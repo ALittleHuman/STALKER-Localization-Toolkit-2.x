@@ -660,12 +660,12 @@
     "text_sha256": "fbd61ee4d0236f4a6a392584c19d65852752aaa75ea4aeef0ac54eb7999c4936"
    },
    "ours": {
-    "step": 6,
-    "enc": "windows-1251",
-    "used": "windows-1251",
+    "step": 4,
+    "enc": "gb2312",
+    "used": "gb2312",
     "forced": false,
-    "chars": 58,
-    "text_sha256": "a9740aaa0459e46793d8cc37e330120e42965e74b7b4aadd716c5d2cd9d926a3"
+    "chars": 52,
+    "text_sha256": "fbd61ee4d0236f4a6a392584c19d65852752aaa75ea4aeef0ac54eb7999c4936"
    }
   },
   {
@@ -3597,20 +3597,6 @@
     5,
     "big5",
     "big5"
-   ],
-   "ours": [
-    6,
-    "windows-1251",
-    "windows-1251"
-   ]
-  },
-  "synth/decl_gb2312": {
-   "kind": "unsupported-declaration",
-   "note": "声明被字节证实，但我们没有该编码的解码器（真能力缺口）",
-   "ref": [
-    4,
-    "gb2312",
-    "gb2312"
    ],
    "ours": [
     6,

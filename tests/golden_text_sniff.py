@@ -216,6 +216,12 @@ def main() -> int:
         return 2
 
     out_file = WORK / "decoded.txt"
+    if args.write and args.id:
+        # ★ `--write` 是**整体重写**基线（不含"合并"语义）：带 `--id` 跑会把基线截成一条，
+        #   其余样本的台账全丢（2026-09-24 实测踩到，靠 git 恢复）。要么全量写，要么只跑不写。
+        print("!! 禁止 `--write --id` 组合：`--write` 会整体重写基线，带 --id 会把其余样本抹掉。")
+        print("GOLDEN-TEXT-SNIFF: FAIL (write-with-id)")
+        return 1
     if args.write:
         entries = []
         naming: dict[str, dict] = {}

@@ -466,7 +466,7 @@ def step_text_tables(release: bool) -> None:
     if not require_repo_file(script, "编码表生成器"):
         return
     for inc in ("cp1251_tables.inc", "cp1252_tables.inc", "gb18030_tables.inc",
-                "gbk_tables.inc"):
+                "gbk_tables.inc", "gb2312_tables.inc"):
         if not require_repo_file(ROOT / "src" / "engine" / "text" / inc, "编码表生成物"):
             return
     rc, out = run([sys.executable, str(script), "--check"])
@@ -710,6 +710,37 @@ def step_golden_font_resample(release: bool) -> None:
         fail("重采样与 Pillow 不一致（见上）")
 
 
+def step_golden_font_charset(release: bool) -> None:
+    """字符集提取锁（M1-7 第⑦步）：2.x `--extract-chars` vs 1.x `extract_chars`。
+
+    字符集错一个字的后果特别隐蔽：引擎对缺失码位不是留空，而是画成同一个重复字形。
+    语料 = 真语料（我们提取出来的翻译 XML）+ 合成边界（单根/多根/畸形/实体/CDATA/注释/
+    PI/DOCTYPE/GBK/UTF-16/无声明 cp1251/空文件/子目录递归）× full_cyrillic 两档。
+    已知分歧（判定链第 5 步未移植 chardet 探针）**逐条报账**，不算通过也不判红。
+    退出码：0=一致（含仅台账分歧），1=有非台账差异，2=CLI / 1.x 缺失。
+    """
+    say("[21] 字符集提取一致性（2.x vs 1.x extract_chars）")
+    script = ROOT / "tests" / "golden_font_charset.py"
+    if not require_repo_file(script, "字符集基线脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=1800)
+    for line in out.splitlines():
+        t = line.strip()
+        if t.startswith("✓") or t.startswith("✗") or t.startswith("GOLDEN-FONT-CHARSET") \
+                or t.startswith("!!") or t.startswith("! ") or t.startswith("gbk.xml") \
+                or t.startswith("(跳过"):
+            say("  " + t)
+    if rc == 0:
+        ok("字符集与 1.x 完全一致（台账分歧已逐条列明）")
+    elif rc == 2:
+        prereq("1.x 参照仓库 / 真语料 XML", "缺失（见上）", release)
+    else:
+        fail("字符集与 1.x 不一致（见上）")
+
+
 def tail(text: str, n: int) -> str:
     """取最后 n 行有效输出。
 
@@ -751,6 +782,7 @@ STEPS = [
     ("golden-font-metrics", step_golden_font_metrics),
     ("golden-font-render", step_golden_font_render),
     ("golden-font-resample", step_golden_font_resample),
+    ("golden-font-charset", step_golden_font_charset),
 ]
 
 

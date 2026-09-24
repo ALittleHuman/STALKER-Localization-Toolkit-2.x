@@ -32,6 +32,7 @@ inline constexpr const char* kUtf32 = "utf-32";
 inline constexpr const char* kUtf32Le = "utf-32-le";
 inline constexpr const char* kUtf32Be = "utf-32-be";
 inline constexpr const char* kGbk = "gbk";
+inline constexpr const char* kGb2312 = "gb2312";
 
 struct DecodeResult {
     bool ok = false;

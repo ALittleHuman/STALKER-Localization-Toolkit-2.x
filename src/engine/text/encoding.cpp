@@ -14,6 +14,7 @@ namespace {
 #include "cp1251_tables.inc"   // NOLINT
 #include "cp1252_tables.inc"   // NOLINT
 #include "gb18030_tables.inc"  // NOLINT
+#include "gb2312_tables.inc"  // NOLINT
 #include "gbk_tables.inc"      // NOLINT
 
 constexpr uint16_t kUndefined = 0xFFFF;
@@ -275,8 +276,12 @@ bool gb18030_encode(const std::string& text, std::vector<uint8_t>& out, std::str
     return true;
 }
 
-// ── GBK（只有双字节形态；decode_bytes 的回落候选里有它）──────────────
-bool gbk_decode(const uint8_t* data, size_t size, std::string& text, std::string& err) {
+// ── GBK / GB2312（只有双字节形态）────────────────────────────────────
+// 两个编码共用同一个循环：非法组合查表得 0xFFFF ⇒ 严格失败。
+// gb2312 只用于判定链第 4 步的"声明被字节证实"（1.x `bytes_fit_encoding` 直接
+// `raw.decode("gb2312")`），所以表必须与 Python 的 gb2312 codec 逐项一致。
+bool gb_two_byte_decode(const uint16_t* table, const char* name, const uint8_t* data,
+                        size_t size, std::string& text, std::string& err) {
     text.clear();
     text.reserve(size * 2);
     size_t i = 0;
@@ -288,27 +293,35 @@ bool gbk_decode(const uint8_t* data, size_t size, std::string& text, std::string
             continue;
         }
         if (b1 == 0x80) {
-            err = "gbk：非法首字节 0x80";
+            err = std::string(name) + "：非法首字节 0x80";
             return false;
         }
         if (i + 1 >= size) {
-            err = "gbk：双字节序列被截断";
+            err = std::string(name) + "：双字节序列被截断";
             return false;
         }
         const uint8_t b2 = data[i + 1];
         if (b2 < 0x40 || b2 > 0xFE) {
-            err = "gbk：非法尾字节";
+            err = std::string(name) + "：非法尾字节";
             return false;
         }
-        const uint16_t cp = kGbkTwoByte[(b1 - 0x81) * 191 + (b2 - 0x40)];
+        const uint16_t cp = table[(b1 - 0x81) * 191 + (b2 - 0x40)];
         if (cp == kUndefined) {
-            err = "gbk：未定义的双字节序列";
+            err = std::string(name) + "：未定义的双字节序列";
             return false;
         }
         append_utf8(text, cp);
         i += 2;
     }
     return true;
+}
+
+bool gbk_decode(const uint8_t* data, size_t size, std::string& text, std::string& err) {
+    return gb_two_byte_decode(kGbkTwoByte, "gbk", data, size, text, err);
+}
+
+bool gb2312_decode(const uint8_t* data, size_t size, std::string& text, std::string& err) {
+    return gb_two_byte_decode(kGb2312TwoByte, "gb2312", data, size, text, err);
 }
 
 // ── UTF-16 / UTF-32（B 链的 BOM 分支与"按名字解码"都要用）─────────────
@@ -443,6 +456,7 @@ bool decode_strict(const std::string& encoding, const uint8_t* data, size_t size
     }
     if (encoding == kGb18030) return gb18030_decode(data, size, text, err);
     if (encoding == kGbk) return gbk_decode(data, size, text, err);
+    if (encoding == kGb2312) return gb2312_decode(data, size, text, err);
     if (encoding == kAscii) {
         text.clear();
         text.reserve(size);

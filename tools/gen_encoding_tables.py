@@ -174,6 +174,13 @@ def build() -> dict[Path, str]:
     gbk = gb_two_byte("gbk")
     files[OUT_DIR / "gbk_tables.inc"] = emit_two_byte("gbk", "kGbkTwoByte", gbk)
     print("    gbk：双字节有效 %d/%d" % (sum(1 for v in gbk if v != 0xFFFF), GB_TWO_W))
+    # gb2312：**只用于"XML 声明里写了 gb2312"这一条**（判定链第 4 步）。1.x 的
+    # `bytes_fit_encoding` 直接 `raw.decode("gb2312")`，所以我们必须有同一张表，
+    # 否则"声明 gb2312、字节真是 gb2312"的文件会被否掉、一路落到默认 windows-1251
+    # （实测：字符集少 6 个汉字，产物就不一致了）。
+    gb2312 = gb_two_byte("gb2312")
+    files[OUT_DIR / "gb2312_tables.inc"] = emit_two_byte("gb2312", "kGb2312TwoByte", gb2312)
+    print("    gb2312：双字节有效 %d/%d" % (sum(1 for v in gb2312 if v != 0xFFFF), GB_TWO_W))
     for codec, _ in SINGLE_BYTE:
         vals = table_1byte(codec)
         print("    %s：未定义 %d 个字节" % (codec, sum(1 for v in vals if v == 0xFFFF)))

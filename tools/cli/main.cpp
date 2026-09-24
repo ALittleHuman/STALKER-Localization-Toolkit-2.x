@@ -17,6 +17,7 @@
 #include "xrkit/engine/fs/db.h"
 #include "xrkit/engine/fs/lzhuf.h"
 #include "xrkit/engine/fs/squashfs.h"
+#include "xrkit/engine/font/charset.h"
 #include "xrkit/engine/font/glyph.h"
 #include "xrkit/engine/font/metrics.h"
 #include "xrkit/engine/font/render.h"
@@ -106,6 +107,8 @@ void print_usage() {
            "                                              渲染一个字号的 DDS + ini（与 1.x 逐字节对拍）\n"
            "  --resample-dump <输入raw> <源宽> <源高> <目标宽> <目标高> <输出raw>\n"
            "                                              Pillow LANCZOS 重采样（与 Pillow 对拍）\n"
+           "  --extract-chars <xml目录> [输出文件] [--no-full-cyrillic]\n"
+           "                                              字符集提取（每行一个十六进制码位）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -639,6 +642,52 @@ int run_cli(const std::vector<std::string>& args) {
                   << " clipped=" << product.clipped
                   << " substituted=" << product.substituted.size()
                   << " dds=" << product.dds.size() << " ini=" << ini_bytes.size() << "\n";
+        return kExitOk;
+    }
+
+    // 字符集提取（M1-7 第⑦步）：递归扫 XML 目录 → 字符集（每行一个十六进制码位）。
+    // 判据：与 1.x `extract_chars` 的 `"".join(sorted(chars))` 完全一致。
+    if (action == "--extract-chars") {
+        if (operands.empty()) {
+            std::cerr << "CHARSET error reason=用法：--extract-chars <xml目录> [输出文件] "
+                         "[--no-full-cyrillic]\n";
+            return kExitUsage;
+        }
+        bool full_cyrillic = true;
+        std::vector<std::string> args;
+        for (const std::string& op : operands) {
+            if (op == "--no-full-cyrillic") {
+                full_cyrillic = false;
+            } else {
+                args.push_back(op);
+            }
+        }
+        const std::string& xml_dir = args[0];
+        xrkit::engine::font::CharsetResult result;
+        if (!xrkit::engine::font::extract_chars(xml_dir, full_cyrillic, result)) {
+            std::cout << "CHARSET error reason=目录不存在：" << xml_dir << "\n";
+            return kExitFail;
+        }
+        const std::string body = xrkit::engine::font::charset_to_lines(result.chars);
+        if (args.size() >= 2) {
+            std::ofstream f(path_from_utf8(args[1]), std::ios::binary | std::ios::trunc);
+            if (!f) {
+                std::cout << "CHARSET error reason=写不出 " << args[1] << "\n";
+                return kExitFail;
+            }
+            f.write(body.data(), static_cast<std::streamsize>(body.size()));
+            if (!f) {
+                std::cout << "CHARSET error reason=写失败\n";
+                return kExitFail;
+            }
+        } else {
+            std::cout << body;
+        }
+        std::cout << "CHARSET ok dir=" << xml_dir << " chars=" << result.chars.size()
+                  << " files=" << result.files_scanned
+                  << " undecodable=" << result.files_undecodable
+                  << " guessed=" << result.guessed.size()
+                  << " full_cyrillic=" << (full_cyrillic ? 1 : 0) << "\n";
         return kExitOk;
     }
 
