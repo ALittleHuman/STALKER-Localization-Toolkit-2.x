@@ -1,0 +1,35 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "msvc-release",
+      "inherits": "base",
+      "displayName": "MSVC Release（core+engine+cli）",
+      "cacheVariables": { "XRKIT_BUILD_SHELL": "OFF" }
+    },
+    {
+      "name": "msvc-shell",
+      "inherits": "base",
+      "displayName": "MSVC Release + Qt6 外壳",
+      "cacheVariables": {
+        "XRKIT_BUILD_SHELL": "ON",
+        "CMAKE_PREFIX_PATH": "E:/Software/Tools/Qt/6.8.3/msvc2022_64"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "msvc-release", "configurePreset": "msvc-release" },
+    { "name": "msvc-shell", "configurePreset": "msvc-shell" }
+  ]
+}

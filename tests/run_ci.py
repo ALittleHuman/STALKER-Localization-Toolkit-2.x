@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""STALKER 工具集 2.x 门禁（对齐 1.x 的"两级门禁"口径，2026-09-12 用户裁定）。
+
+档位：
+    --fast     公开 CI：跳过需要外部前提的步骤，跳过项一律记入「本次未覆盖」
+    默认       local 全量：能跑的都跑，缺外件记 SKIP + 清单
+    --release  发版：任何 SKIP 一律 FAIL，且「未覆盖清单」非空即整体 FAIL
+
+判据分类（1.x 的血账，别搞反）：
+    · 仓库自带的门禁文件缺件          → FAIL（"把门禁文件删掉就算绿灯"是最危险的假绿）
+    · 外部前提缺件（MSVC / 真机样本） → SKIP，并记入未覆盖清单
+
+用法：
+    python tests/run_ci.py [--fast|--release] [--only 子串] [--verbose]
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+BUILD_DIR = ROOT / "build" / "msvc-release"
+CLI_EXE = BUILD_DIR / "tools" / "cli" / "xrkit_cli.exe"
+ENV_CACHE = ROOT / "build" / "msvc_env.txt"
+
+VS_ROOT = Path(os.environ.get("XRKIT_VS", r"E:\Software\Tools\Visual Studio\2022\BuildTools"))
+QT_ROOT = Path(os.environ.get("XRKIT_QT", r"E:\Software\Tools\Qt\6.8.3\msvc2022_64"))
+VCVARS = VS_ROOT / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
+CMAKE = VS_ROOT / "Common7" / "IDE" / "CommonExtensions" / "Microsoft" / "CMake" / "CMake" / "bin" / "cmake.exe"
+NINJA_DIR = VS_ROOT / "Common7" / "IDE" / "CommonExtensions" / "Microsoft" / "CMake" / "Ninja"
+
+UNCOVERED: list[str] = []
+FAILURES = 0
+_MSVC_ENV: dict[str, str] | None = None
+
+
+# ── 基础设施 ────────────────────────────────────────────────────────────
+def say(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def load_msvc_env() -> dict[str, str] | None:
+    """导出并缓存 MSVC 环境。
+
+    做法与 scripts/build.ps1 一致：`call vcvars64.bat && set > 文件`。
+    不在批处理里对同一日志文件反复 `>>` 追加 —— 实测会报"文件被占用"。
+    """
+    global _MSVC_ENV
+    if _MSVC_ENV is not None:
+        return _MSVC_ENV
+    if not VCVARS.is_file():
+        return None
+    ENV_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    if ENV_CACHE.exists():
+        ENV_CACHE.unlink()
+    # ★ 必须用 shell=True（即 cmd /c <原样字符串>）：走 list 形式时 subprocess 的
+    #   list2cmdline 会给整串再套一层引号，cmd 解析失败 —— 实测 exit=1、无输出、
+    #   目标文件根本没生成（而且被 >nul 吞掉，看起来像"vcvars 不存在"）。
+    subprocess.run(
+        'call "%s" >nul 2>&1 && set > "%s"' % (VCVARS, ENV_CACHE),
+        shell=True,
+        check=False,
+    )
+    if not ENV_CACHE.exists():
+        return None
+    env = dict(os.environ)
+    text = ENV_CACHE.read_bytes().decode("mbcs", errors="replace")
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key:
+            env[key] = value
+    env["PATH"] = os.pathsep.join([str(NINJA_DIR), str(QT_ROOT / "bin"), env.get("PATH", "")])
+    _MSVC_ENV = env
+    return env
+
+
+def run(cmd: list[str], env: dict[str, str] | None = None, timeout: int = 600) -> tuple[int, str]:
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(ROOT),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+        )
+        return proc.returncode, proc.stdout.decode("utf-8", errors="replace")
+    except subprocess.TimeoutExpired as exc:
+        partial = (exc.stdout or b"").decode("utf-8", errors="replace")
+        return 124, partial + "\n[超时 %ss]" % timeout
+
+
+def fail(msg: str) -> None:
+    global FAILURES
+    FAILURES += 1
+    say("  FAIL " + msg)
+
+
+def ok(msg: str) -> None:
+    say("  ok   " + msg)
+
+
+def prereq(what: str, why: str, release: bool) -> bool:
+    """外部前提缺件：release 档 FAIL，其余档记 SKIP + 未覆盖清单。"""
+    if release:
+        fail("缺少外部前提（release 档零容忍）：%s —— %s" % (what, why))
+        return False
+    UNCOVERED.append("%s（%s）" % (what, why))
+    say("  SKIP %s —— %s" % (what, why))
+    return True
+
+
+def require_repo_file(path: Path, what: str) -> bool:
+    """仓库自带的门禁文件缺件 = FAIL，绝不 SKIP。"""
+    if path.exists():
+        return True
+    fail("仓库自带文件缺失（不许静默通过）：%s（%s）" % (path.relative_to(ROOT), what))
+    return False
+
+
+# ── 步骤 ────────────────────────────────────────────────────────────────
+def step_build(release: bool) -> None:
+    say("[1] 构建 core/engine/cli")
+    env = load_msvc_env()
+    if env is None:
+        prereq("MSVC 工具链", "找不到 vcvars64.bat：%s" % VCVARS, release)
+        return
+    if not require_repo_file(CMAKE, "VS 自带 CMake"):
+        return
+
+    rc, out = run([str(CMAKE), "-S", str(ROOT), "-B", str(BUILD_DIR),
+                   "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release"], env=env)
+    if rc != 0:
+        fail("configure 失败（退出码 %d）\n%s" % (rc, tail(out, 20)))
+        return
+
+    rc, out = run([str(CMAKE), "--build", str(BUILD_DIR)], env=env)
+    if rc != 0:
+        fail("build 失败（退出码 %d）\n%s" % (rc, tail(out, 30)))
+        return
+    ok("configure + build 通过")
+
+
+def step_no_qt_lock(release: bool) -> None:
+    say("[2] J5 无 Qt 依赖锁（core/engine 不许 include Qt）")
+    script = ROOT / "cmake" / "check_no_qt.cmake"
+    if not require_repo_file(script, "J5 锁脚本"):
+        return
+    env = load_msvc_env() or dict(os.environ)
+    rc, out = run([str(CMAKE), "-DXRKIT_ROOT=%s" % ROOT, "-P", str(script)], env=env)
+    if rc != 0:
+        fail("J5 检查未通过：\n%s" % tail(out, 15))
+        return
+    ok(tail(out, 1).strip() or "J5 通过")
+
+
+def step_no_qt_injection(release: bool) -> None:
+    say("[3] J5 注入必红（先证这条锁抓得住违规，再信它的绿）")
+    probe = ROOT / "src" / "core" / "_j5_probe.cpp"
+    script = ROOT / "cmake" / "check_no_qt.cmake"
+    env = load_msvc_env() or dict(os.environ)
+
+    rc_before, _ = run([str(CMAKE), "-DXRKIT_ROOT=%s" % ROOT, "-P", str(script)], env=env)
+    try:
+        probe.write_text("#include <QtCore/QString>\n", encoding="utf-8")
+        rc_inject, out_inject = run([str(CMAKE), "-DXRKIT_ROOT=%s" % ROOT, "-P", str(script)], env=env)
+    finally:
+        if probe.exists():
+            probe.unlink()
+    rc_after, _ = run([str(CMAKE), "-DXRKIT_ROOT=%s" % ROOT, "-P", str(script)], env=env)
+
+    if rc_before != 0:
+        fail("注入前基线就不通过 —— 这条锁现在无论红绿都不可信")
+        return
+    if rc_inject == 0:
+        fail("往 core 里塞了 Qt 头却没变红 —— 这是「永远为真的锁」")
+        return
+    if rc_after != 0:
+        fail("删掉注入文件后没恢复绿灯 —— 锁有残留状态")
+        return
+    ok("基线绿 → 注入红 → 还原绿（J5 确实在测东西）")
+
+
+def step_selftest(release: bool) -> None:
+    say("[4] CLI --selftest")
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "上一步没产出", release)
+        return
+    rc, out = run([str(CLI_EXE), "--selftest", "--verbose"])
+    summary = [ln for ln in out.splitlines() if ln.startswith("SELFTEST ")]
+    if not summary:
+        fail("找不到 ASCII 收尾行 SELFTEST（1.x 的教训：别的进程只能解析 ASCII 行）\n%s" % tail(out, 15))
+        return
+    if rc != 0 or "fail=0" not in summary[-1]:
+        fail("自检未全绿：%s\n%s" % (summary[-1], tail(out, 15)))
+        return
+    ok(summary[-1])
+
+
+def step_cli_contract(release: bool) -> None:
+    """退出码本身就是判据：0=通过 2=显式跳过 3=用法错误。
+
+    M0 阶段 --bench/--themecheck/--dump 尚未实现，**必须**返回 2 并记入未覆盖，
+    绝不允许把"没实现"混成 0。
+    """
+    say("[5] CLI 退出码契约")
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+
+    expectations = [
+        (["--version"], 0, "--version"),
+        (["--selftest"], 0, "--selftest"),
+        (["--dump"], 3, "--dump 缺路径 → 用法错误"),
+    ]
+    for argv, want, label in expectations:
+        rc, out = run([str(CLI_EXE)] + argv)
+        if rc != want:
+            fail("%s 退出码 %d，期望 %d" % (label, rc, want))
+        else:
+            ok("%s → exit=%d" % (label, rc))
+
+    # 未实现的动作：必须显式 SKIP（2），并且被记入未覆盖清单
+    for argv, marker, label in (
+        (["--bench"], "BENCH skip", "--bench"),
+        (["--themecheck"], "THEMECHECK skip", "--themecheck"),
+        (["--dump", "x.sq_base"], "DUMP skip", "--dump <path>"),
+    ):
+        rc, out = run([str(CLI_EXE)] + argv)
+        if rc != 2 or marker not in out:
+            fail("%s 期望 exit=2 且输出含 %r，实际 exit=%d 输出=%r" % (label, marker, rc, out.strip()))
+        else:
+            UNCOVERED.append("%s（引擎/外壳尚未实现，CLI 显式 SKIP）" % label)
+            ok("%s → exit=2（已记入未覆盖）" % label)
+
+
+def tail(text: str, n: int) -> str:
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return "\n".join(lines[-n:])
+
+
+# ── 主流程 ──────────────────────────────────────────────────────────────
+STEPS = [
+    ("build", step_build),
+    ("no-qt", step_no_qt_lock),
+    ("no-qt-injection", step_no_qt_injection),
+    ("selftest", step_selftest),
+    ("cli", step_cli_contract),
+]
+
+
+def main() -> int:
+    global FAILURES
+
+    parser = argparse.ArgumentParser(description="2.x 门禁")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--fast", action="store_true", help="公开 CI：跳过外部前提步骤并记账")
+    group.add_argument("--release", action="store_true", help="发版：任何 SKIP / 未覆盖即 FAIL")
+    parser.add_argument("--only", default="", help="只跑名字含该子串的步骤")
+    parser.add_argument("--verbose", action="store_true")
+    args = parser.parse_args()
+
+    release = args.release
+    mode = "release" if release else ("fast" if args.fast else "local")
+    say("=" * 66)
+    say("STALKER 工具集 2.x 门禁   档位=%s   仓库=%s" % (mode, ROOT))
+    say("=" * 66)
+
+    for name, fn in STEPS:
+        if args.only and args.only not in name:
+            continue
+        fn(release)
+        say("")
+
+    say("-" * 66)
+    if UNCOVERED:
+        say("本次未覆盖（%d 项）：" % len(UNCOVERED))
+        for item in UNCOVERED:
+            say("  · " + item)
+    else:
+        say("本次覆盖：全部步骤均已执行")
+    say("-" * 66)
+
+    if release and UNCOVERED:
+        say("release 档：未覆盖清单非空 → 整体 FAIL")
+        FAILURES += 1
+
+    if FAILURES:
+        say("RESULT: FAIL（%d 处失败）" % FAILURES)
+        return 1
+    say("RESULT: PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

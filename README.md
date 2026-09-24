@@ -41,4 +41,51 @@ MSVC 编 Qt 必须带 `/Zc:__cplusplus`（否则 Qt 触发 `#error C1189`）与 
 
 ## 文档
 
-- `docs/` —— 设计口径、验收判据、里程碑（编写中；**口径未过目前不写业务代码**）
+- `docs/2.0.0-设计口径.md` —— 分层架构、插件 C ABI、里程碑、七条验收判据
+- `docs/2.0.0-行为口径对照表.md` —— 1.x 逐条行为判据（重写必须逐条重验）
+- `docs/2.0.0-待拍板清单.md` —— 14 条开放项与决策记录
+
+## 构建与门禁
+
+```powershell
+# 构建（core + engine + cli；Qt 外壳另用 -Preset msvc-shell）
+powershell -File scripts\build.ps1
+
+# 门禁（三档：--fast / 默认 local / --release）
+python tests\run_ci.py
+python tests\run_ci.py --fast
+python tests\run_ci.py --release      # 任何 SKIP 与「未覆盖清单」非空即 FAIL
+```
+
+产物：`build/msvc-release/tools/cli/xrkit_cli.exe`
+（`--selftest` / `--bench` / `--themecheck` / `--dump`；退出码 0=通过 1=失败 **2=显式跳过** 3=用法错误）。
+
+## 开发约定（都是本机实测踩出来的，别改回去）
+
+1. **`.ps1` 必须存成 UTF-8 with BOM** —— PowerShell 5.1 会把无 BOM 的脚本按 GBK 读，
+   中文注释直接被读坏、脚本语法报错。
+2. **PowerShell 里给 cmake 传 `-DNAME=$var` 必须加引号**：裸写 `-DXRKIT_ROOT=$root`
+   变量**不会展开**，cmake 收到的是字面量 `$root`（实测）。
+3. **从 Python 调 `cmd /c` 必须用 `shell=True`**：走 list 形式时 subprocess 的
+   `list2cmdline` 会给整串再套一层引号，cmd 解析失败且被 `>nul` 吞掉，现象酷似"文件不存在"。
+4. **必须在全权文件模式下构建**：`workspace-write` 沙箱会让 `cmake→ninja→cl→link`
+   这条深层进程链死锁（CMake 永久卡在 "Detecting CXX compiler ABI info"）。
+5. **收尾行一律 ASCII**（`SELFTEST pass=N fail=M` / `BENCH skip ...`）：中文行在别的进程里是乱码。
+
+## 第三方依赖（vendored，离线可复现）
+
+源码放 `third_party/`，每个 tarball 记录 sha256；拉取脚本 `tools/fetch_third_party.py`。
+可达源在本机环境（GitHub 被 hosts 屏蔽、schannel TLS 不可用）下实测如下：
+
+| 依赖 | 版本 | 源 | 备注 |
+|---|---|---|---|
+| FreeType | 2.14.3 | gh-proxy → GitHub tag `VER-2-14-3` | **对齐 Pillow 12.3.0 捆绑的 2.14.3**（字库产物"保持原样"的基准） |
+| zlib | 1.3.1 | gh-proxy → `madler/zlib` tag `v1.3.1` | |
+| xz (liblzma) | 5.6.4 | tukaani.org 官方 | |
+| zstd | 1.5.6 | gh-proxy → `facebook/zstd` tag `v1.5.6` | |
+| lz4 | 1.10.0 | gh-proxy → `lz4/lz4` tag `v1.10.0` | |
+| lzo | 2.10 | oberhumer.com 官方 | |
+| PCRE2 | 10.48 | USTC Debian pool（`pcre2_10.48.orig.tar.gz`） | |
+
+> ⚠ gh-proxy 是第三方代理。取回的 tarball 一律**记录 sha256 并在构建前校验**，
+> 保证后续构建可复现；provenance 记录在 `third_party/SOURCES.md`。
