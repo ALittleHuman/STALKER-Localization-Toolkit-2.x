@@ -17,6 +17,7 @@
 #include "xrkit/engine/fs/db.h"
 #include "xrkit/engine/fs/lzhuf.h"
 #include "xrkit/engine/fs/squashfs.h"
+#include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/third_party_probe.h"
 
 #include <algorithm>
@@ -89,6 +90,7 @@ void print_usage() {
            "  --extract <源> <内部路径> <输出> [DB格式]   提取单个文件（进程内解压）\n"
            "  --pack-db <输出> <格式> <输入目录>          按目录打包 DB（逐字节对拍用）\n"
            "  --pack-sqfs <输出> <输入目录> [--pack-dirs]  自写 SquashFS 封包（xz 块，逐字节对拍用）\n"
+           "  --decode-text <输入> <输出>                 六编码链解码（把正文写成 UTF-8；对拍用）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -481,6 +483,31 @@ int run_cli(const std::vector<std::string>& args) {
                   << " frag_blocks=" << r.fragment_blocks << " dedup_blocks=" << r.dedup_blocks
                   << " dedup_frags=" << r.dedup_fragments
                   << " ms=" << static_cast<long long>(r.elapsed_ms) << "\n";
+        return kExitOk;
+    }
+
+    // 文本解码层（M1-6）：六编码链的**黑盒**判据入口。产物是解码后的 UTF-8 正文，
+    // 编码名与码位数打在 ASCII 收尾行上，供 tests/golden_text_decode.py 逐文件对拍。
+    if (action == "--decode-text") {
+        if (operands.size() < 2) {
+            std::cerr << "DECODE error reason=用法：--decode-text <输入文件> <输出文件>\n";
+            return kExitUsage;
+        }
+        const xrkit::engine::text::DecodeResult r =
+            xrkit::engine::text::read_text_file(operands[0]);
+        if (!r.ok) {
+            std::cout << "DECODE error reason=" << r.error << "\n";
+            return kExitFail;
+        }
+        std::ofstream out(path_from_utf8(operands[1]), std::ios::binary | std::ios::trunc);
+        if (!out) {
+            std::cout << "DECODE error reason=无法写输出文件：" << operands[1] << "\n";
+            return kExitFail;
+        }
+        out.write(r.text.data(), static_cast<std::streamsize>(r.text.size()));
+        out.close();
+        std::cout << "DECODE ok enc=" << r.encoding << " chars=" << r.chars
+                  << " bytes=" << r.text.size() << "\n";
         return kExitOk;
     }
 

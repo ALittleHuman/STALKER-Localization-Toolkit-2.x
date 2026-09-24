@@ -7,9 +7,11 @@ add_library(xrkit_engine STATIC
   fs/lzhuf_ref.c
   fs/squashfs.cpp
   fs/squashfs_write.cpp
-  fs/db.cpp)
+  fs/db.cpp
+  text/encoding.cpp)
 
 target_include_directories(xrkit_engine PUBLIC "${CMAKE_SOURCE_DIR}/include")
+target_include_directories(xrkit_engine PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/text")
 target_link_libraries(xrkit_engine
   PUBLIC xrkit_core xrkit_flags
   PRIVATE xrkit_third_party)

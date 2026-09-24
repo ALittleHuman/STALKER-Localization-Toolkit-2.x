@@ -45,6 +45,7 @@ MSVC 编 Qt 必须带 `/Zc:__cplusplus`（否则 Qt 触发 `#error C1189`）与 
 - `docs/2.0.0-行为口径对照表.md` —— 1.x 逐条行为判据（重写必须逐条重验）
 - `docs/2.0.0-待拍板清单.md` —— 14 条开放项与决策记录
 - `docs/2.0.0-SquashFS-writer规格.md` —— 自写 writer 的**逐字节复刻规则**与取证（M1-5）
+- `docs/2.0.0-文本模块规格.md` —— 文本模块的两条编码链、提取规则、门禁与缺口记账（M1-6）
 
 ## 构建与门禁
 
@@ -60,7 +61,7 @@ python tests\run_ci.py --release      # 任何 SKIP 与「未覆盖清单」非�
 
 产物：`build/msvc-release/tools/cli/xrkit_cli.exe`
 （`--selftest` / `--bench` / `--themecheck` / `--dump` / `--extract` / `--pack-db` /
-`--pack-sqfs`；退出码 0=通过 1=失败 **2=显式跳过** 3=用法错误）。
+`--pack-sqfs` / `--decode-text`；退出码 0=通过 1=失败 **2=显式跳过** 3=用法错误）。
 
 ## 开发约定（都是本机实测踩出来的，别改回去）
 

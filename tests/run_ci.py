@@ -227,6 +227,8 @@ def step_cli_contract(release: bool) -> None:
          "--dump 不存在的文件 → 失败并报错"),
         (["--pack-sqfs"], 3, "PACK error",
          "--pack-sqfs 缺参数 → 用法错误"),
+        (["--decode-text"], 3, "DECODE error",
+         "--decode-text 缺参数 → 用法错误"),
     ]
     for argv, want, marker, label in expectations:
         rc, out = run([str(CLI_EXE)] + argv)
@@ -402,6 +404,54 @@ def step_golden_sqfs_pack_real(release: bool) -> None:
         fail("真机样本封包产物不一致（见上）")
 
 
+def step_text_tables(release: bool) -> None:
+    """编码表锁：磁盘上的 .inc 必须与 Python 同名 codec 一致。
+
+    这是"仓库自带门禁文件"性质：表被手改、或换了 Python 版本导致 codec 变了 → FAIL。
+    表错了的后果就是整篇乱码，而且是**逐字节判据**才能发现的那种错。
+    """
+    say("[12] 编码表与 Python codec 一致（cp1251 / cp1252 / gb18030）")
+    script = ROOT / "tools" / "gen_encoding_tables.py"
+    if not require_repo_file(script, "编码表生成器"):
+        return
+    for inc in ("cp1251_tables.inc", "cp1252_tables.inc", "gb18030_tables.inc"):
+        if not require_repo_file(ROOT / "src" / "engine" / "text" / inc, "编码表生成物"):
+            return
+    rc, out = run([sys.executable, str(script), "--check"])
+    if rc != 0:
+        fail("编码表与 codec 不一致：\n%s" % tail(out, 10))
+        return
+    ok("三张表与 codec 完全一致")
+
+
+def step_golden_text_decode(release: bool) -> None:
+    """黄金语料差分：文本**解码层**（六编码链）2.x vs 1.x 的 read_text_file。
+
+    退出码：0=全部逐字节一致，1=有不一致，2=有样本变动/不可达（按外部前提处理）。
+    """
+    say("[13] 黄金语料差分：文本解码（2.x vs 1.x 的 read_text_file）")
+    script = ROOT / "tests" / "golden_text_decode.py"
+    if not require_repo_file(script, "解码基线脚本"):
+        return
+    if not require_repo_file(ROOT / "tests" / "golden" / "text_decode.json", "解码基线数据"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=1800)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("GOLDEN-TEXT-DECODE") or s.startswith("✗") or s.startswith("!!") \
+                or s.startswith("样本内容变了"):
+            say("  " + s)
+    if rc == 0:
+        ok("文本解码（编码名 + 正文）与 1.x 逐字节一致")
+    elif rc == 2:
+        prereq("真语料文本样本", "样本缺失或内容变动（见上）", release)
+    else:
+        fail("文本解码与 1.x 不一致（见上）")
+
+
 def tail(text: str, n: int) -> str:
     """取最后 n 行有效输出。
 
@@ -434,6 +484,8 @@ STEPS = [
     ("golden-db", step_golden_db),
     ("golden-sqfs-pack", step_golden_sqfs_pack),
     ("golden-sqfs-pack-real", step_golden_sqfs_pack_real),
+    ("text-tables", step_text_tables),
+    ("golden-text-decode", step_golden_text_decode),
 ]
 
 
