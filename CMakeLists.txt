@@ -1,25 +1,32 @@
 cmake_minimum_required(VERSION 3.21)
-project(STALKER_Toolkit_2x VERSION 2.0.0 LANGUAGES CXX)
+project(STALKER_Toolkit_2x VERSION 2.0.0 LANGUAGES C CXX)
 
 # ─────────────────────────────────────────────────────────────────────
-# 全局编译口径
-#   /Zc:__cplusplus 与 /utf-8 是 1.x 的血账：前者不加以致 Qt 直接 #error C1189，
-#   后者不加以致中文注释触发 C4819。
+# 全局口径
 # ─────────────────────────────────────────────────────────────────────
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# 第三方依赖全部静态链接（发行包少一堆 DLL；也避免 DLL 被安全软件单独拦）
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "只构建静态库" FORCE)
+
+# 严格开关做成 INTERFACE 目标，只加在**我们自己的**目标上。
+# 为什么不用全局 add_compile_options：那会把 /W4 /permissive- 也压到第三方源码上，
+# 几万条第三方告警会把真问题淹掉（构建噪声也是成本）。
+add_library(xrkit_flags INTERFACE)
 if(MSVC)
-  add_compile_options(/W4 /permissive- /utf-8 /Zc:__cplusplus /Zc:preprocessor /EHsc)
-  add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
+  target_compile_options(xrkit_flags INTERFACE
+    /W4 /permissive- /utf-8 /Zc:__cplusplus /Zc:preprocessor /EHsc)
+  target_compile_definitions(xrkit_flags INTERFACE
+    _CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
 # Qt 外壳默认关闭：M0 只做 core + engine + CLI（这三者都不许依赖 Qt）
 option(XRKIT_BUILD_SHELL "构建 Qt6 外壳（需要 Qt6 与源文件）" OFF)
 
 # ─────────────────────────────────────────────────────────────────────
-# 第三方依赖：vendored 源码（离线可复现），见 third_party/
+# 第三方依赖：vendored 源码（离线可复现），见 third_party/ 与 tools/fetch_third_party.py
 # ─────────────────────────────────────────────────────────────────────
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/CMakeLists.txt")
   add_subdirectory(third_party)

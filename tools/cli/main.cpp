@@ -13,6 +13,7 @@
 #include "xrkit/core/log.h"
 #include "xrkit/core/version.h"
 #include "xrkit/engine/engine.h"
+#include "xrkit/engine/third_party_probe.h"
 
 #include <filesystem>
 #include <fstream>
@@ -102,6 +103,53 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
 
 }  // namespace
 
+// 依赖探针的计数：skip 单独统计，绝不混进 ok ——
+// "没验证"与"验证通过"是两件事，混起来就是 1.x 反复吃亏的那种假绿。
+struct DepCounts {
+    int ok = 0;
+    int skip = 0;
+    int fail = 0;
+};
+
+namespace {
+
+void register_dep_checks(xrkit::core::CheckRegistry& reg, DepCounts& counts) {
+    using xrkit::core::CheckContext;
+    using xrkit::core::check;
+    using ProbeFn = xrkit::engine::ProbeResult (*)();
+
+    struct Item {
+        const char* name;
+        ProbeFn fn;
+    };
+    static const Item items[] = {
+        {"deps: zlib 往返压缩", &xrkit::engine::probe_zlib},
+        {"deps: lz4 往返压缩", &xrkit::engine::probe_lz4},
+        {"deps: zstd 往返压缩", &xrkit::engine::probe_zstd},
+        {"deps: xz/liblzma 往返压缩", &xrkit::engine::probe_xz},
+        {"deps: lzo 往返压缩", &xrkit::engine::probe_lzo},
+        {"deps: PCRE2 lookbehind 匹配", &xrkit::engine::probe_pcre2},
+        {"deps: FreeType 字形栅格", &xrkit::engine::probe_freetype},
+    };
+
+    for (const Item& item : items) {
+        reg.add(item.name, [fn = item.fn, &counts](CheckContext& ctx) {
+            const xrkit::engine::ProbeResult r = fn();
+            if (r.skipped) {
+                ++counts.skip;
+            } else if (r.ok) {
+                ++counts.ok;
+            } else {
+                ++counts.fail;
+            }
+            xrkit::core::log(r.ok ? xrkit::core::Level::Info : xrkit::core::Level::Warn, r.detail);
+            check(ctx, r.ok || r.skipped, r.detail);
+        });
+    }
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
     std::vector<std::string> args;
     args.reserve(static_cast<size_t>(argc > 0 ? argc - 1 : 0));
@@ -139,8 +187,13 @@ int main(int argc, char** argv) {
 
     if (action == "--selftest") {
         xrkit::core::CheckRegistry reg;
+        DepCounts counts;
         register_core_checks(reg);
-        return xrkit::core::run_registry(reg, verbose);
+        register_dep_checks(reg, counts);
+        const int rc = xrkit::core::run_registry(reg, verbose);
+        std::cout << "DEPCHECK ok=" << counts.ok << " skip=" << counts.skip
+                  << " fail=" << counts.fail << "\n";
+        return rc;
     }
     if (action == "--bench") {
         std::cout << "BENCH skip reason=engine-not-implemented\n";

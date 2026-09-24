@@ -240,8 +240,22 @@ def step_cli_contract(release: bool) -> None:
 
 
 def tail(text: str, n: int) -> str:
-    lines = [ln for ln in text.splitlines() if ln.strip()]
-    return "\n".join(lines[-n:])
+    """取最后 n 行有效输出。
+
+    必须滤掉 MSVC 的 `/showIncludes` 噪声（"注意: 包含文件:" / "Note: including file:"）——
+    实测一次构建能刷出几千行，真错误会被冲得看不见。
+    """
+    lines = [
+        ln for ln in text.splitlines()
+        if ln.strip()
+        and "包含文件" not in ln
+        and "Note: including file" not in ln
+    ]
+    # 有错误行就优先显示错误行：MSVC 的模板报错会刷出几十行 "note:"，
+    # 真正的 "error Cxxxx" 往往在中间，取尾会把它冲掉。
+    errors = [ln for ln in lines
+              if "error C" in ln or "error:" in ln.lower() or "FAILED" in ln or "fatal error" in ln]
+    return "\n".join((errors or lines)[-n:])
 
 
 # ── 主流程 ──────────────────────────────────────────────────────────────

@@ -1,0 +1,51 @@
+{
+  "freetype": {
+    "archive": "freetype-2.14.3.tar.gz",
+    "note": "字形栅格 —— **对齐 Pillow 12.3.0 捆绑的 2.14.3**（字库产物保持原样的基准）",
+    "sha256": "dc49de6b01a266eef4876a4dd34d9842c475d3e28ff2eff63bd2fb760ab56261",
+    "url": "https://gh-proxy.com/https://github.com/freetype/freetype/archive/refs/tags/VER-2-14-3.tar.gz",
+    "version": "2.14.3"
+  },
+  "lz4": {
+    "archive": "lz4-1.10.0.tar.gz",
+    "note": "SquashFS lz4 块（块格式，无帧头）",
+    "sha256": "537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b",
+    "url": "https://gh-proxy.com/https://github.com/lz4/lz4/archive/refs/tags/v1.10.0.tar.gz",
+    "version": "1.10.0"
+  },
+  "lzo": {
+    "archive": "lzo-2.10.tar.gz",
+    "note": "SquashFS lzo 块（1.x 的已知缺口，2.0 补齐）",
+    "sha256": "c0f892943208266f9b6543b3ae308fab6284c5c90e627931446fb49b4221a072",
+    "url": "https://www.oberhumer.com/opensource/lzo/download/lzo-2.10.tar.gz",
+    "version": "2.10"
+  },
+  "pcre2": {
+    "archive": "pcre2-10.48.tar.gz",
+    "note": "正则（文本提取用；std::regex 不支持 lookbehind）",
+    "sha256": "ebcc25aadf2a51fa1fefa9b8bc9e7a79b3dae86870a0f1152a22e42befd46888",
+    "url": "https://mirrors.aliyun.com/debian/pool/main/p/pcre2/pcre2_10.48.orig.tar.gz",
+    "version": "10.48"
+  },
+  "xz": {
+    "archive": "xz-5.6.4.tar.xz",
+    "note": "SquashFS xz 块（liblzma）",
+    "sha256": "829ccfe79d769748f7557e7a4429a64d06858e27e1e362e25d01ab7b931d9c95",
+    "url": "https://tukaani.org/xz/xz-5.6.4.tar.xz",
+    "version": "5.6.4"
+  },
+  "zlib": {
+    "archive": "zlib-1.3.1.tar.gz",
+    "note": "SquashFS gzip 块 + 通用压缩",
+    "sha256": "17e88863f3600672ab49182f217281b6fc4d3c762bde361935e436a95214d05c",
+    "url": "https://gh-proxy.com/https://github.com/madler/zlib/archive/refs/tags/v1.3.1.tar.gz",
+    "version": "1.3.1"
+  },
+  "zstd": {
+    "archive": "zstd-1.5.6.tar.gz",
+    "note": "SquashFS zstd 块",
+    "sha256": "30f35f71c1203369dc979ecde0400ffea93c27391bfd2ac5a9715d2173d92ff7",
+    "url": "https://gh-proxy.com/https://github.com/facebook/zstd/archive/refs/tags/v1.5.6.tar.gz",
+    "version": "1.5.6"
+  }
+}

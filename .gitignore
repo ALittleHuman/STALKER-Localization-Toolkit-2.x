@@ -41,3 +41,10 @@ ui_*.h
 /logs/
 /temp/
 /dist/
+
+# ── 第三方依赖源码：由 tools/fetch_third_party.py 拉取并校验 sha256 ──
+# 源码体积大不入库；**锁文件与说明必须入库**（可复现的依据）
+/third_party/*
+!/third_party/SOURCES.md
+!/third_party/sources.lock.json
+!/third_party/CMakeLists.txt
