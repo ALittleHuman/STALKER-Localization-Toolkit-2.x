@@ -1,0 +1,43 @@
+# ── 构建产物（CMake / Ninja / MSBuild） ──────────────────────────────
+/build/
+/build-*/
+/out/
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+cmake_install.cmake
+compile_commands.json
+.ninja_deps
+.ninja_log
+*.obj
+*.o
+*.pdb
+*.idb
+*.ilk
+
+# ── 可执行与库产物（源码树里不该有） ─────────────────────────────────
+*.exe
+*.dll
+*.lib
+*.exp
+*.pyd
+
+# ── Qt 生成物 ────────────────────────────────────────────────────────
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*_autogen/
+*.qmlc
+
+# ── IDE ─────────────────────────────────────────────────────────────
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# ── 运行时产物 ───────────────────────────────────────────────────────
+/logs/
+/temp/
+/dist/

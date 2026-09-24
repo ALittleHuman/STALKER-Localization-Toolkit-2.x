@@ -1,0 +1,22 @@
+# 行尾规范：源码一律 LF；Windows 脚本与 VS 工程文件用 CRLF；二进制不参与规范化。
+# 与同目录 .editorconfig 保持一致（两份必须同步改）。
+* text=auto eol=lf
+
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.sln text eol=crlf
+*.vcxproj text eol=crlf
+*.vcxproj.filters text eol=crlf
+
+# 二进制/归档：不参与行尾规范化
+*.ico -text
+*.png -text
+*.bmp -text
+*.dds -text
+*.exe -text
+*.dll -text
+*.lib -text
+*.pdb -text
+*.7z -text
+*.zip -text

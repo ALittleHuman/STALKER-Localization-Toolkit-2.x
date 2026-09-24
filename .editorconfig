@@ -1,0 +1,19 @@
+# 编码与缩进声明（与 .gitattributes 成对维护，两份必须一致）
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = false
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml}]
+indent_size = 2
+
+[*.{cmd,bat,ps1}]
+end_of_line = crlf
+
+[*.md]
+trim_trailing_whitespace = false
