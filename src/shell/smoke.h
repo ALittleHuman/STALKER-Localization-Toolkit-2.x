@@ -15,6 +15,7 @@ struct SmokeResult {
     int checks = 0;
     int failed = 0;
     QStringList failures;
+    QStringList notes;  // 实测值等证据（无论成败都打印，供人核对；如拖动一步的 ms）
 };
 
 // 跑全部自检项。调用方负责先建 QApplication（用 offscreen 平台）。

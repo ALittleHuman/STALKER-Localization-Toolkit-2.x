@@ -3,6 +3,7 @@
 #include "xrkit/core/theme.h"
 #include "hub.h"
 #include "scroll_viewport.h"
+#include "split_pane.h"
 #include "theme.h"
 
 #include <QApplication>
@@ -14,7 +15,9 @@
 #include <QPlainTextEdit>
 #include <QScrollBar>
 #include <QStackedWidget>
+#include <QElapsedTimer>
 #include <QStringList>
+#include <QThread>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <QWidget>
@@ -278,6 +281,100 @@ SmokeResult run_smoke() {
         check(inner->offset_vertical() == inner_before, QStringLiteral("嵌套：内层没动"));
         check(outer->offset_vertical() > outer_before,
               QStringLiteral("嵌套：装得下的内层把滚轮让给外层"));
+    }
+
+    // ⑧ 分栏（M2-3）：对照表 ②（2.1~2.5/2.7）+ ④（4.2/4.3）。
+    //    用户原话："拖拽的时候预览框不能只是一条线，而是要把那部分相应的背景也进行填充"。
+    {
+        QWidget pane_host;
+        pane_host.resize(400, 200);
+        auto* split = new SplitPane(SplitPane::Orient::Vertical, &pane_host);
+        split->setGeometry(0, 0, 400, 200);
+        auto* top_pane = new QWidget;
+        auto* bottom_pane = new QWidget;
+        split->add_pane(top_pane, 40);
+        split->add_pane(bottom_pane, 60);
+        pane_host.show();
+        split->show();
+        QApplication::processEvents();
+
+        // 2.3 命中区 = max(6, px(5))
+        check(split->sash_hit() == std::max(6, px(5)),
+              QStringLiteral("2.3 sash 命中区 = max(6, px(5))（实测 %1）").arg(split->sash_hit()));
+        const int sash0 = split->sash_pos(0);
+        check(split->sash_at(sash0) == 0, QStringLiteral("命中 sash"));
+        check(split->sash_at(sash0 + split->sash_hit() + 8) == -1, QStringLiteral("命中区外不命中"));
+
+        // 2.1 拖动期**一步几何都不改**，只有预览位置变
+        const int size_top = split->pane_size(0);
+        const int size_bottom = split->pane_size(1);
+        check(split->begin_drag(sash0), QStringLiteral("begin_drag 命中 sash"));
+        split->update_drag(sash0 + 30);
+        check(split->dragging() && split->preview_pos() == sash0 + 30,
+              QStringLiteral("拖动期有预览位置"));
+        check(split->pane_size(0) == size_top && split->pane_size(1) == size_bottom,
+              QStringLiteral("2.1 拖动期几何不变（一步不改）"));
+        check(top_pane->height() == size_top,
+              QStringLiteral("2.1 拖动期控件几何也不变"));
+        result.notes.append(QStringLiteral("2.1 拖动预览：位置 %1（原 sash %2），填色带覆盖 %3 px")
+                                .arg(sash0 + 30)
+                                .arg(sash0)
+                                .arg(std::abs(30)));
+
+        // 松手一次重排（2.1）
+        const int clamps_before = split->clamp_count();
+        split->end_drag(true);
+        check(split->pane_size(0) == size_top + 30, QStringLiteral("松手后前一个 pane 吃掉差额"));
+        check(split->clamp_count() == clamps_before + 1, QStringLiteral("松手只重排一次"));
+        check(!split->dragging(), QStringLiteral("松手后不在拖动态"));
+
+        // 2.4 clamp：拖到极右 ⇒ 前一个 pane 保住 minsize，后面的先挨饿
+        split->begin_drag(split->sash_pos(0));
+        split->update_drag(1000);
+        split->end_drag(true);
+        check(split->pane_size(0) >= split->minsize(0),
+              QStringLiteral("2.4 前一个 pane 保住 minsize"));
+        check(split->pane_size(0) + split->pane_size(1) == split->height() - 4,
+              QStringLiteral("两格 + sash = 总高"));
+
+        // 4.2 收起后**改窗口尺寸不弹回**；4.3 顺序（先记意图再 clamp）
+        split->set_collapsed(1, true);
+        check(split->is_collapsed(1) && split->pane_size(1) == 0, QStringLiteral("4.2 收起：尺寸 0"));
+        pane_host.resize(400, 300);
+        split->request_clamp();
+        QThread::msleep(180);
+        QApplication::processEvents();
+        check(split->is_collapsed(1) && split->pane_size(1) == 0,
+              QStringLiteral("4.2 改窗口尺寸后仍然收起（不弹回）"));
+        split->set_collapsed(1, false);
+        check(!split->is_collapsed(1) && split->pane_size(1) >= 60,
+              QStringLiteral("4.2 展开：≥ 原最小值"));
+
+        // 2.5 去抖 120 ms：连续请求只重排一次
+        const int before_debounce = split->clamp_count();
+        for (int i = 0; i < 5; ++i) split->request_clamp();
+        check(split->clamp_count() == before_debounce,
+              QStringLiteral("2.5 去抖窗口内不重排"));
+        QThread::msleep(180);
+        QApplication::processEvents();
+        check(split->clamp_count() == before_debounce + 1,
+              QStringLiteral("2.5 去抖窗口到点只重排一次"));
+
+        // 2.7 成本口径**必须含重绘**（只跑 update_idletasks 会低估约一半）
+        QElapsedTimer timer;
+        timer.start();
+        constexpr int kSteps = 20;
+        for (int i = 0; i < kSteps; ++i) {
+            split->begin_drag(split->sash_pos(0));
+            split->update_drag(split->sash_pos(0) + (i % 7) + 1);
+            split->repaint();  // 含重绘
+            split->end_drag(false);
+        }
+        const double per_step = static_cast<double>(timer.nsecsElapsed()) / 1e6 / kSteps;
+        result.notes.append(QStringLiteral("2.7 拖动一步（含重绘）= %1 ms（PySide6 试点 12~15 ms）")
+                                .arg(per_step, 0, 'f', 2));
+        check(per_step < 30.0,
+              QStringLiteral("2.7 拖动一步（含重绘）%1 ms < 30 ms").arg(per_step, 0, 'f', 2));
     }
 
     return result;

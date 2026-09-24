@@ -8,6 +8,7 @@ qt_standard_project_setup()   # AUTOMOC 等；本模块刻意不用 Q_OBJECT，�
 add_library(xrkit_shell STATIC
   hub.cpp
   scroll_viewport.cpp
+  split_pane.cpp
   theme.cpp
   smoke.cpp)
 

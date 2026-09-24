@@ -37,6 +37,9 @@ int main(int argc, char** argv) {
 
         const xrkit::shell::SmokeResult result = xrkit::shell::run_smoke();
         QTextStream out(stdout);
+        for (const QString& note : result.notes) {
+            out << "  SHELL-SMOKE note " << note << "\n";
+        }
         for (const QString& failure : result.failures) {
             out << "  SHELL-SMOKE fail " << failure << "\n";
         }
