@@ -70,6 +70,8 @@ python tests\run_ci.py --release      # 任何 SKIP 与「未覆盖清单」非�
 `--pack-sqfs` / `--decode-text` / `--sniff` / `--extract-text` / `--glyph-dump` /
 `--font-metrics` / `--font-render` / `--resample-dump` / `--extract-chars` /
 `--build-font-pack`；退出码 0=通过 1=失败 **2=显式跳过** 3=用法错误）。
+Qt6 外壳另用 `-Preset msvc-shell`（`build/msvc-shell`），规格见
+`docs/2.0.0-外壳规格.md`。
 
 ## 开发约定（都是本机实测踩出来的，别改回去）
 

@@ -12,6 +12,7 @@
 #include "xrkit/core/check.h"
 #include "xrkit/core/log.h"
 #include "xrkit/core/path.h"
+#include "xrkit/core/theme.h"
 #include "xrkit/core/version.h"
 #include "xrkit/engine/engine.h"
 #include "xrkit/engine/fs/db.h"
@@ -93,7 +94,7 @@ void print_usage() {
            "动作:\n"
            "  --selftest      跑内置自检（ASCII 收尾行: SELFTEST pass=N fail=M）\n"
            "  --bench         跑性能基线（未实现时输出 BENCH skip ... 并返回 2）\n"
-           "  --themecheck    检查主题令牌（未实现时输出 THEMECHECK skip ... 并返回 2）\n"
+           "  --themecheck    检查主题令牌（两套模式 × 颜色/字体/px/user.ltx 语义；ASCII 收尾行）\n"
            "  --dump <文件> [DB格式]   导出解析结果（SquashFS 条目表 或 DB 条目表 TSV）\n"
            "  --extract <源> <内部路径> <输出> [DB格式]   提取单个文件（进程内解压）\n"
            "  --pack-db <输出> <格式> <输入目录>          按目录打包 DB（逐字节对拍用）\n"
@@ -292,10 +293,6 @@ int run_cli(const std::vector<std::string>& args) {
     }
     if (action == "--bench") {
         std::cout << "BENCH skip reason=engine-not-implemented\n";
-        return kExitSkip;
-    }
-    if (action == "--themecheck") {
-        std::cout << "THEMECHECK skip reason=shell-not-implemented\n";
         return kExitSkip;
     }
     if (action == "--dump") {
@@ -737,6 +734,88 @@ int run_cli(const std::vector<std::string>& args) {
                   << " out=" << r.out_gamedata << " fonts=" << r.fonts_written
                   << " xml=" << r.xml_written << " warnings=" << r.warnings.size() << "\n";
         return kExitOk;
+    }
+
+    // 主题令牌检查（M2 前置；数据层在 core，**不碰 Qt**）。
+    // 锚点：① 两套模式都能给出全部颜色角色、且都是 #RRGGBB；② 字体角色齐全；
+    //       ③ `px()` 的 HiDPI 缩放口径；④ user.ltx 的"读→改一项→整体写回、保留其它段"
+    //       （在内存里跑，绝不碰真实 user.ltx）。
+    if (action == "--themecheck") {
+        int checks = 0;
+        int failed = 0;
+        auto check = [&](bool good, const std::string& what) {
+            ++checks;
+            if (!good) {
+                ++failed;
+                std::cout << "  THEMECHECK fail " << what << "\n";
+            }
+        };
+        auto is_hex_color = [](const char* s) {
+            if (s == nullptr || std::strlen(s) != 7 || s[0] != '#') return false;
+            for (int i = 1; i < 7; ++i) {
+                const char c = s[i];
+                const bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+                                 (c >= 'A' && c <= 'F');
+                if (!hex) return false;
+            }
+            return true;
+        };
+        const int roles = xrkit::core::theme_role_count();
+        check(roles > 0, "颜色角色数 > 0");
+        for (int i = 0; i < roles; ++i) {
+            const char* role = xrkit::core::theme_role(i);
+            check(role != nullptr && *role != '\0', "角色名非空");
+            check(is_hex_color(xrkit::core::theme_color(xrkit::core::ThemeMode::Dark, role)),
+                  std::string("暗色 ") + (role ? role : "?") + " 是 #RRGGBB");
+            check(is_hex_color(xrkit::core::theme_color(xrkit::core::ThemeMode::Light, role)),
+                  std::string("亮色 ") + (role ? role : "?") + " 是 #RRGGBB");
+        }
+        const int fonts = xrkit::core::theme_font_count();
+        check(fonts > 0, "字体角色数 > 0");
+        for (int i = 0; i < fonts; ++i) {
+            const xrkit::core::ThemeFontSpec& f = xrkit::core::theme_font(i);
+            check(f.role != nullptr && *f.role != '\0', "字体角色名非空");
+            check(f.family != nullptr && *f.family != '\0', "字体族非空");
+            check(f.size > 0, "字体字号 > 0");
+        }
+        // HiDPI：96 DPI 基准值 × 缩放
+        xrkit::core::set_ui_scale(1.0);
+        check(xrkit::core::px(24) == 24, "px(24) @1.0 = 24");
+        xrkit::core::set_ui_scale(1.5);
+        check(xrkit::core::px(24) == 36, "px(24) @1.5 = 36");
+        xrkit::core::set_ui_scale(2.0);
+        check(xrkit::core::px(24) == 48, "px(24) @2.0 = 48");
+        xrkit::core::set_ui_scale(1.0);
+        // 模式切换（外壳那边要"原地更新"，这里只验数据层的取色跟着模式走）
+        xrkit::core::ThemeMode mode = xrkit::core::ThemeMode::Dark;
+        check(xrkit::core::theme_mode_from_name("LIGHT", mode) &&
+                  mode == xrkit::core::ThemeMode::Light,
+              "模式名大小写不敏感");
+        xrkit::core::set_theme_mode(xrkit::core::ThemeMode::Light);
+        check(std::strcmp(xrkit::core::theme_color_current("bg"),
+                          xrkit::core::theme_color(xrkit::core::ThemeMode::Light, "bg")) == 0,
+              "切到亮色后取色跟着变");
+        xrkit::core::set_theme_mode(xrkit::core::ThemeMode::Dark);
+        check(xrkit::core::theme_color_current("__没有这个角色__") == nullptr,
+              "未知角色返回 nullptr");
+        // user.ltx：改一项、保留其它段（内存里跑）
+        const std::string fixture =
+            "[theme]\nmode = light\n\n[ffmpeg]\npath = D:/ffmpeg/bin/ffmpeg.exe\nprobe = 1\n\n"
+            "[font]\nfile = msyh.ttf\n; 注释与垃圾行\n这不是键值对\n";
+        xrkit::core::LtxData data = xrkit::core::parse_ltx(fixture);
+        check(data.sections.size() == 3, "user.ltx 解析出 3 段");
+        std::string rendered = xrkit::core::render_ltx(data);
+        const xrkit::core::LtxData again = xrkit::core::parse_ltx(rendered);
+        check(again.sections == data.sections && again.items == data.items,
+              "user.ltx 渲染→再解析 幂等");
+        check(rendered.find("[ffmpeg]") != std::string::npos &&
+                  rendered.find("path = D:/ffmpeg/bin/ffmpeg.exe") != std::string::npos,
+              "重写后其它段原样保留");
+        std::cout << "THEMECHECK ok roles=" << roles << " fonts=" << fonts << " checks=" << checks
+                  << " failed=" << failed << " mode=" << xrkit::core::theme_mode_name(
+                         xrkit::core::theme_mode())
+                  << " bg=" << xrkit::core::theme_color_current("bg") << "\n";
+        return failed == 0 ? kExitOk : kExitFail;
     }
 
     // 字库几何/宽度探针（M1-7 第③步）：把槽位表、EAW 方块判定、推进宽表、简繁表与

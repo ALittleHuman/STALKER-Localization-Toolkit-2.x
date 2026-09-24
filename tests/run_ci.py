@@ -266,6 +266,9 @@ def step_cli_contract(release: bool) -> None:
     expectations = [
         (["--version"], 0, "", "--version"),
         (["--selftest"], 0, "SELFTEST", "--selftest"),
+        # 主题令牌已实现（M2 前置）：必须是**真检查**（0）而不是 skip —— 两套模式 × 颜色/
+        # 字体/px/user.ltx 语义都在里面逐条验
+        (["--themecheck"], 0, "THEMECHECK ok", "--themecheck"),
         (["--dump"], 3, "DUMP error", "--dump 缺路径 → 用法错误"),
         # --dump 已实现：文件不存在必须是**失败并报错**，不许退化成 skip（那会假装"没做"）
         (["--dump", "__not_exist__.sq"], 1, "DUMP error",
@@ -292,7 +295,6 @@ def step_cli_contract(release: bool) -> None:
     # 尚未实现的动作：必须显式 SKIP（2），并且被记入未覆盖清单
     for argv, marker, label in (
         (["--bench"], "BENCH skip", "--bench"),
-        (["--themecheck"], "THEMECHECK skip", "--themecheck"),
     ):
         rc, out = run([str(CLI_EXE)] + argv)
         if rc != 2 or marker not in out:
@@ -486,7 +488,7 @@ def step_font_tables(release: bool) -> None:
     而 `--check` 本身还会拿"原版工具 汉化包生成工具2024 的成品 ini"交叉核对推进宽表
     （重叠 1020 条逐条相等），原版成品缺失时只报 SKIP 行、不算失败。
     """
-    say("[13] 字库数据表与数据源一致（adv_tables / st_fallback / EAW 区间）")
+    say("[13] 生成物锁：字库数据表 / 分组模板 / 主题令牌 与 1.x 一致")
     script = ROOT / "tools" / "gen_font_tables.py"
     if not require_repo_file(script, "字库表生成器"):
         return
@@ -506,6 +508,38 @@ def step_font_tables(release: bool) -> None:
         fail("字库数据表与数据源不一致（见上）")
         return
     ok("三张表与 1.x 数据 / unicodedata 完全一致")
+
+    # 同一性质的另外两个生成器（字库分组/ltx 模板、主题令牌）——之前漏接门禁，
+    # 2026-09-24 补上：它们驱动出包的 ltx 文本与字符集分组，漂移了只有 [22] 才会红，
+    # 而且报的是"整棵树不一致"，定位成本高得多。
+    for script_name, marker, what, srcs in (
+        ("gen_font_templates.py", "GEN-FONT-TEMPLATES", "字库分组/ltx 模板",
+         [ROOT / "src" / "engine" / "font" / "charset_groups.inc",
+          ROOT / "src" / "engine" / "font" / "ltx_templates.inc"]),
+        ("gen_theme_tables.py", "GEN-THEME-TABLES", "主题令牌",
+         [ROOT / "src" / "core" / "theme_tables.inc"]),
+    ):
+        gen = ROOT / "tools" / script_name
+        if not require_repo_file(gen, "%s生成器" % what):
+            return
+        for inc in srcs:
+            if not require_repo_file(inc, "%s生成物" % what):
+                return
+        if not (TOOLKIT_1X / "font_pack" / "font_pack.py").is_file() and marker != "GEN-THEME-TABLES":
+            prereq("1.x 参照仓库", "未找到 font_pack/font_pack.py", release)
+            return
+        if marker == "GEN-THEME-TABLES" and not (TOOLKIT_1X / "toolkit_theme.py").is_file():
+            prereq("1.x 参照仓库", "未找到 toolkit_theme.py", release)
+            return
+        rc, out = run([sys.executable, str(gen), "--check"])
+        for line in out.splitlines():
+            s = line.strip()
+            if s.startswith("!!") or s.startswith(marker):
+                say("  " + s)
+        if rc != 0:
+            fail("%s与 1.x 不一致（见上）" % what)
+            return
+        ok("%s与 1.x 一致" % what)
 
 
 def step_golden_text_decode(release: bool) -> None:
