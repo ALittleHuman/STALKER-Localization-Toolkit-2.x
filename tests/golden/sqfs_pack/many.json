@@ -1,0 +1,7 @@
+{
+  "id": "many",
+  "with_dirs": false,
+  "sha256": "b14d404f35d4469d8cdbc3f7fecc6c563759c6419da8f6e3defcf29b0bd9294e",
+  "size": 20480,
+  "note": "基线由 1.x 的 sqfs_pack（tar2sqfs 1.3.2，默认 xz）生成"
+}

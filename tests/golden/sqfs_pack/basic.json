@@ -1,0 +1,7 @@
+{
+  "id": "basic",
+  "with_dirs": false,
+  "sha256": "356ba327fb3d3a91534cf8461745195f21fa9f0a450b6746b092fa8d58590bda",
+  "size": 4096,
+  "note": "基线由 1.x 的 sqfs_pack（tar2sqfs 1.3.2，默认 xz）生成"
+}

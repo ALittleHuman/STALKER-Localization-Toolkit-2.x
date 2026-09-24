@@ -1,10 +1,12 @@
 add_library(xrkit_engine STATIC
   engine.cpp
   third_party_probe.cpp
+  fs/compress.cpp
   fs/decompress.cpp
   fs/lzhuf.cpp
   fs/lzhuf_ref.c
   fs/squashfs.cpp
+  fs/squashfs_write.cpp
   fs/db.cpp)
 
 target_include_directories(xrkit_engine PUBLIC "${CMAKE_SOURCE_DIR}/include")

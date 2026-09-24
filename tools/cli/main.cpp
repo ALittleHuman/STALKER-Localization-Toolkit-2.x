@@ -88,6 +88,7 @@ void print_usage() {
            "  --dump <文件> [DB格式]   导出解析结果（SquashFS 条目表 或 DB 条目表 TSV）\n"
            "  --extract <源> <内部路径> <输出> [DB格式]   提取单个文件（进程内解压）\n"
            "  --pack-db <输出> <格式> <输入目录>          按目录打包 DB（逐字节对拍用）\n"
+           "  --pack-sqfs <输出> <输入目录> [--pack-dirs]  自写 SquashFS 封包（xz 块，逐字节对拍用）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -200,12 +201,17 @@ void register_dep_checks(xrkit::core::CheckRegistry& reg, DepCounts& counts) {
 
 int run_cli(const std::vector<std::string>& args) {
     bool verbose = false;
+    bool pack_dirs = false;
     std::string action;
     std::vector<std::string> operands;
 
     for (const std::string& a : args) {
         if (a == "-v" || a == "--verbose") {
             verbose = true;
+            continue;
+        }
+        if (a == "--pack-dirs") {
+            pack_dirs = true;
             continue;
         }
         if (a == "-h" || a == "--help") {
@@ -408,6 +414,73 @@ int run_cli(const std::vector<std::string>& args) {
                   static_cast<std::streamsize>(bytes.size()));
         out.close();
         std::cout << "PACKDB ok items=" << items.size() << " bytes=" << bytes.size() << "\n";
+        return kExitOk;
+    }
+
+    // 自写 SquashFS 封包（M1-5）。判据是"与 1.x 的 sqfs_pack / tar2sqfs 逐字节一致"，
+    // 所以这里只做**确定性枚举 + 调用引擎**，不做任何"顺手优化"。
+    //   枚举规则（测试与它对齐）：递归目录（不跟目录符号链接）、只收普通文件，
+    //   相对路径 UTF-8 '\\'→'/'，按 UTF-8 字节序升序。--pack-dirs 时目录也作为条目
+    //   （用于验证"显式目录条目"这条路径；1.x 的 fs 页只喂文件，产物应与之一致）。
+    if (action == "--pack-sqfs") {
+        if (operands.size() < 2) {
+            std::cerr << "PACK error reason=用法：--pack-sqfs <输出> <输入目录> [--pack-dirs]\n";
+            return kExitUsage;
+        }
+        const std::string& out_path = operands[0];
+        const std::filesystem::path root = path_from_utf8(operands[1]);
+        std::error_code ec;
+        if (!std::filesystem::is_directory(root, ec)) {
+            std::cout << "PACK error reason=输入目录不存在：" << operands[1] << "\n";
+            return kExitFail;
+        }
+
+        struct Found {
+            std::string rel;
+            std::string full;
+            bool is_dir = false;
+        };
+        std::vector<Found> found;
+        for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end;
+             it.increment(ec)) {
+            if (ec) break;
+            std::error_code ec2;
+            const bool is_dir = it->is_directory(ec2);
+            const bool is_file = it->is_regular_file(ec2);
+            if (!is_dir && !is_file) continue;
+            if (is_dir && !pack_dirs) continue;
+            const std::filesystem::path rel = std::filesystem::relative(it->path(), root, ec2);
+            if (ec2) continue;
+            std::string rel_utf8 = path_to_utf8(rel);
+            std::replace(rel_utf8.begin(), rel_utf8.end(), '\\', '/');
+            if (rel_utf8.empty() || rel_utf8.rfind("..", 0) == 0) continue;
+            found.push_back(Found{rel_utf8, path_to_utf8(it->path()), is_dir});
+        }
+        std::sort(found.begin(), found.end(),
+                  [](const Found& a, const Found& b) { return a.rel < b.rel; });
+
+        std::vector<xrkit::engine::fs::PackItem> items;
+        items.reserve(found.size());
+        for (const Found& f : found) {
+            xrkit::engine::fs::PackItem item;
+            item.path = f.rel;
+            item.is_dir = f.is_dir;
+            item.source_path = f.is_dir ? std::string() : f.full;
+            items.push_back(std::move(item));
+        }
+
+        const xrkit::engine::fs::PackResult r =
+            xrkit::engine::fs::pack_squashfs(out_path, items);
+        if (!r.ok) {
+            std::cout << "PACK error reason=" << r.error << "\n";
+            return kExitFail;
+        }
+        std::cout << "PACK ok items=" << items.size() << " bytes_used=" << r.bytes_used
+                  << " file_size=" << r.file_size << " inodes=" << r.inode_count
+                  << " fragments=" << r.fragment_count << " data_blocks=" << r.data_blocks
+                  << " frag_blocks=" << r.fragment_blocks << " dedup_blocks=" << r.dedup_blocks
+                  << " dedup_frags=" << r.dedup_fragments
+                  << " ms=" << static_cast<long long>(r.elapsed_ms) << "\n";
         return kExitOk;
     }
 

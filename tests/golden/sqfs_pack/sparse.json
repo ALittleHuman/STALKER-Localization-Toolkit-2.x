@@ -1,0 +1,7 @@
+{
+  "id": "sparse",
+  "with_dirs": false,
+  "sha256": "76f24e28b3a2bb594d1fdd957ade8ec9eefbe919965bd77f69d3a2d9d0033faf",
+  "size": 4096,
+  "note": "基线由 1.x 的 sqfs_pack（tar2sqfs 1.3.2，默认 xz）生成"
+}

@@ -71,4 +71,52 @@ ListResult list_entries(const std::string& path);
 // 返回的 data.size() 必须等于 inode 的 size —— 不等就是解析错了，直接报错而不是给半截数据。
 FileData read_file(const std::string& image_path, const std::string& entry_path);
 
+// ── 写（M1-5）─────────────────────────────────────────────────────────
+//
+// 为什么自写 writer（1.x 的血账）：1.x 的封包是调外部 `tar2sqfs.exe`，而外部 exe
+// 在这台机器上被 360 按文件哈希拦过。2.0 的引擎**零外部 exe**。
+//
+// **验收判据（用户拍板，不许降级）：产物逐字节一致** —— 同一份输入，我们的产物
+// 与 1.x 的 `sqfs_pack`（tar2sqfs 1.3.2，默认 xz）**sha256 必须相等**。
+// 参照实现的全部行为（inode 编号顺序、目录项排序与分组、xz 参数、表顺序、
+// 结尾补零、块去重、fragment 打包）已逐项取证，见
+// `docs/2.0.0-SquashFS-writer规格.md`。
+
+// 待打进镜像的条目。顺序 = **处理顺序**（数据块在盘上的先后由它决定），
+// 与 1.x 里 tar 的条目顺序同义；目录结构本身与顺序无关（每层按名字字节序排序）。
+struct PackItem {
+    std::string path;         // 镜像内相对路径，UTF-8，'/' 分隔，无前导斜杠
+    bool is_dir = false;
+    std::string source_path;  // is_dir=false 时：本机文件路径（UTF-8），内容从这里读
+};
+
+struct PackOptions {
+    uint32_t block_size = 131072;  // 128 KiB（与参照一致）
+    uint32_t mtime = 0;            // 1.x 的 tar 里 mtime 全 0，产物 mkfs_time 也是 0
+    uint32_t dir_mode = 0755;
+    uint32_t file_mode = 0644;
+    uint32_t uid = 0;
+    uint32_t gid = 0;
+    uint32_t dev_block_size = 4096;  // 结尾补零到该块的整数倍（tar2sqfs 默认行为）
+};
+
+struct PackResult {
+    bool ok = false;
+    std::string error;
+    uint64_t bytes_used = 0;       // 补零之前的长度（超块里的 bytes_used）
+    uint64_t file_size = 0;        // 落盘实际长度（含补零）
+    uint64_t inode_count = 0;
+    uint64_t fragment_count = 0;
+    uint64_t data_blocks = 0;      // 实际写盘的数据块数（不含 fragment 块）
+    uint64_t fragment_blocks = 0;
+    uint64_t dedup_blocks = 0;     // 被去重省掉的数据块数（报账用）
+    uint64_t dedup_fragments = 0;  // 被去重省掉的 fragment 数
+    double elapsed_ms = 0.0;
+};
+
+// 把 items 打进 out_path。失败时返回 ok=false + error，**不留下半截产物**的保证由
+// 调用方决定（本函数直接写目标文件，与 1.x 的 sqfs_pack 行为一致）。
+PackResult pack_squashfs(const std::string& out_path, const std::vector<PackItem>& items,
+                         const PackOptions& options = PackOptions{});
+
 }  // namespace xrkit::engine::fs

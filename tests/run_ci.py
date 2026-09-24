@@ -80,11 +80,16 @@ def load_msvc_env() -> dict[str, str] | None:
 
 
 def run(cmd: list[str], env: dict[str, str] | None = None, timeout: int = 600) -> tuple[int, str]:
+    # ★ 子进程的 Python 必须能打印 ✓/✗ 这类字符：控制台可能是 cp1252/GBK，
+    #   裸跑会以 UnicodeEncodeError 把整步打断（1.x 的 CI 踩过同一个坑）。
+    child_env = dict(os.environ if env is None else env)
+    child_env.setdefault("PYTHONUTF8", "1")
+    child_env.setdefault("PYTHONIOENCODING", "utf-8")
     try:
         proc = subprocess.run(
             cmd,
             cwd=str(ROOT),
-            env=env,
+            env=child_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             timeout=timeout,
@@ -220,6 +225,8 @@ def step_cli_contract(release: bool) -> None:
         # --dump 已实现：文件不存在必须是**失败并报错**，不许退化成 skip（那会假装"没做"）
         (["--dump", "__not_exist__.sq"], 1, "DUMP error",
          "--dump 不存在的文件 → 失败并报错"),
+        (["--pack-sqfs"], 3, "PACK error",
+         "--pack-sqfs 缺参数 → 用法错误"),
     ]
     for argv, want, marker, label in expectations:
         rc, out = run([str(CLI_EXE)] + argv)
@@ -337,6 +344,33 @@ def step_golden_db(release: bool) -> None:
         fail("DB 六格式与 1.x 不一致（见上）")
 
 
+def step_golden_sqfs_pack(release: bool) -> None:
+    """黄金语料差分：SquashFS **封包**产物（2.x 自写 writer vs 1.x 的 sqfs_pack/tar2sqfs）。
+
+    判据＝用户拍板的"产物逐字节一致"：同一份输入，两边产物 sha256 必须相等。
+    退出码：0=全部一致，1=有不一致，2=有样本/参照工具被跳过（按外部前提处理）。
+    """
+    say("[10] 黄金语料差分：SquashFS 封包（2.x writer vs 1.x）")
+    script = ROOT / "tests" / "golden_sqfs_pack.py"
+    if not require_repo_file(script, "封包基线脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=3600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("GOLDEN-SQFS-PACK") \
+                or s.startswith("!!") or s.startswith("（"):
+            say("  " + s)
+    if rc == 0:
+        ok("封包产物与 1.x 逐字节一致")
+    elif rc == 2:
+        prereq("封包语料样本 / tar2sqfs", "缺参照工具或未生成基线（见上）", release)
+    else:
+        fail("封包产物与 1.x 不一致（见上）")
+
+
 def tail(text: str, n: int) -> str:
     """取最后 n 行有效输出。
 
@@ -367,6 +401,7 @@ STEPS = [
     ("golden-sqfs", step_golden_sqfs),
     ("golden-extract", step_golden_extract),
     ("golden-db", step_golden_db),
+    ("golden-sqfs-pack", step_golden_sqfs_pack),
 ]
 
 
