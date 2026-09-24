@@ -1,6 +1,8 @@
 add_library(xrkit_engine STATIC
   engine.cpp
-  third_party_probe.cpp)
+  third_party_probe.cpp
+  fs/decompress.cpp
+  fs/squashfs.cpp)
 
 target_include_directories(xrkit_engine PUBLIC "${CMAKE_SOURCE_DIR}/include")
 target_link_libraries(xrkit_engine

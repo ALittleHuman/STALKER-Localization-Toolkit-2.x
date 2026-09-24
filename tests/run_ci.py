@@ -214,22 +214,25 @@ def step_cli_contract(release: bool) -> None:
         return
 
     expectations = [
-        (["--version"], 0, "--version"),
-        (["--selftest"], 0, "--selftest"),
-        (["--dump"], 3, "--dump 缺路径 → 用法错误"),
+        (["--version"], 0, "", "--version"),
+        (["--selftest"], 0, "SELFTEST", "--selftest"),
+        (["--dump"], 3, "DUMP error", "--dump 缺路径 → 用法错误"),
+        # --dump 已实现：文件不存在必须是**失败并报错**，不许退化成 skip（那会假装"没做"）
+        (["--dump", "__not_exist__.sq"], 1, "DUMP error",
+         "--dump 不存在的文件 → 失败并报错"),
     ]
-    for argv, want, label in expectations:
+    for argv, want, marker, label in expectations:
         rc, out = run([str(CLI_EXE)] + argv)
-        if rc != want:
-            fail("%s 退出码 %d，期望 %d" % (label, rc, want))
+        if rc != want or (marker and marker not in out):
+            fail("%s 期望 exit=%d 且输出含 %r，实际 exit=%d 输出=%r"
+                 % (label, want, marker, rc, out.strip()[:120]))
         else:
             ok("%s → exit=%d" % (label, rc))
 
-    # 未实现的动作：必须显式 SKIP（2），并且被记入未覆盖清单
+    # 尚未实现的动作：必须显式 SKIP（2），并且被记入未覆盖清单
     for argv, marker, label in (
         (["--bench"], "BENCH skip", "--bench"),
         (["--themecheck"], "THEMECHECK skip", "--themecheck"),
-        (["--dump", "x.sq_base"], "DUMP skip", "--dump <path>"),
     ):
         rc, out = run([str(CLI_EXE)] + argv)
         if rc != 2 or marker not in out:
@@ -261,6 +264,31 @@ def step_corpus(release: bool) -> None:
         fail("语料基准校验失败（退出码 %d）：大小或 sha256 与清单不符" % rc)
 
 
+def step_golden_sqfs(release: bool) -> None:
+    """黄金语料差分：SquashFS 条目表，2.x（C++）逐条对齐 1.x 的输出。
+
+    退出码：0=全部样本逐条一致，1=有不一致，2=有样本被跳过（按外部前提处理）。
+    """
+    say("[7] 黄金语料差分：SquashFS 条目（2.x vs 1.x）")
+    script = ROOT / "tests" / "golden_sqfs.py"
+    if not require_repo_file(script, "SquashFS 基线脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("GOLDEN-SQFS"):
+            say("  " + s)
+    if rc == 0:
+        ok("SquashFS 条目与 1.x 基线逐条一致")
+    elif rc == 2:
+        prereq("SquashFS 语料样本", "有样本缺失或未生成基线（见上）", release)
+    else:
+        fail("SquashFS 条目与 1.x 基线不一致（见上）")
+
+
 def tail(text: str, n: int) -> str:
     """取最后 n 行有效输出。
 
@@ -288,6 +316,7 @@ STEPS = [
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),
+    ("golden-sqfs", step_golden_sqfs),
 ]
 
 

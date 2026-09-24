@@ -13,6 +13,7 @@
 #include "xrkit/core/log.h"
 #include "xrkit/core/version.h"
 #include "xrkit/engine/engine.h"
+#include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/third_party_probe.h"
 
 #include <filesystem>
@@ -39,7 +40,7 @@ void print_usage() {
            "  --selftest      跑内置自检（ASCII 收尾行: SELFTEST pass=N fail=M）\n"
            "  --bench         跑性能基线（未实现时输出 BENCH skip ... 并返回 2）\n"
            "  --themecheck    检查主题令牌（未实现时输出 THEMECHECK skip ... 并返回 2）\n"
-           "  --dump <文件>   导出引擎解析结果（黄金语料差分用；未实现时返回 2）\n"
+           "  --dump <文件>   导出引擎解析结果（SquashFS 条目表 TSV；黄金语料差分用）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -208,8 +209,20 @@ int main(int argc, char** argv) {
             std::cerr << "DUMP error reason=missing-path\n";
             return kExitUsage;
         }
-        std::cout << "DUMP skip reason=engine-not-implemented path=" << operands.front() << "\n";
-        return kExitSkip;
+        const std::string& target = operands.front();
+        const xrkit::engine::fs::ListResult res = xrkit::engine::fs::list_entries(target);
+        if (!res.ok) {
+            std::cout << "DUMP error reason=" << res.error << "\n";
+            return kExitFail;
+        }
+        // TSV：<d|f> TAB <路径> TAB <大小>，UTF-8 原样输出。
+        // 路径与 rdsquashfs --describe 同格式（无前导斜杠），便于逐条对拍。
+        for (const xrkit::engine::fs::Entry& e : res.entries) {
+            std::cout << (e.is_dir ? 'd' : 'f') << '\t' << e.path << '\t' << e.size << '\n';
+        }
+        std::cout << "DUMP ok entries=" << res.entries.size()
+                  << " ms=" << static_cast<long long>(res.elapsed_ms) << "\n";
+        return kExitOk;
     }
 
     std::cerr << "未知动作: " << action << "\n";
