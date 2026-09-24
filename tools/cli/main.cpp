@@ -20,6 +20,7 @@
 #include "xrkit/engine/font/charset.h"
 #include "xrkit/engine/font/glyph.h"
 #include "xrkit/engine/font/metrics.h"
+#include "xrkit/engine/font/package.h"
 #include "xrkit/engine/font/render.h"
 #include "xrkit/engine/font/resample.h"
 #include "xrkit/engine/text/encoding.h"
@@ -109,6 +110,9 @@ void print_usage() {
            "                                              Pillow LANCZOS 重采样（与 Pillow 对拍）\n"
            "  --extract-chars <xml目录> [输出文件] [--no-full-cyrillic]\n"
            "                                              字符集提取（每行一个十六进制码位）\n"
+           "  --build-font-pack <SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录>\n"
+           "                    [--suffix s] [--offset n] [--no-full-cyrillic]\n"
+           "                                              出整棵 gamedata 汉化包（与 1.x 对拍）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -688,6 +692,50 @@ int run_cli(const std::vector<std::string>& args) {
                   << " undecodable=" << result.files_undecodable
                   << " guessed=" << result.guessed.size()
                   << " full_cyrillic=" << (full_cyrillic ? 1 : 0) << "\n";
+        return kExitOk;
+    }
+
+    // 出包（M1-7 第⑦步）：整棵 `gamedata/` 产物树（10 个字号 + XML 转写 + 两个 ltx）。
+    // 判据：与 1.x `build_package` 的产物树**逐字节一致**。
+    if (action == "--build-font-pack") {
+        if (operands.size() < 5) {
+            std::cerr << "FONTPACK error reason=用法：--build-font-pack <SoC|ClS|CoP> <语言> "
+                         "<xml目录> <字体> <输出目录> [--suffix s] [--offset n] "
+                         "[--no-full-cyrillic]\n";
+            return kExitUsage;
+        }
+        xrkit::engine::font::PackageOptions opt;
+        opt.game = operands[0];
+        opt.lang = operands[1];
+        opt.xml_dir = operands[2];
+        opt.font_path = operands[3];
+        opt.out_dir = operands[4];
+        for (size_t i = 5; i < operands.size(); ++i) {
+            if (operands[i] == "--suffix" && i + 1 < operands.size()) {
+                opt.suffix = operands[++i];
+            } else if (operands[i] == "--offset" && i + 1 < operands.size()) {
+                opt.offset = std::atoi(operands[++i].c_str());
+            } else if (operands[i] == "--no-full-cyrillic") {
+                opt.full_cyrillic = false;
+            } else if (operands[i] == "--only-size" && i + 1 < operands.size()) {
+                opt.only_sizes.push_back(std::atoi(operands[++i].c_str()));
+            } else {
+                std::cerr << "FONTPACK error reason=未知参数 " << operands[i] << "\n";
+                return kExitUsage;
+            }
+        }
+        const xrkit::engine::font::PackageResult r =
+            xrkit::engine::font::build_package(opt);
+        if (!r.ok) {
+            std::cout << "FONTPACK error reason=" << r.error << "\n";
+            return kExitFail;
+        }
+        for (const std::string& w : r.warnings) {
+            std::cout << "FONTPACK warn " << w << "\n";
+        }
+        std::cout << "FONTPACK ok game=" << opt.game << " lang=" << opt.lang
+                  << " out=" << r.out_gamedata << " fonts=" << r.fonts_written
+                  << " xml=" << r.xml_written << " warnings=" << r.warnings.size() << "\n";
         return kExitOk;
     }
 

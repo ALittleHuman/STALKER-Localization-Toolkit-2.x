@@ -14,8 +14,10 @@ add_library(xrkit_engine STATIC
   font/charset.cpp
   font/glyph.cpp
   font/metrics.cpp
+  font/package.cpp
   font/render.cpp
-  font/resample.cpp)
+  font/resample.cpp
+  font/xml_bytes.cpp)
 
 target_include_directories(xrkit_engine PUBLIC "${CMAKE_SOURCE_DIR}/include")
 target_include_directories(xrkit_engine PRIVATE

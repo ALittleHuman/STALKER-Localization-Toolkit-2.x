@@ -52,8 +52,23 @@ struct FontProduct {
 bool render_font(const std::string& font_path, const std::vector<uint32_t>& chars,
                  int render_size, bool x2, const std::string& fmt, FontProduct& out);
 
-// `\n` → `\r\n`（幂等：已经是 CRLF 的不再重复加）。1.x 用 `open(path, "w", encoding=...)`
-// 写 .ini，Windows 文本模式会把 `\n` 翻成 `\r\n` —— 产物逐字节一致必须复刻这一步。
+// `\n` → `\r\n`（**每一个** `\n` 都翻，与 Python 文本模式的语义一致 —— 不是"已经是 CRLF
+// 就跳过"）。1.x 用 `open(path, "w", encoding=...)` 写 .ini/.ltx，Windows 文本模式会把
+// `\n` 翻成 `\r\n` —— 产物逐字节一致必须复刻这一步。
 std::string to_windows_newlines(const std::string& text);
+
+// ── 字体自检（出包前的守卫，= 1.x `font_missing_chars` / `font_unrenderable`）──
+//
+// 判据与 1.x 相同：把某字的掩码字节与私用区码位 `U+E000` 的掩码逐字节比 —— 一样就说明
+// 字体画的是 `.notdef` 方框。**没有这两道守卫，用错字体会得到十张全是同一个方框的图集，
+// 而工具照样报"完成"。**
+//
+// `font_missing_chars`：**按类别成组抽样**（CJK / 西里尔 / "A"），整组都画不出才算该类别
+// 缺失 → 用于**拒绝**废字体；`font_unrenderable`：逐字判定 → 用于**逐字告警**
+// （日文字体缺 Є І Ї 这类西里尔扩展是常态，不该拒绝整包）。
+std::vector<uint32_t> font_missing_chars(const std::string& font_path,
+                                         const std::vector<uint32_t>& chars);
+std::vector<uint32_t> font_unrenderable(const std::string& font_path,
+                                        const std::vector<uint32_t>& chars);
 
 }  // namespace xrkit::engine::font

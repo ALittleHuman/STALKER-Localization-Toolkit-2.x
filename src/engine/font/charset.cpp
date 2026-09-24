@@ -1,6 +1,7 @@
 #include "xrkit/engine/font/charset.h"
 
 #include "xrkit/core/path.h"
+#include "xrkit/engine/font/xml_bytes.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/sniff.h"
 
@@ -17,81 +18,6 @@ namespace {
 
 // 生成物（tools/gen_font_templates.py，门禁第 [13] 步 --check 锁）
 #include "charset_groups.inc"  // NOLINT
-
-bool is_bom_utf8(const std::vector<uint8_t>& raw) {
-    return raw.size() >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF;
-}
-
-// 1.x `_declared_encoding`：XML 声明里的 encoding（小写）；只看前 500 字节。
-std::string declared_encoding(const std::vector<uint8_t>& raw) {
-    const size_t n = std::min<size_t>(raw.size(), 500);
-    const std::string head(reinterpret_cast<const char*>(raw.data()), n);
-    // <\?xml[^>]*encoding\s*=\s*["']([^"']+)["']
-    size_t pos = 0;
-    while (true) {
-        const size_t x = head.find("<?xml", pos);
-        if (x == std::string::npos) return "";
-        const size_t gt = head.find('>', x);
-        const size_t end = (gt == std::string::npos) ? head.size() : gt;
-        const std::string tag = head.substr(x, end - x);
-        size_t e = 0;
-        while ((e = tag.find("encoding", e)) != std::string::npos) {
-            size_t p = e + 8;
-            while (p < tag.size() && (tag[p] == ' ' || tag[p] == '\t' || tag[p] == '\r' ||
-                                      tag[p] == '\n')) {
-                ++p;
-            }
-            if (p >= tag.size() || tag[p] != '=') {
-                e += 8;
-                continue;
-            }
-            ++p;
-            while (p < tag.size() && (tag[p] == ' ' || tag[p] == '\t')) ++p;
-            if (p >= tag.size() || (tag[p] != '"' && tag[p] != '\'')) return "";
-            const char quote = tag[p++];
-            const size_t close = tag.find(quote, p);
-            if (close == std::string::npos) return "";
-            std::string value = tag.substr(p, close - p);
-            for (char& c : value) {
-                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            }
-            while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) value.pop_back();
-            while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
-                value.erase(value.begin());
-            }
-            return value;
-        }
-        if (gt == std::string::npos) return "";
-        pos = gt + 1;
-    }
-}
-
-// 1.x `_encoding_trusted`：windows-1251 只有 XML 声明**明确写了**才算可信。
-bool encoding_trusted(const std::string& enc, const std::string& declared) {
-    if (enc == "windows-1251" || enc == "cp1251") {
-        return declared == "windows-1251" || declared == "cp1251";
-    }
-    return true;
-}
-
-// 1.x `_decode_xml_bytes`：走与出包同一条链（手动/BOM/严格 UTF-8/XML 声明/统计探测/默认）。
-bool decode_xml_bytes(const std::vector<uint8_t>& raw, std::string& text, bool& trusted) {
-    const std::string declared = declared_encoding(raw);
-    const std::string enc = text::sniff_encoding(raw).encoding;
-    const size_t skip = is_bom_utf8(raw) ? 3 : 0;
-    std::string out;
-    std::string err;
-    if (text::decode_strict(enc, raw.data() + skip, raw.size() - skip, out, err)) {
-        text = out;
-        trusted = encoding_trusted(enc, declared);
-        return true;
-    }
-    const text::DecodedBytes fallback = text::decode_bytes(raw);
-    if (!fallback.ok) return false;
-    text = fallback.text;
-    trusted = !fallback.forced && encoding_trusted(fallback.used_encoding, declared);
-    return true;
-}
 
 // 跳过 "<" 起始的一个标签（属性值里的 '>' 不算结束）。
 size_t skip_tag(const std::string& s, size_t i) {
@@ -243,6 +169,14 @@ std::string charset_to_lines(const std::vector<uint32_t>& chars) {
     return out;
 }
 
+std::vector<uint32_t> required_chars() {
+    std::set<uint32_t> chars;
+    add_literal(kAsciiChars, chars);
+    for (uint32_t cp = kCyrillicBlockFrom; cp <= kCyrillicBlockTo; ++cp) chars.insert(cp);
+    add_literal(kAnsiBridge, chars);
+    return std::vector<uint32_t>(chars.begin(), chars.end());
+}
+
 bool extract_chars(const std::string& xml_dir, bool full_cyrillic, CharsetResult& out) {
     out = CharsetResult{};
     std::error_code ec;
@@ -269,8 +203,9 @@ bool extract_chars(const std::string& xml_dir, bool full_cyrillic, CharsetResult
         ++out.files_scanned;
         const std::vector<uint8_t> raw = read_all_bytes(core::path_to_utf8(path));
         std::string text;
+        std::string enc;
         bool trusted = true;
-        if (!decode_xml_bytes(raw, text, trusted)) {
+        if (!decode_xml_bytes(raw, text, enc, trusted)) {
             ++out.files_undecodable;
             continue;
         }

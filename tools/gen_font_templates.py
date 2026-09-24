@@ -45,31 +45,27 @@ def load_reference():
 
 
 def cxx_string(text: str, indent: str = "    ") -> str:
-    r"""转成 C++ 字符串字面量（按行拆开，转义 `\` `"` 与换行/制表符）。
+    r"""转成 C++ 字符串字面量：数据**逐字符转义**，只在转义边界折行。
 
-    ★ 行与行之间**不能**把 `\n` 写进字符串里：那是"源文件里为了可读性换行"，
-    不是数据里的换行。第一版就是每个字面量尾部加了 `\n` ⇒ 字符集里凭空多出 U+000A
-    （门禁当场判红：我们 411 / 1.x 413）。
+    ★ 两个坑都踩过，别再改回去：
+      1. 折行只是**源码可读性**，相邻字符串字面量在 C++ 里是直接拼接的 ——
+         所以折行本身**不引入任何数据字符**；数据里的换行必须写成 `\n` 转义。
+         第一版把换行当成折行 ⇒ `fonts.ltx` 模板里的 77 个换行全丢了（产物从
+         1569 B 变 1415 B）。
+      2. 反过来，第一版给每个折行都补了 `\n` ⇒ 字符集里凭空多出 U+000A
+         （门禁当场判红：我们 411 / 1.x 413）。
     """
-    out = []
-    line = ""
-    for ch in text:
-        if ch == "\n":
-            out.append(line)
-            line = ""
-            continue
-        if ch == "\r":
-            continue
-        if ch == "\t":
-            line += "\\t"
-        elif ch == "\\":
-            line += "\\\\"
-        elif ch == '"':
-            line += '\\"'
-        else:
-            line += ch
-    out.append(line)
-    return ('\n').join('%s"%s"' % (indent, seg) for seg in out)
+    escapes = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+    tokens = [escapes.get(ch, ch) for ch in text]
+    lines = []
+    cur = ""
+    for tok in tokens:
+        if len(cur) + len(tok) > 100:
+            lines.append(cur)
+            cur = ""
+        cur += tok
+    lines.append(cur)
+    return "\n".join('%s"%s"' % (indent, seg) for seg in lines)
 
 
 def group_text(value) -> str:
@@ -132,6 +128,13 @@ def emit_templates(fp) -> str:
         lines.append("%s,\n" % cxx_string(fp.FONTS_LTX[game], "        "))
         lines.append("%s,\n" % cxx_string(fp.LOCALIZATION_LTX[game], "        "))
         lines.append("    },\n")
+    lines.append("};\n\n")
+    lines.append("// 字号表（1.x `SIZES`）：槽位名 + 是否超采样；渲染字号 = 槽位名 + offset，\n")
+    lines.append("// 但**文件名与 ltx 仍用槽位名**。\n")
+    lines.append("struct FontSize {\n    int size;\n    int x2;\n};\n\n")
+    lines.append("static const FontSize kFontSizes[%d] = {\n" % len(fp.SIZES))
+    for size, x2 in fp.SIZES:
+        lines.append("    {%d, %d},\n" % (size, x2))
     lines.append("};\n")
     return "".join(lines)
 

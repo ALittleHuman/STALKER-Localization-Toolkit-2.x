@@ -6,7 +6,8 @@
 
 // ASCII + 俄语基础字符（1.x `ASCII_CHARS`）
 static const char* const kAsciiChars =
-    " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~АаБбВвГгДдЕеЁёЖжЗзИиЙйКкЛлМмНнОоПпРрСсТтУуФфХхЦцЧчШшЩщъЫыьЭэЮюЯя";
+    " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~АаБ"
+    "бВвГгДдЕеЁёЖжЗзИиЙйКкЛлМмНнОоПпРрСсТтУуФфХхЦцЧчШшЩщъЫыьЭэЮюЯя";
 
 // 完整西里尔块（1.x `CYRILLIC_BLOCK`，实测 U+0410..U+04FF 连续）
 static const uint32_t kCyrillicBlockFrom = 0x0410u;

@@ -245,11 +245,135 @@ std::string format_ini_line(uint32_t cp, int x, int y, int x2, int y2) {
 }  // namespace
 
 std::string to_windows_newlines(const std::string& text) {
+    // Python 文本模式（`open(..., "w")`，newline=None）在 Windows 上把**每一个** `\n`
+    // 翻成 `\r\n` —— 不是"已经是 CRLF 就跳过"。照同样的语义做。
     std::string out;
     out.reserve(text.size() + text.size() / 16 + 8);
-    for (size_t i = 0; i < text.size(); ++i) {
-        if (text[i] == '\n' && (i == 0 || text[i - 1] != '\r')) out.push_back('\r');
-        out.push_back(text[i]);
+    for (char c : text) {
+        if (c == '\n') out.push_back('\r');
+        out.push_back(c);
+    }
+    return out;
+}
+
+// ── 字体自检（出包前的守卫）────────────────────────────────────────────
+namespace {
+
+// 一次打开字体，复用同一个 FT_Face（逐字自检要问 3000+ 个字符，逐次开字体太浪费）。
+struct FontProbe {
+    FT_Library lib = nullptr;
+    FT_Face face = nullptr;
+    std::string native;
+
+    FontProbe(const std::string& font_path, int pixel_size) {
+        if (FT_Init_FreeType(&lib) != 0) return;
+        // 与 glyph.cpp 同口径：FreeType 要"本地编码的路径"（UTF-8 → 宽字符 → UTF-8）
+        native = core::path_to_utf8(core::path_from_utf8(font_path));
+        if (FT_New_Face(lib, native.c_str(), 0, &face) != 0) {
+            face = nullptr;
+            return;
+        }
+        if (FT_Set_Pixel_Sizes(face, 0, static_cast<FT_UInt>(pixel_size)) != 0) {
+            FT_Done_Face(face);
+            face = nullptr;
+        }
+    }
+    ~FontProbe() {
+        if (face != nullptr) FT_Done_Face(face);
+        if (lib != nullptr) FT_Done_FreeType(lib);
+    }
+    bool ok() const { return face != nullptr; }
+};
+
+// = 1.x `bytes(f.getmask(ch, mode="L"))`：Pillow 掩码画布的字节（行距 = 画布宽）。
+void mask_bytes(FT_Face face, uint32_t cp, std::vector<uint8_t>& out) {
+    Raster r;
+    raster_glyph(face, FT_Get_Char_Index(face, cp), r);
+    out = std::move(r.px);
+}
+
+}  // namespace
+
+std::vector<uint32_t> font_missing_chars(const std::string& font_path,
+                                         const std::vector<uint32_t>& chars) {
+    FontProbe probe(font_path, 24);  // 1.x 固定 24px 取样
+    std::vector<uint32_t> miss;
+    if (!probe.ok()) return miss;
+    std::vector<uint8_t> ref;
+    mask_bytes(probe.face, 0xE000, ref);
+
+    auto is_notdef = [&](uint32_t cp) {
+        std::vector<uint8_t> got;
+        mask_bytes(probe.face, cp, got);
+        if (got != ref) return false;
+        const uint32_t alt = st_fallback(cp);
+        if (alt != 0) {
+            std::vector<uint8_t> alt_bytes;
+            mask_bytes(probe.face, alt, alt_bytes);
+            return alt_bytes == ref;
+        }
+        return true;
+    };
+
+    // 按类别成组抽样：**整组都是 .notdef** 才判定该类别缺失
+    std::vector<std::vector<uint32_t>> groups;
+    auto take = [&](auto pred, int want) {
+        std::vector<uint32_t> group;
+        for (uint32_t cp : chars) {
+            if (!pred(cp)) continue;
+            group.push_back(cp);
+            if (static_cast<int>(group.size()) >= want) break;
+        }
+        return group;
+    };
+    std::vector<uint32_t> cjk = take([](uint32_t c) { return c >= 0x4E00 && c <= 0x9FFF; }, 3);
+    if (cjk.empty()) cjk = take([](uint32_t c) { return c >= 0x3400 && c <= 0x4DBF; }, 3);
+    if (cjk.empty()) cjk = take([](uint32_t c) { return c >= 0x3000 && c <= 0x30FF; }, 3);
+    if (cjk.empty()) cjk = take([](uint32_t c) { return is_block_char(c); }, 3);
+    const std::vector<uint32_t> cyr =
+        take([](uint32_t c) { return c >= 0x0400 && c <= 0x04FF; }, 3);
+    if (!cjk.empty()) groups.push_back(cjk);
+    if (!cyr.empty()) groups.push_back(cyr);
+    for (uint32_t cp : chars) {
+        if (cp == 'A') {
+            groups.push_back({cp});
+            break;
+        }
+    }
+    if (groups.empty()) {
+        for (size_t i = 0; i < chars.size() && i < 3; ++i) groups.push_back({chars[i]});
+    }
+    for (const std::vector<uint32_t>& group : groups) {
+        bool all_missing = true;
+        for (uint32_t cp : group) {
+            if (!is_notdef(cp)) {
+                all_missing = false;
+                break;
+            }
+        }
+        if (all_missing) miss.insert(miss.end(), group.begin(), group.end());
+    }
+    return miss;
+}
+
+std::vector<uint32_t> font_unrenderable(const std::string& font_path,
+                                        const std::vector<uint32_t>& chars) {
+    FontProbe probe(font_path, 24);
+    std::vector<uint32_t> out;
+    if (!probe.ok()) return out;
+    std::vector<uint8_t> ref;
+    mask_bytes(probe.face, 0xE000, ref);
+    for (uint32_t cp : chars) {
+        std::vector<uint8_t> got;
+        mask_bytes(probe.face, cp, got);
+        if (got != ref) continue;  // 画得出，不缺
+        const uint32_t alt = st_fallback(cp);
+        if (alt != 0) {
+            std::vector<uint8_t> alt_bytes;
+            mask_bytes(probe.face, alt, alt_bytes);
+            if (alt_bytes != ref) continue;  // 繁体顶得住，不算缺
+        }
+        out.push_back(cp);
     }
     return out;
 }

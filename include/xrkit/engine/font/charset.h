@@ -30,6 +30,10 @@ struct CharsetResult {
 // `xml_dir` 不存在返回 false（1.x 返回 None）。
 bool extract_chars(const std::string& xml_dir, bool full_cyrillic, CharsetResult& out);
 
+// 1.x `REQUIRED_CHARS` = ASCII/俄文基础 + 完整西里尔块 U+0410..U+04FF + ANSI 桥接（升序去重）。
+// 出包时的"字体缺必需字形"告警用它（不是全字符集）。
+std::vector<uint32_t> required_chars();
+
 // 供探针/复用：把码位表写成"每行一个十六进制码位"的文本（顺序即槽位顺序）。
 std::string charset_to_lines(const std::vector<uint32_t>& chars);
 

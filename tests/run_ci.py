@@ -741,6 +741,36 @@ def step_golden_font_charset(release: bool) -> None:
         fail("字符集与 1.x 不一致（见上）")
 
 
+def step_golden_font_package(release: bool) -> None:
+    """出包**端到端**锁（M1-7 第⑦步）：整棵 `gamedata/` 产物树 vs 1.x `build_package`。
+
+    这是 M1-7 的收口判据：10 个字号（S=1 + x2）× DDS/ini + XML 转写（无 BOM UTF-8 + 声明
+    改 utf-8）+ `fonts.ltx`/`localization.ltx`，三套游戏版本各跑一遍（顺带验 `GAMES` 的
+    目录名与 DDS 格式）。
+    退出码：0=一致，1=不一致，2=字体 / 1.x / CLI 缺失（按外部前提处理）。
+    """
+    say("[22] 出包端到端一致性（整棵 gamedata 树 vs 1.x build_package）")
+    script = ROOT / "tests" / "golden_font_package.py"
+    if not require_repo_file(script, "出包端到端基线脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=3600)
+    for line in out.splitlines():
+        t = line.strip()
+        if t.startswith("✓") or t.startswith("✗") or t.startswith("GOLDEN-FONT-PACKAGE") \
+                or t.startswith("!!") or t.startswith("语料") or t.startswith("只") \
+                or t.startswith("不同"):
+            say("  " + t)
+    if rc == 0:
+        ok("整棵产物树与 1.x 逐字节一致（3 套游戏版本）")
+    elif rc == 2:
+        prereq("源字体 / 1.x 参照仓库", "缺失（见上）", release)
+    else:
+        fail("出包产物与 1.x 不一致（见上）")
+
+
 def tail(text: str, n: int) -> str:
     """取最后 n 行有效输出。
 
@@ -783,6 +813,7 @@ STEPS = [
     ("golden-font-render", step_golden_font_render),
     ("golden-font-resample", step_golden_font_resample),
     ("golden-font-charset", step_golden_font_charset),
+    ("golden-font-package", step_golden_font_package),
 ]
 
 
