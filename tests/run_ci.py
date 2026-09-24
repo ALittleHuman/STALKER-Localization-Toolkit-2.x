@@ -655,14 +655,14 @@ def step_golden_font_metrics(release: bool) -> None:
 
 
 def step_golden_font_render(release: bool) -> None:
-    """字库**渲染产物**（S=1 档）：我们的 DDS + ini vs 1.x `render_font` 逐字节一致。
+    """字库**渲染产物**（S=1 与 x2 档）：我们的 DDS + ini vs 1.x `render_font` 逐字节一致。
 
-    M1-7 第④⑤步的判据本体：同字符集 + 同字体 + 同字号 + 同格式 ⇒ 产物逐字节相同。
-    只跑 S=1 档（11/13/15，不经重采样）；x2 档（16/17/18）要复刻 Pillow 的 LANCZOS，
-    是我们的 CLI 显式返回 2 的那一档（第⑥步）。
+    M1-7 第④⑤⑥步的判据本体：同字符集 + 同字体 + 同字号 + 同格式 ⇒ 产物逐字节相同。
+    S=1 档（11/13/15）不重采样；x2 档（16/17/18）走 Pillow 的 LANCZOS —— 那一步另有
+    **孤立**对拍（门禁 [20]）。
     退出码：0=一致，1=不一致，2=字体 / 1.x / CLI 缺失（按外部前提处理）。
     """
-    say("[19] 字库渲染产物一致性（S=1 档：DDS + ini vs 1.x）")
+    say("[19] 字库渲染产物一致性（S=1 与 x2 档：DDS + ini vs 1.x）")
     script = ROOT / "tests" / "golden_font_render.py"
     if not require_repo_file(script, "字库渲染基线脚本"):
         return
@@ -681,6 +681,33 @@ def step_golden_font_render(release: bool) -> None:
         prereq("源字体（msyh.ttf）/ 1.x 参照仓库", "缺失（见上）", release)
     else:
         fail("S=1 档产物与 1.x 不一致（见上）")
+
+
+def step_golden_font_resample(release: bool) -> None:
+    """LANCZOS **孤立**锁：我们的实现 vs `PIL.Image.resize(..., LANCZOS)`。
+
+    x2 档（16/17/18）的产物只差这一步，而它是"看着像、实则全错"的高危点（定点系数、
+    边界裁剪、两趟顺序、`(int)` 与 `floor` 的差别）。单独锁比在图集产物上排障便宜一个量级。
+    退出码：0=一致，1=不一致，2=CLI 缺失（按外部前提处理）。
+    """
+    say("[20] LANCZOS 重采样一致性（2.x vs Pillow resize）")
+    script = ROOT / "tests" / "golden_font_resample.py"
+    if not require_repo_file(script, "重采样基线脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=1800)
+    for line in out.splitlines():
+        t = line.strip()
+        if t.startswith("✗") or t.startswith("GOLDEN-FONT-RESAMPLE") or t.startswith("!!"):
+            say("  " + t)
+    if rc == 0:
+        ok("86 个用例与 Pillow 逐字节一致")
+    elif rc == 2:
+        prereq("构建产物 xrkit_cli.exe", "缺失（见上）", release)
+    else:
+        fail("重采样与 Pillow 不一致（见上）")
 
 
 def tail(text: str, n: int) -> str:
@@ -723,6 +750,7 @@ STEPS = [
     ("golden-font-raster", step_golden_font_raster),
     ("golden-font-metrics", step_golden_font_metrics),
     ("golden-font-render", step_golden_font_render),
+    ("golden-font-resample", step_golden_font_resample),
 ]
 
 

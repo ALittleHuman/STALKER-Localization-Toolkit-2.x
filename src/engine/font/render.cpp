@@ -2,6 +2,7 @@
 
 #include "xrkit/core/path.h"
 #include "xrkit/engine/font/metrics.h"
+#include "xrkit/engine/font/resample.h"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -264,12 +265,6 @@ bool render_font(const std::string& font_path, const std::vector<uint32_t>& char
         out.error = "未知 DDS 格式：" + fmt;
         return false;
     }
-    if (x2) {
-        // S=2 档要复刻 Pillow 的 LANCZOS（`Image.resize`），那是 M1-7 第⑥步的活；
-        // 现在**明确失败**，绝不悄悄用别的重采样糊过去（那会让产物"看着像"但逐字节全错）。
-        out.error = "x2 档需要复刻 Pillow 的 LANCZOS 重采样，尚未实现（M1-7 第⑥步）";
-        return false;
-    }
 
     const std::string native = core::path_to_utf8(core::path_from_utf8(font_path));
     FT_Library lib = nullptr;
@@ -292,7 +287,7 @@ bool render_font(const std::string& font_path, const std::vector<uint32_t>& char
         ~FaceGuard() { FT_Done_Face(f); }
     } face_guard{face};
 
-    const int S = 1;  // 本函数只走 S=1（x2 已在上面拦掉）
+    const int S = x2 ? 2 : 1;  // 1.x `S = 2 if x2 else 1`（x2 档渲染字号翻倍、最后再降采样回去）
     const int cell_h = cell_height_for(render_size);
     const int fitted = fit_render_size(face, render_size, x2);
     out.fitted_size = fitted;
@@ -369,36 +364,67 @@ bool render_font(const std::string& font_path, const std::vector<uint32_t>& char
         const BoxResult box = adjudicate_box(cp, rw0, left0, gw, cell_h);
         const int x = col * cell_h + (cell_h - rw0) / 2 + left0 - box.pl;
         ini_lines.push_back(format_ini_line(cp, x, y, x + box.rw, y + cell_h));
+        if (std::getenv("XRKIT_FONT_DEBUG") != nullptr) {
+            std::fprintf(stderr,
+                         "[dbg] cp=%u x2=%d rw0=%d canvas=%dx%d mb=(%d,%d,%d,%d) "
+                         "gw=%d gh=%d left0=%d pl=%d rw=%d gwd=%d\n",
+                         cp, S, rw0, r.canvas_w, r.canvas_h, r.x0, r.y0, r.x1, r.y1,
+                         gw, gh, left0, box.pl, box.rw, box.gw_draw);
+        }
 
         if (!r.has_ink || box.gw_draw < 1 || gh < 1) continue;
 
+        // 裁出紧致墨迹（= 1.x 的 `Image.frombytes(...).crop(mb)`）；S>1 再按 LANCZOS 压到
+        // `(box.gw_draw, gh)`（= 1.x 的 `glyph.resize((gw, gh), Image.LANCZOS)`）。
+        const int ink_w = r.x1 - r.x0;
+        const int ink_h = r.y1 - r.y0;
+        std::vector<uint8_t> glyph(static_cast<size_t>(ink_w) * static_cast<size_t>(ink_h));
+        for (int rr = 0; rr < ink_h; ++rr) {
+            std::memcpy(&glyph[static_cast<size_t>(rr) * ink_w],
+                        &r.px[static_cast<size_t>(r.y0 + rr) * r.canvas_w + r.x0],
+                        static_cast<size_t>(ink_w));
+        }
+        int glyph_w = ink_w;
+        int glyph_h = ink_h;
+        if (S > 1 && box.gw_draw != ink_w) {
+            std::vector<uint8_t> resized(static_cast<size_t>(box.gw_draw) *
+                                         static_cast<size_t>(gh));
+            resample_lanczos_8bpc(glyph.data(), ink_w, ink_h, resized.data(), box.gw_draw, gh);
+            glyph.swap(resized);
+            glyph_w = box.gw_draw;
+            glyph_h = gh;
+        }
+
         // 纵向：em 盒底贴行带底；装不下先整体上移，再装不下才裁进行带（裁的是带外不可见像素）
-        int top = r.box_y0 + vshift;
+        int top = floor_div(r.box_y0, S) + vshift;
         if (top + gh > cell_h) top -= (top + gh - cell_h);
-        int src_y0 = r.y0;
-        int keep = gh;
+        int src_y0 = 0;
+        int keep = glyph_h;
         const int clip_top = std::max(0, -top);
-        const int clip_bot = std::max(0, top + gh - cell_h);
+        const int clip_bot = std::max(0, top + glyph_h - cell_h);
         if (clip_top != 0 || clip_bot != 0) {
             ++out.clipped;
-            keep = gh - clip_top - clip_bot;
+            keep = glyph_h - clip_top - clip_bot;
             if (keep < 1) continue;
             src_y0 += clip_top;
             top += clip_top;
         }
-        // S=1：不做任何重采样，墨迹按原尺寸贴（`ink_draw_w` 只影响 S>1 的压宽与这里的守卫）
+        // S=1 且没触发裁剪时贴的是**原始**墨迹宽（`ink_draw_w` 只影响 S>1 的压宽与守卫）；
+        // 触发裁剪时 1.x 会 `crop((0, clip_top, gw, clip_top+keep))`，宽度随之变成 gw。
         const int draw_x = x + box.pl;
         const int draw_y = y + top;
+        const int paste_w = (clip_top != 0 || clip_bot != 0)
+                                ? std::min(box.gw_draw, glyph_w)
+                                : glyph_w;
         for (int rr = 0; rr < keep; ++rr) {
             const int dy = draw_y + rr;
             if (dy < 0 || dy >= tex_h) continue;
-            const int sy = src_y0 + rr;
-            const uint8_t* src = r.px.data() + static_cast<size_t>(sy) * r.canvas_w;
+            const uint8_t* src = glyph.data() + static_cast<size_t>(src_y0 + rr) * glyph_w;
             uint8_t* dst = canvas.data() + static_cast<size_t>(dy) * tex_w;
-            for (int cc = 0; cc < gw; ++cc) {
+            for (int cc = 0; cc < paste_w; ++cc) {
                 const int dx = draw_x + cc;
                 if (dx < 0 || dx >= tex_w) continue;
-                dst[dx] = src[r.x0 + cc];
+                dst[dx] = src[cc];
             }
         }
     }

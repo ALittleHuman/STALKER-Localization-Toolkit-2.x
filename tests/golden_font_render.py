@@ -9,8 +9,8 @@
 再跑我们的 `xrkit_cli --font-render`，逐字节比 `.dds` 与 `.ini`。两端拿的是**同一个字符集
 文件**（每行一个十六进制码位，顺序即槽位顺序）。
 
-本步只跑 **S=1 档**（11/13/15，不经重采样）；x2 档（16/17/18）要复刻 Pillow 的 LANCZOS，
-是第⑥步的活 —— 我们的 CLI 对 x2 显式返回 2（跳过），绝不产出"看着像"的产物。
+本步覆盖 **S=1 档（11/13/15）** 与 **x2 档（16/17/18，走 Pillow 的 LANCZOS）** ——
+LANCZOS 那一步另有**孤立**对拍（门禁 [20]，`tests/golden_font_resample.py`）。
 
     python tests/golden_font_render.py [--size 11] [--font <路径>]
 """
@@ -38,8 +38,9 @@ DEFAULT_FONT = Path(r"E:\Software\Games\STALKER\Localization\Tools\otherTools"
 BIG_INI = Path(r"E:\Software\Games\STALKER\Localization\Tools\Tool\汉化包生成工具2024"
                r"\gamedata\textures\ui\ui_font_11_chs.ini")
 
-# S=1 档（11/13/15）；x2 档不在这里（见模块 docstring）
+# S=1 档（11/13/15，不经重采样）与 x2 档（16/17/18，走 Pillow 的 LANCZOS）
 S1_SIZES = (11, 13, 15)
+X2_SIZES = (16, 17, 18)
 REF_LINE = re.compile(r"^(\d{5})=")
 
 
@@ -125,17 +126,18 @@ def main() -> int:
 
     small = small_charset(fp)
     big = big_charset()
-    cases = []  # (名字, 码位表, 字号, fmt)
-    sizes = (args.size,) if args.size else S1_SIZES
+    cases = []  # (名字, 码位表, 字号, x2, fmt)
+    sizes = (args.size,) if args.size else (S1_SIZES + X2_SIZES)
     for size in sizes:
         for fmt in ("8888", "A8"):
-            cases.append(("小字符集", small, size, fmt))
+            cases.append(("小字符集", small, size, size in X2_SIZES, fmt))
     if not args.size and big:
-        cases.append(("原版成品字符集", big, 11, "8888"))
+        cases.append(("原版成品字符集", big, 11, False, "8888"))
+        cases.append(("原版成品字符集", big, 16, True, "A8"))
 
     failures = 0
-    for name, cps, size, fmt in cases:
-        tag = "%s size=%d fmt=%s chars=%d" % (name, size, fmt, len(cps))
+    for name, cps, size, x2, fmt in cases:
+        tag = "%s size=%d x2=%d fmt=%s chars=%d" % (name, size, 1 if x2 else 0, fmt, len(cps))
         chars_file = WORK / ("chars_%d.txt" % len(cps))
         write_charset(chars_file, cps)
         ours_prefix = WORK / ("ours_%d_%s" % (size, fmt))
@@ -144,14 +146,14 @@ def main() -> int:
 
         chars_str = "".join(chr(cp) for cp in cps)
         # ── 1.x 基准（调它的真函数，不是重写一遍逻辑）
-        data, ini, w, h, max_y = fp.render_font(chars_str, str(font_path), size, False, fmt)
+        data, ini, w, h, max_y = fp.render_font(chars_str, str(font_path), size, x2, fmt)
         fp.write_dds(str(exp_dds), w, h, fmt, data)
         with open(exp_ini, "w", encoding="ascii") as f:
             f.write(ini)
 
         # ── 我们
-        proc = subprocess.run([str(CLI), "--font-render", str(font_path), str(size), "0", fmt,
-                               str(chars_file), str(ours_prefix)],
+        proc = subprocess.run([str(CLI), "--font-render", str(font_path), str(size),
+                               "1" if x2 else "0", fmt, str(chars_file), str(ours_prefix)],
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         out = proc.stdout.decode("utf-8", "replace").strip()
         if proc.returncode != 0:
@@ -168,7 +170,6 @@ def main() -> int:
             print("  ✓ %s：DDS %d B / ini %d B 与 1.x 逐字节一致（tex %dx%d, max_y %d, sha %s）"
                   % (tag, len(want_dds), len(want_ini), w, h, max_y, sha8(want_dds)))
             continue
-
         failures += 1
         print("  ✗ %s：不一致（tex %dx%d, max_y %d）" % (tag, w, h, max_y))
         if got_dds != want_dds:

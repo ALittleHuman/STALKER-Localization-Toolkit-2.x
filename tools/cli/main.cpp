@@ -20,6 +20,7 @@
 #include "xrkit/engine/font/glyph.h"
 #include "xrkit/engine/font/metrics.h"
 #include "xrkit/engine/font/render.h"
+#include "xrkit/engine/font/resample.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/extract.h"
 #include "xrkit/engine/text/sniff.h"
@@ -103,6 +104,8 @@ void print_usage() {
            "  --font-metrics <输出>                       导出字库几何/宽度表（与 1.x font_pack 对拍）\n"
            "  --font-render <字体> <字号> <x2> <fmt> <字符集文件> <输出前缀>\n"
            "                                              渲染一个字号的 DDS + ini（与 1.x 逐字节对拍）\n"
+           "  --resample-dump <输入raw> <源宽> <源高> <目标宽> <目标高> <输出raw>\n"
+           "                                              Pillow LANCZOS 重采样（与 Pillow 对拍）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -569,8 +572,7 @@ int run_cli(const std::vector<std::string>& args) {
         const std::string& font_path = operands[0];
         const int render_size = std::atoi(operands[1].c_str());
         const bool x2 = (operands[2] == "1");
-        const std::string& fmt = operands[3];
-        const std::vector<uint8_t> raw = read_all(operands[4]);
+        const std::string& fmt = operands[3];        const std::vector<uint8_t> raw = read_all(operands[4]);
         if (raw.empty()) {
             std::cout << "FONTRENDER error reason=字符集文件读不到或为空：" << operands[4] << "\n";
             return kExitFail;
@@ -592,10 +594,7 @@ int run_cli(const std::vector<std::string>& args) {
             }
         }
         if (x2) {
-            // 与 --bench 同口径：未实现的一档**显式跳过**（退出码 2），绝不产出"看着像"的东西。
-            std::cout << "FONTRENDER skip reason=x2 档需要复刻 Pillow 的 LANCZOS（M1-7 第⑥步）"
-                      << " chars=" << chars.size() << "\n";
-            return kExitSkip;
+            // x2 档已实现（Pillow 的 LANCZOS 见 font/resample.cpp，门禁 [20] 孤立锁）。
         }
         xrkit::engine::font::FontProduct product;
         if (!xrkit::engine::font::render_font(font_path, chars, render_size, x2, fmt, product)) {
@@ -657,6 +656,44 @@ int run_cli(const std::vector<std::string>& args) {
             return kExitFail;
         }
         std::cout << "FONTMETRICS ok out=" << out_path << "\n";
+        return kExitOk;
+    }
+
+    // 重采样探针（M1-7 第⑥步）：把**原始 8 位图**按 Pillow 的 LANCZOS 重采样后导出，
+    // 供 tests/golden_font_resample.py 与 `PIL.Image.resize(..., LANCZOS)` 逐字节对拍。
+    // 单独拆出来是为了让 x2 档那个"看着像实则全错"的高危点能被**孤立**验证。
+    if (action == "--resample-dump") {
+        if (operands.size() < 6) {
+            std::cerr << "RESAMPLE error reason=用法：--resample-dump <输入raw> <源宽> <源高> "
+                         "<目标宽> <目标高> <输出raw>\n";
+            return kExitUsage;
+        }
+        const std::vector<uint8_t> src = read_all(operands[0]);
+        const int sw = std::atoi(operands[1].c_str());
+        const int sh = std::atoi(operands[2].c_str());
+        const int dw = std::atoi(operands[3].c_str());
+        const int dh = std::atoi(operands[4].c_str());
+        if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0 ||
+            src.size() != static_cast<size_t>(sw) * static_cast<size_t>(sh)) {
+            std::cout << "RESAMPLE error reason=输入大小与源宽高不符（" << src.size() << " vs "
+                      << sw * sh << "）\n";
+            return kExitFail;
+        }
+        std::vector<uint8_t> dst(static_cast<size_t>(dw) * static_cast<size_t>(dh), 0);
+        xrkit::engine::font::resample_lanczos_8bpc(src.data(), sw, sh, dst.data(), dw, dh);
+        std::ofstream f(path_from_utf8(operands[5]), std::ios::binary | std::ios::trunc);
+        if (!f) {
+            std::cout << "RESAMPLE error reason=写不出 " << operands[5] << "\n";
+            return kExitFail;
+        }
+        f.write(reinterpret_cast<const char*>(dst.data()),
+                static_cast<std::streamsize>(dst.size()));
+        if (!f) {
+            std::cout << "RESAMPLE error reason=写失败\n";
+            return kExitFail;
+        }
+        std::cout << "RESAMPLE ok " << sw << "x" << sh << " -> " << dw << "x" << dh
+                  << " out=" << operands[5] << "\n";
         return kExitOk;
     }
 
