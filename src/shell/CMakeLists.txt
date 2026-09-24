@@ -13,6 +13,8 @@ add_library(xrkit_shell STATIC
   split_pane.cpp
   theme.cpp
   virtual_list.cpp
+  pages/page_base.cpp
+  pages/page_factory.cpp
   smoke.cpp)
 
 target_include_directories(xrkit_shell PUBLIC "${CMAKE_SOURCE_DIR}/include")

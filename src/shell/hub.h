@@ -17,6 +17,7 @@ class QLabel;
 namespace xrkit::shell {
 
 class LogBox;
+class PageBase;
 class SplitPane;
 
 // 内置页：id 是稳定标识（插件槽位/日志都按它走），title 是界面上的名字。
@@ -39,6 +40,8 @@ public:
 
     QListWidget* page_list() const { return page_list_; }
     QStackedWidget* stack() const { return stack_; }
+    // 探针用：拿到**真实的**页对象（页框架/视口/minheight 都从它上面量，不自报）
+    PageBase* page_at(int index) const;
     QPlainTextEdit* log_view() const { return log_view_; }
     LogBox* log_box() const { return log_box_; }
     SplitPane* split() const { return split_; }

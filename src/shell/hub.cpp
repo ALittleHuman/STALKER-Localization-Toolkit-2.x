@@ -1,6 +1,8 @@
 #include "hub.h"
 
 #include "log_box.h"
+#include "pages/page_base.h"
+#include "pages/page_factory.h"
 #include "split_pane.h"
 
 #include "xrkit/core/theme.h"
@@ -35,7 +37,8 @@ constexpr PageInfo kBuiltinPages[] = {
 constexpr int kBuiltinPageCount =
     static_cast<int>(sizeof(kBuiltinPages) / sizeof(kBuiltinPages[0]));
 
-// 页面占位：M2-1 只把壳搭起来，业务内容按 M2-6 一片片接（每片带自己的判据）。
+// 页面占位：**只在页工厂返回空时兜底**（正常路径走 `create_page`，六页各有框架）。
+// 留着它是因为"页建不出来"必须能被看见，而不是变成空白页。
 QWidget* make_placeholder(const PageInfo& page) {
     auto* widget = new QWidget;
     auto* layout = new QVBoxLayout(widget);
@@ -75,7 +78,8 @@ Hub::Hub(QWidget* parent) : QMainWindow(parent) {
     stack_->setObjectName(QStringLiteral("page_stack"));
     for (int i = 0; i < kBuiltinPageCount; ++i) {
         page_list_->addItem(QString::fromUtf8(kBuiltinPages[i].title));
-        stack_->addWidget(make_placeholder(kBuiltinPages[i]));
+        QWidget* page = create_page(i);
+        stack_->addWidget(page != nullptr ? page : make_placeholder(kBuiltinPages[i]));
     }
     page_list_->setCurrentRow(0);
     QObject::connect(page_list_, &QListWidget::currentRowChanged, stack_,
@@ -136,6 +140,13 @@ QString Hub::page_title(int index) const {
 QString Hub::page_id(int index) const {
     if (index < 0 || index >= kBuiltinPageCount) return QString();
     return QString::fromUtf8(kBuiltinPages[index].id);
+}
+
+PageBase* Hub::page_at(int index) const {
+    if (stack_ == nullptr || index < 0 || index >= stack_->count()) return nullptr;
+    // dynamic_cast 而不是 qobject_cast：`PageBase` 刻意不带 Q_OBJECT（本模块不用 moc），
+    // 而 qobject_cast 要求 Q_OBJECT。RTTI 在 MSVC 下默认开，够用。
+    return dynamic_cast<PageBase*>(stack_->widget(index));
 }
 
 void Hub::log_line(const QString& text) {

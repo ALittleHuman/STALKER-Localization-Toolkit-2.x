@@ -3,6 +3,8 @@
 #include "xrkit/core/theme.h"
 #include "hub.h"
 #include "log_box.h"
+#include "pages/page_base.h"
+#include "pages/page_factory.h"
 #include "scroll_viewport.h"
 #include "split_pane.h"
 #include "task_shell.h"
@@ -13,10 +15,12 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QProgressBar>
+#include <QPushButton>
 #include <QScrollBar>
 #include <QStackedWidget>
 #include <QElapsedTimer>
@@ -565,6 +569,133 @@ SmokeResult run_smoke() {
                   .arg(big / std::max(0.0001, small), 0, 'f', 2));
         check(list.selected_row() == 10 % 11 || list.selected_row() >= 0,
               QStringLiteral("选中行可设（%1）").arg(list.selected_row()));
+    }
+
+    // ⑤ 页内滚动 + 标签条（M2-6a）：六页框架的三条口径。
+    // 这一组只量**框架**（页自己那层视口 / 贴底操作栏 / 标签条不被包进视口）；
+    // 各页的业务判据由 M2-6b..g 各自的片补上。
+    {
+        // 沿父链找视口 —— 5.1 的正反两面（body 必须在里面、操作栏必须在外面）都用它
+        const auto inside_viewport = [](const QWidget* w) {
+            for (const QWidget* p = (w == nullptr ? nullptr : w->parentWidget()); p != nullptr;
+                 p = p->parentWidget()) {
+                if (dynamic_cast<const ScrollViewport*>(p) != nullptr) return true;
+            }
+            return false;
+        };
+
+        // 5.2：`page_min_h()` 必须是**函数** —— 改缩放它就得跟着变。
+        // 写成常量的话这三组会全部返回 430，当场露馅（这就是"必须过 px()"的意思）。
+        const double saved_scale = xrkit::core::ui_scale();
+        const struct {
+            double scale;
+            int want;
+        } scale_cases[] = {{1.0, 430}, {1.5, 645}, {2.0, 860}};
+        int scale_bad = 0;
+        for (const auto& c : scale_cases) {
+            xrkit::core::set_ui_scale(c.scale);
+            if (page_min_h() != c.want) ++scale_bad;
+        }
+        xrkit::core::set_ui_scale(saved_scale);
+        check(scale_bad == 0,
+              QStringLiteral("5.2 page_min_h() 随缩放变（1.0/1.5/2.0 → 430/645/860，%1 组不符）")
+                  .arg(scale_bad));
+
+        // 5.3 的反面证据：**没设过** minsize 的视口默认就是 0 ⇒ "忘了设"必然与
+        // `page_min_h()` 不等，所以下面那条判据是有牙的，不是自证。
+        ScrollViewport fresh_viewport;
+        check(fresh_viewport.min_body_height() == 0 && page_min_h() != 0,
+              QStringLiteral("5.3 具名 setter 有牙（未设 = %1，应设 = %2）")
+                  .arg(fresh_viewport.min_body_height())
+                  .arg(page_min_h()));
+
+        hub.show();
+        QApplication::processEvents();
+
+        int frame_bad = 0;
+        int order_bad = 0;
+        for (int i = 0; i < hub.page_count(); ++i) {
+            PageBase* page = hub.page_at(i);
+            if (page == nullptr) {
+                ++frame_bad;
+                ++order_bad;
+                continue;
+            }
+            // 5.3：minsize **真的**设上了（不是"代码里写了"）
+            if (!page->minsize_ok()) ++frame_bad;
+            // 5.1：页自己那层视口的 fit 必须是 content（静态内容，条子由本视口造）
+            if (page->viewport() == nullptr ||
+                page->viewport()->fit() != ScrollViewport::Fit::Content) {
+                ++frame_bad;
+            }
+            check(page->page_id() == hub.page_id(i) &&
+                      page->page_title() == hub.page_title(i) &&
+                      page->header() != nullptr && page->header()->text() == hub.page_title(i),
+                  QStringLiteral("第 %1 页框架带着自己的 id/标题（%2 / %3）")
+                      .arg(i)
+                      .arg(hub.page_id(i))
+                      .arg(hub.page_title(i)));
+
+            // 5.1 + 规则 2：页体在视口**里**，操作栏在视口**外**
+            if (page->body() == nullptr || page->body()->parentWidget() != page->viewport()) {
+                ++order_bad;
+            }
+            if (page->action_bar() == nullptr || inside_viewport(page->action_bar())) {
+                ++order_bad;
+            }
+            // 操作栏内**按钮在前、stretch 在后**（加的顺序 = 显示的顺序，贴右）
+            auto* probe_button = page->add_action(QStringLiteral("自检占位"));
+            if (page->action_layout() == nullptr ||
+                page->action_layout()->itemAt(0) == nullptr ||
+                page->action_layout()->itemAt(0)->widget() != probe_button ||
+                inside_viewport(probe_button)) {
+                ++order_bad;
+            }
+        }
+        check(frame_bad == 0,
+              QStringLiteral("5.1/5.3 六页都自带视口且 minsize=page_min_h()（%1 页不符）")
+                  .arg(frame_bad));
+        check(order_bad == 0,
+              QStringLiteral("5.1/规则2 页体在视口内、操作栏在视口外（%1 处不符）")
+                  .arg(order_bad));
+
+        // 规则 2 的实测：压到 `page_min_h()` 时操作栏**必须还在**（1.x 的坑是窗口一矮，
+        // 贴底那一排被内容挤没，用户找不到"开始"）。
+        // 夹具必须是**裸 Toplevel**：Hub 式布局（页列表+页栈+竖分栏）永远压不矮，
+        // 挂在 Hub 上量这一条等于量不到（M2-2 踩过同一个坑）。
+        int shrink_bad = 0;
+        for (int i = 0; i < builtin_page_count(); ++i) {
+            PageBase* page = create_page(i);
+            if (page == nullptr) {
+                ++shrink_bad;
+                continue;
+            }
+            auto* probe_button = page->add_action(QStringLiteral("自检占位"));
+            page->resize(640, page_min_h());
+            page->show();
+            QApplication::processEvents();
+            QWidget* bar = page->action_bar();
+            const ScrollViewport* viewport = page->viewport();
+            if (bar == nullptr || bar->height() <= 0 || probe_button->height() <= 0 ||
+                bar->y() + bar->height() > page->height() || bar->y() <= 0 ||
+                viewport == nullptr || viewport->height() <= 0 || viewport->y() <= 0) {
+                ++shrink_bad;
+            }
+            page->hide();
+            delete page;
+        }
+        check(shrink_bad == 0,
+              QStringLiteral("规则2 裸窗口压到 page_min_h()=%1 时操作栏仍在（%2 页不符）")
+                  .arg(page_min_h())
+                  .arg(shrink_bad));
+
+        // 5.1 的另一面：**标签条（页列表/页栈）不许被包进任何滚动视口** ——
+        // 被包进去的话一滚主导航就滚走了（1.x 明文锁过这一条）。
+        check(!inside_viewport(hub.page_list()) && !inside_viewport(hub.stack()),
+              QStringLiteral("5.1 标签条与页栈不在任何滚动视口里"));
+        result.notes.append(QStringLiteral("⑤ 六页框架：page_min_h=%1（缩放 %2），视口 fit=content")
+                                .arg(page_min_h())
+                                .arg(xrkit::core::ui_scale()));
     }
 
     return result;

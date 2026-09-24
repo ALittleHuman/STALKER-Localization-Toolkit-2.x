@@ -828,6 +828,21 @@ def step_golden_font_package(release: bool) -> None:
         fail("出包产物与 1.x 不一致（见上）")
 
 
+def active_code(text: str) -> str:
+    """只留**活代码**：丢掉整行注释（C++ `//` / `/*` / 块注释续行 `*`）。
+
+    静态锁要拦的是"代码里另造一份"，注释里为了讲清口径写出的调用形态不算违规 ——
+    反过来要求注释不许提这个名字，等于把文档从源码里赶出去（这几条锁的出处就是注释）。
+    """
+    kept = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("//") or stripped.startswith("*") or stripped.startswith("/*"):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def step_shell_smoke(release: bool) -> None:
     """Qt6 外壳：构建 + **离屏自检**（M2-1）。
 
@@ -869,12 +884,56 @@ def step_shell_smoke(release: bool) -> None:
             continue
         if src.name == "scroll_viewport.cpp":
             continue
-        if "new QScrollBar(" in src.read_text(encoding="utf-8", errors="replace"):
+        if "new QScrollBar(" in active_code(src.read_text(encoding="utf-8", errors="replace")):
             offenders.append(str(src.relative_to(ROOT)))
     if offenders:
         fail("裸滚动条（1.6）：%s —— 条子只能由 ScrollViewport 造" % ", ".join(offenders))
         return
     ok("没有裸滚动条（1.6：只允许 ScrollViewport 造条子）")
+
+    # 对照表 5.1：**页内滚动只能由 PageBase 造**。各页自己 new 一层视口，就等于
+    # 各写各的 `fit`/`minsize_y` —— 1.x 的 `min_y=` 事故正是这么来的（一处写错、
+    # 整页 `TclError` 起不来，而且只有打开那一页才看得见）。
+    offenders = []
+    for src in sorted((ROOT / "src" / "shell" / "pages").rglob("*")):
+        if src.suffix not in (".cpp", ".h") or src.name == "page_base.cpp":
+            continue
+        if "new ScrollViewport(" in active_code(src.read_text(encoding="utf-8", errors="replace")):
+            offenders.append(str(src.relative_to(ROOT)))
+    if offenders:
+        fail("页内视口（5.1）：%s —— 视口只能由 PageBase 造" % ", ".join(offenders))
+        return
+    ok("页内视口只由 PageBase 造（5.1）")
+
+    # 对照表 5.2：`page_min_h()` 必须是**函数**（`px(430)`）。落到别处的字面量 430
+    # 就是把"按 96 DPI 定的值"钉死在别的缩放上 —— 静态锁只认 page_base.cpp 那一处。
+    offenders = []
+    for src in sorted((ROOT / "src" / "shell").rglob("*")):
+        if src.suffix not in (".cpp", ".h") or src.name == "page_base.cpp":
+            continue
+        if "px(430)" in active_code(src.read_text(encoding="utf-8", errors="replace")):
+            offenders.append(str(src.relative_to(ROOT)))
+    if offenders:
+        fail("页最小高字面量（5.2）：%s —— 一律走 page_min_h()" % ", ".join(offenders))
+        return
+    ok("页最小高只有 page_min_h() 一处真值（5.2）")
+
+    # 锁的自证：上面三条静态锁都靠 `active_code` 区分"注释"与"活代码"。
+    # 两头都得对 —— 既能被一句注释绕过（太松），也会把注释当违规（太紧，等于
+    # 禁止源码里写口径出处）。所以这里**故意**喂一份正反样本给它。
+    probe = active_code(
+        "// new ScrollViewport(整行注释)\n"
+        "/* px(430) 块注释 */\n"
+        " * px(430) 块注释续行\n"
+        "new ScrollViewport(真的) // 行内注释后面的代码要留下\n"
+        "int h = px(430);\n")
+    if "new ScrollViewport(真的)" not in probe or "int h = px(430);" not in probe:
+        fail("静态锁自证失败：active_code 把活代码也滤掉了（锁会漏判）")
+        return
+    if probe.count("new ScrollViewport(") != 1 or probe.count("px(430)") != 1:
+        fail("静态锁自证失败：active_code 没滤掉整行注释（锁会被一句注释绕过）")
+        return
+    ok("静态锁自证：注释不算违规、活代码必被拦")
 
 
 def tail(text: str, n: int) -> str:
