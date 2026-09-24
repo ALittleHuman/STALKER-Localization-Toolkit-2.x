@@ -99,6 +99,23 @@ def fixture_dirs() -> dict[str, bytes]:
     }
 
 
+def fixture_fragflush() -> dict[str, bytes]:
+    """"fragment 块已经落盘之后又发生数据块去重"这条交叉路径。
+
+    真机抽验（NLC 的 sqz_wasteland）就是在这里发现的：数据块去重命中会**截断输出文件**，
+    如果块账本里没有 fragment 块的记录，截断点会落回最后一个数据块 —— 把刚写下的
+    fragment 块**删掉**（frag 表还指着它）。后果：镜像变小、碎片去重全部失效、
+    那些文件的碎尾读出来是垃圾。合成夹具里必须先有一段能把 fragment 块挤满的填充，
+    再出现一个与首个大文件完全相同的大文件，才会走到这条路径。
+    """
+    big = pattern(300000, 53)
+    out = {"a_big.bin": big}
+    for i in range(12):
+        out["fill/f%02d.bin" % i] = pattern(15000 + i * 37, 59 + i)
+    out["z_big.bin"] = big  # 与 a_big 逐字节相同，中间隔着已落盘的 fragment 块
+    return out
+
+
 EMPTY_DIRS = {"dirs": ["emptydir", "sub/nested"]}
 
 FIXTURES = {
@@ -107,6 +124,7 @@ FIXTURES = {
     "many": fixture_many,
     "sparse": fixture_sparse,
     "dirs": fixture_dirs,
+    "fragflush": fixture_fragflush,
 }
 
 
@@ -226,6 +244,38 @@ def expected_entries(root: Path, with_dirs: bool) -> dict[str, tuple[str, int]]:
         for i in range(1, len(parts)):
             out.setdefault("/".join(parts[:i]), ("d", 0))
     return out
+
+
+def extract_from_image(image: Path, rel: str, out_file: Path) -> bytes:
+    proc = subprocess.run([str(CLI), "--extract", str(image), rel, str(out_file)],
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if proc.returncode != 0:
+        raise RuntimeError("提取失败 %s：%s"
+                           % (rel, proc.stdout.decode("utf-8", "replace").strip()[:160]))
+    return out_file.read_bytes()
+
+
+def pick_content_sample(root: Path, with_dirs: bool, limit: int = 12) -> list[tuple[str, Path]]:
+    """确定性抽样：头几个 + 均匀分布 + 最大的几个（覆盖碎尾/整块/大文件）。"""
+    files = [(rel, p) for rel, is_dir, p in enumerate_entries(root, with_dirs) if not is_dir]
+    if not files:
+        return []
+    picked: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+
+    def take(item):
+        if item[0] not in seen and len(picked) < limit:
+            seen.add(item[0])
+            picked.append(item)
+
+    for item in files[:4]:
+        take(item)
+    step = max(1, len(files) // 6)
+    for i in range(0, len(files), step):
+        take(files[i])
+    for item in sorted(files, key=lambda x: -x[1].stat().st_size)[:4]:
+        take(item)
+    return picked
 
 
 def first_diff(a: bytes, b: bytes) -> str:
@@ -350,6 +400,26 @@ def main() -> int:
                     print("  ok rdsquashfs 读回 %d 条（路径 + 类型）" % len(ref_map))
         except Exception as exc:  # noqa: BLE001
             print("  !! rdsquashfs 读回跳过：%s" % exc)
+
+        # ④ 内容抽验：从**我们的产物**里把文件抽回来与输入逐字节比。
+        #    只比"条目表"抓不到"数据被截断/碎片块被删"这类损坏（真机抽验抓到过一次）。
+        sample = pick_content_sample(root, with_dirs)
+        content_bad = []
+        for rel, src in sample:
+            try:
+                data = extract_from_image(our_image, rel, WORK / "sample.bin")
+            except Exception as exc:  # noqa: BLE001
+                content_bad.append("%s：%s" % (rel, exc))
+                continue
+            if data != src.read_bytes():
+                content_bad.append("%s：内容不符（%d 字节）" % (rel, len(data)))
+        if content_bad:
+            ok = False
+            print("  ✗ 内容抽验失败 %d/%d：" % (len(content_bad), len(sample)))
+            for item in content_bad[:6]:
+                print("      %s" % item)
+        elif sample:
+            print("  ok 内容抽验 %d 个文件逐字节一致" % len(sample))
 
         if ok:
             print("  ✓ 逐字节一致 %s" % cli_line.split("PACK ok ")[-1])

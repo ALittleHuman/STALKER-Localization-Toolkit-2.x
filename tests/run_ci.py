@@ -371,6 +371,37 @@ def step_golden_sqfs_pack(release: bool) -> None:
         fail("封包产物与 1.x 不一致（见上）")
 
 
+def step_golden_sqfs_pack_real(release: bool) -> None:
+    """真机样本的封包对拍：把真实镜像里的文件抽出来当输入树，两套链路各打一次。
+
+    为什么合成夹具之外还要这一条：夹具只覆盖"想得到的组合"。这一轮真机抽验抓到过一个
+    合成夹具漏掉的**真缺陷**（去重截断把刚写的 fragment 块删掉），所以它是一等判据。
+    耗时口径：local/fast 抽 200 个文件（≈90 s），release 跑整棵树（≈3.5 min）。
+    """
+    say("[11] 真机样本：SquashFS 封包逐字节对拍")
+    script = ROOT / "tests" / "golden_sqfs_pack_real.py"
+    if not require_repo_file(script, "真机封包脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    argv = [sys.executable, str(script), "--id", "nlc-sqz-autumn"]
+    if not release:
+        argv += ["--sample", "200"]
+    rc, out = run(argv, timeout=3600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("GOLDEN-SQFS-PACK-REAL") or s.startswith("✗") or s.startswith("!!") \
+                or s.startswith("ok 逐字节一致") or s.startswith("输入树"):
+            say("  " + s)
+    if rc == 0:
+        ok("真机样本封包产物逐字节一致")
+    elif rc == 2:
+        prereq("真机语料样本 / rdsquashfs", "样本或参照工具缺失（见上）", release)
+    else:
+        fail("真机样本封包产物不一致（见上）")
+
+
 def tail(text: str, n: int) -> str:
     """取最后 n 行有效输出。
 
@@ -402,6 +433,7 @@ STEPS = [
     ("golden-extract", step_golden_extract),
     ("golden-db", step_golden_db),
     ("golden-sqfs-pack", step_golden_sqfs_pack),
+    ("golden-sqfs-pack-real", step_golden_sqfs_pack_real),
 ]
 
 

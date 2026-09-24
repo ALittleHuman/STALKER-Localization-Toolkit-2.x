@@ -664,6 +664,7 @@ bool Packer::write_fragment_block(std::string& err) {
         has_pending_frag_ = false;
         return true;
     }
+    const uint32_t sum = xxh32(pending_frag_.data(), pending_frag_.size());
     bool compressed = false;
     std::vector<uint8_t> out;
     if (!compress_block(Compression::Xz, pending_frag_.data(), pending_frag_.size(),
@@ -671,15 +672,24 @@ bool Packer::write_fragment_block(std::string& err) {
         return false;
     }
     const uint64_t location = file_.size();
+    uint32_t size_field = 0;
     if (compressed) {
         if (!file_.write(out.data(), out.size(), err)) return false;
-        frag_table_[pending_frag_index_] =
-            FragEntry{location, static_cast<uint32_t>(out.size())};
+        size_field = static_cast<uint32_t>(out.size());
     } else {
         if (!file_.write(pending_frag_.data(), pending_frag_.size(), err)) return false;
-        frag_table_[pending_frag_index_] =
-            FragEntry{location, static_cast<uint32_t>(pending_frag_.size()) | kUncompressedBit};
+        size_field = static_cast<uint32_t>(pending_frag_.size()) | kUncompressedBit;
     }
+    frag_table_[pending_frag_index_] = FragEntry{location, size_field};
+
+    // ★ fragment 块必须**也记进块账本**：参照实现里数据块与 fragment 块共用同一张
+    //   `wr->blocks` 记录（write_data_block 对 FRAGMENT_BLOCK 同样 store_block_location）。
+    //   漏掉它，数据块去重命中后的"截断到上一个记录末尾"就会把刚写下的 fragment 块删掉
+    //   （frag 表还指着它）—— 真机抽验（NLC sqz_wasteland）就是这么被抓出来的：
+    //   镜像小 700 KB、碎片去重从 206 掉到 136。
+    blocks_.push_back(BlockRec{location, size_field, sum});
+    blocks_by_sum_[sum].push_back(blocks_.size() - 1);
+
     pending_frag_.clear();
     has_pending_frag_ = false;
     return true;
