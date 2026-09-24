@@ -1,0 +1,30 @@
+#pragma once
+// xrkit::shell —— 主题映射（M2-0/M2-1）：把 core 的令牌映射成 QPalette + QSS。
+//
+// **Qt 侧不抄令牌表**（1.x 的口径：`THEMES`/`_FONTS` 是唯一真值来源，Qt 侧按 AST 读它）。
+// 这里逐项从 `xrkit::core` 取色，切换主题走 `QApplication::setPalette` +
+// `setStyleSheet`（Qt 自己会把 StyleChange 事件发到所有控件 —— 与 1.x"`T` 原地更新、
+// 绝不重新绑定"是同一个语义）。
+
+#include <QString>
+
+#include "xrkit/core/theme.h"
+
+class QApplication;
+class QWidget;
+
+namespace xrkit::shell {
+
+// 按 96 DPI 基准值取像素（外壳里所有硬编码尺寸都要过它，见 core::px 的说明）
+int px(int value);
+
+// 生成当前模式的 QSS（角色 → Qt 控件）。
+QString stylesheet_for(xrkit::core::ThemeMode mode);
+
+// 应用主题：设置 QPalette + QSS，并刷新已存在控件（原地更新）。
+void apply_theme(QApplication& app, xrkit::core::ThemeMode mode);
+
+// Windows 深色标题栏（DWM）。非 Windows 上是空操作。
+void apply_dark_titlebar(QWidget* widget, xrkit::core::ThemeMode mode);
+
+}  // namespace xrkit::shell

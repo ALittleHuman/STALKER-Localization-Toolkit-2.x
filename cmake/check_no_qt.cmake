@@ -4,6 +4,11 @@
 # CLI 黑盒驱动（黄金语料差分就靠它），也必须能脱离 Qt 单独编译与测试。
 # 判据是**扫源码**，不是"我们记得没写"。构建期 FATAL_ERROR，不是警告。
 #
+# ★ 这里用的是 `GLOB_RECURSE`，所以 `include/xrkit/*.h` 会连**子目录**一起扫。外壳的头
+#   （hub.h / theme.h / smoke.h）因此**故意**放在 `src/shell/` 而不是 `include/xrkit/shell/`：
+#   外壳本来就要 include Qt（QMainWindow 等），它不属于"能被 CLI 黑盒驱动的公共 API"。
+#   别把它们挪回 include/ 下 —— 那会把 M2 外壳的头全部误判成红线。
+#
 # 用法：cmake -DXRKIT_ROOT=<repo> -P cmake/check_no_qt.cmake
 
 if(NOT DEFINED XRKIT_ROOT)

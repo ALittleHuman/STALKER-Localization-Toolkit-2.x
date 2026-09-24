@@ -26,6 +26,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BUILD_DIR = ROOT / "build" / "msvc-release"
 CLI_EXE = BUILD_DIR / "tools" / "cli" / "xrkit_cli.exe"
+# Qt6 外壳是**另一个构建目录**：CLI 侧那条"core/engine 脱离 Qt 也能编"的约束因此仍被真实检验
+SHELL_BUILD_DIR = ROOT / "build" / "msvc-shell"
+SHELL_EXE = SHELL_BUILD_DIR / "src" / "shell" / "xrkit_app.exe"
 ENV_CACHE = ROOT / "build" / "msvc_env.txt"
 
 VS_ROOT = Path(os.environ.get("XRKIT_VS", r"E:\Software\Tools\Visual Studio\2022\BuildTools"))
@@ -136,6 +139,64 @@ def require_repo_file(path: Path, what: str) -> bool:
 
 
 # ── 步骤 ────────────────────────────────────────────────────────────────
+def showincludes_prefix() -> str:
+    """量出 cl 的 /showIncludes 前缀（理由见 CMakeLists.txt 顶部）。
+
+    只去掉行尾换行：前缀**本身以空格结尾**（"注意: 包含文件: "），不能 strip()。
+    """
+    rc, out = run([sys.executable, str(ROOT / "tools" / "probe_showincludes_prefix.py"),
+                   "--env-file", str(ENV_CACHE)])
+    prefix = out.rstrip("\r\n").splitlines()[-1] if out.strip() else ""
+    if rc != 0 or not prefix:
+        say("  注意：量不到 /showIncludes 前缀，本次不传（头文件依赖自检会判红）")
+        return ""
+    return prefix
+
+
+def configure_and_build(build_dir: Path, env: dict, shell: bool) -> bool:
+    """configure + build + **头文件依赖效果自检**；返回是否通过（失败已 fail()）。
+
+    `shell=True` 时开 Qt 外壳（`XRKIT_BUILD_SHELL=ON` + Qt 前缀路径）——外壳是**另一个
+    构建目录**，这样 CLI 侧那条"core/engine 脱离 Qt 也能编"的约束仍然每次被真实检验。
+    """
+    args = [str(CMAKE), "-S", str(ROOT), "-B", str(build_dir), "-G", "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DXRKIT_SHOWINCLUDES_PREFIX=%s" % showincludes_prefix()]
+    if shell:
+        args += ["-DXRKIT_BUILD_SHELL=ON", "-DCMAKE_PREFIX_PATH=%s" % QT_ROOT.as_posix()]
+    rc, out = run(args, env=env)
+    if rc != 0:
+        fail("configure 失败（%s，退出码 %d）\n%s"
+             % (build_dir.name, rc, tail(out, 20)))
+        return False
+    rc, out = run([str(CMAKE), "--build", str(build_dir)], env=env)
+    if rc != 0:
+        fail("build 失败（%s，退出码 %d）\n%s" % (build_dir.name, rc, tail(out, 30)))
+        return False
+
+    # ★ 头文件依赖的**效果自检**（2026-09-24 实测踩到，别再删）：
+    #   机制检查（看 rules.ninja 里前缀对不对）会被码页骗；这里只看**效果** ——
+    #   `.ninja_deps` 里到底有没有记下头文件与生成表。没有 ⇒ 改了 .h/.inc 不会重编，
+    #   门禁会用旧二进制判绿，这是最危险的一类假绿，必须在这一步就拦住。
+    deps = build_dir / ".ninja_deps"
+    if not deps.is_file():
+        fail("没有 %s：ninja 一条依赖都没记下（头文件/表改动不会触发重编）" % deps)
+        return False
+    blob = deps.read_bytes()
+    need = [b"metrics.h", b"adv_tables.inc", b"eaw_tables.inc", b"encoding.h",
+            b"squashfs.h"]
+    if shell:
+        need += [b"hub.h", b"theme.h"]
+    missing = [name for name in need if name not in blob]
+    if missing:
+        fail("头文件依赖追踪失效（%s）：.ninja_deps 里找不到 %s —— 改了 .h/.inc 不会重编，"
+             "门禁会拿旧二进制判绿。检查 tools/probe_showincludes_prefix.py 是否量到前缀、"
+             "以及 CMakeLists.txt 顶部那段是否生效。"
+             % (build_dir.name, b", ".join(missing).decode()))
+        return False
+    return True
+
+
 def step_build(release: bool) -> None:
     say("[1] 构建 core/engine/cli")
     env = load_msvc_env()
@@ -154,46 +215,8 @@ def step_build(release: bool) -> None:
                  % ps1.relative_to(ROOT))
             return
 
-    # ★ 先把 /showIncludes 前缀量出来再 configure（理由见 CMakeLists.txt 顶部）：
-    #   不传的话，本地化 MSVC 下 ninja 记不下**任何**头文件依赖 → 改了 .h/.inc 不重编，
-    #   门禁会拿旧二进制判绿。量不到也不拦：后面的效果自检会红。
-    rc, prefix_out = run([sys.executable, str(ROOT / "tools" / "probe_showincludes_prefix.py"),
-                          "--env-file", str(ENV_CACHE)])
-    # 只去掉行尾换行：前缀**本身以空格结尾**（"注意: 包含文件: "），不能 strip()。
-    prefix = prefix_out.rstrip("\r\n").splitlines()[-1] if prefix_out.strip() else ""
-    if rc != 0 or not prefix:
-        say("  注意：量不到 /showIncludes 前缀，本次不传（头文件依赖自检会判红）")
-        prefix = ""
-
-    rc, out = run([str(CMAKE), "-S", str(ROOT), "-B", str(BUILD_DIR),
-                   "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-                   "-DXRKIT_SHOWINCLUDES_PREFIX=%s" % prefix], env=env)
-    if rc != 0:
-        fail("configure 失败（退出码 %d）\n%s" % (rc, tail(out, 20)))
-        return
-
-    rc, out = run([str(CMAKE), "--build", str(BUILD_DIR)], env=env)
-    if rc != 0:
-        fail("build 失败（退出码 %d）\n%s" % (rc, tail(out, 30)))
-        return
-
-    # ★ 头文件依赖的**效果自检**（2026-09-24 实测踩到，别再删）：
-    #   机制检查（看 rules.ninja 里前缀对不对）会被码页骗；这里只看**效果** ——
-    #   `.ninja_deps` 里到底有没有记下头文件与生成表。没有 ⇒ 改了 .h/.inc 不会重编，
-    #   门禁会用旧二进制判绿，这是最危险的一类假绿，必须在这一步就拦住。
-    deps = BUILD_DIR / ".ninja_deps"
-    if not deps.is_file():
-        fail("没有 %s：ninja 一条依赖都没记下（头文件/表改动不会触发重编）" % deps)
-        return
-    blob = deps.read_bytes()
-    missing = [name for name in (b"metrics.h", b"adv_tables.inc", b"eaw_tables.inc",
-                                 b"encoding.h", b"squashfs.h") if name not in blob]
-    if missing:
-        fail("头文件依赖追踪失效：.ninja_deps 里找不到 %s —— 改了 .h/.inc 不会重编，"
-             "门禁会拿旧二进制判绿。检查 tools/probe_showincludes_prefix.py 是否量到前缀、"
-             "以及 CMakeLists.txt 顶部那段是否生效。" % b", ".join(missing).decode())
-        return
-    ok("configure + build 通过（含头文件依赖追踪自检）")
+    if configure_and_build(BUILD_DIR, env, shell=False):
+        ok("configure + build 通过（含头文件依赖追踪自检）")
 
 
 def step_no_qt_lock(release: bool) -> None:
@@ -805,6 +828,38 @@ def step_golden_font_package(release: bool) -> None:
         fail("出包产物与 1.x 不一致（见上）")
 
 
+def step_shell_smoke(release: bool) -> None:
+    """Qt6 外壳：构建 + **离屏自检**（M2-1）。
+
+    为什么外壳也要门禁：M2 的判据是"行为口径对照表 15 组逐条重验"，而界面行为在
+    `-platform offscreen` 下也能量（能构造真实控件树）。所以外壳从第一天起就带
+    `--smoke`（ASCII 收尾行），不靠人眼截图。
+    退出码：0=通过，1=自检红 / 构建失败，2=Qt 或构建工具缺失（按外部前提处理）。
+    """
+    say("[23] Qt6 外壳：构建 + 离屏自检（M2-1）")
+    if not (QT_ROOT / "lib" / "cmake" / "Qt6").is_dir():
+        prereq("Qt6（%s）" % QT_ROOT, "未安装或路径不对", release)
+        return
+    env = load_msvc_env()
+    if env is None:
+        prereq("MSVC 工具链", "找不到 vcvars64.bat：%s" % VCVARS, release)
+        return
+    if not configure_and_build(SHELL_BUILD_DIR, env, shell=True):
+        return
+    if not SHELL_EXE.exists():
+        fail("构建产物缺失：%s" % SHELL_EXE)
+        return
+    rc, out = run([str(SHELL_EXE), "--smoke"], env=env, timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("SHELL-SMOKE") or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0 and "SHELL-SMOKE ok" in out:
+        ok("外壳构建 + 离屏自检通过")
+    else:
+        fail("外壳自检未通过（退出码 %d，见上）" % rc)
+
+
 def tail(text: str, n: int) -> str:
     """取最后 n 行有效输出。
 
@@ -848,6 +903,7 @@ STEPS = [
     ("golden-font-resample", step_golden_font_resample),
     ("golden-font-charset", step_golden_font_charset),
     ("golden-font-package", step_golden_font_package),
+    ("shell-smoke", step_shell_smoke),
 ]
 
 
