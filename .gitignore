@@ -42,6 +42,10 @@ ui_*.h
 /temp/
 /dist/
 
+# ── Python 缓存（生成器与门禁脚本都是 Python）────────────────────────
+__pycache__/
+*.pyc
+
 # ── 第三方依赖源码：由 tools/fetch_third_party.py 拉取并校验 sha256 ──
 # 源码体积大不入库；**锁文件与说明必须入库**（可复现的依据）
 /third_party/*

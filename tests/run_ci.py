@@ -34,6 +34,9 @@ VCVARS = VS_ROOT / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
 CMAKE = VS_ROOT / "Common7" / "IDE" / "CommonExtensions" / "Microsoft" / "CMake" / "CMake" / "bin" / "cmake.exe"
 NINJA_DIR = VS_ROOT / "Common7" / "IDE" / "CommonExtensions" / "Microsoft" / "CMake" / "Ninja"
 
+# 1.x 参照仓库（字库数据表、黄金语料的生成方）。与 tests/golden_*.py 的路径口径一致。
+TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+
 UNCOVERED: list[str] = []
 FAILURES = 0
 _MSVC_ENV: dict[str, str] | None = None
@@ -73,7 +76,11 @@ def load_msvc_env() -> dict[str, str] | None:
     for line in text.splitlines():
         key, sep, value = line.partition("=")
         if sep and key:
-            env[key] = value
+            # ★ 键要**归一成大写**：`set` 输出的是原始大小写（实测是 `Path=` 而不是
+            #   `PATH=`），而 `os.environ` 在 Windows 上本身就是大写键 ⇒ 不归一化就会
+            #   同时存在 `PATH`（继承来的，**没有** MSVC）与 `Path`（真正的 MSVC 环境）
+            #   两个键，`env.get("PATH")` 拿到的是前者 → 找不到 cl.exe（2026-09-24 踩到）。
+            env[key.upper()] = value
     env["PATH"] = os.pathsep.join([str(NINJA_DIR), str(QT_ROOT / "bin"), env.get("PATH", "")])
     _MSVC_ENV = env
     return env
@@ -138,8 +145,29 @@ def step_build(release: bool) -> None:
     if not require_repo_file(CMAKE, "VS 自带 CMake"):
         return
 
+    # README 约定 #1：`.ps1` 必须带 UTF-8 BOM（PowerShell 5.1 会把**无 BOM** 的脚本按 GBK
+    # 读，中文注释与字符串直接读坏、脚本语法报错）。这不是洁癖 —— 编辑工具很容易把 BOM
+    # 悄悄抹掉（2026-09-24 实测被抹过一次），所以放在门禁里，别只写在文档里。
+    for ps1 in sorted((ROOT / "scripts").glob("*.ps1")):
+        if ps1.read_bytes()[:3] != b"\xef\xbb\xbf":
+            fail("%s 丢了 UTF-8 BOM（PowerShell 5.1 会按 GBK 读，中文会被读坏）"
+                 % ps1.relative_to(ROOT))
+            return
+
+    # ★ 先把 /showIncludes 前缀量出来再 configure（理由见 CMakeLists.txt 顶部）：
+    #   不传的话，本地化 MSVC 下 ninja 记不下**任何**头文件依赖 → 改了 .h/.inc 不重编，
+    #   门禁会拿旧二进制判绿。量不到也不拦：后面的效果自检会红。
+    rc, prefix_out = run([sys.executable, str(ROOT / "tools" / "probe_showincludes_prefix.py"),
+                          "--env-file", str(ENV_CACHE)])
+    # 只去掉行尾换行：前缀**本身以空格结尾**（"注意: 包含文件: "），不能 strip()。
+    prefix = prefix_out.rstrip("\r\n").splitlines()[-1] if prefix_out.strip() else ""
+    if rc != 0 or not prefix:
+        say("  注意：量不到 /showIncludes 前缀，本次不传（头文件依赖自检会判红）")
+        prefix = ""
+
     rc, out = run([str(CMAKE), "-S", str(ROOT), "-B", str(BUILD_DIR),
-                   "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release"], env=env)
+                   "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
+                   "-DXRKIT_SHOWINCLUDES_PREFIX=%s" % prefix], env=env)
     if rc != 0:
         fail("configure 失败（退出码 %d）\n%s" % (rc, tail(out, 20)))
         return
@@ -148,7 +176,24 @@ def step_build(release: bool) -> None:
     if rc != 0:
         fail("build 失败（退出码 %d）\n%s" % (rc, tail(out, 30)))
         return
-    ok("configure + build 通过")
+
+    # ★ 头文件依赖的**效果自检**（2026-09-24 实测踩到，别再删）：
+    #   机制检查（看 rules.ninja 里前缀对不对）会被码页骗；这里只看**效果** ——
+    #   `.ninja_deps` 里到底有没有记下头文件与生成表。没有 ⇒ 改了 .h/.inc 不会重编，
+    #   门禁会用旧二进制判绿，这是最危险的一类假绿，必须在这一步就拦住。
+    deps = BUILD_DIR / ".ninja_deps"
+    if not deps.is_file():
+        fail("没有 %s：ninja 一条依赖都没记下（头文件/表改动不会触发重编）" % deps)
+        return
+    blob = deps.read_bytes()
+    missing = [name for name in (b"metrics.h", b"adv_tables.inc", b"eaw_tables.inc",
+                                 b"encoding.h", b"squashfs.h") if name not in blob]
+    if missing:
+        fail("头文件依赖追踪失效：.ninja_deps 里找不到 %s —— 改了 .h/.inc 不会重编，"
+             "门禁会拿旧二进制判绿。检查 tools/probe_showincludes_prefix.py 是否量到前缀、"
+             "以及 CMakeLists.txt 顶部那段是否生效。" % b", ".join(missing).decode())
+        return
+    ok("configure + build 通过（含头文件依赖追踪自检）")
 
 
 def step_no_qt_lock(release: bool) -> None:
@@ -431,12 +476,44 @@ def step_text_tables(release: bool) -> None:
     ok("四张表与 codec 完全一致")
 
 
+def step_font_tables(release: bool) -> None:
+    """字库数据表锁：磁盘上的 .inc 必须与 1.x 的 JSON / Python unicodedata 一致。
+
+    与编码表是同一性质：表被手改、1.x 的 JSON 换了内容、或 Python 换了 Unicode 版本 → FAIL。
+    表错了的后果同样是"产物看着像、逐字节比对全是错"（推进宽错 1px 就是整张图集挪位）。
+
+    1.x 的 `font_pack/*.json` 是**外部前提**（不随 2.x 仓库走）→ 缺件记 SKIP/未覆盖；
+    而 `--check` 本身还会拿"原版工具 汉化包生成工具2024 的成品 ini"交叉核对推进宽表
+    （重叠 1020 条逐条相等），原版成品缺失时只报 SKIP 行、不算失败。
+    """
+    say("[13] 字库数据表与数据源一致（adv_tables / st_fallback / EAW 区间）")
+    script = ROOT / "tools" / "gen_font_tables.py"
+    if not require_repo_file(script, "字库表生成器"):
+        return
+    for inc in ("adv_tables.inc", "st_fallback.inc", "eaw_tables.inc"):
+        if not require_repo_file(ROOT / "src" / "engine" / "font" / inc, "字库表生成物"):
+            return
+    adv = TOOLKIT_1X / "font_pack" / "adv_tables.json"
+    if not adv.is_file():
+        prereq("1.x 参照仓库（font_pack/adv_tables.json）", "未找到 %s" % adv, release)
+        return
+    rc, out = run([sys.executable, str(script), "--check"])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("!!") or "交叉核对" in s or s.startswith("GEN-FONT-TABLES"):
+            say("  " + s)
+    if rc != 0:
+        fail("字库数据表与数据源不一致（见上）")
+        return
+    ok("三张表与 1.x 数据 / unicodedata 完全一致")
+
+
 def step_golden_text_decode(release: bool) -> None:
     """黄金语料差分：文本**解码层**（六编码链）2.x vs 1.x 的 read_text_file。
 
     退出码：0=全部逐字节一致，1=有不一致，2=有样本变动/不可达（按外部前提处理）。
     """
-    say("[13] 黄金语料差分：文本解码（2.x vs 1.x 的 read_text_file）")
+    say("[14] 黄金语料差分：文本解码（2.x vs 1.x 的 read_text_file）")
     script = ROOT / "tests" / "golden_text_decode.py"
     if not require_repo_file(script, "解码基线脚本"):
         return
@@ -465,7 +542,7 @@ def step_golden_text_extract(release: bool) -> None:
     判据＝**整棵产物树逐字节一致**（改写后的源文件 + 文本 XML），不只是条数。
     退出码：0=全部一致，1=有不一致，2=夹具不可达（按外部前提处理）。
     """
-    say("[14] 黄金语料差分：文本提取（2.x vs 1.x）")
+    say("[15] 黄金语料差分：文本提取（2.x vs 1.x）")
     script = ROOT / "tests" / "golden_text_extract.py"
     if not require_repo_file(script, "提取基线脚本"):
         return
@@ -497,7 +574,7 @@ def step_golden_text_sniff(release: bool) -> None:
       ③ 差异台账 = 连正文都不同的样本（含 1.x 的 cp1250 误判）逐条冻结。
     退出码：0=一致，1=不一致，2=样本缺失/变动。
     """
-    say("[15] 黄金语料：文本判定链（2.x vs 1.x）")
+    say("[16] 黄金语料：文本判定链（2.x vs 1.x）")
     script = ROOT / "tests" / "golden_text_sniff.py"
     if not require_repo_file(script, "判定链基线脚本"):
         return
@@ -528,7 +605,7 @@ def step_golden_font_raster(release: bool) -> None:
     必须先对齐 flags —— 所以它排在渲染管线前面。
     退出码：0=一致，1=不一致，2=字体/CLI 缺失（按外部前提处理）。
     """
-    say("[16] 字库栅格一致性（2.x FreeType vs Pillow getmask）")
+    say("[17] 字库栅格一致性（2.x FreeType vs Pillow getmask）")
     script = ROOT / "tests" / "golden_font_raster.py"
     if not require_repo_file(script, "栅格基线脚本"):
         return
@@ -547,6 +624,34 @@ def step_golden_font_raster(release: bool) -> None:
         prereq("源字体（msyh.ttf）", "字体或 CLI 缺失（见上）", release)
     else:
         fail("栅格与 Pillow 不一致（见上）")
+
+
+def step_golden_font_metrics(release: bool) -> None:
+    """字库**几何/宽度**一致性：2.x 的查表与裁决 vs 1.x 的 `font_pack`。
+
+    产物里每个矩形都出自 `font_pack` 的那几张表与四条裁决函数，所以先把这一层钉死 ——
+    这层错了（推进宽差 1px），整张图集一路挪位，到成品 DDS 上表现为"整片都对不上"。
+    退出码：0=一致，1=不一致，2=1.x 的 font_pack 缺失（按外部前提处理）。
+    """
+    say("[18] 字库几何/宽度一致性（2.x vs 1.x font_pack）")
+    script = ROOT / "tests" / "golden_font_metrics.py"
+    if not require_repo_file(script, "字库几何基线脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=1800)
+    for line in out.splitlines():
+        t = line.strip()
+        if t.startswith("✓") or t.startswith("✗") or t.startswith("GOLDEN-FONT-METRICS") \
+                or t.startswith("!!"):
+            say(line.rstrip())
+    if rc == 0:
+        ok("槽位/宽度/方块判定/简繁表/框宽裁决与 1.x 完全一致")
+    elif rc == 2:
+        prereq("1.x 参照仓库（font_pack/font_pack.py）", "未找到（见上）", release)
+    else:
+        fail("字库几何/宽度与 1.x 不一致（见上）")
 
 
 def tail(text: str, n: int) -> str:
@@ -582,10 +687,12 @@ STEPS = [
     ("golden-sqfs-pack", step_golden_sqfs_pack),
     ("golden-sqfs-pack-real", step_golden_sqfs_pack_real),
     ("text-tables", step_text_tables),
+    ("font-tables", step_font_tables),
     ("golden-text-decode", step_golden_text_decode),
     ("golden-text-extract", step_golden_text_extract),
     ("golden-text-sniff", step_golden_text_sniff),
     ("golden-font-raster", step_golden_font_raster),
+    ("golden-font-metrics", step_golden_font_metrics),
 ]
 
 

@@ -67,8 +67,8 @@ python tests\run_ci.py --release      # 任何 SKIP 与「未覆盖清单」非�
 
 产物：`build/msvc-release/tools/cli/xrkit_cli.exe`
 （`--selftest` / `--bench` / `--themecheck` / `--dump` / `--extract` / `--pack-db` /
-`--pack-sqfs` / `--decode-text` / `--sniff` / `--extract-text`；
-退出码 0=通过 1=失败 **2=显式跳过** 3=用法错误）。
+`--pack-sqfs` / `--decode-text` / `--sniff` / `--extract-text` / `--glyph-dump` /
+`--font-metrics`；退出码 0=通过 1=失败 **2=显式跳过** 3=用法错误）。
 
 ## 开发约定（都是本机实测踩出来的，别改回去）
 
@@ -81,6 +81,13 @@ python tests\run_ci.py --release      # 任何 SKIP 与「未覆盖清单」非�
 4. **必须在全权文件模式下构建**：`workspace-write` 沙箱会让 `cmake→ninja→cl→link`
    这条深层进程链死锁（CMake 永久卡在 "Detecting CXX compiler ABI info"）。
 5. **收尾行一律 ASCII**（`SELFTEST pass=N fail=M` / `BENCH skip ...`）：中文行在别的进程里是乱码。
+6. **`/showIncludes` 前缀必须自己量了喂给 CMake**（`tools/probe_showincludes_prefix.py`
+   → `-DXRKIT_SHOWINCLUDES_PREFIX=…`，`run_ci.py` 的 build 步与 `scripts/build.ps1` 都已接）：
+   中文界面的 `cl.exe` 用 **UTF-8 字节**输出 `注意: 包含文件: `，而 CMake 的探测按**系统 ANSI
+   码页**解码 → 写进 `rules.ninja` 的是一串乱码前缀 → ninja 与 cl 输出逐字节比对永不命中
+   → **一条头文件依赖都记不下**：改了 `.h` / 生成表 `.inc` 也报"没事可做"，门禁拿旧二进制
+   判绿（2026-09-24 实测踩到，正是最危险的那类假绿）。build 步现在还有**效果自检**：
+   直接看 `.ninja_deps` 里有没有头文件与 `.inc`，没有就判红。
 
 ## 第三方依赖（vendored，离线可复现）
 

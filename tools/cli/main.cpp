@@ -18,6 +18,7 @@
 #include "xrkit/engine/fs/lzhuf.h"
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/font/glyph.h"
+#include "xrkit/engine/font/metrics.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/extract.h"
 #include "xrkit/engine/text/sniff.h"
@@ -97,6 +98,8 @@ void print_usage() {
            "  --sniff <输入> <输出> [--encoding <手动指定>]  判定链（六步）判定 + 解码（对拍用）\n"
            "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
            "                                              文本提取（gameplay|scripts 一个分支）\n"
+           "  --glyph-dump <字体> <字号> <输出>           导出 FreeType 栅格（与 Pillow 对拍）\n"
+           "  --font-metrics <输出>                       导出字库几何/宽度表（与 1.x font_pack 对拍）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -530,6 +533,23 @@ int run_cli(const std::vector<std::string>& args) {
         }
         std::cout << "GLYPH ok font=" << font_path << " size=" << size << " out=" << out_path
                   << "\n";
+        return kExitOk;
+    }
+
+    // 字库几何/宽度探针（M1-7 第③步）：把槽位表、EAW 方块判定、推进宽表、简繁表与
+    // 框宽裁决全流程按固定扫描顺序导出，供 tests/golden_font_metrics.py 按 1.x 的
+    // `font_pack` 逐条重算对拍。比较逻辑全在 Python 侧（1.x 就是那边的实现）。
+    if (action == "--font-metrics") {
+        if (operands.empty()) {
+            std::cerr << "FONTMETRICS error reason=用法：--font-metrics <输出文件>\n";
+            return kExitUsage;
+        }
+        const std::string& out_path = operands[0];
+        if (!xrkit::engine::font::dump_metrics(out_path)) {
+            std::cout << "FONTMETRICS error reason=写不出文件\n";
+            return kExitFail;
+        }
+        std::cout << "FONTMETRICS ok out=" << out_path << "\n";
         return kExitOk;
     }
 
