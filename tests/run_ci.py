@@ -231,6 +231,8 @@ def step_cli_contract(release: bool) -> None:
          "--decode-text 缺参数 → 用法错误"),
         (["--extract-text"], 3, "TEXT error",
          "--extract-text 缺参数 → 用法错误"),
+        (["--sniff"], 3, "SNIFF error",
+         "--sniff 缺参数 → 用法错误"),
     ]
     for argv, want, marker, label in expectations:
         rc, out = run([str(CLI_EXE)] + argv)
@@ -412,18 +414,19 @@ def step_text_tables(release: bool) -> None:
     这是"仓库自带门禁文件"性质：表被手改、或换了 Python 版本导致 codec 变了 → FAIL。
     表错了的后果就是整篇乱码，而且是**逐字节判据**才能发现的那种错。
     """
-    say("[12] 编码表与 Python codec 一致（cp1251 / cp1252 / gb18030）")
+    say("[12] 编码表与 Python codec 一致（cp1251 / cp1252 / gb18030 / gbk）")
     script = ROOT / "tools" / "gen_encoding_tables.py"
     if not require_repo_file(script, "编码表生成器"):
         return
-    for inc in ("cp1251_tables.inc", "cp1252_tables.inc", "gb18030_tables.inc"):
+    for inc in ("cp1251_tables.inc", "cp1252_tables.inc", "gb18030_tables.inc",
+                "gbk_tables.inc"):
         if not require_repo_file(ROOT / "src" / "engine" / "text" / inc, "编码表生成物"):
             return
     rc, out = run([sys.executable, str(script), "--check"])
     if rc != 0:
         fail("编码表与 codec 不一致：\n%s" % tail(out, 10))
         return
-    ok("三张表与 codec 完全一致")
+    ok("四张表与 codec 完全一致")
 
 
 def step_golden_text_decode(release: bool) -> None:
@@ -483,6 +486,38 @@ def step_golden_text_extract(release: bool) -> None:
         fail("提取产物与 1.x 不一致（见上）")
 
 
+def step_golden_text_sniff(release: bool) -> None:
+    """黄金语料：文本**判定链**（六步）2.x vs 1.x 的 sniff_encoding + decode_bytes。
+
+    判据分三层（第 5 步统计探测未移植 chardet，必须如实记账，不许放宽）：
+      ① 硬判据 = (used, forced, 码位数, 正文 sha256) 一致；
+      ② 命名台账 = 允许 (step, 编码名) 不同，但只允许台账里登记过的那些；
+      ③ 差异台账 = 连正文都不同的样本（含 1.x 的 cp1250 误判）逐条冻结。
+    退出码：0=一致，1=不一致，2=样本缺失/变动。
+    """
+    say("[15] 黄金语料：文本判定链（2.x vs 1.x）")
+    script = ROOT / "tests" / "golden_text_sniff.py"
+    if not require_repo_file(script, "判定链基线脚本"):
+        return
+    if not require_repo_file(ROOT / "tests" / "golden" / "text_sniff.json", "判定链基线数据"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=1800)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("GOLDEN-TEXT-SNIFF") or s.startswith("✗") or s.startswith("!!") \
+                or s.startswith("台账") or s.startswith("样本内容变了"):
+            say("  " + s)
+    if rc == 0:
+        ok("判定链解码结果与 1.x 一致（差异台账已冻结）")
+    elif rc == 2:
+        prereq("真语料文本样本", "样本缺失或内容变动（见上）", release)
+    else:
+        fail("判定链与 1.x 不一致（见上）")
+
+
 def tail(text: str, n: int) -> str:
     """取最后 n 行有效输出。
 
@@ -518,6 +553,7 @@ STEPS = [
     ("text-tables", step_text_tables),
     ("golden-text-decode", step_golden_text_decode),
     ("golden-text-extract", step_golden_text_extract),
+    ("golden-text-sniff", step_golden_text_sniff),
 ]
 
 

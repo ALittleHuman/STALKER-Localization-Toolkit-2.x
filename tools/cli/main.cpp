@@ -19,6 +19,7 @@
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/extract.h"
+#include "xrkit/engine/text/sniff.h"
 #include "xrkit/engine/third_party_probe.h"
 
 #include <algorithm>
@@ -92,6 +93,7 @@ void print_usage() {
            "  --pack-db <输出> <格式> <输入目录>          按目录打包 DB（逐字节对拍用）\n"
            "  --pack-sqfs <输出> <输入目录> [--pack-dirs]  自写 SquashFS 封包（xz 块，逐字节对拍用）\n"
            "  --decode-text <输入> <输出>                 六编码链解码（把正文写成 UTF-8；对拍用）\n"
+           "  --sniff <输入> <输出> [--encoding <手动指定>]  判定链（六步）判定 + 解码（对拍用）\n"
            "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
            "                                              文本提取（gameplay|scripts 一个分支）\n"
            "  --version       打印版本\n"
@@ -210,6 +212,7 @@ int run_cli(const std::vector<std::string>& args) {
     bool clean = false;
     std::string text_prefix;
     std::string text_id_prefix;
+    std::string text_encoding = "auto";
     std::string action;
     std::vector<std::string> operands;
 
@@ -233,6 +236,10 @@ int run_cli(const std::vector<std::string>& args) {
         }
         if (a == "--id-prefix" && i + 1 < args.size()) {
             text_id_prefix = args[++i];
+            continue;
+        }
+        if (a == "--encoding" && i + 1 < args.size()) {
+            text_encoding = args[++i];
             continue;
         }
         if (a == "-h" || a == "--help") {
@@ -502,6 +509,41 @@ int run_cli(const std::vector<std::string>& args) {
                   << " frag_blocks=" << r.fragment_blocks << " dedup_blocks=" << r.dedup_blocks
                   << " dedup_frags=" << r.dedup_fragments
                   << " ms=" << static_cast<long long>(r.elapsed_ms) << "\n";
+        return kExitOk;
+    }
+
+    // 编码**判定链**（B 链，M1-6 尾段）：六步 → (步号, 编码) + 解码结果。
+    // 判据：与 1.x 的 (step, enc, used, forced, 正文) 一致；第 5 步只做已对齐的
+    // ASCII 分支，其余家族在门禁的差异台账里如实列出。
+    if (action == "--sniff") {
+        if (operands.size() < 2) {
+            std::cerr << "SNIFF error reason=用法：--sniff <输入文件> <输出文件> "
+                         "[--encoding <手动指定>]\n";
+            return kExitUsage;
+        }
+        const std::vector<uint8_t> raw = read_all(operands[0]);
+        if (raw.empty() && !std::filesystem::exists(path_from_utf8(operands[0]))) {
+            std::cout << "SNIFF error reason=读不到文件：" << operands[0] << "\n";
+            return kExitFail;
+        }
+        const xrkit::engine::text::SniffResult sr =
+            xrkit::engine::text::sniff_encoding(raw, text_encoding);
+        const xrkit::engine::text::DecodedBytes db =
+            xrkit::engine::text::decode_bytes(raw, text_encoding);
+        if (!db.ok) {
+            std::cout << "SNIFF error reason=" << db.error << "\n";
+            return kExitFail;
+        }
+        std::ofstream out(path_from_utf8(operands[1]), std::ios::binary | std::ios::trunc);
+        if (!out) {
+            std::cout << "SNIFF error reason=无法写输出文件：" << operands[1] << "\n";
+            return kExitFail;
+        }
+        out.write(db.text.data(), static_cast<std::streamsize>(db.text.size()));
+        out.close();
+        std::cout << "SNIFF ok step=" << static_cast<int>(sr.step) << " enc=" << sr.encoding
+                  << " used=" << db.used_encoding << " forced=" << (db.forced ? 1 : 0)
+                  << " chars=" << db.chars << " bytes=" << db.text.size() << "\n";
         return kExitOk;
     }
 

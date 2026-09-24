@@ -23,6 +23,15 @@ inline constexpr const char* kGb18030 = "gb18030";
 inline constexpr const char* kWindows1251 = "windows-1251";
 inline constexpr const char* kWindows1252 = "windows-1252";
 inline constexpr const char* kLatin1 = "latin-1";
+// 判定链（B 链）还会用到的名字
+inline constexpr const char* kAscii = "ascii";
+inline constexpr const char* kUtf16 = "utf-16";
+inline constexpr const char* kUtf16Le = "utf-16-le";
+inline constexpr const char* kUtf16Be = "utf-16-be";
+inline constexpr const char* kUtf32 = "utf-32";
+inline constexpr const char* kUtf32Le = "utf-32-le";
+inline constexpr const char* kUtf32Be = "utf-32-be";
+inline constexpr const char* kGbk = "gbk";
 
 struct DecodeResult {
     bool ok = false;

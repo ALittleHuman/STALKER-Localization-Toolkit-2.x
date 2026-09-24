@@ -1,0 +1,3650 @@
+{
+ "note": "基线由 1.x toolkit_textio（sniff_encoding + decode_bytes）生成；naming_divergences = 只差(步号,编码名)、正文一致；capability_gaps = 正文也不同的已知能力缺口（冻结我们的行为）",
+ "entries": [
+  {
+   "id": "synth/bom_utf8",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\bom_utf8",
+   "override": "",
+   "size": 32,
+   "sha256": "682f09347ccad2623f02ae75132fc77f74aab1dd62c6d74d02feabdcc0c68eaf",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   }
+  },
+  {
+   "id": "synth/bom_utf16le",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\bom_utf16le",
+   "override": "",
+   "size": 34,
+   "sha256": "d5b7c2d0863a5e39ed475705710e77f2710986936442fa20268ac57015b92a1d",
+   "ref": {
+    "step": 1,
+    "enc": "utf-16",
+    "used": "utf-16",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-16",
+    "used": "utf-16",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   }
+  },
+  {
+   "id": "synth/bom_utf16be",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\bom_utf16be",
+   "override": "",
+   "size": 34,
+   "sha256": "5c1ff391248908954beaff88715d271d2c7403dfaf33ec14eb4a6b88b3c2404c",
+   "ref": {
+    "step": 1,
+    "enc": "utf-16",
+    "used": "utf-16",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-16",
+    "used": "utf-16",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   }
+  },
+  {
+   "id": "synth/bom_utf32le",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\bom_utf32le",
+   "override": "",
+   "size": 68,
+   "sha256": "cdc1789467112046e1fa50f8c0af0fd02aaf6543171fe3ab565875b5a3a4aa1c",
+   "ref": {
+    "step": 1,
+    "enc": "utf-32",
+    "used": "utf-32",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-32",
+    "used": "utf-32",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   }
+  },
+  {
+   "id": "synth/utf16le_nobom",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\utf16le_nobom",
+   "override": "",
+   "size": 32,
+   "sha256": "986aeac6b491d35ac1838831b9f0d8f1e1f3774f2f57b8f2d2396a2178939703",
+   "ref": {
+    "step": 5,
+    "enc": "utf-16-le",
+    "used": "utf-16-le",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 32,
+    "text_sha256": "986aeac6b491d35ac1838831b9f0d8f1e1f3774f2f57b8f2d2396a2178939703"
+   }
+  },
+  {
+   "id": "synth/utf16be_nobom",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\utf16be_nobom",
+   "override": "",
+   "size": 32,
+   "sha256": "4459c63dd1e6d2bc454539ab12ed7e81ff1668a903f9002da21cc2781bbda413",
+   "ref": {
+    "step": 5,
+    "enc": "utf-16-be",
+    "used": "utf-16-be",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 32,
+    "text_sha256": "4459c63dd1e6d2bc454539ab12ed7e81ff1668a903f9002da21cc2781bbda413"
+   }
+  },
+  {
+   "id": "synth/utf16le_odd",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\utf16le_odd",
+   "override": "",
+   "size": 31,
+   "sha256": "3edd323e282648b65932b62856b1a5732050e559426cf07d294dd90aef1ad704",
+   "ref": {
+    "step": 5,
+    "enc": "utf-16-le",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 31,
+    "text_sha256": "3edd323e282648b65932b62856b1a5732050e559426cf07d294dd90aef1ad704"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 31,
+    "text_sha256": "3edd323e282648b65932b62856b1a5732050e559426cf07d294dd90aef1ad704"
+   }
+  },
+  {
+   "id": "synth/utf8_cjk",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\utf8_cjk",
+   "override": "",
+   "size": 47,
+   "sha256": "636d13a1e2969cc683fdcda0f36681af54d8bf1cc9b262bae54951617c53cd98",
+   "ref": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 22,
+    "text_sha256": "636d13a1e2969cc683fdcda0f36681af54d8bf1cc9b262bae54951617c53cd98"
+   },
+   "ours": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 22,
+    "text_sha256": "636d13a1e2969cc683fdcda0f36681af54d8bf1cc9b262bae54951617c53cd98"
+   }
+  },
+  {
+   "id": "synth/ascii",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\ascii",
+   "override": "",
+   "size": 22,
+   "sha256": "4fb30983f1c52acf2fb89e78e1366d8ac7711935cc485ef4a08d89d77269f921",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 22,
+    "text_sha256": "4fb30983f1c52acf2fb89e78e1366d8ac7711935cc485ef4a08d89d77269f921"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 22,
+    "text_sha256": "4fb30983f1c52acf2fb89e78e1366d8ac7711935cc485ef4a08d89d77269f921"
+   }
+  },
+  {
+   "id": "synth/ascii_tab_crlf",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\ascii_tab_crlf",
+   "override": "",
+   "size": 7,
+   "sha256": "5bbbbd6650ecc52680170a1e502a9d2ba876eae1d01615e6d4acdd93ec75f05c",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 7,
+    "text_sha256": "5bbbbd6650ecc52680170a1e502a9d2ba876eae1d01615e6d4acdd93ec75f05c"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 7,
+    "text_sha256": "5bbbbd6650ecc52680170a1e502a9d2ba876eae1d01615e6d4acdd93ec75f05c"
+   }
+  },
+  {
+   "id": "synth/ascii_nul",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\ascii_nul",
+   "override": "",
+   "size": 7,
+   "sha256": "516a5e926ce20c5f4d80f00e1a01abdf14986def6588d6abeed9fce090bc660c",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 7,
+    "text_sha256": "516a5e926ce20c5f4d80f00e1a01abdf14986def6588d6abeed9fce090bc660c"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 7,
+    "text_sha256": "516a5e926ce20c5f4d80f00e1a01abdf14986def6588d6abeed9fce090bc660c"
+   }
+  },
+  {
+   "id": "synth/ascii_ctrl",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\ascii_ctrl",
+   "override": "",
+   "size": 8,
+   "sha256": "eb078ba66d860a678319a41d945d6c291cb7ecdd2cefb977c4ee830fe69e8fb4",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 8,
+    "text_sha256": "eb078ba66d860a678319a41d945d6c291cb7ecdd2cefb977c4ee830fe69e8fb4"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 8,
+    "text_sha256": "eb078ba66d860a678319a41d945d6c291cb7ecdd2cefb977c4ee830fe69e8fb4"
+   }
+  },
+  {
+   "id": "synth/ascii_del",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\ascii_del",
+   "override": "",
+   "size": 7,
+   "sha256": "fc5b33593a6c565ed08c720bee47a3fce1914b7b54b5d4a2110c809d09da0a66",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 7,
+    "text_sha256": "fc5b33593a6c565ed08c720bee47a3fce1914b7b54b5d4a2110c809d09da0a66"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 7,
+    "text_sha256": "fc5b33593a6c565ed08c720bee47a3fce1914b7b54b5d4a2110c809d09da0a66"
+   }
+  },
+  {
+   "id": "synth/ascii_formfeed",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\ascii_formfeed",
+   "override": "",
+   "size": 7,
+   "sha256": "71daaf60f0c90e12cf3643c58f7fc036129527f2994ea96fab80fd3faa109e85",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 7,
+    "text_sha256": "71daaf60f0c90e12cf3643c58f7fc036129527f2994ea96fab80fd3faa109e85"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 7,
+    "text_sha256": "71daaf60f0c90e12cf3643c58f7fc036129527f2994ea96fab80fd3faa109e85"
+   }
+  },
+  {
+   "id": "synth/empty",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\empty",
+   "override": "",
+   "size": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 0,
+    "text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 0,
+    "text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   }
+  },
+  {
+   "id": "synth/cp1251",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\cp1251",
+   "override": "",
+   "size": 16,
+   "sha256": "efdac9046e0d8eb86367909ace2ae763b3d6cc0a6ea0ab17cb8b43c9ad268ace",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   }
+  },
+  {
+   "id": "synth/cp1251_short",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\cp1251_short",
+   "override": "",
+   "size": 1,
+   "sha256": "2ea970ff63aec5d7a014ca6447ec743d3ba37450b85ebdcbb582b089b0194fa2",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 1,
+    "text_sha256": "52b99c2a977b538a427c673096b80fa8e977b260ed63683753d187b0dbe28858"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 1,
+    "text_sha256": "52b99c2a977b538a427c673096b80fa8e977b260ed63683753d187b0dbe28858"
+   }
+  },
+  {
+   "id": "synth/cp1252",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\cp1252",
+   "override": "",
+   "size": 12,
+   "sha256": "a83209e4ea5b89bbe45ec314e02e112855bb51acb7137fc34e912d1289092e52",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 12,
+    "text_sha256": "acbd9c7b332209a4e45afc9538f34ba6fcca5511285fb08bfc70176de7c10abb"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 12,
+    "text_sha256": "acbd9c7b332209a4e45afc9538f34ba6fcca5511285fb08bfc70176de7c10abb"
+   }
+  },
+  {
+   "id": "synth/koi8r",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\koi8r",
+   "override": "",
+   "size": 16,
+   "sha256": "9a2f4e09b1e56bf4f292936447efff964481c74a474ec4519b33971cabf6ab7f",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "9715e6880df861a48645922e5e52d18c70fcb17086a9d28cedeb5faf46f0dd15"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "9715e6880df861a48645922e5e52d18c70fcb17086a9d28cedeb5faf46f0dd15"
+   }
+  },
+  {
+   "id": "synth/gbk_cjk",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\gbk_cjk",
+   "override": "",
+   "size": 12,
+   "sha256": "1b65a28b74872c4426f315bbe66ae04cb634bb89499b0ea4732bb22155bbe29b",
+   "ref": {
+    "step": 5,
+    "enc": "gb18030",
+    "used": "gb18030",
+    "forced": false,
+    "chars": 6,
+    "text_sha256": "51919a0c404a5c59f500c65cfad36a57da04d9e8cda5467295b13e79a780aee8"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 12,
+    "text_sha256": "0fe5c09dd4e3105a609ce30f02b2cf06595bd2d212dd855d980c3c052b3e9c7c"
+   }
+  },
+  {
+   "id": "synth/gb18030_4byte",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\gb18030_4byte",
+   "override": "",
+   "size": 4,
+   "sha256": "5b6820e3fb95641266fcfb74ac16b2922b90b8ad84a77b335ebe0a1cc0ba8490",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 4,
+    "text_sha256": "e608dc6d2aa8612c8a740afad58cd5a06cf3bafa9419491e2181de685ccd7a2b"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 4,
+    "text_sha256": "e608dc6d2aa8612c8a740afad58cd5a06cf3bafa9419491e2181de685ccd7a2b"
+   }
+  },
+  {
+   "id": "synth/sjis",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\sjis",
+   "override": "",
+   "size": 14,
+   "sha256": "c234e0f3d21b90060f49d009fe6c70b1f3611f6b600e7c9825163db645c5ca3c",
+   "ref": {
+    "step": 5,
+    "enc": "cp932",
+    "used": "cp932",
+    "forced": false,
+    "chars": 7,
+    "text_sha256": "c6a304536826fb57e1b1896fcd8c91693a746233ae6a286dc85a65c8ae1f416f"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 14,
+    "text_sha256": "2829d499efeb01a96246fd301d10b897a0535b5943963ea1f1e26ffb5cd008bf"
+   }
+  },
+  {
+   "id": "synth/big5",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\big5",
+   "override": "",
+   "size": 10,
+   "sha256": "3b9e1d11bce633b7d7ea87c2158b7888fb24ec15fe1a9bac64f54d437c16fd81",
+   "ref": {
+    "step": 5,
+    "enc": "big5",
+    "used": "big5",
+    "forced": false,
+    "chars": 5,
+    "text_sha256": "f253db60277ff2d57bf693fe75d6b6ddb87bdb7cab0d4c86c7dfb729d559e5d6"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 10,
+    "text_sha256": "478668e48ccec515ec0b56759add25235d799bace4fc62bd26f37a4c4846166e"
+   }
+  },
+  {
+   "id": "synth/latin1_bytes",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\latin1_bytes",
+   "override": "",
+   "size": 8,
+   "sha256": "948b0a239e9afac392bef00bb9e66267617695d729aa58d8f2e7f0b39b8f8c6f",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "gbk",
+    "forced": false,
+    "chars": 7,
+    "text_sha256": "9ea25e72cfbf63d55e115ad72ad6bddfc1167e83501cd472a7cb434ab0f63bc1"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "gbk",
+    "forced": false,
+    "chars": 7,
+    "text_sha256": "9ea25e72cfbf63d55e115ad72ad6bddfc1167e83501cd472a7cb434ab0f63bc1"
+   }
+  },
+  {
+   "id": "synth/decl_1251",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\decl_1251",
+   "override": "",
+   "size": 68,
+   "sha256": "b09f16d951f15667fcef3d6f8d50784b892ccaff2df47523d546bd4d17a9d9ec",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 68,
+    "text_sha256": "a1af0c75b4f92ce6a9e5deb7d2b6951847542a9bdd0967cb2e7dfe0504158514"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 68,
+    "text_sha256": "a1af0c75b4f92ce6a9e5deb7d2b6951847542a9bdd0967cb2e7dfe0504158514"
+   }
+  },
+  {
+   "id": "synth/decl_utf8",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\decl_utf8",
+   "override": "",
+   "size": 74,
+   "sha256": "14da9afe7bac3f582bd72282eb16d5a7db9748bb261c0ca56dcee93f763d7a79",
+   "ref": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 61,
+    "text_sha256": "14da9afe7bac3f582bd72282eb16d5a7db9748bb261c0ca56dcee93f763d7a79"
+   },
+   "ours": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 61,
+    "text_sha256": "14da9afe7bac3f582bd72282eb16d5a7db9748bb261c0ca56dcee93f763d7a79"
+   }
+  },
+  {
+   "id": "synth/decl_lies_utf8",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\decl_lies_utf8",
+   "override": "",
+   "size": 61,
+   "sha256": "028c67015c757f7141baaf54032104aaf2b147a0e79f51a088c36a58e6495a37",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 61,
+    "text_sha256": "14da9afe7bac3f582bd72282eb16d5a7db9748bb261c0ca56dcee93f763d7a79"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 61,
+    "text_sha256": "14da9afe7bac3f582bd72282eb16d5a7db9748bb261c0ca56dcee93f763d7a79"
+   }
+  },
+  {
+   "id": "synth/decl_case_ws",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\decl_case_ws",
+   "override": "",
+   "size": 71,
+   "sha256": "d2e668bc412e4feedf5ac4498ec10579b833393a76ae77086689cec6d15bd6f2",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 71,
+    "text_sha256": "4f8201f9f70ffdc4bd47275abe84b1a3b0f05ce1e4dd3d12f628f653c002cf2c"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 71,
+    "text_sha256": "4f8201f9f70ffdc4bd47275abe84b1a3b0f05ce1e4dd3d12f628f653c002cf2c"
+   }
+  },
+  {
+   "id": "synth/decl_gb2312",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\decl_gb2312",
+   "override": "",
+   "size": 58,
+   "sha256": "5012cf399640b9a263aa02f8656f98824cd43974995d3c6bc7aaca6f6b46f038",
+   "ref": {
+    "step": 4,
+    "enc": "gb2312",
+    "used": "gb2312",
+    "forced": false,
+    "chars": 52,
+    "text_sha256": "fbd61ee4d0236f4a6a392584c19d65852752aaa75ea4aeef0ac54eb7999c4936"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 58,
+    "text_sha256": "a9740aaa0459e46793d8cc37e330120e42965e74b7b4aadd716c5d2cd9d926a3"
+   }
+  },
+  {
+   "id": "synth/decl_then_body_nl",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\decl_then_body_nl",
+   "override": "",
+   "size": 72,
+   "sha256": "14a5623bb80007b9f8e568d91df2599d91cae7a01b2c812bce8310a532e7f71b",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 72,
+    "text_sha256": "7bd7eb3a6617957927b7e960dc79a15ef09b94cfb23ba44563fbb50098e99574"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 72,
+    "text_sha256": "7bd7eb3a6617957927b7e960dc79a15ef09b94cfb23ba44563fbb50098e99574"
+   }
+  },
+  {
+   "id": "synth/ovr_1251_on_utf8",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\ovr_1251_on_utf8",
+   "override": "windows-1251",
+   "size": 29,
+   "sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564",
+   "ref": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   },
+   "ours": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   }
+  },
+  {
+   "id": "synth/ovr_utf8_on_1251",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\ovr_utf8_on_1251",
+   "override": "utf-8",
+   "size": 16,
+   "sha256": "efdac9046e0d8eb86367909ace2ae763b3d6cc0a6ea0ab17cb8b43c9ad268ace",
+   "ref": {
+    "step": 3,
+    "enc": "utf-8",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   },
+   "ours": {
+    "step": 3,
+    "enc": "utf-8",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   }
+  },
+  {
+   "id": "synth/ovr_auto_on_cp1251",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_sniff\\synth\\ovr_auto_on_cp1251",
+   "override": "auto",
+   "size": 16,
+   "sha256": "efdac9046e0d8eb86367909ace2ae763b3d6cc0a6ea0ab17cb8b43c9ad268ace",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 16,
+    "text_sha256": "4044b1fdc2b04cda6a8019b414ee458a38b187941579e8c67f537af3012d8564"
+   }
+  },
+  {
+   "id": "real/config-gameplay/000",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_agents_loot.xml",
+   "override": "",
+   "size": 297,
+   "sha256": "ce7a67866f5362b99087db822d506070037aee1d1bbb440a0f7aeb4371c325a7",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 297,
+    "text_sha256": "ce7a67866f5362b99087db822d506070037aee1d1bbb440a0f7aeb4371c325a7"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 297,
+    "text_sha256": "ce7a67866f5362b99087db822d506070037aee1d1bbb440a0f7aeb4371c325a7"
+   }
+  },
+  {
+   "id": "real/config-gameplay/001",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_criticals.xml",
+   "override": "",
+   "size": 57,
+   "sha256": "bd394e36c1893ebf72a127e1aced3a54b61e77318d29d9b123031f400b30cb31",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 57,
+    "text_sha256": "bd394e36c1893ebf72a127e1aced3a54b61e77318d29d9b123031f400b30cb31"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 57,
+    "text_sha256": "bd394e36c1893ebf72a127e1aced3a54b61e77318d29d9b123031f400b30cb31"
+   }
+  },
+  {
+   "id": "real/config-gameplay/002",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_agroprom.xml",
+   "override": "",
+   "size": 21013,
+   "sha256": "e55a71cb450fcdb46351410f1bad81cc3a33901cf3fa6689b30364bba0a1b8e7",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 21013,
+    "text_sha256": "e55a71cb450fcdb46351410f1bad81cc3a33901cf3fa6689b30364bba0a1b8e7"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 21013,
+    "text_sha256": "e55a71cb450fcdb46351410f1bad81cc3a33901cf3fa6689b30364bba0a1b8e7"
+   }
+  },
+  {
+   "id": "real/config-gameplay/003",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_bar.xml",
+   "override": "",
+   "size": 20775,
+   "sha256": "4afacef2ec633d280c94a1248cf6b8c79673f8d32949436d0b851b88368467d0",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 20775,
+    "text_sha256": "4afacef2ec633d280c94a1248cf6b8c79673f8d32949436d0b851b88368467d0"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 20775,
+    "text_sha256": "4afacef2ec633d280c94a1248cf6b8c79673f8d32949436d0b851b88368467d0"
+   }
+  },
+  {
+   "id": "real/config-gameplay/004",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_darkvalley.xml",
+   "override": "",
+   "size": 30570,
+   "sha256": "4e7e872c5892c903da89912ed1226efef11894aa0058793fbeb0c5514f134cd0",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 30570,
+    "text_sha256": "4e7e872c5892c903da89912ed1226efef11894aa0058793fbeb0c5514f134cd0"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 30570,
+    "text_sha256": "4e7e872c5892c903da89912ed1226efef11894aa0058793fbeb0c5514f134cd0"
+   }
+  },
+  {
+   "id": "real/config-gameplay/005",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_escape.xml",
+   "override": "",
+   "size": 58463,
+   "sha256": "7477a8bc4008984c0183f490e6a2203c016c82b127e14035630ec709391dfdfd",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 58463,
+    "text_sha256": "7477a8bc4008984c0183f490e6a2203c016c82b127e14035630ec709391dfdfd"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 58463,
+    "text_sha256": "7477a8bc4008984c0183f490e6a2203c016c82b127e14035630ec709391dfdfd"
+   }
+  },
+  {
+   "id": "real/config-gameplay/006",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_garbage.xml",
+   "override": "",
+   "size": 23740,
+   "sha256": "490de3b64b59d8c3d50ee85c7714fcf2c525b23f0f1e6fd8652fb183700efe50",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 23740,
+    "text_sha256": "490de3b64b59d8c3d50ee85c7714fcf2c525b23f0f1e6fd8652fb183700efe50"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 23740,
+    "text_sha256": "490de3b64b59d8c3d50ee85c7714fcf2c525b23f0f1e6fd8652fb183700efe50"
+   }
+  },
+  {
+   "id": "real/config-gameplay/007",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_general.xml",
+   "override": "",
+   "size": 2660,
+   "sha256": "1b288e80739a1d7c93189c549f98eb3567390dd6645a3a1520df609de5d839bb",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 2660,
+    "text_sha256": "1b288e80739a1d7c93189c549f98eb3567390dd6645a3a1520df609de5d839bb"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 2660,
+    "text_sha256": "1b288e80739a1d7c93189c549f98eb3567390dd6645a3a1520df609de5d839bb"
+   }
+  },
+  {
+   "id": "real/config-gameplay/008",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_military.xml",
+   "override": "",
+   "size": 19818,
+   "sha256": "c00cceaf75cb0df617d5b8ba013ec5543a06120fa0a4ed2dae8007d2b9e44e17",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 19818,
+    "text_sha256": "c00cceaf75cb0df617d5b8ba013ec5543a06120fa0a4ed2dae8007d2b9e44e17"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 19818,
+    "text_sha256": "c00cceaf75cb0df617d5b8ba013ec5543a06120fa0a4ed2dae8007d2b9e44e17"
+   }
+  },
+  {
+   "id": "real/config-gameplay/009",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_predbannik.xml",
+   "override": "",
+   "size": 48890,
+   "sha256": "2da01c591bcfcf125351344b47572a7788e3eadc10295cb79c28a2dbfe618a64",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 48890,
+    "text_sha256": "2da01c591bcfcf125351344b47572a7788e3eadc10295cb79c28a2dbfe618a64"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 48890,
+    "text_sha256": "2da01c591bcfcf125351344b47572a7788e3eadc10295cb79c28a2dbfe618a64"
+   }
+  },
+  {
+   "id": "real/config-gameplay/010",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_pripyat(1).xml",
+   "override": "",
+   "size": 5452,
+   "sha256": "47af05f3607c325bc0e5830dbe83cd0278ac533207859730b83b8d897d84e127",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 5452,
+    "text_sha256": "f1a10031148dea5c82b4fee0ccc21d9a637c592410d1bd50477c753514241991"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 5452,
+    "text_sha256": "f1a10031148dea5c82b4fee0ccc21d9a637c592410d1bd50477c753514241991"
+   }
+  },
+  {
+   "id": "real/config-gameplay/011",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_pripyat.xml",
+   "override": "",
+   "size": 5462,
+   "sha256": "371b784cfaf96ae55bd98d3c5bf67a851cf0a1825b2bfa21a91bfce133653574",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 5462,
+    "text_sha256": "371b784cfaf96ae55bd98d3c5bf67a851cf0a1825b2bfa21a91bfce133653574"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 5462,
+    "text_sha256": "371b784cfaf96ae55bd98d3c5bf67a851cf0a1825b2bfa21a91bfce133653574"
+   }
+  },
+  {
+   "id": "real/config-gameplay/012",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_radar(1).xml",
+   "override": "",
+   "size": 4227,
+   "sha256": "066c208e3bac8072d030c45135eea4c7ef7acef74b5a4af7f4779770271ea71a",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 4227,
+    "text_sha256": "9e93c12697e56b91a8b95971a00010c638b238a3e516dd47d518d42a2562390b"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 4227,
+    "text_sha256": "9e93c12697e56b91a8b95971a00010c638b238a3e516dd47d518d42a2562390b"
+   }
+  },
+  {
+   "id": "real/config-gameplay/013",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_radar.xml",
+   "override": "",
+   "size": 4239,
+   "sha256": "a370b7c7c60e0c65e3730b5b9df8af667b0d196baf4c88ad5e92f9144ae7210c",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 4239,
+    "text_sha256": "a370b7c7c60e0c65e3730b5b9df8af667b0d196baf4c88ad5e92f9144ae7210c"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 4239,
+    "text_sha256": "a370b7c7c60e0c65e3730b5b9df8af667b0d196baf4c88ad5e92f9144ae7210c"
+   }
+  },
+  {
+   "id": "real/config-gameplay/014",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_simulation(1).xml",
+   "override": "",
+   "size": 26121,
+   "sha256": "f37c84e83bd3cebb8dfc183461e382a8cf6a5a6ee0071981c423df2993c859f7",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 26121,
+    "text_sha256": "3b05e974c82f3fb4d278724b2ac6818b86334fe4b581246de91e72e6ba6a5593"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 26121,
+    "text_sha256": "3b05e974c82f3fb4d278724b2ac6818b86334fe4b581246de91e72e6ba6a5593"
+   }
+  },
+  {
+   "id": "real/config-gameplay/015",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_simulation.xml",
+   "override": "",
+   "size": 27171,
+   "sha256": "740aa3802f8d6681a38c3ab46f1d3e318530f0438fe6cbb54df35c6ffe6154de",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 27171,
+    "text_sha256": "740aa3802f8d6681a38c3ab46f1d3e318530f0438fe6cbb54df35c6ffe6154de"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 27171,
+    "text_sha256": "740aa3802f8d6681a38c3ab46f1d3e318530f0438fe6cbb54df35c6ffe6154de"
+   }
+  },
+  {
+   "id": "real/config-gameplay/016",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_yantar(1).xml",
+   "override": "",
+   "size": 14077,
+   "sha256": "52607e335506fe94752705dfb65cefabc3ccb671455cb56d363a2d137b7cb3e7",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 14077,
+    "text_sha256": "bc53ce4d5cb0c5f51ecdf87c451bc65f6b796e68387a806a2339f86fbd29d285"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 14077,
+    "text_sha256": "bc53ce4d5cb0c5f51ecdf87c451bc65f6b796e68387a806a2339f86fbd29d285"
+   }
+  },
+  {
+   "id": "real/config-gameplay/017",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_desc_yantar.xml",
+   "override": "",
+   "size": 14183,
+   "sha256": "4f64b7930cc2652c171be4f12487230a91193b14cbafa2ce67d680ceb4518aea",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 14183,
+    "text_sha256": "4f64b7930cc2652c171be4f12487230a91193b14cbafa2ce67d680ceb4518aea"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 14183,
+    "text_sha256": "4f64b7930cc2652c171be4f12487230a91193b14cbafa2ce67d680ceb4518aea"
+   }
+  },
+  {
+   "id": "real/config-gameplay/018",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_dialogs(1).xml",
+   "override": "",
+   "size": 1125,
+   "sha256": "2780164f29cbe22ece5c203989557b23c2fd5b6acf725cd521fa267a9e4a576a",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1125,
+    "text_sha256": "2780164f29cbe22ece5c203989557b23c2fd5b6acf725cd521fa267a9e4a576a"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1125,
+    "text_sha256": "2780164f29cbe22ece5c203989557b23c2fd5b6acf725cd521fa267a9e4a576a"
+   }
+  },
+  {
+   "id": "real/config-gameplay/019",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay\\character_dialogs.xml",
+   "override": "",
+   "size": 1187,
+   "sha256": "ffd22e7739240375196ec5700bbc4420d885618126650e27555b97077539eabe",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1187,
+    "text_sha256": "ffd22e7739240375196ec5700bbc4420d885618126650e27555b97077539eabe"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1187,
+    "text_sha256": "ffd22e7739240375196ec5700bbc4420d885618126650e27555b97077539eabe"
+   }
+  },
+  {
+   "id": "real/config-scripts/000",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\actorsleep.ltx",
+   "override": "",
+   "size": 69,
+   "sha256": "3a92aa3867ff9e6600b686fa32174719fa94e8230fce4e38c8eba7a08d8c97e7",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 69,
+    "text_sha256": "3a92aa3867ff9e6600b686fa32174719fa94e8230fce4e38c8eba7a08d8c97e7"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 69,
+    "text_sha256": "3a92aa3867ff9e6600b686fa32174719fa94e8230fce4e38c8eba7a08d8c97e7"
+   }
+  },
+  {
+   "id": "real/config-scripts/001",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_factory_assault_trigger.ltx",
+   "override": "",
+   "size": 427,
+   "sha256": "311794006bc20c8f02c995017f0627bbfa85a4d42cfa924214de14b0c7418875",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 427,
+    "text_sha256": "311794006bc20c8f02c995017f0627bbfa85a4d42cfa924214de14b0c7418875"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 427,
+    "text_sha256": "311794006bc20c8f02c995017f0627bbfa85a4d42cfa924214de14b0c7418875"
+   }
+  },
+  {
+   "id": "real/config-scripts/002",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_factory_radio_spammer.ltx",
+   "override": "",
+   "size": 642,
+   "sha256": "9d486783c57cb00f3765e1e244fa9c431291ab9d8f2aeed869be2e8ea6fb7a06",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 642,
+    "text_sha256": "9d486783c57cb00f3765e1e244fa9c431291ab9d8f2aeed869be2e8ea6fb7a06"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 642,
+    "text_sha256": "9d486783c57cb00f3765e1e244fa9c431291ab9d8f2aeed869be2e8ea6fb7a06"
+   }
+  },
+  {
+   "id": "real/config-scripts/003",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_helicopter1.ltx",
+   "override": "",
+   "size": 1404,
+   "sha256": "9e74b5d5b3745e8fdc847b36292a0677c5c5c6387158132b42d60e3f0881fde6",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1404,
+    "text_sha256": "9e74b5d5b3745e8fdc847b36292a0677c5c5c6387158132b42d60e3f0881fde6"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1404,
+    "text_sha256": "9e74b5d5b3745e8fdc847b36292a0677c5c5c6387158132b42d60e3f0881fde6"
+   }
+  },
+  {
+   "id": "real/config-scripts/004",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_helicopter2.ltx",
+   "override": "",
+   "size": 482,
+   "sha256": "4b23d4a0a051a8f922af285216488cc6b0606c3b9aa11118fa6548f116ae8ca1",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 482,
+    "text_sha256": "4b23d4a0a051a8f922af285216488cc6b0606c3b9aa11118fa6548f116ae8ca1"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 482,
+    "text_sha256": "4b23d4a0a051a8f922af285216488cc6b0606c3b9aa11118fa6548f116ae8ca1"
+   }
+  },
+  {
+   "id": "real/config-scripts/005",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_helicopter3.ltx",
+   "override": "",
+   "size": 651,
+   "sha256": "ad7a0ce20e2b78d40eaf3d639e25df161d4edb5a7eeb7e328d5fb9d628c6a480",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 651,
+    "text_sha256": "ad7a0ce20e2b78d40eaf3d639e25df161d4edb5a7eeb7e328d5fb9d628c6a480"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 651,
+    "text_sha256": "ad7a0ce20e2b78d40eaf3d639e25df161d4edb5a7eeb7e328d5fb9d628c6a480"
+   }
+  },
+  {
+   "id": "real/config-scripts/006",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_helicopter4.ltx",
+   "override": "",
+   "size": 663,
+   "sha256": "ec3996ed26febaf8480677accf6626fa25ba13c46d1c64f6fd1c791b6ac2adbc",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 663,
+    "text_sha256": "ec3996ed26febaf8480677accf6626fa25ba13c46d1c64f6fd1c791b6ac2adbc"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 663,
+    "text_sha256": "ec3996ed26febaf8480677accf6626fa25ba13c46d1c64f6fd1c791b6ac2adbc"
+   }
+  },
+  {
+   "id": "real/config-scripts/007",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_knockdown.ltx",
+   "override": "",
+   "size": 1013,
+   "sha256": "7bce7ede8099344dfbc1dd77b0fa879b471bee45bec97bf5a0d8753d568a718a",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1013,
+    "text_sha256": "7bce7ede8099344dfbc1dd77b0fa879b471bee45bec97bf5a0d8753d568a718a"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1013,
+    "text_sha256": "7bce7ede8099344dfbc1dd77b0fa879b471bee45bec97bf5a0d8753d568a718a"
+   }
+  },
+  {
+   "id": "real/config-scripts/008",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_krot.ltx",
+   "override": "",
+   "size": 4834,
+   "sha256": "e7a8fe86d88ca920c75e25a0c3384d693e76c71a9899d607e3e0a859bebb411d",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 4834,
+    "text_sha256": "e7a8fe86d88ca920c75e25a0c3384d693e76c71a9899d607e3e0a859bebb411d"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 4834,
+    "text_sha256": "e7a8fe86d88ca920c75e25a0c3384d693e76c71a9899d607e3e0a859bebb411d"
+   }
+  },
+  {
+   "id": "real/config-scripts/009",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_krot_combat_trigger.ltx",
+   "override": "",
+   "size": 264,
+   "sha256": "a1206e1e516e1d7eb346ac45470cc9177587aa4537c48c129dd70ed3ac218a62",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 264,
+    "text_sha256": "a1206e1e516e1d7eb346ac45470cc9177587aa4537c48c129dd70ed3ac218a62"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 264,
+    "text_sha256": "a1206e1e516e1d7eb346ac45470cc9177587aa4537c48c129dd70ed3ac218a62"
+   }
+  },
+  {
+   "id": "real/config-scripts/010",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_krot_old.ltx",
+   "override": "",
+   "size": 1777,
+   "sha256": "19919e5cdcc1571ae98ba8d6e39b37a35d264cc46114b50b7cc225a5c2adf8d4",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1777,
+    "text_sha256": "19919e5cdcc1571ae98ba8d6e39b37a35d264cc46114b50b7cc225a5c2adf8d4"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1777,
+    "text_sha256": "19919e5cdcc1571ae98ba8d6e39b37a35d264cc46114b50b7cc225a5c2adf8d4"
+   }
+  },
+  {
+   "id": "real/config-scripts/011",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_nii_heli(1).ltx",
+   "override": "",
+   "size": 868,
+   "sha256": "68c5d8d388d135e0d95c84e8f2285de2dd72e9c5e1787810d46ed0b320a1354a",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 868,
+    "text_sha256": "68c5d8d388d135e0d95c84e8f2285de2dd72e9c5e1787810d46ed0b320a1354a"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 868,
+    "text_sha256": "68c5d8d388d135e0d95c84e8f2285de2dd72e9c5e1787810d46ed0b320a1354a"
+   }
+  },
+  {
+   "id": "real/config-scripts/012",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_nii_heli.ltx",
+   "override": "",
+   "size": 868,
+   "sha256": "68c5d8d388d135e0d95c84e8f2285de2dd72e9c5e1787810d46ed0b320a1354a",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 868,
+    "text_sha256": "68c5d8d388d135e0d95c84e8f2285de2dd72e9c5e1787810d46ed0b320a1354a"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 868,
+    "text_sha256": "68c5d8d388d135e0d95c84e8f2285de2dd72e9c5e1787810d46ed0b320a1354a"
+   }
+  },
+  {
+   "id": "real/config-scripts/013",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_nii_rupor(1).ltx",
+   "override": "",
+   "size": 982,
+   "sha256": "3c0da5dbeb8530c7aae21de19f01c84022333c1fdaa2eea12bd2d0f3c9c09ffe",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 982,
+    "text_sha256": "3c0da5dbeb8530c7aae21de19f01c84022333c1fdaa2eea12bd2d0f3c9c09ffe"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 982,
+    "text_sha256": "3c0da5dbeb8530c7aae21de19f01c84022333c1fdaa2eea12bd2d0f3c9c09ffe"
+   }
+  },
+  {
+   "id": "real/config-scripts/014",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_nii_rupor.ltx",
+   "override": "",
+   "size": 982,
+   "sha256": "3c0da5dbeb8530c7aae21de19f01c84022333c1fdaa2eea12bd2d0f3c9c09ffe",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 982,
+    "text_sha256": "3c0da5dbeb8530c7aae21de19f01c84022333c1fdaa2eea12bd2d0f3c9c09ffe"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 982,
+    "text_sha256": "3c0da5dbeb8530c7aae21de19f01c84022333c1fdaa2eea12bd2d0f3c9c09ffe"
+   }
+  },
+  {
+   "id": "real/config-scripts/015",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_ratcatcher(1).ltx",
+   "override": "",
+   "size": 589,
+   "sha256": "cfe8812fa6fc45bd21b75fadd262e4a89c4e0d7757d89930893087d80a69346a",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 589,
+    "text_sha256": "cfe8812fa6fc45bd21b75fadd262e4a89c4e0d7757d89930893087d80a69346a"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 589,
+    "text_sha256": "cfe8812fa6fc45bd21b75fadd262e4a89c4e0d7757d89930893087d80a69346a"
+   }
+  },
+  {
+   "id": "real/config-scripts/016",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\agr\\agr_ratcatcher.ltx",
+   "override": "",
+   "size": 589,
+   "sha256": "cfe8812fa6fc45bd21b75fadd262e4a89c4e0d7757d89930893087d80a69346a",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 589,
+    "text_sha256": "cfe8812fa6fc45bd21b75fadd262e4a89c4e0d7757d89930893087d80a69346a"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 589,
+    "text_sha256": "cfe8812fa6fc45bd21b75fadd262e4a89c4e0d7757d89930893087d80a69346a"
+   }
+  },
+  {
+   "id": "real/config-scripts/017",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\arena_respawn_custom_data.ltx",
+   "override": "",
+   "size": 337,
+   "sha256": "e7fbc49ff73bb3599978333691bcc23f39f1540c2589b8ab5c7b08cf6e46b494",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 337,
+    "text_sha256": "e7fbc49ff73bb3599978333691bcc23f39f1540c2589b8ab5c7b08cf6e46b494"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 337,
+    "text_sha256": "e7fbc49ff73bb3599978333691bcc23f39f1540c2589b8ab5c7b08cf6e46b494"
+   }
+  },
+  {
+   "id": "real/config-scripts/018",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\bar_arena_combat_triger.ltx",
+   "override": "",
+   "size": 3769,
+   "sha256": "17e2c6cd4003c4c1f0c207fd5102e75f1b02254911f83f1dd6bf89d28ee6d1b9",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 3769,
+    "text_sha256": "17e2c6cd4003c4c1f0c207fd5102e75f1b02254911f83f1dd6bf89d28ee6d1b9"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 3769,
+    "text_sha256": "17e2c6cd4003c4c1f0c207fd5102e75f1b02254911f83f1dd6bf89d28ee6d1b9"
+   }
+  },
+  {
+   "id": "real/config-scripts/019",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\scripts\\bar_arena_door1.ltx",
+   "override": "",
+   "size": 490,
+   "sha256": "91d4a631f0b218be44118c8c1033325b694c9d376e73ec93ea6515dba2291147",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 490,
+    "text_sha256": "91d4a631f0b218be44118c8c1033325b694c9d376e73ec93ea6515dba2291147"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 490,
+    "text_sha256": "91d4a631f0b218be44118c8c1033325b694c9d376e73ec93ea6515dba2291147"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/000",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_artifacts.xml",
+   "override": "",
+   "size": 1151,
+   "sha256": "e6a5694dc231b1afbf11bf3da534269b6d26523773a910c3359f7e09b71b7759",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1151,
+    "text_sha256": "e6a5694dc231b1afbf11bf3da534269b6d26523773a910c3359f7e09b71b7759"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1151,
+    "text_sha256": "e6a5694dc231b1afbf11bf3da534269b6d26523773a910c3359f7e09b71b7759"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/001",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_criticals.xml",
+   "override": "",
+   "size": 57,
+   "sha256": "bd394e36c1893ebf72a127e1aced3a54b61e77318d29d9b123031f400b30cb31",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 57,
+    "text_sha256": "bd394e36c1893ebf72a127e1aced3a54b61e77318d29d9b123031f400b30cb31"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 57,
+    "text_sha256": "bd394e36c1893ebf72a127e1aced3a54b61e77318d29d9b123031f400b30cb31"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/002",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_agroprom.xml",
+   "override": "",
+   "size": 6268,
+   "sha256": "daea2d8dc2a5fff907c0cf9fef8148c65471f971573c0e69d7f2e7990aa08a74",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 6133,
+    "text_sha256": "60983273241595cafb0551b5d23c3adfa34be63280a6ebb9787b62d4e4972200"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 6133,
+    "text_sha256": "60983273241595cafb0551b5d23c3adfa34be63280a6ebb9787b62d4e4972200"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/003",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_area_caravan.xml",
+   "override": "",
+   "size": 45697,
+   "sha256": "a53291d1b8ac2a4b3f94b06e28b8f9ffe6dc190c155ffa627e9a97e3311b488a",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 45697,
+    "text_sha256": "a53291d1b8ac2a4b3f94b06e28b8f9ffe6dc190c155ffa627e9a97e3311b488a"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 45697,
+    "text_sha256": "a53291d1b8ac2a4b3f94b06e28b8f9ffe6dc190c155ffa627e9a97e3311b488a"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/004",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_area_fal.xml",
+   "override": "",
+   "size": 7662,
+   "sha256": "36ecc8efb6cf15176b653aced23181e491200358b8c36be8ba19c0fc41d874a5",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 7662,
+    "text_sha256": "36ecc8efb6cf15176b653aced23181e491200358b8c36be8ba19c0fc41d874a5"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 7662,
+    "text_sha256": "36ecc8efb6cf15176b653aced23181e491200358b8c36be8ba19c0fc41d874a5"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/005",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_bar.xml",
+   "override": "",
+   "size": 36222,
+   "sha256": "ccee7cb042fb4cc8d65282e3b3e0d2dd0207563f7d8b225e1caaedac9c5341f9",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 36222,
+    "text_sha256": "dc6e35efd448a7f18a4a704c3624791719d432b68a78ce0631b97f292b822c6e"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 36222,
+    "text_sha256": "dc6e35efd448a7f18a4a704c3624791719d432b68a78ce0631b97f292b822c6e"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/006",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_darkvalley.xml",
+   "override": "",
+   "size": 10076,
+   "sha256": "633ea3d82d1a0d07a587b03830e8d1089b0e26cdc342201709d5f5232e7210a1",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 9765,
+    "text_sha256": "6bbe308cae765b4ce8c1f5047d8f8bfd18fddb30d60ad42270e45897138f38c9"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 9765,
+    "text_sha256": "6bbe308cae765b4ce8c1f5047d8f8bfd18fddb30d60ad42270e45897138f38c9"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/007",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_deadcity.xml",
+   "override": "",
+   "size": 6428,
+   "sha256": "d813a58240a12f6707bd4dd50cb8d72a56069d90281c8b73c4337491d1997342",
+   "ref": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 6275,
+    "text_sha256": "d813a58240a12f6707bd4dd50cb8d72a56069d90281c8b73c4337491d1997342"
+   },
+   "ours": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 6275,
+    "text_sha256": "d813a58240a12f6707bd4dd50cb8d72a56069d90281c8b73c4337491d1997342"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/008",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_escape.xml",
+   "override": "",
+   "size": 9949,
+   "sha256": "6c50eda8f514a090479dcfbc3862760ba02d40393e0288c6b3d4f057b2a21176",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 9858,
+    "text_sha256": "43393832669c7f23df9529c525c5e832dac5c90a1e5088e8a022c86bb2238bc2"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 9858,
+    "text_sha256": "43393832669c7f23df9529c525c5e832dac5c90a1e5088e8a022c86bb2238bc2"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/009",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_general.xml",
+   "override": "",
+   "size": 665,
+   "sha256": "becec2b918e2d2a16f804a5bfd7180ec7db88557a08eeb052ee4d09eae1d177e",
+   "ref": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 665,
+    "text_sha256": "becec2b918e2d2a16f804a5bfd7180ec7db88557a08eeb052ee4d09eae1d177e"
+   },
+   "ours": {
+    "step": 4,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 665,
+    "text_sha256": "becec2b918e2d2a16f804a5bfd7180ec7db88557a08eeb052ee4d09eae1d177e"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/010",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_general_actor.xml",
+   "override": "",
+   "size": 6005,
+   "sha256": "adf1aa2675bbb959d2c73ca1d37ac5deb72e8d613353b7325bb55787f7c375f0",
+   "ref": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 5961,
+    "text_sha256": "adf1aa2675bbb959d2c73ca1d37ac5deb72e8d613353b7325bb55787f7c375f0"
+   },
+   "ours": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 5961,
+    "text_sha256": "adf1aa2675bbb959d2c73ca1d37ac5deb72e8d613353b7325bb55787f7c375f0"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/011",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_general_army.xml",
+   "override": "",
+   "size": 57109,
+   "sha256": "04666525ba7ac5a29678cd1893e40af56ff6767de024f2311bcfd9f319056bb3",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 54026,
+    "text_sha256": "53a23d7a4281336ffac5bf52d835471b69ed8514f47db4e5093d85a5a20a65ab"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 54026,
+    "text_sha256": "53a23d7a4281336ffac5bf52d835471b69ed8514f47db4e5093d85a5a20a65ab"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/012",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_general_bandit.xml",
+   "override": "",
+   "size": 103763,
+   "sha256": "97578c199518d84285b253a978b79f37ad289b447d81c0634f4fed0d94ece6ff",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 98392,
+    "text_sha256": "d5262359690dd5d198c67c3a35824294c246e81247eb28d70075f40145b88968"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 98392,
+    "text_sha256": "d5262359690dd5d198c67c3a35824294c246e81247eb28d70075f40145b88968"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/013",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_general_csky.xml",
+   "override": "",
+   "size": 68530,
+   "sha256": "2a13db6529ea323db8d13faf280dd148d8b172974a1dd223add09ef0abcc5ca7",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 64787,
+    "text_sha256": "3b0a332f95fff013f0493d00ed951e374a7d694fa107f55a60490805818da199"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 64787,
+    "text_sha256": "3b0a332f95fff013f0493d00ed951e374a7d694fa107f55a60490805818da199"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/014",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_general_dolg.xml",
+   "override": "",
+   "size": 83823,
+   "sha256": "1fd1dfe6270f29d23eccadf6ca032e539bdd8b23db5cc91a27b1987657cc1d04",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 79420,
+    "text_sha256": "f4e4c3b9d6b4fefeb0378b47ab5370fc09a756997edd3eb3d6930346fca8b2ab"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 79420,
+    "text_sha256": "f4e4c3b9d6b4fefeb0378b47ab5370fc09a756997edd3eb3d6930346fca8b2ab"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/015",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_general_ecolog.xml",
+   "override": "",
+   "size": 60144,
+   "sha256": "2abaa02979bffc900bdc3602fb7e19fe8bb0ff3fc4c2cc3d9d8db18424936309",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 57941,
+    "text_sha256": "2b35f86ec7ad7e12effbf160ddcc3d5b8819a366c4e8351dc89e487ec50e5f5d"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 57941,
+    "text_sha256": "2b35f86ec7ad7e12effbf160ddcc3d5b8819a366c4e8351dc89e487ec50e5f5d"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/016",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_general_freedom.xml",
+   "override": "",
+   "size": 99409,
+   "sha256": "8e90caa84653d05951f6e4f10e84f88f0e6ed3f7320dd878a7fcb1d7324623b2",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 94346,
+    "text_sha256": "548032555acf0df702b0052488a10549c6145844e2f506f777df59867c29ddcb"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 94346,
+    "text_sha256": "548032555acf0df702b0052488a10549c6145844e2f506f777df59867c29ddcb"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/017",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_general_killer.xml",
+   "override": "",
+   "size": 63575,
+   "sha256": "41474d825c38da35a5f039b23a2a096dd6e77e0c8c78158ac203f1447e25ca0a",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 60272,
+    "text_sha256": "1788514f888f41c7a57c259cc909d5db7daa2ed054fa295a36324a0d9c5da100"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 60272,
+    "text_sha256": "1788514f888f41c7a57c259cc909d5db7daa2ed054fa295a36324a0d9c5da100"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/018",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_general_monolith.xml",
+   "override": "",
+   "size": 69846,
+   "sha256": "def5f35a4d394b5375f159bba41de13194f0ec017a135f824a7962fcfeddc68d",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 66235,
+    "text_sha256": "7af5916c5f796e2d6717bf79c752f11c595b3e718621f6b09fc5fc22e4e50ce3"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 66235,
+    "text_sha256": "7af5916c5f796e2d6717bf79c752f11c595b3e718621f6b09fc5fc22e4e50ce3"
+   }
+  },
+  {
+   "id": "real/configs-gameplay/019",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\gameplay\\character_desc_general_stalker.xml",
+   "override": "",
+   "size": 273146,
+   "sha256": "4d68784cbcf8e69fd51102f7655081264882f2194be6233893f0753097a1fabb",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 259195,
+    "text_sha256": "c2e41a860e43f5aa16b553cac7a0e18160e804d7bfb586ec7bdd2c9fbe19aa8d"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 259195,
+    "text_sha256": "c2e41a860e43f5aa16b553cac7a0e18160e804d7bfb586ec7bdd2c9fbe19aa8d"
+   }
+  },
+  {
+   "id": "real/configs-scripts/000",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\actor_inventory_box.ltx",
+   "override": "",
+   "size": 101,
+   "sha256": "f826225a3dfe8369171d04a20f1aa1cdaf854925bd98180236a43b312c0cd59d",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 101,
+    "text_sha256": "f826225a3dfe8369171d04a20f1aa1cdaf854925bd98180236a43b312c0cd59d"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 101,
+    "text_sha256": "f826225a3dfe8369171d04a20f1aa1cdaf854925bd98180236a43b312c0cd59d"
+   }
+  },
+  {
+   "id": "real/configs-scripts/001",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_1_6_barman_army_mlr.ltx",
+   "override": "",
+   "size": 982,
+   "sha256": "3a7216533ce7442557b0e263ecd8ed09af1cdbd55f8e62fbacdd116a513ce666",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 982,
+    "text_sha256": "3a7216533ce7442557b0e263ecd8ed09af1cdbd55f8e62fbacdd116a513ce666"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 982,
+    "text_sha256": "3a7216533ce7442557b0e263ecd8ed09af1cdbd55f8e62fbacdd116a513ce666"
+   }
+  },
+  {
+   "id": "real/configs-scripts/002",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_1_6_medic_army_mlr.ltx",
+   "override": "",
+   "size": 964,
+   "sha256": "89ccad113572fc0cdee13cf44c460a68b3cbfa22cf38e7fa1cca463f9cc6a1fc",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 964,
+    "text_sha256": "89ccad113572fc0cdee13cf44c460a68b3cbfa22cf38e7fa1cca463f9cc6a1fc"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 964,
+    "text_sha256": "89ccad113572fc0cdee13cf44c460a68b3cbfa22cf38e7fa1cca463f9cc6a1fc"
+   }
+  },
+  {
+   "id": "real/configs-scripts/003",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_army_hero_degtyarev.ltx",
+   "override": "",
+   "size": 918,
+   "sha256": "7470352ccf38b47c8819f84bcb0e33d35069b7be0c8195ccdb137bd9b6755a53",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 918,
+    "text_sha256": "7470352ccf38b47c8819f84bcb0e33d35069b7be0c8195ccdb137bd9b6755a53"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 918,
+    "text_sha256": "7470352ccf38b47c8819f84bcb0e33d35069b7be0c8195ccdb137bd9b6755a53"
+   }
+  },
+  {
+   "id": "real/configs-scripts/004",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_army_megafone.ltx",
+   "override": "",
+   "size": 1209,
+   "sha256": "c22d9656788aac06cfb7f5799854c62eee8672c83c33f607653d00bdfbc758a5",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1209,
+    "text_sha256": "c22d9656788aac06cfb7f5799854c62eee8672c83c33f607653d00bdfbc758a5"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1209,
+    "text_sha256": "c22d9656788aac06cfb7f5799854c62eee8672c83c33f607653d00bdfbc758a5"
+   }
+  },
+  {
+   "id": "real/configs-scripts/005",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_btr1.ltx",
+   "override": "",
+   "size": 310,
+   "sha256": "5a59be9504ade1ae40397af4064320d6d5d397416de592f4a729e0afc1c81cbf",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 310,
+    "text_sha256": "5a59be9504ade1ae40397af4064320d6d5d397416de592f4a729e0afc1c81cbf"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 310,
+    "text_sha256": "5a59be9504ade1ae40397af4064320d6d5d397416de592f4a729e0afc1c81cbf"
+   }
+  },
+  {
+   "id": "real/configs-scripts/006",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_btr2.ltx",
+   "override": "",
+   "size": 310,
+   "sha256": "7018239938b0b2092392a87271496d9ddaa6a7583efb1eea55c5b654b835ad83",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 310,
+    "text_sha256": "7018239938b0b2092392a87271496d9ddaa6a7583efb1eea55c5b654b835ad83"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 310,
+    "text_sha256": "7018239938b0b2092392a87271496d9ddaa6a7583efb1eea55c5b654b835ad83"
+   }
+  },
+  {
+   "id": "real/configs-scripts/007",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_crow_spawner.ltx",
+   "override": "",
+   "size": 181,
+   "sha256": "9a38f3ca9b1c43c1d2d32e036dd0f094305e2c06f939555982d35b89369224b6",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 181,
+    "text_sha256": "9a38f3ca9b1c43c1d2d32e036dd0f094305e2c06f939555982d35b89369224b6"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 181,
+    "text_sha256": "9a38f3ca9b1c43c1d2d32e036dd0f094305e2c06f939555982d35b89369224b6"
+   }
+  },
+  {
+   "id": "real/configs-scripts/008",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_smart_terrain_1_3_smart_logic.ltx",
+   "override": "",
+   "size": 1337,
+   "sha256": "36cbafec81ad291f0241133c8ab7e520bceb1aef84c78a4abd64ca5613c818a9",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1337,
+    "text_sha256": "36cbafec81ad291f0241133c8ab7e520bceb1aef84c78a4abd64ca5613c818a9"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1337,
+    "text_sha256": "36cbafec81ad291f0241133c8ab7e520bceb1aef84c78a4abd64ca5613c818a9"
+   }
+  },
+  {
+   "id": "real/configs-scripts/009",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_smart_terrain_1_6_base_defense_quest.ltx",
+   "override": "",
+   "size": 2833,
+   "sha256": "18aa5878475701cac46626b19f1c44b2468074f51e11b8512c81631cfaab012d",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 2833,
+    "text_sha256": "18aa5878475701cac46626b19f1c44b2468074f51e11b8512c81631cfaab012d"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 2833,
+    "text_sha256": "18aa5878475701cac46626b19f1c44b2468074f51e11b8512c81631cfaab012d"
+   }
+  },
+  {
+   "id": "real/configs-scripts/010",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_smart_terrain_1_6_minigun.ltx",
+   "override": "",
+   "size": 578,
+   "sha256": "7dffdb713862f0cf6b3ab02c6074067441c85eeaee83ebe6ce14f86dfe42da09",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 578,
+    "text_sha256": "7dffdb713862f0cf6b3ab02c6074067441c85eeaee83ebe6ce14f86dfe42da09"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 578,
+    "text_sha256": "7dffdb713862f0cf6b3ab02c6074067441c85eeaee83ebe6ce14f86dfe42da09"
+   }
+  },
+  {
+   "id": "real/configs-scripts/011",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_smart_terrain_1_6_near_1_radio.ltx",
+   "override": "",
+   "size": 23,
+   "sha256": "4cee988c022a7a20d022c4410d016519505ee0fcd6083f55b91602d8ed3da336",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 23,
+    "text_sha256": "4cee988c022a7a20d022c4410d016519505ee0fcd6083f55b91602d8ed3da336"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 23,
+    "text_sha256": "4cee988c022a7a20d022c4410d016519505ee0fcd6083f55b91602d8ed3da336"
+   }
+  },
+  {
+   "id": "real/configs-scripts/012",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_smart_terrain_1_6_near_1_smart_logic.ltx",
+   "override": "",
+   "size": 14403,
+   "sha256": "0aa92d1e7287d23eba614a968019270bec2a51302f21f4e68de29cd514cfd3a8",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 14403,
+    "text_sha256": "0aa92d1e7287d23eba614a968019270bec2a51302f21f4e68de29cd514cfd3a8"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 14403,
+    "text_sha256": "0aa92d1e7287d23eba614a968019270bec2a51302f21f4e68de29cd514cfd3a8"
+   }
+  },
+  {
+   "id": "real/configs-scripts/013",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_smart_terrain_1_6_near_2_radio.ltx",
+   "override": "",
+   "size": 21,
+   "sha256": "ff4d1adcaf893899efd58dfab12d2c92ae6dcafed369b2456b18c1f936a9f89d",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 21,
+    "text_sha256": "ff4d1adcaf893899efd58dfab12d2c92ae6dcafed369b2456b18c1f936a9f89d"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 21,
+    "text_sha256": "ff4d1adcaf893899efd58dfab12d2c92ae6dcafed369b2456b18c1f936a9f89d"
+   }
+  },
+  {
+   "id": "real/configs-scripts/014",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_smart_terrain_1_6_near_2_smart_logic.ltx",
+   "override": "",
+   "size": 1259,
+   "sha256": "5e5d2eb2a9592fcfd0cccff63bcc924243a03134f58c18ea01dab6f2fd80c4a0",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1259,
+    "text_sha256": "5e5d2eb2a9592fcfd0cccff63bcc924243a03134f58c18ea01dab6f2fd80c4a0"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1259,
+    "text_sha256": "5e5d2eb2a9592fcfd0cccff63bcc924243a03134f58c18ea01dab6f2fd80c4a0"
+   }
+  },
+  {
+   "id": "real/configs-scripts/015",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_smart_terrain_1_6_radio.ltx",
+   "override": "",
+   "size": 21,
+   "sha256": "ff4d1adcaf893899efd58dfab12d2c92ae6dcafed369b2456b18c1f936a9f89d",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 21,
+    "text_sha256": "ff4d1adcaf893899efd58dfab12d2c92ae6dcafed369b2456b18c1f936a9f89d"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 21,
+    "text_sha256": "ff4d1adcaf893899efd58dfab12d2c92ae6dcafed369b2456b18c1f936a9f89d"
+   }
+  },
+  {
+   "id": "real/configs-scripts/016",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_smart_terrain_1_6_smart_logic.ltx",
+   "override": "",
+   "size": 18521,
+   "sha256": "1e78d8cb1b0a7aed699e9d6fe8fc8baefb983cd9b69d82213e68204a66d76114",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 18521,
+    "text_sha256": "1e78d8cb1b0a7aed699e9d6fe8fc8baefb983cd9b69d82213e68204a66d76114"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 18521,
+    "text_sha256": "1e78d8cb1b0a7aed699e9d6fe8fc8baefb983cd9b69d82213e68204a66d76114"
+   }
+  },
+  {
+   "id": "real/configs-scripts/017",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_smart_terrain_4_4_near_1_smart_logic.ltx",
+   "override": "",
+   "size": 1586,
+   "sha256": "6dcaec5f3ae1a2e5a285db703094ef744225a79c12b36b589ca5efe7bcb41dce",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1586,
+    "text_sha256": "6dcaec5f3ae1a2e5a285db703094ef744225a79c12b36b589ca5efe7bcb41dce"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1586,
+    "text_sha256": "6dcaec5f3ae1a2e5a285db703094ef744225a79c12b36b589ca5efe7bcb41dce"
+   }
+  },
+  {
+   "id": "real/configs-scripts/018",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_smart_terrain_4_4_near_2_smart_logic.ltx",
+   "override": "",
+   "size": 1586,
+   "sha256": "3d1f720786ae96634caec9695ef65327eac810fc25222f5c1197d9a85b67d03f",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1586,
+    "text_sha256": "3d1f720786ae96634caec9695ef65327eac810fc25222f5c1197d9a85b67d03f"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1586,
+    "text_sha256": "3d1f720786ae96634caec9695ef65327eac810fc25222f5c1197d9a85b67d03f"
+   }
+  },
+  {
+   "id": "real/configs-scripts/019",
+   "path": "E:\\Software\\Games\\STALKER\\Localization\\Gamedata\\A.R.E.A\\Original\\configs\\scripts\\agroprom\\agr_smart_terrain_4_4_near_3_smart_logic.ltx",
+   "override": "",
+   "size": 1586,
+   "sha256": "1af9d472fb44ceb58641b0cc09a569eff55689faf76496a84b4502399d9f5d8f",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1586,
+    "text_sha256": "1af9d472fb44ceb58641b0cc09a569eff55689faf76496a84b4502399d9f5d8f"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1586,
+    "text_sha256": "1af9d472fb44ceb58641b0cc09a569eff55689faf76496a84b4502399d9f5d8f"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/000",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\BattlEye\\BEClient.dll",
+   "override": "",
+   "size": 73728,
+   "sha256": "e5039b580e3437912f2b115d36e337259931d18543e75b35f67072fe6bc0f85e",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 73728,
+    "text_sha256": "0555494895aef92ac2868fb541381e060ab1413db0acb7c68d0e0190dac33569"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 73728,
+    "text_sha256": "0555494895aef92ac2868fb541381e060ab1413db0acb7c68d0e0190dac33569"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/001",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\BattlEye\\BEServer.dll",
+   "override": "",
+   "size": 77824,
+   "sha256": "d2365e678088bef2018729c845a8a2bcec7ce924457fdf9e94705ff4d8d26885",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 77824,
+    "text_sha256": "cb270a8ff0dff4b46503e86f530748ee97d4bcb7c7422f4ce4b5068ede9bfa02"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 77824,
+    "text_sha256": "cb270a8ff0dff4b46503e86f530748ee97d4bcb7c7422f4ce4b5068ede9bfa02"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/002",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\BugTrap.dll",
+   "override": "",
+   "size": 180224,
+   "sha256": "551fe652b47d4bf49523ac6cdeaec29ae91f268dd423d1baeaa46bb86b0133fd",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 180224,
+    "text_sha256": "8bc0c49760db8277d5d8bb2039af0898acfa1610876aba9568dcd5ec684bb5d3"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 180224,
+    "text_sha256": "8bc0c49760db8277d5d8bb2039af0898acfa1610876aba9568dcd5ec684bb5d3"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/003",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\d3dx9_31.dll",
+   "override": "",
+   "size": 2414360,
+   "sha256": "e2065619fe6eb0034833b1dc0369deb4a6edc3110e38a1132eeafcf430c578a5",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 2414360,
+    "text_sha256": "56de5a1a0a0d533f903bc0fe272992ef8ccab26a7f8c91c6942117708cf19b8e"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 2414360,
+    "text_sha256": "56de5a1a0a0d533f903bc0fe272992ef8ccab26a7f8c91c6942117708cf19b8e"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/004",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\d3dx9_34.dll",
+   "override": "",
+   "size": 3497832,
+   "sha256": "b6f77f06518d35345fb61172b6a13159125ed60c469d28b1a2e07970e9ddf81d",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 3497832,
+    "text_sha256": "3aeea349205d3432a9ac1a3c7d186086a400b948e50e12b41c4e57de43e8e1c3"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 3497832,
+    "text_sha256": "3aeea349205d3432a9ac1a3c7d186086a400b948e50e12b41c4e57de43e8e1c3"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/005",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dbghelp.dll",
+   "override": "",
+   "size": 640000,
+   "sha256": "8f20f178991501542d542c8d613b036a15cd55370697aa82c0f7800ff4fbcc4e",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 640000,
+    "text_sha256": "df456de03a5254f2b24c013b5edd76bef6098cb4e0cb966d1b3c27e9f8388cdc"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 640000,
+    "text_sha256": "df456de03a5254f2b24c013b5edd76bef6098cb4e0cb966d1b3c27e9f8388cdc"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/006",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dedicated\\Microsoft.VC80.CRT.manifest",
+   "override": "",
+   "size": 1869,
+   "sha256": "17ad1a64ba1c382abf89341b40950f9b31f95015c6b0d3e25925bfebc1b53eb5",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 1866,
+    "text_sha256": "e5656bc3d80740087d9dd079bdeb6ef657fc33678988534498cc0b478cebbd8f"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 1866,
+    "text_sha256": "e5656bc3d80740087d9dd079bdeb6ef657fc33678988534498cc0b478cebbd8f"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/007",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dedicated\\msvcp80.dll",
+   "override": "",
+   "size": 548864,
+   "sha256": "2026f3c4f830dff6883b88e2647272a52a132f25eb42c0d423e36b3f65a94d08",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 548864,
+    "text_sha256": "6b1e4166668059876fde5d0f3f4b65d9270f0062c21d06e5a357f594f9a9f02e"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 548864,
+    "text_sha256": "6b1e4166668059876fde5d0f3f4b65d9270f0062c21d06e5a357f594f9a9f02e"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/008",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dedicated\\msvcr80.dll",
+   "override": "",
+   "size": 626688,
+   "sha256": "02bdde38e4c6bd795a092d496b8d6060cdbe71e22ef4d7a204e3050c1be44fa9",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 626688,
+    "text_sha256": "4144cb3b3c9e9a57013f4f8539e80debdb66d8b9de61335d4e159a9dee4abb1d"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 626688,
+    "text_sha256": "4144cb3b3c9e9a57013f4f8539e80debdb66d8b9de61335d4e159a9dee4abb1d"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/009",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dedicated\\XR_3DA.exe",
+   "override": "",
+   "size": 1599560,
+   "sha256": "0cb24889c24c0ec8a0b5e9a0c2ad7be7f305448e264e8fa647ac08b31a9bffd6",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 1599560,
+    "text_sha256": "7833a147c2feebf3c7d5126f202390edb5381287f22c58221d7692d666d1699d"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 1599560,
+    "text_sha256": "7833a147c2feebf3c7d5126f202390edb5381287f22c58221d7692d666d1699d"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/010",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\eax.dll",
+   "override": "",
+   "size": 135168,
+   "sha256": "e56ee2d67bfeebbbcaa154b61e0ef248b0a25d6a1e65450f0ed86231d1768e1c",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 135168,
+    "text_sha256": "96370bc16207446d61f2bfcb7d8c7b1605be65ae9fd5f914414f1069095ff5bf"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 135168,
+    "text_sha256": "96370bc16207446d61f2bfcb7d8c7b1605be65ae9fd5f914414f1069095ff5bf"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/011",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\goggame.dll",
+   "override": "",
+   "size": 244536,
+   "sha256": "066e162f356a67aabb33c7731ce34d7c804c3a3e29ac80bddbe15eef66b0a344",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 244536,
+    "text_sha256": "48bd737bfb173c3f3da2dda6f6cf1a1beb4654a8c2cc12ff9c753db0714293a8"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 244536,
+    "text_sha256": "48bd737bfb173c3f3da2dda6f6cf1a1beb4654a8c2cc12ff9c753db0714293a8"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/012",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\Microsoft.VC80.CRT.manifest",
+   "override": "",
+   "size": 1869,
+   "sha256": "17ad1a64ba1c382abf89341b40950f9b31f95015c6b0d3e25925bfebc1b53eb5",
+   "ref": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 1866,
+    "text_sha256": "e5656bc3d80740087d9dd079bdeb6ef657fc33678988534498cc0b478cebbd8f"
+   },
+   "ours": {
+    "step": 1,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 1866,
+    "text_sha256": "e5656bc3d80740087d9dd079bdeb6ef657fc33678988534498cc0b478cebbd8f"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/013",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\msvcp71.dll",
+   "override": "",
+   "size": 499712,
+   "sha256": "df96156f6a548fd6fe5672918de5ae4509d3c810a57bffd2a91de45a3ed5b23b",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 499712,
+    "text_sha256": "9d6cff4bdc2d1ffe72a5c54a633f389d8dac28227f1c60e4d6f0ecfc587d7ae4"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 499712,
+    "text_sha256": "9d6cff4bdc2d1ffe72a5c54a633f389d8dac28227f1c60e4d6f0ecfc587d7ae4"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/014",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\msvcp80.dll",
+   "override": "",
+   "size": 548864,
+   "sha256": "2026f3c4f830dff6883b88e2647272a52a132f25eb42c0d423e36b3f65a94d08",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 548864,
+    "text_sha256": "6b1e4166668059876fde5d0f3f4b65d9270f0062c21d06e5a357f594f9a9f02e"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 548864,
+    "text_sha256": "6b1e4166668059876fde5d0f3f4b65d9270f0062c21d06e5a357f594f9a9f02e"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/015",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\msvcr71.dll",
+   "override": "",
+   "size": 348160,
+   "sha256": "8094af5ee310714caebccaeee7769ffb08048503ba478b879edfef5f1a24fefe",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 348160,
+    "text_sha256": "18c680265c83e86e02213bb6c3829fcbea2d0a0f75046c25151e6e5f2c1b1122"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 348160,
+    "text_sha256": "18c680265c83e86e02213bb6c3829fcbea2d0a0f75046c25151e6e5f2c1b1122"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/016",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\msvcr80.dll",
+   "override": "",
+   "size": 626688,
+   "sha256": "02bdde38e4c6bd795a092d496b8d6060cdbe71e22ef4d7a204e3050c1be44fa9",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 626688,
+    "text_sha256": "4144cb3b3c9e9a57013f4f8539e80debdb66d8b9de61335d4e159a9dee4abb1d"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 626688,
+    "text_sha256": "4144cb3b3c9e9a57013f4f8539e80debdb66d8b9de61335d4e159a9dee4abb1d"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/017",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\ode.dll",
+   "override": "",
+   "size": 196608,
+   "sha256": "a70d45198ccbf74c8eb80773e98029cba284a738f43f538446bf83a6597296a4",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 196608,
+    "text_sha256": "54bb056ba0e35c52cfbc5dba0f648393df7cd24e0df3e0bce39fb58ea1aef628"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 196608,
+    "text_sha256": "54bb056ba0e35c52cfbc5dba0f648393df7cd24e0df3e0bce39fb58ea1aef628"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/018",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\OpenAL32.dll",
+   "override": "",
+   "size": 49152,
+   "sha256": "44ead055fdc5cb2f5ffa573b66a830e885ea885802946bb2bfd3d37583da7a7c",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 49152,
+    "text_sha256": "447d21572e2fbe45173de2224a636b6e0b9e854a618fab5880fe917dcf4f4e64"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 49152,
+    "text_sha256": "447d21572e2fbe45173de2224a636b6e0b9e854a618fab5880fe917dcf4f4e64"
+   }
+  },
+  {
+   "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/019",
+   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\stlport.5.0.dll",
+   "override": "",
+   "size": 671744,
+   "sha256": "0b3ea083d591e1de56a35a160b14e9b0d16dd59d309106d90d0cb3afdacaeeb2",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 671744,
+    "text_sha256": "491600b17666574d52b0bb432d46c28c128e778903a1cc47e2654ff8b782f8b4"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "latin-1",
+    "forced": true,
+    "chars": 671744,
+    "text_sha256": "491600b17666574d52b0bb432d46c28c128e778903a1cc47e2654ff8b782f8b4"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/000",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\_g(1).script",
+   "override": "",
+   "size": 119572,
+   "sha256": "9435d1096421383f08af11894b945c4d3c4022c9f5571afb9b539682b0b42b50",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 119572,
+    "text_sha256": "ec631e2444785bb14ff4242aa794eb8feccf4e1d5cb90de3ff0c4590b6457f9b"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 119572,
+    "text_sha256": "ec631e2444785bb14ff4242aa794eb8feccf4e1d5cb90de3ff0c4590b6457f9b"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/001",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\_g.script",
+   "override": "",
+   "size": 123326,
+   "sha256": "6596dc7e6f0ba3638c80173c1e642f937e0f63a65fa719eaf57dd1f69b3625ab",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 123326,
+    "text_sha256": "0cf8b2168a561c7dd6b2a9bb76d5f609e04bdae9866fc4418d8d07c79f8b2c5d"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 123326,
+    "text_sha256": "0cf8b2168a561c7dd6b2a9bb76d5f609e04bdae9866fc4418d8d07c79f8b2c5d"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/002",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\_luaxml(1).script",
+   "override": "",
+   "size": 16761,
+   "sha256": "654af02b6c0b7a3e6e42d1a3985f635c12158fb9a8c9cdc09d723781cb343950",
+   "ref": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 15817,
+    "text_sha256": "654af02b6c0b7a3e6e42d1a3985f635c12158fb9a8c9cdc09d723781cb343950"
+   },
+   "ours": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 15817,
+    "text_sha256": "654af02b6c0b7a3e6e42d1a3985f635c12158fb9a8c9cdc09d723781cb343950"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/003",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\_luaxml.script",
+   "override": "",
+   "size": 16761,
+   "sha256": "654af02b6c0b7a3e6e42d1a3985f635c12158fb9a8c9cdc09d723781cb343950",
+   "ref": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 15817,
+    "text_sha256": "654af02b6c0b7a3e6e42d1a3985f635c12158fb9a8c9cdc09d723781cb343950"
+   },
+   "ours": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 15817,
+    "text_sha256": "654af02b6c0b7a3e6e42d1a3985f635c12158fb9a8c9cdc09d723781cb343950"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/004",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\_sdata(1).script",
+   "override": "",
+   "size": 22763,
+   "sha256": "2979e824dfd55a62f9eee24a57495427cde6b1881514471c860a780aa86d668f",
+   "ref": {
+    "step": 5,
+    "enc": "cp1250",
+    "used": "cp1250",
+    "forced": false,
+    "chars": 22763,
+    "text_sha256": "d4a284ce7ed69ceaf91910afa186e34eb292c352a80c222148afb8295479e60d"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 22763,
+    "text_sha256": "063011452a478a94c30d8a1d39835f497dd94b2690cb2496ba8f571a26568bbd"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/005",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\_sdata.script",
+   "override": "",
+   "size": 22765,
+   "sha256": "731b546a08d34a70ef8efe2d3046b34516db0614046edfad4edbbaae3be9c4bc",
+   "ref": {
+    "step": 5,
+    "enc": "cp1250",
+    "used": "cp1250",
+    "forced": false,
+    "chars": 22765,
+    "text_sha256": "f02724fd3aa225e4fefd6c4cb91ed7bfc5ced1bf2f0482f67739fc83f0656b43"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 22765,
+    "text_sha256": "43424efe9cfd2d7a34a857767ab0c2ad5cc1ae3633a53114613881a1f21a20f6"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/006",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\achievements.script",
+   "override": "",
+   "size": 22300,
+   "sha256": "53b68b00384484a5db6e00574b772fdcdb21c5a76ca34cc11879350cf3098106",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 22300,
+    "text_sha256": "e82ce1d00bf606c9098949e22402d9d7521d012fb88e56a8c0c428e7483e4a0a"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 22300,
+    "text_sha256": "e82ce1d00bf606c9098949e22402d9d7521d012fb88e56a8c0c428e7483e4a0a"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/007",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\actor_proxy.script",
+   "override": "",
+   "size": 1927,
+   "sha256": "4d46e153ff97b78d95fd6a393f3aa7f5f350ca9dc61fa1555b10dd359dcedd88",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 1927,
+    "text_sha256": "ae658a06f6fb9d4e637ae635684c90bbea6bd03afbe12405bc7be2bce951327d"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 1927,
+    "text_sha256": "ae658a06f6fb9d4e637ae635684c90bbea6bd03afbe12405bc7be2bce951327d"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/008",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\addon\\addon.script",
+   "override": "",
+   "size": 107645,
+   "sha256": "29196f502299aaf8a9ad9a1a5cad34818f65eda8f926bb2fe6779f5714504b25",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 107645,
+    "text_sha256": "e7bc001ac4b0d84c485b18c23748b55fbb986b530c0d81aaf98588cd011ed97b"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 107645,
+    "text_sha256": "e7bc001ac4b0d84c485b18c23748b55fbb986b530c0d81aaf98588cd011ed97b"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/009",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\addon\\addon_2.script",
+   "override": "",
+   "size": 8396,
+   "sha256": "c36bef7b887371f5d5c46e8b3edb00b29f71c6088f835e96cd786413d01ba7d5",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 8396,
+    "text_sha256": "e4969f6512219f3c23d8da0a9db8390d0ce593dcd7e082a60b32b902e512a8ac"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 8396,
+    "text_sha256": "e4969f6512219f3c23d8da0a9db8390d0ce593dcd7e082a60b32b902e512a8ac"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/010",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\addon\\addon_attach.script",
+   "override": "",
+   "size": 3624,
+   "sha256": "1dd1f02ac02b91d3d2877f2c93cdc98bb39d43f3dc9c702d1e280de564977591",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 3624,
+    "text_sha256": "2c05aa881218a21cebae84e09390cf5492a23eecb40d729dfcb070db3d336a26"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 3624,
+    "text_sha256": "2c05aa881218a21cebae84e09390cf5492a23eecb40d729dfcb070db3d336a26"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/011",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\addon\\addon_devices.script",
+   "override": "",
+   "size": 689235,
+   "sha256": "09406faeee77ce57ecfc325c460b41e1bbb8d1d3412aa91c25d73960e5db76f0",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 689235,
+    "text_sha256": "ea6cc2d9ae48bfb78d90dcdfd481f2cd33bac1d625058c7902099b317b79e74b"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 689235,
+    "text_sha256": "ea6cc2d9ae48bfb78d90dcdfd481f2cd33bac1d625058c7902099b317b79e74b"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/012",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\addon\\addon_dialogs.script",
+   "override": "",
+   "size": 303032,
+   "sha256": "e9350d1fa2727a08ad5172fb4dd731a7908b377e87816e55edb9af30bb9141bd",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 303032,
+    "text_sha256": "3dbef7aaf244fe55a5e1d84d1301d2aed3d045551084992ab6303e7247b22da3"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 303032,
+    "text_sha256": "3dbef7aaf244fe55a5e1d84d1301d2aed3d045551084992ab6303e7247b22da3"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/013",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\addon\\addon_utils.script",
+   "override": "",
+   "size": 1894,
+   "sha256": "98ddd979afb9b7b17989b98e090ee625948025a8a9f52a067730e8ffd510e829",
+   "ref": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1894,
+    "text_sha256": "98ddd979afb9b7b17989b98e090ee625948025a8a9f52a067730e8ffd510e829"
+   },
+   "ours": {
+    "step": 5,
+    "enc": "ascii",
+    "used": "ascii",
+    "forced": false,
+    "chars": 1894,
+    "text_sha256": "98ddd979afb9b7b17989b98e090ee625948025a8a9f52a067730e8ffd510e829"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/014",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\arts_exchange.script",
+   "override": "",
+   "size": 12467,
+   "sha256": "a2804b9a60615176fd49bee81bc22192b4de0a619b4e7f4a2a55170c0362e9d4",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 12467,
+    "text_sha256": "5fd72ccfdb06005a4b004c523a83fd05f6d7d931d3b7922f4b308eccd00b202f"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 12467,
+    "text_sha256": "5fd72ccfdb06005a4b004c523a83fd05f6d7d931d3b7922f4b308eccd00b202f"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/015",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\bind\\bind_anoms.script",
+   "override": "",
+   "size": 4503,
+   "sha256": "46152f97f5ab6ee09218ea24623d6353de833d8d57205070716dc96ca34ab5cf",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 4503,
+    "text_sha256": "02a2265bebaae81f61dc02a662a9bd3c7900e5e19e00a20af542add7fc75474f"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 4503,
+    "text_sha256": "02a2265bebaae81f61dc02a662a9bd3c7900e5e19e00a20af542add7fc75474f"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/016",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\bind\\bind_artefact.script",
+   "override": "",
+   "size": 1348,
+   "sha256": "4e23d265caffb111fadbfd05e9984047924e65b6499bc7d6672958a3c8b1f4e9",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 1348,
+    "text_sha256": "5e4a9c5a3e23650f9028505ebd5f69fcf29bd422f40f2006511eb49c6809b46a"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 1348,
+    "text_sha256": "5e4a9c5a3e23650f9028505ebd5f69fcf29bd422f40f2006511eb49c6809b46a"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/017",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\bind\\bind_heli.script",
+   "override": "",
+   "size": 7050,
+   "sha256": "a41921824aef2383ee4779642ba533326758c1825753f4f9b987791915c1cb67",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 7050,
+    "text_sha256": "40807957e3f968d452637a50f251cc940f1a3b94aaa85a61c5a5e76db20e7c03"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 7050,
+    "text_sha256": "40807957e3f968d452637a50f251cc940f1a3b94aaa85a61c5a5e76db20e7c03"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/018",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\bind\\bind_monster.script",
+   "override": "",
+   "size": 11344,
+   "sha256": "11929bb966f55d475f67bbac398d72bf0564a012460e1effbab4bc19e266fab3",
+   "ref": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 11344,
+    "text_sha256": "3d72539660fb75b51a342075e90452d1fcebf8aba8265a994b443d94eda0d11b"
+   },
+   "ours": {
+    "step": 6,
+    "enc": "windows-1251",
+    "used": "windows-1251",
+    "forced": false,
+    "chars": 11344,
+    "text_sha256": "3d72539660fb75b51a342075e90452d1fcebf8aba8265a994b443d94eda0d11b"
+   }
+  },
+  {
+   "id": "real/gamedata-scripts/019",
+   "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\scripts\\bind\\bind_mteleport.script",
+   "override": "",
+   "size": 5622,
+   "sha256": "badeeb649ca33bf4a667c7403de8f6411f62ffdee785708df439858226c6f135",
+   "ref": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 4946,
+    "text_sha256": "badeeb649ca33bf4a667c7403de8f6411f62ffdee785708df439858226c6f135"
+   },
+   "ours": {
+    "step": 2,
+    "enc": "utf-8",
+    "used": "utf-8",
+    "forced": false,
+    "chars": 4946,
+    "text_sha256": "badeeb649ca33bf4a667c7403de8f6411f62ffdee785708df439858226c6f135"
+   }
+  }
+ ],
+ "naming_divergences": {
+  "synth/utf16le_odd": {
+   "ref": [
+    5,
+    "utf-16-le"
+   ],
+   "ours": [
+    6,
+    "windows-1251"
+   ]
+  }
+ },
+ "capability_gaps": {
+  "synth/utf16le_nobom": {
+   "kind": "chardet-family",
+   "note": "1.x 用 chardet 认出多字节家族；我们没移植 chardet（真能力缺口）",
+   "ref": [
+    5,
+    "utf-16-le",
+    "utf-16-le"
+   ],
+   "ours": [
+    6,
+    "windows-1251",
+    "windows-1251"
+   ]
+  },
+  "synth/utf16be_nobom": {
+   "kind": "chardet-family",
+   "note": "1.x 用 chardet 认出多字节家族；我们没移植 chardet（真能力缺口）",
+   "ref": [
+    5,
+    "utf-16-be",
+    "utf-16-be"
+   ],
+   "ours": [
+    6,
+    "windows-1251",
+    "windows-1251"
+   ]
+  },
+  "synth/gbk_cjk": {
+   "kind": "chardet-family",
+   "note": "1.x 用 chardet 认出多字节家族；我们没移植 chardet（真能力缺口）",
+   "ref": [
+    5,
+    "gb18030",
+    "gb18030"
+   ],
+   "ours": [
+    6,
+    "windows-1251",
+    "windows-1251"
+   ]
+  },
+  "synth/sjis": {
+   "kind": "chardet-family",
+   "note": "1.x 用 chardet 认出多字节家族；我们没移植 chardet（真能力缺口）",
+   "ref": [
+    5,
+    "cp932",
+    "cp932"
+   ],
+   "ours": [
+    6,
+    "windows-1251",
+    "windows-1251"
+   ]
+  },
+  "synth/big5": {
+   "kind": "chardet-family",
+   "note": "1.x 用 chardet 认出多字节家族；我们没移植 chardet（真能力缺口）",
+   "ref": [
+    5,
+    "big5",
+    "big5"
+   ],
+   "ours": [
+    6,
+    "windows-1251",
+    "windows-1251"
+   ]
+  },
+  "synth/decl_gb2312": {
+   "kind": "unsupported-declaration",
+   "note": "声明被字节证实，但我们没有该编码的解码器（真能力缺口）",
+   "ref": [
+    4,
+    "gb2312",
+    "gb2312"
+   ],
+   "ours": [
+    6,
+    "windows-1251",
+    "windows-1251"
+   ]
+  },
+  "real/gamedata-scripts/004": {
+   "kind": "misdetect-single-byte",
+   "note": "1.x 的单字节误判（实测：把 cp1251 俄文判成 cp1250；文件自己写着 coding: windows-1251-dos）——我们**故意不复刻**，待用户拍板",
+   "ref": [
+    5,
+    "cp1250",
+    "cp1250"
+   ],
+   "ours": [
+    6,
+    "windows-1251",
+    "windows-1251"
+   ]
+  },
+  "real/gamedata-scripts/005": {
+   "kind": "misdetect-single-byte",
+   "note": "1.x 的单字节误判（实测：把 cp1251 俄文判成 cp1250；文件自己写着 coding: windows-1251-dos）——我们**故意不复刻**，待用户拍板",
+   "ref": [
+    5,
+    "cp1250",
+    "cp1250"
+   ],
+   "ours": [
+    6,
+    "windows-1251",
+    "windows-1251"
+   ]
+  }
+ }
+}

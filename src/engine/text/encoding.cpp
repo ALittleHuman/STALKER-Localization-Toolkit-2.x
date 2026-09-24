@@ -14,6 +14,7 @@ namespace {
 #include "cp1251_tables.inc"   // NOLINT
 #include "cp1252_tables.inc"   // NOLINT
 #include "gb18030_tables.inc"  // NOLINT
+#include "gbk_tables.inc"      // NOLINT
 
 constexpr uint16_t kUndefined = 0xFFFF;
 constexpr size_t kGb18030FourByteCount = sizeof(kGb18030FourByte) / sizeof(kGb18030FourByte[0]);
@@ -274,6 +275,135 @@ bool gb18030_encode(const std::string& text, std::vector<uint8_t>& out, std::str
     return true;
 }
 
+// ── GBK（只有双字节形态；decode_bytes 的回落候选里有它）──────────────
+bool gbk_decode(const uint8_t* data, size_t size, std::string& text, std::string& err) {
+    text.clear();
+    text.reserve(size * 2);
+    size_t i = 0;
+    while (i < size) {
+        const uint8_t b1 = data[i];
+        if (b1 < 0x80) {
+            text.push_back(static_cast<char>(b1));
+            ++i;
+            continue;
+        }
+        if (b1 == 0x80) {
+            err = "gbk：非法首字节 0x80";
+            return false;
+        }
+        if (i + 1 >= size) {
+            err = "gbk：双字节序列被截断";
+            return false;
+        }
+        const uint8_t b2 = data[i + 1];
+        if (b2 < 0x40 || b2 > 0xFE) {
+            err = "gbk：非法尾字节";
+            return false;
+        }
+        const uint16_t cp = kGbkTwoByte[(b1 - 0x81) * 191 + (b2 - 0x40)];
+        if (cp == kUndefined) {
+            err = "gbk：未定义的双字节序列";
+            return false;
+        }
+        append_utf8(text, cp);
+        i += 2;
+    }
+    return true;
+}
+
+// ── UTF-16 / UTF-32（B 链的 BOM 分支与"按名字解码"都要用）─────────────
+enum class ByteOrder { Little, Big, Native };
+
+bool utf16_decode(const uint8_t* data, size_t size, ByteOrder order, bool allow_bom,
+                  std::string& text, std::string& err) {
+    size_t off = 0;
+    bool little = (order != ByteOrder::Big);
+    if (allow_bom && size >= 2) {
+        if (data[0] == 0xFF && data[1] == 0xFE) {
+            little = true;
+            off = 2;
+        } else if (data[0] == 0xFE && data[1] == 0xFF) {
+            little = false;
+            off = 2;
+        }
+    }
+    if ((size - off) % 2 != 0) {
+        err = "utf-16：长度不是偶数";
+        return false;
+    }
+    text.clear();
+    text.reserve(size);
+    for (size_t i = off; i < size; i += 2) {
+        const uint16_t u = little ? static_cast<uint16_t>(data[i] | (data[i + 1] << 8))
+                                  : static_cast<uint16_t>((data[i] << 8) | data[i + 1]);
+        if (u >= 0xD800 && u <= 0xDBFF) {
+            if (i + 3 >= size) {
+                err = "utf-16：代理对不完整";
+                return false;
+            }
+            const uint16_t lo = little
+                                    ? static_cast<uint16_t>(data[i + 2] | (data[i + 3] << 8))
+                                    : static_cast<uint16_t>((data[i + 2] << 8) | data[i + 3]);
+            if (lo < 0xDC00 || lo > 0xDFFF) {
+                err = "utf-16：孤立的高代理";
+                return false;
+            }
+            append_utf8(text, 0x10000u + ((static_cast<uint32_t>(u) - 0xD800u) << 10) +
+                                  (static_cast<uint32_t>(lo) - 0xDC00u));
+            i += 2;
+        } else if (u >= 0xDC00 && u <= 0xDFFF) {
+            err = "utf-16：孤立的低代理";
+            return false;
+        } else {
+            append_utf8(text, u);
+        }
+    }
+    return true;
+}
+
+bool utf32_decode(const uint8_t* data, size_t size, ByteOrder order, bool allow_bom,
+                  std::string& text, std::string& err) {
+    size_t off = 0;
+    bool little = (order != ByteOrder::Big);
+    if (allow_bom && size >= 4) {
+        const bool le_bom =
+            data[0] == 0xFF && data[1] == 0xFE && data[2] == 0x00 && data[3] == 0x00;
+        const bool be_bom =
+            data[0] == 0x00 && data[1] == 0x00 && data[2] == 0xFE && data[3] == 0xFF;
+        if (le_bom) {
+            little = true;
+            off = 4;
+        } else if (be_bom) {
+            little = false;
+            off = 4;
+        }
+    }
+    if ((size - off) % 4 != 0) {
+        err = "utf-32：长度不是 4 的倍数";
+        return false;
+    }
+    text.clear();
+    text.reserve(size / 2);
+    for (size_t i = off; i < size; i += 4) {
+        uint32_t cp = 0;
+        if (little) {
+            cp = static_cast<uint32_t>(data[i]) | (static_cast<uint32_t>(data[i + 1]) << 8) |
+                 (static_cast<uint32_t>(data[i + 2]) << 16) |
+                 (static_cast<uint32_t>(data[i + 3]) << 24);
+        } else {
+            cp = (static_cast<uint32_t>(data[i]) << 24) |
+                 (static_cast<uint32_t>(data[i + 1]) << 16) |
+                 (static_cast<uint32_t>(data[i + 2]) << 8) | static_cast<uint32_t>(data[i + 3]);
+        }
+        if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
+            err = "utf-32：非法码位";
+            return false;
+        }
+        append_utf8(text, cp);
+    }
+    return true;
+}
+
 }  // namespace
 
 void utf8_append(std::string& out, uint32_t cp) { append_utf8(out, cp); }
@@ -312,6 +442,27 @@ bool decode_strict(const std::string& encoding, const uint8_t* data, size_t size
         return true;
     }
     if (encoding == kGb18030) return gb18030_decode(data, size, text, err);
+    if (encoding == kGbk) return gbk_decode(data, size, text, err);
+    if (encoding == kAscii) {
+        text.clear();
+        text.reserve(size);
+        for (size_t i = 0; i < size; ++i) {
+            if (data[i] >= 0x80) {
+                err = "ascii：出现高位字节";
+                return false;
+            }
+            text.push_back(static_cast<char>(data[i]));
+        }
+        return true;
+    }
+    // utf-16 / utf-32：带 BOM 的走"按名字解码"（codec 自己吃 BOM），
+    // -le/-be 变体不认 BOM（与 Python 同名 codec 一致）
+    if (encoding == kUtf16) return utf16_decode(data, size, ByteOrder::Native, true, text, err);
+    if (encoding == kUtf16Le) return utf16_decode(data, size, ByteOrder::Little, false, text, err);
+    if (encoding == kUtf16Be) return utf16_decode(data, size, ByteOrder::Big, false, text, err);
+    if (encoding == kUtf32) return utf32_decode(data, size, ByteOrder::Native, true, text, err);
+    if (encoding == kUtf32Le) return utf32_decode(data, size, ByteOrder::Little, false, text, err);
+    if (encoding == kUtf32Be) return utf32_decode(data, size, ByteOrder::Big, false, text, err);
     if (encoding == kWindows1251) {
         return decode_single_byte(kCp1251ToUnicode, data, size, text, err, "windows-1251");
     }

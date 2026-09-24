@@ -64,7 +64,8 @@ python tests\run_ci.py --release      # 任何 SKIP 与「未覆盖清单」非�
 
 产物：`build/msvc-release/tools/cli/xrkit_cli.exe`
 （`--selftest` / `--bench` / `--themecheck` / `--dump` / `--extract` / `--pack-db` /
-`--pack-sqfs` / `--decode-text` / `--extract-text`；退出码 0=通过 1=失败 **2=显式跳过** 3=用法错误）。
+`--pack-sqfs` / `--decode-text` / `--sniff` / `--extract-text`；
+退出码 0=通过 1=失败 **2=显式跳过** 3=用法错误）。
 
 ## 开发约定（都是本机实测踩出来的，别改回去）
 

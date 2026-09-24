@@ -9,6 +9,7 @@ add_library(xrkit_engine STATIC
   fs/squashfs_write.cpp
   fs/db.cpp
   text/encoding.cpp
+  text/sniff.cpp
   text/extract.cpp)
 
 target_include_directories(xrkit_engine PUBLIC "${CMAKE_SOURCE_DIR}/include")

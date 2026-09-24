@@ -64,17 +64,28 @@ GB_TWO_W = 126 * 191            # lead 0x81..0xFE × trail 0x40..0xFE
 GB_FOUR_W = 126 * 10 * 126 * 10  # (b1 b2 b3 b4) 全空间
 
 
-def gb_two_byte() -> list[int]:
+def gb_two_byte(codec: str = "gb18030") -> list[int]:
     out = [0xFFFF] * GB_TWO_W
     for b1 in range(0x81, 0xFF):
         for b2 in range(0x40, 0xFF):
             idx = (b1 - 0x81) * 191 + (b2 - 0x40)
             try:
-                s = bytes([b1, b2]).decode("gb18030")
+                s = bytes([b1, b2]).decode(codec)
                 out[idx] = ord(s) if len(s) == 1 else 0xFFFF
             except UnicodeDecodeError:
                 out[idx] = 0xFFFF
     return out
+
+
+def emit_two_byte(codec: str, name: str, values: list[int]) -> str:
+    lines = [HEADER.format(codec=codec)]
+    lines.append("// 下标 = (b1-0x81)*191 + (b2-0x40)，b1∈0x81..0xFE、b2∈0x40..0xFE。\n")
+    lines.append("// 单字节只认 0x00..0x7F（0x80 在 %s 里是非法首字节）。\n\n" % codec)
+    lines.append("static const uint16_t %s[%d] = {\n" % (name, GB_TWO_W))
+    for i in range(0, len(values), 12):
+        lines.append("    " + ", ".join("0x%04X" % v for v in values[i:i + 12]) + ",\n")
+    lines.append("};\n")
+    return "".join(lines)
 
 
 def gb_four_byte_ranges():
@@ -153,12 +164,16 @@ def build() -> dict[Path, str]:
     files: dict[Path, str] = {}
     for codec, name in SINGLE_BYTE:
         files[OUT_DIR / ("%s_tables.inc" % codec)] = emit_1byte(codec, name, table_1byte(codec))
-    two = gb_two_byte()
+    two = gb_two_byte("gb18030")
     four = gb_four_byte_ranges()
     files[OUT_DIR / "gb18030_tables.inc"] = emit_gb18030(two, four)
     valid_two = sum(1 for v in two if v != 0xFFFF)
     print("    gb18030：双字节有效 %d/%d，四字节 %d 段（共 %d 个序列）"
           % (valid_two, GB_TWO_W, len(four), GB_FOUR_W))
+    # gbk：decode_bytes 的回落候选里有它（`BYTE_DECODE_CANDIDATES`），只有双字节形态
+    gbk = gb_two_byte("gbk")
+    files[OUT_DIR / "gbk_tables.inc"] = emit_two_byte("gbk", "kGbkTwoByte", gbk)
+    print("    gbk：双字节有效 %d/%d" % (sum(1 for v in gbk if v != 0xFFFF), GB_TWO_W))
     for codec, _ in SINGLE_BYTE:
         vals = table_1byte(codec)
         print("    %s：未定义 %d 个字节" % (codec, sum(1 for v in vals if v == 0xFFFF)))
