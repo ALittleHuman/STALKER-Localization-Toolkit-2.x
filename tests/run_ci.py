@@ -858,6 +858,23 @@ def step_shell_smoke(release: bool) -> None:
         ok("外壳构建 + 离屏自检通过")
     else:
         fail("外壳自检未通过（退出码 %d，见上）" % rc)
+        return
+
+    # 对照表 1.6：**活代码里不许有裸滚动条**（1.x 是"不许有裸 `ttk.Scrollbar(`"，唯一例外是
+    # 插件的 Tk 回退）。Qt 侧等价判据：`new QScrollBar(` 只允许出现在滚动组件里 ——
+    # 别处自己造条子就等于绕过三闸门（这正是 1.x 花钱那一族的入口）。
+    offenders = []
+    for src in sorted((ROOT / "src" / "shell").rglob("*")):
+        if src.suffix not in (".cpp", ".h"):
+            continue
+        if src.name == "scroll_viewport.cpp":
+            continue
+        if "new QScrollBar(" in src.read_text(encoding="utf-8", errors="replace"):
+            offenders.append(str(src.relative_to(ROOT)))
+    if offenders:
+        fail("裸滚动条（1.6）：%s —— 条子只能由 ScrollViewport 造" % ", ".join(offenders))
+        return
+    ok("没有裸滚动条（1.6：只允许 ScrollViewport 造条子）")
 
 
 def tail(text: str, n: int) -> str:
