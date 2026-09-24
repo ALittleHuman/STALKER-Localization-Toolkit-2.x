@@ -1,0 +1,806 @@
+{
+ "note": "基线由 1.x apps.text_extract_app 的 _extract_gameplay/_extract_scripts 生成",
+ "id_prefix": "sgtat_gstest_{abbr}_1700000000",
+ "entries": [
+  {
+   "id": "real-gameplay",
+   "kind": "gameplay",
+   "source": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata\\config\\gameplay",
+   "stats": {
+    "files": 101,
+    "strings": 1207,
+    "chars": 68181
+   },
+   "tree": {
+    "gameplay/character_agents_loot.xml": {
+     "size": 300,
+     "sha256": "269ccf538fdb06f2d46c001eaa38bcbfe8c6dad6682e8da8c4640e9b8ddac90f"
+    },
+    "gameplay/character_criticals.xml": {
+     "size": 60,
+     "sha256": "b6688e1efd1b0416864133b6d60dd20d762b0b419d555ef8bb594e1a2e0df30a"
+    },
+    "gameplay/character_desc_agroprom.xml": {
+     "size": 21239,
+     "sha256": "20a75a0c74d6a40cdc1866aecb308b8c8fe7c9314612b556269bf349112fc4d2"
+    },
+    "gameplay/character_desc_bar.xml": {
+     "size": 20170,
+     "sha256": "38636fcd3a96cd5c85044fcf3522759f81e8e925dc050934eb84b08cd388a990"
+    },
+    "gameplay/character_desc_darkvalley.xml": {
+     "size": 29682,
+     "sha256": "6c3aa4b453f2ea9faefee14e776704b741b45899987d753cfa1f25636a0bc343"
+    },
+    "gameplay/character_desc_escape.xml": {
+     "size": 56768,
+     "sha256": "5368d9a697447a7d949e764ecb1b51ba275e2ebfe9f534ea4fb0aa0a0431a91c"
+    },
+    "gameplay/character_desc_garbage.xml": {
+     "size": 23184,
+     "sha256": "a5a896efc78a386e8ac88092ce8f24e9acae163dbcfd8b23c26ff7c3ccade22c"
+    },
+    "gameplay/character_desc_general.xml": {
+     "size": 2617,
+     "sha256": "4c664adee6d2903d28e2c6b3256bd7b8915ec2c7da892e6dbc25f5b477429711"
+    },
+    "gameplay/character_desc_military.xml": {
+     "size": 19496,
+     "sha256": "d5d3f3cc30d687eda2f0fbcfe1a1fccb8acb5fc1de1ed9f4cd73e69cb3179935"
+    },
+    "gameplay/character_desc_predbannik.xml": {
+     "size": 47353,
+     "sha256": "ca40fb651c63f976e6736f681af17d9843b08fc98eee2d2dfa31a97eeeee2503"
+    },
+    "gameplay/character_desc_pripyat(1).xml": {
+     "size": 5453,
+     "sha256": "48dd3c98c5f08519b202e678349113a03f456774d596bfc23497ab6c9059f9a2"
+    },
+    "gameplay/character_desc_pripyat.xml": {
+     "size": 5328,
+     "sha256": "f287102a916fc10d28f704f283d1ac2137104606a6aa7e269dd68d8bb1eb8342"
+    },
+    "gameplay/character_desc_radar(1).xml": {
+     "size": 4117,
+     "sha256": "68daf8be23c161bfda7c550d77dd23b9bc82f0cf1f10a2f213762b94beec3b99"
+    },
+    "gameplay/character_desc_radar.xml": {
+     "size": 4063,
+     "sha256": "f504c7038bce47c6208c48ccf5fb60ed2a311e1d84430373f1e217490e4be20e"
+    },
+    "gameplay/character_desc_simulation(1).xml": {
+     "size": 27123,
+     "sha256": "fda21beb9a63cf42955b71c56e0624460793df5188bb4d8c975bee49c77c5819"
+    },
+    "gameplay/character_desc_simulation.xml": {
+     "size": 26872,
+     "sha256": "52b546eae7526b904adcda25da5fb71df8b316904ed2e64e0c50a1707f966f0e"
+    },
+    "gameplay/character_desc_yantar(1).xml": {
+     "size": 14049,
+     "sha256": "4c5618bc8fe7dfe9e175809a111c79668237667523e2a3364b494466cfddd276"
+    },
+    "gameplay/character_desc_yantar.xml": {
+     "size": 14085,
+     "sha256": "1fd59857b0e1abb24524576f062bbe3c53c137bf9a5c6d5b8a40eb8c47c9411b"
+    },
+    "gameplay/character_dialogs(1).xml": {
+     "size": 1124,
+     "sha256": "58150b4e8428ffa524de965b177de930bcae6879824f5eb31868aefd8749d86f"
+    },
+    "gameplay/character_dialogs.xml": {
+     "size": 1186,
+     "sha256": "ff45bdd73fe26bc822b253267d8c31396ea6be9ab4f115716a0e3928fa84b93b"
+    },
+    "gameplay/character_drugs(1).xml": {
+     "size": 52,
+     "sha256": "3d44274322d65950e2b7e89c279f93de3b34369bc6e1d98baddee2f1a91bfb5c"
+    },
+    "gameplay/character_drugs.xml": {
+     "size": 52,
+     "sha256": "3d44274322d65950e2b7e89c279f93de3b34369bc6e1d98baddee2f1a91bfb5c"
+    },
+    "gameplay/character_equipment/character_monolit_regular.xml": {
+     "size": 233,
+     "sha256": "d4c3d8cef465fd5705227c709a7e5cf58560eb2a0e6962a86c1b5b551b3cefe4"
+    },
+    "gameplay/character_equipment/character_novice_1.xml": {
+     "size": 554,
+     "sha256": "2b76d59c2292fb4f3a1c75c1969c86d8b1b8975f14e45b058dd3f85f09c795f3"
+    },
+    "gameplay/character_equipment/character_novice_2.xml": {
+     "size": 557,
+     "sha256": "289bc00a7c070afe8b822bf45253aae7a93ed42a2bbaf06db5098f1c5bda67ab"
+    },
+    "gameplay/character_equipment/character_novice_unic.xml": {
+     "size": 556,
+     "sha256": "f5c429ebad81bd3d9a03710d256da0e5f5691b1ebeae4277d0a9706bbff880c1"
+    },
+    "gameplay/character_equipment/character_stalin.xml": {
+     "size": 122,
+     "sha256": "68fc0c12e1afd8a71001427d5afc4077df80bedefc7d378b564fbe4540ce0378"
+    },
+    "gameplay/character_food(1).xml": {
+     "size": 106,
+     "sha256": "e3da786ed44f98b77627a13121ccf9dd00948a3979863b37e787210f80958636"
+    },
+    "gameplay/character_food.xml": {
+     "size": 106,
+     "sha256": "e3da786ed44f98b77627a13121ccf9dd00948a3979863b37e787210f80958636"
+    },
+    "gameplay/character_items(1).xml": {
+     "size": 89,
+     "sha256": "e502f5acc06f7a07a297c8b2a4d9af399886a6fd7cc74287730d423b99ebbc41"
+    },
+    "gameplay/character_items.xml": {
+     "size": 89,
+     "sha256": "e502f5acc06f7a07a297c8b2a4d9af399886a6fd7cc74287730d423b99ebbc41"
+    },
+    "gameplay/character_zombies_loot(1).xml": {
+     "size": 278,
+     "sha256": "7056403a10898e916c43f06c25f2243103d18fd89e732bf6ba079ddbd32e0927"
+    },
+    "gameplay/character_zombies_loot.xml": {
+     "size": 278,
+     "sha256": "7056403a10898e916c43f06c25f2243103d18fd89e732bf6ba079ddbd32e0927"
+    },
+    "gameplay/dialogs(1).xml": {
+     "size": 48518,
+     "sha256": "fc4eaad84b4a1226953fb45ac57d0f91a5be3d45f93d4310a95e1565e0bd39d8"
+    },
+    "gameplay/dialogs.xml": {
+     "size": 49269,
+     "sha256": "f278e9597384ff524a022445bd4521a152264d88bf2982c4d51c1bcf7d0ca981"
+    },
+    "gameplay/dialogs_aes(1).xml": {
+     "size": 5449,
+     "sha256": "105ba14317be0ec1ec4ca3c7190f1afff1828cd90eba7e72cf2ac8014fd1a403"
+    },
+    "gameplay/dialogs_aes.xml": {
+     "size": 5449,
+     "sha256": "105ba14317be0ec1ec4ca3c7190f1afff1828cd90eba7e72cf2ac8014fd1a403"
+    },
+    "gameplay/dialogs_agroprom(1).xml": {
+     "size": 48171,
+     "sha256": "6169b00425b36224e490b7329821613a24c6cf8deab2b9c15e2a09fa6c62e4ad"
+    },
+    "gameplay/dialogs_agroprom.xml": {
+     "size": 55712,
+     "sha256": "92b088d171029ca0bb5c331e19ea8f19c0cc6acbc44be5ed52d08694babfa7fb"
+    },
+    "gameplay/dialogs_bar(1).xml": {
+     "size": 70802,
+     "sha256": "0d80f99b19a03a665b577515defefe9eca56067af9e49b3638eccdd7b83c995f"
+    },
+    "gameplay/dialogs_bar.xml": {
+     "size": 70802,
+     "sha256": "0d80f99b19a03a665b577515defefe9eca56067af9e49b3638eccdd7b83c995f"
+    },
+    "gameplay/dialogs_darkvalley(1).xml": {
+     "size": 146226,
+     "sha256": "fc886a3e3c6cff6054e36b86aceeecded42b2f3b1ed479b60ba300fe1d6336bf"
+    },
+    "gameplay/dialogs_darkvalley.xml": {
+     "size": 152735,
+     "sha256": "210a7185d7273e88e9508ebfb11c4445fefb462a03395c4fa6d104e12d6c26b8"
+    },
+    "gameplay/dialogs_escape(1).xml": {
+     "size": 282913,
+     "sha256": "b11f88d3cccd06778bd52212aaf6be0a61632092f239543ee8e036b3c42e846c"
+    },
+    "gameplay/dialogs_escape.xml": {
+     "size": 303594,
+     "sha256": "061c0479ddc364c3123994a4b8a736dab2c848874ea53c80e991289652b274fb"
+    },
+    "gameplay/dialogs_garbage(1).xml": {
+     "size": 62707,
+     "sha256": "90970d47f884dfb8045b6b34b2efd45a1f8c39d982dd3b5c0feee51a52aff736"
+    },
+    "gameplay/dialogs_garbage.xml": {
+     "size": 63124,
+     "sha256": "6b53084e424a18c16c9b0246f4c3ab07020ead2a377c2ca9d41250bc32cd1622"
+    },
+    "gameplay/dialogs_labx18(1).xml": {
+     "size": 7329,
+     "sha256": "d9fae3e78fe11ac98571795dfbce72a97e8c8388a861822730f67dacc6e1f71a"
+    },
+    "gameplay/dialogs_labx18.xml": {
+     "size": 7329,
+     "sha256": "d9fae3e78fe11ac98571795dfbce72a97e8c8388a861822730f67dacc6e1f71a"
+    },
+    "gameplay/dialogs_military(1).xml": {
+     "size": 59113,
+     "sha256": "dc818f20014dd85518d4be6502819e8558e859422504f4d29b83ff47800d3094"
+    },
+    "gameplay/dialogs_military.xml": {
+     "size": 59113,
+     "sha256": "dc818f20014dd85518d4be6502819e8558e859422504f4d29b83ff47800d3094"
+    },
+    "gameplay/dialogs_predbannik(1).xml": {
+     "size": 167729,
+     "sha256": "dc50fa59cbb21c0a49aa736553711b8b014bc3146f56fa23445ef546955505ee"
+    },
+    "gameplay/dialogs_predbannik.xml": {
+     "size": 188918,
+     "sha256": "6cd4944258ee1fbd56774986016061c2e91db031267cc3669cfa36ca987c1d9b"
+    },
+    "gameplay/dialogs_pripyat(1).xml": {
+     "size": 18933,
+     "sha256": "bdf17ca75cc8805d18d5b3943eed5ceedfe682460f31b980a1360c2cedda4d09"
+    },
+    "gameplay/dialogs_pripyat.xml": {
+     "size": 18933,
+     "sha256": "bdf17ca75cc8805d18d5b3943eed5ceedfe682460f31b980a1360c2cedda4d09"
+    },
+    "gameplay/dialogs_radar(1).xml": {
+     "size": 23559,
+     "sha256": "a64e0f887c330dba27639bf70dca81dab61bfda909095e7e2292b69298a6413a"
+    },
+    "gameplay/dialogs_radar.xml": {
+     "size": 23559,
+     "sha256": "a64e0f887c330dba27639bf70dca81dab61bfda909095e7e2292b69298a6413a"
+    },
+    "gameplay/dialogs_yantar(1).xml": {
+     "size": 65442,
+     "sha256": "4b9733763dc9f7e34e10ee9d8ebb20ed10b0b00f51a74d74c538568dbeb41749"
+    },
+    "gameplay/dialogs_yantar.xml": {
+     "size": 65442,
+     "sha256": "4b9733763dc9f7e34e10ee9d8ebb20ed10b0b00f51a74d74c538568dbeb41749"
+    },
+    "gameplay/encyclopedia_books(1).xml": {
+     "size": 1093,
+     "sha256": "eee6475f92d22200a6bf42a5e50303b4b6c34830964c98498f716a1d95750538"
+    },
+    "gameplay/encyclopedia_books.xml": {
+     "size": 1093,
+     "sha256": "eee6475f92d22200a6bf42a5e50303b4b6c34830964c98498f716a1d95750538"
+    },
+    "gameplay/encyclopedia_equipment(1).xml": {
+     "size": 4485,
+     "sha256": "e5b8ba3c2fe597dd1fe233809254ed6e7de503542f6288dcf3c9f64109de67b9"
+    },
+    "gameplay/encyclopedia_equipment.xml": {
+     "size": 4485,
+     "sha256": "e5b8ba3c2fe597dd1fe233809254ed6e7de503542f6288dcf3c9f64109de67b9"
+    },
+    "gameplay/encyclopedia_infos(1).xml": {
+     "size": 2834,
+     "sha256": "ceb6cbf375cd2d3f042320da52e55afa089c923f7f8c609be9fab83be6c975c6"
+    },
+    "gameplay/encyclopedia_infos.xml": {
+     "size": 2834,
+     "sha256": "bd599367d0b4a5dcb92c04453a9a359cc491814436c15e4ae82be3e291f1c629"
+    },
+    "gameplay/encyclopedia_mutants(1).xml": {
+     "size": 5578,
+     "sha256": "ccbeb9656874f8dd0a6cc66ddc3b05bbca2803e23ce5a800a4e01eb5d988f05c"
+    },
+    "gameplay/encyclopedia_mutants.xml": {
+     "size": 5578,
+     "sha256": "ccbeb9656874f8dd0a6cc66ddc3b05bbca2803e23ce5a800a4e01eb5d988f05c"
+    },
+    "gameplay/encyclopedia_new(1).xml": {
+     "size": 3354,
+     "sha256": "541bb4d67a7cd4e35594318c9c719dab9de768a8cfa0fb3d2a30e6e6ece84b62"
+    },
+    "gameplay/encyclopedia_new.xml": {
+     "size": 3354,
+     "sha256": "541bb4d67a7cd4e35594318c9c719dab9de768a8cfa0fb3d2a30e6e6ece84b62"
+    },
+    "gameplay/encyclopedia_social(1).xml": {
+     "size": 2841,
+     "sha256": "a6b6ccbe662d1a5ebff97deab96c9e0013bbb48061c6c48ca071046d1616f7f1"
+    },
+    "gameplay/encyclopedia_social.xml": {
+     "size": 2841,
+     "sha256": "a6b6ccbe662d1a5ebff97deab96c9e0013bbb48061c6c48ca071046d1616f7f1"
+    },
+    "gameplay/encyclopedia_tutorial(1).xml": {
+     "size": 1442,
+     "sha256": "2b6c2e05c8e9cc12ba5ac23141ee4c8cc14a5400d7900e287ad4c83b1a7cc1c5"
+    },
+    "gameplay/encyclopedia_tutorial.xml": {
+     "size": 1442,
+     "sha256": "2b6c2e05c8e9cc12ba5ac23141ee4c8cc14a5400d7900e287ad4c83b1a7cc1c5"
+    },
+    "gameplay/encyclopedia_vehicles(1).xml": {
+     "size": 1419,
+     "sha256": "b1bfdffe571df7f81d996fbbf45b9e39406c268cf8c9ff4c0f6478f05bf9157b"
+    },
+    "gameplay/encyclopedia_vehicles.xml": {
+     "size": 1419,
+     "sha256": "b1bfdffe571df7f81d996fbbf45b9e39406c268cf8c9ff4c0f6478f05bf9157b"
+    },
+    "gameplay/encyclopedia_weapons(1).xml": {
+     "size": 11108,
+     "sha256": "aeb3d0ae00fca4e8838fdd75c8209c0f55394f14cfef2adec2ce98ce7b96d37b"
+    },
+    "gameplay/encyclopedia_weapons.xml": {
+     "size": 11108,
+     "sha256": "aeb3d0ae00fca4e8838fdd75c8209c0f55394f14cfef2adec2ce98ce7b96d37b"
+    },
+    "gameplay/encyclopedia_zone(1).xml": {
+     "size": 21573,
+     "sha256": "8aacdf3e5de49ca9a88915e978764f5547f6bde0c12841a37bdddc86413729d3"
+    },
+    "gameplay/encyclopedia_zone.xml": {
+     "size": 21582,
+     "sha256": "dbccfd8044235409dbdf348124f3ae846ae5c2000c9ecd554da8f66fd7a74651"
+    },
+    "gameplay/game_tasks(1).xml": {
+     "size": 172,
+     "sha256": "c050e0cbdc088c5da185962d08391c07fb1fbf480c8e5c9d49c120a14584e482"
+    },
+    "gameplay/game_tasks.xml": {
+     "size": 172,
+     "sha256": "c050e0cbdc088c5da185962d08391c07fb1fbf480c8e5c9d49c120a14584e482"
+    },
+    "gameplay/game_tasks_by_vendor(1).xml": {
+     "size": 5780,
+     "sha256": "814d489a6fe798b6cb625fac3441c435c1dfd2b9cb07b462dab90adda995e8db"
+    },
+    "gameplay/game_tasks_by_vendor.xml": {
+     "size": 5489,
+     "sha256": "9a617d5179bf3569a201b3db9a73a354eb6d803ead3ae2fadd8aa3c0ef8fa3e9"
+    },
+    "gameplay/info_known_objects(1).xml": {
+     "size": 8008,
+     "sha256": "daeba4bed279e7d9a843afef2dd03b60e7008456cb809991dcefdec1f61f329f"
+    },
+    "gameplay/info_known_objects.xml": {
+     "size": 8008,
+     "sha256": "daeba4bed279e7d9a843afef2dd03b60e7008456cb809991dcefdec1f61f329f"
+    },
+    "gameplay/info_portions(1).xml": {
+     "size": 142557,
+     "sha256": "8daffead118978fe9bc69611dff65afe5203164a9102d0ff4d378853d995e8d1"
+    },
+    "gameplay/info_portions.xml": {
+     "size": 149820,
+     "sha256": "078eec54817e4405fd732a29dcd51e59b8521ccd0ce7ba8736c5a4edff8f6fe6"
+    },
+    "gameplay/info_portions_light(1).xml": {
+     "size": 468,
+     "sha256": "70d671d4049e4a65c2393cf066880c9d5dcfc3fa440f9bbd43a9b659634976a4"
+    },
+    "gameplay/info_portions_light.xml": {
+     "size": 468,
+     "sha256": "70d671d4049e4a65c2393cf066880c9d5dcfc3fa440f9bbd43a9b659634976a4"
+    },
+    "gameplay/info_stories(1).xml": {
+     "size": 1232,
+     "sha256": "e70f623120a2fad934867fc41efedb47b58fa2fbee4064ab4179bc4756cc60c9"
+    },
+    "gameplay/info_stories.xml": {
+     "size": 1232,
+     "sha256": "e70f623120a2fad934867fc41efedb47b58fa2fbee4064ab4179bc4756cc60c9"
+    },
+    "gameplay/npc_profile(1).xml": {
+     "size": 46840,
+     "sha256": "19d7c43af78dcb1f7bd5604c03825d03560ef0ebeb50d424dddef5a61e01d1ff"
+    },
+    "gameplay/npc_profile.xml": {
+     "size": 46986,
+     "sha256": "95d3abe2ab9d02b79c08a3a53c0ca939c62d9950b81fcac42f1c12e0c9e93b42"
+    },
+    "gameplay/stories(1).xml": {
+     "size": 3423,
+     "sha256": "7847f8573796924a55b4c6b5699254c57a97d8a6c2b9b77ad6d3c0380954db26"
+    },
+    "gameplay/stories.xml": {
+     "size": 3423,
+     "sha256": "7847f8573796924a55b4c6b5699254c57a97d8a6c2b9b77ad6d3c0380954db26"
+    },
+    "gameplay/storyline_info_escape(1).xml": {
+     "size": 58603,
+     "sha256": "a44f002fa7f1ab16a455fbb227db58985580d8ad609af06dfdeccbede365e959"
+    },
+    "gameplay/storyline_info_escape.xml": {
+     "size": 57430,
+     "sha256": "0b2cdaed80d9867939cfe71e72b4323b3e4370d97484073a41f8daa633074732"
+    },
+    "gameplay/storyline_info_to_diary(1).xml": {
+     "size": 164,
+     "sha256": "a6af61b7a2202ee52b22d9e5ba8408e73667e4c4e933e70aa77ac6dac53d421f"
+    },
+    "gameplay/storyline_info_to_diary.xml": {
+     "size": 164,
+     "sha256": "a6af61b7a2202ee52b22d9e5ba8408e73667e4c4e933e70aa77ac6dac53d421f"
+    },
+    "gameplay/tasks_escape(1).xml": {
+     "size": 169032,
+     "sha256": "1d03a5e077c88a934e84c83525d1e4373ac28f4e9ff079a4950b60e27b4831fd"
+    },
+    "gameplay/tasks_escape.xml": {
+     "size": 165970,
+     "sha256": "6b3069c068b917e058b2b9af1d58e109166acead5923bc347e17000b3955aec8"
+    },
+    "gstest_gameplay_texts.xml": {
+     "size": 214461,
+     "sha256": "3174b83f89c4a32069f7130ef1f328c0159e0122f9b090a51ef4edb3e7ffc577"
+    }
+   }
+  },
+  {
+   "id": "real-scripts",
+   "kind": "scripts",
+   "source": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_extract\\stage\\scripts",
+   "stats": {
+    "files": 70,
+    "strings": 555,
+    "chars": 12277
+   },
+   "tree": {
+    "gstest_scripts_texts.xml": {
+     "size": 56047,
+     "sha256": "6069f0600ad29ec23692cb9a88bbe34dd7cca15aa8981aba9e61f025fb2e20f5"
+    },
+    "scripts/_g(1).script": {
+     "size": 133806,
+     "sha256": "0440479c8234ad8cc2d0a14de7ae977c7179dfea5bb95ec7d1c078264e641af4"
+    },
+    "scripts/_g.script": {
+     "size": 133712,
+     "sha256": "05099f4bbfbdc18143898720dfe87d532ebb74417c9abd018e427f30a3589d52"
+    },
+    "scripts/_luaxml(1).script": {
+     "size": 17509,
+     "sha256": "ba7a92189f09b07d3f88332121e0b5e1f6d776d68470b8efccc0ad1e98ba74bd"
+    },
+    "scripts/_luaxml.script": {
+     "size": 17509,
+     "sha256": "ab988b43ddb916587b3e11190b307a2b30b03ac859bcc7bac6898aa675a8be47"
+    },
+    "scripts/_sdata(1).script": {
+     "size": 26293,
+     "sha256": "116848aaa1c4d4be798c04559462eff0d78c0719334905c40e1fa233e4254eb5"
+    },
+    "scripts/_sdata.script": {
+     "size": 26332,
+     "sha256": "3c3e5dfeb6a1705806c9dda929f67f165a9d36792f4244c619cf6e5fec56a8b0"
+    },
+    "scripts/achievements.script": {
+     "size": 23354,
+     "sha256": "eab7efe26ca8c5d51fe7200e55dfa3ffefe8a179e3967af3b7adcc323504763c"
+    },
+    "scripts/actor_proxy.script": {
+     "size": 2203,
+     "sha256": "ae658a06f6fb9d4e637ae635684c90bbea6bd03afbe12405bc7be2bce951327d"
+    },
+    "scripts/addon/addon.script": {
+     "size": 110147,
+     "sha256": "bdf06a613be576bbee39b72db0250b84005868e1a5a99012871c48d58f7b8da6"
+    },
+    "scripts/addon/addon_2.script": {
+     "size": 9172,
+     "sha256": "06cedb78ae6daafe4780bcd5851dc752da28544a996da1ff6854b365bfba6633"
+    },
+    "scripts/addon/addon_attach.script": {
+     "size": 3904,
+     "sha256": "2c05aa881218a21cebae84e09390cf5492a23eecb40d729dfcb070db3d336a26"
+    },
+    "scripts/addon/addon_devices.script": {
+     "size": 776404,
+     "sha256": "94933650c5818c9ea26985a7a9e17e2571e0833eaf3126bc7820203291a9a7d9"
+    },
+    "scripts/addon/addon_dialogs.script": {
+     "size": 311859,
+     "sha256": "d8f888387e338f9c7cd9c15cc6cf440464ce53656a0c3599f38ad69692d52b9e"
+    },
+    "scripts/addon/addon_utils.script": {
+     "size": 1945,
+     "sha256": "7fc9d4b41d2f7e70e40f862db63abf56edd6e8acfb1de721a830b507d8da4ded"
+    },
+    "scripts/arts_exchange.script": {
+     "size": 12698,
+     "sha256": "5fd72ccfdb06005a4b004c523a83fd05f6d7d931d3b7922f4b308eccd00b202f"
+    },
+    "scripts/bind/bind_anoms.script": {
+     "size": 4429,
+     "sha256": "026b013cf5f047a9e21d048ff4edb90622414517592514d2b6c86e246cdb44ea"
+    },
+    "scripts/bind/bind_artefact.script": {
+     "size": 1394,
+     "sha256": "5e4a9c5a3e23650f9028505ebd5f69fcf29bd422f40f2006511eb49c6809b46a"
+    },
+    "scripts/bind/bind_heli.script": {
+     "size": 7148,
+     "sha256": "40807957e3f968d452637a50f251cc940f1a3b94aaa85a61c5a5e76db20e7c03"
+    },
+    "scripts/bind/bind_monster.script": {
+     "size": 11833,
+     "sha256": "3d72539660fb75b51a342075e90452d1fcebf8aba8265a994b443d94eda0d11b"
+    },
+    "scripts/bind/bind_mteleport.script": {
+     "size": 5622,
+     "sha256": "badeeb649ca33bf4a667c7403de8f6411f62ffdee785708df439858226c6f135"
+    },
+    "scripts/bind/bind_restrictor.script": {
+     "size": 6172,
+     "sha256": "695e5c931d6ec1155000f1903818c92d042cce58d9ec83c4b4d551df415b2c7e"
+    },
+    "scripts/bind/bind_stalker.script": {
+     "size": 24242,
+     "sha256": "b6544a61f2a591c2f24f5526ec29bada74280941404af78f203420659578b8af"
+    },
+    "scripts/collect_info_portions.script": {
+     "size": 5101,
+     "sha256": "47761ae4c899d924222d8fbe3fb3ec6f44f0a4128b03abaa0433c199bbeae7e0"
+    },
+    "scripts/dialogs/dialogs.script": {
+     "size": 35648,
+     "sha256": "23f8b1794a101a093713b942bf7788d0439fd6320d20098801203a66883619c0"
+    },
+    "scripts/dmx_mod.script": {
+     "size": 2748,
+     "sha256": "687f12132294cc6c077d6eb7413ff7acee05cb38cd3d5a30fdf4d61ef8ad316e"
+    },
+    "scripts/doll_npc_check.script": {
+     "size": 7758,
+     "sha256": "178c02cdf3570e8dec046e3c9cb0ddfcfe0c8f3f99cf3ef664f024c4ec2a50fb"
+    },
+    "scripts/dsh/dsh.script": {
+     "size": 27580,
+     "sha256": "76271913ad4d6587ea3dfa16ef6aa3bd1e72acbafc3e8d9a9398d5cd0dffd012"
+    },
+    "scripts/dsh/dsh_alife.script": {
+     "size": 2585,
+     "sha256": "e695a08cb56cee2f5968c3c3ae4a0fdb4a4d42916c463cefd410674285034b5a"
+    },
+    "scripts/dsh/dsh_particles.script": {
+     "size": 3201,
+     "sha256": "7d2265e7276d277c3c7ea95aef295383761d56d858d3f7ac2dbabe675edd72aa"
+    },
+    "scripts/dsh/dsh_sleep.script": {
+     "size": 6083,
+     "sha256": "138a06295893d251acf0d24f96fa42f2e9f0ffb6d3bd461c988a70bd4ed103b1"
+    },
+    "scripts/game_stats(1).script": {
+     "size": 5286,
+     "sha256": "b8c878f33dc809ae96cdc16b7ec154774ecd0b3a8a5e9f90153798b4b4e5be5b"
+    },
+    "scripts/game_stats.script": {
+     "size": 5286,
+     "sha256": "13b99f872a2040abf153e6bd8f6b402708874298e1427cdb80ba5e8169fdae68"
+    },
+    "scripts/gs_ogsr(1).script": {
+     "size": 20314,
+     "sha256": "6286db68f2395072efbd9631b7ce995fc26a53971738b63473072e06a66e6052"
+    },
+    "scripts/gs_ogsr.script": {
+     "size": 24233,
+     "sha256": "1d8f97e5a088d1702ce53c98ca4086c3cb11378c8ba02182262e330802a912d1"
+    },
+    "scripts/healing(1).script": {
+     "size": 8033,
+     "sha256": "04f9e90d8cbdd7c2cb81e813f31edbafef4efa1047f3b4dd4bbf5692734953a1"
+    },
+    "scripts/healing.script": {
+     "size": 8163,
+     "sha256": "5c035f060b0ed81b8426a27343c3296e23846ddb8fba0b9defbde40ce79ddce1"
+    },
+    "scripts/item_use(1).script": {
+     "size": 30120,
+     "sha256": "d772f3ed589cfa94037e721c980b62f62a1e1bad4ee029c842116172f68349e8"
+    },
+    "scripts/item_use.script": {
+     "size": 31010,
+     "sha256": "4f6ccf303cfdd430fe31424ebf6bf7f8ef321e9ed8e92aa9a4f628b33aeec4c9"
+    },
+    "scripts/m_netpk(1).script": {
+     "size": 135461,
+     "sha256": "fbfd2133cc10a926a898cb1ae0cc369c304b8f402efd5c00232dfc3c99de6827"
+    },
+    "scripts/m_netpk.script": {
+     "size": 135461,
+     "sha256": "6a0c0639895cdee336ae104769f93e43f1e43d2b5c16e5e46af0749906855faa"
+    },
+    "scripts/mob/mob_jump.script": {
+     "size": 4465,
+     "sha256": "58d447e8f821b2a65be9e464ead0975b51267394e014374331d22cbea20ec13e"
+    },
+    "scripts/myscript(1).script": {
+     "size": 391,
+     "sha256": "10ac4e9001d930183170ddc7bf34a899ae8be6d7e877c7bda48ed202d8c4a851"
+    },
+    "scripts/myscript.script": {
+     "size": 391,
+     "sha256": "17aec6ce12194632aec955d951f6c5707dfa08bb91fabc4d140e2fb61a19fbb9"
+    },
+    "scripts/news_manager(1).script": {
+     "size": 22558,
+     "sha256": "e55f0ac457ab32d8b9cf51d7f0632cab1196d8b4ca20879e502a68c77e209cc4"
+    },
+    "scripts/news_manager.script": {
+     "size": 22229,
+     "sha256": "2e3de82cf98ca04bbfcc7f1d69a77da2a9716afe490fb6d16570e6fdb921700c"
+    },
+    "scripts/ogse/ogse.script": {
+     "size": 28103,
+     "sha256": "6ece74d0e442e2395414efff7f92754e1f387e08bdaf025279eff4d860f37d91"
+    },
+    "scripts/ogse/ogse_anomaly.script": {
+     "size": 53253,
+     "sha256": "34c23e8f9677521f5d1f773fe4bb5961c83de585a5da0ba87395eb3b842d01ae"
+    },
+    "scripts/ogse/ogse_autodoc.script": {
+     "size": 18580,
+     "sha256": "a6cef7d95da89aad2d43cd9ab5c26f30eed44eed2968bbe890dea225517a63ca"
+    },
+    "scripts/ogse/ogse_base_storage.script": {
+     "size": 12662,
+     "sha256": "9858aafa19e9a4e42bd6460ca39a2017c424b48893f66868a0cc39002aef965d"
+    },
+    "scripts/ogse/ogse_mental_fix.script": {
+     "size": 2606,
+     "sha256": "4f1fa71879bac2cacad4149cf9ad13d54fee3ed18dd9f8362bb4d864b161909f"
+    },
+    "scripts/ogse/ogse_signals.script": {
+     "size": 17687,
+     "sha256": "4431adc0da2389cbeaf738b62d20ceb6e34fb94109a9bd0747052a5c3130c29d"
+    },
+    "scripts/ogse/ogse_st_mgr.script": {
+     "size": 23426,
+     "sha256": "ac9ce0cfda572834cb9e144c9f6fe855d15277da378b682f5330e9f912ee8f53"
+    },
+    "scripts/ogse/ogse_surge_mgr.script": {
+     "size": 749,
+     "sha256": "46b8a4b4e7f6668fe0837f2216b70de916e1fbebc9f87dc6da0fc4880ce5267a"
+    },
+    "scripts/ogse/ogse_unist.script": {
+     "size": 44861,
+     "sha256": "05766e5073be28a993c7b117f768d09440879e6e26628bfb8a30b9895b668c24"
+    },
+    "scripts/ogse/ogse_weather_mgr.script": {
+     "size": 57207,
+     "sha256": "814763f60b314d561f1801082afb9edccc94e59b35eef6d6c80d5391d3544758"
+    },
+    "scripts/perbarsvalka(1).script": {
+     "size": 5069,
+     "sha256": "fe2848dde23812d80e2b26ea5e146f9d42de3b4242df388e41bb40980126f7f2"
+    },
+    "scripts/perbarsvalka.script": {
+     "size": 5069,
+     "sha256": "fa304ad4823fefe874a1f5ecc6bf3d310d3aca40d733cbff91afd2824995ee7f"
+    },
+    "scripts/se/se_respawn.script": {
+     "size": 21853,
+     "sha256": "e42709301708a004dcc72fa224df74674bc3f997bef6444836e77abb460f92c9"
+    },
+    "scripts/se/se_switcher.script": {
+     "size": 2067,
+     "sha256": "835244075f8ae3e4c21c728ba77ecb8d65d5fada78b183fcc8439e75835f22f3"
+    },
+    "scripts/sim_statistic(1).script": {
+     "size": 6775,
+     "sha256": "1b2f006fe0ea81488c27c334594035172b4aa06c257bcb94d0215797f0198d4b"
+    },
+    "scripts/sim_statistic.script": {
+     "size": 6775,
+     "sha256": "3cae188e0508a59025403ec988c80f691ea80814da256b7687ee9ba599ef0db7"
+    },
+    "scripts/state/state_mgr(1).script": {
+     "size": 22758,
+     "sha256": "ec76ee2174c108cff4c90003adf9d92337086f438b89b1b2758771d6ff90b9c9"
+    },
+    "scripts/state/state_mgr.script": {
+     "size": 22758,
+     "sha256": "a3d926f2bb128a8a692fbb06ff62ad6f4157b13bebe339a2486b0324cad86674"
+    },
+    "scripts/state/state_mgr_animation_list(1).script": {
+     "size": 47287,
+     "sha256": "a78b2b98b4710db2f42e05d39b5c4372503b67dc8ea5cda240ca2f5ba5e32204"
+    },
+    "scripts/state/state_mgr_animation_list.script": {
+     "size": 47287,
+     "sha256": "f345e68bdc2e4e1aacc93e3be0d4b9f9a3ffe226413a8780dccf5249a5ad5916"
+    },
+    "scripts/timer_actions(1).script": {
+     "size": 31753,
+     "sha256": "2a9fabe6483e8205c00210186f62d908205cd968255cb3c0591434ad678a47ed"
+    },
+    "scripts/timer_actions.script": {
+     "size": 35521,
+     "sha256": "d8cb465156f4d3ff36f6f04b650f96bf4ab1a77fb5b565e1475f9d15307e6ec2"
+    },
+    "scripts/u3_utils(1).script": {
+     "size": 1809,
+     "sha256": "846e70663a518dd722e390a4561bbcf7c30258e68b27b08c89cbed6622a95789"
+    },
+    "scripts/u3_utils.script": {
+     "size": 1809,
+     "sha256": "63f33a805e34ebc42dfa6b97bde04ef330114aae75117dfbca4de0ec8975db12"
+    },
+    "scripts/ui/ui_cheat_menu(1).script": {
+     "size": 32298,
+     "sha256": "52d92763c0a8a01e431a29ada45f046f5c8dc2b79f887a68af2b00a6a936b0b1"
+    }
+   }
+  },
+  {
+   "id": "synth-gameplay",
+   "kind": "gameplay",
+   "source": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_extract\\synth\\gameplay",
+   "stats": {
+    "files": 8,
+    "strings": 12,
+    "chars": 3181
+   },
+   "tree": {
+    "gameplay/a.xml": {
+     "size": 246,
+     "sha256": "83164496d53215d829badd7bc71e2f8e0ada28b6843a86ad4f8202b15267acd2"
+    },
+    "gameplay/b.xml": {
+     "size": 195,
+     "sha256": "6e4be22992d36c3a054e12a686d71b43242353f01fd77314aeb6f6bdefd3847a"
+    },
+    "gameplay/c.xml": {
+     "size": 148,
+     "sha256": "788a9c9564b091319bef29b3617cd82f15b43fcd6398405f9961e04bf5a7a2fe"
+    },
+    "gameplay/d.xml": {
+     "size": 63,
+     "sha256": "b4dede2458ebd704c543748efc3c41fe1e78a2c25ca051aa170a274d4aafc074"
+    },
+    "gameplay/e.xml": {
+     "size": 51,
+     "sha256": "97cf2d1e595b3403ae996027efb6f2e6c9f5401bea0c00ade30366ba12efa281"
+    },
+    "gameplay/g.xml": {
+     "size": 59,
+     "sha256": "7617d5f7c90f9636a7643fd86ecc49612418b5ec359f33e3e59af9900f8264e2"
+    },
+    "gameplay/h.xml": {
+     "size": 59,
+     "sha256": "9f1a1415d49b53d9bfaccfd0bddab0933548e5ffca397b866c27f4cf5c99282b"
+    },
+    "gameplay/sub/f.xml": {
+     "size": 59,
+     "sha256": "e2a9ad702fe9df1d4038a95598ab1c34ea820140d1782f0b8a15712044a988a1"
+    },
+    "gstest_gameplay_texts.xml": {
+     "size": 6720,
+     "sha256": "41294ae7cfd4430acdda5e2e96edcc9e13a7e22a347dbae9eb93bc8ce1e8a2e2"
+    }
+   }
+  },
+  {
+   "id": "synth-scripts",
+   "kind": "scripts",
+   "source": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_extract\\synth\\scripts",
+   "stats": {
+    "files": 5,
+    "strings": 17,
+    "chars": 190
+   },
+   "tree": {
+    "gstest_scripts_texts.xml": {
+     "size": 1672,
+     "sha256": "096f9b6e378a2ef647d612b0c010dff54ffe993abfdd8f12b2a7039d25a8c780"
+    },
+    "scripts/a.script": {
+     "size": 205,
+     "sha256": "3a4bf067f5c43cc073ac4087320e369d0693659ad760e7c9b1e5c5fe466a5311"
+    },
+    "scripts/b.script": {
+     "size": 688,
+     "sha256": "bdadc6990ce9eab16182da34ee4e8ab603b9c827363cc9ec72576d9bab5bb8e1"
+    },
+    "scripts/c.script": {
+     "size": 48,
+     "sha256": "315b905acc6e10e62ba8e7dafc5394edcc442a1711d043c87edc3f3540c6b7c2"
+    },
+    "scripts/d.ltx": {
+     "size": 581,
+     "sha256": "a6b961255205aec9d15ab6aed05768233db793837e58d31b61678e770ff4aada"
+    },
+    "scripts/e.ltx": {
+     "size": 33,
+     "sha256": "499d03218dddac81968f7e2d096110ee2d841ec363ac430e2dd8e7b9c92980f5"
+    }
+   }
+  }
+ ]
+}

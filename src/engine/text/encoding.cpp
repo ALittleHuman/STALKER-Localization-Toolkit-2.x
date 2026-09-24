@@ -27,8 +27,7 @@ std::string hex_byte(uint8_t b) {
 }
 
 // ── UTF-8（严格，与 Python 的 utf-8 解码器同判据）─────────────────────
-void append_utf8(std::string& out, uint32_t cp) {
-    if (cp <= 0x7F) {
+void append_utf8(std::string& out, uint32_t cp) {    if (cp <= 0x7F) {
         out.push_back(static_cast<char>(cp));
     } else if (cp <= 0x7FF) {
         out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
@@ -276,6 +275,12 @@ bool gb18030_encode(const std::string& text, std::vector<uint8_t>& out, std::str
 }
 
 }  // namespace
+
+void utf8_append(std::string& out, uint32_t cp) { append_utf8(out, cp); }
+
+bool utf8_next(const uint8_t* data, size_t size, size_t& pos, uint32_t& cp) {
+    return utf8_decode_one(data, size, pos, cp);
+}
 
 uint64_t utf8_codepoint_count(const std::string& utf8) {
     const uint8_t* p = reinterpret_cast<const uint8_t*>(utf8.data());

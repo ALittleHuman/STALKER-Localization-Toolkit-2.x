@@ -229,6 +229,8 @@ def step_cli_contract(release: bool) -> None:
          "--pack-sqfs 缺参数 → 用法错误"),
         (["--decode-text"], 3, "DECODE error",
          "--decode-text 缺参数 → 用法错误"),
+        (["--extract-text"], 3, "TEXT error",
+         "--extract-text 缺参数 → 用法错误"),
     ]
     for argv, want, marker, label in expectations:
         rc, out = run([str(CLI_EXE)] + argv)
@@ -452,6 +454,35 @@ def step_golden_text_decode(release: bool) -> None:
         fail("文本解码与 1.x 不一致（见上）")
 
 
+def step_golden_text_extract(release: bool) -> None:
+    """黄金语料差分：文本**提取层**（2.x vs 1.x 的 text_extract_app）。
+
+    判据＝**整棵产物树逐字节一致**（改写后的源文件 + 文本 XML），不只是条数。
+    退出码：0=全部一致，1=有不一致，2=夹具不可达（按外部前提处理）。
+    """
+    say("[14] 黄金语料差分：文本提取（2.x vs 1.x）")
+    script = ROOT / "tests" / "golden_text_extract.py"
+    if not require_repo_file(script, "提取基线脚本"):
+        return
+    if not require_repo_file(ROOT / "tests" / "golden" / "text_extract.json", "提取基线数据"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=3600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("GOLDEN-TEXT-EXTRACT") \
+                or s.startswith("!!") or s.startswith("ok strings=") or s.startswith("[取样]"):
+            say("  " + s)
+    if rc == 0:
+        ok("提取产物（改写源文件 + 文本 XML）与 1.x 逐字节一致")
+    elif rc == 2:
+        prereq("真语料文本树", "夹具不可达（见上）", release)
+    else:
+        fail("提取产物与 1.x 不一致（见上）")
+
+
 def tail(text: str, n: int) -> str:
     """取最后 n 行有效输出。
 
@@ -486,6 +517,7 @@ STEPS = [
     ("golden-sqfs-pack-real", step_golden_sqfs_pack_real),
     ("text-tables", step_text_tables),
     ("golden-text-decode", step_golden_text_decode),
+    ("golden-text-extract", step_golden_text_extract),
 ]
 
 

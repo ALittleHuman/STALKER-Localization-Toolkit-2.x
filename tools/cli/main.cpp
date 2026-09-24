@@ -18,6 +18,7 @@
 #include "xrkit/engine/fs/lzhuf.h"
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/text/encoding.h"
+#include "xrkit/engine/text/extract.h"
 #include "xrkit/engine/third_party_probe.h"
 
 #include <algorithm>
@@ -91,6 +92,8 @@ void print_usage() {
            "  --pack-db <输出> <格式> <输入目录>          按目录打包 DB（逐字节对拍用）\n"
            "  --pack-sqfs <输出> <输入目录> [--pack-dirs]  自写 SquashFS 封包（xz 块，逐字节对拍用）\n"
            "  --decode-text <输入> <输出>                 六编码链解码（把正文写成 UTF-8；对拍用）\n"
+           "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
+           "                                              文本提取（gameplay|scripts 一个分支）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -204,16 +207,32 @@ void register_dep_checks(xrkit::core::CheckRegistry& reg, DepCounts& counts) {
 int run_cli(const std::vector<std::string>& args) {
     bool verbose = false;
     bool pack_dirs = false;
+    bool clean = false;
+    std::string text_prefix;
+    std::string text_id_prefix;
     std::string action;
     std::vector<std::string> operands;
 
-    for (const std::string& a : args) {
+    for (size_t i = 0; i < args.size(); ++i) {
+        const std::string& a = args[i];
         if (a == "-v" || a == "--verbose") {
             verbose = true;
             continue;
         }
         if (a == "--pack-dirs") {
             pack_dirs = true;
+            continue;
+        }
+        if (a == "--clean") {
+            clean = true;
+            continue;
+        }
+        if (a == "--prefix" && i + 1 < args.size()) {
+            text_prefix = args[++i];
+            continue;
+        }
+        if (a == "--id-prefix" && i + 1 < args.size()) {
+            text_id_prefix = args[++i];
             continue;
         }
         if (a == "-h" || a == "--help") {
@@ -483,6 +502,48 @@ int run_cli(const std::vector<std::string>& args) {
                   << " frag_blocks=" << r.fragment_blocks << " dedup_blocks=" << r.dedup_blocks
                   << " dedup_frags=" << r.dedup_fragments
                   << " ms=" << static_cast<long long>(r.elapsed_ms) << "\n";
+        return kExitOk;
+    }
+
+    // 文本提取（M1-6）：gameplay / scripts 一个分支。类型**只看源目录自己的名字**，
+    // 与 1.x 的 `_resolve_source_types` 同口径（不向下查找、不要选上层目录）。
+    // 产物 = 改写后的源文件树 + 文本 XML；对拍判据是"整棵产物树逐字节一致"。
+    if (action == "--extract-text") {
+        if (operands.size() < 2) {
+            std::cerr << "TEXT error reason=用法：--extract-text <源目录(gameplay|scripts)> <输出目录>"
+                         " [--prefix p] [--id-prefix p] [--clean]\n";
+            return kExitUsage;
+        }
+        const std::string& source = operands[0];
+        const std::string& target = operands[1];
+        xrkit::engine::text::ExtractKind kind{};
+        std::string kind_err;
+        if (!xrkit::engine::text::kind_from_dir_name(source, kind, kind_err)) {
+            std::cout << "TEXT error reason=" << kind_err << "\n";
+            return kExitFail;
+        }
+        const std::string type_dir =
+            (kind == xrkit::engine::text::ExtractKind::Gameplay) ? "gameplay" : "scripts";
+        const std::filesystem::path target_sub =
+            std::filesystem::path(path_from_utf8(target)) / path_from_utf8(type_dir);
+        xrkit::engine::text::ExtractOptions opt;
+        if (!text_prefix.empty()) opt.prefix = text_prefix;
+        opt.id_prefix = text_id_prefix;
+        opt.clean = clean;
+        const xrkit::engine::text::ExtractStats st =
+            xrkit::engine::text::extract_dir(source, path_to_utf8(target_sub), target, opt);
+        if (!st.ok) {
+            std::cout << "TEXT error reason=" << st.error << "\n";
+            return kExitFail;
+        }
+        for (const std::string& s : st.skipped) {
+            std::cout << "TEXT skip " << s << "\n";
+        }
+        std::cout << "TEXT ok kind=" << type_dir << " files=" << st.files
+                  << " strings=" << st.strings << " chars=" << st.chars
+                  << " skipped=" << st.skipped.size()
+                  << " xml=" << (st.texts_xml_name.empty() ? "-" : st.texts_xml_name)
+                  << " ms=" << static_cast<long long>(st.elapsed_ms) << "\n";
         return kExitOk;
     }
 

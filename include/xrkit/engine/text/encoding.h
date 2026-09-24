@@ -53,6 +53,13 @@ DecodeResult read_text_file(const std::string& path);
 // 通用换行归一（\r\n → \n，单独的 \r → \n）
 void normalize_newlines(std::string& text);
 
+// 读一个 UTF-8 码位（严格；失败返回 false 且 pos 不前进）。
+// 文本层（提取）要按码位做 strip / 切分 / 判定，所以这里把码位迭代暴露出来。
+bool utf8_next(const uint8_t* data, size_t size, size_t& pos, uint32_t& cp);
+
+// 追加一个码位（UTF-8 编码）
+void utf8_append(std::string& out, uint32_t cp);
+
 // UTF-8 串的码位数（不合法返回 0）
 uint64_t utf8_codepoint_count(const std::string& utf8);
 

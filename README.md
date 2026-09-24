@@ -36,8 +36,11 @@ MSVC 编 Qt 必须带 `/Zc:__cplusplus`（否则 Qt 触发 `#error C1189`）与 
 
 - **1.x 是行为基准，不是代码基准。** 2.0.0 的验收判据逐条对照 1.x 的行为口径
   （滚动条四看、拖动 line 档、文件合并"后者为准 + 散装最后"、日志栏、任务壳、字库定标……）。
-- 真机样本沿用 1.x 那一份：`E:\Human\NLC Improved [OBT]`（`gamedata.sq_*`、`xrEngine.exe` /
-  `xrEngine_patched.exe` 逐字节对拍）。
+- 真机样本沿用 1.x 那一份（**2026-09-24 实测：已从 `E:\Human\` 迁到**
+  `E:\Software\Games\STALKER\Games\`）：`NLC Improved [OBT]\gamedata.sq_*`、`bin_x64\xrEngine.exe`；
+  正确的补丁版在 `E:\Software\Tools\Ghidra\Projects\NLC Improved\Exported\xrEngine_patched.exe`
+  （`xrEngine.exe` 与它逐字节对拍是最硬的判据）。文本类语料见
+  `docs/2.0.0-文本模块规格.md`（gameplay/scripts 真树）。
 
 ## 文档
 
@@ -61,7 +64,7 @@ python tests\run_ci.py --release      # 任何 SKIP 与「未覆盖清单」非�
 
 产物：`build/msvc-release/tools/cli/xrkit_cli.exe`
 （`--selftest` / `--bench` / `--themecheck` / `--dump` / `--extract` / `--pack-db` /
-`--pack-sqfs` / `--decode-text`；退出码 0=通过 1=失败 **2=显式跳过** 3=用法错误）。
+`--pack-sqfs` / `--decode-text` / `--extract-text`；退出码 0=通过 1=失败 **2=显式跳过** 3=用法错误）。
 
 ## 开发约定（都是本机实测踩出来的，别改回去）
 
