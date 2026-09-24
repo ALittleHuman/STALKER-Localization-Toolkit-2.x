@@ -38,6 +38,9 @@ public:
     void set_row_text_provider(std::function<QString(int)> provider);
     int provider_calls() const { return provider_calls_; }
 
+    // 取某一行"会显示成什么"（自检核对行文本用；不改变池子与选中的状态）
+    QString row_text(int row) const;
+
     // 10.2 的范围规则（静态版便于逐组对拍）
     static QPair<int, int> visible_range(int top, int view_h, int row_h, int total);
     QPair<int, int> visible_range() const;

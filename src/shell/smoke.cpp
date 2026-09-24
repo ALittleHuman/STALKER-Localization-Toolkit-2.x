@@ -3,6 +3,7 @@
 #include "xrkit/core/theme.h"
 #include "hub.h"
 #include "log_box.h"
+#include "pages/fs_page.h"
 #include "pages/page_base.h"
 #include "pages/page_factory.h"
 #include "scroll_viewport.h"
@@ -12,6 +13,7 @@
 #include "virtual_list.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -643,12 +645,19 @@ SmokeResult run_smoke() {
             if (page->action_bar() == nullptr || inside_viewport(page->action_bar())) {
                 ++order_bad;
             }
-            // 操作栏内**按钮在前、stretch 在后**（加的顺序 = 显示的顺序，贴右）
+            // 操作栏里必须有这个按钮、且**不在视口里**。不能要求它是第 0 项：
+            // 真页面在自己构造时就已经加过按钮了（顺序契约由 add_action 保证）。
             auto* probe_button = page->add_action(QStringLiteral("自检占位"));
-            if (page->action_layout() == nullptr ||
-                page->action_layout()->itemAt(0) == nullptr ||
-                page->action_layout()->itemAt(0)->widget() != probe_button ||
-                inside_viewport(probe_button)) {
+            bool probe_in_bar = false;
+            for (int j = 0; page->action_layout() != nullptr &&
+                            j < page->action_layout()->count();
+                 ++j) {
+                if (page->action_layout()->itemAt(j) != nullptr &&
+                    page->action_layout()->itemAt(j)->widget() == probe_button) {
+                    probe_in_bar = true;
+                }
+            }
+            if (!probe_in_bar || inside_viewport(probe_button)) {
                 ++order_bad;
             }
         }
@@ -696,6 +705,92 @@ SmokeResult run_smoke() {
         result.notes.append(QStringLiteral("⑤ 六页框架：page_min_h=%1（缩放 %2），视口 fit=content")
                                 .arg(page_min_h())
                                 .arg(xrkit::core::ui_scale()));
+    }
+
+    // ⑥ 文件系统页的**界面形态**（M2-6b2）。这几条都是 1.x 出过事故的地方：
+    // 两套状态混成一套、下拉存显示名、拖放另造一个 zone、解包有两条不同源的路。
+    {
+        namespace efs = xrkit::engine::fs;
+        FsPage page;
+        page.resize(720, page_min_h());
+        page.show();
+        QApplication::processEvents();
+
+        // 6.13：下拉**取值 = 内部键**，显示名只用于展示
+        QComboBox* combo = page.format_combo();
+        const std::vector<efs::FsFormatItem>& formats = efs::fs_formats();
+        check(combo != nullptr && combo->count() == static_cast<int>(formats.size()),
+              QStringLiteral("6.13 格式下拉条数 = 格式表条数（%1）").arg(formats.size()));
+        int key_bad = 0;
+        int sqfs_items = 0;
+        for (int i = 0; combo != nullptr && i < combo->count(); ++i) {
+            const std::string key = combo->itemData(i).toString().toStdString();
+            const std::string label = combo->itemText(i).toStdString();
+            const bool key_ok =
+                efs::format_key_is_sqfs(key) || efs::format_key_to_db(key).has_value();
+            // 显示名**不该**能被当成取值解析（这就是那个事故的判据）
+            const bool label_resolves =
+                efs::format_key_is_sqfs(label) || efs::format_key_to_db(label).has_value();
+            if (!key_ok || label_resolves) ++key_bad;
+            if (efs::format_key_is_sqfs(key)) ++sqfs_items;
+        }
+        check(key_bad == 0,
+              QStringLiteral("6.13 下拉取值是内部键、显示名解析不出来（%1 项不符）").arg(key_bad));
+        check(sqfs_items == 1, QStringLiteral("6.13 SquashFS 在下拉里恰好一条"));
+
+        // 6.4：**没有 drop_zone** —— 拖放挂在既有控件上（1.x 明文写着）
+        bool any_drop_zone = false;
+        for (QWidget* child : page.findChildren<QWidget*>()) {
+            if (child->objectName().contains(QStringLiteral("drop_zone"))) any_drop_zone = true;
+        }
+        check(!any_drop_zone, QStringLiteral("6.4 页里没有 drop_zone 控件"));
+        check(page.package_list() != nullptr && page.package_list()->acceptDrops(),
+              QStringLiteral("6.4 拖放直接挂在包列表上（acceptDrops）"));
+
+        // 6.1/6.2：两个包叠加，后者为准；行文本要能看出"这一份来自哪个包"
+        page.add_source(QStringLiteral("sq_base"),
+                        {{"a.txt", false}, {"dir/keep.txt", false}, {"dir/base_only.txt", false}});
+        page.add_source(QStringLiteral("sqzy_patch"), {{"a.txt", false}, {"dir/keep.txt", false}});
+        check(page.source_count() == 2, QStringLiteral("6.2 两个包都进了列表"));
+        VirtualList* rows = page.entry_list();
+        check(rows != nullptr && rows->row_count() == 4,
+              QStringLiteral("6.1 合并后条目数 = 4（实测 %1）")
+                  .arg(rows == nullptr ? -1 : rows->row_count()));
+        bool patch_wins = false;
+        for (int i = 0; rows != nullptr && i < rows->row_count(); ++i) {
+            const QString text = rows->row_text(i);
+            if (text.startsWith(QStringLiteral("a.txt")) &&
+                text.contains(QStringLiteral("sqzy_patch"))) {
+                patch_wins = true;
+            }
+        }
+        check(patch_wins, QStringLiteral("6.1 同名条目以后加载的包为准（行里能看到来源包）"));
+
+        // 6.3：两个"全选"动的是**两套**状态
+        page.select_all_button()->click();
+        check(page.selection().size() == 2, QStringLiteral("6.3 「全选包」改了包列表选中态"));
+        check(page.checked_file_count() == 0,
+              QStringLiteral("6.3 「全选包」**没有**碰包内勾选态（实测勾了 %1 个）")
+                  .arg(page.checked_file_count()));
+        page.check_all_button()->click();
+        check(page.checked_file_count() == 3,
+              QStringLiteral("6.3 「包内全选」勾上了 3 个文件（实测 %1）")
+                  .arg(page.checked_file_count()));
+        check(page.selection().size() == 2,
+              QStringLiteral("6.3 「包内全选」**没有**碰包列表选中态（实测 %1）")
+                  .arg(page.selection().size()));
+
+        // 6.11：选中集解包与批量解包走**同一个**入口 —— 同一份输入、同一句话。
+        // 真镜像上的逐字节对拍在门禁 [8] 的整树导出里做；这里证的是"没有第二条路"。
+        const efs::ExtractTreeResult batch =
+            page.extract_to(QStringLiteral("no_such_image.sqfs"), QStringLiteral("no_out"),
+                            efs::Selection::All);
+        const efs::ExtractTreeResult picked =
+            page.extract_to(QStringLiteral("no_such_image.sqfs"), QStringLiteral("no_out"),
+                            efs::Selection::Listed, {"a.txt"});
+        check(!batch.ok && !picked.ok && batch.error == picked.error && !batch.error.empty(),
+              QStringLiteral("6.11 批量与选中解包同源（同样失败、同样的话：%1）")
+                  .arg(QString::fromStdString(batch.error)));
     }
 
     return result;

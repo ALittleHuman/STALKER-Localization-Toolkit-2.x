@@ -41,6 +41,11 @@ void VirtualList::set_scroll_top(int top) {
     refresh();
 }
 
+QString VirtualList::row_text(int row) const {
+    if (row < 0 || row >= total_) return QString();
+    return provider_ ? provider_(row) : QString::number(row);
+}
+
 void VirtualList::set_selected_row(int row) {
     selected_ = row;
     refresh();

@@ -918,7 +918,18 @@ def step_shell_smoke(release: bool) -> None:
         return
     ok("页最小高只有 page_min_h() 一处真值（5.2）")
 
-    # 锁的自证：上面三条静态锁都靠 `active_code` 区分"注释"与"活代码"。
+    # 对照表 6.11：**解包只能有一条路**。1.x 是"逐项 `--cat`（300 s/项）"与
+    # "整镜像 `--unpack-path`（3600 s）"两条路，成功计数与文案还不同源 ——
+    # 页面里再出现第二处 `extract_tree(` 调用，就等于把那条路又劈开了。
+    page_src = ROOT / "src" / "shell" / "pages" / "fs_page.cpp"
+    calls = active_code(page_src.read_text(encoding="utf-8", errors="replace")).count(
+        "extract_tree(")
+    if calls != 1:
+        fail("解包入口（6.11）：fs_page.cpp 里有 %d 处 extract_tree( —— 必须恰好 1 处" % calls)
+        return
+    ok("解包只有一条路（6.11：fs_page.cpp 里 extract_tree( 恰好 1 处）")
+
+    # 锁的自证：上面这些静态锁都靠 `active_code` 区分"注释"与"活代码"。
     # 两头都得对 —— 既能被一句注释绕过（太松），也会把注释当违规（太紧，等于
     # 禁止源码里写口径出处）。所以这里**故意**喂一份正反样本给它。
     probe = active_code(

@@ -18,6 +18,7 @@
 #include "xrkit/engine/fs/db.h"
 #include "xrkit/engine/fs/extract_tree.h"
 #include "xrkit/engine/fs/lzhuf.h"
+#include "xrkit/engine/fs/overlay.h"
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/font/charset.h"
 #include "xrkit/engine/font/glyph.h"
@@ -177,6 +178,171 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         check(ctx, line.rfind("engine id=", 0) == 0, "status_line 形态不符: " + line);
     });
 
+    // ⑥6.1/6.2 合并语义：**后者为准**，且 `source` 要跟着切到"引擎实际会读到的那一份"。
+    // 这条以前是 first-wins（错的）：`sqzy_patch` 里的同名文件永远输给 `sq_base`。
+    reg.add("fs: 合并以后者为准，勾选态跟随原节点（⑥6.1）", [](CheckContext& ctx) {
+        namespace efs = xrkit::engine::fs;
+        // base 包：a.txt / dir/keep.txt / dir/only_base.txt
+        // patch 包：a.txt（同名，应赢）/ dir/keep.txt（同名，应赢）/ dir2/ 目录（类型变化）
+        const efs::MergeTree base = efs::build_tree({"sq_base",
+                                                     {{"a.txt", false},
+                                                      {"dir/keep.txt", false},
+                                                      {"dir/only_base.txt", false},
+                                                      {"swap", false}}});
+        const efs::MergeTree patch = efs::build_tree({"sqzy_patch",
+                                                      {{"a.txt", false},
+                                                       {"dir/keep.txt", false},
+                                                       {"swap/x.txt", false}}});
+
+        efs::MergeTree merged = base;
+        // 用户先勾过 base 里的 a.txt 与 dir/keep.txt
+        merged.toggle_all(false);
+        merged.toggle_dir("a.txt", true);
+        merged.toggle_dir("dir/keep.txt", true);
+        merged.merge(patch, 1);
+
+        const efs::MergeNode* a = merged.find("a.txt");
+        check(ctx, a != nullptr && a->source_index == 1, "同名文件没有以后并入的那份为准");
+        // 6.1 的"勾选态跟随原节点"：并进来之后，用户之前勾的还要在
+        check(ctx, a != nullptr && a->checked, "合并后丢了原来的勾选态");
+        const efs::MergeNode* keep = merged.find("dir/keep.txt");
+        check(ctx, keep != nullptr && keep->source_index == 1 && keep->checked,
+              "目录下同名文件的胜负/勾选态不对");
+        const efs::MergeNode* only_base = merged.find("dir/only_base.txt");
+        check(ctx, only_base != nullptr && only_base->source_index == 0,
+              "只有 base 有的文件被弄丢了");
+        // 类型变化（base 里 swap 是文件，patch 里 swap 是目录）⇒ 以后者为准且其子树可用
+        const efs::MergeNode* swap = merged.find("swap");
+        check(ctx, swap != nullptr && swap->is_dir, "文件→目录的类型变化没以后者为准");
+        check(ctx, merged.find("swap/x.txt") != nullptr, "类型变化后新子树没接上");
+        // 同名替换计数 = 2 个同名文件 + 1 个类型变化（base 的 swap 是文件、patch 的是目录）。
+        // **类型变化也算一次替换** —— 这正是"后者为准"的含义，不是特例。
+        check(ctx, merged.conflict_count() == 3,
+              "同名冲突计数不对（应为 3，实测 " + std::to_string(merged.conflict_count()) + "）");
+        check(ctx, merged.checked_file_count() == 2,
+              "勾选文件计数不对（应为 2，实测 " + std::to_string(merged.checked_file_count()) +
+                  "）");
+    });
+
+    // ⑥6.2：加载顺序 = 按 basename 小写升序（字典序靠后的包赢）。
+    reg.add("fs: 加载序按 basename 小写升序（⑥6.2）", [](CheckContext& ctx) {
+        namespace efs = xrkit::engine::fs;
+        const std::vector<std::string> paths = {"D:/mods/sq_base", "D:/mods/sqzy_patch",
+                                                "D:/mods/SQ_textures"};
+        const std::vector<size_t> order = efs::sort_sources_by_basename(paths);
+        const std::vector<size_t> want = {0, 2, 1};  // sq_base < sq_textures < sqzy_patch
+        check(ctx, order == want, "加载顺序不对（大小写敏感或没排序）");
+        // 稳定排序：同名时保持原顺序
+        const std::vector<std::string> same = {"a/x", "b/x", "c/x"};
+        check(ctx, efs::sort_sources_by_basename(same) == std::vector<size_t>({0, 1, 2}),
+              "同名 basename 时没保持稳定顺序");
+    });
+
+    // ⑥6.3：`selected`（DB 栏）与 `checked`（包内文件）是**两套独立状态**。
+    // 1.x 的判据：DB 栏「全选」只改 `_sel`；包内「全选/全不选」只改 `node.checked`。
+    reg.add("fs: 选中态与勾选态互不影响（⑥6.3）", [](CheckContext& ctx) {
+        namespace efs = xrkit::engine::fs;
+        efs::MergeTree tree = efs::build_tree({"sq_base",
+                                               {{"a.txt", false}, {"b.txt", false}}});
+        efs::FsSelection sel;
+        sel.select_all({"sq_base", "sqzy_patch"});
+        check(ctx, sel.size() == 2, "DB 栏全选没生效");
+        // 「全选」不许把包内文件也勾上
+        check(ctx, tree.checked_file_count() == 0, "DB 栏全选把包内文件也勾上了（两套状态混了）");
+        tree.toggle_all(true);
+        check(ctx, tree.checked_file_count() == 2, "包内全选没生效");
+        check(ctx, sel.size() == 2, "包内全选动了 DB 栏选中态（两套状态混了）");
+        sel.clear();
+        check(ctx, tree.checked_file_count() == 2, "清空 DB 栏选中态把包内勾选也清了");
+    });
+
+    // ⑥6.13：下拉存的是**内部键**。1.x 存显示名 ⇒ `ALL_FMTS.get(fmt)` 必然取不到，
+    // SquashFS 被静默按 xdb 打包（文件名还叫 .SquashFS.db）。
+    reg.add("fs: 格式下拉用内部键、显示名解析不出来（⑥6.13）", [](CheckContext& ctx) {
+        namespace efs = xrkit::engine::fs;
+        const std::vector<efs::FsFormatItem>& items = efs::fs_formats();
+        check(ctx, items.size() == 7, "格式表条数不对（6 种 DB + SquashFS）");
+        int sqfs_count = 0;
+        for (const efs::FsFormatItem& item : items) {
+            if (item.is_sqfs) ++sqfs_count;
+            // 内部键必须能解析（sqfs 除外）
+            if (item.is_sqfs) {
+                check(ctx, efs::format_key_is_sqfs(item.key), "SquashFS 键没被认出来");
+                check(ctx, !efs::format_key_to_db(item.key).has_value(),
+                      "SquashFS 键被当成 DB 格式了");
+            } else {
+                check(ctx, efs::format_key_to_db(item.key).has_value(),
+                      "内部键解析不出格式: " + item.key);
+            }
+            // **显示名一律不许被当成取值解析**（这条就是 1.x 那个事故的判据）
+            check(ctx, !efs::format_key_to_db(item.label).has_value(),
+                  "显示名被当成下拉取值解析了: " + item.label);
+        }
+        check(ctx, sqfs_count == 1, "SquashFS 在格式表里不是唯一一条");
+        // 历史取值 "sqfs" 继续被识别（老配置/插件条目不能因此失效）
+        check(ctx, efs::format_key_is_sqfs("sqfs"), "历史取值 sqfs 不被识别");
+    });
+
+    // ⑥6.12：目录条目必须**如实**带 is_dir ⇒ 引擎的 DIRTYPE 分支真的会被走到。
+    // 1.x 在 App 侧把 is_dir 写死 False，那条分支在 App 路径下永不触发。
+    reg.add("fs: 目录条目真走 DIRTYPE（⑥6.12）", [](CheckContext& ctx) {
+        namespace fsys = std::filesystem;
+        namespace efs = xrkit::engine::fs;
+        std::error_code ec;
+        const fsys::path dir = fsys::temp_directory_path(ec) / "xrkit_selftest_dirtree";
+        fsys::remove_all(dir, ec);
+        fsys::create_directories(dir / "sub" / "deep", ec);
+        {
+            std::ofstream(dir / "top.txt") << "top";
+            std::ofstream(dir / "sub" / "mid.txt") << "mid";
+            std::ofstream(dir / "sub" / "deep" / "leaf.txt") << "leaf";
+        }
+        const std::vector<efs::TreeItem> items = efs::collect_tree(dir.string());
+        int dirs = 0;
+        int files = 0;
+        for (const efs::TreeItem& item : items) {
+            if (item.is_dir) {
+                ++dirs;
+            } else {
+                ++files;
+                check(ctx, !item.source_path.empty() && item.source_path != item.path,
+                      "文件条目没带本机路径: " + item.path);
+            }
+        }
+        // sub / sub/deep = 2 个目录；3 个文件
+        check(ctx, dirs == 2, "目录条目数不对（实测 " + std::to_string(dirs) + "）");
+        check(ctx, files == 3, "文件条目数不对（实测 " + std::to_string(files) + "）");
+
+        // 端到端：把**带 is_dir** 的条目交给 pack_db → 再解回来必须看得见目录条目。
+        // 这就是"DIRTYPE 分支真的可达"的判据（不是看代码里有没有分支）。
+        std::vector<efs::DbPackItem> pack;
+        for (const efs::TreeItem& item : items) {
+            efs::DbPackItem p;
+            p.path = item.path;
+            p.is_dir = item.is_dir;
+            if (!item.is_dir) {
+                std::ifstream in(xrkit::core::path_from_utf8(item.source_path), std::ios::binary);
+                p.data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            }
+            pack.push_back(std::move(p));
+        }
+        for (efs::DbFormat fmt : {efs::DbFormat::Xdb, efs::DbFormat::Ru2947}) {
+            const std::vector<uint8_t> bytes = efs::pack_db(pack, fmt);
+            check(ctx, !bytes.empty(), std::string("pack_db 没产出: ") + efs::db_format_key(fmt));
+            const efs::DbList back = efs::unpack_db(bytes, fmt);
+            check(ctx, back.ok, std::string("回读失败: ") + back.error);
+            int back_dirs = 0;
+            for (const efs::DbEntry& e : back.entries) {
+                if (e.is_dir) ++back_dirs;
+            }
+            check(ctx, back_dirs == dirs,
+                  std::string("回读出来的目录条目数不对（") + efs::db_format_key(fmt) + "，实测 " +
+                      std::to_string(back_dirs) + "）");
+        }
+        fsys::remove_all(dir, ec);
+    });
+    // **任意文件写**。1.x 只把理由写在注释里，2.0 把"拒因"带出来 —— 所以这里连
+    // **理由**一起断言：改判定顺序、把某一条删掉，都能当场变红。
     // ⑥6.7 路径越界判据（safe_out_path）：归档条目名是不可信输入，这条判据挡的是
     // **任意文件写**。1.x 只把理由写在注释里，2.0 把"拒因"带出来 —— 所以这里连
     // **理由**一起断言：改判定顺序、把某一条删掉，都能当场变红。

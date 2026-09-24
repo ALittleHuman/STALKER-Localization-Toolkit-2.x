@@ -15,6 +15,7 @@ add_library(xrkit_shell STATIC
   virtual_list.cpp
   pages/page_base.cpp
   pages/page_factory.cpp
+  pages/fs_page.cpp
   smoke.cpp)
 
 target_include_directories(xrkit_shell PUBLIC "${CMAKE_SOURCE_DIR}/include")
