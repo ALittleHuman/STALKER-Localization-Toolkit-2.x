@@ -42,6 +42,7 @@ struct Entry {
     std::string path;  // 与 rdsquashfs --describe 同格式：**无前导斜杠**，如 levels/aver/x.dds
     bool is_dir = false;
     uint64_t size = 0;  // 目录恒 0
+    uint64_t inode_ref = 0;  // 内部用：定位 inode（列表与提取共用同一次遍历结果）
 };
 
 struct ListResult {
@@ -51,10 +52,23 @@ struct ListResult {
     double elapsed_ms = 0.0;
 };
 
+struct FileData {
+    bool ok = false;
+    std::string error;
+    std::vector<uint8_t> data;
+    double elapsed_ms = 0.0;
+};
+
 // 只读 96 字节超块。magic 不是 hsqs/sqsh 时返回 false。
 bool read_superblock(const std::string& path, SuperBlock& out, std::string& err);
 
 // 列出全部条目（含目录项），按 path 字节序排序（确定性，便于逐条对拍）。
 ListResult list_entries(const std::string& path);
+
+// 读取单个文件的完整内容（进程内解压）：
+//   · 数据块（block_size 一块，bit24 = 未压缩，size==0 表示空洞）
+//   · 尾部 fragment（块内偏移 + fragment 长度）
+// 返回的 data.size() 必须等于 inode 的 size —— 不等就是解析错了，直接报错而不是给半截数据。
+FileData read_file(const std::string& image_path, const std::string& entry_path);
 
 }  // namespace xrkit::engine::fs

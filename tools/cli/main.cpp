@@ -41,6 +41,7 @@ void print_usage() {
            "  --bench         跑性能基线（未实现时输出 BENCH skip ... 并返回 2）\n"
            "  --themecheck    检查主题令牌（未实现时输出 THEMECHECK skip ... 并返回 2）\n"
            "  --dump <文件>   导出引擎解析结果（SquashFS 条目表 TSV；黄金语料差分用）\n"
+           "  --extract <镜像> <内部路径> <输出文件>   提取单个文件（进程内解压）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -221,6 +222,30 @@ int main(int argc, char** argv) {
             std::cout << (e.is_dir ? 'd' : 'f') << '\t' << e.path << '\t' << e.size << '\n';
         }
         std::cout << "DUMP ok entries=" << res.entries.size()
+                  << " ms=" << static_cast<long long>(res.elapsed_ms) << "\n";
+        return kExitOk;
+    }
+
+    if (action == "--extract") {
+        if (operands.size() < 3) {
+            std::cerr << "EXTRACT error reason=用法：--extract <镜像> <内部路径> <输出文件>\n";
+            return kExitUsage;
+        }
+        const xrkit::engine::fs::FileData res =
+            xrkit::engine::fs::read_file(operands[0], operands[1]);
+        if (!res.ok) {
+            std::cout << "EXTRACT error reason=" << res.error << "\n";
+            return kExitFail;
+        }
+        std::ofstream out(operands[2], std::ios::binary | std::ios::trunc);
+        if (!out) {
+            std::cout << "EXTRACT error reason=无法写输出文件：" << operands[2] << "\n";
+            return kExitFail;
+        }
+        out.write(reinterpret_cast<const char*>(res.data.data()),
+                  static_cast<std::streamsize>(res.data.size()));
+        out.close();
+        std::cout << "EXTRACT ok path=" << operands[1] << " bytes=" << res.data.size()
                   << " ms=" << static_cast<long long>(res.elapsed_ms) << "\n";
         return kExitOk;
     }

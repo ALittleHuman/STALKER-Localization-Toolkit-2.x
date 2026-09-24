@@ -1,0 +1,66 @@
+{
+  "id": "nlc-sq-meshes",
+  "image": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sq_meshes",
+  "files": [
+    {
+      "path": "meshes/actors/2018/brod.ogf",
+      "size": 550410,
+      "sha256": "0d36d9a09a5548dd20be996e65eee854f1b87906fae37e9775ab5ffbf2b89b12"
+    },
+    {
+      "path": "meshes/actors/2018/brom.ogf",
+      "size": 973525,
+      "sha256": "f01cdde6cb44704fe15def4cd679bbd7306ac614253ee13795cf9605893294af"
+    },
+    {
+      "path": "meshes/actors/2018/deg.ogf",
+      "size": 575547,
+      "sha256": "f564027eb60ce557adbe0372566d5b48fb34a8d3552c0a856cc7878e51beea1c"
+    },
+    {
+      "path": "meshes/actors/2018/dneva.ogf",
+      "size": 493859,
+      "sha256": "2846e6ba365e8ca16c6918eabe958366ee8bc6ede1a2b84b12c771b1639ec63b"
+    },
+    {
+      "path": "meshes/dynamics/box/box_1c.ogf",
+      "size": 21154,
+      "sha256": "a70241492c59a582f66a7c8e99f494d891e54881efc5f8a9c0a16a72eb288fc0"
+    },
+    {
+      "path": "meshes/dynamics/weapons/wpn_eat/food/wpn_eat_kolbasa.ogf",
+      "size": 66307,
+      "sha256": "186a650903a4f3ee90a8ae4cd53bf342536c4eea76187756812d2a6e34a2d05c"
+    },
+    {
+      "path": "meshes/dynamics/weapons/wpn_protecta/wpn_protecta_lod.ogf",
+      "size": 710882,
+      "sha256": "645a52ad5956cb807be6c90c466300add4bbbc1608c0c29446cecdcf8f8e5a4c"
+    },
+    {
+      "path": "meshes/dynamics/weapons/wpn_winchester1300/wpn_winchester1300_trapper_eot_hud.ogf",
+      "size": 2915572,
+      "sha256": "073ccd8bf845e3a9750a30e25d1397c850050ee8db8162d73a14d679b2d811c1"
+    },
+    {
+      "path": "meshes/new_item/kran_mayatnik.ogf",
+      "size": 200141,
+      "sha256": "70f343a57095619d911b1c840f68607fb0b35bb59b69441a17627cb4b8065a52"
+    },
+    {
+      "path": "meshes/physics/box/prt/box_lab_02_prt4.ogf",
+      "size": 8251,
+      "sha256": "538c394aace6693fc7ef911158deca15f2e597487b98fbdeb97a8e05d2b6a30e"
+    },
+    {
+      "path": "meshes/physics/zabor/wood_fence_1.ogf",
+      "size": 16207,
+      "sha256": "1076de213171d7a8ff91bce9a1389defd52546b892d12bb5d1657dc658940711"
+    },
+    {
+      "path": "meshes/actors/stalker_animation.omf",
+      "size": 39066990,
+      "sha256": "a2c3130a26d31fa00d29fad704ff025f89219ff027354cc5ddd86ebf09ce86e1"
+    }
+  ]
+}

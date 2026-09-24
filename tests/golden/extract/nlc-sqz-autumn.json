@@ -1,0 +1,66 @@
+{
+  "id": "nlc-sqz-autumn",
+  "image": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\Текстурные дополнения\\gamedata.sqz_autumn",
+  "files": [
+    {
+      "path": "levels/aver/build_details.dds",
+      "size": 1398240,
+      "sha256": "11e1e2ddde787b067224a715d8ad040d562fbe51ec7aef5ed429fb0affd59ad0"
+    },
+    {
+      "path": "levels/aver/level.details",
+      "size": 4033172,
+      "sha256": "b474fa50fbbdc5a1ffa017fea7e5a45e2509326c919ddf32319067807713a03d"
+    },
+    {
+      "path": "levels/deadcity/build_details.dds",
+      "size": 1398240,
+      "sha256": "11e1e2ddde787b067224a715d8ad040d562fbe51ec7aef5ed429fb0affd59ad0"
+    },
+    {
+      "path": "levels/deadcity/level.details",
+      "size": 6550292,
+      "sha256": "51ccf6c06e65cfefae3fa878e184f5fecf227d0f952a67b0768084d131299d00"
+    },
+    {
+      "path": "textures/trees/2rees_sosna_low.dds",
+      "size": 699184,
+      "sha256": "dbd4c453b541dd8667a358a8f007e068fa0ff074a2a1f8741d64edf7d3630ad3"
+    },
+    {
+      "path": "textures/trees/6rees_vetkagreen1.dds",
+      "size": 699192,
+      "sha256": "f9e8720a7a43bd5d3cc0ca29a56ecfbe94c80acbb8dd18914765da9b232655fe"
+    },
+    {
+      "path": "textures/trees/trees_atp_birch_det.dds",
+      "size": 174920,
+      "sha256": "3ba43aa3bf6243bd562c372229aaf1eec350db3c46f6fc2d255818c5a5042629"
+    },
+    {
+      "path": "textures/trees/trees_atp_spruce_bark_bump#.dds",
+      "size": 1398288,
+      "sha256": "ae66154b52d747f97b122d1310388ee58c4bec68580bd44a547f7a304410c763"
+    },
+    {
+      "path": "textures/trees/trees_bark_sux3.dds",
+      "size": 174904,
+      "sha256": "c3f4a3869634890e8ccd0339ecaeb8b3ebcde160e2a98d6c84aaeacbbcd0fd05"
+    },
+    {
+      "path": "textures/trees/trees_forestwall1.dds",
+      "size": 699216,
+      "sha256": "ba1957ed8ace8d4a9c9f99498b0340c266a46fe4332f6370a1a8b7a22ccf23c8"
+    },
+    {
+      "path": "textures/trees/trees_sosna_sux_dry.dds",
+      "size": 174904,
+      "sha256": "f7fa5492458a56a396178118c01280cb6ff8dfa4b07c135b8c2580c143705dc8"
+    },
+    {
+      "path": "textures/trees/trees_vetkasux3.thm",
+      "size": 138,
+      "sha256": "0b89a36fe4c7b45098c75529bd81d5bc9be4342db76b770d4994afb328180dcc"
+    }
+  ]
+}

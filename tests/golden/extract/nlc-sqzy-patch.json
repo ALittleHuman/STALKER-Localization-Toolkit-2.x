@@ -1,0 +1,66 @@
+{
+  "id": "nlc-sqzy-patch",
+  "image": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sqzy_patch",
+  "files": [
+    {
+      "path": "levels/l01_escape/level",
+      "size": 3874561,
+      "sha256": "65ae288a3677abeb84b398554d9a6e3cfb3a1dfbc8254b39d74efc21d2884919"
+    },
+    {
+      "path": "levels/l01_escape/level.cform",
+      "size": 38846400,
+      "sha256": "06d8efb03a4f21115d4d0b5ed04990bd444d298ccb74e193e0a73416966e633a"
+    },
+    {
+      "path": "levels/l01_escape/level.env_mod",
+      "size": 614,
+      "sha256": "c69b1f5495cd618d40080fb2ae6308a6389e184aa5edafab0e8d6db90d5b2ca7"
+    },
+    {
+      "path": "levels/l01_escape/level.fog_vol",
+      "size": 6,
+      "sha256": "287a3387a6a65e0b5483d02992ed2649ef4a9f48d79c7c1d3484acfaec7367d3"
+    },
+    {
+      "path": "levels/red_forest/level.hom",
+      "size": 27980,
+      "sha256": "e7c1b52fd15a813848ecb23887eec12cf2dcf05aab286b5f2ad3a8f224afb834"
+    },
+    {
+      "path": "meshes/monsters/mutant_boar/mutant_boar.ogf",
+      "size": 789306,
+      "sha256": "cd4e671f89fb8b23913283ac2444150eb1a6f383ad7e333a5c5753fcfe408e16"
+    },
+    {
+      "path": "sounds/weapons/taurus/muzzle_raging_mono.ogg",
+      "size": 98970,
+      "sha256": "6fd9b37d723a38e18c45f4f3d1df2f871ce44facb785a2ff5b6138cc2dbc4821"
+    },
+    {
+      "path": "textures/act/act_zombie_4_bump#.dds",
+      "size": 22369760,
+      "sha256": "6247b3f62d4425317129e8a137486b3c15af54e13d0a37c9f06aae259f8ff953"
+    },
+    {
+      "path": "textures/act/watch/icon_thirst.dds",
+      "size": 400128,
+      "sha256": "e2d79eb50d186d41624d6d3f82b4d9506564cdc4c471b996bd7c10b218ba633f"
+    },
+    {
+      "path": "textures/usable_items/liz/item_mre_ukr_bump#.dds",
+      "size": 1398240,
+      "sha256": "1b969685739f3491c77c290cee912810503229c9684576dc48ab5c80949343fa"
+    },
+    {
+      "path": "textures/verg/masks/hud_mil_1_2.dds",
+      "size": 3686528,
+      "sha256": "f2b6422cc120c5d6578f07517813384eccf037a6e48989142f7f7ca9475b1870"
+    },
+    {
+      "path": "textures/wpn/wpn_mpf_bump.dds",
+      "size": 349680,
+      "sha256": "71b8fa56e795e9afaed74278d58ad532090ff77612e217a8816d23afece27c32"
+    }
+  ]
+}

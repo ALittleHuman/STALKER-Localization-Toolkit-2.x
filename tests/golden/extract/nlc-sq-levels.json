@@ -1,0 +1,66 @@
+{
+  "id": "nlc-sq-levels",
+  "image": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sq_levels",
+  "files": [
+    {
+      "path": "levels/atp_for_test22/level.gct",
+      "size": 6298182,
+      "sha256": "f42d66811ddf66fa5b3a402ba8a9f974f4a0bc5bbbf0ddd0ec2409982fc99887"
+    },
+    {
+      "path": "levels/av_peshera/level",
+      "size": 32207,
+      "sha256": "32b5ce19b8a21104bd542827b168a406ce904e53e282559df5781f3851ad8824"
+    },
+    {
+      "path": "levels/av_peshera/level.ai",
+      "size": 3625433,
+      "sha256": "31627198efcb759b0afe6c70af7262c5bf4af745f80eb0faae0e03af9ef5166b"
+    },
+    {
+      "path": "levels/av_peshera/level.cform",
+      "size": 1537636,
+      "sha256": "4a299b181828b5bae7fd94c40e0106e4be5062167ba8a723c4d12d9bf4745650"
+    },
+    {
+      "path": "levels/l01_escape/meshes/brkbl#29.ogf",
+      "size": 7858,
+      "sha256": "e0cb0eed4a6250bf052d58194eb803d4c6190a74ef7863741f50ae0e89f02d29"
+    },
+    {
+      "path": "levels/l06_rostok/lmap#5_2.dds",
+      "size": 1048704,
+      "sha256": "5d75b2c0e1859dd23e7624c47c627e8e086745864c2ece67e6473c0a4acf5fb4"
+    },
+    {
+      "path": "levels/l11_pripyat/meshes/brkbl#39.ogf",
+      "size": 6794,
+      "sha256": "f332bdbc4ee007e2d0dbf63f5d88660a43eed49c9ebec45293f2cbda336d9ed6"
+    },
+    {
+      "path": "levels/l12_stancia_2_new/meshes/brkbl#337.ogf",
+      "size": 10857,
+      "sha256": "cca463513cbd22389d1113497703e64d82affddd32a9399c9f220d5febb36213"
+    },
+    {
+      "path": "levels/l12_stancia_new/lmap#2_1.dds",
+      "size": 1152,
+      "sha256": "79da4897affc3bef5d3ca8cb5c670a9459a257cd3132c339733b0d0320b8611b"
+    },
+    {
+      "path": "levels/l12_stancia_new/meshes/brkbl#423.ogf",
+      "size": 25057,
+      "sha256": "cbc4eaf5f4e5b92f45cfa025f385f2e91db6e4d12279bdab89aad05cace8230f"
+    },
+    {
+      "path": "levels/limansk/level.details",
+      "size": 4021360,
+      "sha256": "eb8513b1087b2e2f05d09df37dc599f777ca6d0febfafee7eb1da1ad828bc584"
+    },
+    {
+      "path": "levels/l12_stancia_2_new/level.geom",
+      "size": 120799738,
+      "sha256": "8e261a27c24f91b664571b56ea6bc10a57976c27ef7bedbb0400decf3aa9749b"
+    }
+  ]
+}

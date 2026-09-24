@@ -289,6 +289,32 @@ def step_golden_sqfs(release: bool) -> None:
         fail("SquashFS 条目与 1.x 基线不一致（见上）")
 
 
+def step_golden_extract(release: bool) -> None:
+    """黄金语料差分：文件提取（2.x 进程内解压 vs 1.x 的 rdsquashfs 抽取结果）。
+
+    覆盖三类路径：整文件在 fragment 的小文件、多数据块的大文件、中间尺寸。
+    退出码：0=全部逐字节一致，1=有差异，2=有样本被跳过。
+    """
+    say("[8] 黄金语料差分：文件提取（2.x vs 1.x）")
+    script = ROOT / "tests" / "golden_extract.py"
+    if not require_repo_file(script, "提取基线脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=1800)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("GOLDEN-EXTRACT"):
+            say("  " + s)
+    if rc == 0:
+        ok("提取内容与 1.x 逐字节一致")
+    elif rc == 2:
+        prereq("提取语料样本", "有样本缺失或未生成基线（见上）", release)
+    else:
+        fail("提取内容与 1.x 不一致（见上）")
+
+
 def tail(text: str, n: int) -> str:
     """取最后 n 行有效输出。
 
@@ -317,6 +343,7 @@ STEPS = [
     ("cli", step_cli_contract),
     ("corpus", step_corpus),
     ("golden-sqfs", step_golden_sqfs),
+    ("golden-extract", step_golden_extract),
 ]
 
 

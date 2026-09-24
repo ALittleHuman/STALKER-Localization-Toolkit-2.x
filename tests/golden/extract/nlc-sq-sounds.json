@@ -1,0 +1,66 @@
+{
+  "id": "nlc-sq-sounds",
+  "image": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sq_sounds",
+  "files": [
+    {
+      "path": "sounds/$no_sound.ogg",
+      "size": 3990,
+      "sha256": "f91c2abd30b9b5372c2055d80e4f471bb34784e6c3392438c10e710ed96b2a77"
+    },
+    {
+      "path": "sounds/aa_fld_test2.ogg",
+      "size": 56229,
+      "sha256": "d9dd586c38f3607d9d0489194991649b48d0799ee324391f2fd79dcadad3ad35"
+    },
+    {
+      "path": "sounds/actor/arts_hit_1.ogg",
+      "size": 5931,
+      "sha256": "8cf85d9f31e92d115c9af678f262e97106bd934178f89575b6dfeeaaf3b1e3cf"
+    },
+    {
+      "path": "sounds/actor/arts_hit_2.ogg",
+      "size": 11011,
+      "sha256": "502aeda5c4afc8aed9a4eb879ab1556d84738df35b46be67fed81f0c257fcb26"
+    },
+    {
+      "path": "sounds/characters_voice/human_01/killer/talk/intros/intro_music_5.ogg",
+      "size": 17103,
+      "sha256": "7fa7746a296b0eccb1b3424edbddd4be12687152b248b6a70ff0a4b5ad300b58"
+    },
+    {
+      "path": "sounds/characters_voice/human_02/dolg/states/idle/idle_20.ogg",
+      "size": 34547,
+      "sha256": "9af79117595f29ff460da8ce43947e14705b7b5181476aaaf82e5127d50e6f1d"
+    },
+    {
+      "path": "sounds/characters_voice/human_02/newbie/reactions/story/yes_2.ogg",
+      "size": 12388,
+      "sha256": "ba5f6de9c9e112c4812a8f16d89b2700b65b46c123470bd0b637412ae73b6280"
+    },
+    {
+      "path": "sounds/characters_voice/human_03/military/help/wounded/kill_wounded_3.ogg",
+      "size": 12689,
+      "sha256": "48440810fa4086189a2f0dad1a7d68d4224ea957f7b35167b85b747cc14871c3"
+    },
+    {
+      "path": "sounds/characters_voice/human_05/ecolog/fight/friend_hitted/hit_friend_2.ogg",
+      "size": 13786,
+      "sha256": "14fa1de94ff1fa21cd3fc8b992602dbcf84192e484ada28c2d53f33060d54bb4"
+    },
+    {
+      "path": "sounds/characters_voice/scenario/val/sacrifice_help_3.ogg",
+      "size": 13315,
+      "sha256": "8fb28aa4f49286347d6948c0ad60b6d0c21317004db9699ee7273c16d6fb39c9"
+    },
+    {
+      "path": "sounds/weapons/aps/aps_muzzle_mono2.ogg",
+      "size": 96957,
+      "sha256": "62758b6a3127ba82283f1fc3c57d77799c508b95aa7ee781350e97d98ba7e405"
+    },
+    {
+      "path": "sounds/weapons/whiz6.ogg",
+      "size": 30036,
+      "sha256": "c471bbf35bc75fd3e1629956dfe937ec4f158ee83da60700e7aa01d71212f2f5"
+    }
+  ]
+}

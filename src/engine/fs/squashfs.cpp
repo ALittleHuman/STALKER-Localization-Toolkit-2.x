@@ -98,7 +98,24 @@ struct Inode {
     uint64_t size = 0;       // DIR: 目录表字节数；FILE: 文件大小；SLINK: 目标长度
     uint64_t dir_block = 0;  // DIR/DIR_X：目录表内偏移（**不是**块号）
     uint16_t dir_offset = 0;
+    uint64_t start_block = 0;   // FILE/FILE_X：数据块起始绝对偏移
+    uint32_t fragment = 0;      // FILE/FILE_X：fragment 索引；0xFFFFFFFF = 无
+    uint32_t block_offset = 0;  // FILE/FILE_X：在本文件尾部 fragment 内的偏移
+    uint32_t block_array_off = 32;  // block_sizes 数组相对 inode 起点的偏移（REG=32，LREG=56）
 };
+
+// SquashFS 块大小字段：bit24 **置位 = 未压缩**，低 24 位是压缩后长度
+constexpr uint32_t kUncompressedBit = 1u << 24;
+constexpr uint32_t kInvalidFrag = 0xFFFFFFFFu;
+constexpr size_t kFragEntrySize = 16;  // start_block u64 + size u32 + unused u32
+
+// ★ 实测纠正：SquashFS 4.0 的 FILE inode **没有** fragment 长度字段。
+//   它的头部就是 32 字节（type/mode/uid/gid/mtime/inode_number/start_block/fragment/
+//   offset/file_size），紧跟 block_sizes 数组；尾部 fragment 的载荷长度是**算出来的**：
+//     fragment_size = file_size - 数据块数 × block_size
+//   第一版我按"数组后还有一个 u32"读，读到的是**下一个 inode 的类型字段**（实测 138 字节的
+//   文件 offset=115288、算出 32309249 的荒谬长度），被探针当场抓住。
+//   扩展 inode（LREG/FILE_X）头部是 56 字节，fragment/offset 在 [44..48)/[48..52)。
 
 class Image {
 public:
@@ -111,6 +128,14 @@ private:
     bool meta_read(uint64_t base, uint64_t rel_block, uint32_t off, uint32_t len,
                    std::vector<uint8_t>& out, std::string& err);
     bool read_inode(uint64_t ref, Inode& ino, std::string& err);
+    bool fragment_entry(uint32_t index, uint64_t& start_block, uint32_t& size, std::string& err);
+    bool read_file_data(uint64_t ref, const Inode& ino, std::vector<uint8_t>& out, std::string& err);
+
+public:
+    // 按镜像内路径读一个文件的完整内容（列表结果复用同一次遍历）
+    bool read_entry_file(const std::string& path, std::vector<uint8_t>& out, std::string& err);
+
+private:
 
     FileReader file_;
     SuperBlock sb_;
@@ -236,7 +261,7 @@ bool Image::read_inode(uint64_t ref, Inode& ino, std::string& err) {
         case kTypeDir: rec = 32; break;
         case kTypeDirX: rec = 36; break;
         case kTypeFile: rec = 32; break;
-        case kTypeFileX: rec = 32; break;
+        case kTypeFileX: rec = 56; break;
         case kTypeSlink:
         case kTypeSlinkX: rec = 24; break;
         default: rec = 2; break;  // 未知类型：只取类型，不猜长度
@@ -261,10 +286,19 @@ bool Image::read_inode(uint64_t ref, Inode& ino, std::string& err) {
             ino.dir_offset = rd16(p + 34, be);
             break;
         case kTypeFile:
+            ino.start_block = rd32(p + 16, be);
+            ino.fragment = rd32(p + 20, be);
+            ino.block_offset = rd32(p + 24, be);
             ino.size = rd32(p + 28, be);
             break;
         case kTypeFileX:
+            // LREG：start_block u64 @16、file_size u64 @24、sparse u64 @32、nlink @40、
+            //       fragment @44、offset @48、xattr @52，block_sizes 从 56 开始
+            ino.start_block = rd64(p + 16, be);
             ino.size = rd64(p + 24, be);
+            ino.fragment = rd32(p + 44, be);
+            ino.block_offset = rd32(p + 48, be);
+            ino.block_array_off = 56;
             break;
         case kTypeSlink:
         case kTypeSlinkX:
@@ -330,11 +364,11 @@ bool Image::list(std::vector<Entry>& out, std::string& err) {
                 const uint64_t child_ref = (static_cast<uint64_t>(sblk) << 16) | e_off;
                 if (e_type == kTypeDir || e_type == kTypeDirX) {
                     stack.push_back({child_ref, path});
-                    out.push_back({path, true, 0});
+                    out.push_back({path, true, 0, child_ref});
                 } else {
                     Inode child;
                     if (!read_inode(child_ref, child, err)) return false;
-                    out.push_back({path, false, child.size});
+                    out.push_back({path, false, child.size, child_ref});
                 }
             }
         }
@@ -343,6 +377,160 @@ bool Image::list(std::vector<Entry>& out, std::string& err) {
     std::sort(out.begin(), out.end(),
               [](const Entry& a, const Entry& b) { return a.path < b.path; });
     return true;
+}
+
+bool Image::fragment_entry(uint32_t index, uint64_t& start_block, uint32_t& size,
+                           std::string& err) {
+    if (sb_.fragments == 0) {
+        err = "inode 指向 fragment，但镜像的 fragments 计数为 0";
+        return false;
+    }
+    // fragment_table_start 指向一张「元数据块位置数组」：每项 u64 = 该元数据块的**绝对**偏移。
+    // 真正的条目在那些元数据块里，每条 16 字节。
+    const uint64_t per_block = kMetaBlockSize / kFragEntrySize;
+    const uint64_t lookup_index = index / per_block;
+    const uint64_t in_block = index % per_block;
+
+    uint8_t pos[8] = {};
+    if (!file_.read_at(sb_.fragment_table_start + lookup_index * 8, pos, sizeof(pos), err)) {
+        err = "读 fragment 查找表失败：" + err;
+        return false;
+    }
+    const uint64_t block_off = rd64(pos, sb_.big_endian);
+
+    std::vector<uint8_t> entry;
+    if (!meta_read(0, block_off, static_cast<uint32_t>(in_block * kFragEntrySize),
+                   static_cast<uint32_t>(kFragEntrySize), entry, err)) {
+        err = "读 fragment 条目失败：" + err;
+        return false;
+    }
+    start_block = rd64(entry.data(), sb_.big_endian);
+    size = rd32(entry.data() + 8, sb_.big_endian);
+    return true;
+}
+
+bool Image::read_file_data(uint64_t ref, const Inode& ino, std::vector<uint8_t>& out,
+                           std::string& err) {
+    const uint64_t bs = sb_.block_size ? sb_.block_size : 131072;
+    const bool has_frag = (ino.fragment != kInvalidFrag);
+    // 有 fragment 时：整块数 = size / bs，尾部不足一块的进 fragment；
+    // 无 fragment 时：块数要向上取整（最后一块可能不满）
+    const uint64_t nblocks = has_frag ? (ino.size / bs) : ((ino.size + bs - 1) / bs);
+
+    // block_sizes 数组紧跟在 inode 头之后（REG 从 32 起、LREG 从 56 起）
+    std::vector<uint8_t> tail;
+    const uint32_t tail_len = static_cast<uint32_t>(nblocks) * 4u;
+    if (tail_len > 0) {
+        if (!meta_read(sb_.inode_table_start, ref >> 16,
+                       static_cast<uint32_t>(ref & 0xFFFFu) + ino.block_array_off, tail_len, tail,
+                       err)) {
+            err = "读 block_sizes 失败：" + err;
+            return false;
+        }
+    }
+
+    out.clear();
+    out.reserve(static_cast<size_t>(ino.size));
+
+    uint64_t offset = ino.start_block;
+    for (uint64_t i = 0; i < nblocks; ++i) {
+        uint32_t raw = rd32(tail.data() + i * 4, sb_.big_endian);
+        const bool uncompressed = (raw & kUncompressedBit) != 0;
+        raw &= ~kUncompressedBit;
+        if (out.size() >= ino.size) {
+            err = "block_sizes 比文件长";
+            return false;
+        }
+        const size_t want = static_cast<size_t>(std::min<uint64_t>(bs, ino.size - out.size()));
+        if (raw == 0) {
+            out.insert(out.end(), want, 0);  // 稀疏空洞：补 0，不读盘
+        } else {
+            std::vector<uint8_t> rawbuf(raw);
+            if (!file_.read_at(offset, rawbuf.data(), rawbuf.size(), err)) return false;
+            if (uncompressed) {
+                if (rawbuf.size() < want) {
+                    err = "未压缩块长度不足";
+                    return false;
+                }
+                out.insert(out.end(), rawbuf.begin(), rawbuf.begin() + want);
+            } else {
+                std::vector<uint8_t> plain;
+                if (!decompress_block(sb_.compression, rawbuf.data(), rawbuf.size(), want, plain,
+                                      err)) {
+                    err = "数据块解压失败（块 " + std::to_string(i) + "）：" + err;
+                    return false;
+                }
+                if (plain.size() < want) {
+                    err = "数据块解压后长度不足（块 " + std::to_string(i) + "）";
+                    return false;
+                }
+                out.insert(out.end(), plain.begin(), plain.begin() + want);
+            }
+        }
+        offset += raw;
+    }
+
+    if (has_frag) {
+        uint64_t frag_start = 0;
+        uint32_t frag_field = 0;
+        if (!fragment_entry(ino.fragment, frag_start, frag_field, err)) return false;
+        const bool frag_uncompressed = (frag_field & kUncompressedBit) != 0;
+        const uint32_t frag_stored = frag_field & ~kUncompressedBit;
+
+        std::vector<uint8_t> rawbuf(frag_stored);
+        if (frag_stored > 0 && !file_.read_at(frag_start, rawbuf.data(), rawbuf.size(), err)) {
+            return false;
+        }
+        std::vector<uint8_t> plain;
+        if (frag_uncompressed) {
+            plain = std::move(rawbuf);
+        } else if (!decompress_block(sb_.compression, rawbuf.data(), rawbuf.size(),
+                                     static_cast<size_t>(bs), plain, err)) {
+            err = "fragment 解压失败：" + err;
+            return false;
+        }
+        // fragment 载荷长度是**算出来**的，不是存的（见 Inode 那边的实测说明）
+        const uint32_t frag_size = static_cast<uint32_t>(ino.size - nblocks * bs);
+        if (static_cast<uint64_t>(ino.block_offset) + frag_size > plain.size()) {
+            err = "fragment 越界（offset=" + std::to_string(ino.block_offset) + " size=" +
+                  std::to_string(frag_size) + " 块内只有 " + std::to_string(plain.size()) + "）";
+            return false;
+        }
+        out.insert(out.end(), plain.begin() + ino.block_offset,
+                   plain.begin() + ino.block_offset + frag_size);
+    }
+
+    // 长度必须与 inode 声明一致：**宁可报错也不给半截数据**（1.x 的空文件教训）
+    if (out.size() != ino.size) {
+        err = "提取长度与 inode 声明不符（得到 " + std::to_string(out.size()) + "，声明 " +
+              std::to_string(ino.size) + "）";
+        return false;
+    }
+    return true;
+}
+
+bool Image::read_entry_file(const std::string& path, std::vector<uint8_t>& out,
+                            std::string& err) {
+    std::vector<Entry> entries;
+    if (!list(entries, err)) return false;
+    const Entry* found = nullptr;
+    for (const Entry& e : entries) {
+        if (e.path == path) {
+            found = &e;
+            break;
+        }
+    }
+    if (found == nullptr) {
+        err = "镜像里没有该条目：" + path;
+        return false;
+    }
+    if (found->is_dir) {
+        err = "该条目是目录，不是文件：" + path;
+        return false;
+    }
+    Inode ino;
+    if (!read_inode(found->inode_ref, ino, err)) return false;
+    return read_file_data(found->inode_ref, ino, out, err);
 }
 
 }  // namespace
@@ -365,6 +553,25 @@ ListResult list_entries(const std::string& path) {
         return res;
     }
     if (!img.list(res.entries, err)) {
+        res.error = err;
+        return res;
+    }
+    const auto t1 = std::chrono::steady_clock::now();
+    res.elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    res.ok = true;
+    return res;
+}
+
+FileData read_file(const std::string& image_path, const std::string& entry_path) {
+    FileData res;
+    const auto t0 = std::chrono::steady_clock::now();
+    Image img;
+    std::string err;
+    if (!img.open(image_path, err)) {
+        res.error = err;
+        return res;
+    }
+    if (!img.read_entry_file(entry_path, res.data, err)) {
         res.error = err;
         return res;
     }

@@ -1,0 +1,66 @@
+{
+  "id": "nlc-sq-textures",
+  "image": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sq_textures",
+  "files": [
+    {
+      "path": "textures/#.dds",
+      "size": 240,
+      "sha256": "b6c4ea16743e474a4f3c7a375267120b2768fa7530b83a790fa8d329c5ee02ba"
+    },
+    {
+      "path": "textures/$target.dds",
+      "size": 8320,
+      "sha256": "69113eb771b56413a50649ea7d06cc7cc0fdb5bdbb64046778a56fe1f7537093"
+    },
+    {
+      "path": "textures/1/1_dark_stalker.dds",
+      "size": 699192,
+      "sha256": "f7e6b67d287e9711d85be9534a29b9ac32479d71017aaaf870868f4dc259456e"
+    },
+    {
+      "path": "textures/1/1_dark_stalker.thm",
+      "size": 159,
+      "sha256": "a6f162036734c22838d43696f0eba861767a7d5442170f98a03f2a4990bf2534"
+    },
+    {
+      "path": "textures/amik/hit_fx/glass/glass_tiled_spec2a.dds",
+      "size": 22000,
+      "sha256": "aa93457236750e698d0a9a8216900c5ec7bc605385a17709cc03dde73986af53"
+    },
+    {
+      "path": "textures/fx/fx_lavahell1_04.thm",
+      "size": 138,
+      "sha256": "125363632667a0ee74076ba547b5ea5aafc871b6f40bbfed55cf0bf7e65aa506"
+    },
+    {
+      "path": "textures/prop/prop_barrel_red.512.thm",
+      "size": 138,
+      "sha256": "55546c261e921ed0e4c583e3875f2fde21bc0174a4cef81bf4aec8cee8e2ca63"
+    },
+    {
+      "path": "textures/sky/sky_19_cube_90.dds",
+      "size": 786560,
+      "sha256": "f1366b8ab5dca5bb45aa2fdbb4bd109912ac9d16a1b270fc7310aefd17d933e5"
+    },
+    {
+      "path": "textures/terrain/terrain_factory_ter_det.dds",
+      "size": 699192,
+      "sha256": "43297e3ef0e5527e109d3a9b5bb5434119e01b74d36fb21bd545aa696a8ae422"
+    },
+    {
+      "path": "textures/verg/masks/hud_exo_6_2.thm",
+      "size": 138,
+      "sha256": "21d2e361f7095871f1c88852af04bec5a000403e402e35ea6cce6078ab2627e5"
+    },
+    {
+      "path": "textures/wpn/lenses_bump.thm",
+      "size": 107,
+      "sha256": "0ccf9e1d3e6d52b4992caf77ec7eb131d9d5b394bfb2e594431b46c13a2d9595"
+    },
+    {
+      "path": "textures/zimovie/zimovie_wood.dds",
+      "size": 174904,
+      "sha256": "88a35e5e7d5d12e63a7d0ec6bc2ba05c58af18c7711457373a5adc3157291e44"
+    }
+  ]
+}
