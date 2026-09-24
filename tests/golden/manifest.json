@@ -1,0 +1,101 @@
+{
+  "note": "黄金语料基准；由 tests/collect_golden.py --write 生成",
+  "entries": [
+    {
+      "id": "gs-db-base",
+      "path": "E:\\Software\\Games\\STALKER\\Games\\Golden Sphere\\gamedata.db_base",
+      "why": "DB 六格式（Golden Sphere 家族）：xdb/2947/2945/2215/11xx 的现场来源",
+      "size_bytes": 45008165,
+      "sha256": "22eeea690e8c9b9aeb439f0d4938eb0b2752bf8c283b66b0ddb8b5e77adb933b",
+      "mtime": 1632416080
+    },
+    {
+      "id": "nlc-sq-base",
+      "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sq_base",
+      "why": "NLC 加密包（ZZZZ 头 + XOR 流密码）：通用解密挂钩 + 解密后按 hsqs 处理",
+      "size_bytes": 17694732,
+      "sha256": "652576d4c11d265656502243ac8ac6b187804d83dab5559df976efd2c2479466",
+      "mtime": 1783226564
+    },
+    {
+      "id": "nlc-sq-levels",
+      "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sq_levels",
+      "why": "明文 SquashFS（3209 项）",
+      "size_bytes": 2410831872,
+      "sha256": "c880ec8a37eebf6f430dd6707ade5d7c67fd7554419965b53cdda659c064dcdf",
+      "mtime": 1751901744
+    },
+    {
+      "id": "nlc-sq-meshes",
+      "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sq_meshes",
+      "why": "明文 SquashFS（4104 项）；列路径 0.07s 那族",
+      "size_bytes": 2050744320,
+      "sha256": "1d5c092647d9efe6c21d328d5e11a7853ece5baf9e5dd3b7ff36fbe6681190ff",
+      "mtime": 1752415228
+    },
+    {
+      "id": "nlc-sq-sounds",
+      "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sq_sounds",
+      "why": "明文 SquashFS（较小）",
+      "size_bytes": 1007878144,
+      "sha256": "92fe4ce850433dfde3881e4887133142253d8be07574a7a6703f5b145929f7aa",
+      "mtime": 1752414620
+    },
+    {
+      "id": "nlc-sq-textures",
+      "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sq_textures",
+      "why": "明文 SquashFS 最大包（19641 项）：虚拟化与吞吐压测基准",
+      "size_bytes": 8321224704,
+      "sha256": "714acfdd4109afea613154601ce359e08ffb9ba232774e602109279e0e010951",
+      "mtime": 1752416172
+    },
+    {
+      "id": "nlc-sqz-autumn",
+      "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\Текстурные дополнения\\gamedata.sqz_autumn",
+      "why": "带西里尔目录名的样本（路径/编码口径）",
+      "size_bytes": 248397824,
+      "sha256": "9b4b6678aa63f31ad8fbb476cfea03ae625770b2eedc820df3e01639a6b143fa",
+      "mtime": 1752148518
+    },
+    {
+      "id": "nlc-sqz-wasteland",
+      "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\Текстурные дополнения\\gamedata.sqz_wasteland",
+      "why": "同上，第二个样本",
+      "size_bytes": 131710976,
+      "sha256": "2370e2d690e9d7ccc09fe7821d50724f34b9832a8e83f39dfe5e879ebac89820",
+      "mtime": 1752148360
+    },
+    {
+      "id": "nlc-sqzy-patch",
+      "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sqzy_patch",
+      "why": "明文 SquashFS 大包（1065 项那一族）；同名文件合并语义的现场来源",
+      "size_bytes": 2320744448,
+      "sha256": "ea2def65a098fac9aa8d9ed63422f26a68c96d710b720e6fda04d2e89ee69c80",
+      "mtime": 1784442923
+    },
+    {
+      "id": "nlc-xrengine",
+      "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\bin_x64\\xrEngine.exe",
+      "why": "引擎补丁目标（原版）；与 xrEngine_patched.exe 逐字节对拍是最硬判据",
+      "size_bytes": 21806592,
+      "sha256": "cb1d73421636e0351eb4c9096c527046818b2f3736ccaafb74098fa514c0f790",
+      "mtime": 1783190246
+    },
+    {
+      "id": "nlc-xrengine-patched",
+      "path": "E:\\Software\\Tools\\Ghidra\\Projects\\NLC Improved\\Exported\\xrEngine_patched.exe",
+      "why": "已确认正确的补丁结果：与它逐字节对拍是最硬判据",
+      "size_bytes": 21806592,
+      "sha256": "06902d539a8000ab276796b25f873fcd3c0722342acc19ef1caeb79a5ca5936b",
+      "mtime": 1789017170
+    },
+    {
+      "id": "soc-db0",
+      "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\gamedata.db0",
+      "why": "SoC 原版 DB 家族（.db0 这种后缀正是 1.x '只判前缀' 口径的来源）",
+      "size_bytes": 678577379,
+      "sha256": "3384d71299acd21da02605cb8967fd21a5da0a4565093c2e63a71858123b14f9",
+      "mtime": 1172735466
+    }
+  ]
+}

@@ -239,6 +239,28 @@ def step_cli_contract(release: bool) -> None:
             ok("%s → exit=2（已记入未覆盖）" % label)
 
 
+def step_corpus(release: bool) -> None:
+    """黄金语料基准：验证"我们到底拿哪几个字节当基准"没变。
+
+    缺件分类：清单文件本身缺 = FAIL（仓库自带）；样本缺 = 外部前提（按档位 FAIL/SKIP）。
+    退出码：0=全对，1=基准变了，2=样本缺失（部分）。
+    """
+    say("[6] 黄金语料基准")
+    script = ROOT / "tests" / "collect_golden.py"
+    if not require_repo_file(script, "语料收集脚本"):
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        if line.startswith("CORPUS:") or line.strip().startswith("!!"):
+            say("  " + line.strip())
+    if rc == 0:
+        ok("语料基准与清单完全一致")
+    elif rc == 2:
+        prereq("真机语料样本", "有样本缺失（见上）", release)
+    else:
+        fail("语料基准校验失败（退出码 %d）：大小或 sha256 与清单不符" % rc)
+
+
 def tail(text: str, n: int) -> str:
     """取最后 n 行有效输出。
 
@@ -265,6 +287,7 @@ STEPS = [
     ("no-qt-injection", step_no_qt_injection),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
+    ("corpus", step_corpus),
 ]
 
 
