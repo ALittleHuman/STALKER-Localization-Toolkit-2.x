@@ -11,12 +11,16 @@
 //   每条：u32 cp, i32 left, i32 top, i32 advance_26_6, i32 ascender_26_6,
 //         i32 descender_26_6, i32 height, i32 width, i32 pitch, u32 len, bytes(len)
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace xrkit::engine::font {
 
 // 用内置样本字符表（常用汉字 + 标点 + Latin + 西里尔）导出栅格结果。
+// `cps` 非空时改用它（顺序即输出顺序）—— 对拍/排障时要能指定任意字符。
 // 返回 false 只在"字体打不开 / 字号设置失败 / 写不出文件"时。
-bool dump_glyphs(const std::string& font_path, int pixel_size, const std::string& out_path);
+bool dump_glyphs(const std::string& font_path, int pixel_size,
+                 const std::vector<uint32_t>& cps, const std::string& out_path);
 
 }  // namespace xrkit::engine::font

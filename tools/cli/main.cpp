@@ -19,6 +19,7 @@
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/font/glyph.h"
 #include "xrkit/engine/font/metrics.h"
+#include "xrkit/engine/font/render.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/extract.h"
 #include "xrkit/engine/text/sniff.h"
@@ -98,8 +99,10 @@ void print_usage() {
            "  --sniff <输入> <输出> [--encoding <手动指定>]  判定链（六步）判定 + 解码（对拍用）\n"
            "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
            "                                              文本提取（gameplay|scripts 一个分支）\n"
-           "  --glyph-dump <字体> <字号> <输出>           导出 FreeType 栅格（与 Pillow 对拍）\n"
+           "  --glyph-dump <字体> <字号> <输出> [字符集文件]  导出 FreeType 栅格（与 Pillow 对拍）\n"
            "  --font-metrics <输出>                       导出字库几何/宽度表（与 1.x font_pack 对拍）\n"
+           "  --font-render <字体> <字号> <x2> <fmt> <字符集文件> <输出前缀>\n"
+           "                                              渲染一个字号的 DDS + ini（与 1.x 逐字节对拍）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -521,18 +524,122 @@ int run_cli(const std::vector<std::string>& args) {
     // 只做"导出"这一件事：比较逻辑在 Python 侧（Pillow 在那边）。
     if (action == "--glyph-dump") {
         if (operands.size() < 3) {
-            std::cerr << "GLYPH error reason=用法：--glyph-dump <字体文件> <字号> <输出文件>\n";
+            std::cerr << "GLYPH error reason=用法：--glyph-dump <字体文件> <字号> <输出文件> "
+                         "[字符集文件]\n";
             return kExitUsage;
         }
         const std::string& font_path = operands[0];
         const int size = std::atoi(operands[1].c_str());
         const std::string& out_path = operands[2];
-        if (!xrkit::engine::font::dump_glyphs(font_path, size, out_path)) {
+        std::vector<uint32_t> cps;
+        if (operands.size() >= 4) {
+            const std::vector<uint8_t> raw = read_all(operands[3]);
+            const std::string text(raw.begin(), raw.end());
+            size_t pos = 0;
+            while (pos < text.size()) {
+                size_t end = text.find('\n', pos);
+                if (end == std::string::npos) end = text.size();
+                std::string token = text.substr(pos, end - pos);
+                pos = end + 1;
+                while (!token.empty() && (token.back() == '\r' || token.back() == ' ')) {
+                    token.pop_back();
+                }
+                if (token.empty()) continue;
+                cps.push_back(static_cast<uint32_t>(std::strtoul(token.c_str(), nullptr, 16)));
+            }
+        }
+        if (!xrkit::engine::font::dump_glyphs(font_path, size, cps, out_path)) {
             std::cout << "GLYPH error reason=导出失败（字体打不开 / 字号非法 / 写不出文件）\n";
             return kExitFail;
         }
         std::cout << "GLYPH ok font=" << font_path << " size=" << size << " out=" << out_path
                   << "\n";
+        return kExitOk;
+    }
+
+    // 字库**渲染管线**（M1-7 第④⑤步）：一个字号的 DDS + ini，与 1.x `render_font` 逐字节对拍。
+    // 字符集文件 = 每行一个**十六进制码位**（顺序即槽位顺序）—— 两端都以它为准，
+    // 不用"UTF-8 文本里有没有尾换行"这种含糊口径。
+    if (action == "--font-render") {
+        if (operands.size() < 6) {
+            std::cerr << "FONTRENDER error reason=用法：--font-render <字体> <渲染字号> <x2:0|1> "
+                         "<8888|A8> <字符集文件> <输出前缀>\n";
+            return kExitUsage;
+        }
+        const std::string& font_path = operands[0];
+        const int render_size = std::atoi(operands[1].c_str());
+        const bool x2 = (operands[2] == "1");
+        const std::string& fmt = operands[3];
+        const std::vector<uint8_t> raw = read_all(operands[4]);
+        if (raw.empty()) {
+            std::cout << "FONTRENDER error reason=字符集文件读不到或为空：" << operands[4] << "\n";
+            return kExitFail;
+        }
+        std::vector<uint32_t> chars;
+        {
+            const std::string text(raw.begin(), raw.end());
+            size_t pos = 0;
+            while (pos < text.size()) {
+                size_t end = text.find('\n', pos);
+                if (end == std::string::npos) end = text.size();
+                std::string token = text.substr(pos, end - pos);
+                pos = end + 1;
+                while (!token.empty() && (token.back() == '\r' || token.back() == ' ')) {
+                    token.pop_back();
+                }
+                if (token.empty()) continue;
+                chars.push_back(static_cast<uint32_t>(std::strtoul(token.c_str(), nullptr, 16)));
+            }
+        }
+        if (x2) {
+            // 与 --bench 同口径：未实现的一档**显式跳过**（退出码 2），绝不产出"看着像"的东西。
+            std::cout << "FONTRENDER skip reason=x2 档需要复刻 Pillow 的 LANCZOS（M1-7 第⑥步）"
+                      << " chars=" << chars.size() << "\n";
+            return kExitSkip;
+        }
+        xrkit::engine::font::FontProduct product;
+        if (!xrkit::engine::font::render_font(font_path, chars, render_size, x2, fmt, product)) {
+            std::cout << "FONTRENDER error reason=" << product.error << "\n";
+            return kExitFail;
+        }
+        const std::string dds_path = operands[5] + ".dds";
+        const std::string ini_path = operands[5] + ".ini";
+        {
+            std::ofstream f(path_from_utf8(dds_path), std::ios::binary | std::ios::trunc);
+            if (!f) {
+                std::cout << "FONTRENDER error reason=写不出 " << dds_path << "\n";
+                return kExitFail;
+            }
+            f.write(reinterpret_cast<const char*>(product.dds.data()),
+                    static_cast<std::streamsize>(product.dds.size()));
+            if (!f) {
+                std::cout << "FONTRENDER error reason=写 DDS 失败\n";
+                return kExitFail;
+            }
+        }
+        const std::string ini_bytes =
+            xrkit::engine::font::to_windows_newlines(product.ini);
+        {
+            // 1.x 用 `open(path, "w", encoding="ascii")` ⇒ 文本模式把 \n 翻成 \r\n。
+            std::ofstream f(path_from_utf8(ini_path), std::ios::binary | std::ios::trunc);
+            if (!f) {
+                std::cout << "FONTRENDER error reason=写不出 " << ini_path << "\n";
+                return kExitFail;
+            }
+            f.write(ini_bytes.data(), static_cast<std::streamsize>(ini_bytes.size()));
+            if (!f) {
+                std::cout << "FONTRENDER error reason=写 ini 失败\n";
+                return kExitFail;
+            }
+        }
+        std::cout << "FONTRENDER ok size=" << render_size << " x2=" << (x2 ? 1 : 0)
+                  << " fmt=" << fmt << " chars=" << chars.size()
+                  << " fitted=" << product.fitted_size
+                  << " tex=" << product.tex_w << "x" << product.tex_h
+                  << " max_y=" << product.max_y
+                  << " clipped=" << product.clipped
+                  << " substituted=" << product.substituted.size()
+                  << " dds=" << product.dds.size() << " ini=" << ini_bytes.size() << "\n";
         return kExitOk;
     }
 

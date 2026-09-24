@@ -30,7 +30,8 @@ void put32(std::vector<uint8_t>& v, uint32_t x) {
 
 }  // namespace
 
-bool dump_glyphs(const std::string& font_path, int pixel_size, const std::string& out_path) {
+bool dump_glyphs(const std::string& font_path, int pixel_size,
+                 const std::vector<uint32_t>& cps_in, const std::string& out_path) {
     if (pixel_size <= 0) return false;
 
     FT_Library lib = nullptr;
@@ -51,9 +52,9 @@ bool dump_glyphs(const std::string& font_path, int pixel_size, const std::string
 
     if (FT_Set_Pixel_Sizes(face, 0, static_cast<FT_UInt>(pixel_size)) != 0) return false;
 
-    // 样本 → 码位表
-    std::vector<uint32_t> cps;
-    {
+    // 样本 → 码位表（给了 cps 就用给的，否则用内置样本）
+    std::vector<uint32_t> cps = cps_in;
+    if (cps.empty()) {
         const uint8_t* p = reinterpret_cast<const uint8_t*>(kSample);
         const size_t n = std::strlen(kSample);
         size_t i = 0;

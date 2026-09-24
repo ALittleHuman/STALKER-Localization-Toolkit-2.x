@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""字库**渲染产物**锁（M1-7 第④⑤步）：2.x 的 `ui_font_NN.dds` + `.ini` vs 1.x `render_font`。
+
+判据（用户 C3 口径）：**实现方式可以改变，生成产物要保持原样** ⇒ 同字符集 + 同字体 +
+同字号 + 同格式，两份产物**逐字节一致**。
+
+对拍方式：本脚本**直接调用 1.x 的 `font_pack.render_font` + `write_dds`** 生成基准，
+再跑我们的 `xrkit_cli --font-render`，逐字节比 `.dds` 与 `.ini`。两端拿的是**同一个字符集
+文件**（每行一个十六进制码位，顺序即槽位顺序）。
+
+本步只跑 **S=1 档**（11/13/15，不经重采样）；x2 档（16/17/18）要复刻 Pillow 的 LANCZOS，
+是第⑥步的活 —— 我们的 CLI 对 x2 显式返回 2（跳过），绝不产出"看着像"的产物。
+
+    python tests/golden_font_render.py [--size 11] [--font <路径>]
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import importlib.util
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
+CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
+WORK = ROOT / "build" / "golden_font_render"
+
+TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+FONT_PACK_PY = TOOLKIT_1X / "font_pack" / "font_pack.py"
+DEFAULT_FONT = Path(r"E:\Software\Games\STALKER\Localization\Tools\otherTools"
+                    r"\CN_Pack_Generator\msyh.ttf")
+# 原版工具成品的字符集（3428 个码位、"整套汉化"量级）—— 用来压大画布路径（1024→2048）
+BIG_INI = Path(r"E:\Software\Games\STALKER\Localization\Tools\Tool\汉化包生成工具2024"
+               r"\gamedata\textures\ui\ui_font_11_chs.ini")
+
+# S=1 档（11/13/15）；x2 档不在这里（见模块 docstring）
+S1_SIZES = (11, 13, 15)
+REF_LINE = re.compile(r"^(\d{5})=")
+
+
+def load_reference():
+    """按文件路径装载 1.x 的 `font_pack`（同名命名空间包会挡住 `import font_pack`）。"""
+    spec = importlib.util.spec_from_file_location("font_pack_1x", FONT_PACK_PY)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("装载失败：%s" % FONT_PACK_PY)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def small_charset(fp) -> list:
+    """小而"拧"的字符集：必需字符 + 定标样本 + 各条边界路径。"""
+    cps = {ord(ch) for ch in fp.REQUIRED_CHARS}
+    cps |= {ord(ch) for ch in fp.FIT_SAMPLE}
+    cps |= {0x00AD, 0x2116, 0x2014, 0x2016,          # 宽度表 0 / 墨迹比框宽 / 强制全角
+            0x0483, 0x0484, 0x0485, 0x0486,          # 表值 1px 而墨迹 4–9px（clamp 路径）
+            0xFF01, 0xFF08, 0xFF09, 0xFF0C, 0xFF1A, 0xFF1B, 0xFF1F, 0xFF5E,
+            0x3001, 0x3002, 0x300C, 0x300D, 0x3010, 0x3011,
+            0x00B7, 0x2018, 0x2019, 0x201C, 0x201D, 0x2026,
+            0x4E2D, 0x6587, 0x5B57, 0x5E93, 0x6D4B, 0x8BD5,   # 中文字库测试
+            0xE000, 0xF8FF}                          # 私用区：走 .notdef（实测 Pillow 画方框）
+    return sorted(cps)
+
+
+def big_charset() -> list:
+    """原版成品 ini 的槽位顺序（3428 个码位）。"""
+    if not BIG_INI.is_file():
+        return []
+    out = []
+    for line in BIG_INI.read_text(encoding="utf-8").splitlines():
+        m = REF_LINE.match(line)
+        if m:
+            out.append(int(m.group(1)))
+    return out
+
+
+def write_charset(path: Path, cps: list) -> None:
+    path.write_bytes(("".join("%X\n" % cp for cp in cps)).encode("ascii"))
+
+
+def sha8(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:12]
+
+
+def first_diff(a: bytes, b: bytes):
+    n = min(len(a), len(b))
+    for i in range(n):
+        if a[i] != b[i]:
+            return i
+    return -1 if len(a) == len(b) else n
+
+
+def main() -> int:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
+
+    parser = argparse.ArgumentParser(description="字库渲染产物一致性锁（S=1 档）")
+    parser.add_argument("--font", default=str(DEFAULT_FONT))
+    parser.add_argument("--size", type=int, default=0, help="只跑某个字号")
+    args = parser.parse_args()
+
+    if not CLI.exists():
+        print("!! 找不到 %s（先跑 python tests/run_ci.py --only build）" % CLI)
+        print("GOLDEN-FONT-RENDER: SKIP (cli-missing)")
+        return 2
+    if not FONT_PACK_PY.is_file():
+        print("!! 找不到 1.x 的 %s" % FONT_PACK_PY)
+        print("GOLDEN-FONT-RENDER: SKIP (toolkit-1x-missing)")
+        return 2
+    font_path = Path(args.font)
+    if not font_path.is_file():
+        print("!! 找不到字体 %s" % font_path)
+        print("GOLDEN-FONT-RENDER: SKIP (font-missing)")
+        return 2
+
+    fp = load_reference()
+    WORK.mkdir(parents=True, exist_ok=True)
+
+    small = small_charset(fp)
+    big = big_charset()
+    cases = []  # (名字, 码位表, 字号, fmt)
+    sizes = (args.size,) if args.size else S1_SIZES
+    for size in sizes:
+        for fmt in ("8888", "A8"):
+            cases.append(("小字符集", small, size, fmt))
+    if not args.size and big:
+        cases.append(("原版成品字符集", big, 11, "8888"))
+
+    failures = 0
+    for name, cps, size, fmt in cases:
+        tag = "%s size=%d fmt=%s chars=%d" % (name, size, fmt, len(cps))
+        chars_file = WORK / ("chars_%d.txt" % len(cps))
+        write_charset(chars_file, cps)
+        ours_prefix = WORK / ("ours_%d_%s" % (size, fmt))
+        exp_dds = WORK / ("exp_%d_%s.dds" % (size, fmt))
+        exp_ini = WORK / ("exp_%d_%s.ini" % (size, fmt))
+
+        chars_str = "".join(chr(cp) for cp in cps)
+        # ── 1.x 基准（调它的真函数，不是重写一遍逻辑）
+        data, ini, w, h, max_y = fp.render_font(chars_str, str(font_path), size, False, fmt)
+        fp.write_dds(str(exp_dds), w, h, fmt, data)
+        with open(exp_ini, "w", encoding="ascii") as f:
+            f.write(ini)
+
+        # ── 我们
+        proc = subprocess.run([str(CLI), "--font-render", str(font_path), str(size), "0", fmt,
+                               str(chars_file), str(ours_prefix)],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out = proc.stdout.decode("utf-8", "replace").strip()
+        if proc.returncode != 0:
+            failures += 1
+            print("  ✗ %s：CLI 退出码 %d —— %s" % (tag, proc.returncode, out[:200]))
+            continue
+
+        got_dds = Path(str(ours_prefix) + ".dds").read_bytes()
+        got_ini = Path(str(ours_prefix) + ".ini").read_bytes()
+        want_dds = exp_dds.read_bytes()
+        want_ini = exp_ini.read_bytes()
+
+        if got_dds == want_dds and got_ini == want_ini:
+            print("  ✓ %s：DDS %d B / ini %d B 与 1.x 逐字节一致（tex %dx%d, max_y %d, sha %s）"
+                  % (tag, len(want_dds), len(want_ini), w, h, max_y, sha8(want_dds)))
+            continue
+
+        failures += 1
+        print("  ✗ %s：不一致（tex %dx%d, max_y %d）" % (tag, w, h, max_y))
+        if got_dds != want_dds:
+            off = first_diff(got_dds, want_dds)
+            print("      DDS：我们 %d B / 1.x %d B，首个不同 @%s"
+                  % (len(got_dds), len(want_dds), off if off >= 0 else "长度不同"))
+        if got_ini != want_ini:
+            off = first_diff(got_ini, want_ini)
+            ctx = ""
+            if off >= 0:
+                ctx = " 我们 %r / 1.x %r" % (got_ini[max(0, off - 20):off + 20],
+                                             want_ini[max(0, off - 20):off + 20])
+            print("      ini：我们 %d B / 1.x %d B，首个不同 @%s%s"
+                  % (len(got_ini), len(want_ini), off if off >= 0 else "长度不同", ctx))
+        print("      CLI: %s" % out[:200])
+
+    print("")
+    print("GOLDEN-FONT-RENDER: %s (cases=%d failed=%d)"
+          % ("FAIL" if failures else "PASS", len(cases), failures))
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
