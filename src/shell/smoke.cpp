@@ -7,6 +7,7 @@
 #include "pages/fs_page.h"
 #include "pages/page_base.h"
 #include "pages/page_factory.h"
+#include "pages/text_page.h"
 #include "scroll_viewport.h"
 #include "split_pane.h"
 #include "task_shell.h"
@@ -16,7 +17,10 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
+#include <QDirIterator>
+#include <QFile>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -870,6 +874,101 @@ SmokeResult run_smoke() {
         check(page.current_target_encoding() == "utf-8",
               QStringLiteral("⑨ 目标编码默认为 utf-8"));
         QDir(dir).removeRecursively();
+    }
+
+    // ⑦ 文本提取页（M2-6d）：判据同源（7.1/7.5 由引擎给理由、7.2 两次运行同产物）。
+    {
+        namespace etxt = xrkit::engine::text;
+        TextPage page;
+        page.resize(720, page_min_h());
+        page.show();
+        QApplication::processEvents();
+
+        const QString root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_text"));
+        QDir(root).removeRecursively();
+        QDir().mkpath(root + QStringLiteral("/gameplay/config"));
+        QDir().mkpath(root + QStringLiteral("/out"));
+        // 一份最小的 scripts 夹具（真语料上的正确性由门禁 [15] 的逐字节对拍负责）
+        QDir().mkpath(root + QStringLiteral("/scripts"));
+        {
+            std::ofstream out((root + QStringLiteral("/scripts/probe.script")).toStdString(),
+                              std::ios::binary | std::ios::trunc);
+            const std::string body = "function probe()\n  local s = \"hello stalker\"\nend\n";
+            out.write(body.data(), static_cast<std::streamsize>(body.size()));
+        }
+
+        // ⑦7.1/7.5：页面**不自己判** —— 返回的必须是引擎那句原话
+        etxt::ExtractRequest request;
+        request.source_dir = (root + QStringLiteral("/gameplay/config")).toStdString();
+        request.target_dir = (root + QStringLiteral("/out")).toStdString();
+        const QString engine_reason = QString::fromStdString(etxt::validate_request(request));
+        const QString page_reason =
+            page.validate(root + QStringLiteral("/gameplay/config"), root + QStringLiteral("/out"));
+        check(!engine_reason.isEmpty() &&
+                  page_reason == engine_reason &&
+                  engine_reason.contains(QStringLiteral("不要选它们的上层目录")),
+              QStringLiteral("⑦7.1 页面理由 = 引擎理由（%1）").arg(page_reason));
+
+        // ⑦7.5：输出目录 = 源目录的父目录 ⇒ 引擎拒绝，页面原样透出
+        const QString cover = page.validate(root + QStringLiteral("/scripts"), root);
+        check(cover.contains(QStringLiteral("会覆盖源目录中的原文件")),
+              QStringLiteral("⑦7.5 覆盖源目录被拒（%1）").arg(cover));
+
+        // ⑦7.2/7.3：显式 id_prefix ⇒ 同一份源两次运行产物逐字节相同
+        const QString out_a = root + QStringLiteral("/out_a");
+        const QString out_b = root + QStringLiteral("/out_b");
+        const etxt::ExtractStats first =
+            page.extract_one(root + QStringLiteral("/scripts"), out_a, QStringLiteral("smoke"),
+                             QStringLiteral("smoke_sc_0"), true);
+        const etxt::ExtractStats second =
+            page.extract_one(root + QStringLiteral("/scripts"), out_b, QStringLiteral("smoke"),
+                             QStringLiteral("smoke_sc_0"), true);
+        check(first.ok && first.files == 1 && first.strings >= 1,
+              QStringLiteral("⑦ 提取产出（files=%1 strings=%2 xml=%3）")
+                  .arg(first.files)
+                  .arg(first.strings)
+                  .arg(QString::fromStdString(first.texts_xml_name)));
+        check(!first.texts_xml_name.empty() &&
+                  QFileInfo::exists(QDir(out_a).filePath(QString::fromStdString(
+                      first.texts_xml_name))),
+              QStringLiteral("⑦ 文本 XML 落在输出目录根（%1）")
+                  .arg(QString::fromStdString(first.texts_xml_name)));
+
+        const auto tree_signature = [](const QString& dir) {
+            QStringList parts;
+            QDirIterator it(dir, QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+            while (it.hasNext()) parts << it.next();
+            parts.sort();
+            QString joined;
+            for (const QString& file : parts) {
+                QFile f(file);
+                if (!f.open(QIODevice::ReadOnly)) return QString();
+                const QByteArray body = f.readAll();
+                joined += QDir(dir).relativeFilePath(file) + QStringLiteral(":") +
+                          QString::number(body.size()) + QStringLiteral(":") +
+                          QString::fromLatin1(QCryptographicHash::hash(body,
+                                                                      QCryptographicHash::Sha1)
+                                                  .toHex());
+                joined += QLatin1Char('\n');
+            }
+            return joined;
+        };
+        check(first.ok && second.ok && tree_signature(out_a) == tree_signature(out_b) &&
+                  !tree_signature(out_a).isEmpty(),
+              QStringLiteral("⑦7.2 两次运行产物逐字节相同（页面入口）"));
+
+        // 7.4（口径不对称）与 7.6（自己的产物不重复提取）在引擎里有对拍，
+        // 页面上只证一件事：参数真的透传下去了（前缀不同 ⇒ 产物 XML 名不同）。
+        const etxt::ExtractStats other_prefix =
+            page.extract_one(root + QStringLiteral("/scripts"), root + QStringLiteral("/out_c"),
+                             QStringLiteral("zz"), QStringLiteral("zz_sc_0"), true);
+        check(other_prefix.ok &&
+                  other_prefix.texts_xml_name != first.texts_xml_name &&
+                  other_prefix.texts_xml_name.rfind("zz_", 0) == 0,
+              QStringLiteral("⑦ 前缀透传（%1 vs %2）")
+                  .arg(QString::fromStdString(first.texts_xml_name))
+                  .arg(QString::fromStdString(other_prefix.texts_xml_name)));
+        QDir(root).removeRecursively();
     }
 
     return result;

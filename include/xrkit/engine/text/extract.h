@@ -48,6 +48,18 @@ struct ExtractStats {
 // 源目录名 → 类型（不是 gameplay/scripts 就失败，理由同 1.x：不要选它们的上层目录）
 bool kind_from_dir_name(const std::string& source_dir, ExtractKind& out, std::string& err);
 
+// ── 7.1 / 7.5 的守卫（放引擎，免得两条入口各判一次还判得不一样）────────
+struct ExtractRequest {
+    std::string source_dir;  // 必须是 gameplay / scripts **文件夹本身**
+    std::string target_dir;  // 必填；改写后的源文件与文本 XML 都写这里
+    std::string prefix = kDefaultIdPrefix;
+};
+
+// 通过返回**空串**；否则是给用户看的中文理由（与 1.x 的 ValueError 文案逐字一致）。
+// 检查顺序照 1.x `run_extraction`：源目录存在 → target 必填 → 文件夹名合法 →
+// **目标子目录是否撞上源目录**（撞上＝原地覆盖，原文不可恢复）。
+std::string validate_request(const ExtractRequest& request);
+
 // 跑一个分支：把 src 下的候选文件提取到 dst（dst 是 **该类型的目标子目录**，例如 out/gameplay），
 // 文本 XML 写到 `xml_out_dir`（通常就是 out 的根）。
 ExtractStats extract_dir(const std::string& source_dir, const std::string& target_dir,

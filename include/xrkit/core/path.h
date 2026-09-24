@@ -16,4 +16,9 @@ std::filesystem::path path_from_utf8(const std::string& utf8);
 // 本地路径 → UTF-8（'/' 分隔）
 std::string path_to_utf8(const std::filesystem::path& path);
 
+// 两个路径是否指向**同一个位置**：只做词法规范化（不碰盘、不解析符号链接），
+// **Windows 下大小写不敏感**（与 Python `os.path.normcase` 同语义）。
+// 用途：守卫"输出目录会不会原地覆盖源目录"这类判据 —— 1.x 用的正是 normcase 比较。
+bool path_equals(const std::string& a, const std::string& b);
+
 }  // namespace xrkit::core

@@ -4,6 +4,7 @@
 #include "convert_page.h"
 #include "fs_page.h"
 #include "page_base.h"
+#include "text_page.h"
 
 #include <QString>
 
@@ -17,6 +18,7 @@ PageBase* create_page(int index, QWidget* parent) {
     //（标题 / 页内视口 / 贴底操作栏 —— 形态从第一天起就是一致的）。
     if (id == QStringLiteral("fs")) return new FsPage(parent);
     if (id == QStringLiteral("convert")) return new ConvertPage(parent);
+    if (id == QStringLiteral("text")) return new TextPage(parent);
     return new PageBase(id, QString::fromUtf8(info.title), parent);
 }
 

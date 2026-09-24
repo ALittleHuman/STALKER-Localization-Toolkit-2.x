@@ -27,6 +27,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -47,6 +48,20 @@ REAL_ROOTS = [
     Path(r"E:\Software\Games\STALKER\Games\Golden Sphere\gamedata\scripts"),
 ]
 PER_ROOT = 30
+
+
+def read_bytes_retry(path: Path, attempts: int = 5) -> bytes:
+    """读文件（带重试）：刚复制出来的样本可能被安全软件短暂锁住 —— 那是环境问题，
+    不是"解码不一致"。实测踩过：整跑门禁时 `real/141_wrap_oal.dll` 报 `[WinError 5] 拒绝访问`。"""
+    last: OSError | None = None
+    for i in range(attempts):
+        try:
+            return path.read_bytes()
+        except OSError as exc:  # noqa: PERF203
+            last = exc
+            time.sleep(0.2 * (i + 1))
+    assert last is not None
+    raise last
 
 RUS = "Привет, сталкер! Ты должен идти на Янтарь."          # 俄文
 CJK = "你好，潜行者。这是中文测试。"                          # 中文
@@ -174,6 +189,7 @@ def main() -> int:
     base = {e["id"]: e for e in json.loads(BASELINE.read_text(encoding="utf-8"))["entries"]}
     failures: list[str] = []
     stale: list[str] = []
+    denied: list[str] = []
     compared = 0
     for sample_id, path in items:
         exp = base.get(sample_id)
@@ -181,7 +197,16 @@ def main() -> int:
             print("  !! 基线里没有 %s（夹具变了？重跑 --write）" % sample_id)
             failures.append(sample_id)
             continue
-        if hashlib.sha256(path.read_bytes()).hexdigest() != exp["sha256"]:
+        # 读一下（带重试）：副本刚落盘时可能被安全软件短暂锁住 —— 那是**环境问题**，
+        # 不是"解码不一致"。读不到就显式记 SKIP（退出码 2 → 门禁记"未覆盖"），
+        # 绝不混进通过、也绝不判红。
+        try:
+            raw = read_bytes_retry(path)
+        except OSError as exc:
+            print("  !! %s：读取被系统拒绝（%s）—— 记 SKIP，不判红" % (sample_id, exc))
+            denied.append(sample_id)
+            continue
+        if hashlib.sha256(raw).hexdigest() != exp["sha256"]:
             stale.append(sample_id)
             continue
         out_file = WORK / "decoded.txt"
@@ -205,12 +230,15 @@ def main() -> int:
     if stale:
         print("  样本内容变了（与基线记录不符）%d 个：%s%s"
               % (len(stale), ", ".join(stale[:5]), " …" if len(stale) > 5 else ""))
-    verdict = "FAIL" if failures else ("PARTIAL" if stale else "PASS")
-    print("GOLDEN-TEXT-DECODE: %s (compared=%d failed=%d stale=%d)"
-          % (verdict, compared, len(failures), len(stale)))
+    if denied:
+        print("  读取被系统拒绝（环境问题，记 SKIP）%d 个：%s%s"
+              % (len(denied), ", ".join(denied[:5]), " …" if len(denied) > 5 else ""))
+    verdict = "FAIL" if failures else ("PARTIAL" if (stale or denied) else "PASS")
+    print("GOLDEN-TEXT-DECODE: %s (compared=%d failed=%d stale=%d denied=%d)"
+          % (verdict, compared, len(failures), len(stale), len(denied)))
     if failures:
         return 1
-    return 2 if stale else 0
+    return 2 if (stale or denied) else 0
 
 
 if __name__ == "__main__":

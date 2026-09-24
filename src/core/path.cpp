@@ -37,4 +37,30 @@ std::string path_to_utf8(const std::filesystem::path& path) {
 #endif
 }
 
+bool path_equals(const std::string& a, const std::string& b) {
+    const std::filesystem::path pa = path_from_utf8(a).lexically_normal();
+    const std::filesystem::path pb = path_from_utf8(b).lexically_normal();
+    auto ia = pa.begin();
+    auto ib = pb.begin();
+#ifdef _WIN32
+    const auto lower = [](char c) {
+        return (c >= 'A' && c <= 'Z') ? char(c - 'A' + 'a') : c;
+    };
+#endif
+    for (; ia != pa.end() && ib != pb.end(); ++ia, ++ib) {
+        std::string ca = path_to_utf8(*ia);
+        std::string cb = path_to_utf8(*ib);
+#ifdef _WIN32
+        // Windows 下路径比较大小写不敏感（1.x 用 os.path.normcase）
+        if (ca.size() != cb.size()) return false;
+        for (size_t i = 0; i < ca.size(); ++i) {
+            if (lower(ca[i]) != lower(cb[i])) return false;
+        }
+#else
+        if (ca != cb) return false;
+#endif
+    }
+    return ia == pa.end() && ib == pb.end();
+}
+
 }  // namespace xrkit::core

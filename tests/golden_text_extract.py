@@ -372,6 +372,26 @@ def main() -> int:
                      stats["chars"]))
         else:
             print("  ok strings=%d chars=%d %s" % (stats["strings"], stats["chars"], stats["tail"]))
+
+        # ⑦7.2：**同一份源跑两次必须逐字节相同**。1.x 的坑是候选遍历没排序
+        #（Python set 迭代随哈希随机化）⇒ 同一份源两次运行得到不同 ID。
+        # 这条对拍只在候选数 >1 时有意义（一个候选的话排不排序都一样）。
+        try:
+            run_2x(kind, src, WORK / fixture_id / "again")
+            second = tree_hashes(WORK / fixture_id / "again")
+        except Exception as exc:  # noqa: BLE001
+            failures += 1
+            print("  ✗ 第二次运行失败：%s" % exc)
+        else:
+            repeat = diff_trees(got, second)
+            if repeat:
+                failures += 1
+                print("  ✗ 7.2 两次运行产物不同 %d 处（候选遍历没排序 / 有随机性）"
+                      % len(repeat))
+                for p in repeat[:6]:
+                    print("      %s" % p)
+            else:
+                print("  ✓ 7.2 两次运行逐字节相同（%d 个文件）" % len(second))
         compared += 1
 
     print("")

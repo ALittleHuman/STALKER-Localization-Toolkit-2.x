@@ -863,6 +863,35 @@ bool kind_from_dir_name(const std::string& source_dir, ExtractKind& out, std::st
     return false;
 }
 
+std::string validate_request(const ExtractRequest& request) {
+    std::error_code ec;
+    const std::filesystem::path source = core::path_from_utf8(request.source_dir);
+    if (request.source_dir.empty() || !std::filesystem::is_directory(source, ec)) {
+        // 1.x 在 `run_extraction` 里 `os.path.isdir` 失败抛 FileNotFoundError
+        return "源目录不存在（或不是目录）：" + request.source_dir;
+    }
+    if (request.target_dir.empty()) {
+        // 文案逐字照 1.x：这也是"源目录始终只读"这条口径的用户可见表述
+        return "请指定输出目录：改写后的源文件与文本 XML 都写入输出目录，"
+               "源目录中的原文件不会被覆盖（原地覆盖后原文不可恢复，故不支持）";
+    }
+    ExtractKind kind = ExtractKind::Gameplay;
+    std::string err;
+    if (!kind_from_dir_name(request.source_dir, kind, err)) return err;
+
+    // 7.5（照 `_plan_output_dirs` 的代码，不是照文档措辞）：
+    // 真正被拒的是"**目标子目录撞上源子目录**" —— 因为 types 恒等于源目录自己的名字，
+    // 所以等价于 `target/源目录名 == 源目录`，即**输出目录是源目录的父目录**。
+    //（对照表 7.5 把它写成"输出目录 == 源目录"，那是简化说法：target == source 时
+    //  产物落在 source/gameplay|scripts 子目录里，并不覆盖源文件，1.x 并不拒绝。）
+    const std::filesystem::path target_sub =
+        core::path_from_utf8(request.target_dir) / source.filename();
+    if (core::path_equals(core::path_to_utf8(source), core::path_to_utf8(target_sub))) {
+        return "输出目录会覆盖源目录中的原文件（且不可恢复），请另选输出目录";
+    }
+    return {};
+}
+
 ExtractStats extract_dir(const std::string& source_dir, const std::string& target_dir,
                          const std::string& xml_out_dir, const ExtractOptions& options) {
     ExtractStats st;

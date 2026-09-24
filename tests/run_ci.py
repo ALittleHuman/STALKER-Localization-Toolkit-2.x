@@ -957,6 +957,18 @@ def step_shell_smoke(release: bool) -> None:
         return
     ok("定案步骤标签只由引擎给（9.7：页面不拼 `多字节(...)` 那类结论）")
 
+    # 对照表 ⑦7.1/7.5：**页面不许自己写拒绝理由**。判据与文案都在 `validate_request`
+    #（引擎），页面只把返回值显示出来 —— 两条入口各写一份理由，迟早会不一样。
+    text_src = ROOT / "src" / "shell" / "pages" / "text_page.cpp"
+    code = active_code(text_src.read_text(encoding="utf-8", errors="replace"))
+    offenders = [phrase for phrase in ("不要选它们的上层目录", "会覆盖源目录中的原文件", "请指定输出目录")
+                 if phrase in code]
+    if offenders:
+        fail("提取守卫文案（7.1/7.5）：text_page.cpp 里出现 %s —— 理由只能由引擎给（validate_request）"
+             % "、".join(offenders))
+        return
+    ok("提取守卫理由只由引擎给（7.1/7.5：页面不自己写那几句话）")
+
     # 锁的自证：上面这些静态锁都靠 `active_code` 区分"注释"与"活代码"。
     # 两头都得对 —— 既能被一句注释绕过（太松），也会把注释当违规（太紧，等于
     # 禁止源码里写口径出处）。所以这里**故意**喂一份正反样本给它。

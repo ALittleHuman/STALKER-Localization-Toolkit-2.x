@@ -111,6 +111,7 @@ void print_usage() {
            "  --sniff <输入> <输出> [--encoding <手动指定>]  判定链（六步）判定 + 解码（对拍用）\n"
            "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
            "                                              文本提取（gameplay|scripts 一个分支）\n"
+           "  --text-plan <源目录> <输出目录>              文本提取的请求守卫（7.1 文件夹名 / 7.5 覆盖源目录）\n"
            "  --glyph-dump <字体> <字号> <输出> [字符集文件]  导出 FreeType 栅格（与 Pillow 对拍）\n"
            "  --font-metrics <输出>                       导出字库几何/宽度表（与 1.x font_pack 对拍）\n"
            "  --font-render <字体> <字号> <x2> <fmt> <字符集文件> <输出前缀>\n"
@@ -425,6 +426,68 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
               "宽 BOM 匹配顺序不对（9.6：先长后短）");
         check(ctx, txt::bom_encoding({0xFF, 0xFE, 'a', 0}) == std::string(txt::kUtf16),
               "UTF-16LE BOM 没认出来");
+    });
+
+    // ⑦7.1/7.5 文本提取的请求守卫。判据要点：① 只看**文件夹自己的名字**（大小写不敏感、
+    // 无别名、绝不往下找）；② 空输出目录必拒，且文案里写明"源目录只读"；③ 真正被拒的
+    // 覆盖情形是**输出目录 = 源目录的父目录**（目标子目录 == 源目录）—— 对照表把它简化
+    // 成"输出目录 == 源目录"，照代码判会发现不是那么回事（target == source 时产物落在
+    // source/gameplay 子目录里，不覆盖源文件，1.x 并不拒绝）。
+    reg.add("text: 提取请求守卫（⑦7.1/7.5）", [](CheckContext& ctx) {
+        namespace txt = xrkit::engine::text;
+        namespace fsys = std::filesystem;
+        std::error_code ec;
+        const fsys::path root = fsys::temp_directory_path(ec) / "xrkit_selftest_textreq";
+        fsys::remove_all(root, ec);
+        fsys::create_directories(root / "gameplay" / "config", ec);
+        fsys::create_directories(root / "Scripts", ec);   // 大小写不敏感的证据
+        // 名字既不是 gameplay 也不是 scripts 的目录（"上层目录"的典型：
+        // 1.x 只看**选中目录自己的名字**，所以哪怕它下面真有 gameplay/ 也不认）
+        fsys::create_directories(root / "config", ec);
+        fsys::create_directories(root / "out", ec);
+
+        const std::string gameplay = (root / "gameplay").string();
+        const std::string scripts_upper = (root / "Scripts").string();
+        const std::string not_a_type = (root / "config").string();
+
+        const auto guard = [](const std::string& src, const std::string& dst) {
+            txt::ExtractRequest request;
+            request.source_dir = src;
+            request.target_dir = dst;
+            return txt::validate_request(request);
+        };
+
+        // 7.1 大小写不敏感 + 只有这两个名字
+        check(ctx, guard(gameplay, (root / "out").string()).empty(),
+              "gameplay 目录被判非法");
+        check(ctx, guard(scripts_upper, (root / "out").string()).empty(),
+              "大小写不敏感失效（Scripts 被判非法）");
+        const std::string bad_name = guard(not_a_type, (root / "out").string());
+        check(ctx, bad_name.find("不要选它们的上层目录") != std::string::npos,
+              "选了上层目录却没给出 1.x 那句理由：" + bad_name);
+        check(ctx, !guard((root / "nope").string(), (root / "out").string()).empty(),
+              "不存在的源目录没被拒");
+
+        // 7.5 输出目录必填（文案里必须写明"源目录只读"这条口径）
+        const std::string empty_target = guard(gameplay, "");
+        check(ctx, empty_target.find("请指定输出目录") != std::string::npos,
+              "空输出目录没被拒：" + empty_target);
+        check(ctx, empty_target.find("不会被覆盖") != std::string::npos,
+              "空输出目录的文案丢了『源目录不会被覆盖』：" + empty_target);
+
+        // 7.5 覆盖判据：输出目录 = 源目录的**父目录** ⇒ 目标子目录就是源目录 ⇒ 拒
+        const std::string parent = guard(gameplay, root.string());
+        check(ctx, parent.find("会覆盖源目录中的原文件（且不可恢复）") != std::string::npos,
+              "输出目录=源目录父目录没被拒：" + parent);
+        // 大小写不同也算撞（Windows normcase 语义）：把父目录名改成大写再试
+        std::string upper_root = root.parent_path().string() + "\\XRKIT_SELFTEST_TEXTREQ";
+        check(ctx, !guard(gameplay, upper_root).empty(),
+              "大小写不同的同一路径没被判为撞车（path_equals 语义）");
+        // 反面：输出目录 = 源目录**本身** 时产物落在 source/gameplay 子目录，不覆盖源文件
+        //（1.x 的 `_plan_output_dirs` 并不拒绝）—— 判据照代码，不照文档的简化措辞
+        check(ctx, guard(gameplay, gameplay).empty(),
+              "输出目录=源目录本身被误拒了（1.x 并不拒这一例）");
+        fsys::remove_all(root, ec);
     });
 
     // ⑥6.7 路径越界判据（safe_out_path）：归档条目名是不可信输入，这条判据挡的是
@@ -850,6 +913,29 @@ int run_cli(const std::vector<std::string>& args) {
         file.write(fixed.data(), static_cast<std::streamsize>(fixed.size()));
         file.close();
         std::cout << "DECLFIX ok bytes=" << fixed.size() << "\n";
+        return kExitOk;
+    }
+
+    // 文本提取的请求守卫探针（⑦7.1/7.5）：页面与自检共用引擎那一份判据。
+    if (action == "--text-plan") {
+        if (operands.size() < 2) {
+            std::cerr << "TEXTPLAN error reason=用法：--text-plan <源目录> <输出目录>\n";
+            return kExitUsage;
+        }
+        xrkit::engine::text::ExtractRequest request;
+        request.source_dir = operands[0];
+        request.target_dir = operands[1];
+        const std::string reason = xrkit::engine::text::validate_request(request);
+        if (!reason.empty()) {
+            std::cout << "TEXTPLAN reject reason=" << reason << "\n";
+            return kExitFail;
+        }
+        xrkit::engine::text::ExtractKind kind = xrkit::engine::text::ExtractKind::Gameplay;
+        std::string err;
+        xrkit::engine::text::kind_from_dir_name(request.source_dir, kind, err);
+        std::cout << "TEXTPLAN ok kind="
+                  << (kind == xrkit::engine::text::ExtractKind::Gameplay ? "gameplay" : "scripts")
+                  << "\n";
         return kExitOk;
     }
 
