@@ -216,8 +216,214 @@ bool gb18030_decode(const uint8_t* data, size_t size, std::string& text, std::st
     return true;
 }
 
-const std::unordered_map<uint32_t, uint16_t>& gb18030_two_byte_reverse() {
-    static const std::unordered_map<uint32_t, uint16_t> table = [] {
+// ── 有损解码/编码（Python 的 errors="replace"）───────────────────────
+//
+// 转换页的两条写出路径（转换分支与"已是目标编码"分支）都用 `errors="replace"`，
+// 而 replace 的输出**直接进正文**、最终进产物 —— 所以它必须逐字节对齐 Python，
+// 不能"看着差不多"。下面的规则是**实测**出来的（`tests/golden_lossy_codec.py` 会持续对拍）：
+//
+//   UTF-8（CPython 的 replace）：
+//     · 非法前导（<C2 或 >F4）⇒ 一个 U+FFFD，吃掉 1 字节；
+//     · 合法前导但后续字节越界 ⇒ 一个 U+FFFD，吃掉**到越界字节之前**为止；
+//     · 合法前导但在**输入末尾被截断** ⇒ 一个 U+FFFD，吃掉**已经吃掉的**那些字节。
+//   实测样本：e4b8→1 个；e4b8e4→2 个；e441→1 个 + 'A'；e08080→3 个（E0 的次字节必须
+//   A0..BF，80 越界 ⇒ 第一个 FFFD 只吃 E0）；eda080→3 个；f4908080→4 个；c080→2 个。
+//   gb18030：非法/截断各自一个 U+FFFD，规则同上（截断时吃到末尾）。
+//   单字节表：未定义字节（表里 0xFFFF）⇒ 一个 U+FFFD。
+//   编码方向：目标编码表示不了的码位 ⇒ `?`（0x3F）。
+void append_replacement(std::string& text) { text += "\xEF\xBF\xBD"; }  // U+FFFD
+
+// gbk / gb2312 的有损解码：**只有两字节路径**（gb18030 才认四字节）。
+// 实测（Python 同名 codec，errors="replace"）：结构合法但表里没定义的序列
+// ⇒ 一个 U+FFFD 且**只吃前导字节**（`fe fe` → 两个替换；`81 30` → 替换 + '0'；
+// gb2312 里的 `81 40` 也如此，因为那张表比 gbk 小）。
+bool gb_two_byte_decode_lossy(const uint16_t* table, const uint8_t* data, size_t size,
+                              std::string& text) {
+    text.clear();
+    text.reserve(size * 3);
+    size_t i = 0;
+    while (i < size) {
+        const uint8_t b1 = data[i];
+        if (b1 < 0x80) {
+            text.push_back(static_cast<char>(b1));
+            ++i;
+            continue;
+        }
+        if (b1 == 0x80 || b1 == 0xFF) {
+            append_replacement(text);
+            ++i;
+            continue;
+        }
+        if (i + 1 < size) {
+            const uint8_t b2 = data[i + 1];
+            if (b2 >= 0x40 && b2 <= 0xFE) {
+                const uint16_t cp = table[(b1 - 0x81) * 191 + (b2 - 0x40)];
+                if (cp != kUndefined) {
+                    append_utf8(text, cp);
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        append_replacement(text);
+        ++i;  // 只吃前导：后面的字节按自己的身份继续处理
+    }
+    return true;
+}
+
+bool decode_single_byte_lossy(const uint16_t* table, const uint8_t* data, size_t size,
+                              std::string& text) {
+    text.clear();
+    text.reserve(size * 3);
+    for (size_t i = 0; i < size; ++i) {
+        const uint8_t b = data[i];
+        if (b < 0x80) {
+            text.push_back(static_cast<char>(b));
+            continue;
+        }
+        const uint16_t cp = table[b - 0x80];
+        if (cp == kUndefined) {
+            append_replacement(text);
+            continue;
+        }
+        append_utf8(text, cp);
+    }
+    return true;
+}
+
+bool utf8_decode_lossy(const uint8_t* data, size_t size, std::string& text) {
+    text.clear();
+    text.reserve(size * 3);
+    size_t i = 0;
+    while (i < size) {
+        const uint8_t b = data[i];
+        if (b < 0x80) {
+            text.push_back(static_cast<char>(b));
+            ++i;
+            continue;
+        }
+        if (b < 0xC2 || b > 0xF4) {  // 非法前导（含 C0/C1 过长编码与 F5..FF）
+            append_replacement(text);
+            ++i;
+            continue;
+        }
+        const size_t need = (b < 0xE0) ? 2 : (b < 0xF0 ? 3 : 4);
+        bool truncated = false;
+        bool bad_continuation = false;
+        size_t j = i + 1;
+        for (; j < i + need; ++j) {
+            if (j >= size) {  // 输入末尾截断：吃掉已经吃掉的，一个替换
+                truncated = true;
+                break;
+            }
+            const uint8_t c = data[j];
+            bool ok = (c >= 0x80 && c <= 0xBF);
+            if (j == i + 1) {  // 次字节的特殊范围（CPython 的 overlong/surrogate 检查）
+                if (b == 0xE0) ok = (c >= 0xA0 && c <= 0xBF);
+                else if (b == 0xED) ok = (c >= 0x80 && c <= 0x9F);
+                else if (b == 0xF0) ok = (c >= 0x90 && c <= 0xBF);
+                else if (b == 0xF4) ok = (c >= 0x80 && c <= 0x8F);
+            }
+            if (!ok) {
+                bad_continuation = true;
+                break;
+            }
+        }
+        if (truncated) {
+            append_replacement(text);
+            i = size;
+            continue;
+        }
+        if (bad_continuation) {
+            append_replacement(text);
+            i = j;  // 只吃到越界字节之前
+            continue;
+        }
+        // 合法序列：按位拼码位
+        uint32_t cp = 0;
+        if (need == 2) {
+            cp = ((b & 0x1Fu) << 6) | (data[i + 1] & 0x3Fu);
+        } else if (need == 3) {
+            cp = ((b & 0x0Fu) << 12) | ((data[i + 1] & 0x3Fu) << 6) | (data[i + 2] & 0x3Fu);
+        } else {
+            cp = ((b & 0x07u) << 18) | ((data[i + 1] & 0x3Fu) << 12) |
+                 ((data[i + 2] & 0x3Fu) << 6) | (data[i + 3] & 0x3Fu);
+        }
+        append_utf8(text, cp);
+        i += need;
+    }
+    return true;
+}
+
+bool gb18030_decode_lossy(const uint8_t* data, size_t size, std::string& text) {
+    text.clear();
+    text.reserve(size * 3);
+    size_t i = 0;
+    while (i < size) {
+        const uint8_t b1 = data[i];
+        if (b1 < 0x80) {
+            text.push_back(static_cast<char>(b1));
+            ++i;
+            continue;
+        }
+        if (b1 == 0x80 || b1 == 0xFF) {  // Python 对 0x80 抛错；0xFF 也不是合法首字节
+            append_replacement(text);
+            ++i;
+            continue;
+        }
+        if (i + 1 >= size) {  // 末尾截断：吃掉这个前导
+            append_replacement(text);
+            i = size;
+            continue;
+        }
+        const uint8_t b2 = data[i + 1];
+        if (b2 >= 0x40 && b2 <= 0xFE) {
+            const uint16_t cp = kGb18030TwoByte[(b1 - 0x81) * 191 + (b2 - 0x40)];
+            if (cp != kUndefined) {
+                append_utf8(text, cp);
+                i += 2;
+                continue;
+            }
+        }
+        // 四字节路径（b2 必须是数字位）
+        if (b2 >= 0x30 && b2 <= 0x39) {
+            if (i + 3 >= size) {  // 末尾截断
+                append_replacement(text);
+                i = size;
+                continue;
+            }
+            const uint8_t b3 = data[i + 2];
+            const uint8_t b4 = data[i + 3];
+            if (b3 >= 0x81 && b3 <= 0xFE && b4 >= 0x30 && b4 <= 0x39) {
+                const uint32_t linear =
+                    ((static_cast<uint32_t>(b1) - 0x81) * 10 + (b2 - 0x30)) * 1260 +
+                    (static_cast<uint32_t>(b3) - 0x81) * 10 + (b4 - 0x30);
+                size_t lo = 0;
+                size_t hi = kGb18030FourByteCount;
+                while (lo < hi) {
+                    const size_t mid = lo + (hi - lo) / 2;
+                    if (kGb18030FourByte[mid].to < linear) {
+                        lo = mid + 1;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                if (lo < kGb18030FourByteCount && linear >= kGb18030FourByte[lo].from) {
+                    const uint32_t cp = static_cast<uint32_t>(
+                        static_cast<int64_t>(linear) + kGb18030FourByte[lo].delta);
+                    append_utf8(text, cp);
+                    i += 4;
+                    continue;
+                }
+            }
+        }
+        append_replacement(text);
+        ++i;  // 吃掉一个前导字节，剩下的下一轮各自处理
+    }
+    return true;
+}
+
+const std::unordered_map<uint32_t, uint16_t>& gb18030_two_byte_reverse() {    static const std::unordered_map<uint32_t, uint16_t> table = [] {
         std::unordered_map<uint32_t, uint16_t> m;
         m.reserve(24000);
         for (uint32_t idx = 0; idx < 126u * 191u; ++idx) {
@@ -493,9 +699,81 @@ bool decode_strict(const std::string& encoding, const uint8_t* data, size_t size
     return false;
 }
 
-bool encode_strict(const std::string& encoding, const std::string& text,
-                   std::vector<uint8_t>& out, std::string& err) {
+bool decode_lossy(const std::string& encoding, const uint8_t* data, size_t size,
+                  std::string& text, std::string& err) {
     err.clear();
+    if (encoding == kUtf8 || encoding == kUtf8Sig) {
+        if (encoding == kUtf8Sig && size >= 3 && data[0] == 0xEF && data[1] == 0xBB &&
+            data[2] == 0xBF) {
+            return utf8_decode_lossy(data + 3, size - 3, text);
+        }
+        return utf8_decode_lossy(data, size, text);
+    }
+    if (encoding == kGb18030) return gb18030_decode_lossy(data, size, text);
+    // gbk / gb2312 只有两字节路径，且各自的表比 gb18030 小 —— 不能借 gb18030 的表，
+    // 否则 `81 40`（gbk 有、gb2312 没有）与四字节序列都会判错。
+    if (encoding == kGbk) return gb_two_byte_decode_lossy(kGbkTwoByte, data, size, text);
+    if (encoding == kGb2312) return gb_two_byte_decode_lossy(kGb2312TwoByte, data, size, text);
+    if (encoding == kWindows1251) {
+        return decode_single_byte_lossy(kCp1251ToUnicode, data, size, text);
+    }
+    if (encoding == kWindows1252) {
+        return decode_single_byte_lossy(kCp1252ToUnicode, data, size, text);
+    }
+    if (encoding == kAscii) {
+        text.clear();
+        text.reserve(size);
+        for (size_t i = 0; i < size; ++i) {
+            if (data[i] >= 0x80) {
+                append_replacement(text);
+            } else {
+                text.push_back(static_cast<char>(data[i]));
+            }
+        }
+        return true;
+    }
+    if (encoding == kLatin1) {
+        text.clear();
+        text.reserve(size * 2);
+        for (size_t i = 0; i < size; ++i) append_utf8(text, data[i]);
+        return true;
+    }
+    // 其余编码（utf-16/utf-32 家族）暂不做有损模式：**如实报错**，不假装支持。
+    // 转换页的目标/源编码下拉只列这里做过对拍的编码（见 golden_lossy_codec.py）。
+    if (decode_strict(encoding, data, size, text, err)) return true;
+    err = "有损解码尚未对拍该编码：" + encoding + "（严格解码失败：" + err + "）";
+    return false;
+}
+
+bool encode_lossy(const std::string& encoding, const std::string& text, std::vector<uint8_t>& out,
+                  std::string& err) {
+    err.clear();
+    // 能严格编码就严格编码（与 replace 的结果一致，因为没触发替换）
+    if (encode_strict(encoding, text, out, err)) return true;
+    // 否则逐码位来：表示不了的写 `?`（Python `errors="replace"` 在编码方向的行为）
+    out.clear();
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(text.data());
+    size_t i = 0;
+    while (i < text.size()) {
+        const size_t start = i;
+        uint32_t cp = 0;
+        if (!utf8_decode_one(p, text.size(), i, cp)) {
+            err = "正文不是合法 UTF-8（有损编码前）";
+            return false;
+        }
+        std::vector<uint8_t> piece;
+        std::string piece_err;
+        if (encode_strict(encoding, std::string(text, start, i - start), piece, piece_err)) {
+            out.insert(out.end(), piece.begin(), piece.end());
+        } else {
+            out.push_back('?');
+        }
+    }
+    return true;
+}
+
+bool encode_strict(const std::string& encoding, const std::string& text,
+                   std::vector<uint8_t>& out, std::string& err) {    err.clear();
     if (encoding == kUtf8) {
         out.assign(text.begin(), text.end());
         return true;

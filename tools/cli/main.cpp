@@ -26,6 +26,7 @@
 #include "xrkit/engine/font/package.h"
 #include "xrkit/engine/font/render.h"
 #include "xrkit/engine/font/resample.h"
+#include "xrkit/engine/text/convert.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/extract.h"
 #include "xrkit/engine/text/sniff.h"
@@ -104,6 +105,9 @@ void print_usage() {
            "  --pack-db <输出> <格式> <输入目录>          按目录打包 DB（逐字节对拍用）\n"
            "  --pack-sqfs <输出> <输入目录> [--pack-dirs]  自写 SquashFS 封包（xz 块，逐字节对拍用）\n"
            "  --decode-text <输入> <输出>                 六编码链解码（把正文写成 UTF-8；对拍用）\n"
+           "  --codec-lossy <decode|encode> <编码> <输入> <输出>\n"
+           "                                              有损编解码（Python errors=replace；对拍用）\n"
+           "  --decl-fix <输入> <目标编码> <输出>          XML 声明规范化（1.x _fix_xml_decl；对拍用）\n"
            "  --sniff <输入> <输出> [--encoding <手动指定>]  判定链（六步）判定 + 解码（对拍用）\n"
            "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
            "                                              文本提取（gameplay|scripts 一个分支）\n"
@@ -769,6 +773,84 @@ int run_cli(const std::vector<std::string>& args) {
                   << " ms=" << static_cast<long long>(res.elapsed_ms) << "\n";
         // 有单项失败：**不谎报成功**（1.x 的"解包失败返回 0"就是这么被吞掉的）
         return res.failures.empty() ? kExitOk : kExitFail;
+    }
+
+    // 有损编解码探针（Python `errors="replace"` 的逐字节对拍用）。
+    // 门禁 [12] 用 Python 同名 codec 驱动它：单字节 / UTF-8 截断 / GB 家族边界。
+    if (action == "--codec-lossy") {
+        if (operands.size() < 4) {
+            std::cerr << "CODEC error reason=用法：--codec-lossy <decode|encode> <编码> <输入> <输出>\n";
+            return kExitUsage;
+        }
+        const std::string& mode = operands[0];
+        const std::string& encoding = operands[1];
+        std::string body;
+        {
+            std::ifstream in(xrkit::core::path_from_utf8(operands[2]), std::ios::binary);
+            if (!in) {
+                std::cout << "CODEC error reason=读不到输入：" << operands[2] << "\n";
+                return kExitFail;
+            }
+            body.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+        std::vector<uint8_t> out;
+        std::string err;
+        if (mode == "decode") {
+            std::string text;
+            if (!xrkit::engine::text::decode_lossy(
+                    encoding, reinterpret_cast<const uint8_t*>(body.data()), body.size(), text,
+                    err)) {
+                std::cout << "CODEC error reason=" << err << "\n";
+                return kExitFail;
+            }
+            out.assign(text.begin(), text.end());
+        } else if (mode == "encode") {
+            if (!xrkit::engine::text::encode_lossy(encoding, body, out, err)) {
+                std::cout << "CODEC error reason=" << err << "\n";
+                return kExitFail;
+            }
+        } else {
+            std::cerr << "CODEC error reason=未知模式（decode|encode）\n";
+            return kExitUsage;
+        }
+        std::ofstream file(xrkit::core::path_from_utf8(operands[3]), std::ios::binary | std::ios::trunc);
+        if (!file) {
+            std::cout << "CODEC error reason=写不到输出：" << operands[3] << "\n";
+            return kExitFail;
+        }
+        if (!out.empty()) {
+            file.write(reinterpret_cast<const char*>(out.data()),
+                       static_cast<std::streamsize>(out.size()));
+        }
+        file.close();
+        std::cout << "CODEC ok mode=" << mode << " encoding=" << encoding << " bytes=" << out.size()
+                  << "\n";
+        return kExitOk;
+    }
+
+    // XML 声明规范化探针（1.x `_fix_xml_decl` 的逐字节对拍用）
+    if (action == "--decl-fix") {
+        if (operands.size() < 3) {
+            std::cerr << "DECLFIX error reason=用法：--decl-fix <输入> <目标编码> <输出>\n";
+            return kExitUsage;
+        }
+        std::ifstream in(xrkit::core::path_from_utf8(operands[0]), std::ios::binary);
+        if (!in) {
+            std::cout << "DECLFIX error reason=读不到输入：" << operands[0] << "\n";
+            return kExitFail;
+        }
+        const std::string body((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        const std::string fixed = xrkit::engine::text::fix_xml_decl(body, operands[1]);
+        std::ofstream file(xrkit::core::path_from_utf8(operands[2]), std::ios::binary | std::ios::trunc);
+        if (!file) {
+            std::cout << "DECLFIX error reason=写不到输出：" << operands[2] << "\n";
+            return kExitFail;
+        }
+        file.write(fixed.data(), static_cast<std::streamsize>(fixed.size()));
+        file.close();
+        std::cout << "DECLFIX ok bytes=" << fixed.size() << "\n";
+        return kExitOk;
     }
 
     if (action == "--pack-db") {

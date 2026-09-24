@@ -1,5 +1,6 @@
 #include "xrkit/engine/fs/extract_tree.h"
 
+#include "xrkit/core/atomic_write.h"
 #include "xrkit/core/path.h"
 #include "xrkit/engine/fs/squashfs.h"
 
@@ -64,71 +65,6 @@ bool is_within(const stdfs::path& root, const stdfs::path& joined) {
     if (j.size() < r.size()) return false;
     for (size_t i = 0; i < r.size(); ++i) {
         if (!component_equal(r[i], j[i])) return false;
-    }
-    return true;
-}
-
-bool write_file_atomic(const std::string& final_path, const std::vector<uint8_t>& data,
-                       bool atomic, std::string& error) {
-    const stdfs::path target = xrkit::core::path_from_utf8(final_path);
-    std::error_code ec;
-    const stdfs::path dir = target.parent_path();
-    if (!dir.empty()) {
-        stdfs::create_directories(dir, ec);
-        if (ec) {
-            error = "建目录失败：" + ec.message();
-            return false;
-        }
-    }
-    const stdfs::path temp =
-        atomic ? stdfs::path(target.string() + ".part") : target;
-
-    {
-        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
-        if (!out) {
-            error = "打不开输出文件";
-            return false;
-        }
-        if (!data.empty()) {
-            out.write(reinterpret_cast<const char*>(data.data()),
-                      static_cast<std::streamsize>(data.size()));
-        }
-        out.close();
-        if (!out) {
-            error = "写盘失败（磁盘满/被占用）";
-            // 落半截就删掉：宁可没有，也不要留一个**看起来存在**的坏文件
-            if (atomic) stdfs::remove(temp, ec);
-            return false;
-        }
-    }
-
-    if (!atomic) return true;
-
-    // 6.9 的"逐字节复核"：从临时文件读回来比一遍 ——
-    // 写盘被截断（磁盘满、被占用）只在**读回**时看得见，`ofstream` 的 `!out` 未必报。
-    {
-        std::ifstream in(temp, std::ios::binary);
-        if (!in) {
-            error = "复核读不回临时文件";
-            stdfs::remove(temp, ec);
-            return false;
-        }
-        std::vector<uint8_t> back((std::istreambuf_iterator<char>(in)),
-                                  std::istreambuf_iterator<char>());
-        if (back.size() != data.size() ||
-            (data.size() != 0 && std::memcmp(back.data(), data.data(), data.size()) != 0)) {
-            error = "复核不一致（临时文件与待写内容不同）";
-            stdfs::remove(temp, ec);
-            return false;
-        }
-    }
-
-    // 同盘 rename（1.x 是 `os.replace`）：要么旧文件还在，要么新文件完整。
-    stdfs::rename(temp, target, ec);
-    if (ec) {
-        error = "替换目标文件失败：" + ec.message();
-        stdfs::remove(temp, ec);
-        return false;
     }
     return true;
 }
@@ -298,7 +234,7 @@ ExtractTreeResult extract_tree(const std::string& image_path, const std::string&
         // 6.8：空文件是**合法条目** —— 写出 0 字节并计入成功。
         //（1.x 的旧代码 `rc == 0 and r.stdout` 把空文件当成"解不出来"，已修。）
         std::string error;
-        if (!write_file_atomic(target.path, data.data, options.atomic, error)) {
+        if (!xrkit::core::write_file_atomic(target.path, data.data, options.atomic, error)) {
             result.failures.push_back({entry->path, error});
             continue;
         }

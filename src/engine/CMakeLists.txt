@@ -12,6 +12,7 @@ add_library(xrkit_engine STATIC
   fs/db.cpp
   text/encoding.cpp
   text/sniff.cpp
+  text/convert.cpp
   text/extract.cpp
   font/charset.cpp
   font/glyph.cpp

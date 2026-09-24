@@ -52,6 +52,19 @@ bool decode_strict(const std::string& encoding, const uint8_t* data, size_t size
 bool encode_strict(const std::string& encoding, const std::string& text,
                    std::vector<uint8_t>& out, std::string& err);
 
+// ── 有损模式（Python 的 `errors="replace"`）──────────────────────────
+//
+// 编码转换页的两个写出分支都用它，而 replace 的输出**直接进产物**，
+// 所以语义必须逐项对拍（`tests/golden_lossy_codec.py` + 门禁 [12]），不许"看着像"：
+//   · 解码方向：坏字节/坏序列 → U+FFFD，个数按 CPython 的"最大子部分"规则
+//     （实测：`e4b8`→1 个、`e4b8e4`→2 个、`e08080`→3 个、`e441`→1 个 + 'A'）；
+//   · 编码方向：目标编码表示不了的码位 → `?`。
+// 尚未对拍的编码（utf-16/utf-32 家族）**返回 false 并说明**，不假装支持。
+bool decode_lossy(const std::string& encoding, const uint8_t* data, size_t size,
+                  std::string& text, std::string& err);
+bool encode_lossy(const std::string& encoding, const std::string& text, std::vector<uint8_t>& out,
+                  std::string& err);
+
 // 六编码链（= 1.x read_text_file 的字节级语义；latin-1 兜底所以永不失败）
 DecodeResult decode_text_chain(const std::vector<uint8_t>& raw);
 

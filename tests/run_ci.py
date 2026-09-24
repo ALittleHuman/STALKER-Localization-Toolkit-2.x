@@ -500,6 +500,21 @@ def step_text_tables(release: bool) -> None:
         return
     ok("四张表与 codec 完全一致")
 
+    # 表对了还不够：编码转换页用的 `errors="replace"`（有损编解码）**也要逐字节等于
+    # Python 同名 codec** —— 替换符个数差一个就是产物错，而它错得"看着像对"。
+    lossy = ROOT / "tests" / "golden_lossy_codec.py"
+    if not require_repo_file(lossy, "有损编解码对拍"):
+        return
+    rc, out = run([sys.executable, str(lossy)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✗") or s.startswith("GOLDEN-LOSSY-CODEC"):
+            say("  " + s)
+    if rc != 0:
+        fail("有损编解码与 Python codec 不一致（见上）")
+        return
+    ok("有损编解码（errors=replace）与 Python 逐字节一致")
+
 
 def step_font_tables(release: bool) -> None:
     """字库数据表锁：磁盘上的 .inc 必须与 1.x 的 JSON / Python unicodedata 一致。
