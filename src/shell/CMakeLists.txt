@@ -12,6 +12,7 @@ add_library(xrkit_shell STATIC
   scroll_viewport.cpp
   split_pane.cpp
   theme.cpp
+  virtual_list.cpp
   smoke.cpp)
 
 target_include_directories(xrkit_shell PUBLIC "${CMAKE_SOURCE_DIR}/include")

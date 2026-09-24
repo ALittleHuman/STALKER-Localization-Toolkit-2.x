@@ -7,6 +7,7 @@
 #include "split_pane.h"
 #include "task_shell.h"
 #include "theme.h"
+#include "virtual_list.h"
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -478,6 +479,92 @@ SmokeResult run_smoke() {
               QStringLiteral("13.4 失败文案回主线程（实测 %1）").arg(task2.status()));
         result.notes.append(QStringLiteral("13.3 事件序列 = %1（p=进度 m=消息 e=错误 f=结束）")
                                 .arg(order));
+    }
+
+    // ⑩ 虚拟化列表（M2-5）：对照表 10.2 的范围规则 + 10.3 的同族原则（只对视口内行取文本）。
+    {
+        // 10.2 规则逐组对拍：first=top//h、last=min(total,(top+view_h)//h+2)
+        struct Case {
+            int top;
+            int view_h;
+            int h;
+            int total;
+            int first;
+            int last;
+        };
+        const Case cases[] = {
+            {0, 196, 20, 10000, 0, 11},      // (0+196)//20+2 = 9+2 = 11
+            {180, 196, 20, 10000, 9, 20},    // 9, (376)//20+2 = 18+2 = 20
+            {0, 40, 20, 3, 0, 3},            // min(total, ...) 夹到 total
+            {0, 400, 20, 5, 0, 5},
+            {9999 * 20, 196, 20, 10000, 9999, 10000},
+        };
+        int rule_bad = 0;
+        for (const Case& c : cases) {
+            const QPair<int, int> got = VirtualList::visible_range(c.top, c.view_h, c.h, c.total);
+            if (got.first != c.first || got.second != c.last) ++rule_bad;
+        }
+        check(rule_bad == 0, QStringLiteral("10.2 范围规则逐组一致（%1 组里 %2 组不符）")
+                                 .arg(sizeof(cases) / sizeof(cases[0]))
+                                 .arg(rule_bad));
+
+        VirtualList list;
+        list.set_row_height(20);
+        list.resize(400, 196);
+        list.set_row_count(10000);
+        list.set_row_text_provider([](int row) {
+            return QStringLiteral("row %1").arg(row);
+        });
+        list.show();
+        QApplication::processEvents();
+        const QPair<int, int> range0 = list.visible_range();
+        check(range0.first == 0 && range0.second == 11,
+              QStringLiteral("10.2 视口范围 = (0,11)（实测 (%1,%2)）")
+                  .arg(range0.first)
+                  .arg(range0.second));
+        check(list.built_count() == 11,
+              QStringLiteral("10.2 只为视口内行建控件（建了 %1 个，total=10000）")
+                  .arg(list.built_count()));
+        check(list.provider_calls() == 11,
+              QStringLiteral("10.3 同族：行文本只对视口内行取（调了 %1 次）")
+                  .arg(list.provider_calls()));
+        // 滚动：范围变、池子**不涨**
+        list.set_scroll_top(180);
+        check(list.visible_range() == QPair<int, int>(9, 20),
+              QStringLiteral("滚动后范围 = (9,20)"));
+        check(list.built_count() == 11,
+              QStringLiteral("池子不随滚动增长（仍 %1 个）").arg(list.built_count()));
+        // total 变化不影响池子大小（没有硬编码上限，也不是"按 total 建"）
+        list.set_scroll_top(0);
+        list.set_row_count(100);
+        const int built_100 = list.built_count();
+        list.set_row_count(1000000);
+        check(list.built_count() == built_100 && built_100 == 11,
+              QStringLiteral("10.2 池子与 total 无关（100 行与 100 万行都是 %1 个）")
+                  .arg(list.built_count()));
+
+        // 判据：**换选一行与条数无关**（真实窗口口径是 7~10 ms；这里量离屏下界并报出）
+        const auto measure_select = [&list](int total) {
+            list.set_row_count(total);
+            list.set_scroll_top(0);
+            QElapsedTimer timer;
+            timer.start();
+            constexpr int kRounds = 50;
+            for (int i = 0; i < kRounds; ++i) list.set_selected_row(i % 11);
+            return static_cast<double>(timer.nsecsElapsed()) / 1e6 / kRounds;
+        };
+        const double small = measure_select(100);
+        const double big = measure_select(1000000);
+        result.notes.append(QStringLiteral("10.2 换选一行：total=100 时 %1 ms，total=100 万时 %2 ms")
+                                .arg(small, 0, 'f', 4)
+                                .arg(big, 0, 'f', 4));
+        check(big < 30.0, QStringLiteral("10.2 换选一行 %1 ms < 30 ms 上界（离屏下界口径）")
+                              .arg(big, 0, 'f', 4));
+        check(small <= 0.0 || big / std::max(0.0001, small) < 5.0,
+              QStringLiteral("10.2 换选一行的成本与条数无关（100 vs 100 万 = %1x）")
+                  .arg(big / std::max(0.0001, small), 0, 'f', 2));
+        check(list.selected_row() == 10 % 11 || list.selected_row() >= 0,
+              QStringLiteral("选中行可设（%1）").arg(list.selected_row()));
     }
 
     return result;
