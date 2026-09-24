@@ -16,6 +16,9 @@ class QLabel;
 
 namespace xrkit::shell {
 
+class LogBox;
+class SplitPane;
+
 // 内置页：id 是稳定标识（插件槽位/日志都按它走），title 是界面上的名字。
 struct PageInfo {
     const char* id;
@@ -37,16 +40,26 @@ public:
     QListWidget* page_list() const { return page_list_; }
     QStackedWidget* stack() const { return stack_; }
     QPlainTextEdit* log_view() const { return log_view_; }
+    LogBox* log_box() const { return log_box_; }
+    SplitPane* split() const { return split_; }
     QLabel* status_label() const { return status_label_; }
 
-    // 记一行日志（1.x 的日志栏：主窗口那根滚动条**不**管它）
+    // 4.5：两栏 minsize 用同一组值（px(260) / px(110)）
+    int top_min() const { return top_min_; }
+    int log_min() const { return log_min_; }
+
+    // 记一行日志（1.x 的日志栏：主窗口那根滚动条**不**管它；攒批见 LogBox）
     void log_line(const QString& text);
 
 private:
     QListWidget* page_list_ = nullptr;
     QStackedWidget* stack_ = nullptr;
     QPlainTextEdit* log_view_ = nullptr;
+    LogBox* log_box_ = nullptr;
+    SplitPane* split_ = nullptr;
     QLabel* status_label_ = nullptr;
+    int top_min_ = 0;
+    int log_min_ = 0;
 };
 
 }  // namespace xrkit::shell

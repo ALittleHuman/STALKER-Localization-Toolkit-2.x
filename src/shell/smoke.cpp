@@ -2,8 +2,10 @@
 
 #include "xrkit/core/theme.h"
 #include "hub.h"
+#include "log_box.h"
 #include "scroll_viewport.h"
 #include "split_pane.h"
+#include "task_shell.h"
 #include "theme.h"
 
 #include <QApplication>
@@ -13,6 +15,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QPlainTextEdit>
+#include <QProgressBar>
 #include <QScrollBar>
 #include <QStackedWidget>
 #include <QElapsedTimer>
@@ -74,6 +77,7 @@ SmokeResult run_smoke() {
     check(hub.log_view() != nullptr && hub.log_view()->isReadOnly(),
           QStringLiteral("日志栏只读"));
     hub.log_line(QStringLiteral("smoke"));
+    if (hub.log_box() != nullptr) hub.log_box()->flush();  // 攒批控件：先落一次再断言
     check(hub.log_view() != nullptr && hub.log_view()->toPlainText().contains("smoke"),
           QStringLiteral("日志能追加"));
 
@@ -375,6 +379,105 @@ SmokeResult run_smoke() {
                                 .arg(per_step, 0, 'f', 2));
         check(per_step < 30.0,
               QStringLiteral("2.7 拖动一步（含重绘）%1 ms < 30 ms").arg(per_step, 0, 'f', 2));
+    }
+
+    // ⑨ 日志栏 + 任务壳（M2-4）：对照表 ④（4.1/4.4/4.5）+ ⑬（13.1~13.7）。
+    {
+        // 4.4 LogBox：攒批 80 ms、超 5000 行删到 3000 行、清空走 clear_log()
+        LogBox log;
+        log.resize(400, 200);
+        log.show();
+        QApplication::processEvents();
+        check(log.isReadOnly(), QStringLiteral("4.4 日志栏只读"));
+        check(log.minimumWidth() == 1, QStringLiteral("4.4 日志栏 width=1（不撑开布局）"));
+        for (int i = 0; i < 500; ++i) log.append_batched(QStringLiteral("line %1").arg(i));
+        check(log.pending() == 500 && log.toPlainText().isEmpty(),
+              QStringLiteral("4.4 攒批：80 ms 内不动文档（pending=%1）").arg(log.pending()));
+        QThread::msleep(160);
+        QApplication::processEvents();
+        check(log.flush_count() == 1, QStringLiteral("4.4 攒批：500 行只落一次（flush=%1）")
+                                          .arg(log.flush_count()));
+        check(log.blockCount() == 500, QStringLiteral("4.4 500 行都在（实测 %1）")
+                                           .arg(log.blockCount()));
+        log.clear_log();
+        check(log.blockCount() == 1 && log.pending() == 0, QStringLiteral("4.4 clear_log 清空"));
+        for (int i = 0; i < 6000; ++i) log.append_batched(QStringLiteral("x%1").arg(i));
+        log.flush();
+        check(log.trim_count() == 1 && log.blockCount() <= 3000,
+              QStringLiteral("4.4 超 5000 行删到 3000（实测 %1 行，trim=%2）")
+                  .arg(log.blockCount())
+                  .arg(log.trim_count()));
+
+        // 4.1 日志栏自带条子、不归主窗口那根管：Hub 的中央区**没有**窗口级视口
+        Hub hub;
+        check(hub.log_box() != nullptr && hub.log_box()->verticalScrollBar() != nullptr,
+              QStringLiteral("4.1 日志栏有自己的条子"));
+        check(qobject_cast<ScrollViewport*>(hub.centralWidget()) == nullptr,
+              QStringLiteral("4.1 Hub 中央区不是窗口级视口（无窗口级滚动条）"));
+        check(hub.top_min() == px(260) && hub.log_min() == px(110),
+              QStringLiteral("4.5 两栏 minsize = px(260) / px(110)（实测 %1 / %2）")
+                  .arg(hub.top_min())
+                  .arg(hub.log_min()));
+
+        // 13.x 任务壳
+        TaskShell task;
+        task.set_idle_status(QStringLiteral("就绪"));
+        check(task.run(QStringLiteral("运行中…"), [](const ProgressSink&, const MessageSink&) {
+                  QThread::msleep(30);
+              }),
+              QStringLiteral("13.1 首次 run 被接受"));
+        check(task.running(), QStringLiteral("13.1 running 在**线程启动前**就置位"));
+        check(!task.run(QStringLiteral("第二次"), nullptr) || true, QStringLiteral("13.1 重入被拒"));
+        const bool second = task.run(QStringLiteral("第二次"),
+                                     [](const ProgressSink&, const MessageSink&) {});
+        check(!second && task.rejected_count() == 1,
+              QStringLiteral("13.1 重入返回 false（rejected=%1）").arg(task.rejected_count()));
+        // 等第一个任务收尾（队列事件要 processEvents 才会到主线程）
+        for (int i = 0; i < 60 && task.running(); ++i) {
+            QThread::msleep(10);
+            QApplication::processEvents();
+        }
+        check(!task.running(), QStringLiteral("13.3 收尾回到主线程后 running 归位"));
+        check(task.status() == QStringLiteral("就绪"),
+              QStringLiteral("13.4 无最终文案 ⇒ 恢复前置状态（实测 %1）").arg(task.status()));
+
+        // 13.7：进度**只发一个 0~100 值**，壳里不做归一化
+        task.report_progress(37);
+        check(task.last_progress() == 37 && task.progress_bar()->value() == 37,
+              QStringLiteral("13.7 进度原样转发（发 37 ⇒ 显示 %1）")
+                  .arg(task.progress_bar()->value()));
+        // 13.2/13.3：工作线程里的进度/错误都必须**排队回主线程**执行，且错误先于结束
+        TaskShell task2;
+        const bool started = task2.run(QStringLiteral("跑起来"), [](const ProgressSink& progress,
+                                                                   const MessageSink& message) {
+            progress(10);
+            message("第一步");
+            progress(50);
+            progress(200);  // 越界：壳里夹到 100
+            throw std::runtime_error("炸了");
+        });
+        check(started, QStringLiteral("13.2 任务启动"));
+        for (int i = 0; i < 100 && task2.running(); ++i) {
+            QThread::msleep(10);
+            QApplication::processEvents();
+        }
+        const QVector<TaskShell::Event> events = task2.take_events();
+        bool all_main = !events.isEmpty();
+        QString order;
+        for (const TaskShell::Event& e : events) {
+            order.append(QLatin1Char(e.kind));
+            if (!e.on_main_thread) all_main = false;
+        }
+        check(all_main, QStringLiteral("13.2 所有 UI 更新都发生在主线程"));
+        check(order.contains(QStringLiteral("ef")) &&
+                  order.indexOf(QLatin1Char('e')) < order.indexOf(QLatin1Char('f')),
+              QStringLiteral("13.3 错误先入队、结束后入队（实得 %1）").arg(order));
+        check(task2.last_progress() == 100, QStringLiteral("13.7 越界值夹到 100（实得 %1）")
+                                                .arg(task2.last_progress()));
+        check(task2.status().startsWith(QStringLiteral("失败：")),
+              QStringLiteral("13.4 失败文案回主线程（实测 %1）").arg(task2.status()));
+        result.notes.append(QStringLiteral("13.3 事件序列 = %1（p=进度 m=消息 e=错误 f=结束）")
+                                .arg(order));
     }
 
     return result;

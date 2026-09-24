@@ -1,5 +1,8 @@
 #include "hub.h"
 
+#include "log_box.h"
+#include "split_pane.h"
+
 #include "xrkit/core/theme.h"
 #include "theme.h"
 
@@ -82,23 +85,26 @@ Hub::Hub(QWidget* parent) : QMainWindow(parent) {
     splitter->addWidget(page_list_);
     splitter->addWidget(stack_);
     splitter->setStretchFactor(1, 1);
-    setCentralWidget(splitter);
 
-    // ── 底部：日志栏（1.x 口径：主窗口那根滚动条**不**管它）
-    auto* dock = new QDockWidget(QStringLiteral("日志"), this);
-    dock->setObjectName(QStringLiteral("log_dock"));
+    // ── 4.1/4.5：栏目区 + 日志栏 = **竖分栏**（没有窗口级视口 ⇒ 日志不归主窗口那根条管），
+    //    两栏 minsize 用同一组值：px(260) / px(110)。
+    top_min_ = px(260);
+    log_min_ = px(110);
+    split_ = new SplitPane(SplitPane::Orient::Vertical, this);
+    split_->setObjectName(QStringLiteral("hub_split"));
+    split_->add_pane(splitter, top_min_);
+
     auto* log_panel = new QWidget;
     auto* log_layout = new QVBoxLayout(log_panel);
-    log_layout->setContentsMargins(6, 6, 6, 6);
-    log_view_ = new QPlainTextEdit;
-    log_view_->setObjectName(QStringLiteral("log_view"));
-    log_view_->setReadOnly(true);
+    log_layout->setContentsMargins(px(6), px(4), px(6), px(4));
+    log_box_ = new LogBox(log_panel);
+    log_view_ = log_box_;  // 兼容 M2-1 的访问器（LogBox 是 QPlainTextEdit 子类）
     status_label_ = new QLabel(QStringLiteral("就绪"));
     status_label_->setObjectName(QStringLiteral("status_label"));
-    log_layout->addWidget(log_view_);
+    log_layout->addWidget(log_box_);
     log_layout->addWidget(status_label_);
-    dock->setWidget(log_panel);
-    addDockWidget(Qt::BottomDockWidgetArea, dock);
+    split_->add_pane(log_panel, log_min_);
+    setCentralWidget(split_);
 
     // ── 菜单：主题（暗/亮，原地更新）
     QMenu* view_menu = menuBar()->addMenu(QStringLiteral("视图"));
@@ -133,7 +139,8 @@ QString Hub::page_id(int index) const {
 }
 
 void Hub::log_line(const QString& text) {
-    if (log_view_ != nullptr) log_view_->appendPlainText(text);
+    // 攒批写入（4.4）；用户在日志栏里看到的是它**自己的**条子（4.1）
+    if (log_box_ != nullptr) log_box_->append_batched(text);
 }
 
 }  // namespace xrkit::shell
