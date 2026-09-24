@@ -944,6 +944,19 @@ def step_shell_smoke(release: bool) -> None:
         return
     ok("解包只有一条路（6.11：fs_page.cpp 里 extract_tree( 恰好 1 处）")
 
+    # 对照表 ⑨9.7：**页面不许自己拼"定案步骤"标签**。1.x 的事故就是 convert_app 复算了
+    # `多字节(...)` / `指定(...)` / `声明(...)` / `统计(...)`，而判定的值来自别处 ⇒
+    # 标签与判定自相矛盾。锁的形态取"标签 + 左括号"这一**构造形态**：
+    # 页面里可以解释链条（"BOM → 多字节 → …"），但不许把它拼成结论。
+    convert_src = ROOT / "src" / "shell" / "pages" / "convert_page.cpp"
+    code = active_code(convert_src.read_text(encoding="utf-8", errors="replace"))
+    offenders = [label for label in ("多字节(", "指定(", "声明(", "统计(") if label in code]
+    if offenders:
+        fail("定案步骤标签（9.7）：convert_page.cpp 里出现 %s —— 标签只能由引擎给（sniff_result_label）"
+             % "、".join(offenders))
+        return
+    ok("定案步骤标签只由引擎给（9.7：页面不拼 `多字节(...)` 那类结论）")
+
     # 锁的自证：上面这些静态锁都靠 `active_code` 区分"注释"与"活代码"。
     # 两头都得对 —— 既能被一句注释绕过（太松），也会把注释当违规（太紧，等于
     # 禁止源码里写口径出处）。所以这里**故意**喂一份正反样本给它。

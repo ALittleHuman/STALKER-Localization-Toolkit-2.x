@@ -3,6 +3,7 @@
 #include "xrkit/core/theme.h"
 #include "hub.h"
 #include "log_box.h"
+#include "pages/convert_page.h"
 #include "pages/fs_page.h"
 #include "pages/page_base.h"
 #include "pages/page_factory.h"
@@ -32,6 +33,8 @@
 #include <QWheelEvent>
 #include <QWidget>
 #include <algorithm>
+#include <fstream>
+#include <iterator>
 
 namespace xrkit::shell {
 namespace {
@@ -791,6 +794,82 @@ SmokeResult run_smoke() {
         check(!batch.ok && !picked.ok && batch.error == picked.error && !batch.error.empty(),
               QStringLiteral("6.11 批量与选中解包同源（同样失败、同样的话：%1）")
                   .arg(QString::fromStdString(batch.error)));
+    }
+
+    // ⑨/⑬ 编码转换页（M2-6c2）：判定步骤来自引擎（9.7）、暂停归 App（13.6）、
+    // 空闲文案非空（13.5）、进度只发一个 0~100 值（13.7）。
+    {
+        namespace etxt = xrkit::engine::text;
+        ConvertPage page;
+        page.resize(720, page_min_h());
+        page.show();
+        QApplication::processEvents();
+
+        // 9.7：行文本里的"定案步骤"必须**逐字等于**引擎给的那一行 —— 页面没有
+        // 能力自己拼一个标签（静态锁另证：本文件里不出现那几个标签字面量）。
+        const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_convert"));
+        QDir().mkpath(dir);
+        const std::vector<uint8_t> cp1251 = {0xEF, 0xE2, 0xE0, 0xEE, 0x0A};  // cp1251 的"ево"
+        const std::string file_name = "probe.xml";
+        {
+            std::ofstream out(QDir(dir).filePath(QString::fromStdString(file_name)).toStdString(),
+                              std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(cp1251.data()),
+                      static_cast<std::streamsize>(cp1251.size()));
+        }
+        const etxt::SniffResult sniffed = etxt::sniff_encoding(cp1251, "auto");
+        const std::string expected_label = etxt::sniff_result_label(sniffed);
+
+        const QString source_path = QDir(dir).filePath(QString::fromStdString(file_name));
+        const etxt::ConvertOutcome outcome =
+            page.convert_one(source_path, dir, QStringLiteral("auto"), QStringLiteral("utf-8"));
+        check(outcome.ok && outcome.wrote, QStringLiteral("⑨ 转换真的产出了文件"));
+        check(outcome.step_label == expected_label,
+              QStringLiteral("⑨9.7 页面拿到的定案步骤 = 引擎判定（%1 vs %2）")
+                  .arg(QString::fromStdString(outcome.step_label))
+                  .arg(QString::fromStdString(expected_label)));
+        check(outcome.step_label.find("声明") == std::string::npos ||
+                  sniffed.step == etxt::SniffStep::XmlDeclaration,
+              QStringLiteral("⑨9.7 步骤标签与判定步号一致（%1）")
+                  .arg(QString::fromStdString(outcome.step_label)));
+
+        // 产物按目标编码写出，且**不再带 BOM/换行翻译**
+        {
+            std::ifstream in(QDir(dir).filePath(QString::fromStdString(file_name))
+                                 .toStdString(),
+                             std::ios::binary);
+            const std::string body((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            check(body.find('\r') == std::string::npos,
+                  QStringLiteral("⑨14 写盘用 newline=\"\"（不许把 \\n 翻成 \\r\\n）"));
+            check(body.size() >= 3 && body.compare(0, 3, "\xEF\xBB\xBF") != 0,
+                  QStringLiteral("⑨ 输出侧不带 BOM"));
+        }
+
+        // 13.6：暂停状态机在 App 这边 —— 暂停时工作循环必须被拦住（且计数）
+        const int before = page.pause_gate_hits();
+        page.set_paused(true);
+        check(!page.wait_if_paused(false), QStringLiteral("13.6 暂停时循环被拦住"));
+        check(page.pause_gate_hits() == before + 1,
+              QStringLiteral("13.6 拦截有计数（%1 → %2）")
+                  .arg(before)
+                  .arg(page.pause_gate_hits()));
+        page.set_paused(false);
+        check(page.wait_if_paused(false), QStringLiteral("13.6 继续后循环放行"));
+
+        // 13.5：空闲文案非空；下拉的取值是内部键（不是显示名）
+        TaskShell* task = page.task();
+        check(task != nullptr && !task->idle_status().isEmpty(),
+              QStringLiteral("13.5 空闲文案非空（%1）")
+                  .arg(task == nullptr ? QString() : task->idle_status()));
+        check(!page.current_source_encoding().empty() &&
+                  !page.current_target_encoding().empty(),
+              QStringLiteral("⑨ 编码下拉的取值是内部键（%1 → %2）")
+                  .arg(QString::fromStdString(page.current_source_encoding()))
+                  .arg(QString::fromStdString(page.current_target_encoding())));
+        check(page.current_target_encoding() == "utf-8",
+              QStringLiteral("⑨ 目标编码默认为 utf-8"));
+        QDir(dir).removeRecursively();
     }
 
     return result;

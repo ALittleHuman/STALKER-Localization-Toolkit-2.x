@@ -1,6 +1,7 @@
 #include "page_factory.h"
 
 #include "../hub.h"
+#include "convert_page.h"
 #include "fs_page.h"
 #include "page_base.h"
 
@@ -12,9 +13,10 @@ PageBase* create_page(int index, QWidget* parent) {
     if (index < 0 || index >= builtin_page_count()) return nullptr;
     const PageInfo& info = builtin_page(index);
     const QString id = QString::fromUtf8(info.id);
-    // M2-6b2 起各页陆续换成自己的实现类；还没轮到的先戴 `PageBase` 的框架
+    // 各页陆续换成自己的实现类；还没轮到的先戴 `PageBase` 的框架
     //（标题 / 页内视口 / 贴底操作栏 —— 形态从第一天起就是一致的）。
     if (id == QStringLiteral("fs")) return new FsPage(parent);
+    if (id == QStringLiteral("convert")) return new ConvertPage(parent);
     return new PageBase(id, QString::fromUtf8(info.title), parent);
 }
 

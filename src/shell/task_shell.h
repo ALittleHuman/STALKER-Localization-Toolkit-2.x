@@ -46,6 +46,11 @@ public:
     QString idle_status() const { return idle_status_; }
     QString status() const { return status_text_; }
 
+    // 主线程上的消息回调（界面上"逐文件一行"的表就是靠它填的）。
+    // 在工作线程里 `report_message` 之后，壳会排队回主线程再调它 —— 所以回调里
+    // **可以直接碰控件**，而工作线程那边永远碰不到。
+    void set_message_handler(std::function<void(const QString&)> handler);
+
     // 13.1：重入闸门在**主线程同步置位**，然后才启动工作线程。重入返回 false（拒绝）。
     bool run(const QString& title, const WorkerFn& worker);
     bool running() const { return running_; }
@@ -89,6 +94,7 @@ private:
     std::mutex mutex_;
     QVector<Event> events_;
     std::vector<std::thread> threads_;
+    std::function<void(const QString&)> message_handler_;
 };
 
 }  // namespace xrkit::shell

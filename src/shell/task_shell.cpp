@@ -106,6 +106,10 @@ void TaskShell::apply_progress(int percent) {
     events_.push_back({'p', value, on_main});
 }
 
+void TaskShell::set_message_handler(std::function<void(const QString&)> handler) {
+    message_handler_ = std::move(handler);
+}
+
 void TaskShell::apply_message(QString text) {
     const bool on_main = QThread::currentThread() == QCoreApplication::instance()->thread();
     {
@@ -113,6 +117,9 @@ void TaskShell::apply_message(QString text) {
         events_.push_back({'m', 0, on_main});
     }
     if (!text.isEmpty()) status_->setText(text);
+    // 回调只在**主线程**跑（工作线程的报告已经在上面排队回来了）——
+    // 所以页面可以在回调里直接往表里加行，而工作线程那边永远碰不到控件（13.2）。
+    if (on_main && message_handler_) message_handler_(text);
 }
 
 void TaskShell::apply_error(QString text) {
