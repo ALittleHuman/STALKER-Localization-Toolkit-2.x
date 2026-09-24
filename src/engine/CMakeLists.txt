@@ -7,6 +7,7 @@ add_library(xrkit_engine STATIC
   fs/lzhuf_ref.c
   fs/squashfs.cpp
   fs/squashfs_write.cpp
+  fs/extract_tree.cpp
   fs/db.cpp
   text/encoding.cpp
   text/sniff.cpp

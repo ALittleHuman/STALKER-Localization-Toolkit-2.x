@@ -62,5 +62,37 @@
       "size": 138,
       "sha256": "0b89a36fe4c7b45098c75529bd81d5bc9be4342db76b770d4994afb328180dcc"
     }
+  ],
+  "tree": [
+    {
+      "path": "levels/aver/build_details.dds",
+      "size": 1398240,
+      "sha256": "11e1e2ddde787b067224a715d8ad040d562fbe51ec7aef5ed429fb0affd59ad0"
+    },
+    {
+      "path": "levels/aver/level.details",
+      "size": 4033172,
+      "sha256": "b474fa50fbbdc5a1ffa017fea7e5a45e2509326c919ddf32319067807713a03d"
+    },
+    {
+      "path": "levels/deadcity/build_details.dds",
+      "size": 1398240,
+      "sha256": "11e1e2ddde787b067224a715d8ad040d562fbe51ec7aef5ed429fb0affd59ad0"
+    },
+    {
+      "path": "levels/deadcity/level.details",
+      "size": 6550292,
+      "sha256": "51ccf6c06e65cfefae3fa878e184f5fecf227d0f952a67b0768084d131299d00"
+    },
+    {
+      "path": "textures/trees/2rees_sosna_low.dds",
+      "size": 699184,
+      "sha256": "dbd4c453b541dd8667a358a8f007e068fa0ff074a2a1f8741d64edf7d3630ad3"
+    },
+    {
+      "path": "textures/trees/6rees_vetkagreen1.dds",
+      "size": 699192,
+      "sha256": "f9e8720a7a43bd5d3cc0ca29a56ecfbe94c80acbb8dd18914765da9b232655fe"
+    }
   ]
 }

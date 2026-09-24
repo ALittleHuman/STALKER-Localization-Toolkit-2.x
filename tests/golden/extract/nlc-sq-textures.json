@@ -62,5 +62,37 @@
       "size": 174904,
       "sha256": "88a35e5e7d5d12e63a7d0ec6bc2ba05c58af18c7711457373a5adc3157291e44"
     }
+  ],
+  "tree": [
+    {
+      "path": "textures/#.dds",
+      "size": 240,
+      "sha256": "b6c4ea16743e474a4f3c7a375267120b2768fa7530b83a790fa8d329c5ee02ba"
+    },
+    {
+      "path": "textures/$target.dds",
+      "size": 8320,
+      "sha256": "69113eb771b56413a50649ea7d06cc7cc0fdb5bdbb64046778a56fe1f7537093"
+    },
+    {
+      "path": "textures/1/1_dark_stalker.dds",
+      "size": 699192,
+      "sha256": "f7e6b67d287e9711d85be9534a29b9ac32479d71017aaaf870868f4dc259456e"
+    },
+    {
+      "path": "textures/1/1_dark_stalker.thm",
+      "size": 159,
+      "sha256": "a6f162036734c22838d43696f0eba861767a7d5442170f98a03f2a4990bf2534"
+    },
+    {
+      "path": "textures/amik/hit_fx/glass/glass_tiled_spec2a.dds",
+      "size": 22000,
+      "sha256": "aa93457236750e698d0a9a8216900c5ec7bc605385a17709cc03dde73986af53"
+    },
+    {
+      "path": "textures/fx/fx_lavahell1_04.thm",
+      "size": 138,
+      "sha256": "125363632667a0ee74076ba547b5ea5aafc871b6f40bbfed55cf0bf7e65aa506"
+    }
   ]
 }

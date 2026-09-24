@@ -16,6 +16,7 @@
 #include "xrkit/core/version.h"
 #include "xrkit/engine/engine.h"
 #include "xrkit/engine/fs/db.h"
+#include "xrkit/engine/fs/extract_tree.h"
 #include "xrkit/engine/fs/lzhuf.h"
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/font/charset.h"
@@ -97,6 +98,8 @@ void print_usage() {
            "  --themecheck    检查主题令牌（两套模式 × 颜色/字体/px/user.ltx 语义；ASCII 收尾行）\n"
            "  --dump <文件> [DB格式]   导出解析结果（SquashFS 条目表 或 DB 条目表 TSV）\n"
            "  --extract <源> <内部路径> <输出> [DB格式]   提取单个文件（进程内解压）\n"
+           "  --unpack-tree <镜像> <输出根> [--only <清单文件>]\n"
+           "                                              整树导出（安全路径 + 原子写；空清单＝拒绝）\n"
            "  --pack-db <输出> <格式> <输入目录>          按目录打包 DB（逐字节对拍用）\n"
            "  --pack-sqfs <输出> <输入目录> [--pack-dirs]  自写 SquashFS 封包（xz 块，逐字节对拍用）\n"
            "  --decode-text <输入> <输出>                 六编码链解码（把正文写成 UTF-8；对拍用）\n"
@@ -173,6 +176,66 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         const std::string line = xrkit::engine::status_line();
         check(ctx, line.rfind("engine id=", 0) == 0, "status_line 形态不符: " + line);
     });
+
+    // ⑥6.7 路径越界判据（safe_out_path）：归档条目名是不可信输入，这条判据挡的是
+    // **任意文件写**。1.x 只把理由写在注释里，2.0 把"拒因"带出来 —— 所以这里连
+    // **理由**一起断言：改判定顺序、把某一条删掉，都能当场变红。
+    reg.add("fs: 路径越界五条拒因逐条生效（⑥6.7）", [](CheckContext& ctx) {
+        namespace efs = xrkit::engine::fs;
+        const std::string root = "C:/xrkit_out_root";
+
+        struct Reject {
+            const char* rel;
+            const char* why;
+        };
+        const Reject rejects[] = {
+            {"", "空"},
+            {"/etc/passwd", "绝对路径"},
+            {"//server/share/x", "UNC"},
+            {"C:/windows/system32/x", "盘符"},
+            {"../x", "上级"},
+            {"a/../../x", "深层上级"},
+            {"a/b/../../../x", "三段上级"},
+            {"a/D:/b", "盘符相对（靠兜底复核拦）"},
+        };
+        for (const Reject& r : rejects) {
+            const efs::OutPathResult got = efs::safe_out_path(root, r.rel);
+            check(ctx, !got.ok, std::string("应拒而被接受：") + r.why + " [" + r.rel + "]");
+            check(ctx, got.ok || !got.reason.empty(),
+                  std::string("拒了但没给理由：") + r.why + " [" + r.rel + "]");
+        }
+
+        struct Accept {
+            const char* rel;
+            const char* want;  // 去掉 root 之后的相对路径（'/' 分隔）
+        };
+        const Accept accepts[] = {
+            {"a/b.txt", "a/b.txt"},
+            {"a//b.txt", "a/b.txt"},      // 空段被丢掉（1.x 就是这么做的，不能拒）
+            {"a/./b.txt", "a/b.txt"},     // `.` 段同上
+            {"a\\b.txt", "a/b.txt"},      // 反斜杠先归一
+            {"deep/deeper/x.dds", "deep/deeper/x.dds"},
+        };
+        for (const Accept& a : accepts) {
+            const efs::OutPathResult got = efs::safe_out_path(root, a.rel);
+            check(ctx, got.ok, std::string("应接受而被拒：") + got.reason + " [" + a.rel + "]");
+            if (!got.ok) continue;
+            // 落盘路径必须以 root 的规范化结果为**组件级**前缀（不是字符串前缀）
+            std::string tail = got.path;
+            const size_t pos = tail.find("xrkit_out_root");
+            if (pos == std::string::npos) {
+                check(ctx, false, "落盘路径里找不到输出根: " + got.path);
+                continue;
+            }
+            tail = tail.substr(pos + std::string("xrkit_out_root").size());
+            while (!tail.empty() && (tail.front() == '/' || tail.front() == '\\')) tail.erase(0, 1);
+            std::string want = a.want;
+            for (char& c : tail) {
+                if (c == '\\') c = '/';
+            }
+            check(ctx, tail == want, "规范化结果不符：得到 " + tail + "，期望 " + want);
+        }
+    });
 }
 
 }  // namespace
@@ -231,6 +294,8 @@ int run_cli(const std::vector<std::string>& args) {
     std::string text_prefix;
     std::string text_id_prefix;
     std::string text_encoding = "auto";
+    std::string only_list;   // --unpack-tree 的 --only <清单文件>（每行一个镜像内路径）
+    bool extract_all = false;
     std::string action;
     std::vector<std::string> operands;
 
@@ -258,6 +323,14 @@ int run_cli(const std::vector<std::string>& args) {
         }
         if (a == "--encoding" && i + 1 < args.size()) {
             text_encoding = args[++i];
+            continue;
+        }
+        if (a == "--only" && i + 1 < args.size()) {
+            only_list = args[++i];
+            continue;
+        }
+        if (a == "--all") {
+            extract_all = true;
             continue;
         }
         if (a == "-h" || a == "--help") {
@@ -409,6 +482,47 @@ int run_cli(const std::vector<std::string>& args) {
         out.close();
         std::cout << "EXTRACT ok path=" << rel << " bytes=" << data.size() << "\n";
         return kExitOk;
+    }
+
+    // 整树导出（M2-6b1，对照表 ⑥6.7~6.10/6.14）。**不开外部 exe** 是 2.0 的硬口径
+    // （1.x 靠 rdsquashfs --unpack-path / --cat，超时与"把整包收进内存"都栽过）。
+    if (action == "--unpack-tree") {
+        if (operands.size() < 2) {
+            std::cerr << "UNPACK error reason=用法：--unpack-tree <镜像> <输出根> [--only <清单文件>]\n";
+            return kExitUsage;
+        }
+        xrkit::engine::fs::ExtractTreeOptions options;
+        if (!only_list.empty() && !extract_all) {
+            std::ifstream in(xrkit::core::path_from_utf8(only_list), std::ios::binary);
+            if (!in) {
+                std::cout << "UNPACK error reason=读不到清单文件：" << only_list << "\n";
+                return kExitFail;
+            }
+            std::string line;
+            while (std::getline(in, line)) {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (line.empty()) continue;
+                options.only.push_back(line);
+            }
+            // 6.10：**空清单 ≠ 全部**。1.x 的 `if not files:` 把两者混在一起，
+            // 于是"什么都没勾"会退化成整镜像导出并被记为成功 —— 2.0 显式拒绝。
+            options.selection = xrkit::engine::fs::Selection::Listed;
+        }
+        const xrkit::engine::fs::ExtractTreeResult res =
+            xrkit::engine::fs::extract_tree(operands[0], operands[1], options);
+        for (const xrkit::engine::fs::ExtractTreeFailure& f : res.failures) {
+            std::cout << "UNPACK fail path=" << f.path << " reason=" << f.reason << "\n";
+        }
+        if (!res.ok) {
+            std::cout << "UNPACK error reason=" << res.error << "\n";
+            return kExitFail;
+        }
+        std::cout << "UNPACK ok files=" << res.files_written << " dirs=" << res.dirs_created
+                  << " skipped_dirs=" << res.skipped_dirs << " bytes=" << res.bytes_written
+                  << " failed=" << res.failures.size()
+                  << " ms=" << static_cast<long long>(res.elapsed_ms) << "\n";
+        // 有单项失败：**不谎报成功**（1.x 的"解包失败返回 0"就是这么被吞掉的）
+        return res.failures.empty() ? kExitOk : kExitFail;
     }
 
     if (action == "--pack-db") {

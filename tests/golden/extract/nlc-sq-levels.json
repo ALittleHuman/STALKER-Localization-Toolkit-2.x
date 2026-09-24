@@ -62,5 +62,37 @@
       "size": 120799738,
       "sha256": "8e261a27c24f91b664571b56ea6bc10a57976c27ef7bedbb0400decf3aa9749b"
     }
+  ],
+  "tree": [
+    {
+      "path": "levels/hospital/level.ps_static",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "levels/atp_for_test22/level.gct",
+      "size": 6298182,
+      "sha256": "f42d66811ddf66fa5b3a402ba8a9f974f4a0bc5bbbf0ddd0ec2409982fc99887"
+    },
+    {
+      "path": "levels/av_peshera/level",
+      "size": 32207,
+      "sha256": "32b5ce19b8a21104bd542827b168a406ce904e53e282559df5781f3851ad8824"
+    },
+    {
+      "path": "levels/av_peshera/level.ai",
+      "size": 3625433,
+      "sha256": "31627198efcb759b0afe6c70af7262c5bf4af745f80eb0faae0e03af9ef5166b"
+    },
+    {
+      "path": "levels/av_peshera/level.cform",
+      "size": 1537636,
+      "sha256": "4a299b181828b5bae7fd94c40e0106e4be5062167ba8a723c4d12d9bf4745650"
+    },
+    {
+      "path": "levels/l01_escape/meshes/brkbl#29.ogf",
+      "size": 7858,
+      "sha256": "e0cb0eed4a6250bf052d58194eb803d4c6190a74ef7863741f50ae0e89f02d29"
+    }
   ]
 }
