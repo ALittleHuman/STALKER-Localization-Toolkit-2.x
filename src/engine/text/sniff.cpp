@@ -134,8 +134,31 @@ std::string bom_encoding(const std::vector<uint8_t>& raw) {
     return {};
 }
 
-SniffResult sniff_encoding(const std::vector<uint8_t>& raw, const std::string& override_enc) {
-    SniffResult res;
+const char* sniff_step_label(SniffStep step) {
+    switch (step) {
+        case SniffStep::Bom:
+            return "BOM";
+        case SniffStep::MultibyteUtf8:
+            return "多字节";
+        case SniffStep::Override:
+            return "指定";
+        case SniffStep::XmlDeclaration:
+            return "声明";
+        case SniffStep::Statistic:
+            return "统计";
+        case SniffStep::Default:
+            return "默认";
+    }
+    return "未知";
+}
+
+std::string sniff_result_label(const SniffResult& result) {
+    const std::string label = sniff_step_label(result.step);
+    if (result.encoding.empty()) return label;
+    return label + "(" + result.encoding + ")";
+}
+
+SniffResult sniff_encoding(const std::vector<uint8_t>& raw, const std::string& override_enc) {    SniffResult res;
 
     // 1. BOM 是物理事实，优先于任何猜测
     const std::string bom = bom_encoding(raw);

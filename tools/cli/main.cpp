@@ -343,6 +343,86 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
     });
     // **任意文件写**。1.x 只把理由写在注释里，2.0 把"拒因"带出来 —— 所以这里连
     // **理由**一起断言：改判定顺序、把某一条删掉，都能当场变红。
+    // ⑨ 判定链的**顺序与边界**（9.2/9.4/9.5/9.6/9.7）。整条链的产物对拍在门禁 [16]
+    // （153 个真样本）；这里用合成字节把"顺序"本身钉住 —— 顺序错了，产物对拍**未必**红
+    // （样本里可能恰好没触发那条边界），而这几条全是"只差一个字符就误判"的地方。
+    reg.add("text: 判定链顺序与边界（⑨9.2/9.4/9.5/9.6）", [](CheckContext& ctx) {
+        namespace txt = xrkit::engine::text;
+
+        // 9.2 第 2 步（多字节检查）必须在第 3 步（手动指定）**之前**：
+        // 真多字节 UTF-8 用单字节编码解必乱码 —— 用户的手动指定在"证据不足"时才生效。
+        const std::vector<uint8_t> zh = {0xE4, 0xB8, 0xAD, 0xE6, 0x96, 0x87};  // "中文"
+        const txt::SniffResult mb = txt::sniff_encoding(zh, "windows-1251");
+        check(ctx, mb.step == txt::SniffStep::MultibyteUtf8,
+              "真多字节被手动指定抢走了（9.2：多字节必须优先）");
+
+        // 9.2 的反面：`is_multibyte_utf8` 必须要求 max(raw) >= 0x80 ——
+        // 纯 ASCII 不算（否则英文 XML 的编码声明永远改不掉）。
+        const std::vector<uint8_t> ascii = {'<', 'a', '/', '>'};
+        const txt::SniffResult ascii_override = txt::sniff_encoding(ascii, "windows-1251");
+        check(ctx, ascii_override.step == txt::SniffStep::Override,
+              "纯 ASCII 被当成多字节了（9.2：必须含 ≥0x80）");
+
+        // 9.4 gb18030 必须排在 windows-1251 **之前**：GBK 的"中文"两个字节
+        // （D6 D0 CE C4）在 cp1251 下也能"解成功"（都是合法单字节），顺序错了就整篇乱码。
+        const std::vector<uint8_t> gbk_zh = {0xD6, 0xD0, 0xCE, 0xC4};
+        const txt::DecodeResult chained = txt::decode_text_chain(gbk_zh);
+        check(ctx, chained.ok && chained.encoding == std::string(txt::kGb18030),
+              "六编码链把 GBK 字节判成了 " + chained.encoding + "（9.4：gb18030 要在 cp1251 前）");
+
+        // 9.3 单字节家族必须**程序化判定**（"能容错解成 256 个字符"），不许维护名单：
+        // 1.x 曾漏掉 cp865 → 整篇乱码。判据落在"末位 latin-1 兜底永远成功且码位齐全"。
+        std::vector<uint8_t> all_bytes(256);
+        for (int i = 0; i < 256; ++i) all_bytes[static_cast<size_t>(i)] = static_cast<uint8_t>(i);
+        const txt::DecodedBytes fallback = txt::decode_bytes(all_bytes);
+        check(ctx, fallback.ok && fallback.forced && fallback.chars == 256,
+              "任意字节没有落到 latin-1 兜底并解出 256 个码位（9.3）");
+
+        // 9.5 XML 声明只看 `raw[:500]`，且**必须被字节证实**
+        //（变量别叫 `far`：MSVC 的历史头文件里 `far` 是个空宏，会把 `far.insert(...)`
+        //  吃成 `.insert(...)` —— 报一堆莫名其妙的语法错。）
+        const std::string decl = "<?xml version=\"1.0\" encoding=\"windows-1251\"?>";
+        std::vector<uint8_t> beyond_window(600, 'a');
+        beyond_window.insert(beyond_window.end(), decl.begin(), decl.end());
+        const txt::SniffResult beyond = txt::sniff_encoding(beyond_window);
+        check(ctx, beyond.step != txt::SniffStep::XmlDeclaration,
+              "500 字节以外的声明被采信了（9.5：搜索窗口 raw[:500]）");
+
+        // 9.7 的核心判据：**"有声明"不等于"声明赢了"**，标签必须跟着判定走。
+        // 这正是 1.x 注释里写下的那类文件：字节是真 UTF-8，声明却写 windows-1251 ——
+        // 判定链第 2 步（多字节）胜出，而 1.x 的复算只看"有没有声明"，于是标成
+        // `声明(utf-8)`，读起来像"声明说 utf-8"，与事实相反。
+        std::vector<uint8_t> mismatched(decl.begin(), decl.end());  // 声明写 windows-1251
+        mismatched.insert(mismatched.end(), zh.begin(), zh.end());  // 字节却是 UTF-8
+        const txt::SniffResult winner = txt::sniff_encoding(mismatched);
+        check(ctx, winner.step == txt::SniffStep::MultibyteUtf8,
+              "含声明的真 UTF-8 没被第 2 步判走（9.2/9.7）");
+        const std::string winner_label = txt::sniff_result_label(winner);
+        check(ctx, winner_label == "多字节(utf-8)",
+              "标签没跟着判定走（9.7）：得到 " + winner_label);
+        check(ctx, winner_label.find("声明") == std::string::npos,
+              "有声明就被标成 `声明(...)` —— 这正是 1.x 的自相矛盾：" + winner_label);
+
+        // 反过来：声明**撒谎到字节不成立**（声明 utf-8、字节是 cp1251）时，
+        // 第 4 步必须让位（9.5 的"须被字节证实"）。
+        const std::string utf8_decl = "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
+        std::vector<uint8_t> liar(utf8_decl.begin(), utf8_decl.end());
+        liar.insert(liar.end(), {0xEF, 0xE2, 0xE0, 0xEE});  // cp1251，不是合法 UTF-8
+        const txt::SniffResult lied = txt::sniff_encoding(liar);
+        check(ctx, lied.step != txt::SniffStep::XmlDeclaration,
+              "声明撒谎（字节不成立）却被标成 声明 —— 9.5 的「须被字节证实」没生效");
+        const std::string label = txt::sniff_result_label(lied);
+        check(ctx, label.rfind(txt::sniff_step_label(lied.step), 0) == 0,
+              "标签与判定步号不一致（9.7）：" + label);
+
+        // 9.6 宽 BOM **先长后短**：FF FE 00 00 是 UTF-32LE，不能被当成 UTF-16LE
+        const std::vector<uint8_t> utf32le = {0xFF, 0xFE, 0x00, 0x00, 'a', 0, 0, 0};
+        check(ctx, txt::bom_encoding(utf32le) == std::string(txt::kUtf32),
+              "宽 BOM 匹配顺序不对（9.6：先长后短）");
+        check(ctx, txt::bom_encoding({0xFF, 0xFE, 'a', 0}) == std::string(txt::kUtf16),
+              "UTF-16LE BOM 没认出来");
+    });
+
     // ⑥6.7 路径越界判据（safe_out_path）：归档条目名是不可信输入，这条判据挡的是
     // **任意文件写**。1.x 只把理由写在注释里，2.0 把"拒因"带出来 —— 所以这里连
     // **理由**一起断言：改判定顺序、把某一条删掉，都能当场变红。

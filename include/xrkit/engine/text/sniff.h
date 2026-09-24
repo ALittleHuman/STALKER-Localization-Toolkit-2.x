@@ -32,6 +32,19 @@ struct SniffResult {
     std::string reason;    // 人类可读的胜出理由（日志直接用返回值，1.x 是 convert_app 复算）
 };
 
+// 9.7 的修正：1.x 那行"定案步骤"标签（`多字节(utf-8)`）是 convert_app **复算**的
+// （它只查"有没有 XML 声明"、**不校验字节证实**），于是标签能与判定本身矛盾 ——
+// 实测那句注释里就写着：字节是 UTF-8、声明写 windows-1251 的文件被标成 `声明(utf-8)`。
+// 2.0 只发一个**步号**，标签由步号唯一决定，页面不许自己拼。
+//
+// 标签用词照 1.x：多字节 / 指定 / 声明 / 统计；`BOM` 与 `默认` 是 2.0 新加的两个
+// 一等步骤（1.x 把 BOM 在进链之前就剥掉了、把默认并进了"统计"）—— 这是**有意分歧**，
+// 因为 2.0 的链把这两步显式化了（见对照表 ⑨9.1 的顺序）。
+const char* sniff_step_label(SniffStep step);
+
+// 一行形态：`多字节(utf-8)` / `指定(windows-1251)` …（编码名为空时只给标签）
+std::string sniff_result_label(const SniffResult& result);
+
 struct DecodedBytes {
     bool ok = false;
     std::string text;           // UTF-8（与 1.x decode_bytes 的 str 对应）
