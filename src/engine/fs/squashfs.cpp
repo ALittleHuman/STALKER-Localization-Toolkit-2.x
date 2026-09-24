@@ -1,5 +1,7 @@
 #include "xrkit/engine/fs/squashfs.h"
 
+#include "xrkit/core/path.h"
+
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -46,14 +48,16 @@ uint64_t rd64(const uint8_t* p, bool be) {
 class FileReader {
 public:
     bool open(const std::string& path, std::string& err) {
+        // 路径一律按 UTF-8 传入，碰文件系统时才转本地宽字符（否则西里尔目录找不到）
+        const std::filesystem::path fs_path = core::path_from_utf8(path);
         std::error_code ec;
-        const auto size = std::filesystem::file_size(path, ec);
+        const auto size = std::filesystem::file_size(fs_path, ec);
         if (ec) {
             err = "取文件大小失败：" + ec.message();
             return false;
         }
         size_ = size;
-        in_.open(path, std::ios::binary);
+        in_.open(fs_path, std::ios::binary);
         if (!in_) {
             err = "打不开文件：" + path;
             return false;

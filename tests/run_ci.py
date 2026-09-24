@@ -315,6 +315,28 @@ def step_golden_extract(release: bool) -> None:
         fail("提取内容与 1.x 不一致（见上）")
 
 
+def step_golden_db(release: bool) -> None:
+    """黄金语料差分：DB 六格式（pack 产物字节 + 条目表 + 提取内容，全部对齐 1.x）。"""
+    say("[9] 黄金语料差分：DB 六格式（2.x vs 1.x）")
+    script = ROOT / "tests" / "golden_db.py"
+    if not require_repo_file(script, "DB 基线脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=1800)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("GOLDEN-DB"):
+            say("  " + s)
+    if rc == 0:
+        ok("DB 六格式：pack 产物/条目表/提取内容均与 1.x 一致")
+    elif rc == 2:
+        prereq("DB 语料样本", "有样本缺失或未生成基线（见上）", release)
+    else:
+        fail("DB 六格式与 1.x 不一致（见上）")
+
+
 def tail(text: str, n: int) -> str:
     """取最后 n 行有效输出。
 
@@ -344,6 +366,7 @@ STEPS = [
     ("corpus", step_corpus),
     ("golden-sqfs", step_golden_sqfs),
     ("golden-extract", step_golden_extract),
+    ("golden-db", step_golden_db),
 ]
 
 

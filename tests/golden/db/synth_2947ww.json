@@ -1,0 +1,42 @@
+{
+  "kind": "synth",
+  "format": "2947ww",
+  "db_sha256": "62f25912923df7ea45d0fcaab680a7ef0283b72f04f36cd983fc2e3d1d3dcbca",
+  "entries": [
+    "d\tbin\t0\t0\t0\t0",
+    "f\tbin/blob.dat\t400\t400\t8\t0",
+    "d\tdata\t0\t0\t0\t0",
+    "f\tdata/empty.dat\t0\t0\t408\t0",
+    "f\tdata/nested.bin\t1024\t1024\t408\t0",
+    "f\treadme.txt\t14\t14\t1432\t0",
+    "d\tпапка\t0\t0\t0\t0",
+    "f\tпапка/файл_тест.txt\t11\t11\t1446\t0"
+  ],
+  "extract": [
+    {
+      "path": "bin/blob.dat",
+      "sha256": "7800e343c51f0c9a5b97b6cf926e57a20cbfa8e3362ec3a3127cc0fa5c924005",
+      "size": 400
+    },
+    {
+      "path": "data/empty.dat",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "data/nested.bin",
+      "sha256": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+      "size": 1024
+    },
+    {
+      "path": "readme.txt",
+      "sha256": "d44e14a3191cc13d698a95b3807ed12a25734a87f08a0d349d18b302356c9451",
+      "size": 14
+    },
+    {
+      "path": "папка/файл_тест.txt",
+      "sha256": "30f7f6e7885a4b2c0181c5b5ac601d490f0dbedabfad17fe677ac52351a0dcc5",
+      "size": 11
+    }
+  ]
+}

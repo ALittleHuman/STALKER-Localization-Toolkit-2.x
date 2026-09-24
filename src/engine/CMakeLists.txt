@@ -2,7 +2,10 @@ add_library(xrkit_engine STATIC
   engine.cpp
   third_party_probe.cpp
   fs/decompress.cpp
-  fs/squashfs.cpp)
+  fs/lzhuf.cpp
+  fs/lzhuf_ref.c
+  fs/squashfs.cpp
+  fs/db.cpp)
 
 target_include_directories(xrkit_engine PUBLIC "${CMAKE_SOURCE_DIR}/include")
 target_link_libraries(xrkit_engine

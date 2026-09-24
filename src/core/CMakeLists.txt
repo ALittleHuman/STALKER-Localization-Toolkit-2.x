@@ -1,7 +1,8 @@
 add_library(xrkit_core STATIC
   version.cpp
   check.cpp
-  log.cpp)
+  log.cpp
+  path.cpp)
 
 target_include_directories(xrkit_core PUBLIC "${CMAKE_SOURCE_DIR}/include")
 target_link_libraries(xrkit_core PUBLIC xrkit_flags)

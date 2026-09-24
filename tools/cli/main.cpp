@@ -11,17 +11,27 @@
 
 #include "xrkit/core/check.h"
 #include "xrkit/core/log.h"
+#include "xrkit/core/path.h"
 #include "xrkit/core/version.h"
 #include "xrkit/engine/engine.h"
+#include "xrkit/engine/fs/db.h"
+#include "xrkit/engine/fs/lzhuf.h"
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/third_party_probe.h"
 
+#include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -29,6 +39,41 @@ constexpr int kExitOk = 0;
 [[maybe_unused]] constexpr int kExitFail = 1;
 constexpr int kExitSkip = 2;
 constexpr int kExitUsage = 3;
+
+// ★ Windows 上 `char** argv` 是按 **ANSI 代码页**转出来的：西里尔/中文路径会被转坏
+//   （而且 PowerShell 5.1 传原生参数也是按 ANSI 代码页，西里尔字符会直接变成 '?'）。
+//   所以：入口用 wmain（宽字符命令行为准），内部一律 UTF-8，进出路径显式 UTF-8↔UTF-16。
+std::filesystem::path path_from_utf8(const std::string& s) {
+    return xrkit::core::path_from_utf8(s);
+}
+
+std::string path_to_utf8(const std::filesystem::path& p) {
+    return xrkit::core::path_to_utf8(p);
+}
+
+std::vector<uint8_t> read_all(const std::string& path) {
+    std::ifstream in(path_from_utf8(path), std::ios::binary);
+    if (!in) return {};
+    return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)),
+                                std::istreambuf_iterator<char>());
+}
+
+std::vector<uint8_t> read_all_path(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+    return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)),
+                                std::istreambuf_iterator<char>());
+}
+
+// 按魔数判容器：hsqs（小端）/ sqsh（大端）= SquashFS，其余按 DB 处理
+bool is_squashfs_head(const std::string& path) {
+    std::ifstream in(path_from_utf8(path), std::ios::binary);
+    if (!in) return false;
+    char head[4] = {};
+    in.read(head, 4);
+    if (in.gcount() != 4) return false;
+    return std::memcmp(head, "hsqs", 4) == 0 || std::memcmp(head, "sqsh", 4) == 0;
+}
 
 void print_usage() {
     std::cout
@@ -40,8 +85,9 @@ void print_usage() {
            "  --selftest      跑内置自检（ASCII 收尾行: SELFTEST pass=N fail=M）\n"
            "  --bench         跑性能基线（未实现时输出 BENCH skip ... 并返回 2）\n"
            "  --themecheck    检查主题令牌（未实现时输出 THEMECHECK skip ... 并返回 2）\n"
-           "  --dump <文件>   导出引擎解析结果（SquashFS 条目表 TSV；黄金语料差分用）\n"
-           "  --extract <镜像> <内部路径> <输出文件>   提取单个文件（进程内解压）\n"
+           "  --dump <文件> [DB格式]   导出解析结果（SquashFS 条目表 或 DB 条目表 TSV）\n"
+           "  --extract <源> <内部路径> <输出> [DB格式]   提取单个文件（进程内解压）\n"
+           "  --pack-db <输出> <格式> <输入目录>          按目录打包 DB（逐字节对拍用）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -152,11 +198,7 @@ void register_dep_checks(xrkit::core::CheckRegistry& reg, DepCounts& counts) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    std::vector<std::string> args;
-    args.reserve(static_cast<size_t>(argc > 0 ? argc - 1 : 0));
-    for (int i = 1; i < argc; ++i) args.emplace_back(argv[i]);
-
+int run_cli(const std::vector<std::string>& args) {
     bool verbose = false;
     std::string action;
     std::vector<std::string> operands;
@@ -211,42 +253,198 @@ int main(int argc, char** argv) {
             return kExitUsage;
         }
         const std::string& target = operands.front();
-        const xrkit::engine::fs::ListResult res = xrkit::engine::fs::list_entries(target);
+        if (is_squashfs_head(target)) {
+            const xrkit::engine::fs::ListResult res = xrkit::engine::fs::list_entries(target);
+            if (!res.ok) {
+                std::cout << "DUMP error reason=" << res.error << "\n";
+                return kExitFail;
+            }
+            // TSV：<d|f> TAB <路径> TAB <大小>（路径与 rdsquashfs --describe 同格式）
+            for (const xrkit::engine::fs::Entry& e : res.entries) {
+                std::cout << (e.is_dir ? 'd' : 'f') << '\t' << e.path << '\t' << e.size << '\n';
+            }
+            std::cout << "DUMP ok kind=sqfs entries=" << res.entries.size()
+                      << " ms=" << static_cast<long long>(res.elapsed_ms) << "\n";
+            return kExitOk;
+        }
+
+        const std::vector<uint8_t> raw = read_all(target);
+        if (raw.empty()) {
+            std::cout << "DUMP error reason=读不到文件或文件为空: " << target << "\n";
+            return kExitFail;
+        }
+        std::optional<xrkit::engine::fs::DbFormat> fmt;
+        if (operands.size() >= 2) {
+            fmt = xrkit::engine::fs::db_format_from_any(operands[1]);
+            if (!fmt) {
+                std::cout << "DUMP error reason=未知格式名: " << operands[1] << "\n";
+                return kExitUsage;
+            }
+        }
+        if (!fmt) fmt = xrkit::engine::fs::auto_detect(raw);
+        if (!fmt) {
+            std::cout << "DUMP error reason=无法唯一判定 DB 格式（歧义或损坏，请显式指定格式）\n";
+            return kExitFail;
+        }
+        const xrkit::engine::fs::DbList res = xrkit::engine::fs::unpack_db(raw, *fmt);
         if (!res.ok) {
             std::cout << "DUMP error reason=" << res.error << "\n";
             return kExitFail;
         }
-        // TSV：<d|f> TAB <路径> TAB <大小>，UTF-8 原样输出。
-        // 路径与 rdsquashfs --describe 同格式（无前导斜杠），便于逐条对拍。
-        for (const xrkit::engine::fs::Entry& e : res.entries) {
-            std::cout << (e.is_dir ? 'd' : 'f') << '\t' << e.path << '\t' << e.size << '\n';
+        // TSV：<d|f> TAB 路径 TAB size_real TAB size_comp TAB offset TAB use_lzhuf
+        for (const xrkit::engine::fs::DbEntry& e : res.entries) {
+            std::cout << (e.is_dir ? 'd' : 'f') << '\t' << e.path << '\t' << e.size_real << '\t'
+                      << e.size_comp << '\t' << e.offset << '\t' << (e.use_lzhuf ? 1 : 0) << '\n';
         }
-        std::cout << "DUMP ok entries=" << res.entries.size()
+        std::cout << "DUMP ok kind=db format=" << xrkit::engine::fs::db_format_key(*fmt)
+                  << " entries=" << res.entries.size()
                   << " ms=" << static_cast<long long>(res.elapsed_ms) << "\n";
         return kExitOk;
     }
 
     if (action == "--extract") {
         if (operands.size() < 3) {
-            std::cerr << "EXTRACT error reason=用法：--extract <镜像> <内部路径> <输出文件>\n";
+            std::cerr << "EXTRACT error reason=用法：--extract <源> <内部路径> <输出文件> [DB格式]\n";
             return kExitUsage;
         }
-        const xrkit::engine::fs::FileData res =
-            xrkit::engine::fs::read_file(operands[0], operands[1]);
-        if (!res.ok) {
-            std::cout << "EXTRACT error reason=" << res.error << "\n";
-            return kExitFail;
+        const std::string& source = operands[0];
+        const std::string& rel = operands[1];
+        std::vector<uint8_t> data;
+
+        if (is_squashfs_head(source)) {
+            const xrkit::engine::fs::FileData r = xrkit::engine::fs::read_file(source, rel);
+            if (!r.ok) {
+                std::cout << "EXTRACT error reason=" << r.error << "\n";
+                return kExitFail;
+            }
+            data = r.data;
+        } else {
+            const std::vector<uint8_t> raw = read_all(source);
+            std::optional<xrkit::engine::fs::DbFormat> fmt;
+            if (operands.size() >= 4) fmt = xrkit::engine::fs::db_format_from_any(operands[3]);
+            if (!fmt) fmt = xrkit::engine::fs::auto_detect(raw);
+            if (!fmt) {
+                std::cout << "EXTRACT error reason=无法唯一判定 DB 格式\n";
+                return kExitFail;
+            }
+            const xrkit::engine::fs::DbList list = xrkit::engine::fs::unpack_db(raw, *fmt);
+            if (!list.ok) {
+                std::cout << "EXTRACT error reason=" << list.error << "\n";
+                return kExitFail;
+            }
+            const xrkit::engine::fs::DbEntry* found = nullptr;
+            for (const xrkit::engine::fs::DbEntry& e : list.entries) {
+                if (e.path == rel) {
+                    found = &e;
+                    break;
+                }
+            }
+            if (found == nullptr) {
+                std::cout << "EXTRACT error reason=归档里没有该条目: " << rel << "\n";
+                return kExitFail;
+            }
+            const xrkit::engine::fs::DbExtract r = xrkit::engine::fs::extract_entry(raw, *found);
+            if (!r.ok) {
+                std::cout << "EXTRACT error reason=" << r.error << "\n";
+                return kExitFail;
+            }
+            data = r.data;
         }
+
         std::ofstream out(operands[2], std::ios::binary | std::ios::trunc);
         if (!out) {
             std::cout << "EXTRACT error reason=无法写输出文件：" << operands[2] << "\n";
             return kExitFail;
         }
-        out.write(reinterpret_cast<const char*>(res.data.data()),
-                  static_cast<std::streamsize>(res.data.size()));
+        out.write(reinterpret_cast<const char*>(data.data()),
+                  static_cast<std::streamsize>(data.size()));
         out.close();
-        std::cout << "EXTRACT ok path=" << operands[1] << " bytes=" << res.data.size()
-                  << " ms=" << static_cast<long long>(res.elapsed_ms) << "\n";
+        std::cout << "EXTRACT ok path=" << rel << " bytes=" << data.size() << "\n";
+        return kExitOk;
+    }
+
+    if (action == "--pack-db") {
+        if (operands.size() < 3) {
+            std::cerr << "PACKDB error reason=用法：--pack-db <输出文件> <格式> <输入目录>\n";
+            return kExitUsage;
+        }
+        const auto fmt = xrkit::engine::fs::db_format_from_any(operands[1]);
+        if (!fmt) {
+            std::cout << "PACKDB error reason=未知格式名: " << operands[1] << "\n";
+            return kExitUsage;
+        }
+        std::error_code ec;
+        const std::filesystem::path root = path_from_utf8(operands[2]);
+        struct Found {
+            std::string rel;             // UTF-8，'/' 分隔
+            std::filesystem::path full;  // 用宽字符路径读文件（否则非 ASCII 名读不到）
+            bool is_dir = false;
+        };
+        std::vector<Found> found;
+        for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end;
+             it.increment(ec)) {
+            if (ec) break;
+            const std::filesystem::path rel = std::filesystem::relative(it->path(), root, ec);
+            if (ec) continue;
+            found.push_back({path_to_utf8(rel), it->path(), it->is_directory()});
+        }
+        std::sort(found.begin(), found.end(),
+                  [](const Found& a, const Found& b) { return a.rel < b.rel; });
+        std::vector<xrkit::engine::fs::DbPackItem> items;
+        for (const Found& f : found) {
+            xrkit::engine::fs::DbPackItem item;
+            item.path = f.rel;
+            item.is_dir = f.is_dir;
+            if (!f.is_dir) item.data = read_all_path(f.full);
+            items.push_back(std::move(item));
+        }
+        const std::vector<uint8_t> bytes = xrkit::engine::fs::pack_db(items, *fmt);
+        std::ofstream out(path_from_utf8(operands[0]), std::ios::binary | std::ios::trunc);
+        if (!out) {
+            std::cout << "PACKDB error reason=无法写输出文件\n";
+            return kExitFail;
+        }
+        out.write(reinterpret_cast<const char*>(bytes.data()),
+                  static_cast<std::streamsize>(bytes.size()));
+        out.close();
+        std::cout << "PACKDB ok items=" << items.size() << " bytes=" << bytes.size() << "\n";
+        return kExitOk;
+    }
+
+    // 引擎级小工具：LZHUF 编/解码对拍用（判据要能直接打在 LZHUF 上，而不是隔着 DB 猜）
+    if (action == "--lzhuf") {
+        if (operands.size() < 3) {
+            std::cerr << "LZHUF error reason=用法：--lzhuf <encode|decode> <输入> <输出>\n";
+            return kExitUsage;
+        }
+        const std::vector<uint8_t> in = read_all(operands[1]);
+        if (in.empty()) {
+            std::cout << "LZHUF error reason=输入为空或读不到\n";
+            return kExitFail;
+        }
+        std::vector<uint8_t> out;
+        if (operands[0] == "encode") {
+            out = xrkit::engine::fs::lzhuf_encode(in.data(), in.size());
+        } else if (operands[0] == "decode") {
+            std::string err;
+            if (!xrkit::engine::fs::lzhuf_decode(in.data(), in.size(), out, err)) {
+                std::cout << "LZHUF error reason=" << err << "\n";
+                return kExitFail;
+            }
+        } else {
+            std::cerr << "LZHUF error reason=未知子命令: " << operands[0] << "\n";
+            return kExitUsage;
+        }
+        std::ofstream out_file(operands[2], std::ios::binary | std::ios::trunc);
+        if (!out_file) {
+            std::cout << "LZHUF error reason=无法写输出文件\n";
+            return kExitFail;
+        }
+        out_file.write(reinterpret_cast<const char*>(out.data()),
+                       static_cast<std::streamsize>(out.size()));
+        out_file.close();
+        std::cout << "LZHUF ok mode=" << operands[0] << " in=" << in.size()
+                  << " out=" << out.size() << "\n";
         return kExitOk;
     }
 
@@ -254,3 +452,33 @@ int main(int argc, char** argv) {
     print_usage();
     return kExitUsage;
 }
+
+#ifdef _WIN32
+namespace {
+
+std::string wide_to_utf8(const wchar_t* w) {
+    if (w == nullptr) return {};
+    const int need = ::WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+    if (need <= 1) return {};
+    std::string out(static_cast<size_t>(need), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, w, -1, out.data(), need, nullptr, nullptr);
+    out.resize(static_cast<size_t>(need - 1));  // 去掉结尾的 NUL
+    return out;
+}
+
+}  // namespace
+
+// ★ 用 wmain 而不是 main：`char** argv` 会按 ANSI 代码页转换，西里尔/中文路径全被转坏。
+int wmain(int argc, wchar_t** argv) {
+    std::vector<std::string> args;
+    args.reserve(static_cast<size_t>(argc > 0 ? argc - 1 : 0));
+    for (int i = 1; i < argc; ++i) args.push_back(wide_to_utf8(argv[i]));
+    return run_cli(args);
+}
+#else
+int main(int argc, char** argv) {
+    std::vector<std::string> args;
+    for (int i = 1; i < argc; ++i) args.emplace_back(argv[i]);
+    return run_cli(args);
+}
+#endif
