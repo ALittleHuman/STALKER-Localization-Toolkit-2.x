@@ -260,14 +260,31 @@ bool Image::read_inode(uint64_t ref, Inode& ino, std::string& err) {
     if (!meta_read(sb_.inode_table_start, rel_block, off, 2, head, err)) return false;
     const uint16_t type = rd16(head.data(), be);
 
+    // ★ 这里读的是"**解析所需的前缀**"，不是 inode 的完整记录长度 —— 两者别混：
+    //   · 完整记录长度（格式常量）：DIR 32 / DIR_X **40**（16 基头 + 24）/ REG 32 /
+    //     LREG 56 / SLINK 24（+ 目标串）；
+    //   · 解析前缀：只覆盖本函数**实际访问**的最后一个字段（DIR_X 是 offset@34 的 u16，
+    //     所以 36 就够）。
+    //   2026-09-24 订正：原先把 36 直接当"记录长度"写着，与 writer 写出的 40 字节
+    //   不一致（功能上没错，但常量是错的、容易误导）。多读那 4 字节没有收益，
+    //   而且在"EXT_DIR 恰好是 inode 表最后一条"时会把读取跨进下一个元数据块，
+    //   所以解析前缀保持 36，格式常量单列出来。
+    constexpr size_t kRecDir = 32;
+    constexpr size_t kRecDirXFull = 40;  // 格式常量（本函数不用，供 writer/文档对齐）
+    constexpr size_t kRecDirXPrefix = 36;
+    constexpr size_t kRecFile = 32;
+    constexpr size_t kRecFileX = 56;
+    constexpr size_t kRecSlink = 24;
+    static_assert(kRecDirXFull == 16 + 24, "EXT_DIR 记录长度必须是 40");
+
     size_t rec = 2;
     switch (type) {
-        case kTypeDir: rec = 32; break;
-        case kTypeDirX: rec = 36; break;
-        case kTypeFile: rec = 32; break;
-        case kTypeFileX: rec = 56; break;
+        case kTypeDir: rec = kRecDir; break;
+        case kTypeDirX: rec = kRecDirXPrefix; break;
+        case kTypeFile: rec = kRecFile; break;
+        case kTypeFileX: rec = kRecFileX; break;
         case kTypeSlink:
-        case kTypeSlinkX: rec = 24; break;
+        case kTypeSlinkX: rec = kRecSlink; break;
         default: rec = 2; break;  // 未知类型：只取类型，不猜长度
     }
 
