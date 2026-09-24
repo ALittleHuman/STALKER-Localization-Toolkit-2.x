@@ -233,6 +233,8 @@ def step_cli_contract(release: bool) -> None:
          "--extract-text 缺参数 → 用法错误"),
         (["--sniff"], 3, "SNIFF error",
          "--sniff 缺参数 → 用法错误"),
+        (["--glyph-dump"], 3, "GLYPH error",
+         "--glyph-dump 缺参数 → 用法错误"),
     ]
     for argv, want, marker, label in expectations:
         rc, out = run([str(CLI_EXE)] + argv)
@@ -518,6 +520,35 @@ def step_golden_text_sniff(release: bool) -> None:
         fail("判定链与 1.x 不一致（见上）")
 
 
+def step_golden_font_raster(release: bool) -> None:
+    """字库栅格一致性：我们的 FreeType 栅格 vs Pillow 的 `getmask(mode="L")`。
+
+    M1-7 的第一道锁：1.x 的字库产物是 Pillow 12.3.0（捆绑 FreeType 2.14.3）做的，
+    与工程 vendored 的 FreeType 同版本。栅格对不上就说明"产物逐字节一致"不可行，
+    必须先对齐 flags —— 所以它排在渲染管线前面。
+    退出码：0=一致，1=不一致，2=字体/CLI 缺失（按外部前提处理）。
+    """
+    say("[16] 字库栅格一致性（2.x FreeType vs Pillow getmask）")
+    script = ROOT / "tests" / "golden_font_raster.py"
+    if not require_repo_file(script, "栅格基线脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=1800)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("GOLDEN-FONT-RASTER") \
+                or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("栅格与 Pillow 逐字节一致")
+    elif rc == 2:
+        prereq("源字体（msyh.ttf）", "字体或 CLI 缺失（见上）", release)
+    else:
+        fail("栅格与 Pillow 不一致（见上）")
+
+
 def tail(text: str, n: int) -> str:
     """取最后 n 行有效输出。
 
@@ -554,6 +585,7 @@ STEPS = [
     ("golden-text-decode", step_golden_text_decode),
     ("golden-text-extract", step_golden_text_extract),
     ("golden-text-sniff", step_golden_text_sniff),
+    ("golden-font-raster", step_golden_font_raster),
 ]
 
 

@@ -17,6 +17,7 @@
 #include "xrkit/engine/fs/db.h"
 #include "xrkit/engine/fs/lzhuf.h"
 #include "xrkit/engine/fs/squashfs.h"
+#include "xrkit/engine/font/glyph.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/extract.h"
 #include "xrkit/engine/text/sniff.h"
@@ -509,6 +510,26 @@ int run_cli(const std::vector<std::string>& args) {
                   << " frag_blocks=" << r.fragment_blocks << " dedup_blocks=" << r.dedup_blocks
                   << " dedup_frags=" << r.dedup_fragments
                   << " ms=" << static_cast<long long>(r.elapsed_ms) << "\n";
+        return kExitOk;
+    }
+
+    // 字库可行性探针（M1-7 第①步）：把 FreeType 栅格结果按**定长容器**导出，
+    // 供 tests/golden_font_raster.py 与 Pillow 的 getmask 逐字节对拍。
+    // 只做"导出"这一件事：比较逻辑在 Python 侧（Pillow 在那边）。
+    if (action == "--glyph-dump") {
+        if (operands.size() < 3) {
+            std::cerr << "GLYPH error reason=用法：--glyph-dump <字体文件> <字号> <输出文件>\n";
+            return kExitUsage;
+        }
+        const std::string& font_path = operands[0];
+        const int size = std::atoi(operands[1].c_str());
+        const std::string& out_path = operands[2];
+        if (!xrkit::engine::font::dump_glyphs(font_path, size, out_path)) {
+            std::cout << "GLYPH error reason=导出失败（字体打不开 / 字号非法 / 写不出文件）\n";
+            return kExitFail;
+        }
+        std::cout << "GLYPH ok font=" << font_path << " size=" << size << " out=" << out_path
+                  << "\n";
         return kExitOk;
     }
 

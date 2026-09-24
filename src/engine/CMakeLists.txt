@@ -10,7 +10,8 @@ add_library(xrkit_engine STATIC
   fs/db.cpp
   text/encoding.cpp
   text/sniff.cpp
-  text/extract.cpp)
+  text/extract.cpp
+  font/glyph.cpp)
 
 target_include_directories(xrkit_engine PUBLIC "${CMAKE_SOURCE_DIR}/include")
 target_include_directories(xrkit_engine PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/text")

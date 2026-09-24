@@ -36,6 +36,9 @@ MSVC 编 Qt 必须带 `/Zc:__cplusplus`（否则 Qt 触发 `#error C1189`）与 
 
 - **1.x 是行为基准，不是代码基准。** 2.0.0 的验收判据逐条对照 1.x 的行为口径
   （滚动条四看、拖动 line 档、文件合并"后者为准 + 散装最后"、日志栏、任务壳、字库定标……）。
+- **但最终参照是原版工具/游戏**（用户 2026-09-24 原话："解包最终是要和原版 cv 对齐的。"）：
+  1.x 只是"行为代理"；**1.x 与原版冲突时以原版为准**，并把差异记进台账、在文档/日志里
+  明说是"有意与 1.x 不同"。首例见 `docs/2.0.0-文本模块规格.md` §5.1（cp1250 误判）。
 - 真机样本沿用 1.x 那一份（**2026-09-24 实测：已从 `E:\Human\` 迁到**
   `E:\Software\Games\STALKER\Games\`）：`NLC Improved [OBT]\gamedata.sq_*`、`bin_x64\xrEngine.exe`；
   正确的补丁版在 `E:\Software\Tools\Ghidra\Projects\NLC Improved\Exported\xrEngine_patched.exe`
