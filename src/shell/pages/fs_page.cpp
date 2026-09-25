@@ -111,13 +111,13 @@ void FsPage::fill_format_combo() {
 }
 
 std::string FsPage::current_format_key() const {
-    return format_combo_->currentData().toString().toStdString();
+    return format_combo_->currentData().toString().toUtf8().toStdString();
 }
 
 void FsPage::add_source(const QString& source,
                         const std::vector<std::pair<std::string, bool>>& entries) {
     efs::MergeInput input;
-    input.source = source.toStdString();
+    input.source = source.toUtf8().toStdString();
     input.entries = entries;
     efs::MergeTree incoming = efs::build_tree(input);
     if (sources_.empty()) {
@@ -127,7 +127,7 @@ void FsPage::add_source(const QString& source,
     }
     Source record;
     record.path = source;
-    record.key = source.toStdString();
+    record.key = source.toUtf8().toStdString();
     sources_.push_back(record);
     package_list_->addItem(source);
     refresh_rows();
@@ -168,7 +168,7 @@ efs::ExtractTreeResult FsPage::extract_to(const QString& image_path, const QStri
     efs::ExtractTreeOptions options;
     options.selection = selection_kind;
     options.only = only;
-    return efs::extract_tree(image_path.toStdString(), out_root.toStdString(), options);
+    return efs::extract_tree(image_path.toUtf8().toStdString(), out_root.toUtf8().toStdString(), options);
 }
 
 }  // namespace xrkit::shell

@@ -103,9 +103,9 @@ TextPage::TextPage(QWidget* parent)
 QString TextPage::validate(const QString& source_dir, const QString& target_dir) const {
     // 判据只在引擎那一份（`validate_request`）—— 页面拿到的就是给用户看的那句话
     etxt::ExtractRequest request;
-    request.source_dir = source_dir.toStdString();
-    request.target_dir = target_dir.toStdString();
-    request.prefix = prefix_edit_->text().trimmed().toStdString();
+    request.source_dir = source_dir.toUtf8().toStdString();
+    request.target_dir = target_dir.toUtf8().toStdString();
+    request.prefix = prefix_edit_->text().trimmed().toUtf8().toStdString();
     return utf8(etxt::validate_request(request));
 }
 
@@ -116,19 +116,19 @@ engine::text::ExtractStats TextPage::extract_one(const QString& source_dir,
     etxt::ExtractKind kind = etxt::ExtractKind::Gameplay;
     std::string err;
     etxt::ExtractStats stats;
-    if (!etxt::kind_from_dir_name(source_dir.toStdString(), kind, err)) {
+    if (!etxt::kind_from_dir_name(source_dir.toUtf8().toStdString(), kind, err)) {
         stats.error = err;
         return stats;
     }
     const QString sub = kind == etxt::ExtractKind::Gameplay ? QStringLiteral("gameplay")
                                                             : QStringLiteral("scripts");
     etxt::ExtractOptions options;
-    options.prefix = prefix.toStdString();
-    options.id_prefix = id_prefix.toStdString();
+    options.prefix = prefix.toUtf8().toStdString();
+    options.id_prefix = id_prefix.toUtf8().toStdString();
     options.clean = clean;
     const QDir target(target_dir);
-    return etxt::extract_dir(source_dir.toStdString(), target.filePath(sub).toStdString(),
-                             target_dir.toStdString(), options);
+    return etxt::extract_dir(source_dir.toUtf8().toStdString(), target.filePath(sub).toUtf8().toStdString(),
+                             target_dir.toUtf8().toStdString(), options);
 }
 
 void TextPage::add_row(const QString& text) {
@@ -165,7 +165,7 @@ void TextPage::run_batch() {
                     .arg(stats.strings)
                     .arg(stats.chars)
                     .arg(utf8(stats.texts_xml_name))
-                    .toStdString());
+                    .toUtf8().toStdString());
         for (const std::string& skipped : stats.skipped) message("跳过 " + skipped);
     });
 }

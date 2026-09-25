@@ -8,6 +8,7 @@
 #include "pages/page_base.h"
 #include "pages/page_factory.h"
 #include "pages/text_page.h"
+#include "pages/xml_page.h"
 #include "scroll_viewport.h"
 #include "split_pane.h"
 #include "task_shell.h"
@@ -968,6 +969,125 @@ SmokeResult run_smoke() {
               QStringLiteral("⑦ 前缀透传（%1 vs %2）")
                   .arg(QString::fromStdString(first.texts_xml_name))
                   .arg(QString::fromStdString(other_prefix.texts_xml_name)));
+        QDir(root).removeRecursively();
+    }
+
+    // ⑩ XML 校对页（M2-6e3）：10.1 内部键 / 10.3 摘要是计数 / 10.4 切模式不重跑 /
+    // 10.5 导出范围＝筛选后的行（BOM + CRLF）。
+    {
+        namespace exml = xrkit::engine::xml;
+        XmlPage page;
+        page.resize(760, page_min_h());
+        page.show();
+        QApplication::processEvents();
+
+        // 10.1：模式下拉的**取值是内部键**，条数 = 声明表条数
+        QComboBox* modes = page.mode_combo();
+        const std::vector<exml::XmlModeSpec>& specs = exml::builtin_modes();
+        check(modes != nullptr && modes->count() == static_cast<int>(specs.size()),
+              QStringLiteral("⑩10.1 模式下拉条数 = 声明表条数（%1）").arg(specs.size()));
+        int key_bad = 0;
+        for (int i = 0; modes != nullptr && i < modes->count(); ++i) {
+            const std::string key = modes->itemData(i).toString().toStdString();
+            if (exml::find_mode(key) == nullptr) ++key_bad;
+        }
+        check(key_bad == 0, QStringLiteral("⑩10.1 模式下拉取值都是内部键（%1 项不符）").arg(key_bad));
+
+        // 合成夹具：一个文件两侧一致、一个两侧不同、一个只在 A 有
+        const QString root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_xml"));
+        QDir(root).removeRecursively();
+        QDir().mkpath(root + QStringLiteral("/a"));
+        QDir().mkpath(root + QStringLiteral("/b"));
+        const auto write = [](const QString& path, const QString& body) {
+            std::ofstream out(path.toStdString(), std::ios::binary | std::ios::trunc);
+            out.write(body.toUtf8().constData(), body.toUtf8().size());
+        };
+        const QString same =
+            QStringLiteral("<r>\n<s id=\"x\"><text>v</text></s>\n</r>\n");
+        write(root + QStringLiteral("/a/same.xml"), same);
+        write(root + QStringLiteral("/b/same.xml"), same);
+        write(root + QStringLiteral("/a/diff.xml"),
+              QStringLiteral("<r>\n<s id=\"x\"><text>v</text></s>\n</r>\n"));
+        write(root + QStringLiteral("/b/diff.xml"),
+              QStringLiteral("<r>\n<s id=\"x\"><text>V</text></s>\n</r>\n"));
+        write(root + QStringLiteral("/a/only_a.xml"),
+              QStringLiteral("<r>\n<s id=\"y\"><text>z</text></s>\n</r>\n"));
+        // 统计模式只看**行数/ID 计数**，不看文本 ⇒ 上面那个 diff.xml 在统计模式下
+        // 其实是"一致"（同 id、同次数）。要造出统计模式的差异，得让次数不同。
+        write(root + QStringLiteral("/a/countdiff.xml"),
+              QStringLiteral("<r>\n<s id=\"k\"><text>1</text></s>\n"
+                             "<s id=\"k\"><text>2</text></s>\n</r>\n"));
+        write(root + QStringLiteral("/b/countdiff.xml"),
+              QStringLiteral("<r>\n<s id=\"k\"><text>1</text></s>\n</r>\n"));
+
+        const int total = page.compare_dirs(root + QStringLiteral("/a"), root + QStringLiteral("/b"),
+                                            QStringLiteral("auto"), QStringLiteral("auto"));
+        check(total == 4 && page.result_count() == 4,
+              QStringLiteral("⑩ 比较扫到 4 个文件（实测 %1）").arg(total));
+        check(page.scan_count() == 1, QStringLiteral("⑩ 第一次比较真的扫了目录"));
+
+        // 10.4：切模式 ⇒ **清空结果**、换筛选项、**不重跑 I/O**
+        const int before_scan = page.scan_count();
+        page.set_mode(QStringLiteral("text"));
+        check(page.current_mode_key() == "text", QStringLiteral("⑩10.4 切到文本模式"));
+        check(page.result_count() == 0 && page.visible_count() == 0,
+              QStringLiteral("⑩10.4 切模式必须清空旧结果（实测 %1 行）").arg(page.result_count()));
+        check(page.scan_count() == before_scan,
+              QStringLiteral("⑩10.4 切模式不许重跑 I/O（扫描次数 %1 → %2）")
+                  .arg(before_scan)
+                  .arg(page.scan_count()));
+        check(page.filter_combo() != nullptr && page.filter_combo()->count() ==
+                                                    static_cast<int>(specs[1].filters.size()),
+              QStringLiteral("⑩10.1 筛选项来自新模式声明（文本模式 %1 项）")
+                  .arg(specs[1].filters.size()));
+
+        // 回到统计模式重跑，然后用筛选与导出
+        page.set_mode(QStringLiteral("stats"));
+        page.compare_dirs(root + QStringLiteral("/a"), root + QStringLiteral("/b"),
+                          QStringLiteral("auto"), QStringLiteral("auto"));
+        check(page.visible_count() == 4, QStringLiteral("⑩ 「全部」筛选下 4 行"));
+        if (page.filter_combo() != nullptr) {
+            const int index = page.filter_combo()->findText(QStringLiteral("仅不一致"));
+            if (index >= 0) page.filter_combo()->setCurrentIndex(index);
+        }
+        check(page.visible_count() == 1,
+              QStringLiteral("⑩ 筛选「仅不一致」后 1 行（该文件文本不同；实测 %1）")
+                  .arg(page.visible_count()));
+
+        // 10.5：导出范围 = 筛选后的行；字节层面看 BOM + CRLF
+        const QString csv = root + QStringLiteral("/out.csv");
+        check(page.export_csv(csv, QStringLiteral("2026-09-24 00:00:00")),
+              QStringLiteral("⑩10.5 导出成功"));
+        {
+            QFile file(csv);
+            if (file.open(QIODevice::ReadOnly)) {
+                const QByteArray body = file.readAll();
+                check(body.startsWith("\xEF\xBB\xBF"),
+                      QStringLiteral("⑩10.5 导出以 BOM 开头"));
+                check(body.contains("\r\n"), QStringLiteral("⑩10.5 导出用 CRLF"));
+                // 头部 10 行（标题/时间/模式/两个文件夹/编码/实际编码/筛选/计数/空行）
+                // + 列头 1 行 + 筛选后的数据行
+                const int want = 11 + page.visible_count();
+                const int rows = body.count("\r\n");
+                check(rows == want,
+                      QStringLiteral("⑩10.5 导出行数 = 头部 10 + 列头 1 + 筛选后 %1 = %2（实测 %3）")
+                          .arg(page.visible_count())
+                          .arg(want)
+                          .arg(rows));
+            } else {
+                check(false, QStringLiteral("⑩10.5 导出文件读不回来"));
+            }
+        }
+        // 10.3：行文本是**计数摘要**（统计模式下差异来自"次数不同"），
+        // 完整明细只在"看这一行"时才生成
+        bool summary_ok = false;
+        for (int i = 0; i < page.visible_count(); ++i) {
+            if (page.row_text(i).contains(QStringLiteral("次数不同 1"))) summary_ok = true;
+        }
+        check(summary_ok, QStringLiteral("⑩10.3 行文本里是按计数拼的摘要"));
+        const QString detail = page.detail_text(0);
+        check(detail.contains(QStringLiteral("id=\"")) || detail.contains(QStringLiteral("仅")),
+              QStringLiteral("⑩10.3 完整明细在需要时才给（%1）").arg(detail.left(40)));
         QDir(root).removeRecursively();
     }
 

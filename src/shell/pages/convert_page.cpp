@@ -140,11 +140,11 @@ void ConvertPage::fill_encoding_combos() {
 }
 
 std::string ConvertPage::current_source_encoding() const {
-    return source_combo_->currentData().toString().toStdString();
+    return source_combo_->currentData().toString().toUtf8().toStdString();
 }
 
 std::string ConvertPage::current_target_encoding() const {
-    return target_combo_->currentData().toString().toStdString();
+    return target_combo_->currentData().toString().toUtf8().toStdString();
 }
 
 engine::text::ConvertOutcome ConvertPage::convert_one(const QString& source_path,
@@ -152,15 +152,15 @@ engine::text::ConvertOutcome ConvertPage::convert_one(const QString& source_path
                                                       const QString& source_enc,
                                                       const QString& target_enc) {
     etxt::ConvertOptions options;
-    options.source_encoding = source_enc.toStdString();
-    options.target_encoding = target_enc.toStdString();
+    options.source_encoding = source_enc.toUtf8().toStdString();
+    options.target_encoding = target_enc.toUtf8().toStdString();
     options.to_output_dir = !out_dir.isEmpty();
     QString target;
     if (!out_dir.isEmpty()) {
         QDir dir(out_dir);
         target = dir.filePath(QFileInfo(source_path).fileName());
     }
-    return etxt::convert_file(source_path.toStdString(), target.toStdString(), options);
+    return etxt::convert_file(source_path.toUtf8().toStdString(), target.toUtf8().toStdString(), options);
 }
 
 void ConvertPage::set_paused(bool paused) { paused_.store(paused); }
@@ -203,8 +203,8 @@ void ConvertPage::run_batch(const std::vector<QString>& files, const QString& ou
             const etxt::ConvertOutcome outcome =
                 convert_one(file, out_dir, source_enc, target_enc);
             if (!outcome.ok) ++failed;
-            message(QFileInfo(file).fileName().toStdString() + " | " + outcome.step_label +
-                    (outcome.skipped ? " | 已是目标编码" : "") + " → " + target_enc.toStdString());
+            message(QFileInfo(file).fileName().toUtf8().toStdString() + " | " + outcome.step_label +
+                    (outcome.skipped ? " | 已是目标编码" : "") + " → " + target_enc.toUtf8().toStdString());
             ++done;
             // ⑬13.7：**只发一个 0~100 值**，壳里不乘不除
             progress(total == 0 ? 100 : done * 100 / total);
