@@ -4,6 +4,7 @@
 #include "xrkit/engine/plugin/abi_host.h"
 #include "hub.h"
 #include "log_box.h"
+#include "plugin_ui.h"
 #include "pages/convert_page.h"
 #include "pages/fs_page.h"
 #include "pages/fontpack_page.h"
@@ -1226,6 +1227,55 @@ SmokeResult run_smoke() {
                   QStringLiteral("⑪11.9 拒绝时**没有**创建输出目录"));
             QDir(out).removeRecursively();
         }
+    }
+
+    // ⑫12.2/12.3：`api.ui` 的 **16 方法 Qt 实现** —— 槽位齐全，且真造得出控件。
+    // （三个标准对话框会阻塞，自检只核对槽位非空。）
+    {
+        const stk_ui* ui = qt_plugin_ui();
+        check(ui != nullptr, QStringLiteral("⑫12.2 外壳没有提供 api.ui"));
+        // `stk_ui` 是"纯函数指针的 POD"，按指针数组扫一遍就知道有没有空洞
+        const void* const* slot_table = reinterpret_cast<const void* const*>(ui);
+        const size_t slot_count = sizeof(stk_ui) / sizeof(void*);
+        int holes = 0;
+        for (size_t i = 0; i < slot_count; ++i) {
+            if (slot_table[i] == nullptr) ++holes;
+        }
+        check(holes == 0 && slot_count == 16,
+              QStringLiteral("⑫12.3 api.ui 应有 16 个非空槽位（实测 %1 个槽、%2 个空洞）")
+                  .arg(slot_count)
+                  .arg(holes));
+
+        QWidget host;
+        host.resize(320, 240);
+        stk_host* handle = reinterpret_cast<stk_host*>(&host);
+        stk_widget* root_widget = reinterpret_cast<stk_widget*>(&host);
+        stk_widget* label = ui->label(handle, root_widget, "标题", nullptr);
+        stk_widget* button = ui->button(handle, root_widget, "按钮", nullptr, nullptr, nullptr, 1);
+        stk_widget* box = ui->checkbox(handle, root_widget, "勾上", nullptr, nullptr);
+        stk_widget* entry = ui->entry(handle, root_widget, "初值", 20, nullptr);
+        stk_widget* text = ui->text(handle, root_widget, 6, 0, "word");
+        const char* values[] = {"甲", "乙"};
+        stk_widget* combo = ui->combo(handle, root_widget, values, 2, nullptr, nullptr);
+        stk_widget* drop = ui->drop_box(handle, root_widget, nullptr, nullptr, "拖进来", 0);
+        stk_widget* row = ui->row(handle, root_widget, "top", "x", 0, 0, 0);
+        stk_widget* view = ui->text_view(handle, root_widget, 8, 1);
+        check(label != nullptr && button != nullptr && box != nullptr && entry != nullptr &&
+                  text != nullptr && combo != nullptr && drop != nullptr && row != nullptr &&
+                  view != nullptr,
+              QStringLiteral("⑫12.2 九种控件没有全部造出来"));
+        auto* label_widget = reinterpret_cast<QLabel*>(label);
+        ui->set_text(handle, label, "改过的标题");
+        check(label_widget != nullptr && label_widget->text() == QStringLiteral("改过的标题"),
+              QStringLiteral("⑫12.2 set_text 没改到控件上"));
+        ui->set_state(handle, button, 0);
+        check(!reinterpret_cast<QWidget*>(button)->isEnabled(),
+              QStringLiteral("⑫12.2 set_state 没把控件置灰"));
+        check(ui->alive(handle, label) == 1 && ui->alive(handle, nullptr) == 0,
+              QStringLiteral("⑫12.2 alive 判断不对"));
+        ui->pack(handle, root_widget, label, "top", "x", 0, 0, 0);
+        check(host.layout() != nullptr && host.layout()->count() >= 1,
+              QStringLiteral("⑫12.2 pack 没把控件挂进布局"));
     }
 
     // ⑫12.4：插件加载失败**不阻塞启动**，且问题要在 Hub 启动时可见（日志 + 状态栏）。
