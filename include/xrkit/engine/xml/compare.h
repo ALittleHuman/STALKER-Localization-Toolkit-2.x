@@ -89,6 +89,12 @@ struct XmlCompareResult {
     std::vector<std::string> only_a;    // 已排序
     std::vector<std::string> only_b;
     std::vector<std::array<std::string, 3>> count_diff;  // (id, A 次数, B 次数)
+    std::vector<std::array<std::string, 3>> text_diff;   // (id, A 文本, B 文本)
+    std::map<std::string, std::string> id_text_a;        // 明细里要看原文（文本模式）
+    std::map<std::string, std::string> id_text_b;
+    bool untrusted_a = false;  // 一侧解析失败 ⇒ 结果不可信（界面必须告警）
+    bool untrusted_b = false;
+    std::string warning;
     std::string encoding_a;
     std::string encoding_b;
     std::string error;
@@ -111,5 +117,61 @@ XmlCompareResult compare_stats(const std::string& rel, const std::string& text_a
                                const std::string& text_b, const std::string& enc_a,
                                const std::string& enc_b);
 XmlCompareResult only_one_side(const std::string& rel, const std::string& side);
+
+// ── 文本模式（ID 文本对比）──────────────────────────────────────────
+
+struct XmlTextSide {
+    bool ok = false;       // 解析成功（结构可理解）
+    bool trusted = true;   // false = 解析失败，结果**不可信**（调用方必须告警，不许静默）
+    std::string warning;
+    std::string encoding;
+    std::map<std::string, std::string> id_text;  // 后出现的同名 id 覆盖先出现的（照 ET）
+};
+
+// 1.x `_fix_entities` + ElementTree 取值的等价实现：
+//   ① 修裸 `&`（不构成合法实体时补成 `&amp;`）、修裸露的 `<`（后面不是 !/?/字母时补 `&lt;`）、
+//      修 `<!--` 后多余的 `-`；
+//   ② 扫描元素：带 `id` 属性的元素，优先取**第一个直接子元素 `<text>` 的文本**，
+//      没有就取它自己的直接文本；两者都 `.strip()`；实体解码。
+//   ③ 结构不可理解（标签不闭合等）⇒ ok=false、trusted=false + warning
+//      （1.x 在这里 log_summary 告警："结果不可信"）。
+XmlTextSide parse_text_by_id(const std::string& text, const std::string& encoding);
+
+// 文本模式比较（两侧文本不同的 id 记进 text_diff；同名 id 取最后出现的文本）
+XmlCompareResult compare_text(const std::string& rel, const std::string& text_a,
+                              const std::string& text_b, const std::string& enc_a,
+                              const std::string& enc_b);
+
+// 文本模式的完整明细（1.x `build_full_text_detail`：含每个差异 id 的首个差异位置与两侧全文）
+std::string full_text_detail(const XmlCompareResult& result, const std::string& name_a,
+                             const std::string& name_b, DetailCallStats* stats = nullptr);
+
+// ── 10.5 CSV 导出 ───────────────────────────────────────────────────
+
+struct XmlCsvReport {
+    std::string mode_name;      // 显示名（导出表头用）
+    std::string folder_a;
+    std::string folder_b;
+    std::string enc_a = "auto";
+    std::string enc_b = "auto";
+    std::string filter_label;
+    std::string generated_at;   // 由调用方给（引擎不取系统时间，便于对拍）
+    std::vector<std::string> columns;             // 表头（来自模式声明）
+    std::vector<std::vector<std::string>> rows;   // 当前**筛选后**的行
+    uint64_t consistent = 0;
+    uint64_t inconsistent = 0;
+    uint64_t only_a = 0;
+    uint64_t only_b = 0;
+    std::string encodings_used;  // "实际使用编码"那行（空则不出）
+};
+
+// 渲染成 CSV 文本：**先写 `\ufeff`**（Excel 不认无 BOM 的 UTF-8），
+// 行结束符 `\r\n`（Python `csv.writer` 的 excel 方言），
+// 需要时按 excel 规则加引号（含分隔符/引号/换行 ⇒ 包起来、内部引号翻倍）。
+// 写盘时**不做任何换行翻译**（1.x 用 `newline=""`）。
+std::string render_csv(const XmlCsvReport& report);
+
+// 渲染 + 原子写盘（同目录 .part → 逐字节复核 → rename）
+bool write_csv_file(const std::string& path, const XmlCsvReport& report, std::string& error);
 
 }  // namespace xrkit::engine::xml

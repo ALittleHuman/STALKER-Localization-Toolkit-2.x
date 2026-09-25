@@ -616,6 +616,70 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
               "单侧文件没被标成 only_side / 摘要不对");
     });
 
+    // ⑩文本模式（ID 文本对比）：取值口径与"解析失败必须告警"两条。
+    // 取值口径最阴的一条（门禁对拍抓出来的）：**判空看原始文本、存的是 strip 之后的值** ——
+    // `<specific_character id=...>` 的直接文本是 "\n\t\t"（truthy ⇒ 1.x 记一条 id → ""），
+    // 用 strip 判空会把整片 id 漏掉（实测真语料 32 个 id 全丢）。
+    reg.add("xml: 文本模式取值与告警（⑩10.1/文本模式）", [](CheckContext& ctx) {
+        namespace exml = xrkit::engine::xml;
+        const std::string text =
+            "<r>\n"
+            "  <s id=\"a\"><text>hello &amp; bye</text></s>\n"
+            "  <s id=\"b\" other=\"1\">own text</s>\n"
+            "  <s id=\"ws\">\n\t\t</s>\n"          // 只有空白：1.x 仍记一条（值为 ""）
+            "  <s id=\"kid\">pre<text>inner</text></s>\n"  // 优先取 <text>
+            "  <s id=\"dup\"><text>first</text></s>\n"
+            "  <s id=\"dup\"><text>second</text></s>\n"    // 后者覆盖前者
+            "</r>";
+        const exml::XmlTextSide side = exml::parse_text_by_id(text, "utf-8");
+        check(ctx, side.ok && side.trusted, "正常 XML 应解析成功且可信：" + side.warning);
+        check(ctx, side.id_text.count("a") != 0 && side.id_text.at("a") == "hello & bye",
+              "实体没解码（&amp; → &）");
+        check(ctx, side.id_text.count("b") != 0 && side.id_text.at("b") == "own text",
+              "自有文本没取到");
+        check(ctx, side.id_text.count("ws") != 0 && side.id_text.at("ws").empty(),
+              "只有空白文本的元素被漏掉了（判空必须看原始文本）");
+        check(ctx, side.id_text.count("kid") != 0 && side.id_text.at("kid") == "inner",
+              "<text> 子元素没优先");
+        check(ctx, side.id_text.count("dup") != 0 && side.id_text.at("dup") == "second",
+              "重复 id 应后者覆盖前者");
+
+        // 坏 XML：必须 trusted=false + 有理由（1.x 在这里 log_summary 告警）
+        const exml::XmlTextSide broken =
+            exml::parse_text_by_id("<r><s id=\"a\"><text>x</text></s>", "utf-8");
+        check(ctx, !broken.trusted && !broken.warning.empty(),
+              "标签没闭合却没被判成不可信");
+        // 注释体里含 `--`：ElementTree 会抛 ⇒ 1.x 判不可信；我们**不许比它更宽**
+        const exml::XmlTextSide bad_comment =
+            exml::parse_text_by_id("<!-- a -- b --><r><s id=\"a\"><text>x</text></s></r>", "utf-8");
+        check(ctx, !bad_comment.trusted, "注释体含 -- 时应判不可信（照 ElementTree）");
+
+        // 比较：同 id 文本不同 ⇒ text_diff；只在一侧 ⇒ only_*
+        const std::string other =
+            "<r>\n  <s id=\"a\"><text>hello &amp; bye</text></s>\n"
+            "  <s id=\"b\" other=\"1\">own TEXT</s>\n"
+            "  <s id=\"ws\">\n\t\t</s>\n"
+            "  <s id=\"kid\">pre<text>inner</text></s>\n"
+            "  <s id=\"dup\"><text>second</text></s>\n"
+            "  <s id=\"extra\"><text>only here</text></s>\n"
+            "</r>";
+        const exml::XmlCompareResult diff =
+            exml::compare_text("x.xml", text, other, "utf-8", "utf-8");
+        check(ctx, diff.only_b.size() == 1 && diff.only_b[0] == "extra", "only_b 不对");
+        check(ctx, diff.text_diff.size() == 1 && diff.text_diff[0][0] == "b",
+              "text_diff 不对（应只有 b）");
+        check(ctx, !diff.consistent && diff.ids_a == 5 && diff.ids_b == 6,
+              "文本模式统计不对（ids_a=" + std::to_string(diff.ids_a) + " ids_b=" +
+                  std::to_string(diff.ids_b) + "）");
+        check(ctx, exml::inline_detail(diff, "A", "B").find("文本不同 1") != std::string::npos,
+              "摘要里没有文本不同计数");
+        exml::DetailCallStats stats;
+        const std::string full = exml::full_text_detail(diff, "A", "B", &stats);
+        check(ctx, stats.full_detail_calls == 1 && full.find("首个差异@") != std::string::npos &&
+                      full.find("only here") != std::string::npos,
+              "文本模式完整明细不对");
+    });
+
     // ⑥6.7 路径越界判据（safe_out_path）：归档条目名是不可信输入，这条判据挡的是
     // **任意文件写**。1.x 只把理由写在注释里，2.0 把"拒因"带出来 —— 所以这里连
     // **理由**一起断言：改判定顺序、把某一条删掉，都能当场变红。
@@ -1130,6 +1194,79 @@ int run_cli(const std::vector<std::string>& args) {
                   << " ids_a=" << result.ids_a << " ids_b=" << result.ids_b
                   << " only_a=" << result.only_a.size() << " only_b=" << result.only_b.size()
                   << " count_diff=" << result.count_diff.size() << "\n";
+        return kExitOk;
+    }
+
+    // XML 文本模式的比较探针（ID 文本对比）
+    if (action == "--xml-text") {
+        if (operands.size() < 3) {
+            std::cerr << "XMLTEXT error reason=用法：--xml-text <rel> <A 文件> <B 文件>\n";
+            return kExitUsage;
+        }
+        const auto read_text = [](const std::string& path, std::string& text) {
+            std::ifstream in(xrkit::core::path_from_utf8(path), std::ios::binary);
+            if (!in) return false;
+            const std::string body((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            const std::vector<uint8_t> raw(body.begin(), body.end());
+            std::string err;
+            return xrkit::engine::text::decode_lossy("utf-8", raw.data(), raw.size(), text, err);
+        };
+        std::string text_a;
+        std::string text_b;
+        if (!read_text(operands[1], text_a) || !read_text(operands[2], text_b)) {
+            std::cout << "XMLTEXT error reason=读不到输入\n";
+            return kExitFail;
+        }
+        const xrkit::engine::xml::XmlCompareResult result =
+            xrkit::engine::xml::compare_text(operands[0], text_a, text_b, "utf-8", "utf-8");
+        std::cout << "XMLTEXT ok consistent=" << (result.consistent ? 1 : 0)
+                  << " ids_a=" << result.ids_a << " ids_b=" << result.ids_b
+                  << " only_a=" << result.only_a.size() << " only_b=" << result.only_b.size()
+                  << " text_diff=" << result.text_diff.size()
+                  << " untrusted=" << ((result.untrusted_a || result.untrusted_b) ? 1 : 0) << "\n";
+        for (const std::array<std::string, 3>& item : result.text_diff) {
+            std::cout << "XMLTEXT diff id=" << item[0] << "\ta=" << item[1] << "\tb=" << item[2]
+                      << "\n";
+        }
+        for (const std::string& id : result.only_a) std::cout << "XMLTEXT only_a=" << id << "\n";
+        for (const std::string& id : result.only_b) std::cout << "XMLTEXT only_b=" << id << "\n";
+        return kExitOk;
+    }
+
+    // CSV 渲染探针（10.5 的机制对拍：BOM + \r\n + excel 引号规则）。
+    // 表内容固定，只为让"引号/换行/BOM"这三件事能被 Python 的 csv 模块逐字节比对。
+    if (action == "--xml-csv-probe") {
+        if (operands.empty()) {
+            std::cerr << "XMLCSV error reason=用法：--xml-csv-probe <输出 csv>\n";
+            return kExitUsage;
+        }
+        xrkit::engine::xml::XmlCsvReport report;
+        report.mode_name = "行数/ID 统计";
+        report.folder_a = "A 目录";
+        report.folder_b = "B 目录";
+        report.filter_label = "全部";
+        report.generated_at = "2026-09-24 00:00:00";
+        report.columns = {"文件 (相对路径)", "状态", "差异详情"};
+        report.rows = {
+            {"a.xml", "一致", "无差异"},
+            {"b,c.xml", "不一致", "仅 A 有 1；文本不同 2"},
+            {"quote\".xml", "不一致", "有 \"引号\" 的摘要"},
+            {"multi\nline.xml", "不一致", "摘要里有换行"},
+            {"中文.xml", "一致", "无差异"},
+            {"", "", ""},
+        };
+        report.consistent = 3;
+        report.inconsistent = 3;
+        report.only_a = 1;
+        report.only_b = 0;
+        report.encodings_used = "A=windows-1251 / B=utf-8";
+        std::string error;
+        if (!xrkit::engine::xml::write_csv_file(operands[0], report, error)) {
+            std::cout << "XMLCSV error reason=" << error << "\n";
+            return kExitFail;
+        }
+        std::cout << "XMLCSV ok bytes=" << xrkit::engine::xml::render_csv(report).size() << "\n";
         return kExitOk;
     }
 

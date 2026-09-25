@@ -104,6 +104,136 @@ def candidate_2x(path: Path, enc: str) -> tuple[int, int]:
     return int(fields["lines"]), int(fields["ids"])
 
 
+def candidate_2x_text(rel: str, path_a: Path, path_b: Path) -> dict:
+    """跑 2.x 的 `--xml-text`，解析成 {consistent, ids_a, ids_b, only_a, only_b, text_diff}。"""
+    proc = subprocess.run([str(CLI), "--xml-text", rel, str(path_a), str(path_b)],
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    text = proc.stdout.decode("utf-8", errors="replace")
+    if proc.returncode != 0:
+        raise RuntimeError(text.strip()[:200])
+    head = [ln for ln in text.splitlines() if ln.startswith("XMLTEXT ok")]
+    if not head:
+        raise RuntimeError("没有收尾行：" + text.strip()[:200])
+    fields = dict(kv.split("=", 1) for kv in head[-1].split()[2:])
+    out = {"consistent": int(fields["consistent"]), "ids_a": int(fields["ids_a"]),
+           "ids_b": int(fields["ids_b"]), "only_a": [], "only_b": [], "text_diff": []}
+    for line in text.splitlines():
+        if line.startswith("XMLTEXT diff id="):
+            body = line[len("XMLTEXT diff id="):]
+            iid, rest = body.split("\t", 1)
+            a_part, b_part = rest.split("\tb=", 1)
+            out["text_diff"].append((iid, a_part[2:], b_part))
+        elif line.startswith("XMLTEXT only_a="):
+            out["only_a"].append(line[len("XMLTEXT only_a="):])
+        elif line.startswith("XMLTEXT only_b="):
+            out["only_b"].append(line[len("XMLTEXT only_b="):])
+    return out
+
+
+def load_1x_text_mode():
+    """把 1.x 的文本模式实现**按 AST 摘出来**执行（不 import 模块 —— 那会拖进 tkinter）。
+
+    参照就是 1.x 的**源码本身**（`_fix_entities` + `parse_file_text_by_id` +
+    `compare_text_content` + 三个模块级正则），所以不存在"我转述错了"。
+    """
+    import ast
+    import xml.etree.ElementTree as ET  # noqa: N817
+
+    if str(TOOLKIT_1X) not in sys.path:
+        sys.path.insert(0, str(TOOLKIT_1X))
+    from toolkit_textio import read_text_file  # noqa: PLC0415
+
+    src = (TOOLKIT_1X / "apps" / "xml_compare_app.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    wanted_funcs = {"_fix_entities", "parse_file_text_by_id", "compare_text_content"}
+    wanted_consts = {"_AMP_BAD", "_LT_BAD", "_COMMENT_BAD"}
+    ns = {"re": re, "ET": ET, "Counter": Counter,
+          "decode_file": lambda path, enc="auto": read_text_file(str(path)),
+          "log_summary": lambda *a, **k: None}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            names = {t.id for t in node.targets if isinstance(t, ast.Name)}
+            if names & wanted_consts:
+                exec(compile(ast.Module([node], []), "<1x>", "exec"), ns)  # noqa: S102
+        elif isinstance(node, ast.FunctionDef) and node.name in wanted_funcs:
+            exec(compile(ast.Module([node], []), "<1x>", "exec"), ns)  # noqa: S102
+    missing = [n for n in (wanted_funcs | wanted_consts) if n not in ns]
+    if missing:
+        raise SystemExit("1.x 源码里缺这些定义：%s" % ", ".join(sorted(missing)))
+    return ns
+
+
+def reference_1x_text(ns, rel: str, path_a: Path, path_b: Path) -> dict:
+    r = ns["compare_text_content"](rel, path_a, path_b, enc_a="auto", enc_b="auto")
+    return {"consistent": 1 if r.get("consistent") else 0,
+            "ids_a": r.get("ids_a", 0), "ids_b": r.get("ids_b", 0),
+            "only_a": sorted(r.get("only_a") or []), "only_b": sorted(r.get("only_b") or []),
+            "text_diff": sorted((i, a, b) for i, a, b in (r.get("text_diff") or []))}
+
+
+def csv_reference(rows: list[list[str]], header_rows: list[list[str]]) -> bytes:
+    """Python `csv.writer`（excel 方言）+ 先写 `\\ufeff`，写盘 `newline=""` 不翻译换行。"""
+    import csv
+    import io
+
+    buf = io.StringIO()
+    buf.write("\ufeff")
+    writer = csv.writer(buf)
+    for row in header_rows:
+        writer.writerow(row)
+    for row in rows:
+        writer.writerow(row)
+    return buf.getvalue().encode("utf-8")
+
+
+def text_mode_cases(work: Path) -> list[tuple[str, Path, Path]]:
+    """文本模式的样本对：`<text>` 子元素优先、自有文本、实体、重复 id、坏 XML。"""
+    cases: list[tuple[str, str, str]] = [
+        ("child_text.xml",
+         '<?xml version="1.0"?>\n<string_table>\n'
+         '  <string id="a"><text>hello</text></string>\n'
+         '  <string id="b"><text>world</text></string>\n</string_table>',
+         '<?xml version="1.0"?>\n<string_table>\n'
+         '  <string id="a"><text>hello</text></string>\n'
+         '  <string id="b"><text>world!</text></string>\n</string_table>'),
+        ("own_text.xml",
+         '<text id="x">plain</text>',
+         '<text id="x">plain2</text>'),
+        ("entities.xml",
+         '<string_table><string id="e"><text>a &amp; b &lt;c&gt; &#1055;</text></string>'
+         '</string_table>',
+         '<string_table><string id="e"><text>a &amp; b &lt;c&gt; &#1055;</text></string>'
+         '</string_table>'),
+        ("bare_amp.xml",
+         '<string_table><string id="e"><text>tom & jerry</text></string></string_table>',
+         '<string_table><string id="e"><text>tom &amp; jerry</text></string></string_table>'),
+        # 重复 id：后出现的覆盖先出现的（1.x 直接 dict 赋值）
+        ("dup_id.xml",
+         '<r><s id="d"><text>first</text></s><s id="d"><text>second</text></s></r>',
+         '<r><s id="d"><text>second</text></s></r>'),
+        # 只在一侧
+        ("one_side.xml",
+         '<r><s id="only_a"><text>1</text></s></r>',
+         '<r><s id="only_b"><text>2</text></s></r>'),
+        # 注释里带 `--`（1.x 的 _COMMENT_BAD 要修）与多根平铺
+        ("flat_and_comment.xml",
+         '<!-- a -- b --><s id="p"><text>v</text></s><s id="q"><text>w</text></s>',
+         '<!-- a -- b --><s id="p"><text>v</text></s><s id="q"><text>W</text></s>'),
+        # 坏 XML：两侧都解析不出来 ⇒ 结果不可信（1.x 只告警）
+        ("broken.xml",
+         '<r><s id="a"><text>x</text></s>',
+         '<r><s id="a"><text>x</text></s>'),
+    ]
+    out: list[tuple[str, Path, Path]] = []
+    for name, a, b in cases:
+        pa = work / ("a_" + name)
+        pb = work / ("b_" + name)
+        pa.write_text(a, encoding="utf-8", newline="")
+        pb.write_text(b, encoding="utf-8", newline="")
+        out.append((name, pa, pb))
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="XML 统计模式对拍")
     parser.add_argument("--list", action="store_true")
@@ -153,6 +283,72 @@ def main() -> int:
             if (got_lines, got_ids) != (lines, ids):
                 failures.append("%s：参照 lines=%d ids=%d / 候选 lines=%d ids=%d"
                                 % (path.name, lines, ids, got_lines, got_ids))
+
+        # ── 文本模式（ID 文本对比）：参照 = 1.x 源码按 AST 摘出来直接跑 ──
+        text_ns = load_1x_text_mode()
+        for name, path_a, path_b in text_mode_cases(work):
+            rel = "config/gameplay/" + name
+            try:
+                want = reference_1x_text(text_ns, rel, path_a, path_b)
+                got = candidate_2x_text(rel, path_a, path_b)
+            except Exception as exc:  # noqa: BLE001
+                failures.append("文本模式 %s：%s" % (name, exc))
+                continue
+            compared += 1
+            if got != want:
+                failures.append("文本模式 %s：参照 %s / 候选 %s" % (name, want, got))
+
+        # 真语料上也走几对（同一文件比同一文件：必须判"一致"且 ID 数相同）
+        for path in real[:12]:
+            try:
+                want = reference_1x_text(text_ns, path.name, path, path)
+                got = candidate_2x_text(path.name, path, path)
+            except Exception as exc:  # noqa: BLE001
+                failures.append("文本模式 %s：%s" % (path.name, exc))
+                continue
+            compared += 1
+            if got != want:
+                failures.append("文本模式 %s：参照 %s / 候选 %s" % (path.name, want, got))
+
+        # ── 10.5 CSV 渲染：参照 = Python `csv.writer`（excel 方言）+ 前置 BOM ──
+        csv_out = work / "probe.csv"
+        proc = subprocess.run([str(CLI), "--xml-csv-probe", str(csv_out)],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        compared += 1
+        if proc.returncode != 0:
+            failures.append("CSV 探针失败：%s"
+                            % proc.stdout.decode("utf-8", errors="replace")[:200])
+        else:
+            header_rows = [
+                ["XML校对报告"],
+                ["生成时间: 2026-09-24 00:00:00"],
+                ["比较模式: 行数/ID 统计"],
+                ["文件夹 A: A 目录"],
+                ["文件夹 B: B 目录"],
+                ["编码（auto=自动判定）: A=auto / B=auto"],
+                ["实际使用编码: A=windows-1251 / B=utf-8"],
+                ["筛选条件: 全部"],
+                ["一致: 3 | 不一致: 3 | 仅 A: 1 | 仅 B: 0"],
+                [],
+                ["文件 (相对路径)", "状态", "差异详情"],
+            ]
+            body_rows = [
+                ["a.xml", "一致", "无差异"],
+                ["b,c.xml", "不一致", "仅 A 有 1；文本不同 2"],
+                ["quote\".xml", "不一致", "有 \"引号\" 的摘要"],
+                ["multi\nline.xml", "不一致", "摘要里有换行"],
+                ["中文.xml", "一致", "无差异"],
+                ["", "", ""],
+            ]
+            want_bytes = csv_reference(body_rows, header_rows)
+            got_bytes = csv_out.read_bytes() if csv_out.exists() else b""
+            if got_bytes != want_bytes:
+                failures.append("CSV 与 Python csv.writer 不一致：期望 %d 字节 / 得到 %d 字节"
+                                % (len(want_bytes), len(got_bytes)))
+            elif not got_bytes.startswith(b"\xef\xbb\xbf"):
+                failures.append("CSV 没有以 BOM 开头（Excel 会认成乱码）")
+            else:
+                records.append({"id": "csv", "bytes": len(got_bytes)})
 
     if args.write:
         BASELINE.parent.mkdir(parents=True, exist_ok=True)
