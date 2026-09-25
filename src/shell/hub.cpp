@@ -5,10 +5,13 @@
 #include "pages/page_factory.h"
 #include "split_pane.h"
 
+#include "xrkit/core/path.h"
 #include "xrkit/core/theme.h"
+#include "xrkit/engine/plugin/loader.h"
 #include "theme.h"
 
 #include <QApplication>
+#include <QDir>
 #include <QDockWidget>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -67,7 +70,7 @@ const PageInfo& builtin_page(int index) {
     return kBuiltinPages[index];
 }
 
-Hub::Hub(QWidget* parent) : QMainWindow(parent) {
+Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     setWindowTitle(QStringLiteral("STALKER 汉化工具集 2.0"));
     resize(1180, 760);
 
@@ -128,6 +131,7 @@ Hub::Hub(QWidget* parent) : QMainWindow(parent) {
     });
 
     log_line(QStringLiteral("Hub 就绪：%1 个内置页").arg(kBuiltinPageCount));
+    load_plugins(plugin_dir);
 }
 
 int Hub::page_count() const { return stack_ == nullptr ? 0 : stack_->count(); }
@@ -152,6 +156,33 @@ PageBase* Hub::page_at(int index) const {
 void Hub::log_line(const QString& text) {
     // 攒批写入（4.4）；用户在日志栏里看到的是它**自己的**条子（4.1）
     if (log_box_ != nullptr) log_box_->append_batched(text);
+}
+
+void Hub::load_plugins(const QString& plugin_dir) {
+    // ⑫12.4：插件注册期的非法寻址要在 **Hub 启动时可见** —— 这里做三件事：
+    // ① 真去加载（失败不阻塞启动）；② 把错误逐条打进日志栏；③ 状态栏给一句汇总。
+    // 无 Qt 的 UI 工厂这一版先传 nullptr（16 方法的 Qt 实现是下一步）：
+    // 插件照样能注册命令/格式/下拉条目/比较模式，只是暂时造不出控件。
+    const QString dir = plugin_dir.isEmpty()
+                            ? QDir(xrkit::core::app_dir().c_str()).filePath(QStringLiteral("plugins"))
+                            : plugin_dir;
+    xrkit::plugin::load_plugins_from_dir(dir.toUtf8().toStdString(), registry_, nullptr);
+    plugin_errors_ = registry_.registration_errors();
+
+    int loaded = 0;
+    for (const xrkit::plugin::RegistrationError& error : plugin_errors_) {
+        log_line(QStringLiteral("插件问题：%1 —— %2")
+                     .arg(QString::fromStdString(error.plugin))
+                     .arg(QString::fromStdString(error.message)));
+    }
+    if (plugin_errors_.empty()) {
+        plugin_notice_ = QStringLiteral("插件：无（目录 %1）").arg(QDir::toNativeSeparators(dir));
+    } else {
+        ++loaded;
+        plugin_notice_ = QStringLiteral("插件：%1 个问题（详见日志）").arg(plugin_errors_.size());
+    }
+    log_line(plugin_notice_);
+    if (status_label_ != nullptr && !plugin_errors_.empty()) status_label_->setText(plugin_notice_);
 }
 
 }  // namespace xrkit::shell

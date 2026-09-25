@@ -1192,6 +1192,45 @@ SmokeResult run_smoke() {
         }
     }
 
+    // ⑫12.4：插件加载失败**不阻塞启动**，且问题要在 Hub 启动时可见（日志 + 状态栏）。
+    {
+        const QString empty_dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_plugins_empty"));
+        QDir(empty_dir).removeRecursively();
+        QDir().mkpath(empty_dir);
+        {
+            Hub quiet(nullptr, empty_dir);
+            check(quiet.plugin_errors().empty(),
+                  QStringLiteral("⑫12.4 空插件目录不该报错（%1）").arg(quiet.plugin_notice()));
+            check(quiet.plugin_notice().contains(QStringLiteral("无")),
+                  QStringLiteral("⑫12.4 空目录的启动提示不对（%1）").arg(quiet.plugin_notice()));
+        }
+
+        const QString bad_dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_plugins_bad"));
+        QDir(bad_dir).removeRecursively();
+        QDir().mkpath(bad_dir);
+        {
+            // 一个"看起来像插件但其实不是 DLL"的文件 ⇒ LoadLibrary 必失败
+            std::ofstream out((bad_dir + QStringLiteral("/not_a_plugin.dll")).toStdString(),
+                              std::ios::binary | std::ios::trunc);
+            out << "this is not a PE file";
+        }
+        {
+            Hub loud(nullptr, bad_dir);
+            check(!loud.plugin_errors().empty(),
+                  QStringLiteral("⑫12.4 坏插件必须留下 registration_errors"));
+            check(loud.plugin_notice().contains(QStringLiteral("问题")),
+                  QStringLiteral("⑫12.4 状态栏/提示要写出有问题（%1）").arg(loud.plugin_notice()));
+            if (loud.log_box() != nullptr) loud.log_box()->flush();
+            check(loud.log_view() != nullptr &&
+                      loud.log_view()->toPlainText().contains(QStringLiteral("插件问题")),
+                  QStringLiteral("⑫12.4 问题要打进日志栏（启动即可见）"));
+            check(loud.page_count() == builtin_page_count(),
+                  QStringLiteral("⑫12.4 插件坏了也不许影响内置六页"));
+        }
+        QDir(empty_dir).removeRecursively();
+        QDir(bad_dir).removeRecursively();
+    }
+
     return result;
 }
 

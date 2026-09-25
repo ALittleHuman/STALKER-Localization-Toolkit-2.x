@@ -9,6 +9,10 @@
 #include <QMainWindow>
 #include <QString>
 
+#include "xrkit/engine/plugin/registry.h"
+
+#include <vector>
+
 class QListWidget;
 class QPlainTextEdit;
 class QStackedWidget;
@@ -31,12 +35,21 @@ const PageInfo& builtin_page(int index);
 
 class Hub : public QMainWindow {
 public:
-    explicit Hub(QWidget* parent = nullptr);
+    // `plugin_dir` 为空 ⇒ 用 exe 旁边的 `plugins/`；自检可以指定临时目录
+    explicit Hub(QWidget* parent = nullptr, const QString& plugin_dir = QString());
 
     // 探针/自检用：核对**真实**创建的页面数、标题与顺序
     int page_count() const;
     QString page_title(int index) const;
     QString page_id(int index) const;
+
+    // 插件：注册表 + 启动时的错误清单（⑫12.4：非法寻址要**在 Hub 启动时可见**）
+    xrkit::plugin::Registry& registry() { return registry_; }
+    const std::vector<xrkit::plugin::RegistrationError>& plugin_errors() const {
+        return plugin_errors_;
+    }
+    // 启动时的插件提示（读几行、非空说明有插件问题）——Hub 会把它打日志 + 写状态栏
+    QString plugin_notice() const { return plugin_notice_; }
 
     QListWidget* page_list() const { return page_list_; }
     QStackedWidget* stack() const { return stack_; }
@@ -54,6 +67,9 @@ public:
     // 记一行日志（1.x 的日志栏：主窗口那根滚动条**不**管它；攒批见 LogBox）
     void log_line(const QString& text);
 
+    // ⑫12.4：加载插件并把注册期问题显示出来（构造末尾调一次；空目录＝没有插件）
+    void load_plugins(const QString& plugin_dir);
+
 private:
     QListWidget* page_list_ = nullptr;
     QStackedWidget* stack_ = nullptr;
@@ -63,6 +79,9 @@ private:
     QLabel* status_label_ = nullptr;
     int top_min_ = 0;
     int log_min_ = 0;
+    xrkit::plugin::Registry registry_;
+    std::vector<xrkit::plugin::RegistrationError> plugin_errors_;
+    QString plugin_notice_;
 };
 
 }  // namespace xrkit::shell
