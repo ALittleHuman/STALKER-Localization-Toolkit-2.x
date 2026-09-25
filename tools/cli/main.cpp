@@ -19,6 +19,7 @@
 #include "xrkit/engine/fs/extract_tree.h"
 #include "xrkit/engine/fs/lzhuf.h"
 #include "xrkit/engine/fs/overlay.h"
+#include "xrkit/engine/plugin/abi_host.h"
 #include "xrkit/engine/plugin/contract.h"
 #include "xrkit/engine/plugin/registry.h"
 #include "xrkit/engine/fs/squashfs.h"
@@ -1098,6 +1099,159 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         check(ctx, throwing.registration_errors().size() == 1 &&
                       throwing.registration_errors()[0].message.find("kaboom") != std::string::npos,
               "插件回调抛异常没被捕获记账（12.9）");
+    });
+
+    // ⑫12.1/12.2/12.3 纯 C ABI：**像插件那样**通过函数表把 10 个注册点全跑一遍，
+    // 再从消费端把每一条捞回来。无 Qt 路径（`api.ui == nullptr`）——UI 那 16 个方法
+    // 由外壳注入，这里证的是"注册面 + 回调 + when 数据化"这套 ABI 形状真的通。
+    reg.add("plugin: C ABI 十个注册点端到端（⑫12.1）", [](CheckContext& ctx) {
+        namespace plug = xrkit::plugin;
+        plug::Registry reg;
+        plug::PluginApiAdapter adapter(reg, "demo.dll", /*ui=*/nullptr);
+        const stk_api& api = adapter.api();
+
+        check(ctx, api.abi_version == STK_ABI_VERSION, "ABI 版本号不对");
+        check(ctx, api.host != nullptr && api.ui == nullptr,
+              "无 Qt 路径下 host 要有、ui 可以是空");
+        check(ctx, api.register_decryptor != nullptr && api.register_command != nullptr &&
+                      api.register_tool != nullptr && api.register_compare_mode != nullptr &&
+                      api.register_option_entry != nullptr && api.register_option != nullptr &&
+                      api.register_panel != nullptr && api.register_menu_item != nullptr &&
+                      api.add_error != nullptr,
+              "注册面函数表有空洞（10 个注册点必须齐）");
+
+        // ① 解密器（裸函数指针跨 ABI）
+        const auto check_fn = +[](void*, const char* path) -> int {
+            return std::string(path).find("zzzz") != std::string::npos ? 1 : 0;
+        };
+        const auto decrypt_fn = +[](void*, const char*, void** data, size_t* size) -> int {
+            static const char kPayload[] = "decrypted";
+            *data = const_cast<char*>(kPayload);
+            *size = sizeof(kPayload) - 1;
+            return 1;
+        };
+        check(ctx, api.register_decryptor(api.host, "nlc", check_fn, decrypt_fn, nullptr) == 1,
+              "① 解密器注册失败");
+        const plug::DecryptorReg* dec = reg.find_decryptor("a/zzzz.sq_base");
+        check(ctx, dec != nullptr, "① 解密器没被消费端命中");
+        if (dec != nullptr) {
+            std::string out;
+            check(ctx, dec->decrypt("a/zzzz.sq_base", out) && out == "decrypted",
+                  "① 解密回调跨 ABI 传值失败");
+        }
+
+        // ② 格式
+        const auto format_fn = +[](void*, const char* path) -> int {
+            return std::string(path).rfind(".myfmt", 0) == 0 ? 1 : 0;
+        };
+        check(ctx, api.register_format(api.host, "myfmt", format_fn, nullptr) == 1,
+              "② 格式注册失败");
+        check(ctx, reg.formats().size() == 1 && reg.formats()[0].handler(".myfmt-x") &&
+                      !reg.formats()[0].handler("other.bin"),
+              "② 格式没被消费（handler 应按注册的判据命中）");
+
+        // ③ 命令（when 用**数据**表达）
+        const auto command_fn = +[](void* user) { *static_cast<int*>(user) += 1; };
+        int runs = 0;
+        const char* when_keys[] = {"mode"};
+        const char* when_values[] = {"文本"};
+        stk_when when{};
+        when.keys = when_keys;
+        when.values = when_values;
+        when.count = 1;
+        const char* command_id =
+            api.register_command(api.host, "demo_action", "演示动作", command_fn, &runs, &when);
+        check(ctx, command_id != nullptr && std::string(command_id) == "demo.dll:demo_action",
+              "③ 命令 id 形态不对（应是 <插件>:<动作名>）");
+        check(ctx, api.register_command(api.host, "bad name", "x", command_fn, &runs, nullptr) ==
+                          nullptr,
+              "③ 非法动作名没被拒");
+
+        // ④ 挂载点（精确匹配 + when 生效）
+        check(ctx, api.register_menu_item(api.host, "xml", "toolbar", command_id, 5) == 1,
+              "④ 挂载点注册失败");
+        check(ctx, api.register_menu_item(api.host, "nope", "toolbar", command_id, 0) == 0,
+              "④ 非法 host 没被拒");
+        plug::Context hit;
+        hit["mode"] = std::string("文本");
+        plug::Context miss;
+        miss["mode"] = std::string("统计");
+        const auto items_hit = reg.menu_items_for("xml", "toolbar", hit);
+        const auto items_miss = reg.menu_items_for("xml", "toolbar", miss);
+        check(ctx, items_hit.size() == 1 && items_hit[0]->id == "demo.dll:demo_action",
+              "④ 挂载点没被消费");
+        check(ctx, items_miss.empty(), "④ ABI 传过来的 when 没生效（应只在 mode=文本 时出现）");
+        if (!items_hit.empty()) {
+            items_hit[0]->handler();
+            check(ctx, runs == 1, "③ 命令回调跨 ABI 调用失败");
+        }
+
+        // ⑤ 下拉条目 / ⑥ 新建下拉
+        check(ctx, api.register_option_entry(api.host, "xml", "filter", "插件筛选项", nullptr) == 1,
+              "⑤ 下拉条目注册失败");
+        check(ctx, reg.option_entries_for("xml", "filter").size() == 1 &&
+                      reg.option_entries_for("xml", "filter")[0] == "插件筛选项",
+              "⑤ 下拉条目没被消费");
+        const char* choices[] = {"甲", "乙"};
+        check(ctx, api.register_option(api.host, "插件下拉", choices, 2, nullptr, nullptr, "fs",
+                                       "top_bar", nullptr, 3) == 1,
+              "⑥ 新建下拉注册失败");
+        check(ctx, reg.options_for("fs", "top_bar").size() == 1 &&
+                      reg.options_for("fs", "top_bar")[0]->choices.size() == 2,
+              "⑥ 新建下拉没被消费");
+
+        // ⑦ 面板 / ⑧ Hub 页
+        const auto builder = +[](void*, stk_widget*) -> stk_widget* { return nullptr; };
+        check(ctx, api.register_panel(api.host, "插件面板", builder, nullptr, "xml", "top_bar",
+                                      nullptr, 1) == 1,
+              "⑦ 面板注册失败");
+        check(ctx, reg.panels_for("xml", "top_bar").size() == 1, "⑦ 面板没被消费");
+        check(ctx, api.register_tool(api.host, "插件页", builder, nullptr, 2) == 1,
+              "⑧ Hub 页注册失败");
+        check(ctx, reg.tools_sorted().size() == 1 && reg.tools_sorted()[0]->name == "插件页",
+              "⑧ Hub 页没被消费");
+
+        // ⑨ 比较模式：回调通过**宿主提供的 sink** 回传（跨 ABI 没有所有权问题）
+        const auto compare_fn = +[](void* user, const char*, const char*, const char*, const char*,
+                                    const char*, stk_result_sink sink, void* sink_user) {
+            *static_cast<bool*>(user) = true;
+            sink(sink_user, "consistent", "0");
+            sink(sink_user, "only_a", "id_only_a");
+            sink(sink_user, "text_diff", "id_x\t甲\t乙");
+        };
+        bool compare_ran = false;
+        const char* col_keys[] = {"rel", "status", "detail"};
+        const char* col_headings[] = {"文件", "状态", "差异"};
+        const int col_widths[] = {280, 60, 400};
+        const char* filter_labels[] = {"全部", "仅不一致"};
+        const char* filter_kinds[] = {"same|diff|only_a|only_b", "diff"};
+        check(ctx, api.register_compare_mode(api.host, "插件模式", "plugin_mode", 7, col_keys,
+                                             col_headings, col_widths, 3, filter_labels, 2,
+                                             filter_kinds, compare_fn, &compare_ran) == 1,
+              "⑨ 比较模式注册失败");
+        const plug::CompareModeReg* mode = reg.compare_mode("插件模式");
+        check(ctx, mode != nullptr && mode->spec.columns.size() == 3 &&
+                      mode->spec.filters.size() == 2 &&
+                      mode->spec.filters[1].row_kinds.size() == 1 &&
+                      mode->spec.filters[1].row_kinds[0] == "diff",
+              "⑨ 比较模式声明（列/筛选）没被消费");
+        if (mode != nullptr && mode->compare) {
+            const xrkit::engine::xml::XmlCompareResult result =
+                mode->compare("x.xml", "<a/>", "<b/>", "utf-8", "utf-8");
+            check(ctx, compare_ran && !result.consistent && result.only_a.size() == 1 &&
+                          result.only_a[0] == "id_only_a" && result.text_diff.size() == 1 &&
+                          result.text_diff[0][0] == "id_x" && result.text_diff[0][2] == "乙",
+                  "⑨ 插件比较回调的 sink 数据没被正确解析回结果");
+        }
+
+        // ⑩ 插件自报错误：走同一条留痕通道（Hub 启动时可见）
+        const size_t errors_before = reg.registration_errors().size();
+        api.add_error(api.host, "插件自己发现的异常");
+        check(ctx, reg.registration_errors().size() == errors_before + 1 &&
+                      reg.registration_errors().back().message.find("插件自己发现的异常") !=
+                          std::string::npos,
+              "⑩ 插件自报错误没进 registration_errors");
+        check(ctx, reg.registration_errors().size() >= 2, "被拒的注册没有全部留痕");
     });
 
     // ⑥6.7 路径越界判据（safe_out_path）：归档条目名是不可信输入，这条判据挡的是
