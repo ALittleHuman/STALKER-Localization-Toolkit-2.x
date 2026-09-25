@@ -31,8 +31,10 @@
 #include "xrkit/engine/text/extract.h"
 #include "xrkit/engine/text/sniff.h"
 #include "xrkit/engine/third_party_probe.h"
+#include "xrkit/engine/xml/compare.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -490,6 +492,130 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         fsys::remove_all(root, ec);
     });
 
+    // ⑩10.1/10.3/10.6 XML 统计模式的判据面。10.6 的行数口径是 `len(text.splitlines())`，
+    // 最容易错的就是"结尾换行算不算多一行"——1.x 曾对结尾换行额外 +1，于是纯格式差异
+    // 被当成不一致。这里把 Python 的边界集合逐条钉住（含 \v \f \x1c-\x1e \x85 \u2028 \u2029）。
+    reg.add("xml: 行数口径与模式声明（⑩10.1/10.6）", [](CheckContext& ctx) {
+        namespace exml = xrkit::engine::xml;
+        // 10.6：结尾是边界不额外多一行
+        check(ctx, exml::split_lines("") == 0, "空串应为 0 行");
+        check(ctx, exml::split_lines("a") == 1, "无边界应为 1 行");
+        check(ctx, exml::split_lines("a\n") == 1, "结尾 \\n 不该多一行（1.x 的老毛病）");
+        check(ctx, exml::split_lines("a\nb") == 2, "a\\nb 应为 2 行");
+        check(ctx, exml::split_lines("a\nb\n") == 2, "结尾 \\n 不该多一行");
+        check(ctx, exml::split_lines("a\n\n") == 2, "两个连续换行 = 2 行（空行算一行）");
+        check(ctx, exml::split_lines("a\r\nb\r\n") == 2, "CRLF 结尾不该多一行");
+        check(ctx, exml::split_lines("a\rb") == 2, "单独的 \\r 也是边界");
+        // Python 的完整边界集合
+        const std::vector<std::string> exotic = {"a\x0b" "b", "a\x0c" "b", "a\x1c" "b",
+                                                 "a\x1d" "b", "a\x1e" "b", "a\xc2\x85" "b",
+                                                 "a\xe2\x80\xa8" "b", "a\xe2\x80\xa9" "b"};
+        for (const std::string& text : exotic) {
+            check(ctx, exml::split_lines(text) == 2,
+                  "Python 的边界字符没被认出来（应为 2 行）");
+        }
+
+        // 10.1：内置模式表 = 两条，order 10/20，哨兵值唯一
+        const std::vector<exml::XmlModeSpec>& modes = exml::builtin_modes();
+        check(ctx, modes.size() == 2, "内置模式应为 2 条");
+        check(ctx, modes.size() == 2 && modes[0].order == 10 && modes[1].order == 20,
+              "内置模式的 order 应为 10 / 20");
+        check(ctx, modes.size() == 2 && modes[0].key == "stats" && modes[1].key == "text",
+              "内置模式的内部键应为 stats / text");
+        for (const exml::XmlModeSpec& mode : modes) {
+            check(ctx, mode.plugin == exml::kBuiltinPlugin,
+                  "内置模式的哨兵值不统一（⑫12.8）");
+            bool has_detail = false;
+            for (const exml::XmlColumn& column : mode.columns) {
+                if (column.key == "detail") has_detail = true;
+            }
+            check(ctx, has_detail, "模式声明里必须有 detail 保留列（" + mode.name + "）");
+        }
+        // 显示名也能查到模式（历史引用），但**取值**用内部键
+        check(ctx, exml::find_mode("stats") != nullptr && exml::find_mode("行数/ID 统计") != nullptr,
+              "按内部键或显示名都该能查到模式");
+        check(ctx, exml::find_mode("没这个模式") == nullptr, "未知模式名应为 nullptr");
+    });
+
+    // ⑩10.3：`detail` 列的单行摘要**只按计数拼** —— 完整明细 builder 的调用次数必须为 0。
+    // 1.x 实测：1 万行时填充从 89ms 涨到 327ms，因为每行都调了一次 detail_builder。
+    reg.add("xml: 摘要不许偷调完整明细（⑩10.3）", [](CheckContext& ctx) {
+        namespace exml = xrkit::engine::xml;
+        exml::XmlCompareResult result;
+        result.rel = "config/gameplay/x.xml";
+        result.lines_a = 100;
+        result.lines_b = 101;
+        result.ids_a = 50;
+        result.ids_b = 50;
+        for (int i = 0; i < 1000; ++i) result.only_a.push_back("id_a_" + std::to_string(i));
+        for (int i = 0; i < 500; ++i) result.only_b.push_back("id_b_" + std::to_string(i));
+        for (int i = 0; i < 200; ++i) {
+            result.count_diff.push_back(
+                std::array<std::string, 3>{"id_c_" + std::to_string(i), "1", "2"});
+        }
+        result.consistent = false;
+
+        exml::DetailCallStats stats;
+        const std::string summary = exml::inline_detail(result, "A", "B");
+        check(ctx, stats.full_detail_calls == 0,
+              "摘要路径偷调了完整明细（调用 " + std::to_string(stats.full_detail_calls) + " 次）");
+        check(ctx, summary.find("仅 A 有 1000") != std::string::npos &&
+                      summary.find("仅 B 有 500") != std::string::npos &&
+                      summary.find("次数不同 200") != std::string::npos,
+              "摘要没按计数拼：" + summary);
+
+        const std::string full = exml::full_detail(result, "A", "B", &stats);
+        check(ctx, stats.full_detail_calls == 1, "完整明细没被计数");
+        check(ctx, full.find("id_a_999") != std::string::npos, "完整明细里没有逐条 id");
+        // 摘要与完整明细必须**不是**同一个东西（否则就是又把 builder 塞进列里了）
+        check(ctx, summary != full, "摘要与完整明细相同（10.3 的判据失效）");
+    });
+
+    // ⑩统计模式的**比较**本身：only_a/only_b/count_diff/consistent 四条判据
+    // （行数一致性也参与 consistent —— 1.x 的 `compare_one` 就是这么定的）。
+    reg.add("xml: 统计模式比较（only_a/only_b/次数/一致）", [](CheckContext& ctx) {
+        namespace exml = xrkit::engine::xml;
+        const std::string a =
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+            "<string_table>\n"
+            "  <string id=\"a\"><text>1</text></string>\n"
+            "  <string id=\"b\"><text>2</text></string>\n"
+            "  <string id=\"b\"><text>3</text></string>\n"
+            "</string_table>\n";
+        const std::string b =
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+            "<string_table>\n"
+            "  <string id=\"a\"><text>1</text></string>\n"
+            "  <string id=\"b\"><text>2</text></string>\n"
+            "  <string id=\"c\"><text>4</text></string>\n"
+            "</string_table>\n";
+
+        const exml::XmlCompareResult diff = exml::compare_stats("x.xml", a, b, "utf-8", "utf-8");
+        check(ctx, diff.lines_a == 6 && diff.lines_b == 6,
+              "行数不对（A=" + std::to_string(diff.lines_a) + " B=" +
+                  std::to_string(diff.lines_b) + "）");
+        check(ctx, diff.ids_a == 2 && diff.ids_b == 3,
+              "ID 数不对（A=" + std::to_string(diff.ids_a) + " B=" + std::to_string(diff.ids_b) +
+                  "）");
+        check(ctx, diff.only_b.size() == 1 && diff.only_b[0] == "c", "only_b 不对");
+        check(ctx, diff.only_a.empty(), "only_a 应为空");
+        check(ctx, diff.count_diff.size() == 1 && diff.count_diff[0][0] == "b" &&
+                      diff.count_diff[0][1] == "2" && diff.count_diff[0][2] == "1",
+              "次数差异不对");
+        check(ctx, !diff.consistent, "有差异却判成一致");
+
+        // 完全相同的两份 ⇒ 一致；且**声明里的 id 不算数**（先剥声明）
+        const exml::XmlCompareResult same = exml::compare_stats("x.xml", a, a, "utf-8", "utf-8");
+        check(ctx, same.consistent, "同一份文本应判一致");
+        check(ctx, same.ids_a == 2, "声明里的 id 被算进 ID 数了");
+
+        // 只在一侧存在
+        const exml::XmlCompareResult one = exml::only_one_side("only.xml", "b");
+        check(ctx, one.only_one_side && !one.consistent &&
+                      exml::inline_detail(one, "A", "B").find("仅 B") != std::string::npos,
+              "单侧文件没被标成 only_side / 摘要不对");
+    });
+
     // ⑥6.7 路径越界判据（safe_out_path）：归档条目名是不可信输入，这条判据挡的是
     // **任意文件写**。1.x 只把理由写在注释里，2.0 把"拒因"带出来 —— 所以这里连
     // **理由**一起断言：改判定顺序、把某一条删掉，都能当场变红。
@@ -936,6 +1062,74 @@ int run_cli(const std::vector<std::string>& args) {
         std::cout << "TEXTPLAN ok kind="
                   << (kind == xrkit::engine::text::ExtractKind::Gameplay ? "gameplay" : "scripts")
                   << "\n";
+        return kExitOk;
+    }
+
+    // XML 统计模式探针（⑩10.6 行数口径 + ID 计数）：门禁拿 Python 的 `splitlines()`
+    // 与 1.x 的 ID 正则当参照，逐文件对拍。
+    if (action == "--xml-stats") {
+        if (operands.empty()) {
+            std::cerr << "XMLSTATS error reason=用法：--xml-stats <文件> [--encoding X]\n";
+            return kExitUsage;
+        }
+        std::string body;
+        {
+            std::ifstream in(xrkit::core::path_from_utf8(operands[0]), std::ios::binary);
+            if (!in) {
+                std::cout << "XMLSTATS error reason=读不到文件：" << operands[0] << "\n";
+                return kExitFail;
+            }
+            body.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+        // 编码：显式给的直接严格解码；auto 走判定链（与 1.x decode_file 同义）
+        std::string text;
+        std::string used = text_encoding;
+        std::string err;
+        const std::vector<uint8_t> raw(body.begin(), body.end());
+        if (text_encoding == "auto") {
+            const xrkit::engine::text::SniffResult sniffed =
+                xrkit::engine::text::sniff_encoding(raw, "auto");
+            used = sniffed.encoding;
+        }
+        if (!xrkit::engine::text::decode_lossy(used, raw.data(), raw.size(), text, err)) {
+            std::cout << "XMLSTATS error reason=" << err << "\n";
+            return kExitFail;
+        }
+        const xrkit::engine::xml::XmlSideStats stats =
+            xrkit::engine::xml::parse_stats_text(text, used);
+        std::cout << "XMLSTATS ok lines=" << stats.lines << " ids=" << stats.id_counts.size()
+                  << " enc=" << used << "\n";
+        return kExitOk;
+    }
+
+    // XML 统计模式的**比较**探针：两侧同相对路径
+    if (action == "--xml-compare") {
+        if (operands.size() < 3) {
+            std::cerr << "XMLCMP error reason=用法：--xml-compare <rel> <A 文件> <B 文件>\n";
+            return kExitUsage;
+        }
+        const auto read_text = [](const std::string& path, std::string& text) {
+            std::ifstream in(xrkit::core::path_from_utf8(path), std::ios::binary);
+            if (!in) return false;
+            const std::string body((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            const std::vector<uint8_t> raw(body.begin(), body.end());
+            std::string err;
+            return xrkit::engine::text::decode_lossy("utf-8", raw.data(), raw.size(), text, err);
+        };
+        std::string text_a;
+        std::string text_b;
+        if (!read_text(operands[1], text_a) || !read_text(operands[2], text_b)) {
+            std::cout << "XMLCMP error reason=读不到输入\n";
+            return kExitFail;
+        }
+        const xrkit::engine::xml::XmlCompareResult result =
+            xrkit::engine::xml::compare_stats(operands[0], text_a, text_b, "utf-8", "utf-8");
+        std::cout << "XMLCMP ok consistent=" << (result.consistent ? 1 : 0)
+                  << " lines_a=" << result.lines_a << " lines_b=" << result.lines_b
+                  << " ids_a=" << result.ids_a << " ids_b=" << result.ids_b
+                  << " only_a=" << result.only_a.size() << " only_b=" << result.only_b.size()
+                  << " count_diff=" << result.count_diff.size() << "\n";
         return kExitOk;
     }
 

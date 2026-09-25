@@ -858,6 +858,31 @@ def active_code(text: str) -> str:
     return "\n".join(kept)
 
 
+def step_golden_xml_stats(release: bool) -> None:
+    """XML 统计模式的黄金对拍（M2-6e1，⑩10.6）。
+
+    参照是两件真实存在的东西：Python 的 `len(str.splitlines())` 与 1.x
+    `xml_compare_app.ID_PATTERN`（含"先剥开头 XML 声明"这一步）。
+    1.x 曾对**结尾换行**额外 +1，于是"A 有结尾换行、B 没有"被误判成不一致 ——
+    这条对拍就是冲着这个口径来的（合成样本里专门放了成对的两份）。
+    """
+    say("[24] XML 统计模式：行数/ID 与 Python 口径一致（⑩10.6）")
+    script = ROOT / "tests" / "golden_xml_stats.py"
+    if not require_repo_file(script, "XML 统计对拍"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✗") or s.startswith("GOLDEN-XML-STATS"):
+            say("  " + s)
+    if rc == 0:
+        ok("行数（splitlines 语义）与 ID 计数与参照完全一致")
+    elif rc == 2:
+        prereq("XML 统计对拍的外部前提", "CLI 缺失", release)
+    else:
+        fail("XML 统计模式与参照不一致（见上）")
+
+
 def step_shell_smoke(release: bool) -> None:
     """Qt6 外壳：构建 + **离屏自检**（M2-1）。
 
@@ -1030,6 +1055,7 @@ STEPS = [
     ("golden-font-resample", step_golden_font_resample),
     ("golden-font-charset", step_golden_font_charset),
     ("golden-font-package", step_golden_font_package),
+    ("golden-xml-stats", step_golden_xml_stats),
     ("shell-smoke", step_shell_smoke),
 ]
 

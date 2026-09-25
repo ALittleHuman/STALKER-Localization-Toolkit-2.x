@@ -14,6 +14,7 @@ add_library(xrkit_engine STATIC
   text/sniff.cpp
   text/convert.cpp
   text/extract.cpp
+  xml/compare.cpp
   font/charset.cpp
   font/glyph.cpp
   font/metrics.cpp
