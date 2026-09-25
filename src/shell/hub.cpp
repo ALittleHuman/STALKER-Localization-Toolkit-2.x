@@ -1,6 +1,7 @@
 #include "hub.h"
 
 #include "log_box.h"
+#include "plugin_ui.h"
 #include "pages/page_base.h"
 #include "pages/page_factory.h"
 #include "pages/xml_page.h"
@@ -180,7 +181,11 @@ void Hub::load_plugins(const QString& plugin_dir) {
     const QString dir = plugin_dir.isEmpty()
                             ? QDir(xrkit::core::app_dir().c_str()).filePath(QStringLiteral("plugins"))
                             : plugin_dir;
-    xrkit::plugin::load_plugins_from_dir(dir.toUtf8().toStdString(), registry_, nullptr);
+    // ⑫12.2：把外壳实现的 `api.ui`（Qt 16 方法）交给插件 —— 插件的面板/按钮
+    // 才真能造出控件；`stk_widget*` 仍是不透明句柄，插件不碰 Qt 类型。
+    const stk_ui* ui = qt_plugin_ui();
+    plugin_ui_installed_ = ui != nullptr;
+    xrkit::plugin::load_plugins_from_dir(dir.toUtf8().toStdString(), registry_, ui);
     plugin_errors_ = registry_.registration_errors();
 
     int loaded = 0;

@@ -1310,6 +1310,8 @@ SmokeResult run_smoke() {
             check(loud.log_view() != nullptr &&
                       loud.log_view()->toPlainText().contains(QStringLiteral("插件问题")),
                   QStringLiteral("⑫12.4 问题要打进日志栏（启动即可见）"));
+            check(loud.plugin_ui_installed(),
+                  QStringLiteral("⑫12.2 加载插件时必须把外壳的 api.ui 装上"));
             check(loud.page_count() == builtin_page_count(),
                   QStringLiteral("⑫12.4 插件坏了也不许影响内置六页"));
         }

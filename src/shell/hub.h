@@ -50,6 +50,8 @@ public:
     }
     // 启动时的插件提示（读几行、非空说明有插件问题）——Hub 会把它打日志 + 写状态栏
     QString plugin_notice() const { return plugin_notice_; }
+    // 探针：加载插件时是否把外壳的 `api.ui`（Qt 16 方法）装上了
+    bool plugin_ui_installed() const { return plugin_ui_installed_; }
 
     QListWidget* page_list() const { return page_list_; }
     QStackedWidget* stack() const { return stack_; }
@@ -82,6 +84,7 @@ private:
     xrkit::plugin::Registry registry_;
     std::vector<xrkit::plugin::RegistrationError> plugin_errors_;
     QString plugin_notice_;
+    bool plugin_ui_installed_ = false;
 };
 
 }  // namespace xrkit::shell
