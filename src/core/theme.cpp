@@ -176,14 +176,22 @@ std::string render_ltx(const LtxData& data) {
     return out;
 }
 
-std::string user_ltx_path() {
+std::string app_dir() {
 #if defined(_WIN32)
     wchar_t buffer[MAX_PATH] = {};
     const DWORD n = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
     if (n > 0 && n < MAX_PATH) {
         std::filesystem::path exe(buffer);
-        return path_to_utf8(exe.parent_path() / L"user.ltx");
+        return path_to_utf8(exe.parent_path());
     }
+#endif
+    return ".";
+}
+
+std::string user_ltx_path() {
+#if defined(_WIN32)
+    const std::string dir = app_dir();
+    if (dir != ".") return path_to_utf8(path_from_utf8(dir) / L"user.ltx");
 #endif
     return "user.ltx";
 }

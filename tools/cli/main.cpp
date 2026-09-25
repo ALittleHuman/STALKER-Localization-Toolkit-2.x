@@ -31,6 +31,7 @@
 #include "xrkit/engine/text/extract.h"
 #include "xrkit/engine/text/sniff.h"
 #include "xrkit/engine/third_party_probe.h"
+#include "xrkit/engine/video/ffmpeg.h"
 #include "xrkit/engine/xml/compare.h"
 
 #include <algorithm>
@@ -678,6 +679,125 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         check(ctx, stats.full_detail_calls == 1 && full.find("首个差异@") != std::string::npos &&
                       full.find("only here") != std::string::npos,
               "文本模式完整明细不对");
+    });
+
+    // ⑧8.1/8.2/8.6/8.7 ffmpeg 定位：**只认两处**（配置里存在的文件 / 程序目录），
+    // 不搜 PATH；探测惰性且失败也置位；8.x 拒用；只有手动指定的才写 user.ltx。
+    reg.add("video: ffmpeg 只认两处、不搜 PATH（⑧8.1/8.2/8.6/8.7）", [](CheckContext& ctx) {
+        namespace vid = xrkit::engine::video;
+        namespace fsys = std::filesystem;
+        std::error_code ec;
+        const fsys::path root = fsys::temp_directory_path(ec) / "xrkit_selftest_video";
+        fsys::remove_all(root, ec);
+        fsys::create_directories(root / "app", ec);
+        fsys::create_directories(root / "bogus_in_path", ec);
+        {
+            std::ofstream(root / "app" / "ffmpeg.exe") << "x";
+            std::ofstream(root / "app" / "ffprobe.exe") << "x";
+            std::ofstream(root / "manual_ffmpeg.exe") << "x";
+            std::ofstream(root / "manual_ffprobe.exe") << "x";
+            // 一个**只存在于"别处"**的同名程序：搜 PATH / 到处找都该找不到它
+            std::ofstream(root / "bogus_in_path" / "ffmpeg.exe") << "x";
+        }
+
+        // ① 程序目录命中（自动找到的**不写盘** —— 8.7）
+        const vid::FfmpegPaths local = vid::find_ffmpeg((root / "app").string(), {});
+        check(ctx, local.found && local.has_probe && !local.ffmpeg_from_config,
+              "程序目录里的 ffmpeg/ffprobe 没被认出来");
+        check(ctx, local.ffmpeg.find("app") != std::string::npos,
+              "拿到的不是程序目录里那一份：" + local.ffmpeg);
+
+        // ② 配置里的路径**必须存在**才算数；不存在 ⇒ 落回程序目录
+        vid::FfmpegConfig ghost;
+        ghost.path = (root / "nowhere" / "ffmpeg.exe").string();
+        ghost.probe = (root / "nowhere" / "ffprobe.exe").string();
+        const vid::FfmpegPaths ghost_hit = vid::find_ffmpeg((root / "app").string(), ghost);
+        check(ctx, ghost_hit.ffmpeg.find("app") != std::string::npos,
+              "配置里的路径不存在时没有落回程序目录");
+        check(ctx, ghost_hit.has_probe, "配置里的 probe 不存在时没有落回程序目录的 ffprobe");
+
+        // ③ **手动优先**，且两侧独立解析（ffmpeg 来自配置、ffprobe 来自程序目录）
+        vid::FfmpegConfig manual;
+        manual.path = (root / "manual_ffmpeg.exe").string();
+        const vid::FfmpegPaths mixed = vid::find_ffmpeg((root / "app").string(), manual);
+        check(ctx, mixed.ffmpeg_from_config && mixed.ffmpeg == manual.path,
+              "配置里的 ffmpeg 没有优先");
+        check(ctx, !mixed.ffprobe_from_config && mixed.ffprobe.find("app") != std::string::npos,
+              "两侧没有独立解析（ffprobe 应落回程序目录）");
+
+        // ④ 8.1 的反面：**不搜 PATH** —— 只把程序放在一个别的目录里，必须判没找到
+        const vid::FfmpegPaths nowhere =
+            vid::find_ffmpeg((root / "bogus_in_path" / "empty_app").string(), {});
+        check(ctx, !nowhere.found && nowhere.ffmpeg.empty(),
+              "在程序目录之外找到了 ffmpeg（是不是偷偷搜了 PATH？）");
+
+        // ⑤ 8.2 惰性 + 失败也置位：连探两次只算一次，且"没找到"要被记住
+        vid::FfmpegLocator locator((root / "bogus_in_path" / "empty_app").string());
+        check(ctx, locator.state() == vid::ProbeState::NotProbed,
+              "探测之前状态不是 NotProbed（8.5：探测前不许画 ✗）");
+        locator.ensure();
+        const int after_first = locator.probe_count();
+        check(ctx, locator.state() == vid::ProbeState::Missing,
+              "找不到时状态应为 Missing");
+        locator.ensure();
+        check(ctx, after_first == 1 && locator.probe_count() == 1,
+              "惰性探测失效（探了 " + std::to_string(locator.probe_count()) + " 次）");
+
+        // ⑥ 8.6 版本守卫：8.x 拒用（theora 对 STALKER OGM 有 bug）
+        check(ctx, vid::major_version("ffmpeg version 7.1-essentials_build") == 7,
+              "版本号没解析出来（7.1 那串）");
+        check(ctx, vid::major_version("ffmpeg version n8.0 Copyright") == 8,
+              "版本号没解析出来（n8.0 那串）");
+        check(ctx, vid::version_rejected("ffmpeg version 8.0.1") &&
+                      !vid::version_rejected("ffmpeg version 7.1"),
+              "8.x 守卫不对");
+        check(ctx, vid::major_version("不是版本串") == -1,
+              "无法识别的版本串应返回 -1");
+
+        // ⑦ 8.7：**只有手动指定的**写进 user.ltx（自动找到的不写盘）。
+        //    这里会真的动一下 exe 旁边的 user.ltx —— 先备份、测完原样写回。
+        {
+            const std::string ltx = xrkit::core::user_ltx_path();
+            std::string backup;
+            bool had_file = false;
+            {
+                std::ifstream in(xrkit::core::path_from_utf8(ltx), std::ios::binary);
+                if (in) {
+                    had_file = true;
+                    backup.assign(std::istreambuf_iterator<char>(in),
+                                  std::istreambuf_iterator<char>());
+                }
+            }
+            vid::FfmpegLocator locator((root / "app").string());
+            locator.ensure();  // 自动找到：**写盘了吗？**（不该写）
+            const std::string auto_saved = xrkit::core::load_user_value("ffmpeg", "path");
+            check(ctx, auto_saved != locator.paths().ffmpeg,
+                  "自动查找到的路径被写进 user.ltx 了（8.7：只有手动指定才写）");
+
+            std::string error;
+            const std::string manual_path = (root / "manual_ffmpeg.exe").string();
+            check(ctx, locator.set_manual(manual_path, "", error),
+                  "手动指定写盘失败：" + error);
+            check(ctx, xrkit::core::load_user_value("ffmpeg", "path") == manual_path,
+                  "手动指定的路径没写进 user.ltx");
+            // 手动优先：手动指定后重新探测必须拿到它
+            locator.invalidate();
+            check(ctx, locator.ensure().ffmpeg == manual_path,
+                  "手动指定没有优先（探测拿到的还是程序目录那份）");
+            // 不存在的文件必须拒绝
+            check(ctx, !locator.set_manual((root / "nowhere" / "ffmpeg.exe").string(), "", error) &&
+                          !error.empty(),
+                  "手动指定了不存在的文件却没被拒");
+
+            std::error_code cleanup;
+            if (had_file) {
+                std::ofstream out(xrkit::core::path_from_utf8(ltx), std::ios::binary | std::ios::trunc);
+                out.write(backup.data(), static_cast<std::streamsize>(backup.size()));
+            } else {
+                fsys::remove(xrkit::core::path_from_utf8(ltx), cleanup);
+            }
+        }
+        fsys::remove_all(root, ec);
     });
 
     // ⑥6.7 路径越界判据（safe_out_path）：归档条目名是不可信输入，这条判据挡的是

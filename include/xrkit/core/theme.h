@@ -69,6 +69,9 @@ std::string render_ltx(const LtxData& data);
 
 // `user.ltx` 的路径：**exe 所在目录**（1.x `app_dir()/user.ltx`；自动生成，不入库）。
 std::string user_ltx_path();
+// exe 所在目录（1.x `app_dir()`）。发行版把 ffmpeg.exe/ffprobe.exe 放在这里，源码版
+// `download_ffmpeg.py` 也下到项目根 —— 两者都等于这个目录（⑧8.1"只认两处"之一）。
+std::string app_dir();
 // 读整个文件；缺失/损坏返回空表（不抛）。
 LtxData load_user_config();
 std::string load_user_value(const std::string& section, const std::string& key,

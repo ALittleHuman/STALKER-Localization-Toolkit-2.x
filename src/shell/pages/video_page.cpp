@@ -1,0 +1,174 @@
+#include "video_page.h"
+
+#include "xrkit/core/path.h"
+#include "xrkit/core/theme.h"
+
+#include <QDialog>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QVBoxLayout>
+#include <filesystem>
+
+namespace xrkit::shell {
+namespace {
+
+QString utf8(const std::string& text) { return QString::fromStdString(text); }
+
+}  // namespace
+
+VideoPage::VideoPage(QWidget* parent)
+    : PageBase(QStringLiteral("video"), QStringLiteral("视频转换"), parent) {
+    auto* hint = new QLabel(QStringLiteral(
+        "把视频转成 STALKER 用的 OGM。ffmpeg **只认两处**：`user.ltx` 的 [ffmpeg] "
+        "path/probe（手动指定的，文件必须存在）与程序目录下的 ffmpeg.exe / ffprobe.exe —— "
+        "不搜 PATH。探测是惰性的：进页面先显示「未检测」。"));
+    hint->setWordWrap(true);
+
+    source_edit_ = new QLineEdit;
+    source_edit_->setObjectName(QStringLiteral("video_source"));
+    source_edit_->setAcceptDrops(true);
+    source_edit_->setPlaceholderText(QStringLiteral("源视频文件（可拖进来）"));
+    output_edit_ = new QLineEdit;
+    output_edit_->setObjectName(QStringLiteral("video_output"));
+    output_edit_->setAcceptDrops(true);
+    output_edit_->setPlaceholderText(QStringLiteral("输出目录"));
+
+    const auto row = [this](const QString& label, QLineEdit* edit, const QString& title) {
+        auto* layout = new QHBoxLayout;
+        layout->addWidget(new QLabel(label), 0);
+        layout->addWidget(edit, 1);
+        auto* browse = new QPushButton(QStringLiteral("选择…"));
+        layout->addWidget(browse, 0);
+        QObject::connect(browse, &QPushButton::clicked, this, [this, edit, title] {
+            const QString picked = QFileDialog::getExistingDirectory(this, title, edit->text());
+            if (!picked.isEmpty()) edit->setText(QDir::toNativeSeparators(picked));
+        });
+        return layout;
+    };
+    body_layout()->addWidget(hint, 0);
+    body_layout()->addLayout(row(QStringLiteral("源文件："), source_edit_,
+                                 QStringLiteral("选择输出目录")));
+    body_layout()->addLayout(row(QStringLiteral("输出目录："), output_edit_,
+                                 QStringLiteral("选择输出目录")));
+
+    // 8.5：三态状态栏。构造期**不探测**（8.2）⇒ 这里显示"未检测"，不是 ✗
+    status_ = new QLabel;
+    status_->setObjectName(QStringLiteral("video_status"));
+    body_layout()->addWidget(status_, 0);
+    body_layout()->addStretch(1);
+
+    detect_button_ = add_action(QStringLiteral("检测 ffmpeg"));
+    detect_button_->setObjectName(QStringLiteral("video_detect"));
+    QObject::connect(detect_button_, &QPushButton::clicked, this, [this] {
+        if (detect()) return;
+        request_setup();  // 8.3：读不到就弹三按钮小窗（非阻塞）
+    });
+    auto* setup = add_action(QStringLiteral("设置 ffmpeg"));
+    setup->setObjectName(QStringLiteral("video_setup"));
+    QObject::connect(setup, &QPushButton::clicked, this, [this] { request_setup(); });
+
+    refresh_status();
+}
+
+QString VideoPage::status_text() const {
+    switch (locator_.state()) {
+        case engine::video::ProbeState::NotProbed:
+            // ★ 探测之前**不显示 ✗**（那就是在断言"没有"，而我们还没查）
+            return QStringLiteral("未检测 ffmpeg");
+        case engine::video::ProbeState::Found: {
+            const engine::video::FfmpegPaths& paths = locator_.paths();
+            QString text = QStringLiteral("✓ ffmpeg: ") + utf8(paths.ffmpeg);
+            if (!paths.has_probe) text += QStringLiteral("（缺 ffprobe —— 视频信息读不出来）");
+            if (paths.ffmpeg_from_config) text += QStringLiteral("（user.ltx 手动指定）");
+            return text;
+        }
+        case engine::video::ProbeState::Missing:
+            return QStringLiteral("✗ 没找到 ffmpeg（只认 user.ltx 与程序目录，不搜 PATH）");
+    }
+    return QString();
+}
+
+void VideoPage::refresh_status() { status_->setText(status_text()); }
+
+bool VideoPage::detect() {
+    locator_.ensure();  // 惰性：探过一次（含"没找到"）就不再探
+    refresh_status();
+    return locator_.state() == engine::video::ProbeState::Found;
+}
+
+bool VideoPage::set_manual(const QString& ffmpeg, const QString& ffprobe, QString* error) {
+    std::string reason;
+    if (!locator_.set_manual(ffmpeg.toUtf8().toStdString(), ffprobe.toUtf8().toStdString(),
+                             reason)) {
+        if (error != nullptr) *error = utf8(reason);
+        return false;
+    }
+    refresh_status();
+    return true;
+}
+
+QWidget* VideoPage::request_setup() {
+    if (dialog_ != nullptr) {
+        dialog_->show();
+        dialog_->raise();
+        return dialog_;
+    }
+    auto* dialog = new QDialog(this);
+    dialog->setObjectName(QStringLiteral("video_setup_dialog"));
+    dialog->setWindowTitle(QStringLiteral("需要 ffmpeg"));
+    dialog->setModal(false);  // 8.3：**非阻塞**（不 grab、不等窗口）
+    auto* layout = new QVBoxLayout(dialog);
+    layout->addWidget(new QLabel(
+        QStringLiteral("没找到 ffmpeg。可以自动安装（项目自带的 download_ffmpeg.py），"
+                       "也可以手动指定 ffmpeg.exe / ffprobe.exe 的位置。")));
+    auto* buttons = new QHBoxLayout;
+    // 8.3：**三个**按钮 —— 自动安装 / 手动选择 / 稍后
+    auto* install = new QPushButton(QStringLiteral("自动安装"));
+    auto* choose = new QPushButton(QStringLiteral("手动选择"));
+    auto* later = new QPushButton(QStringLiteral("稍后"));
+    buttons->addWidget(install);
+    buttons->addWidget(choose);
+    buttons->addWidget(later);
+    buttons->addStretch(1);
+    layout->addLayout(buttons);
+    QObject::connect(later, &QPushButton::clicked, dialog, &QWidget::hide);
+    // 8.4：自动安装**只能挂在按钮上**（绝不在构造期/后台偷偷装）
+    QObject::connect(install, &QPushButton::clicked, this, [this] {
+        const QString message = auto_install();
+        if (status_ != nullptr) status_->setText(message);
+    });
+    QObject::connect(choose, &QPushButton::clicked, this, [this, dialog] {
+        const QString picked = QFileDialog::getOpenFileName(
+            this, QStringLiteral("选择 ffmpeg.exe"), QString(), QStringLiteral("ffmpeg (ffmpeg*.exe)"));
+        if (picked.isEmpty()) return;
+        const QDir dir = QFileInfo(picked).absoluteDir();
+        QString probe = dir.filePath(QStringLiteral("ffprobe.exe"));
+        if (!QFileInfo::exists(probe)) probe.clear();  // 8.4：缺 ffprobe 如实报，不假装有
+        QString error;
+        if (!set_manual(picked, probe, &error) && status_ != nullptr) status_->setText(error);
+        dialog->hide();
+    });
+    dialog_ = dialog;
+    dialog->show();  // show 而不是 exec ⇒ 不阻塞
+    return dialog;
+}
+
+QString VideoPage::auto_install() {
+    // 8.4：先试**项目自带**的 download_ffmpeg.py（在程序目录里）；没有就如实报。
+    // 这里刻意不去 import imageio-ffmpeg / 不去联网 —— 静默自救是明令禁止的。
+    const std::filesystem::path script =
+        xrkit::core::path_from_utf8(xrkit::core::app_dir()) / "download_ffmpeg.py";
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(script, ec)) {
+        return QStringLiteral("自动安装不可用：程序目录里没有 download_ffmpeg.py（不联网、不静默自救）");
+    }
+    return QStringLiteral("请运行 ") + utf8(xrkit::core::path_to_utf8(script)) +
+           QStringLiteral(" 完成下载（它会校验并拒绝 ffmpeg 8.x）");
+}
+
+}  // namespace xrkit::shell

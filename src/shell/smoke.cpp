@@ -8,6 +8,7 @@
 #include "pages/page_base.h"
 #include "pages/page_factory.h"
 #include "pages/text_page.h"
+#include "pages/video_page.h"
 #include "pages/xml_page.h"
 #include "scroll_viewport.h"
 #include "split_pane.h"
@@ -1089,6 +1090,61 @@ SmokeResult run_smoke() {
         check(detail.contains(QStringLiteral("id=\"")) || detail.contains(QStringLiteral("仅")),
               QStringLiteral("⑩10.3 完整明细在需要时才给（%1）").arg(detail.left(40)));
         QDir(root).removeRecursively();
+    }
+
+    // ⑧ 视频转换页（M2-6f）：8.2 构造期不探测 / 8.3 三按钮小窗非阻塞 /
+    // 8.5 状态三态（探测前不显示 ✗）/ 8.4 自动安装挂按钮上且缺件如实报。
+    {
+        namespace evid = xrkit::engine::video;
+        VideoPage page;
+        page.resize(720, page_min_h());
+        page.show();
+        QApplication::processEvents();
+
+        // 8.2/8.5：构造完**一次都没探**，状态是"未检测"（不是 ✗）
+        check(page.probe_count() == 0,
+              QStringLiteral("⑧8.2 构造期不探测（实测探了 %1 次）").arg(page.probe_count()));
+        check(page.status_text().contains(QStringLiteral("未检测")) &&
+                  !page.status_text().contains(QStringLiteral("✗")),
+              QStringLiteral("⑧8.5 探测之前不显示 ✗（%1）").arg(page.status_text()));
+
+        // 8.2：探测失败也置位（再调不会重探）
+        page.detect();
+        const int after = page.probe_count();
+        check(after == 1, QStringLiteral("⑧8.2 第一次探测记了 1 次（实测 %1）").arg(after));
+        page.detect();
+        check(page.probe_count() == 1,
+              QStringLiteral("⑧8.2 探测失败也被记住（再调不重探，实测 %1 次）")
+                  .arg(page.probe_count()));
+        check(page.probe_state() == evid::ProbeState::Missing ||
+                  page.probe_state() == evid::ProbeState::Found,
+              QStringLiteral("⑧8.5 探测后状态落定"));
+
+        // 8.3：三按钮小窗 + **非阻塞**
+        QWidget* dialog = page.request_setup();
+        check(dialog != nullptr, QStringLiteral("⑧8.3 弹出了设置小窗"));
+        if (dialog != nullptr) {
+            check(!dialog->isModal(), QStringLiteral("⑧8.3 小窗不是模态（不 grab_set）"));
+            check(dialog->isVisible(), QStringLiteral("⑧8.3 小窗 show 出来了（不 wait_window）"));
+            const QList<QPushButton*> buttons = dialog->findChildren<QPushButton*>();
+            QStringList labels;
+            for (QPushButton* button : buttons) labels << button->text();
+            check(labels.size() == 3 && labels.contains(QStringLiteral("自动安装")) &&
+                      labels.contains(QStringLiteral("手动选择")) &&
+                      labels.contains(QStringLiteral("稍后")),
+                  QStringLiteral("⑧8.3 三个按钮齐（%1）").arg(labels.join(QStringLiteral("/"))));
+        }
+        // 8.4：自动安装缺 download_ffmpeg.py 时如实报（不联网、不静默自救）
+        const QString install = page.auto_install();
+        check(install.contains(QStringLiteral("download_ffmpeg.py")) ||
+                  install.contains(QStringLiteral("不可用")) ||
+                  install.contains(QStringLiteral("ffmpeg 8.x")),
+              QStringLiteral("⑧8.4 自动安装按钮给出如实结论（%1）").arg(install.left(48)));
+        // 8.7：手动指定不存在的文件必须被拒（且不写盘）
+        QString error;
+        const QString ghost = QDir::temp().filePath(QStringLiteral("xrkit_nope_ffmpeg.exe"));
+        check(!page.set_manual(ghost, QString(), &error) && !error.isEmpty(),
+              QStringLiteral("⑧8.7 手动指定不存在的文件被拒"));
     }
 
     return result;

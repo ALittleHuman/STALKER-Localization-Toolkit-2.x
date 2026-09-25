@@ -5,6 +5,7 @@
 #include "fs_page.h"
 #include "page_base.h"
 #include "text_page.h"
+#include "video_page.h"
 #include "xml_page.h"
 
 #include <QString>
@@ -21,6 +22,7 @@ PageBase* create_page(int index, QWidget* parent) {
     if (id == QStringLiteral("convert")) return new ConvertPage(parent);
     if (id == QStringLiteral("text")) return new TextPage(parent);
     if (id == QStringLiteral("xml")) return new XmlPage(parent);
+    if (id == QStringLiteral("video")) return new VideoPage(parent);
     return new PageBase(id, QString::fromUtf8(info.title), parent);
 }
 
