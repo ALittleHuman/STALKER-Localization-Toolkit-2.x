@@ -52,6 +52,10 @@ public:
     QString plugin_notice() const { return plugin_notice_; }
     // 探针：加载插件时是否把外壳的 `api.ui`（Qt 16 方法）装上了
     bool plugin_ui_installed() const { return plugin_ui_installed_; }
+    // ⑫12.4/12.1：把插件槽位**渲染出来**（工具栏菜单项先做）——
+    // 注册成功但没人渲染 = FAIL，所以这一步也要有计数判据
+    void render_plugin_slots();
+    int plugin_slots_rendered() const { return plugin_slots_rendered_; }
 
     QListWidget* page_list() const { return page_list_; }
     QStackedWidget* stack() const { return stack_; }
@@ -85,6 +89,7 @@ private:
     std::vector<xrkit::plugin::RegistrationError> plugin_errors_;
     QString plugin_notice_;
     bool plugin_ui_installed_ = false;
+    int plugin_slots_rendered_ = 0;
 };
 
 }  // namespace xrkit::shell

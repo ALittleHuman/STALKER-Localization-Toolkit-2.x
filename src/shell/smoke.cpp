@@ -1130,6 +1130,37 @@ SmokeResult run_smoke() {
         check(keys.size() == 3, QStringLiteral("⑫12.5 模式条数应为 3（%1）").arg(keys.size()));
     }
 
+    // ⑫12.1/12.4：插件槽位要**渲染出来**（工具栏菜单项 → 页面的操作栏按钮）
+    {
+        namespace plug = xrkit::plugin;
+        const QString empty = QDir::temp().filePath(QStringLiteral("xrkit_smoke_slots"));
+        QDir(empty).removeRecursively();
+        QDir().mkpath(empty);
+        Hub hub(nullptr, empty);
+        plug::PluginApiAdapter adapter(hub.registry(), "slots.dll", nullptr);
+        const auto on_click = +[](void*) {};
+        const char* cid =
+            adapter.api().register_command(adapter.api().host, "slot_action", "插件动作",
+                                           on_click, nullptr, nullptr);
+        check(cid != nullptr, QStringLiteral("⑫12.1 插件命令注册失败"));
+        check(adapter.api().register_menu_item(adapter.api().host, "xml", "toolbar", cid, 0) == 1,
+              QStringLiteral("⑫12.4 插件工具栏挂载点注册失败"));
+        hub.render_plugin_slots();
+        check(hub.plugin_slots_rendered() >= 1,
+              QStringLiteral("⑫12.1 插件槽位没有被渲染（渲染了 %1 个）")
+                  .arg(hub.plugin_slots_rendered()));
+        bool found = false;
+        for (int i = 0; i < hub.page_count(); ++i) {
+            PageBase* page = hub.page_at(i);
+            if (page == nullptr || page->page_id() != QStringLiteral("xml")) continue;
+            for (QPushButton* button : page->action_bar()->findChildren<QPushButton*>()) {
+                if (button->text() == QStringLiteral("插件动作")) found = true;
+            }
+        }
+        check(found, QStringLiteral("⑫12.1 插件动作按钮没出现在 XML 页的操作栏里"));
+        QDir(empty).removeRecursively();
+    }
+
     // ⑧ 视频转换页（M2-6f）：8.2 构造期不探测 / 8.3 三按钮小窗非阻塞 /
     // 8.5 状态三态（探测前不显示 ✗）/ 8.4 自动安装挂按钮上且缺件如实报。
     {

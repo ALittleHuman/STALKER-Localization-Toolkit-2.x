@@ -21,6 +21,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
+#include <QPushButton>
 #include <QPlainTextEdit>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -173,6 +174,35 @@ void Hub::log_line(const QString& text) {
     if (log_box_ != nullptr) log_box_->append_batched(text);
 }
 
+void Hub::render_plugin_slots() {
+    // ⑫12.1：`menu_items_for(host, "toolbar")` 的每一项都要**真的出现在界面上** ——
+    // 这里先做工具栏一类（其它槽位：下拉条目/面板/插件页同理，后续按需接）。
+    plugin_slots_rendered_ = 0;
+    for (int i = 0; i < page_count(); ++i) {
+        PageBase* page = page_at(i);
+        if (page == nullptr) continue;
+        const std::string host = page->page_id().toStdString();
+        for (const plugin::CommandReg* command :
+             registry_.menu_items_for(host, "toolbar")) {
+            auto* button = page->add_action(QString::fromStdString(command->label));
+            button->setObjectName(QStringLiteral("plugin_") + QString::fromStdString(command->id));
+            const std::string plugin = command->plugin;
+            const std::string label = command->label;
+            const plugin::CommandHandler handler = command->handler;
+            QObject::connect(button, &QPushButton::clicked, this,
+                             [this, plugin, label, handler] {
+                                 // ⑫12.9：插件回调统一走 invoke（异常记账，不冒到 UI）
+                                 registry_.invoke(plugin, label, handler);
+                             });
+            ++plugin_slots_rendered_;
+            log_line(QStringLiteral("插件槽位：%1 → %2（%3）")
+                         .arg(QString::fromStdString(host))
+                         .arg(QString::fromStdString(command->label))
+                         .arg(QString::fromStdString(plugin)));
+        }
+    }
+}
+
 void Hub::load_plugins(const QString& plugin_dir) {
     // ⑫12.4：插件注册期的非法寻址要在 **Hub 启动时可见** —— 这里做三件事：
     // ① 真去加载（失败不阻塞启动）；② 把错误逐条打进日志栏；③ 状态栏给一句汇总。
@@ -202,6 +232,7 @@ void Hub::load_plugins(const QString& plugin_dir) {
     }
     log_line(plugin_notice_);
     if (status_label_ != nullptr && !plugin_errors_.empty()) status_label_->setText(plugin_notice_);
+    render_plugin_slots();
 }
 
 }  // namespace xrkit::shell
