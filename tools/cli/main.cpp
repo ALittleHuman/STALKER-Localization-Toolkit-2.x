@@ -20,6 +20,7 @@
 #include "xrkit/engine/fs/lzhuf.h"
 #include "xrkit/engine/fs/overlay.h"
 #include "xrkit/engine/plugin/contract.h"
+#include "xrkit/engine/plugin/registry.h"
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/font/charset.h"
 #include "xrkit/engine/font/glyph.h"
@@ -915,6 +916,188 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
                                            std::string::npos &&
                       std::string(label->params).find("style") != std::string::npos,
               "参数名也是契约（label 应有 parent/style）");
+    });
+
+    // ⑫12.1/12.4~12.9 注册表：**10 个注册点逐点验"真的被消费"**
+    // （1.x 的判据原话：注册成功但无人消费 = FAIL），外加槽位精确匹配、排序规则、
+    // when 三形态、scan 不清 compare_modes、回调异常不冒出去。
+    reg.add("plugin: 十个注册点与消费端（⑫12.1/12.4~12.9）", [](CheckContext& ctx) {
+        namespace plug = xrkit::plugin;
+        namespace exml = xrkit::engine::xml;
+        plug::Registry reg;
+
+        // ── 1) 解密器 / 2) 格式：两个"能力"注册点 ──
+        bool decryptor_used = false;
+        check(ctx, reg.register_decryptor("t.dll", [](const std::string& path) {
+                  return path.find("zzzz") != std::string::npos;
+              },
+              [&decryptor_used](const std::string& path, std::string& out) {
+                  decryptor_used = path.empty();
+                  out = "x";
+                  return true;
+              }),
+              "注册解密器失败");
+        check(ctx, reg.find_decryptor("a/zzzz.sq_base") != nullptr &&
+                      reg.find_decryptor("a/plain.sqfs") == nullptr,
+              "解密器没有被消费端按 check 命中（12.1）");
+        // check 抛异常 ⇒ 跳过这一个（1.x `find_decryptor` 的 try/except）
+        plug::Registry bad_dec;
+        bad_dec.register_decryptor("bad.dll", [](const std::string&) -> bool {
+            throw std::runtime_error("boom");
+        }, [](const std::string&, std::string&) { return true; });
+        check(ctx, bad_dec.find_decryptor("x") == nullptr, "抛异常的 check 没被跳过");
+
+        check(ctx, reg.register_format("t.dll", "myfmt", [](const std::string&) { return true; }),
+              "注册格式失败");
+        check(ctx, reg.formats().size() == 1 && reg.formats()[0].name == "myfmt",
+              "格式没有被消费端看到（12.1）");
+
+        // ── 3) 命令 + 4) 挂载点 ──
+        const auto cmd = reg.register_command("t.dll", "export_csv", "导出 CSV", [] {});
+        check(ctx, cmd.has_value() && *cmd == "t.dll:export_csv",
+              "命令 id 应是 <插件>:<动作名>（12.1）");
+        check(ctx, !reg.register_command("t.dll", "bad name!", "x", [] {}).has_value(),
+              "非法动作名应被拒");
+        check(ctx, !reg.register_command("t.dll", "export_csv", "x", [] {}).has_value(),
+              "重复命令应被拒");
+        check(ctx, !reg.register_command("t.dll", "ok_name", "x", nullptr).has_value(),
+              "空 handler 应被拒");
+        check(ctx, !reg.register_menu_item("t.dll", "nope", "toolbar", *cmd),
+              "未知 host 应被拒（12.4）");
+        check(ctx, !reg.register_menu_item("t.dll", "xml", "sidebar", *cmd),
+              "未知 location 应被拒（12.4）");
+        check(ctx, reg.registration_errors().size() >= 5,
+              "被拒的注册必须留下 registration_errors（不许静默）");
+        check(ctx, reg.register_menu_item("t.dll", "xml", "toolbar", *cmd, 10), "挂载点注册失败");
+        check(ctx, reg.register_menu_item("t.dll", "xml", "toolbar", "t.dll:missing", 0) == false,
+              "挂载点引用未注册命令应被拒");
+        check(ctx, reg.menu_items_for("xml", "toolbar").size() == 1 &&
+                      reg.menu_items_for("xml", "context").empty() &&
+                      reg.menu_items_for("fs", "toolbar").empty(),
+              "挂载点是**精确匹配**（不跨槽回退，12.4）");
+
+        // ── 5) 下拉条目 + 6) 新建下拉 ──
+        check(ctx, reg.register_option_entry("t.dll", "xml", "filter", "我的筛选"), "条目注册失败");
+        check(ctx, reg.register_option_entry("t.dll", "xml", "filter", "我的筛选"),
+              "重复条目注册失败");
+        check(ctx, !reg.register_option_entry("t.dll", "nope", "filter", "x"), "未知 host 应被拒");
+        const std::vector<std::string> entries = reg.option_entries_for("xml", "filter");
+        check(ctx, entries.size() == 1 && entries[0] == "我的筛选",
+              "下拉条目没被消费或没保序去重（12.5）");
+        check(ctx, reg.register_option("t.dll", "我的下拉", {"a", "b"}, [] {}, "fs", "top_bar", {},
+                                       5),
+              "新建下拉注册失败");
+        check(ctx, reg.options_for("fs", "top_bar").size() == 1 &&
+                      reg.options_for("fs", "bottom").empty(),
+              "新建下拉没被消费（12.1）");
+
+        // ── 7) 面板 ──
+        check(ctx, reg.register_panel("t.dll", "我的面板", [](void*) { return nullptr; }, "xml",
+                                      "top_bar"),
+              "面板注册失败");
+        check(ctx, !reg.register_panel("t.dll", "坏面板", nullptr, "xml", "top_bar"),
+              "空 builder 应被拒");
+        check(ctx, reg.panels_for("xml", "top_bar").size() == 1 &&
+                      reg.panels_for("xml", "bottom").empty(),
+              "面板没被消费（12.1）");
+
+        // ── 8) Hub 页（工具）──
+        check(ctx, reg.register_tool("t.dll", "我的页", [](void*) { return nullptr; }, 1),
+              "工具页注册失败");
+        check(ctx, !reg.register_tool("t.dll", "坏页", nullptr),
+              "空 builder 应被拒");
+        check(ctx, reg.tools_sorted().size() == 1 && reg.tools_sorted()[0]->name == "我的页",
+              "工具页没被消费（12.1）");
+
+        // ── 9) 比较模式（唯一哨兵 + 内置优先 + order 稳定排序）──
+        auto make_mode = [](const std::string& name, const std::string& key, int order) {
+            plug::CompareModeReg mode;
+            mode.spec.name = name;
+            mode.spec.key = key;
+            mode.spec.order = order;
+            mode.spec.columns = {{"rel", "文件", 100}, {"detail", "差异", 100}};
+            mode.compare = [](const std::string& rel, const std::string&, const std::string&,
+                              const std::string&, const std::string&) {
+                exml::XmlCompareResult r;
+                r.rel = rel;
+                r.consistent = true;
+                return r;
+            };
+            return mode;
+        };
+        check(ctx, reg.register_compare_mode("t.dll", make_mode("我的模式", "mine", 30)),
+              "比较模式注册失败");
+        check(ctx, !reg.register_compare_mode("t.dll", make_mode("", "", 0)),
+              "空名字/空键的模式应被拒");
+        plug::CompareModeReg no_compare = make_mode("无比较", "nocompare", 0);
+        no_compare.compare = nullptr;
+        check(ctx, !reg.register_compare_mode("t.dll", no_compare), "缺 compare 的模式应被拒");
+        // 内置模式（哨兵由注册表统一）：插件与内置同名时**内置赢**（与注册顺序无关）
+        plug::CompareModeReg clashing = make_mode("行数/ID 统计", "plugin_stats", 1);
+        check(ctx, reg.register_compare_mode(exml::kBuiltinPlugin, clashing),
+              "内置模式注册失败");
+        int modes_seen = 0;
+        bool builtin_won = false;
+        for (const plug::CompareModeReg* mode : reg.compare_modes_for()) {
+            if (mode->spec.name == "行数/ID 统计") {
+                ++modes_seen;
+                builtin_won = mode->spec.plugin == exml::kBuiltinPlugin &&
+                              mode->spec.key == "plugin_stats";
+            }
+        }
+        check(ctx, modes_seen == 1 && builtin_won,
+              "同名模式下内置没有赢 / 没有去重（12.5/12.8）");
+        check(ctx, reg.compare_mode("mine") != nullptr && reg.compare_mode("没有这个") == nullptr,
+              "按内部键取模式失败");
+        const std::vector<const plug::CompareModeReg*> ordered = reg.compare_modes_for();
+        check(ctx, ordered.size() == 2 && ordered[0]->spec.key == "plugin_stats",
+              "比较模式没按 order 升序（内置那条 order=1 应在前）");
+
+        // ── 10) scan()：清插件贡献但**不动** compare_modes（12.7）──
+        const size_t before = reg.compare_modes_for().size();
+        reg.scan_clear();
+        check(ctx, reg.command_count() == 0 && reg.formats().empty() &&
+                      reg.menu_items_for("xml", "toolbar").empty() &&
+                      reg.registration_errors().empty(),
+              "scan 没有清掉插件贡献");
+        check(ctx, reg.compare_modes_for().size() == before,
+              "scan() 把 compare_modes 也清了（12.7：内置与插件共用一张表）");
+
+        // ── 12.6 when 三形态 ──
+        plug::WhenSpec always;
+        check(ctx, plug::when_ok(always, {}), "空 when 应恒真");
+        plug::WhenSpec match;
+        match.match.push_back({"mode", std::string("文本")});
+        plug::Context hit;
+        hit["mode"] = std::string("文本");
+        plug::Context miss;
+        miss["mode"] = std::string("统计");
+        check(ctx, plug::when_ok(match, hit) && !plug::when_ok(match, miss) &&
+                      !plug::when_ok(match, {}),
+              "dict 形式 when 不满足时判真（缺键应不满足）");
+        plug::WhenSpec null_match;
+        null_match.match.push_back({"k", plug::ContextValue{}});  // 期望 None
+        check(ctx, plug::when_ok(null_match, {}),
+              "期望 None 时缺键应命中（Python 的 ctx.get(k) == None 语义）");
+        plug::WhenSpec boom;
+        boom.predicate = [](const plug::Context&) -> bool { throw std::runtime_error("x"); };
+        check(ctx, !plug::when_ok(boom, {}), "when 回调抛异常应判 False");
+        plug::WhenSpec pred;
+        pred.predicate = [](const plug::Context& c) {
+            const auto it = c.find("loaded");
+            return it != c.end() && it->second.has_value() && *it->second == "1";
+        };
+        plug::Context loaded;
+        loaded["loaded"] = std::string("1");
+        check(ctx, plug::when_ok(pred, loaded) && !plug::when_ok(pred, {}),
+              "可调用 when 没生效");
+
+        // ── 12.9 回调抛异常：绝不冒出去，也绝不静默 ──
+        plug::Registry throwing;
+        throwing.invoke("t.dll", "命令执行", [] { throw std::runtime_error("kaboom"); });
+        check(ctx, throwing.registration_errors().size() == 1 &&
+                      throwing.registration_errors()[0].message.find("kaboom") != std::string::npos,
+              "插件回调抛异常没被捕获记账（12.9）");
     });
 
     // ⑥6.7 路径越界判据（safe_out_path）：归档条目名是不可信输入，这条判据挡的是
