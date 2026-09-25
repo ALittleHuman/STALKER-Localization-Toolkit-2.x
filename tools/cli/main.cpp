@@ -12,6 +12,7 @@
 #include "xrkit/core/check.h"
 #include "xrkit/core/log.h"
 #include "xrkit/core/path.h"
+#include "xrkit/core/atomic_write.h"
 #include "xrkit/core/theme.h"
 #include "xrkit/core/version.h"
 #include "xrkit/engine/engine.h"
@@ -1102,6 +1103,37 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
               "插件回调抛异常没被捕获记账（12.9）");
     });
 
+    // ★ 原子写的**路径编码安全**（2026-09-25 HanaAgent 审计查出的【高】缺陷的锁）：
+    //   临时文件路径若经 `Path::string()`（CP_ACP）转窄串，ACP 表示不了的字符会变成 `?`
+    //   ⇒ 打不开、原子写失败。这里用**ACP 表示不了的字符（韩文）**真写一次：旧代码必红。
+    //   ★ 样本选择有讲究：**西里尔在 GBK(936) 里是有映射的**（GB2312 收俄文字母）⇒ 拿"俄文
+    //   文件名"当样本会**假绿**（实测：注入旧代码仍全过）；韩文/泰文不在 GBK 里，在 ACP=936
+    //   与 ACP=1252 两种机器上都表示不了，才是能失败的样本。
+    reg.add("core: 原子写在非 ACP 路径下必须成功（韩文）", [](CheckContext& ctx) {
+        std::error_code ec;
+        const std::filesystem::path dir =
+            std::filesystem::temp_directory_path(ec) /
+            xrkit::core::path_from_utf8("xrkit_selftest_한글");
+        const std::filesystem::path file = dir / xrkit::core::path_from_utf8("파일.txt");
+        const std::vector<uint8_t> data{0x41, 0x00, 0x42, 0xFF};
+        std::string error;
+        const bool ok = xrkit::core::write_file_atomic(xrkit::core::path_to_utf8(file), data,
+                                                       /*atomic=*/true, error);
+        check(ctx, ok, "非 ACP 字符（韩文）的路径原子写失败：" + error);
+        if (ok) {
+            std::ifstream in(file, std::ios::binary);
+            const std::string got((std::istreambuf_iterator<char>(in)),
+                                  std::istreambuf_iterator<char>());
+            check(ctx, got.size() == data.size() &&
+                          std::memcmp(got.data(), data.data(), data.size()) == 0,
+                  "写回内容与输入不一致（非 ACP 路径）");
+            std::filesystem::path part = file;
+            part += L".part";
+            check(ctx, !std::filesystem::exists(part), "原子写留下了 .part");
+        }
+        std::filesystem::remove(file, ec);
+        std::filesystem::remove(dir, ec);
+    });
     // ⑫12.1/12.2/12.3 纯 C ABI：**像插件那样**通过函数表把 10 个注册点全跑一遍，
     // 再从消费端把每一条捞回来。无 Qt 路径（`api.ui == nullptr`）——UI 那 16 个方法
     // 由外壳注入，这里证的是"注册面 + 回调 + when 数据化"这套 ABI 形状真的通。

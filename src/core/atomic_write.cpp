@@ -26,7 +26,12 @@ bool write_file_atomic(const std::string& path, const std::vector<uint8_t>& data
             return false;
         }
     }
-    const stdfs::path temp = atomic ? stdfs::path(target.string() + ".part") : target;
+    // ★ 临时文件路径**必须全程走宽串**：`Path::string()` 在 Windows 上按 **CP_ACP** 转窄串，
+    //   ACP 表示不了的字符（中文 Windows 下的西里尔/俄文）会变成 `?`，而 `?` 是非法文件名字符
+    //   ⇒ 临时文件打不开、原子写**必然失败**（2026-09-25 HanaAgent 审计查出；我们的逐字节语料
+    //   路径全是 ASCII，所以一直没暴露）。用 `+= L".part"` 保住 native 宽串。
+    stdfs::path temp = target;
+    if (atomic) temp += L".part";
 
     {
         std::ofstream out(temp, std::ios::binary | std::ios::trunc);
