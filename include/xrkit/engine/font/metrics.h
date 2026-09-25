@@ -14,7 +14,9 @@
 // 本模块**不依赖 FreeType**：需要墨迹的地方（`left0` / `gw`）由调用方量好传进来。
 
 #include <cstdint>
+#include <map>
 #include <string>
+#include <vector>
 
 namespace xrkit::engine::font {
 
@@ -86,6 +88,36 @@ int ink_draw_w(int gw, int rw, int pl);
 
 // 该字没有字形时用来顶的繁体字（1.x `ST_FALLBACK`）；没有则返回 0。
 uint32_t st_fallback(uint32_t cp);
+
+// ── ⑪11.8 CJK 字形四态判定 ──────────────────────────────────────────
+//
+// 1.x `apps/font_pack_app.glyph_status`：**唯一**的判据，列表标记与预览标题共用它
+//（两处各判一次就会出现"列表 ✓ 中文、预览却缺常用字"的自相矛盾）。
+//   · ok       —— 样本里每个字都画得出墨迹，且**不同 bbox 数 > 1**
+//                 （全同 = 该字体对什么字都画同一个方块）；
+//   · japanese —— 有简体字画不出，但缺的那些里**有能**用繁体字形顶上的
+//                 （日文字体按 JIS 收字，没有简体专有形却有繁体形）；
+//   · missing  —— 画不出的字连繁体也补不出来；或 bbox 全同（fail-closed）；
+//   · unknown  —— **检测失败**（字体打不开等），与"缺字形"不是一回事，界面上要分开。
+//
+// ★ 与对照表措辞的差异（**照代码不照文档**）：11.8 把 japanese 写成"缺的简体字
+//   **全都能**用繁体顶上"，而 1.x 的代码是 `if sample_fallback(path):` ——
+//   **非空即可**（只要有一个缺字能补就判 japanese）。这里按代码实现，差异记账。
+enum class CjkFontState { Ok, Japanese, Missing, Unknown };
+
+struct CjkFontCheck {
+    CjkFontState state = CjkFontState::Unknown;
+    std::vector<std::string> missing;              // 样本里画不出墨迹的字（UTF-8 单字，按样本顺序）
+    std::map<std::string, std::string> fallbacks;  // 缺字里能用繁体顶上的：{简体: 繁体}
+};
+
+// 判定样本（1.x `CJK_SAMPLE`）——**判据的一部分，不许随手改**：
+// 老样本"永你好汉化测"漏了"简体特有"的字，日文字体照样判 ✓ 中文，而预览里那几个字
+// 是整字宽的空洞。现在混入简体特有的字，缺一个就 fail-closed。
+const char* cjk_sample();
+
+CjkFontCheck classify_cjk_font(const std::string& font_path, int pixel_size = 40);
+const char* cjk_state_mark(CjkFontState state);  // "✓ 中文" / "⚠ 日语字体（缺简体→用繁体）" 等
 
 // ── 探针 ───────────────────────────────────────────────────────────────
 

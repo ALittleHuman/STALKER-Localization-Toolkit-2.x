@@ -23,4 +23,18 @@ namespace xrkit::engine::font {
 bool dump_glyphs(const std::string& font_path, int pixel_size,
                  const std::vector<uint32_t>& cps, const std::string& out_path);
 
+// 单个码位的掩码信息（与 Pillow `font.getmask(ch, mode="L")` 同一栈）。
+// `has_ink=false` 对应 Pillow 的 `getmask(ch).getbbox() is None` —— 即"这个字在这个
+// 字体里画出来是**空的**"（⑪11.8 的判据就是它，不是"字体里有没有这个码位"：
+// 有些字体的 .notdef 本身就是空白）。
+struct GlyphMaskInfo {
+    bool ok = false;        // 渲染这一步成功（字体能打开、码位能设置）
+    bool has_ink = false;   // 掩码里有非零像素
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;  // 紧致 bbox（无墨迹时全 0）
+    int width = 0, height = 0;           // 掩码尺寸（未裁）
+};
+
+bool glyph_mask_info(const std::string& font_path, int pixel_size, uint32_t cp,
+                     GlyphMaskInfo& out);
+
 }  // namespace xrkit::engine::font

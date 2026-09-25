@@ -118,4 +118,61 @@ bool dump_glyphs(const std::string& font_path, int pixel_size,
     return static_cast<bool>(f);
 }
 
+bool glyph_mask_info(const std::string& font_path, int pixel_size, uint32_t cp,
+                     GlyphMaskInfo& out) {
+    out = GlyphMaskInfo{};
+    const std::string native = core::path_from_utf8(font_path).string();
+    FT_Library lib = nullptr;
+    if (FT_Init_FreeType(&lib) != 0) return false;
+    struct LibGuard {
+        FT_Library l;
+        ~LibGuard() { FT_Done_FreeType(l); }
+    } lib_guard{lib};
+    FT_Face face = nullptr;
+    if (FT_New_Face(lib, native.c_str(), 0, &face) != 0) return false;
+    struct FaceGuard {
+        FT_Face f;
+        ~FaceGuard() { FT_Done_Face(f); }
+    } face_guard{face};
+    if (FT_Set_Pixel_Sizes(face, 0, static_cast<FT_UInt>(pixel_size)) != 0) return false;
+
+    const FT_UInt index = FT_Get_Char_Index(face, cp);
+    if (index == 0) {
+        // 字体里没有这个码位 ⇒ 走 .notdef；**判据不是它**，而是渲染出来有没有墨迹
+        // （有些字体的 .notdef 是空白，有些是方框；1.x 用 `getbbox() is None` 区分）。
+        if (FT_Load_Glyph(face, 0, FT_LOAD_DEFAULT) != 0) return false;
+    } else if (FT_Load_Glyph(face, index, FT_LOAD_DEFAULT) != 0) {
+        return false;
+    }
+    if (FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL) != 0) return false;
+    const FT_Bitmap& bm = face->glyph->bitmap;
+    out.width = static_cast<int>(bm.width);
+    out.height = static_cast<int>(bm.rows);
+    out.ok = true;
+    if (bm.pixel_mode != FT_PIXEL_MODE_GRAY || bm.buffer == nullptr) return true;
+
+    int x0 = out.width;
+    int y0 = out.height;
+    int x1 = -1;
+    int y1 = -1;
+    for (int r = 0; r < out.height; ++r) {
+        const uint8_t* row = bm.buffer + static_cast<size_t>(r) * bm.pitch;
+        for (int c = 0; c < out.width; ++c) {
+            if (row[c] == 0) continue;
+            if (c < x0) x0 = c;
+            if (c > x1) x1 = c;
+            if (r < y0) y0 = r;
+            if (r > y1) y1 = r;
+        }
+    }
+    if (x1 >= 0) {
+        out.has_ink = true;
+        out.x0 = x0;
+        out.y0 = y0;
+        out.x1 = x1 + 1;  // 与 Pillow 的 bbox 一样是**半开区间**
+        out.y1 = y1 + 1;
+    }
+    return true;
+}
+
 }  // namespace xrkit::engine::font

@@ -20,6 +20,7 @@ add_library(xrkit_shell STATIC
   pages/text_page.cpp
   pages/xml_page.cpp
   pages/video_page.cpp
+  pages/fontpack_page.cpp
   smoke.cpp)
 
 target_include_directories(xrkit_shell PUBLIC "${CMAKE_SOURCE_DIR}/include")

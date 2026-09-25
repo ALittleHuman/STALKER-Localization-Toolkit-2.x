@@ -5,6 +5,7 @@
 #include "log_box.h"
 #include "pages/convert_page.h"
 #include "pages/fs_page.h"
+#include "pages/fontpack_page.h"
 #include "pages/page_base.h"
 #include "pages/page_factory.h"
 #include "pages/text_page.h"
@@ -1145,6 +1146,50 @@ SmokeResult run_smoke() {
         const QString ghost = QDir::temp().filePath(QStringLiteral("xrkit_nope_ffmpeg.exe"));
         check(!page.set_manual(ghost, QString(), &error) && !error.isEmpty(),
               QStringLiteral("⑧8.7 手动指定不存在的文件被拒"));
+    }
+
+    // ⑪ 汉化包生成页（M2-6g）：11.8 四态标记由引擎给 / 11.9 缺字形**先判后建**且不留半成品。
+    {
+        namespace fnt = xrkit::engine::font;
+        FontPackPage page;
+        page.resize(760, page_min_h());
+        page.show();
+        QApplication::processEvents();
+
+        const QString msyh = QStringLiteral(
+            "E:/Software/Games/STALKER/Localization/Tools/otherTools/CN_Pack_Generator/msyh.ttf");
+        const QString jpan = QStringLiteral("C:/Windows/Fonts/hpsimplifiedjpan-regular.ttf");
+        const QString latin = QStringLiteral("C:/Windows/Fonts/arial.ttf");
+        const auto exists = [](const QString& path) { return QFileInfo::exists(path); };
+
+        // 11.8：标记逐字等于引擎的判据（页面不许自己再判一遍）
+        if (exists(msyh)) {
+            check(page.font_state_text(msyh) ==
+                      QString::fromUtf8(fnt::cjk_state_mark(fnt::CjkFontState::Ok)),
+                  QStringLiteral("⑪11.8 简体字体标记 = 引擎判据（%1）").arg(page.font_state_text(msyh)));
+        }
+        if (exists(jpan)) {
+            const QString mark = page.font_state_text(jpan);
+            check(mark.startsWith(QString::fromUtf8(fnt::cjk_state_mark(fnt::CjkFontState::Japanese))) &&
+                      mark.contains(QStringLiteral("可用繁体顶")),
+                  QStringLiteral("⑪11.8 日语字体标记 + 繁体回退计数（%1）").arg(mark));
+        }
+        check(page.font_state_text(QString()).contains(QStringLiteral("未选择字体")),
+              QStringLiteral("⑪11.8 没选字体时不乱下结论"));
+
+        // 11.9：缺字形**拒绝式检查、在建目录之前** —— 产物目录不许被建出来
+        if (exists(latin)) {
+            const QString out = QDir::temp().filePath(QStringLiteral("xrkit_smoke_fontpack_out"));
+            QDir(out).removeRecursively();
+            QString reason;
+            const bool built = page.build(QDir::temp().filePath(QStringLiteral("xrkit_no_xml")),
+                                          latin, out, &reason);
+            check(!built && reason.contains(QStringLiteral("拒绝生成")),
+                  QStringLiteral("⑪11.9 缺字形被拒（%1）").arg(reason));
+            check(!QDir(out).exists() && page.refused_count() >= 1,
+                  QStringLiteral("⑪11.9 拒绝时**没有**创建输出目录"));
+            QDir(out).removeRecursively();
+        }
     }
 
     return result;

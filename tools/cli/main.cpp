@@ -800,6 +800,64 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         fsys::remove_all(root, ec);
     });
 
+    // ⑪11.8 CJK 字形四态判定：真字体上逐态验（本机有 msyh=简体全、hpsimplifiedjpan=日语、
+    // arial=无 CJK 三种典型形态）。缺字体时**只是不测**，不假绿也不判红。
+    reg.add("font: CJK 字形四态判定（⑪11.8）", [](CheckContext& ctx) {
+        namespace fnt = xrkit::engine::font;
+        namespace fsys = std::filesystem;
+        const auto exists = [](const char* path) {
+            std::error_code ec;
+            return fsys::is_regular_file(xrkit::core::path_from_utf8(path), ec);
+        };
+        // 判定失败（路径不存在）必须是 unknown，而不是 missing
+        const fnt::CjkFontCheck bogus =
+            fnt::classify_cjk_font("no_such_font_file_xyz.ttf", 40);
+        check(ctx, bogus.state == fnt::CjkFontState::Unknown,
+              "打不开的字体应判 unknown（与缺字形分开）");
+
+        const char* msyh = "E:/Software/Games/STALKER/Localization/Tools/otherTools/"
+                           "CN_Pack_Generator/msyh.ttf";
+        const char* jpan = "C:/Windows/Fonts/hpsimplifiedjpan-regular.ttf";
+        const char* latin = "C:/Windows/Fonts/arial.ttf";
+
+        if (exists(msyh)) {
+            const fnt::CjkFontCheck cjk = fnt::classify_cjk_font(msyh, 40);
+            check(ctx, cjk.state == fnt::CjkFontState::Ok,
+                  std::string("简体字体（msyh）应判 ok，实测 ") + fnt::cjk_state_mark(cjk.state));
+            check(ctx, cjk.missing.empty(), "msyh 不该有缺字");
+        } else {
+            xrkit::core::log(xrkit::core::Level::Warn, "自检缺 msyh.ttf，跳过 11.8 的 ok 分支");
+        }
+        if (exists(jpan)) {
+            // 日语字体按 JIS 收字：没有简体专有形、却有繁体形 ⇒ 必须是 japanese
+            const fnt::CjkFontCheck jp = fnt::classify_cjk_font(jpan, 40);
+            check(ctx, jp.state == fnt::CjkFontState::Japanese,
+                  std::string("日语字体（hpsimplifiedjpan）应判 Japanese，实测 ") +
+                      fnt::cjk_state_mark(jp.state));
+            check(ctx, !jp.missing.empty() && !jp.fallbacks.empty(),
+                  "日语字体应给出「缺哪些字 + 能用繁体顶哪些字」");
+        } else {
+            xrkit::core::log(xrkit::core::Level::Warn,
+                             "自检缺 hpsimplifiedjpan，跳过 11.8 的 japanese 分支");
+        }
+        if (exists(latin)) {
+            // 完全画不出汉字的字体：缺字连繁体也补不出来 ⇒ missing（fail-closed）
+            const fnt::CjkFontCheck missing = fnt::classify_cjk_font(latin, 40);
+            check(ctx, missing.state == fnt::CjkFontState::Missing,
+                  std::string("无 CJK 的字体应判 missing，实测 ") +
+                      fnt::cjk_state_mark(missing.state));
+            check(ctx, missing.fallbacks.empty(), "无 CJK 的字体不该有可用的繁体替代");
+        } else {
+            xrkit::core::log(xrkit::core::Level::Warn, "自检缺 arial.ttf，跳过 11.8 的 missing 分支");
+        }
+        // 样本本身是判据的一部分：必须含简体特有的字（老样本漏了它们才会误判）
+        const std::string sample = fnt::cjk_sample();
+        check(ctx, sample.find("汉") != std::string::npos &&
+                      sample.find("测") != std::string::npos &&
+                      sample.find("这") != std::string::npos,
+              "判定样本里缺了简体特有的字（会被日文字体蒙混过关）");
+    });
+
     // ⑥6.7 路径越界判据（safe_out_path）：归档条目名是不可信输入，这条判据挡的是
     // **任意文件写**。1.x 只把理由写在注释里，2.0 把"拒因"带出来 —— 所以这里连
     // **理由**一起断言：改判定顺序、把某一条删掉，都能当场变红。

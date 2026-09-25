@@ -17,6 +17,7 @@ add_library(xrkit_engine STATIC
   xml/compare.cpp
   video/ffmpeg.cpp
   font/charset.cpp
+  font/cjk_state.cpp
   font/glyph.cpp
   font/metrics.cpp
   font/package.cpp
