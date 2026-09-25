@@ -579,6 +579,29 @@ def step_font_tables(release: bool) -> None:
             return
         ok("%s与 1.x 一致" % what)
 
+    # 插件契约表（槽位 HOSTS/LOCATIONS/AREA_* + api.ui 的 16 方法及其参数名）——
+    # ⑫12.3 要求"契约清单从源码 AST 读，读不到就报错、不许静默降级"，
+    # 所以它是**生成物 + --check 锁**，不是手抄的一份表。
+    gen = ROOT / "tools" / "gen_plugin_contract.py"
+    if not require_repo_file(gen, "插件契约生成器"):
+        return
+    if not require_repo_file(ROOT / "src" / "engine" / "plugin" / "contract_tables.inc",
+                             "插件契约生成物"):
+        return
+    for src in ("toolkit_plugins.py", "toolkit_plugin_ui.py"):
+        if not (TOOLKIT_1X / src).is_file():
+            prereq("1.x 参照仓库（%s）" % src, "未找到", release)
+            return
+    rc, out = run([sys.executable, str(gen), "--check"])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("插件契约表") or "失败" in s:
+            say("  " + s)
+    if rc != 0:
+        fail("插件契约表与 1.x 源码不一致（见上）")
+        return
+    ok("插件契约表（槽位 + api.ui 16 方法）与 1.x 源码一致")
+
 
 def step_golden_text_decode(release: bool) -> None:
     """黄金语料差分：文本**解码层**（六编码链）2.x vs 1.x 的 read_text_file。

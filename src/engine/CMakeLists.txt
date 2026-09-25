@@ -16,6 +16,7 @@ add_library(xrkit_engine STATIC
   text/extract.cpp
   xml/compare.cpp
   video/ffmpeg.cpp
+  plugin/contract.cpp
   font/charset.cpp
   font/cjk_state.cpp
   font/glyph.cpp
@@ -28,7 +29,8 @@ add_library(xrkit_engine STATIC
 target_include_directories(xrkit_engine PUBLIC "${CMAKE_SOURCE_DIR}/include")
 target_include_directories(xrkit_engine PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/text"
-  "${CMAKE_CURRENT_SOURCE_DIR}/font")
+  "${CMAKE_CURRENT_SOURCE_DIR}/font"
+  "${CMAKE_CURRENT_SOURCE_DIR}/plugin")
 target_link_libraries(xrkit_engine
   PUBLIC xrkit_core xrkit_flags
   PRIVATE xrkit_third_party)

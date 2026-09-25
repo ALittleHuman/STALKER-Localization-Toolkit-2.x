@@ -19,6 +19,7 @@
 #include "xrkit/engine/fs/extract_tree.h"
 #include "xrkit/engine/fs/lzhuf.h"
 #include "xrkit/engine/fs/overlay.h"
+#include "xrkit/engine/plugin/contract.h"
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/font/charset.h"
 #include "xrkit/engine/font/glyph.h"
@@ -856,6 +857,64 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
                       sample.find("测") != std::string::npos &&
                       sample.find("这") != std::string::npos,
               "判定样本里缺了简体特有的字（会被日文字体蒙混过关）");
+    });
+
+    // ⑫ 插件契约表：槽位（HOSTS/LOCATIONS/AREA_*）与 api.ui 的 16 方法。
+    // 判据要点：① 表是**从 1.x 源码按 AST 读出来的生成物**（门禁 [13] 的 --check 锁住）；
+    // ② 条数不对/空名字要**报错**，不许静默降级（12.3）；③ 槽位精确匹配（12.4）。
+    reg.add("plugin: 契约表与槽位精确匹配（⑫12.1/12.3/12.4）", [](CheckContext& ctx) {
+        namespace plug = xrkit::plugin;
+        std::string why;
+        check(ctx, plug::contract_ok(why), "契约表自检失败：" + why);
+
+        check(ctx, plug::host_count() == 6, "槽位表应有 6 个组件（⑫12.1）");
+        // 六个组件的键必须与内置页 id 一致（插件槽位就是按页 id 寻址的）
+        const char* expected_hosts[] = {"fs", "convert", "text", "xml", "video", "font"};
+        int host_bad = 0;
+        for (const char* key : expected_hosts) {
+            if (!plug::known_host(key)) ++host_bad;
+        }
+        check(ctx, host_bad == 0, "六页的 host 键没有全部认出来（缺 " +
+                                      std::to_string(host_bad) + " 个）");
+        check(ctx, !plug::known_host("fontpack"),
+              "host 键认了 'fontpack'（1.x 的 host 是 'font' —— 不许跨槽回退/别名）");
+        check(ctx, !plug::known_host("") && plug::host_label("nope") == nullptr,
+              "未知 host 应判不合法");
+        check(ctx, plug::host_label("xml") != nullptr, "host 标签取不到");
+
+        check(ctx, plug::location_count() == 2 && plug::known_location("toolbar") &&
+                      plug::known_location("context"),
+              "挂载点表应是 toolbar/context 两项（⑫12.4）");
+        check(ctx, !plug::known_location("sidebar"), "未知挂载点应判不合法");
+
+        // AREA_* 槽位（下拉/面板区）：至少要有 top_bar/filter/format 这几个真用到的
+        int area_bad = 0;
+        for (const char* key : {"top_bar", "bottom", "format", "pack_format", "source_enc",
+                                "game", "lang", "size", "suffix", "filter"}) {
+            if (!plug::known_area(key)) ++area_bad;
+        }
+        check(ctx, area_bad == 0,
+              "AREA_* 槽位缺 " + std::to_string(area_bad) + " 个（从 1.x 源码读表）");
+
+        // api.ui 的 16 方法：9 造控件 + 7 改控件/取输入（12.3）
+        check(ctx, plug::ui_method_count() == 16, "api.ui 契约应有 16 个方法");
+        for (const char* name : {"label", "button", "row", "checkbox", "entry", "text", "combo",
+                                 "drop_box", "pack", "set_text", "set_state", "text_view", "alive",
+                                 "ask_yes_no", "ask_open_file", "ask_save_file"}) {
+            check(ctx, plug::find_ui_method(name) != nullptr,
+                  std::string("api.ui 契约里缺方法：") + name);
+        }
+        check(ctx, plug::find_ui_method("draw_chart") == nullptr,
+              "契约里不该有 1.x 没有的方法");
+        const plug::UiMethodSpec* button = plug::find_ui_method("button");
+        check(ctx, button != nullptr && std::string(button->params).find("on_click") !=
+                                            std::string::npos,
+              "参数名也是契约（button 应有 on_click）");
+        const plug::UiMethodSpec* label = plug::find_ui_method("label");
+        check(ctx, label != nullptr && std::string(label->params).find("parent") !=
+                                           std::string::npos &&
+                      std::string(label->params).find("style") != std::string::npos,
+              "参数名也是契约（label 应有 parent/style）");
     });
 
     // ⑥6.7 路径越界判据（safe_out_path）：归档条目名是不可信输入，这条判据挡的是
