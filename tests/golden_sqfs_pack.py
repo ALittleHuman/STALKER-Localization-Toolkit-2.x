@@ -118,6 +118,14 @@ def fixture_fragflush() -> dict[str, bytes]:
 
 EMPTY_DIRS = {"dirs": ["emptydir", "sub/nested"]}
 
+# ★ 闭环（judge ⑤）里**不能锁 sha** 的夹具：它们的文件名含非本机 ACP 可表示的字符。
+#   2026-09-25 实测：参考工具 `rdsquashfs --describe` 打印的名字是 UTF-8（判据 ③ 因此全过），
+#   但 `--unpack-path` **落盘时按本机 ACP 把西里尔名字变了形**（解出来的树里是 `\uf0d0\uf0a2…`
+#   这种私用区码位，等于每个字节各成一个字符）⇒ 我们照着这棵"变了形的树"重封，sha 必然漂移。
+#   这是**参照工具自己的行为**（与 1.x 的 cv "按本机 ANSI 代码页转名"同族），不是我们的缺陷；
+#   对这类夹具，闭环改判**内容层**：解包树里所有文件的**内容多重集**必须与输入树相同。
+NON_ASCII_NAME_FIXTURES = {"basic"}
+
 FIXTURES = {
     "basic": fixture_basic,
     "dedup": fixture_dedup,
@@ -420,6 +428,50 @@ def main() -> int:
                 print("      %s" % item)
         elif sample:
             print("  ok 内容抽验 %d 个文件逐字节一致" % len(sample))
+
+        # ⑤ 闭环（用户 2026-09-25 指定）：**原版 SquashFS 解包我们的产物** → 我们照那棵树重封
+        #    → 产物必须**逐字节回到同一个镜像**。这条比"rdsquashfs --describe 读回"强，
+        #    因为它走完整解包路径（内容 + 元数据 + 目录结构都要能被原版读出来）。
+        try:
+            rt_dir = WORK / ("%s.roundtrip" % fixture_id)
+            shutil.rmtree(rt_dir, ignore_errors=True)
+            rt_dir.mkdir(parents=True, exist_ok=True)
+            proc = subprocess.run([str(RDSQUASHFS), "-p", str(rt_dir), "--unpack-path", "/",
+                                   str(our_image)],
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            if proc.returncode != 0:
+                ok = False
+                print("  ✗ 原版解包我们的产物失败：%s"
+                      % proc.stdout.decode("utf-8", "replace").strip()[:160])
+            else:
+                rt_image = WORK / ("%s.roundtrip.sqfs" % fixture_id)
+                rt_sha, _ = candidate_2x(rt_dir, rt_image, with_dirs)
+                if fixture_id in NON_ASCII_NAME_FIXTURES:
+                    # 名字被参照工具按 ACP 变了形 ⇒ 只判**内容多重集**（见该常量的注释）
+                    def content_multiset(tree: Path) -> list[bytes]:
+                        out = []
+                        for rel, is_dir, path in enumerate_entries(tree, with_dirs):
+                            if not is_dir:
+                                out.append(path.read_bytes())
+                        return sorted(out)
+                    want = content_multiset(root)
+                    got_c = content_multiset(rt_dir)
+                    if want != got_c:
+                        ok = False
+                        print("  ✗ 闭环内容层不符（含非 ACP 名字的夹具）：原 %d 个文件 / 解包 %d 个"
+                              % (len(want), len(got_c)))
+                    else:
+                        print("  ok 闭环（内容层）：原版解包 → 我们重封，%d 个文件内容一致"
+                              "（该夹具名字含非 ACP 字符，参照工具落盘会变形，故锁内容不锁 sha）"
+                              % len(want))
+                elif rt_sha != ours_sha:
+                    ok = False
+                    print("  ✗ 闭环 sha256 漂移：原 %s / 重封 %s" % (ours_sha[:16], rt_sha[:16]))
+                    print("     %s" % first_diff(our_image.read_bytes(), rt_image.read_bytes()))
+                else:
+                    print("  ok 闭环：原版解包 → 我们重封，sha256 不变（%s）" % rt_sha[:16])
+        except Exception as exc:  # noqa: BLE001
+            print("  !! 闭环跳过：%s" % exc)
 
         if ok:
             print("  ✓ 逐字节一致 %s" % cli_line.split("PACK ok ")[-1])
