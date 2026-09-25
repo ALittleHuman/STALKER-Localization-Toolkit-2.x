@@ -4,6 +4,7 @@
 #include "xrkit/engine/plugin/contract.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <set>
 
@@ -363,6 +364,29 @@ size_t Registry::registration_count() const {
     return decryptors_.size() + formats_.size() + commands_.size() + menu_items_.size() +
            option_entries_.size() + options_.size() + panels_.size() + tools_.size() +
            compare_modes_.size();
+}
+
+std::vector<CompareModeReg> builtin_compare_modes() {
+    std::vector<CompareModeReg> out;
+    for (const engine::xml::XmlModeSpec& spec : engine::xml::builtin_modes()) {
+        CompareModeReg mode;
+        mode.spec = spec;
+        const bool text_mode = spec.key == "text";
+        mode.compare = text_mode ? CompareFn(engine::xml::compare_text)
+                                 : CompareFn(engine::xml::compare_stats);
+        mode.row_builder = [](const engine::xml::XmlCompareResult& result) {
+            if (result.only_one_side) return std::string("only_") + result.only_side;
+            if (result.consistent) return std::string("same");
+            return std::string("diff");
+        };
+        mode.detail_builder = [text_mode](const engine::xml::XmlCompareResult& result,
+                                          const std::string& na, const std::string& nb) {
+            return text_mode ? engine::xml::full_text_detail(result, na, nb)
+                             : engine::xml::full_detail(result, na, nb);
+        };
+        out.push_back(std::move(mode));
+    }
+    return out;
 }
 
 }  // namespace xrkit::plugin

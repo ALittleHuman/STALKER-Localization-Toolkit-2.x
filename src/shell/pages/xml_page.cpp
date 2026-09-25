@@ -161,10 +161,30 @@ XmlPage::XmlPage(QWidget* parent)
 }
 
 void XmlPage::fill_mode_combo() {
-    for (const exml::XmlModeSpec& spec : exml::builtin_modes()) {
-        // 显示名给人看，**取值是内部键**（⑫12.8/⑥6.13 同一条纪律）
-        mode_combo_->addItem(utf8(spec.name), utf8(spec.key));
+    const QString keep = mode_combo_->currentData().toString();
+    mode_combo_->blockSignals(true);
+    mode_combo_->clear();
+    if (registry_ != nullptr) {
+        // ⑫12.1/12.5：内置与插件**同一张表**，按 order 升序 + 注册顺序（内置同名优先）
+        for (const plugin::CompareModeReg* mode : registry_->compare_modes_for()) {
+            mode_combo_->addItem(utf8(mode->spec.name), utf8(mode->spec.key));
+        }
     }
+    if (mode_combo_->count() == 0) {
+        // 没有注册表（或表是空的）⇒ 退回内置声明表：页面照样能用
+        for (const exml::XmlModeSpec& spec : exml::builtin_modes()) {
+            mode_combo_->addItem(utf8(spec.name), utf8(spec.key));
+        }
+    }
+    const int index = mode_combo_->findData(keep);
+    if (index >= 0) mode_combo_->setCurrentIndex(index);
+    mode_combo_->blockSignals(false);
+}
+
+void XmlPage::set_registry(const plugin::Registry* registry) {
+    registry_ = registry;
+    fill_mode_combo();   // 插件模式与内置模式出现在**同一个**下拉里
+    rebuild_filter_combo();
 }
 
 std::string XmlPage::current_mode_key() const {

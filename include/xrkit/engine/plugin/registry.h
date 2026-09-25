@@ -136,6 +136,10 @@ struct CompareModeReg {
     DetailBuilderFn detail_builder;  // 可空 ⇒ 用通用摘要
 };
 
+// 内置的两套比较模式也**走注册表**（⑫12.1：内置与插件共用一张表），
+// 由 `xml::builtin_modes()` 的声明 + xml 模块的比较/明细函数装好。
+std::vector<CompareModeReg> builtin_compare_modes();
+
 // ── 注册表 ───────────────────────────────────────────────────────────
 
 class Registry {

@@ -1,6 +1,7 @@
 #include "smoke.h"
 
 #include "xrkit/core/theme.h"
+#include "xrkit/engine/plugin/abi_host.h"
 #include "hub.h"
 #include "log_box.h"
 #include "pages/convert_page.h"
@@ -1091,6 +1092,41 @@ SmokeResult run_smoke() {
         check(detail.contains(QStringLiteral("id=\"")) || detail.contains(QStringLiteral("仅")),
               QStringLiteral("⑩10.3 完整明细在需要时才给（%1）").arg(detail.left(40)));
         QDir(root).removeRecursively();
+    }
+
+    // ⑫12.1/12.5：**插件注册的比较模式要出现在 XML 页的同一个下拉里**
+    {
+        namespace plug = xrkit::plugin;
+        namespace exml = xrkit::engine::xml;
+        XmlPage page;
+        plug::Registry registry;
+        for (plug::CompareModeReg& mode : plug::builtin_compare_modes()) {
+            registry.register_compare_mode(exml::kBuiltinPlugin, std::move(mode));
+        }
+        plug::PluginApiAdapter adapter(registry, "demo.dll", nullptr);
+        const char* col_keys[] = {"rel", "detail"};
+        const char* col_headings[] = {"文件", "差异"};
+        const int col_widths[] = {280, 400};
+        const char* filter_labels[] = {"全部"};
+        const char* filter_kinds[] = {"same|diff|only_a|only_b"};
+        const auto compare_fn = +[](void*, const char*, const char*, const char*, const char*,
+                                    const char*, stk_result_sink, void*) {};
+        check(adapter.api().register_compare_mode(adapter.api().host, "插件模式", "plugin_mode", 40,
+                                                 col_keys, col_headings, col_widths, 2,
+                                                 filter_labels, 1, filter_kinds, compare_fn,
+                                                 nullptr) == 1,
+              QStringLiteral("⑫12.1 插件比较模式注册失败"));
+        page.set_registry(&registry);
+        QComboBox* modes = page.mode_combo();
+        QStringList keys;
+        for (int i = 0; modes != nullptr && i < modes->count(); ++i) {
+            keys << modes->itemData(i).toString();
+        }
+        check(keys.contains(QStringLiteral("stats")) && keys.contains(QStringLiteral("text")) &&
+                  keys.contains(QStringLiteral("plugin_mode")),
+              QStringLiteral("⑫12.1 内置与插件模式必须在同一个下拉里（%1）")
+                  .arg(keys.join(QStringLiteral("/"))));
+        check(keys.size() == 3, QStringLiteral("⑫12.5 模式条数应为 3（%1）").arg(keys.size()));
     }
 
     // ⑧ 视频转换页（M2-6f）：8.2 构造期不探测 / 8.3 三按钮小窗非阻塞 /

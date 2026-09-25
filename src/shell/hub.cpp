@@ -3,11 +3,13 @@
 #include "log_box.h"
 #include "pages/page_base.h"
 #include "pages/page_factory.h"
+#include "pages/xml_page.h"
 #include "split_pane.h"
 
 #include "xrkit/core/path.h"
 #include "xrkit/core/theme.h"
 #include "xrkit/engine/plugin/loader.h"
+#include "xrkit/engine/xml/compare.h"
 #include "theme.h"
 
 #include <QApplication>
@@ -23,6 +25,9 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
+
+namespace plugin = xrkit::plugin;
+namespace xml = xrkit::engine::xml;
 
 namespace xrkit::shell {
 namespace {
@@ -74,6 +79,11 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     setWindowTitle(QStringLiteral("STALKER 汉化工具集 2.0"));
     resize(1180, 760);
 
+    // ⑫12.1：内置两套比较模式也**注册进表** —— 与插件模式同一条通道
+    for (plugin::CompareModeReg& mode : plugin::builtin_compare_modes()) {
+        registry_.register_compare_mode(xml::kBuiltinPlugin, std::move(mode));
+    }
+
     // ── 左侧：页列表；右侧：页栈（1.x 的 Hub 形态：一列 + 一栈）
     page_list_ = new QListWidget;
     page_list_->setObjectName(QStringLiteral("page_list"));
@@ -83,6 +93,10 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
         page_list_->addItem(QString::fromUtf8(kBuiltinPages[i].title));
         QWidget* page = create_page(i);
         stack_->addWidget(page != nullptr ? page : make_placeholder(kBuiltinPages[i]));
+        if (auto* xml_page = dynamic_cast<XmlPage*>(page)) {
+            // ⑫12.1：插件注册的比较模式要出现在 XML 页的**同一个**下拉里
+            xml_page->set_registry(&registry_);
+        }
     }
     page_list_->setCurrentRow(0);
     QObject::connect(page_list_, &QListWidget::currentRowChanged, stack_,

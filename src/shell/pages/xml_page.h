@@ -11,6 +11,7 @@
 
 #include "page_base.h"
 
+#include "xrkit/engine/plugin/registry.h"
 #include "xrkit/engine/xml/compare.h"
 
 #include <QString>
@@ -32,6 +33,9 @@ public:
 
     // 10.1：模式下拉的取值来自内置声明表（data=内部键；插件模式将来走同一张表）
     void fill_mode_combo();
+    // ⑫12.1：把**注册表**接进来 —— 插件注册的比较模式要出现在同一个下拉里
+    //（`nullptr` = 退回只显示内置模式，页面照样能用）
+    void set_registry(const plugin::Registry* registry);
     std::string current_mode_key() const;
     // 10.4：切模式 → 重建筛选项 + **清空结果**，不重跑 I/O
     void set_mode(const QString& key);
@@ -81,6 +85,7 @@ private:
     std::vector<int> visible_;   // results_ 的下标（当前筛选后）
     std::vector<QString> row_texts_;
     int scan_count_ = 0;
+    const plugin::Registry* registry_ = nullptr;  // 可空（见 set_registry）
 };
 
 }  // namespace xrkit::shell
