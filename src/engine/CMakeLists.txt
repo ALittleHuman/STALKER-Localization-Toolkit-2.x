@@ -19,6 +19,7 @@ add_library(xrkit_engine STATIC
   plugin/contract.cpp
   plugin/registry.cpp
   plugin/abi_host.cpp
+  plugin/loader.cpp
   font/charset.cpp
   font/cjk_state.cpp
   font/glyph.cpp

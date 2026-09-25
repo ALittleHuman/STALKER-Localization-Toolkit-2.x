@@ -24,6 +24,14 @@ extern "C" {
 
 #define STK_ABI_VERSION 1
 
+// 导出宏：插件入口**必须**导出，否则宿主 GetProcAddress 拿不到
+// （实测踩过：忘了它，症状是"DLL 里没有入口 stk_plugin_init"）
+#if defined(_WIN32)
+#define STK_EXPORT __declspec(dllexport)
+#else
+#define STK_EXPORT __attribute__((visibility("default")))
+#endif
+
 // 不透明句柄：插件只认识指针，永远不知道背后是 Qt 还是别的
 typedef struct stk_widget stk_widget;
 typedef struct stk_host stk_host;

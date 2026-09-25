@@ -184,6 +184,10 @@ public:
 
     const std::vector<FormatReg>& formats() const { return formats_; }
     const std::vector<RegistrationError>& registration_errors() const { return errors_; }
+    // 宿主侧（加载器 / 插件自报）也往**同一条**留痕通道写 —— Hub 启动时统一显示
+    void add_error(const std::string& plugin, const std::string& message) {
+        reject(plugin, message);
+    }
     // 12.9：**调插件回调**的统一入口（异常在这里被吃掉并记账，绝不冒到 UI 层）
     void invoke(const std::string& plugin, const std::string& what, const std::function<void()>& fn);
 

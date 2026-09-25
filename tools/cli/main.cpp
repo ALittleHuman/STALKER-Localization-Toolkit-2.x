@@ -21,6 +21,7 @@
 #include "xrkit/engine/fs/overlay.h"
 #include "xrkit/engine/plugin/abi_host.h"
 #include "xrkit/engine/plugin/contract.h"
+#include "xrkit/engine/plugin/loader.h"
 #include "xrkit/engine/plugin/registry.h"
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/font/charset.h"
@@ -1252,6 +1253,78 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
                           std::string::npos,
               "⑩ 插件自报错误没进 registration_errors");
         check(ctx, reg.registration_errors().size() >= 2, "被拒的注册没有全部留痕");
+    });
+
+    // ⑫12.4 + 用户口径：**插件加载失败不阻塞启动**；加载成功的要真的注册进表。
+    // 夹具是同一构建里编出来的 `xrkit_test_plugin.dll`（**用 C 编译**，证明 ABI 是纯 C）。
+    reg.add("plugin: DLL 加载与注册（⑫12.4）", [](CheckContext& ctx) {
+        namespace plug = xrkit::plugin;
+        plug::Registry registry;
+
+        // ① 加载不存在的 DLL：只报错、不崩
+        plug::LoadResult broken;
+        {
+            plug::PluginApiAdapter adapter(registry, "broken.dll", nullptr);
+            broken = plug::load_plugin("no_such_plugin_xyz.dll", adapter.api());
+        }
+        check(ctx, !broken.ok && !broken.error.empty(),
+              "加载不存在的 DLL 应失败并给出理由（不许崩）");
+
+        // ② 真 DLL：与 CLI 同目录（构建时就放好了）
+        const std::string dll = xrkit::core::app_dir() + "/xrkit_test_plugin.dll";
+        std::error_code ec;
+        const bool present =
+            std::filesystem::is_regular_file(xrkit::core::path_from_utf8(dll), ec);
+        if (!present) {
+            // 自家产物缺失 ⇒ 如实报红（不是 SKIP）
+            check(ctx, false, "找不到测试插件 " + dll + "（构建没编出来？）");
+            return;
+        }
+        {
+            plug::PluginApiAdapter adapter(registry, "xrkit_test_plugin.dll", nullptr);
+            const plug::LoadResult loaded = plug::load_plugin(dll, adapter.api());
+            check(ctx, loaded.ok && loaded.init_rc == 1, "加载测试插件失败：" + loaded.error);
+            if (loaded.ok) new plug::PluginApiAdapter(std::move(adapter));
+        }
+        check(ctx, plug::loaded_count() >= 1, "加载成功后句柄没被记账");
+
+        // ③ 它注册的东西必须**真的在表里**（插件名做前缀 / 做哨兵）
+        check(ctx, registry.has_command("xrkit_test_plugin.dll:hello"),
+              "插件注册的命令没进表");
+        check(ctx, registry.formats().size() == 1 &&
+                      registry.formats()[0].plugin == "xrkit_test_plugin.dll",
+              "插件注册的格式没进表");
+        plug::Context demo;
+        demo["mode"] = std::string("demo");
+        plug::Context other;
+        other["mode"] = std::string("别的");
+        check(ctx, registry.menu_items_for("xml", "toolbar", demo).size() == 1 &&
+                      registry.menu_items_for("xml", "toolbar", other).empty(),
+              "插件挂载点/它的 when 没生效（应只在 mode=demo 时出现）");
+        check(ctx, registry.option_entries_for("xml", "filter").size() == 1 &&
+                      registry.option_entries_for("xml", "filter")[0] == "demo 筛选项",
+              "插件下拉条目没进表");
+        check(ctx, registry.panels_for("xml", "top_bar").size() == 1, "插件面板没进表");
+        const plug::CompareModeReg* mode = registry.compare_mode("demo 模式");
+        check(ctx, mode != nullptr && mode->spec.plugin == "xrkit_test_plugin.dll",
+              "插件比较模式没进表（哨兵应是插件名，不是内置）");
+        if (mode != nullptr && mode->compare) {
+            const auto diff = mode->compare("a.xml", "AAA", "BBB", "utf-8", "utf-8");
+            const auto same = mode->compare("a.xml", "SAME", "SAME", "utf-8", "utf-8");
+            check(ctx, !diff.consistent && diff.only_a.size() == 1 &&
+                          diff.only_a[0] == "a.xml" && same.consistent,
+                  "插件比较回调经 sink 回传的结果不对（回调没跨 DLL 边界跑通）");
+        }
+        // ④ 命令回调真的能跨 DLL 调用（不崩）
+        const auto items = registry.menu_items_for("xml", "toolbar", demo);
+        if (!items.empty()) {
+            items[0]->handler();
+            check(ctx, true, "插件命令回调跨 DLL 调用没有崩");
+        }
+        check(ctx, registry.registration_errors().empty(),
+              "这一段不该产生 registration_errors（插件注册都是合法的）");
+        plug::unload_all();
+        check(ctx, plug::loaded_count() == 0, "unload_all 没把句柄清掉");
     });
 
     // ⑥6.7 路径越界判据（safe_out_path）：归档条目名是不可信输入，这条判据挡的是
