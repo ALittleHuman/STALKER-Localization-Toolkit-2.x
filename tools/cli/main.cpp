@@ -1103,6 +1103,67 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
               "插件回调抛异常没被捕获记账（12.9）");
     });
 
+    // ⑫12.1 decryptor 消费端（用户 2026-09-26：NLC 解密是外部插件；工具内不放逻辑）
+    reg.add("plugin: decryptor 消费端（加载 DB 前问插件）", [](CheckContext& ctx) {
+        namespace plug = xrkit::plugin;
+        namespace core = xrkit::core;
+        std::error_code ec;
+        const std::filesystem::path work = std::filesystem::temp_directory_path(ec) /
+                                           "xrkit_selftest_decrypt";
+        std::filesystem::remove_all(work, ec);
+        std::filesystem::create_directories(work, ec);
+        const std::string dir = core::path_to_utf8(work);
+        const std::string enc = dir + "/gamedata.db_enc";
+        {
+            std::vector<uint8_t> cipher{0xDE, 0xAD, 0xBE, 0xEF};
+            std::string err;
+            check(ctx, core::write_file_atomic(enc, cipher, true, err), "准备加密样本失败");
+        }
+
+        // ① 没有解密器 ⇒ 原样放行（行为与不做这件事一致）
+        {
+            plug::Registry empty;
+            const plug::DecryptGateResult r = plug::gate_db_path(empty, enc, dir);
+            check(ctx, r.ok && !r.used_plugin && r.path == enc,
+                  "没有解密器时不该改变路径/判定");
+        }
+
+        // ② 命中且解密成功 ⇒ 明文落盘、路径换成解密产物
+        {
+            plug::Registry registry;
+            check(ctx,
+                  registry.register_decryptor(
+                      "nlc.dll", [](const std::string& p) { return p.size() > 4; },
+                      [](const std::string&, std::string& out) {
+                          out = "DECRYPTED-DB";
+                          return true;
+                      }),
+                  "注册解密器失败");
+            const plug::DecryptGateResult r = plug::gate_db_path(registry, enc, dir);
+            check(ctx, r.ok && r.used_plugin && r.path != enc && r.path.find(".decrypted") !=
+                                                                      std::string::npos,
+                  "命中解密器后没换成解密产物");
+            if (r.ok && r.used_plugin) {
+                std::ifstream in(core::path_from_utf8(r.path), std::ios::binary);
+                const std::string got((std::istreambuf_iterator<char>(in)),
+                                      std::istreambuf_iterator<char>());
+                check(ctx, got == "DECRYPTED-DB", "解密结果内容不对");
+            }
+        }
+
+        // ③ 命中但解密失败 ⇒ **可见失败**（不许回落）
+        {
+            plug::Registry registry;
+            registry.register_decryptor("bad.dll",
+                                        [](const std::string&) { return true; },
+                                        [](const std::string&, std::string&) { return false; });
+            const plug::DecryptGateResult r = plug::gate_db_path(registry, enc, dir);
+            check(ctx, !r.ok && !r.error.empty() && r.path == enc,
+                  "解密失败必须 visible（ok=false + 理由），不许静默回落");
+        }
+        std::filesystem::remove_all(work, ec);
+    });
+
     // ★ 原子写的**路径编码安全**（2026-09-25 HanaAgent 审计查出的【高】缺陷的锁）：
     //   临时文件路径若经 `Path::string()`（CP_ACP）转窄串，ACP 表示不了的字符会变成 `?`
     //   ⇒ 打不开、原子写失败。这里用**ACP 表示不了的字符（韩文）**真写一次：旧代码必红。

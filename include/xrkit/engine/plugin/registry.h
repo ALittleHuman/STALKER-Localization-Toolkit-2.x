@@ -219,4 +219,20 @@ private:
     std::vector<RegistrationError> errors_;
 };
 
+// ⑫12.1 的 **decryptor 消费端**（用户 2026-09-26 决策：NLC 解密是外部闭源插件，
+// 走 `register_decryptor`/`find_decryptor`，工具内**不放任何解密逻辑、无模组名分支**）：
+// 加载 DB 之前问一遍插件解密器 ——
+//   · 没有解密器命中 ⇒ `ok=true, used_plugin=false, path=原路径`（行为与不做这件事完全一致）；
+//   · 命中且解密成功 ⇒ 把明文**原子写**到 `out_dir` 下，返回那个路径（`used_plugin=true`）；
+//   · 命中但解密失败 ⇒ `ok=false` + 明确理由（**不许静默回落到"当普通包读"**）。
+struct DecryptGateResult {
+    bool ok = true;
+    bool used_plugin = false;
+    std::string path;
+    std::string error;
+};
+
+DecryptGateResult gate_db_path(const Registry& registry, const std::string& path,
+                               const std::string& out_dir);
+
 }  // namespace xrkit::plugin

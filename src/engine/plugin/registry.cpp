@@ -1,5 +1,6 @@
 #include "xrkit/engine/plugin/registry.h"
 
+#include "xrkit/core/atomic_write.h"
 #include "xrkit/core/log.h"
 #include "xrkit/engine/plugin/contract.h"
 
@@ -387,6 +388,42 @@ std::vector<CompareModeReg> builtin_compare_modes() {
         out.push_back(std::move(mode));
     }
     return out;
+}
+
+DecryptGateResult gate_db_path(const Registry& registry, const std::string& path,
+                               const std::string& out_dir) {
+    DecryptGateResult result;
+    result.path = path;
+    const DecryptorReg* decryptor = registry.find_decryptor(path);
+    if (decryptor == nullptr) return result;  // 没有插件解密器 ⇒ 一切照旧
+
+    std::string plain;
+    if (!decryptor->decrypt(path, plain)) {
+        // 命中却解不开：**可见失败**，绝不回落成"当普通包读"（那会读出垃圾还判成功）
+        result.ok = false;
+        result.error = "这个包需要插件解密器，但 " + decryptor->plugin +
+                       " 的解密失败（不回落成普通包读取）：" + path;
+        return result;
+    }
+
+    // 取输入文件名（去目录）拼一个可读的临时文件名
+    std::string name = path;
+    const size_t slash = name.find_last_of("/\\");
+    if (slash != std::string::npos) name = name.substr(slash + 1);
+    const std::string target =
+        (out_dir.empty() ? std::string(".") : out_dir) + "/" + name + ".decrypted";
+
+    const std::vector<uint8_t> bytes(plain.begin(), plain.end());
+    std::string error;
+    if (!core::write_file_atomic(target, bytes, /*atomic=*/true, error)) {
+        result.ok = false;
+        result.error = "解密结果落盘失败：" + error;
+        return result;
+    }
+    result.used_plugin = true;
+    result.path = target;
+    core::log(core::Level::Info, "已用插件解密器 " + decryptor->plugin + " 解开：" + path);
+    return result;
 }
 
 }  // namespace xrkit::plugin
