@@ -9,6 +9,7 @@
 //   0 = 通过；1 = 有失败；2 = **显式跳过（未实现）**；3 = 用法错误。
 //   ★ 2 绝不能与 0 混同 —— 门禁必须把 2 记入「本次未覆盖」。
 
+#include "xrkit/engine/font/xml_bytes.h"
 #include "xrkit/core/check.h"
 #include "xrkit/core/log.h"
 #include "xrkit/core/path.h"
@@ -1138,6 +1139,24 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         check(ctx, token.cancelled(), "cancel() 后应为已取消");
         token.reset();
         check(ctx, !token.cancelled(), "只有 reset() 能清零（1.x convert() 不清零）");
+    });
+
+    // XML 声明改写要**大小写不敏感**（1.x 用 re.I；Hana 第二次审计 §四-2）
+    reg.add("font: XML 声明改写（大写声明/大写 ENCODING 也要认）", [](CheckContext& ctx) {
+        namespace ef = xrkit::engine::font;
+        const std::string upper =
+            "<?XML version=\"1.0\" ENCODING=\"windows-1251\"?>\n<root/>";
+        const std::string fixed = ef::rewrite_xml_declaration_encoding(upper);
+        check(ctx, fixed.find("utf-8") != std::string::npos,
+              "大写 XML 声明没被改写成 utf-8（大小写敏感的老毛病）：" + fixed);
+        check(ctx, fixed.find("<root/>") != std::string::npos, "声明之外的正文被弄坏了");
+        // 小写声明当然也要认（回归）
+        const std::string lower = "<?xml version=\"1.0\" encoding='cp1251'?>\n<a/>";
+        const std::string fixed2 = ef::rewrite_xml_declaration_encoding(lower);
+        check(ctx, fixed2.find("utf-8") != std::string::npos, "小写声明改写失败：" + fixed2);
+        // 没有声明 ⇒ 原样返回
+        const std::string plain = "<a b=\"1\"/>";
+        check(ctx, ef::rewrite_xml_declaration_encoding(plain) == plain, "没有声明时不该动内容");
     });
 
     // 散装层（用户 2026-09-26"最后并入层"决策）：真实目录 → 与包同形的条目表

@@ -27,7 +27,7 @@ bool write_file_atomic(const std::string& path, const std::vector<uint8_t>& data
         }
     }
     // ★ 临时文件路径**必须全程走宽串**：`Path::string()` 在 Windows 上按 **CP_ACP** 转窄串，
-    //   ACP 表示不了的字符（中文 Windows 下的西里尔/俄文）会变成 `?`，而 `?` 是非法文件名字符
+    // ★ 2026-09-27 更正（我自己的实测）：**俄文在 CP936 下能无损编码**（`файл` → `a7e6a7d1a7dba7dd`）；真正会退化成 `?` 的是 **CP_ACP 表示不了的字符**——韩文、日文假名、emoji、Ё 等。早先注释写"俄文会变 ?"是错的，别再照它复刻。
     //   ⇒ 临时文件打不开、原子写**必然失败**（2026-09-25 HanaAgent 审计查出；我们的逐字节语料
     //   路径全是 ASCII，所以一直没暴露）。用 `+= L".part"` 保住 native 宽串。
     stdfs::path temp = target;
