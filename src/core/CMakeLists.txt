@@ -4,6 +4,7 @@ add_library(xrkit_core STATIC
   log.cpp
   path.cpp
   atomic_write.cpp
+  build_version.cpp
   theme.cpp)
 
 target_include_directories(xrkit_core PUBLIC "${CMAKE_SOURCE_DIR}/include")
