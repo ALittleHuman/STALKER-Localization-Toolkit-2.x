@@ -1103,6 +1103,33 @@ def step_golden_sqfs_lzo(release: bool) -> None:
         fail("lzo 镜像判据不通过（见上）")
 
 
+def step_golden_sqfs_metacross(release: bool) -> None:
+    """元数据**跨块逻辑偏移**的回归锁（2026-09-27 真机整树跑抓到的缺陷）。
+
+    判据：抽 `sqzy_patch` 里那个 inode 起始偏移 > 8 KiB 的文件，**与参照工具 `rdsquashfs --cat`
+    的输出逐字节比**。参照工具/镜像缺失时退码 2（进"本次未覆盖"）。
+    """
+    say("[27] 元数据跨块偏移（真机成员 vs 参照 cat）")
+    script = ROOT / "tests" / "golden_sqfs_metacross.py"
+    if not require_repo_file(script, "跨块偏移判据脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("ok ") or s.startswith("✗") or s.startswith("GOLDEN-SQFS-METACROSS") \
+                or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("跨块偏移成员与参照逐字节一致")
+    elif rc == 2:
+        prereq("参照 rdsquashfs / sqzy_patch 镜像", "缺参照或样本（见上）", release)
+    else:
+        fail("跨块偏移判据不通过（见上）")
+
+
 STEPS = [
     ("build", step_build),
     ("no-qt", step_no_qt_lock),
@@ -1129,6 +1156,7 @@ STEPS = [
     ("golden-xml-stats", step_golden_xml_stats),
     ("golden-video-argv", step_golden_video_argv),
     ("golden-sqfs-lzo", step_golden_sqfs_lzo),
+    ("golden-sqfs-metacross", step_golden_sqfs_metacross),
     ("shell-smoke", step_shell_smoke),
 ]
 
