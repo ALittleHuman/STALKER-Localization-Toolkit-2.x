@@ -80,7 +80,12 @@ bool dump_glyphs(const std::string& font_path, int pixel_size,
         int32_t pitch = 0;
         std::vector<uint8_t> tight;
         if (index != 0 && FT_Load_Glyph(face, index, FT_LOAD_DEFAULT) == 0) {
-            FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL);
+            // ★ 2026-09-27：带**内嵌位图 strike** 的字体（simsun 在 11~16px 等）加载出来就是位图，
+            //   此时 FT_Render_Glyph 不适用（它只对轮廓有效）。Pillow 走的正是这条位图路径
+            //   （实测 simsun@12 它给 12x12 = strike 高度，而我们强推轮廓只有 12x11）⇒ 必须**照它读**。
+            if (face->glyph->format == FT_GLYPH_FORMAT_OUTLINE) {
+                FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL);
+            }
             const FT_Bitmap& bm = face->glyph->bitmap;
             left = face->glyph->bitmap_left;
             top = face->glyph->bitmap_top;
@@ -88,11 +93,24 @@ bool dump_glyphs(const std::string& font_path, int pixel_size,
             height = static_cast<int32_t>(bm.rows);
             width = static_cast<int32_t>(bm.width);
             pitch = static_cast<int32_t>(bm.pitch);
-            if (bm.pixel_mode == FT_PIXEL_MODE_GRAY && bm.buffer != nullptr) {
+            if (bm.buffer != nullptr) {
                 tight.reserve(static_cast<size_t>(width) * static_cast<size_t>(height));
-                for (int32_t r = 0; r < height; ++r) {
-                    const uint8_t* row = bm.buffer + static_cast<size_t>(r) * pitch;
-                    tight.insert(tight.end(), row, row + width);
+                if (bm.pixel_mode == FT_PIXEL_MODE_GRAY) {
+                    for (int32_t r = 0; r < height; ++r) {
+                        const uint8_t* row = bm.buffer + static_cast<size_t>(r) * pitch;
+                        tight.insert(tight.end(), row, row + width);
+                    }
+                } else if (bm.pixel_mode == FT_PIXEL_MODE_MONO) {
+                    // 内嵌位图是 1bpp：每行按 (w+7)/8 字节存，**最高位是最左像素**。
+                    // 展开成 8bpp（0/255），下游与 GRAY 走同一条路。
+                    for (int32_t r = 0; r < height; ++r) {
+                        const uint8_t* row = bm.buffer + static_cast<size_t>(r) * pitch;
+                        for (int32_t x = 0; x < width; ++x) {
+                            const uint8_t byte = row[x >> 3];
+                            const bool on = ((byte >> (7 - (x & 7))) & 1u) != 0;
+                            tight.push_back(on ? 255 : 0);
+                        }
+                    }
                 }
             }
         }
@@ -144,7 +162,10 @@ bool glyph_mask_info(const std::string& font_path, int pixel_size, uint32_t cp,
     } else if (FT_Load_Glyph(face, index, FT_LOAD_DEFAULT) != 0) {
         return false;
     }
-    if (FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL) != 0) return false;
+    if (face->glyph->format == FT_GLYPH_FORMAT_OUTLINE &&
+        FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL) != 0) {
+        return false;
+    }
     const FT_Bitmap& bm = face->glyph->bitmap;
     out.width = static_cast<int>(bm.width);
     out.height = static_cast<int>(bm.rows);
