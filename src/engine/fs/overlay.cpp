@@ -262,4 +262,43 @@ std::vector<TreeItem> collect_tree(const std::string& root) {
     return out;
 }
 
+std::vector<std::pair<std::string, bool>> loose_entries(const std::string& root,
+                                                        std::string& error) {
+    error.clear();
+    std::vector<std::pair<std::string, bool>> out;
+    std::error_code ec;
+    const std::filesystem::path base = core::path_from_utf8(root);
+    if (!std::filesystem::is_directory(base, ec)) {
+        error = "散装层根目录不存在：" + root;
+        return out;
+    }
+    // 递归收集：目录也算条目（与包侧同形）；每层按字节序排，保证渲染确定性
+    std::vector<std::filesystem::path> dirs{base};
+    std::vector<std::string> rels{""};
+    while (!dirs.empty()) {
+        const std::filesystem::path dir = dirs.back();
+        const std::string rel = rels.back();
+        dirs.pop_back();
+        rels.pop_back();
+        std::vector<std::string> names;
+        for (std::filesystem::directory_iterator it(dir, ec), end; it != end; it.increment(ec)) {
+            if (ec) break;
+            names.push_back(core::path_to_utf8(it->path().filename()));
+        }
+        std::sort(names.begin(), names.end());
+        for (const std::string& name : names) {
+            const std::filesystem::path full = dir / core::path_from_utf8(name);
+            const std::string child = rel.empty() ? name : rel + "/" + name;
+            const bool is_dir = std::filesystem::is_directory(full, ec);
+            out.emplace_back(child, is_dir);
+            if (is_dir) {
+                dirs.push_back(full);
+                rels.push_back(child);
+            }
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 }  // namespace xrkit::engine::fs

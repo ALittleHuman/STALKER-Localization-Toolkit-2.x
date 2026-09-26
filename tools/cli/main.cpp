@@ -1140,6 +1140,47 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         check(ctx, !token.cancelled(), "只有 reset() 能清零（1.x convert() 不清零）");
     });
 
+    // 散装层（用户 2026-09-26"最后并入层"决策）：真实目录 → 与包同形的条目表
+    reg.add("fs: 散装层条目收集（与包同形、目录也算、排序确定）", [](CheckContext& ctx) {
+        namespace efs = xrkit::engine::fs;
+        namespace core = xrkit::core;
+        std::error_code ec;
+        const std::filesystem::path work = std::filesystem::temp_directory_path(ec) /
+                                           "xrkit_selftest_loose";
+        std::filesystem::remove_all(work, ec);
+        std::filesystem::create_directories(work / "sub", ec);
+        std::filesystem::create_directories(work / "empty", ec);
+        {
+            std::string err;
+            check(ctx, core::write_file_atomic(core::path_to_utf8(work / "a.txt"),
+                                               std::vector<uint8_t>{'A'}, true, err),
+                  "准备散装层样本失败");
+            check(ctx, core::write_file_atomic(core::path_to_utf8(work / "sub" / "b.txt"),
+                                               std::vector<uint8_t>{'B'}, true, err),
+                  "准备子目录样本失败");
+        }
+        std::string error;
+        const auto entries = efs::loose_entries(core::path_to_utf8(work), error);
+        check(ctx, error.empty(), "loose_entries 报错：" + error);
+        std::vector<std::string> files;
+        std::vector<std::string> dirs;
+        for (const auto& item : entries) {
+            (item.second ? dirs : files).push_back(item.first);
+        }
+        check(ctx, files.size() == 2 && files[0] == "a.txt" && files[1] == "sub/b.txt",
+              "散装层文件条目不对（应为 a.txt 与 sub/b.txt）");
+        check(ctx, std::find(dirs.begin(), dirs.end(), std::string("empty")) != dirs.end() &&
+                      std::find(dirs.begin(), dirs.end(), std::string("sub")) != dirs.end(),
+              "散装层目录条目不对（empty/sub 都要在，空目录也算）");
+        check(ctx, std::is_sorted(entries.begin(), entries.end()),
+              "散装层条目未按字节序排序（渲染确定性要求）");
+        // 不存在的目录 ⇒ 明确报错（不是静默空表）
+        const auto missing = efs::loose_entries(core::path_to_utf8(work / "nope"), error);
+        check(ctx, !error.empty() && missing.empty(),
+              "不存在的散装目录必须报错，不许静默返回空表");
+        std::filesystem::remove_all(work, ec);
+    });
+
     // 字库字符集口径（用户 2026-09-26：日文层砍掉 ⇒ 假名不进字符集）
     reg.add("font: 字符集剔掉日文假名（汉字/西里尔保留）", [](CheckContext& ctx) {
         std::set<uint32_t> chars{0x0041,     // A

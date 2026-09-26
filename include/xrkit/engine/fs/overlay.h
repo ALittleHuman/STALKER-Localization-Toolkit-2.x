@@ -44,6 +44,15 @@ struct MergeInput {
     std::vector<std::pair<std::string, bool>> entries;  // (path, is_dir)
 };
 
+// 散装层（用户 2026-09-26 决策"最后并入层"；落地口径由我定，2026-09-27）：
+// 把一个**真实目录**（解包后的 gamedata）变成与"包"同形的条目表，交给**同一个 MergeTree**
+// —— 于是"同名条目以后加载的为准"这条语义对散装层与包**完全一致**，不需要第二套合并逻辑。
+//   · 路径一律用 '/' 分隔、相对 root、**不含**前导 './'；
+//   · 目录也作为条目出现（与包侧的 is_dir 同形），空目录照样算；
+//   · 排序：每层按名字的字节序（与包侧 `children` 的排序口径一致，保证渲染确定性）。
+std::vector<std::pair<std::string, bool>> loose_entries(const std::string& root,
+                                                        std::string& error);
+
 struct MergeTree {
     MergeNode root;                      // 虚拟根（name/path 为空）
     std::vector<std::string> sources;    // **合并顺序**（= 加载顺序，后者赢）
