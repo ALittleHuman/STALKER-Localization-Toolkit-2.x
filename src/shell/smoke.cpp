@@ -36,6 +36,7 @@
 #include <QScrollBar>
 #include <QStackedWidget>
 #include <QElapsedTimer>
+#include <QProcess>
 #include <QStringList>
 #include <QThread>
 #include <QVBoxLayout>
@@ -1215,6 +1216,71 @@ SmokeResult run_smoke() {
         check(hub.page_count() == builtin + 1 && hub.plugin_pages_added() == 1,
               QStringLiteral("⑫12.1 重渲染把插件页装了两遍（pages=%1）").arg(hub.page_count()));
         QDir(empty).removeRecursively();
+    }
+
+    // 视频端到端（2026-09-27）：**仅当按口径能定位到 ffmpeg/ffprobe 时才跑**；
+    // 本机没有 user.ltx、程序目录也没有 exe（⑧8.1 只认两处、不搜 PATH）⇒ 会走"如实 note 跳过"，
+    // 这条对应用户侧的人工验收（配方见 docs/2.0.0-视频模块规格.md §6）。
+    {
+        namespace vid = xrkit::engine::video;
+        const vid::FfmpegPaths paths = vid::find_ffmpeg_default();
+        if (!paths.found || !paths.has_probe) {
+            result.notes.append(QStringLiteral(
+                "视频端到端：本机未按口径配置 ffmpeg/ffprobe（只认 user.ltx 手动指定与程序目录）"
+                "⇒ 跳过，属人工验收项"));
+        } else {
+            const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_video"));
+            QDir(dir).removeRecursively();
+            QDir().mkpath(dir);
+            const QString in_path = dir + QStringLiteral("/in.avi");
+            // ① 造 1 秒测试输入（lavfi 源，不需要外部素材）
+            QProcess gen;
+            gen.start(QString::fromStdString(paths.ffmpeg),
+                      QStringList{QStringLiteral("-y"), QStringLiteral("-f"),
+                                  QStringLiteral("lavfi"), QStringLiteral("-i"),
+                                  QStringLiteral("testsrc=d=1"), QStringLiteral("-f"),
+                                  QStringLiteral("lavfi"), QStringLiteral("-i"),
+                                  QStringLiteral("sine=f=440:d=1"), QStringLiteral("-shortest"),
+                                  in_path});
+            gen.waitForFinished(120000);
+            const bool made = gen.exitCode() == 0 && QFile::exists(in_path);
+            check(made, QStringLiteral("视频端到端：造测试输入失败（%1）").arg(gen.exitCode()));
+
+            if (made) {
+                const QString out_path = dir + QStringLiteral("/out.ogm");
+                QFile::remove(out_path);
+                VideoPage page;
+                vid::TranscodeRequest request;
+                request.ffmpeg = paths.ffmpeg;
+                request.input = in_path.toUtf8().toStdString();
+                request.output = out_path.toUtf8().toStdString();
+                request.available_encoders = {"libtheora", "libxvid", "mpeg4"};
+                QString error;
+                check(page.start_transcode(request, &error),
+                      QStringLiteral("视频端到端：启动失败（%1）").arg(error));
+                QElapsedTimer clock;
+                clock.start();
+                while (page.transcode_running() && clock.elapsed() < 180000) {
+                    QCoreApplication::processEvents();
+                }
+                check(!page.transcode_running(), QStringLiteral("视频端到端：超时未结束"));
+                check(QFile::exists(out_path) && QFileInfo(out_path).size() > 0,
+                      QStringLiteral("视频端到端：产物不存在或为空（%1）").arg(page.last_error()));
+                // ② 产物要能被 ffprobe 解析（"不是垃圾文件"）
+                QProcess probe;
+                probe.start(QString::fromStdString(paths.ffprobe),
+                            QStringList{QStringLiteral("-v"), QStringLiteral("error"),
+                                        QStringLiteral("-show_entries"),
+                                        QStringLiteral("format=duration"),
+                                        QStringLiteral("-of"),
+                                        QStringLiteral("default=nw=1"), out_path});
+                probe.waitForFinished(30000);
+                const QString probed = QString::fromUtf8(probe.readAllStandardOutput());
+                check(probe.exitCode() == 0 && probed.contains(QStringLiteral("duration=")),
+                      QStringLiteral("视频端到端：产物 ffprobe 解析失败（%1）").arg(probed.left(60)));
+            }
+            QDir(dir).removeRecursively();
+        }
     }
 
     // 散装层界面接线（用户 2026-09-26"最后并入层"）
