@@ -42,7 +42,9 @@ target_link_libraries(xrkit_app PRIVATE xrkit_shell Qt6::Widgets)
 # 构建 GUI（口径见 docs/2.0.0-构建口径与buildGUI规格.md）：**只驱动 CLI**，不自己实现构建。
 # 挂在 shell 目标旁边是因为这里一定已经 find_package(Qt6) 了（release 预设不带 Qt，不能放根 CMake）。
 qt_add_executable(xrkit_build_gui "${CMAKE_SOURCE_DIR}/tools/build_gui/main.cpp")
-target_link_libraries(xrkit_build_gui PRIVATE xrkit_core Qt6::Widgets)
+# ★ 必须链 xrkit_flags（带 /utf-8）：不链的话 MSVC 按系统 ANSI(GBK) 读源文件，
+#   界面里的中文字面量会变成乱码（实测：分组框标题与下拉项显示成'鐗堟湰…'）。
+target_link_libraries(xrkit_build_gui PRIVATE xrkit_core xrkit_flags Qt6::Widgets)
 target_include_directories(xrkit_build_gui PRIVATE "${CMAKE_SOURCE_DIR}/include")
 set_target_properties(xrkit_build_gui PROPERTIES
   OUTPUT_NAME "xrkit_build_gui"

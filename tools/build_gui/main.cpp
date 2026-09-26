@@ -17,6 +17,7 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
@@ -54,6 +55,21 @@ class BuildWindow : public QWidget {
 public:
     BuildWindow() {
         setWindowTitle(QStringLiteral("xrkit 构建（2.0.0）"));
+        // 图标与 1.x 同款（app_icon.ico，随 exe 一起放；找不到就跳过，不阻塞）
+        {
+            const QStringList icon_candidates{
+                QCoreApplication::applicationDirPath() + "/app_icon.ico",
+                QCoreApplication::applicationDirPath() + "/../../../assets/app_icon.ico",
+                QCoreApplication::applicationDirPath() + "/../../../../assets/app_icon.ico",
+            };
+            for (const QString& ic : icon_candidates) {
+                const QString clean = QDir::cleanPath(ic);
+                if (QFileInfo::exists(clean)) {
+                    setWindowIcon(QIcon(clean));
+                    break;
+                }
+            }
+        }
         auto* root_layout = new QVBoxLayout(this);
 
         auto* box = new QGroupBox(QStringLiteral("版本与标记（唯一事实来源：version.json）"), this);
