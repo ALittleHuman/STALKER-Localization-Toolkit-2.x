@@ -5,6 +5,8 @@
 #include "../virtual_list.h"
 
 #include <QComboBox>
+#include <QDir>
+#include <QMetaObject>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
@@ -20,7 +22,35 @@ QString utf8(const std::string& text) { return QString::fromStdString(text); }
 
 }  // namespace
 
+bool FsPage::gate_source(QString& path, QString* error_out) {
+    last_gate_error_.clear();
+    if (registry_ == nullptr) return true;  // 没有注册表 ⇒ 一切照旧（不引入新分支）
+    const std::string in = path.toUtf8().toStdString();
+    const plugin::DecryptGateResult result =
+        plugin::gate_db_path(*registry_, in, decrypt_dir_.toUtf8().toStdString());
+    if (!result.ok) {
+        last_gate_error_ = QString::fromStdString(result.error);
+        if (error_out != nullptr) *error_out = last_gate_error_;
+        return false;
+    }
+    if (result.used_plugin) {
+        // 解开了：换成解密产物，并在日志里说清"这一份是插件解出来的"
+        path = QString::fromStdString(result.path);
+        log_message(QStringLiteral("已用插件解密器解开：%1").arg(path));
+    }
+    return true;
+}
+
+void FsPage::log_message(const QString& text) {
+    // 页面只转发给宿主（Hub 决定往哪写）
+    if (auto* hub = window()) {
+        QMetaObject::invokeMethod(hub, "log_line", Qt::DirectConnection, Q_ARG(QString, text));
+    }
+}
+
 FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral("文件系统"), parent) {
+    decrypt_dir_ = QDir::temp().filePath(QStringLiteral("xrkit_decrypted"));
+    QDir().mkpath(decrypt_dir_);
     // ── 左：包列表（6.4：拖放**直接挂在这个既有控件上**，不另造 drop_zone）
     package_list_ = new QListWidget;
     package_list_->setObjectName(QStringLiteral("fs_package_list"));
@@ -114,8 +144,17 @@ std::string FsPage::current_format_key() const {
     return format_combo_->currentData().toString().toUtf8().toStdString();
 }
 
-void FsPage::add_source(const QString& source,
+void FsPage::add_source(const QString& source_in,
                         const std::vector<std::pair<std::string, bool>>& entries) {
+    // ⑫12.1：加载前先过插件解密器（拒绝时**不加载**，理由给用户看）
+    QString gated = source_in;
+    QString gate_error;
+    if (!gate_source(gated, &gate_error)) {
+        log_message(QStringLiteral("拒绝加载（需要解密插件）：%1").arg(gate_error));
+        return;
+    }
+    const QString source = gated;  // 之后正文照旧用 source（形参已改名 source_in）
+
     efs::MergeInput input;
     input.source = source.toUtf8().toStdString();
     input.entries = entries;

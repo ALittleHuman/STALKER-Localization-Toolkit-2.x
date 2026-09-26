@@ -4,6 +4,7 @@
 #include "plugin_ui.h"
 #include "pages/page_base.h"
 #include "pages/page_factory.h"
+#include "pages/fs_page.h"
 #include "pages/xml_page.h"
 #include "split_pane.h"
 
@@ -95,6 +96,10 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
         page_list_->addItem(QString::fromUtf8(kBuiltinPages[i].title));
         QWidget* page = create_page(i);
         stack_->addWidget(page != nullptr ? page : make_placeholder(kBuiltinPages[i]));
+        if (auto* fs_page = dynamic_cast<FsPage*>(page)) {
+            // ⑫12.1：fs 页加载包之前要问插件解密器（用户 2026-09-26 决策的"必须"项）
+            fs_page->set_registry(&registry_);
+        }
         if (auto* xml_page = dynamic_cast<XmlPage*>(page)) {
             // ⑫12.1：插件注册的比较模式要出现在 XML 页的**同一个**下拉里
             xml_page->set_registry(&registry_);

@@ -14,6 +14,7 @@
 #include "page_base.h"
 
 #include "xrkit/engine/fs/extract_tree.h"
+#include "xrkit/engine/plugin/registry.h"
 #include "xrkit/engine/fs/overlay.h"
 
 #include <QString>
@@ -52,6 +53,16 @@ public:
     // 6.11：**唯一**的导出入口。选中集（Listed）与批量（All）走同一条路、同一套计数。
     // 1.x 是"逐项 --cat（300 s/项）"与"整镜像 --unpack-path（3600 s）"两条路，
     // 成功计数与文案还不同源。
+    // ⑫12.1 decryptor 消费端（用户 2026-09-26 决策：NLC 解密是**外部闭源插件**，
+    // 工具内不放解密逻辑）。加载包之前问一遍插件解密器：
+    //   · 没有解密器命中 ⇒ 原样放行（行为完全不变）；
+    //   · 命中并解开 ⇒ 路径换成解密产物，照常加载；
+    //   · 命中却解不开 ⇒ **拒绝加载**并把理由显示出来（绝不静默当普通包读）。
+    void set_registry(const plugin::Registry* registry) { registry_ = registry; }
+    bool gate_source(QString& path_in_out, QString* error_out);
+    QString last_gate_error() const { return last_gate_error_; }
+    void log_message(const QString& text);
+
     engine::fs::ExtractTreeResult extract_to(const QString& image_path, const QString& out_root,
                                             engine::fs::Selection selection_kind,
                                             const std::vector<std::string>& only = {});
@@ -81,6 +92,9 @@ private:
     engine::fs::FsSelection selection_;
     std::vector<Source> sources_;
     std::vector<QString> row_texts_;
+    const plugin::Registry* registry_ = nullptr;
+    QString decrypt_dir_;
+    QString last_gate_error_;
 
     QListWidget* package_list_ = nullptr;
     QComboBox* format_combo_ = nullptr;

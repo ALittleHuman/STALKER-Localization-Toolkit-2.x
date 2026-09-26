@@ -1130,6 +1130,43 @@ SmokeResult run_smoke() {
         check(keys.size() == 3, QStringLiteral("⑫12.5 模式条数应为 3（%1）").arg(keys.size()));
     }
 
+    // ⑫12.1 decryptor 消费端（用户 2026-09-26：NLC 解密是外部插件；fs 页加载前必须问）
+    {
+        namespace plug = xrkit::plugin;
+        FsPage page;
+        const std::vector<std::pair<std::string, bool>> none;
+        // ① 没装注册表 ⇒ 行为不变
+        page.add_source(QStringLiteral("gamedata.db_enc"), none);
+        check(page.source_count() == 1 && page.source_at(0) == QStringLiteral("gamedata.db_enc"),
+              QStringLiteral("⑫12.1 没有注册表时不该改变加载行为"));
+
+        // ② 装了"能解开"的解密器 ⇒ 换成解密产物
+        plug::Registry registry;
+        registry.register_decryptor("nlc.dll", [](const std::string&) { return true; },
+                                    [](const std::string&, std::string& out) {
+                                        out = "PLAIN";
+                                        return true;
+                                    });
+        FsPage gated;
+        gated.set_registry(&registry);
+        gated.add_source(QStringLiteral("gamedata.db_enc"), none);
+        check(gated.source_count() == 1 &&
+                  gated.source_at(0).endsWith(QStringLiteral(".decrypted")),
+              QStringLiteral("⑫12.1 命中解密器后没换成解密产物（实得 %1）")
+                  .arg(gated.source_at(0)));
+
+        // ③ 装了"解不开"的解密器 ⇒ **拒绝加载**且理由可见
+        plug::Registry bad;
+        bad.register_decryptor("bad.dll", [](const std::string&) { return true; },
+                               [](const std::string&, std::string&) { return false; });
+        FsPage refused;
+        refused.set_registry(&bad);
+        refused.add_source(QStringLiteral("gamedata.db_enc"), none);
+        check(refused.source_count() == 0 && !refused.last_gate_error().isEmpty(),
+              QStringLiteral("⑫12.1 解密失败必须拒绝加载并给出理由（实得 %1 个源）")
+                  .arg(refused.source_count()));
+    }
+
     // ⑫12.1/12.4：插件槽位要**渲染出来**（工具栏菜单项 → 页面的操作栏按钮）
     {
         namespace plug = xrkit::plugin;
