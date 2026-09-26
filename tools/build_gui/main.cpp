@@ -44,7 +44,7 @@ QString cli_path() {
         if (QFileInfo::exists(p)) return p;
     }
     // 开发期回退：仓库根的 build\msvc-release 那份
-    const QString rel = dir + "/../../../build/msvc-release/tools/cli/xrkit_cli.exe";
+    const QString rel = dir + "/../../../../build/msvc-release/tools/cli/xrkit_cli.exe";
     return QFileInfo::exists(rel) ? QDir(rel).absolutePath() : QString();
 }
 
