@@ -235,15 +235,29 @@ bool Image::meta_read(uint64_t base, uint64_t rel_block, uint32_t off, uint32_t 
     out.reserve(len);
     uint64_t block_off = base + rel_block;
     uint32_t cur_off = off;
+    // ★ 2026-09-27 真机整树跑抓到的缺陷：**offset 是"跨块的逻辑偏移"**，不是"块内偏移"。
+    //   实证：`gamedata.sqzy_patch` 里 `textures/verg/masks/hud_sci_1_5.dds`（普通 REG、
+    //   3686528 字节 / 29 块）的 inode 起始偏移是 **8200** —— 落在 8 KiB 块**之后**。
+    //   参照 reader（rdsquashfs）照样读得出（它顺着 next 指针跨块跳），而我们原先直接报
+    //   "元数据块越界（off=8200，块内只有 8192 字节）"。抽样跑（门禁 [11] 默认 200 文件）
+    //   碰不到这种布局，只有整树才暴露。
+    //   新语义：`cur_off >= 块大小` 时不是错误，而是**减掉这一块、跳到 next 块继续**；
+    //   循环有上限，坏镜像仍会以"读元数据块失败"这种**可见**方式失败。
+    int hops = 0;
     while (out.size() < len) {
         const MetaBlock* mb = nullptr;
         if (!meta_block(block_off, mb, err)) return false;
-        if (cur_off >= mb->data.size()) {
-            err = "元数据块越界（off=" + std::to_string(cur_off) +
-                  "，块内只有 " + std::to_string(mb->data.size()) + " 字节）";
-            return false;
+        const size_t block_size = mb->data.size();
+        if (cur_off >= block_size) {
+            if (block_size == 0 || ++hops > 4096) {
+                err = "元数据跨块跳过次数异常（off=" + std::to_string(cur_off) + "）";
+                return false;
+            }
+            cur_off -= static_cast<uint32_t>(block_size);
+            block_off = mb->next;
+            continue;
         }
-        const size_t take = std::min<size_t>(mb->data.size() - cur_off, len - out.size());
+        const size_t take = std::min<size_t>(block_size - cur_off, len - out.size());
         out.insert(out.end(), mb->data.begin() + cur_off, mb->data.begin() + cur_off + take);
         cur_off = 0;
         block_off = mb->next;
