@@ -99,8 +99,15 @@ def main() -> int:
 
     if CORPUS.exists():
         corpus = json.loads(CORPUS.read_text(encoding="utf-8"))
-        files = [Path(f) for f in (corpus if isinstance(corpus, list)
-                                   else corpus.get("files", []))]
+        # schema 是 {"note":..., "entries":[{"id","path","size","sha256"}...]}（实测，别猜）
+        if isinstance(corpus, list):
+            raw = [str(x) for x in corpus]
+        elif isinstance(corpus, dict):
+            entries = corpus.get("entries") or corpus.get("files") or []
+            raw = [str(e.get("path", "")) if isinstance(e, dict) else str(e) for e in entries]
+        else:
+            raw = []
+        files = [Path(f) for f in raw if f]
         files = [f for f in files if f.exists()][:20]
         if files:
             import tempfile
