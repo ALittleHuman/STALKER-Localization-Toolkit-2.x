@@ -1140,6 +1140,25 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         check(ctx, !token.cancelled(), "只有 reset() 能清零（1.x convert() 不清零）");
     });
 
+    // 字库字符集口径（用户 2026-09-26：日文层砍掉 ⇒ 假名不进字符集）
+    reg.add("font: 字符集剔掉日文假名（汉字/西里尔保留）", [](CheckContext& ctx) {
+        std::set<uint32_t> chars{0x0041,     // A
+                                 0x0410,     // А（西里尔）
+                                 0x00C9,     // É（西欧）
+                                 0x6C49,     // 汉（译文汉字 —— 必须留）
+                                 0x3042,     // あ
+                                 0x30A2,     // ア
+                                 0x31F0,     // ㇰ（片假名扩展）
+                                 0xFF76};    // ｶ（半角片假名）
+        xrkit::engine::font::strip_japanese_kana(chars);
+        check(ctx, chars.count(0x3042) == 0 && chars.count(0x30A2) == 0 &&
+                      chars.count(0x31F0) == 0 && chars.count(0xFF76) == 0,
+              "日文假名（含扩展/半角）必须被剔掉");
+        check(ctx, chars.count(0x0041) == 1 && chars.count(0x0410) == 1 &&
+                      chars.count(0x00C9) == 1 && chars.count(0x6C49) == 1,
+              "ASCII/西里尔/西欧/译文汉字都不许被误剔");
+    });
+
     // ⑫12.1 decryptor 消费端（用户 2026-09-26：NLC 解密是外部插件；工具内不放逻辑）
     reg.add("plugin: decryptor 消费端（加载 DB 前问插件）", [](CheckContext& ctx) {
         namespace plug = xrkit::plugin;

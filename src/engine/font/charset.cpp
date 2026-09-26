@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <set>
 #include <string>
 #include <vector>
@@ -177,6 +178,16 @@ std::vector<uint32_t> required_chars() {
     return std::vector<uint32_t>(chars.begin(), chars.end());
 }
 
+void strip_japanese_kana(std::set<uint32_t>& chars) {
+    for (auto it = chars.begin(); it != chars.end();) {
+        const uint32_t cp = *it;
+        const bool kana = (cp >= 0x3040 && cp <= 0x30FF) ||   // 平假名 + 片假名
+                          (cp >= 0x31F0 && cp <= 0x31FF) ||   // 片假名扩展
+                          (cp >= 0xFF66 && cp <= 0xFF9D);     // 半角片假名
+        it = kana ? chars.erase(it) : std::next(it);
+    }
+}
+
 bool extract_chars(const std::string& xml_dir, bool full_cyrillic, CharsetResult& out) {
     out = CharsetResult{};
     std::error_code ec;
@@ -212,6 +223,9 @@ bool extract_chars(const std::string& xml_dir, bool full_cyrillic, CharsetResult
         if (!trusted) out.guessed.push_back(core::path_to_utf8(path.filename()));
         scan_xml_texts(text, chars);
     }
+
+    // ④' 日文层砍掉（用户 2026-09-26）：任何来源的假名都不进字符集
+    strip_japanese_kana(chars);
 
     // ⑤ 并入生僻补集；"复刻旧包"模式再剔除丢失的西里尔
     add_literal(kFontgenExtra, chars);

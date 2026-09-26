@@ -15,6 +15,7 @@
 //   `TCMap[i] = vFirstValid`（同一个重复字形）—— 满屏重复字形且日志里毫无痕迹。
 
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,12 @@ struct CharsetResult {
 };
 
 // `xml_dir` 不存在返回 false（1.x 返回 None）。
+// 用户 2026-09-26 决策：**日文层砍掉** ⇒ 假名不进字符集。
+// 剔的码位：平假名/片假名 U+3040–U+30FF、片假名扩展 U+31F0–U+31FF、半角片假名 U+FF66–U+FF9D。
+// ★ "日文汉字不进"**不能**靠剔 CJK 码位实现 —— 日文汉字与中文汉字码位相同，剔了就把译文
+//   的汉字一起剔光。那条只能靠"不加日语专用字形层、译文里出现的汉字照收"来落实。
+void strip_japanese_kana(std::set<uint32_t>& chars);
+
 bool extract_chars(const std::string& xml_dir, bool full_cyrillic, CharsetResult& out);
 
 // 1.x `REQUIRED_CHARS` = ASCII/俄文基础 + 完整西里尔块 U+0410..U+04FF + ANSI 桥接（升序去重）。
