@@ -1081,6 +1081,28 @@ def step_golden_video_argv(release: bool) -> None:
         fail("视频转码 argv 与 1.x 不一致（见上）")
 
 
+def step_golden_sqfs_lzo(release: bool) -> None:
+    """⑥6.5：lzo 压缩的镜像要能读，且**截断后必须可见失败**（不许静默吞掉）。"""
+    say("[26] lzo 镜像：能读 + 失败要可见（⑥6.5）")
+    script = ROOT / "tests" / "golden_sqfs_lzo.py"
+    if not require_repo_file(script, "lzo 镜像判据脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("ok ") or s.startswith("✗") or s.startswith("GOLDEN-SQFS-LZO") or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("lzo 镜像可读、失败可见")
+    elif rc == 2:
+        prereq("参照 tar2sqfs", "缺参照工具或 CLI（见上）", release)
+    else:
+        fail("lzo 镜像判据不通过（见上）")
+
+
 STEPS = [
     ("build", step_build),
     ("no-qt", step_no_qt_lock),
@@ -1106,6 +1128,7 @@ STEPS = [
     ("golden-font-package", step_golden_font_package),
     ("golden-xml-stats", step_golden_xml_stats),
     ("golden-video-argv", step_golden_video_argv),
+    ("golden-sqfs-lzo", step_golden_sqfs_lzo),
     ("shell-smoke", step_shell_smoke),
 ]
 
