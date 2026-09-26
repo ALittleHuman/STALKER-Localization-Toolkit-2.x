@@ -1,0 +1,235 @@
+{
+  "note": "基线由 1.x apps/video_ogm_app.py 的 convert() 本体 exec 出来后**实调**得到（桩只替换 Popen/parse_video_info/日志）——不是我照着源码手写的",
+  "reference": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit\\apps\\video_ogm_app.py",
+  "cases": [
+    {
+      "case": "theora_ref_bitrate_src_same_audio",
+      "encoders": [
+        "libtheora",
+        "libxvid",
+        "mpeg4"
+      ],
+      "ok": false,
+      "argv": [
+        "FFMPEG",
+        "-y",
+        "-i",
+        "IN.avi",
+        "-c:v",
+        "libtheora",
+        "-b:v",
+        "800000",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "libvorbis",
+        "-b:a",
+        "128000",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-f",
+        "ogg",
+        "OUT.ogm"
+      ],
+      "message": "输出文件不存在或为空"
+    },
+    {
+      "case": "theora_ref_no_bitrate_src_diff_noaudio",
+      "encoders": [
+        "libtheora",
+        "libxvid",
+        "mpeg4"
+      ],
+      "ok": false,
+      "argv": [
+        "FFMPEG",
+        "-y",
+        "-i",
+        "IN.avi",
+        "-c:v",
+        "libtheora",
+        "-q:v",
+        "7",
+        "-pix_fmt",
+        "yuv420p",
+        "-g",
+        "30",
+        "-c:a",
+        "libvorbis",
+        "-b:a",
+        "160000",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-f",
+        "ogg",
+        "OUT.ogm"
+      ],
+      "message": "输出文件不存在或为空"
+    },
+    {
+      "case": "mpeg4_ref_no_bitrate_src_noaudio",
+      "encoders": [
+        "libtheora",
+        "libxvid",
+        "mpeg4"
+      ],
+      "ok": false,
+      "argv": [
+        "FFMPEG",
+        "-y",
+        "-i",
+        "IN.avi",
+        "-c:v",
+        "libxvid",
+        "-b:v",
+        "2500000",
+        "-pix_fmt",
+        "yuv420p",
+        "-an",
+        "-f",
+        "ogg",
+        "OUT.ogm"
+      ],
+      "message": "输出文件不存在或为空"
+    },
+    {
+      "case": "mpeg4_ref_fallback_noxvid",
+      "encoders": [
+        "libtheora",
+        "mpeg4"
+      ],
+      "ok": false,
+      "argv": [
+        "FFMPEG",
+        "-y",
+        "-i",
+        "IN.avi",
+        "-c:v",
+        "libtheora",
+        "-q:v",
+        "7",
+        "-pix_fmt",
+        "yuv420p",
+        "-g",
+        "30",
+        "-c:a",
+        "libvorbis",
+        "-b:a",
+        "160000",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-f",
+        "ogg",
+        "OUT.ogm"
+      ],
+      "message": "输出文件不存在或为空"
+    },
+    {
+      "case": "last_resort_only_mpeg4",
+      "encoders": [
+        "mpeg4"
+      ],
+      "ok": false,
+      "argv": [
+        "FFMPEG",
+        "-y",
+        "-i",
+        "IN.avi",
+        "-c:v",
+        "mpeg4",
+        "-b:v",
+        "800000",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "libvorbis",
+        "-b:a",
+        "128000",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-f",
+        "ogg",
+        "OUT.ogm"
+      ],
+      "message": "输出文件不存在或为空"
+    },
+    {
+      "case": "ffprobe_failed_keeps_audio",
+      "encoders": [
+        "libtheora",
+        "libxvid",
+        "mpeg4"
+      ],
+      "ok": false,
+      "argv": [
+        "FFMPEG",
+        "-y",
+        "-i",
+        "IN.avi",
+        "-c:v",
+        "libtheora",
+        "-b:v",
+        "800000",
+        "-pix_fmt",
+        "yuv420p",
+        "-vf",
+        "scale=640:480,fps=25.0",
+        "-c:a",
+        "libvorbis",
+        "-b:a",
+        "128000",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-f",
+        "ogg",
+        "OUT.ogm"
+      ],
+      "message": "输出文件不存在或为空"
+    },
+    {
+      "case": "no_reference_at_all",
+      "encoders": [
+        "libtheora",
+        "libxvid",
+        "mpeg4"
+      ],
+      "ok": false,
+      "argv": [
+        "FFMPEG",
+        "-y",
+        "-i",
+        "IN.avi",
+        "-c:v",
+        "libtheora",
+        "-q:v",
+        "7",
+        "-pix_fmt",
+        "yuv420p",
+        "-g",
+        "30",
+        "-c:a",
+        "libvorbis",
+        "-b:a",
+        "160000",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-f",
+        "ogg",
+        "OUT.ogm"
+      ],
+      "message": "输出文件不存在或为空"
+    }
+  ]
+}
