@@ -920,9 +920,11 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
 
     if (options.clean) {
         std::filesystem::remove_all(dst, ec);
-        std::filesystem::remove(core::path_from_utf8(
-            (std::filesystem::path(core::path_from_utf8(xml_out_dir)) /
-             (prefix + "_" + type_dir + "_texts.xml")).string()), ec);
+        // ★ 别再经 `Path::string()` 中转：它按 **CP_ACP** 转窄串，ACP 表示不了的字符会变 `?`
+        //   （与 atomic_write 那个【中】同类）。这里直接把 path 交给 remove 的 path 重载。
+        std::filesystem::remove(std::filesystem::path(core::path_from_utf8(xml_out_dir)) /
+                                    (prefix + "_" + type_dir + "_texts.xml"),
+                                ec);
     }
 
     const std::vector<Found> files =
