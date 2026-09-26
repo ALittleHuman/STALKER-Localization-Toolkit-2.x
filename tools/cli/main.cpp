@@ -37,6 +37,7 @@
 #include "xrkit/engine/text/sniff.h"
 #include "xrkit/engine/third_party_probe.h"
 #include "xrkit/engine/video/ffmpeg.h"
+#include "xrkit/engine/video/transcode.h"
 #include "xrkit/engine/xml/compare.h"
 
 #include <algorithm>
@@ -1606,6 +1607,85 @@ int run_cli(const std::vector<std::string>& args) {
         std::cout << "DEPCHECK ok=" << counts.ok << " skip=" << counts.skip
                   << " fail=" << counts.fail << "\n";
         return rc;
+    }
+    if (action == "--video-plan") {
+        // 判据面：把 `tests/probe_video_argv.py` 里那 7 组用例（输入与 1.x 实调时**同一张表**）
+        // 交给引擎算 argv，逐行打印，供 `tests/golden_video_argv.py` 与基线对拍。
+        namespace vid = xrkit::engine::video;
+        struct Case {
+            const char* name;
+            bool has_ref;
+            bool ref_has_video;
+            const char* ref_codec;
+            int ref_w, ref_h;
+            double ref_fps;
+            long long ref_vbitrate;
+            bool ref_has_audio;
+            int ref_ar, ref_ac;
+            long long ref_abitrate;
+            bool src_parsed;
+            bool src_has_video;
+            int src_w, src_h;
+            double src_fps;
+            bool src_has_audio;
+            int encoder_set;  // 0=三个都有 1=无 libxvid 2=只有 mpeg4
+        };
+        const Case cases[] = {
+            {"theora_ref_bitrate_src_same_audio", true, true, "theora", 640, 480, 25.0, 800000, true,
+             44100, 2, 128000, true, true, 640, 480, 25.0, true, 0},
+            {"theora_ref_no_bitrate_src_diff_noaudio", true, true, "h264", 0, 0, 0.0, 0, false, 0, 0,
+             0, true, true, 320, 240, 30.0, true, 0},
+            {"mpeg4_ref_no_bitrate_src_noaudio", true, true, "mpeg4", 640, 480, 25.0, 0, true, 0, 0,
+             0, true, true, 640, 480, 25.0, false, 0},
+            {"mpeg4_ref_fallback_noxvid", true, true, "mpeg4", 640, 480, 25.0, 0, true, 0, 0,
+             0, true, true, 640, 480, 25.0, true, 1},
+            {"last_resort_only_mpeg4", true, true, "theora", 640, 480, 25.0, 800000, true, 44100, 2,
+             128000, true, true, 640, 480, 25.0, true, 2},
+            {"ffprobe_failed_keeps_audio", true, true, "theora", 640, 480, 25.0, 800000, true, 44100,
+             2, 128000, false, false, 0, 0, 0.0, false, 0},
+            {"no_reference_at_all", false, false, "", 0, 0, 0.0, 0, false, 0, 0, 0, true, true, 640,
+             480, 25.0, true, 0},
+        };
+        for (const Case& item : cases) {
+            vid::TranscodeRequest request;
+            request.ffmpeg = "FFMPEG";
+            request.input = "IN.avi";
+            request.output = "OUT.ogm";
+            request.has_reference = item.has_ref;
+            if (item.has_ref) {
+                request.reference.has_video = item.ref_has_video;
+                request.reference.has_audio = item.ref_has_audio;
+                request.reference.video.codec = item.ref_codec;
+                request.reference.video.width = item.ref_w;
+                request.reference.video.height = item.ref_h;
+                request.reference.video.fps = item.ref_fps;
+                request.reference.video.bitrate = item.ref_vbitrate;
+                request.reference.audio.sample_rate = item.ref_ar;
+                request.reference.audio.channels = item.ref_ac;
+                request.reference.audio.bitrate = item.ref_abitrate;
+            }
+            request.source.parsed = item.src_parsed;
+            request.source.has_video = item.src_has_video;
+            request.source.has_audio = item.src_has_audio;
+            request.source.video.width = item.src_w;
+            request.source.video.height = item.src_h;
+            request.source.video.fps = item.src_fps;
+            if (item.encoder_set == 0) {
+                request.available_encoders = {"libtheora", "libxvid", "mpeg4"};
+            } else if (item.encoder_set == 1) {
+                request.available_encoders = {"libtheora", "mpeg4"};
+            } else {
+                request.available_encoders = {"mpeg4"};
+            }
+            const vid::TranscodePlan plan = vid::plan_transcode(request);
+            std::string joined;
+            for (const std::string& part : plan.argv) {
+                if (!joined.empty()) joined += '\x1f';
+                joined += part;
+            }
+            std::cout << "PLAN\t" << item.name << "\t" << joined << "\n";
+        }
+        return kExitOk;
     }
     if (action == "--bench") {
         std::cout << "BENCH skip reason=engine-not-implemented\n";

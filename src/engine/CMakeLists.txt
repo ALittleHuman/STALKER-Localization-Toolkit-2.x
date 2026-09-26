@@ -16,6 +16,7 @@ add_library(xrkit_engine STATIC
   text/extract.cpp
   xml/compare.cpp
   video/ffmpeg.cpp
+  video/transcode.cpp
   plugin/contract.cpp
   plugin/registry.cpp
   plugin/abi_host.cpp
