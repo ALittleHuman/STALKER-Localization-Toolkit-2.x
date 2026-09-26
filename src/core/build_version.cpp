@@ -293,6 +293,15 @@ std::string version_backup_path(const std::string& path) { return path + ".bak";
 bool load_version_store(const std::string& path, VersionStore& out, std::string& error) {
     std::string text;
     if (!read_text(path, text, error)) return false;
+    // ★ 2026-09-27 实测踩到的坑：PowerShell `Set-Content -Encoding UTF8` / 记事本写出来的
+    //   JSON **带 UTF-8 BOM**，解析器在位置 0 就撞上 0xEF ⇒ 报"无法识别的记号"，
+    //   而调用方会把它当成"文件不存在"⇒ **把用户的历史构建记录覆盖掉**。
+    //   这里先把 BOM 吃掉（语义上它就是"文件是 UTF-8"的标记，不是内容）。
+    if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
+        static_cast<unsigned char>(text[1]) == 0xBB &&
+        static_cast<unsigned char>(text[2]) == 0xBF) {
+        text.erase(0, 3);
+    }
     JVal root;
     JParser parser(text);
     if (!parser.parse(root, error)) return false;

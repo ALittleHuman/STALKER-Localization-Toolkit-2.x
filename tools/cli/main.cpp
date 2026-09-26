@@ -14,6 +14,7 @@
 #include "xrkit/core/log.h"
 #include "xrkit/core/path.h"
 #include "xrkit/core/atomic_write.h"
+#include "xrkit/core/build_version.h"
 #include "xrkit/core/theme.h"
 #include "xrkit/core/version.h"
 #include "xrkit/engine/engine.h"
@@ -1802,6 +1803,57 @@ int run_cli(const std::vector<std::string>& args) {
         }
         return kExitOk;
     }
+    if (action == "--version-store") {
+        if (operands.empty()) {
+            std::cerr << "VERSIONSTORE error reason=用法：--version-store <version.json> [set <版本> <标记>]\n";
+            return kExitUsage;
+        }
+        const std::string store_path = operands[0];
+        xrkit::core::VersionStore store;
+        std::string verr;
+        if (!xrkit::core::load_version_store(store_path, store, verr)) {
+            // ★ 2026-09-27 实测踩到：**解析失败 ≠ 文件不存在**。原先把两者混在一起，
+            //   一份带 BOM（或写坏）的 version.json 会被"当成首次使用"**静默覆盖**，
+            //   等于把用户的构建史丢掉。存在但读不出来 ⇒ 如实报错、**一个字节都不写**。
+            if (std::filesystem::exists(xrkit::core::path_from_utf8(store_path))) {
+                std::cout << "VERSIONSTORE error reason=解析失败（已保留原文件，不覆盖）：" << verr
+                          << "\n";
+                return kExitFail;
+            }
+            store = xrkit::core::VersionStore{};
+            store.current_version = "2.0.0";
+            store.current_prerelease = "BETA";
+            store.current_index = 1;
+            if (!xrkit::core::save_version_store(store_path, store, verr)) {
+                std::cout << "VERSIONSTORE error reason=" << verr << "\n";
+                return kExitFail;
+            }
+            std::cout << "VERSIONSTORE created=" << store_path << "\n";
+        }
+        if (operands.size() >= 4 && operands[1] == "set") {
+            store.current_version = operands[2];
+            store.current_prerelease = operands[3];
+            store.current_index = store.next_index(operands[2], operands[3]);
+            if (!xrkit::core::save_version_store(store_path, store, verr)) {
+                std::cout << "VERSIONSTORE error reason=" << verr << "\n";
+                return kExitFail;
+            }
+        } else {
+            store.current_index = store.next_index(store.current_version, store.current_prerelease);
+        }
+        size_t history = 0;
+        for (const auto& v : store.tree) {
+            for (const auto& m : v.second) history += m.second.size();
+        }
+        std::cout << "VERSIONSTORE ok version=" << store.current_version
+                  << " prerelease=" << store.current_prerelease
+                  << " next=" << store.current_index
+                  << " full=" << store.full_version()
+                  << " versions=" << store.tree.size()
+                  << " history=" << history << "\n";
+        return kExitOk;
+    }
+
     if (action == "--bench") {
         std::cout << "BENCH skip reason=engine-not-implemented\n";
         return kExitSkip;
