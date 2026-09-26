@@ -40,6 +40,11 @@ public:
     // 6.2：加载顺序按 basename 小写升序 —— 页面**不自己排**，交给模型。
     void add_source(const QString& source,
                     const std::vector<std::pair<std::string, bool>>& entries);
+    // 散装层（用户 2026-09-26"最后并入层"）：把一个**磁盘目录**当"包"加进来 ——
+    // 条目表由 `engine::fs::loose_entries` 产出，走的是**同一个** `add_source`，
+    // 所以"同名条目以后加载的为准"对散装层与包完全一致（不出现第二套合并逻辑）。
+    bool add_loose_dir(const QString& dir, QString* error);
+
     int source_count() const { return static_cast<int>(sources_.size()); }
     QString source_at(int index) const;
     int conflict_count() const { return tree_.conflict_count(); }

@@ -41,6 +41,29 @@ bool FsPage::gate_source(QString& path, QString* error_out) {
     return true;
 }
 
+bool FsPage::add_loose_dir(const QString& dir, QString* error) {
+    std::string err;
+    const auto entries = engine::fs::loose_entries(dir.toUtf8().toStdString(), err);
+    if (!err.empty()) {
+        // 不存在的目录/读不动 ⇒ **可见失败**（不静默加一个空源）
+        if (error != nullptr) *error = QString::fromStdString(err);
+        log_message(QStringLiteral("散装层拒绝加载：%1").arg(QString::fromStdString(err)));
+        return false;
+    }
+    QString gated = dir;
+    QString gate_error;
+    if (!gate_source(gated, &gate_error)) {
+        if (error != nullptr) *error = gate_error;
+        log_message(QStringLiteral("散装层被解密闸门拒绝：%1").arg(gate_error));
+        return false;
+    }
+    add_source(gated, entries);
+    log_message(QStringLiteral("散装层已并入：%1（%2 个条目）")
+                    .arg(gated)
+                    .arg(static_cast<int>(entries.size())));
+    return true;
+}
+
 void FsPage::log_message(const QString& text) {
     // 页面只转发给宿主（Hub 决定往哪写）
     if (auto* hub = window()) {

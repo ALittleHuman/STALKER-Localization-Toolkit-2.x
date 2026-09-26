@@ -1217,6 +1217,41 @@ SmokeResult run_smoke() {
         QDir(empty).removeRecursively();
     }
 
+    // 散装层界面接线（用户 2026-09-26"最后并入层"）
+    {
+        std::error_code ec;
+        const std::filesystem::path work =
+            std::filesystem::temp_directory_path(ec) / "xrkit_smoke_loose";
+        std::filesystem::remove_all(work, ec);
+        std::filesystem::create_directories(work / "sub", ec);
+        {
+            std::ofstream out(work / "a.txt", std::ios::binary);
+            out << 'A';
+        }
+        {
+            std::ofstream out(work / "sub" / "b.txt", std::ios::binary);
+            out << 'B';
+        }
+        FsPage page;
+        QString error;
+        const bool ok = page.add_loose_dir(QString::fromStdString(work.string()), &error);
+        check(ok && error.isEmpty(), QStringLiteral("散装层加入失败：%1").arg(error));
+        check(page.source_count() == 1,
+              QStringLiteral("散装层没有变成一个源（实得 %1）").arg(page.source_count()));
+        // 用"勾选计数"证明条目**真的进了合并树**（a.txt + sub/b.txt = 2 个文件）
+        page.check_all(true);
+        check(page.checked_file_count() == 2,
+              QStringLiteral("散装层条目数不对（期望 2，实得 %1）").arg(page.checked_file_count()));
+        // 不存在的目录 ⇒ 拒绝且**不加源**
+        const int before = page.source_count();
+        QString missing_error;
+        const bool bad =
+            page.add_loose_dir(QString::fromStdString((work / "nope").string()), &missing_error);
+        check(!bad && !missing_error.isEmpty() && page.source_count() == before,
+              QStringLiteral("不存在的散装目录必须拒绝且不加源"));
+        std::filesystem::remove_all(work, ec);
+    }
+
     // ⑫12.1 decryptor 消费端（用户 2026-09-26：NLC 解密是外部插件；fs 页加载前必须问）
     {
         namespace plug = xrkit::plugin;
