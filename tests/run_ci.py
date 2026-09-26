@@ -1084,11 +1084,15 @@ def step_golden_video_argv(release: bool) -> None:
         fail("视频转码 argv 与 1.x 不一致（见上）")
 
 
-def step_golden_sqfs_lzo(release: bool) -> None:
-    """⑥6.5：lzo 压缩的镜像要能读，且**截断后必须可见失败**（不许静默吞掉）。"""
-    say("[26] lzo 镜像：能读 + 失败要可见（⑥6.5）")
-    script = ROOT / "tests" / "golden_sqfs_lzo.py"
-    if not require_repo_file(script, "lzo 镜像判据脚本"):
+def step_golden_sqfs_compressors(release: bool) -> None:
+    """块压缩器**读侧**判据：lzo / gzip / lz4 / zstd（⑥6.5 一般化）。
+
+    正面＝参照 `tar2sqfs -c <压缩器>` 造的镜像能被我们正确读回；反面＝坏镜像必须**可见失败**。
+    写侧（我们产出这些压缩器）本步骤不覆盖 —— 现有 writer 只有 xz。
+    """
+    say("[26] 块压缩器读侧：lzo / gzip / lz4 / zstd（⑥6.5）")
+    script = ROOT / "tests" / "golden_sqfs_compressors.py"
+    if not require_repo_file(script, "块压缩器判据脚本"):
         return
     if not CLI_EXE.exists():
         prereq("构建产物 xrkit_cli.exe", "未构建", release)
@@ -1096,14 +1100,15 @@ def step_golden_sqfs_lzo(release: bool) -> None:
     rc, out = run([sys.executable, str(script)])
     for line in out.splitlines():
         s = line.strip()
-        if s.startswith("ok ") or s.startswith("✗") or s.startswith("GOLDEN-SQFS-LZO") or s.startswith("!!"):
+        if s.startswith("ok ") or s.startswith("✗") or s.startswith("GOLDEN-SQFS-COMPRESSORS") \
+                or s.startswith("!!"):
             say("  " + s)
     if rc == 0:
-        ok("lzo 镜像可读、失败可见")
+        ok("四种块压缩器的读侧与坏镜像行为都对")
     elif rc == 2:
         prereq("参照 tar2sqfs", "缺参照工具或 CLI（见上）", release)
     else:
-        fail("lzo 镜像判据不通过（见上）")
+        fail("块压缩器读侧判据不通过（见上）")
 
 
 def step_golden_sqfs_metacross(release: bool) -> None:
@@ -1183,7 +1188,7 @@ STEPS = [
     ("golden-font-package", step_golden_font_package),
     ("golden-xml-stats", step_golden_xml_stats),
     ("golden-video-argv", step_golden_video_argv),
-    ("golden-sqfs-lzo", step_golden_sqfs_lzo),
+    ("golden-sqfs-compressors", step_golden_sqfs_compressors),
     ("golden-sqfs-metacross", step_golden_sqfs_metacross),
     ("bench", step_bench),
     ("shell-smoke", step_shell_smoke),
