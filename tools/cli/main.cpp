@@ -14,6 +14,7 @@
 #include "xrkit/core/log.h"
 #include "xrkit/core/path.h"
 #include "xrkit/core/atomic_write.h"
+#include "build_cmd.h"
 #include "xrkit/core/build_version.h"
 #include "xrkit/core/theme.h"
 #include "xrkit/core/version.h"
@@ -1852,6 +1853,10 @@ int run_cli(const std::vector<std::string>& args) {
                   << " versions=" << store.tree.size()
                   << " history=" << history << "\n";
         return kExitOk;
+    }
+
+    if (action == "--build-package") {
+        return xrkit_cli::run_build_package(operands);
     }
 
     if (action == "--bench") {

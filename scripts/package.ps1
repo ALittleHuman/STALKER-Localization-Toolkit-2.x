@@ -13,7 +13,10 @@
   用法：pwsh -File scripts/package.ps1 [-OutDir dist]
 #>
 param(
-    [string]$OutDir = 'dist'
+    [string]$OutDir = 'dist',
+    # 构建序号与完整版本串由 CLI（--build-package）传进来 —— 版本口径只有一处：version.json
+    [int]$BuildIndex = 0,
+    [string]$VersionString = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -55,8 +58,10 @@ STALKER 汉化工具集 2.0.0（xrkit）
 不含：ffmpeg（视频页要你自己在页面里手动指定）、NLC 解密插件、实验性引擎补丁。
 自检：命令行跑 `xrkit_app.exe --smoke`（离屏，ASCII 输出）可核对包是否完整。
 "@ | Set-Content -LiteralPath (Join-Path $stage 'README.txt') -Encoding UTF8
+$verLine = if ($VersionString -ne '') { $VersionString } else { '2.0.0' }
 @"
-version=2.0.0
+version=$verLine
+index=$BuildIndex
 commit=$commit
 built=$stamp
 "@ | Set-Content -LiteralPath (Join-Path $stage 'version.txt') -Encoding UTF8
@@ -104,7 +109,8 @@ if (-not $smokeOk) { throw "包内 exe 的离屏自检没通过（包可能缺 Q
 Write-Host "== 压缩 =="
 $dist = Join-Path $root $OutDir
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
-$zip  = Join-Path $dist ("STALKER_Toolkit_2.0.0_{0}.zip" -f $commit)
+$tag  = if ($VersionString -ne '') { ($VersionString -replace ' ', '_') } else { '2.0.0' }
+$zip  = Join-Path $dist ("STALKER_Toolkit_{0}_{1}.zip" -f $tag, $commit)
 if (Test-Path $zip) { Remove-Item -Force $zip }
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip
 Write-Host "PACKAGE OK: $zip"
