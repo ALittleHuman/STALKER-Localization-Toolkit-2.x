@@ -1130,6 +1130,34 @@ SmokeResult run_smoke() {
         check(keys.size() == 3, QStringLiteral("⑫12.5 模式条数应为 3（%1）").arg(keys.size()));
     }
 
+    // 视频转码接线（用户 2026-09-26：完整移植）—— argv 由引擎算，页面只起进程/报错
+    {
+        namespace vid = xrkit::engine::video;
+        VideoPage page;
+        vid::TranscodeRequest request;
+        request.ffmpeg = "definitely-not-a-real-ffmpeg.exe";
+        request.input = "in.avi";
+        request.output = QDir::temp().filePath(QStringLiteral("xrkit_smoke_out.ogm")).toStdString();
+        request.source.parsed = true;
+        request.source.has_video = true;
+        request.source.has_audio = true;
+        request.source.duration = 10.0;
+        request.available_encoders = {"libtheora"};
+        QString error;
+        const bool started = page.start_transcode(request, &error);
+        check(!started && !error.isEmpty(),
+              QStringLiteral("视频：起不来的 ffmpeg 必须**如实报错**（不崩不卡）"));
+        check(!page.transcode_running() && !page.last_error().isEmpty(),
+              QStringLiteral("视频：启动失败后态/理由要可见（实得 '%1'）").arg(page.last_error()));
+        // 取消令牌：只有 reset 能清零；新一轮 start 会先 reset（1.x 语义）
+        page.cancel_transcode();
+        check(page.cancel_token().cancelled(), QStringLiteral("视频：cancel_transcode 应置位令牌"));
+        QString error2;
+        page.start_transcode(request, &error2);
+        check(!page.cancel_token().cancelled(),
+              QStringLiteral("视频：新一轮 start 必须先 reset 取消令牌（1.x：convert 自己不清零）"));
+    }
+
     // ⑫12.1 四类槽位渲染（用户 2026-09-26"补六类"：panel/tool/option/option_entry）
     {
         namespace plug = xrkit::plugin;

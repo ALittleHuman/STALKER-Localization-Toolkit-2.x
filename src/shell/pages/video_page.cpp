@@ -10,6 +10,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QFile>
+#include <QProcess>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <filesystem>
@@ -20,6 +22,79 @@ namespace {
 QString utf8(const std::string& text) { return QString::fromStdString(text); }
 
 }  // namespace
+
+bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request,
+                                QString* error) {
+    if (process_ != nullptr) {
+        if (error != nullptr) *error = QStringLiteral("已经在转码中");
+        return false;
+    }
+    cancel_token_.reset();  // 1.x：新一轮要显式 reset（convert() 自己不清零）
+    progress_percent_ = 0;
+    last_error_.clear();
+
+    const engine::video::TranscodePlan plan = engine::video::plan_transcode(request);
+    duration_sec_ = plan.duration;
+    if (plan.argv.empty()) {
+        if (error != nullptr) *error = QStringLiteral("空命令行");
+        return false;
+    }
+    QStringList args;
+    for (size_t i = 1; i < plan.argv.size(); ++i) {
+        args << QString::fromStdString(plan.argv[i]);
+    }
+    process_ = new QProcess(this);
+    process_->setProgram(QString::fromStdString(plan.argv.front()));
+    process_->setArguments(args);
+    connect(process_, &QProcess::readyReadStandardError, this, [this] {
+        const QString text = QString::fromUtf8(process_->readAllStandardError());
+        const std::string raw = text.toUtf8().toStdString();
+        size_t start = 0;
+        while (start <= raw.size()) {
+            const size_t nl = raw.find('\n', start);
+            const std::string line =
+                raw.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+            const engine::video::ProgressSample sample =
+                engine::video::progress_from_line(line, duration_sec_);
+            if (sample.matched) progress_percent_ = static_cast<int>(sample.percent);
+            if (nl == std::string::npos) break;
+            start = nl + 1;
+        }
+    });
+    connect(process_, &QProcess::finished, this,
+            [this](int code, QProcess::ExitStatus status) {
+                if (cancel_token_.cancelled()) {
+                    // 1.x：取消就**删掉半成品**（不留"看着像成功"的输出）
+                    if (output_edit_ != nullptr) QFile::remove(output_edit_->text());
+                    last_error_ = QStringLiteral("已取消");
+                } else if (status != QProcess::NormalExit || code != 0) {
+                    last_error_ = QStringLiteral("ffmpeg 退出码 %1").arg(code);
+                }
+                if (process_ != nullptr) {
+                    process_->deleteLater();
+                    process_ = nullptr;
+                }
+            });
+    process_->start();
+    if (!process_->waitForStarted(10000)) {
+        last_error_ = QStringLiteral("启动失败：%1").arg(process_->errorString());
+        process_->deleteLater();
+        process_ = nullptr;
+        if (error != nullptr) *error = last_error_;
+        return false;
+    }
+    return true;
+}
+
+void VideoPage::cancel_transcode() {
+    cancel_token_.cancel();
+    if (process_ != nullptr) {
+        process_->kill();
+        process_->waitForFinished(5000);
+    }
+}
+
+bool VideoPage::transcode_running() const { return process_ != nullptr; }
 
 VideoPage::VideoPage(QWidget* parent)
     : PageBase(QStringLiteral("video"), QStringLiteral("视频转换"), parent) {

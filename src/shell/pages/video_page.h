@@ -14,12 +14,14 @@
 #include "page_base.h"
 
 #include "xrkit/engine/video/ffmpeg.h"
+#include "xrkit/engine/video/transcode.h"
 
 #include <QString>
 
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QProcess;
 class QWidget;
 
 namespace xrkit::shell {
@@ -44,6 +46,16 @@ public:
     QLineEdit* output_edit() const { return output_edit_; }
     QPushButton* detect_button() const { return detect_button_; }
 
+    // 转码（用户 2026-09-26 决策：完整移植）。argv 一律由 `plan_transcode` 算，
+    // 页面只负责起进程、把 stderr 喂给 `progress_from_line`、以及把失败如实报出来。
+    // 取消照 1.x：置令牌 → kill → **删掉半成品输出**（只有取消才删；失败保留供排障）。
+    bool start_transcode(const engine::video::TranscodeRequest& request, QString* error);
+    void cancel_transcode();
+    bool transcode_running() const;
+    int progress_percent() const { return progress_percent_; }
+    QString last_error() const { return last_error_; }
+    engine::video::CancelToken& cancel_token() { return cancel_token_; }
+
 private:
     void refresh_status();
 
@@ -53,6 +65,11 @@ private:
     QLabel* status_ = nullptr;
     QPushButton* detect_button_ = nullptr;
     QWidget* dialog_ = nullptr;
+    QProcess* process_ = nullptr;
+    engine::video::CancelToken cancel_token_;
+    double duration_sec_ = 0.0;
+    int progress_percent_ = 0;
+    QString last_error_;
 };
 
 }  // namespace xrkit::shell
