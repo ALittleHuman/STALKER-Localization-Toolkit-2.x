@@ -59,4 +59,31 @@ std::string pick_video_encoder(const std::string& reference_codec,
                                const std::vector<std::string>& available);
 TranscodePlan plan_transcode(const TranscodeRequest& request);
 
+// ── 进度与取消（1.x `convert()` 340–372 行，逐句取证）────────────────
+//
+// 1.x 在**每一行 stderr** 上做两件事，顺序不能颠倒：
+//   ① 先看 `self._cancelled` —— 取消就 `terminate()` + `wait()` + **删掉输出文件** +
+//      返回 `(False, "已取消")`（所以取消**不留半成品**）；
+//   ② 再用 `time=(\d+):(\d+):(\d+)\.(\d+)` 匹配，命中且 duration>0 才算进度：
+//      `cur = h*3600 + mi*60 + s + cs/100.0`（第 4 组按**厘秒**）、
+//      `percent = min(cur/duration*100, 99.5)` —— **上限 99.5、没有下限**（1.x 原文如此）。
+// **`convert()` 不清零 `_cancelled`**（只由 `reset_cancel()` 清）—— 这条要照抄，
+// 否则"取消后重跑"的行为和 1.x 不一样。
+struct ProgressSample {
+    bool matched = false;   // 这一行里有 `time=`（且 duration>0）
+    double percent = 0.0;   // 上限 99.5（1.x 的 min(..., 99.5)）
+};
+
+ProgressSample progress_from_line(const std::string& line, double duration_sec);
+
+class CancelToken {
+public:
+    void cancel() { cancelled_ = true; }
+    void reset() { cancelled_ = false; }   // 只有它能清零（1.x `reset_cancel`）
+    bool cancelled() const { return cancelled_; }
+
+private:
+    bool cancelled_ = false;
+};
+
 }  // namespace xrkit::engine::video

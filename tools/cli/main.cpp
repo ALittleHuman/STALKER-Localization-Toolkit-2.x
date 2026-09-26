@@ -1104,6 +1104,38 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
               "插件回调抛异常没被捕获记账（12.9）");
     });
 
+    // 视频进度/取消（口径见 docs/2.0.0-视频模块规格.md §3；1.x convert() 340–372 行）
+    reg.add("video: 进度取样与取消令牌（照 1.x 语义）", [](CheckContext& ctx) {
+        namespace vid = xrkit::engine::video;
+        // time= 的第 4 组按**厘秒**算；percent 上限 99.5（1.x 原文 min(..., 99.5)）
+        const vid::ProgressSample half =
+            vid::progress_from_line("frame= 100 time=00:00:05.00 bitrate=1", 10.0);
+        check(ctx, half.matched && half.percent > 49.9 && half.percent < 50.1,
+              "time=00:00:05.00 / 10s 应为 ~50%");
+        const vid::ProgressSample cs =
+            vid::progress_from_line("time=00:00:01.50", 10.0);
+        check(ctx, cs.matched && cs.percent > 14.9 && cs.percent < 15.1,
+              "厘秒要按 /100 算（1.50s / 10s = 15%）");
+        const vid::ProgressSample capped =
+            vid::progress_from_line("time=01:00:00.00", 10.0);
+        check(ctx, capped.matched && capped.percent == 99.5, "超过 100% 要封顶 99.5");
+        const vid::ProgressSample none = vid::progress_from_line("frame= 1 fps=0", 10.0);
+        check(ctx, !none.matched, "没有 time= 的行不该算进度");
+        const vid::ProgressSample nodur = vid::progress_from_line("time=00:00:05.00", 0.0);
+        check(ctx, !nodur.matched, "duration<=0 时不算进度（1.x 的条件）");
+        // 首处匹配（Python `search` 语义），后面的 time= 不覆盖
+        const vid::ProgressSample first =
+            vid::progress_from_line("time=00:00:01.00 x time=00:00:09.00", 10.0);
+        check(ctx, first.matched && first.percent > 9.9 && first.percent < 10.1,
+              "一行里多个 time= 只取第一处（search 语义）");
+        vid::CancelToken token;
+        check(ctx, !token.cancelled(), "取消令牌初始应为未取消");
+        token.cancel();
+        check(ctx, token.cancelled(), "cancel() 后应为已取消");
+        token.reset();
+        check(ctx, !token.cancelled(), "只有 reset() 能清零（1.x convert() 不清零）");
+    });
+
     // ⑫12.1 decryptor 消费端（用户 2026-09-26：NLC 解密是外部插件；工具内不放逻辑）
     reg.add("plugin: decryptor 消费端（加载 DB 前问插件）", [](CheckContext& ctx) {
         namespace plug = xrkit::plugin;

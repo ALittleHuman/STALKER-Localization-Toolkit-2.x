@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <map>
+#include <string>
 
 namespace xrkit::engine::video {
 namespace {
@@ -140,6 +141,39 @@ TranscodePlan plan_transcode(const TranscodeRequest& request) {
     cmd.push_back("ogg");
     cmd.push_back(request.output);
     return plan;
+}
+
+ProgressSample progress_from_line(const std::string& line, double duration_sec) {
+    ProgressSample sample;
+    if (duration_sec <= 0) return sample;
+    // 1.x 的 `time=(\d+):(\d+):(\d+)\.(\d+)`：手写扫描，语义等价（`search` = 取第一处）
+    const std::string key = "time=";
+    size_t at = line.find(key);
+    while (at != std::string::npos) {
+        size_t i = at + key.size();
+        auto digits = [&](int& value) {
+            const size_t start = i;
+            long long acc = 0;
+            while (i < line.size() && line[i] >= '0' && line[i] <= '9') {
+                acc = acc * 10 + (line[i] - '0');
+                ++i;
+            }
+            value = static_cast<int>(acc);
+            return i > start;
+        };
+        int h = 0, mi = 0, sec = 0, cs = 0;
+        if (digits(h) && i < line.size() && line[i] == ':' && ++i != 0 && digits(mi) &&
+            i < line.size() && line[i] == ':' && ++i != 0 && digits(sec) && i < line.size() &&
+            line[i] == '.' && ++i != 0 && digits(cs)) {
+            const double cur = h * 3600.0 + mi * 60.0 + sec + cs / 100.0;
+            sample.matched = true;
+            const double percent = cur / duration_sec * 100.0;
+            sample.percent = percent < 99.5 ? percent : 99.5;  // 1.x: min(cur/duration*100, 99.5)
+            return sample;
+        }
+        at = line.find(key, at + key.size());
+    }
+    return sample;
 }
 
 }  // namespace xrkit::engine::video
