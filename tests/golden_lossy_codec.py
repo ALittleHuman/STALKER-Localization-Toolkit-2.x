@@ -111,6 +111,49 @@ def run_probe(mode: str, codec: str, data: bytes, work: Path) -> tuple[int, byte
     return proc.returncode, got, text
 
 
+
+def utf_family_cases() -> list[bytes]:
+    """utf-16/32 家族的难样本（与 `tests/probe_utf_lossy.py` 的真值表同源）。
+
+    BOM（LE/BE/反向/只有 BOM）、无 BOM 本机序、尾部奇数字节、单独高位/低位代理、代理对、
+    低位在前、U+FFFE、utf-32 越界/代理区、utf-32 尾部 1~3 字节、空输入。
+    """
+    return [
+        b"",
+        b"A\x00B\x00",
+        b"\xff\xfeA\x00",
+        b"\xfe\xff\x00A",
+        b"\xff\xfe",
+        b"\xfe\xff",
+        b"\xfe\xffA\x00",
+        b"A\x00B",
+        b"A\x00B\x00C\x00\x00",
+        b"\x00\xd8",
+        b"\x00\xdc",
+        b"\x00\xd8A\x00",
+        b"\x3d\xd8\x00\xde",
+        b"\x00\xdc\x00\xd8",
+        b"\xff\xfe\xff\xfe",
+        b"A\x00\x00\x00",
+        b"\xff\xfe\x00\x00A\x00\x00\x00",
+        b"\x00\x00\xfe\xff\x00\x00\x00A",
+        b"A\x00\x00",
+        b"A\x00",
+        b"\x00\x00\x11\x00",
+        b"\x00\xd8\x00\x00",
+    ]
+
+
+
+# 2026-09-26：把 utf-16/32 六族并进"参与对拍"的集合（判据＝规格 §5.3 的九条）。
+# ⚠ 教训：光往 cases_by_codec 加用例没用 —— main() 会用 DECODE_CODECS 过滤，
+#   改完必须看 `compared=` 有没有涨。
+DECODE_CODECS = set(DECODE_CODECS) | {"utf-16", "utf-16-le", "utf-16-be",
+                                      "utf-32", "utf-32-le", "utf-32-be"}
+ENCODE_CODECS = set(ENCODE_CODECS) | {"utf-16", "utf-16-le", "utf-16-be",
+                                      "utf-32", "utf-32-le", "utf-32-be"}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="有损编解码黄金对拍")
     parser.add_argument("--list", action="store_true", help="只打印用例")
@@ -136,6 +179,12 @@ def main() -> int:
         ("gb18030", gb_cases()),
         ("gbk", gb_cases()),
         ("gb2312", gb_cases()),
+    ("utf-16", utf_family_cases()),
+    ("utf-16-le", utf_family_cases()),
+    ("utf-16-be", utf_family_cases()),
+    ("utf-32", utf_family_cases()),
+    ("utf-32-le", utf_family_cases()),
+    ("utf-32-be", utf_family_cases()),
     ]
 
     with tempfile.TemporaryDirectory(prefix="xrkit_lossy_") as tmp:

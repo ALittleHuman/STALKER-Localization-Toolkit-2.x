@@ -30,7 +30,12 @@ QString utf8(const std::string& text) { return QString::fromStdString(text); }
 // 没对拍的编码宁可不给选，也不让人选到一个我们没验证过的行为。
 const char* kManualEncodings[] = {etxt::kUtf8,          etxt::kWindows1251, etxt::kWindows1252,
                                   etxt::kGb18030,       etxt::kGbk,         etxt::kGb2312,
-                                  etxt::kLatin1};
+                                  etxt::kLatin1,
+                                  // 2026-09-26：utf-16/32 六族的有损编解码已与 Python
+                                  // `errors="replace"` 逐字节对拍（门禁 [12] 的 compared
+                                  // 从 114 涨到 294）⇒ 按"只列对拍过的编码"这条纪律可以列了。
+                                  etxt::kUtf16,     etxt::kUtf16Le, etxt::kUtf16Be,
+                                  etxt::kUtf32,     etxt::kUtf32Le, etxt::kUtf32Be};
 
 }  // namespace
 

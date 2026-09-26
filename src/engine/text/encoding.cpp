@@ -699,6 +699,91 @@ bool decode_strict(const std::string& encoding, const uint8_t* data, size_t size
     return false;
 }
 
+namespace {
+
+// 规格 §5.3（Python `errors="replace"` 实测语义）：
+//   · BOM **只在带 BOM 的编解码器**里被吃（无 BOM ⇒ 本机序 LE 且不吃字节；-le/-be 永不吃）
+//   · utf-16 尾部**奇数**字节 ⇒ 恰好 1 个 U+FFFD；代理对合成，问题单位**各** 1 个
+//   · utf-32 尾部 1~3 字节 ⇒ **恰好 1 个**；越界/代理区 ⇒ 1 个
+bool utf16_decode_lossy_impl(const uint8_t* data, size_t size, bool little, bool bom_aware,
+                             std::string& text) {
+    size_t i = 0;
+    bool le = little;
+    if (bom_aware && size >= 2) {
+        if (data[0] == 0xFF && data[1] == 0xFE) {
+            le = true;
+            i = 2;
+        } else if (data[0] == 0xFE && data[1] == 0xFF) {
+            le = false;
+            i = 2;
+        }
+    }
+    text.clear();
+    while (i + 1 < size) {
+        const uint16_t unit = le ? static_cast<uint16_t>(data[i] | (data[i + 1] << 8))
+                                 : static_cast<uint16_t>((data[i] << 8) | data[i + 1]);
+        i += 2;
+        if (unit >= 0xD800 && unit <= 0xDBFF) {
+            if (i + 1 < size) {
+                const uint16_t low = le ? static_cast<uint16_t>(data[i] | (data[i + 1] << 8))
+                                        : static_cast<uint16_t>((data[i] << 8) | data[i + 1]);
+                if (low >= 0xDC00 && low <= 0xDFFF) {
+                    i += 2;
+                    append_utf8(text, 0x10000u + ((unit - 0xD800u) << 10) + (low - 0xDC00u));
+                    continue;
+                }
+            }
+            append_replacement(text);
+            continue;
+        }
+        if (unit >= 0xDC00 && unit <= 0xDFFF) {
+            append_replacement(text);
+            continue;
+        }
+        append_utf8(text, unit);
+    }
+    if (i < size) append_replacement(text);  // 尾部奇数 ⇒ 恰好一个
+    return true;
+}
+
+bool utf32_decode_lossy_impl(const uint8_t* data, size_t size, bool little, bool bom_aware,
+                             std::string& text) {
+    size_t i = 0;
+    bool le = little;
+    if (bom_aware && size >= 4) {
+        if (data[0] == 0xFF && data[1] == 0xFE && data[2] == 0x00 && data[3] == 0x00) {
+            le = true;
+            i = 4;
+        } else if (data[0] == 0x00 && data[1] == 0x00 && data[2] == 0xFE && data[3] == 0xFF) {
+            le = false;
+            i = 4;
+        }
+    }
+    text.clear();
+    while (i + 3 < size) {
+        uint32_t unit = 0;
+        if (le) {
+            unit = static_cast<uint32_t>(data[i]) | (static_cast<uint32_t>(data[i + 1]) << 8) |
+                   (static_cast<uint32_t>(data[i + 2]) << 16) |
+                   (static_cast<uint32_t>(data[i + 3]) << 24);
+        } else {
+            unit = (static_cast<uint32_t>(data[i]) << 24) |
+                   (static_cast<uint32_t>(data[i + 1]) << 16) |
+                   (static_cast<uint32_t>(data[i + 2]) << 8) | static_cast<uint32_t>(data[i + 3]);
+        }
+        i += 4;
+        if (unit > 0x10FFFFu || (unit >= 0xD800u && unit <= 0xDFFFu)) {
+            append_replacement(text);
+            continue;
+        }
+        append_utf8(text, unit);
+    }
+    if (i < size) append_replacement(text);  // 尾部 1~3 字节 ⇒ 恰好一个
+    return true;
+}
+
+}  // namespace
+
 bool decode_lossy(const std::string& encoding, const uint8_t* data, size_t size,
                   std::string& text, std::string& err) {
     err.clear();
@@ -709,6 +794,18 @@ bool decode_lossy(const std::string& encoding, const uint8_t* data, size_t size,
         }
         return utf8_decode_lossy(data, size, text);
     }
+    if (encoding == kUtf16) return utf16_decode_lossy_impl(data, size, /*little=*/true,
+                                                      /*bom_aware=*/true, text);
+    if (encoding == kUtf16Le)
+        return utf16_decode_lossy_impl(data, size, true, false, text);
+    if (encoding == kUtf16Be)
+        return utf16_decode_lossy_impl(data, size, false, false, text);
+    if (encoding == kUtf32)
+        return utf32_decode_lossy_impl(data, size, true, true, text);
+    if (encoding == kUtf32Le)
+        return utf32_decode_lossy_impl(data, size, true, false, text);
+    if (encoding == kUtf32Be)
+        return utf32_decode_lossy_impl(data, size, false, false, text);
     if (encoding == kGb18030) return gb18030_decode_lossy(data, size, text);
     // gbk / gb2312 只有两字节路径，且各自的表比 gb18030 小 —— 不能借 gb18030 的表，
     // 否则 `81 40`（gbk 有、gb2312 没有）与四字节序列都会判错。
@@ -745,9 +842,120 @@ bool decode_lossy(const std::string& encoding, const uint8_t* data, size_t size,
     return false;
 }
 
+namespace {
+
+// 规格 §5.3：带 BOM 的编解码器（utf-16 / utf-32）写**小端** BOM；`-le/-be` 不写。
+// 单独代理（无法表示）在严格模式下**失败**，在有损模式下写 `?`（按各自字节序与单位宽度）。
+bool is_utf16_family(const std::string& encoding) {
+    return encoding == kUtf16 || encoding == kUtf16Le || encoding == kUtf16Be;
+}
+bool is_utf32_family(const std::string& encoding) {
+    return encoding == kUtf32 || encoding == kUtf32Le || encoding == kUtf32Be;
+}
+
+bool utf16_encode_impl(const std::string& encoding, const std::string& text, bool lossy,
+                       std::vector<uint8_t>& out, std::string& err) {
+    const bool bom = (encoding == kUtf16);
+    const bool little = (encoding != kUtf16Be);
+    out.clear();
+    if (bom) {
+        out.push_back(0xFF);
+        out.push_back(0xFE);
+    }
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(text.data());
+    size_t i = 0;
+    while (i < text.size()) {
+        uint32_t cp = 0;
+        if (!utf8_decode_one(p, text.size(), i, cp)) {
+            if (lossy) {
+                out.push_back(little ? 0x3F : 0x00);
+                out.push_back(little ? 0x00 : 0x3F);
+                i = text.size();
+                continue;
+            }
+            err = "正文不是合法 UTF-8（编码方向）";
+            return false;
+        }
+        auto emit = [&](uint16_t unit) {
+            out.push_back(static_cast<uint8_t>(little ? (unit & 0xFF) : (unit >> 8)));
+            out.push_back(static_cast<uint8_t>(little ? (unit >> 8) : (unit & 0xFF)));
+        };
+        if (cp <= 0xFFFF) {
+            if (cp >= 0xD800 && cp <= 0xDFFF) {
+                if (!lossy) {
+                    err = "utf-16 无法表示单独代理";
+                    return false;
+                }
+                emit(0x003F);
+                continue;
+            }
+            emit(static_cast<uint16_t>(cp));
+            continue;
+        }
+        if (cp > 0x10FFFF) {
+            if (!lossy) {
+                err = "码位超出 Unicode 范围";
+                return false;
+            }
+            emit(0x003F);
+            continue;
+        }
+        const uint32_t v = cp - 0x10000;
+        emit(static_cast<uint16_t>(0xD800 + (v >> 10)));
+        emit(static_cast<uint16_t>(0xDC00 + (v & 0x3FF)));
+    }
+    return true;
+}
+
+bool utf32_encode_impl(const std::string& encoding, const std::string& text, bool lossy,
+                       std::vector<uint8_t>& out, std::string& err) {
+    const bool bom = (encoding == kUtf32);
+    const bool little = (encoding != kUtf32Be);
+    out.clear();
+    if (bom) {
+        out.push_back(0xFF);
+        out.push_back(0xFE);
+        out.push_back(0x00);
+        out.push_back(0x00);
+    }
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(text.data());
+    size_t i = 0;
+    while (i < text.size()) {
+        uint32_t cp = 0;
+        if (!utf8_decode_one(p, text.size(), i, cp)) {
+            if (lossy) {
+                cp = 0x3F;
+            } else {
+                err = "正文不是合法 UTF-8（编码方向）";
+                return false;
+            }
+        }
+        if ((cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF))) {
+            if (!lossy) {
+                err = "utf-32 无法表示该码位";
+                return false;
+            }
+            cp = 0x3F;
+        }
+        for (int k = 0; k < 4; ++k) {
+            const int shift = little ? (8 * k) : (8 * (3 - k));
+            out.push_back(static_cast<uint8_t>((cp >> shift) & 0xFF));
+        }
+    }
+    return true;
+}
+
+}  // namespace
+
 bool encode_lossy(const std::string& encoding, const std::string& text, std::vector<uint8_t>& out,
                   std::string& err) {
     err.clear();
+    if (is_utf16_family(encoding)) {
+        return utf16_encode_impl(encoding, text, /*lossy=*/true, out, err);
+    }
+    if (is_utf32_family(encoding)) {
+        return utf32_encode_impl(encoding, text, /*lossy=*/true, out, err);
+    }
     // 能严格编码就严格编码（与 replace 的结果一致，因为没触发替换）
     if (encode_strict(encoding, text, out, err)) return true;
     // 否则逐码位来：表示不了的写 `?`（Python `errors="replace"` 在编码方向的行为）
@@ -785,6 +993,12 @@ bool encode_strict(const std::string& encoding, const std::string& text,
         out.push_back(0xBF);
         out.insert(out.end(), text.begin(), text.end());
         return true;
+    }
+    if (is_utf16_family(encoding)) {
+        return utf16_encode_impl(encoding, text, /*lossy=*/false, out, err);
+    }
+    if (is_utf32_family(encoding)) {
+        return utf32_encode_impl(encoding, text, /*lossy=*/false, out, err);
     }
     if (encoding == kGb18030) return gb18030_encode(text, out, err);
     if (encoding == kWindows1251) {
