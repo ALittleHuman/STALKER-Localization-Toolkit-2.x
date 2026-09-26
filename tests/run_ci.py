@@ -1130,6 +1130,31 @@ def step_golden_sqfs_metacross(release: bool) -> None:
         fail("跨块偏移判据不通过（见上）")
 
 
+def step_bench(release: bool) -> None:
+    """`--bench`：三条真实 I/O 路径计时，只守"防数量级回归"的宽松上界。
+
+    口径见 `docs/2.0.0-bench口径.md`；样本缺失退 2（进"本次未覆盖"）。
+    """
+    say("[28] bench：元数据列举 / 抽取吞吐 / 文本解码（只守数量级）")
+    script = ROOT / "tests" / "bench.py"
+    if not require_repo_file(script, "bench 脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("BENCH") or s.startswith("ok ") or s.startswith("✗") or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("bench 三条路径都在数量级上界内")
+    elif rc == 2:
+        prereq("bench 样本", "缺镜像或语料（见上）", release)
+    else:
+        fail("bench 超出数量级上界（见上）")
+
+
 STEPS = [
     ("build", step_build),
     ("no-qt", step_no_qt_lock),
@@ -1157,6 +1182,7 @@ STEPS = [
     ("golden-video-argv", step_golden_video_argv),
     ("golden-sqfs-lzo", step_golden_sqfs_lzo),
     ("golden-sqfs-metacross", step_golden_sqfs_metacross),
+    ("bench", step_bench),
     ("shell-smoke", step_shell_smoke),
 ]
 
