@@ -185,11 +185,15 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         check(ctx, trace == "ab", "执行顺序异常: " + trace);
     });
 
-    reg.add("engine: M0 阶段如实上报未就绪（不许假绿）", [](CheckContext& ctx) {
+    reg.add("engine: 五个模块都已实现 ⇒ 就绪状态要如实上报", [](CheckContext& ctx) {
         const bool is_ready = xrkit::engine::ready();
-        check(ctx, !is_ready, "M0 阶段引擎应为未就绪；若确已就绪，请同步更新本断言");
+        check(ctx, is_ready,
+              "五个模块（fs/font/text/xml/video）都已实现，ready() 必须为真（M0 的恒 false 占位已过时）");
         const std::string line = xrkit::engine::status_line();
         check(ctx, line.rfind("engine id=", 0) == 0, "status_line 形态不符: " + line);
+        check(ctx, line.find("ready=1") != std::string::npos &&
+                      line.find("modules=5/5") != std::string::npos,
+              "status_line 必须显示 ready=1 modules=5/5，实得: " + line);
     });
 
     // ⑥6.1/6.2 合并语义：**后者为准**，且 `source` 要跟着切到"引擎实际会读到的那一份"。
