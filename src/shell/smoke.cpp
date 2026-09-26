@@ -1130,6 +1130,65 @@ SmokeResult run_smoke() {
         check(keys.size() == 3, QStringLiteral("⑫12.5 模式条数应为 3（%1）").arg(keys.size()));
     }
 
+    // ⑫12.1 四类槽位渲染（用户 2026-09-26"补六类"：panel/tool/option/option_entry）
+    {
+        namespace plug = xrkit::plugin;
+        const QString empty = QDir::temp().filePath(QStringLiteral("xrkit_smoke_slots4"));
+        QDir(empty).removeRecursively();
+        QDir().mkpath(empty);
+        Hub hub(nullptr, empty);
+        const int builtin = hub.page_count();
+
+        plug::PluginApiAdapter adapter(hub.registry(), "slots4.dll", nullptr);
+        const char* choices[] = {"甲", "乙"};
+        check(adapter.api().register_option(adapter.api().host, "插件下拉", choices, 2, nullptr,
+                                           nullptr, "fs", "top_bar", nullptr, 1) == 1,
+              QStringLiteral("⑫12.1 新建下拉注册失败"));
+        check(adapter.api().register_option_entry(adapter.api().host, "fs", "top_bar", "插件条目",
+                                                  nullptr) == 1,
+              QStringLiteral("⑫12.1 下拉条目注册失败"));
+        const auto builder = +[](void*, stk_widget*) -> stk_widget* {
+            return reinterpret_cast<stk_widget*>(new QWidget());
+        };
+        check(adapter.api().register_panel(adapter.api().host, "插件面板", builder, nullptr, "fs",
+                                           "top_bar", nullptr, 2) == 1,
+              QStringLiteral("⑫12.1 面板注册失败"));
+        check(adapter.api().register_tool(adapter.api().host, "插件页", builder, nullptr, 3) == 1,
+              QStringLiteral("⑫12.1 Hub 插件页注册失败"));
+
+        hub.render_plugin_slots();
+        check(hub.plugin_pages_added() == 1 && hub.page_count() == builtin + 1,
+              QStringLiteral("⑫12.1 插件页没被追加（pages=%1 期望 %2）")
+                  .arg(hub.page_count())
+                  .arg(builtin + 1));
+
+        bool combo_ok = false;
+        bool entry_ok = false;
+        bool panel_ok = false;
+        for (int i = 0; i < hub.page_count(); ++i) {
+            PageBase* page = hub.page_at(i);
+            if (page == nullptr || page->page_id() != QStringLiteral("fs")) continue;
+            for (QComboBox* combo : page->action_bar()->findChildren<QComboBox*>()) {
+                if (combo->count() >= 2) combo_ok = true;
+                for (int k = 0; k < combo->count(); ++k) {
+                    if (combo->itemText(k) == QStringLiteral("插件条目")) entry_ok = true;
+                }
+            }
+            for (QWidget* w : page->body()->findChildren<QWidget*>()) {
+                if (w->objectName().startsWith(QStringLiteral("plugin_panel_"))) panel_ok = true;
+            }
+        }
+        check(combo_ok, QStringLiteral("⑫12.1 插件下拉没出现在 fs 页操作栏"));
+        check(entry_ok, QStringLiteral("⑫12.1 插件下拉条目没塞进对应 area 的下拉"));
+        check(panel_ok, QStringLiteral("⑫12.1 插件面板没出现在 fs 页正文"));
+
+        // 幂等：重渲染不许把插件页装两遍
+        hub.render_plugin_slots();
+        check(hub.page_count() == builtin + 1 && hub.plugin_pages_added() == 1,
+              QStringLiteral("⑫12.1 重渲染把插件页装了两遍（pages=%1）").arg(hub.page_count()));
+        QDir(empty).removeRecursively();
+    }
+
     // ⑫12.1 decryptor 消费端（用户 2026-09-26：NLC 解密是外部插件；fs 页加载前必须问）
     {
         namespace plug = xrkit::plugin;

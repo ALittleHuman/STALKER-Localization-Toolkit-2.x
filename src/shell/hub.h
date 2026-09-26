@@ -56,6 +56,7 @@ public:
     // 注册成功但没人渲染 = FAIL，所以这一步也要有计数判据
     void render_plugin_slots();
     int plugin_slots_rendered() const { return plugin_slots_rendered_; }
+    int plugin_pages_added() const { return plugin_pages_added_; }
 
     QListWidget* page_list() const { return page_list_; }
     QStackedWidget* stack() const { return stack_; }
@@ -90,6 +91,8 @@ private:
     QString plugin_notice_;
     bool plugin_ui_installed_ = false;
     int plugin_slots_rendered_ = 0;
+    int plugin_pages_added_ = 0;
+    QList<QWidget*> plugin_pages_;  // 渲染插件页用（重渲染先清掉，保证幂等）
 };
 
 }  // namespace xrkit::shell

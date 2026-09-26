@@ -187,6 +187,10 @@ public:
     const DecryptorReg* find_decryptor(const std::string& path) const;  // check 抛异常 ⇒ 跳过
 
     const std::vector<FormatReg>& formats() const { return formats_; }
+    // 渲染端要按 area 把条目塞进对应的下拉（`option_entries_for` 只回值，不含 area）
+    const std::vector<OptionEntryReg>& option_entry_regs() const {
+        return option_entries_;
+    }
     const std::vector<RegistrationError>& registration_errors() const { return errors_; }
     // 宿主侧（加载器 / 插件自报）也往**同一条**留痕通道写 —— Hub 启动时统一显示
     void add_error(const std::string& plugin, const std::string& message) {

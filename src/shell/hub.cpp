@@ -23,6 +23,8 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QPushButton>
+#include <QHash>
+#include <QComboBox>
 #include <QPlainTextEdit>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -180,8 +182,22 @@ void Hub::log_line(const QString& text) {
 }
 
 void Hub::render_plugin_slots() {
-    // ⑫12.1：`menu_items_for(host, "toolbar")` 的每一项都要**真的出现在界面上** ——
-    // 这里先做工具栏一类（其它槽位：下拉条目/面板/插件页同理，后续按需接）。
+    // ⑫12.1：注册表里的每一类槽位都要**真的出现在界面上**（用户 2026-09-26 决策"补六类"）。
+    // 本函数覆盖五类：工具栏菜单项 / 新建下拉 / 下拉条目 / 面板 / Hub 插件页
+    //（decryptor 走 fs 页闸门，format 六格式仍内置、可选）。
+    // **幂等**：重渲染先把上一轮的插件页摘掉，避免"点两次按钮装两遍"。
+    for (QWidget* widget : plugin_pages_) {
+        stack_->removeWidget(widget);
+        for (int i = 0; i < page_list_->count(); ++i) {
+            if (page_list_->item(i)->text() == widget->windowTitle()) {
+                delete page_list_->takeItem(i);
+                break;
+            }
+        }
+        widget->deleteLater();
+    }
+    plugin_pages_.clear();
+    plugin_pages_added_ = 0;
     plugin_slots_rendered_ = 0;
     for (int i = 0; i < page_count(); ++i) {
         PageBase* page = page_at(i);
@@ -205,6 +221,83 @@ void Hub::render_plugin_slots() {
                          .arg(QString::fromStdString(command->label))
                          .arg(QString::fromStdString(plugin)));
         }
+
+        // ② 新建下拉（option）+ ③ 下拉条目（option_entry）：都落在页面的操作栏里。
+        //    条目按 area 塞进"该 area 的下拉"；没有就为该 area 现建一个（与 1.x 一致）。
+        QHash<QString, QComboBox*> combos;
+        for (const plugin::OptionReg* option : registry_.options_for(host)) {
+            auto* combo = new QComboBox(page);
+            combo->setObjectName(QStringLiteral("plugin_option_") +
+                                 QString::fromStdString(option->label));
+            for (const std::string& choice : option->choices) {
+                combo->addItem(QString::fromStdString(choice));
+            }
+            if (page->action_bar()->layout() != nullptr) {
+                page->action_bar()->layout()->addWidget(combo);
+            }
+            combos.insert(QString::fromStdString(option->area), combo);
+            ++plugin_slots_rendered_;
+            log_line(QStringLiteral("插件槽位：%1 → 下拉 %2（%3）")
+                         .arg(QString::fromStdString(host))
+                         .arg(QString::fromStdString(option->label))
+                         .arg(QString::fromStdString(option->plugin)));
+        }
+        for (const plugin::OptionEntryReg& entry : registry_.option_entry_regs()) {
+            if (entry.host != host) continue;
+            if (!plugin::when_ok(entry.when, plugin::Context{})) continue;
+            const QString area = QString::fromStdString(entry.area);
+            QComboBox* combo = combos.value(area, nullptr);
+            if (combo == nullptr) {
+                combo = new QComboBox(page);  // 该 area 没有下拉 ⇒ 现建一个（与 1.x 一致）
+                combo->setObjectName(QStringLiteral("plugin_area_") + area);
+                if (page->action_bar()->layout() != nullptr) {
+                    page->action_bar()->layout()->addWidget(combo);
+                }
+                combos.insert(area, combo);
+            }
+            combo->addItem(QString::fromStdString(entry.value));
+            ++plugin_slots_rendered_;
+            log_line(QStringLiteral("插件槽位：%1 → 下拉条目 %2（area=%3，%4）")
+                         .arg(QString::fromStdString(host))
+                         .arg(QString::fromStdString(entry.value))
+                         .arg(area)
+                         .arg(QString::fromStdString(entry.plugin)));
+        }
+
+        // ④ 面板（panel）：builder 造出来的控件塞进**页面正文**（body）。
+        for (const plugin::PanelReg* panel : registry_.panels_for(host)) {
+            auto* widget = reinterpret_cast<QWidget*>(panel->builder(nullptr));
+            if (widget == nullptr) continue;
+            widget->setObjectName(QStringLiteral("plugin_panel_") +
+                                  QString::fromStdString(panel->title));
+            if (page->body()->layout() == nullptr) new QVBoxLayout(page->body());
+            page->body()->layout()->addWidget(widget);
+            ++plugin_slots_rendered_;
+            log_line(QStringLiteral("插件槽位：%1 → 面板 %2（%3）")
+                         .arg(QString::fromStdString(host))
+                         .arg(QString::fromStdString(panel->title))
+                         .arg(QString::fromStdString(panel->plugin)));
+        }
+    }
+
+    // ⑤ Hub 插件页（tool）：按 order 升序 + 注册顺序，追加到页列表末尾（内置六页不动）
+    for (const plugin::ToolReg* tool : registry_.tools_sorted()) {
+        auto* widget = reinterpret_cast<QWidget*>(tool->builder(nullptr));
+        if (widget == nullptr) {
+            widget = new QWidget(stack_);
+            auto* fallback = new QLabel(QStringLiteral("插件页未造出控件"), widget);
+            Q_UNUSED(fallback);
+        }
+        widget->setWindowTitle(QString::fromStdString(tool->name));
+        widget->setObjectName(QStringLiteral("plugin_page_") + QString::fromStdString(tool->name));
+        stack_->addWidget(widget);
+        page_list_->addItem(QString::fromStdString(tool->name));
+        plugin_pages_.push_back(widget);
+        ++plugin_pages_added_;
+        ++plugin_slots_rendered_;
+        log_line(QStringLiteral("插件页：%1（%2）")
+                     .arg(QString::fromStdString(tool->name))
+                     .arg(QString::fromStdString(tool->plugin)));
     }
 }
 
