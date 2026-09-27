@@ -133,6 +133,11 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     status_label_->setObjectName(QStringLiteral("status_label"));
     log_layout->addWidget(log_box_);
     log_layout->addWidget(status_label_);
+    // ★ 2026-09-27 用户实测反馈"排版有很大问题"：日志区原来跟页面区**对半分**（甚至更多），
+    //   主内容区反而被挤成一条。口径：**页面为主、日志为辅** —— 页面区吃剩余空间，
+    //   日志区给一个**可读但有上限**的高度（上限 px(200)，最小仍是 log_min_；条子可拖，
+    //   但拖不过上限）。这样 1000px 高的窗口里日志约占 20%，而不是 50%。
+    log_panel->setMaximumHeight(px(200));
     split_->add_pane(log_panel, log_min_);
     setCentralWidget(split_);
 

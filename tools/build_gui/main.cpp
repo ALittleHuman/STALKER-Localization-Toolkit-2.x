@@ -34,6 +34,7 @@
 #include <string>
 
 #include "log_box.h"          // shell 通用日志组件（LogBox：自带攒批/截断/只读）
+#include "theme.h"            // shell 主题（与主程序同一套令牌，别自己造样式）          // shell 通用日志组件（LogBox：自带攒批/截断/只读）
 #include "xrkit/core/build_version.h"
 
 namespace {
@@ -343,7 +344,10 @@ private:
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
+    // 与主程序同一套主题（用户口径"小组件用通用的"；也是"两个软件观感一致"的前提）
+    xrkit::shell::apply_theme(app, xrkit::core::ThemeMode::Dark);
     BuildWindow window;
+    xrkit::shell::apply_dark_titlebar(&window, xrkit::core::ThemeMode::Dark);
     window.resize(760, 520);
     window.show();
     return app.exec();
