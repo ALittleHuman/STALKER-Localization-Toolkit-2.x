@@ -91,7 +91,7 @@ SmokeResult run_smoke() {
     // ② Hub 真的按这份清单建了控件（列表项 = 页栈页数 = 清单条数）
     Hub hub;
     check(hub.page_count() == builtin_page_count(), QStringLiteral("页栈页数 = 内置页数"));
-    check(hub.page_list()->count() == builtin_page_count(), QStringLiteral("列表项数 = 内置页数"));
+    check(hub.page_tabs()->count() == builtin_page_count(), QStringLiteral("标签项数 = 内置页数"));
     for (int i = 0; i < builtin_page_count(); ++i) {
         check(hub.page_title(i) == QString::fromUtf8(builtin_page(i).title),
               QStringLiteral("列表第 %1 项标题与清单一致").arg(i));
@@ -106,10 +106,10 @@ SmokeResult run_smoke() {
           QStringLiteral("日志栏只读"));
     hub.log_line(QStringLiteral("smoke"));
     {
-        // ★ 界面重构：日志区要有标题栏（标题 + 清空），且「清空」真的清掉
-        check(hub.log_title() != nullptr && !hub.log_title()->text().isEmpty(),
-              QStringLiteral("日志面板要有标题（实测 %1）")
-                  .arg(hub.log_title() != nullptr ? hub.log_title()->text() : QStringLiteral("(无)")));
+        // ★ 方案一（Hana 重排）：日志从标题栏改成底部折叠按钮
+        check(hub.log_toggle() != nullptr && !hub.log_toggle()->text().isEmpty(),
+              QStringLiteral("日志折叠按钮存在（实测 %1）")
+                  .arg(hub.log_toggle() != nullptr ? hub.log_toggle()->text() : QStringLiteral("(无)")));
         check(hub.log_clear_button() != nullptr, QStringLiteral("日志面板要有清空按钮"));
         hub.log_line(QStringLiteral("待清空 A"));
         if (hub.log_box() != nullptr) hub.log_box()->flush();
@@ -491,10 +491,13 @@ SmokeResult run_smoke() {
               QStringLiteral("4.1 日志栏有自己的条子"));
         check(qobject_cast<ScrollViewport*>(hub.centralWidget()) == nullptr,
               QStringLiteral("4.1 Hub 中央区不是窗口级视口（无窗口级滚动条）"));
-        check(hub.top_min() == px(260) && hub.log_min() == px(110),
-              QStringLiteral("4.5 两栏 minsize = px(260) / px(110)（实测 %1 / %2）")
-                  .arg(hub.top_min())
-                  .arg(hub.log_min()));
+        // ★ 方案一（Hana 重排）：日志默认折叠，点折叠按钮才展开；不再用两栏 minsize
+        //   用 isHidden() 而非 isVisible()：离屏下 Hub 没 show，isVisible() 恒 false（父窗隐藏）
+        check(hub.log_panel() != nullptr && hub.log_panel()->isHidden(),
+              QStringLiteral("日志面板默认折叠"));
+        if (hub.log_toggle() != nullptr) hub.log_toggle()->click();
+        check(hub.log_panel() != nullptr && !hub.log_panel()->isHidden(),
+              QStringLiteral("点折叠按钮后日志面板展开"));
 
         // ★ 6.x 排版口径（用户 2026-09-27："排版有很大问题"）—— **几何断言，不看截图**。
         //   为什么用 SplitPane 夹具而不是 Hub：离屏下 **Hub 的几何不落地**（实测子控件高度为 0），
@@ -804,7 +807,7 @@ SmokeResult run_smoke() {
 
         // 5.1 的另一面：**标签条（页列表/页栈）不许被包进任何滚动视口** ——
         // 被包进去的话一滚主导航就滚走了（1.x 明文锁过这一条）。
-        check(!inside_viewport(hub.page_list()) && !inside_viewport(hub.stack()),
+        check(!inside_viewport(hub.page_tabs()) && !inside_viewport(hub.stack()),
               QStringLiteral("5.1 标签条与页栈不在任何滚动视口里"));
         result.notes.append(QStringLiteral("⑤ 六页框架：page_min_h=%1（缩放 %2），视口 fit=content")
                                 .arg(page_min_h())

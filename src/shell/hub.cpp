@@ -6,7 +6,6 @@
 #include "pages/page_factory.h"
 #include "pages/fs_page.h"
 #include "pages/xml_page.h"
-#include "split_pane.h"
 
 #include "xrkit/core/path.h"
 #include "xrkit/core/theme.h"
@@ -19,14 +18,13 @@
 #include <QDockWidget>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QListWidget>
+#include <QTabBar>
 #include <QMenu>
 #include <QMenuBar>
 #include <QPushButton>
 #include <QHash>
 #include <QComboBox>
 #include <QPlainTextEdit>
-#include <QSplitter>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -88,25 +86,26 @@ const PageInfo& builtin_page(int index) {
 
 Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     setWindowTitle(QStringLiteral("STALKER 汉化工具集 2.0"));
-    resize(1180, 760);
+    // 默认窗口尺寸过 px()（自适应入口在 main.cpp 用 adaptive_window_size 覆盖；这里只给一个
+    //   不写死 96 DPI 的初始值，销掉 px-only 那条 debt）
+    resize(px(1180), px(760));
 
     // ⑫12.1：内置两套比较模式也**注册进表** —— 与插件模式同一条通道
     for (plugin::CompareModeReg& mode : plugin::builtin_compare_modes()) {
         registry_.register_compare_mode(xml::kBuiltinPlugin, std::move(mode));
     }
 
-    // ── 左侧：页列表；右侧：页栈（1.x 的 Hub 形态：一列 + 一栈）
-    page_list_ = new QListWidget;
-    page_list_->setObjectName(QStringLiteral("page_list"));
+    // ── 方案一（Hana 重排）：顶部标签条 + 内容区。六页照旧，只是导航从左侧列表
+    //   改成顶部标签（横向铺开、当前页高亮），把左右宽度都还给内容区。
     stack_ = new QStackedWidget;
     stack_->setObjectName(QStringLiteral("page_stack"));
+    page_tabs_ = new QTabBar;
+    page_tabs_->setObjectName(QStringLiteral("page_tabs"));
+    page_tabs_->setDrawBase(false);   // 不画标签条底基线，下划线高亮交给 QSS
+    page_tabs_->setExpanding(false);  // 标签不拉伸、靠左排列
     for (int i = 0; i < kBuiltinPageCount; ++i) {
-        page_list_->addItem(QString::fromUtf8(kBuiltinPages[i].title));
+        page_tabs_->addTab(QString::fromUtf8(kBuiltinPages[i].title));
         QWidget* page = create_page(i);
-        // ★ 界面重构：把页表里的说明设成副标题（页标题下面那句"本页能干什么"）。
-        //   注意 `page` 的静态类型是 QWidget* ⇒ 必须 qobject_cast 到 PageBase 才能调。
-        // PageBase **没有 Q_OBJECT**（它只是个 QWidget 子类）⇒ 不能用 qobject_cast，
-        // 这里用 dynamic_cast（RTTI 可用）；拿到才设副标题，不是 PageBase 就跳过。
         if (auto* as_page = dynamic_cast<PageBase*>(page)) {
             as_page->set_subtitle(QString::fromUtf8(kBuiltinPages[i].subtitle));
         }
@@ -120,55 +119,55 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
             xml_page->set_registry(&registry_);
         }
     }
-    page_list_->setCurrentRow(0);
-    QObject::connect(page_list_, &QListWidget::currentRowChanged, stack_,
+    page_tabs_->setCurrentIndex(0);
+    QObject::connect(page_tabs_, &QTabBar::currentChanged, stack_,
                      &QStackedWidget::setCurrentIndex);
 
-    auto* splitter = new QSplitter(Qt::Horizontal);
-    splitter->addWidget(page_list_);
-    splitter->addWidget(stack_);
-    splitter->setStretchFactor(1, 1);
-
-    // ── 4.1/4.5：栏目区 + 日志栏 = **竖分栏**（没有窗口级视口 ⇒ 日志不归主窗口那根条管），
-    //    两栏 minsize 用同一组值：px(260) / px(110)。
-    top_min_ = px(260);
-    log_min_ = px(110);
-    split_ = new SplitPane(SplitPane::Orient::Vertical, this);
-    split_->setObjectName(QStringLiteral("hub_split"));
-    split_->add_pane(splitter, top_min_);
-
-    auto* log_panel = new QWidget;
-    auto* log_layout = new QVBoxLayout(log_panel);
-    log_layout->setContentsMargins(px(6), px(4), px(6), px(4));
-    log_box_ = new LogBox(log_panel);
-    log_view_ = log_box_;  // 兼容 M2-1 的访问器（LogBox 是 QPlainTextEdit 子类）
-    status_label_ = new QLabel(QStringLiteral("就绪"));
-    status_label_->setObjectName(QStringLiteral("status_label"));
-    // ★ 界面重构（用户："日志区是裸等宽文本块"）：给它一个**标题栏**，不再是裸文本框。
-    auto* log_head = new QWidget(log_panel);
-    auto* log_head_layout = new QHBoxLayout(log_head);
-    log_head_layout->setContentsMargins(0, 0, 0, 0);
-    log_head_layout->setSpacing(px(6));
-    log_title_ = new QLabel(QStringLiteral("日志"), log_head);
-    log_title_->setObjectName(QStringLiteral("log_title"));
-    log_clear_ = new QPushButton(QStringLiteral("清空"), log_head);
+    // ── 底部：折叠日志抽屉 + 状态栏。日志默认收起、点「▸ 日志」才展开，
+    //   不再像旧版那样常驻一块 200px 横条去抢内容区。
+    log_box_ = new LogBox;
+    log_view_ = log_box_;  // 兼容访问器（LogBox 是 QPlainTextEdit 子类）
+    log_clear_ = new QPushButton(QStringLiteral("清空"));
     log_clear_->setObjectName(QStringLiteral("log_clear"));
-    log_head_layout->addWidget(log_title_, 0);
-    log_head_layout->addStretch(1);
-    log_head_layout->addWidget(log_clear_, 0);
     QObject::connect(log_clear_, &QPushButton::clicked, this, [this] {
         if (log_box_ != nullptr) log_box_->clear_log();
     });
-    log_layout->addWidget(log_head, 0);
-    log_layout->addWidget(log_box_);
-    log_layout->addWidget(status_label_);
-    // ★ 2026-09-27 用户实测反馈"排版有很大问题"：日志区原来跟页面区**对半分**（甚至更多）。
-    //   口径：**页面为主、日志为辅** —— 页面区吃剩余空间，日志区**由容器的每格上限**封顶。
-    //   ⚠ 注意：**不能**用 `log_panel->setMaximumHeight(...)` —— `SplitPane::relayout()` 直接
-    //   `setGeometry`，子控件上的尺寸约束不生效（我第一版就是这么写错的，空操作）。
-    split_->add_pane(log_panel, log_min_);
-    split_->set_max_size(1, px(200));  // 第 2 格（日志面板）上限 200px
-    setCentralWidget(split_);
+
+    log_panel_ = new QWidget;
+    log_panel_->setObjectName(QStringLiteral("log_panel"));
+    auto* log_panel_layout = new QHBoxLayout(log_panel_);
+    log_panel_layout->setContentsMargins(px(8), px(4), px(8), px(4));
+    log_panel_layout->setSpacing(px(6));
+    log_panel_layout->addWidget(log_box_, 1);
+    log_panel_layout->addWidget(log_clear_, 0);
+    log_panel_->setVisible(false);  // 默认折叠
+
+    log_toggle_ = new QPushButton(QStringLiteral("▸ 日志"));
+    log_toggle_->setObjectName(QStringLiteral("log_toggle"));
+    QObject::connect(log_toggle_, &QPushButton::clicked, this, [this] {
+        log_expanded_ = !log_expanded_;
+        if (log_panel_ != nullptr) log_panel_->setVisible(log_expanded_);
+        if (log_toggle_ != nullptr) {
+            log_toggle_->setText(log_expanded_ ? QStringLiteral("▾ 日志")
+                                               : QStringLiteral("▸ 日志"));
+        }
+    });
+
+    status_label_ = new QLabel(QStringLiteral("就绪"));
+    status_label_->setObjectName(QStringLiteral("status_label"));
+
+    // 整体：顶部标签条 → 内容区（吃剩余）→ 折叠日志按钮 → 日志面板 → 状态栏
+    auto* central = new QWidget;
+    central->setObjectName(QStringLiteral("hub_central"));
+    auto* central_layout = new QVBoxLayout(central);
+    central_layout->setContentsMargins(0, 0, 0, 0);
+    central_layout->setSpacing(0);
+    central_layout->addWidget(page_tabs_, 0);
+    central_layout->addWidget(stack_, 1);
+    central_layout->addWidget(log_toggle_, 0);
+    central_layout->addWidget(log_panel_, 0);
+    central_layout->addWidget(status_label_, 0);
+    setCentralWidget(central);
 
     // ── 菜单：主题（暗/亮，原地更新）
     QMenu* view_menu = menuBar()->addMenu(QStringLiteral("视图"));
@@ -194,8 +193,8 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
 int Hub::page_count() const { return stack_ == nullptr ? 0 : stack_->count(); }
 
 QString Hub::page_title(int index) const {
-    if (page_list_ == nullptr || index < 0 || index >= page_list_->count()) return QString();
-    return page_list_->item(index)->text();
+    if (page_tabs_ == nullptr || index < 0 || index >= page_tabs_->count()) return QString();
+    return page_tabs_->tabText(index);
 }
 
 QString Hub::page_id(int index) const {
@@ -222,9 +221,9 @@ void Hub::render_plugin_slots() {
     // **幂等**：重渲染先把上一轮的插件页摘掉，避免"点两次按钮装两遍"。
     for (QWidget* widget : plugin_pages_) {
         stack_->removeWidget(widget);
-        for (int i = 0; i < page_list_->count(); ++i) {
-            if (page_list_->item(i)->text() == widget->windowTitle()) {
-                delete page_list_->takeItem(i);
+        for (int i = 0; i < page_tabs_->count(); ++i) {
+            if (page_tabs_->tabText(i) == widget->windowTitle()) {
+                page_tabs_->removeTab(i);
                 break;
             }
         }
@@ -325,7 +324,7 @@ void Hub::render_plugin_slots() {
         widget->setWindowTitle(QString::fromStdString(tool->name));
         widget->setObjectName(QStringLiteral("plugin_page_") + QString::fromStdString(tool->name));
         stack_->addWidget(widget);
-        page_list_->addItem(QString::fromStdString(tool->name));
+        page_tabs_->addTab(QString::fromStdString(tool->name));
         plugin_pages_.push_back(widget);
         ++plugin_pages_added_;
         ++plugin_slots_rendered_;

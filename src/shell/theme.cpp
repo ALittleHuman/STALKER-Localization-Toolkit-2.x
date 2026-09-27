@@ -62,17 +62,20 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                "QLabel#status_label { color: %5; }"
                "QLabel#page_header { color: %16; }"
                "QLabel#page_subtitle { color: %5; }"
-               // 日志面板的标题栏（小面板感：标题次要色 + 小号清空按钮）
-               "QLabel#log_title { color: %5; font-weight: bold; }"
+               // 折叠日志：折叠按钮（一行、透明、左对齐）+ 清空小按钮
+               "QPushButton#log_toggle { background: transparent; border: 0; color: %5;"
+               "  padding: %11px %12px; text-align: left; }"
+               "QPushButton#log_toggle:hover { color: %6; }"
                "QPushButton#log_clear { padding: %18px %12px; }"
-               // 左侧导航 = 导航条（项高统一、当前项 accent 左条）
-               "QListWidget#page_list { background: %2; border: 0;"
-               "  border-right: 1px solid %4; border-radius: 0; padding: %11px 0; }"
-               "QListWidget#page_list::item { min-height: %22px; padding: %11px %12px;"
-               "  border-left: %18px solid transparent; border-radius: 0; }"
-               "QListWidget#page_list::item:hover { background: %3; }"
-               "QListWidget#page_list::item:selected { background: %9; color: %19;"
-               "  border-left: %18px solid %7; }"
+               // 顶部标签条（方案一）：横向铺开、当前页 accent 下划线 + 高亮
+               "QTabBar#page_tabs { background: %2; border: 0;"
+               "  border-bottom: 1px solid %4; }"
+               "QTabBar#page_tabs::tab { background: transparent; color: %5;"
+               "  padding: %12px %12px; border: 0; border-bottom: %18px solid transparent;"
+               "  margin-right: %18px; }"
+               "QTabBar#page_tabs::tab:hover { color: %6; }"
+               "QTabBar#page_tabs::tab:selected { color: %6;"
+               "  border-bottom: %18px solid %7; }"
                // 卡片与分组（内容区加边界：原来"裸列表铺满"全靠这个改观）
                "QFrame#card, QGroupBox { background: %3; border: 1px solid %4;"
                "  border-radius: %17px; }"

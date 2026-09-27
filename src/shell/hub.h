@@ -13,7 +13,7 @@
 
 #include <vector>
 
-class QListWidget;
+class QTabBar;
 class QPushButton;
 class QPlainTextEdit;
 class QStackedWidget;
@@ -60,21 +60,17 @@ public:
     int plugin_slots_rendered() const { return plugin_slots_rendered_; }
     int plugin_pages_added() const { return plugin_pages_added_; }
 
-    QListWidget* page_list() const { return page_list_; }
+    QTabBar* page_tabs() const { return page_tabs_; }
     QStackedWidget* stack() const { return stack_; }
     // 探针用：拿到**真实的**页对象（页框架/视口/minheight 都从它上面量，不自报）
     PageBase* page_at(int index) const;
     QPlainTextEdit* log_view() const { return log_view_; }
-    // ★ 界面重构：日志区做成「带标题栏的小面板」（标题 + 清空按钮）
-    QLabel* log_title() const { return log_title_; }
     QPushButton* log_clear_button() const { return log_clear_; }
     LogBox* log_box() const { return log_box_; }
-    SplitPane* split() const { return split_; }
+    // ★ 方案一（Hana 重排）：导航改顶部标签条，日志改底部可折叠抽屉
+    QPushButton* log_toggle() const { return log_toggle_; }
+    QWidget* log_panel() const { return log_panel_; }
     QLabel* status_label() const { return status_label_; }
-
-    // 4.5：两栏 minsize 用同一组值（px(260) / px(110)）
-    int top_min() const { return top_min_; }
-    int log_min() const { return log_min_; }
 
     // 记一行日志（1.x 的日志栏：主窗口那根滚动条**不**管它；攒批见 LogBox）
     void log_line(const QString& text);
@@ -83,16 +79,15 @@ public:
     void load_plugins(const QString& plugin_dir);
 
 private:
-    QListWidget* page_list_ = nullptr;
+    QTabBar* page_tabs_ = nullptr;
     QStackedWidget* stack_ = nullptr;
     QPlainTextEdit* log_view_ = nullptr;
     LogBox* log_box_ = nullptr;
-    QLabel* log_title_ = nullptr;
     QPushButton* log_clear_ = nullptr;
-    SplitPane* split_ = nullptr;
+    QPushButton* log_toggle_ = nullptr;
+    QWidget* log_panel_ = nullptr;
     QLabel* status_label_ = nullptr;
-    int top_min_ = 0;
-    int log_min_ = 0;
+    bool log_expanded_ = false;
     xrkit::plugin::Registry registry_;
     std::vector<xrkit::plugin::RegistrationError> plugin_errors_;
     QString plugin_notice_;
