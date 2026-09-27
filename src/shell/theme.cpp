@@ -46,32 +46,93 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
     const QString selected = role("selected").name();
     const QString scroll_border = role("scroll_border").name();
     const QString sash = role("sash").name();
+    const QString accent_hover = role("accent_hover").name();
+    const QString bright = role("text_bright").name();
+    const QString danger = role("red").name();
     xrkit::core::set_theme_mode(saved);
 
-    // 只写"角色 → 控件"的映射；尺寸一律走 px()（HiDPI）
+    // ★ 2026-09-27 界面重构（用户："排版完全重新设计…配色也改一下"）：
+    //   这张 QSS 是"控件像不像成品"的关键 —— 按钮/下拉/输入/列表/滚动条/表头/勾选**统一**，
+    //   并且每个可交互控件都有 **hover / pressed / disabled** 三态；强调色(accent)只出现在
+    //   "当前/主操作/进行中"这三处。尺寸一律走 px()（HiDPI）。
     return QStringLiteral(
+               // 基底
                "QWidget { background: %1; color: %6; }"
-               "QMainWindow::separator { background: %4; width: %11px; height: %11px; }"
-               "QListWidget { background: %2; border: 1px solid %4; outline: none; }"
-               "QListWidget::item { padding: %11px %12px; }"
-               "QListWidget::item:selected { background: %9; color: %7; }"
-               "QPlainTextEdit { background: %8; color: %6; border: 1px solid %4;"
-               "  font-family: Consolas; }"
                "QLabel { background: transparent; }"
                "QLabel#status_label { color: %5; }"
-               "QDockWidget::title { background: %3; padding: %11px; }"
+               "QLabel#page_header { color: %16; }"
+               // 卡片与分组（内容区加边界：原来"裸列表铺满"全靠这个改观）
+               "QFrame#card, QGroupBox { background: %3; border: 1px solid %4;"
+               "  border-radius: %17px; }"
+               "QFrame#card { padding: %12px; }"
+               "QGroupBox { margin-top: %11px; padding: %12px; }"
+               "QGroupBox::title { subcontrol-origin: margin; left: %12px; padding: 0 %11px;"
+               "  color: %5; }"
+               // 列表：项高一致、hover 可见、选中用强调色底 + 亮文本
+               "QListWidget, QListView, QTreeView { background: %2; border: 1px solid %4;"
+               "  border-radius: %17px; outline: none; }"
+               "QListWidget::item, QListView::item, QTreeView::item { padding: %11px %12px;"
+               "  border-radius: %18px; }"
+               "QListWidget::item:hover, QListView::item:hover, QTreeView::item:hover"
+               "  { background: %3; }"
+               "QListWidget::item:selected, QListView::item:selected, QTreeView::item:selected"
+               "  { background: %9; color: %19; }"
+               "QHeaderView::section { background: %3; color: %5; border: 0;"
+               "  border-bottom: 1px solid %4; padding: %11px %12px; }"
+               // 日志/文本区
+               "QPlainTextEdit, QTextEdit { background: %8; color: %6; border: 1px solid %4;"
+               "  border-radius: %17px; font-family: Consolas; }"
+               // 按钮：三态 + 主按钮（objectName=primary）用 accent 实心
+               "QPushButton { background: %3; color: %6; border: 1px solid %4;"
+               "  border-radius: %17px; padding: %11px %12px; }"
+               "QPushButton:hover { background: %2; border-color: %15; }"
+               "QPushButton:pressed { background: %1; }"
+               "QPushButton:disabled { color: %5; border-color: %4; background: %3; }"
+               "QPushButton#primary { background: %7; color: %19; border: 1px solid %15; }"
+               "QPushButton#primary:hover { background: %15; }"
+               "QPushButton#primary:pressed { background: %7; }"
+               // 下拉 / 输入：与按钮同一套边界与圆角
+               "QComboBox, QLineEdit, QSpinBox { background: %8; color: %6;"
+               "  border: 1px solid %4; border-radius: %17px; padding: %11px %12px; }"
+               "QComboBox:hover, QLineEdit:hover { border-color: %15; }"
+               "QComboBox:disabled, QLineEdit:disabled { color: %5; }"
+               "QComboBox::drop-down { border: 0; width: %19px; }"
+               "QComboBox QAbstractItemView { background: %2; border: 1px solid %4;"
+               "  selection-background-color: %9; }"
+               // 勾选 / 单选：强调色只在"选中"这一处
+               "QCheckBox, QRadioButton { spacing: %11px; }"
+               "QCheckBox::indicator, QRadioButton::indicator { width: %20px; height: %20px;"
+               "  border: 1px solid %4; border-radius: %18px; background: %8; }"
+               "QCheckBox::indicator:checked, QRadioButton::indicator:checked"
+               "  { background: %7; border-color: %15; }"
+               // 滚动条：细、圆角、hover 变亮
                "QScrollBar:vertical { background: %2; width: %13px; margin: 0; }"
                "QScrollBar:horizontal { background: %2; height: %13px; margin: 0; }"
-               "QScrollBar::handle { background: %4; border: 1px solid %10; }"
+               "QScrollBar::handle { background: %4; border-radius: %18px; }"
+               "QScrollBar::handle:hover { background: %15; }"
                "QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }"
-               "QPushButton { background: %3; border: 1px solid %4; padding: %11px %12px; }"
-               "QPushButton:hover { border-color: %7; }"
-               "QSplitter::handle { background: %14; }")
+               "QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }"
+               // 分栏 / 停靠 / 提示
+               "QSplitter::handle { background: %14; }"
+               "QDockWidget::title { background: %3; padding: %11px; }"
+               "QMainWindow::separator { background: %4; width: %11px; height: %11px; }"
+               "QToolTip { background: %3; color: %6; border: 1px solid %4;"
+               "  border-radius: %17px; padding: %11px; }"
+               "QProgressBar { background: %8; border: 1px solid %4; border-radius: %17px;"
+               "  text-align: center; color: %6; }"
+               "QProgressBar::chunk { background: %7; border-radius: %17px; }")
         .arg(bg, surface, surface2, border, dim, text, accent, entry, selected, scroll_border)
         .arg(px(4))
         .arg(px(8))
         .arg(px(10))
-        .arg(sash);
+        .arg(sash)
+        .arg(accent_hover)      // %15
+        .arg(bright)            // %16
+        .arg(px(6))             // %17 圆角
+        .arg(px(3))             // %18 小圆角
+        .arg(bright)            // %19 强调底上的文字色
+        .arg(px(14))            // %20 勾选框尺寸
+        .arg(danger);           // %21（保留：危险色，供后续按钮/状态用）
 }
 
 void apply_theme(QApplication& app, xrkit::core::ThemeMode mode) {
