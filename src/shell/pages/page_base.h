@@ -44,6 +44,8 @@ public:
     //   内容区包进**卡片**（QFrame#card：边框+圆角+内边距）——原来六页都是
     //   "标题/说明/操作栏/内容区同一平面 + 裸列表铺满"。自检用它做几何断言。
     QLabel* subtitle() const { return subtitle_; }
+    // ★ 排版口径（真机反馈'太挤'）：标题与说明**合并成一行**的容器
+    QWidget* header_row() const { return header_row_; }
     QWidget* card() const { return card_; }
     void set_subtitle(const QString& text);
     ScrollViewport* viewport() const { return viewport_; }

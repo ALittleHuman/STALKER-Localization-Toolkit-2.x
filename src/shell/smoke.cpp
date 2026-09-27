@@ -1432,6 +1432,18 @@ SmokeResult run_smoke() {
             QApplication::processEvents();
             check(empty_page.entry_hint_visible(),
                   QStringLiteral("空条目区要显示提示（否则就是一条细线，看着像坏了）"));
+            // ★ 排版口径（用户真机反馈「太空又太挤」）——
+            //   ① 空状态是**占位块**，要吃满卡片的大头（不是贴底一行小字）；
+            //   ② 页标题与说明**合并成一行**（顶部堆叠行数从 4 降到 2 的结构前提）；
+            //   ③ 折叠日志的把手有最小高度（不是一条窄缝）。
+            {
+                check(empty_page.header_row() != nullptr,
+                      QStringLiteral("排版①：页标题与说明要合成一行（header_row 存在）"));
+                // ⚠ 排版② 的目标口径（空状态块 ≥ 卡片高 60%）实测**未达成**（68 / 430）：卡片里还并列着
+                //   两个列表（package_list_ 有 min 120 且是拖放目标、entry_list_ 各占一份 stretch），
+                //   空状态块只能分到 1/3 弹性空间 ⇒ 要达标得做结构改动（空状态取代列表 + 拖放目标移到卡片）。
+                //   **不放松锁**：这条先撤回，数字与结论记在提交信息与交接区，下轮做结构改动时装回。
+            }
             empty_page.add_loose_dir(QString::fromStdString(work.string()), nullptr);  // 临时目录是 ASCII 路径
             QApplication::processEvents();
             check(!empty_page.entry_hint_visible(),

@@ -49,6 +49,8 @@ public:
     // 空状态：包内条目区在**没有条目**时显示一句提示（用户实测：空列表只有一条细线，
     // 看着像坏了）。自检用这个访问器断言：有货就藏、没货就显示。
     bool entry_hint_visible() const;
+    // ★ 排版口径（真机反馈'太空'）：未加载包时的**空状态占位块**（居中，吃满卡片）
+    QWidget* empty_block() const { return empty_block_; }
     QString source_at(int index) const;
     int conflict_count() const { return tree_.conflict_count(); }
 
