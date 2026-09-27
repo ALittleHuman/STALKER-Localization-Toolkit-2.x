@@ -47,6 +47,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -2623,6 +2624,67 @@ int run_cli(const std::vector<std::string>& args) {
             check(is_hex_color(xrkit::core::theme_color(xrkit::core::ThemeMode::Light, role)),
                   std::string("亮色 ") + (role ? role : "?") + " 是 #RRGGBB");
         }
+        // ★ 2.x 配色断言（2026-09-27 界面重构口径；用户"配色也改一下"）——
+        //   不是"看起来还行"，而是**能量、能判红**：正文/次要文字对比度、强调色与背景亮度差、
+        //   当前导航项与窗口底必须可区分。改坏任意一条 ⇒ 这里当场判红。
+        {
+            struct Rgb {
+                int r = 0, g = 0, b = 0;
+            };
+            auto rgb_of = [&](xrkit::core::ThemeMode m, const char* role) {
+                Rgb out;
+                const char* hex = xrkit::core::theme_color(m, role);
+                if (hex == nullptr || std::strlen(hex) != 7) return out;
+                auto hv = [](char c) {
+                    if (c >= '0' && c <= '9') return c - '0';
+                    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                    return 0;
+                };
+                out.r = hv(hex[1]) * 16 + hv(hex[2]);
+                out.g = hv(hex[3]) * 16 + hv(hex[4]);
+                out.b = hv(hex[5]) * 16 + hv(hex[6]);
+                return out;
+            };
+            auto rel_lum = [](const Rgb& c) {  // WCAG 相对亮度
+                auto ch = [](int v) {
+                    const double s = static_cast<double>(v) / 255.0;
+                    return s <= 0.03928 ? s / 12.92 : std::pow((s + 0.055) / 1.055, 2.4);
+                };
+                return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b);
+            };
+            auto contrast = [&](const Rgb& a, const Rgb& b) {
+                const double la = rel_lum(a);
+                const double lb = rel_lum(b);
+                const double hi = la > lb ? la : lb;
+                const double lo = la > lb ? lb : la;
+                return (hi + 0.05) / (lo + 0.05);
+            };
+            auto same = [](const Rgb& a, const Rgb& b) {
+                return a.r == b.r && a.g == b.g && a.b == b.b;
+            };
+            auto brief = [](double v) { return std::to_string(v).substr(0, 4); };
+            const struct {
+                xrkit::core::ThemeMode mode;
+                const char* label;
+            } modes[] = {{xrkit::core::ThemeMode::Dark, "dark"},
+                         {xrkit::core::ThemeMode::Light, "light"}};
+            for (const auto& m : modes) {
+                const Rgb card = rgb_of(m.mode, "surface2");
+                const double c_text = contrast(rgb_of(m.mode, "text"), card);
+                const double c_dim = contrast(rgb_of(m.mode, "text_dim"), card);
+                check(c_text >= 4.5, std::string(m.label) + " 正文/卡片对比度>=4.5 实测" + brief(c_text));
+                check(c_dim >= 3.0, std::string(m.label) + " 次要文字/卡片对比度>=3.0 实测" + brief(c_dim));
+                const Rgb accent = rgb_of(m.mode, "accent");
+                const Rgb bg = rgb_of(m.mode, "bg");
+                const double delta = std::abs(rel_lum(accent) - rel_lum(bg));
+                check(delta >= 0.25,
+                      std::string(m.label) + " 强调色与背景亮度差>=25% 实测" + brief(delta));
+                check(!same(rgb_of(m.mode, "selected"), bg),
+                      std::string(m.label) + " 当前导航项与窗口底不同色");
+            }
+        }
+
         const int fonts = xrkit::core::theme_font_count();
         check(fonts > 0, "字体角色数 > 0");
         for (int i = 0; i < fonts; ++i) {
