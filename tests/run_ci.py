@@ -936,7 +936,7 @@ def step_shell_smoke(release: bool) -> None:
         rc_gui, out_gui = run([str(gui_exe), "--layout-report"], env=env_gui, timeout=180)
         for line in out_gui.splitlines():
             s = line.strip()
-            if s.startswith("LAYOUT"):
+            if s.startswith("LAYOUT") or s.startswith("SCALE"):
                 say("  " + s)
         if rc_gui == 0 and "LAYOUT PASS" in out_gui:
             ok("构建 GUI 排版口径通过（表单 <=200px / 构建史 >=110px / 日志 <=50%）")
