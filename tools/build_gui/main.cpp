@@ -34,7 +34,7 @@
 #include <cstdio>
 #include <string>
 
-#include "ui_scale.h"
+#include "screen_scale.h"
 #include "log_box.h"          // shell 通用日志组件（LogBox：自带攒批/截断/只读）
 #include "theme.h"            // shell 主题（与主程序同一套令牌，别自己造样式）          // shell 通用日志组件（LogBox：自带攒批/截断/只读）
 #include "xrkit/core/build_version.h"
@@ -415,9 +415,45 @@ int main(int argc, char** argv) {
         std::printf("LAYOUT subtitle=%d primary=%d\n", sub_h, has_primary ? 1 : 0);
         const bool ok = form > 0 && form <= 200 && hist >= 110 && log_pct >= 0 && log_pct <= 50 &&
                         sub_h > 0 && has_primary;
-        std::printf("LAYOUT %s\n", ok ? "PASS" : "FAIL");
+
+        // ★ 屏幕自适应判据（用户："2.5K屏…做一个自适应，所有屏幕都能正常用"）——
+        //   与上面"实际窗口几何"分开：这里会**临时改全局 ui_scale**，量完必须还原，
+        //   免得影响上面那组结论（顺序敏感：先量窗口，再做缩放检查）。
+        bool scale_ok = true;
+        {
+            const double ambient = xrkit::core::ui_scale();
+            const struct {
+                double scale;
+                int want_px100;
+            } steps[] = {{1.0, 100}, {1.25, 125}, {1.5, 150}, {2.0, 200}};
+            for (const auto& st : steps) {
+                xrkit::core::set_ui_scale(st.scale);
+                if (xrkit::core::px(100) != st.want_px100) scale_ok = false;
+            }
+            xrkit::core::set_ui_scale(ambient);  // 还原
+            // 吸附与 clamp（1.33 ⇒ 1.25；太小 ⇒ 1.0；太大 ⇒ 2.0）
+            if (xrkit::shell::snap_ui_scale(1.33) != 1.25) scale_ok = false;
+            if (xrkit::shell::snap_ui_scale(0.50) != 1.00) scale_ok = false;
+            if (xrkit::shell::snap_ui_scale(3.00) != 2.00) scale_ok = false;
+            // 窗口尺寸：小屏(1366x768)不溢出、大屏(2560x1440)不缩成一小块
+            const QSize min_win = xrkit::shell::app_min_window_size();
+            const QSize screens[] = {QSize(1366, 768), QSize(2560, 1440)};
+            for (const QSize& avail : screens) {
+                const QSize win = xrkit::shell::adaptive_window_size(avail, min_win);
+                const bool fits = win.width() <= avail.width() && win.height() <= avail.height();
+                const bool big_enough = win.width() >= min_win.width() && win.height() >= min_win.height();
+                const bool not_tiny = win.width() >= avail.width() / 2;
+                if (!fits || !big_enough || !not_tiny) scale_ok = false;
+                std::printf("SCALE screen=%dx%d window=%dx%d min=%dx%d\n", avail.width(),
+                            avail.height(), win.width(), win.height(), min_win.width(),
+                            min_win.height());
+            }
+        }
+        std::printf("SCALE steps=4 %s\n", scale_ok ? "PASS" : "FAIL");
+        const bool all_ok = ok && scale_ok;
+        std::printf("LAYOUT %s\n", all_ok ? "PASS" : "FAIL");
         window.hide();
-        return ok ? 0 : 1;
+        return all_ok ? 0 : 1;
     }
     // 与主程序同一套主题（用户口径"小组件用通用的"；也是"两个软件观感一致"的前提）
     xrkit::shell::apply_theme(app, xrkit::core::ThemeMode::Dark);

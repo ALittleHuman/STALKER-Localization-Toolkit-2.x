@@ -1,4 +1,4 @@
-#include "ui_scale.h"
+#include "screen_scale.h"
 
 #include "xrkit/core/theme.h"
 

@@ -8,7 +8,7 @@
 #include "xrkit/core/theme.h"
 #include "hub.h"
 #include "smoke.h"
-#include "ui_scale.h"
+#include "screen_scale.h"
 #include "theme.h"
 
 #include <QApplication>
