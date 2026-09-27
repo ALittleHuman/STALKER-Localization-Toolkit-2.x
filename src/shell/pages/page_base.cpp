@@ -25,9 +25,10 @@ PageBase::PageBase(const QString& page_id, const QString& title, QWidget* parent
     outer_ = new QVBoxLayout(this);
     // 边距/间距一律过 px()（14.3：按 96 DPI 定的像素都得过；Qt 侧只过 core::px，
     // 不自己乘 devicePixelRatio —— 逻辑像素已经设备无关了，再乘一次就是双重缩放）
-    outer_->setContentsMargins(xrkit::core::px(8), xrkit::core::px(6), xrkit::core::px(8),
-                               xrkit::core::px(6));
-    outer_->setSpacing(xrkit::core::px(6));
+    // ★ 用户真机反馈「又挤又空」：页边距/行距整体上调一档（原来 8/6 + spacing 6 太紧）
+    outer_->setContentsMargins(xrkit::core::px(12), xrkit::core::px(10), xrkit::core::px(12),
+                               xrkit::core::px(10));
+    outer_->setSpacing(xrkit::core::px(10));
 
     header_ = new QLabel(title_, this);
     header_->setObjectName(QStringLiteral("page_header"));

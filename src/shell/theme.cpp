@@ -148,7 +148,16 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
         .arg(bright)            // %19 强调底上的文字色
         .arg(px(14))            // %20 勾选框尺寸
         .arg(danger)            // %21（保留：危险色，供后续按钮/状态用）
-        .arg(px(32));           // %22 导航项高（口径：32px，过 px() 缩放）
+        .arg(px(32))            // %22 导航项高（口径：32px，过 px() 缩放）
+        // ★ 用户真机反馈「又挤又空」的根因＝控件太小、间距太小 ⇒ 控件最小高度与内边距**整体上调
+        //   一档**。用独立字符串拼接（不再往上面那条 %N 链里加号，避免再出"错位"那类事故）。
+        + QStringLiteral(
+              "QPushButton { min-height: %1px; padding: %2px %3px; }"
+              "QComboBox, QLineEdit, QSpinBox { min-height: %1px; padding: %2px %4px; }"
+              "QListWidget::item, QListView::item, QTreeView::item { min-height: %1px; }"
+              "QHeaderView::section { min-height: %2px; padding: %2px %4px; }"
+              "QLabel#page_header { padding: %2px 0; }")
+              .arg(px(28)).arg(px(8)).arg(px(14)).arg(px(10));
 }
 
 void apply_theme(QApplication& app, xrkit::core::ThemeMode mode) {
@@ -167,6 +176,14 @@ void apply_theme(QApplication& app, xrkit::core::ThemeMode mode) {
     palette.setColor(QPalette::HighlightedText, role("text_bright"));
     palette.setColor(QPalette::ToolTipBase, role("surface2"));
     palette.setColor(QPalette::ToolTipText, role("text"));
+    // ★ 用户真机反馈（2026-09-27）：「很多字符和控件太小，相互的空格也小」
+    //   ⇒ 界面看着又挤又空。这里把**全局默认字体放大一档**（所有控件继承）。
+    {
+        QFont base = app.font();
+        const double pt = base.pointSizeF() > 0 ? base.pointSizeF() : 9.0;
+        base.setPointSizeF(pt + 2.0);
+        app.setFont(base);
+    }
     app.setPalette(palette);
     app.setStyleSheet(stylesheet_for(mode));
 
