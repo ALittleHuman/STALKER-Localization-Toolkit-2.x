@@ -12,6 +12,7 @@
 #include "theme.h"
 
 #include <QApplication>
+#include <QGuiApplication>
 #include <QScreen>
 #include <QStringList>
 #include <QTextStream>
@@ -26,6 +27,11 @@ int main(int argc, char** argv) {
         qputenv("QT_QPA_PLATFORM", "offscreen");
     }
 
+    // ★ 高 DPI 策略（屏幕自适应口径，2026-09-27）：让 Qt **保留分数缩放**。
+    //   Qt6 默认 `Round` 会把 125%/133% 这类缩放先取整一次，而我们的 `snap_ui_scale()`
+    //   还会再吸附一档 ⇒ 两处都在取整、结果不可预期。**必须在构造 QApplication 之前**设。
+    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
+        Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("STALKER Toolkit 2.x"));
     QApplication::setApplicationVersion(QStringLiteral("2.0.0"));

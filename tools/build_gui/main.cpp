@@ -391,8 +391,14 @@ private:
 };
 
 #include <QApplication>
+#include <QGuiApplication>
 
 int main(int argc, char** argv) {
+    // ★ 高 DPI 策略（屏幕自适应口径，2026-09-27）：让 Qt **保留分数缩放**。
+    //   Qt6 默认 `Round` 会把 125%/133% 这类缩放先取整一次，而我们的 `snap_ui_scale()`
+    //   还会再吸附一档 ⇒ 两处都在取整、结果不可预期。**必须在构造 QApplication 之前**设。
+    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
+        Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
     QApplication app(argc, argv);
     // ★ `--layout-report`：**排版判据**（不看截图）。离屏构建窗口 → 量各区高度 → 按口径给结论：
     //   表单区 ≤ 200px、构建史 ≥ 110px、日志区 ≤ 窗口高 50%。退出码 0/1 供门禁使用。
