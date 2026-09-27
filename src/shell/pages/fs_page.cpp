@@ -125,7 +125,13 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     empty_layout->setContentsMargins(0, 0, 0, 0);
     empty_layout->setSpacing(xrkit::core::px(8));
     empty_layout->addStretch(1);
-    empty_layout->addWidget(entry_hint_, 0, Qt::AlignHCenter);
+    // ★ 用户截图（真机）：空状态文字被**裁掉半行**、位置也怪 ⇒ 限宽 + 居中 + 给块最小高度，
+    //   让它在卡片里稳定地占一块、而不是被上下 stretch 挤扁。
+    entry_hint_->setMaximumWidth(xrkit::core::px(560));
+    entry_hint_->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
+    entry_hint_->setMinimumHeight(xrkit::core::px(56));
+    empty_block_->setMinimumHeight(xrkit::core::px(160));
+    empty_layout->addWidget(entry_hint_, 0, Qt::AlignHCenter | Qt::AlignVCenter);
     empty_layout->addStretch(1);
     // ★ 用户真机反馈「比例太丑」：空状态块给 stretch 3（包列表 1）⇒ 未加载包时
     //   它是卡片的主角、包列表缩到它自己的最小高度（仍作拖放落点）。

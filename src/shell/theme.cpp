@@ -143,8 +143,8 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
         .arg(sash)
         .arg(accent_hover)      // %15
         .arg(bright)            // %16
-        .arg(px(6))             // %17 圆角
-        .arg(px(3))             // %18 小圆角
+        .arg(px(3))             // %17 圆角（用户：太圆润 ⇒ 收敛）
+        .arg(px(2))             // %18 小圆角（同上）
         .arg(bright)            // %19 强调底上的文字色
         .arg(px(14))            // %20 勾选框尺寸
         .arg(danger)            // %21（保留：危险色，供后续按钮/状态用）
@@ -179,9 +179,14 @@ void apply_theme(QApplication& app, xrkit::core::ThemeMode mode) {
     // ★ 用户真机反馈（2026-09-27）：「很多字符和控件太小，相互的空格也小」
     //   ⇒ 界面看着又挤又空。这里把**全局默认字体放大一档**（所有控件继承）。
     {
+        // ★ 用户 2026-09-27 实测 bug：**每次切主题（哪怕选的是同一个）字号都会被再 +2**
+        //   —— 原来是"在当前字号上 +2"，切一次涨一次。这里改成**从一次性的基线值算**。
+        static const double kBasePt = [] {
+            const QFont f = QApplication::font();
+            return f.pointSizeF() > 0 ? f.pointSizeF() : 9.0;
+        }();
         QFont base = app.font();
-        const double pt = base.pointSizeF() > 0 ? base.pointSizeF() : 9.0;
-        base.setPointSizeF(pt + 2.0);
+        base.setPointSizeF(kBasePt + 2.0);
         app.setFont(base);
     }
     app.setPalette(palette);
