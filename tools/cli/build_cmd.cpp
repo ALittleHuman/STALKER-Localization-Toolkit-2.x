@@ -1,6 +1,7 @@
 #include "build_cmd.h"
 
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <ctime>
 #include <iostream>
@@ -70,8 +71,49 @@ int run_build_package(const std::vector<std::string>& operands) {
             std::cout << "BUILDPKG error reason=回退失败：" << err << "\n";
             return kFail;
         }
-        std::cout << "BUILDPKG error reason=构建或打包失败（退出码 " << rc
-                  << "）⇒ 版本已回退；日志=" << log << "\n";
+        // ④ 失败流（用户 2026-09-24 口述 spec）：失败件进 dist\FAIL\、**加构建时间戳重命名**；
+        //    **没产出任何文件 ⇒ 不建目录**（日志直接放 FAIL\ 下）；日志名与文件夹名一致。
+        namespace stdfs = std::filesystem;
+        std::error_code ec;
+        char stamp[32] = {};
+        {
+            std::time_t now = std::time(nullptr);
+            std::tm tm_buf{};
+            localtime_s(&tm_buf, &now);
+            std::strftime(stamp, sizeof(stamp), "%Y-%m-%d_%H_%M_%S", &tm_buf);
+        }
+        const std::string base = "build_" + std::to_string(want_index) + "_" + stamp;
+        const stdfs::path fail_root = stdfs::path("dist") / "FAIL";
+        stdfs::create_directories(fail_root, ec);
+        // 舞台目录里有东西 ⇒ 说明构建出了产物但打包或自检失败 ⇒ 整个移进 FAIL 下该次目录
+        const stdfs::path stage = stdfs::path("build") / "package_stage";
+        const stdfs::path log_path2 = stdfs::path(log);
+        bool produced = false;
+        if (stdfs::is_directory(stage, ec)) {
+            for (stdfs::directory_iterator it(stage, ec), end; it != end; it.increment(ec)) {
+                produced = true;
+                break;
+            }
+        }
+        if (produced) {
+            const stdfs::path dir = fail_root / base;
+            stdfs::create_directories(dir, ec);
+            if (stdfs::exists(log_path2, ec)) {
+                stdfs::rename(log_path2, dir / (base + ".log"), ec);
+            }
+            const stdfs::path moved = dir / "package_stage";
+            stdfs::rename(stage, moved, ec);
+            std::cout << "BUILDPKG error reason=构建或打包失败（退出码 " << rc
+                      << "）⇒ 版本已回退；失败件已归档：" << (fail_root / base).string() << "\n";
+        } else {
+            // 什么都没产出 ⇒ **不建目录**（spec：没有 build 出任何文件就把那个构建文件夹删掉）
+            const stdfs::path only_log = fail_root / (base + ".log");
+            if (stdfs::exists(log_path2, ec)) {
+                stdfs::rename(log_path2, only_log, ec);
+            }
+            std::cout << "BUILDPKG error reason=构建失败且没有产出任何文件（退出码 " << rc
+                      << "）⇒ 版本已回退、未留构建目录；日志=" << only_log.string() << "\n";
+        }
         return kFail;
     }
 
