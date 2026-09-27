@@ -45,6 +45,13 @@ public:
     bool dragging() const { return dragging_; }
     int preview_pos() const { return preview_; }
 
+    // ★ 每格**上限**（size<=0 = 不限）。为什么要有它（2026-09-27 用户实测"排版有很大问题"）：
+    //   `clamp_now()` 的富余空间**全部给最后一格**（Tk `expand=True` 语义），而 hub 的最后一格
+    //   就是日志面板 ⇒ 日志吃掉整窗剩余高度。**约束必须做进容器自己**：`relayout()` 直接
+    //   `setGeometry` 分配几何，子控件上的 `setMaximumHeight()` 根本不生效（我踩过这个空操作）。
+    void set_max_size(int index, int size);
+    int maxsize(int index) const;
+
     // 收起 / 展开（4.2/4.3）
     void set_collapsed(int index, bool collapsed);
     bool is_collapsed(int index) const;
@@ -70,6 +77,7 @@ private:
     QVector<QWidget*> panes_;
     QVector<int> mins_;        // 当前生效的最小值（收起时撤下）
     QVector<int> saved_mins_;  // 收起前的原最小值（4.2）
+    QVector<int> maxs_;        // 每格上限（0 = 不限）
     QVector<bool> collapsed_;
     QVector<int> sizes_;       // 沿轴方向的尺寸
     bool dragging_ = false;

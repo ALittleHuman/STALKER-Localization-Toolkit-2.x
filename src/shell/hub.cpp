@@ -133,12 +133,12 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     status_label_->setObjectName(QStringLiteral("status_label"));
     log_layout->addWidget(log_box_);
     log_layout->addWidget(status_label_);
-    // ★ 2026-09-27 用户实测反馈"排版有很大问题"：日志区原来跟页面区**对半分**（甚至更多），
-    //   主内容区反而被挤成一条。口径：**页面为主、日志为辅** —— 页面区吃剩余空间，
-    //   日志区给一个**可读但有上限**的高度（上限 px(200)，最小仍是 log_min_；条子可拖，
-    //   但拖不过上限）。这样 1000px 高的窗口里日志约占 20%，而不是 50%。
-    log_panel->setMaximumHeight(px(200));
+    // ★ 2026-09-27 用户实测反馈"排版有很大问题"：日志区原来跟页面区**对半分**（甚至更多）。
+    //   口径：**页面为主、日志为辅** —— 页面区吃剩余空间，日志区**由容器的每格上限**封顶。
+    //   ⚠ 注意：**不能**用 `log_panel->setMaximumHeight(...)` —— `SplitPane::relayout()` 直接
+    //   `setGeometry`，子控件上的尺寸约束不生效（我第一版就是这么写错的，空操作）。
     split_->add_pane(log_panel, log_min_);
+    split_->set_max_size(1, px(200));  // 第 2 格（日志面板）上限 200px
     setCentralWidget(split_);
 
     // ── 菜单：主题（暗/亮，原地更新）

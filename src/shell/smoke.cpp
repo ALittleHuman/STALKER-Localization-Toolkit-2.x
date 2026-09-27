@@ -468,6 +468,40 @@ SmokeResult run_smoke() {
                   .arg(hub.top_min())
                   .arg(hub.log_min()));
 
+        // ★ 6.x 排版口径（用户 2026-09-27："排版有很大问题"）—— **几何断言，不看截图**。
+        //   为什么用 SplitPane 夹具而不是 Hub：离屏下 **Hub 的几何不落地**（实测子控件高度为 0），
+        //   而真正决定比例的机制就是 SplitPane 的分配算法（富余给谁、受不受上限约束）。
+        {
+            SplitPane pane(SplitPane::Orient::Vertical);
+            auto* page_pane = new QWidget;
+            auto* log_pane = new QWidget;
+            pane.add_pane(page_pane, px(260));
+            pane.add_pane(log_pane, px(110));
+            pane.set_max_size(1, px(200));   // 与 hub 同口径：日志格上限 200px
+            pane.resize(1000, 900);
+            pane.show();
+            QApplication::processEvents();
+            // SplitPane 的重排带 120ms 去抖（2.5）：等它真落地再读尺寸，否则读到的是中间值
+            pane.request_clamp();
+            QThread::msleep(160);
+            QApplication::processEvents();
+            if (pane.layout() != nullptr) pane.layout()->activate();
+            const int total = pane.height();
+            const int log_h = pane.pane_size(1);
+            const int page_h = pane.pane_size(0);
+            check(log_h > 0 && log_h <= px(200),
+                  QStringLiteral("6.x 日志格受 per-pane 上限（实测 %1，上限 %2）")
+                      .arg(log_h)
+                      .arg(px(200)));
+            check(total > 0 && log_h <= total * 30 / 100,
+                  QStringLiteral("6.x 日志格 ≤ 窗口高 30%%（实测 %1 / %2 = %3%%）")
+                      .arg(log_h).arg(total).arg(total > 0 ? log_h * 100 / total : -1));
+            check(total > 0 && page_h >= total * 60 / 100,
+                  QStringLiteral("6.x 页面格 ≥ 窗口高 60%%（实测 %1 / %2 = %3%%）")
+                      .arg(page_h).arg(total).arg(total > 0 ? page_h * 100 / total : -1));
+            pane.hide();
+        }
+
         // 13.x 任务壳
         TaskShell task;
         task.set_idle_status(QStringLiteral("就绪"));

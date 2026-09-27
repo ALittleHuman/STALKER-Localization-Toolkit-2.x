@@ -8,6 +8,7 @@
 #include <QResizeEvent>
 #include <QTimerEvent>
 #include <algorithm>
+#include <climits>
 
 namespace xrkit::shell {
 namespace {
@@ -39,6 +40,7 @@ int SplitPane::add_pane(QWidget* pane, int minsize) {
     }
     panes_.push_back(pane);
     mins_.push_back(std::max(0, minsize));
+    maxs_.push_back(0);  // 默认不限
     saved_mins_.push_back(std::max(0, minsize));
     collapsed_.push_back(false);
     sizes_.push_back(0);
@@ -60,6 +62,17 @@ int SplitPane::pane_size(int index) const {
 int SplitPane::minsize(int index) const {
     if (index < 0 || index >= mins_.size()) return 0;
     return mins_[index];
+}
+
+void SplitPane::set_max_size(int index, int size) {
+    if (index < 0 || index >= static_cast<int>(maxs_.size())) return;
+    maxs_[index] = std::max(0, size);
+    relayout();
+}
+
+int SplitPane::maxsize(int index) const {
+    if (index < 0 || index >= static_cast<int>(maxs_.size())) return 0;
+    return maxs_[index];
 }
 
 int SplitPane::axis_total() const {
@@ -99,6 +112,12 @@ void SplitPane::clamp_now() {
         floor_i[i] = collapsed_[i] ? 0 : mins_[i];
         if (collapsed_[i]) sizes_[i] = 0;
         if (sizes_[i] < floor_i[i]) sizes_[i] = floor_i[i];
+        // ★ 2026-09-27（用户实测"排版有很大问题"）：**每格上限要在每次 clamp 时先压一遍**。
+        //   `sizes_` 是跨次保留的：只在"富余分配"里按上限发不够 —— 上一次给多了之后，
+        //   下一次会走**收窄分支**，而收窄分支不会把超限的格子压回去（实测日志格 636 一直不收敛）。
+        if (i < static_cast<int>(maxs_.size()) && maxs_[i] > 0 && sizes_[i] > maxs_[i]) {
+            sizes_[i] = maxs_[i];
+        }
     }
     int sum = 0;
     for (int v : sizes_) sum += v;
@@ -139,7 +158,20 @@ void SplitPane::clamp_now() {
                 }
             }
         }
-        if (elastic >= 0) sizes_[elastic] += give;
+        // ★ 2026-09-27：富余分配**按每格上限发放**（0 = 不限），而不是"一股脑给最后一格"。
+        //   顺序仍是"后面的先吃饱"（与原语义一致），只是吃到上限就换下一格（继续往前）。
+        for (int i = n - 1; i >= 0 && give > 0; --i) {
+            if (collapsed_[i]) continue;
+            const int cap = (i < static_cast<int>(maxs_.size()) && maxs_[i] > 0) ? maxs_[i]
+                                                                               : INT_MAX;
+            const int room = cap - sizes_[i];
+            if (room <= 0) continue;
+            const int take = std::min(room, give);
+            sizes_[i] += take;
+            give -= take;
+        }
+        // 所有格子都到顶了还有剩 ⇒ 还是给最后一格，保证高度用满（保持旧行为兜底）
+        if (give > 0 && elastic >= 0) sizes_[elastic] += give;
     }
     ++clamp_count_;
 }
