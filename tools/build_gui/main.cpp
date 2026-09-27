@@ -15,6 +15,7 @@
 #include <QFileInfo>
 #include <QFont>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QListWidget>
@@ -100,13 +101,16 @@ public:
 
         auto* box = new QGroupBox(QStringLiteral("版本与标记（唯一事实来源：version.json）"), this);
         form_box_ = box;
-        auto* form = new QFormLayout(box);
-        // ★ 2026-09-27（用户："两个软件 UI 排版都有很大问题"）：表单区紧凑化 —— 口径是 **≤ 200px**，
-        //   行距/边距都收紧，避免顶部一大块留白把内容区挤下去。
-        form->setContentsMargins(xrkit::core::px(8), xrkit::core::px(6), xrkit::core::px(8),
+        // ★ 2026-09-27：**五行竖排 → 三行两列**。原因不是"好看"，是判据：
+        //   用户要求"控件太小 ⇒ 整体调大一档"之后（全局 min-height 28px + 内边距），
+        //   五行竖排的表单区实测 **249px**，撞破了本窗口自己的排版口径「表单区 ≤ 200px」
+        //   （`--layout-report` 会判红，而"放松阈值"是明确不许做的事）。
+        //   五个字段一个不少，只是把"短字段"并排：版本号|标记、序号|完整版本号，构建史独占一行。
+        auto* grid = new QGridLayout(box);
+        grid->setContentsMargins(xrkit::core::px(8), xrkit::core::px(6), xrkit::core::px(8),
                                  xrkit::core::px(6));
-        form->setVerticalSpacing(4);
-        form->setHorizontalSpacing(8);
+        grid->setVerticalSpacing(4);
+        grid->setHorizontalSpacing(8);
 
         combo_version_ = new QComboBox(box);   // **只能选**，不许手打
         combo_prerelease_ = new QComboBox(box);
@@ -116,11 +120,18 @@ public:
         edit_full_->setReadOnly(true);
         label_store_ = new QLabel(box);
 
-        form->addRow(QStringLiteral("版本号："), combo_version_);
-        form->addRow(QStringLiteral("标记："), combo_prerelease_);
-        form->addRow(QStringLiteral("序号（下一个）："), edit_index_);
-        form->addRow(QStringLiteral("完整版本号："), edit_full_);
-        form->addRow(QStringLiteral("构建史："), label_store_);
+        grid->addWidget(new QLabel(QStringLiteral("版本号："), box), 0, 0);
+        grid->addWidget(combo_version_, 0, 1);
+        grid->addWidget(new QLabel(QStringLiteral("标记："), box), 0, 2);
+        grid->addWidget(combo_prerelease_, 0, 3);
+        grid->addWidget(new QLabel(QStringLiteral("序号（下一个）："), box), 1, 0);
+        grid->addWidget(edit_index_, 1, 1);
+        grid->addWidget(new QLabel(QStringLiteral("完整版本号："), box), 1, 2);
+        grid->addWidget(edit_full_, 1, 3);
+        grid->addWidget(new QLabel(QStringLiteral("构建史："), box), 2, 0);
+        grid->addWidget(label_store_, 2, 1, 1, 3);
+        grid->setColumnStretch(1, 1);
+        grid->setColumnStretch(3, 1);
         root_layout->addWidget(box);
 
         auto* row = new QHBoxLayout();
