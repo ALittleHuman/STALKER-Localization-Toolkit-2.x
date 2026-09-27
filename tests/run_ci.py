@@ -1176,10 +1176,29 @@ def step_bench(release: bool) -> None:
         fail("bench 超出数量级上界（见上）")
 
 
+def step_px_only(release: bool) -> None:
+    """像素口径（屏幕自适应，2026-09-27 用户：「我电脑是2.5K屏，所以做一个自适应」）：
+    **设计稿像素一律过 px()** —— 非零裸字面量按 96 DPI 定死，在高 DPI 屏上不会跟着缩放。
+    独立成脚本（tests/check_px_only.py），**不受其它步骤早退影响**（上一版我把它塞进外壳步骤，
+    而外壳自检一红那一步就 return 了 ⇒ 锁根本没被执行）。
+    """
+    say("[px-only] 像素口径：尺寸/间距只许过 px()")
+    rc, out = run([sys.executable, str(ROOT / "tests" / "check_px_only.py")], timeout=120)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("PX-ONLY"):
+            say("  " + s)
+    if rc == 0:
+        ok("尺寸/间距一律过 px()（屏幕自适应口径）")
+    else:
+        fail("有尺寸/间距没过 px()（见上；白名单见 tests/check_px_only.py）")
+
+
 STEPS = [
     ("build", step_build),
     ("no-qt", step_no_qt_lock),
     ("no-qt-injection", step_no_qt_injection),
+    ("px-only", step_px_only),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),
