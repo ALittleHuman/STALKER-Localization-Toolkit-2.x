@@ -14,6 +14,7 @@
 #include <vector>
 
 class QListWidget;
+class QPushButton;
 class QPlainTextEdit;
 class QStackedWidget;
 class QLabel;
@@ -64,6 +65,9 @@ public:
     // 探针用：拿到**真实的**页对象（页框架/视口/minheight 都从它上面量，不自报）
     PageBase* page_at(int index) const;
     QPlainTextEdit* log_view() const { return log_view_; }
+    // ★ 界面重构：日志区做成「带标题栏的小面板」（标题 + 清空按钮）
+    QLabel* log_title() const { return log_title_; }
+    QPushButton* log_clear_button() const { return log_clear_; }
     LogBox* log_box() const { return log_box_; }
     SplitPane* split() const { return split_; }
     QLabel* status_label() const { return status_label_; }
@@ -83,6 +87,8 @@ private:
     QStackedWidget* stack_ = nullptr;
     QPlainTextEdit* log_view_ = nullptr;
     LogBox* log_box_ = nullptr;
+    QLabel* log_title_ = nullptr;
+    QPushButton* log_clear_ = nullptr;
     SplitPane* split_ = nullptr;
     QLabel* status_label_ = nullptr;
     int top_min_ = 0;

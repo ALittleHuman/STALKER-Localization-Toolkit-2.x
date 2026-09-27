@@ -144,6 +144,22 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     log_view_ = log_box_;  // 兼容 M2-1 的访问器（LogBox 是 QPlainTextEdit 子类）
     status_label_ = new QLabel(QStringLiteral("就绪"));
     status_label_->setObjectName(QStringLiteral("status_label"));
+    // ★ 界面重构（用户："日志区是裸等宽文本块"）：给它一个**标题栏**，不再是裸文本框。
+    auto* log_head = new QWidget(log_panel);
+    auto* log_head_layout = new QHBoxLayout(log_head);
+    log_head_layout->setContentsMargins(0, 0, 0, 0);
+    log_head_layout->setSpacing(px(6));
+    log_title_ = new QLabel(QStringLiteral("日志"), log_head);
+    log_title_->setObjectName(QStringLiteral("log_title"));
+    log_clear_ = new QPushButton(QStringLiteral("清空"), log_head);
+    log_clear_->setObjectName(QStringLiteral("log_clear"));
+    log_head_layout->addWidget(log_title_, 0);
+    log_head_layout->addStretch(1);
+    log_head_layout->addWidget(log_clear_, 0);
+    QObject::connect(log_clear_, &QPushButton::clicked, this, [this] {
+        if (log_box_ != nullptr) log_box_->clear_log();
+    });
+    log_layout->addWidget(log_head, 0);
     log_layout->addWidget(log_box_);
     log_layout->addWidget(status_label_);
     // ★ 2026-09-27 用户实测反馈"排版有很大问题"：日志区原来跟页面区**对半分**（甚至更多）。

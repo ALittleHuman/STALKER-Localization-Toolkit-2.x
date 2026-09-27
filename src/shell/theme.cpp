@@ -62,6 +62,9 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                "QLabel#status_label { color: %5; }"
                "QLabel#page_header { color: %16; }"
                "QLabel#page_subtitle { color: %5; }"
+               // 日志面板的标题栏（小面板感：标题次要色 + 小号清空按钮）
+               "QLabel#log_title { color: %5; font-weight: bold; }"
+               "QPushButton#log_clear { padding: %18px %12px; }"
                // 左侧导航 = 导航条（项高统一、当前项 accent 左条）
                "QListWidget#page_list { background: %2; border: 0;"
                "  border-right: 1px solid %4; border-radius: 0; padding: %11px 0; }"

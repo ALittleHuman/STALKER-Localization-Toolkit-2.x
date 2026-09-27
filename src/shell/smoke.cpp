@@ -105,6 +105,26 @@ SmokeResult run_smoke() {
     check(hub.log_view() != nullptr && hub.log_view()->isReadOnly(),
           QStringLiteral("日志栏只读"));
     hub.log_line(QStringLiteral("smoke"));
+    {
+        // ★ 界面重构：日志区要有标题栏（标题 + 清空），且「清空」真的清掉
+        check(hub.log_title() != nullptr && !hub.log_title()->text().isEmpty(),
+              QStringLiteral("日志面板要有标题（实测 %1）")
+                  .arg(hub.log_title() != nullptr ? hub.log_title()->text() : QStringLiteral("(无)")));
+        check(hub.log_clear_button() != nullptr, QStringLiteral("日志面板要有清空按钮"));
+        hub.log_line(QStringLiteral("待清空 A"));
+        if (hub.log_box() != nullptr) hub.log_box()->flush();
+        const int before = hub.log_box() != nullptr ? hub.log_box()->blockCount() : 0;
+        if (hub.log_clear_button() != nullptr) hub.log_clear_button()->click();
+        if (hub.log_box() != nullptr) hub.log_box()->flush();
+        const int after = hub.log_box() != nullptr ? hub.log_box()->blockCount() : 0;
+        check(before > 0 && after < before,
+              QStringLiteral("点清空要真的清掉（%1 -> %2 行）").arg(before).arg(after));
+        // ★ 本块插在原有的「日志能追加」断言**之前**，而清空会把内容清掉 ⇒ 这里补回一行，
+        //   免得把后面那条既有断言弄红（顺序敏感是这种"就地插断言"的固有坑）。
+        hub.log_line(QStringLiteral("smoke"));
+        if (hub.log_box() != nullptr) hub.log_box()->flush();
+    }
+
     if (hub.log_box() != nullptr) hub.log_box()->flush();  // 攒批控件：先落一次再断言
     check(hub.log_view() != nullptr && hub.log_view()->toPlainText().contains("smoke"),
           QStringLiteral("日志能追加"));
