@@ -31,6 +31,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <cstdio>
 #include <string>
 
 #include "log_box.h"          // shell 通用日志组件（LogBox：自带攒批/截断/只读）
@@ -76,7 +77,13 @@ public:
         auto* root_layout = new QVBoxLayout(this);
 
         auto* box = new QGroupBox(QStringLiteral("版本与标记（唯一事实来源：version.json）"), this);
+        form_box_ = box;
         auto* form = new QFormLayout(box);
+        // ★ 2026-09-27（用户："两个软件 UI 排版都有很大问题"）：表单区紧凑化 —— 口径是 **≤ 200px**，
+        //   行距/边距都收紧，避免顶部一大块留白把内容区挤下去。
+        form->setContentsMargins(8, 6, 8, 6);
+        form->setVerticalSpacing(4);
+        form->setHorizontalSpacing(8);
 
         combo_version_ = new QComboBox(box);   // **只能选**，不许手打
         combo_prerelease_ = new QComboBox(box);
@@ -116,7 +123,8 @@ public:
 
         // 构建史：树里的每条记录一行；双击在资源管理器里打开产物
         history_ = new QListWidget(this);
-        history_->setMaximumHeight(110);
+        history_->setMinimumHeight(110);   // 口径：构建史 ≥ 110px（原来只有 max ⇒ 会被压没）
+        history_->setMaximumHeight(160);
         connect(history_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
             const QString path = item->data(Qt::UserRole).toString();
             if (path.isEmpty()) return;
@@ -154,7 +162,13 @@ public:
         reload();
     }
 
+public:
+    int form_height() const { return form_box_ != nullptr ? form_box_->height() : -1; }
+    int history_height() const { return history_ != nullptr ? history_->height() : -1; }
+    int log_height() const { return log_ != nullptr ? log_->height() : -1; }
+
 private:
+    static bool logpct_le(int pct) { return pct >= 0 && pct <= 50; }
     static constexpr const char* kNewVersion = "＋ 新建版本…";
 
     void log_line(const QString& text) {
@@ -326,6 +340,7 @@ private:
     QLineEdit* edit_index_ = nullptr;
     QLineEdit* edit_full_ = nullptr;
     QLabel* label_store_ = nullptr;
+    QGroupBox* form_box_ = nullptr;
     xrkit::shell::LogBox* log_ = nullptr;
     QProgressBar* progress_ = nullptr;   // 不确定态：构建中就一直走
     QListWidget* history_ = nullptr;     // 构建史条目（双击打开产物）
@@ -344,6 +359,28 @@ private:
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
+    // ★ `--layout-report`：**排版判据**（不看截图）。离屏构建窗口 → 量各区高度 → 按口径给结论：
+    //   表单区 ≤ 200px、构建史 ≥ 110px、日志区 ≤ 窗口高 50%。退出码 0/1 供门禁使用。
+    if (argc > 1 && std::string(argv[1]) == "--layout-report") {
+        xrkit::shell::apply_theme(app, xrkit::core::ThemeMode::Dark);
+        BuildWindow window;
+        window.resize(900, 700);
+        window.show();
+        QApplication::processEvents();
+        if (window.layout() != nullptr) window.layout()->activate();
+        QApplication::processEvents();
+        const int total = window.height();
+        const int form = window.form_height();
+        const int hist = window.history_height();
+        const int logh = window.log_height();
+        const int log_pct = total > 0 ? logh * 100 / total : -1;
+        std::printf("LAYOUT total=%d form=%d history=%d log=%d log_pct=%d%%\n", total, form, hist,
+                    logh, log_pct);
+        const bool ok = form > 0 && form <= 200 && hist >= 110 && log_pct >= 0 && log_pct <= 50;
+        std::printf("LAYOUT %s\n", ok ? "PASS" : "FAIL");
+        window.hide();
+        return ok ? 0 : 1;
+    }
     // 与主程序同一套主题（用户口径"小组件用通用的"；也是"两个软件观感一致"的前提）
     xrkit::shell::apply_theme(app, xrkit::core::ThemeMode::Dark);
     BuildWindow window;

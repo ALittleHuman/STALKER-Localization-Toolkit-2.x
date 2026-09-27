@@ -927,6 +927,22 @@ def step_shell_smoke(release: bool) -> None:
     if not SHELL_EXE.exists():
         fail("构建产物缺失：%s" % SHELL_EXE)
         return
+    # 构建 GUI 的**排版判据**（用户 2026-09-27："两个软件 UI 的排版都有很大问题"）——
+    # 不是看截图：跑 `--layout-report`（离屏构建窗口 → 量各区高度 → 按口径给结论）。
+    gui_exe = SHELL_BUILD_DIR / "src" / "shell" / "xrkit_build_gui.exe"
+    if gui_exe.exists():
+        env_gui = dict(env)
+        env_gui["QT_QPA_PLATFORM"] = "offscreen"
+        rc_gui, out_gui = run([str(gui_exe), "--layout-report"], env=env_gui, timeout=180)
+        for line in out_gui.splitlines():
+            s = line.strip()
+            if s.startswith("LAYOUT"):
+                say("  " + s)
+        if rc_gui == 0 and "LAYOUT PASS" in out_gui:
+            ok("构建 GUI 排版口径通过（表单 <=200px / 构建史 >=110px / 日志 <=50%）")
+        else:
+            fail("构建 GUI 排版口径不通过（退出码 %d，见上）" % rc_gui)
+
     rc, out = run([str(SHELL_EXE), "--smoke"], env=env, timeout=300)
     for line in out.splitlines():
         s = line.strip()
