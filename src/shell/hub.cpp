@@ -135,6 +135,9 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
 
     log_panel_ = new QWidget;
     log_panel_->setObjectName(QStringLiteral("log_panel"));
+    // ★ 用户真机反馈（截图里折叠后的「日志 / 就绪」只剩一条窄缝）：给抽屉**头部一行**
+    //   一个最小高度，让它始终是「看得见、点得着」的一条把手（口径 ≈px(28)）。
+    log_panel_->setMinimumHeight(xrkit::core::px(28));
     auto* log_panel_layout = new QHBoxLayout(log_panel_);
     log_panel_layout->setContentsMargins(px(8), px(4), px(8), px(4));
     log_panel_layout->setSpacing(px(6));
