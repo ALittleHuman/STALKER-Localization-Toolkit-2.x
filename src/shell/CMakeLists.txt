@@ -48,4 +48,8 @@ target_link_libraries(xrkit_build_gui PRIVATE xrkit_core xrkit_flags Qt6::Widget
 target_include_directories(xrkit_build_gui PRIVATE "${CMAKE_SOURCE_DIR}/include")
 set_target_properties(xrkit_build_gui PROPERTIES
   OUTPUT_NAME "xrkit_build_gui"
+  # ★ 必须 GUI 子系统：否则双击会**连带弹出一个命令提示符窗口**（用户实测反馈）。
+  #   注意 RUNTIME_OUTPUT_DIRECTORY 是**运行时**目录，别写成 RUNTIME_OUTPUT_DIRECTORY 拼错；
+  #   WIN32_EXECUTABLE=TRUE ⇒ 链接 /SUBSYSTEM:WINDOWS（PE 子系统=2）。
+  WIN32_EXECUTABLE TRUE
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
