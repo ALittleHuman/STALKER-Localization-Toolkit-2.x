@@ -111,7 +111,7 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                "  border: 1px solid %4; border-radius: %17px; padding: %11px %12px; }"
                "QComboBox:hover, QLineEdit:hover { border-color: %15; }"
                "QComboBox:disabled, QLineEdit:disabled { color: %5; }"
-               "QComboBox::drop-down { border: 0; width: %19px; }"
+               "QComboBox::drop-down { border: 0; width: %13px; }"
                "QComboBox QAbstractItemView { background: %2; border: 1px solid %4;"
                "  selection-background-color: %9; }"
                // 勾选 / 单选：强调色只在"选中"这一处

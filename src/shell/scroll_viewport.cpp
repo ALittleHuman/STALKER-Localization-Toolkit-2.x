@@ -258,11 +258,17 @@ bool ScrollViewport::route_wheel(QWidget* target, QWheelEvent* event) {
     for (QWidget* walk = target; walk != nullptr; walk = walk->parentWidget()) {
         if (auto* area = qobject_cast<QAbstractScrollArea*>(walk)) {
             QScrollBar* bar = (dy != 0) ? area->verticalScrollBar() : area->horizontalScrollBar();
-            if (bar != nullptr && !bar_shown(bar)) {
+            // ★ 用户 2026-09-27 真机反馈：「控件里没显示滚动条，但光标放在那里时**主窗口的滚动条
+            //   不能用滚轮控制**」—— 原来的写法是"条子看不见就一律吃事件"，于是**装得下的控件也把
+            //   滚轮吞了**，外层的视口永远收不到。正确判据不是"条子看不见"，而是**"它到底能不能滚"**：
+            //   · 能滚（range>0）但条子被藏起来 ⇒ 仍然吃事件（挡住类绑定的"没有条子也在滚"）；
+            //   · 装得下（range==0）⇒ **不吃**，让事件继续冒泡给外层视口/主窗口的条子。
+            const bool can_scroll = bar != nullptr && bar->maximum() > bar->minimum();
+            if (bar != nullptr && !bar_shown(bar) && can_scroll) {
                 event->accept();
-                return true;  // 吃事件：挡住类绑定的自滚
+                return true;  // 藏条子但确实能滚：吃事件，挡自滚
             }
-            return false;  // 看得见 ⇒ 完全不干预
+            return false;  // 装得下（或条子可见）⇒ 不干预，让事件冒泡出去
         }
         if (qobject_cast<ScrollViewport*>(walk) != nullptr) break;  // 到了视口边界就停
     }
