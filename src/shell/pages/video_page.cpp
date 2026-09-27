@@ -12,6 +12,10 @@
 #include <QLineEdit>
 #include <QFile>
 #include <QProcess>
+
+#if defined(_WIN32)
+#include <windows.h>  // CREATE_NO_WINDOW（子进程无控制台窗口）
+#endif
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <filesystem>
@@ -44,6 +48,13 @@ bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request,
         args << QString::fromStdString(plan.argv[i]);
     }
     process_ = new QProcess(this);
+#ifdef _WIN32
+    // ★ 用户 2026-09-27：「不要打开cmd」—— 子进程是控制台程序（ffmpeg / CLI），
+    //   Qt 默认会**新建一个控制台窗口**；这里加 CREATE_NO_WINDOW 让它无窗口运行。
+    process_->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+        args->flags |= CREATE_NO_WINDOW;
+    });
+#endif
     process_->setProgram(QString::fromStdString(plan.argv.front()));
     process_->setArguments(args);
     connect(process_, &QProcess::readyReadStandardError, this, [this] {

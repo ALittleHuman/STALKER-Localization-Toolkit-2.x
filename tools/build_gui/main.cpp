@@ -26,6 +26,10 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QProcess>
+
+#if defined(_WIN32)
+#include <windows.h>  // CREATE_NO_WINDOW（子进程无控制台窗口）
+#endif
 #include <QPushButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -347,6 +351,13 @@ private:
         log_line(QStringLiteral("   CLI: %1").arg(cli));
 
         process_ = new QProcess(this);
+#ifdef _WIN32
+    // ★ 用户 2026-09-27：「不要打开cmd」—— 子进程是控制台程序（ffmpeg / CLI），
+    //   Qt 默认会**新建一个控制台窗口**；这里加 CREATE_NO_WINDOW 让它无窗口运行。
+    process_->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+        args->flags |= CREATE_NO_WINDOW;
+    });
+#endif
         process_->setProcessChannelMode(QProcess::MergedChannels);
         connect(process_, &QProcess::readyReadStandardOutput, this, [this] {
             const QString text = QString::fromUtf8(process_->readAllStandardOutput());

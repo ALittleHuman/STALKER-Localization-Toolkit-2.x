@@ -49,6 +49,41 @@ std::filesystem::path repo_root() {
 
 }  // namespace
 
+#ifdef _WIN32
+namespace {
+
+// ★ 用户 2026-09-27：「不要打开cmd」—— `std::system()` 会走 `cmd.exe /c`，
+//   在 GUI（WIN32 子系统）里会**闪一个黑窗口**。这里改成用 `CreateProcessW`
+//   + **`CREATE_NO_WINDOW`** 起同一个命令行：功能不变，但不创建控制台窗口。
+int run_windowless_utf8(const std::string& command) {
+    const int wide_len = MultiByteToWideChar(CP_UTF8, 0, command.c_str(), -1, nullptr, 0);
+    if (wide_len <= 0) return -1;
+    std::wstring wide(static_cast<size_t>(wide_len), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, command.c_str(), -1, wide.data(), wide_len);
+
+    std::wstring line = L"cmd.exe /c ";
+    line += wide;  // CreateProcessW 需要一个可写的命令行缓冲
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    if (CreateProcessW(nullptr, line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+                       nullptr, &si, &pi) == FALSE) {
+        return -1;
+    }
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = static_cast<DWORD>(-1);
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return static_cast<int>(code);
+}
+
+}  // namespace
+#endif
+
 int run_build_package(const std::vector<std::string>& operands) {
     if (operands.size() < 4) {
         std::cerr << "BUILDPKG error reason=用法：--build-package <version.json> <版本> <标记> <序号>\n";
@@ -107,7 +142,11 @@ int run_build_package(const std::vector<std::string>& operands) {
     std::cout << "BUILDPKG start version=" << full << " log=" << log << "\n";
     std::cout.flush();
 
+#ifdef _WIN32
+    const int rc = run_windowless_utf8(cmd);  // 无控制台窗口（用户要求：不要打开 cmd）
+#else
     const int rc = std::system(cmd.c_str());
+#endif
     if (rc != 0) {
         // ③ 失败：版本/标记/序号**逐字节回退**（判据就是"与备份逐字节相同"）
         if (!xrkit::core::restore_version_store(backup, store_path, err)) {
