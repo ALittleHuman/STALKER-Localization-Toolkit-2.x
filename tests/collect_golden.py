@@ -27,7 +27,7 @@ MANIFEST = ROOT / "tests" / "golden" / "manifest.json"
 # 真机样本根（2026-09-24 实测：已从 E:\Human 迁到 Games\ 下）
 NLC = Path(r"E:\Software\Games\STALKER\Games\NLC Improved\NLC Improved [OBT]")
 GS = Path(r"E:\Software\Games\STALKER\Games\Golden Sphere")
-SOC = Path(r"E:\Software\Games\STALKER\SoC_Source\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS")
+SOC = Path(r"E:\Software\Games\STALKER\Original\SoC_Source\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS")
 
 # 语料选择原则：覆盖每一类**解析路径**，而不是把硬盘上的包全抄一遍。
 CORPUS = [

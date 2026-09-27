@@ -2602,7 +2602,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/000",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\BattlEye\\BEClient.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\BattlEye\\BEClient.dll",
    "override": "",
    "size": 73728,
    "sha256": "e5039b580e3437912f2b115d36e337259931d18543e75b35f67072fe6bc0f85e",
@@ -2625,7 +2625,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/001",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\BattlEye\\BEServer.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\BattlEye\\BEServer.dll",
    "override": "",
    "size": 77824,
    "sha256": "d2365e678088bef2018729c845a8a2bcec7ce924457fdf9e94705ff4d8d26885",
@@ -2648,7 +2648,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/002",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\BugTrap.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\BugTrap.dll",
    "override": "",
    "size": 180224,
    "sha256": "551fe652b47d4bf49523ac6cdeaec29ae91f268dd423d1baeaa46bb86b0133fd",
@@ -2671,7 +2671,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/003",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\d3dx9_31.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\d3dx9_31.dll",
    "override": "",
    "size": 2414360,
    "sha256": "e2065619fe6eb0034833b1dc0369deb4a6edc3110e38a1132eeafcf430c578a5",
@@ -2694,7 +2694,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/004",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\d3dx9_34.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\d3dx9_34.dll",
    "override": "",
    "size": 3497832,
    "sha256": "b6f77f06518d35345fb61172b6a13159125ed60c469d28b1a2e07970e9ddf81d",
@@ -2717,7 +2717,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/005",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dbghelp.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dbghelp.dll",
    "override": "",
    "size": 640000,
    "sha256": "8f20f178991501542d542c8d613b036a15cd55370697aa82c0f7800ff4fbcc4e",
@@ -2740,7 +2740,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/006",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dedicated\\Microsoft.VC80.CRT.manifest",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dedicated\\Microsoft.VC80.CRT.manifest",
    "override": "",
    "size": 1869,
    "sha256": "17ad1a64ba1c382abf89341b40950f9b31f95015c6b0d3e25925bfebc1b53eb5",
@@ -2763,7 +2763,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/007",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dedicated\\msvcp80.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dedicated\\msvcp80.dll",
    "override": "",
    "size": 548864,
    "sha256": "2026f3c4f830dff6883b88e2647272a52a132f25eb42c0d423e36b3f65a94d08",
@@ -2786,7 +2786,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/008",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dedicated\\msvcr80.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dedicated\\msvcr80.dll",
    "override": "",
    "size": 626688,
    "sha256": "02bdde38e4c6bd795a092d496b8d6060cdbe71e22ef4d7a204e3050c1be44fa9",
@@ -2809,7 +2809,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/009",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dedicated\\XR_3DA.exe",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\dedicated\\XR_3DA.exe",
    "override": "",
    "size": 1599560,
    "sha256": "0cb24889c24c0ec8a0b5e9a0c2ad7be7f305448e264e8fa647ac08b31a9bffd6",
@@ -2832,7 +2832,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/010",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\eax.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\eax.dll",
    "override": "",
    "size": 135168,
    "sha256": "e56ee2d67bfeebbbcaa154b61e0ef248b0a25d6a1e65450f0ed86231d1768e1c",
@@ -2855,7 +2855,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/011",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\goggame.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\goggame.dll",
    "override": "",
    "size": 244536,
    "sha256": "066e162f356a67aabb33c7731ce34d7c804c3a3e29ac80bddbe15eef66b0a344",
@@ -2878,7 +2878,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/012",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\Microsoft.VC80.CRT.manifest",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\Microsoft.VC80.CRT.manifest",
    "override": "",
    "size": 1869,
    "sha256": "17ad1a64ba1c382abf89341b40950f9b31f95015c6b0d3e25925bfebc1b53eb5",
@@ -2901,7 +2901,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/013",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\msvcp71.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\msvcp71.dll",
    "override": "",
    "size": 499712,
    "sha256": "df96156f6a548fd6fe5672918de5ae4509d3c810a57bffd2a91de45a3ed5b23b",
@@ -2924,7 +2924,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/014",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\msvcp80.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\msvcp80.dll",
    "override": "",
    "size": 548864,
    "sha256": "2026f3c4f830dff6883b88e2647272a52a132f25eb42c0d423e36b3f65a94d08",
@@ -2947,7 +2947,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/015",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\msvcr71.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\msvcr71.dll",
    "override": "",
    "size": 348160,
    "sha256": "8094af5ee310714caebccaeee7769ffb08048503ba478b879edfef5f1a24fefe",
@@ -2970,7 +2970,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/016",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\msvcr80.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\msvcr80.dll",
    "override": "",
    "size": 626688,
    "sha256": "02bdde38e4c6bd795a092d496b8d6060cdbe71e22ef4d7a204e3050c1be44fa9",
@@ -2993,7 +2993,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/017",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\ode.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\ode.dll",
    "override": "",
    "size": 196608,
    "sha256": "a70d45198ccbf74c8eb80773e98029cba284a738f43f538446bf83a6597296a4",
@@ -3016,7 +3016,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/018",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\OpenAL32.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\OpenAL32.dll",
    "override": "",
    "size": 49152,
    "sha256": "44ead055fdc5cb2f5ffa573b66a830e885ea885802946bb2bfd3d37583da7a7c",
@@ -3039,7 +3039,7 @@
   },
   {
    "id": "real/SoC_Source-S.T.A.L.K.E.R. Shadow of Chernobyl_RUS/019",
-   "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\stlport.5.0.dll",
+   "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\bin\\stlport.5.0.dll",
    "override": "",
    "size": 671744,
    "sha256": "0b3ea083d591e1de56a35a160b14e9b0d16dd59d309106d90d0cb3afdacaeeb2",

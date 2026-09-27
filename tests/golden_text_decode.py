@@ -44,7 +44,7 @@ REAL_ROOTS = [
     Path(r"E:\Software\Games\STALKER\Games\Golden Sphere\gamedata\config\scripts"),
     Path(r"E:\Software\Games\STALKER\Localization\Gamedata\A.R.E.A\Original\configs\gameplay"),
     Path(r"E:\Software\Games\STALKER\Localization\Gamedata\A.R.E.A\Original\configs\scripts"),
-    Path(r"E:\Software\Games\STALKER\SoC_Source\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS"),
+    Path(r"E:\Software\Games\STALKER\Original\SoC_Source\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS"),
     Path(r"E:\Software\Games\STALKER\Games\Golden Sphere\gamedata\scripts"),
 ]
 PER_ROOT = 30

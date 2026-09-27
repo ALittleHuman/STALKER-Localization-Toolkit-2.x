@@ -34,7 +34,7 @@ REAL_ROOTS = [
     Path(r"E:\Software\Games\STALKER\Games\Golden Sphere\gamedata\config\gameplay"),
     Path(r"E:\Software\Games\STALKER\Games\Golden Sphere\gamedata\config\scripts"),
     Path(r"E:\Software\Games\STALKER\Localization\Gamedata\A.R.E.A\Original\configs\gameplay"),
-    Path(r"E:\Software\Games\STALKER\SoC_Source\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS"),
+    Path(r"E:\Software\Games\STALKER\Original\SoC_Source\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS"),
 ]
 
 # 与 1.x 逐字一致的 ID 正则与"剥开头声明"的正则

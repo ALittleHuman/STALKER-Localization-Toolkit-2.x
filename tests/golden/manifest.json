@@ -91,7 +91,7 @@
     },
     {
       "id": "soc-db0",
-      "path": "E:\\Software\\Games\\STALKER\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\gamedata.db0",
+      "path": "E:\\Software\\Games\\STALKER\\Original\\SoC_Source\\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS\\gamedata.db0",
       "why": "SoC 原版 DB 家族（.db0 这种后缀正是 1.x '只判前缀' 口径的来源）",
       "size_bytes": 678577379,
       "sha256": "3384d71299acd21da02605cb8967fd21a5da0a4565093c2e63a71858123b14f9",
