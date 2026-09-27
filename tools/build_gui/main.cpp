@@ -99,7 +99,8 @@ public:
         auto* form = new QFormLayout(box);
         // ★ 2026-09-27（用户："两个软件 UI 排版都有很大问题"）：表单区紧凑化 —— 口径是 **≤ 200px**，
         //   行距/边距都收紧，避免顶部一大块留白把内容区挤下去。
-        form->setContentsMargins(8, 6, 8, 6);
+        form->setContentsMargins(xrkit::core::px(8), xrkit::core::px(6), xrkit::core::px(8),
+                                 xrkit::core::px(6));
         form->setVerticalSpacing(4);
         form->setHorizontalSpacing(8);
 
@@ -135,7 +136,7 @@ public:
         progress_ = new QProgressBar(this);
         progress_->setRange(0, 0);          // 不确定态（CLI 目前不吐百分比，就别假装有进度）
         progress_->setVisible(false);
-        progress_->setMaximumHeight(12);
+        progress_->setMaximumHeight(xrkit::core::px(12));
         auto* status_row = new QHBoxLayout();
         status_row->addWidget(status_);
         status_row->addWidget(progress_, 1);
@@ -150,8 +151,8 @@ public:
         root_layout->addWidget(hist_label, 0);
 
         history_ = new QListWidget(this);
-        history_->setMinimumHeight(110);   // 口径：构建史 ≥ 110px（原来只有 max ⇒ 会被压没）
-        history_->setMaximumHeight(160);
+        history_->setMinimumHeight(xrkit::core::px(110));   // 口径：构建史 ≥ 110px（原来只有 max ⇒ 会被压没）
+        history_->setMaximumHeight(xrkit::core::px(160));
         connect(history_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
             const QString path = item->data(Qt::UserRole).toString();
             if (path.isEmpty()) return;
@@ -398,7 +399,7 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "--layout-report") {
         xrkit::shell::apply_theme(app, xrkit::core::ThemeMode::Dark);
         BuildWindow window;
-        window.resize(900, 700);
+        window.resize(xrkit::core::px(900), xrkit::core::px(700));
         window.show();
         QApplication::processEvents();
         if (window.layout() != nullptr) window.layout()->activate();
@@ -462,7 +463,7 @@ int main(int argc, char** argv) {
     xrkit::shell::apply_screen_ui_scale();
     BuildWindow window;
     xrkit::shell::apply_dark_titlebar(&window, xrkit::core::ThemeMode::Dark);
-    window.resize(760, 520);
+    window.resize(xrkit::core::px(760), xrkit::core::px(520));
     window.show();
     return app.exec();
 }
