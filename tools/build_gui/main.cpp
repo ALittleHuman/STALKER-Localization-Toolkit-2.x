@@ -119,6 +119,8 @@ public:
 
         auto* row = new QHBoxLayout();
         button_build_ = new QPushButton(QStringLiteral("开始构建"), this);
+        // ★ 界面重构口径：**强调色只用于「当前/主操作/进行中」** ⇒ 只有它能是 accent 实心
+        button_build_->setObjectName(QStringLiteral("primary"));
         button_dist_ = new QPushButton(QStringLiteral("打开 dist"), this);
         button_reload_ = new QPushButton(QStringLiteral("重新读取"), this);
         row->addWidget(button_build_);
