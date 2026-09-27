@@ -184,14 +184,21 @@ void ScrollViewport::resizeEvent(QResizeEvent* event) {
 
 bool ScrollViewport::claim_wheel(quint64 serial) {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (serial != 0) {
-        if (g_last_serial == serial) return false;  // 同一事件已被别的条子认领
-        g_last_serial = serial;
-        g_last_claim_ms = now;
-        return true;
+    // ★ 2026-09-27 用户实测缺陷（"FS 滚轮滚下去之后就滚不回来了"）：
+    //   这里的身份用的是 **QWheelEvent 对象的地址**（见 `serial_of`）。Qt 在**同一个接收者**上
+    //   复用同一个栈/池槽位 ⇒ 后续事件的地址**与前一个完全相同**。原来的写法只要 `serial`
+    //   非 0 且等于上次的值就**永久**判为"已被认领" ⇒ 第二个滚轮事件起一律被撤销
+    //   （`route_wheel` 里把 bar 值改回去并吃掉事件）⇒ **一次之后再也滚不动**，表现就是
+    //   "滚下去之后滚不回来"。
+    //   修法：**身份相同也要看时间窗口** —— 同一个事件在父链上冒泡（微秒级重复）会在窗口内被拒；
+    //   而地址被复用的**新事件**（人手滚轮的间隔 ≥ 数十 ms）照样能过。
+    if (serial != 0 && g_last_serial == serial && now - g_last_claim_ms < kClaimWindowMs) {
+        return false;  // 同一事件的重复认领（冒泡中的第二、第三个条子）
     }
-    // 没有身份信息：退回时间窗口（1.3）
-    if (now - g_last_claim_ms < kClaimWindowMs) return false;
+    if (serial == 0 && now - g_last_claim_ms < kClaimWindowMs) {
+        return false;  // 没有身份信息：退回时间窗口（1.3）
+    }
+    g_last_serial = serial;
     g_last_claim_ms = now;
     return true;
 }
