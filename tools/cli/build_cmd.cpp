@@ -145,7 +145,9 @@ int run_build_package(const std::vector<std::string>& operands) {
 #ifdef _WIN32
     const int rc = run_windowless_utf8(cmd);  // 无控制台窗口（用户要求：不要打开 cmd）
 #else
-    const int rc = std::system(cmd.c_str());
+    // 本项目只出 Windows 包（scripts/*.ps1 都是 PowerShell）⇒ 非 Windows 不做等价实现，
+    // 直接失败。（保留 std::system 会让"无控制台窗口"静态锁永远红 —— 它就是拦这个的。）
+    const int rc = -1;
 #endif
     if (rc != 0) {
         // ③ 失败：版本/标记/序号**逐字节回退**（判据就是"与备份逐字节相同"）

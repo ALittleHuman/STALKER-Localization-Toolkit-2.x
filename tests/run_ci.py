@@ -1194,11 +1194,29 @@ def step_px_only(release: bool) -> None:
         fail("有尺寸/间距没过 px()（见上；白名单见 tests/check_px_only.py）")
 
 
+def step_no_console(release: bool) -> None:
+    """无控制台窗口（用户 2026-09-27：「不要打开cmd」）：产品代码不许用 std::system(
+    （走 cmd.exe /c，GUI 里会闪黑窗），起了 QProcess 就必须置 CREATE_NO_WINDOW。
+    独立成步骤，不受其它步骤早退影响（做法同 px-only）。
+    """
+    say("[no-console] 子进程启动：不许弹控制台窗口")
+    rc, out = run([sys.executable, str(ROOT / "tests" / "check_no_console.py")], timeout=120)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("NOCONSOLE"):
+            say("  " + s)
+    if rc == 0:
+        ok("子进程启动全部无控制台窗口")
+    else:
+        fail("有子进程启动会弹控制台窗口（见上）")
+
+
 STEPS = [
     ("build", step_build),
     ("no-qt", step_no_qt_lock),
     ("no-qt-injection", step_no_qt_injection),
     ("px-only", step_px_only),
+    ("no-console", step_no_console),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),
