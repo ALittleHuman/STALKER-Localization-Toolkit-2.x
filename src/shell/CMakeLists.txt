@@ -46,8 +46,11 @@ qt_add_executable(xrkit_build_gui "${CMAKE_SOURCE_DIR}/tools/build_gui/main.cpp"
 target_sources(xrkit_build_gui PRIVATE "${CMAKE_SOURCE_DIR}/assets/app.rc")
 # ★ 必须链 xrkit_flags（带 /utf-8）：不链的话 MSVC 按系统 ANSI(GBK) 读源文件，
 #   界面里的中文字面量会变成乱码（实测：分组框标题与下拉项显示成'鐗堟湰…'）。
-target_link_libraries(xrkit_build_gui PRIVATE xrkit_core xrkit_flags Qt6::Widgets)
-target_include_directories(xrkit_build_gui PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_link_libraries(xrkit_build_gui PRIVATE xrkit_core xrkit_flags Qt6::Widgets
+  # 用户口径"小组件用通用的"：链 shell 拿 LogBox 等通用组件（组件头在 src/shell）
+  xrkit_shell)
+target_include_directories(xrkit_build_gui PRIVATE
+  "${CMAKE_SOURCE_DIR}/include" "${CMAKE_SOURCE_DIR}/src/shell")
 set_target_properties(xrkit_build_gui PROPERTIES
   OUTPUT_NAME "xrkit_build_gui"
   # ★ 必须 GUI 子系统：否则双击会**连带弹出一个命令提示符窗口**（用户实测反馈）。

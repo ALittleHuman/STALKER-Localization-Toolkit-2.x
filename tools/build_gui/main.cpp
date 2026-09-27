@@ -25,13 +25,13 @@
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
-#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 
 #include <string>
 
+#include "log_box.h"          // shell 通用日志组件（LogBox：自带攒批/截断/只读）
 #include "xrkit/core/build_version.h"
 
 namespace {
@@ -100,8 +100,7 @@ public:
         row->addStretch(1);
         root_layout->addLayout(row);
 
-        log_ = new QPlainTextEdit(this);
-        log_->setReadOnly(true);
+        log_ = new xrkit::shell::LogBox(this);
         log_->setFont(QFont(QStringLiteral("Consolas"), 9));
         root_layout->addWidget(log_, 1);
 
@@ -135,19 +134,9 @@ private:
     static constexpr const char* kNewVersion = "＋ 新建版本…";
 
     void log_line(const QString& text) {
-        // 攒批：先塞缓冲，200ms 刷一次（日志栏不逐行狂刷）
-        pending_log_ += text + "\n";
-        if (!flush_timer_) {
-            flush_timer_ = new QTimer(this);
-            flush_timer_->setInterval(200);
-            connect(flush_timer_, &QTimer::timeout, this, [this] {
-                if (pending_log_.isEmpty()) return;
-                log_->moveCursor(QTextCursor::End);
-                log_->insertPlainText(pending_log_);
-                pending_log_.clear();
-            });
-            flush_timer_->start();
-        }
+        // 用 shell 通用组件 LogBox 的攒批（它按 80ms 合并、>5000 行整体截到 3000 行），
+        // 不再自己造一套 timer —— "小组件用通用的"（用户口径）。
+        log_->append_batched(text);
     }
 
     bool load_store(std::string& err) {
@@ -282,13 +271,11 @@ private:
     QLineEdit* edit_index_ = nullptr;
     QLineEdit* edit_full_ = nullptr;
     QLabel* label_store_ = nullptr;
-    QPlainTextEdit* log_ = nullptr;
+    xrkit::shell::LogBox* log_ = nullptr;
     QPushButton* button_build_ = nullptr;
     QPushButton* button_dist_ = nullptr;
     QPushButton* button_reload_ = nullptr;
     QProcess* process_ = nullptr;
-    QTimer* flush_timer_ = nullptr;
-    QString pending_log_;
     QString store_dir_;
     QString new_version_;
     std::string store_path_;
