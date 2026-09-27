@@ -127,7 +127,9 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     empty_layout->addStretch(1);
     empty_layout->addWidget(entry_hint_, 0, Qt::AlignHCenter);
     empty_layout->addStretch(1);
-    body_layout()->addWidget(empty_block_, 1);
+    // ★ 用户真机反馈「比例太丑」：空状态块给 stretch 3（包列表 1）⇒ 未加载包时
+    //   它是卡片的主角、包列表缩到它自己的最小高度（仍作拖放落点）。
+    body_layout()->addWidget(empty_block_, 3);
 
     // ── 操作栏（规则 2：贴底、不进视口）
     // 6.3：**两个不同的"全选"** —— 左边那组改包列表选中态，右边那个改包内勾选态。
@@ -245,7 +247,11 @@ void FsPage::refresh_rows() {
         row_texts_.push_back(text);
     }
     entry_list_->set_row_count(static_cast<int>(row_texts_.size()));
-    if (empty_block_ != nullptr) empty_block_->setVisible(row_texts_.empty());
+    const bool nothing = row_texts_.empty();
+    if (empty_block_ != nullptr) empty_block_->setVisible(nothing);
+    // ★ 用户真机反馈「比例太丑」：未加载包时那个 160px 高的**空条目框**纯属占地方
+    //   （包列表保留 —— 它是拖放落点），空状态块因此拿回整块卡片。
+    if (entry_list_ != nullptr) entry_list_->setVisible(!nothing);
 }
 
 efs::ExtractTreeResult FsPage::extract_to(const QString& image_path, const QString& out_root,
