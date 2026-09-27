@@ -110,14 +110,24 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     body_layout()->addLayout(row);
     // 空状态提示：没有条目时显示（有货就藏）—— 与"空列表只有一条细线"配套
     entry_hint_ = new QLabel(QStringLiteral(
-        "（这里还没有条目）把包拖到上面的列表，或点「加包」；加载后这里显示包内文件树，"
-        "勾选后可以解包。"));
+        "把包（.db / .sqfs）拖到窗口里就能加载；可叠加多个包，同名条目以后加载的为准。\n"
+        "加载后这里显示包内文件树，勾选条目后点下方「解包」。"));
     entry_hint_->setObjectName(QStringLiteral("fs_entry_hint"));
     entry_hint_->setWordWrap(true);
 
     body_layout()->addWidget(package_list_, 1);
     body_layout()->addWidget(entry_list_, 1);
-    body_layout()->addWidget(entry_hint_, 0);
+    // ★ 真机反馈「太空又太挤」第 2 步（2026-09-27）：空状态做成**占位块**——居中、吃满卡片
+    //   剩余空间，而不是原来贴在卡片底部的一行小字（中间那片空白因此变成可读的引导）。
+    empty_block_ = new QWidget;
+    empty_block_->setObjectName(QStringLiteral("fs_empty_block"));
+    auto* empty_layout = new QVBoxLayout(empty_block_);
+    empty_layout->setContentsMargins(0, 0, 0, 0);
+    empty_layout->setSpacing(xrkit::core::px(8));
+    empty_layout->addStretch(1);
+    empty_layout->addWidget(entry_hint_, 0, Qt::AlignHCenter);
+    empty_layout->addStretch(1);
+    body_layout()->addWidget(empty_block_, 1);
 
     // ── 操作栏（规则 2：贴底、不进视口）
     // 6.3：**两个不同的"全选"** —— 左边那组改包列表选中态，右边那个改包内勾选态。
@@ -235,7 +245,7 @@ void FsPage::refresh_rows() {
         row_texts_.push_back(text);
     }
     entry_list_->set_row_count(static_cast<int>(row_texts_.size()));
-    if (entry_hint_ != nullptr) entry_hint_->setVisible(row_texts_.empty());
+    if (empty_block_ != nullptr) empty_block_->setVisible(row_texts_.empty());
 }
 
 efs::ExtractTreeResult FsPage::extract_to(const QString& image_path, const QString& out_root,

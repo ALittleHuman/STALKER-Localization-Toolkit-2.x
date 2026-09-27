@@ -109,6 +109,7 @@ private:
     VirtualList* entry_list_ = nullptr;
     QLabel* hint_ = nullptr;
     QLabel* entry_hint_ = nullptr;
+    QWidget* empty_block_ = nullptr;  // 空状态占位块（居中，吃满卡片）
     QPushButton* select_all_button_ = nullptr;
     QPushButton* check_all_button_ = nullptr;
     QPushButton* unpack_button_ = nullptr;
