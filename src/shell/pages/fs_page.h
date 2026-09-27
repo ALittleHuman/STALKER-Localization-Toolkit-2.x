@@ -46,6 +46,9 @@ public:
     bool add_loose_dir(const QString& dir, QString* error);
 
     int source_count() const { return static_cast<int>(sources_.size()); }
+    // 空状态：包内条目区在**没有条目**时显示一句提示（用户实测：空列表只有一条细线，
+    // 看着像坏了）。自检用这个访问器断言：有货就藏、没货就显示。
+    bool entry_hint_visible() const;
     QString source_at(int index) const;
     int conflict_count() const { return tree_.conflict_count(); }
 
@@ -105,6 +108,7 @@ private:
     QComboBox* format_combo_ = nullptr;
     VirtualList* entry_list_ = nullptr;
     QLabel* hint_ = nullptr;
+    QLabel* entry_hint_ = nullptr;
     QPushButton* select_all_button_ = nullptr;
     QPushButton* check_all_button_ = nullptr;
     QPushButton* unpack_button_ = nullptr;

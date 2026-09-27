@@ -1367,6 +1367,20 @@ SmokeResult run_smoke() {
         check(ok && error.isEmpty(), QStringLiteral("散装层加入失败：%1").arg(error));
         check(page.source_count() == 1,
               QStringLiteral("散装层没有变成一个源（实得 %1）").arg(page.source_count()));
+
+        // ★ 空状态（用户实测"空列表只有一条细线，看着像坏了"）：无条目时提示可见
+        {
+            FsPage empty_page;
+            empty_page.show();
+            QApplication::processEvents();
+            check(empty_page.entry_hint_visible(),
+                  QStringLiteral("空条目区要显示提示（否则就是一条细线，看着像坏了）"));
+            empty_page.add_loose_dir(QString::fromStdString(work.string()), nullptr);  // 临时目录是 ASCII 路径
+            QApplication::processEvents();
+            check(!empty_page.entry_hint_visible(),
+                  QStringLiteral("有条目后提示要自动隐藏"));
+            empty_page.hide();
+        }
         // 用"勾选计数"证明条目**真的进了合并树**（a.txt + sub/b.txt = 2 个文件）
         page.check_all(true);
         check(page.checked_file_count() == 2,

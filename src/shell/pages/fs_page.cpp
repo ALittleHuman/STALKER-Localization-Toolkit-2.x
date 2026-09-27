@@ -89,6 +89,9 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     entry_list_ = new VirtualList;
     entry_list_->setObjectName(QStringLiteral("fs_entry_list"));
     entry_list_->set_row_height(xrkit::core::px(20));
+    // ★ 2026-09-27（用户实测"排版有很大问题"）：条目区给自己一个**最小高度**，
+    //   免得没有条目时被压成一条细线（看着像坏了）。
+    entry_list_->setMinimumHeight(xrkit::core::px(160));
     entry_list_->set_row_text_provider([this](int row) -> QString {
         if (row < 0 || row >= static_cast<int>(row_texts_.size())) return QString();
         return row_texts_[static_cast<size_t>(row)];
@@ -105,8 +108,16 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     row->addWidget(format_combo_, 0);
     row->addStretch(1);
     body_layout()->addLayout(row);
+    // 空状态提示：没有条目时显示（有货就藏）—— 与"空列表只有一条细线"配套
+    entry_hint_ = new QLabel(QStringLiteral(
+        "（这里还没有条目）把包拖到上面的列表，或点「加包」；加载后这里显示包内文件树，"
+        "勾选后可以解包。"));
+    entry_hint_->setObjectName(QStringLiteral("fs_entry_hint"));
+    entry_hint_->setWordWrap(true);
+
     body_layout()->addWidget(package_list_, 1);
     body_layout()->addWidget(entry_list_, 1);
+    body_layout()->addWidget(entry_hint_, 0);
 
     // ── 操作栏（规则 2：贴底、不进视口）
     // 6.3：**两个不同的"全选"** —— 左边那组改包列表选中态，右边那个改包内勾选态。
@@ -205,6 +216,10 @@ void FsPage::check_all(bool checked) {
     refresh_rows();
 }
 
+bool FsPage::entry_hint_visible() const {
+    return entry_hint_ != nullptr && entry_hint_->isVisibleTo(const_cast<FsPage*>(this));
+}
+
 void FsPage::refresh_rows() {
     row_texts_.clear();
     for (const efs::MergeNode* node : tree_.flatten()) {
@@ -220,6 +235,7 @@ void FsPage::refresh_rows() {
         row_texts_.push_back(text);
     }
     entry_list_->set_row_count(static_cast<int>(row_texts_.size()));
+    if (entry_hint_ != nullptr) entry_hint_->setVisible(row_texts_.empty());
 }
 
 efs::ExtractTreeResult FsPage::extract_to(const QString& image_path, const QString& out_root,
