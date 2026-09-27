@@ -56,3 +56,11 @@ __pycache__/
 # 构建版本存储的备份（运行期产物，不入库）
 /version.json.bak
 /dist/build_pkg_*.log
+
+# build_gui 的部署副本（运行期产物，不入库；源码只有 main.cpp）
+/tools/build_gui/*.exe
+/tools/build_gui/*.dll
+/tools/build_gui/platforms/
+/tools/build_gui/styles/
+/tools/build_gui/tls/
+/tools/build_gui/app_icon.ico
