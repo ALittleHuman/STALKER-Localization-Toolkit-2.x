@@ -9,6 +9,7 @@
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QDateTime>
+#include <QTimer>
 #include <QWheelEvent>
 #include <algorithm>
 #include <QWidget>
@@ -185,20 +186,22 @@ void ScrollViewport::resizeEvent(QResizeEvent* event) {
 bool ScrollViewport::claim_wheel(quint64 serial) {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     // ★ 2026-09-27 用户实测缺陷（"FS 滚轮滚下去之后就滚不回来了"）：
-    //   这里的身份用的是 **QWheelEvent 对象的地址**（见 `serial_of`）。Qt 在**同一个接收者**上
-    //   复用同一个栈/池槽位 ⇒ 后续事件的地址**与前一个完全相同**。原来的写法只要 `serial`
-    //   非 0 且等于上次的值就**永久**判为"已被认领" ⇒ 第二个滚轮事件起一律被撤销
-    //   （`route_wheel` 里把 bar 值改回去并吃掉事件）⇒ **一次之后再也滚不动**，表现就是
-    //   "滚下去之后滚不回来"。
-    //   修法：**身份相同也要看时间窗口** —— 同一个事件在父链上冒泡（微秒级重复）会在窗口内被拒；
-    //   而地址被复用的**新事件**（人手滚轮的间隔 ≥ 数十 ms）照样能过。
-    if (serial != 0 && g_last_serial == serial && now - g_last_claim_ms < kClaimWindowMs) {
-        return false;  // 同一事件的重复认领（冒泡中的第二、第三个条子）
+    //   身份用的是 **QWheelEvent 对象的地址**（见 `serial_of`，"冒泡时地址不变"这条没错），
+    //   但 **Qt 会复用事件槽位** ⇒ 后续事件的地址与上一个**完全相同**。原实现只要
+    //   `serial` 非 0 且等于上次值就**永久**判为"已被认领" ⇒ 第二个滚轮事件起一律被撤销
+    //   （`route_wheel` 把 bar 值改回去并吃掉事件）⇒ 一次之后再也滚不动。
+    //   ★ 修法：**认领只在"这次事件派发"内有效** —— 记下串号后，用 `QTimer::singleShot(0, …)`
+    //   把表清掉：同一个事件的冒泡重复发生在**同一次派发内（同步）**，必被拒；
+    //   而下一个滚轮事件必然落在**下一次事件循环迭代**（清理已经跑过）⇒ 地址被复用也照常能滚。
+    //   （不要用"固定毫秒时间窗"：人手快速滚动的事件间隔可能只有十几毫秒，会被误拒。）
+    if (serial != 0) {
+        if (g_last_serial == serial) return false;  // 同一事件的重复认领（同一次派发内）
+        g_last_serial = serial;
+        g_last_claim_ms = now;
+        QTimer::singleShot(0, [] { g_last_serial = 0; });  // 下次事件循环前失效
+        return true;
     }
-    if (serial == 0 && now - g_last_claim_ms < kClaimWindowMs) {
-        return false;  // 没有身份信息：退回时间窗口（1.3）
-    }
-    g_last_serial = serial;
+    if (now - g_last_claim_ms < kClaimWindowMs) return false;  // 没有身份信息：退回时间窗（1.3）
     g_last_claim_ms = now;
     return true;
 }

@@ -224,6 +224,35 @@ SmokeResult run_smoke() {
         for (int i = 0; i < 60; ++i) send_wheel(tall_body, 120);
         check(tall_vp->offset_vertical() == 0, QStringLiteral("连续上滚夹在 0"));
 
+        // ⑦-c2 ★ 用户实测缺陷的**能红断言**（2026-09-27）：连续两个滚轮事件（**不重置认领表**）
+        //      都必须真的动。旧实现拿 `QWheelEvent` 的**对象地址**当事件身份，而 Qt 会复用槽位
+        //      ⇒ 第二个事件地址与上一个相同 ⇒ 被判成"已被认领"并**撤销滚动** ⇒ 表现就是
+        //      "滚下去之后滚不回来"。注意：上面那个 `send_wheel` 每次都 `reset_wheel_claims()`，
+        //      所以它天然测不出这个缺陷 —— 这条断言**故意不重置**。
+        {
+            const auto send_wheel_raw = [](QWidget* target, int delta) {
+                QWheelEvent event(QPointF(5, 5), target->mapToGlobal(QPoint(5, 5)), QPoint(0, 0),
+                                  QPoint(0, delta), Qt::NoButton, Qt::NoModifier,
+                                  Qt::NoScrollPhase, false);
+                QApplication::sendEvent(target, &event);
+                return event.isAccepted();
+            };
+            // 先回到顶部，再用"不重置"的方式滚：下 → 上，两次都要动
+            tall_vp->vbar()->setValue(0);
+            ScrollViewport::reset_wheel_claims();
+            const int v0 = tall_vp->vbar()->value();
+            check(send_wheel_raw(tall_body, -120) && tall_vp->vbar()->value() != v0,
+                  QStringLiteral("连续滚轮①：第一个事件要真的动（v=%1）").arg(v0));
+            const int v1 = tall_vp->vbar()->value();
+            // 真实场景里两次滚轮之间**必然有一次事件循环**（认领表的"本派发生效"就是靠它失效的）
+            QApplication::processEvents();
+            check(send_wheel_raw(tall_body, 120),
+                  QStringLiteral("连续滚轮②：第二个事件必须被消费（旧逻辑在这里就永久判重了）"));
+            check(tall_vp->vbar()->value() != v1,
+                  QStringLiteral("连续滚轮③：**第二个事件也要真的动** —— 旧逻辑（地址当身份、无时间窗）"
+                                 "会把它撤销掉，这正是用户看到的'滚下去滚不回来'"));
+        }
+
         // ⑦-d fit 规则（3.2/3.3）
         auto* content_body = new QWidget;
         auto* content_lay = new QVBoxLayout(content_body);
