@@ -1,6 +1,10 @@
 #include "build_cmd.h"
 
 #include <cstdlib>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <filesystem>
 #include <fstream>
 #include <ctime>
@@ -18,10 +22,48 @@ constexpr int kUsage = 3;
 
 }  // namespace
 
+
+namespace {
+
+// 仓库根：从**本 exe 所在目录**向上找带 `scripts\build.ps1` 的那一层。
+// ★ 为什么必须这么做（用户实测反馈 2026-09-27）：GUI 双击启动时**工作目录是 exe 自己那层**
+//   （部署副本在 `tools\build_gui\`），而 `scripts\build.ps1` 在仓库根 ⇒ 按相对路径调
+//   会直接"命令找不到"，报成"构建失败且没有产出任何文件"。
+std::filesystem::path repo_root() {
+    std::error_code ec;
+#ifdef _WIN32
+    wchar_t buf[MAX_PATH] = {};
+    const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    std::filesystem::path dir = (n > 0 && n < MAX_PATH) ? std::filesystem::path(buf).parent_path()
+                                                        : std::filesystem::current_path(ec);
+#else
+    std::filesystem::path dir = std::filesystem::current_path(ec);
+#endif
+    for (int i = 0; i < 8 && !dir.empty(); ++i) {
+        if (std::filesystem::exists(dir / "scripts" / "build.ps1", ec)) return dir;
+        if (!dir.has_parent_path()) break;
+        dir = dir.parent_path();
+    }
+    return std::filesystem::current_path(ec);  // 兜底：维持现状（就当是老行为）
+}
+
+}  // namespace
+
 int run_build_package(const std::vector<std::string>& operands) {
     if (operands.size() < 4) {
         std::cerr << "BUILDPKG error reason=用法：--build-package <version.json> <版本> <标记> <序号>\n";
         return kUsage;
+    }
+    // ★ 先把工作目录切到**仓库根**：GUI 从部署目录双击启动时 CWD 不是仓库根，
+    //   否则 `scripts\build.ps1` 找不到、`dist\` 也会落到别处（用户实测的失败就是这个）。
+    {
+        std::error_code root_ec;
+        const std::filesystem::path root = repo_root();
+        std::filesystem::current_path(root, root_ec);
+        if (root_ec) {
+            std::cout << "BUILDPKG error reason=切不到仓库根：" << root.string() << "\n";
+            return kFail;
+        }
     }
     const std::string store_path = operands[0];
     const std::string want_version = operands[1];
@@ -53,7 +95,8 @@ int run_build_package(const std::vector<std::string>& operands) {
     // ② 真编译 + 打包（日志落 dist\；GUI 侧只是调本动作，不自己拼参数）
     const std::string log = "dist\\build_pkg_" + std::to_string(want_index) + ".log";
     std::string cmd;
-    cmd += "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\build.ps1";
+    // 先把控制台代码页切 UTF-8（`chcp 65001`）⇒ 子进程 PowerShell 写进日志的中文不再乱码
+    cmd += "chcp 65001 >nul && powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\build.ps1";
     cmd += " -Preset msvc-shell > \"";
     cmd += log;
     cmd += "\" 2>&1 && powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\package.ps1";
