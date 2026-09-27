@@ -1,9 +1,10 @@
 {
-  "current": { "version": "2.0.0", "prerelease": "ALPHA", "index": 1 },
+  "current": { "version": "2.0.0", "prerelease": "ALPHA", "index": 2 },
   "tree": {
     "2.0.0": {
       "ALPHA": {
-        "1": { "built": "2026-09-27 12:29:00", "commit": "22f53e9", "artifacts": ["dist\\build_pkg_1.log", "dist\\STALKER_Toolkit_2.0.0_ALPHA.1_22f53e9.zip"] }
+        "1": { "built": "2026-09-27 12:29:00", "commit": "22f53e9", "artifacts": ["dist\\build_pkg_1.log", "dist\\STALKER_Toolkit_2.0.0_ALPHA.1_22f53e9.zip"] },
+        "2": { "built": "2026-09-27 13:23:38", "commit": "25156f3", "artifacts": ["dist\\build_pkg_2.log", "dist\\STALKER_Toolkit_2.0.0_ALPHA.2_25156f3.zip"] }
       },
       "BETA": {
         "1": { "built": "2026-09-26 23:59:22", "commit": "2.0.0 ALPHA.0", "artifacts": ["dist\\build_pkg_1.log"] },

@@ -23,6 +23,45 @@ constexpr int kFontCount = static_cast<int>(sizeof(kThemeFonts) / sizeof(kThemeF
 constexpr int kBgRoleCount = static_cast<int>(sizeof(kBgRoles) / sizeof(kBgRoles[0]));
 
 ThemeMode g_mode = ThemeMode::Dark;
+
+// ★ 2.x 配色覆盖（2026-09-27 用户："配色也改一下"）—— **有意与 1.x 不同**：
+//   配色属**表现层**，与行为口径无关；改这里**不动** 1.x 源、也**不手改**生成的
+//   `theme_tables.inc`（手改会让 `gen_theme_tables.py --check` 变红）。
+struct ColorOverride {
+    const char* role;
+    const char* dark;
+    const char* light;
+};
+constexpr ColorOverride kOverrides[] = {
+    {"bg", "#1e2124", "#f4f5f7"},
+    {"surface", "#26292d", "#ffffff"},
+    {"surface2", "#2b2f33", "#eef0f3"},
+    {"border", "#3a3f45", "#d8dce1"},
+    {"accent", "#4c9ed9", "#2b6cb0"},
+    {"accent_hover", "#63b0e6", "#3a7cc0"},
+    {"text", "#e8eaed", "#1f2328"},
+    {"text_dim", "#a8b0b8", "#5a636b"},
+    {"text_bright", "#ffffff", "#000000"},
+    {"entry_bg", "#23262a", "#ffffff"},
+    {"selected", "#31363b", "#dce7f5"},
+    {"scroll_border", "#3a3f45", "#cdd3da"},
+    {"sash", "#2f3338", "#e3e6ea"},
+    {"sash_light", "#4c9ed9", "#2b6cb0"},
+    {"red", "#d9534f", "#c0392b"},
+    {"green", "#5cb85c", "#2f8f46"},
+    {"yellow", "#e5c07b", "#9a7b1f"},
+    {"orange", "#e08b4a", "#c46a1f"},
+};
+
+const char* override_color(ThemeMode mode, const char* role) {
+    if (role == nullptr) return nullptr;
+    for (const ColorOverride& o : kOverrides) {
+        if (std::strcmp(o.role, role) == 0) {
+            return (mode == ThemeMode::Light) ? o.light : o.dark;
+        }
+    }
+    return nullptr;
+}
 double g_ui_scale = 1.0;
 
 std::string trim(const std::string& s) {
@@ -48,6 +87,8 @@ const char* theme_role(int index) {
 
 const char* theme_color(ThemeMode mode, const char* role) {
     if (role == nullptr) return nullptr;
+        // ★ 先查 2.x 覆盖（kOverrides）；没覆盖才回到生成表
+        if (const char* over = override_color(mode, role); over != nullptr) return over;
     for (int i = 0; i < kRoleCount; ++i) {
         if (std::strcmp(kThemeRoles[i], role) != 0) continue;
         return (mode == ThemeMode::Light) ? kThemeLight[i] : kThemeDark[i];
