@@ -62,6 +62,14 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                "QLabel#status_label { color: %5; }"
                "QLabel#page_header { color: %16; }"
                "QLabel#page_subtitle { color: %5; }"
+               // 左侧导航 = 导航条（项高统一、当前项 accent 左条）
+               "QListWidget#page_list { background: %2; border: 0;"
+               "  border-right: 1px solid %4; border-radius: 0; padding: %11px 0; }"
+               "QListWidget#page_list::item { min-height: %22px; padding: %11px %12px;"
+               "  border-left: %18px solid transparent; border-radius: 0; }"
+               "QListWidget#page_list::item:hover { background: %3; }"
+               "QListWidget#page_list::item:selected { background: %9; color: %19;"
+               "  border-left: %18px solid %7; }"
                // 卡片与分组（内容区加边界：原来"裸列表铺满"全靠这个改观）
                "QFrame#card, QGroupBox { background: %3; border: 1px solid %4;"
                "  border-radius: %17px; }"
@@ -133,7 +141,8 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
         .arg(px(3))             // %18 小圆角
         .arg(bright)            // %19 强调底上的文字色
         .arg(px(14))            // %20 勾选框尺寸
-        .arg(danger);           // %21（保留：危险色，供后续按钮/状态用）
+        .arg(danger)            // %21（保留：危险色，供后续按钮/状态用）
+        .arg(px(32));           // %22 导航项高（口径：32px，过 px() 缩放）
 }
 
 void apply_theme(QApplication& app, xrkit::core::ThemeMode mode) {

@@ -39,12 +39,18 @@ namespace {
 
 // 六个内置页（**顺序与名字照抄 1.x `BUILTIN_TOOLS`**；id 是我们自己的稳定标识）
 constexpr PageInfo kBuiltinPages[] = {
-    {"fs", "文件系统"},
-    {"convert", "编码转换"},
-    {"text", "文本提取"},
-    {"xml", "XML校对"},
-    {"video", "视频转换"},
-    {"fontpack", "汉化包生成"},
+    {"fs", "文件系统",
+     "把包（.db / .sqfs）拖进来，看包内文件树、勾选后解包或重打包"},
+    {"convert", "编码转换",
+     "批量转换文本编码（cp1251 / cp866 / utf-8 …），逐条对比转换前后"},
+    {"text", "文本提取",
+     "从语料里提取可翻译文本，导出/导入翻译表"},
+    {"xml", "XML校对",
+     "比较两版 XML 的结构与条目差异，定位漏翻/多翻"},
+    {"video", "视频转换",
+     "调用 ffmpeg 转换过场视频（需自备 ffmpeg，缺失时可见跳过）"},
+    {"fontpack", "汉化包生成",
+     "把字体/贴图打成一个汉化包，产出可直接分发的压缩包"},
 };
 
 constexpr int kBuiltinPageCount =
@@ -97,6 +103,13 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     for (int i = 0; i < kBuiltinPageCount; ++i) {
         page_list_->addItem(QString::fromUtf8(kBuiltinPages[i].title));
         QWidget* page = create_page(i);
+        // ★ 界面重构：把页表里的说明设成副标题（页标题下面那句"本页能干什么"）。
+        //   注意 `page` 的静态类型是 QWidget* ⇒ 必须 qobject_cast 到 PageBase 才能调。
+        // PageBase **没有 Q_OBJECT**（它只是个 QWidget 子类）⇒ 不能用 qobject_cast，
+        // 这里用 dynamic_cast（RTTI 可用）；拿到才设副标题，不是 PageBase 就跳过。
+        if (auto* as_page = dynamic_cast<PageBase*>(page)) {
+            as_page->set_subtitle(QString::fromUtf8(kBuiltinPages[i].subtitle));
+        }
         stack_->addWidget(page != nullptr ? page : make_placeholder(kBuiltinPages[i]));
         if (auto* fs_page = dynamic_cast<FsPage*>(page)) {
             // ⑫12.1：fs 页加载包之前要问插件解密器（用户 2026-09-26 决策的"必须"项）

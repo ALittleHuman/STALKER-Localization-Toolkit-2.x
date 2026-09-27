@@ -69,6 +69,14 @@ SmokeResult run_smoke() {
     };
 
     // ① 真实清单 vs 契约（少一页/改个名字都要红）
+    {
+        // ★ 界面重构（用户："左侧六页导航是裸列表"）：六页都要有说明文案 + 导航项高统一
+        int empty_sub = 0;
+        for (int i = 0; i < builtin_page_count(); ++i) {
+            if (builtin_page(i).subtitle == nullptr || *builtin_page(i).subtitle == '\0') ++empty_sub;
+        }
+        check(empty_sub == 0, QStringLiteral("六页说明文案都要有（空 %1 条）").arg(empty_sub));
+    }
     check(builtin_page_count() == kExpectedCount,
           QStringLiteral("内置页数 = %1（实际 %2）").arg(kExpectedCount).arg(builtin_page_count()));
     for (int i = 0; i < kExpectedCount && i < builtin_page_count(); ++i) {

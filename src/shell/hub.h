@@ -28,6 +28,7 @@ class SplitPane;
 struct PageInfo {
     const char* id;
     const char* title;
+    const char* subtitle = "";  // 一句话说明本页能干什么（界面重构口径）
 };
 
 int builtin_page_count();
