@@ -17,6 +17,8 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QListWidget>
+#include <QProgressBar>
 #include <QIcon>
 #include <QInputDialog>
 #include <QLabel>
@@ -99,6 +101,27 @@ public:
         row->addWidget(button_reload_);
         row->addStretch(1);
         root_layout->addLayout(row);
+
+        // 构建状态：进度条（不确定态）+ 一行文字 —— "构建时进度可见"
+        status_ = new QLabel(QStringLiteral("就绪"), this);
+        progress_ = new QProgressBar(this);
+        progress_->setRange(0, 0);          // 不确定态（CLI 目前不吐百分比，就别假装有进度）
+        progress_->setVisible(false);
+        progress_->setMaximumHeight(12);
+        auto* status_row = new QHBoxLayout();
+        status_row->addWidget(status_);
+        status_row->addWidget(progress_, 1);
+        root_layout->addLayout(status_row);
+
+        // 构建史：树里的每条记录一行；双击在资源管理器里打开产物
+        history_ = new QListWidget(this);
+        history_->setMaximumHeight(110);
+        connect(history_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+            const QString path = item->data(Qt::UserRole).toString();
+            if (path.isEmpty()) return;
+            QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+        });
+        root_layout->addWidget(history_);
 
         log_ = new xrkit::shell::LogBox(this);
         log_->setFont(QFont(QStringLiteral("Consolas"), 9));
@@ -204,6 +227,30 @@ private:
                                   .arg(history)
                                   .arg(store_dir_ + "/version.json"));
         refresh_derived();
+        refresh_history();
+    }
+
+    void refresh_history() {
+        history_->clear();
+        for (const auto& v : store_.tree) {
+            for (const auto& m : v.second) {
+                for (const auto& i : m.second) {
+                    const xrkit::core::BuildRecord& rec = i.second;
+                    QString text = QStringLiteral("%1 %2.%3   %4   %5")
+                                       .arg(QString::fromStdString(v.first),
+                                            QString::fromStdString(m.first))
+                                       .arg(i.first)
+                                       .arg(QString::fromStdString(rec.built),
+                                            QString::fromStdString(rec.commit));
+                    auto* item = new QListWidgetItem(text, history_);
+                    const QString last = rec.artifacts.empty()
+                                             ? QString()
+                                             : QString::fromStdString(rec.artifacts.back());
+                    item->setData(Qt::UserRole, last);
+                    if (!last.isEmpty()) item->setToolTip(QStringLiteral("双击打开：%1").arg(last));
+                }
+            }
+        }
     }
 
     QString current_version() const {
@@ -244,6 +291,9 @@ private:
             return;
         }
         button_build_->setEnabled(false);
+        progress_->setVisible(true);
+        status_->setText(QStringLiteral("构建中… %1 %2.%3（日志在下方）").arg(version, pre)
+                             .arg(index));
         log_line(QStringLiteral("== 开始构建 %1 %2.%3 ==").arg(version, pre).arg(index));
         log_line(QStringLiteral("   CLI: %1").arg(cli));
 
@@ -256,6 +306,10 @@ private:
         connect(process_, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
                 [this](int code, QProcess::ExitStatus) {
                     log_line(QStringLiteral("== 结束：退出码 %1 ==").arg(code));
+                    progress_->setVisible(false);
+                    status_->setText(code == 0 ? QStringLiteral("构建成功（产物在 dist\\）")
+                                               : QStringLiteral("构建失败（版本已回退，失败件在 "
+                                                                "dist\\FAIL\\）"));
                     process_->deleteLater();
                     process_ = nullptr;
                     button_build_->setEnabled(true);
@@ -272,6 +326,9 @@ private:
     QLineEdit* edit_full_ = nullptr;
     QLabel* label_store_ = nullptr;
     xrkit::shell::LogBox* log_ = nullptr;
+    QProgressBar* progress_ = nullptr;   // 不确定态：构建中就一直走
+    QListWidget* history_ = nullptr;     // 构建史条目（双击打开产物）
+    QLabel* status_ = nullptr;
     QPushButton* button_build_ = nullptr;
     QPushButton* button_dist_ = nullptr;
     QPushButton* button_reload_ = nullptr;

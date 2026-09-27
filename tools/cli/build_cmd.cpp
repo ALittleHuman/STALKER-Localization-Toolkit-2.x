@@ -147,6 +147,17 @@ int run_build_package(const std::vector<std::string>& operands) {
         }
     }
     rec.artifacts.push_back(log);
+    {
+        // 与 package.ps1 的命名一致：STALKER_Toolkit_<版本_标记.序号>_<commit>.zip
+        // （GUI 的构建史条目点开就是这个文件）
+        std::string tag = want_version + "_" + want_prerelease;
+        if (want_index > 0) tag += "." + std::to_string(want_index);
+        for (char& c : tag) {
+            if (c == ' ') c = '_';
+        }
+        std::string zip_name_hint = "dist\\STALKER_Toolkit_" + tag + "_" + rec.commit + ".zip";
+        rec.artifacts.push_back(zip_name_hint);
+    }
     store.append(want_version, want_prerelease, want_index, rec);
     if (!xrkit::core::save_version_store(store_path, store, err)) {
         std::cout << "BUILDPKG error reason=写构建史失败：" << err << "\n";
