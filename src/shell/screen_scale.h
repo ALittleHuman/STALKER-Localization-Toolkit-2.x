@@ -17,6 +17,11 @@
 namespace xrkit::shell {
 
 // 把"原始缩放"吸附到 {1.0, 1.25, 1.5, 1.75, 2.0} 并 clamp 到 [1.0, 2.0]（纯函数，可单测）
+// ★ 口径更正（2026-09-27 真机实测）：**不能只看 logicalDotsPerInch** —— Windows/Qt6 下它
+//   **恒为 96**（实测 150% 缩放的机器：dpi=96.0 / dpr=1.50 / pdpi=125.9）。正确规则：
+//   dpr>1 ⇒ Qt 已在缩放 ⇒ 我们保持 1.0（否则双重缩放）；dpr≈1 ⇒ 按物理 DPI 自己放大。
+double ui_scale_for(double device_pixel_ratio, double physical_dpi);
+
 double snap_ui_scale(double raw);
 
 // 屏幕可用区 + 最小尺寸 ⇒ 默认窗口尺寸（纯函数，可单测）

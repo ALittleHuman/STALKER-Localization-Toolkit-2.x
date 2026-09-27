@@ -65,13 +65,23 @@ QSize app_min_window_size() {
     return QSize(xrkit::core::px(kMinDesignWidth), xrkit::core::px(kMinDesignHeight));
 }
 
+double ui_scale_for(double device_pixel_ratio, double physical_dpi) {
+    // Qt 已经在按 OS 缩放渲染（dpr>1）⇒ 我们**不叠加**，否则几何被放大两次
+    if (device_pixel_ratio > 1.01) return 1.0;
+    // dpr≈1：系统没帮我们放大（典型：4K 屏但系统缩放 100%）⇒ 按物理 DPI 自己放大
+    if (!(physical_dpi > 0.0)) return 1.0;
+    return snap_ui_scale(physical_dpi / 96.0);
+}
+
 double apply_screen_ui_scale() {
-    double dpi = 96.0;
+    double dpr = 1.0;
+    double pdpi = 96.0;
     if (const QScreen* screen = QGuiApplication::primaryScreen()) {
-        const double reported = screen->logicalDotsPerInch();
-        if (reported > 0.0) dpi = reported;  // 拿不到就按 96（＝100%）走
+        if (screen->devicePixelRatio() > 0.0) dpr = screen->devicePixelRatio();
+        const double reported = screen->physicalDotsPerInch();
+        if (reported > 0.0) pdpi = reported;  // 拿不到就按 96（＝100%）走
     }
-    const double scale = snap_ui_scale(dpi / 96.0);
+    const double scale = ui_scale_for(dpr, pdpi);
     xrkit::core::set_ui_scale(scale);
     return scale;
 }

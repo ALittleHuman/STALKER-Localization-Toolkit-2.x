@@ -456,6 +456,27 @@ int main(int argc, char** argv) {
                             min_win.height());
             }
         }
+        // ★ 规则判据（口径更正后）：dpr>1 时**不叠加**（防双重缩放）；dpr≈1 时按物理 DPI 放大
+        {
+            const struct {
+                double dpr;
+                double pdpi;
+                double want;
+            } rules[] = {
+                {1.50, 125.9, 1.00},  // 真机实测：150% 缩放 ⇒ Qt 已放大 ⇒ 我们保持 1.0
+                {1.00, 96.0, 1.00},   // 普通屏
+                {1.00, 160.0, 1.75},  // 4K 屏但系统 100% ⇒ 我们自己放大
+                {1.00, 300.0, 2.00},  // 极端 ⇒ clamp 到 2.0
+            };
+            for (const auto& r : rules) {
+                const double got = xrkit::shell::ui_scale_for(r.dpr, r.pdpi);
+                if (std::abs(got - r.want) > 0.001) {
+                    scale_ok = false;
+                    std::printf("SCALE rule dpr=%.2f pdpi=%.1f want=%.2f got=%.2f\n", r.dpr, r.pdpi,
+                                r.want, got);
+                }
+            }
+        }
         std::printf("SCALE steps=4 %s\n", scale_ok ? "PASS" : "FAIL");
         const bool all_ok = ok && scale_ok;
         std::printf("LAYOUT %s\n", all_ok ? "PASS" : "FAIL");
