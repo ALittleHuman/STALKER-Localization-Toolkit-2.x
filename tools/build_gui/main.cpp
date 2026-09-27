@@ -76,6 +76,23 @@ public:
         }
         auto* root_layout = new QVBoxLayout(this);
 
+        // ★ 界面重构：顶部加**页标题 + 说明句**，与主程序六页同一套视觉语言
+        {
+            auto* head = new QLabel(QStringLiteral("构建"), this);
+            head->setObjectName(QStringLiteral("gui_header"));
+            QFont f = head->font();
+            f.setPointSizeF(f.pointSizeF() + 3.0);
+            f.setBold(true);
+            head->setFont(f);
+            auto* sub = new QLabel(
+                QStringLiteral("选版本与标记 → 点「开始构建」；成功件落在 dist\\，失败件落在 dist\\FAIL\\"),
+                this);
+            sub->setObjectName(QStringLiteral("gui_subtitle"));
+            sub->setWordWrap(true);
+            root_layout->addWidget(head, 0);
+            root_layout->addWidget(sub, 0);
+        }
+
         auto* box = new QGroupBox(QStringLiteral("版本与标记（唯一事实来源：version.json）"), this);
         form_box_ = box;
         auto* form = new QFormLayout(box);
