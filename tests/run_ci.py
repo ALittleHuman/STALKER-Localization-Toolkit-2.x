@@ -278,8 +278,8 @@ def step_selftest(release: bool) -> None:
 def step_cli_contract(release: bool) -> None:
     """退出码本身就是判据：0=通过 2=显式跳过 3=用法错误。
 
-    `--bench` 的**能力**已由测试侧的 [28] bench.py 覆盖（口径见 docs/2.0.0-bench口径.md），
-    但 **CLI 那个动作仍是占位**，所以它照旧必须返回 2；`--themecheck/--dump` 早已实现。
+    `--bench` 的**能力**在测试侧（[28] bench.py，口径见 docs/2.0.0-bench口径.md）；
+    CLI 里**不再保留**那个只会 SKIP 的占位动作（它会把 release 档的"未覆盖"清单顶住 ⇒ 发版永远过不了）。
     绝不允许把"没实现"混成 0。
     """
     say("[5] CLI 退出码契约")
@@ -318,15 +318,12 @@ def step_cli_contract(release: bool) -> None:
 
     # 尚未实现的动作：必须显式 SKIP（2），并且被记入未覆盖清单
     for argv, marker, label in (
-        (["--bench"], "BENCH skip", "--bench"),
     ):
         rc, out = run([str(CLI_EXE)] + argv)
         if rc != 2 or marker not in out:
             fail("%s 期望 exit=2 且输出含 %r，实际 exit=%d 输出=%r" % (label, marker, rc, out.strip()))
         else:
-            UNCOVERED.append("%s（CLI 动作为占位；能力由 tests/bench.py / 门禁 [28] 覆盖）" % label
-                     if label == "--bench"
-                     else "%s（尚未实现，CLI 显式 SKIP）" % label)
+            UNCOVERED.append("%s（尚未实现，CLI 显式 SKIP）" % label)
             ok("%s → exit=2（已记入未覆盖）" % label)
 
 
