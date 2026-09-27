@@ -18,6 +18,7 @@
 #include "xrkit/engine/fs/overlay.h"
 
 #include <QString>
+#include <QStringList>
 
 #include <string>
 #include <utility>
@@ -30,6 +31,7 @@ class QPushButton;
 
 namespace xrkit::shell {
 
+class FileDropFilter;
 class VirtualList;
 
 class FsPage : public PageBase {
@@ -45,12 +47,24 @@ public:
     // 所以"同名条目以后加载的为准"对散装层与包完全一致（不出现第二套合并逻辑）。
     bool add_loose_dir(const QString& dir, QString* error);
 
+    // ★ 2026-09-27（用户："1.x 的部分功能或选择没了" + 对照表 6.4）：
+    // 从**磁盘路径**加载（包文件或散装目录）—— 「加包」按钮与拖放**共用这一条**：
+    //   ① 先过插件解密闸门（⑫12.1）：拒绝就**不加载**，理由写日志；
+    //   ② 是目录 ⇒ `loose_entries`；是文件 ⇒ `package_entries`（SquashFS 按 magic、
+    //      DB 按自洽判定，歧义时用格式下拉里选的那个）；
+    //   ③ 认不出/解不开 ⇒ **可见失败**（日志里有理由，绝不静默加一个空包）。
+    // 返回真正加载成功的条数（0 表示一个都没加载）。
+    int add_paths(const QStringList& paths);
+    // 上一次 `add_paths` 里**每一份认不出的路径 + 理由**（自检要断言"可见失败"；
+    // 界面侧同一句话也会进日志栏 —— 不留全局变量，随调用返回值走）
+    QStringList load_errors() const { return load_errors_; }
+    // 自检用：拖放过滤器到底装在哪些控件上（判据是**接线**，见 drop_filter.h）
+    FileDropFilter* drop_filter() const { return drop_filter_; }
+
     int source_count() const { return static_cast<int>(sources_.size()); }
-    // 空状态：包内条目区在**没有条目**时显示一句提示（用户实测：空列表只有一条细线，
-    // 看着像坏了）。自检用这个访问器断言：有货就藏、没货就显示。
+    // ★ 2026-09-27：卡片里的"空状态提示块"与重复提示行**按用户要求删除**（原话"把图中玩意
+    //   删掉"）⇒ 本访问器恒为 false，只供自检做"这条不许再冒出来"的反向断言。
     bool entry_hint_visible() const;
-    // ★ 排版口径（真机反馈'太空'）：未加载包时的**空状态占位块**（居中，吃满卡片）
-    QWidget* empty_block() const { return empty_block_; }
     QString source_at(int index) const;
     int conflict_count() const { return tree_.conflict_count(); }
 
@@ -80,6 +94,7 @@ public:
     QComboBox* format_combo() const { return format_combo_; }
     QListWidget* package_list() const { return package_list_; }
     VirtualList* entry_list() const { return entry_list_; }
+    QPushButton* add_button() const { return add_button_; }
     QPushButton* select_all_button() const { return select_all_button_; }
     QPushButton* check_all_button() const { return check_all_button_; }
     QPushButton* unpack_button() const { return unpack_button_; }
@@ -98,6 +113,12 @@ private:
         std::string key;
     };
 
+    // 模型/界面收尾（闸门已过）：建树 → 合并 → 进列表 → 刷行。
+    // `add_source`（已在内存里的条目）与 `add_paths`（从磁盘列条目）**共用**这一段，
+    // 所以"同名条目以后加载的为准"只有一份实现。
+    void push_source(const QString& source,
+                     const std::vector<std::pair<std::string, bool>>& entries);
+
     engine::fs::MergeTree tree_;
     engine::fs::FsSelection selection_;
     std::vector<Source> sources_;
@@ -105,13 +126,13 @@ private:
     const plugin::Registry* registry_ = nullptr;
     QString decrypt_dir_;
     QString last_gate_error_;
+    QStringList load_errors_;
 
     QListWidget* package_list_ = nullptr;
     QComboBox* format_combo_ = nullptr;
     VirtualList* entry_list_ = nullptr;
-    QLabel* hint_ = nullptr;
-    QLabel* entry_hint_ = nullptr;
-    QWidget* empty_block_ = nullptr;  // 空状态占位块（居中，吃满卡片）
+    QPushButton* add_button_ = nullptr;
+    FileDropFilter* drop_filter_ = nullptr;
     QPushButton* select_all_button_ = nullptr;
     QPushButton* check_all_button_ = nullptr;
     QPushButton* unpack_button_ = nullptr;

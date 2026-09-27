@@ -3,6 +3,7 @@
 #include "xrkit/core/theme.h"
 #include "xrkit/engine/plugin/abi_host.h"
 #include "hub.h"
+#include "drop_filter.h"
 #include "log_box.h"
 #include "plugin_ui.h"
 #include "pages/convert_page.h"
@@ -29,10 +30,16 @@
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
+#include <QMimeData>
+#include <QMouseEvent>
+#include <QDropEvent>
+#include <QUrl>
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollBar>
 #include <QStackedWidget>
 #include <QElapsedTimer>
@@ -147,6 +154,77 @@ SmokeResult run_smoke() {
     check(dark_window != light_window, QStringLiteral("切主题后同一控件底色确实变了"));
     check(!qApp->styleSheet().isEmpty(), QStringLiteral("QSS 已应用"));
     apply_theme(*qApp, xrkit::core::ThemeMode::Dark);
+
+    // ⑤ QSS **占位错位**这一类事故不许再来（用户真机截图：控制台 88 条
+    //    `QCssParser::parseHexColor: Unknown color name '#3a3f45px'`，同时 padding/圆角/
+    //    勾选框尺寸静默失效）。三条判据，都是"能判红"的实测口径：
+    //      ① 生成的样式表里**没有「颜色值 + px」**（错位的典型形态）；
+    //      ② 没有未替换的命名令牌 `@{`、也没有残留的 `%N` 占位；
+    //      ③ 真应用样式表时 Qt **一条** parseHexColor / Argument missing 警告都不发。
+    {
+        int color_px_hits = 0;
+        int token_left = 0;
+        int arg_left = 0;
+        const QRegularExpression color_px(QStringLiteral("#[0-9a-fA-F]{6}px"));
+        const QRegularExpression arg_marker(QStringLiteral("%[0-9]"));
+        for (const xrkit::core::ThemeMode mode :
+             {xrkit::core::ThemeMode::Dark, xrkit::core::ThemeMode::Light}) {
+            const QString sheet = stylesheet_for(mode);
+            // 逐处数，别只问"有没有"（修一处 ≠ 修完 —— 88 条那次就是只修了一处）
+            auto it = color_px.globalMatch(sheet);
+            while (it.hasNext()) {
+                it.next();
+                ++color_px_hits;
+            }
+            if (sheet.contains(QStringLiteral("@{"))) ++token_left;
+            if (arg_marker.match(sheet).hasMatch()) ++arg_left;
+        }
+        check(color_px_hits == 0,
+              QStringLiteral("⑤ 样式表里出现「颜色值 + px」%1 处（占位错位）").arg(color_px_hits));
+        check(token_left == 0, QStringLiteral("⑤ 有未替换的命名令牌 @{...}（模板写错名字了）"));
+        check(arg_left == 0, QStringLiteral("⑤ 样式表里还残留 %N 占位符"));
+
+        static int qss_warnings = 0;
+        qss_warnings = 0;
+        const QtMessageHandler previous = qInstallMessageHandler(
+            +[](QtMsgType, const QMessageLogContext&, const QString& text) {
+                if (text.contains(QStringLiteral("parseHexColor")) ||
+                    text.contains(QStringLiteral("Argument missing"))) {
+                    ++qss_warnings;
+                }
+            });
+        apply_theme(*qApp, xrkit::core::ThemeMode::Dark);
+        apply_theme(*qApp, xrkit::core::ThemeMode::Light);
+        apply_theme(*qApp, xrkit::core::ThemeMode::Dark);
+        qInstallMessageHandler(previous);
+        check(qss_warnings == 0,
+              QStringLiteral("⑤ 应用样式表时 Qt 报了 %1 条 QSS 警告（应为 0）").arg(qss_warnings));
+
+        // ③ 强调色（蓝）**只许出现在三处**：主按钮 / 当前标签项 / 进度条 ——
+        //   口径见 `docs/2.0.0-界面重构口径(排版与配色).md` 第二节（用户原话
+        //   "配色里为什么这么多蓝色"）。判据是**逐规则**看：凡是含 accent 色的规则，
+        //   选择器必须在白名单里；多一处就红（不许"看着差不多"）。
+        const QStringList accent_allowed = {
+            QStringLiteral("QPushButton#primary"), QStringLiteral("QPushButton#primary:hover"),
+            QStringLiteral("QPushButton#primary:pressed"),
+            QStringLiteral("QTabBar#page_tabs::tab:selected"), QStringLiteral("QProgressBar::chunk")};
+        QStringList accent_strays;
+        for (const xrkit::core::ThemeMode mode :
+             {xrkit::core::ThemeMode::Dark, xrkit::core::ThemeMode::Light}) {
+            const QString accent_hex =
+                QString::fromUtf8(xrkit::core::theme_color(mode, "accent"));
+            const QString sheet = stylesheet_for(mode);
+            const QStringList rules = sheet.split(QLatin1Char('}'));
+            for (const QString& rule : rules) {
+                if (!rule.contains(accent_hex, Qt::CaseInsensitive)) continue;
+                const QString selector = rule.section(QLatin1Char('{'), 0, 0).trimmed();
+                if (!accent_allowed.contains(selector)) accent_strays << selector;
+            }
+        }
+        check(accent_strays.isEmpty(),
+              QStringLiteral("③ 强调色跑到这三处之外了：%1")
+                  .arg(accent_strays.join(QStringLiteral(" / "))));
+    }
 
     // ⑤ HiDPI：外壳里所有硬编码尺寸都要过 px()
     xrkit::core::set_ui_scale(1.0);
@@ -854,6 +932,109 @@ SmokeResult run_smoke() {
         check(page.package_list() != nullptr && page.package_list()->acceptDrops(),
               QStringLiteral("6.4 拖放直接挂在包列表上（acceptDrops）"));
 
+        // ★ 2026-09-27（用户："1.x 的部分功能或选择没了" + ⑦"拖放可能根本没实现，须查实"）：
+        //   **加包入口**与**拖放**都要真的把包加载进来 —— 判据是"载进来了"，
+        //   不是"代码里有个 dropEvent"（原来全 src/shell 只有 setAcceptDrops(true)，
+        //   一个 dropEvent/dragEnterEvent 都没有 ⇒ 拖着没反应，这就是用户说的"选择没了"）。
+        {
+            FsPage drop_page;
+            drop_page.show();
+            QApplication::processEvents();
+            check(drop_page.add_button() != nullptr &&
+                      drop_page.add_button()->objectName() ==
+                          QStringLiteral("fs_add_package"),
+                  QStringLiteral("④ 要有「加包」按钮（1.x 的入口在 2.x 里丢了）"));
+
+            // 用引擎自己的写侧造一个**真的 X-Ray DB 包**：既测 `package_entries`，也当拖放载荷
+            const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_drop"));
+            QDir(dir).removeRecursively();
+            QDir().mkpath(dir);
+            const QString db_path = dir + QStringLiteral("/gamedata.db0");
+            int packed = 0;
+            {
+                std::vector<efs::DbPackItem> items;
+                efs::DbPackItem a;
+                a.path = "a.txt";
+                a.data = {static_cast<uint8_t>('A')};
+                efs::DbPackItem b;
+                b.path = "dir/keep.txt";
+                b.data = {static_cast<uint8_t>('B'), static_cast<uint8_t>('B')};
+                items.push_back(a);
+                items.push_back(b);
+                const std::vector<uint8_t> raw = efs::pack_db(items, efs::DbFormat::Xdb);
+                packed = static_cast<int>(raw.size());
+                std::ofstream out(db_path.toStdString(), std::ios::binary | std::ios::trunc);
+                out.write(reinterpret_cast<const char*>(raw.data()),
+                          static_cast<std::streamsize>(raw.size()));
+            }
+            check(packed > 0, QStringLiteral("④ 夹具：造一个真 DB 包（实得 %1 字节）").arg(packed));
+
+            // ① 引擎侧：从**磁盘上的包**列条目（SquashFS 按 magic / DB 按自洽判定）
+            std::string list_error;
+            const std::vector<std::pair<std::string, bool>> listed =
+                efs::package_entries(db_path.toStdString(), std::nullopt, list_error);
+            check(list_error.empty() && listed.size() == 2,
+                  QStringLiteral("④ package_entries 从真包列出条目（err=%1，实得 %2 条）")
+                      .arg(QString::fromStdString(list_error))
+                      .arg(listed.size()));
+
+            // ② 拖放**接线**：过滤器必须真装在包列表与卡片上（缺一个就红）
+            check(drop_page.drop_filter() != nullptr &&
+                      drop_page.drop_filter()->is_attached_to(drop_page.package_list()) &&
+                      drop_page.drop_filter()->is_attached_to(drop_page.card()),
+                  QStringLiteral("⑦ 拖放过滤器没装在包列表/卡片上（接线断了）"));
+
+            // ③ 拖放**行为**：一个 Drop 事件进来 ⇒ 包真的加载进模型
+            //    （离屏环境没有平台拖放：实测 `sendEvent(widget,&QDropEvent)` 会被 Qt
+            //     拦掉 —— 返回 false、事件根本不到控件；真实 drop 走 QWidgetWindow 那条
+            //     平台通路。所以这里直接把事件交给过滤器，见 drop_filter.h 的说明。）
+            QMimeData mime;
+            mime.setUrls({QUrl::fromLocalFile(db_path)});
+            check(FileDropFilter::local_paths(&mime) == QStringList{db_path},
+                  QStringLiteral("⑦ mime 里的本地文件路径要能取出来"));
+            QDropEvent drop(QPointF(5, 5), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            check(drop_page.drop_filter() != nullptr && drop_page.drop_filter()->dispatch(&drop),
+                  QStringLiteral("⑦ 过滤器要认这个 drop（本地文件 ⇒ accept）"));
+            check(drop_page.source_count() == 1,
+                  QStringLiteral("⑦ 拖一个包进来要真的加载（实测 %1 个源）")
+                      .arg(drop_page.source_count()));
+            // 树里是 3 行：两个文件 + `dir/keep.txt` 那一层目录节点（条目表是 2 条）
+            check(drop_page.entry_list() != nullptr && drop_page.entry_list()->row_count() == 3,
+                  QStringLiteral("⑦ 拖进来的包条目要进树（期望 2 文件 + 1 目录节点 = 3 行，实测 %1）")
+                      .arg(drop_page.entry_list() != nullptr ? drop_page.entry_list()->row_count()
+                                                             : -1));
+
+            // ④ 认不出的文件 ⇒ **可见失败**且不加源（绝不静默加一个空包）
+            const QString junk = dir + QStringLiteral("/junk.bin");
+            {
+                std::ofstream out(junk.toStdString(), std::ios::binary | std::ios::trunc);
+                out << "this is not a package";
+            }
+            QMimeData bad_mime;
+            bad_mime.setUrls({QUrl::fromLocalFile(junk)});
+            QDropEvent bad_drop(QPointF(5, 5), Qt::CopyAction, &bad_mime, Qt::LeftButton,
+                                Qt::NoModifier);
+            if (drop_page.drop_filter() != nullptr) drop_page.drop_filter()->dispatch(&bad_drop);
+            QApplication::processEvents();
+            check(drop_page.source_count() == 1 && !drop_page.load_errors().isEmpty(),
+                  QStringLiteral("⑦ 认不出的文件要拒绝并留下理由（源 %1 个，理由 %2 条）")
+                      .arg(drop_page.source_count())
+                      .arg(drop_page.load_errors().size()));
+
+            // ⑤ 目录也能拖（散装层：与包走**同一条** add_source 路径）
+            QMimeData dir_mime;
+            dir_mime.setUrls({QUrl::fromLocalFile(dir)});
+            QDropEvent dir_drop(QPointF(5, 5), Qt::CopyAction, &dir_mime, Qt::LeftButton,
+                                Qt::NoModifier);
+            if (drop_page.drop_filter() != nullptr) drop_page.drop_filter()->dispatch(&dir_drop);
+            QApplication::processEvents();
+            check(drop_page.source_count() == 2,
+                  QStringLiteral("⑦ 拖一个目录进来要走散装层（实测 %1 个源）")
+                      .arg(drop_page.source_count()));
+            QDir(dir).removeRecursively();
+            drop_page.hide();
+        }
+
         // 6.1/6.2：两个包叠加，后者为准；行文本要能看出"这一份来自哪个包"
         page.add_source(QStringLiteral("sq_base"),
                         {{"a.txt", false}, {"dir/keep.txt", false}, {"dir/base_only.txt", false}});
@@ -898,6 +1079,45 @@ SmokeResult run_smoke() {
         check(!batch.ok && !picked.ok && batch.error == picked.error && !batch.error.empty(),
               QStringLiteral("6.11 批量与选中解包同源（同样失败、同样的话：%1）")
                   .arg(QString::fromStdString(batch.error)));
+    }
+
+    // ② 点页面空白 ⇒ 输入框必须**失去焦点**（用户真机："能输入的框点空白并不能取消，
+    //    还是一闪一闪"）。判据是**行为**，不是"看代码里有没有 setFocusPolicy"。
+    {
+        ConvertPage page;
+        page.resize(720, page_min_h());
+        page.show();
+        QApplication::setActiveWindow(&page);
+        QApplication::processEvents();
+        QLineEdit* edit = page.source_edit();
+        check(edit != nullptr, QStringLiteral("② 夹具要有可聚焦的输入框"));
+        if (edit != nullptr) {
+            edit->setFocus(Qt::MouseFocusReason);
+            QApplication::processEvents();
+            const bool got = edit->hasFocus();
+            // 按下"卡片空白处"：卡片是不接焦点的容器 ⇒ 焦点必须回到页面、输入框熄掉
+            QWidget* blank = page.card() != nullptr ? page.card() : &page;
+            const QPointF local(blank->width() / 2.0, blank->height() / 2.0);
+            QMouseEvent press(QEvent::MouseButtonPress, local, blank->mapToGlobal(local.toPoint()),
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(blank, &press);
+            QApplication::processEvents();
+            check(got, QStringLiteral("② 夹具前提：输入框本应先拿到焦点（实测 %1）")
+                           .arg(edit->hasFocus()));
+            check(!edit->hasFocus(),
+                  QStringLiteral("② 点卡片空白后输入框必须失去焦点（实测仍持有 %1）")
+                      .arg(edit->hasFocus() ? 1 : 0));
+            // 反向：点**输入框自己**不许被页面抢走焦点（过滤器只装在空白容器上）
+            edit->setFocus(Qt::MouseFocusReason);
+            QApplication::processEvents();
+            QMouseEvent on_edit(QEvent::MouseButtonPress, QPointF(2, 2), QPoint(), Qt::LeftButton,
+                                Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(edit, &on_edit);
+            QApplication::processEvents();
+            check(edit->hasFocus(),
+                  QStringLiteral("② 点输入框本身不许把焦点抢到页面上（实测丢了）"));
+        }
+        page.hide();
     }
 
     // ⑨/⑬ 编码转换页（M2-6c2）：判定步骤来自引擎（9.7）、暂停归 App（13.6）、
@@ -1425,29 +1645,61 @@ SmokeResult run_smoke() {
             skel.hide();
         }
 
-        // ★ 空状态（用户实测"空列表只有一条细线，看着像坏了"）：无条目时提示可见
+        // ★ 空状态（用户 2026-09-27 明令："把图中玩意删掉"）：卡片里那坨空状态文字块与
+        //   重复提示行**都不许再出现**；空状态改由"包列表吃满卡片"承担。
         {
             FsPage empty_page;
             empty_page.show();
             QApplication::processEvents();
-            check(empty_page.entry_hint_visible(),
-                  QStringLiteral("空条目区要显示提示（否则就是一条细线，看着像坏了）"));
-            // ★ 排版口径（用户真机反馈「太空又太挤」）——
-            //   ① 空状态是**占位块**，要吃满卡片的大头（不是贴底一行小字）；
-            //   ② 页标题与说明**合并成一行**（顶部堆叠行数从 4 降到 2 的结构前提）；
-            //   ③ 折叠日志的把手有最小高度（不是一条窄缝）。
-            {
-                check(empty_page.header_row() != nullptr,
-                      QStringLiteral("排版①：页标题与说明要合成一行（header_row 存在）"));
-                // ⚠ 排版② 的目标口径（空状态块 ≥ 卡片高 60%）实测**未达成**（68 / 430）：卡片里还并列着
-                //   两个列表（package_list_ 有 min 120 且是拖放目标、entry_list_ 各占一份 stretch），
-                //   空状态块只能分到 1/3 弹性空间 ⇒ 要达标得做结构改动（空状态取代列表 + 拖放目标移到卡片）。
-                //   **不放松锁**：这条先撤回，数字与结论记在提交信息与交接区，下轮做结构改动时装回。
+            if (empty_page.layout() != nullptr) empty_page.layout()->activate();
+            QApplication::processEvents();
+
+            // ① 用户明令删掉的那三样：一个也不许回来（命中即红）
+            QStringList leftover;
+            for (QWidget* child : empty_page.findChildren<QWidget*>()) {
+                const QString name = child->objectName();
+                if (name == QStringLiteral("fs_hint") || name == QStringLiteral("fs_entry_hint") ||
+                    name == QStringLiteral("fs_empty_block")) {
+                    leftover << name;
+                }
             }
+            check(leftover.isEmpty(),
+                  QStringLiteral("① 删掉的空状态块/重复提示行又回来了：%1")
+                      .arg(leftover.join(QStringLiteral(","))));
+            check(!empty_page.entry_hint_visible(),
+                  QStringLiteral("① 空状态提示访问器应为「恒 false」（该文字块已删）"));
+            // ① 卡片里只剩一个直接子 QLabel（"打包/解包格式："）；多一个就是又塞了提示行
+            const int card_labels =
+                empty_page.card() != nullptr
+                    ? static_cast<int>(
+                          empty_page.card()->findChildren<QLabel*>(Qt::FindDirectChildrenOnly).size())
+                    : -1;
+            check(card_labels == 1,
+                  QStringLiteral("① 卡片内直接标签数应为 1（只剩打包格式行），实测 %1").arg(card_labels));
+
+            // ★ 排版口径：页标题与说明**合并成一行**（顶部堆叠行数从 4 降到 2 的结构前提）
+            check(empty_page.header_row() != nullptr,
+                  QStringLiteral("排版①：页标题与说明要合成一行（header_row 存在）"));
+            // ★ 原 ⑥「空状态块 ≥ 卡片高 60%」的度量对象（那个占位块）已按用户要求删除 ⇒
+            //   该断言作废，换成等价物：**没条目时包列表自己吃满卡片**（它就是空状态本体）。
+            const int card_h = empty_page.card() != nullptr ? empty_page.card()->height() : -1;
+            const int list_h = empty_page.package_list() != nullptr
+                                   ? empty_page.package_list()->height()
+                                   : -1;
+            check(card_h > 0 && list_h >= card_h * 60 / 100,
+                  QStringLiteral("⑥ 空状态：包列表要吃掉卡片的大头（实测 %1 / %2）")
+                      .arg(list_h)
+                      .arg(card_h));
+            // 条目列表：没条目时收起（不占地方），有货才出现
+            check(empty_page.entry_list() != nullptr && empty_page.entry_list()->isHidden(),
+                  QStringLiteral("空状态：没有条目时条目列表要收起（不留一个空框）"));
+
             empty_page.add_loose_dir(QString::fromStdString(work.string()), nullptr);  // 临时目录是 ASCII 路径
             QApplication::processEvents();
             check(!empty_page.entry_hint_visible(),
-                  QStringLiteral("有条目后提示要自动隐藏"));
+                  QStringLiteral("① 加载后也不许冒出那句提示（它已经删了）"));
+            check(empty_page.entry_list() != nullptr && !empty_page.entry_list()->isHidden(),
+                  QStringLiteral("有条目后条目列表要出现"));
             empty_page.hide();
         }
         // 用"勾选计数"证明条目**真的进了合并树**（a.txt + sub/b.txt = 2 个文件）

@@ -61,6 +61,9 @@ public:
     //（自检用它做"忘了设就红"的断言，而不是自己抄一份期望值）
     bool minsize_ok() const;
 
+    // ② 点页面空白 ⇒ 把输入框焦点收回页面（用户真机："点空白并不能取消，还是一闪一闪"）
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 private:
     QString page_id_;
     QString title_;

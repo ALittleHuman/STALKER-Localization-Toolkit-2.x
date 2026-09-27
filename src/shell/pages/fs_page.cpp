@@ -2,10 +2,13 @@
 
 #include "xrkit/core/theme.h"
 
+#include "../drop_filter.h"
 #include "../virtual_list.h"
 
 #include <QComboBox>
 #include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QMetaObject>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -97,45 +100,35 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         return row_texts_[static_cast<size_t>(row)];
     });
 
-    hint_ = new QLabel(QStringLiteral("把包（.db / .sqfs）拖到左侧列表；可叠加多个包，"
-                                      "同名条目**以后加载的为准**（引擎实际读到的那一份）"));
-    hint_->setObjectName(QStringLiteral("fs_hint"));
-    hint_->setWordWrap(true);
-
-    body_layout()->addWidget(hint_, 0);
+    // ★ 用户 2026-09-27 真机明令：「把图中玩意删掉」——卡片里那坨**空状态文字**连同它的
+    //   容器块一起删掉；页内提示只保留**顶部标题行的副标题**那一句（原来卡片里还贴了一遍
+    //   几乎同义的话，是重复）。删完卡片里只剩：打包格式行 + 两个列表。
     auto* row = new QHBoxLayout;
     row->addWidget(new QLabel(QStringLiteral("打包/解包格式：")), 0);
     row->addWidget(format_combo_, 0);
     row->addStretch(1);
+    // ★ 用户 2026-09-27：「1.x 的部分功能或选择没了」——1.x 有"输入行 + 浏览"和"扫描目录"，
+    //   2.x 却**只有拖放**（而拖放当时根本没接线，见 drop_filter.h 的说明）⇒ 等于没有入口。
+    //   这里补上**唯一**的加包入口按钮：选文件（可多选）→ 走 `add_paths`（与拖放同一条）。
+    add_button_ = new QPushButton(QStringLiteral("加包"));
+    add_button_->setObjectName(QStringLiteral("fs_add_package"));
+    row->addWidget(add_button_, 0);
     body_layout()->addLayout(row);
-    // 空状态提示：没有条目时显示（有货就藏）—— 与"空列表只有一条细线"配套
-    entry_hint_ = new QLabel(QStringLiteral(
-        "把包（.db / .sqfs）拖到窗口里就能加载；可叠加多个包，同名条目以后加载的为准。\n"
-        "加载后这里显示包内文件树，勾选条目后点下方「解包」。"));
-    entry_hint_->setObjectName(QStringLiteral("fs_entry_hint"));
-    entry_hint_->setWordWrap(true);
-
     body_layout()->addWidget(package_list_, 1);
     body_layout()->addWidget(entry_list_, 1);
-    // ★ 真机反馈「太空又太挤」第 2 步（2026-09-27）：空状态做成**占位块**——居中、吃满卡片
-    //   剩余空间，而不是原来贴在卡片底部的一行小字（中间那片空白因此变成可读的引导）。
-    empty_block_ = new QWidget;
-    empty_block_->setObjectName(QStringLiteral("fs_empty_block"));
-    auto* empty_layout = new QVBoxLayout(empty_block_);
-    empty_layout->setContentsMargins(0, 0, 0, 0);
-    empty_layout->setSpacing(xrkit::core::px(8));
-    empty_layout->addStretch(1);
-    // ★ 用户截图（真机）：空状态文字被**裁掉半行**、位置也怪 ⇒ 限宽 + 居中 + 给块最小高度，
-    //   让它在卡片里稳定地占一块、而不是被上下 stretch 挤扁。
-    entry_hint_->setMaximumWidth(xrkit::core::px(560));
-    entry_hint_->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
-    entry_hint_->setMinimumHeight(xrkit::core::px(56));
-    empty_block_->setMinimumHeight(xrkit::core::px(160));
-    empty_layout->addWidget(entry_hint_, 0, Qt::AlignHCenter | Qt::AlignVCenter);
-    empty_layout->addStretch(1);
-    // ★ 用户真机反馈「比例太丑」：空状态块给 stretch 3（包列表 1）⇒ 未加载包时
-    //   它是卡片的主角、包列表缩到它自己的最小高度（仍作拖放落点）。
-    body_layout()->addWidget(empty_block_, 3);
+
+    QObject::connect(add_button_, &QPushButton::clicked, this, [this] {
+        const QStringList picked = QFileDialog::getOpenFileNames(
+            this, QStringLiteral("选择要加载的包（可多选）"), QString(),
+            QStringLiteral("包 (*.db *.db0 *.db1 *.db2 *.db3 *.db4 *.db5 *.db6 *.db7 *.db8 "
+                           "*.db9 *.xdb *.sqfs *.sq_textures *.sq_levels *.sq_base *.sq_meshes);;"
+                           "所有文件 (*.*)"));
+        if (!picked.isEmpty()) add_paths(picked);
+    });
+    // 6.4：拖放挂在**既有控件**上（包列表 + 卡片空白处），不另造 drop_zone
+    drop_filter_ = new FileDropFilter([this](const QStringList& paths) { add_paths(paths); }, this);
+    drop_filter_->attach(package_list_);
+    drop_filter_->attach(card());
 
     // ── 操作栏（规则 2：贴底、不进视口）
     // 6.3：**两个不同的"全选"** —— 左边那组改包列表选中态，右边那个改包内勾选态。
@@ -169,15 +162,15 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         const QString image = sources_.empty() ? QString() : sources_.front().path;
         const efs::ExtractTreeResult result =
             extract_to(image, image + QStringLiteral(".out"), efs::Selection::Listed, only);
-        if (hint_ != nullptr) {
-            hint_->setText(result.ok
-                               ? QStringLiteral("解包完成：%1 个文件、%2 字节（失败 %3 项）%4")
-                                     .arg(result.files_written)
-                                     .arg(result.bytes_written)
-                                     .arg(result.failures.size())
-                                     .arg(utf8(result.failure_note()))
-                               : QStringLiteral("解包失败：%1").arg(utf8(result.error)));
-        }
+        // 解包结果写进**日志栏**（原来是改写卡片里那行提示；那行已按用户要求删掉，
+        // 结果不能因此没地方去）。失败也照旧可见。
+        log_message(result.ok
+                        ? QStringLiteral("解包完成：%1 个文件、%2 字节（失败 %3 项）%4")
+                              .arg(result.files_written)
+                              .arg(result.bytes_written)
+                              .arg(result.failures.size())
+                              .arg(utf8(result.failure_note()))
+                        : QStringLiteral("解包失败：%1").arg(utf8(result.error)));
     });
 
     refresh_rows();
@@ -205,8 +198,12 @@ void FsPage::add_source(const QString& source_in,
         log_message(QStringLiteral("拒绝加载（需要解密插件）：%1").arg(gate_error));
         return;
     }
-    const QString source = gated;  // 之后正文照旧用 source（形参已改名 source_in）
+    push_source(gated, entries);
+}
 
+void FsPage::push_source(const QString& source,
+                         const std::vector<std::pair<std::string, bool>>& entries) {
+    // 路径侧的闸门已经在调用方过掉（`add_source` / `add_paths`）—— 这里只动模型与界面
     efs::MergeInput input;
     input.source = source.toUtf8().toStdString();
     input.entries = entries;
@@ -224,6 +221,46 @@ void FsPage::add_source(const QString& source_in,
     refresh_rows();
 }
 
+int FsPage::add_paths(const QStringList& paths) {
+    int loaded = 0;
+    load_errors_.clear();
+    for (const QString& raw : paths) {
+        // ① 先过插件解密闸门（⑫12.1）：拒绝就**不加载**，理由进日志
+        QString gated = raw;
+        QString gate_error;
+        if (!gate_source(gated, &gate_error)) {
+            const QString why = QStringLiteral("拒绝加载（需要解密插件）：%1 —— %2")
+                                    .arg(raw, gate_error);
+            log_message(why);
+            load_errors_ << why;
+            continue;
+        }
+        // ② 目录 ⇒ 散装层；文件 ⇒ 包（SquashFS 按 magic、DB 按自洽判定，
+        //    歧义时用「打包/解包格式」下拉里选的那个，见 package_entries 的说明）
+        std::string error;
+        std::vector<std::pair<std::string, bool>> entries;
+        if (QFileInfo(gated).isDir()) {
+            entries = efs::loose_entries(gated.toUtf8().toStdString(), error);
+        } else {
+            entries = efs::package_entries(gated.toUtf8().toStdString(),
+                                           efs::format_key_to_db(current_format_key()), error);
+        }
+        if (!error.empty()) {
+            // ③ **可见失败**：认不出/解不开都要说清是哪一份、为什么（绝不静默加空包）
+            const QString why = QStringLiteral("加载失败：%1 —— %2").arg(raw, utf8(error));
+            log_message(why);
+            load_errors_ << why;
+            continue;
+        }
+        push_source(gated, entries);
+        ++loaded;
+        log_message(QStringLiteral("已加载：%1（%2 项）")
+                        .arg(raw)
+                        .arg(static_cast<int>(entries.size())));
+    }
+    return loaded;
+}
+
 QString FsPage::source_at(int index) const {
     if (index < 0 || index >= static_cast<int>(sources_.size())) return QString();
     return sources_[static_cast<size_t>(index)].path;
@@ -235,7 +272,9 @@ void FsPage::check_all(bool checked) {
 }
 
 bool FsPage::entry_hint_visible() const {
-    return entry_hint_ != nullptr && entry_hint_->isVisibleTo(const_cast<FsPage*>(this));
+    // ★ 2026-09-27：空状态提示块按用户要求**已删**（见构造函数注释）⇒ 恒为 false。
+    //   访问器保留是因为自检里还有"这条不该再出现"的反向断言（见 smoke.cpp）。
+    return false;
 }
 
 void FsPage::refresh_rows() {
@@ -253,11 +292,10 @@ void FsPage::refresh_rows() {
         row_texts_.push_back(text);
     }
     entry_list_->set_row_count(static_cast<int>(row_texts_.size()));
-    const bool nothing = row_texts_.empty();
-    if (empty_block_ != nullptr) empty_block_->setVisible(nothing);
-    // ★ 用户真机反馈「比例太丑」：未加载包时那个 160px 高的**空条目框**纯属占地方
-    //   （包列表保留 —— 它是拖放落点），空状态块因此拿回整块卡片。
-    if (entry_list_ != nullptr) entry_list_->setVisible(!nothing);
+    // ★ 一个包都没加载时（没有任何条目）**条目列表整个收起**，空间全给包列表：
+    //   它就是拖放落点、也是"已加载哪些包"的唯一显示处 —— 空着的条目框纯属占地方
+    //   （用户真机反馈「比例太丑」的原话场景；空状态块删掉后这条就是空状态的唯一处理）。
+    if (entry_list_ != nullptr) entry_list_->setVisible(!row_texts_.empty());
 }
 
 efs::ExtractTreeResult FsPage::extract_to(const QString& image_path, const QString& out_root,

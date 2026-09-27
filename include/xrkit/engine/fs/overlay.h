@@ -53,6 +53,20 @@ struct MergeInput {
 std::vector<std::pair<std::string, bool>> loose_entries(const std::string& root,
                                                         std::string& error);
 
+// 从一个**包文件**列出条目表（与 `loose_entries` 同形 —— 好让"包"与"散装目录"走同一条
+// `add_source` 路径，不出现第二套合并/加载逻辑）。
+//
+// 判定顺序（照 1.x `apps/fs_app.py` 的 `_load_one`）：
+//   ① **先读 96 字节超块**判 SquashFS（magic `hsqs`/`sqsh`）：命中就走元数据列表，
+//      **绝不整包进内存** —— 真机上有 8.3 GB 的 `gamedata.sq_textures`；
+//   ② 否则按 X-Ray DB：整文件读进来 + `auto_detect`（DB 的条目表在尾部，绕不开整文件读）；
+//      自洽格式**唯一**才采用；歧义/认不出时用 `db_fallback`（界面下拉里选的那个）；
+//   ③ 都不成立 ⇒ `error` 里写清原因（界面直接显示，**不静默当空包**）。
+// `db_fallback` 传 nullopt = "只认自动判定"。
+std::vector<std::pair<std::string, bool>> package_entries(const std::string& path,
+                                                          std::optional<DbFormat> db_fallback,
+                                                          std::string& error);
+
 struct MergeTree {
     MergeNode root;                      // 虚拟根（name/path 为空）
     std::vector<std::string> sources;    // **合并顺序**（= 加载顺序，后者赢）

@@ -1,10 +1,13 @@
 #include "xrkit/engine/fs/overlay.h"
 
 #include "xrkit/core/path.h"
+#include "xrkit/engine/fs/squashfs.h"
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 
 namespace xrkit::engine::fs {
 namespace {
@@ -298,6 +301,61 @@ std::vector<std::pair<std::string, bool>> loose_entries(const std::string& root,
         }
     }
     std::sort(out.begin(), out.end());
+    return out;
+}
+
+std::vector<std::pair<std::string, bool>> package_entries(const std::string& path,
+                                                          std::optional<DbFormat> db_fallback,
+                                                          std::string& error) {
+    error.clear();
+    std::vector<std::pair<std::string, bool>> out;
+
+    // ① SquashFS：**先只读 96 字节超块**判 magic（8.3 GB 的镜像不能整包进内存）
+    SuperBlock super;
+    std::string super_error;
+    if (read_superblock(path, super, super_error)) {
+        const ListResult listed = list_entries(path);
+        if (!listed.ok) {
+            error = listed.error.empty() ? std::string("读不出 SquashFS 条目表") : listed.error;
+            return out;
+        }
+        out.reserve(listed.entries.size());
+        for (const Entry& entry : listed.entries) out.emplace_back(entry.path, entry.is_dir);
+        return out;
+    }
+
+    // ② X-Ray DB 六格式：条目表在文件尾部 ⇒ 只能整文件读
+    std::ifstream in(core::path_from_utf8(path), std::ios::binary);
+    if (!in) {
+        error = "读不出文件：" + path;
+        return out;
+    }
+    const std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+    if (raw.empty()) {
+        error = "文件是空的：" + path;
+        return out;
+    }
+    std::optional<DbFormat> fmt = auto_detect(raw);
+    if (!fmt.has_value() && db_fallback.has_value()) fmt = db_fallback;
+    if (!fmt.has_value()) {
+        error = "认不出这个包的格式（DB 自洽判定有歧义；在下拉里选定具体格式后重试，"
+                "或它就是加密包/需要解密插件）";
+        return out;
+    }
+    const DbList listed = unpack_db(raw, *fmt);
+    if (!listed.ok) {
+        error = std::string(db_format_key(*fmt)) + " 解析失败：" + listed.error;
+        return out;
+    }
+    if (listed.entries.empty()) {
+        // 自动判定失败、退回下拉格式时**必须**有这一条：不然"拿错格式硬解"会静默变成
+        // 一个空包（用户看到的是"加载成功但什么都没有"）
+        error = std::string("在 ") + db_format_key(*fmt) + " 下一个条目都解不出来（格式不对？）";
+        return out;
+    }
+    out.reserve(listed.entries.size());
+    for (const DbEntry& entry : listed.entries) out.emplace_back(entry.path, entry.is_dir);
     return out;
 }
 

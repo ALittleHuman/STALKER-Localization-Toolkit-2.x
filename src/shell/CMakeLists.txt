@@ -14,6 +14,7 @@ add_library(xrkit_shell STATIC
   theme.cpp
 screen_scale.cpp
   plugin_ui.cpp
+  drop_filter.cpp
   virtual_list.cpp
   pages/page_base.cpp
   pages/page_factory.cpp

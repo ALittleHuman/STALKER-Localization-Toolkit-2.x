@@ -4,6 +4,7 @@
 
 #include "../scroll_viewport.h"
 
+#include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QFrame>
@@ -21,6 +22,14 @@ int page_min_h() { return xrkit::core::px(430); }
 PageBase::PageBase(const QString& page_id, const QString& title, QWidget* parent)
     : QWidget(parent), page_id_(page_id), title_(title) {
     setObjectName(QStringLiteral("page_") + page_id);
+    // ★ 用户 2026-09-27 真机反馈：「能输入的框点空白并不能取消，还是一闪一闪」
+    //   真因：QLineEdit 拿到焦点后，点卡片/正文那些**不接焦点**的空白区，Qt 不会动焦点
+    //   （默认 mousePressEvent 只 ignore，页面本身又是 NoFocus）⇒ 光标一直闪。
+    //   修法两层：① 页面本体接**点击焦点**（setFocus 得有地方落）；
+    //            ② 在空白容器上装事件过滤器，按下就把焦点**收回页面**（见 eventFilter）。
+    //   为什么不只靠 ①：点击落在 card/body 这类 NoFocus 子控件上时，Qt 不保证把焦点
+    //   交给父级；显式收焦点才是"点哪儿都会取消输入框焦点"的确定性做法。
+    setFocusPolicy(Qt::ClickFocus);
 
     outer_ = new QVBoxLayout(this);
     // 边距/间距一律过 px()（14.3：按 96 DPI 定的像素都得过；Qt 侧只过 core::px，
@@ -87,6 +96,22 @@ PageBase::PageBase(const QString& page_id, const QString& title, QWidget* parent
     outer_->addWidget(header_row_, 0);
     outer_->addWidget(viewport_, 1);  // 吃剩余空间
     outer_->addWidget(action_bar_, 0);
+
+    // ② 空白容器：按在它们身上 = "点了空白" ⇒ 把输入框的焦点收回页面
+    //   （只装在这几个**容器**上：按到 QLineEdit/QComboBox 等**接焦点**的控件时，
+    //    事件先到那个控件，这里的过滤器不会被触发 ⇒ 不会误抢）
+    for (QWidget* blank : {static_cast<QWidget*>(header_row_), card_, body_, action_bar_,
+                           static_cast<QWidget*>(viewport_)}) {
+        if (blank != nullptr) blank->installEventFilter(this);
+    }
+}
+
+bool PageBase::eventFilter(QObject* watched, QEvent* event) {
+    // 点空白 ⇒ 焦点收回页面（不吞事件：该冒泡的照旧冒泡）
+    if (event != nullptr && event->type() == QEvent::MouseButtonPress) {
+        setFocus(Qt::MouseFocusReason);
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void PageBase::set_subtitle(const QString& text) {
