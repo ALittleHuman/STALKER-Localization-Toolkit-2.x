@@ -72,8 +72,18 @@ PageBase::PageBase(const QString& page_id, const QString& title, QWidget* parent
     action_layout_->setSpacing(xrkit::core::px(6));
     action_layout_->addStretch(1);  // 按钮从右侧长出来（1.x 操作栏也是贴右）
 
-    outer_->addWidget(header_, 0);
-    outer_->addWidget(subtitle_, 0);
+    // ★ 用户 2026-09-27 真机反馈「太空又太挤」：把**页标题与说明合并成一行**（原来是两条薄行
+    //   叠在一起，加上顶部标签条共四条，视觉上挤成一片）。标题左、说明右、同基线；
+    //   顶部堆叠行数从 4 降到 2（标签条 + 本行）。
+    header_row_ = new QWidget(this);
+    header_row_->setObjectName(QStringLiteral("page_header_row"));
+    auto* header_row_layout = new QHBoxLayout(header_row_);
+    header_row_layout->setContentsMargins(0, 0, 0, 0);
+    header_row_layout->setSpacing(xrkit::core::px(8));
+    header_row_layout->addWidget(header_, 0);
+    header_row_layout->addStretch(1);
+    header_row_layout->addWidget(subtitle_, 0, Qt::AlignVCenter | Qt::AlignRight);
+    outer_->addWidget(header_row_, 0);
     outer_->addWidget(viewport_, 1);  // 吃剩余空间
     outer_->addWidget(action_bar_, 0);
 }

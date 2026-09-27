@@ -64,6 +64,7 @@ private:
     QString title_;
     QVBoxLayout* outer_ = nullptr;
     QLabel* header_ = nullptr;
+    QWidget* header_row_ = nullptr;  // 标题与说明同一行（真机反馈：别叠薄行）
     QLabel* subtitle_ = nullptr;
     QWidget* card_ = nullptr;
     ScrollViewport* viewport_ = nullptr;
