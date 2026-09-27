@@ -6,6 +6,7 @@
 
 #include <QFont>
 #include <QHBoxLayout>
+#include <QFrame>
 #include <QLabel>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -35,6 +36,12 @@ PageBase::PageBase(const QString& page_id, const QString& title, QWidget* parent
     header_font.setBold(true);
     header_->setFont(header_font);
 
+    // 副标题：次要色、比正文略小（QSS 里 #page_subtitle 定色）
+    subtitle_ = new QLabel(this);
+    subtitle_->setObjectName(QStringLiteral("page_subtitle"));
+    subtitle_->setWordWrap(true);
+    subtitle_->setVisible(false);  // 没设文案就不占位
+
     // ── 5.1：每页**自己**套一层视口。fit=content（静态内容，条子由本视口造），
     //    minsize_y = page_min_h()（5.2/5.3 的具名 setter）。
     viewport_ = new ScrollViewport(this);
@@ -44,9 +51,16 @@ PageBase::PageBase(const QString& page_id, const QString& title, QWidget* parent
 
     body_ = new QWidget;
     body_->setObjectName(QStringLiteral("page_body"));
-    body_layout_ = new QVBoxLayout(body_);
-    body_layout_->setContentsMargins(0, 0, 0, 0);
+    // ★ 内容区包进**卡片**：页面照旧往 body_layout() 里加东西 ⇒ 自动落在卡片内（页面代码不用改）
+    card_ = new QFrame(body_);
+    card_->setObjectName(QStringLiteral("card"));
+    body_layout_ = new QVBoxLayout(card_);
+    body_layout_->setContentsMargins(xrkit::core::px(12), xrkit::core::px(12),
+                                     xrkit::core::px(12), xrkit::core::px(12));
     body_layout_->setSpacing(xrkit::core::px(6));
+    auto* body_outer = new QVBoxLayout(body_);
+    body_outer->setContentsMargins(0, 0, 0, 0);
+    body_outer->addWidget(card_);
     viewport_->set_body(body_);
 
     // ── 规则 2：操作栏**先放且贴底**。它是页的直接子控件、**不在视口里**，
@@ -59,8 +73,15 @@ PageBase::PageBase(const QString& page_id, const QString& title, QWidget* parent
     action_layout_->addStretch(1);  // 按钮从右侧长出来（1.x 操作栏也是贴右）
 
     outer_->addWidget(header_, 0);
+    outer_->addWidget(subtitle_, 0);
     outer_->addWidget(viewport_, 1);  // 吃剩余空间
     outer_->addWidget(action_bar_, 0);
+}
+
+void PageBase::set_subtitle(const QString& text) {
+    if (subtitle_ == nullptr) return;
+    subtitle_->setText(text);
+    subtitle_->setVisible(!text.isEmpty());
 }
 
 QPushButton* PageBase::add_action(const QString& text) {

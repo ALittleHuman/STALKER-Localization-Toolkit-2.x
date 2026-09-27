@@ -40,6 +40,12 @@ public:
 
     QVBoxLayout* outer_layout() const { return outer_; }
     QLabel* header() const { return header_; }
+    // ★ 2026-09-27 界面重构：页标题下面加一句**副标题**（说明本页能干什么），
+    //   内容区包进**卡片**（QFrame#card：边框+圆角+内边距）——原来六页都是
+    //   "标题/说明/操作栏/内容区同一平面 + 裸列表铺满"。自检用它做几何断言。
+    QLabel* subtitle() const { return subtitle_; }
+    QWidget* card() const { return card_; }
+    void set_subtitle(const QString& text);
     ScrollViewport* viewport() const { return viewport_; }
     QWidget* body() const { return body_; }
     QVBoxLayout* body_layout() const { return body_layout_; }
@@ -58,6 +64,8 @@ private:
     QString title_;
     QVBoxLayout* outer_ = nullptr;
     QLabel* header_ = nullptr;
+    QLabel* subtitle_ = nullptr;
+    QWidget* card_ = nullptr;
     ScrollViewport* viewport_ = nullptr;
     QWidget* body_ = nullptr;
     QVBoxLayout* body_layout_ = nullptr;

@@ -61,6 +61,7 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                "QLabel { background: transparent; }"
                "QLabel#status_label { color: %5; }"
                "QLabel#page_header { color: %16; }"
+               "QLabel#page_subtitle { color: %5; }"
                // 卡片与分组（内容区加边界：原来"裸列表铺满"全靠这个改观）
                "QFrame#card, QGroupBox { background: %3; border: 1px solid %4;"
                "  border-radius: %17px; }"

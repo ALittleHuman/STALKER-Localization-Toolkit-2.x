@@ -1368,6 +1368,32 @@ SmokeResult run_smoke() {
         check(page.source_count() == 1,
               QStringLiteral("散装层没有变成一个源（实得 %1）").arg(page.source_count()));
 
+        // ★ 5.x 页面骨架（界面重构口径）：标题字号 > 正文、内容卡片占大头、操作栏贴底
+        {
+            FsPage skel;
+            skel.resize(600, 700);
+            skel.show();
+            QApplication::processEvents();
+            if (skel.layout() != nullptr) skel.layout()->activate();
+            QApplication::processEvents();
+            const double title_pt = skel.header() != nullptr ? skel.header()->font().pointSizeF() : 0.0;
+            const double body_pt = skel.font().pointSizeF() > 0 ? skel.font().pointSizeF() : 12.0;
+            check(skel.header() != nullptr && title_pt >= body_pt + 2.0,
+                  QStringLiteral("骨架① 页标题比正文大 >= 2pt（实测 %1 vs %2）").arg(title_pt).arg(body_pt));
+            check(skel.subtitle() != nullptr,
+                  QStringLiteral("骨架② 页要有副标题控件（说明本页能干什么）"));
+            const int page_h = skel.height();
+            const int card_h = skel.card() != nullptr ? skel.card()->height() : -1;
+            check(card_h > 0 && card_h >= page_h * 55 / 100,
+                  QStringLiteral("骨架③ 内容卡片 >= 页面高 55%%（实测 %1 / %2）").arg(card_h).arg(page_h));
+            if (skel.action_bar() != nullptr && skel.action_bar()->parentWidget() == &skel) {
+                const int bottom_gap = page_h - (skel.action_bar()->y() + skel.action_bar()->height());
+                check(bottom_gap >= 0 && bottom_gap <= xrkit::core::px(10),
+                      QStringLiteral("骨架④ 操作栏贴底（底部余量 %1px）").arg(bottom_gap));
+            }
+            skel.hide();
+        }
+
         // ★ 空状态（用户实测"空列表只有一条细线，看着像坏了"）：无条目时提示可见
         {
             FsPage empty_page;
