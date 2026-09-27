@@ -84,13 +84,13 @@ public:
             f.setPointSizeF(f.pointSizeF() + 3.0);
             f.setBold(true);
             head->setFont(f);
-            auto* sub = new QLabel(
+            subtitle_ = new QLabel(
                 QStringLiteral("选版本与标记 → 点「开始构建」；成功件落在 dist\\，失败件落在 dist\\FAIL\\"),
                 this);
-            sub->setObjectName(QStringLiteral("gui_subtitle"));
-            sub->setWordWrap(true);
+            subtitle_->setObjectName(QStringLiteral("gui_subtitle"));
+            subtitle_->setWordWrap(true);
             root_layout->addWidget(head, 0);
-            root_layout->addWidget(sub, 0);
+            root_layout->addWidget(subtitle_, 0);
         }
 
         auto* box = new QGroupBox(QStringLiteral("版本与标记（唯一事实来源：version.json）"), this);
@@ -192,6 +192,12 @@ public:
     int form_height() const { return form_box_ != nullptr ? form_box_->height() : -1; }
     int history_height() const { return history_ != nullptr ? history_->height() : -1; }
     int log_height() const { return log_ != nullptr ? log_->height() : -1; }
+    // 类外的自检（--layout-report 在 main 里）**只能**走公开访问器：
+    // 上一轮我直接在 main 里用 subtitle_ / findChild 编译不过（C2065/C3861）。
+    int subtitle_height() const { return subtitle_ != nullptr ? subtitle_->height() : -1; }
+    bool has_primary_button() const {
+        return findChild<QPushButton*>(QStringLiteral("primary")) != nullptr;
+    }
 
 private:
     static bool logpct_le(int pct) { return pct >= 0 && pct <= 50; }
@@ -367,6 +373,7 @@ private:
     QLineEdit* edit_full_ = nullptr;
     QLabel* label_store_ = nullptr;
     QGroupBox* form_box_ = nullptr;
+    QLabel* subtitle_ = nullptr;   // 顶部说明句（自检断言用）
     xrkit::shell::LogBox* log_ = nullptr;
     QProgressBar* progress_ = nullptr;   // 不确定态：构建中就一直走
     QListWidget* history_ = nullptr;     // 构建史条目（双击打开产物）
@@ -402,7 +409,11 @@ int main(int argc, char** argv) {
         const int log_pct = total > 0 ? logh * 100 / total : -1;
         std::printf("LAYOUT total=%d form=%d history=%d log=%d log_pct=%d%%\n", total, form, hist,
                     logh, log_pct);
-        const bool ok = form > 0 && form <= 200 && hist >= 110 && log_pct >= 0 && log_pct <= 50;
+        const int sub_h = window.subtitle_height();
+        const bool has_primary = window.has_primary_button();
+        std::printf("LAYOUT subtitle=%d primary=%d\n", sub_h, has_primary ? 1 : 0);
+        const bool ok = form > 0 && form <= 200 && hist >= 110 && log_pct >= 0 && log_pct <= 50 &&
+                        sub_h > 0 && has_primary;
         std::printf("LAYOUT %s\n", ok ? "PASS" : "FAIL");
         window.hide();
         return ok ? 0 : 1;
