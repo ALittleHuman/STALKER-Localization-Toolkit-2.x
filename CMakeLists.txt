@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 project(STALKER_Toolkit_2x VERSION 2.0.0 LANGUAGES C CXX)
 
+# Windows 资源（.rc）：可执行文件的图标等 —— 需要显式启用 RC 语言
+enable_language(RC)
+
 # ─────────────────────────────────────────────────────────────────────
 # /showIncludes 前缀（2026-09-24 实测，别删）
 #

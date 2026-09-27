@@ -1,0 +1,4 @@
+// 2.x 可执行文件的图标（与 1.x 同款：1.x 仓库根的 app_icon.ico）
+// 说明：这只影响**文件本身的图标**（资源管理器/任务栏）；窗口图标由 Qt 的 setWindowIcon 设，
+// 两者都要有 —— 只设窗口图标的话，资源管理器里看到的还是白板图标（用户实测反馈）。
+IDI_ICON1 ICON DISCARDABLE "app_icon.ico"

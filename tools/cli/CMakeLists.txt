@@ -1,4 +1,5 @@
-add_executable(xrkit_cli main.cpp build_cmd.cpp)
+add_executable(xrkit_cli main.cpp build_cmd.cpp
+  "${CMAKE_SOURCE_DIR}/assets/app.rc")
 target_link_libraries(xrkit_cli PRIVATE xrkit_engine xrkit_core xrkit_flags)
 
 # 测试插件：**故意用 C 编译**（.c + C 编译器）——用来证明这套 ABI 真的是纯 C ABI，
