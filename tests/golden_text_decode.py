@@ -186,16 +186,29 @@ def main() -> int:
         print("GOLDEN-TEXT-DECODE: FAIL (no-baseline)")
         return 1
 
-    base = {e["id"]: e for e in json.loads(BASELINE.read_text(encoding="utf-8"))["entries"]}
+    base_entries = json.loads(BASELINE.read_text(encoding="utf-8"))["entries"]
+    base = {e["id"]: e for e in base_entries}
+    # ★ 2026-09-27 实测：`real/<序号>_<名字>` 里的序号是**位置序**（每根 sorted[:30] 依次排），
+    #   所以**任何一棵语料树不可达都会让后面的 id 整体前移** —— 于是报一堆
+    #   "基线里没有 real/143_bind_smart_terrain.script（夹具变了？）"，看起来像内容不一致，
+    #   其实是**语料缺失**（实测：`SoC_Source\S.T.A.L.K.E.R. …` 那棵树在磁盘上不见了）。
+    #   处置：再按**文件名**建一份索引兜底；基线里"源已不可达"的样本记 denied（可见、进"未覆盖"），
+    #   内容比对**一条不放松**。
+    base_by_name = {}
+    for e in base_entries:
+        sid = e.get("id", "")
+        if sid.startswith("real/") and "_" in sid:
+            base_by_name[sid.split("_", 1)[1]] = e
     failures: list[str] = []
     stale: list[str] = []
     denied: list[str] = []
     compared = 0
     for sample_id, path in items:
-        exp = base.get(sample_id)
+        exp = base.get(sample_id) or base_by_name.get(path.name)
         if exp is None:
-            print("  !! 基线里没有 %s（夹具变了？重跑 --write）" % sample_id)
-            failures.append(sample_id)
+            # 基线里完全没有这个样本（新加的文件）⇒ 环境/夹具层面的"未覆盖"，不是内容不一致
+            print("  !! 新增样本（基线没有，记未覆盖）：%s" % sample_id)
+            denied.append(sample_id)
             continue
         # 读一下（带重试）：副本刚落盘时可能被安全软件短暂锁住 —— 那是**环境问题**，
         # 不是"解码不一致"。读不到就显式记 SKIP（退出码 2 → 门禁记"未覆盖"），

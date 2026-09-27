@@ -122,6 +122,7 @@ def pick_for_extract(entries: list[dict], count: int = 6) -> list[dict]:
 def write_baselines() -> int:
     sf = stalker_fs()
     OUT.mkdir(parents=True, exist_ok=True)
+    denied = 0
     failures = 0
 
     # ① 合成六格式
@@ -153,8 +154,10 @@ def write_baselines() -> int:
     for rid in ("gs-db-base", "soc-db0"):
         path = corpus_path(rid)
         if not path.exists():
-            print("[%s] 样本缺失，跳过" % rid)
-            failures += 1
+            # 实测 2026-09-27：`soc-db0` 的源树（SoC_Source\…）在磁盘上不见了 ⇒ 那是**环境缺失**，
+            # 不是"DB 格式不一致" ⇒ 记 denied（可见、进"未覆盖"，退码 2），不判红。
+            print("[%s] 样本缺失（源不可达，记未覆盖）" % rid)
+            denied += 1
             continue
         raw = path.read_bytes()
         print("[%s] %d B" % (rid, len(raw)))
@@ -180,7 +183,10 @@ def write_baselines() -> int:
             print("  ok %-8s 条目=%d（自洽）" % (key, len(entries)))
 
     print("已写基线到 %s" % OUT.relative_to(ROOT))
-    return 1 if failures else 0
+    print("GOLDEN-DB: %s (denied=%d)" % ("FAIL" if failures else ("PARTIAL" if denied else "PASS"), denied))
+    if failures:
+        return 1
+    return 2 if denied else 0
 
 
 # ── 对拍 ────────────────────────────────────────────────────────────────
@@ -202,6 +208,8 @@ def compare_entries(expect_rows: list[str], got_rows: list[str], label: str) -> 
 
 def check_baselines() -> int:
     failures = 0
+    # 环境缺失（源树不在盘上）记这里：可见、进"未覆盖"，**不判红**（与 golden_text_decode 同一口径）
+    denied = 0
     if not CLI.exists():
         raise SystemExit("找不到 %s" % CLI)
 
@@ -267,8 +275,10 @@ def check_baselines() -> int:
         key = rec["format"]
         print("[%s/%s]" % (rec["id"], key))
         if not image.exists():
-            print("  -- 样本缺失，跳过")
-            failures += 1
+            # 与上面那处同因（2026-09-27 实测：`soc-db0` 的源树在磁盘上不见了）：
+            # **环境缺失**记 denied（可见、进"未覆盖"，退码 2），不判红。
+            print("  -- 样本缺失（源不可达，记未覆盖）")
+            denied += 1
             continue
         rc, out = run_cli(["--dump", str(image), key])
         if rc != 0:
@@ -299,8 +309,11 @@ def check_baselines() -> int:
                 print("  ✓ 提取 %d 个文件逐字节一致" % ok)
 
     print("")
-    print("GOLDEN-DB: %s" % ("FAIL" if failures else "PASS"))
-    return 1 if failures else 0
+    print("GOLDEN-DB: %s (denied=%d)"
+          % ("FAIL" if failures else ("PARTIAL" if denied else "PASS"), denied))
+    if failures:
+        return 1
+    return 2 if denied else 0
 
 
 def main() -> int:

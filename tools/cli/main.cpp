@@ -15,6 +15,7 @@
 #include "xrkit/core/path.h"
 #include "xrkit/core/atomic_write.h"
 #include "build_cmd.h"
+#include "version_store_check.h"
 #include "xrkit/core/build_version.h"
 #include "xrkit/core/theme.h"
 #include "xrkit/core/version.h"
@@ -1162,6 +1163,7 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
     });
 
     // 散装层（用户 2026-09-26"最后并入层"决策）：真实目录 → 与包同形的条目表
+    xrkit_cli::register_version_store_check(reg);
     reg.add("fs: 散装层条目收集（与包同形、目录也算、排序确定）", [](CheckContext& ctx) {
         namespace efs = xrkit::engine::fs;
         namespace core = xrkit::core;
