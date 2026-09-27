@@ -8,9 +8,11 @@
 #include "xrkit/core/theme.h"
 #include "hub.h"
 #include "smoke.h"
+#include "ui_scale.h"
 #include "theme.h"
 
 #include <QApplication>
+#include <QScreen>
 #include <QStringList>
 #include <QTextStream>
 
@@ -56,8 +58,21 @@ int main(int argc, char** argv) {
     if (!saved.empty()) xrkit::core::theme_mode_from_name(saved, mode);
     xrkit::shell::apply_theme(app, mode);
 
+    // ★ 屏幕自适应（用户 2026-09-27："2.5K 屏…做一个自适应，所有屏幕都能正常用"）：
+    //   ① 先按当前屏幕的逻辑 DPI 把全局 ui_scale 设对（**必须在建控件之前**，
+    //      因为字体与几何都在构造时用 px() 换算）；
+    //   ② 再按屏幕可用区给窗口一个合适的默认尺寸（小屏不溢出、大屏不缩成一小块）。
+    xrkit::shell::apply_screen_ui_scale();
+
     xrkit::shell::Hub hub;
     xrkit::shell::apply_dark_titlebar(&hub, mode);
+    {
+        const QScreen* screen = QGuiApplication::primaryScreen();
+        const QSize avail = screen != nullptr ? screen->availableGeometry().size()
+                                              : QSize(1280, 800);
+        hub.resize(xrkit::shell::adaptive_window_size(avail, xrkit::shell::app_min_window_size()));
+        hub.setMinimumSize(xrkit::shell::app_min_window_size());
+    }
     hub.show();
     return QApplication::exec();
 }

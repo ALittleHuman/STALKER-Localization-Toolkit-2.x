@@ -12,6 +12,7 @@ add_library(xrkit_shell STATIC
   scroll_viewport.cpp
   split_pane.cpp
   theme.cpp
+ui_scale.cpp
   plugin_ui.cpp
   virtual_list.cpp
   pages/page_base.cpp
