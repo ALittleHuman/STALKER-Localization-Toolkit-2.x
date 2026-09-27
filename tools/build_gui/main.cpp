@@ -141,6 +141,13 @@ public:
         root_layout->addLayout(status_row);
 
         // 构建史：树里的每条记录一行；双击在资源管理器里打开产物
+        // ★ 界面重构（与主程序日志面板同语言）：给列表加一个小节标题，别让裸列表孤零零一片。
+        //   直接复用主程序已有的次要色选择器 page_subtitle ⇒ 零 QSS 改动、观感一致。
+        auto* hist_label = new QLabel(QStringLiteral("构建史（双击一行在资源管理器里打开产物）"), this);
+        hist_label->setObjectName(QStringLiteral("page_subtitle"));
+        hist_label->setProperty("gui_role", QStringLiteral("gui_history_label"));
+        root_layout->addWidget(hist_label, 0);
+
         history_ = new QListWidget(this);
         history_->setMinimumHeight(110);   // 口径：构建史 ≥ 110px（原来只有 max ⇒ 会被压没）
         history_->setMaximumHeight(160);
