@@ -18,6 +18,9 @@
 #include "xrkit/engine/plugin/registry.h"
 #include "xrkit/engine/fs/overlay.h"
 
+#include <QHash>
+#include <QSet>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 
@@ -32,10 +35,12 @@ class QListWidget;
 class QListWidgetItem;
 class QPushButton;
 
+class QTreeWidget;
+class QTreeWidgetItem;
+
 namespace xrkit::shell {
 
 class FileDropFilter;
-class VirtualList;
 
 class FsPage : public PageBase {
 public:
@@ -104,7 +109,15 @@ public:
 
     QComboBox* format_combo() const { return format_combo_; }
     QListWidget* package_list() const { return package_list_; }
-    VirtualList* entry_list() const { return entry_list_; }
+    // ★ 2026-09-28（用户贴 1.x 对照截图："差距。"）：包内文件区**从扁平路径文本改成真树**
+    //   —— 可展开/折叠（**懒建子节点**，几万条目的大包不卡）、每行**三态勾选框**
+    //   （能勾单个文件/整个目录，回灌引擎 `MergeTree`）、右列**大小**（1.x `_fmt_size` 同格式）
+    //   与**来源包**（6.1"看得出这一份来自哪个包"）。
+    QTreeWidget* entry_tree() const { return entry_tree_; }
+    int entry_top_level_count() const;
+    int entry_built_file_count() const;
+    QTreeWidgetItem* find_entry_item(const QString& path) const;
+    bool expand_entry(const QString& path);
     QPushButton* add_button() const { return add_button_; }
     // ★ 2026-09-28（用户："FS 的方便程度比 1.x 下降了不少"）—— 对齐 1.x 1.1.0：
     QLineEdit* out_edit() const { return out_edit_; }
@@ -233,6 +246,17 @@ private:
     void rebuild_package_list();
     // 合并树里的 `source_index` → 已知包路径（见 `loaded_order_` 的说明）
     QString source_path_for_index(int source_index) const;
+    // ── 树（包内条目）──────────────────────────────────────────────
+    static QString format_size(uint64_t size);                 // 照 1.x `_fmt_size`
+    QString source_label_for(const engine::fs::MergeNode* node) const;
+    void rebuild_dir_states();                                 // 目录 (文件数, 已勾数)
+    QTreeWidgetItem* make_entry_item(const engine::fs::MergeNode& node);
+    void populate_entry_children(QTreeWidgetItem* item);       // 懒建（展开时）
+    void build_all_descendants(const engine::fs::MergeNode& node, QTreeWidgetItem* item);
+    void sync_entry_states();                                  // 勾选后按模型刷三态
+    void on_entry_item_changed(QTreeWidgetItem* item);
+    bool entry_visible(const engine::fs::MergeNode& node) const;
+    void rebuild_filter_keep();
     // 反向：`sources_` 的下标 → 合并树里的 `source_index`（未加载返回 -1）
     int loaded_index_for_source(size_t row) const;
 
@@ -249,7 +273,12 @@ private:
     static engine::fs::ExtractTreeResult extract_job(const UnpackJob& job);
     engine::fs::FsSelection selection_;
     std::vector<Source> sources_;
-    std::vector<QString> row_texts_;
+    // 树：条目路径 → 项（懒建；只有建出来的那些在表里）
+    QHash<QString, QTreeWidgetItem*> built_items_;
+    // 每个**目录**在模型里的 (文件数, 已勾数) —— 勾选后按它刷新三态（一次 flatten 建全表）
+    QHash<QString, QPair<int, int>> dir_states_;
+    QSet<QString> filter_keep_;   // 搜索过滤要显示的路径（命中项 + 祖先链）；空 = 不过滤
+    bool syncing_tree_ = false;
     const plugin::Registry* registry_ = nullptr;
     QString decrypt_dir_;
     QString last_gate_error_;
@@ -257,7 +286,7 @@ private:
 
     QListWidget* package_list_ = nullptr;
     QComboBox* format_combo_ = nullptr;
-    VirtualList* entry_list_ = nullptr;
+    QTreeWidget* entry_tree_ = nullptr;
     QPushButton* add_button_ = nullptr;
     QLineEdit* out_edit_ = nullptr;
     QLineEdit* search_edit_ = nullptr;

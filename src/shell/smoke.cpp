@@ -47,6 +47,7 @@
 #include <QProcess>
 #include <QStringList>
 #include <QThread>
+#include <QTreeWidgetItem>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <QWidget>
@@ -1098,8 +1099,11 @@ SmokeResult run_smoke() {
         QApplication::processEvents();
         // 只匹配**行自己的路径**（1.x `_render` 同一口径）⇒ 命中 dir/keep.txt 这一行；
         // 父目录 dir/ 不含 "keep" 所以不显示（我第一版按"父目录也跟着来"写成 2，是我想多了）
-        check(page.entry_list()->row_count() == 1,
-              QStringLiteral("① 搜索过滤：只剩匹配行（实测 %1 行）").arg(page.entry_list()->row_count()));
+        // 过滤后：树里只留匹配项（含它的祖先链），且**命中必须看得见**
+        check(page.entry_built_file_count() == 1 &&
+                  page.find_entry_item(QStringLiteral("dir/keep.txt")) != nullptr,
+              QStringLiteral("① 搜索过滤：只留匹配项且它可见（已建文件项 %1）")
+                  .arg(page.entry_built_file_count()));
         page.search_edit()->clear();
         QApplication::processEvents();
         page.check_all_button()->click();            // 包内全选
@@ -1136,16 +1140,18 @@ SmokeResult run_smoke() {
                   QStringLiteral("① 加载选中：选中的都进树（已加载 %1 / 共 %2）")
                       .arg(scan_page.loaded_source_count())
                       .arg(scan_page.source_count()));
-            const int before_unload = scan_page.entry_list()->row_count();
+            const int before_unload = scan_page.entry_built_file_count();
             for (int i = 0; i < scan_page.package_list()->count(); ++i) {
                 scan_page.package_list()->item(i)->setSelected(true);
             }
             scan_page.unload_selected();
             check(before_unload > 0 && scan_page.loaded_source_count() == 0 &&
-                      scan_page.entry_list()->row_count() == 0,
-                  QStringLiteral("① 取消加载：条目从树里摘掉（%1 行 → %2 行）")
+                      scan_page.entry_top_level_count() == 0 &&
+                      scan_page.entry_built_file_count() == 0,
+                  QStringLiteral("① 取消加载：条目从树里摘掉（%1 个文件项 → %2，顶层 %3）")
                       .arg(before_unload)
-                      .arg(scan_page.entry_list()->row_count()));
+                      .arg(scan_page.entry_built_file_count())
+                      .arg(scan_page.entry_top_level_count()));
             scan_page.clear_all();
             check(scan_page.source_count() == 0 && scan_page.package_list()->count() == 0,
                   QStringLiteral("① 清空：已知包与列表都空（源 %1 / 行 %2）")
@@ -1378,11 +1384,18 @@ SmokeResult run_smoke() {
             check(drop_page.source_count() == 1,
                   QStringLiteral("⑦ 拖一个包进来要真的加载（实测 %1 个源）")
                       .arg(drop_page.source_count()));
-            // 树里是 3 行：两个文件 + `dir/keep.txt` 那一层目录节点（条目表是 2 条）
-            check(drop_page.entry_list() != nullptr && drop_page.entry_list()->row_count() == 3,
-                  QStringLiteral("⑦ 拖进来的包条目要进树（期望 2 文件 + 1 目录节点 = 3 行，实测 %1）")
-                      .arg(drop_page.entry_list() != nullptr ? drop_page.entry_list()->row_count()
-                                                             : -1));
+            // 树：顶层 = `dir/` 与 `a.txt`（2 项）；`dir` 展开后里面有 1 个文件；
+            // 懒建 ⇒ 一开始只建顶层，展开哪一支才建哪一支。
+            check(drop_page.entry_top_level_count() == 2 &&
+                      drop_page.entry_built_file_count() == 1 &&
+                      drop_page.expand_entry(QStringLiteral("dir")) &&
+                      drop_page.find_entry_item(QStringLiteral("dir/keep.txt")) != nullptr,
+                  QStringLiteral("⑦ 拖进来的包要进**树**（顶层 %1 / 展开前文件项 %2 / dir 子项 %3）")
+                      .arg(drop_page.entry_top_level_count())
+                      .arg(1)
+                      .arg(drop_page.find_entry_item(QStringLiteral("dir/keep.txt")) != nullptr
+                               ? 1
+                               : 0));
 
             // ④ 认不出的文件 ⇒ **可见失败**且不加源（绝不静默加一个空包）
             const QString junk = dir + QStringLiteral("/junk.bin");
@@ -1420,25 +1433,87 @@ SmokeResult run_smoke() {
                         {{"a.txt", false}, {"dir/keep.txt", false}, {"dir/base_only.txt", false}});
         page.add_source(QStringLiteral("sqzy_patch"), {{"a.txt", false}, {"dir/keep.txt", false}});
         check(page.source_count() == 2, QStringLiteral("6.2 两个包都进了列表"));
-        VirtualList* rows = page.entry_list();
-        check(rows != nullptr && rows->row_count() == 4,
-              QStringLiteral("6.1 合并后条目数 = 4（实测 %1）")
-                  .arg(rows == nullptr ? -1 : rows->row_count()));
-        bool patch_wins = false;
-        QStringList seen_rows;
-        for (int i = 0; rows != nullptr && i < rows->row_count(); ++i) {
-            const QString text = rows->row_text(i);
-            seen_rows << text;
-            if (text.startsWith(QStringLiteral("a.txt")) &&
-                text.contains(QStringLiteral("sqzy_patch"))) {
-                patch_wins = true;
+        // 合并后：顶层 = `dir/` + `a.txt`；文件项要看得出"这一份来自哪个包"（来源列）
+        check(page.entry_top_level_count() == 2,
+              QStringLiteral("6.1 合并后顶层条目数 = 2（实测 %1）").arg(page.entry_top_level_count()));
+        QTreeWidgetItem* a_item = page.find_entry_item(QStringLiteral("a.txt"));
+        check(a_item != nullptr &&
+                  a_item->text(2).contains(QStringLiteral("sqzy_patch")),
+              QStringLiteral("6.1 同名条目以后加载的包为准（来源列 = 「%1」，期望含 sqzy_patch）")
+                  .arg(a_item != nullptr ? a_item->text(2) : QString()));
+        check(a_item != nullptr && !a_item->text(1).isEmpty(),
+              QStringLiteral("6.1 文件行要有**大小**列（实测「%1」）")
+                  .arg(a_item != nullptr ? a_item->text(1) : QString()));
+        // ★ 2026-09-28（用户贴 1.x 对照截图："差距。"）：树要能**展开/折叠**、每行能**单独勾**、
+        //   目录勾选是**三态**（模型说了算）。判据都落在真树上，不是"看代码里有没有 QTreeWidget"。
+        {
+            FsPage tree_page;
+            tree_page.resize(760, page_min_h());
+            tree_page.show();
+            QApplication::processEvents();
+            tree_page.add_source(QStringLiteral("base"),
+                                 {{"top.txt", false}, {"d/one.txt", false}, {"d/two.txt", false}});
+            QApplication::processEvents();
+            check(tree_page.entry_top_level_count() == 2,
+                  QStringLiteral("树① 顶层 2 项（top.txt + d/），实测 %1")
+                      .arg(tree_page.entry_top_level_count()));
+            check(tree_page.entry_built_file_count() == 1,
+                  QStringLiteral("树① **懒建**：没展开时只建顶层（已建文件项 %1）")
+                      .arg(tree_page.entry_built_file_count()));
+            // 「展开信号接上了」：程序化 setExpanded 不发信号（见 expand_entry 注释），
+            // 所以这里**手动发一条** `itemExpanded`（等价于视图在用户点箭头时发的那条）⇒ 懒建必须发生。
+            // 这一条证明的是"连接 + 懒建逻辑"，不是"Qt 会不会发信号"（那是 Qt 的契约）。
+            {
+                QTreeWidgetItem* d_raw = tree_page.find_entry_item(QStringLiteral("d"));
+                QMetaObject::invokeMethod(tree_page.entry_tree(), "itemExpanded",
+                                          Q_ARG(QTreeWidgetItem*, d_raw));
+                QApplication::processEvents();
+                check(tree_page.entry_built_file_count() == 3,
+                      QStringLiteral("树① itemExpanded ⇒ 懒建子节点（已建文件项 %1，期望 3）")
+                          .arg(tree_page.entry_built_file_count()));
             }
+            check(tree_page.find_entry_item(QStringLiteral("d")) != nullptr,
+                  QStringLiteral("树① 能按路径找到条目项"));
+            check(tree_page.expand_entry(QStringLiteral("d")) &&
+                      tree_page.entry_built_file_count() == 3,
+                  QStringLiteral("树① 展开后子项出现且**幂等**（已建文件项 %1，期望 3）")
+                      .arg(tree_page.entry_built_file_count()));
+            // 单个文件勾选（1.x 的 CanvasTree 能一行一行勾）⇒ 模型计数跟着走
+            QTreeWidgetItem* one = tree_page.find_entry_item(QStringLiteral("d/one.txt"));
+            check(one != nullptr && tree_page.checked_file_count() == 0,
+                  QStringLiteral("树① 初始没有勾选"));
+            if (one != nullptr) one->setCheckState(0, Qt::Checked);
+            QApplication::processEvents();
+            check(tree_page.checked_file_count() == 1,
+                  QStringLiteral("树① **能勾单个文件**（实测勾了 %1 个）")
+                      .arg(tree_page.checked_file_count()));
+            // 目录勾选 = 整目录（三态：勾满 → Checked；勾一个 → PartiallyChecked）
+            QTreeWidgetItem* dir_item = tree_page.find_entry_item(QStringLiteral("d"));
+            check(dir_item != nullptr && dir_item->checkState(0) == Qt::PartiallyChecked,
+                  QStringLiteral("树① 目录三态：勾了 1/2 ⇒ PartiallyChecked（实测 %1）")
+                      .arg(dir_item != nullptr ? static_cast<int>(dir_item->checkState(0)) : -1));
+            if (dir_item != nullptr) dir_item->setCheckState(0, Qt::Checked);
+            QApplication::processEvents();
+            // 勾 `d/` = 该目录**整棵**勾上（正好 2 个文件）；`top.txt` 不在它里面 ⇒ 仍是未勾。
+            // （我第一版把期望写成 3，是把"顶层文件"也算进去了 —— 判据写错，已改）
+            check(tree_page.checked_file_count() == 2,
+                  QStringLiteral("树① 勾目录 = 该目录整棵勾上（实测 %1，期望它自己的 2 个）")
+                      .arg(tree_page.checked_file_count()));
+            QTreeWidgetItem* top_item = tree_page.find_entry_item(QStringLiteral("top.txt"));
+            if (top_item != nullptr) top_item->setCheckState(0, Qt::Checked);
+            QApplication::processEvents();
+            check(tree_page.checked_file_count() == 3,
+                  QStringLiteral("树① 再勾顶层文件 ⇒ 3 个（实测 %1）")
+                      .arg(tree_page.checked_file_count()));
+            // 解包选中只带"勾选的"（按包分组）：勾满 3 个 ⇒ only 是 3 条
+            QString root_unused;
+            const std::vector<FsPage::UnpackJob> jobs = tree_page.plan_unpack(true, &root_unused);
+            check(jobs.size() == 1 && jobs[0].only.size() == 3,
+                  QStringLiteral("树① 勾选进得了「解包选中」的计划（包 %1 / 条目 %2）")
+                      .arg(jobs.size())
+                      .arg(jobs.empty() ? 0 : jobs[0].only.size()));
+            tree_page.hide();
         }
-        check(patch_wins, QStringLiteral("6.1 同名条目以后加载的包为准（行里能看到来源包）；"
-                                         "源 %1 个/已加载 %2 个，实际行：%3")
-                              .arg(page.source_count())
-                              .arg(page.loaded_source_count())
-                              .arg(seen_rows.join(QStringLiteral(" | "))));
 
         // 6.3：两个"全选"动的是**两套**状态
         page.select_all_button()->click();
@@ -2089,15 +2164,15 @@ SmokeResult run_smoke() {
                       .arg(list_h)
                       .arg(pack_h));
             // 条目列表：没条目时收起（不占地方），有货才出现
-            check(empty_page.entry_list() != nullptr && empty_page.entry_list()->isHidden(),
-                  QStringLiteral("空状态：没有条目时条目列表要收起（不留一个空框）"));
+            check(empty_page.entry_tree() != nullptr && empty_page.entry_tree()->isHidden(),
+                  QStringLiteral("空状态：没有条目时条目树要收起（不留一个空框）"));
 
             empty_page.add_loose_dir(QString::fromStdString(work.string()), nullptr);  // 临时目录是 ASCII 路径
             QApplication::processEvents();
             check(!empty_page.entry_hint_visible(),
                   QStringLiteral("① 加载后也不许冒出那句提示（它已经删了）"));
-            check(empty_page.entry_list() != nullptr && !empty_page.entry_list()->isHidden(),
-                  QStringLiteral("有条目后条目列表要出现"));
+            check(empty_page.entry_tree() != nullptr && !empty_page.entry_tree()->isHidden(),
+                  QStringLiteral("有条目后条目树要出现"));
             empty_page.hide();
         }
         // 用"勾选计数"证明条目**真的进了合并树**（a.txt + sub/b.txt = 2 个文件）

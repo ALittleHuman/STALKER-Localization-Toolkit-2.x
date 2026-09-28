@@ -6,7 +6,7 @@
 #include "xrkit/engine/fs/squashfs.h"
 
 #include "../drop_filter.h"
-#include "../virtual_list.h"
+
 
 #include <QComboBox>
 #include <QDesktopServices>
@@ -19,7 +19,9 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QHeaderView>
 #include <QPushButton>
+#include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -107,16 +109,24 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     format_combo_->setObjectName(QStringLiteral("fs_format_combo"));
     fill_format_combo();
 
-    entry_list_ = new VirtualList;
-    entry_list_->setObjectName(QStringLiteral("fs_entry_list"));
-    entry_list_->set_row_height(xrkit::core::px(20));
+    // ★ 真树（1.x CanvasTree 的对位件）：三列 = 名称（带三态勾选框）/ 大小 / 来源包；
+    //   子节点**懒建**（展开时才建），所以几万条目的大包打开也不慢。
+    entry_tree_ = new QTreeWidget;
+    entry_tree_->setObjectName(QStringLiteral("fs_entry_tree"));
+    entry_tree_->setColumnCount(3);
+    entry_tree_->setHeaderLabels({QStringLiteral("包内条目"), QStringLiteral("大小"),
+                                  QStringLiteral("来源")});
+    entry_tree_->setUniformRowHeights(true);   // 行高一致 ⇒ 几万行也不慢
+    entry_tree_->setAlternatingRowColors(false);
+    entry_tree_->header()->setStretchLastSection(true);
     // ★ 2026-09-27（用户实测"排版有很大问题"）：条目区给自己一个**最小高度**，
     //   免得没有条目时被压成一条细线（看着像坏了）。
-    entry_list_->setMinimumHeight(xrkit::core::px(160));
-    entry_list_->set_row_text_provider([this](int row) -> QString {
-        if (row < 0 || row >= static_cast<int>(row_texts_.size())) return QString();
-        return row_texts_[static_cast<size_t>(row)];
-    });
+    entry_tree_->setMinimumHeight(xrkit::core::px(160));
+    // 勾选/展开都回灌模型（见 on_entry_item_changed / populate_entry_children）
+    QObject::connect(entry_tree_, &QTreeWidget::itemChanged, this,
+                     [this](QTreeWidgetItem* item, int) { on_entry_item_changed(item); });
+    QObject::connect(entry_tree_, &QTreeWidget::itemExpanded, this,
+                     [this](QTreeWidgetItem* item) { populate_entry_children(item); });
 
     // ★ 用户 2026-09-27 真机明令：「把图中玩意删掉」——卡片里那坨**空状态文字**连同它的
     //   容器块一起删掉；页内提示只保留**顶部标题行的副标题**那一句（原来卡片里还贴了一遍
@@ -195,7 +205,7 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         bar->addWidget(entry_count_label_, 0);
         body_layout()->addLayout(bar);
     }
-    body_layout()->addWidget(entry_list_, 1);
+    body_layout()->addWidget(entry_tree_, 1);
 
     // ── ★ 1.x 的**封包面板**（`_build_pack_panel`）：这一整块是"FS 方便程度"的最后一块拼图
     //    （1.x 能"解包 → 改 → 重新封包"，2.x 原来只解不封）。布局照 1.x 三行：
@@ -506,28 +516,234 @@ bool FsPage::row_matches(const std::string& path) const {
     return utf8(path).toLower().contains(query);
 }
 
-void FsPage::refresh_rows() {
-    row_texts_.clear();
+QString FsPage::format_size(uint64_t size) {
+    // 照 1.x `_fmt_size`：≥1 MiB ⇒ "N.N MB"；≥1 KiB ⇒ "N.N KB"；否则 "N B"
+    if (size >= 1048576) return QStringLiteral("%1 MB").arg(size / 1048576.0, 0, 'f', 1);
+    if (size >= 1024) return QStringLiteral("%1 KB").arg(size / 1024.0, 0, 'f', 1);
+    return QStringLiteral("%1 B").arg(size);
+}
+
+QString FsPage::source_label_for(const efs::MergeNode* node) const {
+    if (node == nullptr || node->is_dir) return QString();
+    const QString path = source_path_for_index(node->source_index);
+    return path.isEmpty() ? QString() : QFileInfo(path).fileName();
+}
+
+void FsPage::rebuild_dir_states() {
+    // 每个目录在模型里的 (文件数, 已勾数)：勾选后刷三态用。
+    // 只算**这一份源胜出**的节点（`source_index` 已在合并时定死），与"包内全选"同口径。
+    dir_states_.clear();
     for (const efs::MergeNode* node : tree_.flatten()) {
-        if (!row_matches(node->path)) continue;   // 搜索过滤（1.x 同一行为）
-        QString text = utf8(node->path);
-        if (node->is_dir) {
-            text += QStringLiteral("/");
-        } else if (!source_path_for_index(node->source_index).isEmpty()) {
-            // "这一份来自哪个包" = 引擎实际会读到的那一份（6.1）
-            text += QStringLiteral("　←　") + source_path_for_index(node->source_index);
-        }
-        if (node->checked) text += QStringLiteral("　[勾选]");
-        row_texts_.push_back(text);
+        if (node->is_dir) continue;
+        const QString path = utf8(node->path);
+        const int slash = path.lastIndexOf(QLatin1Char('/'));
+        if (slash <= 0) continue;
+        const QString dir = path.left(slash);
+        QPair<int, int>& state = dir_states_[dir];
+        state.first += 1;
+        if (node->checked) state.second += 1;
     }
-    entry_list_->set_row_count(static_cast<int>(row_texts_.size()));
-    // ★ 一个包都没加载时（没有任何条目）**条目列表整个收起**，空间全给包列表：
-    //   它就是拖放落点、也是"已加载哪些包"的唯一显示处 —— 空着的条目框纯属占地方
-    //   （用户真机反馈「比例太丑」的原话场景；空状态块删掉后这条就是空状态的唯一处理）。
-    if (entry_list_ != nullptr) entry_list_->setVisible(!row_texts_.empty());
+}
+
+int FsPage::entry_top_level_count() const {
+    return entry_tree_ != nullptr ? entry_tree_->topLevelItemCount() : 0;
+}
+
+int FsPage::entry_built_file_count() const {
+    int files = 0;
+    if (entry_tree_ == nullptr) return 0;
+    std::function<void(QTreeWidgetItem*)> walk = [&](QTreeWidgetItem* item) {
+        if (item == nullptr) return;
+        if (item->data(0, Qt::UserRole).toString().isEmpty()) return;   // 占位子项
+        // UserRole+1 存的是 **is_dir** ⇒ 只有 false 才是文件（我第一版写反了，把目录当文件数，entry_built_file_count 因此恒为顶层目录数）
+        if (!item->data(0, Qt::UserRole + 1).toBool()) files += 1;
+        for (int i = 0; i < item->childCount(); ++i) walk(item->child(i));
+    };
+    for (int i = 0; i < entry_tree_->topLevelItemCount(); ++i) walk(entry_tree_->topLevelItem(i));
+    return files;
+}
+
+QTreeWidgetItem* FsPage::find_entry_item(const QString& path) const {
+    if (entry_tree_ == nullptr) return nullptr;
+    QTreeWidgetItem* found = nullptr;
+    std::function<void(QTreeWidgetItem*)> walk = [&](QTreeWidgetItem* item) {
+        if (item == nullptr || found != nullptr) return;
+        if (item->data(0, Qt::UserRole).toString() == path) {
+            found = item;
+            return;
+        }
+        for (int i = 0; i < item->childCount(); ++i) walk(item->child(i));
+    };
+    for (int i = 0; i < entry_tree_->topLevelItemCount() && found == nullptr; ++i) {
+        walk(entry_tree_->topLevelItem(i));
+    }
+    return found;
+}
+
+bool FsPage::expand_entry(const QString& path) {
+    QTreeWidgetItem* item = find_entry_item(path);
+    if (item == nullptr) return false;
+    item->setExpanded(true);
+    // 这里**显式**补一次懒建：Qt 的 `itemExpanded` 是**视图**在（用户/视图）真正展开时发的，
+    // 程序化 `QTreeWidgetItem::setExpanded()` 只置项自己的标志、不发信号（自检里实测）。
+    // 真机上是用户点箭头 ⇒ 走 `itemExpanded`（构造函数里已接）。`populate_entry_children`
+    // 幂等（已有真子项就直接返回），所以两条路都走也不会重复建。
+    populate_entry_children(item);
+    return true;
+}
+
+QTreeWidgetItem* FsPage::make_entry_item(const efs::MergeNode& node) {
+    auto* item = new QTreeWidgetItem;
+    const QString path = utf8(node.path);
+    item->setData(0, Qt::UserRole, path);
+    item->setData(0, Qt::UserRole + 1, node.is_dir);
+    item->setText(0, utf8(node.name) + (node.is_dir ? QStringLiteral("/") : QString()));
+    item->setText(1, node.is_dir ? QString() : format_size(node.size));
+    item->setText(2, source_label_for(&node));
+    item->setToolTip(0, path);
+    if (node.is_dir) {
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        // 目录的三态由**模型**决定（见 sync_entry_states），不靠 Qt 的自动三态
+        QPair<int, int> state = dir_states_.value(path, {0, 0});
+        item->setCheckState(0, state.first == 0 || state.second == 0
+                                   ? (state.second > 0 ? Qt::Checked : Qt::Unchecked)
+                                   : (state.second == state.first ? Qt::Checked
+                                                                  : Qt::PartiallyChecked));
+        // 有子节点就放一个占位子项（展开箭头才会出现；真的子项在展开时才建）
+        if (!node.children.empty()) {
+            auto* placeholder = new QTreeWidgetItem;
+            placeholder->setData(0, Qt::UserRole, QString());
+            item->addChild(placeholder);
+        }
+    } else {
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(0, node.checked ? Qt::Checked : Qt::Unchecked);
+    }
+    built_items_.insert(path, item);
+    return item;
+}
+
+void FsPage::populate_entry_children(QTreeWidgetItem* item) {
+    if (item == nullptr || syncing_tree_) return;
+    const QString path = item->data(0, Qt::UserRole).toString();
+    if (path.isEmpty()) return;
+    // 已经建过真子项就不再建（占位子项的特征：它的 path 为空）
+    if (item->childCount() == 1 && item->child(0)->data(0, Qt::UserRole).toString().isEmpty()) {
+        item->removeChild(item->child(0));
+    } else if (item->childCount() > 0) {
+        return;
+    }
+    const efs::MergeNode* node = tree_.find(path.toUtf8().toStdString());
+    if (node == nullptr) return;
+    syncing_tree_ = true;
+    for (const efs::MergeNode& child : node->children) {
+        if (!entry_visible(child)) continue;   // 搜索过滤（命中项 + 祖先链才显示）
+        item->addChild(make_entry_item(child));
+    }
+    syncing_tree_ = false;
+}
+
+void FsPage::sync_entry_states() {
+    // 勾选变化后：把**已建出来**的目录/文件项的三态按模型刷一遍（父项跟着变三态）
+    syncing_tree_ = true;
+    for (auto it = built_items_.begin(); it != built_items_.end(); ++it) {
+        QTreeWidgetItem* item = it.value();
+        if (item == nullptr) continue;
+        const bool is_dir = item->data(0, Qt::UserRole + 1).toBool();
+        if (is_dir) {
+            const QPair<int, int> state = dir_states_.value(it.key(), {0, 0});
+            item->setCheckState(0, state.second == 0 ? Qt::Unchecked
+                                                     : (state.second == state.first
+                                                            ? Qt::Checked
+                                                            : Qt::PartiallyChecked));
+        } else {
+            const efs::MergeNode* node = tree_.find(it.key().toUtf8().toStdString());
+            item->setCheckState(0, node != nullptr && node->checked ? Qt::Checked
+                                                                   : Qt::Unchecked);
+        }
+    }
+    syncing_tree_ = false;
+}
+
+void FsPage::on_entry_item_changed(QTreeWidgetItem* item) {
+    if (syncing_tree_ || item == nullptr) return;
+    const QString path = item->data(0, Qt::UserRole).toString();
+    if (path.isEmpty()) return;
+    const bool on = item->checkState(0) != Qt::Unchecked;
+    // 回灌模型：**文件与目录都走 `toggle_dir`**（目录递归、文件只影响它自己）——
+    // 这就是 1.x `_dir_toggle` 的语义；模型改完再按它刷界面三态。
+    tree_.toggle_dir(path.toUtf8().toStdString(), on);
+    rebuild_dir_states();
+    sync_entry_states();
     refresh_counts();
 }
 
+bool FsPage::entry_visible(const efs::MergeNode& node) const {
+    // 空集合 = 不过滤；否则只显示「命中项 + 祖先链」（层级才留得住）
+    return filter_keep_.isEmpty() || filter_keep_.contains(utf8(node.path));
+}
+
+void FsPage::rebuild_filter_keep() {
+    filter_keep_.clear();
+    if (search_edit_ == nullptr) return;
+    if (search_edit_->text().trimmed().isEmpty()) return;
+    // 一趟 flatten 就够：命中项进集合，再把它的每一段祖先也塞进去
+    for (const efs::MergeNode* node : tree_.flatten()) {
+        if (node->is_dir || !row_matches(node->path)) continue;
+        QString path = utf8(node->path);
+        while (!path.isEmpty()) {
+            filter_keep_.insert(path);
+            const qsizetype slash = path.lastIndexOf(QLatin1Char('/'));
+            path = slash > 0 ? path.left(slash) : QString();
+        }
+    }
+}
+
+void FsPage::refresh_rows() {
+    // 重建整棵树：顶层 = 合并树的根的直接子节点；子节点在展开时懒建。
+    // 有搜索词时**不懒建**（把匹配路径的整条链一次建出来）—— 过滤后条目通常很少，
+    // 这样"搜一下就看得见"；空搜索时保持懒建（大包性能）。
+    if (entry_tree_ == nullptr) return;
+    syncing_tree_ = true;
+    entry_tree_->clear();
+    built_items_.clear();
+    rebuild_dir_states();
+    // 搜索过滤：先把「命中项 + 它们的祖先链」算成一个集合，再按它建树（层级因此保留）
+    rebuild_filter_keep();
+    if (filter_keep_.isEmpty()) {
+        for (const efs::MergeNode& child : tree_.root.children) {
+            entry_tree_->addTopLevelItem(make_entry_item(child));
+        }
+    } else {
+        std::function<void(const efs::MergeNode&, QTreeWidgetItem*)> walk =
+            [&](const efs::MergeNode& node, QTreeWidgetItem* parent) {
+                for (const efs::MergeNode& child : node.children) {
+                    if (!entry_visible(child)) continue;
+                    QTreeWidgetItem* item = make_entry_item(child);
+                    if (parent == nullptr) {
+                        entry_tree_->addTopLevelItem(item);
+                    } else {
+                        parent->addChild(item);
+                    }
+                    walk(child, item);
+                }
+            };
+        walk(tree_.root, nullptr);
+    }
+    syncing_tree_ = false;
+    entry_tree_->setVisible(entry_tree_->topLevelItemCount() > 0);
+    refresh_counts();
+}
+
+void FsPage::build_all_descendants(const efs::MergeNode& node, QTreeWidgetItem* item) {
+    // 过滤模式：把这一支整棵建出来（含不匹配的祖先之间已匹配的子树）
+    for (const efs::MergeNode& child : node.children) {
+        if (!entry_visible(child)) continue;
+        QTreeWidgetItem* child_item = make_entry_item(child);
+        item->addChild(child_item);
+        build_all_descendants(child, child_item);
+    }
+}
 QString FsPage::output_dir() const {
     return out_edit_ != nullptr ? out_edit_->text().trimmed() : QString();
 }
