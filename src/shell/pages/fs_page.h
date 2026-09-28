@@ -28,6 +28,7 @@ class QComboBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QListWidgetItem;
 class QPushButton;
 
 namespace xrkit::shell {
@@ -131,6 +132,32 @@ public:
 
     QPushButton* select_all_button() const { return select_all_button_; }
     QPushButton* check_all_button() const { return check_all_button_; }
+    // ★ 1.x 的封包面板（`_build_pack_panel` / `_pack` 一族）
+    QComboBox* pack_format_combo() const { return pack_format_combo_; }
+    QLineEdit* pack_out_edit() const { return pack_out_edit_; }
+    QListWidget* pack_list() const { return pack_list_; }
+    QPushButton* pack_button() const { return pack_button_; }
+    QLabel* pack_count_label() const { return pack_count_label_; }
+    int pack_item_count() const { return static_cast<int>(pack_items_.size()); }
+    int add_pack_files(const QStringList& paths);
+    int add_pack_dir(const QString& dir);
+    int remove_pack_selected();
+    void clear_pack();
+    void refresh_pack_list();
+    // 包列表勾选框（1.x `_db_toggle`/`_db_chk_state`）
+    void on_package_item_changed(QListWidgetItem* item);
+    void refresh_package_checks();
+    // 1.x `_pack_root`：设了输入目录就用它（2.x 用「解包到」当这个"根"）
+    QString pack_base_dir() const;
+    // 1.x `_pack_output_basename`（没有"输入目录"那一支）：顶层同名 ⇒ 用那个名字；
+    // 单文件 ⇒ 去扩展名；否则 None ⇒ 用 `packed`。
+    QString pack_output_basename() const;
+    // 1.x `_pack_ext`：sqfs ⇒ `.sqfs`；其余 ⇒ `.<内部键>.db`（六种格式产物不同名）
+    static QString pack_ext_for(const QString& key);
+    // 1.x `_resolve_pack_target`：定路径 + **回填到输出框**（1.x 的 H1 就是"set 写在 return 之后"）
+    QString resolve_pack_target();
+    // 真写盘：sqfs ⇒ `pack_squashfs`；其余 ⇒ `pack_db` + 原子写
+    bool run_pack(QString* summary);
 
     // 6.13 的判据：下拉每一项的 `data` 必须是内部键，且显示名解析不出格式
     void fill_format_combo();
@@ -202,6 +229,13 @@ private:
     QPushButton* check_none_button_ = nullptr;
     QPushButton* unpack_checked_button_ = nullptr;
     QPushButton* unpack_all_button_ = nullptr;
+    QComboBox* pack_format_combo_ = nullptr;
+    QLineEdit* pack_out_edit_ = nullptr;
+    QListWidget* pack_list_ = nullptr;
+    QPushButton* pack_button_ = nullptr;
+    QLabel* pack_count_label_ = nullptr;
+    std::vector<engine::fs::PackFileItem> pack_items_;
+    bool rebuilding_package_list_ = false;   // 重建包列表时抑制 itemChanged 回灌
     FileDropFilter* drop_filter_ = nullptr;
     QPushButton* select_all_button_ = nullptr;
     QPushButton* check_all_button_ = nullptr;

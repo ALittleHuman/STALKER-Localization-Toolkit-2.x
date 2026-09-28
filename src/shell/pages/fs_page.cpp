@@ -1,6 +1,9 @@
 #include "fs_page.h"
 
 #include "xrkit/core/theme.h"
+#include "xrkit/core/atomic_write.h"
+#include "xrkit/core/path.h"
+#include "xrkit/engine/fs/squashfs.h"
 
 #include "../drop_filter.h"
 #include "../virtual_list.h"
@@ -21,7 +24,9 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <fstream>
 #include <functional>
+#include <iterator>
 
 namespace xrkit::shell {
 namespace {
@@ -192,6 +197,84 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     }
     body_layout()->addWidget(entry_list_, 1);
 
+    // ── ★ 1.x 的**封包面板**（`_build_pack_panel`）：这一整块是"FS 方便程度"的最后一块拼图
+    //    （1.x 能"解包 → 改 → 重新封包"，2.x 原来只解不封）。布局照 1.x 三行：
+    //    格式+输出+浏览+封包 / ＋文件＋目录 移除 清空 + 计数 / 待打包列表。
+    {
+        auto* row = new QHBoxLayout;
+        row->addWidget(new QLabel(QStringLiteral("封包格式：")), 0);
+        pack_format_combo_ = new QComboBox;
+        pack_format_combo_->setObjectName(QStringLiteral("fs_pack_format"));
+        for (const efs::FsFormatItem& item : efs::fs_formats()) {
+            // 1.x 的封包下拉 = 非 auto 的全部格式（六种 DB + SquashFS）；取值仍是**内部键**
+            pack_format_combo_->addItem(utf8(item.label), utf8(item.key));
+        }
+        row->addWidget(pack_format_combo_, 0);
+        row->addWidget(new QLabel(QStringLiteral("封包输出：")), 0);
+        pack_out_edit_ = new QLineEdit;
+        pack_out_edit_->setObjectName(QStringLiteral("fs_pack_out"));
+        pack_out_edit_->setPlaceholderText(QStringLiteral("输出文件（留空＝弹保存框）"));
+        row->addWidget(pack_out_edit_, 1);
+        auto* browse_pack = new QPushButton(QStringLiteral("选择…"));
+        browse_pack->setObjectName(QStringLiteral("fs_pack_browse"));
+        row->addWidget(browse_pack, 0);
+        pack_button_ = new QPushButton(QStringLiteral("封包"));
+        pack_button_->setObjectName(QStringLiteral("fs_pack"));
+        row->addWidget(pack_button_, 0);
+        body_layout()->addLayout(row);
+
+        auto* bar = new QHBoxLayout;
+        auto* add_files = new QPushButton(QStringLiteral("＋文件"));
+        add_files->setObjectName(QStringLiteral("fs_pack_add_files"));
+        bar->addWidget(add_files, 0);
+        auto* add_dir = new QPushButton(QStringLiteral("＋目录"));
+        add_dir->setObjectName(QStringLiteral("fs_pack_add_dir"));
+        bar->addWidget(add_dir, 0);
+        auto* rm = new QPushButton(QStringLiteral("移除"));
+        rm->setObjectName(QStringLiteral("fs_pack_remove"));
+        bar->addWidget(rm, 0);
+        auto* clr = new QPushButton(QStringLiteral("清空"));
+        clr->setObjectName(QStringLiteral("fs_pack_clear"));
+        bar->addWidget(clr, 0);
+        bar->addStretch(1);
+        pack_count_label_ = new QLabel;
+        pack_count_label_->setObjectName(QStringLiteral("fs_pack_count"));
+        bar->addWidget(pack_count_label_, 0);
+        body_layout()->addLayout(bar);
+
+        pack_list_ = new QListWidget;
+        pack_list_->setObjectName(QStringLiteral("fs_pack_list"));
+        pack_list_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+        pack_list_->setMinimumHeight(xrkit::core::px(90));
+        body_layout()->addWidget(pack_list_, 1);
+
+        QObject::connect(add_files, &QPushButton::clicked, this, [this] {
+            const QStringList picked = QFileDialog::getOpenFileNames(
+                this, QStringLiteral("选择要打进去的文件"), pack_base_dir(),
+                QStringLiteral("所有文件 (*.*)"));
+            if (!picked.isEmpty()) add_pack_files(picked);
+        });
+        QObject::connect(add_dir, &QPushButton::clicked, this, [this] {
+            const QString dir = QFileDialog::getExistingDirectory(
+                this, QStringLiteral("选择要打进去的目录（递归，自动排除包文件）"), pack_base_dir());
+            if (!dir.isEmpty()) add_pack_dir(dir);
+        });
+        QObject::connect(rm, &QPushButton::clicked, this, [this] { remove_pack_selected(); });
+        QObject::connect(clr, &QPushButton::clicked, this, [this] { clear_pack(); });
+        QObject::connect(browse_pack, &QPushButton::clicked, this, [this] {
+            // 1.x 走 `_resolve_pack_target` 的保存框分支；这里显式选一次（选完回填）
+            const QString picked = QFileDialog::getSaveFileName(
+                this, QStringLiteral("封包输出文件"), pack_out_edit_->text(),
+                QStringLiteral("包 (*.db *.sqfs);;所有文件 (*.*)"));
+            if (!picked.isEmpty()) pack_out_edit_->setText(QDir::toNativeSeparators(picked));
+        });
+        QObject::connect(pack_button_, &QPushButton::clicked, this, [this] {
+            QString summary;
+            run_pack(&summary);
+            log_message(summary);
+        });
+    }
+
     QObject::connect(add_button_, &QPushButton::clicked, this, [this] {
         const QStringList picked = QFileDialog::getOpenFileNames(
             this, QStringLiteral("选择要加载的包（可多选）"), QString(),
@@ -221,6 +304,9 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     unpack_all_button_ = add_action(QStringLiteral("批量解包"));
     unpack_all_button_->setObjectName(QStringLiteral("fs_unpack_all"));
 
+    // 包列表勾选框（1.x `_db_toggle`：勾一个包 = 加载它 + 该包条目全勾）
+    QObject::connect(package_list_, &QListWidget::itemChanged, this,
+                     [this](QListWidgetItem* item) { on_package_item_changed(item); });
     QObject::connect(select_all_button_, &QPushButton::clicked, this, [this] {
         std::vector<std::string> visible;
         for (const Source& source : sources_) visible.push_back(source.key);
@@ -591,26 +677,76 @@ int FsPage::scan_dir(const QString& dir) {
 }
 
 void FsPage::rebuild_package_list() {
-    // 包列表每行：basename + 大小 + [已加载]/[未加载]（1.x DB 行的 f"[已加载]" / 大小）
-    const QString keep = selection_.size() > 0 ? QString() : QString();
-    Q_UNUSED(keep);
+    // 包列表每行：勾选框 + basename + [已加载]/[未加载] + 大小。
+    // ★ 勾选框 = 该包在合并树里的**整包勾选态**（1.x `_db_chk_state` 的 partial-aware 三态），
+    //   勾上/取消 = 该包贡献的条目全勾/全不勾（1.x `_db_toggle` ⇒ 引擎 `toggle_source`）。
+    rebuilding_package_list_ = true;
     int selected_row = -1;
     for (int i = 0; i < package_list_->count(); ++i) {
         if (package_list_->item(i)->isSelected()) selected_row = i;
     }
     package_list_->clear();
-    for (const Source& source : sources_) {
+    for (size_t i = 0; i < sources_.size(); ++i) {
+        const Source& source = sources_[i];
         const QFileInfo info(source.path);
         const QString state = source.loaded ? QStringLiteral("[已加载]")
                                             : QStringLiteral("[未加载]");
-        QString text = QStringLiteral("%1　%2　%3")
-                           .arg(info.fileName(), state, QStringLiteral("%1 B").arg(info.size()));
-        package_list_->addItem(text);
+        auto* item = new QListWidgetItem(QStringLiteral("%1　%2　%3 B")
+                                             .arg(info.fileName(), state)
+                                             .arg(info.size()));
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        Qt::CheckState check = Qt::Unchecked;
+        if (source.loaded) {
+            int files = 0;
+            int checked = 0;
+            tree_.source_check_state(loaded_index_for_source(i), &files, &checked);
+            check = checked == 0 ? Qt::Unchecked
+                                 : (checked == files ? Qt::Checked : Qt::PartiallyChecked);
+        }
+        item->setCheckState(check);
+        package_list_->addItem(item);
     }
+    rebuilding_package_list_ = false;
     if (selected_row >= 0 && selected_row < package_list_->count()) {
         package_list_->item(selected_row)->setSelected(true);
     }
     refresh_counts();
+}
+
+void FsPage::on_package_item_changed(QListWidgetItem* item) {
+    if (rebuilding_package_list_ || item == nullptr) return;   // 重建列表时不要把状态回灌
+    const int row = package_list_->row(item);
+    if (row < 0 || row >= static_cast<int>(sources_.size())) return;
+    const bool want = item->checkState() != Qt::Unchecked;
+    if (!sources_[static_cast<size_t>(row)].loaded) {
+        // 1.x `_db_toggle`：勾选一个**未加载**的包 ⇒ 先加载，再整包勾上
+        if (!want) return;
+        package_list_->item(row)->setSelected(true);
+        load_selected();
+        rebuild_package_list();
+    }
+    const int merged = loaded_index_for_source(static_cast<size_t>(row));
+    if (merged < 0) return;
+    tree_.toggle_source(merged, want);
+    refresh_package_checks();
+    refresh_rows();
+}
+
+void FsPage::refresh_package_checks() {
+    rebuilding_package_list_ = true;
+    for (int row = 0; row < package_list_->count() && row < static_cast<int>(sources_.size());
+         ++row) {
+        int files = 0;
+        int checked = 0;
+        if (sources_[static_cast<size_t>(row)].loaded) {
+            tree_.source_check_state(loaded_index_for_source(static_cast<size_t>(row)), &files,
+                                     &checked);
+        }
+        QListWidgetItem* item = package_list_->item(row);
+        item->setCheckState(checked == 0 ? Qt::Unchecked
+                                        : (checked == files ? Qt::Checked : Qt::PartiallyChecked));
+    }
+    rebuilding_package_list_ = false;
 }
 
 int FsPage::load_selected() {
@@ -701,6 +837,208 @@ void FsPage::clear_all() {
     selection_ = efs::FsSelection{};
     package_list_->clear();
     rebuild_tree();   // 空树 + 刷计数/行
+}
+
+// ═══ 封包（1.x `_build_pack_panel` / `_pack` 一族） ═══════════════════════
+
+QString FsPage::pack_base_dir() const {
+    // 1.x `_pack_root`：设了输入目录就以它为根（相对路径都相对它算）。
+    // 2.x 没有"输入行"，就用「解包到」那一格当根（语义相同：产物相对它归一）。
+    return output_dir();
+}
+
+int FsPage::add_pack_files(const QStringList& paths) {
+    std::vector<std::string> roots;
+    for (const QString& path : paths) roots.push_back(path.toUtf8().toStdString());
+    const efs::PackCollectResult collected =
+        efs::collect_pack_files(pack_base_dir().toUtf8().toStdString(), roots);
+    int added = 0;
+    for (const efs::PackFileItem& item : collected.items) {
+        bool known = false;
+        for (const efs::PackFileItem& have : pack_items_) {
+            if (have.rel == item.rel) known = true;
+        }
+        if (known) continue;
+        pack_items_.push_back(item);
+        ++added;
+    }
+    refresh_pack_list();
+    log_message(QStringLiteral("＋文件：%1 个（排除包文件 %2 个，不在根之下 %3 个）")
+                    .arg(added)
+                    .arg(collected.skipped_package_files)
+                    .arg(collected.skipped_outside_base));
+    return added;
+}
+
+int FsPage::add_pack_dir(const QString& dir) {
+    // 1.x `_add_dir`：base = 输入目录；没设就把"这个目录的父目录"当 base，
+    // 这样**目录本身**会成为包里的顶层（用户视角：拖进去的那个文件夹还在）。
+    QString base = pack_base_dir();
+    if (base.isEmpty()) base = QFileInfo(dir).absolutePath();
+    const std::vector<std::string> roots{dir.toUtf8().toStdString()};
+    const efs::PackCollectResult collected =
+        efs::collect_pack_files(base.toUtf8().toStdString(), roots);
+    int added = 0;
+    for (const efs::PackFileItem& item : collected.items) {
+        bool known = false;
+        for (const efs::PackFileItem& have : pack_items_) {
+            if (have.rel == item.rel) known = true;
+        }
+        if (known) continue;
+        pack_items_.push_back(item);
+        ++added;
+    }
+    refresh_pack_list();
+    log_message(QStringLiteral("＋目录：%1 个（排除包文件 %2 个，不在根之下 %3 个）")
+                    .arg(added)
+                    .arg(collected.skipped_package_files)
+                    .arg(collected.skipped_outside_base));
+    return added;
+}
+
+int FsPage::remove_pack_selected() {
+    QSet<QString> doomed;
+    for (QListWidgetItem* item : pack_list_->selectedItems()) doomed.insert(item->text());
+    if (doomed.isEmpty()) return 0;
+    const int before = static_cast<int>(pack_items_.size());
+    std::vector<efs::PackFileItem> keep;
+    for (const efs::PackFileItem& item : pack_items_) {
+        if (doomed.contains(utf8(item.rel))) continue;
+        keep.push_back(item);
+    }
+    pack_items_.swap(keep);
+    refresh_pack_list();
+    return before - static_cast<int>(pack_items_.size());
+}
+
+void FsPage::clear_pack() {
+    pack_items_.clear();
+    refresh_pack_list();
+}
+
+void FsPage::refresh_pack_list() {
+    pack_list_->clear();
+    for (const efs::PackFileItem& item : pack_items_) pack_list_->addItem(utf8(item.rel));
+    if (pack_count_label_ != nullptr) {
+        pack_count_label_->setText(pack_items_.empty()
+                                       ? QString()
+                                       : QStringLiteral("%1 个文件")
+                                             .arg(static_cast<int>(pack_items_.size())));
+    }
+}
+
+QString FsPage::pack_output_basename() const {
+    // 1.x `_pack_output_basename`（"输入目录"那一支在 2.x 没有 ⇒ 走后面两支）
+    QStringList tops;
+    for (const efs::PackFileItem& item : pack_items_) {
+        const QString top = utf8(item.rel).section(QLatin1Char('/'), 0, 0);
+        if (!top.isEmpty() && !tops.contains(top)) tops << top;
+    }
+    if (tops.size() != 1) return QString();
+    const QString top = tops.front();
+    if (pack_items_.size() == 1 && !utf8(pack_items_.front().rel).contains(QLatin1Char('/'))) {
+        return QFileInfo(top).completeBaseName();   // 单文件：去掉原扩展名
+    }
+    return top;                                      // 目录：保留目录名
+}
+
+QString FsPage::pack_ext_for(const QString& key) {
+    // 1.x `_pack_ext`：sqfs ⇒ `.sqfs`；其余 ⇒ `.<内部键>.db`（六种格式产物不同名，
+    // 否则用户在资源管理器里分不出打的是哪种格式）
+    if (efs::format_key_is_sqfs(key.toUtf8().toStdString())) return QStringLiteral(".sqfs");
+    return QStringLiteral(".") + key + QStringLiteral(".db");
+}
+
+QString FsPage::resolve_pack_target() {
+    const std::string key = pack_format_combo_->currentData().toString().toUtf8().toStdString();
+    const QString ext = pack_ext_for(utf8(key));
+    const QString base = pack_output_basename();
+    QString out = pack_out_edit_->text().trimmed();
+    if (out.isEmpty()) {
+        const QString initial =
+            base.isEmpty() ? QStringLiteral("packed") + ext : base + ext;
+        out = QFileDialog::getSaveFileName(this, QStringLiteral("封包保存到"), initial,
+                                           QStringLiteral("包 (*.db *.sqfs);;所有文件 (*.*)"));
+        if (out.isEmpty()) return QString();
+    } else if (QFileInfo(out).isDir()) {
+        if (!base.isEmpty()) {
+            out = QDir(out).filePath(base + ext);
+        } else {
+            out = QFileDialog::getSaveFileName(this, QStringLiteral("封包保存到"),
+                                               QDir(out).filePath(QStringLiteral("packed") + ext),
+                                               QStringLiteral("包 (*.db *.sqfs);;所有文件 (*.*)"));
+            if (out.isEmpty()) return QString();
+        }
+    } else if (QFileInfo(out).suffix().isEmpty()) {
+        out += ext;
+    }
+    pack_out_edit_->setText(QDir::toNativeSeparators(out));   // 1.x H1：最终路径必须回填
+    return out;
+}
+
+bool FsPage::run_pack(QString* summary) {
+    const auto set_summary = [summary](const QString& text) {
+        if (summary != nullptr) *summary = text;
+    };
+    if (pack_items_.empty()) {
+        set_summary(QStringLiteral("封包：列表是空的（先「＋文件」或「＋目录」）"));
+        return false;
+    }
+    const QString out = resolve_pack_target();
+    if (out.isEmpty()) {
+        set_summary(QStringLiteral("封包：没选输出文件，已取消"));
+        return false;
+    }
+    const std::string key = pack_format_combo_->currentData().toString().toUtf8().toStdString();
+    if (efs::format_key_is_sqfs(key)) {
+        std::vector<efs::PackItem> items;
+        items.reserve(pack_items_.size());
+        for (const efs::PackFileItem& item : pack_items_) {
+            efs::PackItem pack_item;
+            pack_item.path = item.rel;
+            pack_item.is_dir = false;
+            pack_item.source_path = item.source_path;
+            items.push_back(pack_item);
+        }
+        const efs::PackResult result = efs::pack_squashfs(out.toUtf8().toStdString(), items);
+        set_summary(result.ok ? QStringLiteral("封包完成（SquashFS）：%1 个文件、%2 字节 → %3")
+                                    .arg(static_cast<int>(items.size()))
+                                    .arg(result.file_size)
+                                    .arg(out)
+                              : QStringLiteral("封包失败（SquashFS）：%1").arg(utf8(result.error)));
+        return result.ok;
+    }
+    const std::optional<efs::DbFormat> fmt = efs::format_key_to_db(key);
+    if (!fmt.has_value()) {
+        set_summary(QStringLiteral("封包：格式键 %1 既不是 DB 也不是 SquashFS").arg(utf8(key)));
+        return false;
+    }
+    std::vector<efs::DbPackItem> items;
+    items.reserve(pack_items_.size());
+    for (const efs::PackFileItem& item : pack_items_) {
+        std::ifstream in(core::path_from_utf8(item.source_path), std::ios::binary);
+        if (!in) {
+            set_summary(QStringLiteral("封包失败：读不出 %1").arg(utf8(item.source_path)));
+            return false;
+        }
+        efs::DbPackItem pack_item;
+        pack_item.path = item.rel;
+        pack_item.is_dir = false;
+        pack_item.data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        items.push_back(std::move(pack_item));
+    }
+    const std::vector<uint8_t> raw = efs::pack_db(items, *fmt);
+    std::string write_error;
+    if (!core::write_file_atomic(out.toUtf8().toStdString(), raw, true, write_error)) {
+        set_summary(QStringLiteral("封包失败（写盘）：%1").arg(utf8(write_error)));
+        return false;
+    }
+    set_summary(QStringLiteral("封包完成（%1）：%2 个文件、%3 字节 → %4")
+                    .arg(utf8(efs::db_format_key(*fmt)))
+                    .arg(static_cast<int>(items.size()))
+                    .arg(raw.size())
+                    .arg(out));
+    return true;
 }
 
 efs::ExtractTreeResult FsPage::extract_to(const QString& image_path, const QString& out_root,

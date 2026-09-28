@@ -58,6 +58,25 @@ std::vector<std::pair<std::string, bool>> loose_entries(const std::string& root,
 // 用途：扫描目录时认包、加入封包列表时**排除包文件**（1.x `_is_pack_file`）。
 bool is_package_file_name(const std::string& path);
 
+// ── 封包列表（1.x `files_data` 的"相对路径"那一半）──────────────────
+// 1.x `_add_to_pack` 的判据逐条照抄：
+//   · 递归收集（目录进去找、文件就它自己）；
+//   · **排除包文件**（`is_package_file_name` ⇔ 1.x `_is_pack_file`）——把 .db/.sq 打进新包
+//     等于把旧包套娃，1.x 明确不做；
+//   · 相对 `base` 归一（base 为空 ⇒ 只用文件名）；**不在 base 之下的跳过并计数**；
+//   · 按 rel 去重（先到先得）、按 rel 字节序排序（产物确定性）。
+struct PackFileItem {
+    std::string rel;          // 打包进包的内部路径（'/' 分隔，相对 base）
+    std::string source_path;  // 本机文件（UTF-8）
+};
+struct PackCollectResult {
+    std::vector<PackFileItem> items;
+    int skipped_outside_base = 0;
+    int skipped_package_files = 0;
+};
+PackCollectResult collect_pack_files(const std::string& base,
+                                     const std::vector<std::string>& roots);
+
 // 从一个**包文件**列出条目表（与 `loose_entries` 同形 —— 好让"包"与"散装目录"走同一条
 // `add_source` 路径，不出现第二套合并/加载逻辑）。
 //

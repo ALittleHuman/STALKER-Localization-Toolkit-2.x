@@ -307,6 +307,51 @@ bool is_package_file_name(const std::string& path) {
     return head == "db" || head == "sq";
 }
 
+PackCollectResult collect_pack_files(const std::string& base,
+                                     const std::vector<std::string>& roots) {
+    PackCollectResult out;
+    std::set<std::string> have;   // 去重（1.x 的 `have` 集合）
+    std::error_code ec;
+    const stdfs::path base_path = base.empty() ? stdfs::path() : core::path_from_utf8(base);
+    for (const std::string& root : roots) {
+        const stdfs::path root_path = core::path_from_utf8(root);
+        std::vector<stdfs::path> files;
+        if (stdfs::is_directory(root_path, ec)) {
+            for (stdfs::recursive_directory_iterator it(root_path, ec), end; it != end;
+                 it.increment(ec)) {
+                if (ec) break;
+                if (it->is_regular_file(ec)) files.push_back(it->path());
+            }
+        } else if (stdfs::is_regular_file(root_path, ec)) {
+            files.push_back(root_path);
+        }
+        std::sort(files.begin(), files.end());
+        for (const stdfs::path& file : files) {
+            if (is_package_file_name(core::path_to_utf8(file))) {
+                ++out.skipped_package_files;   // 1.x `_is_pack_file`：包文件不参与封包
+                continue;
+            }
+            std::string rel;
+            if (base_path.empty()) {
+                rel = core::path_to_utf8(file.filename());
+            } else {
+                const stdfs::path relative = file.lexically_relative(base_path);
+                const std::string text = core::path_to_utf8(relative);
+                if (relative.empty() || text.rfind("..", 0) == 0) {
+                    ++out.skipped_outside_base;   // 不在 base 之下：跳过 + 报数（不静默丢）
+                    continue;
+                }
+                rel = text;
+            }
+            if (rel.empty() || !have.insert(rel).second) continue;
+            out.items.push_back({rel, core::path_to_utf8(file)});
+        }
+    }
+    std::sort(out.items.begin(), out.items.end(),
+              [](const PackFileItem& a, const PackFileItem& b) { return a.rel < b.rel; });
+    return out;
+}
+
 std::vector<std::pair<std::string, bool>> loose_entries(const std::string& root,
                                                         std::string& error) {
     error.clear();

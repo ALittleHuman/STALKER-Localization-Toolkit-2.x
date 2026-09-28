@@ -1,6 +1,7 @@
 #include "smoke.h"
 
 #include "xrkit/core/theme.h"
+#include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/plugin/abi_host.h"
 #include "hub.h"
 #include "drop_filter.h"
@@ -1159,6 +1160,106 @@ SmokeResult run_smoke() {
                       .arg(files)
                       .arg(checked));
         }
+        // —— 封包面板（1.x `_build_pack_panel` / `_pack`）：**真打一个包再读回来**，不是"按钮在不在"
+        {
+            const QString pk_root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_pack"));
+            QDir(pk_root).removeRecursively();
+            QDir().mkpath(pk_root + QStringLiteral("/gamedata/scripts"));
+            {
+                std::ofstream(pk_root.toStdString() + "/gamedata/a.txt",
+                              std::ios::binary | std::ios::trunc)
+                    << "AA";
+                std::ofstream(pk_root.toStdString() + "/gamedata/scripts/b.txt",
+                              std::ios::binary | std::ios::trunc)
+                    << "BBB";
+                // 一个包文件混在目录里：1.x `_is_pack_file` 明确**不把它打进新包**
+                std::ofstream(pk_root.toStdString() + "/gamedata/old.db0",
+                              std::ios::binary | std::ios::trunc)
+                    << "not a package really";
+                // 根之外的一个文件：相对路径算不出来 ⇒ 跳过并报数（1.x 同一行为）
+                std::ofstream(pk_root.toStdString() + "/outside.txt",
+                              std::ios::binary | std::ios::trunc)
+                    << "OUT";
+            }
+            // 引擎侧：收集规则（排除包文件 / 相对 base / 不在 base 之下计入 / 排序确定）
+            const efs2::PackCollectResult collected = efs2::collect_pack_files(
+                (pk_root + QStringLiteral("/gamedata")).toStdString(),
+                {(pk_root + QStringLiteral("/gamedata")).toStdString(),
+                 (pk_root + QStringLiteral("/outside.txt")).toStdString()});
+            check(collected.items.size() == 2 && collected.skipped_package_files == 1 &&
+                      collected.skipped_outside_base == 1 &&
+                      collected.items[0].rel == "a.txt" &&
+                      collected.items[1].rel == "scripts/b.txt",
+                  QStringLiteral("② 封包收集：2 个文件（%1/%2）、排除包文件 %3、越界 %4")
+                      .arg(QString::fromStdString(collected.items.empty()
+                                                      ? std::string()
+                                                      : collected.items[0].rel),
+                           QString::fromStdString(collected.items.size() > 1
+                                                      ? collected.items[1].rel
+                                                      : std::string()))
+                      .arg(collected.skipped_package_files)
+                      .arg(collected.skipped_outside_base));
+
+            // ① XDB 封包 → 用引擎自己的读侧读回（round-trip，真字节）
+            FsPage pack_page;
+            pack_page.resize(760, page_min_h());
+            pack_page.show();
+            QApplication::processEvents();
+            pack_page.out_edit()->setText(QDir::toNativeSeparators(
+                pk_root + QStringLiteral("/gamedata")));   // base = 这一格
+            check(pack_page.add_pack_dir(pk_root + QStringLiteral("/gamedata")) == 2,
+                  QStringLiteral("② ＋目录：加进来 2 个文件（实测 %1）").arg(pack_page.pack_item_count()));
+            check(FsPage::pack_ext_for(QStringLiteral("xdb")) == QStringLiteral(".xdb.db") &&
+                      FsPage::pack_ext_for(QStringLiteral("sqfs")) == QStringLiteral(".sqfs"),
+                  QStringLiteral("② 封包扩展名照 1.x：xdb→.xdb.db、sqfs→.sqfs"));
+            const QString xdb_out = pk_root + QStringLiteral("/packed.xdb.db");
+            pack_page.pack_out_edit()->setText(xdb_out);
+            QString pack_summary;
+            const bool packed = pack_page.run_pack(&pack_summary);
+            std::string read_back_error;
+            const std::vector<std::pair<std::string, bool>> read_back =
+                efs2::package_entries(xdb_out.toStdString(), std::nullopt, read_back_error);
+            check(packed && read_back_error.empty() && read_back.size() == 2,
+                  QStringLiteral("② 封包（XDB）→ 读回 2 个条目（%1）").arg(pack_summary));
+            check(pack_page.pack_out_edit()->text().contains(QStringLiteral("packed.xdb.db")),
+                  QStringLiteral("② 封包输出路径要回填到输入框（1.x 的 H1）"));
+
+            // ② SquashFS 封包 → `list_entries` 读回
+            pack_page.pack_format_combo()->setCurrentIndex(
+                pack_page.pack_format_combo()->count() - 1);   // 末项 = SquashFS（fs_formats 的顺序）
+            const QString sqfs_out = pk_root + QStringLiteral("/packed.sqfs");
+            pack_page.pack_out_edit()->setText(sqfs_out);
+            const bool packed_sqfs = pack_page.run_pack(&pack_summary);
+            const efs2::ListResult listed_sqfs = efs2::list_entries(sqfs_out.toStdString());
+            check(packed_sqfs && listed_sqfs.ok && listed_sqfs.entries.size() >= 2,
+                  QStringLiteral("② 封包（SquashFS）→ list_entries 读回 %1 条（%2）")
+                      .arg(listed_sqfs.entries.size())
+                      .arg(pack_summary));
+
+            // ③ 包列表勾选框 = 整包勾选（1.x `_db_toggle`）
+            FsPage check_page;
+            check_page.resize(760, page_min_h());
+            check_page.show();
+            QApplication::processEvents();
+            check_page.add_paths({db_path});
+            QApplication::processEvents();
+            check(check_page.package_list()->count() == 1 &&
+                      check_page.package_list()->item(0)->checkState() == Qt::Unchecked,
+                  QStringLiteral("② 包行有勾选框且初始未勾"));
+            check_page.package_list()->item(0)->setCheckState(Qt::Checked);
+            QApplication::processEvents();
+            check(check_page.checked_file_count() == 2,
+                  QStringLiteral("② 勾一个包 = 该包条目全勾（实测 %1 个文件）")
+                      .arg(check_page.checked_file_count()));
+            check_page.package_list()->item(0)->setCheckState(Qt::Unchecked);
+            QApplication::processEvents();
+            check(check_page.checked_file_count() == 0,
+                  QStringLiteral("② 取消勾选 = 该包条目全不勾（实测 %1）")
+                      .arg(check_page.checked_file_count()));
+            check_page.hide();
+            pack_page.hide();
+            QDir(pk_root).removeRecursively();
+        }
         QDir(dir).removeRecursively();
         page.hide();
     }
@@ -1922,18 +2023,23 @@ SmokeResult run_smoke() {
             check(empty_page.header_row() != nullptr,
                   QStringLiteral("排版①：页标题与说明要合成一行（header_row 存在）"));
             // ★ 原 ⑥「空状态块 ≥ 卡片高 60%」的度量对象（那个占位块）已按用户要求删除 ⇒
-            //   该断言作废，换成等价物：**没条目时包列表自己吃满卡片**（它就是空状态本体）。
-            //   ⚠ 2026-09-28：按 1.x 补回**三行控件行**（格式/输出行 + 包列表按钮行 + 条目按钮行）
-            //   之后，固定 60% 这个数已经不该再当判据（它不是用户口径，是我上一轮估的）——
-            //   改成按**性质**判：列表必须是卡片里最大的那块（**过半**）且不小于它自己的最小高度。
-            const int card_h = empty_page.card() != nullptr ? empty_page.card()->height() : -1;
+            //   断言作废，换成等价物：**没条目时条目列表收起、各列表不被挤成细线**。
+            //   口径沿革（报账，别当成"悄悄改数字"）：
+            //     ① 上一轮：60%（我按"卡片里只有两个列表"估的）；
+            //     ② 用户要求补回 1.x 的按钮行后 → 改成"过半"；
+            //     ③ 本轮再补 **1.x 的封包面板**（卡片里现在有**两个**工作区 + 三行控件）
+            //        ⇒ 任何"某个列表占卡片几分之几"都不再说明问题。
+            //   保留的**不变量**（也是用户真正抱怨过的："空列表只有一条细线，看着像坏了"）：
+            //   每个列表不得小于它自己的最小高度。想判红就把某条 minimumHeight 去掉。
             const int list_h = empty_page.package_list() != nullptr
                                    ? empty_page.package_list()->height()
                                    : -1;
-            check(card_h > 0 && list_h > card_h / 2 && list_h >= xrkit::core::px(120),
-                  QStringLiteral("⑥ 空状态：包列表要占卡片过半且不小于最小高度（实测 %1 / %2）")
+            const int pack_h = empty_page.pack_list() != nullptr ? empty_page.pack_list()->height()
+                                                                 : -1;
+            check(list_h >= xrkit::core::px(120) && pack_h >= xrkit::core::px(90),
+                  QStringLiteral("⑥ 空状态：各列表都不许被挤成细线（包列表 %1/≥120，待打包 %2/≥90）")
                       .arg(list_h)
-                      .arg(card_h));
+                      .arg(pack_h));
             // 条目列表：没条目时收起（不占地方），有货才出现
             check(empty_page.entry_list() != nullptr && empty_page.entry_list()->isHidden(),
                   QStringLiteral("空状态：没有条目时条目列表要收起（不留一个空框）"));
