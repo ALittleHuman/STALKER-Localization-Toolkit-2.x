@@ -12,6 +12,7 @@
 //   · 6.13 格式下拉的**取值是内部键**（显示名只用于展示）。
 
 #include "page_base.h"
+#include "../task_shell.h"
 
 #include "xrkit/engine/fs/extract_tree.h"
 #include "xrkit/engine/plugin/registry.h"
@@ -130,6 +131,34 @@ public:
     int unpack_selected(QString* summary);
     int unpack_all(QString* summary);
 
+    // ★ 2026-09-28 第三步（对齐 1.x 的 `_load_async`/`TaskRunner`）：解包与封包**走任务壳**
+    //   —— 13.1 重入闸门在主线程同步置位、13.2 **工作线程里不碰任何 UI**。
+    //   做法：**计划**（读模型/控件）在主线程算好成 `UnpackJob`/`PackJob`，**执行**是纯引擎调用，
+    //   两者之间只传值 ⇒ 同一个执行函数被"按钮（后台线程）"与"自检（前台）"共用，
+    //   不会出现"线程里读到半个界面状态"那类事故（1.x 的 H2/H3 就是快照没做干净）。
+    struct UnpackJob {
+        std::string image;
+        std::string target;
+        engine::fs::Selection kind = engine::fs::Selection::All;
+        std::vector<std::string> only;
+        std::string label;
+        std::optional<engine::fs::DbFormat> db_fallback;
+    };
+    struct PackJob {
+        std::string out;
+        std::string key;                                   // 内部格式键（"sqfs" / "xdb" …）
+        std::vector<engine::fs::PackFileItem> items;
+    };
+    std::vector<UnpackJob> plan_unpack(bool checked_only, QString* out_root);
+    static QString run_unpack_jobs(const std::vector<UnpackJob>& jobs,
+                                   const ProgressSink& progress, const MessageSink& message);
+    PackJob plan_pack(bool* ok, QString* why);
+    static QString run_pack_job(const PackJob& job, const ProgressSink& progress,
+                                const MessageSink& message);
+    void start_unpack(bool checked_only);   // 按钮：计划（主线程）+ task_->run
+    void start_pack();
+    TaskShell* task() const { return task_; }
+
     QPushButton* select_all_button() const { return select_all_button_; }
     QPushButton* check_all_button() const { return check_all_button_; }
     // ★ 1.x 的封包面板（`_build_pack_panel` / `_pack` 一族）
@@ -207,6 +236,11 @@ private:
     // 合并树里的 `source_index` 是"**已加载**集合里的序号"，而界面要的是 `sources_` 的下标
     //（已知列表里还有未加载的）—— 这张表就是两者的映射，重建树时同步更新。
     std::vector<size_t> loaded_order_;
+    // 任务壳（解包/封包在后台跑；13.1/13.2）
+    TaskShell* task_ = nullptr;
+    // ★ 唯一一处调用引擎导出的地方（门禁静态锁：extract_package( 恰好 1 处）
+    // 静态：只吃 UnpackJob 的值（工作线程与自检都能直接调，不需要页面对象）
+    static engine::fs::ExtractTreeResult extract_job(const UnpackJob& job);
     engine::fs::FsSelection selection_;
     std::vector<Source> sources_;
     std::vector<QString> row_texts_;

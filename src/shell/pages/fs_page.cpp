@@ -268,12 +268,15 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
                 QStringLiteral("包 (*.db *.sqfs);;所有文件 (*.*)"));
             if (!picked.isEmpty()) pack_out_edit_->setText(QDir::toNativeSeparators(picked));
         });
-        QObject::connect(pack_button_, &QPushButton::clicked, this, [this] {
-            QString summary;
-            run_pack(&summary);
-            log_message(summary);
-        });
+        QObject::connect(pack_button_, &QPushButton::clicked, this, [this] { start_pack(); });
     }
+
+    // ── 任务壳（13.1/13.2）：解包/封包在**后台线程**跑，界面不冻（1.x TaskRunner 同族；
+    //    2.x 的 convert/text 页也是这么接的 —— 用户要的「方便」里包含「大包不卡界面」）。
+    task_ = new TaskShell(this);
+    task_->set_idle_status(QStringLiteral("就绪"));
+    task_->set_message_handler([this](const QString& text) { log_message(text); });
+    body_layout()->addWidget(task_->panel(), 0);
 
     QObject::connect(add_button_, &QPushButton::clicked, this, [this] {
         const QStringList picked = QFileDialog::getOpenFileNames(
@@ -327,14 +330,10 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     QObject::connect(search_edit_, &QLineEdit::textChanged, this, [this] { refresh_rows(); });
     // 6.11：两个解包入口都走**同一条** `extract_to`（页面里 `extract_tree(` 只许出现一次）
     QObject::connect(unpack_checked_button_, &QPushButton::clicked, this, [this] {
-        QString summary;
-        unpack_selected(&summary);
-        log_message(summary);
+        start_unpack(true);
     });
     QObject::connect(unpack_all_button_, &QPushButton::clicked, this, [this] {
-        QString summary;
-        unpack_all(&summary);
-        log_message(summary);
+        start_unpack(false);
     });
 
     refresh_rows();
@@ -554,76 +553,127 @@ QString FsPage::package_folder_name(const QString& package_path) {
     return QFileInfo(package_path).completeBaseName();
 }
 
-int FsPage::unpack_selected(QString* summary) {
-    // 1.x `_unpack_checked`：只解**勾选的**文件，按"条目归属哪个包"分组逐包导出，
-    // 每包落到 `<输出>/<包名去掉扩展名>/`（1.x `os.path.join(out, _package_folder(src))`）。
-    const QString out_root = resolve_output_dir();
+efs::ExtractTreeResult FsPage::extract_job(const UnpackJob& job) {
+    // ★ 这里是本页**唯一**调用引擎导出的地方（门禁静态锁：整个页面里 `extract_package(` 恰好 1 处）
+    //   —— 6.11 的"两条路合一"就靠它。`extract_package` 内部按包类型分派（SquashFS / X-Ray DB），
+    //   所以"DB 包也要能解"与"只有一条路"能同时成立；前台（自检）与后台（任务壳 worker）
+    //   都经过它，不存在第二条实现。
+    efs::ExtractTreeOptions options;
+    options.selection = job.kind;
+    options.only = job.only;
+    return efs::extract_package(job.image, job.target, options, job.db_fallback);
+}
+
+efs::ExtractTreeResult FsPage::extract_to(const QString& image_path, const QString& out_root,
+                                          efs::Selection selection_kind,
+                                          const std::vector<std::string>& only) {
+    UnpackJob job;
+    job.image = image_path.toUtf8().toStdString();
+    job.target = out_root.toUtf8().toStdString();
+    job.kind = selection_kind;
+    job.only = only;
+    job.db_fallback = efs::format_key_to_db(current_format_key());
+    return extract_job(job);
+}
+
+std::vector<FsPage::UnpackJob> FsPage::plan_unpack(bool checked_only, QString* out_root) {
+    // 主线程里把"要解哪些、解到哪、用哪个格式兜底"算成纯值（13.2：工作线程只吃这些值）
+    std::vector<UnpackJob> jobs;
+    const QString root = resolve_output_dir();
+    if (out_root != nullptr) *out_root = root;
+    const std::optional<efs::DbFormat> fallback = efs::format_key_to_db(current_format_key());
+    for (size_t i = 0; i < sources_.size(); ++i) {
+        if (!sources_[i].loaded) continue;
+        UnpackJob job;
+        job.image = sources_[i].path.toUtf8().toStdString();
+        job.target =
+            QDir(root).filePath(package_folder_name(sources_[i].path)).toUtf8().toStdString();
+        job.label = QFileInfo(sources_[i].path).fileName().toUtf8().toStdString();
+        job.db_fallback = fallback;
+        if (checked_only) {
+            const int merged = loaded_index_for_source(i);
+            for (const efs::MergeNode* node : tree_.flatten()) {
+                if (node->is_dir || !node->checked) continue;
+                if (node->source_index != merged) continue;
+                job.only.push_back(node->path);
+            }
+            if (job.only.empty()) continue;   // 这一包没勾任何文件 ⇒ 不排它
+        }
+        job.kind = checked_only ? efs::Selection::Listed : efs::Selection::All;
+        jobs.push_back(job);
+    }
+    return jobs;
+}
+
+QString FsPage::run_unpack_jobs(const std::vector<UnpackJob>& jobs, const ProgressSink& progress,
+                                const MessageSink& message) {
+    // **纯执行**：不读任何控件、不写任何界面（任务壳的 worker 与自检共用这一条）
     int written = 0;
     int failed = 0;
     QStringList per_package;
-    for (size_t i = 0; i < sources_.size(); ++i) {
-        if (!sources_[i].loaded) continue;
-        const int merged_index = loaded_index_for_source(i);
-        std::vector<std::string> only;
-        for (const efs::MergeNode* node : tree_.flatten()) {
-            if (node->is_dir || !node->checked) continue;
-            if (node->source_index != merged_index) continue;
-            only.push_back(node->path);
-        }
-        if (only.empty()) continue;
-        const QString image = sources_[i].path;
-        const QString target =
-            QDir(out_root).filePath(package_folder_name(image));
-        const efs::ExtractTreeResult result =
-            extract_to(image, target, efs::Selection::Listed, only);
+    for (size_t i = 0; i < jobs.size(); ++i) {
+        const efs::ExtractTreeResult result = FsPage::extract_job(jobs[i]);
         written += static_cast<int>(result.files_written);
         failed += static_cast<int>(result.failures.size());
-        per_package << QStringLiteral("%1→%2（%3 文件%4）")
-                           .arg(QFileInfo(image).fileName(), package_folder_name(image))
-                           .arg(result.files_written)
-                           .arg(result.ok ? QString()
-                                          : QStringLiteral("，失败：") + utf8(result.error));
+        const QString line = QStringLiteral("%1→%2（%3 文件%4）")
+                                 .arg(utf8(jobs[i].label), utf8(jobs[i].target))
+                                 .arg(result.files_written)
+                                 .arg(result.ok ? QString()
+                                                : QStringLiteral("，失败：") + utf8(result.error));
+        per_package << line;
+        if (message) message(line.toUtf8().toStdString());
+        if (progress && !jobs.empty()) {
+            progress(static_cast<int>((i + 1) * 100 / jobs.size()));   // 13.7：只发 0~100
+        }
     }
-    if (summary != nullptr) {
-        *summary = per_package.isEmpty()
-                       ? QStringLiteral("没有勾选任何条目（包内全选/勾单个文件后再解）")
-                       : QStringLiteral("解包选中：%1 个文件、失败 %2 → %3\n  %4")
-                             .arg(written)
-                             .arg(failed)
-                             .arg(out_root)
-                             .arg(per_package.join(QStringLiteral("\n  ")));
+    if (per_package.isEmpty()) {
+        return QStringLiteral("没有可解的内容（先「加包」/「扫描目录」并勾选，或先加载包）");
+    }
+    return QStringLiteral("解包：%1 个文件、失败 %2\n  %3")
+        .arg(written)
+        .arg(failed)
+        .arg(per_package.join(QStringLiteral("\n  ")));
+}
+
+void FsPage::start_unpack(bool checked_only) {
+    QString root;
+    const std::vector<UnpackJob> jobs = plan_unpack(checked_only, &root);
+    if (jobs.empty()) {
+        log_message(QStringLiteral("解包：没有可解的内容（先「加包」/「扫描目录」并勾选，或先加载包）"));
+        return;
+    }
+    const QString title = checked_only ? QStringLiteral("解包选中") : QStringLiteral("批量解包");
+    log_message(QStringLiteral("%1：%2 个包 → %3").arg(title).arg(static_cast<int>(jobs.size())).arg(root));
+    if (task_ == nullptr || !task_->run(title, [jobs](const ProgressSink& progress,
+                                                      const MessageSink& message) {
+            run_unpack_jobs(jobs, progress, message);
+        })) {
+        log_message(QStringLiteral("有任务在跑，稍后再试"));
+    }
+}
+
+int FsPage::unpack_selected(QString* summary) {
+    QString root;
+    const std::vector<UnpackJob> jobs = plan_unpack(true, &root);
+    const QString text = run_unpack_jobs(jobs, nullptr, nullptr);
+    if (summary != nullptr) *summary = text;
+    int written = 0;
+    for (const UnpackJob& job : jobs) {
+        const efs::ExtractTreeResult result = extract_job(job);
+        written += static_cast<int>(result.files_written);
     }
     return written;
 }
 
 int FsPage::unpack_all(QString* summary) {
-    // 1.x `_unpack_batch`：**所有已加载的包**整包导出（不看勾选）
-    const QString out_root = resolve_output_dir();
+    QString root;
+    const std::vector<UnpackJob> jobs = plan_unpack(false, &root);
+    const QString text = run_unpack_jobs(jobs, nullptr, nullptr);
+    if (summary != nullptr) *summary = text;
     int written = 0;
-    int failed = 0;
-    QStringList per_package;
-    for (size_t i = 0; i < sources_.size(); ++i) {
-        if (!sources_[i].loaded) continue;
-        const QString image = sources_[i].path;
-        const QString target = QDir(out_root).filePath(package_folder_name(image));
-        const efs::ExtractTreeResult result =
-            extract_to(image, target, efs::Selection::All);
+    for (const UnpackJob& job : jobs) {
+        const efs::ExtractTreeResult result = extract_job(job);
         written += static_cast<int>(result.files_written);
-        failed += static_cast<int>(result.failures.size());
-        per_package << QStringLiteral("%1→%2（%3 文件%4）")
-                           .arg(QFileInfo(image).fileName(), package_folder_name(image))
-                           .arg(result.files_written)
-                           .arg(result.ok ? QString()
-                                          : QStringLiteral("，失败：") + utf8(result.error));
-    }
-    if (summary != nullptr) {
-        *summary = per_package.isEmpty()
-                       ? QStringLiteral("没有已加载的包（先「加包」/「扫描目录」并加载）")
-                       : QStringLiteral("批量解包：%1 个文件、失败 %2 → %3\n  %4")
-                             .arg(written)
-                             .arg(failed)
-                             .arg(out_root)
-                             .arg(per_package.join(QStringLiteral("\n  ")));
     }
     return written;
 }
@@ -976,51 +1026,63 @@ QString FsPage::resolve_pack_target() {
     return out;
 }
 
-bool FsPage::run_pack(QString* summary) {
-    const auto set_summary = [summary](const QString& text) {
-        if (summary != nullptr) *summary = text;
-    };
+FsPage::PackJob FsPage::plan_pack(bool* ok, QString* why) {
+    // 主线程：算输出路径（可能要弹保存框）+ 快照待打包列表与格式键 ⇒ 交给工作线程的只有值
+    PackJob job;
     if (pack_items_.empty()) {
-        set_summary(QStringLiteral("封包：列表是空的（先「＋文件」或「＋目录」）"));
-        return false;
+        if (ok != nullptr) *ok = false;
+        if (why != nullptr) *why = QStringLiteral("封包：列表是空的（先「＋文件」或「＋目录」）");
+        return job;
     }
     const QString out = resolve_pack_target();
     if (out.isEmpty()) {
-        set_summary(QStringLiteral("封包：没选输出文件，已取消"));
-        return false;
+        if (ok != nullptr) *ok = false;
+        if (why != nullptr) *why = QStringLiteral("封包：没选输出文件，已取消");
+        return job;
     }
-    const std::string key = pack_format_combo_->currentData().toString().toUtf8().toStdString();
-    if (efs::format_key_is_sqfs(key)) {
+    job.out = out.toUtf8().toStdString();
+    job.key = pack_format_combo_->currentData().toString().toUtf8().toStdString();
+    job.items = pack_items_;
+    if (ok != nullptr) *ok = true;
+    return job;
+}
+
+QString FsPage::run_pack_job(const PackJob& job, const ProgressSink& progress,
+                             const MessageSink& message) {
+    // **纯执行**（工作线程里不碰控件）：sqfs ⇒ pack_squashfs；其余 ⇒ pack_db + 原子写
+    const auto say = [&message](const QString& text) {
+        if (message) message(text.toUtf8().toStdString());
+    };
+    if (progress) progress(0);
+    if (efs::format_key_is_sqfs(job.key)) {
         std::vector<efs::PackItem> items;
-        items.reserve(pack_items_.size());
-        for (const efs::PackFileItem& item : pack_items_) {
+        items.reserve(job.items.size());
+        for (const efs::PackFileItem& item : job.items) {
             efs::PackItem pack_item;
             pack_item.path = item.rel;
             pack_item.is_dir = false;
             pack_item.source_path = item.source_path;
             items.push_back(pack_item);
         }
-        const efs::PackResult result = efs::pack_squashfs(out.toUtf8().toStdString(), items);
-        set_summary(result.ok ? QStringLiteral("封包完成（SquashFS）：%1 个文件、%2 字节 → %3")
-                                    .arg(static_cast<int>(items.size()))
-                                    .arg(result.file_size)
-                                    .arg(out)
-                              : QStringLiteral("封包失败（SquashFS）：%1").arg(utf8(result.error)));
-        return result.ok;
+        const efs::PackResult result = efs::pack_squashfs(job.out, items);
+        if (progress) progress(100);
+        if (!result.ok) return QStringLiteral("封包失败（SquashFS）：%1").arg(utf8(result.error));
+        const QString text = QStringLiteral("封包完成（SquashFS）：%1 个文件、%2 字节 → %3")
+                                 .arg(static_cast<int>(items.size()))
+                                 .arg(result.file_size)
+                                 .arg(utf8(job.out));
+        say(text);
+        return text;
     }
-    const std::optional<efs::DbFormat> fmt = efs::format_key_to_db(key);
+    const std::optional<efs::DbFormat> fmt = efs::format_key_to_db(job.key);
     if (!fmt.has_value()) {
-        set_summary(QStringLiteral("封包：格式键 %1 既不是 DB 也不是 SquashFS").arg(utf8(key)));
-        return false;
+        return QStringLiteral("封包：格式键 %1 既不是 DB 也不是 SquashFS").arg(utf8(job.key));
     }
     std::vector<efs::DbPackItem> items;
-    items.reserve(pack_items_.size());
-    for (const efs::PackFileItem& item : pack_items_) {
+    items.reserve(job.items.size());
+    for (const efs::PackFileItem& item : job.items) {
         std::ifstream in(core::path_from_utf8(item.source_path), std::ios::binary);
-        if (!in) {
-            set_summary(QStringLiteral("封包失败：读不出 %1").arg(utf8(item.source_path)));
-            return false;
-        }
+        if (!in) return QStringLiteral("封包失败：读不出 %1").arg(utf8(item.source_path));
         efs::DbPackItem pack_item;
         pack_item.path = item.rel;
         pack_item.is_dir = false;
@@ -1028,32 +1090,54 @@ bool FsPage::run_pack(QString* summary) {
         items.push_back(std::move(pack_item));
     }
     const std::vector<uint8_t> raw = efs::pack_db(items, *fmt);
+    if (progress) progress(70);
     std::string write_error;
-    if (!core::write_file_atomic(out.toUtf8().toStdString(), raw, true, write_error)) {
-        set_summary(QStringLiteral("封包失败（写盘）：%1").arg(utf8(write_error)));
-        return false;
+    if (!core::write_file_atomic(job.out, raw, true, write_error)) {
+        return QStringLiteral("封包失败（写盘）：%1").arg(utf8(write_error));
     }
-    set_summary(QStringLiteral("封包完成（%1）：%2 个文件、%3 字节 → %4")
-                    .arg(utf8(efs::db_format_key(*fmt)))
-                    .arg(static_cast<int>(items.size()))
-                    .arg(raw.size())
-                    .arg(out));
-    return true;
+    if (progress) progress(100);
+    const QString text = QStringLiteral("封包完成（%1）：%2 个文件、%3 字节 → %4")
+                             .arg(utf8(efs::db_format_key(*fmt)))
+                             .arg(static_cast<int>(items.size()))
+                             .arg(raw.size())
+                             .arg(utf8(job.out));
+    say(text);
+    return text;
 }
 
-efs::ExtractTreeResult FsPage::extract_to(const QString& image_path, const QString& out_root,
-                                          efs::Selection selection_kind,
-                                          const std::vector<std::string>& only) {
-    // ★ 这里是本页**唯一**调用引擎导出的地方（门禁静态锁：整个页面文件里
-    //   `extract_tree(` 只许出现一次）—— 6.11 的"两条路合一"就靠它。
-    // ★ 这里是本页**唯一**调用引擎导出的地方（门禁静态锁：整个页面文件里只许出现一次）
-    //   —— 6.11 的"两条路合一"就靠它。`extract_package` 内部按包类型分派
-    //   （SquashFS / X-Ray DB 六格式），所以"DB 包也要能解"和"只有一条路"能同时成立。
-    efs::ExtractTreeOptions options;
-    options.selection = selection_kind;
-    options.only = only;
-    return efs::extract_package(image_path.toUtf8().toStdString(), out_root.toUtf8().toStdString(),
-                                options, efs::format_key_to_db(current_format_key()));
+bool FsPage::run_pack(QString* summary) {
+    bool ok = false;
+    QString why;
+    const PackJob job = plan_pack(&ok, &why);
+    if (!ok) {
+        if (summary != nullptr) *summary = why;
+        return false;
+    }
+    const QString text = run_pack_job(job, nullptr, nullptr);
+    if (summary != nullptr) *summary = text;
+    return !text.startsWith(QStringLiteral("封包失败")) &&
+           !text.startsWith(QStringLiteral("封包："));
+}
+
+void FsPage::start_pack() {
+    bool ok = false;
+    QString why;
+    const PackJob job = plan_pack(&ok, &why);
+    if (!ok) {
+        log_message(why);
+        return;
+    }
+    const QString out = utf8(job.out);
+    log_message(QStringLiteral("封包（%1）：%2 个文件 → %3")
+                    .arg(utf8(job.key))
+                    .arg(static_cast<int>(job.items.size()))
+                    .arg(out));
+    if (task_ == nullptr || !task_->run(QStringLiteral("封包"),
+                                        [job](const ProgressSink& progress, const MessageSink& message) {
+                                            run_pack_job(job, progress, message);
+                                        })) {
+        log_message(QStringLiteral("有任务在跑，稍后再试"));
+    }
 }
 
 }  // namespace xrkit::shell

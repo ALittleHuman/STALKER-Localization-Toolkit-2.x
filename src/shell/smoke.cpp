@@ -1260,6 +1260,45 @@ SmokeResult run_smoke() {
             pack_page.hide();
             QDir(pk_root).removeRecursively();
         }
+
+        // —— ③ 解包/封包**走任务壳**（1.x `TaskRunner` 的那半边"方便"：大包不冻界面）
+        //    判据是行为：点按钮 ⇒ 任务壳真的跑起来、结束事件回主线程、产物与同步路径**逐字节一致**。
+        {
+            const QString async_out = dir + QStringLiteral("/async");
+            QDir().mkpath(async_out);
+            FsPage async_page;
+            async_page.resize(760, page_min_h());
+            async_page.show();
+            QApplication::processEvents();
+            check(async_page.task() != nullptr && async_page.task()->panel() != nullptr,
+                  QStringLiteral("③ 解包/封包要挂在任务壳上（有面板才算接上）"));
+            check(async_page.add_paths({db_path}) == 1, QStringLiteral("③ 异步夹具：装一个真包"));
+            async_page.out_edit()->setText(async_out);
+            async_page.unpack_all_button()->click();
+            QElapsedTimer clock;
+            clock.start();
+            while (async_page.task()->running() && clock.elapsed() < 15000) {
+                QCoreApplication::processEvents();   // 任务壳的排队事件要靠泵事件才会落到主线程
+            }
+            check(!async_page.task()->running(),
+                  QStringLiteral("③ 任务壳要跑完（不是挂住；超时 %1 ms）").arg(clock.elapsed()));
+            bool saw_progress = false;
+            bool saw_finish_on_main = false;
+            for (const TaskShell::Event& event : async_page.task()->take_events()) {
+                if (event.kind == 'p') saw_progress = true;
+                if (event.kind == 'f' && event.on_main_thread) saw_finish_on_main = true;
+            }
+            check(saw_progress && saw_finish_on_main,
+                  QStringLiteral("③ 进度与「结束」都要经任务壳回主线程（p=%1 f=%2）")
+                      .arg(saw_progress ? 1 : 0)
+                      .arg(saw_finish_on_main ? 1 : 0));
+            QFile async_file(async_out + QStringLiteral("/gamedata/a.txt"));
+            const bool same_bytes =
+                async_file.open(QIODevice::ReadOnly) && async_file.readAll() == QByteArray("AA");
+            check(same_bytes,
+                  QStringLiteral("③ 异步解包的产物与同步一致（<输出>/gamedata/a.txt == AA）"));
+            async_page.hide();
+        }
         QDir(dir).removeRecursively();
         page.hide();
     }
