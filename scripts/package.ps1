@@ -85,18 +85,27 @@ try {
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     $log = Join-Path $stage 'smoke.log'
+    $errLog = Join-Path $stage 'smoke.err.log'
     try {
-        & (Join-Path $stage 'xrkit_app.exe') --smoke *> $log
+        # ★ 2026-09-28：主程序改成 **GUI 子系统**（修用户报的"打开弹 cmd"）之后，
+        #   PowerShell 的 `& exe args *> log` **不会等待 GUI 程序结束**、也不完整捕获输出
+        #   ⇒ 抓不到 `SHELL-SMOKE ok`，打包被误判成失败（实测）。
+        #   `Start-Process -Wait -PassThru` 对 GUI 程序是等进程结束的，还能拿 ExitCode
+        #   （比只 grep 一行更硬：日志里有 ok 但退出码非 0 也要拦住）。
+        $proc = Start-Process -FilePath (Join-Path $stage 'xrkit_app.exe') -ArgumentList '--smoke' `
+            -NoNewWindow -Wait -PassThru -RedirectStandardOutput $log -RedirectStandardError $errLog
         $line = Select-String -Path $log -Pattern 'SHELL-SMOKE ok' | Select-Object -First 1
-        if ($line) {
-            Write-Host "  $($line.Line.Trim())"
+        if ($line -and $proc.ExitCode -eq 0) {
+            Write-Host "  $($line.Line.Trim())  (exit=$($proc.ExitCode))"
             $smokeOk = $true
         } else {
-            Get-Content -LiteralPath $log -Tail 10 | ForEach-Object { Write-Host $_ }
+            Write-Host "  包内自检退出码=$($proc.ExitCode)"
+            Get-Content -LiteralPath $log -Tail 10 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+            Get-Content -LiteralPath $errLog -Tail 10 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
         }
     } finally {
         $ErrorActionPreference = $prevEap
-        Remove-Item -Force $log -ErrorAction SilentlyContinue
+        Remove-Item -Force $log, $errLog -ErrorAction SilentlyContinue
     }
 } finally {
     $env:QT_QPA_PLATFORM = ''
