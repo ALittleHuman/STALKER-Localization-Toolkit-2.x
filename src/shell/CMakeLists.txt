@@ -42,6 +42,18 @@ target_sources(xrkit_app PRIVATE "${CMAKE_SOURCE_DIR}/assets/app.rc")
 
 target_link_libraries(xrkit_app PRIVATE xrkit_shell Qt6::Widgets)
 
+# ★★ 2026-09-28 用户："软件打开弹出cmd的问题，也一直没修。" —— 查实：**只有构建器**设了
+#   `WIN32_EXECUTABLE TRUE`，主程序从来没设 ⇒ `xrkit_app.exe` 的 PE 子系统是 3（Console）
+#   ⇒ 双击必弹一个黑框；`no-console` 那条锁只管源码里的 `std::system()`/`QProcess`，
+#   **管不到"主程序自己是不是控制台程序"**，所以一直漏着。
+#   设成 TRUE ⇒ 链接 `/SUBSYSTEM:WINDOWS`（PE 子系统=2）。门禁据此**读 PE 头**判红（见
+#   `tests/check_no_console.py`），不再只看源码。
+#   ⚠ 副作用须知：GUI 子系统下从**已有控制台**启动仍能用 `>` 重定向拿到 stdout
+#   （门禁与 `--smoke`/`--scale-report` 都靠这个），只是**不再新建**控制台窗口。
+set_target_properties(xrkit_app PROPERTIES
+  WIN32_EXECUTABLE TRUE
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
 # 构建 GUI（口径见 docs/2.0.0-构建口径与buildGUI规格.md）：**只驱动 CLI**，不自己实现构建。
 # 挂在 shell 目标旁边是因为这里一定已经 find_package(Qt6) 了（release 预设不带 Qt，不能放根 CMake）。
 qt_add_executable(xrkit_build_gui "${CMAKE_SOURCE_DIR}/tools/build_gui/main.cpp")
