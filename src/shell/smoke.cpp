@@ -47,6 +47,7 @@
 #include <QProcess>
 #include <QStringList>
 #include <QThread>
+#include <QHeaderView>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -1454,6 +1455,18 @@ SmokeResult run_smoke() {
             tree_page.add_source(QStringLiteral("base"),
                                  {{"top.txt", false}, {"d/one.txt", false}, {"d/two.txt", false}});
             QApplication::processEvents();
+            // ★ 首列宽度（用户截图："text..." —— 名称列被挤成几十像素，整棵树没法读）：
+            //   首列必须是**拉伸**模式且实测有足够的宽度；判红办法：把 Stretch 换回默认宽度。
+            {
+                QHeaderView* head = tree_page.entry_tree()->header();
+                check(head != nullptr &&
+                          head->sectionResizeMode(0) == QHeaderView::Stretch &&
+                          head->sectionResizeMode(1) == QHeaderView::ResizeToContents &&
+                          tree_page.entry_tree()->columnWidth(0) >= xrkit::core::px(160),
+                      QStringLiteral("树① 首列要拉伸且有宽度（模式 %1 / 实测 %2 px，恒 ≥160）")
+                          .arg(head != nullptr ? static_cast<int>(head->sectionResizeMode(0)) : -1)
+                          .arg(tree_page.entry_tree()->columnWidth(0)));
+            }
             check(tree_page.entry_top_level_count() == 2,
                   QStringLiteral("树① 顶层 2 项（top.txt + d/），实测 %1")
                       .arg(tree_page.entry_top_level_count()));

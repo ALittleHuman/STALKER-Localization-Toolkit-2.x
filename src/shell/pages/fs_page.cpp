@@ -118,6 +118,13 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
                                   QStringLiteral("来源")});
     entry_tree_->setUniformRowHeights(true);   // 行高一致 ⇒ 几万行也不慢
     entry_tree_->setAlternatingRowColors(false);
+    // ★ 列宽（用户截图：名称列被挤成 "text..."，整棵树没法读）：**首列拉伸**，
+    //   后两列按内容自适应；别再用 `setStretchLastSection(true)`（那会拉伸"来源"列、
+    //   把名称列留成默认的几十像素）。
+    entry_tree_->header()->setStretchLastSection(false);
+    entry_tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    entry_tree_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    entry_tree_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     entry_tree_->header()->setStretchLastSection(true);
     // ★ 2026-09-27（用户实测"排版有很大问题"）：条目区给自己一个**最小高度**，
     //   免得没有条目时被压成一条细线（看着像坏了）。
@@ -957,9 +964,10 @@ void FsPage::rebuild_package_list() {
         const QFileInfo info(source.path);
         const QString state = source.loaded ? QStringLiteral("[已加载]")
                                             : QStringLiteral("[未加载]");
-        auto* item = new QListWidgetItem(QStringLiteral("%1　%2　%3 B")
-                                             .arg(info.fileName(), state)
-                                             .arg(info.size()));
+        // 大小走 `format_size`（1.x `_fmt_size` 同格式）—— 别再显示 "8321224704 B" 这种
+    auto* item = new QListWidgetItem(
+        QStringLiteral("%1　%2　%3").arg(info.fileName(), state, format_size(
+                                                      static_cast<uint64_t>(info.size()))));
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         Qt::CheckState check = Qt::Unchecked;
         if (source.loaded) {

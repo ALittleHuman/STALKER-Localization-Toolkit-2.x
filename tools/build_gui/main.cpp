@@ -16,6 +16,7 @@
 #include <QFont>
 #include <QFormLayout>
 #include <QGridLayout>
+#include <QSplitter>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QListWidget>
@@ -81,6 +82,22 @@ public:
             }
         }
         auto* root_layout = new QVBoxLayout(this);
+        // ★ 用户 2026-09-28："没有可拖拽分隔条" + "上面太挤下面太空" ⇒ 顶部（表单/按钮/状态）
+        //   与底部（构建史/日志）之间放一个**竖向 QSplitter**：默认给下面多一点，
+        //   但**用户可以自己拖**（1.x 构建器就是 SplitPane）。
+        auto* splitter = new QSplitter(Qt::Vertical, this);
+        splitter_ = splitter;
+        auto* top_panel = new QWidget(splitter);
+        auto* top_layout = new QVBoxLayout(top_panel);
+        top_layout->setContentsMargins(0, 0, 0, 0);
+        auto* bottom_panel = new QWidget(splitter);
+        auto* bottom_layout = new QVBoxLayout(bottom_panel);
+        bottom_layout->setContentsMargins(0, 0, 0, 0);
+        splitter->addWidget(top_panel);
+        splitter->addWidget(bottom_panel);
+        splitter->setChildrenCollapsible(false);
+        splitter->setStretchFactor(0, 0);
+        splitter->setStretchFactor(1, 1);
 
         // ★ 界面重构：顶部加**页标题 + 说明句**，与主程序六页同一套视觉语言
         {
@@ -98,6 +115,8 @@ public:
             root_layout->addWidget(head, 0);
             root_layout->addWidget(subtitle_, 0);
         }
+        root_layout->addWidget(splitter, 1);
+        splitter->setSizes({xrkit::core::px(300), xrkit::core::px(400)});
 
         auto* box = new QGroupBox(QStringLiteral("版本与标记（唯一事实来源：version.json）"), this);
         form_box_ = box;
@@ -107,6 +126,7 @@ public:
         //   （`--layout-report` 会判红，而"放松阈值"是明确不许做的事）。
         //   五个字段一个不少，只是把"短字段"并排：版本号|标记、序号|完整版本号，构建史独占一行。
         auto* grid = new QGridLayout(box);
+        form_grid_ = grid;
         grid->setContentsMargins(xrkit::core::px(8), xrkit::core::px(6), xrkit::core::px(8),
                                  xrkit::core::px(6));
         grid->setVerticalSpacing(4);
@@ -132,7 +152,7 @@ public:
         grid->addWidget(label_store_, 2, 1, 1, 3);
         grid->setColumnStretch(1, 1);
         grid->setColumnStretch(3, 1);
-        root_layout->addWidget(box);
+        top_layout->addWidget(box);
 
         auto* row = new QHBoxLayout();
         button_build_ = new QPushButton(QStringLiteral("开始构建"), this);
@@ -144,7 +164,7 @@ public:
         row->addWidget(button_dist_);
         row->addWidget(button_reload_);
         row->addStretch(1);
-        root_layout->addLayout(row);
+        top_layout->addLayout(row);
 
         // 构建状态：进度条（不确定态）+ 一行文字 —— "构建时进度可见"
         status_ = new QLabel(QStringLiteral("就绪"), this);
@@ -155,7 +175,7 @@ public:
         auto* status_row = new QHBoxLayout();
         status_row->addWidget(status_);
         status_row->addWidget(progress_, 1);
-        root_layout->addLayout(status_row);
+        top_layout->addLayout(status_row);
 
         // 构建史：树里的每条记录一行；双击在资源管理器里打开产物
         // ★ 界面重构（与主程序日志面板同语言）：给列表加一个小节标题，别让裸列表孤零零一片。
@@ -163,7 +183,7 @@ public:
         auto* hist_label = new QLabel(QStringLiteral("构建史（双击一行在资源管理器里打开产物）"), this);
         hist_label->setObjectName(QStringLiteral("page_subtitle"));
         hist_label->setProperty("gui_role", QStringLiteral("gui_history_label"));
-        root_layout->addWidget(hist_label, 0);
+        bottom_layout->addWidget(hist_label, 0);
 
         history_ = new QListWidget(this);
         history_->setMinimumHeight(xrkit::core::px(110));   // 口径：构建史 ≥ 110px（原来只有 max ⇒ 会被压没）
@@ -173,11 +193,11 @@ public:
             if (path.isEmpty()) return;
             QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
         });
-        root_layout->addWidget(history_);
+        bottom_layout->addWidget(history_);
 
         log_ = new xrkit::shell::LogBox(this);
         log_->setFont(QFont(QStringLiteral("Consolas"), 9));
-        root_layout->addWidget(log_, 1);
+        bottom_layout->addWidget(log_, 1);
 
         connect(combo_version_, &QComboBox::currentTextChanged, this,
                 [this](const QString&) { refresh_derived(); });
@@ -207,6 +227,39 @@ public:
 
 public:
     int form_height() const { return form_box_ != nullptr ? form_box_->height() : -1; }
+    QSplitter* splitter() const { return splitter_; }
+    // ★ 用户 2026-09-28 指出的四点，四条访问器（`--layout-report` 全用它们判红）：
+    //   ① 序号不许为 0 或缺 ② 版本下拉显示的必须就是 version.json 的当前版本
+    //   ③ "＋ 新建版本…"这一项不许乱码（它是 UTF-8 中文，曾被 fromLatin1 解成乱码）
+    //   ④ 标签与右侧控件不许重叠（"上面的字和框也有重叠"）
+    bool index_shown() const {
+        return edit_index_ != nullptr && !edit_index_->text().isEmpty() &&
+               edit_index_->text().toInt() >= 1;
+    }
+    bool version_text_ok() const {
+        return combo_version_ != nullptr &&
+               combo_version_->currentText() == QString::fromStdString(store_.current_version);
+    }
+    bool new_version_item_ok() const {
+        if (combo_version_ == nullptr || combo_version_->count() == 0) return false;
+        return combo_version_->itemText(combo_version_->count() - 1) ==
+               QString::fromUtf8(kNewVersion);
+    }
+    int form_grid_overlaps() const {
+        if (form_grid_ == nullptr) return -1;
+        const int pairs[4][2] = {{0, 0}, {0, 2}, {1, 0}, {1, 2}};
+        int bad = 0;
+        for (const auto& pair : pairs) {
+            QLayoutItem* label = form_grid_->itemAtPosition(pair[0], pair[1]);
+            QLayoutItem* widget = form_grid_->itemAtPosition(pair[0], pair[1] + 1);
+            if (label == nullptr || widget == nullptr || label->widget() == nullptr ||
+                widget->widget() == nullptr) {
+                return -1;
+            }
+            if (widget->widget()->x() < label->widget()->x() + label->widget()->width()) ++bad;
+        }
+        return bad;
+    }
     int history_height() const { return history_ != nullptr ? history_->height() : -1; }
     int log_height() const { return log_ != nullptr ? log_->height() : -1; }
     // 类外的自检（--layout-report 在 main 里）**只能**走公开访问器：
@@ -261,13 +314,13 @@ private:
         if (!new_version_.isEmpty() && !store_.tree.count(new_version_.toStdString())) {
             combo_version_->addItem(new_version_);
         }
-        combo_version_->addItem(QString::fromLatin1(kNewVersion));
+        combo_version_->addItem(QString::fromUtf8(kNewVersion));
         if (!keep_version.isEmpty()) {
             const int i = combo_version_->findText(keep_version);
             if (i >= 0) combo_version_->setCurrentIndex(i);
         }
         if (combo_version_->currentText().isEmpty() ||
-            combo_version_->currentText() == QString::fromLatin1(kNewVersion)) {
+            combo_version_->currentText() == QString::fromUtf8(kNewVersion)) {
             const int i = combo_version_->findText(QString::fromStdString(store_.current_version));
             if (i >= 0) combo_version_->setCurrentIndex(i);
         }
@@ -319,7 +372,7 @@ private:
 
     QString current_version() const {
         const QString v = combo_version_->currentText();
-        return v == QString::fromLatin1(kNewVersion) ? new_version_ : v;
+        return v == QString::fromUtf8(kNewVersion) ? new_version_ : v;
     }
 
     QString current_prerelease() const { return combo_prerelease_->currentText(); }
@@ -332,11 +385,19 @@ private:
 
     // 版本号 / 标记任一变化 ⇒ 序号与完整版本号**同步刷新**
     void refresh_derived() {
+        // ★ 用户 2026-09-28："序号是不能为0的" —— 序号是**下一个构建的序号**，从 1 起算。
+        //   查不到时（版本/标记不在 version.json 里）按 1 起算并在日志里记一行，
+        //   界面上**绝不出现 0 或空白**（原来直接 setText("") ⇒ 截图里那个空框 + "ALPHA.0"）。
         const int next = next_index();
-        edit_index_->setText(next > 0 ? QString::number(next) : QString());
+        const int shown = next > 0 ? next : 1;
+        edit_index_->setText(QString::number(shown));
+        if (next <= 0) {
+            log_line(QStringLiteral("提示：version.json 里没有「%1 %2」这条，序号按 1 起算")
+                         .arg(current_version(), current_prerelease()));
+        }
         edit_full_->setText(QStringLiteral("%1 %2.%3")
                                 .arg(current_version(), current_prerelease())
-                                .arg(next));
+                                .arg(shown));
     }
 
     void start_build() {
@@ -397,6 +458,8 @@ private:
     QLineEdit* edit_full_ = nullptr;
     QLabel* label_store_ = nullptr;
     QGroupBox* form_box_ = nullptr;
+    QSplitter* splitter_ = nullptr;
+    QGridLayout* form_grid_ = nullptr;
     QLabel* subtitle_ = nullptr;   // 顶部说明句（自检断言用）
     xrkit::shell::LogBox* log_ = nullptr;
     QProgressBar* progress_ = nullptr;   // 不确定态：构建中就一直走
@@ -442,8 +505,26 @@ int main(int argc, char** argv) {
         const int sub_h = window.subtitle_height();
         const bool has_primary = window.has_primary_button();
         std::printf("LAYOUT subtitle=%d primary=%d\n", sub_h, has_primary ? 1 : 0);
+        // ★ 2026-09-28 新增（用户截图指出的四处，都能判红）：
+        const bool index_ok = window.index_shown();
+        const bool version_ok = window.version_text_ok();
+        const bool new_item_ok = window.new_version_item_ok();
+        const int overlaps = window.form_grid_overlaps();
+        const bool splitter_ok = window.splitter() != nullptr && window.splitter()->count() == 2 &&
+                                 window.splitter()->handleWidth() > 0;
+        std::printf("LAYOUT index=%d overlaps=%d splitter=%d version_ok=%d newitem_ok=%d\n",
+                    index_ok ? 1 : 0, overlaps, splitter_ok ? 1 : 0, version_ok ? 1 : 0,
+                    new_item_ok ? 1 : 0);
+        if (index_ok && version_ok && new_item_ok && overlaps == 0 && splitter_ok) {
+            std::printf("LAYOUT ui=PASS\n");
+        } else {
+            std::printf("LAYOUT ui=FAIL（序号 %d / 重叠 %d / 分隔条 %d / 版本文本 %d / 新建项 %d）\n",
+                        index_ok ? 1 : 0, overlaps, splitter_ok ? 1 : 0, version_ok ? 1 : 0,
+                        new_item_ok ? 1 : 0);
+        }
         const bool ok = form > 0 && form <= 200 && hist >= 110 && log_pct >= 0 && log_pct <= 50 &&
-                        sub_h > 0 && has_primary;
+                        sub_h > 0 && has_primary && index_ok && version_ok && new_item_ok &&
+                        overlaps == 0 && splitter_ok;
 
         // ★ 屏幕自适应判据（用户："2.5K屏…做一个自适应，所有屏幕都能正常用"）——
         //   与上面"实际窗口几何"分开：这里会**临时改全局 ui_scale**，量完必须还原，
