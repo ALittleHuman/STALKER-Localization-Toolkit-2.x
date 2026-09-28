@@ -15,7 +15,10 @@
 //     2.0 把"全部"与"空选择"分成两个显式状态，空选择直接拒绝并说明理由；
 //   · 6.14 失败原因**随返回值走**（1.x 用模块级全局变量报错，并发任务互相覆盖）。
 
+#include "xrkit/engine/fs/db.h"
+
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -76,7 +79,18 @@ struct ExtractTreeResult {
 
 // 把镜像里的条目导到 out_root。**空文件写出 0 字节**；目录项在 All 模式下建出来、
 // 在 Listed 模式下按 1.x 跳过；`.part` 临时文件写完复核后才 rename。
+// ⚠ 只认 **SquashFS**（走 `list_entries`）。要"什么包都能解"请用下面的 `extract_package`。
 ExtractTreeResult extract_tree(const std::string& image_path, const std::string& out_root,
                                const ExtractTreeOptions& options = ExtractTreeOptions{});
+
+// ★ 2026-09-28（对齐 1.x `_unpack_checked`，"FS 方便程度"的一半）：**统一的"从包导出"入口** ——
+// 按包类型分派：magic 命中 SquashFS ⇒ 走上面的 `extract_tree`；否则按 X-Ray DB 六格式
+// （整文件读 + `auto_detect`，歧义时用 `db_fallback`）逐条 `extract_entry` 写出。
+// 为什么合成一条：1.x 是两条路各写一份（SquashFS 调外部 exe、DB 走 raw bytes），
+// 成功计数/越界判据/原子写/失败台账都在两份里各有一套 —— 合成后**同一套** 6.7 越界判据、
+// 6.9 原子写、6.14 失败理由随返回值走。**这也是"解包只有一条路"那条静态锁的新指向。**
+ExtractTreeResult extract_package(const std::string& image_path, const std::string& out_root,
+                                  const ExtractTreeOptions& options = ExtractTreeOptions{},
+                                  std::optional<DbFormat> db_fallback = std::nullopt);
 
 }  // namespace xrkit::engine::fs

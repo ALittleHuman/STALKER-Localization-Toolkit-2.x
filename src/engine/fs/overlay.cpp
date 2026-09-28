@@ -187,6 +187,39 @@ int MergeTree::checked_file_count() const {
     return count;
 }
 
+int MergeTree::toggle_source(int source_index, bool checked) {
+    // 照 1.x `_db_toggle`：勾选一个包 = 它的**文件**全部打勾（目录跟着显示三态）
+    int files = 0;
+    int checked_files = 0;
+    for (const MergeNode* node : flatten()) {
+        if (node->source_index != source_index) continue;
+        if (node->is_dir) continue;
+        ++files;
+    }
+    // flatten() 给的是 const 指针 ⇒ 用路径回查可变节点（与 toggle_dir 同一手法）
+    for (const MergeNode* node : flatten()) {
+        if (node->source_index != source_index) continue;
+        MergeNode* mutable_node = find(node->path);
+        if (mutable_node == nullptr) continue;
+        mutable_node->checked = checked;
+        if (!mutable_node->is_dir && checked) ++checked_files;
+    }
+    (void)checked_files;
+    return files;
+}
+
+void MergeTree::source_check_state(int source_index, int* files, int* checked_files) const {
+    int total = 0;
+    int on = 0;
+    for (const MergeNode* node : flatten()) {
+        if (node->source_index != source_index || node->is_dir) continue;
+        ++total;
+        if (node->checked) ++on;
+    }
+    if (files != nullptr) *files = total;
+    if (checked_files != nullptr) *checked_files = on;
+}
+
 std::vector<const MergeNode*> MergeTree::flatten() const {
     std::vector<const MergeNode*> out;
     flatten_into(root, out);
@@ -263,6 +296,15 @@ std::vector<TreeItem> collect_tree(const std::string& root) {
     std::sort(out.begin(), out.end(),
               [](const TreeItem& a, const TreeItem& b) { return a.path < b.path; });
     return out;
+}
+
+bool is_package_file_name(const std::string& path) {
+    // 照 1.x：`n = basename(p).lower(); d = n.rfind("."); return d >= 0 and n[d:d+3] == ".db"`
+    const std::string name = basename_lower(path);
+    const size_t dot = name.rfind('.');
+    if (dot == std::string::npos || dot + 2 >= name.size()) return false;
+    const std::string head = name.substr(dot + 1, 2);
+    return head == "db" || head == "sq";
 }
 
 std::vector<std::pair<std::string, bool>> loose_entries(const std::string& root,

@@ -6,15 +6,22 @@
 #include "../virtual_list.h"
 
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QDir>
+#include <QDirIterator>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QLineEdit>
 #include <QMetaObject>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
+#include <QUrl>
 #include <QVBoxLayout>
+
+#include <algorithm>
+#include <functional>
 
 namespace xrkit::shell {
 namespace {
@@ -77,6 +84,12 @@ void FsPage::log_message(const QString& text) {
 FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral("文件系统"), parent) {
     decrypt_dir_ = QDir::temp().filePath(QStringLiteral("xrkit_decrypted"));
     QDir().mkpath(decrypt_dir_);
+    // ★ 2026-09-28（用户："FS 的方便程度比 1.x 下降了不少，你回头看看 1.1.0"）——
+    //   本页布局按 **1.x `apps/fs_app.py` 的控件组织**重排（照代码，不照印象）：
+    //     · 包列表带自己的按钮行（加包/扫描目录/全选包/加载选中/取消加载/移除/清空 + 计数）
+    //     · 条目列表带自己的行（搜索框 + 包内全选/全不选 + 计数）
+    //     · 顶部一行：打包/解包格式 + **解包输出目录**（1.x 的「输出」行，含浏览/拖放/打开）
+    //   ——1.x 的"方便"主要就来自这三块控件各自贴着自己的列表，而不是全塞进底部操作栏。
     // ── 左：包列表（6.4：拖放**直接挂在这个既有控件上**，不另造 drop_zone）
     package_list_ = new QListWidget;
     package_list_->setObjectName(QStringLiteral("fs_package_list"));
@@ -102,19 +115,81 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
 
     // ★ 用户 2026-09-27 真机明令：「把图中玩意删掉」——卡片里那坨**空状态文字**连同它的
     //   容器块一起删掉；页内提示只保留**顶部标题行的副标题**那一句（原来卡片里还贴了一遍
-    //   几乎同义的话，是重复）。删完卡片里只剩：打包格式行 + 两个列表。
+    //   几乎同义的话，是重复）。删完卡片里只剩：打包格式行 + 各列表自己的按钮行。
     auto* row = new QHBoxLayout;
     row->addWidget(new QLabel(QStringLiteral("打包/解包格式：")), 0);
     row->addWidget(format_combo_, 0);
-    row->addStretch(1);
-    // ★ 用户 2026-09-27：「1.x 的部分功能或选择没了」——1.x 有"输入行 + 浏览"和"扫描目录"，
-    //   2.x 却**只有拖放**（而拖放当时根本没接线，见 drop_filter.h 的说明）⇒ 等于没有入口。
-    //   这里补上**唯一**的加包入口按钮：选文件（可多选）→ 走 `add_paths`（与拖放同一条）。
+    row->addSpacing(xrkit::core::px(12));
+    // 1.x 的「输入」行在这里换成了「解包到」：2.x 的包是"加进来"的（加包/拖放/扫描），
+    // 所以缺的不是输入行而是**解包输出行**（原来写死 `<包路径>.out`，用户没法选）。
+    row->addWidget(new QLabel(QStringLiteral("解包到：")), 0);
+    out_edit_ = new QLineEdit;
+    out_edit_->setObjectName(QStringLiteral("fs_output_dir"));
+    out_edit_->setAcceptDrops(true);  // 6.4 同族：拖放挂在既有控件上
+    out_edit_->setPlaceholderText(QStringLiteral("输出目录（留空＝与包同目录）"));
+    row->addWidget(out_edit_, 1);
+    auto* browse_out = new QPushButton(QStringLiteral("选择…"));
+    browse_out->setObjectName(QStringLiteral("fs_browse_output"));
+    row->addWidget(browse_out, 0);
+    open_out_button_ = new QPushButton(QStringLiteral("打开"));
+    open_out_button_->setObjectName(QStringLiteral("fs_open_output"));
+    row->addWidget(open_out_button_, 0);
     add_button_ = new QPushButton(QStringLiteral("加包"));
     add_button_->setObjectName(QStringLiteral("fs_add_package"));
     row->addWidget(add_button_, 0);
     body_layout()->addLayout(row);
+
+    // 包列表的按钮行（1.x `_build_db_panel` 的 bar：扫描目录/全选/加载选中/取消加载/移除/清空 + 计数）
+    {
+        auto* bar = new QHBoxLayout;
+        scan_button_ = new QPushButton(QStringLiteral("扫描目录"));
+        scan_button_->setObjectName(QStringLiteral("fs_scan_dir"));
+        bar->addWidget(scan_button_, 0);
+        select_all_button_ = new QPushButton(QStringLiteral("全选包"));
+        select_all_button_->setObjectName(QStringLiteral("fs_select_all_packages"));
+        bar->addWidget(select_all_button_, 0);
+        auto* load_sel = new QPushButton(QStringLiteral("加载选中"));
+        load_sel->setObjectName(QStringLiteral("fs_load_selected"));
+        bar->addWidget(load_sel, 0);
+        QObject::connect(load_sel, &QPushButton::clicked, this, [this] { load_selected(); });
+        auto* unload_sel = new QPushButton(QStringLiteral("取消加载"));
+        unload_sel->setObjectName(QStringLiteral("fs_unload_selected"));
+        bar->addWidget(unload_sel, 0);
+        QObject::connect(unload_sel, &QPushButton::clicked, this, [this] { unload_selected(); });
+        auto* remove_sel = new QPushButton(QStringLiteral("移除"));
+        remove_sel->setObjectName(QStringLiteral("fs_remove_packages"));
+        bar->addWidget(remove_sel, 0);
+        QObject::connect(remove_sel, &QPushButton::clicked, this, [this] { remove_selected(); });
+        clear_button_ = new QPushButton(QStringLiteral("清空"));
+        clear_button_->setObjectName(QStringLiteral("fs_clear_packages"));
+        bar->addWidget(clear_button_, 0);
+        bar->addStretch(1);
+        package_count_label_ = new QLabel;
+        package_count_label_->setObjectName(QStringLiteral("fs_package_count"));
+        bar->addWidget(package_count_label_, 0);
+        body_layout()->addLayout(bar);
+    }
     body_layout()->addWidget(package_list_, 1);
+
+    // 条目列表的按钮行（1.x `_build_file_panel`：全选/全不选 + 计数 + **搜索**）
+    {
+        auto* bar = new QHBoxLayout;
+        check_all_button_ = new QPushButton(QStringLiteral("包内全选"));
+        check_all_button_->setObjectName(QStringLiteral("fs_check_all_files"));
+        bar->addWidget(check_all_button_, 0);
+        check_none_button_ = new QPushButton(QStringLiteral("包内全不选"));
+        check_none_button_->setObjectName(QStringLiteral("fs_check_no_files"));
+        bar->addWidget(check_none_button_, 0);
+        bar->addWidget(new QLabel(QStringLiteral("搜索")), 0);
+        search_edit_ = new QLineEdit;
+        search_edit_->setObjectName(QStringLiteral("fs_search"));
+        search_edit_->setPlaceholderText(QStringLiteral("按路径过滤（边打边筛）"));
+        bar->addWidget(search_edit_, 1);
+        entry_count_label_ = new QLabel;
+        entry_count_label_->setObjectName(QStringLiteral("fs_entry_count"));
+        bar->addWidget(entry_count_label_, 0);
+        body_layout()->addLayout(bar);
+    }
     body_layout()->addWidget(entry_list_, 1);
 
     QObject::connect(add_button_, &QPushButton::clicked, this, [this] {
@@ -125,22 +200,26 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
                            "所有文件 (*.*)"));
         if (!picked.isEmpty()) add_paths(picked);
     });
+    QObject::connect(browse_out, &QPushButton::clicked, this, [this] {
+        const QString picked =
+            QFileDialog::getExistingDirectory(this, QStringLiteral("选择解包输出目录"),
+                                              out_edit_->text());
+        if (!picked.isEmpty()) out_edit_->setText(QDir::toNativeSeparators(picked));
+    });
+    QObject::connect(open_out_button_, &QPushButton::clicked, this, [this] {
+        const QString dir = resolve_output_dir();
+        if (!dir.isEmpty()) QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    });
     // 6.4：拖放挂在**既有控件**上（包列表 + 卡片空白处），不另造 drop_zone
     drop_filter_ = new FileDropFilter([this](const QStringList& paths) { add_paths(paths); }, this);
     drop_filter_->attach(package_list_);
     drop_filter_->attach(card());
 
-    // ── 操作栏（规则 2：贴底、不进视口）
-    // 6.3：**两个不同的"全选"** —— 左边那组改包列表选中态，右边那个改包内勾选态。
-    select_all_button_ = add_action(QStringLiteral("全选包"));
-    select_all_button_->setObjectName(QStringLiteral("fs_select_all_packages"));
-    add_action(QStringLiteral("加载选中"));
-    add_action(QStringLiteral("取消加载"));
-    add_action(QStringLiteral("移除"));
-    check_all_button_ = add_action(QStringLiteral("包内全选"));
-    check_all_button_->setObjectName(QStringLiteral("fs_check_all_files"));
-    unpack_button_ = add_action(QStringLiteral("解包"));
-    unpack_button_->setObjectName(QStringLiteral("fs_unpack"));
+    // ── 操作栏（规则 2：贴底、不进视口）：1.x 顶部那两个解包入口
+    unpack_checked_button_ = add_action(QStringLiteral("解包选中"));
+    unpack_checked_button_->setObjectName(QStringLiteral("fs_unpack_checked"));
+    unpack_all_button_ = add_action(QStringLiteral("批量解包"));
+    unpack_all_button_->setObjectName(QStringLiteral("fs_unpack_all"));
 
     QObject::connect(select_all_button_, &QPushButton::clicked, this, [this] {
         std::vector<std::string> visible;
@@ -149,28 +228,27 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         // 只动包列表：包内勾选**一个都不碰**（6.3 的两套状态）
         for (int i = 0; i < package_list_->count(); ++i) package_list_->item(i)->setSelected(true);
     });
-    QObject::connect(check_all_button_, &QPushButton::clicked, this, [this] {
-        check_all(true);
+    QObject::connect(check_all_button_, &QPushButton::clicked, this, [this] { check_all(true); });
+    QObject::connect(check_none_button_, &QPushButton::clicked, this, [this] { check_all(false); });
+    // 包列表那一行按钮（1.x `_build_db_panel` 的同名动作）
+    QObject::connect(scan_button_, &QPushButton::clicked, this, [this] {
+        const QString dir = QFileDialog::getExistingDirectory(
+            this, QStringLiteral("扫描目录里的包（递归）"), resolve_output_dir());
+        if (!dir.isEmpty()) scan_dir(dir);
     });
-    QObject::connect(unpack_button_, &QPushButton::clicked, this, [this] {
-        // 6.11：解包走的是**同一个** `extract_to`（选中集 = 当前勾选的文件）
-        std::vector<std::string> only;
-        for (const efs::MergeNode* node : tree_.flatten()) {
-            if (!node->is_dir && node->checked) only.push_back(node->path);
-        }
-        // 真程序里"从哪个包解"= 包列表里选中的那一份；这里取第一个源（自检也用它喂）
-        const QString image = sources_.empty() ? QString() : sources_.front().path;
-        const efs::ExtractTreeResult result =
-            extract_to(image, image + QStringLiteral(".out"), efs::Selection::Listed, only);
-        // 解包结果写进**日志栏**（原来是改写卡片里那行提示；那行已按用户要求删掉，
-        // 结果不能因此没地方去）。失败也照旧可见。
-        log_message(result.ok
-                        ? QStringLiteral("解包完成：%1 个文件、%2 字节（失败 %3 项）%4")
-                              .arg(result.files_written)
-                              .arg(result.bytes_written)
-                              .arg(result.failures.size())
-                              .arg(utf8(result.failure_note()))
-                        : QStringLiteral("解包失败：%1").arg(utf8(result.error)));
+    QObject::connect(clear_button_, &QPushButton::clicked, this, [this] { clear_all(); });
+    // 搜索：边打边筛（1.x 的 `search_var.trace_add` 同一行为）
+    QObject::connect(search_edit_, &QLineEdit::textChanged, this, [this] { refresh_rows(); });
+    // 6.11：两个解包入口都走**同一条** `extract_to`（页面里 `extract_tree(` 只许出现一次）
+    QObject::connect(unpack_checked_button_, &QPushButton::clicked, this, [this] {
+        QString summary;
+        unpack_selected(&summary);
+        log_message(summary);
+    });
+    QObject::connect(unpack_all_button_, &QPushButton::clicked, this, [this] {
+        QString summary;
+        unpack_all(&summary);
+        log_message(summary);
     });
 
     refresh_rows();
@@ -204,21 +282,14 @@ void FsPage::add_source(const QString& source_in,
 void FsPage::push_source(const QString& source,
                          const std::vector<std::pair<std::string, bool>>& entries) {
     // 路径侧的闸门已经在调用方过掉（`add_source` / `add_paths`）—— 这里只动模型与界面
-    efs::MergeInput input;
-    input.source = source.toUtf8().toStdString();
-    input.entries = entries;
-    efs::MergeTree incoming = efs::build_tree(input);
-    if (sources_.empty()) {
-        tree_ = incoming;
-    } else {
-        tree_.merge(incoming, static_cast<int>(sources_.size()));
-    }
     Source record;
     record.path = source;
     record.key = source.toUtf8().toStdString();
+    record.loaded = true;      // 「加包/拖放/散装层」进来的就是已加载（1.x 拖入目录=全部加载）
     sources_.push_back(record);
-    package_list_->addItem(source);
-    refresh_rows();
+    entries_.push_back(entries);
+    rebuild_package_list();
+    rebuild_tree();
 }
 
 int FsPage::add_paths(const QStringList& paths) {
@@ -277,16 +348,89 @@ bool FsPage::entry_hint_visible() const {
     return false;
 }
 
+void FsPage::rebuild_tree() {
+    // 合并树 = **已加载的那些源**按 `sources_` 顺序重放一遍（后者为准）。
+    // 「取消加载/移除/清空」都走它 —— 不引入"从树里局部删节点"这种第二套逻辑。
+    tree_ = efs::MergeTree{};
+    loaded_order_.clear();
+    for (size_t i = 0; i < sources_.size(); ++i) {
+        const Source& source = sources_[i];
+        if (!source.loaded) continue;
+        efs::MergeInput input;
+        input.source = source.key;
+        input.entries = entries_[i];
+        efs::MergeTree incoming = efs::build_tree(input);
+        if (tree_.sources.empty()) {
+            // `build_tree` 自己就把这个源写进 `sources`（**别再 push 一次**：多算一个会让
+            // 下一个源的 `other_source_index` 变成 2，合并出来的节点 source_index 越界、
+            // 界面上"这一份来自哪个包"就整列空了 —— 2026-09-28 实测踩过）
+            tree_ = incoming;
+        } else {
+            // `merge` 会把对方的 sources 追加进来，序号 = 当前已加载源数
+            tree_.merge(incoming, static_cast<int>(tree_.sources.size()));
+        }
+        loaded_order_.push_back(i);   // 合并树里的第 k 个源 ←→ sources_ 的第 i 个
+    }
+    refresh_counts();
+    refresh_rows();
+}
+
+QString FsPage::source_path_for_index(int source_index) const {
+    if (source_index < 0 || source_index >= static_cast<int>(loaded_order_.size())) return QString();
+    const size_t row = loaded_order_[static_cast<size_t>(source_index)];
+    if (row >= sources_.size()) return QString();
+    return sources_[row].path;
+}
+
+int FsPage::loaded_index_for_source(size_t row) const {
+    for (size_t i = 0; i < loaded_order_.size(); ++i) {
+        if (loaded_order_[i] == row) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+void FsPage::refresh_counts() {
+    // 包计数（1.x `db_count`：`f"{len} 个"`；2.x 额外把"已加载几个"说出来）
+    if (package_count_label_ != nullptr) {
+        int loaded = 0;
+        for (const Source& source : sources_) {
+            if (source.loaded) ++loaded;
+        }
+        package_count_label_->setText(sources_.empty()
+                                          ? QString()
+                                          : QStringLiteral("%1 个（已加载 %2）")
+                                                .arg(static_cast<int>(sources_.size()))
+                                                .arg(loaded));
+    }
+    // 条目计数（1.x `entry_count`：`f"{nf} 文件"`；查看的是**过滤后**的数）
+    if (entry_count_label_ != nullptr) {
+        int files = 0;
+        for (const efs::MergeNode* node : tree_.flatten()) {
+            if (!node->is_dir && row_matches(node->path)) ++files;
+        }
+        entry_count_label_->setText(files == 0 ? QString() : QStringLiteral("%1 文件").arg(files));
+    }
+}
+
+bool FsPage::row_matches(const std::string& path) const {
+    // 1.x `_render`：`q = search.lower().replace("\\","/")`，命中即显示
+    if (search_edit_ == nullptr) return true;
+    const QString query = search_edit_->text().trimmed().toLower().replace(QLatin1Char('\\'),
+                                                                          QLatin1Char('/'));
+    if (query.isEmpty()) return true;
+    return utf8(path).toLower().contains(query);
+}
+
 void FsPage::refresh_rows() {
     row_texts_.clear();
     for (const efs::MergeNode* node : tree_.flatten()) {
+        if (!row_matches(node->path)) continue;   // 搜索过滤（1.x 同一行为）
         QString text = utf8(node->path);
         if (node->is_dir) {
             text += QStringLiteral("/");
-        } else if (node->source_index >= 0 &&
-                   node->source_index < static_cast<int>(sources_.size())) {
+        } else if (!source_path_for_index(node->source_index).isEmpty()) {
             // "这一份来自哪个包" = 引擎实际会读到的那一份（6.1）
-            text += QStringLiteral("　←　") + sources_[static_cast<size_t>(node->source_index)].path;
+            text += QStringLiteral("　←　") + source_path_for_index(node->source_index);
         }
         if (node->checked) text += QStringLiteral("　[勾选]");
         row_texts_.push_back(text);
@@ -296,6 +440,267 @@ void FsPage::refresh_rows() {
     //   它就是拖放落点、也是"已加载哪些包"的唯一显示处 —— 空着的条目框纯属占地方
     //   （用户真机反馈「比例太丑」的原话场景；空状态块删掉后这条就是空状态的唯一处理）。
     if (entry_list_ != nullptr) entry_list_->setVisible(!row_texts_.empty());
+    refresh_counts();
+}
+
+QString FsPage::output_dir() const {
+    return out_edit_ != nullptr ? out_edit_->text().trimmed() : QString();
+}
+
+QString FsPage::resolve_output_dir() {
+    // 1.x `_resolve_output`：空则按"第一个包所在目录"推断，并**回填**输入框
+    //（界面必须反映真实落盘位置 —— 1.x 的 H1 就是"框里空着，实际落到别处"）。
+    QString out = output_dir();
+    if (out.isEmpty()) {
+        if (!sources_.empty()) {
+            out = QFileInfo(sources_.front().path).absolutePath();
+        } else {
+            out = QDir::toNativeSeparators(QDir::currentPath());
+        }
+        if (out_edit_ != nullptr) out_edit_->setText(QDir::toNativeSeparators(out));
+    }
+    return out;
+}
+
+QString FsPage::package_folder_name(const QString& package_path) {
+    // 1.x `_package_folder`：`os.path.splitext(os.path.basename(p))[0]`
+    //   gamedata.db0 → gamedata；gamedata.sq_base → gamedata；a.b.db0 → a.b
+    return QFileInfo(package_path).completeBaseName();
+}
+
+int FsPage::unpack_selected(QString* summary) {
+    // 1.x `_unpack_checked`：只解**勾选的**文件，按"条目归属哪个包"分组逐包导出，
+    // 每包落到 `<输出>/<包名去掉扩展名>/`（1.x `os.path.join(out, _package_folder(src))`）。
+    const QString out_root = resolve_output_dir();
+    int written = 0;
+    int failed = 0;
+    QStringList per_package;
+    for (size_t i = 0; i < sources_.size(); ++i) {
+        if (!sources_[i].loaded) continue;
+        const int merged_index = loaded_index_for_source(i);
+        std::vector<std::string> only;
+        for (const efs::MergeNode* node : tree_.flatten()) {
+            if (node->is_dir || !node->checked) continue;
+            if (node->source_index != merged_index) continue;
+            only.push_back(node->path);
+        }
+        if (only.empty()) continue;
+        const QString image = sources_[i].path;
+        const QString target =
+            QDir(out_root).filePath(package_folder_name(image));
+        const efs::ExtractTreeResult result =
+            extract_to(image, target, efs::Selection::Listed, only);
+        written += static_cast<int>(result.files_written);
+        failed += static_cast<int>(result.failures.size());
+        per_package << QStringLiteral("%1→%2（%3 文件%4）")
+                           .arg(QFileInfo(image).fileName(), package_folder_name(image))
+                           .arg(result.files_written)
+                           .arg(result.ok ? QString()
+                                          : QStringLiteral("，失败：") + utf8(result.error));
+    }
+    if (summary != nullptr) {
+        *summary = per_package.isEmpty()
+                       ? QStringLiteral("没有勾选任何条目（包内全选/勾单个文件后再解）")
+                       : QStringLiteral("解包选中：%1 个文件、失败 %2 → %3\n  %4")
+                             .arg(written)
+                             .arg(failed)
+                             .arg(out_root)
+                             .arg(per_package.join(QStringLiteral("\n  ")));
+    }
+    return written;
+}
+
+int FsPage::unpack_all(QString* summary) {
+    // 1.x `_unpack_batch`：**所有已加载的包**整包导出（不看勾选）
+    const QString out_root = resolve_output_dir();
+    int written = 0;
+    int failed = 0;
+    QStringList per_package;
+    for (size_t i = 0; i < sources_.size(); ++i) {
+        if (!sources_[i].loaded) continue;
+        const QString image = sources_[i].path;
+        const QString target = QDir(out_root).filePath(package_folder_name(image));
+        const efs::ExtractTreeResult result =
+            extract_to(image, target, efs::Selection::All);
+        written += static_cast<int>(result.files_written);
+        failed += static_cast<int>(result.failures.size());
+        per_package << QStringLiteral("%1→%2（%3 文件%4）")
+                           .arg(QFileInfo(image).fileName(), package_folder_name(image))
+                           .arg(result.files_written)
+                           .arg(result.ok ? QString()
+                                          : QStringLiteral("，失败：") + utf8(result.error));
+    }
+    if (summary != nullptr) {
+        *summary = per_package.isEmpty()
+                       ? QStringLiteral("没有已加载的包（先「加包」/「扫描目录」并加载）")
+                       : QStringLiteral("批量解包：%1 个文件、失败 %2 → %3\n  %4")
+                             .arg(written)
+                             .arg(failed)
+                             .arg(out_root)
+                             .arg(per_package.join(QStringLiteral("\n  ")));
+    }
+    return written;
+}
+
+int FsPage::scan_dir(const QString& dir) {
+    // 1.x `_scan_dir`：递归找 `_is_db` / `_is_sq` 命中的文件，加进**已知包列表**（不自动加载），
+    // 按 basename 小写排序（6.2 的加载序同源）。
+    if (dir.isEmpty() || !QFileInfo(dir).isDir()) return 0;
+    QStringList found;
+    QDirIterator it(dir, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString path = it.next();
+        if (efs::is_package_file_name(path.toUtf8().toStdString())) found << path;
+    }
+    found.sort(Qt::CaseInsensitive);
+    int added = 0;
+    for (const QString& path : found) {
+        bool known = false;
+        for (const Source& source : sources_) {
+            if (source.path.compare(path, Qt::CaseInsensitive) == 0) known = true;
+        }
+        if (known) continue;
+        Source record;
+        record.path = path;
+        record.key = path.toUtf8().toStdString();
+        record.loaded = false;      // 扫进来 ≠ 加载；由「加载选中」或勾选决定
+        sources_.push_back(record);
+        entries_.emplace_back();
+        ++added;
+    }
+    // 列表按 basename 排序显示（与 6.2 的"后者为准"顺序一致，免得显示顺序与合并顺序打架）
+    std::vector<size_t> order = efs::sort_sources_by_basename([this] {
+        std::vector<std::string> paths;
+        for (const Source& source : sources_) paths.push_back(source.key);
+        return paths;
+    }());
+    std::vector<Source> sorted_sources;
+    std::vector<std::vector<std::pair<std::string, bool>>> sorted_entries;
+    for (size_t index : order) {
+        sorted_sources.push_back(sources_[index]);
+        sorted_entries.push_back(entries_[index]);
+    }
+    sources_.swap(sorted_sources);
+    entries_.swap(sorted_entries);
+    rebuild_package_list();
+    rebuild_tree();
+    log_message(QStringLiteral("扫描目录：新增 %1 个包，共 %2 个（未加载）")
+                    .arg(added)
+                    .arg(static_cast<int>(sources_.size())));
+    return added;
+}
+
+void FsPage::rebuild_package_list() {
+    // 包列表每行：basename + 大小 + [已加载]/[未加载]（1.x DB 行的 f"[已加载]" / 大小）
+    const QString keep = selection_.size() > 0 ? QString() : QString();
+    Q_UNUSED(keep);
+    int selected_row = -1;
+    for (int i = 0; i < package_list_->count(); ++i) {
+        if (package_list_->item(i)->isSelected()) selected_row = i;
+    }
+    package_list_->clear();
+    for (const Source& source : sources_) {
+        const QFileInfo info(source.path);
+        const QString state = source.loaded ? QStringLiteral("[已加载]")
+                                            : QStringLiteral("[未加载]");
+        QString text = QStringLiteral("%1　%2　%3")
+                           .arg(info.fileName(), state, QStringLiteral("%1 B").arg(info.size()));
+        package_list_->addItem(text);
+    }
+    if (selected_row >= 0 && selected_row < package_list_->count()) {
+        package_list_->item(selected_row)->setSelected(true);
+    }
+    refresh_counts();
+}
+
+int FsPage::load_selected() {
+    // 1.x `_load_selected`：只加载**选中的**包，勾选态不碰
+    int loaded = 0;
+    const QList<QListWidgetItem*> chosen = package_list_->selectedItems();
+    for (QListWidgetItem* item : chosen) {
+        const int row = package_list_->row(item);
+        if (row < 0 || row >= static_cast<int>(sources_.size())) continue;
+        if (sources_[static_cast<size_t>(row)].loaded) continue;
+        QString gated = sources_[static_cast<size_t>(row)].path;
+        QString gate_error;
+        if (!gate_source(gated, &gate_error)) {
+            const QString why = QStringLiteral("拒绝加载（需要解密插件）：%1 —— %2")
+                                    .arg(sources_[static_cast<size_t>(row)].path, gate_error);
+            log_message(why);
+            load_errors_ << why;
+            continue;
+        }
+        std::string error;
+        std::vector<std::pair<std::string, bool>> entries;
+        if (QFileInfo(gated).isDir()) {
+            entries = efs::loose_entries(gated.toUtf8().toStdString(), error);
+        } else {
+            entries = efs::package_entries(gated.toUtf8().toStdString(),
+                                           efs::format_key_to_db(current_format_key()), error);
+        }
+        if (!error.empty()) {
+            const QString why = QStringLiteral("加载失败：%1 —— %2")
+                                    .arg(sources_[static_cast<size_t>(row)].path, utf8(error));
+            log_message(why);
+            load_errors_ << why;
+            continue;
+        }
+        sources_[static_cast<size_t>(row)].path = gated;
+        sources_[static_cast<size_t>(row)].key = gated.toUtf8().toStdString();
+        sources_[static_cast<size_t>(row)].loaded = true;
+        entries_[static_cast<size_t>(row)] = std::move(entries);
+        ++loaded;
+    }
+    rebuild_package_list();
+    rebuild_tree();
+    log_message(QStringLiteral("加载选中：%1 个（共 %2 个已加载）")
+                    .arg(loaded)
+                    .arg(static_cast<int>(std::count_if(
+                        sources_.begin(), sources_.end(),
+                        [](const Source& s) { return s.loaded; }))));
+    return loaded;
+}
+
+int FsPage::unload_selected() {
+    // 1.x `_unload_selected`：只改"加载"状态，勾选态跟随原节点（merge 的既有语义）
+    int unloaded = 0;
+    for (QListWidgetItem* item : package_list_->selectedItems()) {
+        const int row = package_list_->row(item);
+        if (row < 0 || row >= static_cast<int>(sources_.size())) continue;
+        if (!sources_[static_cast<size_t>(row)].loaded) continue;
+        sources_[static_cast<size_t>(row)].loaded = false;
+        ++unloaded;
+    }
+    rebuild_package_list();
+    rebuild_tree();
+    return unloaded;
+}
+
+int FsPage::remove_selected() {
+    std::vector<size_t> doomed;
+    for (QListWidgetItem* item : package_list_->selectedItems()) {
+        const int row = package_list_->row(item);
+        if (row >= 0 && row < static_cast<int>(sources_.size())) {
+            doomed.push_back(static_cast<size_t>(row));
+        }
+    }
+    std::sort(doomed.begin(), doomed.end(), std::greater<size_t>());
+    for (size_t row : doomed) {
+        selection_.toggle(sources_[row].key, false);
+        sources_.erase(sources_.begin() + static_cast<long>(row));
+        entries_.erase(entries_.begin() + static_cast<long>(row));
+    }
+    rebuild_package_list();
+    rebuild_tree();
+    return static_cast<int>(doomed.size());
+}
+
+void FsPage::clear_all() {
+    sources_.clear();
+    entries_.clear();
+    selection_ = efs::FsSelection{};
+    package_list_->clear();
+    rebuild_tree();   // 空树 + 刷计数/行
 }
 
 efs::ExtractTreeResult FsPage::extract_to(const QString& image_path, const QString& out_root,
@@ -303,10 +708,14 @@ efs::ExtractTreeResult FsPage::extract_to(const QString& image_path, const QStri
                                           const std::vector<std::string>& only) {
     // ★ 这里是本页**唯一**调用引擎导出的地方（门禁静态锁：整个页面文件里
     //   `extract_tree(` 只许出现一次）—— 6.11 的"两条路合一"就靠它。
+    // ★ 这里是本页**唯一**调用引擎导出的地方（门禁静态锁：整个页面文件里只许出现一次）
+    //   —— 6.11 的"两条路合一"就靠它。`extract_package` 内部按包类型分派
+    //   （SquashFS / X-Ray DB 六格式），所以"DB 包也要能解"和"只有一条路"能同时成立。
     efs::ExtractTreeOptions options;
     options.selection = selection_kind;
     options.only = only;
-    return efs::extract_tree(image_path.toUtf8().toStdString(), out_root.toUtf8().toStdString(), options);
+    return efs::extract_package(image_path.toUtf8().toStdString(), out_root.toUtf8().toStdString(),
+                                options, efs::format_key_to_db(current_format_key()));
 }
 
 }  // namespace xrkit::shell

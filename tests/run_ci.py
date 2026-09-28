@@ -999,14 +999,21 @@ def step_shell_smoke(release: bool) -> None:
 
     # 对照表 6.11：**解包只能有一条路**。1.x 是"逐项 `--cat`（300 s/项）"与
     # "整镜像 `--unpack-path`（3600 s）"两条路，成功计数与文案还不同源 ——
-    # 页面里再出现第二处 `extract_tree(` 调用，就等于把那条路又劈开了。
+    # 页面里再出现第二处导出调用，就等于把那条路又劈开了。
+    # ★ 2026-09-28：那一处**入口改名了** —— `extract_tree` 只认 SquashFS，而 1.x 的
+    #   "解包"DB 与 SquashFS 都能解（这正是"FS 不如 1.x 方便"的一半）⇒ 引擎加了
+    #   `extract_package`（按包类型分派，共用同一套越界判据/原子写/失败台账）。
+    #   锁的**意图不变**（页面里只有一处导出调用），指向改成新入口；并要求页面里
+    #   **不再直接出现** `extract_tree(`（免得有人绕过统一入口又开一条路）。
     page_src = ROOT / "src" / "shell" / "pages" / "fs_page.cpp"
-    calls = active_code(page_src.read_text(encoding="utf-8", errors="replace")).count(
-        "extract_tree(")
-    if calls != 1:
-        fail("解包入口（6.11）：fs_page.cpp 里有 %d 处 extract_tree( —— 必须恰好 1 处" % calls)
+    page_code = active_code(page_src.read_text(encoding="utf-8", errors="replace"))
+    calls = page_code.count("extract_package(")
+    direct = page_code.count("extract_tree(")
+    if calls != 1 or direct != 0:
+        fail("解包入口（6.11）：fs_page.cpp 里 extract_package( 必须恰好 1 处、"
+             "extract_tree( 必须 0 处（实测 %d / %d）" % (calls, direct))
         return
-    ok("解包只有一条路（6.11：fs_page.cpp 里 extract_tree( 恰好 1 处）")
+    ok("解包只有一条路（6.11：fs_page.cpp 里 extract_package( 恰好 1 处、无旁路）")
 
     # 对照表 ⑨9.7：**页面不许自己拼"定案步骤"标签**。1.x 的事故就是 convert_app 复算了
     # `多字节(...)` / `指定(...)` / `声明(...)` / `统计(...)`，而判定的值来自别处 ⇒

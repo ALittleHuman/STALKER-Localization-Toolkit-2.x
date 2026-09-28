@@ -26,6 +26,7 @@
 
 class QComboBox;
 class QLabel;
+class QLineEdit;
 class QListWidget;
 class QPushButton;
 
@@ -62,6 +63,14 @@ public:
     FileDropFilter* drop_filter() const { return drop_filter_; }
 
     int source_count() const { return static_cast<int>(sources_.size()); }
+    // 已加载的源数（`refresh_counts` 的"已加载 k"与自检都用它）
+    int loaded_source_count() const {
+        int loaded = 0;
+        for (const Source& source : sources_) {
+            if (source.loaded) ++loaded;
+        }
+        return loaded;
+    }
     // ★ 2026-09-27：卡片里的"空状态提示块"与重复提示行**按用户要求删除**（原话"把图中玩意
     //   删掉"）⇒ 本访问器恒为 false，只供自检做"这条不许再冒出来"的反向断言。
     bool entry_hint_visible() const;
@@ -95,9 +104,33 @@ public:
     QListWidget* package_list() const { return package_list_; }
     VirtualList* entry_list() const { return entry_list_; }
     QPushButton* add_button() const { return add_button_; }
+    // ★ 2026-09-28（用户："FS 的方便程度比 1.x 下降了不少"）—— 对齐 1.x 1.1.0：
+    QLineEdit* out_edit() const { return out_edit_; }
+    QLineEdit* search_edit() const { return search_edit_; }
+    QLabel* entry_count_label() const { return entry_count_label_; }
+    QPushButton* open_out_button() const { return open_out_button_; }
+    QPushButton* scan_button() const { return scan_button_; }
+    QPushButton* clear_button() const { return clear_button_; }
+    QPushButton* check_none_button() const { return check_none_button_; }
+    QPushButton* unpack_checked_button() const { return unpack_checked_button_; }
+    QPushButton* unpack_all_button() const { return unpack_all_button_; }
+
+    // 解包输出根目录（1.x `_resolve_output`）：为空时按第一个源所在目录推断，并**回填**到输入框
+    //（界面必须反映真实落盘位置 —— 1.x 的 H1 就是"框里是空/旧值，实际落到别处"）。
+    QString resolve_output_dir();
+    QString output_dir() const;
+    // 1.x `_package_folder`：gamedata.db0 / gamedata.sq_base → "gamedata"
+    static QString package_folder_name(const QString& package_path);
+
+    // 解包（1.x `_unpack_checked` / `_unpack_batch` 的等价物；两者都走**同一条** `extract_to`）：
+    //   ① 按"条目归属哪个包"分组，逐包导出到 `<输出>/<包名去掉扩展名>/`；
+    //   ② 返回写出的文件数，`summary` 里带成功/失败与落盘根目录（界面只用它写日志与状态）。
+    // 不做模态确认、不阻塞 —— 界面按钮与自检**共用**这一条（自检据此断言真产物）。
+    int unpack_selected(QString* summary);
+    int unpack_all(QString* summary);
+
     QPushButton* select_all_button() const { return select_all_button_; }
     QPushButton* check_all_button() const { return check_all_button_; }
-    QPushButton* unpack_button() const { return unpack_button_; }
 
     // 6.13 的判据：下拉每一项的 `data` 必须是内部键，且显示名解析不出格式
     void fill_format_combo();
@@ -107,19 +140,46 @@ public:
     // 把模型的一行行刷进虚拟列表（行文本带"这一份来自哪个包"）
     void refresh_rows();
 
+    // ★ 1.x 的"已知包列表"模型（`db_files` + `loaded{}`）在 2.x 的落地：
+    //   `sources_` = **已知的包**（加包/拖放/扫描进来的都在这儿，带"是否已加载"），
+    //   合并树由**已加载的那些**按加载顺序重建 ⇒ "加载选中/取消加载/移除/清空"才有意义
+    //   （否则列表里全是已加载的，那几个按钮等于摆设 —— 这正是"不如 1.x 方便"的一半）。
+    void rebuild_tree();
+    void refresh_counts();
+    // 扫描目录（1.x `_scan_dir`）：递归找包文件（名字规则在引擎 `is_package_file_name`），
+    // 加入已知列表但**不自动加载**（1.x 是加进列表，用户勾/选后再加载）。返回新增个数。
+    int scan_dir(const QString& dir);
+    // 对包列表里**选中**的项：加载（解析条目进树）/ 取消加载（从树里摘掉）/ 移除 / 全部清空
+    int load_selected();
+    int unload_selected();
+    int remove_selected();
+    void clear_all();
+
 private:
     struct Source {
         QString path;
         std::string key;
+        bool loaded = false;   // 是否已解析条目并并进合并树（1.x `loaded`）
     };
 
-    // 模型/界面收尾（闸门已过）：建树 → 合并 → 进列表 → 刷行。
+    // 模型/界面收尾（闸门已过）：记进已知包列表 → 重建列表与合并树。
     // `add_source`（已在内存里的条目）与 `add_paths`（从磁盘列条目）**共用**这一段，
-    // 所以"同名条目以后加载的为准"只有一份实现。
+    // 所以"同名条目以后加载的为准"只有一份实现（`rebuild_tree` 里的 MergeTree 合并）。
     void push_source(const QString& source,
                      const std::vector<std::pair<std::string, bool>>& entries);
+    bool row_matches(const std::string& path) const;
+    void rebuild_package_list();
+    // 合并树里的 `source_index` → 已知包路径（见 `loaded_order_` 的说明）
+    QString source_path_for_index(int source_index) const;
+    // 反向：`sources_` 的下标 → 合并树里的 `source_index`（未加载返回 -1）
+    int loaded_index_for_source(size_t row) const;
 
     engine::fs::MergeTree tree_;
+    // 每个已知源解析出来的条目表（`load_selected` 之后才填；`rebuild_tree` 用它重放合并）
+    std::vector<std::vector<std::pair<std::string, bool>>> entries_;
+    // 合并树里的 `source_index` 是"**已加载**集合里的序号"，而界面要的是 `sources_` 的下标
+    //（已知列表里还有未加载的）—— 这张表就是两者的映射，重建树时同步更新。
+    std::vector<size_t> loaded_order_;
     engine::fs::FsSelection selection_;
     std::vector<Source> sources_;
     std::vector<QString> row_texts_;
@@ -132,10 +192,19 @@ private:
     QComboBox* format_combo_ = nullptr;
     VirtualList* entry_list_ = nullptr;
     QPushButton* add_button_ = nullptr;
+    QLineEdit* out_edit_ = nullptr;
+    QLineEdit* search_edit_ = nullptr;
+    QLabel* entry_count_label_ = nullptr;
+    QLabel* package_count_label_ = nullptr;
+    QPushButton* open_out_button_ = nullptr;
+    QPushButton* scan_button_ = nullptr;
+    QPushButton* clear_button_ = nullptr;
+    QPushButton* check_none_button_ = nullptr;
+    QPushButton* unpack_checked_button_ = nullptr;
+    QPushButton* unpack_all_button_ = nullptr;
     FileDropFilter* drop_filter_ = nullptr;
     QPushButton* select_all_button_ = nullptr;
     QPushButton* check_all_button_ = nullptr;
-    QPushButton* unpack_button_ = nullptr;
 };
 
 }  // namespace xrkit::shell

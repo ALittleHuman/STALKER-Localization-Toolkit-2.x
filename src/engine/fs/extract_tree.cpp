@@ -246,4 +246,89 @@ ExtractTreeResult extract_tree(const std::string& image_path, const std::string&
     return finish();
 }
 
+ExtractTreeResult extract_package(const std::string& image_path, const std::string& out_root,
+                                  const ExtractTreeOptions& options,
+                                  std::optional<DbFormat> db_fallback) {
+    // ① SquashFS：先只读 96 字节超块判 magic（大镜像不能整包进内存）⇒ 命中就走既有那条
+    SuperBlock super;
+    std::string super_error;
+    if (read_superblock(image_path, super, super_error)) {
+        return extract_tree(image_path, out_root, options);
+    }
+
+    // ② X-Ray DB 六格式：条目表在尾部 ⇒ 整文件读
+    ExtractTreeResult result;
+    const auto begin = std::chrono::steady_clock::now();
+    const auto finish = [&result, begin]() {
+        result.elapsed_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin)
+                .count();
+        return result;
+    };
+    if (out_root.empty()) {
+        result.error = "输出根为空";
+        return finish();
+    }
+    std::ifstream in(core::path_from_utf8(image_path), std::ios::binary);
+    if (!in) {
+        result.error = "读不出文件：" + image_path;
+        return finish();
+    }
+    const std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+    std::optional<DbFormat> fmt = auto_detect(raw);
+    if (!fmt.has_value() && db_fallback.has_value()) fmt = db_fallback;
+    if (!fmt.has_value()) {
+        result.error = "认不出这个包的格式（既不是 SquashFS，DB 自洽判定也有歧义："
+                       "在格式下拉里选定具体格式后重试）";
+        return finish();
+    }
+    const DbList listed = unpack_db(raw, *fmt);
+    if (!listed.ok) {
+        result.error = std::string(db_format_key(*fmt)) + " 解析失败：" + listed.error;
+        return finish();
+    }
+    result.ok = true;   // 从这里往后：单项失败算单项（与 SquashFS 分支同口径）
+
+    const bool want_all = options.selection == Selection::All;
+    // Listed 模式下按 1.x **跳过目录项**（6.10 的同族口径）
+    for (const DbEntry& entry : listed.entries) {
+        if (!want_all) {
+            const bool wanted =
+                std::find(options.only.begin(), options.only.end(), entry.path) != options.only.end();
+            if (!wanted || entry.is_dir) continue;
+        }
+        const OutPathResult safe = safe_out_path(out_root, entry.path);
+        if (!safe.ok) {
+            result.failures.push_back({entry.path, safe.reason});
+            continue;
+        }
+        if (entry.is_dir) {
+            std::error_code ec;
+            stdfs::create_directories(core::path_from_utf8(safe.path), ec);
+            if (ec) {
+                result.failures.push_back({entry.path, "建目录失败：" + ec.message()});
+                continue;
+            }
+            ++result.dirs_created;
+            continue;
+        }
+        const DbExtract data = extract_entry(raw, entry);
+        if (!data.ok) {
+            result.failures.push_back({entry.path, data.error});
+            continue;
+        }
+        std::string write_error;
+        if (!core::write_file_atomic(safe.path, data.data, options.atomic, write_error)) {
+            result.failures.push_back({entry.path, write_error});
+            continue;
+        }
+        // 空文件是**合法条目**（写出 0 字节）—— 与"解不出来"分开（6.8）
+        ++result.files_written;
+        result.bytes_written += data.data.size();
+        result.written.push_back(entry.path);
+    }
+    return finish();
+}
+
 }  // namespace xrkit::engine::fs

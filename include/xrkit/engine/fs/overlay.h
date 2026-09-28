@@ -53,6 +53,11 @@ struct MergeInput {
 std::vector<std::pair<std::string, bool>> loose_entries(const std::string& root,
                                                         std::string& error);
 
+// ★ 1.x `_is_db` / `_is_sq` 的**照抄**（看 basename 的最后一个扩展名头两个字母）：
+//   `x.db` / `x.db0` / `x.db_base` ⇒ 真；`x.sq` / `x.sqfs` / `x.sq_textures` ⇒ 真。
+// 用途：扫描目录时认包、加入封包列表时**排除包文件**（1.x `_is_pack_file`）。
+bool is_package_file_name(const std::string& path);
+
 // 从一个**包文件**列出条目表（与 `loose_entries` 同形 —— 好让"包"与"散装目录"走同一条
 // `add_source` 路径，不出现第二套合并/加载逻辑）。
 //
@@ -81,6 +86,12 @@ struct MergeTree {
     // 6.3：包内「全选/全不选」—— 只改 `checked`（**不碰** selected）
     void toggle_all(bool checked);
     void toggle_dir(const std::string& path, bool checked);
+    // ★ 2026-09-28（对齐 1.x `_db_toggle`）：**勾选一个包 = 该包贡献的条目全部打勾**。
+    // 合并树里"这一份是谁的"由 `source_index` 说了算（后者为准），所以按它筛即可。
+    // 返回被改动的**文件**条目数（目录不计，与 `checked_file_count` 同口径）。
+    int toggle_source(int source_index, bool checked);
+    // 某个源在合并树里还看得见的文件数（界面显示"整包勾选态"用它判三态）
+    void source_check_state(int source_index, int* files, int* checked_files) const;
 
     // 打平成一列（前序遍历，目录在前）—— 界面用它喂虚拟列表
     std::vector<const MergeNode*> flatten() const;
