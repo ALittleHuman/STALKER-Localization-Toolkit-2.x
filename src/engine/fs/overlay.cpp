@@ -76,7 +76,9 @@ MergeTree build_tree(const MergeInput& input) {
     MergeTree tree;
     tree.root.is_dir = true;  // 虚拟根：它不是条目，只是挂载点（计数/遍历要靠这个标志）
     tree.sources.push_back(input.source);
-    for (const auto& [path, is_dir] : input.entries) {
+    for (const EntryInfo& entry : input.entries) {
+        const std::string& path = entry.path;
+        const bool is_dir = entry.is_dir;
         // 6.7 的同一份"不可信输入"意识：这里只做结构，越界路径由导出那一层拒。
         const std::vector<std::string> parts = split_path(path);
         if (parts.empty()) continue;
@@ -92,6 +94,9 @@ MergeTree build_tree(const MergeInput& input) {
                 fresh.name = parts[i];
                 fresh.path = acc;
                 fresh.is_dir = !last || is_dir;
+                // ★ 大小随条目进节点（**新建节点这一支也必须写** —— 我第一次只写在"已存在"那一支，
+                //   界面上就是一列 0；锁当场把它抓出来了）
+                fresh.size = fresh.is_dir ? 0 : entry.size;
                 fresh.source_index = 0;
                 cur->children.push_back(fresh);
                 next = &cur->children.back();
@@ -101,6 +106,7 @@ MergeTree build_tree(const MergeInput& input) {
                     next->is_dir = false;
                     next->children.clear();
                 }
+                next->size = entry.size;   // ★ 大小随条目进节点（界面右列要显示它）
                 next->source_index = 0;
             } else if (!last && !next->is_dir) {
                 // 中间段先前被当成文件（另一份源里它是目录）：类型变化以后者为准
@@ -352,10 +358,9 @@ PackCollectResult collect_pack_files(const std::string& base,
     return out;
 }
 
-std::vector<std::pair<std::string, bool>> loose_entries(const std::string& root,
-                                                        std::string& error) {
+std::vector<EntryInfo> loose_entries(const std::string& root, std::string& error) {
     error.clear();
-    std::vector<std::pair<std::string, bool>> out;
+    std::vector<EntryInfo> out;
     std::error_code ec;
     const std::filesystem::path base = core::path_from_utf8(root);
     if (!std::filesystem::is_directory(base, ec)) {
@@ -380,7 +385,12 @@ std::vector<std::pair<std::string, bool>> loose_entries(const std::string& root,
             const std::filesystem::path full = dir / core::path_from_utf8(name);
             const std::string child = rel.empty() ? name : rel + "/" + name;
             const bool is_dir = std::filesystem::is_directory(full, ec);
-            out.emplace_back(child, is_dir);
+            uint64_t size = 0;
+            if (!is_dir) {
+                const auto bytes = std::filesystem::file_size(full, ec);
+                size = ec ? 0 : static_cast<uint64_t>(bytes);
+            }
+            out.emplace_back(child, is_dir, size);   // ★ 大小也带出去（1.x 的树有大小列）
             if (is_dir) {
                 dirs.push_back(full);
                 rels.push_back(child);
@@ -391,11 +401,11 @@ std::vector<std::pair<std::string, bool>> loose_entries(const std::string& root,
     return out;
 }
 
-std::vector<std::pair<std::string, bool>> package_entries(const std::string& path,
-                                                          std::optional<DbFormat> db_fallback,
-                                                          std::string& error) {
+std::vector<EntryInfo> package_entries(const std::string& path,
+                                       std::optional<DbFormat> db_fallback,
+                                       std::string& error) {
     error.clear();
-    std::vector<std::pair<std::string, bool>> out;
+    std::vector<EntryInfo> out;
 
     // ① SquashFS：**先只读 96 字节超块**判 magic（8.3 GB 的镜像不能整包进内存）
     SuperBlock super;
@@ -407,7 +417,9 @@ std::vector<std::pair<std::string, bool>> package_entries(const std::string& pat
             return out;
         }
         out.reserve(listed.entries.size());
-        for (const Entry& entry : listed.entries) out.emplace_back(entry.path, entry.is_dir);
+        for (const Entry& entry : listed.entries) {
+            out.emplace_back(entry.path, entry.is_dir, entry.size);   // SquashFS 的 Entry.size
+        }
         return out;
     }
 
@@ -442,7 +454,9 @@ std::vector<std::pair<std::string, bool>> package_entries(const std::string& pat
         return out;
     }
     out.reserve(listed.entries.size());
-    for (const DbEntry& entry : listed.entries) out.emplace_back(entry.path, entry.is_dir);
+    for (const DbEntry& entry : listed.entries) {
+        out.emplace_back(entry.path, entry.is_dir, entry.size_real);   // DB 的 size_real（未压缩长度）
+    }
     return out;
 }
 

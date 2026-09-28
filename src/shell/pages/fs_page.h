@@ -44,7 +44,7 @@ public:
     // 载入一个包（真程序里由拖放/文件对话框给路径；自检直接喂条目清单）。
     // 6.2：加载顺序按 basename 小写升序 —— 页面**不自己排**，交给模型。
     void add_source(const QString& source,
-                    const std::vector<std::pair<std::string, bool>>& entries);
+                    const std::vector<engine::fs::EntryInfo>& entries);
     // 散装层（用户 2026-09-26"最后并入层"）：把一个**磁盘目录**当"包"加进来 ——
     // 条目表由 `engine::fs::loose_entries` 产出，走的是**同一个** `add_source`，
     // 所以"同名条目以后加载的为准"对散装层与包完全一致（不出现第二套合并逻辑）。
@@ -128,6 +128,12 @@ public:
     //   ① 按"条目归属哪个包"分组，逐包导出到 `<输出>/<包名去掉扩展名>/`；
     //   ② 返回写出的文件数，`summary` 里带成功/失败与落盘根目录（界面只用它写日志与状态）。
     // 不做模态确认、不阻塞 —— 界面按钮与自检**共用**这一条（自检据此断言真产物）。
+    // 合并树里某个条目的**大小**（0 = 目录或没有这个条目）——树的右列要用它，
+    // 自检也用它证明"大小真的从包/目录里带进了模型"（不是界面上瞎写一个数）
+    uint64_t node_size(const QString& path) const {
+        const engine::fs::MergeNode* node = tree_.find(path.toUtf8().toStdString());
+        return node != nullptr ? node->size : 0;
+    }
     int unpack_selected(QString* summary);
     int unpack_all(QString* summary);
 
@@ -222,7 +228,7 @@ private:
     // `add_source`（已在内存里的条目）与 `add_paths`（从磁盘列条目）**共用**这一段，
     // 所以"同名条目以后加载的为准"只有一份实现（`rebuild_tree` 里的 MergeTree 合并）。
     void push_source(const QString& source,
-                     const std::vector<std::pair<std::string, bool>>& entries);
+                     const std::vector<engine::fs::EntryInfo>& entries);
     bool row_matches(const std::string& path) const;
     void rebuild_package_list();
     // 合并树里的 `source_index` → 已知包路径（见 `loaded_order_` 的说明）
@@ -232,7 +238,7 @@ private:
 
     engine::fs::MergeTree tree_;
     // 每个已知源解析出来的条目表（`load_selected` 之后才填；`rebuild_tree` 用它重放合并）
-    std::vector<std::vector<std::pair<std::string, bool>>> entries_;
+    std::vector<std::vector<engine::fs::EntryInfo>> entries_;
     // 合并树里的 `source_index` 是"**已加载**集合里的序号"，而界面要的是 `sources_` 的下标
     //（已知列表里还有未加载的）—— 这张表就是两者的映射，重建树时同步更新。
     std::vector<size_t> loaded_order_;

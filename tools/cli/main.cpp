@@ -1189,7 +1189,7 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         std::vector<std::string> files;
         std::vector<std::string> dirs;
         for (const auto& item : entries) {
-            (item.second ? dirs : files).push_back(item.first);
+            (item.is_dir ? dirs : files).push_back(item.path);
         }
         check(ctx, files.size() == 2 && files[0] == "a.txt" && files[1] == "sub/b.txt",
               "散装层文件条目不对（应为 a.txt 与 sub/b.txt）");

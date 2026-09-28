@@ -38,10 +38,29 @@ struct MergeNode {
     std::vector<MergeNode> children;  // 目录才有；按 name 字节序
 };
 
-// 一个源的条目清单（SquashFS 的 `Entry` / DB 的 `DbEntry` 都能喂进来）
+// ★ 一个源的条目（**带大小** —— 用户 2026-09-28 对比 1.x 的树：人家右侧有大小列）：
+// 原来这里只有 `(path, is_dir)`，所以 2.x 的树**根本没有大小可显示**。
+// 两参构造留着是有意的：既有调用点写的是 `{{"a.txt", false}}`，不用改一行。
+struct EntryInfo {
+    std::string path;
+    bool is_dir = false;
+    uint64_t size = 0;
+    EntryInfo() = default;
+    EntryInfo(std::string p, bool d, uint64_t s = 0)
+        : path(std::move(p)), is_dir(d), size(s) {}
+    // 排序口径**照旧**（原来是 `pair<path, is_dir>` 的字典序）：先 path、再 is_dir；
+    // size 只作最后的决胜（不影响既有顺序，`loose_entries` 的 `std::sort` 依赖它）
+    bool operator<(const EntryInfo& other) const {
+        if (path != other.path) return path < other.path;
+        if (is_dir != other.is_dir) return is_dir < other.is_dir;
+        return size < other.size;
+    }
+};
+
+// 一个源的条目清单（SquashFS 的 `Entry` / DB 的 `DbEntry` / 散装目录都能喂进来）
 struct MergeInput {
     std::string source;  // 用户看到的包名/路径（1.x 里就是包文件名）
-    std::vector<std::pair<std::string, bool>> entries;  // (path, is_dir)
+    std::vector<EntryInfo> entries;
 };
 
 // 散装层（用户 2026-09-26 决策"最后并入层"；落地口径由我定，2026-09-27）：
@@ -50,8 +69,7 @@ struct MergeInput {
 //   · 路径一律用 '/' 分隔、相对 root、**不含**前导 './'；
 //   · 目录也作为条目出现（与包侧的 is_dir 同形），空目录照样算；
 //   · 排序：每层按名字的字节序（与包侧 `children` 的排序口径一致，保证渲染确定性）。
-std::vector<std::pair<std::string, bool>> loose_entries(const std::string& root,
-                                                        std::string& error);
+std::vector<EntryInfo> loose_entries(const std::string& root, std::string& error);
 
 // ★ 1.x `_is_db` / `_is_sq` 的**照抄**（看 basename 的最后一个扩展名头两个字母）：
 //   `x.db` / `x.db0` / `x.db_base` ⇒ 真；`x.sq` / `x.sqfs` / `x.sq_textures` ⇒ 真。
@@ -87,9 +105,9 @@ PackCollectResult collect_pack_files(const std::string& base,
 //      自洽格式**唯一**才采用；歧义/认不出时用 `db_fallback`（界面下拉里选的那个）；
 //   ③ 都不成立 ⇒ `error` 里写清原因（界面直接显示，**不静默当空包**）。
 // `db_fallback` 传 nullopt = "只认自动判定"。
-std::vector<std::pair<std::string, bool>> package_entries(const std::string& path,
-                                                          std::optional<DbFormat> db_fallback,
-                                                          std::string& error);
+std::vector<EntryInfo> package_entries(const std::string& path,
+                                       std::optional<DbFormat> db_fallback,
+                                       std::string& error);
 
 struct MergeTree {
     MergeNode root;                      // 虚拟根（name/path 为空）

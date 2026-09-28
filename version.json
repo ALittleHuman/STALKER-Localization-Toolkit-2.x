@@ -1,5 +1,5 @@
 {
-  "current": { "version": "2.0.0", "prerelease": "ALPHA", "index": 10 },
+  "current": { "version": "2.0.0", "prerelease": "ALPHA", "index": 11 },
   "tree": {
     "2.0.0": {
       "ALPHA": {
@@ -12,7 +12,8 @@
         "7": { "built": "2026-09-27 21:48:51", "commit": "209dfb9", "artifacts": ["dist\\build_pkg_7.log", "dist\\STALKER_Toolkit_2.0.0_ALPHA.7_209dfb9.zip"] },
         "8": { "built": "2026-09-27 22:30:42", "commit": "5df5d7d", "artifacts": ["dist\\build_pkg_8.log", "dist\\STALKER_Toolkit_2.0.0_ALPHA.8_5df5d7d.zip"] },
         "9": { "built": "2026-09-28 10:32:45", "commit": "1903930", "artifacts": ["dist\\build_pkg_9.log", "dist\\STALKER_Toolkit_2.0.0_ALPHA.9_1903930.zip"] },
-        "10": { "built": "2026-09-28 13:56:26", "commit": "e9da09a", "artifacts": ["dist\\build_pkg_10.log", "dist\\STALKER_Toolkit_2.0.0_ALPHA.10_e9da09a.zip"] }
+        "10": { "built": "2026-09-28 13:56:26", "commit": "e9da09a", "artifacts": ["dist\\build_pkg_10.log", "dist\\STALKER_Toolkit_2.0.0_ALPHA.10_e9da09a.zip"] },
+        "11": { "built": "2026-09-28 15:07:42", "commit": "b09cd46", "artifacts": ["dist\\build_pkg_11.log", "dist\\STALKER_Toolkit_2.0.0_ALPHA.11_b09cd46.zip"] }
       },
       "BETA": {
         "1": { "built": "2026-09-26 23:59:22", "commit": "2.0.0 ALPHA.0", "artifacts": ["dist\\build_pkg_1.log"] },

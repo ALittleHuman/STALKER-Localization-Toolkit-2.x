@@ -353,7 +353,7 @@ std::string FsPage::current_format_key() const {
 }
 
 void FsPage::add_source(const QString& source_in,
-                        const std::vector<std::pair<std::string, bool>>& entries) {
+                        const std::vector<efs::EntryInfo>& entries) {
     // ⑫12.1：加载前先过插件解密器（拒绝时**不加载**，理由给用户看）
     QString gated = source_in;
     QString gate_error;
@@ -365,7 +365,7 @@ void FsPage::add_source(const QString& source_in,
 }
 
 void FsPage::push_source(const QString& source,
-                         const std::vector<std::pair<std::string, bool>>& entries) {
+                         const std::vector<efs::EntryInfo>& entries) {
     // 路径侧的闸门已经在调用方过掉（`add_source` / `add_paths`）—— 这里只动模型与界面
     Source record;
     record.path = source;
@@ -394,7 +394,7 @@ int FsPage::add_paths(const QStringList& paths) {
         // ② 目录 ⇒ 散装层；文件 ⇒ 包（SquashFS 按 magic、DB 按自洽判定，
         //    歧义时用「打包/解包格式」下拉里选的那个，见 package_entries 的说明）
         std::string error;
-        std::vector<std::pair<std::string, bool>> entries;
+        std::vector<efs::EntryInfo> entries;
         if (QFileInfo(gated).isDir()) {
             entries = efs::loose_entries(gated.toUtf8().toStdString(), error);
         } else {
@@ -711,7 +711,7 @@ int FsPage::scan_dir(const QString& dir) {
         return paths;
     }());
     std::vector<Source> sorted_sources;
-    std::vector<std::vector<std::pair<std::string, bool>>> sorted_entries;
+    std::vector<std::vector<efs::EntryInfo>> sorted_entries;
     for (size_t index : order) {
         sorted_sources.push_back(sources_[index]);
         sorted_entries.push_back(entries_[index]);
@@ -817,7 +817,7 @@ int FsPage::load_selected() {
             continue;
         }
         std::string error;
-        std::vector<std::pair<std::string, bool>> entries;
+        std::vector<efs::EntryInfo> entries;
         if (QFileInfo(gated).isDir()) {
             entries = efs::loose_entries(gated.toUtf8().toStdString(), error);
         } else {

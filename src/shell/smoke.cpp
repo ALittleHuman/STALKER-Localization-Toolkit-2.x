@@ -1045,6 +1045,15 @@ SmokeResult run_smoke() {
         check(page.out_edit() != nullptr && page.out_edit()->text().isEmpty(),
               QStringLiteral("① 输出框初始为空（不改用户没填的东西）"));
         check(page.add_paths({db_path}) == 1, QStringLiteral("① 加包：真 DB 包要能加载"));
+        // ★ 条目**大小**必须真的从包里带进合并树（用户 2026-09-28 对比 1.x 的树：人家右列有大小）
+        //   —— 这条也是"树右列有数可显示"的前提；注入（不填 size）即红。
+        check(page.node_size(QStringLiteral("a.txt")) == 2 &&
+                  page.node_size(QStringLiteral("dir/keep.txt")) == 1 &&
+                  page.node_size(QStringLiteral("dir")) == 0,
+              QStringLiteral("④ 条目大小进模型：a.txt=2 / dir/keep.txt=1 / 目录=0（实测 %1/%2/%3）")
+                  .arg(page.node_size(QStringLiteral("a.txt")))
+                  .arg(page.node_size(QStringLiteral("dir/keep.txt")))
+                  .arg(page.node_size(QStringLiteral("dir"))));
         const QString resolved = page.resolve_output_dir();
         check(QDir::cleanPath(resolved) == QDir::cleanPath(pk_dir) &&
                   QDir::cleanPath(page.out_edit()->text()) == QDir::cleanPath(pk_dir),
@@ -1217,7 +1226,7 @@ SmokeResult run_smoke() {
             QString pack_summary;
             const bool packed = pack_page.run_pack(&pack_summary);
             std::string read_back_error;
-            const std::vector<std::pair<std::string, bool>> read_back =
+            const std::vector<efs2::EntryInfo> read_back =
                 efs2::package_entries(xdb_out.toStdString(), std::nullopt, read_back_error);
             check(packed && read_back_error.empty() && read_back.size() == 2,
                   QStringLiteral("② 封包（XDB）→ 读回 2 个条目（%1）").arg(pack_summary));
@@ -1342,7 +1351,7 @@ SmokeResult run_smoke() {
 
             // ① 引擎侧：从**磁盘上的包**列条目（SquashFS 按 magic / DB 按自洽判定）
             std::string list_error;
-            const std::vector<std::pair<std::string, bool>> listed =
+            const std::vector<xrkit::engine::fs::EntryInfo> listed =
                 efs::package_entries(db_path.toStdString(), std::nullopt, list_error);
             check(list_error.empty() && listed.size() == 2,
                   QStringLiteral("④ package_entries 从真包列出条目（err=%1，实得 %2 条）")
@@ -2109,7 +2118,7 @@ SmokeResult run_smoke() {
     {
         namespace plug = xrkit::plugin;
         FsPage page;
-        const std::vector<std::pair<std::string, bool>> none;
+        const std::vector<xrkit::engine::fs::EntryInfo> none;
         // ① 没装注册表 ⇒ 行为不变
         page.add_source(QStringLiteral("gamedata.db_enc"), none);
         check(page.source_count() == 1 && page.source_at(0) == QStringLiteral("gamedata.db_enc"),
