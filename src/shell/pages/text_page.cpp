@@ -26,15 +26,11 @@ QString utf8(const std::string& text) { return QString::fromStdString(text); }
 
 TextPage::TextPage(QWidget* parent)
     : PageBase(QStringLiteral("text"), QStringLiteral("文本提取"), parent) {
-    auto* hint = new QLabel(QStringLiteral(
-        "把 **gameplay** 或 **scripts** 文件夹本身拖进来（只看文件夹自己的名字，"
-        "不往下找）；改写后的源文件与文本 XML 都写进输出目录，源目录始终只读。"));
-    hint->setWordWrap(true);
-
+    // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内说明整段删（六页统一）
     source_edit_ = new QLineEdit;
     source_edit_->setObjectName(QStringLiteral("text_source"));
     source_edit_->setAcceptDrops(true);  // 6.4 同族：拖放挂在既有控件上
-    source_edit_->setPlaceholderText(QStringLiteral("gameplay 或 scripts 文件夹（可拖进来）"));
+    source_edit_->setPlaceholderText(QStringLiteral("gameplay 或 scripts 文件夹"));
     target_edit_ = new QLineEdit;
     target_edit_->setObjectName(QStringLiteral("text_target"));
     target_edit_->setAcceptDrops(true);
@@ -52,7 +48,6 @@ TextPage::TextPage(QWidget* parent)
         });
         return layout;
     };
-    body_layout()->addWidget(hint, 0);
     body_layout()->addLayout(row(QStringLiteral("源目录："), source_edit_,
                                  QStringLiteral("选择 gameplay / scripts 文件夹")));
     body_layout()->addLayout(row(QStringLiteral("输出目录："), target_edit_,

@@ -109,16 +109,11 @@ bool VideoPage::transcode_running() const { return process_ != nullptr; }
 
 VideoPage::VideoPage(QWidget* parent)
     : PageBase(QStringLiteral("video"), QStringLiteral("视频转换"), parent) {
-    auto* hint = new QLabel(QStringLiteral(
-        "把视频转成 STALKER 用的 OGM。ffmpeg **只认两处**：`user.ltx` 的 [ffmpeg] "
-        "path/probe（手动指定的，文件必须存在）与程序目录下的 ffmpeg.exe / ffprobe.exe —— "
-        "不搜 PATH。探测是惰性的：进页面先显示「未检测」。"));
-    hint->setWordWrap(true);
-
+    // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内说明整段删（六页统一）
     source_edit_ = new QLineEdit;
     source_edit_->setObjectName(QStringLiteral("video_source"));
     source_edit_->setAcceptDrops(true);
-    source_edit_->setPlaceholderText(QStringLiteral("源视频文件（可拖进来）"));
+    source_edit_->setPlaceholderText(QStringLiteral("源视频文件"));
     output_edit_ = new QLineEdit;
     output_edit_->setObjectName(QStringLiteral("video_output"));
     output_edit_->setAcceptDrops(true);
@@ -136,7 +131,6 @@ VideoPage::VideoPage(QWidget* parent)
         });
         return layout;
     };
-    body_layout()->addWidget(hint, 0);
     body_layout()->addLayout(row(QStringLiteral("源文件："), source_edit_,
                                  QStringLiteral("选择输出目录")));
     body_layout()->addLayout(row(QStringLiteral("输出目录："), output_edit_,

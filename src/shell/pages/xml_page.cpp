@@ -48,19 +48,15 @@ std::map<std::string, QString> list_xml(const QString& root) {
 
 XmlPage::XmlPage(QWidget* parent)
     : PageBase(QStringLiteral("xml"), QStringLiteral("XML校对"), parent) {
-    auto* hint = new QLabel(QStringLiteral(
-        "选两个目录比同名的 .xml：**行数/ID 统计**看条数与出现次数，"
-        "**ID 文本对比**看同 id 的文本是否一致。解析失败的行会标成「结果不可信」。"));;
-    hint->setWordWrap(true);
-
+    // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内说明整段删（六页统一）
     dir_a_edit_ = new QLineEdit;
     dir_a_edit_->setObjectName(QStringLiteral("xml_dir_a"));
     dir_a_edit_->setAcceptDrops(true);
-    dir_a_edit_->setPlaceholderText(QStringLiteral("文件夹 A（可拖进来）"));
+    dir_a_edit_->setPlaceholderText(QStringLiteral("文件夹 A"));
     dir_b_edit_ = new QLineEdit;
     dir_b_edit_->setObjectName(QStringLiteral("xml_dir_b"));
     dir_b_edit_->setAcceptDrops(true);
-    dir_b_edit_->setPlaceholderText(QStringLiteral("文件夹 B（可拖进来）"));
+    dir_b_edit_->setPlaceholderText(QStringLiteral("文件夹 B"));
 
     const auto dir_row = [this](const QString& label, QLineEdit* edit, QComboBox*& enc) {
         auto* layout = new QHBoxLayout;
@@ -79,7 +75,6 @@ XmlPage::XmlPage(QWidget* parent)
         });
         return layout;
     };
-    body_layout()->addWidget(hint, 0);
     body_layout()->addLayout(dir_row(QStringLiteral("文件夹 A："), dir_a_edit_, enc_a_combo_));
     body_layout()->addLayout(dir_row(QStringLiteral("文件夹 B："), dir_b_edit_, enc_b_combo_));
 

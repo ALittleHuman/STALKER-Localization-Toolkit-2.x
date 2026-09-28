@@ -36,9 +36,11 @@ namespace xrkit::shell {
 namespace {
 
 // 六个内置页（**顺序与名字照抄 1.x `BUILTIN_TOOLS`**；id 是我们自己的稳定标识）
+// ★ 副标题（`subtitle`）：用户 2026-09-27「先把我截图的文字全删了」⇒ 他截到的两句
+//   （文件系统 / 汉化包生成）**留空**（`set_subtitle("")` 会让它不占位）。其余四句保留，
+//   等他逐句点名再删 —— 不替他扩大删除范围。
 constexpr PageInfo kBuiltinPages[] = {
-    {"fs", "文件系统",
-     "把包（.db / .sqfs）拖进来，看包内文件树、勾选后解包或重打包"},
+    {"fs", "文件系统", ""},
     {"convert", "编码转换",
      "批量转换文本编码（cp1251 / cp866 / utf-8 …），逐条对比转换前后"},
     {"text", "文本提取",
@@ -47,8 +49,7 @@ constexpr PageInfo kBuiltinPages[] = {
      "比较两版 XML 的结构与条目差异，定位漏翻/多翻"},
     {"video", "视频转换",
      "调用 ffmpeg 转换过场视频（需自备 ffmpeg，缺失时可见跳过）"},
-    {"fontpack", "汉化包生成",
-     "把字体/贴图打成一个汉化包，产出可直接分发的压缩包"},
+    {"fontpack", "汉化包生成", ""},
 };
 
 constexpr int kBuiltinPageCount =

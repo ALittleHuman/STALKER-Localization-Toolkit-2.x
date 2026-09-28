@@ -77,12 +77,23 @@ SmokeResult run_smoke() {
 
     // ① 真实清单 vs 契约（少一页/改个名字都要红）
     {
-        // ★ 界面重构（用户："左侧六页导航是裸列表"）：六页都要有说明文案 + 导航项高统一
-        int empty_sub = 0;
+        // ★ 2026-09-27（用户："先把我截图的文字全删了"）：副标题**允许留空**（他截到的那两句已删）
+        //   ⇒ 判据从"六页都要有"改成"**要么没有、要么有实质文案**"（留空串/空白串占位＝红）。
+        //   这是**用户的删除指令**造成的口径变更，不是为了让谁变绿而放松 —— 原来那条
+        //   "六页都要有说明文案"是上一轮 `docs/2.0.0-界面重构口径(排版与配色).md` 的口径，
+        //   现被用户当面推翻（他的话就是更高一级的口径）。
+        int bad_sub = 0;
         for (int i = 0; i < builtin_page_count(); ++i) {
-            if (builtin_page(i).subtitle == nullptr || *builtin_page(i).subtitle == '\0') ++empty_sub;
+            const char* sub = builtin_page(i).subtitle;
+            if (sub == nullptr || *sub == '\0') continue;  // 没有文案 = 合法（用户删掉的那些）
+            bool blank = true;
+            for (const char* p = sub; *p != '\0'; ++p) {
+                if (*p != ' ' && *p != '\t') blank = false;
+            }
+            if (blank) ++bad_sub;
         }
-        check(empty_sub == 0, QStringLiteral("六页说明文案都要有（空 %1 条）").arg(empty_sub));
+        check(bad_sub == 0,
+              QStringLiteral("① 副标题要么没有、要么有实质文案（空白占位 %1 条）").arg(bad_sub));
     }
     check(builtin_page_count() == kExpectedCount,
           QStringLiteral("内置页数 = %1（实际 %2）").arg(kExpectedCount).arg(builtin_page_count()));
@@ -93,6 +104,64 @@ SmokeResult run_smoke() {
               QStringLiteral("第 %1 页标题 = %2")
                   .arg(i)
                   .arg(QString::fromUtf8(kExpectedTitles[i])));
+    }
+
+    // ★ 2026-09-27（用户："先把我截图的文字全删了"）：**被他点名删掉的那些文字不许回来** ——
+    //   六页卡片顶部那几段说明、两页的副标题、占位符/下拉项里的括注。
+    //   判据是**逐字串**（他给的正是字面文字），命中即红；不抽样：六页的每个 QLabel / 占位符 /
+    //   下拉项都扫一遍。
+    {
+        const QStringList banned = {
+            QStringLiteral("六步判定链"),      // 编码转换页说明 + 下拉项括注
+            QStringLiteral("可拖进来"),        // 四个占位符的括注
+            QStringLiteral("留空＝原地转换"),  // 输出目录占位符括注
+            QStringLiteral("只认两处"),        // 视频页说明
+            // ⚠ 这里**不能**用 `行数/ID 统计`：那是 XML 页比较模式下拉里的**合法模式名**
+            //   （引擎的模式声明），我第一版写成它，锁当场把我自己拦下来了 ⇒ 换成说明段里
+            //   独有的那半句。这条经验：**锁的判据要挑"只有被删对象才有"的字串**。
+            QStringLiteral("看条数与出现次数"),  // XML 页说明（独有的那半句）
+            QStringLiteral("只看文件夹自己的名字"),  // 文本提取页说明
+            QStringLiteral("与 1.x 逐字节一致"),     // 汉化包页说明
+            QStringLiteral("产出可直接分发的压缩包"),  // 汉化包页副标题
+            QStringLiteral("勾选后解包或重打包"),      // 文件系统页副标题
+        };
+        QStringList hit;
+        // ① 六页的 QLabel（含卡片里的说明段落）
+        for (int i = 0; i < builtin_page_count(); ++i) {
+            QWidget* page = create_page(i);
+            if (page == nullptr) continue;
+            for (QLabel* label : page->findChildren<QLabel*>()) {
+                for (const QString& text : banned) {
+                    if (label->text().contains(text)) hit << text;
+                }
+            }
+            // ② 输入框占位符
+            for (QLineEdit* edit : page->findChildren<QLineEdit*>()) {
+                for (const QString& text : banned) {
+                    if (edit->placeholderText().contains(text)) hit << text;
+                }
+            }
+            // ③ 下拉项（编码转换页的「自动（六步判定链）」就是这一类）
+            for (QComboBox* combo : page->findChildren<QComboBox*>()) {
+                for (int k = 0; k < combo->count(); ++k) {
+                    for (const QString& text : banned) {
+                        if (combo->itemText(k).contains(text)) hit << text;
+                    }
+                }
+            }
+            delete page;
+        }
+        // ④ 副标题（六页清单）
+        for (int i = 0; i < builtin_page_count(); ++i) {
+            const char* sub = builtin_page(i).subtitle;
+            if (sub == nullptr) continue;
+            for (const QString& text : banned) {
+                if (QString::fromUtf8(sub).contains(text)) hit << text;
+            }
+        }
+        check(hit.isEmpty(),
+              QStringLiteral("① 用户点名删掉的文字又回来了：%1")
+                  .arg(hit.join(QStringLiteral(" / "))));
     }
 
     // ② Hub 真的按这份清单建了控件（列表项 = 页栈页数 = 清单条数）

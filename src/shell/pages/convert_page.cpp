@@ -41,19 +41,16 @@ const char* kManualEncodings[] = {etxt::kUtf8,          etxt::kWindows1251, etxt
 
 ConvertPage::ConvertPage(QWidget* parent)
     : PageBase(QStringLiteral("convert"), QStringLiteral("编码转换"), parent) {
-    auto* hint = new QLabel(QStringLiteral(
-        "源编码选「自动」时走**六步判定链**（BOM → 多字节 → 手动 → 声明 → 统计 → 默认）；"
-        "每一行都会标出是链条的哪一步做的决定。目标编码推荐 utf-8。"));
-    hint->setWordWrap(true);
-
+    // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内那一段说明文字**整段删掉**
+    //   （六页统一；用户对"满屏解释"的口径与词汇口径同源：「不用带括号。一般人又看不懂。」）
     source_edit_ = new QLineEdit;
     source_edit_->setObjectName(QStringLiteral("convert_source"));
     source_edit_->setAcceptDrops(true);  // 6.4 同族：拖放挂在既有控件上
-    source_edit_->setPlaceholderText(QStringLiteral("源文件或目录（可拖进来）"));
+    source_edit_->setPlaceholderText(QStringLiteral("源文件或目录"));
     output_edit_ = new QLineEdit;
     output_edit_->setObjectName(QStringLiteral("convert_output"));
     output_edit_->setAcceptDrops(true);
-    output_edit_->setPlaceholderText(QStringLiteral("输出目录（留空＝原地转换）"));
+    output_edit_->setPlaceholderText(QStringLiteral("输出目录"));
 
     auto make_row = [this](const QString& label, QLineEdit* edit, const QString& title) {
         auto* row = new QHBoxLayout;
@@ -67,7 +64,6 @@ ConvertPage::ConvertPage(QWidget* parent)
         });
         return row;
     };
-    body_layout()->addWidget(hint, 0);
     body_layout()->addLayout(make_row(QStringLiteral("源路径："), source_edit_,
                                       QStringLiteral("选择源目录")));
     body_layout()->addLayout(make_row(QStringLiteral("输出目录："), output_edit_,
@@ -136,7 +132,7 @@ ConvertPage::ConvertPage(QWidget* parent)
 }
 
 void ConvertPage::fill_encoding_combos() {
-    source_combo_->addItem(QStringLiteral("自动（六步判定链）"), QStringLiteral("auto"));
+    source_combo_->addItem(QStringLiteral("自动"), QStringLiteral("auto"));
     for (const char* name : kManualEncodings) {
         source_combo_->addItem(utf8(name), utf8(name));
         target_combo_->addItem(utf8(name), utf8(name));

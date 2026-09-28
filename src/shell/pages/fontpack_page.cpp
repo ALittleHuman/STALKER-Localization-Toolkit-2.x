@@ -25,12 +25,7 @@ QString utf8(const std::string& text) { return QString::fromStdString(text); }
 
 FontPackPage::FontPackPage(QWidget* parent)
     : PageBase(QStringLiteral("fontpack"), QStringLiteral("汉化包生成"), parent) {
-    auto* hint = new QLabel(QStringLiteral(
-        "出整棵 gamedata 汉化包（与 1.x 逐字节一致）。字体状态用一个判据判定："
-        "缺字形会**直接拒绝**（在建目录之前，不留半成品）；日语字体（缺简体但有繁体形）"
-        "会被**标明**并按繁体回退，这不是坏字体。"));
-    hint->setWordWrap(true);
-
+    // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内说明整段删（六页统一）
     xml_edit_ = new QLineEdit;
     xml_edit_->setObjectName(QStringLiteral("font_xml_dir"));
     xml_edit_->setAcceptDrops(true);
@@ -67,7 +62,6 @@ FontPackPage::FontPackPage(QWidget* parent)
         });
         return layout;
     };
-    body_layout()->addWidget(hint, 0);
     body_layout()->addLayout(path_row(QStringLiteral("文本 XML："), xml_edit_, true,
                                       QStringLiteral("选择 XML 目录")));
     body_layout()->addLayout(path_row(QStringLiteral("字体："), font_edit_, false,
