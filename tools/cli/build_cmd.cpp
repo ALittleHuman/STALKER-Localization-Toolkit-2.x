@@ -128,7 +128,8 @@ int run_build_package(const std::vector<std::string>& operands) {
     const std::string full = store.full_version();
 
     // ② 真编译 + 打包（日志落 dist\；GUI 侧只是调本动作，不自己拼参数）
-    const std::string log = "dist\\build_pkg_" + std::to_string(want_index) + ".log";
+    // 构建日志不再散在 dist 根：统一进 dist\logs\（dist 根只留版本树 + FAIL）
+    const std::string log = "dist\\logs\\build_pkg_" + std::to_string(want_index) + ".log";
     std::string cmd;
     // 先把控制台代码页切 UTF-8（`chcp 65001`）⇒ 子进程 PowerShell 写进日志的中文不再乱码
     cmd += "chcp 65001 >nul && powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\build.ps1";
@@ -232,15 +233,15 @@ int run_build_package(const std::vector<std::string>& operands) {
     }
     rec.artifacts.push_back(log);
     {
-        // 与 package.ps1 的命名一致：STALKER_Toolkit_<版本_标记.序号>_<commit>.zip
-        // （GUI 的构建史条目点开就是这个文件）
-        std::string tag = want_version + "_" + want_prerelease;
-        if (want_index > 0) tag += "." + std::to_string(want_index);
-        for (char& c : tag) {
-            if (c == ' ') c = '_';
-        }
-        std::string zip_name_hint = "dist\\STALKER_Toolkit_" + tag + "_" + rec.commit + ".zip";
-        rec.artifacts.push_back(zip_name_hint);
+        // ★ 2026-09-28 用户口径：「构建出来不要使用压缩包的形式…压缩包方便分发但不方便测试。
+        //   构建成功的不要加时间戳」⇒ 主交付是**一个能直接跑的目录**（成功件名确定性、
+        //   不带时间戳），压缩包只是顺带给分发；版本层级＝主版本 → 标记。
+        //   与 package.ps1 落盘规则一致：dist\<主版本>\<标记>\STALKER_Toolkit_<主版本>_<标记>_<commit>（不带时间戳）
+        const std::string dir_hint = "dist\\" + want_version + "\\" + want_prerelease +
+                                     "\\STALKER_Toolkit_" + want_version + "_" + want_prerelease +
+                                     "_" + rec.commit;
+        rec.artifacts.push_back(dir_hint);          // 可直接跑的目录（测试用）
+        rec.artifacts.push_back(dir_hint + ".zip"); // 同名压缩包（分发用）
     }
     store.append(want_version, want_prerelease, want_index, rec);
     if (!xrkit::core::save_version_store(store_path, store, err)) {

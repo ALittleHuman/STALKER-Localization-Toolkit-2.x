@@ -115,11 +115,45 @@ try {
 }
 if (-not $smokeOk) { throw "包内 exe 的离屏自检没通过（包可能缺 Qt 运行时）" }
 
-Write-Host "== 压缩 =="
+# ★ 2026-09-28 用户口径（原话）：
+#   「构建出来不要使用压缩包的形式，因为我是单人开发，压缩包方便分发但不方便测试。
+#     构建成功的不要加时间戳，看上去太乱了。」
+#   ⇒ 交付物是**一个可以直接跑的目录**（测试用），压缩包只是**顺带**给分发用；
+#     成功件名**确定性**（不加时间戳，同一版本重复构建就覆盖它自己）；
+#     版本层级照用户口径：主版本（2.0.0 / 2.0.1…）→ 标记（ALPHA/BETA/RC）。
+
+Write-Host "== 落到版本目录（目录可直接跑 + 同名 zip 供分发）=="
 $dist = Join-Path $root $OutDir
-New-Item -ItemType Directory -Force -Path $dist | Out-Null
-$tag  = if ($VersionString -ne '') { ($VersionString -replace ' ', '_') } else { '2.0.0' }
-$zip  = Join-Path $dist ("STALKER_Toolkit_{0}_{1}.zip" -f $tag, $commit)
+# 版本口径**只有一处**：version.json。`-VersionString` 没传（比如手工跑）就从它读 current。
+# （原来没这一步：CLI 调 package.ps1 时其实也不传参 ⇒ 会落到 `<主版本>\dev\`，那是错的）
+if ($VersionString -eq '') {
+    $vj = Join-Path $root 'version.json'
+    if (Test-Path $vj) {
+        $vs = Get-Content -LiteralPath $vj -Raw -Encoding UTF8 | ConvertFrom-Json
+        $cur = $vs.current
+        if ($cur -and $cur.version) {
+            $VersionString = "{0} {1}.{2}" -f $cur.version, $cur.prerelease, $cur.index
+        }
+    }
+}
+# 从 `-VersionString`（形如 "2.0.0 ALPHA.13"）拆出 主版本 与 标记
+$verMajor = '2.0.0'
+$marker   = 'ALPHA'
+if ($VersionString -match '^\s*(\S+)\s+([A-Za-z]+)') {
+    $verMajor = $Matches[1]
+    $marker   = $Matches[2].ToUpper()
+}
+$verDir = Join-Path $dist $verMajor
+$preDir = Join-Path $verDir $marker
+New-Item -ItemType Directory -Force -Path $preDir | Out-Null
+
+$pkgName = "STALKER_Toolkit_{0}_{1}_{2}" -f $verMajor, $marker, $commit
+$pkgDir  = Join-Path $preDir $pkgName
+if (Test-Path $pkgDir) { Remove-Item -Recurse -Force $pkgDir }
+Move-Item -LiteralPath $stage -Destination $pkgDir
+
+$zip = Join-Path $preDir ("{0}.zip" -f $pkgName)
 if (Test-Path $zip) { Remove-Item -Force $zip }
-Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip
-Write-Host "PACKAGE OK: $zip"
+Compress-Archive -Path (Join-Path $pkgDir '*') -DestinationPath $zip
+Write-Host "PACKAGE OK: $pkgDir"
+Write-Host "  （分发用压缩包：$zip）" 
