@@ -228,6 +228,9 @@ public:
 public:
     int form_height() const { return form_box_ != nullptr ? form_box_->height() : -1; }
     QSplitter* splitter() const { return splitter_; }
+    // 自检用：界面显示的序号 + 版本库路径（判据：序号口径只有一处，必须与 CLI 一致）
+    QString index_text() const { return edit_index_ != nullptr ? edit_index_->text() : QString(); }
+    QString store_path_text() const { return QString::fromStdString(store_path_); }
     // ★ 用户 2026-09-28 指出的四点，四条访问器（`--layout-report` 全用它们判红）：
     //   ① 序号不许为 0 或缺 ② 版本下拉显示的必须就是 version.json 的当前版本
     //   ③ "＋ 新建版本…"这一项不许乱码（它是 UTF-8 中文，曾被 fromLatin1 解成乱码）
@@ -383,14 +386,59 @@ private:
                                  current_prerelease().toStdString());
     }
 
-    // 版本号 / 标记任一变化 ⇒ 序号与完整版本号**同步刷新**
+    // ★ 用户 spec（2026-09-24）：「"保存版本号与标记"不要加按钮，直接自动保存」+
+    //   「序号栏要显示"本轮构建标记的实际序号"」；而**版本口径只有一处**（version.json，
+    //   实现只有 CLI 一份）⇒ 这里调 `--version-store <store> set <版本> <标记>` 做自动保存，
+    //   再把它打出来的 `next=` 读回来显示，**界面不再自己算一遍**（也就不会"两者结果有差别"）。
+    int sync_store_and_read_next(const QString& version, const QString& prerelease, bool* ok) {
+        if (ok != nullptr) *ok = false;
+        const QString cli = cli_path();
+        if (cli.isEmpty()) return 0;
+        QProcess proc;
+        proc.setProcessChannelMode(QProcess::MergedChannels);
+#ifdef _WIN32
+        proc.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+            args->flags |= CREATE_NO_WINDOW;   // 不许弹控制台（用户口径「不要打开cmd」）
+        });
+#endif
+        proc.start(cli, QStringList{QStringLiteral("--version-store"),
+                                    QString::fromStdString(store_path_), QStringLiteral("set"),
+                                    version, prerelease});
+        if (!proc.waitForStarted(5000) || !proc.waitForFinished(20000)) return 0;
+        const QString out = QString::fromUtf8(proc.readAll());
+        const qsizetype at = out.indexOf(QStringLiteral("next="));
+        if (at < 0) return 0;
+        const QString digits = out.mid(at + 5).section(QLatin1Char(' '), 0, 0).trimmed();
+        bool num_ok = false;
+        const int next = digits.toInt(&num_ok);
+        if (ok != nullptr) *ok = num_ok;
+        return num_ok ? next : 0;
+    }
+
+    // 版本号 / 标记任一变化 ⇒ **自动保存** + 序号与完整版本号同步刷新
     void refresh_derived() {
-        // ★ 用户 2026-09-28："序号是不能为0的" —— 序号是**下一个构建的序号**，从 1 起算。
-        //   查不到时（版本/标记不在 version.json 里）按 1 起算并在日志里记一行，
+        // ★ 用户 2026-09-28："序号是不能为0的" —— 序号是**本轮要构建的序号**，从 1 起算；
         //   界面上**绝不出现 0 或空白**（原来直接 setText("") ⇒ 截图里那个空框 + "ALPHA.0"）。
-        const int next = next_index();
+        int next = 0;
+        bool synced = false;
+        if (!current_version().isEmpty() && !current_prerelease().isEmpty()) {
+            next = sync_store_and_read_next(current_version(), current_prerelease(), &synced);
+        }
+        if (!synced) next = next_index();   // CLI 调不动时的兜底（下面会记一行，不静默）
         const int shown = next > 0 ? next : 1;
         edit_index_->setText(QString::number(shown));
+        if (synced) {
+            // 自动保存是**可见**的：只在选择真的变了时写一行（用户口径：不许静默自救）
+            const QString key = current_version() + QLatin1Char(' ') + current_prerelease();
+            if (key != last_saved_) {
+                last_saved_ = key;
+                log_line(QStringLiteral("已自动保存版本与标记：%1（本轮序号 %2）")
+                             .arg(key)
+                             .arg(shown));
+            }
+        } else {
+            log_line(QStringLiteral("提示：没法调 CLI 自动保存，序号是本机算的（%1）").arg(shown));
+        }
         if (next <= 0) {
             log_line(QStringLiteral("提示：version.json 里没有「%1 %2」这条，序号按 1 起算")
                          .arg(current_version(), current_prerelease()));
@@ -459,6 +507,7 @@ private:
     QLabel* label_store_ = nullptr;
     QGroupBox* form_box_ = nullptr;
     QSplitter* splitter_ = nullptr;
+    QString last_saved_;   // 上一次自动保存过的「版本 标记」（用来只在变化时记一行日志）
     QGridLayout* form_grid_ = nullptr;
     QLabel* subtitle_ = nullptr;   // 顶部说明句（自检断言用）
     xrkit::shell::LogBox* log_ = nullptr;
@@ -512,9 +561,36 @@ int main(int argc, char** argv) {
         const int overlaps = window.form_grid_overlaps();
         const bool splitter_ok = window.splitter() != nullptr && window.splitter()->count() == 2 &&
                                  window.splitter()->handleWidth() > 0;
-        std::printf("LAYOUT index=%d overlaps=%d splitter=%d version_ok=%d newitem_ok=%d\n",
+        // ★ 序号口径只有一处：界面显示的必须 == CLI（version.json）算出的 next=（只读查，不写盘）
+        bool index_matches_cli = false;
+        int cli_next = -1;
+        {
+            QProcess probe;
+            probe.setProcessChannelMode(QProcess::MergedChannels);
+#ifdef _WIN32
+            probe.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+                args->flags |= CREATE_NO_WINDOW;
+            });
+#endif
+            probe.start(cli_path(), QStringList{QStringLiteral("--version-store"),
+                                                window.store_path_text()});
+            if (probe.waitForStarted(5000) && probe.waitForFinished(20000)) {
+                const QString out = QString::fromUtf8(probe.readAll());
+                const qsizetype at = out.indexOf(QStringLiteral("next="));
+                if (at >= 0) {
+                    cli_next = out.mid(at + 5).section(QLatin1Char(' '), 0, 0).trimmed().toInt();
+                    index_matches_cli = window.index_text().toInt() == cli_next;
+                }
+            }
+        }
+        std::printf("LAYOUT index=%d overlaps=%d splitter=%d version_ok=%d newitem_ok=%d "
+                    "index_cli=%d/%d\n",
                     index_ok ? 1 : 0, overlaps, splitter_ok ? 1 : 0, version_ok ? 1 : 0,
-                    new_item_ok ? 1 : 0);
+                    new_item_ok ? 1 : 0, window.index_text().toInt(), cli_next);
+        if (!index_matches_cli) {
+            std::printf("LAYOUT 序号与 CLI 不一致（界面 %d / CLI %d）⇒ 序号口径不唯一\n",
+                        window.index_text().toInt(), cli_next);
+        }
         if (index_ok && version_ok && new_item_ok && overlaps == 0 && splitter_ok) {
             std::printf("LAYOUT ui=PASS\n");
         } else {
@@ -524,7 +600,7 @@ int main(int argc, char** argv) {
         }
         const bool ok = form > 0 && form <= 200 && hist >= 110 && log_pct >= 0 && log_pct <= 50 &&
                         sub_h > 0 && has_primary && index_ok && version_ok && new_item_ok &&
-                        overlaps == 0 && splitter_ok;
+                        overlaps == 0 && splitter_ok && index_matches_cli;
 
         // ★ 屏幕自适应判据（用户："2.5K屏…做一个自适应，所有屏幕都能正常用"）——
         //   与上面"实际窗口几何"分开：这里会**临时改全局 ui_scale**，量完必须还原，
