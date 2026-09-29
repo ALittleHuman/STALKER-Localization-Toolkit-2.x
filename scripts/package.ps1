@@ -163,7 +163,7 @@ New-Item -ItemType Directory -Force -Path $preDir | Out-Null
 #      不要再出现 `STALKER_Toolkit_` 前缀、重复的主版本、以及 commit 那一坨。
 #   ② 不要再有压缩包 ⇒ **只出目录**（目录本身就能直接跑；要分发时再单独说）。
 #   ① 历史版本**不删** ⇒ 只覆盖"同一个序号"自己的目录（重建同一序号＝覆盖它自己），别的序号一律不动。
-$pkgName = "{0}.{1}" -f $marker, $idx
+$pkgName = "{0}" -f $idx   # 只留序号；主版本/标记已经在上层目录里了（用户 2026-09-29 第 1 条）
 $pkgDir  = Join-Path $preDir $pkgName
 if (Test-Path $pkgDir) { Remove-Item -Recurse -Force $pkgDir }
 Move-Item -LiteralPath $stage -Destination $pkgDir

@@ -246,7 +246,7 @@ int run_build_package(const std::vector<std::string>& operands) {
         //   与 package.ps1 落盘规则一致：dist\<主版本>\<标记>\STALKER_Toolkit_<主版本>_<标记>_<commit>（不带时间戳）
         // 与 package.ps1 的落盘规则一致：dist\<主版本>\<标记>\<标记>.<序号>\ （只要目录）
         const std::string dir_hint = "dist\\" + want_version + "\\" + want_prerelease + "\\" +
-                                     want_prerelease + "." + std::to_string(want_index);
+                                     std::to_string(want_index);   // 只留序号（上层已是 主版本/标记）
         rec.artifacts.push_back(dir_hint);   // 可直接双击跑的目录（历史版本按序号共存）
     }
     store.append(want_version, want_prerelease, want_index, rec);
