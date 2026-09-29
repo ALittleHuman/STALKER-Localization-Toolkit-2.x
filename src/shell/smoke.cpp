@@ -48,7 +48,6 @@
 #include <QStringList>
 #include <QThread>
 #include <QHeaderView>
-#include <QTabWidget>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -1296,44 +1295,7 @@ SmokeResult run_smoke() {
             async_page.resize(760, page_min_h());
             async_page.show();
             QApplication::processEvents();
-            // ★ 用户 2026-09-29 第 3 条：「封包和解包现在是上下排列，太挤了，最好是弄成标签切换之类的。」
-        //   判据落在**结构**上：两页标签存在、解包按钮在第 0 页、封包列表在第 1 页
-        //   （修前它们在同一个竖排布局里 ⇒ 这条必红）。
-        {
-            FsPage tab_page;
-            tab_page.resize(760, page_min_h());
-            tab_page.show();
-            QApplication::processEvents();
-            QTabWidget* tabs = tab_page.tabs();
-            const bool two_tabs = tabs != nullptr && tabs->count() == 2 &&
-                                  tabs->tabText(0) == QStringLiteral("解包") &&
-                                  tabs->tabText(1) == QStringLiteral("封包");
-            const bool unpack_in_tab0 = two_tabs &&
-                                        tabs->widget(0)->isAncestorOf(tab_page.unpack_all_button());
-            const bool pack_in_tab1 = two_tabs && tabs->widget(1)->isAncestorOf(tab_page.pack_list());
-            // 第一版把标签区写成 stretch=0 ⇒ 实测被压成一条（用户："哪儿跟哪儿啊？是这么做的吗？"）
-            // ⇒ 这里量高度：标签区必须 ≥150px（判红办法：把 addWidget(tabs_, 1) 改回 0）。
-            const int tabs_h = tabs != nullptr ? tabs->height() : -1;
-            check(two_tabs && tabs_h >= xrkit::core::px(150),
-                  QStringLiteral("③ 标签区要有**工作区高度**（实测 %1 px，恒 ≥150）").arg(tabs_h));
-            // ★ 用户 2026-09-29 更正：「其实之前的设计可以，但是**上面解包和下面封包分两个标签**就没问题了。」
-            //   ⇒ 判据升级为"**整页两标签**"：包列表与包内树也必须在第 0 页里（原来它们在标签外面
-            //   ⇒ 这条会红）。
-            const bool list_in_tab0 = two_tabs && tabs->widget(0)->isAncestorOf(tab_page.package_list());
-            const bool tree_in_tab0 = two_tabs && tabs->widget(0)->isAncestorOf(tab_page.entry_tree());
-            check(list_in_tab0 && tree_in_tab0,
-                  QStringLiteral("③ 整页两标签：包列表与包内树都要在「解包」页里（列表 %1 / 树 %2）")
-                      .arg(list_in_tab0 ? 1 : 0)
-                      .arg(tree_in_tab0 ? 1 : 0));
-            check(two_tabs && unpack_in_tab0 && pack_in_tab1,
-                  QStringLiteral("③ 解包/封包要分在两个标签页里（标签 %1 个 / 解包在第0页 %2 / 封包在第1页 %3）")
-                      .arg(tabs != nullptr ? tabs->count() : -1)
-                      .arg(unpack_in_tab0 ? 1 : 0)
-                      .arg(pack_in_tab1 ? 1 : 0));
-            tab_page.hide();
-        }
-
-        check(async_page.task() != nullptr && async_page.task()->panel() != nullptr,
+            check(async_page.task() != nullptr && async_page.task()->panel() != nullptr,
                   QStringLiteral("③ 解包/封包要挂在任务壳上（有面板才算接上）"));
             check(async_page.add_paths({db_path}) == 1, QStringLiteral("③ 异步夹具：装一个真包"));
             async_page.out_edit()->setText(async_out);
