@@ -255,6 +255,7 @@ private:
     void build_all_descendants(const engine::fs::MergeNode& node, QTreeWidgetItem* item);
     void sync_entry_states();                                  // 勾选后按模型刷三态
     void on_entry_item_changed(QTreeWidgetItem* item);
+    void on_entry_item_clicked(QTreeWidgetItem* item);   // 单击展开 / 单击条目勾选
     bool entry_visible(const engine::fs::MergeNode& node) const;
     void rebuild_filter_keep();
     // 反向：`sources_` 的下标 → 合并树里的 `source_index`（未加载返回 -1）

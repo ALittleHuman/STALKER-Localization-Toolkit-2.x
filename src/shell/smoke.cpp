@@ -1456,14 +1456,16 @@ SmokeResult run_smoke() {
                                  {{"top.txt", false}, {"d/one.txt", false}, {"d/two.txt", false}});
             QApplication::processEvents();
             // ★ 首列宽度（用户截图："text..." —— 名称列被挤成几十像素，整棵树没法读）：
-            //   首列必须是**拉伸**模式且实测有足够的宽度；判红办法：把 Stretch 换回默认宽度。
+            //   ★ 2026-09-29 **口径更新**（用户第 4 条："最好弄一个水平方向的可拖拽分隔条"）：
+            //   首列从 Stretch 改成 **Interactive**（三列都能拖）⇒ 判据按性质重述为
+            //   "首列可拖（Interactive）且默认宽度 ≥160px"；原意（名称列不许被挤成几十像素）不变。
+            //   判红办法：把列宽改小到 160 以下，或把模式换回 ResizeToContents。
             {
                 QHeaderView* head = tree_page.entry_tree()->header();
                 check(head != nullptr &&
-                          head->sectionResizeMode(0) == QHeaderView::Stretch &&
-                          head->sectionResizeMode(1) == QHeaderView::ResizeToContents &&
+                          head->sectionResizeMode(0) == QHeaderView::Interactive &&
                           tree_page.entry_tree()->columnWidth(0) >= xrkit::core::px(160),
-                      QStringLiteral("树① 首列要拉伸且有宽度（模式 %1 / 实测 %2 px，恒 ≥160）")
+                      QStringLiteral("树① 首列**可拖拽**且有宽度（模式 %1=Interactive / 实测 %2 px，恒 ≥160）")
                           .arg(head != nullptr ? static_cast<int>(head->sectionResizeMode(0)) : -1)
                           .arg(tree_page.entry_tree()->columnWidth(0)));
             }
@@ -1487,6 +1489,48 @@ SmokeResult run_smoke() {
             }
             check(tree_page.find_entry_item(QStringLiteral("d")) != nullptr,
                   QStringLiteral("树① 能按路径找到条目项"));
+            // ★ 用户 2026-09-29 第 5 条：文件夹**单击**就展开；文件**单击条目本身**就切换勾选
+            //   （勾选框只是视觉效果）。判据落在行为上：发一次 itemClicked 看状态有没有变。
+            {
+                QTreeWidgetItem* f = tree_page.find_entry_item(QStringLiteral("top.txt"));
+                check(f != nullptr && tree_page.checked_file_count() == 0,
+                      QStringLiteral("树② 起点：一个都没勾"));
+                QMetaObject::invokeMethod(tree_page.entry_tree(), "itemClicked",
+                                          Q_ARG(QTreeWidgetItem*, f), Q_ARG(int, 0));
+                QApplication::processEvents();
+                check(tree_page.checked_file_count() == 1,
+                      QStringLiteral("树② **单击条目 = 勾选**（实测 %1，期望 1）")
+                          .arg(tree_page.checked_file_count()));
+                QMetaObject::invokeMethod(tree_page.entry_tree(), "itemClicked",
+                                          Q_ARG(QTreeWidgetItem*, f), Q_ARG(int, 0));
+                QApplication::processEvents();
+                check(tree_page.checked_file_count() == 0,
+                      QStringLiteral("树② 再单击一次 = 取消勾选（实测 %1，期望 0）")
+                          .arg(tree_page.checked_file_count()));
+                QTreeWidgetItem* dd = tree_page.find_entry_item(QStringLiteral("d"));
+                const bool was_open = dd != nullptr && dd->isExpanded();
+                const int before = tree_page.entry_built_file_count();
+                QMetaObject::invokeMethod(tree_page.entry_tree(), "itemClicked",
+                                          Q_ARG(QTreeWidgetItem*, dd), Q_ARG(int, 0));
+                QApplication::processEvents();
+                check(dd != nullptr && dd->isExpanded() != was_open &&
+                          tree_page.entry_built_file_count() >= before,
+                      QStringLiteral("树② **单击文件夹 = 展开/折叠**（展开态 %1→%2，已建文件项 %3→%4）")
+                          .arg(was_open ? 1 : 0)
+                          .arg(dd != nullptr && dd->isExpanded() ? 1 : 0)
+                          .arg(before)
+                          .arg(tree_page.entry_built_file_count()));
+                // 列宽可拖拽（用户第 4 条）：三列都必须是 Interactive，否则用户调不了
+                QHeaderView* hh = tree_page.entry_tree()->header();
+                bool interactive = hh != nullptr;
+                for (int c = 0; c < 3 && interactive; ++c) {
+                    interactive = hh->sectionResizeMode(c) == QHeaderView::Interactive;
+                }
+                check(interactive && hh->sectionSize(0) >= xrkit::core::px(200),
+                      QStringLiteral("树② 三列**可拖拽**（模式全 Interactive=%1，首列 %2 px）")
+                          .arg(interactive ? 1 : 0)
+                          .arg(hh != nullptr ? hh->sectionSize(0) : -1));
+            }
             check(tree_page.expand_entry(QStringLiteral("d")) &&
                       tree_page.entry_built_file_count() == 3,
                   QStringLiteral("树① 展开后子项出现且**幂等**（已建文件项 %1，期望 3）")

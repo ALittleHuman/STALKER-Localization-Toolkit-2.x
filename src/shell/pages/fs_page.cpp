@@ -121,10 +121,17 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     // ★ 列宽（用户截图：名称列被挤成 "text..."，整棵树没法读）：**首列拉伸**，
     //   后两列按内容自适应；别再用 `setStretchLastSection(true)`（那会拉伸"来源"列、
     //   把名称列留成默认的几十像素）。
+    // ★ 用户 2026-09-29 第 4 条：「某些字段还是不能全部显示……最好也是弄一个水平方向的可拖拽分隔条」
+    //   ⇒ 三列都改成 **Interactive**（表头之间可以拖），并给一组合适的初始宽度；
+    //   不要再 Stretch/ResizeToContents（那样用户没法自己调，字段也容易被挤掉）。
     entry_tree_->header()->setStretchLastSection(false);
-    entry_tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    entry_tree_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    entry_tree_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    for (int col = 0; col < 3; ++col) {
+        entry_tree_->header()->setSectionResizeMode(col, QHeaderView::Interactive);
+    }
+    entry_tree_->header()->resizeSection(0, xrkit::core::px(260));
+    entry_tree_->header()->resizeSection(1, xrkit::core::px(90));
+    entry_tree_->header()->resizeSection(2, xrkit::core::px(160));
+    entry_tree_->header()->setMinimumSectionSize(xrkit::core::px(48));
     entry_tree_->header()->setStretchLastSection(true);
     // ★ 2026-09-27（用户实测"排版有很大问题"）：条目区给自己一个**最小高度**，
     //   免得没有条目时被压成一条细线（看着像坏了）。
@@ -134,6 +141,13 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
                      [this](QTreeWidgetItem* item, int) { on_entry_item_changed(item); });
     QObject::connect(entry_tree_, &QTreeWidget::itemExpanded, this,
                      [this](QTreeWidgetItem* item) { populate_entry_children(item); });
+    // ★ 用户 2026-09-29 第 5 条：「文件夹要双击才能打开，改成单击。然后单个文件要点框才能勾选，
+    //   改成点击条目就能勾选（那个勾选框只是视觉效果，没有额外判定）」。
+    //   `expandsOnDoubleClick(false)` + itemClicked：文件夹单击就展开/折叠；
+    //   文件**点条目身体**即切换勾选（点勾选框本身仍由 Qt 走 itemChanged，两条路都回灌模型）。
+    entry_tree_->setExpandsOnDoubleClick(false);
+    QObject::connect(entry_tree_, &QTreeWidget::itemClicked, this,
+                     [this](QTreeWidgetItem* item, int) { on_entry_item_clicked(item); });
 
     // ★ 用户 2026-09-27 真机明令：「把图中玩意删掉」——卡片里那坨**空状态文字**连同它的
     //   容器块一起删掉；页内提示只保留**顶部标题行的副标题**那一句（原来卡片里还贴了一遍
@@ -670,6 +684,33 @@ void FsPage::sync_entry_states() {
         }
     }
     syncing_tree_ = false;
+}
+
+void FsPage::on_entry_item_clicked(QTreeWidgetItem* item) {
+    if (item == nullptr || syncing_tree_) return;
+    const QString path = item->data(0, Qt::UserRole).toString();
+    if (path.isEmpty()) return;   // 占位子项
+    const bool is_dir = item->data(0, Qt::UserRole + 1).toBool();
+    // 点的是勾选框那一小块吗？是的话交给 Qt（itemChanged 会回灌模型），这里不重复处理
+    bool on_indicator = false;
+    if (entry_tree_ != nullptr && entry_tree_->viewport() != nullptr) {
+        const QPoint vp = entry_tree_->viewport()->mapFromGlobal(QCursor::pos());
+        const QRect row = entry_tree_->visualItemRect(item);
+        int depth = 0;
+        for (QTreeWidgetItem* p = item->parent(); p != nullptr; p = p->parent()) ++depth;
+        const int indent = entry_tree_->indentation() * depth;
+        const int indicator = entry_tree_->style()->pixelMetric(QStyle::PM_IndicatorWidth) + 8;
+        // 只有"光标确实落在这一行里、且落在那小块勾选框上"才算点勾选框；
+        // 离屏/自检里光标不在行上 ⇒ 视为点**条目身体**（否则自检没法验这条）
+        on_indicator = row.contains(vp) && vp.x() < row.x() + indent + indicator;
+    }
+    if (is_dir) {
+        if (!on_indicator) item->setExpanded(!item->isExpanded());   // 单击文件夹 = 展开/折叠
+        return;
+    }
+    if (on_indicator) return;   // 勾选框自身交给 Qt
+    // 文件：**点条目身体**即切换勾选（勾选框只是视觉效果）
+    item->setCheckState(0, item->checkState(0) == Qt::Checked ? Qt::Unchecked : Qt::Checked);
 }
 
 void FsPage::on_entry_item_changed(QTreeWidgetItem* item) {
