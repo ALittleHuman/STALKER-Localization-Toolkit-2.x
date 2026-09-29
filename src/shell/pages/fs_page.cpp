@@ -154,6 +154,24 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     // ★ 用户 2026-09-27 真机明令：「把图中玩意删掉」——卡片里那坨**空状态文字**连同它的
     //   容器块一起删掉；页内提示只保留**顶部标题行的副标题**那一句（原来卡片里还贴了一遍
     //   几乎同义的话，是重复）。删完卡片里只剩：打包格式行 + 各列表自己的按钮行。
+    // ★ 用户 2026-09-29 第 3 条（第一版我做成"最底下的两条小标签"，被用户当场否掉：被压成一条、
+    //   而且「解包」页里几乎是空的）⇒ 正确的样子：**标签区就是下方那块工作区，自己拿拉伸**，
+    //   每页装**完整的**一块 ——「解包」= 解包格式 + 解包到 + 选择… + 打开（+ 解包动作按钮，
+    //   稍后从底部操作栏挪进来）；「封包」= 封包格式/输出/浏览/封包 + 文件行 + 待打包列表。
+    tabs_ = new QTabWidget;
+    tabs_->setObjectName(QStringLiteral("fs_tabs"));
+    tabs_->setMinimumHeight(xrkit::core::px(190));   // 不许被压成一条（第一版就是这么糟的）
+    auto* unpack_page = new QWidget;
+    unpack_page->setObjectName(QStringLiteral("fs_unpack_page"));
+    unpack_layout_ = new QVBoxLayout(unpack_page);
+    unpack_layout_->setContentsMargins(0, xrkit::core::px(6), 0, 0);
+    auto* pack_page = new QWidget;
+    pack_page->setObjectName(QStringLiteral("fs_pack_page"));
+    pack_page_layout_ = new QVBoxLayout(pack_page);
+    pack_page_layout_->setContentsMargins(0, xrkit::core::px(6), 0, 0);
+    tabs_->addTab(unpack_page, QStringLiteral("解包"));
+    tabs_->addTab(pack_page, QStringLiteral("封包"));
+
     auto* row = new QHBoxLayout;
     row->addWidget(new QLabel(QStringLiteral("打包/解包格式：")), 0);
     row->addWidget(format_combo_, 0);
@@ -172,14 +190,15 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     open_out_button_ = new QPushButton(QStringLiteral("打开"));
     open_out_button_->setObjectName(QStringLiteral("fs_open_output"));
     row->addWidget(open_out_button_, 0);
-    add_button_ = new QPushButton(QStringLiteral("加包"));
-    add_button_->setObjectName(QStringLiteral("fs_add_package"));
-    row->addWidget(add_button_, 0);
-    body_layout()->addLayout(row);
+    unpack_layout_->addLayout(row);   // 「解包」页：格式 + 解包到 + 选择… + 打开
 
     // 包列表的按钮行（1.x `_build_db_panel` 的 bar：扫描目录/全选/加载选中/取消加载/移除/清空 + 计数）
     {
         auto* bar = new QHBoxLayout;
+        // 「加包」是**列表动作**，跟扫描目录/加载/移除 放一起（原来跟在"解包到"后面，属归类错误）
+        add_button_ = new QPushButton(QStringLiteral("加包"));
+        add_button_->setObjectName(QStringLiteral("fs_add_package"));
+        bar->addWidget(add_button_, 0);
         scan_button_ = new QPushButton(QStringLiteral("扫描目录"));
         scan_button_->setObjectName(QStringLiteral("fs_scan_dir"));
         bar->addWidget(scan_button_, 0);
@@ -230,23 +249,8 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     }
     body_layout()->addWidget(entry_tree_, 1);
 
-    // ★ 用户 2026-09-29 第 3 条：「封包和解包现在是上下排列，太挤了，最好是弄成标签切换之类的。」
-    //   ⇒ 下面放 QTabWidget 两页：「解包」（解包选中 / 批量解包）与「封包」（整块封包面板）；
-    //   上面保留**共用**的包列表 + 包内树。判据：两个关键控件必须各自落在自己的标签页里
-    //   （自检：解包按钮的祖先 == 第 0 页、封包列表的祖先 == 第 1 页）。
-    tabs_ = new QTabWidget;
-    tabs_->setObjectName(QStringLiteral("fs_tabs"));
-    auto* unpack_page = new QWidget;
-    unpack_page->setObjectName(QStringLiteral("fs_unpack_page"));
-    unpack_layout_ = new QVBoxLayout(unpack_page);
-    unpack_layout_->setContentsMargins(0, xrkit::core::px(6), 0, 0);
-    auto* pack_page = new QWidget;
-    pack_page->setObjectName(QStringLiteral("fs_pack_page"));
-    pack_page_layout_ = new QVBoxLayout(pack_page);
-    pack_page_layout_->setContentsMargins(0, xrkit::core::px(6), 0, 0);
-    tabs_->addTab(unpack_page, QStringLiteral("解包"));
-    tabs_->addTab(pack_page, QStringLiteral("封包"));
-    body_layout()->addWidget(tabs_, 0);
+    // 标签区放在包内树**下面**、并拿拉伸（第一版这里写的是 0 ⇒ 被压成一条，用户当场否掉）
+    body_layout()->addWidget(tabs_, 1);
 
     // ── ★ 1.x 的**封包面板**（`_build_pack_panel`）：这一整块是"FS 方便程度"的最后一块拼图
     //    （1.x 能"解包 → 改 → 重新封包"，2.x 原来只解不封）。布局照 1.x 三行：

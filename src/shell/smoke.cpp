@@ -1311,6 +1311,11 @@ SmokeResult run_smoke() {
             const bool unpack_in_tab0 = two_tabs &&
                                         tabs->widget(0)->isAncestorOf(tab_page.unpack_all_button());
             const bool pack_in_tab1 = two_tabs && tabs->widget(1)->isAncestorOf(tab_page.pack_list());
+            // 第一版把标签区写成 stretch=0 ⇒ 实测被压成一条（用户："哪儿跟哪儿啊？是这么做的吗？"）
+            // ⇒ 这里量高度：标签区必须 ≥150px（判红办法：把 addWidget(tabs_, 1) 改回 0）。
+            const int tabs_h = tabs != nullptr ? tabs->height() : -1;
+            check(two_tabs && tabs_h >= xrkit::core::px(150),
+                  QStringLiteral("③ 标签区要有**工作区高度**（实测 %1 px，恒 ≥150）").arg(tabs_h));
             check(two_tabs && unpack_in_tab0 && pack_in_tab1,
                   QStringLiteral("③ 解包/封包要分在两个标签页里（标签 %1 个 / 解包在第0页 %2 / 封包在第1页 %3）")
                       .arg(tabs != nullptr ? tabs->count() : -1)
