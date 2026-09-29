@@ -264,11 +264,22 @@ bool ScrollViewport::route_wheel(QWidget* target, QWheelEvent* event) {
             //   · 能滚（range>0）但条子被藏起来 ⇒ 仍然吃事件（挡住类绑定的"没有条子也在滚"）；
             //   · 装得下（range==0）⇒ **不吃**，让事件继续冒泡给外层视口/主窗口的条子。
             const bool can_scroll = bar != nullptr && bar->maximum() > bar->minimum();
+            // ★ 2026-09-29（用户："小滚动条在不隐藏的时候也没法滚，还是控制的整个界面的滚动条"）：
+            //   **条子可见且能滚 ⇒ 由这个控件自己滚**。原来是 `return false`（"不干预"）⇒ 事件继续
+            //   冒泡到外层视口 ⇒ 外层的条子动、它自己不动（正是用户看到的现象）。步进与自家视口同量级。
+            if (can_scroll && bar_shown(bar)) {
+                const int step = (dy != 0 ? dy : dx) > 0 ? -1 : 1;
+                const int before = bar->value();
+                bar->setValue(before + px(24) * 3 * step);
+                // 滚到头顶/底也别放它冒泡（否则"一滚到底就跳去滚外层"，用户会觉得条子不受控）
+                event->accept();
+                return true;
+            }
             if (bar != nullptr && !bar_shown(bar) && can_scroll) {
                 event->accept();
                 return true;  // 藏条子但确实能滚：吃事件，挡自滚
             }
-            return false;  // 装得下（或条子可见）⇒ 不干预，让事件冒泡出去
+            return false;  // 装得下 ⇒ 不干预，让事件冒泡出去
         }
         if (qobject_cast<ScrollViewport*>(walk) != nullptr) break;  // 到了视口边界就停
     }

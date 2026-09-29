@@ -364,9 +364,18 @@ SmokeResult run_smoke() {
         native_text->verticalScrollBar()->setValue(0);
         check(ScrollViewport::bar_shown(text_vp->vbar()) == false,
               QStringLiteral("控件级拦：视口条子不可见（前置条件）"));
-        check(send_wheel(native_text, -120), QStringLiteral("控件级拦：事件被吃掉（挡住原生自滚）"));
-        check(native_text->verticalScrollBar()->value() == 0,
-              QStringLiteral("控件级拦：QPlainTextEdit 自己没滚"));
+        // ★ 2026-09-29 **口径更新**（用户："小滚动条在不隐藏的时候也没法滚，还是控制的整个界面的
+        //   滚动条"）：原生滚动区**条子可见且能滚**时，必须**它自己滚**，事件被吃掉、
+        //   **外层不许跟着动**。旧口径是"可见 ⇒ 不干预，让它冒泡"，正是用户报的那个现象。
+        //   判红办法：把 `route_wheel` 里"可见且能滚 ⇒ 自己滚"那一段去掉（恢复 return false）。
+        check(send_wheel(native_text, -120),
+              QStringLiteral("控件级拦：事件被吃掉（不再冒泡给外层）"));
+        check(native_text->verticalScrollBar()->value() > 0,
+              QStringLiteral("条子可见且能滚 ⇒ **它自己滚**（实测 %1，期望 >0）")
+                  .arg(native_text->verticalScrollBar()->value()));
+        check(text_vp->offset_vertical() == 0,
+              QStringLiteral("外层视口不许跟着动（实测偏移 %1，期望 0）")
+                  .arg(text_vp->offset_vertical()));
 
         // ⑦-b 能滚 ⇒ **必须看得见条**（1.7 的另一向）。内容高用 fit=Content + 高的 body
         auto* tall_body = new QWidget;
