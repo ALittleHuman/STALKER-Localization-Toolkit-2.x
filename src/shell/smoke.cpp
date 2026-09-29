@@ -1422,8 +1422,12 @@ SmokeResult run_smoke() {
                                 Qt::NoModifier);
             if (drop_page.drop_filter() != nullptr) drop_page.drop_filter()->dispatch(&dir_drop);
             QApplication::processEvents();
-            check(drop_page.source_count() == 2,
-                  QStringLiteral("⑦ 拖一个目录进来要走散装层（实测 %1 个源）")
+            // ★ 2026-09-29 口径更新（用户第 6 条："整包拖进去要把 gamedata 文件树展开"）：
+            //   拖目录不再**只**建散装层 —— 现在是「散装层 1 个源 + 目录里每个包各 1 个源」。
+            //   本夹具的目录里有 1 个包 ⇒ 加上前面那一份，共 3 个源；原意（同一条 add_source 路径、
+            //   认不出的不静默加）由前后两条判据守住。
+            check(drop_page.source_count() == 3,
+                  QStringLiteral("⑦ 拖目录 = 散装层 + 里面的包（实测 %1 个源，期望 3）")
                       .arg(drop_page.source_count()));
             QDir(dir).removeRecursively();
             drop_page.hide();
@@ -1468,6 +1472,52 @@ SmokeResult run_smoke() {
                       QStringLiteral("树① 首列**可拖拽**且有宽度（模式 %1=Interactive / 实测 %2 px，恒 ≥160）")
                           .arg(head != nullptr ? static_cast<int>(head->sectionResizeMode(0)) : -1)
                           .arg(tree_page.entry_tree()->columnWidth(0)));
+            }
+            // ★ 用户 2026-09-29 第 6 条：拖**目录**要展开里面的包（不只显示 db 文件）
+            {
+                FsPage dir_page;
+                dir_page.resize(760, page_min_h());
+                dir_page.show();
+                QApplication::processEvents();
+                const QString mix = QDir::temp().filePath(QStringLiteral("xrkit_smoke_dirpkg"));
+                QDir(mix).removeRecursively();
+                QDir().mkpath(mix + QStringLiteral("/gamedata/loose"));
+                {
+                    std::ofstream(mix.toStdString() + "/gamedata/loose/readme.txt",
+                                  std::ios::binary | std::ios::trunc)
+                        << "L";
+                }
+                // 里面放一个**真 XDB 包**（用引擎自己打的），验证"包内容也摊进树里"
+                {
+                    std::vector<efs::DbPackItem> items;
+                    efs::DbPackItem one;
+                    one.path = "gamedata/from_package.txt";   // CoP：包里的路径本身就带 gamedata 前缀
+                    one.is_dir = false;
+                    one.data = {'P'};
+                    items.push_back(one);
+                    const std::vector<uint8_t> raw = efs::pack_db(items, *efs::format_key_to_db("xdb"));
+                    std::ofstream out(mix.toStdString() + "/gamedata/configs.db0",
+                                      std::ios::binary | std::ios::trunc);
+                    out.write(reinterpret_cast<const char*>(raw.data()),
+                              static_cast<std::streamsize>(raw.size()));
+                }
+                const int n = dir_page.add_paths({mix});
+                QApplication::processEvents();
+                check(n == 2 && dir_page.loaded_source_count() == 2,
+                      QStringLiteral("树③ 拖目录 ⇒ 散装层 + 里面的包**都加载**（返回 %1，已加载源 %2，期望 2/2）")
+                          .arg(n)
+                          .arg(dir_page.loaded_source_count()));
+                // 懒建：先展开 `gamedata`（以及 `gamedata/loose`）才找得到深层条目
+                dir_page.expand_entry(QStringLiteral("gamedata"));
+                dir_page.expand_entry(QStringLiteral("gamedata/loose"));
+                QApplication::processEvents();
+                check(dir_page.find_entry_item(QStringLiteral("gamedata/loose/readme.txt")) != nullptr &&
+                          dir_page.find_entry_item(QStringLiteral("gamedata/from_package.txt")) != nullptr,
+                      QStringLiteral("树③ gamedata 树要摊开：松散文件 %1 / 包内文件 %2")
+                          .arg(dir_page.find_entry_item(QStringLiteral("gamedata/loose/readme.txt")) != nullptr ? 1 : 0)
+                          .arg(dir_page.find_entry_item(QStringLiteral("gamedata/from_package.txt")) != nullptr ? 1 : 0));
+                dir_page.hide();
+                QDir(mix).removeRecursively();
             }
             check(tree_page.entry_top_level_count() == 2,
                   QStringLiteral("树① 顶层 2 项（top.txt + d/），实测 %1")

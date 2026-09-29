@@ -427,6 +427,11 @@ int FsPage::add_paths(const QStringList& paths) {
         std::string error;
         std::vector<efs::EntryInfo> entries;
         if (QFileInfo(gated).isDir()) {
+            // ★ 用户 2026-09-29 第 6 条：「像 E:\...\IWP 这种 CoP 的文件管理方式，直接把整个文件夹
+            //   拖进去没法将 gamedata 文件树正确展开，而是仅仅显示当中的 db 包文件。」
+            //   ⇒ 目录不再"只当散装层"：**散装层（松散文件看得见）+ 递归找包并加载（包内容摊开）**，
+            //   即 1.x `_on_drop_input` → `_scan_and_load` 的语义。两条源都进同一个合并树，
+            //   所以 `gamedata/` 下既能看到松散文件，也能看到各 `.db` 里的文件。
             entries = efs::loose_entries(gated.toUtf8().toStdString(), error);
         } else {
             entries = efs::package_entries(gated.toUtf8().toStdString(),
@@ -441,6 +446,22 @@ int FsPage::add_paths(const QStringList& paths) {
         }
         push_source(gated, entries);
         ++loaded;
+        // 目录：再把里面的包递归找出来并加载（1.x `_scan_dir` 的名字规则；找不到就只留散装层）
+        if (QFileInfo(gated).isDir()) {
+            QStringList packages;
+            QDirIterator walk(gated, QDir::Files, QDirIterator::Subdirectories);
+            while (walk.hasNext()) {
+                const QString candidate = walk.next();
+                if (efs::is_package_file_name(candidate.toUtf8().toStdString())) {
+                    packages << candidate;
+                }
+            }
+            if (!packages.isEmpty()) {
+                log_message(QStringLiteral("目录里发现 %1 个包，一并加载（gamedata 树才展得开）")
+                                .arg(packages.size()));
+                loaded += add_paths(packages);   // 递归：这一层全是文件，不会再进目录分支
+            }
+        }
         log_message(QStringLiteral("已加载：%1（%2 项）")
                         .arg(raw)
                         .arg(static_cast<int>(entries.size())));
