@@ -48,6 +48,7 @@
 #include <QStringList>
 #include <QThread>
 #include <QHeaderView>
+#include <QTabWidget>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -1295,7 +1296,41 @@ SmokeResult run_smoke() {
             async_page.resize(760, page_min_h());
             async_page.show();
             QApplication::processEvents();
-            check(async_page.task() != nullptr && async_page.task()->panel() != nullptr,
+            // ★ 用户 2026-09-29 更正 ③ 的口径：「**上面解包和下面封包分两个标签**就没问题了」（之前的设计可以）
+        //   判据：① 整页两标签、标题对；② 包列表与包内树在**第 0 页**；③ 待打包列表在**第 1 页**；
+        //   ④ **底部操作栏的两个解包按钮不许落进标签页里**（上一版塞进 QVBoxLayout ⇒ 被摊成整行大块，
+        //   用户："你觉得丑么？"）。判红办法：把这几行 addWidget 的落点改回 body / 改回页内即可。
+        {
+            FsPage tab_page;
+            tab_page.resize(760, page_min_h());
+            tab_page.show();
+            QApplication::processEvents();
+            QTabWidget* tabs = tab_page.tabs();
+            const bool two_tabs = tabs != nullptr && tabs->count() == 2 &&
+                                  tabs->tabText(0) == QStringLiteral("解包") &&
+                                  tabs->tabText(1) == QStringLiteral("封包");
+            const bool unpack_side_ok = two_tabs &&
+                                        tabs->widget(0)->isAncestorOf(tab_page.package_list()) &&
+                                        tabs->widget(0)->isAncestorOf(tab_page.entry_tree());
+            const bool pack_side_ok = two_tabs &&
+                                      tabs->widget(1)->isAncestorOf(tab_page.pack_list()) &&
+                                      tabs->widget(1)->isAncestorOf(tab_page.pack_format_combo());
+            const bool buttons_outside = two_tabs &&
+                                         !tabs->widget(0)->isAncestorOf(tab_page.unpack_all_button());
+            check(two_tabs && unpack_side_ok && pack_side_ok && buttons_outside,
+                  QStringLiteral("③ 整页两标签（标签 %1 / 解包侧在第0页 %2 / 封包侧在第1页 %3 / "
+                                 "底部按钮留在操作栏 %4）")
+                      .arg(tabs != nullptr ? tabs->count() : -1)
+                      .arg(unpack_side_ok ? 1 : 0)
+                      .arg(pack_side_ok ? 1 : 0)
+                      .arg(buttons_outside ? 1 : 0));
+            check(two_tabs && tabs->height() >= xrkit::core::px(300),
+                  QStringLiteral("③ 标签区要占满工作区（实测 %1 px，恒 ≥300）")
+                      .arg(tabs != nullptr ? tabs->height() : -1));
+            tab_page.hide();
+        }
+
+        check(async_page.task() != nullptr && async_page.task()->panel() != nullptr,
                   QStringLiteral("③ 解包/封包要挂在任务壳上（有面板才算接上）"));
             check(async_page.add_paths({db_path}) == 1, QStringLiteral("③ 异步夹具：装一个真包"));
             async_page.out_edit()->setText(async_out);

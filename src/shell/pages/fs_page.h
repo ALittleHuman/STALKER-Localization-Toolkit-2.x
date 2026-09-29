@@ -35,6 +35,7 @@ class QListWidget;
 class QListWidgetItem;
 class QPushButton;
 
+class QTabWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -114,6 +115,7 @@ public:
     //   （能勾单个文件/整个目录，回灌引擎 `MergeTree`）、右列**大小**（1.x `_fmt_size` 同格式）
     //   与**来源包**（6.1"看得出这一份来自哪个包"）。
     QTreeWidget* entry_tree() const { return entry_tree_; }
+    QTabWidget* tabs() const { return tabs_; }   // 整页两标签（解包 / 封包）
     int entry_top_level_count() const;
     int entry_built_file_count() const;
     QTreeWidgetItem* find_entry_item(const QString& path) const;
@@ -288,6 +290,9 @@ private:
     QListWidget* package_list_ = nullptr;
     QComboBox* format_combo_ = nullptr;
     QTreeWidget* entry_tree_ = nullptr;
+    QTabWidget* tabs_ = nullptr;
+    QVBoxLayout* unpack_layout_ = nullptr;
+    QVBoxLayout* pack_page_layout_ = nullptr;
     QPushButton* add_button_ = nullptr;
     QLineEdit* out_edit_ = nullptr;
     QLineEdit* search_edit_ = nullptr;
