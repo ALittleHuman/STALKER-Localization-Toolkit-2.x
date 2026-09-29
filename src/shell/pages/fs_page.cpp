@@ -190,15 +190,14 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     open_out_button_ = new QPushButton(QStringLiteral("打开"));
     open_out_button_->setObjectName(QStringLiteral("fs_open_output"));
     row->addWidget(open_out_button_, 0);
-    unpack_layout_->addLayout(row);   // 「解包」页：格式 + 解包到 + 选择… + 打开
+    add_button_ = new QPushButton(QStringLiteral("加包"));      // 用户："之前的设计可以" ⇒ 加包回这一行
+    add_button_->setObjectName(QStringLiteral("fs_add_package"));
+    row->addWidget(add_button_, 0);
+    unpack_layout_->addLayout(row);   // 「解包」页：格式 + 解包到 + 选择… + 打开 + 加包
 
     // 包列表的按钮行（1.x `_build_db_panel` 的 bar：扫描目录/全选/加载选中/取消加载/移除/清空 + 计数）
     {
         auto* bar = new QHBoxLayout;
-        // 「加包」是**列表动作**，跟扫描目录/加载/移除 放一起（原来跟在"解包到"后面，属归类错误）
-        add_button_ = new QPushButton(QStringLiteral("加包"));
-        add_button_->setObjectName(QStringLiteral("fs_add_package"));
-        bar->addWidget(add_button_, 0);
         scan_button_ = new QPushButton(QStringLiteral("扫描目录"));
         scan_button_->setObjectName(QStringLiteral("fs_scan_dir"));
         bar->addWidget(scan_button_, 0);
@@ -224,9 +223,9 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         package_count_label_ = new QLabel;
         package_count_label_->setObjectName(QStringLiteral("fs_package_count"));
         bar->addWidget(package_count_label_, 0);
-        body_layout()->addLayout(bar);
+        unpack_layout_->addLayout(bar);
     }
-    body_layout()->addWidget(package_list_, 1);
+    unpack_layout_->addWidget(package_list_, 1);
 
     // 条目列表的按钮行（1.x `_build_file_panel`：全选/全不选 + 计数 + **搜索**）
     {
@@ -245,9 +244,9 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         entry_count_label_ = new QLabel;
         entry_count_label_->setObjectName(QStringLiteral("fs_entry_count"));
         bar->addWidget(entry_count_label_, 0);
-        body_layout()->addLayout(bar);
+        unpack_layout_->addLayout(bar);
     }
-    body_layout()->addWidget(entry_tree_, 1);
+    unpack_layout_->addWidget(entry_tree_, 1);
 
     // 标签区放在包内树**下面**、并拿拉伸（第一版这里写的是 0 ⇒ 被压成一条，用户当场否掉）
     body_layout()->addWidget(tabs_, 1);

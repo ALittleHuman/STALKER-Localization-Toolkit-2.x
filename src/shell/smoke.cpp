@@ -1316,6 +1316,15 @@ SmokeResult run_smoke() {
             const int tabs_h = tabs != nullptr ? tabs->height() : -1;
             check(two_tabs && tabs_h >= xrkit::core::px(150),
                   QStringLiteral("③ 标签区要有**工作区高度**（实测 %1 px，恒 ≥150）").arg(tabs_h));
+            // ★ 用户 2026-09-29 更正：「其实之前的设计可以，但是**上面解包和下面封包分两个标签**就没问题了。」
+            //   ⇒ 判据升级为"**整页两标签**"：包列表与包内树也必须在第 0 页里（原来它们在标签外面
+            //   ⇒ 这条会红）。
+            const bool list_in_tab0 = two_tabs && tabs->widget(0)->isAncestorOf(tab_page.package_list());
+            const bool tree_in_tab0 = two_tabs && tabs->widget(0)->isAncestorOf(tab_page.entry_tree());
+            check(list_in_tab0 && tree_in_tab0,
+                  QStringLiteral("③ 整页两标签：包列表与包内树都要在「解包」页里（列表 %1 / 树 %2）")
+                      .arg(list_in_tab0 ? 1 : 0)
+                      .arg(tree_in_tab0 ? 1 : 0));
             check(two_tabs && unpack_in_tab0 && pack_in_tab1,
                   QStringLiteral("③ 解包/封包要分在两个标签页里（标签 %1 个 / 解包在第0页 %2 / 封包在第1页 %3）")
                       .arg(tabs != nullptr ? tabs->count() : -1)
