@@ -129,7 +129,14 @@ int run_build_package(const std::vector<std::string>& operands) {
 
     // ② 真编译 + 打包（日志落 dist\；GUI 侧只是调本动作，不自己拼参数）
     // 构建日志不再散在 dist 根：统一进 dist\logs\（dist 根只留版本树 + FAIL）
-    const std::string log = "dist\\logs\\build_pkg_" + std::to_string(want_index) + ".log";
+    // ★ 用户 2026-09-29：「为什么 dist 里面还是有 build_pkg_13？」⇒ 日志不再放 dist，
+    //   统一进 **build\logs\**（构建中间区）；dist 只留版本树 + FAIL。
+    const std::string log = "build\\logs\\build_pkg_" + std::to_string(want_index) + ".log";
+    // 日志目录先建出来（重定向到不存在的目录会直接失败）
+    {
+        std::error_code mk_ec;
+        std::filesystem::create_directories("build\\logs", mk_ec);
+    }
     std::string cmd;
     // 先把控制台代码页切 UTF-8（`chcp 65001`）⇒ 子进程 PowerShell 写进日志的中文不再乱码
     cmd += "chcp 65001 >nul && powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\build.ps1";
@@ -237,11 +244,10 @@ int run_build_package(const std::vector<std::string>& operands) {
         //   构建成功的不要加时间戳」⇒ 主交付是**一个能直接跑的目录**（成功件名确定性、
         //   不带时间戳），压缩包只是顺带给分发；版本层级＝主版本 → 标记。
         //   与 package.ps1 落盘规则一致：dist\<主版本>\<标记>\STALKER_Toolkit_<主版本>_<标记>_<commit>（不带时间戳）
-        const std::string dir_hint = "dist\\" + want_version + "\\" + want_prerelease +
-                                     "\\STALKER_Toolkit_" + want_version + "_" + want_prerelease +
-                                     "_" + rec.commit;
-        rec.artifacts.push_back(dir_hint);          // 可直接跑的目录（测试用）
-        rec.artifacts.push_back(dir_hint + ".zip"); // 同名压缩包（分发用）
+        // 与 package.ps1 的落盘规则一致：dist\<主版本>\<标记>\<标记>.<序号>\ （只要目录）
+        const std::string dir_hint = "dist\\" + want_version + "\\" + want_prerelease + "\\" +
+                                     want_prerelease + "." + std::to_string(want_index);
+        rec.artifacts.push_back(dir_hint);   // 可直接双击跑的目录（历史版本按序号共存）
     }
     store.append(want_version, want_prerelease, want_index, rec);
     if (!xrkit::core::save_version_store(store_path, store, err)) {

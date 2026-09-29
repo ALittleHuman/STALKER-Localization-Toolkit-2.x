@@ -122,7 +122,7 @@ if (-not $smokeOk) { throw "包内 exe 的离屏自检没通过（包可能缺 Q
 #     成功件名**确定性**（不加时间戳，同一版本重复构建就覆盖它自己）；
 #     版本层级照用户口径：主版本（2.0.0 / 2.0.1…）→ 标记（ALPHA/BETA/RC）。
 
-Write-Host "== 落到版本目录（目录可直接跑 + 同名 zip 供分发）=="
+Write-Host "== 落到版本目录（只出目录；历史按序号共存，不删）=="
 $dist = Join-Path $root $OutDir
 # 版本口径**只有一处**：version.json。`-VersionString` 没传（比如手工跑）就从它读 current。
 # （原来没这一步：CLI 调 package.ps1 时其实也不传参 ⇒ 会落到 `<主版本>\dev\`，那是错的）
@@ -136,24 +136,36 @@ if ($VersionString -eq '') {
         }
     }
 }
-# 从 `-VersionString`（形如 "2.0.0 ALPHA.13"）拆出 主版本 与 标记
+# 从 `-VersionString`（形如 "2.0.0 ALPHA.13"）拆出 主版本 / 标记 / 序号
 $verMajor = '2.0.0'
 $marker   = 'ALPHA'
-if ($VersionString -match '^\s*(\S+)\s+([A-Za-z]+)') {
+$idx      = 0
+if ($VersionString -match '^\s*(\S+)\s+([A-Za-z]+)\.?(\d*)') {
     $verMajor = $Matches[1]
     $marker   = $Matches[2].ToUpper()
+    if ($Matches[3] -ne '') { $idx = [int]$Matches[3] }
 }
+if ($idx -le 0) {
+    # 没拿到就退回 version.json 的 current.index（版本口径只有一处）
+    $vj2 = Join-Path $root 'version.json'
+    if (Test-Path $vj2) {
+        $cur2 = (Get-Content -LiteralPath $vj2 -Raw -Encoding UTF8 | ConvertFrom-Json).current
+        if ($cur2 -and $cur2.index) { $idx = [int]$cur2.index }
+    }
+}
+if ($idx -le 0) { $idx = 1 }
 $verDir = Join-Path $dist $verMajor
 $preDir = Join-Path $verDir $marker
 New-Item -ItemType Directory -Force -Path $preDir | Out-Null
 
-$pkgName = "STALKER_Toolkit_{0}_{1}_{2}" -f $verMajor, $marker, $commit
+# ★ 用户 2026-09-29 四问的两条口径：
+#   ③ 名字要干净 ⇒ `<主版本>\<标记>\<标记>.<序号>\`（例 `dist\2.0.0\ALPHA\ALPHA.13\`）：
+#      不要再出现 `STALKER_Toolkit_` 前缀、重复的主版本、以及 commit 那一坨。
+#   ② 不要再有压缩包 ⇒ **只出目录**（目录本身就能直接跑；要分发时再单独说）。
+#   ① 历史版本**不删** ⇒ 只覆盖"同一个序号"自己的目录（重建同一序号＝覆盖它自己），别的序号一律不动。
+$pkgName = "{0}.{1}" -f $marker, $idx
 $pkgDir  = Join-Path $preDir $pkgName
 if (Test-Path $pkgDir) { Remove-Item -Recurse -Force $pkgDir }
 Move-Item -LiteralPath $stage -Destination $pkgDir
-
-$zip = Join-Path $preDir ("{0}.zip" -f $pkgName)
-if (Test-Path $zip) { Remove-Item -Force $zip }
-Compress-Archive -Path (Join-Path $pkgDir '*') -DestinationPath $zip
 Write-Host "PACKAGE OK: $pkgDir"
-Write-Host "  （分发用压缩包：$zip）" 
+ 
