@@ -47,6 +47,8 @@
 #include <QProcess>
 #include <QStringList>
 #include <QThread>
+
+#include <cstdio>
 #include <QHeaderView>
 #include <QSplitter>
 #include <QStyle>
@@ -1792,6 +1794,43 @@ SmokeResult run_smoke() {
                           .arg(text.contains(QStringLiteral("已加载")) ? 1 : 0)
                           .arg(text.size()));
                 QDir(tmp).removeRecursively();
+            }
+            // ★ 用户 2026-09-30 ⑦：「现在还是慢得不行。最起码，要追上X-Ray Engine这个优化奇烂的老东西吧。」
+            //   先量数字再改：引擎侧实测「15,374 条目 / 106 ms」（SquashFS 真镜像），这里量 **UI 侧**
+            //   （`add_paths` ＝过闸门 + 解条目表 + 合进 MergeTree + 建界面树）用同一量级的夹具。
+            {
+                const QString big = QDir::temp().filePath(QStringLiteral("xrkit_smoke_big.db0"));
+                {
+                    std::vector<efs::DbPackItem> items;
+                    items.reserve(15000);
+                    for (int i = 0; i < 15000; ++i) {
+                        efs::DbPackItem one;
+                        one.path = "configs/ai_tweaks/dir" + std::to_string(i / 100) + "/f" +
+                                   std::to_string(i) + ".ltx";
+                        one.is_dir = false;
+                        one.data = {'x'};
+                        items.push_back(std::move(one));
+                    }
+                    const std::vector<uint8_t> raw = efs::pack_db(items, *efs::format_key_to_db("xdb"));
+                    std::ofstream out(big.toStdString(), std::ios::binary | std::ios::trunc);
+                    out.write(reinterpret_cast<const char*>(raw.data()),
+                              static_cast<std::streamsize>(raw.size()));
+                }
+                FsPage big_page;
+                big_page.resize(760, page_min_h());
+                big_page.show();
+                QApplication::processEvents();
+                const auto began = std::chrono::steady_clock::now();
+                big_page.add_paths({big});
+                QApplication::processEvents();
+                const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now() - began)
+                                         .count();
+                std::fprintf(stderr, "SMOKE-TIMING add_paths_15000_entries=%lld ms\n", ms);
+                check(ms < 5000,
+                      QStringLiteral("载 1.5 万条目不许数量级回归：实测 %1 ms（引擎侧同量级 106 ms）").arg(ms));
+                big_page.hide();
+                QFile::remove(big);
             }
             check(tree_page.entry_top_level_count() == 2,
                   QStringLiteral("树① 顶层 2 项（top.txt + d/），实测 %1")
