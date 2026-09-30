@@ -1597,6 +1597,41 @@ SmokeResult run_smoke() {
                           .arg(top.join(QStringLiteral("|"))));
                 sort_page.hide();
             }
+            // ★ 用户 2026-09-30：「E:\...\IWP\database 整个文件夹拖进去会卡死」——实测该目录是
+            //   **57 个包 / 18.9 GB**；根因＝我 09-29 改的"目录＝散装层 + 递归加载里面**每一个**包"。
+            //   判据：目录里包**超过 8 个**时只入列表不加载（修前 9 个包全加载 ⇒ `loaded_source_count()`
+            //   会是 10 ⇒ 这条红）。
+            {
+                const QString many = QDir::temp().filePath(QStringLiteral("xrkit_smoke_manypkg"));
+                QDir(many).removeRecursively();
+                QDir().mkpath(many);
+                for (int i = 0; i < 9; ++i) {
+                    std::vector<efs::DbPackItem> items;
+                    efs::DbPackItem one;
+                    one.path = "f" + std::to_string(i) + ".txt";
+                    one.is_dir = false;
+                    one.data = {'x'};
+                    items.push_back(one);
+                    const std::vector<uint8_t> raw = efs::pack_db(items, *efs::format_key_to_db("xdb"));
+                    std::ofstream out(many.toStdString() + "/p" + std::to_string(i) + ".db0",
+                                      std::ios::binary | std::ios::trunc);
+                    out.write(reinterpret_cast<const char*>(raw.data()),
+                              static_cast<std::streamsize>(raw.size()));
+                }
+                FsPage many_page;
+                many_page.resize(760, page_min_h());
+                many_page.show();
+                QApplication::processEvents();
+                many_page.add_paths({many});
+                QApplication::processEvents();
+                check(many_page.loaded_source_count() == 1 && many_page.source_count() >= 10,
+                      QStringLiteral("包多不自动加载：已加载源 %1（期望 1）、已知源 %2（期望 ≥10）")
+                          .arg(many_page.loaded_source_count())
+                          .arg(many_page.source_count()));
+                many_page.hide();
+                QDir(many).removeRecursively();
+            }
+
             check(tree_page.entry_top_level_count() == 2,
                   QStringLiteral("树① 顶层 2 项（top.txt + d/），实测 %1")
                       .arg(tree_page.entry_top_level_count()));
