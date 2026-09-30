@@ -84,7 +84,10 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
     size("r3", 3);
     size("r2", 2);
     size("ind14", 14);
-    size("ctl28", 28);
+    // 控件高度：28 → 24（用户 2026-09-30："默认有点偏大"⇒ 整体收紧，页面也不再堆得那么高）
+    size("ctl", 24);
+    // 内容区（包列表/包内树/日志）字号：比界面正文大一档，且走 px() ⇒ 跟着界面大小缩
+    size("font_content", 16);;
     xrkit::core::set_theme_mode(saved);
 
     // ★ 配色口径（用户 2026-09-27：「配色里为什么这么多蓝色」⇒ 与
@@ -181,11 +184,13 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
 "QHeaderView::section { background: @{entry_bg}; border: none;"
 "  border-right: 1px solid @{border}; border-bottom: 1px solid @{border}; padding: @{pad4}; }"
 "QMenu, QToolTip { background: @{entry_bg}; border: 1px solid @{border}; border-radius: @{r2}; }"
+               // ★ 用户 2026-09-30：「包和内容物的字体大小太小。」⇒ 内容区字号单独放大
+               "QTreeWidget, QTreeView, QListView { font-size: @{font_content}; }"
                // ★ 用户真机反馈「又挤又空」的根因＝控件太小、间距太小 ⇒ 控件最小高度与内边距**整体上调
                //   一档**（值都在上面那批命名令牌里；这块原先用独立 `%1..%4` 是对的，一并并进来）
-               "QPushButton { min-height: @{ctl28}; padding: @{pad8} @{pad14}; }"
-               "QComboBox, QLineEdit, QSpinBox { min-height: @{ctl28}; padding: @{pad8} @{pad10}; }"
-               "QListWidget::item, QListView::item, QTreeView::item { min-height: @{ctl28}; }"
+               "QPushButton { min-height: @{ctl}; padding: @{pad8} @{pad14}; }"
+               "QComboBox, QLineEdit, QSpinBox { min-height: @{ctl}; padding: @{pad8} @{pad10}; }"
+               "QListWidget::item, QListView::item, QTreeView::item { min-height: @{ctl}; }"
                "QHeaderView::section { min-height: @{pad8}; padding: @{pad8} @{pad10}; }"
                "QLabel#page_header { padding: @{pad8} 0; }");
 
@@ -200,6 +205,13 @@ double g_base_font_pt = 0.0;   // 首次调用时的基准（之后缩放都相�
 double ui_size_base_font_pt() {
     if (g_base_font_pt <= 0.0) g_base_font_pt = QApplication::font().pointSizeF();
     return g_base_font_pt;
+}
+
+const std::vector<UiSizeChoice>& ui_size_choices() {
+    // ★ 用户 2026-09-30：「小有点偏小，默认有点偏大，大和特大就不用说了。」⇒ 收紧档位
+    static const std::vector<UiSizeChoice> kChoices = {{"小", 0.9}, {"默认", 1.0},
+                                                       {"大", 1.1}, {"特大", 1.2}};
+    return kChoices;
 }
 
 void apply_ui_size(QApplication& app, double scale) {

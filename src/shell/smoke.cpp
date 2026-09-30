@@ -379,6 +379,31 @@ SmokeResult run_smoke() {
                       .arg(font_after)
                       .arg(xrkit::core::px(100)));
             xrkit::shell::apply_ui_size(*qApp, 1.0);   // 复原，别影响后面的判据
+            // ★ 用户 2026-09-30：「小有点偏小，默认有点偏大，大和特大就不用说了。」⇒ 档位必须是
+            //   0.9 / 1.0 / 1.1 / 1.2（修前是 0.85/1.0/1.25/1.5 ⇒ 这条红）。
+            {
+                const auto& choices = xrkit::shell::ui_size_choices();
+                const bool ladder_ok =
+                    choices.size() == 4 && std::abs(choices[0].scale - 0.9) < 0.001 &&
+                    std::abs(choices[1].scale - 1.0) < 0.001 &&
+                    std::abs(choices[2].scale - 1.1) < 0.001 &&
+                    std::abs(choices[3].scale - 1.2) < 0.001;
+                check(ladder_ok,
+                      QStringLiteral("界面大小档位＝0.9/1.0/1.1/1.2（实测 %1 档：%2/%3/%4/%5）")
+                          .arg(choices.size())
+                          .arg(choices.size() > 0 ? choices[0].scale : -1.0)
+                          .arg(choices.size() > 1 ? choices[1].scale : -1.0)
+                          .arg(choices.size() > 2 ? choices[2].scale : -1.0)
+                          .arg(choices.size() > 3 ? choices[3].scale : -1.0));
+            }
+            // ★ 用户 2026-09-30：「包和内容物的字体大小太小。」⇒ 内容区（树/列表）字号必须由样式表
+            //   单独放大，且走令牌（跟着界面大小一起缩）。修前没有任何 item view 的字号规则 ⇒ 红。
+            {
+                const QString qss = xrkit::shell::stylesheet_for(xrkit::core::ThemeMode::Dark);
+                check(qss.contains(QStringLiteral("QTreeWidget, QTreeView, QListView { font-size")) ||
+                          qss.contains(QStringLiteral("font-size: @{font_content}")),
+                      QStringLiteral("内容区字号要单独放大（样式表里要有 font_content 规则）"));
+            }
             check(std::abs(xrkit::core::ui_scale() - 1.0) < 0.001,
                   QStringLiteral("界面大小缩放：调回 1.0 要复原（实测 %1）")
                       .arg(xrkit::core::ui_scale()));
@@ -1709,6 +1734,21 @@ SmokeResult run_smoke() {
                           .arg(static_cast<int>(mid_state))
                           .arg(static_cast<int>(top_state)));
                 tri_page.hide();
+            }
+            // ★ 用户 2026-09-30：「'包内条目'那一行字看出来什么没？」（截图里表头文字顶部被切）
+            //   判据：表头高度必须 ≥ 它自己字体的一行高（被压小就判红）。
+            {
+                FsPage head_page;
+                head_page.resize(760, page_min_h());
+                head_page.show();
+                QApplication::processEvents();
+                QHeaderView* hh = head_page.entry_tree()->header();
+                const int line = head_page.entry_tree()->fontMetrics().height();
+                check(hh != nullptr && hh->height() >= line,
+                      QStringLiteral("表头不许被裁：表头高 %1 ≥ 行高 %2")
+                          .arg(hh != nullptr ? hh->height() : -1)
+                          .arg(line));
+                head_page.hide();
             }
             check(tree_page.entry_top_level_count() == 2,
                   QStringLiteral("树① 顶层 2 项（top.txt + d/），实测 %1")

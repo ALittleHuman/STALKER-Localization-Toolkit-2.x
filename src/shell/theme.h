@@ -1,4 +1,6 @@
 #pragma once
+
+#include <vector>
 // xrkit::shell —— 主题映射（M2-0/M2-1）：把 core 的令牌映射成 QPalette + QSS。
 //
 // **Qt 侧不抄令牌表**（1.x 的口径：`THEMES`/`_FONTS` 是唯一真值来源，Qt 侧按 AST 读它）。
@@ -22,6 +24,9 @@ int px(int value);
 // ★ 用户 2026-09-30：主题旁要一个「调整 UI 控件大小（包括里面的字体）」的下拉。
 //   scale: 0.85 小 / 1.0 默认 / 1.25 大 / 1.5 特大；**立即生效**（控件尺寸 + 字体 + 重套样式表）。
 void apply_ui_size(class QApplication& app, double scale);
+// 「界面大小」的档位（label, scale）。自检要能真读到这些值（不是只看菜单文案）。
+struct UiSizeChoice { const char* label; double scale; };
+const std::vector<UiSizeChoice>& ui_size_choices();
 double ui_size_base_font_pt();   // 未缩放时的基准字体点数（首用时的值）
 
 QString stylesheet_for(xrkit::core::ThemeMode mode);

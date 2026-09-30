@@ -182,9 +182,7 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     //   的下拉菜单。」⇒ 视图菜单里加「界面大小」子菜单（立即生效；字体与控件一起缩放）。
     QMenu* size_menu = view_menu->addMenu(QStringLiteral("界面大小"));
     {
-        struct SizeItem { const char* label; double scale; };
-        const SizeItem items[] = {{"小", 0.85}, {"默认", 1.0}, {"大", 1.25}, {"特大", 1.5}};
-        for (const SizeItem& item : items) {
+        for (const xrkit::shell::UiSizeChoice& item : xrkit::shell::ui_size_choices()) {
             const QString label = QString::fromUtf8(item.label);
             QAction* act = size_menu->addAction(label);
             const double scale = item.scale;
