@@ -193,6 +193,27 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
     return sheet;
 }
 
+namespace {
+double g_base_font_pt = 0.0;   // 首次调用时的基准（之后缩放都相对它，避免连乘）
+}  // namespace
+
+double ui_size_base_font_pt() {
+    if (g_base_font_pt <= 0.0) g_base_font_pt = QApplication::font().pointSizeF();
+    return g_base_font_pt;
+}
+
+void apply_ui_size(QApplication& app, double scale) {
+    if (scale <= 0.0) return;
+    const double base = ui_size_base_font_pt();
+    xrkit::core::set_ui_scale(scale);   // 控件尺寸（px() 全部按它算）
+    // 字体由 `apply_theme` 统一按 ui_scale 设（见那边的 setPointSizeF）；这里只重套主题。
+    Q_UNUSED(base);
+    // 样式表里的尺寸是 px() 生成的 ⇒ 重新套一遍才立刻生效；模式从属性里读（hub 切主题时写的）
+    const QString mode = app.property("xrkit_theme").toString();
+    apply_theme(app, mode == QStringLiteral("light") ? xrkit::core::ThemeMode::Light
+                                                       : xrkit::core::ThemeMode::Dark);
+}
+
 void apply_theme(QApplication& app, xrkit::core::ThemeMode mode) {
     xrkit::core::set_theme_mode(mode);
     // 在**现有** palette 上改（不是新建一份塞回去）：这就是"原地更新"的 Qt 写法；
@@ -219,7 +240,9 @@ void apply_theme(QApplication& app, xrkit::core::ThemeMode mode) {
             return f.pointSizeF() > 0 ? f.pointSizeF() : 9.0;
         }();
         QFont base = app.font();
-        base.setPointSizeF(kBasePt + 2.0);
+        // 字体点数也要乘 ui_scale（用户：调整 UI 控件大小要**包括里面的字体**）——
+    // 这里是字体尺寸的**唯一来源**，`apply_ui_size` 只负责 set_ui_scale + 重套本函数。
+    base.setPointSizeF((kBasePt + 2.0) * xrkit::core::ui_scale());
         app.setFont(base);
     }
     app.setPalette(palette);

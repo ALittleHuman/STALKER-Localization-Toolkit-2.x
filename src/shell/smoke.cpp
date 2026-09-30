@@ -364,6 +364,26 @@ SmokeResult run_smoke() {
                                              : missing.join(QStringLiteral(","))));
         }
 
+        // ★ 用户 2026-09-30：「主题之外，再增加一个调整 UI 控件大小（包括里面的字体）的下拉」
+        //   判据：缩放 1.25 ⇒ `ui_scale()==1.25`、字体点数变大、`px(100)==125`；再调回 1.0 ⇒ 复原。
+        {
+            const double font_before = QApplication::font().pointSizeF();
+            const double scale_before = xrkit::core::ui_scale();
+            xrkit::shell::apply_ui_size(*qApp, 1.25);
+            const double font_after = QApplication::font().pointSizeF();
+            check(std::abs(xrkit::core::ui_scale() - 1.25) < 0.001 && font_after > font_before &&
+                      xrkit::core::px(100) == 125,
+                  QStringLiteral("界面大小缩放：ui_scale %1→1.25、字体 %2→%3、px(100)=%4")
+                      .arg(scale_before)
+                      .arg(font_before)
+                      .arg(font_after)
+                      .arg(xrkit::core::px(100)));
+            xrkit::shell::apply_ui_size(*qApp, 1.0);   // 复原，别影响后面的判据
+            check(std::abs(xrkit::core::ui_scale() - 1.0) < 0.001,
+                  QStringLiteral("界面大小缩放：调回 1.0 要复原（实测 %1）")
+                      .arg(xrkit::core::ui_scale()));
+        }
+
         check(!small_vp->can_scroll_vertical(), QStringLiteral("装得下 ⇒ 范围为空（不能滚）"));
         check(!ScrollViewport::bar_shown(small_vp->vbar()),
               QStringLiteral("装得下 ⇒ 条子不占位（bar_shown 四看不全真）"));

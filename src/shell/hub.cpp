@@ -177,6 +177,23 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     QMenu* view_menu = menuBar()->addMenu(QStringLiteral("视图"));
     QAction* dark = view_menu->addAction(QStringLiteral("暗色主题"));
     QAction* light = view_menu->addAction(QStringLiteral("亮色主题"));
+
+    // ★ 用户 2026-09-30：「上面除了主题之外，再增加一个调整 UI 控件大小（当然，包括里面的字体）
+    //   的下拉菜单。」⇒ 视图菜单里加「界面大小」子菜单（立即生效；字体与控件一起缩放）。
+    QMenu* size_menu = view_menu->addMenu(QStringLiteral("界面大小"));
+    {
+        struct SizeItem { const char* label; double scale; };
+        const SizeItem items[] = {{"小", 0.85}, {"默认", 1.0}, {"大", 1.25}, {"特大", 1.5}};
+        for (const SizeItem& item : items) {
+            const QString label = QString::fromUtf8(item.label);
+            QAction* act = size_menu->addAction(label);
+            const double scale = item.scale;
+            connect(act, &QAction::triggered, this, [this, scale, label] {
+                xrkit::shell::apply_ui_size(*qApp, scale);
+                log_line(QStringLiteral("界面大小已切到「%1」（缩放 %2×）").arg(label).arg(scale));
+            });
+        }
+    }
     QObject::connect(dark, &QAction::triggered, this, [this] {
         qApp->setProperty("xrkit_theme", "dark");
         apply_theme(*qApp, xrkit::core::ThemeMode::Dark);

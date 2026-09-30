@@ -19,6 +19,11 @@ namespace xrkit::shell {
 int px(int value);
 
 // 生成当前模式的 QSS（角色 → Qt 控件）。
+// ★ 用户 2026-09-30：主题旁要一个「调整 UI 控件大小（包括里面的字体）」的下拉。
+//   scale: 0.85 小 / 1.0 默认 / 1.25 大 / 1.5 特大；**立即生效**（控件尺寸 + 字体 + 重套样式表）。
+void apply_ui_size(class QApplication& app, double scale);
+double ui_size_base_font_pt();   // 未缩放时的基准字体点数（首用时的值）
+
 QString stylesheet_for(xrkit::core::ThemeMode mode);
 
 // 应用主题：设置 QPalette + QSS，并刷新已存在控件（原地更新）。
