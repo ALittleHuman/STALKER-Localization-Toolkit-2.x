@@ -85,10 +85,9 @@ bool FsPage::add_loose_dir(const QString& dir, QString* error) {
 }
 
 void FsPage::log_message(const QString& text) {
-    // 页面只转发给宿主（Hub 决定往哪写）
-    if (auto* hub = window()) {
-        QMetaObject::invokeMethod(hub, "log_line", Qt::DirectConnection, Q_ARG(QString, text));
-    }
+    // 页面只转发给宿主（Hub 决定往哪写）。★ 走**回调**而不是 invokeMethod：
+    //   Hub 不用 Q_OBJECT ⇒ 按名字调用永远失败（页面日志一条都进不去，用户 2026-09-30 报的就是这个）。
+    log_to_host(text);
 }
 
 FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral("文件系统"), parent) {

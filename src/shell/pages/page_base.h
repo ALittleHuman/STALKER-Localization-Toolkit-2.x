@@ -1,4 +1,6 @@
 #pragma once
+
+#include <functional>
 // xrkit::shell —— 页基类（M2-6a）：对照表 ⑤（页内滚动 + 标签条）的落地形态。
 //
 // ⑤ 的三条口径逐条照抄（出处见 `docs/2.0.0-行为口径对照表.md`）：
@@ -48,6 +50,13 @@ public:
     QWidget* header_row() const { return header_row_; }
     QWidget* card() const { return card_; }
     void set_subtitle(const QString& text);
+
+    // ★ 用户 2026-09-30：「日志记录的是什么东西，为什么没有在app当中的操作（例如，加载包）？」
+    //   根因：Hub **不用 Q_OBJECT**（回调一律 lambda），页面用
+    //   `QMetaObject::invokeMethod(hub, "log_line")` 按名字调用 ⇒ 元对象系统不认识它 ⇒ **静默失败**。
+    //   ⇒ 改用**回调**：Hub 造页时把它的 log_line 接进来，页面用 log_to_host() 转发。
+    void set_log_sink(std::function<void(const QString&)> sink) { log_sink_ = std::move(sink); }
+    void log_to_host(const QString& text) const { if (log_sink_) log_sink_(text); }
     ScrollViewport* viewport() const { return viewport_; }
     QWidget* body() const { return body_; }
     QVBoxLayout* body_layout() const { return body_layout_; }
@@ -65,6 +74,7 @@ public:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    std::function<void(const QString&)> log_sink_;   // ★ Hub 接进来的日志口（见 set_log_sink）
     QString page_id_;
     QString title_;
     QVBoxLayout* outer_ = nullptr;

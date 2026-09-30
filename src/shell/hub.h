@@ -73,7 +73,11 @@ public:
     QLabel* status_label() const { return status_label_; }
 
     // 记一行日志（1.x 的日志栏：主窗口那根滚动条**不**管它；攒批见 LogBox）
-    void log_line(const QString& text);
+    // ★ Q_INVOKABLE 必须有：各页用 `QMetaObject::invokeMethod(hub, "log_line", ...)` 转发日志
+    //   （页面不 include hub.h，靠名字解耦）；**按名字调用要求它是可调用的**，否则 invokeMethod
+    //   静默返回 false ⇒ 页面日志一条都进不了日志栏。用户 2026-09-30 报的
+    //   「日志记录的是什么东西，为什么没有在app当中的操作（例如，加载包）？」就是这个根因。
+    Q_INVOKABLE void log_line(const QString& text);
 
     // ⑫12.4：加载插件并把注册期问题显示出来（构造末尾调一次；空目录＝没有插件）
     void load_plugins(const QString& plugin_dir);

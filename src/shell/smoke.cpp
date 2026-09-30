@@ -1750,6 +1750,49 @@ SmokeResult run_smoke() {
                           .arg(line));
                 head_page.hide();
             }
+            // ★ 用户 2026-09-30：「日志记录的是什么东西，为什么没有在 app 当中的操作（例如，加载包）？」
+            //   判据：在**真 Hub** 里让 fs 页加载一个包 ⇒ 日志栏必须出现「已加载」行。
+            //   （页面单独构造时 `window()` 不是 Hub，这条路测不到 ⇒ 必须在 Hub 里测。）
+            {
+                Hub log_hub(nullptr, QString());
+                const QString tmp = QDir::temp().filePath(QStringLiteral("xrkit_smoke_log"));
+                QDir(tmp).removeRecursively();
+                QDir().mkpath(tmp);
+                {
+                    std::vector<efs::DbPackItem> items;
+                    efs::DbPackItem one;
+                    one.path = "configs/ai_tweaks/ai_tweaks.ltx";
+                    one.is_dir = false;
+                    one.data = {'x', 'y'};
+                    items.push_back(one);
+                    const std::vector<uint8_t> raw = efs::pack_db(items, *efs::format_key_to_db("xdb"));
+                    std::ofstream out(tmp.toStdString() + "/p.db0", std::ios::binary | std::ios::trunc);
+                    out.write(reinterpret_cast<const char*>(raw.data()),
+                              static_cast<std::streamsize>(raw.size()));
+                }
+                FsPage* fs = nullptr;
+                for (int i = 0; i < log_hub.page_count(); ++i) {
+                    if (log_hub.page_id(i) == QStringLiteral("fs"))
+                        fs = dynamic_cast<FsPage*>(log_hub.page_at(i));
+                }
+                if (fs != nullptr) {
+                    fs->add_paths({tmp + QStringLiteral("/p.db0")});
+                }
+                // 日志是**攒批**写的 ⇒ 等真时间（最多 1.5 s），别用"跑几次 processEvents"当"已经刷出来了"
+                QString text;
+                for (int i = 0; i < 150; ++i) {
+                    QApplication::processEvents();
+                    text = log_hub.log_view() != nullptr ? log_hub.log_view()->toPlainText() : QString();
+                    if (text.contains(QStringLiteral("已加载"))) break;
+                    QThread::msleep(10);
+                }
+                check(fs != nullptr && text.contains(QStringLiteral("已加载")),
+                      QStringLiteral("日志要记 app 内操作：Hub 里加载包后日志要有「已加载」（页 %1 / 命中 %2 / 日志长度 %3）")
+                          .arg(fs != nullptr ? 1 : 0)
+                          .arg(text.contains(QStringLiteral("已加载")) ? 1 : 0)
+                          .arg(text.size()));
+                QDir(tmp).removeRecursively();
+            }
             check(tree_page.entry_top_level_count() == 2,
                   QStringLiteral("树① 顶层 2 项（top.txt + d/），实测 %1")
                       .arg(tree_page.entry_top_level_count()));
