@@ -45,8 +45,13 @@ MergeNode* child_by_name(MergeNode& parent, const std::string& name) {
 }
 
 void sort_children(MergeNode& node) {
+    // ★ 用户 2026-09-30：「包内文件的排序有问题。正确的是**文件夹>文件**，然后各自按名称排。」
+    //   原来只按 name 排 ⇒ 目录与文件混在一起。
     std::sort(node.children.begin(), node.children.end(),
-              [](const MergeNode& a, const MergeNode& b) { return a.name < b.name; });
+              [](const MergeNode& a, const MergeNode& b) {
+                  if (a.is_dir != b.is_dir) return a.is_dir;   // 文件夹在前
+                  return a.name < b.name;                       // 各自按名称
+              });
     for (MergeNode& child : node.children) sort_children(child);
 }
 

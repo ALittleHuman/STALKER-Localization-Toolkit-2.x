@@ -35,6 +35,7 @@ class QListWidget;
 class QListWidgetItem;
 class QPushButton;
 
+class QSplitter;
 class QTabWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -116,6 +117,7 @@ public:
     //   与**来源包**（6.1"看得出这一份来自哪个包"）。
     QTreeWidget* entry_tree() const { return entry_tree_; }
     QTabWidget* tabs() const { return tabs_; }   // 整页两标签（解包 / 封包）
+    QSplitter* split_list_tree() const { return split_list_tree_; }
     int entry_top_level_count() const;
     int entry_built_file_count() const;
     QTreeWidgetItem* find_entry_item(const QString& path) const;
@@ -291,6 +293,7 @@ private:
     QComboBox* format_combo_ = nullptr;
     QTreeWidget* entry_tree_ = nullptr;
     QTabWidget* tabs_ = nullptr;
+    QSplitter* split_list_tree_ = nullptr;   // 包列表 ↔ 包内树
     QVBoxLayout* unpack_layout_ = nullptr;
     QVBoxLayout* pack_page_layout_ = nullptr;
     QPushButton* add_button_ = nullptr;

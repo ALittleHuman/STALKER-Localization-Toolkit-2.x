@@ -21,6 +21,7 @@
 #include <QListWidget>
 #include <QHeaderView>
 #include <QPushButton>
+#include <QSplitter>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QTreeWidget>
@@ -130,9 +131,9 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     for (int col = 0; col < 3; ++col) {
         entry_tree_->header()->setSectionResizeMode(col, QHeaderView::Interactive);
     }
-    entry_tree_->header()->resizeSection(0, xrkit::core::px(260));
-    entry_tree_->header()->resizeSection(1, xrkit::core::px(90));
-    entry_tree_->header()->resizeSection(2, xrkit::core::px(160));
+    entry_tree_->header()->resizeSection(0, xrkit::core::px(340));   // 用户："包内条目/大小/来源还是被截"
+    entry_tree_->header()->resizeSection(1, xrkit::core::px(110));
+    entry_tree_->header()->resizeSection(2, xrkit::core::px(220));
     entry_tree_->header()->setMinimumSectionSize(xrkit::core::px(48));
     entry_tree_->header()->setStretchLastSection(true);
     // ★ 2026-09-27（用户实测"排版有很大问题"）：条目区给自己一个**最小高度**，
@@ -221,7 +222,15 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         bar->addWidget(package_count_label_, 0);
         unpack_layout_->addLayout(bar);
     }
-    unpack_layout_->addWidget(package_list_, 1);
+    // ★ 用户 2026-09-30：「上面包列表和下面文件列表之间也要有可拖拽分隔条」；并授权"自己看着
+    //   有需要的地方就加" ⇒ 这里用竖向 QSplitter（两侧各自可拖），不再让两个列表硬分高度。
+    split_list_tree_ = new QSplitter(Qt::Vertical);
+    split_list_tree_->setObjectName(QStringLiteral("fs_split_list_tree"));
+    split_list_tree_->setChildrenCollapsible(false);
+    split_list_tree_->addWidget(package_list_);
+    split_list_tree_->addWidget(entry_tree_);
+    split_list_tree_->setSizes({xrkit::core::px(150), xrkit::core::px(320)});
+    unpack_layout_->addWidget(split_list_tree_, 1);
 
     // 条目列表的按钮行（1.x `_build_file_panel`：全选/全不选 + 计数 + **搜索**）
     {
@@ -242,7 +251,7 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         bar->addWidget(entry_count_label_, 0);
         unpack_layout_->addLayout(bar);
     }
-    unpack_layout_->addWidget(entry_tree_, 1);
+    // （包内树已随分隔条加入，见上）
 
     // ── ★ 1.x 的**封包面板**（`_build_pack_panel`）：这一整块是"FS 方便程度"的最后一块拼图
     //    （1.x 能"解包 → 改 → 重新封包"，2.x 原来只解不封）。布局照 1.x 三行：

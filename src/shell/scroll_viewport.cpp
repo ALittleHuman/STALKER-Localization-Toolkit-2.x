@@ -270,7 +270,10 @@ bool ScrollViewport::route_wheel(QWidget* target, QWheelEvent* event) {
             if (can_scroll && bar_shown(bar)) {
                 const int step = (dy != 0 ? dy : dx) > 0 ? -1 : 1;
                 const int before = bar->value();
-                bar->setValue(before + px(24) * 3 * step);
+                // ★ 单位要用**条子自己的**：原生滚动区（树/列表/文本框）的条子单位是行/项，
+                //   按像素加 72 会一格跳到最上/最下（用户 2026-09-30 实测）。
+                const int unit = bar->singleStep() > 0 ? bar->singleStep() : 1;
+                bar->setValue(before + unit * 3 * step);
                 // 滚到头顶/底也别放它冒泡（否则"一滚到底就跳去滚外层"，用户会觉得条子不受控）
                 event->accept();
                 return true;

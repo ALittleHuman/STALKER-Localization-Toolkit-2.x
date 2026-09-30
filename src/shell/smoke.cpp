@@ -48,6 +48,7 @@
 #include <QStringList>
 #include <QThread>
 #include <QHeaderView>
+#include <QSplitter>
 #include <QTabWidget>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
@@ -1317,6 +1318,19 @@ SmokeResult run_smoke() {
                                       tabs->widget(1)->isAncestorOf(tab_page.pack_format_combo());
             const bool buttons_outside = two_tabs &&
                                          !tabs->widget(0)->isAncestorOf(tab_page.unpack_all_button());
+            // ★ 用户 2026-09-30：「上面包列表和下面文件列表之间也要有可拖拽分隔条」——
+            //   判据：分隔条存在、两个列表都挂在它下面、且它是「解包」页的一部分。
+            QSplitter* sp = tab_page.split_list_tree();
+            const bool split_ok = sp != nullptr && sp->count() == 2 &&
+                                  sp->handleWidth() > 0 &&
+                                  (sp->widget(0) == tab_page.package_list() ||
+                                   sp->widget(0) == tab_page.entry_tree()) &&
+                                  two_tabs && tabs->widget(0)->isAncestorOf(sp);
+            check(split_ok,
+                  QStringLiteral("④ 包列表↔包内树要有可拖拽分隔条（存在 %1 / 面板数 %2 / 在解包页 %3）")
+                      .arg(sp != nullptr ? 1 : 0)
+                      .arg(sp != nullptr ? sp->count() : -1)
+                      .arg(two_tabs && sp != nullptr && tabs->widget(0)->isAncestorOf(sp) ? 1 : 0));
             check(two_tabs && unpack_side_ok && pack_side_ok && buttons_outside,
                   QStringLiteral("③ 整页两标签（标签 %1 / 解包侧在第0页 %2 / 封包侧在第1页 %3 / "
                                  "底部按钮留在操作栏 %4）")
@@ -1562,6 +1576,26 @@ SmokeResult run_smoke() {
                           .arg(dir_page.find_entry_item(QStringLiteral("gamedata/from_package.txt")) != nullptr ? 1 : 0));
                 dir_page.hide();
                 QDir(mix).removeRecursively();
+            }
+            // ★ 用户 2026-09-30：包内排序＝**文件夹在前，各自按名称**（原来目录/文件混排）
+            {
+                FsPage sort_page;
+                sort_page.resize(760, page_min_h());
+                sort_page.show();
+                QApplication::processEvents();
+                sort_page.add_source(QStringLiteral("s"),
+                                     {{"z.txt", false}, {"b/", true}, {"a.txt", false}, {"c/", true}});
+                QApplication::processEvents();
+                QStringList top;
+                for (int i = 0; i < sort_page.entry_top_level_count(); ++i) {
+                    top << sort_page.entry_tree()->topLevelItem(i)->text(0);
+                }
+                check(top.size() == 4 && top[0] == QStringLiteral("b/") &&
+                          top[1] == QStringLiteral("c/") && top[2] == QStringLiteral("a.txt") &&
+                          top[3] == QStringLiteral("z.txt"),
+                      QStringLiteral("排序：文件夹在前、文件在后，各自按名（实际 %1）")
+                          .arg(top.join(QStringLiteral("|"))));
+                sort_page.hide();
             }
             check(tree_page.entry_top_level_count() == 2,
                   QStringLiteral("树① 顶层 2 项（top.txt + d/），实测 %1")
