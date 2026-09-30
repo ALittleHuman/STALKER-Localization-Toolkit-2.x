@@ -428,34 +428,13 @@ std::vector<EntryInfo> package_entries(const std::string& path,
         return out;
     }
 
-    // ② X-Ray DB 六格式：条目表在文件尾部 ⇒ 只能整文件读
-    std::ifstream in(core::path_from_utf8(path), std::ios::binary);
-    if (!in) {
-        error = "读不出文件：" + path;
-        return out;
-    }
-    const std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),
-                                   std::istreambuf_iterator<char>());
-    if (raw.empty()) {
-        error = "文件是空的：" + path;
-        return out;
-    }
-    std::optional<DbFormat> fmt = auto_detect(raw);
-    if (!fmt.has_value() && db_fallback.has_value()) fmt = db_fallback;
-    if (!fmt.has_value()) {
-        error = "认不出这个包的格式（DB 自洽判定有歧义；在下拉里选定具体格式后重试，"
-                "或它就是加密包/需要解密插件）";
-        return out;
-    }
-    const DbList listed = unpack_db(raw, *fmt);
+    // ② X-Ray DB 六格式：条目表在**文件尾部** ⇒ seek 式只读"块头 + 尾部那一块"。
+    //    ★ 2026-09-30 用户第四轮 ⑦（"现在还是慢得不行"）：旧实现把整文件读进内存，
+    //      实测 1900 MB 的包光读盘就要 8,063 ms（耗时只与文件大小成正比、与条目数无关）。
+    //      `list_db_seek` 的判定/错误文案与旧路径**逐值一致**（对不上就退回整文件读）。
+    const DbListing listed = list_db_seek(path, db_fallback);
     if (!listed.ok) {
-        error = std::string(db_format_key(*fmt)) + " 解析失败：" + listed.error;
-        return out;
-    }
-    if (listed.entries.empty()) {
-        // 自动判定失败、退回下拉格式时**必须**有这一条：不然"拿错格式硬解"会静默变成
-        // 一个空包（用户看到的是"加载成功但什么都没有"）
-        error = std::string("在 ") + db_format_key(*fmt) + " 下一个条目都解不出来（格式不对？）";
+        error = listed.error;
         return out;
     }
     out.reserve(listed.entries.size());

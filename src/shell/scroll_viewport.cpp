@@ -211,82 +211,103 @@ void ScrollViewport::reset_wheel_claims() {
     g_last_claim_ms = 0;
 }
 
+ScrollViewport::WheelDecision ScrollViewport::decide_wheel(QWidget* target, int dy, int dx) {
+    WheelDecision out;
+    if (target == nullptr || (dy == 0 && dx == 0)) return out;
+
+    // ★★ 2026-09-30 **用户真机缺陷的根因就在这里**（原话："把日志调出来，光标放在小滚动条的
+    //   窗口内滚轮就不是控制小滚动条而是控制大滚动条，把日志收起就正常。日志内也是正常。"）：
+    //
+    //   原实现是**两圈**：第一圈只找 `ScrollViewport`（自己的视口），第二圈才看
+    //   `QAbstractScrollArea`（树/列表/文本框这类"会自己滚的原生滚动区"）。
+    //   于是"树套在能滚的页视口里"这种情况：树是 `QAbstractScrollArea` 而**不是**
+    //   `ScrollViewport` ⇒ 被第一圈整圈跳过 ⇒ 第一圈直接命中**祖先页视口**并把事件消费掉
+    //   ⇒ 用户看到的就是"滚的是大滚动条，小滚动条不动"。
+    //   为什么"把日志一收起就正常"：日志收起时页视口装得下（range==0），第一圈找不到能滚的
+    //   视口，才轮到第二圈让树自己滚 —— 症状与机制完全对得上。
+    //
+    //   正确口径（= 1.x 在 Tk 下的实际行为：Text/Listbox 的**类绑定先拿到事件**）：
+    //   **按"离指针由近及远"找第一个能滚的滚动件**，两类混在一起比远近，谁近谁赢；
+    //   装得下的不拦（1.1），继续往外找。
+    QWidget* widget = target;
+    for (int hop = 0; widget != nullptr && hop <= kMaxParentHops; ++hop) {
+        // ① 自家视口（`ScrollViewport` 不是 `QAbstractScrollArea`，两类互不包含）
+        if (auto* viewport = qobject_cast<ScrollViewport*>(widget)) {
+            const bool can_v = (dy != 0) && viewport->can_scroll_vertical();
+            const bool can_h = (dx != 0) && viewport->can_scroll_horizontal();
+            if (can_v || can_h) {
+                out.owner = viewport;
+                out.bar = can_v ? viewport->vbar() : viewport->hbar();
+                return out;   // 能滚 ⇒ 条子必须看得见（1.7），这里没有 block 这一说
+            }
+            widget = widget->parentWidget();   // 装得下 ⇒ 不许滚（1.1/1.7），继续往外
+            continue;
+        }
+        // ② 原生滚动区（QPlainTextEdit / QTreeWidget / QListView …）
+        if (auto* area = qobject_cast<QAbstractScrollArea*>(widget)) {
+            QScrollBar* bar = (dy != 0) ? area->verticalScrollBar() : area->horizontalScrollBar();
+            // ★ 用户 2026-09-27：「控件里没显示滚动条，但光标放在那里时**主窗口的滚动条不能用
+            //   滚轮控制**」—— 判据不是"条子看不见"，而是**"它到底能不能滚"**：
+            //   · 装得下（range==0）⇒ **不吃**，让事件继续往外给外层视口/主窗口的条子（1.1）；
+            //   · 能滚但条子被藏起来 ⇒ 吃事件、**不许它自己滚**（挡"没有条子也在滚"）；
+            //   · 能滚且条子看得见 ⇒ **由它自己滚**（2026-09-29 用户："小滚动条在不隐藏的时候
+            //     也没法滚，还是控制的整个界面的滚动条" ⇒ 旧写法 `return false` 是错的）。
+            const bool can_scroll = bar != nullptr && bar->maximum() > bar->minimum();
+            if (can_scroll) {
+                out.owner = area;
+                out.bar = bar;
+                out.block = !bar_shown(bar);
+                return out;
+            }
+            // 装得下 ⇒ 不干预，继续往外（1.1）
+        }
+        widget = widget->parentWidget();
+    }
+    return out;   // 没有能滚的滚动件：不吃事件（交给默认处理）
+}
+
 bool ScrollViewport::route_wheel(QWidget* target, QWheelEvent* event) {
     if (target == nullptr || event == nullptr) return false;
     const int dy = event->angleDelta().y();
     const int dx = event->angleDelta().x();
     if (dy == 0 && dx == 0) return false;
 
-    // 1.5：从事件目标沿父链上溯，找**第一个能滚的**视口（≤60 层）
-    QWidget* widget = target;
-    for (int hop = 0; widget != nullptr && hop <= kMaxParentHops; ++hop) {
-        if (auto* viewport = qobject_cast<ScrollViewport*>(widget)) {
-            const bool can_v = (dy != 0) && viewport->can_scroll_vertical();
-            const bool can_h = (dx != 0) && viewport->can_scroll_horizontal();
-            if (!can_v && !can_h) {
-                // 装得下 ⇒ 这个视口不许滚（1.1/1.7），继续往上找
-                widget = widget->parentWidget();
-                continue;
-            }
-            QScrollBar* bar = can_v ? viewport->vbar() : viewport->hbar();
-            const int step = (can_v ? dy : dx) > 0 ? -1 : 1;
-            const int before = bar->value();
-            const int delta = px(24) * 3 * step;  // 一格 = 3 行，与 1.x 的滚轮步进同量级
-            bar->setValue(before + delta);
-
-            // 1.4：声明在**确认能滚之后**；被抢先就撤销自己刚才的滚动
-            if (bar->value() != before && !claim_wheel(serial_of(event))) {
-                bar->setValue(before);
-                return true;  // 事件已被（别人）消费掉，别再往上滚
-            }
-            if (bar->value() != before) {
-                // 滚动了 ⇒ 同步画布位置
-                if (auto* body = viewport->body()) {
-                    body->move(-viewport->offset_horizontal(), -viewport->offset_vertical());
-                }
-            }
-            event->accept();
-            return true;
-        }
-        widget = widget->parentWidget();
+    const WheelDecision decision = decide_wheel(target, dy, dx);
+    if (!decision.handled()) return false;
+    if (decision.block) {
+        event->accept();
+        return true;   // 藏条子但确实能滚：吃事件，挡自滚（1.1 控件级拦）
     }
 
-    // ② 链上**没有能滚的视口**时，还有一种必须在这一层拦住的东西：
-    //    "会自己滚的原生滚动区"（Qt 里的 `QAbstractScrollArea` 子类：QPlainTextEdit、QListView…）。
-    //    1.1 的口径是**控件级拦** —— 它的条子不可见时，不许它自己滚（否则就是"没有滚动条也在滚"）。
-    //    条子**看得见**时则"完全不干预"，让它按原生方式滚（1.x 同一句话）。
-    for (QWidget* walk = target; walk != nullptr; walk = walk->parentWidget()) {
-        if (auto* area = qobject_cast<QAbstractScrollArea*>(walk)) {
-            QScrollBar* bar = (dy != 0) ? area->verticalScrollBar() : area->horizontalScrollBar();
-            // ★ 用户 2026-09-27 真机反馈：「控件里没显示滚动条，但光标放在那里时**主窗口的滚动条
-            //   不能用滚轮控制**」—— 原来的写法是"条子看不见就一律吃事件"，于是**装得下的控件也把
-            //   滚轮吞了**，外层的视口永远收不到。正确判据不是"条子看不见"，而是**"它到底能不能滚"**：
-            //   · 能滚（range>0）但条子被藏起来 ⇒ 仍然吃事件（挡住类绑定的"没有条子也在滚"）；
-            //   · 装得下（range==0）⇒ **不吃**，让事件继续冒泡给外层视口/主窗口的条子。
-            const bool can_scroll = bar != nullptr && bar->maximum() > bar->minimum();
-            // ★ 2026-09-29（用户："小滚动条在不隐藏的时候也没法滚，还是控制的整个界面的滚动条"）：
-            //   **条子可见且能滚 ⇒ 由这个控件自己滚**。原来是 `return false`（"不干预"）⇒ 事件继续
-            //   冒泡到外层视口 ⇒ 外层的条子动、它自己不动（正是用户看到的现象）。步进与自家视口同量级。
-            if (can_scroll && bar_shown(bar)) {
-                const int step = (dy != 0 ? dy : dx) > 0 ? -1 : 1;
-                const int before = bar->value();
-                // ★ 单位要用**条子自己的**：原生滚动区（树/列表/文本框）的条子单位是行/项，
-                //   按像素加 72 会一格跳到最上/最下（用户 2026-09-30 实测）。
-                const int unit = bar->singleStep() > 0 ? bar->singleStep() : 1;
-                bar->setValue(before + unit * 3 * step);
-                // 滚到头顶/底也别放它冒泡（否则"一滚到底就跳去滚外层"，用户会觉得条子不受控）
-                event->accept();
-                return true;
-            }
-            if (bar != nullptr && !bar_shown(bar) && can_scroll) {
-                event->accept();
-                return true;  // 藏条子但确实能滚：吃事件，挡自滚
-            }
-            return false;  // 装得下 ⇒ 不干预，让事件冒泡出去
+    QScrollBar* bar = decision.bar;
+    const int amount = (dy != 0) ? dy : dx;
+    const int step = amount > 0 ? -1 : 1;
+    const int before = bar->value();
+
+    if (auto* viewport = qobject_cast<ScrollViewport*>(decision.owner)) {
+        const int delta = px(24) * 3 * step;   // 一格 = 3 行，与 1.x 的滚轮步进同量级
+        bar->setValue(before + delta);
+        // 1.4：声明在**确认能滚之后**；被抢先就撤销自己刚才的滚动
+        if (bar->value() != before && !claim_wheel(serial_of(event))) {
+            bar->setValue(before);
+            return true;   // 事件已被（别人）消费掉，别再往上滚
         }
-        if (qobject_cast<ScrollViewport*>(walk) != nullptr) break;  // 到了视口边界就停
+        if (bar->value() != before) {
+            // 滚动了 ⇒ 同步画布位置
+            if (auto* body = viewport->body()) {
+                body->move(-viewport->offset_horizontal(), -viewport->offset_vertical());
+            }
+        }
+        event->accept();
+        return true;
     }
-    return false;  // 没有能滚的视口：不吃事件（交给默认处理）
+
+    // 原生滚动区：步进要用**条子自己的**单位（行/项）—— 按像素加 72 会一格跳到最上/最下
+    //（用户 2026-09-30 实测）。滚到头顶/底也别放它冒泡（否则"一滚到底就跳去滚外层"）。
+    const int unit = bar->singleStep() > 0 ? bar->singleStep() : 1;
+    bar->setValue(before + unit * 3 * step);
+    event->accept();
+    return true;
 }
 
 bool ScrollViewport::eventFilter(QObject* watched, QEvent* event) {

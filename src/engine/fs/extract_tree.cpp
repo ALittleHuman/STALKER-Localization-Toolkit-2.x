@@ -269,23 +269,12 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
         result.error = "输出根为空";
         return finish();
     }
-    std::ifstream in(core::path_from_utf8(image_path), std::ios::binary);
-    if (!in) {
-        result.error = "读不出文件：" + image_path;
-        return finish();
-    }
-    const std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),
-                                   std::istreambuf_iterator<char>());
-    std::optional<DbFormat> fmt = auto_detect(raw);
-    if (!fmt.has_value() && db_fallback.has_value()) fmt = db_fallback;
-    if (!fmt.has_value()) {
-        result.error = "认不出这个包的格式（既不是 SquashFS，DB 自洽判定也有歧义："
-                       "在格式下拉里选定具体格式后重试）";
-        return finish();
-    }
-    const DbList listed = unpack_db(raw, *fmt);
+    // ② X-Ray DB 六格式：条目表在尾部 ⇒ **seek 式**只读"块头 + 尾部那一块"；
+    //    逐条目解包时也只读那一条的那一段（旧实现整包读进内存：1900 MB 的包光读盘 8 s，
+    //    而且整个镜像常驻内存）。两条路的产物逐值一致（共用 `decode_entry_bytes`）。
+    const DbListing listed = list_db_seek(image_path, db_fallback);
     if (!listed.ok) {
-        result.error = std::string(db_format_key(*fmt)) + " 解析失败：" + listed.error;
+        result.error = listed.error;
         return finish();
     }
     result.ok = true;   // 从这里往后：单项失败算单项（与 SquashFS 分支同口径）
@@ -313,7 +302,7 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
             ++result.dirs_created;
             continue;
         }
-        const DbExtract data = extract_entry(raw, entry);
+        const DbExtract data = extract_entry_seek(image_path, entry);
         if (!data.ok) {
             result.failures.push_back({entry.path, data.error});
             continue;

@@ -1887,11 +1887,6 @@ int run_cli(const std::vector<std::string>& args) {
             return kExitOk;
         }
 
-        const std::vector<uint8_t> raw = read_all(target);
-        if (raw.empty()) {
-            std::cout << "DUMP error reason=读不到文件或文件为空: " << target << "\n";
-            return kExitFail;
-        }
         std::optional<xrkit::engine::fs::DbFormat> fmt;
         if (operands.size() >= 2) {
             fmt = xrkit::engine::fs::db_format_from_any(operands[1]);
@@ -1900,12 +1895,11 @@ int run_cli(const std::vector<std::string>& args) {
                 return kExitUsage;
             }
         }
-        if (!fmt) fmt = xrkit::engine::fs::auto_detect(raw);
-        if (!fmt) {
-            std::cout << "DUMP error reason=无法唯一判定 DB 格式（歧义或损坏，请显式指定格式）\n";
-            return kExitFail;
-        }
-        const xrkit::engine::fs::DbList res = xrkit::engine::fs::unpack_db(raw, *fmt);
+        // ★ 2026-09-30 用户第四轮 ⑦：DB 列条目走 **seek 式**（只读块头 + 尾部条目表）。
+        //   旧写法 `read_all` 把整文件读进内存 ⇒ 1900 MB 的包 8,063 ms；顺带把
+        //   "1.9 GB 读不进来"那条旧观察也一并消掉（那次是**路径写错**：实际文件在
+        //   `IWP\database\patch\` 下，`read_all` 打不开 ⇒ 返回空 ⇒ 报了"读不到文件或文件为空"）。
+        const xrkit::engine::fs::DbListing res = xrkit::engine::fs::list_db_seek(target, fmt);
         if (!res.ok) {
             std::cout << "DUMP error reason=" << res.error << "\n";
             return kExitFail;
@@ -1915,9 +1909,12 @@ int run_cli(const std::vector<std::string>& args) {
             std::cout << (e.is_dir ? 'd' : 'f') << '\t' << e.path << '\t' << e.size_real << '\t'
                       << e.size_comp << '\t' << e.offset << '\t' << (e.use_lzhuf ? 1 : 0) << '\n';
         }
-        std::cout << "DUMP ok kind=db format=" << xrkit::engine::fs::db_format_key(*fmt)
+        std::cout << "DUMP ok kind=db format=" << xrkit::engine::fs::db_format_key(res.format)
                   << " entries=" << res.entries.size()
-                  << " ms=" << static_cast<long long>(res.elapsed_ms) << "\n";
+                  << " ms=" << static_cast<long long>(res.elapsed_ms)
+                  << " seek=" << (res.used_seek ? 1 : 0)
+                  << " header_bytes=" << res.header_bytes
+                  << " file_bytes=" << res.file_size << "\n";
         return kExitOk;
     }
 
@@ -1938,15 +1935,10 @@ int run_cli(const std::vector<std::string>& args) {
             }
             data = r.data;
         } else {
-            const std::vector<uint8_t> raw = read_all(source);
+            // ★ 2026-09-30 第四轮 ⑦：列条目与取那一条都走 seek（大 DB 不再整包进内存）
             std::optional<xrkit::engine::fs::DbFormat> fmt;
             if (operands.size() >= 4) fmt = xrkit::engine::fs::db_format_from_any(operands[3]);
-            if (!fmt) fmt = xrkit::engine::fs::auto_detect(raw);
-            if (!fmt) {
-                std::cout << "EXTRACT error reason=无法唯一判定 DB 格式\n";
-                return kExitFail;
-            }
-            const xrkit::engine::fs::DbList list = xrkit::engine::fs::unpack_db(raw, *fmt);
+            const xrkit::engine::fs::DbListing list = xrkit::engine::fs::list_db_seek(source, fmt);
             if (!list.ok) {
                 std::cout << "EXTRACT error reason=" << list.error << "\n";
                 return kExitFail;
@@ -1962,7 +1954,8 @@ int run_cli(const std::vector<std::string>& args) {
                 std::cout << "EXTRACT error reason=归档里没有该条目: " << rel << "\n";
                 return kExitFail;
             }
-            const xrkit::engine::fs::DbExtract r = xrkit::engine::fs::extract_entry(raw, *found);
+            const xrkit::engine::fs::DbExtract r =
+                xrkit::engine::fs::extract_entry_seek(source, *found);
             if (!r.ok) {
                 std::cout << "EXTRACT error reason=" << r.error << "\n";
                 return kExitFail;

@@ -4,10 +4,14 @@
 #include <array>
 #include <chrono>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <mutex>
 
 #include "minilzo.h"
 
+#include "xrkit/core/path.h"
 #include "xrkit/engine/fs/lzhuf.h"
 
 namespace xrkit::engine::fs {
@@ -271,7 +275,8 @@ std::vector<DbEntry> parse_format(const std::vector<uint8_t>& d, DbFormat f) {
 }
 
 // ── 自洽性（唯一判据，两处共用：拒伪造 HEADER 与 auto_detect）────────
-bool entries_fit_file(const std::vector<uint8_t>& raw, const std::vector<DbEntry>& entries) {
+// ★ seek 式读盘拿不到 `raw` ⇒ 判据改成**显式传文件大小**（语义与 `raw.size()` 完全相同）。
+bool entries_fit_size(uint64_t file_size, const std::vector<DbEntry>& entries) {
     for (const DbEntry& e : entries) {
         if (e.is_dir) continue;
         if (e.path.empty()) return false;
@@ -279,17 +284,25 @@ bool entries_fit_file(const std::vector<uint8_t>& raw, const std::vector<DbEntry
             if (static_cast<unsigned char>(c) < 32) return false;
         }
         const uint64_t sc = e.size_comp;
-        if (e.offset == 0 || e.offset + sc > raw.size()) return false;
+        if (e.offset == 0 || e.offset + sc > file_size) return false;
         if (e.size_comp != 0 && e.size_real > sc * kMaxLzoRatio) return false;
     }
     return true;
 }
 
+bool entries_fit_file(const std::vector<uint8_t>& raw, const std::vector<DbEntry>& entries) {
+    return entries_fit_size(raw.size(), entries);
+}
+
+bool entries_self_consistent_size(uint64_t file_size, const std::vector<DbEntry>& entries) {
+    if (entries.empty()) return false;
+    if (!entries_fit_size(file_size, entries)) return false;
+    return std::any_of(entries.begin(), entries.end(), [](const DbEntry& e) { return !e.is_dir; });
+}
+
 bool entries_self_consistent(const std::vector<uint8_t>& raw,
                              const std::vector<DbEntry>& entries) {
-    if (entries.empty()) return false;
-    if (!entries_fit_file(raw, entries)) return false;
-    return std::any_of(entries.begin(), entries.end(), [](const DbEntry& e) { return !e.is_dir; });
+    return entries_self_consistent_size(raw.size(), entries);
 }
 
 // ── HEADER 块校验（fmt 已知时不要求 ASCII）───────────────────────────
@@ -400,6 +413,85 @@ bool read_chunks(const std::vector<uint8_t>& raw, DbFormat fmt, Chunks& out) {
     return out.has_header;
 }
 
+// ── seek 式块链行走（大包）───────────────────────────────────────────
+// 与 `read_chunks` 用**同一个**判据认块（`cid <= 1 && sz > 0 && 8 + sz <= 剩余`），
+// 区别只是**不把块体读进来**：读到 8 字节块头就按 `sz` 跳过去。
+// 为什么这样走与旧路径等价：`read_chunks` 在 `pos == 0` 认出 DATA 块时也是
+// `pos += 8 + sz` 跳过去的（逐字节回退只发生在**第一个块头就不合法**时）⇒ 只要
+// 第一个块头合法，两条路走的是**同一条链**、找到的是**同一个 HEADER 块**。
+// 任何一步对不上就返回 false，让调用方退回整文件读（不猜）。
+uint32_t le32_at(const uint8_t* p) {
+    return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+           (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+
+// HEADER 表的合理上界：真档案的条目表是 MB 级；超过这个数说明要么不是标准块结构、
+// 要么是坏值 ⇒ 退回整文件读（绝不为一个 4 GB 的假 sz 分配内存）。
+constexpr uint64_t kMaxSeekHeaderBytes = 512ull * 1024 * 1024;
+// "找块链起点"的探测窗口与次数上限（**有界**，绝不退化成扫全文件）
+constexpr uint64_t kStartProbeBytes = 4ull * 1024 * 1024;
+constexpr int kMaxStartProbes = 64;
+
+// 一个块头是否合法（与 `read_chunks` 同一判据）
+bool chunk_head_at(const uint8_t* p, uint64_t remain, uint32_t& rid, uint32_t& sz) {
+    rid = le32_at(p);
+    sz = le32_at(p + 4);
+    const uint32_t cid = rid & 0x7FFFFFFFu;
+    return cid <= 1 && sz > 0 && 8ull + sz <= remain;
+}
+
+bool walk_chain_from(std::ifstream& in, uint64_t file_size, uint64_t start,
+                     std::vector<uint8_t>& header, bool& comp) {
+    uint64_t pos = start;
+    while (pos + 8 <= file_size) {
+        in.seekg(static_cast<std::streamoff>(pos), std::ios::beg);
+        uint8_t head[8] = {};
+        in.read(reinterpret_cast<char*>(head), 8);
+        if (in.gcount() != 8) return false;
+        uint32_t rid = 0;
+        uint32_t sz = 0;
+        if (!chunk_head_at(head, file_size - pos, rid, sz)) return false;
+        if ((rid & 0x7FFFFFFFu) == 1) {
+            if (sz > kMaxSeekHeaderBytes) return false;
+            std::vector<uint8_t> data(static_cast<size_t>(sz));
+            in.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(sz));
+            if (in.gcount() != static_cast<std::streamsize>(sz)) return false;
+            header = std::move(data);
+            comp = (rid & 0x80800000u) != 0;   // 与 `read_chunks` 同一处取 comp 位
+            return true;
+        }
+        pos += 8ull + sz;   // DATA 块：整块跳过（这正是省掉 8 s 的地方）
+    }
+    return false;
+}
+
+bool seek_header_chunk(std::ifstream& in, uint64_t file_size, std::vector<uint8_t>& header,
+                       bool& comp) {
+    // ① 标准档案：第一个块头就在文件开头 ⇒ 直接走链，一个多余字节都不读
+    if (walk_chain_from(in, file_size, 0, header, comp)) return true;
+
+    // ② 有些包在块链之前带一段**文本前导**（实测 `IWP\database\patch\xpatch_textures.db0`
+    //    开头是 `[header]\r\nauto_load = true…`）⇒ 旧路径靠"逐字节回退扫描"找到真正的块头。
+    //    这里把那次扫描限制在开头 4 MB 里（前导是几百字节级），并且只在**候选位置**上
+    //    试走链（合法块头要求前 4 字节的 cid∈{0,1}、后 4 字节是合理的 sz）——**有界**，
+    //    绝不退化成"把 2 GB 读进来再扫"。
+    const uint64_t probe = std::min<uint64_t>(file_size, kStartProbeBytes);
+    std::vector<uint8_t> win(static_cast<size_t>(probe));
+    in.clear();
+    in.seekg(0, std::ios::beg);
+    in.read(reinterpret_cast<char*>(win.data()), static_cast<std::streamsize>(probe));
+    const size_t got = static_cast<size_t>(in.gcount());
+    int tries = 0;
+    for (size_t p = 1; p + 8 <= got; ++p) {
+        uint32_t rid = 0;
+        uint32_t sz = 0;
+        if (!chunk_head_at(win.data() + p, file_size - p, rid, sz)) continue;
+        if (++tries > kMaxStartProbes) return false;
+        if (walk_chain_from(in, file_size, p, header, comp)) return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 // ── 公开接口 ─────────────────────────────────────────────────────────
@@ -484,20 +576,19 @@ std::optional<DbFormat> auto_detect(const std::vector<uint8_t>& raw) {
     return std::nullopt;
 }
 
-DbExtract extract_entry(const std::vector<uint8_t>& raw, const DbEntry& entry) {
+namespace {
+
+// 解码一段"已经是这一条的原始字节"的缓冲（`p` 指向文件里 `entry.offset` 处，`n` 是可读长度）。
+// 内存版（整包在内存）与 seek 版（只读了那一段）**共用这一份** —— 两条路的产物必须逐值一致。
+DbExtract decode_entry_bytes(const uint8_t* p, size_t n, const DbEntry& entry) {
     DbExtract res;
-    if (entry.is_dir) {
-        res.error = "该条目是目录";
-        return res;
-    }
     if (entry.use_lzhuf) {
-        if (entry.offset + entry.size_comp > raw.size()) {
+        if (entry.size_comp > n) {
             res.error = "偏移越界";
             return res;
         }
         std::string err;
-        if (!lzhuf_decode(raw.data() + entry.offset, static_cast<size_t>(entry.size_comp), res.data,
-                          err)) {
+        if (!lzhuf_decode(p, static_cast<size_t>(entry.size_comp), res.data, err)) {
             res.error = "LZHUF 解压失败：" + err;
             return res;
         }
@@ -506,13 +597,12 @@ DbExtract extract_entry(const std::vector<uint8_t>& raw, const DbEntry& entry) {
     }
 
     const uint64_t sc = entry.size_comp ? entry.size_comp : entry.size_real;
-    if (entry.offset + sc > raw.size()) {
+    if (sc > n) {
         res.error = "偏移越界";
         return res;
     }
     if (sc == entry.size_real) {
-        res.data.assign(raw.begin() + static_cast<long>(entry.offset),
-                        raw.begin() + static_cast<long>(entry.offset + sc));
+        res.data.assign(p, p + sc);
         res.ok = true;
         return res;
     }
@@ -532,8 +622,8 @@ DbExtract extract_entry(const std::vector<uint8_t>& raw, const DbEntry& entry) {
     }
     res.data.resize(static_cast<size_t>(entry.size_real));
     lzo_uint out_len = static_cast<lzo_uint>(res.data.size());
-    const int rc = lzo1x_decompress_safe(raw.data() + entry.offset, static_cast<lzo_uint>(sc),
-                                         res.data.data(), &out_len, nullptr);
+    const int rc = lzo1x_decompress_safe(p, static_cast<lzo_uint>(sc), res.data.data(), &out_len,
+                                         nullptr);
     if (rc != LZO_E_OK) {
         res.error = "lzo 解压失败（code=" + std::to_string(rc) + "）";
         res.data.clear();
@@ -542,6 +632,155 @@ DbExtract extract_entry(const std::vector<uint8_t>& raw, const DbEntry& entry) {
     res.data.resize(out_len);
     res.ok = true;
     return res;
+}
+
+// 这一条需要从文件里取的字节数（= 解码真正会读到的那一段）
+uint64_t entry_read_bytes(const DbEntry& entry) {
+    if (entry.use_lzhuf) return entry.size_comp;
+    return entry.size_comp ? entry.size_comp : entry.size_real;
+}
+
+}  // namespace
+
+DbExtract extract_entry(const std::vector<uint8_t>& raw, const DbEntry& entry) {
+    DbExtract res;
+    if (entry.is_dir) {
+        res.error = "该条目是目录";
+        return res;
+    }
+    const uint64_t sc = entry_read_bytes(entry);
+    if (entry.offset > raw.size() || sc > raw.size() - entry.offset) {
+        res.error = "偏移越界";
+        return res;
+    }
+    return decode_entry_bytes(raw.data() + entry.offset, static_cast<size_t>(sc), entry);
+}
+
+DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallback) {
+    DbListing res;
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto stamp = [&res, t0]() {
+        res.elapsed_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                                   t0)
+                             .count();
+    };
+
+    std::error_code ec;
+    const auto bytes = std::filesystem::file_size(xrkit::core::path_from_utf8(path), ec);
+    if (ec) {
+        res.error = "读不出文件：" + path;
+        stamp();
+        return res;
+    }
+    res.file_size = static_cast<uint64_t>(bytes);
+    if (res.file_size == 0) {
+        res.error = "文件是空的：" + path;
+        stamp();
+        return res;
+    }
+
+    std::ifstream in(xrkit::core::path_from_utf8(path), std::ios::binary);
+    if (!in) {
+        res.error = "读不出文件：" + path;
+        stamp();
+        return res;
+    }
+
+    std::vector<uint8_t> header;
+    bool comp = false;
+    if (seek_header_chunk(in, res.file_size, header, comp)) {
+        // 与内存版 `auto_detect` **同一条判据**（唯一自洽才认），只是字节只来自尾部那一块。
+        // 注意用 `validate_header(..., fmt, ...)`（fmt 已知 ⇒ 非严格档）：这正是 `unpack_db`
+        // 内部走的那条路，连"至少一条非目录条目可用"的轻校验都照旧。
+        const DbFormat all[6] = {DbFormat::Xdb,    DbFormat::Ru2947, DbFormat::Ww2947,
+                                 DbFormat::F2945,  DbFormat::F2215,  DbFormat::F11xx};
+        int hits = 0;
+        DbFormat picked = DbFormat::Unknown;
+        std::vector<DbEntry> picked_entries;
+        for (DbFormat f : all) {
+            std::vector<DbEntry> entries;
+            if (!validate_header(header, comp, f, entries)) continue;
+            if (!entries_self_consistent_size(res.file_size, entries)) continue;
+            ++hits;
+            picked = f;
+            picked_entries = std::move(entries);
+        }
+        if (hits == 1) {
+            res.used_seek = true;
+            res.header_bytes = header.size();
+            res.format = picked;
+            res.entries = std::move(picked_entries);
+            res.ok = true;
+            stamp();
+            return res;
+        }
+        // 判不出来 / 有歧义：**不在这里下结论** —— 旧路径还会沿着链继续扫（逐字节回退），
+        // 可能找到另一个 HEADER 块，也可能靠 `db_fallback` 裁决。退回整文件读，行为逐值一致。
+        res.ambiguous = hits > 1;
+    }
+
+    // ── 退回整文件读（= 旧路径，含逐字节回退扫描；错误文案也与旧版一致）──────────
+    in.clear();
+    in.seekg(0, std::ios::beg);
+    const std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+    if (raw.empty()) {
+        res.error = "文件是空的：" + path;
+        stamp();
+        return res;
+    }
+    res.header_bytes = raw.size();
+    std::optional<DbFormat> fmt = auto_detect(raw);
+    if (!fmt.has_value() && db_fallback.has_value()) fmt = db_fallback;
+    if (!fmt.has_value()) {
+        res.error = "认不出这个包的格式（DB 自洽判定有歧义；在下拉里选定具体格式后重试，"
+                    "或它就是加密包/需要解密插件）";
+        stamp();
+        return res;
+    }
+    const DbList listed = unpack_db(raw, *fmt);
+    if (!listed.ok) {
+        res.error = std::string(db_format_key(*fmt)) + " 解析失败：" + listed.error;
+        stamp();
+        return res;
+    }
+    if (listed.entries.empty()) {
+        // 自动判定失败、退回下拉格式时**必须**有这一条：不然"拿错格式硬解"会静默变成一个空包
+        res.error = std::string("在 ") + db_format_key(*fmt) + " 下一个条目都解不出来（格式不对？）";
+        stamp();
+        return res;
+    }
+    res.format = *fmt;
+    res.entries = listed.entries;
+    res.ok = true;
+    stamp();
+    return res;
+}
+
+DbExtract extract_entry_seek(const std::string& path, const DbEntry& entry) {
+    DbExtract res;
+    if (entry.is_dir) {
+        res.error = "该条目是目录";
+        return res;
+    }
+    const uint64_t sc = entry_read_bytes(entry);
+    if (sc == 0) {
+        res.ok = true;   // 合法空文件（与内存版的 `sc == size_real == 0` 分支同结果）
+        return res;
+    }
+    std::ifstream in(xrkit::core::path_from_utf8(path), std::ios::binary);
+    if (!in) {
+        res.error = "读不出文件：" + path;
+        return res;
+    }
+    in.seekg(static_cast<std::streamoff>(entry.offset), std::ios::beg);
+    std::vector<uint8_t> buf(static_cast<size_t>(sc));
+    in.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(sc));
+    if (in.gcount() != static_cast<std::streamsize>(sc)) {
+        res.error = "偏移越界";
+        return res;
+    }
+    return decode_entry_bytes(buf.data(), buf.size(), entry);
 }
 
 namespace {

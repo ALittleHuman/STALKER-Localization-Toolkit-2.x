@@ -64,9 +64,24 @@ public:
     // 同步内容尺寸 + 重排（1.8）。任何尺寸/内容变化后调用。
     void sync_layout();
 
-    // 滚轮处理（1.3/1.4/1.5 的合体）：从 `target` 起沿父链找第一个能滚的视口；
-    // 命中本视口才消费，并做 serial 认领（被抢先则撤销本次滚动）。返回是否消费。
+    // 滚轮处理（1.3/1.4/1.5 的合体）：从 `target` 起沿父链找第一个能滚的滚动件；
+    // 命中才消费，并做 serial 认领（被抢先则撤销本次滚动）。返回是否消费。
     static bool route_wheel(QWidget* target, QWheelEvent* event);
+
+    // ★ 公开测试入口（用户 2026-09-30 真机反馈后新增）：**只做决策、无任何副作用**
+    //   （不动条子、不认领、不改画布）—— 因为"离屏下发真滚轮给原生滚动区"本身不可靠，
+    //   而这条判据要的恰恰是**路由决策**（该滚谁的条子）。
+    struct WheelDecision {
+        QWidget* owner = nullptr;   // 条子的主人：`ScrollViewport*` 或 `QAbstractScrollArea*`
+        QScrollBar* bar = nullptr;  // 该滚的条子（`owner == nullptr` 时无意义）
+        bool block = false;         // 条子被藏起来：**能吃事件**（挡"没有条子也在滚"）但不许它自己滚
+        bool handled() const { return owner != nullptr && bar != nullptr; }
+    };
+    // 判据（1.5 + 2026-09-30 修正）：**离线最近的那个能滚的滚动件赢**。
+    //   · 原生滚动区（树/列表/文本框）能滚 ⇒ 它自己滚，祖先视口**不许越过它抢**；
+    //   · 它装得下 ⇒ 不吃、继续往外找（1.1 的"装得下的内层让位给外层"）；
+    //   · 谁都不该滚 ⇒ `handled() == false`。
+    static WheelDecision decide_wheel(QWidget* target, int delta_y, int delta_x);
 
     // 1.x `wheel_claim(serial)`：同一事件只有一个认领者。0 表示"没有身份信息"。
     static bool claim_wheel(quint64 serial);

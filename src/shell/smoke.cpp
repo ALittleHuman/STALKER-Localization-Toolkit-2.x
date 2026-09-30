@@ -1,6 +1,7 @@
 #include "smoke.h"
 
 #include "xrkit/core/theme.h"
+#include "xrkit/engine/fs/db.h"
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/plugin/abi_host.h"
 #include "hub.h"
@@ -53,6 +54,7 @@
 #include <QSplitter>
 #include <QStyle>
 #include <QTabWidget>
+#include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -593,6 +595,74 @@ SmokeResult run_smoke() {
         check(inner->offset_vertical() == inner_before, QStringLiteral("嵌套：内层没动"));
         check(outer->offset_vertical() > outer_before,
               QStringLiteral("嵌套：装得下的内层把滚轮让给外层"));
+
+        // ⑦-g ★★ 用户 2026-09-30 真机缺陷的**能红断言**（原话：「把日志调出来，光标放在小滚动条
+        //      的窗口内滚轮就不是控制小滚动条而是控制大滚动条，把日志收起就正常。日志内也是正常。」）
+        //      机制：树/文本框是 `QAbstractScrollArea` 而**不是** `ScrollViewport`，旧实现第一圈
+        //      "找第一个能滚的视口"会把它们整圈跳过 ⇒ 直接命中**祖先页视口**并把它滚了；
+        //      "日志一收起就正常"正是因为那时外层视口装得下（range==0），才轮到内层自己滚。
+        //      判据用**公开决策入口**（`decide_wheel`，无副作用）—— 该滚谁的条子。
+        //      判红办法：把 `decide_wheel` 改回"先只找 ScrollViewport、找不到再看原生滚动区"。
+        {
+            QWidget native_top;
+            native_top.resize(400, 200);
+            auto* native_outer = new ScrollViewport(&native_top);
+            native_outer->setGeometry(0, 0, 400, 200);
+            native_outer->set_fit(ScrollViewport::Fit::Content);
+            auto* native_body = new QWidget;
+            auto* native_lay = new QVBoxLayout(native_body);
+            auto* native_ink = new QWidget;
+            native_ink->setFixedHeight(900);
+            native_lay->addWidget(native_ink);
+            auto* inner_tree = new QTreeWidget(native_body);
+            inner_tree->setObjectName(QStringLiteral("smoke_native_tree"));
+            inner_tree->setColumnCount(1);
+            for (int i = 0; i < 60; ++i) {
+                inner_tree->addTopLevelItem(
+                    new QTreeWidgetItem(QStringList{QStringLiteral("row %1").arg(i)}));
+            }
+            native_lay->addWidget(inner_tree);
+            native_outer->set_body(native_body);
+            native_outer->sync_layout();
+            native_top.show();
+            native_outer->show();
+            QApplication::processEvents();
+
+            QScrollBar* tree_bar = inner_tree->verticalScrollBar();
+            check(native_outer->can_scroll_vertical() && tree_bar != nullptr &&
+                      tree_bar->maximum() > tree_bar->minimum(),
+                  QStringLiteral("⑦-g 前置：外层视口与内层树**都能滚**（树 max=%1）")
+                      .arg(tree_bar != nullptr ? tree_bar->maximum() : -1));
+            check(tree_bar != nullptr && ScrollViewport::bar_shown(tree_bar),
+                  QStringLiteral("⑦-g 前置：内层树的条子看得见"));
+
+            const ScrollViewport::WheelDecision tree_decision =
+                ScrollViewport::decide_wheel(inner_tree->viewport(), -120, 0);
+            check(tree_decision.bar == tree_bar && tree_decision.owner == inner_tree,
+                  QStringLiteral("⑦-g 光标在树里 ⇒ 该滚的是**树自己的条子**（实得 owner=%1）")
+                      .arg(tree_decision.owner == nullptr
+                               ? QStringLiteral("nullptr")
+                               : QString::fromLatin1(tree_decision.owner->metaObject()->className())));
+            check(ScrollViewport::decide_wheel(native_body, -120, 0).bar == native_outer->vbar(),
+                  QStringLiteral("⑦-g 光标在视口空白处 ⇒ 才轮到外层视口"));
+            check(ScrollViewport::decide_wheel(native_ink, -120, 0).bar == native_outer->vbar(),
+                  QStringLiteral("⑦-g 光标在**装得下**的普通控件上 ⇒ 外层视口（1.1 冒泡）"));
+
+            // 真发一次：内层要真的动，外层**一步都不许动**（1.3 同一事件只一个条子动）
+            const int outer_before = native_outer->offset_vertical();
+            const int tree_before = tree_bar != nullptr ? tree_bar->value() : 0;
+            check(send_wheel(inner_tree->viewport(), -120),
+                  QStringLiteral("⑦-g 事件被内层消费（不再冒泡给外层）"));
+            check(tree_bar != nullptr && tree_bar->value() > tree_before,
+                  QStringLiteral("⑦-g 内层树自己滚了（%1 → %2，步进 %3）")
+                      .arg(tree_before)
+                      .arg(tree_bar != nullptr ? tree_bar->value() : -1)
+                      .arg(tree_bar != nullptr ? tree_bar->singleStep() : -1));
+            check(native_outer->offset_vertical() == outer_before,
+                  QStringLiteral("⑦-g 外层视口一步没动（实测 %1，期望 %2）")
+                      .arg(native_outer->offset_vertical())
+                      .arg(outer_before));
+        }
     }
 
     // ⑧ 分栏（M2-3）：对照表 ②（2.1~2.5/2.7）+ ④（4.2/4.3）。
@@ -1085,6 +1155,190 @@ SmokeResult run_smoke() {
         check(page.package_list() != nullptr && page.package_list()->acceptDrops(),
               QStringLiteral("6.4 拖放直接挂在包列表上（acceptDrops）"));
 
+        // ★ 2026-09-30 结构重排（用户第四轮 ①「你不认为，堆起来很丑吗？」+ 授权「按自己审美来改」）
+        //   判据＝**工具行归位**：工具行与它服务的那个列表**同一父控件**、且行在列表**上面**；
+        //   两个面板一起进同一个分隔条。**修前第一条就红**：条目工具行（搜索/全选）的父控件是
+        //   解包页、而且落在分隔条**下面**（看着像页级控件）。
+        {
+            // ★ 几何必须在**装了东西**的状态下量：`refresh_rows()` 在条目树为空时会
+            //   `setVisible(false)`（空状态），而 Qt 的布局**不给隐藏控件分配空间** ⇒ 拿空夹具
+            //   去量"工具行在树上面"只会量到一棵没被布局过的树（y=0/h=默认值）。
+            //   所以这里用一个**有内容**的独立夹具，不动上面的 `page`。
+            FsPage geo_page;
+            geo_page.add_source(QStringLiteral("smoke_src"),
+                                {efs::EntryInfo{std::string("dir"), true, 0},
+                                 efs::EntryInfo{std::string("dir/a.txt"), false, 10}});
+            geo_page.show();
+
+            QWidget* pkg_pane = geo_page.package_pane();
+            QWidget* entry_pane = geo_page.entry_pane();
+            QWidget* pkg_bar = geo_page.package_bar();
+            QWidget* entry_bar = geo_page.entry_bar();
+            check(pkg_pane != nullptr && entry_pane != nullptr &&
+                      geo_page.package_list() != nullptr && geo_page.entry_tree() != nullptr &&
+                      geo_page.package_list()->parentWidget() == pkg_pane &&
+                      geo_page.entry_tree()->parentWidget() == entry_pane,
+                  QStringLiteral("① 两个列表各自在自己的面板里"));
+            check(pkg_bar != nullptr && entry_bar != nullptr &&
+                      pkg_bar->parentWidget() == pkg_pane &&
+                      entry_bar->parentWidget() == entry_pane &&
+                      geo_page.add_button() != nullptr &&
+                      geo_page.add_button()->parentWidget() == pkg_bar,
+                  QStringLiteral("① 工具行归位：「加包」回到包工具行、条目工具行归条目面板"));
+            check(geo_page.split_list_tree() != nullptr &&
+                      geo_page.split_list_tree()->count() == 2 &&
+                      geo_page.split_list_tree()->widget(0) == pkg_pane &&
+                      geo_page.split_list_tree()->widget(1) == entry_pane,
+                  QStringLiteral("① 分隔条拖的是两个**面板**（工具行跟着自己的列表走）"));
+
+            // ① 几何取两档：**正常窗口**（900×700，用户实际就在这附近）与**最小页高**
+            //   `page_min_h()`。第一档要求"工具行真在列表上方 + 两个面板都够高"；第二档只要求
+            //   "都还在、没归零"—— 430 px 里要塞 行+两个面板+任务面板，两个列表各自的
+            //   minimumHeight(120/160) 本来就装不下（这是**尺寸下限**，不是这次重排引入的）。
+            const auto measure = [&](int w, int h) {
+                geo_page.resize(w, h);
+                if (geo_page.layout() != nullptr) geo_page.layout()->activate();
+                QApplication::processEvents();
+            };
+
+            measure(900, 700);
+            const int big_pkg = pkg_pane != nullptr ? pkg_pane->height() : 0;
+            const int big_entry = entry_pane != nullptr ? entry_pane->height() : 0;
+            const int bar_y = entry_bar != nullptr ? entry_bar->y() : -1;
+            const int tree_y = geo_page.entry_tree() != nullptr ? geo_page.entry_tree()->y() : -1;
+            check(bar_y >= 0 && tree_y > bar_y,
+                  QStringLiteral("① 正常窗口下条目工具行在树**上面**（行 y=%1 < 树 y=%2）")
+                      .arg(bar_y)
+                      .arg(tree_y));
+            check(big_pkg >= xrkit::core::px(120) && big_entry >= xrkit::core::px(160),
+                  QStringLiteral("① 正常窗口 900×700 下两个面板都够高（包 %1 ≥ %2；条目 %3 ≥ %4）")
+                      .arg(big_pkg)
+                      .arg(xrkit::core::px(120))
+                      .arg(big_entry)
+                      .arg(xrkit::core::px(160)));
+
+            measure(720, page_min_h());
+            const int small_pkg = pkg_pane != nullptr ? pkg_pane->height() : 0;
+            const int small_entry = entry_pane != nullptr ? entry_pane->height() : 0;
+            check(small_pkg > xrkit::core::px(40) && small_entry > xrkit::core::px(40),
+                  QStringLiteral("① 最小页高 %1 下两个面板都没被挤成一条（包 %2 / 条目 %3）")
+                      .arg(page_min_h())
+                      .arg(small_pkg)
+                      .arg(small_entry));
+            result.notes.append(
+                QStringLiteral("① 结构重排几何：900×700 ⇒ 包 %1 / 条目 %2（工具行 y=%3 < 树 y=%4）；"
+                               "720×%5 ⇒ 包 %6 / 条目 %7")
+                    .arg(big_pkg)
+                    .arg(big_entry)
+                    .arg(bar_y)
+                    .arg(tree_y)
+                    .arg(page_min_h())
+                    .arg(small_pkg)
+                    .arg(small_entry));
+        }
+
+        // ★ 2026-09-30 用户第四轮 ⑦（「现在还是慢得不行。最起码，要追上 X-Ray Engine 这个优化
+        //   奇烂的老东西吧。」）：DB 列条目改 **seek 式**（只读块头 + 尾部条目表）。
+        //   旧实现整文件读进内存 —— 实测 1900 MB 的包光读盘 8,063 ms（只与文件大小成正比）。
+        //   判据三条，全部落在**真实字节**上：
+        //     ① 撑到 32 MB 的包，`list_db_seek` 必须走 seek 且实际读进来的字节 ≪ 文件大小；
+        //     ② 条目表与内存版 `unpack_db` **逐字段一致**（路径/offset/两个尺寸/is_dir/use_lzhuf）；
+        //     ③ 单条目 `extract_entry_seek` 与内存版 `extract_entry` **逐字节一致**。
+        //   判红办法：把 `list_db_seek` 的 seek 分支短路掉（直接走整文件读）⇒ ① 立刻红。
+        {
+            namespace efs = xrkit::engine::fs;
+            const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_dbseek"));
+            QDir(dir).removeRecursively();
+            QDir().mkpath(dir);
+
+            const auto rd32 = [](const std::vector<uint8_t>& v, size_t p) {
+                return static_cast<uint32_t>(v[p]) | (static_cast<uint32_t>(v[p + 1]) << 8) |
+                       (static_cast<uint32_t>(v[p + 2]) << 16) |
+                       (static_cast<uint32_t>(v[p + 3]) << 24);
+            };
+            std::vector<efs::DbPackItem> items;
+            items.push_back({std::string("a.txt"), std::vector<uint8_t>(64, 'a'), false});
+            items.push_back({std::string("dir"), {}, true});
+            items.push_back({std::string("dir/b.bin"), std::vector<uint8_t>(4096, 7), false});
+            const efs::DbFormat fmt = *efs::db_format_from_any("xdb");
+            const std::vector<uint8_t> packed = efs::pack_db(items, fmt);
+            const uint32_t old_data_sz = rd32(packed, 4);
+            const size_t tail = 8 + static_cast<size_t>(old_data_sz);   // 尾部 HEADER 块的起点
+
+            // 把 DATA 块撑到 32 MB（真档案里 DATA 就是几百 MB～几 GB），尾部那一块原样搬过去
+            const uint32_t big_sz = 32u * 1024u * 1024u;
+            std::vector<uint8_t> big;
+            big.reserve(8 + static_cast<size_t>(big_sz) + (packed.size() - tail));
+            big.push_back(0);
+            big.push_back(0);
+            big.push_back(0);
+            big.push_back(0);
+            big.push_back(static_cast<uint8_t>(big_sz & 0xFF));
+            big.push_back(static_cast<uint8_t>((big_sz >> 8) & 0xFF));
+            big.push_back(static_cast<uint8_t>((big_sz >> 16) & 0xFF));
+            big.push_back(static_cast<uint8_t>((big_sz >> 24) & 0xFF));
+            big.resize(8 + static_cast<size_t>(big_sz), 0);
+            big.insert(big.end(), packed.begin() + static_cast<long>(tail), packed.end());
+
+            const QString big_path = dir + QStringLiteral("/big.db");
+            {
+                QFile file(big_path);
+                if (file.open(QIODevice::WriteOnly)) {
+                    file.write(reinterpret_cast<const char*>(big.data()),
+                               static_cast<qint64>(big.size()));
+                    file.close();
+                }
+            }
+
+            const efs::DbList mem = efs::unpack_db(big, fmt);
+            const efs::DbListing seek = efs::list_db_seek(big_path.toStdString(), fmt);
+            check(seek.ok && seek.used_seek && seek.file_size == big.size() &&
+                      seek.header_bytes > 0 &&
+                      seek.header_bytes < static_cast<uint64_t>(big.size()) / 100,
+                  QStringLiteral("⑦' DB seek 式：32 MB 的包只读了 %1 B / 共 %2 B（used_seek=%3）")
+                      .arg(seek.header_bytes)
+                      .arg(seek.file_size)
+                      .arg(seek.used_seek ? 1 : 0));
+
+            const auto entry_row = [](const efs::DbEntry& e) {
+                return QStringLiteral("%1|%2|%3|%4|%5|%6")
+                    .arg(e.is_dir ? 1 : 0)
+                    .arg(QString::fromStdString(e.path))
+                    .arg(static_cast<qulonglong>(e.offset))
+                    .arg(static_cast<qulonglong>(e.size_real))
+                    .arg(static_cast<qulonglong>(e.size_comp))
+                    .arg(e.use_lzhuf ? 1 : 0);
+            };
+            QStringList mem_rows;
+            for (const efs::DbEntry& e : mem.entries) mem_rows << entry_row(e);
+            QStringList seek_rows;
+            for (const efs::DbEntry& e : seek.entries) seek_rows << entry_row(e);
+            check(!seek_rows.isEmpty() && seek_rows == mem_rows,
+                  QStringLiteral("⑦' seek 版条目表与内存版**逐字段一致**（%1 vs %2 条）")
+                      .arg(seek_rows.size())
+                      .arg(mem_rows.size()));
+
+            int extract_bad = 0;
+            for (const efs::DbEntry& e : seek.entries) {
+                if (e.is_dir) continue;
+                const efs::DbExtract a = efs::extract_entry(big, e);
+                const efs::DbExtract b = efs::extract_entry_seek(big_path.toStdString(), e);
+                if (a.ok != b.ok || a.data != b.data) ++extract_bad;
+            }
+            check(extract_bad == 0,
+                  QStringLiteral("⑦' 单条目 seek 提取与内存版逐字节一致（%1 条不符 / %2 条条目）")
+                      .arg(extract_bad)
+                      .arg(seek.entries.size()));
+            result.notes.append(
+                QStringLiteral("⑦' DB seek：32 MB 包读取 %1 B（占 %2%%），条目 %3 条")
+                    .arg(seek.header_bytes)
+                    .arg(seek.file_size > 0 ? static_cast<int>(seek.header_bytes * 100 /
+                                                               seek.file_size)
+                                            : -1)
+                    .arg(seek.entries.size()));
+            QDir(dir).removeRecursively();
+        }
+
         // ★ 2026-09-28（用户："FS 的方便程度比 1.x 下降了不少，回头看看 1.1.0"）：按 1.x 补回来的
     //   那批"方便"，每条都要有**能判红**的判据，且尽量落到**真实字节**（不只是"控件在不在"）。
     {
@@ -1393,8 +1647,9 @@ SmokeResult run_smoke() {
             QSplitter* sp = tab_page.split_list_tree();
             const bool split_ok = sp != nullptr && sp->count() == 2 &&
                                   sp->handleWidth() > 0 &&
-                                  (sp->widget(0) == tab_page.package_list() ||
-                                   sp->widget(0) == tab_page.entry_tree()) &&
+                                  sp->widget(0) != nullptr && sp->widget(1) != nullptr &&
+                                  sp->widget(0)->isAncestorOf(tab_page.package_list()) &&
+                                  sp->widget(1)->isAncestorOf(tab_page.entry_tree()) &&
                                   two_tabs && tabs->widget(0)->isAncestorOf(sp);
             check(split_ok,
                   QStringLiteral("④ 包列表↔包内树要有可拖拽分隔条（存在 %1 / 面板数 %2 / 在解包页 %3）")

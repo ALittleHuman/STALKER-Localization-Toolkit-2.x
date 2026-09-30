@@ -168,12 +168,13 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     pack_page_layout_->setContentsMargins(0, 0, 0, 0);
     tabs_->addTab(unpack_page, QStringLiteral("解包"));
     tabs_->addTab(pack_page, QStringLiteral("封包"));
+    // ── 顶部一行 = **整页级**的东西（与两张列表都无关）：打包/解包格式 + 解包输出。
+    // 1.x 的「输入」行在这里换成了「解包到」：2.x 的包是"加进来"的（加包/拖放/扫描），
+    // 所以缺的不是输入行而是**解包输出行**（原来写死 `<包路径>.out`，用户没法选）。
     auto* row = new QHBoxLayout;
     row->addWidget(new QLabel(QStringLiteral("打包/解包格式：")), 0);
     row->addWidget(format_combo_, 0);
     row->addSpacing(xrkit::core::px(12));
-    // 1.x 的「输入」行在这里换成了「解包到」：2.x 的包是"加进来"的（加包/拖放/扫描），
-    // 所以缺的不是输入行而是**解包输出行**（原来写死 `<包路径>.out`，用户没法选）。
     row->addWidget(new QLabel(QStringLiteral("解包到：")), 0);
     out_edit_ = new QLineEdit;
     out_edit_->setObjectName(QStringLiteral("fs_output_dir"));
@@ -186,14 +187,37 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     open_out_button_ = new QPushButton(QStringLiteral("打开"));
     open_out_button_->setObjectName(QStringLiteral("fs_open_output"));
     row->addWidget(open_out_button_, 0);
-    add_button_ = new QPushButton(QStringLiteral("加包"));
-    add_button_->setObjectName(QStringLiteral("fs_add_package"));
-    row->addWidget(add_button_, 0);
     unpack_layout_->addLayout(row);
+    // 「加包」**不在这条页级行上**：它服务的是包列表 ⇒ 归包列表工具行（见下）。
 
-    // 包列表的按钮行（1.x `_build_db_panel` 的 bar：扫描目录/全选/加载选中/取消加载/移除/清空 + 计数）
+    // ── ★ 2026-09-30 结构重排（用户第四轮 ①：「你不认为，堆起来很丑吗？」+ 授权「按自己审美来改」）
+    //   症状：解包页原来是"包工具行 / 包列表 / 条目工具行 / 条目树"四条**等宽横条**上下叠着，
+    //   而且条目工具行（搜索/全选）落在分隔条**下面** —— 视觉上像是页级控件，实际只服务于树。
+    //   改法：每个列表**各自成一个小面板**（工具行 + 列表，同一父控件、同一条左边界、自身只留
+    //   px(4) 行距），两个面板一起进既有的竖向分隔条 ⇒ 页级横条从 4 条降到 1 条，
+    //   "谁的行规谁管"一眼可辨。**不新增任何说明文字**（用户口径：界面不要解释段）。
+    package_pane_ = new QWidget;
+    package_pane_->setObjectName(QStringLiteral("fs_package_pane"));
+    auto* package_pane_layout = new QVBoxLayout(package_pane_);
+    package_pane_layout->setContentsMargins(0, 0, 0, 0);
+    package_pane_layout->setSpacing(xrkit::core::px(4));
+
+    entry_pane_ = new QWidget;
+    entry_pane_->setObjectName(QStringLiteral("fs_entry_pane"));
+    auto* entry_pane_layout = new QVBoxLayout(entry_pane_);
+    entry_pane_layout->setContentsMargins(0, 0, 0, 0);
+    entry_pane_layout->setSpacing(xrkit::core::px(4));
+
+    // 包列表的工具行（1.x `_build_db_panel` 的 bar：加包/扫描目录/全选/加载选中/取消加载/移除/清空 + 计数）
+    package_bar_ = new QWidget;
+    package_bar_->setObjectName(QStringLiteral("fs_package_bar"));
     {
-        auto* bar = new QHBoxLayout;
+        auto* bar = new QHBoxLayout(package_bar_);
+        bar->setContentsMargins(0, 0, 0, 0);
+        bar->setSpacing(xrkit::core::px(6));
+        add_button_ = new QPushButton(QStringLiteral("加包"));
+        add_button_->setObjectName(QStringLiteral("fs_add_package"));
+        bar->addWidget(add_button_, 0);
         scan_button_ = new QPushButton(QStringLiteral("扫描目录"));
         scan_button_->setObjectName(QStringLiteral("fs_scan_dir"));
         bar->addWidget(scan_button_, 0);
@@ -219,21 +243,17 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         package_count_label_ = new QLabel;
         package_count_label_->setObjectName(QStringLiteral("fs_package_count"));
         bar->addWidget(package_count_label_, 0);
-        unpack_layout_->addLayout(bar);
     }
-    // ★ 用户 2026-09-30：「上面包列表和下面文件列表之间也要有可拖拽分隔条」；并授权"自己看着
-    //   有需要的地方就加" ⇒ 这里用竖向 QSplitter（两侧各自可拖），不再让两个列表硬分高度。
-    split_list_tree_ = new QSplitter(Qt::Vertical);
-    split_list_tree_->setObjectName(QStringLiteral("fs_split_list_tree"));
-    split_list_tree_->setChildrenCollapsible(false);
-    split_list_tree_->addWidget(package_list_);
-    split_list_tree_->addWidget(entry_tree_);
-    split_list_tree_->setSizes({xrkit::core::px(150), xrkit::core::px(320)});
-    unpack_layout_->addWidget(split_list_tree_, 1);
+    package_pane_layout->addWidget(package_bar_, 0);
+    package_pane_layout->addWidget(package_list_, 1);
 
-    // 条目列表的按钮行（1.x `_build_file_panel`：全选/全不选 + 计数 + **搜索**）
+    // 条目列表的工具行（1.x `_build_file_panel`：全选/全不选 + **搜索** + 计数）+ 树
+    entry_bar_ = new QWidget;
+    entry_bar_->setObjectName(QStringLiteral("fs_entry_bar"));
     {
-        auto* bar = new QHBoxLayout;
+        auto* bar = new QHBoxLayout(entry_bar_);
+        bar->setContentsMargins(0, 0, 0, 0);
+        bar->setSpacing(xrkit::core::px(6));
         check_all_button_ = new QPushButton(QStringLiteral("包内全选"));
         check_all_button_->setObjectName(QStringLiteral("fs_check_all_files"));
         bar->addWidget(check_all_button_, 0);
@@ -248,9 +268,20 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         entry_count_label_ = new QLabel;
         entry_count_label_->setObjectName(QStringLiteral("fs_entry_count"));
         bar->addWidget(entry_count_label_, 0);
-        unpack_layout_->addLayout(bar);
     }
-    // （包内树已随分隔条加入，见上）
+    entry_pane_layout->addWidget(entry_bar_, 0);
+    entry_pane_layout->addWidget(entry_tree_, 1);
+
+    // ★ 用户 2026-09-30：「上面包列表和下面文件列表之间也要有可拖拽分隔条」；并授权"自己看着
+    //   有需要的地方就加" ⇒ 竖向 QSplitter 拖的两个**面板**（工具行跟着自己的列表一起走，
+    //   拖分隔条时不会把工具行落在外面）。
+    split_list_tree_ = new QSplitter(Qt::Vertical);
+    split_list_tree_->setObjectName(QStringLiteral("fs_split_list_tree"));
+    split_list_tree_->setChildrenCollapsible(false);
+    split_list_tree_->addWidget(package_pane_);
+    split_list_tree_->addWidget(entry_pane_);
+    split_list_tree_->setSizes({xrkit::core::px(150), xrkit::core::px(320)});
+    unpack_layout_->addWidget(split_list_tree_, 1);
 
     // ── ★ 1.x 的**封包面板**（`_build_pack_panel`）：这一整块是"FS 方便程度"的最后一块拼图
     //    （1.x 能"解包 → 改 → 重新封包"，2.x 原来只解不封）。布局照 1.x 三行：

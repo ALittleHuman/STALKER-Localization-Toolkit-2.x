@@ -59,4 +59,32 @@ struct DbPackItem {
 // 封包（写路径）：LZHUF 编码 + scrambler，产物应与 1.x 的 pack_db **逐字节一致**。
 std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& items, DbFormat fmt);
 
+// ── seek 式读盘（大包的唯一可行路径）─────────────────────────────────
+// X-Ray DB 的布局是 `[DATA 块头 + 数据][HEADER 块头 + 条目表]` ⇒ **条目表在文件尾部**。
+// 旧实现"整文件读进内存再解析"：1900 MB 的包光读盘就要 8 s（实测耗时只与文件大小成正比、
+// 与条目数无关），1.9 GB 级的包更是把整个镜像常驻内存。下面两个入口只读
+// **块头 + HEADER 块**（几 MB）：列条目变快，解包不再整包进内存。
+//
+// 判据：与内存版**逐值一致**（同一个 HEADER 块、同一套自洽判定、同一条错误文案路径）；
+// 任何一步对不上都**不猜**，直接退回整文件读（`used_seek == false` = 走的就是旧路径）。
+struct DbListing {
+    bool ok = false;
+    std::string error;
+    uint64_t file_size = 0;
+    DbFormat format = DbFormat::Unknown;
+    std::vector<DbEntry> entries;
+    double elapsed_ms = 0.0;
+    uint64_t header_bytes = 0;   // 实际读进来的字节数（判据：必须远小于 file_size）
+    bool used_seek = false;      // true = 只读了块头与尾部表；false = 退回整文件读
+    bool ambiguous = false;      // 唯一自洽判定出多个候选（此时走旧路径裁决）
+};
+
+// 列条目（`package_entries` 与 CLI `--dump` 用）。`db_fallback` 语义与原来完全一致：
+// 先唯一自洽判定，判不出来才用它。
+DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallback);
+
+// 单条目 seek 提取：只读那一条的那一段（解包大 DB 时不再整包进内存）。
+// 与 `extract_entry(raw, entry)` 的产物**逐值一致**（同一段字节、同一套解码）。
+DbExtract extract_entry_seek(const std::string& path, const DbEntry& entry);
+
 }  // namespace xrkit::engine::fs

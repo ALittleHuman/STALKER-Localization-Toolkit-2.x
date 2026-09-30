@@ -118,6 +118,13 @@ public:
     QTreeWidget* entry_tree() const { return entry_tree_; }
     QTabWidget* tabs() const { return tabs_; }   // 整页两标签（解包 / 封包）
     QSplitter* split_list_tree() const { return split_list_tree_; }
+    // ★ 2026-09-30 结构重排（用户 ①「堆起来很丑」+ 授权自行审美）：包列表与条目树各自成
+    //   **一个小面板**（工具行 + 它服务的那个列表，同一父控件）。自检据此断言"工具行归位"
+    //   ——修前条目工具行落在分隔条**下面**（父控件是解包页），看着像页级控件。
+    QWidget* package_pane() const { return package_pane_; }
+    QWidget* entry_pane() const { return entry_pane_; }
+    QWidget* package_bar() const { return package_bar_; }
+    QWidget* entry_bar() const { return entry_bar_; }
     int entry_top_level_count() const;
     int entry_built_file_count() const;
     QTreeWidgetItem* find_entry_item(const QString& path) const;
@@ -294,6 +301,10 @@ private:
     QTreeWidget* entry_tree_ = nullptr;
     QTabWidget* tabs_ = nullptr;
     QSplitter* split_list_tree_ = nullptr;   // 包列表 ↔ 包内树
+    QWidget* package_pane_ = nullptr;        // 包列表面板（工具行 + 列表）
+    QWidget* entry_pane_ = nullptr;          // 条目树面板（工具行 + 树）
+    QWidget* package_bar_ = nullptr;
+    QWidget* entry_bar_ = nullptr;
     QVBoxLayout* unpack_layout_ = nullptr;
     QVBoxLayout* pack_page_layout_ = nullptr;
     QPushButton* add_button_ = nullptr;

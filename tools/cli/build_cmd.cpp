@@ -220,11 +220,18 @@ int run_build_package(const std::vector<std::string>& operands) {
         rec.built = when;
     }
     // 构建史里的 `commit` 要的是**源提交**（不是引擎版本串）。package.ps1 已经把
-    // `commit=<短 sha>` 写进舞台的 version.txt，这里直接读它 —— 保证与成品里那份**同一个值**，
+    // `commit=<短 sha>` 写进产物的 version.txt，这里直接读它 —— 保证与成品里那份**同一个值**，
     // 不再各自算一遍（找不到就退回引擎版本串，绝不写空）。
+    // ★★ 2026-09-30 修（真缺陷，构建史 13~16 的 `commit` 全是引擎版本串 `2.0.0 ALPHA.0`）：
+    //   package.ps1 **结尾会把舞台 `Move-Item` 到** `<dist>\<主版本>\<标记>\<序号>\`
+    //   ⇒ 旧写法读 `build\package_stage\version.txt` 时那个目录**已经不存在了** ⇒ 永远读不到。
+    //   改成读**成品目录里那一份**（同一条落盘规则、同一个文件 ⇒ 与成品逐字一致，正是本意）。
     rec.commit = xrkit::core::version_string();
     {
-        std::ifstream vf("build\\package_stage\\version.txt");
+        const std::filesystem::path version_txt = std::filesystem::path("dist") / want_version /
+                                                  want_prerelease / std::to_string(want_index) /
+                                                  "version.txt";
+        std::ifstream vf(version_txt);
         std::string line;
         while (std::getline(vf, line)) {
             const std::string key = "commit=";
