@@ -483,10 +483,22 @@ int FsPage::add_paths(const QStringList& paths) {
                     packages << candidate;
                 }
             }
+            // ★ 用户 2026-09-30：「IWP\\database 整个文件夹拖进去会卡死……像 SoC 那种管理模式就快一些。
+            //   但是大包还是非常慢。」⇒ 目录里包**太多**时不自动加载（那等于把几十个 .db 全解一遍，
+            //   `database` 正是这种），只把包**加进包列表**，等用户按需「加载选中」。
+            constexpr int kAutoLoadMax = 8;
             if (!packages.isEmpty()) {
-                log_message(QStringLiteral("目录里发现 %1 个包，一并加载（gamedata 树才展得开）")
-                                .arg(packages.size()));
-                loaded += add_paths(packages);   // 递归：这一层全是文件，不会再进目录分支
+                if (packages.size() > kAutoLoadMax) {
+                    scan_dir(gated);   // 只入"已知包列表"（不加载）
+                    log_message(QStringLiteral("目录里有 %1 个包（超过 %2 个）⇒ 只加进包列表、不自动加载；"
+                                               "勾选后点「加载选中」")
+                                    .arg(packages.size())
+                                    .arg(kAutoLoadMax));
+                } else {
+                    log_message(QStringLiteral("目录里发现 %1 个包，一并加载（gamedata 树才展得开）")
+                                    .arg(packages.size()));
+                    loaded += add_paths(packages);   // 递归：这一层全是文件，不会再进目录分支
+                }
             }
         }
         log_message(QStringLiteral("已加载：%1（%2 项）")
