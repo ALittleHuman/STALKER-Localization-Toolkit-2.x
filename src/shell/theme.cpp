@@ -173,6 +173,14 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                "QProgressBar { background: @{entry_bg}; border: 1px solid @{border}; border-radius: @{r3};"
                "  text-align: center; color: @{text}; }"
                "QProgressBar::chunk { background: @{accent}; border-radius: @{r3}; }"
+"QTabWidget::pane { border: 1px solid @{border}; border-radius: @{r2}; }"
+"QTabBar::tab { background: @{entry_bg}; border: 1px solid @{border}; border-bottom: none;"
+"  border-top-left-radius: @{r2}; border-top-right-radius: @{r2}; padding: @{pad4} @{pad8}; }"
+"QGroupBox { border: 1px solid @{border}; border-radius: @{r2}; margin-top: @{pad8};"
+"  padding-top: @{pad4}; }"
+"QHeaderView::section { background: @{entry_bg}; border: none;"
+"  border-right: 1px solid @{border}; border-bottom: 1px solid @{border}; padding: @{pad4}; }"
+"QMenu, QToolTip { background: @{entry_bg}; border: 1px solid @{border}; border-radius: @{r2}; }"
                // ★ 用户真机反馈「又挤又空」的根因＝控件太小、间距太小 ⇒ 控件最小高度与内边距**整体上调
                //   一档**（值都在上面那批命名令牌里；这块原先用独立 `%1..%4` 是对的，一并并进来）
                "QPushButton { min-height: @{ctl28}; padding: @{pad8} @{pad14}; }"
@@ -215,6 +223,11 @@ void apply_theme(QApplication& app, xrkit::core::ThemeMode mode) {
         app.setFont(base);
     }
     app.setPalette(palette);
+    // ★ 用户 2026-09-30：「很多UI控件可以稍微硬朗一些，现在有点太圆润了。」——查证：我们的圆角
+    //   令牌本来就小（r3=3px / r2=2px），圆润来自**平台原生样式**（Win11 风格自己给标签栏/分组框/
+    //   表头画圆角，而这些控件我们原本没写 QSS）⇒ 用 **Fusion**（扁平、完全由 QSS 决定外观），
+    //   并补上缺的几条规则。
+    app.setStyle(QStringLiteral("Fusion"));
     app.setStyleSheet(stylesheet_for(mode));
 
     for (QWidget* widget : QApplication::allWidgets()) {

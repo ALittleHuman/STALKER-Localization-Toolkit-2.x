@@ -49,6 +49,7 @@
 #include <QThread>
 #include <QHeaderView>
 #include <QSplitter>
+#include <QStyle>
 #include <QTabWidget>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
@@ -340,6 +341,28 @@ SmokeResult run_smoke() {
         short_top.show();
         small_vp->show();   // ★ 必须 show：`bar_shown` 四看里有"已 mapped"，不 show 会**假通过**
         QApplication::processEvents();
+
+        // ★ 用户 2026-09-30：「很多UI控件可以稍微硬朗一些，现在有点太圆润了。」
+        //   圆角令牌本来就小（r2/r3）⇒ 圆润来自平台原生样式 + **这几类控件我们原本没写 QSS**。
+        //   判据：标签栏/分组框/表头/菜单现在必须有规则（修前一条都没有 ⇒ 红）。
+        //   （样式名探不出来：Fusion 被 QStyleSheetStyle 包住，objectName/name 都回 QStyleSheetStyle，
+        //    除非引 Qt 私有头 ⇒ 改为钉住这些控件有 QSS，再靠既有的 QSS 警告必须为 0 那条守语法。）
+        {
+            const QString qss =
+                xrkit::shell::stylesheet_for(xrkit::core::ThemeMode::Dark);
+            const QStringList need{QStringLiteral("QTabBar::tab"),
+                                   QStringLiteral("QGroupBox"),
+                                   QStringLiteral("QHeaderView::section"),
+                                   QStringLiteral("QToolTip")};
+            QStringList missing;
+            for (const QString& frag : need) {
+                if (!qss.contains(frag)) missing << frag;
+            }
+            check(missing.isEmpty(),
+                  QStringLiteral("硬朗化：原来没写 QSS 的控件现在有规则（缺 %1）")
+                      .arg(missing.isEmpty() ? QStringLiteral("无")
+                                             : missing.join(QStringLiteral(","))));
+        }
 
         check(!small_vp->can_scroll_vertical(), QStringLiteral("装得下 ⇒ 范围为空（不能滚）"));
         check(!ScrollViewport::bar_shown(small_vp->vbar()),
