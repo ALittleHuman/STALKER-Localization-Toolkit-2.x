@@ -1675,6 +1675,41 @@ SmokeResult run_smoke() {
                 QDir(many).removeRecursively();
             }
 
+            // ★ 用户 2026-09-30：三层结构里勾最内层文件 ⇒ **最外层祖先也要显示"部分勾选"**
+            //   （修前只算直接父目录 ⇒ 最外层恒未选中 ⇒ 这条红）。
+            {
+                FsPage tri_page;
+                tri_page.resize(760, page_min_h());
+                tri_page.show();
+                QApplication::processEvents();
+                tri_page.add_source(QStringLiteral("s"),
+                                    {{"meshes/actors/actor_models/green_stalker_10.ogf", false},
+                                     {"meshes/actors/actor_models/green_stalker_15.ogf", false},
+                                     {"configs/ai_tweaks/ai_tweaks.ltx", false}});
+                QApplication::processEvents();
+                // 懒建要**逐级**展开（每展开一层才建下一层的子项）
+                tri_page.expand_entry(QStringLiteral("meshes"));
+                tri_page.expand_entry(QStringLiteral("meshes/actors"));
+                tri_page.expand_entry(QStringLiteral("meshes/actors/actor_models"));
+                QApplication::processEvents();
+                QTreeWidgetItem* deep = tri_page.find_entry_item(
+                    QStringLiteral("meshes/actors/actor_models/green_stalker_10.ogf"));
+                if (deep == nullptr) {
+                    check(false, QStringLiteral("三态传播：判据自己要能跑到 —— 找不到最内层文件项"));
+                } else {
+                    deep->setCheckState(0, Qt::Checked);   // 触发 itemChanged ⇒ 回灌模型
+                }
+                QApplication::processEvents();
+                QTreeWidgetItem* mid = tri_page.find_entry_item(QStringLiteral("meshes/actors"));
+                QTreeWidgetItem* top = tri_page.find_entry_item(QStringLiteral("meshes"));
+                const Qt::CheckState mid_state = mid != nullptr ? mid->checkState(0) : Qt::Unchecked;
+                const Qt::CheckState top_state = top != nullptr ? top->checkState(0) : Qt::Unchecked;
+                check(top_state == Qt::PartiallyChecked,
+                      QStringLiteral("三态传播：勾最内层文件 ⇒ 最外层要部分勾选（实测 中间层=%1 最外层=%2）")
+                          .arg(static_cast<int>(mid_state))
+                          .arg(static_cast<int>(top_state)));
+                tri_page.hide();
+            }
             check(tree_page.entry_top_level_count() == 2,
                   QStringLiteral("树① 顶层 2 项（top.txt + d/），实测 %1")
                       .arg(tree_page.entry_top_level_count()));

@@ -617,12 +617,18 @@ void FsPage::rebuild_dir_states() {
     for (const efs::MergeNode* node : tree_.flatten()) {
         if (node->is_dir) continue;
         const QString path = utf8(node->path);
-        const int slash = path.lastIndexOf(QLatin1Char('/'));
-        if (slash <= 0) continue;
-        const QString dir = path.left(slash);
-        QPair<int, int>& state = dir_states_[dir];
-        state.first += 1;
-        if (node->checked) state.second += 1;
+        // ★ 用户 2026-09-30：「一个三层的结构，最里面的文件之一被选中，第二层的文件夹能够正常显示
+        //   部分勾选，但是最外面的还是显示未选中。」⇒ 根因：原来只把文件计入**直接父目录**
+        //   （`meshes/actors/actor_models/x.ogf` 只记到 `…/actor_models`），于是 `actors/`、`meshes/`
+        //   恒为 0/0 ⇒ 显示未选中。改成**沿祖先链逐级累加**：每个文件计入它的**每一级**祖先目录。
+        int slash = path.lastIndexOf(QLatin1Char('/'));
+        while (slash > 0) {
+            const QString dir = path.left(slash);
+            QPair<int, int>& state = dir_states_[dir];
+            state.first += 1;
+            if (node->checked) state.second += 1;
+            slash = dir.lastIndexOf(QLatin1Char('/'));
+        }
     }
 }
 
