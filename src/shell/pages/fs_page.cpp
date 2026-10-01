@@ -246,6 +246,10 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     }
     package_pane_layout->addWidget(package_bar_, 0);
     package_pane_layout->addWidget(package_list_, 1);
+    // ★ 工具行**永远只占一行高**（2026-09-30 修）：它是普通 QWidget、垂直策略默认 Preferred，
+    //   一旦同面板里的列表被隐藏/没有最小高，布局会把剩余空间全塞给它 ⇒ 里面的按钮被垂直居中，
+    //   看起来就是"飘在空白中间"。钉成 Fixed 之后，无论列表在不在，工具行都只在顶部一条。
+    package_bar_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
     // 条目列表的工具行（1.x `_build_file_panel`：全选/全不选 + **搜索** + 计数）+ 树
     entry_bar_ = new QWidget;
@@ -271,6 +275,7 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     }
     entry_pane_layout->addWidget(entry_bar_, 0);
     entry_pane_layout->addWidget(entry_tree_, 1);
+    entry_bar_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);   // 同上：工具行只占一行
 
     // ★ 用户 2026-09-30：「上面包列表和下面文件列表之间也要有可拖拽分隔条」；并授权"自己看着
     //   有需要的地方就加" ⇒ 竖向 QSplitter 拖的两个**面板**（工具行跟着自己的列表一起走，
@@ -875,7 +880,13 @@ void FsPage::refresh_rows() {
         walk(tree_.root, nullptr);
     }
     syncing_tree_ = false;
-    entry_tree_->setVisible(entry_tree_->topLevelItemCount() > 0);
+    // ★ 2026-09-30（用户对着 FS 页排版发火后查明）：原来这里在树为空时 `setVisible(false)` ——
+    //   **Qt 布局不给隐藏控件分配空间**，于是那 344 px 全落进 `entry_bar`（一个普通 QWidget，
+    //   垂直策略 Preferred ⇒ 会被拉满），工具行里的按钮被 QHBoxLayout **垂直居中** ⇒
+    //   看上去就是"搜索行孤零零飘在两大块空白中间"，而包列表一直可见 ⇒ 两边观感还不对称。
+    //   改成**永远可见**：没包时就是一个带表头的空树（本身就是"这里会出现包内条目"的指示，
+    //   且不是文字说明，符合用户"界面不要解释段"的口径）。
+    entry_tree_->setVisible(true);
     refresh_counts();
 }
 

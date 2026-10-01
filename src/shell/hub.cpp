@@ -211,6 +211,12 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
 
 int Hub::page_count() const { return stack_ == nullptr ? 0 : stack_->count(); }
 
+void Hub::set_current_page(int index) {
+    if (page_tabs_ == nullptr || index < 0 || index >= page_tabs_->count()) return;
+    page_tabs_->setCurrentIndex(index);   // 与页栈的连接已存在 ⇒ 两处同步
+    if (stack_ != nullptr) stack_->setCurrentIndex(index);
+}
+
 QString Hub::page_title(int index) const {
     if (page_tabs_ == nullptr || index < 0 || index >= page_tabs_->count()) return QString();
     return page_tabs_->tabText(index);

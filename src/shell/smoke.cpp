@@ -1160,9 +1160,38 @@ SmokeResult run_smoke() {
         //   两个面板一起进同一个分隔条。**修前第一条就红**：条目工具行（搜索/全选）的父控件是
         //   解包页、而且落在分隔条**下面**（看着像页级控件）。
         {
-            // ★ 几何必须在**装了东西**的状态下量：`refresh_rows()` 在条目树为空时会
-            //   `setVisible(false)`（空状态），而 Qt 的布局**不给隐藏控件分配空间** ⇒ 拿空夹具
-            //   去量"工具行在树上面"只会量到一棵没被布局过的树（y=0/h=默认值）。
+            // ★★ ①-a0 **空状态**（一个包都没有）的排版 —— 2026-09-30 用户对着 FS 页发火的真根因：
+            //   条目树在空状态被 `setVisible(false)`，而 **Qt 布局不给隐藏控件分配空间** ⇒
+            //   那 340 px 全落进 `entry_bar`（普通 QWidget、垂直策略默认 Preferred）⇒ 里面的按钮被
+            //   QHBoxLayout **垂直居中** ⇒ 看上去就是"搜索行孤零零飘在两块空白中间"。
+            //   修法：工具行钉成 `QSizePolicy::Fixed` + 条目树**永远可见**（空树带表头本身就是
+            //   "这里会出现包内条目"的指示，不是解释文字 ⇒ 不违反"界面不要解释段"）。
+            //   判红办法：把这两处改回去 ⇒ 下面第一条立刻红（实测会从 42 变成 386）。
+            FsPage empty_page;
+            empty_page.resize(900, 700);
+            empty_page.show();
+            QApplication::processEvents();
+            const int empty_bar_h =
+                empty_page.entry_bar() != nullptr ? empty_page.entry_bar()->height() : -1;
+            check(empty_bar_h > 0 && empty_bar_h <= xrkit::core::px(60),
+                  QStringLiteral("① 空状态下条目工具行只占一行（实测 %1 ≤ %2；修前会被拉满整个面板）")
+                      .arg(empty_bar_h)
+                      .arg(xrkit::core::px(60)));
+            check(empty_page.entry_tree() != nullptr && !empty_page.entry_tree()->isHidden(),
+                  QStringLiteral("① 空状态下条目树也可见（占住位置，不留空洞）"));
+            // ①-a1 操作栏按钮**贴右**（`add_action` 里 stretch 在 index 0 ⇒ 必须追加，不许前插）
+            if (empty_page.action_bar() != nullptr && empty_page.unpack_all_button() != nullptr) {
+                QPushButton* last = empty_page.unpack_all_button();
+                const int right_gap =
+                    empty_page.action_bar()->width() - (last->x() + last->width());
+                check(right_gap >= 0 && right_gap <= xrkit::core::px(12),
+                      QStringLiteral("① 操作栏按钮贴右（右侧留白 %1 ≤ %2；修前按钮被顶到左下角）")
+                          .arg(right_gap)
+                          .arg(xrkit::core::px(12)));
+            }
+            empty_page.hide();
+
+            // ★ 几何必须在**装了东西**的状态下量：空夹具的树是隐藏的（历史现象），不适合量几何。
             //   所以这里用一个**有内容**的独立夹具，不动上面的 `page`。
             FsPage geo_page;
             geo_page.add_source(QStringLiteral("smoke_src"),
@@ -2838,9 +2867,14 @@ SmokeResult run_smoke() {
                   QStringLiteral("⑥ 空状态：各列表都不许被挤成细线（包列表 %1/≥120，待打包 %2/≥90）")
                       .arg(list_h)
                       .arg(pack_h));
-            // 条目列表：没条目时收起（不占地方），有货才出现
-            check(empty_page.entry_tree() != nullptr && empty_page.entry_tree()->isHidden(),
-                  QStringLiteral("空状态：没有条目时条目树要收起（不留一个空框）"));
+            // 条目列表：★**2026-09-30 口径有意改写**（用户对着 FS 页排版发火后）——
+            //   旧口径是"没条目就收起，不留一个空框"，但**Qt 布局不给隐藏控件分配空间** ⇒
+            //   那 340 px 会全落进同面板的工具行（普通 QWidget、垂直策略默认 Preferred），
+            //   工具行被拉满、里面的按钮被垂直居中 ⇒ 看上去就是"搜索行孤零零飘在两块空白中间"
+            //   （用户截图里那坨"屎"的真根因）。现改为：**空树也留着**（带表头 = "这里会出现
+            //   包内条目"的位置指示，不是解释文字），并把工具行钉成固定高度 ⇒ 结构不再塌。
+            check(empty_page.entry_tree() != nullptr && !empty_page.entry_tree()->isHidden(),
+                  QStringLiteral("空状态：条目树留着占位 + 工具行不塌（2026-09-30 口径改写，理由见代码注释）"));
 
             empty_page.add_loose_dir(QString::fromStdString(work.string()), nullptr);  // 临时目录是 ASCII 路径
             QApplication::processEvents();

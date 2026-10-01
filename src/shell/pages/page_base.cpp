@@ -123,8 +123,11 @@ void PageBase::set_subtitle(const QString& text) {
 QPushButton* PageBase::add_action(const QString& text) {
     auto* button = new QPushButton(text, action_bar_);
     button->setObjectName(QStringLiteral("action_") + text);
-    // 插在末尾那个 stretch 之前 ⇒ 按钮保持右对齐且**加的顺序 = 显示的顺序**
-    action_layout_->insertWidget(action_layout_->count() - 1, button);
+    // ★ 2026-09-30 修（真缺陷）：那个 stretch 是在构造函数里**第一个**加进来的（在 index 0），
+    //   所以"插在末尾那个 stretch 之前"其实插到了 stretch **前面** ⇒ 按钮全被顶到**左边**，
+    //   与「1.x 操作栏贴右 / 按钮从右侧长出来」的口径正好相反（`--shot` 截图里一眼可见：
+    //   两个按钮孤儿一样挂在左下角，与卡片脱节）。要右对齐就得**追加到 stretch 之后**。
+    action_layout_->addWidget(button);
     return button;
 }
 

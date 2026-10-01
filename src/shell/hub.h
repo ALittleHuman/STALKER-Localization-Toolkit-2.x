@@ -62,6 +62,8 @@ public:
 
     QTabBar* page_tabs() const { return page_tabs_; }
     QStackedWidget* stack() const { return stack_; }
+    // 切页（`--shot` 抓图与自检用；标签条与页栈由既有连接同步）
+    void set_current_page(int index);
     // 探针用：拿到**真实的**页对象（页框架/视口/minheight 都从它上面量，不自报）
     PageBase* page_at(int index) const;
     QPlainTextEdit* log_view() const { return log_view_; }

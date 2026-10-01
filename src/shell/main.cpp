@@ -7,12 +7,15 @@
 
 #include "xrkit/core/theme.h"
 #include "hub.h"
+#include "pages/page_base.h"
 #include "smoke.h"
 #include "screen_scale.h"
 #include "theme.h"
 
 #include <QApplication>
 #include <QGuiApplication>
+#include <QLayout>
+#include <QPixmap>
 #include <QScreen>
 #include <QStringList>
 #include <QTextStream>
@@ -25,9 +28,25 @@ int main(int argc, char** argv) {
     //   为什么要有它：离屏自检只验了纯函数；这条分支验的是**真实启动路径**
     //   （QScreen 逻辑 DPI → snap → set_ui_scale → 窗口尺寸），可配合 QT_SCALE_FACTOR 实测。
     const bool scale_report = args.contains(QStringLiteral("--scale-report"));
+    // ★ `--shot <png> [--size WxH] [--page N]`：**把真实窗口抓成图片**再退出。
+    //   为什么要有它（2026-09-30 用户对着 FS 页排版发火）：我在离屏自检里量的几何"都对"，
+    //   但他眼睛看到的是另一回事 —— 几何断言只能证明"我断言的那几条"，证明不了"看起来对不对"。
+    //   有了截图我就能**自己看**，不用让他反复截图。离屏 + `QWidget::grab()` 不需要真实显示器。
+    const int shot_arg = args.indexOf(QStringLiteral("--shot"));
+    const QString shot_path = (shot_arg >= 0 && shot_arg + 1 < args.size()) ? args[shot_arg + 1]
+                                                                           : QString();
+    const int size_arg = args.indexOf(QStringLiteral("--size"));
+    QSize shot_size(1600, 1000);
+    if (size_arg >= 0 && size_arg + 1 < args.size()) {
+        const QStringList wh = args[size_arg + 1].split(QLatin1Char('x'));
+        if (wh.size() == 2) shot_size = QSize(wh[0].toInt(), wh[1].toInt());
+    }
+    const int page_arg = args.indexOf(QStringLiteral("--page"));
+    const int shot_page = (page_arg >= 0 && page_arg + 1 < args.size()) ? args[page_arg + 1].toInt()
+                                                                        : 0;
 
     // 离屏：不依赖真实显示器（门禁机器上也可能没有交互桌面）
-    if (smoke && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
+    if ((smoke || !shot_path.isEmpty()) && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
         qputenv("QT_QPA_PLATFORM", "offscreen");
     }
 
@@ -112,5 +131,53 @@ int main(int argc, char** argv) {
         hub.setMinimumSize(xrkit::shell::app_min_window_size());
     }
     hub.show();
+    if (!shot_path.isEmpty()) {
+        // 抓图前把布局彻底催到位（离屏下 `LayoutRequest` 不会自己派发）
+        hub.resize(shot_size);
+        hub.show();
+        if (shot_page > 0 && shot_page < hub.page_count()) hub.set_current_page(shot_page);
+        for (int pass = 0; pass < 3; ++pass) {
+            for (QWidget* child : hub.findChildren<QWidget*>()) {
+                if (child->layout() != nullptr) child->layout()->activate();
+            }
+            if (hub.layout() != nullptr) hub.layout()->activate();
+            QApplication::processEvents();
+        }
+        const bool ok_save = hub.grab().save(shot_path);
+        QTextStream out(stdout);
+        // 顺带把**解包页里的真实几何**打出来（`名称 x y w h 可见`）—— 截图能看出"丑"，
+        // 但"哪一块占了谁的位置"要看数字（2026-09-30 用户对 FS 页排版发火后加的诊断）。
+        if (xrkit::shell::PageBase* fs = hub.page_at(0)) {
+            const auto dump = [&out](const char* tag, QWidget* w) {
+                if (w == nullptr) return;
+                out << QStringLiteral("GEOM %1 %2 x=%3 y=%4 w=%5 h=%6 vis=%7\n")
+                           .arg(QString::fromLatin1(tag))
+                           .arg(w->objectName())
+                           .arg(w->x())
+                           .arg(w->y())
+                           .arg(w->width())
+                           .arg(w->height())
+                           .arg(w->isVisible() ? 1 : 0);
+            };
+            dump("page", fs);
+            dump("body", fs->body());
+            for (QWidget* child : fs->findChildren<QWidget*>()) {
+                const QString name = child->objectName();
+                if (name.startsWith(QStringLiteral("fs_")) ||
+                    name.startsWith(QStringLiteral("page_")) ||
+                    name == QStringLiteral("card")) {
+                    dump("child", child);
+                }
+            }
+        }
+        out << QStringLiteral("SHOT %1 path=%2 size=%3x%4 page=%5\n")
+                   .arg(ok_save ? QStringLiteral("ok") : QStringLiteral("fail"))
+                   .arg(shot_path)
+                   .arg(hub.width())
+                   .arg(hub.height())
+                   .arg(shot_page);
+        out.flush();
+        return ok_save ? 0 : 1;
+    }
     return QApplication::exec();
 }
