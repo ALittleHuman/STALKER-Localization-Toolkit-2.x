@@ -880,13 +880,13 @@ void FsPage::refresh_rows() {
         walk(tree_.root, nullptr);
     }
     syncing_tree_ = false;
-    // ★ 2026-09-30（用户对着 FS 页排版发火后查明）：原来这里在树为空时 `setVisible(false)` ——
-    //   **Qt 布局不给隐藏控件分配空间**，于是那 344 px 全落进 `entry_bar`（一个普通 QWidget，
-    //   垂直策略 Preferred ⇒ 会被拉满），工具行里的按钮被 QHBoxLayout **垂直居中** ⇒
-    //   看上去就是"搜索行孤零零飘在两大块空白中间"，而包列表一直可见 ⇒ 两边观感还不对称。
-    //   改成**永远可见**：没包时就是一个带表头的空树（本身就是"这里会出现包内条目"的指示，
-    //   且不是文字说明，符合用户"界面不要解释段"的口径）。
-    entry_tree_->setVisible(true);
+    // ★★ 2026-10-01（用户把两个标签页摆在一起比："一个正常一个屎"）——**空状态整块收起**：
+    //   没条目时把**整个条目面板**（连同它那一行工具行）收掉，高度全给包列表 ⇒ 解包页的空状态
+    //   长得跟封包页一模一样：两行控件 + 一个列表填满整个工作区。有货时面板才出现、分隔条才生效。
+    //   （上一版只把树收起、工具行留着一行 —— 那会留下一条孤零零的行 + 一块空白，正是他骂的"屎"。）
+    const bool has_entries = entry_tree_->topLevelItemCount() > 0;
+    entry_tree_->setVisible(true);   // 树本身始终在面板内，由**面板**决定显隐
+    if (entry_pane_ != nullptr) entry_pane_->setVisible(has_entries);
     refresh_counts();
 }
 

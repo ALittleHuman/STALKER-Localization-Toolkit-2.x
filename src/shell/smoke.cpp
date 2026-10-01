@@ -1171,14 +1171,19 @@ SmokeResult run_smoke() {
             empty_page.resize(900, 700);
             empty_page.show();
             QApplication::processEvents();
-            const int empty_bar_h =
-                empty_page.entry_bar() != nullptr ? empty_page.entry_bar()->height() : -1;
-            check(empty_bar_h > 0 && empty_bar_h <= xrkit::core::px(60),
-                  QStringLiteral("① 空状态下条目工具行只占一行（实测 %1 ≤ %2；修前会被拉满整个面板）")
-                      .arg(empty_bar_h)
-                      .arg(xrkit::core::px(60)));
-            check(empty_page.entry_tree() != nullptr && !empty_page.entry_tree()->isHidden(),
-                  QStringLiteral("① 空状态下条目树也可见（占住位置，不留空洞）"));
+            check(empty_page.entry_pane() != nullptr && empty_page.entry_pane()->isHidden() &&
+                      empty_page.package_list() != nullptr &&
+                      empty_page.package_list()->height() > xrkit::core::px(300),
+                  QStringLiteral("① 空状态＝条目面板整块收起、包列表填满工作区"
+                                 "（包列表实测 %1 > %2）")
+                      .arg(empty_page.package_list() != nullptr
+                               ? empty_page.package_list()->height()
+                               : -1)
+                      .arg(xrkit::core::px(300)));
+            check(empty_page.entry_tree() != nullptr && empty_page.entry_pane() != nullptr &&
+                      empty_page.entry_pane()->isHidden(),
+                  QStringLiteral("① 空状态下**整个条目面板收掉**（解包页空状态＝两行 + 一个列表填满，"
+                                 "与封包页同形）"));
             // ①-a1 操作栏按钮**贴右**（`add_action` 里 stretch 在 index 0 ⇒ 必须追加，不许前插）
             if (empty_page.action_bar() != nullptr && empty_page.unpack_all_button() != nullptr) {
                 QPushButton* last = empty_page.unpack_all_button();
@@ -1216,14 +1221,20 @@ SmokeResult run_smoke() {
                   QStringLiteral("① 工具行归位：「加包」回到包工具行、条目工具行归条目面板"));
             check(geo_page.split_list_tree() != nullptr &&
                       geo_page.split_list_tree()->count() == 2 &&
-                      geo_page.split_list_tree()->widget(0) == pkg_pane &&
-                      geo_page.split_list_tree()->widget(1) == entry_pane,
+                      geo_page.split_list_tree()->widget(0) == pkg_pane &&                      geo_page.split_list_tree()->widget(1) == entry_pane,
                   QStringLiteral("① 分隔条拖的是两个**面板**（工具行跟着自己的列表走）"));
 
             // ① 几何取两档：**正常窗口**（900×700，用户实际就在这附近）与**最小页高**
             //   `page_min_h()`。第一档要求"工具行真在列表上方 + 两个面板都够高"；第二档只要求
             //   "都还在、没归零"—— 430 px 里要塞 行+两个面板+任务面板，两个列表各自的
             //   minimumHeight(120/160) 本来就装不下（这是**尺寸下限**，不是这次重排引入的）。
+            check(entry_bar != nullptr && entry_pane != nullptr && !entry_pane->isHidden() &&
+                      entry_bar->height() > 0 && entry_bar->height() <= xrkit::core::px(60),
+                  QStringLiteral("① 有内容时条目工具行只占一行（实测 %1 ≤ %2；被拉满就是"
+                                 "\"隐藏控件的空间落进兄弟控件\"那个坑）")
+                      .arg(entry_bar != nullptr ? entry_bar->height() : -1)
+                      .arg(xrkit::core::px(60)));
+
             const auto measure = [&](int w, int h) {
                 geo_page.resize(w, h);
                 if (geo_page.layout() != nullptr) geo_page.layout()->activate();
@@ -2021,19 +2032,37 @@ SmokeResult run_smoke() {
                           .arg(static_cast<int>(top_state)));
                 tri_page.hide();
             }
-            // ★ 用户 2026-09-30：「'包内条目'那一行字看出来什么没？」（截图里表头文字顶部被切）
-            //   判据：表头高度必须 ≥ 它自己字体的一行高（被压小就判红）。
+            // ★ 用户 2026-09-30 与 2026-10-01 **两次**指出「'包内条目'那一行字顶部被切」
+            //   ⇒ 这次把机制量清楚了（`--shot` 的 HDR 行）：表头高度由 QHeaderView 按**它自己的
+            //   字体**算，而 QSS 的 `padding` 又被用作内容区的内缩 ⇒ 8 px 上下内边距会把
+            //   15 px 的字压在 9 px 的内容区里、顶部直接切掉（实测表头 25 px）。
+            //   判据：**表头高 ≥ 表头自己的字高 + 2×QSS 上下内边距(现为 pad4)** —— 两边任一处
+            //   回退（字号不跟内容走 / 内边距又调回 8）这条就会红。
             {
                 FsPage head_page;
                 head_page.resize(760, page_min_h());
                 head_page.show();
                 QApplication::processEvents();
                 QHeaderView* hh = head_page.entry_tree()->header();
-                const int line = head_page.entry_tree()->fontMetrics().height();
-                check(hh != nullptr && hh->height() >= line,
-                      QStringLiteral("表头不许被裁：表头高 %1 ≥ 行高 %2")
+                const int font_h = hh != nullptr ? hh->fontMetrics().height() : -1;
+                const int need = font_h + 2 * xrkit::core::px(4);
+                check(hh != nullptr && hh->height() >= need,
+                      QStringLiteral("表头不许被裁：表头高 %1 ≥ 字高 %2 + 2×内边距 %3 = %4")
                           .arg(hh != nullptr ? hh->height() : -1)
-                          .arg(line));
+                          .arg(font_h)
+                          .arg(xrkit::core::px(4))
+                          .arg(need));
+                // ★ 加一条**有牙**的锁：表头高度不随 QSS 内边距变（padding 只影响内容区），
+                //   所以光比高度抓不住"有人把内边距调回 8px" —— 直接钉住样式表里那一节的
+                //   上下内边距必须是 px(4)（8px 那版实测把 15px 的字压在 9px 内容区里、顶部被切）。
+                {
+                    const QString qss = xrkit::shell::stylesheet_for(xrkit::core::ThemeMode::Dark);
+                    const int at = qss.lastIndexOf(QStringLiteral("QHeaderView::section {"));
+                    const QString rule = at >= 0 ? qss.mid(at) : QString();
+                    check(rule.contains(QStringLiteral("padding: %1px ").arg(xrkit::core::px(4))),
+                          QStringLiteral("表头 QSS 的上下内边距必须是 px(%1)（回退到 8px 就会裁字）")
+                              .arg(xrkit::core::px(4)));
+                }
                 head_page.hide();
             }
             // ★ 用户 2026-09-30：「日志记录的是什么东西，为什么没有在 app 当中的操作（例如，加载包）？」
@@ -2867,14 +2896,12 @@ SmokeResult run_smoke() {
                   QStringLiteral("⑥ 空状态：各列表都不许被挤成细线（包列表 %1/≥120，待打包 %2/≥90）")
                       .arg(list_h)
                       .arg(pack_h));
-            // 条目列表：★**2026-09-30 口径有意改写**（用户对着 FS 页排版发火后）——
-            //   旧口径是"没条目就收起，不留一个空框"，但**Qt 布局不给隐藏控件分配空间** ⇒
-            //   那 340 px 会全落进同面板的工具行（普通 QWidget、垂直策略默认 Preferred），
-            //   工具行被拉满、里面的按钮被垂直居中 ⇒ 看上去就是"搜索行孤零零飘在两块空白中间"
-            //   （用户截图里那坨"屎"的真根因）。现改为：**空树也留着**（带表头 = "这里会出现
-            //   包内条目"的位置指示，不是解释文字），并把工具行钉成固定高度 ⇒ 结构不再塌。
-            check(empty_page.entry_tree() != nullptr && !empty_page.entry_tree()->isHidden(),
-                  QStringLiteral("空状态：条目树留着占位 + 工具行不塌（2026-09-30 口径改写，理由见代码注释）"));
+            // 条目列表：★**2026-10-01 与用户两张截图对齐后的口径**（他说"一个正常一个屎"：
+            //   封包页＝两行控件 + 一个列表填满；解包页当时是四条横带 + 两个空框）——
+            //   **没条目时把整个条目面板（工具行 + 树）收掉**，高度全给包列表 ⇒ 两页同形；
+            //   有货时面板才出现、竖向分隔条才生效（下面那条断言接着验它出现）。
+            check(empty_page.entry_pane() != nullptr && empty_page.entry_pane()->isHidden(),
+                  QStringLiteral("空状态：条目面板整块收起，包列表填满工作区（与封包页同形）"));
 
             empty_page.add_loose_dir(QString::fromStdString(work.string()), nullptr);  // 临时目录是 ASCII 路径
             QApplication::processEvents();

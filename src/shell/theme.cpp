@@ -191,7 +191,15 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                "QPushButton { min-height: @{ctl}; padding: @{pad8} @{pad14}; }"
                "QComboBox, QLineEdit, QSpinBox { min-height: @{ctl}; padding: @{pad8} @{pad10}; }"
                "QListWidget::item, QListView::item, QTreeView::item { min-height: @{ctl}; }"
-               "QHeaderView::section { min-height: @{pad8}; padding: @{pad8} @{pad10}; }"
+               // ★★ 表头不许裁字（用户 2026-09-30 与 2026-10-01 两次指出"那行字顶部被切"）：
+               //   **实测过的机制**（`--shot` 打的 HDR 行）：QSS 给 section 配了 8 px 上下内边距，
+               //   而 `QHeaderView` 的取高算法**不把这段内边距算进去**（实测表头 25 px，文字
+               //   15 px ⇒ 内容区只剩 25-16=9 px ⇒ 顶部被切）。QSS 的 `min-height` 也压不住它。
+               //   ⇒ 两处一起改：① 上下内边距降到 4 px；② **表头字号与内容同号**
+               //   （`font_content`，表头尺寸随之算进去 ⇒ 实测 26 px 高、内容区 18 px > 字高）；
+               //   ③ `min-height` 用同一个字号令牌兜底。**改任何一个数都要重看 HDR 行与截图。**
+               "QHeaderView::section { font-size: @{font_content}; min-height: @{font_content};"
+               "  padding: @{pad4} @{pad10}; }"
                "QLabel#page_header { padding: @{pad8} 0; }");
 
     for (const auto& kv : tokens) sheet.replace(kv.first, kv.second);

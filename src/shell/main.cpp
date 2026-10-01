@@ -7,6 +7,7 @@
 
 #include "xrkit/core/theme.h"
 #include "hub.h"
+#include "pages/fs_page.h"
 #include "pages/page_base.h"
 #include "smoke.h"
 #include "screen_scale.h"
@@ -14,11 +15,13 @@
 
 #include <QApplication>
 #include <QGuiApplication>
+#include <QHeaderView>
 #include <QLayout>
 #include <QPixmap>
 #include <QScreen>
 #include <QStringList>
 #include <QTextStream>
+#include <QTreeWidget>
 
 int main(int argc, char** argv) {
     QStringList args;
@@ -44,6 +47,11 @@ int main(int argc, char** argv) {
     const int page_arg = args.indexOf(QStringLiteral("--page"));
     const int shot_page = (page_arg >= 0 && page_arg + 1 < args.size()) ? args[page_arg + 1].toInt()
                                                                         : 0;
+    // `--load <包路径>`：抓图前先往 FS 页里装一个真包（看"有内容"的那种状态 —— 空状态和装货状态
+    // 长得完全不同，只看空状态等于没看）。
+    const int load_arg = args.indexOf(QStringLiteral("--load"));
+    const QString load_path = (load_arg >= 0 && load_arg + 1 < args.size()) ? args[load_arg + 1]
+                                                                            : QString();
 
     // 离屏：不依赖真实显示器（门禁机器上也可能没有交互桌面）
     if ((smoke || !shot_path.isEmpty()) && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
@@ -136,6 +144,22 @@ int main(int argc, char** argv) {
         hub.resize(shot_size);
         hub.show();
         if (shot_page > 0 && shot_page < hub.page_count()) hub.set_current_page(shot_page);
+        if (!load_path.isEmpty()) {
+            if (auto* fs_page = dynamic_cast<xrkit::shell::FsPage*>(hub.page_at(0))) {
+                fs_page->add_paths(QStringList{load_path});
+                hub.set_current_page(0);
+                QTextStream out(stdout);
+                out << QStringLiteral("SHOT load=%1 sources=%2 errors=%3\n")
+                           .arg(load_path)
+                           .arg(fs_page->source_count())
+                           .arg(fs_page->load_errors().join(QStringLiteral(" | ")));
+                out.flush();
+            } else {
+                QTextStream out(stdout);
+                out << QStringLiteral("SHOT load=失败：第 0 页不是 FsPage\n");
+                out.flush();
+            }
+        }
         for (int pass = 0; pass < 3; ++pass) {
             for (QWidget* child : hub.findChildren<QWidget*>()) {
                 if (child->layout() != nullptr) child->layout()->activate();
@@ -168,6 +192,19 @@ int main(int argc, char** argv) {
                     name == QStringLiteral("card")) {
                     dump("child", child);
                 }
+            }
+            // 表头裁字专项诊断（用户 2026-09-30 与 2026-10-01 两次指出"那行字顶部被切"）
+            if (auto* tree = fs->findChild<QTreeWidget*>(QStringLiteral("fs_entry_tree"))) {
+                QHeaderView* h = tree->header();
+                out << QStringLiteral(
+                           "HDR tree_font_px=%1 tree_fm_h=%2 hdr_font_px=%3 hdr_fm_h=%4 "
+                           "hdr_height=%5 hdr_sizeHint=%6\n")
+                           .arg(tree->font().pixelSize())
+                           .arg(tree->fontMetrics().height())
+                           .arg(h != nullptr ? h->font().pixelSize() : -1)
+                           .arg(h != nullptr ? h->fontMetrics().height() : -1)
+                           .arg(h != nullptr ? h->height() : -1)
+                           .arg(h != nullptr ? h->sizeHint().height() : -1);
             }
         }
         out << QStringLiteral("SHOT %1 path=%2 size=%3x%4 page=%5\n")
