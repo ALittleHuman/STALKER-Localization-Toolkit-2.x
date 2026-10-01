@@ -17,11 +17,13 @@
 #include <QGuiApplication>
 #include <QHeaderView>
 #include <QLayout>
+#include <QLineEdit>
 #include <QPixmap>
 #include <QScreen>
 #include <QStringList>
 #include <QTextStream>
 #include <QTreeWidget>
+#include <functional>
 
 int main(int argc, char** argv) {
     QStringList args;
@@ -52,6 +54,11 @@ int main(int argc, char** argv) {
     const int load_arg = args.indexOf(QStringLiteral("--load"));
     const QString load_path = (load_arg >= 0 && load_arg + 1 < args.size()) ? args[load_arg + 1]
                                                                             : QString();
+    // `--filter <文本>`：抓图前先往 FS 页的搜索框里打字（复现"筛选时多出一个空行"那类现象）
+    const int filter_arg = args.indexOf(QStringLiteral("--filter"));
+    const QString filter_text = (filter_arg >= 0 && filter_arg + 1 < args.size())
+                                    ? args[filter_arg + 1]
+                                    : QString();
 
     // 离屏：不依赖真实显示器（门禁机器上也可能没有交互桌面）
     if ((smoke || !shot_path.isEmpty()) && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
@@ -148,6 +155,9 @@ int main(int argc, char** argv) {
             if (auto* fs_page = dynamic_cast<xrkit::shell::FsPage*>(hub.page_at(0))) {
                 fs_page->add_paths(QStringList{load_path});
                 hub.set_current_page(0);
+                if (!filter_text.isEmpty() && fs_page->search_edit() != nullptr) {
+                    fs_page->search_edit()->setText(filter_text);
+                }
                 QTextStream out(stdout);
                 out << QStringLiteral("SHOT load=%1 sources=%2 errors=%3\n")
                            .arg(load_path)
@@ -205,6 +215,23 @@ int main(int argc, char** argv) {
                            .arg(h != nullptr ? h->fontMetrics().height() : -1)
                            .arg(h != nullptr ? h->height() : -1)
                            .arg(h != nullptr ? h->sizeHint().height() : -1);
+                // 树里**实际建出来的行**（含缩进层级 + 文本 + 勾选态）——用来查"筛选时那个空行"
+                int printed = 0;
+                std::function<void(QTreeWidgetItem*, int)> dump_item = [&](QTreeWidgetItem* item,
+                                                                           int depth) {
+                    if (item == nullptr || printed >= 40) return;
+                    ++printed;
+                    out << QStringLiteral("ROW d=%1 text='%2' check=%3 kids=%4\n")
+                               .arg(depth)
+                               .arg(item->text(0))
+                               .arg(static_cast<int>(item->checkState(0)))
+                               .arg(item->childCount());
+                    for (int i = 0; i < item->childCount(); ++i) dump_item(item->child(i), depth + 1);
+                };
+                for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+                    dump_item(tree->topLevelItem(i), 0);
+                }
+                out << QStringLiteral("ROW total_top=%1\n").arg(tree->topLevelItemCount());
             }
         }
         out << QStringLiteral("SHOT %1 path=%2 size=%3x%4 page=%5\n")

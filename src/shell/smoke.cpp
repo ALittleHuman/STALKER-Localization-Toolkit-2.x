@@ -1196,6 +1196,48 @@ SmokeResult run_smoke() {
             }
             empty_page.hide();
 
+            // ★★ 2026-10-01 用户三连（都在这一个夹具里判）：
+            //   ①「在筛选的时候，文件夹下会多出一个空的行」⇒ 真因＝`make_entry_item` 给"有子节点的
+            //     目录"塞的**懒建占位子项**没被摘掉，筛选是一次性建树 ⇒ 它留在第一位当空行。
+            //   ②「我不知道搜索字段和结果有什么直接关系」⇒ 旧实现拿**整条路径** contains，
+            //     `ai` 会命中 `crouch_down_aim.anm` 这种"凑巧有这两个字母"的；现改成**按名字匹配**
+            //     （文件与目录一视同仁）+ 命中项加粗。
+            //   ③「DB栏能拖动多选，文件栏不行」⇒ 条目树补 ExtendedSelection。
+            {
+                FsPage filter_page;
+                filter_page.add_source(QStringLiteral("smoke_filter"),
+                                       {efs::EntryInfo{std::string("dir"), true, 0},
+                                        efs::EntryInfo{std::string("dir/aim.txt"), false, 10},
+                                        efs::EntryInfo{std::string("dir/other.bin"), false, 20}});
+                filter_page.search_edit()->setText(QStringLiteral("aim"));
+                QApplication::processEvents();
+                QTreeWidget* tree = filter_page.entry_tree();
+                int blanks = 0;
+                int rows = 0;
+                bool has_other = false;
+                bool matched_bold = false;
+                std::function<void(QTreeWidgetItem*)> walk = [&](QTreeWidgetItem* item) {
+                    ++rows;
+                    if (item->text(0).isEmpty()) ++blanks;
+                    if (item->text(0).contains(QStringLiteral("other"))) has_other = true;
+                    if (item->text(0) == QStringLiteral("aim.txt") && item->font(0).bold()) {
+                        matched_bold = true;
+                    }
+                    for (int i = 0; i < item->childCount(); ++i) walk(item->child(i));
+                };
+                for (int i = 0; i < tree->topLevelItemCount(); ++i) walk(tree->topLevelItem(i));
+                check(blanks == 0 && rows > 0,
+                      QStringLiteral("① 筛选后树里没有空名字的行（空行 %1 行 / 共 %2 行）")
+                          .arg(blanks)
+                          .arg(rows));
+                check(!has_other,
+                      QStringLiteral("② 搜索按**名字**匹配：不命中 aim 的 other.bin 不许出现"));
+                check(matched_bold, QStringLiteral("② 命中项加粗（一眼看出哪些行是命中的）"));
+                check(filter_page.entry_tree()->selectionMode() == QAbstractItemView::ExtendedSelection,
+                      QStringLiteral("③ 条目树能框选/拖选多个（ExtendedSelection）"));
+                filter_page.hide();
+            }
+
             // ★ 几何必须在**装了东西**的状态下量：空夹具的树是隐藏的（历史现象），不适合量几何。
             //   所以这里用一个**有内容**的独立夹具，不动上面的 `page`。
             FsPage geo_page;
@@ -2248,11 +2290,16 @@ SmokeResult run_smoke() {
             tree_page.hide();
         }
 
-        // 6.3：两个"全选"动的是**两套**状态
+        // 6.3：两个"全选"
         page.select_all_button()->click();
         check(page.selection().size() == 2, QStringLiteral("6.3 「全选包」改了包列表选中态"));
-        check(page.checked_file_count() == 0,
-              QStringLiteral("6.3 「全选包」**没有**碰包内勾选态（实测勾了 %1 个）")
+        // ★★ 2026-10-01 **口径有意改写**（用户：「包列表全选是能全选，但是并没有勾选。」）：
+        //   旧口径是「全选包**只**动选中态、不碰包内勾选」（6.3 的"两套状态"），但用户看到的是
+        //   "点了全选、框里还是空的，像没生效"。现改为：**全选包 = 选中 + 勾选一起做**
+        //   （勾选态＝这一包进合并树，才是"选它"在这个界面里的真含义）。
+        //   保留的区分：**「包内全选/全不选」仍然只动包内勾选**（下面那条接着验）。
+        check(page.checked_file_count() > 0,
+              QStringLiteral("6.3 「全选包」现在**同时勾选**（实测勾了 %1 个）")
                   .arg(page.checked_file_count()));
         page.check_all_button()->click();
         check(page.checked_file_count() == 3,

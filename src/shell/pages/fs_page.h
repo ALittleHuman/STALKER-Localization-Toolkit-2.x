@@ -268,6 +268,9 @@ private:
     void on_entry_item_changed(QTreeWidgetItem* item);
     void on_entry_item_clicked(QTreeWidgetItem* item);   // 单击展开 / 单击条目勾选
     bool entry_visible(const engine::fs::MergeNode& node) const;
+    // ★ 2026-10-01：搜索改成**按"这一项自己的名字"匹配**（文件与目录一视同仁），
+    //   命中项进 `matched_paths_`（界面上加粗），祖先链进 `filter_keep_` 撑层级。
+    bool name_matches(const std::string& name) const;
     void rebuild_filter_keep();
     // 反向：`sources_` 的下标 → 合并树里的 `source_index`（未加载返回 -1）
     int loaded_index_for_source(size_t row) const;
@@ -290,6 +293,7 @@ private:
     // 每个**目录**在模型里的 (文件数, 已勾数) —— 勾选后按它刷新三态（一次 flatten 建全表）
     QHash<QString, QPair<int, int>> dir_states_;
     QSet<QString> filter_keep_;   // 搜索过滤要显示的路径（命中项 + 祖先链）；空 = 不过滤
+    QSet<QString> matched_paths_; // 真正**命中**搜索的路径（界面上加粗的那些）
     bool syncing_tree_ = false;
     const plugin::Registry* registry_ = nullptr;
     QString decrypt_dir_;

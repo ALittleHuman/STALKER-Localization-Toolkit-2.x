@@ -40,6 +40,17 @@ namespace efs = xrkit::engine::fs;
 
 QString utf8(const std::string& text) { return QString::fromStdString(text); }
 
+// 占位子项：`make_entry_item` 给"模型里有子节点的目录"塞的那个空项（只为让展开箭头出现，
+// 真子项在展开时才建）。★ 2026-10-01 用户报「在筛选的时候，文件夹下会多出一个空的行」——
+// 真因就是**只要接着要建真子项的地方**没把这个占位项摘掉，它就留在第一个位置当空行。
+// ⇒ 凡是"马上要往里加真子项"的路径（筛选里的一次性建树、`build_all_descendants`）都必须先摘。
+void drop_placeholder(QTreeWidgetItem* item) {
+    if (item == nullptr) return;
+    if (item->childCount() == 1 && item->child(0)->data(0, Qt::UserRole).toString().isEmpty()) {
+        item->removeChild(item->child(0));
+    }
+}
+
 }  // namespace
 
 bool FsPage::gate_source(QString& path, QString* error_out) {
@@ -138,6 +149,10 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     // ★ 2026-09-27（用户实测"排版有很大问题"）：条目区给自己一个**最小高度**，
     //   免得没有条目时被压成一条细线（看着像坏了）。
     entry_tree_->setMinimumHeight(xrkit::core::px(160));
+    // ★ 用户 2026-10-01：「DB栏能拖动多选，文件栏不行。」⇒ 包内条目也要能**框选/拖选多个**
+    //   （包列表一直是 ExtendedSelection）。选中的条目本身不参与解包（解包看勾选态），
+    //   但"能多选"是他习惯的操作方式，缺了就像坏了。
+    entry_tree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     // 勾选/展开都回灌模型（见 on_entry_item_changed / populate_entry_children）
     QObject::connect(entry_tree_, &QTreeWidget::itemChanged, this,
                      [this](QTreeWidgetItem* item, int) { on_entry_item_changed(item); });
@@ -280,12 +295,14 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     // ★ 用户 2026-09-30：「上面包列表和下面文件列表之间也要有可拖拽分隔条」；并授权"自己看着
     //   有需要的地方就加" ⇒ 竖向 QSplitter 拖的两个**面板**（工具行跟着自己的列表一起走，
     //   拖分隔条时不会把工具行落在外面）。
-    split_list_tree_ = new QSplitter(Qt::Vertical);
+    // ★ 2026-10-01（用户：「这个不要做成上下，做成左右。」）⇒ 分隔条改**水平**：
+    //   包列表在**左**、包内条目在**右**。两个面板各自「工具行 + 列表」的结构不变。
+    split_list_tree_ = new QSplitter(Qt::Horizontal);
     split_list_tree_->setObjectName(QStringLiteral("fs_split_list_tree"));
     split_list_tree_->setChildrenCollapsible(false);
     split_list_tree_->addWidget(package_pane_);
     split_list_tree_->addWidget(entry_pane_);
-    split_list_tree_->setSizes({xrkit::core::px(150), xrkit::core::px(320)});
+    split_list_tree_->setSizes({xrkit::core::px(340), xrkit::core::px(900)});
     unpack_layout_->addWidget(split_list_tree_, 1);
 
     // ── ★ 1.x 的**封包面板**（`_build_pack_panel`）：这一整块是"FS 方便程度"的最后一块拼图
@@ -407,8 +424,22 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         std::vector<std::string> visible;
         for (const Source& source : sources_) visible.push_back(source.key);
         selection_.select_all(visible);
-        // 只动包列表：包内勾选**一个都不碰**（6.3 的两套状态）
-        for (int i = 0; i < package_list_->count(); ++i) package_list_->item(i)->setSelected(true);
+        // ★ 用户 2026-10-01：「包列表全选是能全选，但是并没有勾选。」⇒ 「全选包」现在
+        //   **选中 + 勾选**一起做（勾选态＝这一包进合并树，是这个界面里"选它"的真正含义）；
+        //   批量置位期间用 `rebuilding_package_list_` 挡住逐项回灌，最后统一加载 + 刷新。
+        rebuilding_package_list_ = true;
+        for (int i = 0; i < package_list_->count(); ++i) {
+            package_list_->item(i)->setSelected(true);
+            package_list_->item(i)->setCheckState(Qt::Checked);
+        }
+        rebuilding_package_list_ = false;
+        load_selected();   // 未加载的（此刻全被选中）一次装进来
+        for (size_t i = 0; i < sources_.size(); ++i) {
+            const int merged = loaded_index_for_source(i);
+            if (merged >= 0) tree_.toggle_source(merged, true);
+        }
+        refresh_package_checks();
+        refresh_rows();
     });
     QObject::connect(check_all_button_, &QPushButton::clicked, this, [this] { check_all(true); });
     QObject::connect(check_none_button_, &QPushButton::clicked, this, [this] { check_all(false); });
@@ -614,10 +645,14 @@ void FsPage::refresh_counts() {
                                                 .arg(loaded));
     }
     // 条目计数（1.x `entry_count`：`f"{nf} 文件"`；查看的是**过滤后**的数）
+    // ★ 2026-10-01：旧写法用 `row_matches`（整条路径 contains）算，于是搜 `ai` 时标签写着
+    //   "39374 文件"而树上只有几十行 —— 现在**只数真的在筛选集合里的文件**。
     if (entry_count_label_ != nullptr) {
         int files = 0;
         for (const efs::MergeNode* node : tree_.flatten()) {
-            if (!node->is_dir && row_matches(node->path)) ++files;
+            if (node->is_dir) continue;
+            if (!filter_keep_.isEmpty() && !filter_keep_.contains(utf8(node->path))) continue;
+            ++files;
         }
         entry_count_label_->setText(files == 0 ? QString() : QStringLiteral("%1 文件").arg(files));
     }
@@ -723,6 +758,13 @@ QTreeWidgetItem* FsPage::make_entry_item(const efs::MergeNode& node) {
     item->setText(1, node.is_dir ? QString() : format_size(node.size));
     item->setText(2, source_label_for(&node));
     item->setToolTip(0, path);
+    // ★ 2026-10-01（用户：「我不知道搜索字段和结果有什么直接关系。」）⇒ 命中项**加粗**，
+    //   让"打字 → 哪些行是命中的、哪些只是为了撑层级才露出来的祖先"一眼可辨。
+    if (matched_paths_.contains(path)) {
+        QFont matched_font = item->font(0);
+        matched_font.setBold(true);
+        item->setFont(0, matched_font);
+    }
     if (node.is_dir) {
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         // 目录的三态由**模型**决定（见 sync_entry_states），不靠 Qt 的自动三态
@@ -834,11 +876,17 @@ bool FsPage::entry_visible(const efs::MergeNode& node) const {
 
 void FsPage::rebuild_filter_keep() {
     filter_keep_.clear();
+    matched_paths_.clear();
     if (search_edit_ == nullptr) return;
     if (search_edit_->text().trimmed().isEmpty()) return;
-    // 一趟 flatten 就够：命中项进集合，再把它的每一段祖先也塞进去
+    // ★ 2026-10-01 口径改动（用户：「我不知道搜索字段和结果有什么直接关系。」）：
+    //   旧实现拿**整条路径**去 contains（`row_matches`），于是 `ai` 会命中 `.../crouch_down_aim.anm`
+    //   这种"只是路径里凑巧有这两个字母"的东西，而**目录名本身永远不参与匹配** —— 结果看起来
+    //   和输入无关。现在改成：**按"这一项自己的名字"（最后一段）匹配，文件和目录一视同仁**；
+    //   命中项进 `matched_paths_`（界面上加粗），再把它的祖先链塞进 `filter_keep_` 撑层级。
     for (const efs::MergeNode* node : tree_.flatten()) {
-        if (node->is_dir || !row_matches(node->path)) continue;
+        if (!name_matches(node->name)) continue;
+        matched_paths_.insert(utf8(node->path));
         QString path = utf8(node->path);
         while (!path.isEmpty()) {
             filter_keep_.insert(path);
@@ -846,6 +894,13 @@ void FsPage::rebuild_filter_keep() {
             path = slash > 0 ? path.left(slash) : QString();
         }
     }
+}
+
+bool FsPage::name_matches(const std::string& name) const {
+    if (search_edit_ == nullptr) return true;
+    const QString query = search_edit_->text().trimmed().toLower();
+    if (query.isEmpty()) return true;
+    return utf8(name).toLower().contains(query);
 }
 
 void FsPage::refresh_rows() {
@@ -869,6 +924,9 @@ void FsPage::refresh_rows() {
                 for (const efs::MergeNode& child : node.children) {
                     if (!entry_visible(child)) continue;
                     QTreeWidgetItem* item = make_entry_item(child);
+                    // ★ 筛选是一次性把链建出来 ⇒ 先把"懒建占位子项"摘掉，否则它会留在第一位
+                    //   变成用户看到的"文件夹下多出一个空行"（2026-10-01）。
+                    drop_placeholder(item);
                     if (parent == nullptr) {
                         entry_tree_->addTopLevelItem(item);
                     } else {
@@ -892,6 +950,7 @@ void FsPage::refresh_rows() {
 
 void FsPage::build_all_descendants(const efs::MergeNode& node, QTreeWidgetItem* item) {
     // 过滤模式：把这一支整棵建出来（含不匹配的祖先之间已匹配的子树）
+    drop_placeholder(item);   // 同上：加真子项前先摘占位项，否则第一个位置留一个空行
     for (const efs::MergeNode& child : node.children) {
         if (!entry_visible(child)) continue;
         QTreeWidgetItem* child_item = make_entry_item(child);
