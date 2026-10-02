@@ -186,11 +186,16 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     package_list_->setUniformRowHeights(true);
     package_list_->setAlternatingRowColors(false);
     package_list_->setRootIsDecorated(false);   // 包列表是平表，不需要展开箭头
+    // ★★ 2026-10-02 用户只圈着表头那块打了个「？」—— 真因：三列**都是 Interactive 且没有任何一列吃剩余
+    //   宽度** ⇒ 初始总宽 px(180)+px(90)+px(48)=318 ≪ 面板宽（真机约 717）⇒ **表头与每一行的右半边
+    //   是死区**（背景还在，却没有列、也没有分隔线，看着像表断了）。
+    //   修法＝**名称列吃掉剩余宽度**、后两列靠右钉住：这是文件表格的常规长相（长名字不再被截，
+    //   大小与 ✕ 永远贴右边），后两列**仍然可拖**（用户 09-29 要的拖动不许丢）。
+    //   ——**条目树不跟着改**（用户没点它，它的"来源"列吃宽是既有观感；要统一说一声即可）。
     package_list_->header()->setStretchLastSection(false);
-    for (int col = 0; col < 3; ++col) {
-        package_list_->header()->setSectionResizeMode(col, QHeaderView::Interactive);
-    }
-    package_list_->header()->resizeSection(0, xrkit::core::px(180));
+    package_list_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    package_list_->header()->setSectionResizeMode(1, QHeaderView::Interactive);
+    package_list_->header()->setSectionResizeMode(2, QHeaderView::Interactive);
     package_list_->header()->resizeSection(1, xrkit::core::px(90));
     package_list_->header()->resizeSection(2, xrkit::core::px(48));
     // 与 `entry_tree_` **同一个** minimumSectionSize（同一套小组件模板；28 那种"因为 ✕ 列窄"

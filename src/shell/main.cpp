@@ -203,6 +203,25 @@ int main(int argc, char** argv) {
                     dump("child", child);
                 }
             }
+            // ★ 2026-10-02 用户圈着包列表表头打了个「？」（三列总宽 < 面板宽 ⇒ 右半边死区）：
+            //   把**列宽合计 vs 视口宽**打出来，这种"没铺满"的毛病以后用数字判，不靠眯眼看图。
+            if (auto* pkg = fs->findChild<QTreeWidget*>(QStringLiteral("fs_package_list"))) {
+                QHeaderView* ph = pkg->header();
+                QString widths;
+                int total = 0;
+                for (int c = 0; c < pkg->columnCount(); ++c) {
+                    const int w = ph != nullptr ? ph->sectionSize(c) : -1;
+                    total += w;
+                    widths += QStringLiteral("%1 ").arg(w);
+                }
+                const int vp = pkg->viewport()->width();
+                out << QStringLiteral("HDR pkg cols=%1 widths=[%2] total=%3 viewport=%4 fill=%5\n")
+                           .arg(pkg->columnCount())
+                           .arg(widths.trimmed())
+                           .arg(total)
+                           .arg(vp)
+                           .arg(total >= vp - 2 ? 1 : 0);
+            }
             // 表头裁字专项诊断（用户 2026-09-30 与 2026-10-01 两次指出"那行字顶部被切"）
             if (auto* tree = fs->findChild<QTreeWidget*>(QStringLiteral("fs_entry_tree"))) {
                 QHeaderView* h = tree->header();

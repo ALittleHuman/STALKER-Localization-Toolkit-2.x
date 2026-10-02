@@ -1165,14 +1165,36 @@ SmokeResult run_smoke() {
             // **`acceptDrops` 不算"对齐项"**：它是**实例级特性**（包列表是拖放目标，`drop_filter_`
             // 只挂在它身上；条目树就算设了也没有 handler ⇒ 拖上去没反应，反而误导）——
             // 所以这里只单独要求包列表可接收拖放（6.4 的要求），不拿它跟条目树比。
-            const auto header_interactive = [](QTreeWidget* tree) {
-                if (tree == nullptr || tree->header() == nullptr) return false;
+            // ★ 2026-10-02：口径**有意放宽一处**（用户圈着表头打了个「？」之后）。
+            //   旧写法要求"两列表三列都 Interactive、拉伸交给条目树末列"，而**包列表要的是"名称列吃
+            //   剩余宽度、大小/✕ 靠右钉住"**（否则表头右边 ~400px 是死区 —— 正是用户圈的那块）。
+            //   ⇒ 对齐改成"**同一套表头行为**：恰好一列吃剩余宽度（哪一列由各表自己的语义定）＋
+            //   其余列一律 Interactive（用户 09-29 要的可拖不许丢）＋ minimumSectionSize 相同"。
+            //   放宽的只是"哪一列拉伸"；"同一个组件、同一族行为"没有放宽。
+            const auto header_stretch_columns = [](QTreeWidget* tree) {
+                if (tree == nullptr || tree->header() == nullptr) return -1;
+                int stretched = 0;
                 for (int col = 0; col < tree->columnCount(); ++col) {
-                    if (tree->header()->sectionResizeMode(col) != QHeaderView::Interactive) {
-                        return false;
+                    const auto mode = tree->header()->sectionResizeMode(col);
+                    if (mode == QHeaderView::Stretch) {
+                        ++stretched;
+                    } else if (mode != QHeaderView::Interactive) {
+                        return -1;   // 出现 Fixed/ResizeToContents 之类 ⇒ 不算同一族
                     }
                 }
-                return tree->columnCount() > 0;
+                if (tree->header()->stretchLastSection()) ++stretched;
+                return stretched;
+            };
+            // ★★「？」的硬判据：**列的总宽必须铺满视口**，否则右半边就是死区（改回去立刻红：
+            //   真机 318 < 717，包列表这一条会红，而条目树那边仍然是铺满的 —— 差异看得见）。
+            const auto header_fills_viewport = [](QTreeWidget* tree) {
+                if (tree == nullptr || tree->header() == nullptr) return false;
+                int total = 0;
+                for (int col = 0; col < tree->columnCount(); ++col) {
+                    total += tree->header()->sectionSize(col);
+                }
+                return tree->viewport()->width() > 0 &&
+                       total >= tree->viewport()->width() - xrkit::core::px(2);
             };
             check(qobject_cast<QTreeWidget*>(page.package_list()) != nullptr &&
                       page.package_list()->columnCount() == 3 &&
@@ -1185,13 +1207,13 @@ SmokeResult run_smoke() {
                       page.package_list()->uniformRowHeights() &&
                       page.package_list()->alternatingRowColors() ==
                           page.entry_tree()->alternatingRowColors() &&
-                      header_interactive(page.package_list()) &&
-                      header_interactive(page.entry_tree()) &&
+                      header_stretch_columns(page.package_list()) == 1 &&
+                      header_stretch_columns(page.entry_tree()) == 1 &&
                       page.package_list()->header()->minimumSectionSize() ==
                           page.entry_tree()->header()->minimumSectionSize() &&
                       page.package_list()->acceptDrops(),
                   QStringLiteral("第6条 包列表与条目树同一套小组件配置（列 %1 / selection %2==%3 / "
-                                 "uniform %4==%5 / alt %6==%7 / 表头三列 Interactive %8==%9 / "
+                                 "uniform %4==%5 / alt %6==%7 / 表头恰好一列拉伸 %8==%9 / "
                                  "minSection %10==%11 / 包列表可接收拖放 %12）")
                       .arg(page.package_list()->columnCount())
                       .arg(static_cast<int>(page.package_list()->selectionMode()))
@@ -1200,11 +1222,32 @@ SmokeResult run_smoke() {
                       .arg(page.entry_tree()->uniformRowHeights() ? 1 : 0)
                       .arg(page.package_list()->alternatingRowColors() ? 1 : 0)
                       .arg(page.entry_tree()->alternatingRowColors() ? 1 : 0)
-                      .arg(header_interactive(page.package_list()) ? 1 : 0)
-                      .arg(header_interactive(page.entry_tree()) ? 1 : 0)
+                      .arg(header_stretch_columns(page.package_list()))
+                      .arg(header_stretch_columns(page.entry_tree()))
                       .arg(page.package_list()->header()->minimumSectionSize())
                       .arg(page.entry_tree()->header()->minimumSectionSize())
                       .arg(page.package_list()->acceptDrops() ? 1 : 0));
+            QApplication::processEvents();
+            // ★★ 2026-10-02 用户「？」：**表头/行必须铺满面板**（三列总宽 < 视口宽 ⇒ 右边是死区）。
+            check(header_fills_viewport(page.package_list()) &&
+                      header_fills_viewport(page.entry_tree()),
+                  QStringLiteral("第6条 表头铺满面板无死区（包列表列宽 %1 / 视口 %2，条目树 %3 / 视口 %4）")
+                      .arg([&] {
+                          int t = 0;
+                          for (int c = 0; c < page.package_list()->columnCount(); ++c) {
+                              t += page.package_list()->header()->sectionSize(c);
+                          }
+                          return t;
+                      }())
+                      .arg(page.package_list()->viewport()->width())
+                      .arg([&] {
+                          int t = 0;
+                          for (int c = 0; c < page.entry_tree()->columnCount(); ++c) {
+                              t += page.entry_tree()->header()->sectionSize(c);
+                          }
+                          return t;
+                      }())
+                      .arg(page.entry_tree()->viewport()->width()));
         }
 
         // ★★ 2026-10-01 用户第 3 条（原话）：「并且扫描时有Bug的，选择包模式的时候，是扫不出
