@@ -14,14 +14,20 @@
 #include <QDirIterator>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGuiApplication>
+#include <QClipboard>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMetaObject>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
 #include <QHeaderView>
 #include <QPushButton>
 #include <QSplitter>
+#include <QStyledItemDelegate>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QTreeWidget>
@@ -39,6 +45,63 @@ namespace {
 namespace efs = xrkit::engine::fs;
 
 QString utf8(const std::string& text) { return QString::fromStdString(text); }
+
+// ★★ 2026-10-01 用户第 5 条：「移除这个按钮也可以优化掉，在包的条目后面增加一个叉叉按钮。」
+//   用**委托**在 col2 画 ✕ 并自己处理点击 —— **不要用 `setItemWidget`**：那会把整行内容换成
+//   自造控件，勾选框/列宽/选择行为全会被搞乱（用户要的只是"行尾一个小按钮"）。
+//   点击走 `editorEvent`（判 MouseButtonRelease + 落点在小方块内）⇒ 回调同一份
+//   `remove_source_at`；右键菜单的「移除选中」也走它 ⇒ 移除逻辑只有一套。
+class PackageRemoveDelegate : public QStyledItemDelegate {
+public:
+    explicit PackageRemoveDelegate(std::function<void(int)> on_remove)
+        : on_remove_(std::move(on_remove)) {}
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override {
+        if (index.column() != 2) {
+            QStyledItemDelegate::paint(painter, option, index);
+            return;
+        }
+        painter->save();
+        painter->setPen(option.palette.color(QPalette::Text));
+        QFont font = option.font;
+        font.setPointSizeF(font.pointSizeF() + 1.0);
+        painter->setFont(font);
+        painter->drawText(option.rect, Qt::AlignCenter, QStringLiteral("✕"));
+        painter->restore();
+    }
+
+    bool editorEvent(QEvent* event, QAbstractItemModel*, const QStyleOptionViewItem& option,
+                     const QModelIndex& index) override {
+        if (index.column() != 2 || event == nullptr) return false;
+        if (event->type() != QEvent::MouseButtonRelease) return false;
+        auto* mouse = static_cast<QMouseEvent*>(event);
+        if (mouse->button() != Qt::LeftButton) return false;
+        if (!hit_rect(option).contains(mouse->position().toPoint())) return false;
+        if (on_remove_ != nullptr) on_remove_(index.row());
+        return true;   // 吃掉：别让它变成"点了一下整行"
+    }
+
+    QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override {
+        QSize size = QStyledItemDelegate::sizeHint(option, index);
+        if (index.column() == 2) size.setWidth(xrkit::core::px(30));
+        return size;
+    }
+
+private:
+    static QRect hit_rect(const QStyleOptionViewItem& option) {
+        const int box = xrkit::core::px(20);
+        const QRect rect = option.rect;
+        return QRect(rect.center().x() - box / 2, rect.center().y() - box / 2, box, box);
+    }
+    std::function<void(int)> on_remove_;
+};
+
+// ★ 用户第 3 条原话：「并且扫描时有Bug的，选择包模式的时候，是扫不出金球奖的db的。这是个Bug。
+//   不要想着增加后缀的样式（.db0，.db_base等），因为这是遍历不完的。然后点击"所有文件"才能看见那些包。」
+//   ⇒ 过滤器**恰好两段**，用 `*.db*` / `*.sq*` 一次覆盖所有分卷与自定义后缀
+//   （老写法把 `*.db0 *.db1 …` 逐个列出来 ⇒ `gamedata.db_textures_1` 这类根本不在名单里）。
+constexpr const char* kPackageDialogFilter = "包 (*.db* *.sq*);;所有文件 (*.*)";
 
 // 占位子项：`make_entry_item` 给"模型里有子节点的目录"塞的那个空项（只为让展开箭头出现，
 // 真子项在展开时才建）。★ 2026-10-01 用户报「在筛选的时候，文件夹下会多出一个空的行」——
@@ -111,11 +174,34 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     //     · 顶部一行：打包/解包格式 + **解包输出目录**（1.x 的「输出」行，含浏览/拖放/打开）
     //   ——1.x 的"方便"主要就来自这三块控件各自贴着自己的列表，而不是全塞进底部操作栏。
     // ── 左：包列表（6.4：拖放**直接挂在这个既有控件上**，不另造 drop_zone）
-    package_list_ = new QListWidget;
+    // ★★ 2026-10-01 用户第 6 条：「包列表和文件列表引用的子组件是不是不一样？…所以，使用同一个
+    //   小组件来完成。包列表的内容和文件列表的结构实际上是一样的。统一使用文件列表的那个，
+    //   因为那个已经打磨过。」⇒ 由 `QListWidget` 换成 `QTreeWidget`，配置照抄下面 `entry_tree_`
+    //   那一段（uniformRowHeights / 三列 Interactive + 初始宽 + minimumSectionSize /
+    //   ExtendedSelection / acceptDrops / 最小高）。三列＝ 包 / 大小 / ✕。
+    package_list_ = new QTreeWidget;
     package_list_->setObjectName(QStringLiteral("fs_package_list"));
+    package_list_->setColumnCount(3);
+    package_list_->setHeaderLabels({QStringLiteral("包"), QStringLiteral("大小"), QString()});
+    package_list_->setUniformRowHeights(true);
+    package_list_->setAlternatingRowColors(false);
+    package_list_->setRootIsDecorated(false);   // 包列表是平表，不需要展开箭头
+    package_list_->header()->setStretchLastSection(false);
+    for (int col = 0; col < 3; ++col) {
+        package_list_->header()->setSectionResizeMode(col, QHeaderView::Interactive);
+    }
+    package_list_->header()->resizeSection(0, xrkit::core::px(180));
+    package_list_->header()->resizeSection(1, xrkit::core::px(90));
+    package_list_->header()->resizeSection(2, xrkit::core::px(48));
+    // 与 `entry_tree_` **同一个** minimumSectionSize（同一套小组件模板；28 那种"因为 ✕ 列窄"
+    // 的特例会让两条列表的表头行为不一致，正是用户第 6 条要消掉的东西）。
+    package_list_->header()->setMinimumSectionSize(xrkit::core::px(48));
     package_list_->setAcceptDrops(true);
     package_list_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     package_list_->setMinimumHeight(xrkit::core::px(120));
+    // 行尾 ✕（第 5 条）：委托画 + 自己处理点击 ⇒ 删掉工具行里的「移除」按钮
+    package_list_->setItemDelegateForColumn(
+        2, new PackageRemoveDelegate([this](int row) { remove_source_at(row); }));
 
     // ── 中：格式下拉（6.13：取值 = 内部键）+ 条目列表（虚拟化）
     format_combo_ = new QComboBox;
@@ -223,7 +309,9 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     entry_pane_layout->setContentsMargins(0, 0, 0, 0);
     entry_pane_layout->setSpacing(xrkit::core::px(4));
 
-    // 包列表的工具行（1.x `_build_db_panel` 的 bar：加包/扫描目录/全选/加载选中/取消加载/移除/清空 + 计数）
+    // 包列表的工具行（1.x `_build_db_panel` 的 bar：加包/全选/加载选中/取消加载/清空 + 计数）
+    // ★ 2026-10-01 用户第 4/5 条：**「扫描目录」删掉**（加包多了"选文件夹…"模式，功能重合）、
+    //   **「移除」删掉**（改到每行的行尾 ✕）⇒ 工具行少两个按钮，给列表让出空间。
     package_bar_ = new QWidget;
     package_bar_->setObjectName(QStringLiteral("fs_package_bar"));
     {
@@ -233,10 +321,8 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         add_button_ = new QPushButton(QStringLiteral("加包"));
         add_button_->setObjectName(QStringLiteral("fs_add_package"));
         bar->addWidget(add_button_, 0);
-        scan_button_ = new QPushButton(QStringLiteral("扫描目录"));
-        scan_button_->setObjectName(QStringLiteral("fs_scan_dir"));
-        bar->addWidget(scan_button_, 0);
-        select_all_button_ = new QPushButton(QStringLiteral("全选包"));
+        // ★ 第 1 条：按钮表述改成「全选」（原「全选包」）；行为＝**选中而非勾选**
+        select_all_button_ = new QPushButton(QStringLiteral("全选"));
         select_all_button_->setObjectName(QStringLiteral("fs_select_all_packages"));
         bar->addWidget(select_all_button_, 0);
         auto* load_sel = new QPushButton(QStringLiteral("加载选中"));
@@ -247,10 +333,6 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         unload_sel->setObjectName(QStringLiteral("fs_unload_selected"));
         bar->addWidget(unload_sel, 0);
         QObject::connect(unload_sel, &QPushButton::clicked, this, [this] { unload_selected(); });
-        auto* remove_sel = new QPushButton(QStringLiteral("移除"));
-        remove_sel->setObjectName(QStringLiteral("fs_remove_packages"));
-        bar->addWidget(remove_sel, 0);
-        QObject::connect(remove_sel, &QPushButton::clicked, this, [this] { remove_selected(); });
         clear_button_ = new QPushButton(QStringLiteral("清空"));
         clear_button_->setObjectName(QStringLiteral("fs_clear_packages"));
         bar->addWidget(clear_button_, 0);
@@ -389,11 +471,22 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     body_layout()->addWidget(task_->panel(), 0);
 
     QObject::connect(add_button_, &QPushButton::clicked, this, [this] {
+        // ★ 2026-10-01 用户第 4 条：「能不能在加载包那里增加一个文件夹的模式，这样就能精简掉
+        //   一个按钮了。」⇒ 一个「加包」按钮两种模式（弹小菜单），原「扫描目录」按钮删掉。
+        QMenu menu(this);
+        QAction* pick_files = menu.addAction(QStringLiteral("选包文件…"));
+        QAction* pick_dir = menu.addAction(QStringLiteral("选文件夹…"));
+        QAction* chosen = menu.exec(add_button_->mapToGlobal(QPoint(0, add_button_->height())));
+        if (chosen == nullptr) return;
+        if (chosen == pick_dir) {
+            const QString dir = QFileDialog::getExistingDirectory(
+                this, QStringLiteral("选择要加载的文件夹"), resolve_output_dir());
+            if (!dir.isEmpty()) add_paths({dir});   // 目录 ⇒ 散装层 + 递归找包并加载
+            return;
+        }
         const QStringList picked = QFileDialog::getOpenFileNames(
             this, QStringLiteral("选择要加载的包（可多选）"), QString(),
-            QStringLiteral("包 (*.db *.db0 *.db1 *.db2 *.db3 *.db4 *.db5 *.db6 *.db7 *.db8 "
-                           "*.db9 *.xdb *.sqfs *.sq_textures *.sq_levels *.sq_base *.sq_meshes);;"
-                           "所有文件 (*.*)"));
+            QString::fromUtf8(kPackageDialogFilter));
         if (!picked.isEmpty()) add_paths(picked);
     });
     QObject::connect(browse_out, &QPushButton::clicked, this, [this] {
@@ -418,37 +511,22 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     unpack_all_button_->setObjectName(QStringLiteral("fs_unpack_all"));
 
     // 包列表勾选框（1.x `_db_toggle`：勾一个包 = 加载它 + 该包条目全勾）
-    QObject::connect(package_list_, &QListWidget::itemChanged, this,
-                     [this](QListWidgetItem* item) { on_package_item_changed(item); });
+    QObject::connect(package_list_, &QTreeWidget::itemChanged, this,
+                     [this](QTreeWidgetItem* item, int) { on_package_item_changed(item); });
     QObject::connect(select_all_button_, &QPushButton::clicked, this, [this] {
+        // ★★ 2026-10-01 用户第 1 条（原话）：「全选就直接勾选了？不能这样。」「全选包，功能是
+        //   选中而非勾选。」⇒ **回退**上一轮"选中 + 勾选"的做法：这里**只改选中态**，
+        //   一个勾选框都不碰（勾选＝把这一包并进右边的树，那是"勾选"这个动作自己的语义）。
         std::vector<std::string> visible;
         for (const Source& source : sources_) visible.push_back(source.key);
         selection_.select_all(visible);
-        // ★ 用户 2026-10-01：「包列表全选是能全选，但是并没有勾选。」⇒ 「全选包」现在
-        //   **选中 + 勾选**一起做（勾选态＝这一包进合并树，是这个界面里"选它"的真正含义）；
-        //   批量置位期间用 `rebuilding_package_list_` 挡住逐项回灌，最后统一加载 + 刷新。
-        rebuilding_package_list_ = true;
-        for (int i = 0; i < package_list_->count(); ++i) {
-            package_list_->item(i)->setSelected(true);
-            package_list_->item(i)->setCheckState(Qt::Checked);
+        for (int i = 0; i < package_list_->topLevelItemCount(); ++i) {
+            package_list_->topLevelItem(i)->setSelected(true);
         }
-        rebuilding_package_list_ = false;
-        load_selected();   // 未加载的（此刻全被选中）一次装进来
-        for (size_t i = 0; i < sources_.size(); ++i) {
-            const int merged = loaded_index_for_source(i);
-            if (merged >= 0) tree_.toggle_source(merged, true);
-        }
-        refresh_package_checks();
-        refresh_rows();
+        refresh_counts();
     });
     QObject::connect(check_all_button_, &QPushButton::clicked, this, [this] { check_all(true); });
     QObject::connect(check_none_button_, &QPushButton::clicked, this, [this] { check_all(false); });
-    // 包列表那一行按钮（1.x `_build_db_panel` 的同名动作）
-    QObject::connect(scan_button_, &QPushButton::clicked, this, [this] {
-        const QString dir = QFileDialog::getExistingDirectory(
-            this, QStringLiteral("扫描目录里的包（递归）"), resolve_output_dir());
-        if (!dir.isEmpty()) scan_dir(dir);
-    });
     QObject::connect(clear_button_, &QPushButton::clicked, this, [this] { clear_all(); });
     // 搜索：边打边筛（1.x 的 `search_var.trace_add` 同一行为）
     QObject::connect(search_edit_, &QLineEdit::textChanged, this, [this] { refresh_rows(); });
@@ -460,11 +538,78 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         start_unpack(false);
     });
 
+    // ★ 用户第 8 条：「增加右键选单。要加什么功能自己想。」—— 两个列表各一个，**都调既有函数**
+    //   （按钮的同一个底层入口），不另写一套逻辑。
+    package_list_->setContextMenuPolicy(Qt::CustomContextMenu);
+    QObject::connect(package_list_, &QWidget::customContextMenuRequested, this,
+                     [this](const QPoint& pos) {
+                         QMenu menu(this);
+                         QAction* act_load = menu.addAction(QStringLiteral("加载选中"));
+                         QAction* act_unload = menu.addAction(QStringLiteral("取消加载"));
+                         menu.addSeparator();
+                         QAction* act_select_all = menu.addAction(QStringLiteral("全选"));
+                         menu.addSeparator();
+                         QAction* act_remove = menu.addAction(QStringLiteral("移除选中"));
+                         QAction* act_clear = menu.addAction(QStringLiteral("清空"));
+                         QAction* chosen =
+                             menu.exec(package_list_->viewport()->mapToGlobal(pos));
+                         if (chosen == nullptr) return;
+                         if (chosen == act_load) load_selected();
+                         else if (chosen == act_unload) unload_selected();
+                         else if (chosen == act_select_all) select_all_button_->click();
+                         else if (chosen == act_remove) remove_selected();
+                         else if (chosen == act_clear) clear_all();
+                     });
+    entry_tree_->setContextMenuPolicy(Qt::CustomContextMenu);
+    QObject::connect(entry_tree_, &QWidget::customContextMenuRequested, this,
+                     [this](const QPoint& pos) {
+                         QMenu menu(this);
+                         QAction* act_expand = menu.addAction(QStringLiteral("展开一级"));
+                         QAction* act_collapse = menu.addAction(QStringLiteral("折叠全部"));
+                         menu.addSeparator();
+                         QAction* act_check = menu.addAction(QStringLiteral("勾选选中"));
+                         QAction* act_uncheck = menu.addAction(QStringLiteral("取消勾选选中"));
+                         menu.addSeparator();
+                         QAction* act_copy = menu.addAction(QStringLiteral("复制路径"));
+                         QAction* chosen = menu.exec(entry_tree_->viewport()->mapToGlobal(pos));
+                         if (chosen == nullptr) return;
+                         if (chosen == act_expand || chosen == act_collapse) {
+                             // 懒建树**不做真 expandAll**（几万条会把整棵树建出来）⇒ 只动顶层一级
+                             const bool expand = (chosen == act_expand);
+                             for (int i = 0; i < entry_tree_->topLevelItemCount(); ++i) {
+                                 entry_tree_->topLevelItem(i)->setExpanded(expand);
+                             }
+                             return;
+                         }
+                         if (chosen == act_check || chosen == act_uncheck) {
+                             // 走 Qt 的 setCheckState ⇒ itemChanged ⇒ on_entry_item_changed 回灌模型
+                             const Qt::CheckState state =
+                                 (chosen == act_check) ? Qt::Checked : Qt::Unchecked;
+                             for (QTreeWidgetItem* item : entry_tree_->selectedItems()) {
+                                 if (item->flags().testFlag(Qt::ItemIsUserCheckable)) {
+                                     item->setCheckState(0, state);
+                                 }
+                             }
+                             return;
+                         }
+                         if (chosen == act_copy) {
+                             QStringList paths;
+                             for (QTreeWidgetItem* item : entry_tree_->selectedItems()) {
+                                 if (!item->toolTip(0).isEmpty()) paths << item->toolTip(0);
+                             }
+                             if (!paths.isEmpty()) {
+                                 QGuiApplication::clipboard()->setText(
+                                     paths.join(QLatin1Char('\n')));
+                             }
+                         }
+                     });
+
     refresh_rows();
 }
 
-void FsPage::fill_format_combo() {
-    format_combo_->clear();
+QString FsPage::package_dialog_filter() { return QString::fromUtf8(kPackageDialogFilter); }
+
+void FsPage::fill_format_combo() {    format_combo_->clear();
     for (const efs::FsFormatItem& item : efs::fs_formats()) {
         // 显示名给人看，**取值给机器用**（内部键）—— 1.x 把显示名当取值存，
         // 于是 `ALL_FMTS.get(fmt)` 必然取不到，SquashFS 被静默按 xdb 打包。
@@ -1157,25 +1302,28 @@ int FsPage::scan_dir(const QString& dir) {
 }
 
 void FsPage::rebuild_package_list() {
-    // 包列表每行：勾选框 + basename + [已加载]/[未加载] + 大小。
+    // 包列表每行（三列）：勾选框 + 包名（加载过后缀 `[已加载]`） / 大小 / ✕ 列（委托画）。
     // ★ 勾选框 = 该包在合并树里的**整包勾选态**（1.x `_db_chk_state` 的 partial-aware 三态），
     //   勾上/取消 = 该包贡献的条目全勾/全不勾（1.x `_db_toggle` ⇒ 引擎 `toggle_source`）。
+    // ★ 2026-10-01：这是"**包列表内容改变**"才走的路径（新增/移除/排序/加载），
+    //   勾选态的变化**不走这里**（用户第 7 条，见 `on_package_item_changed`）。
     rebuilding_package_list_ = true;
     int selected_row = -1;
-    for (int i = 0; i < package_list_->count(); ++i) {
-        if (package_list_->item(i)->isSelected()) selected_row = i;
+    for (int i = 0; i < package_list_->topLevelItemCount(); ++i) {
+        if (package_list_->topLevelItem(i)->isSelected()) selected_row = i;
     }
     package_list_->clear();
     for (size_t i = 0; i < sources_.size(); ++i) {
         const Source& source = sources_[i];
         const QFileInfo info(source.path);
-        const QString state = source.loaded ? QStringLiteral("[已加载]")
-                                            : QStringLiteral("[未加载]");
-        // 大小走 `format_size`（1.x `_fmt_size` 同格式）—— 别再显示 "8321224704 B" 这种
-    auto* item = new QListWidgetItem(
-        QStringLiteral("%1　%2　%3").arg(info.fileName(), state, format_size(
-                                                      static_cast<uint64_t>(info.size()))));
+        auto* item = new QTreeWidgetItem;
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setText(0, source.loaded
+                             ? QStringLiteral("%1　[已加载]").arg(info.fileName())
+                             : info.fileName());
+        item->setText(1, format_size(static_cast<uint64_t>(info.size())));
+        item->setText(2, QString());                       // 委托在 col2 画 ✕
+        item->setData(0, Qt::UserRole, source.path);       // 反查用（右键/委托都按行号，够用）
         Qt::CheckState check = Qt::Unchecked;
         if (source.loaded) {
             int files = 0;
@@ -1184,38 +1332,57 @@ void FsPage::rebuild_package_list() {
             check = checked == 0 ? Qt::Unchecked
                                  : (checked == files ? Qt::Checked : Qt::PartiallyChecked);
         }
-        item->setCheckState(check);
-        package_list_->addItem(item);
+        item->setCheckState(0, check);
+        package_list_->addTopLevelItem(item);
     }
     rebuilding_package_list_ = false;
-    if (selected_row >= 0 && selected_row < package_list_->count()) {
-        package_list_->item(selected_row)->setSelected(true);
+    if (selected_row >= 0 && selected_row < package_list_->topLevelItemCount()) {
+        package_list_->topLevelItem(selected_row)->setSelected(true);
     }
     refresh_counts();
 }
 
-void FsPage::on_package_item_changed(QListWidgetItem* item) {
-    if (rebuilding_package_list_ || item == nullptr) return;   // 重建列表时不要把状态回灌
-    const int row = package_list_->row(item);
+void FsPage::remove_source_at(int row) {
+    // ★ 第 5 条：行尾 ✕ 与右键菜单「移除选中」**共用这一条**（按行号摘掉一个源）。
     if (row < 0 || row >= static_cast<int>(sources_.size())) return;
-    const bool want = item->checkState() != Qt::Unchecked;
+    selection_.toggle(sources_[static_cast<size_t>(row)].key, false);
+    sources_.erase(sources_.begin() + row);
+    entries_.erase(entries_.begin() + row);
+    rebuild_package_list();
+    rebuild_tree();
+}
+
+void FsPage::on_package_item_changed(QTreeWidgetItem* item) {
+    if (rebuilding_package_list_ || item == nullptr) return;   // 重建列表时不要把状态回灌
+    const int row = package_list_->indexOfTopLevelItem(item);
+    if (row < 0 || row >= static_cast<int>(sources_.size())) return;
+    const bool want = item->checkState(0) != Qt::Unchecked;
     if (!sources_[static_cast<size_t>(row)].loaded) {
         // 1.x `_db_toggle`：勾选一个**未加载**的包 ⇒ 先加载，再整包勾上
         if (!want) return;
-        package_list_->item(row)->setSelected(true);
-        load_selected();
+        package_list_->topLevelItem(row)->setSelected(true);
+        load_selected();          // 内容变了 ⇒ 这里**允许**重建（load_selected → rebuild_tree）
         rebuild_package_list();
     }
     const int merged = loaded_index_for_source(static_cast<size_t>(row));
     if (merged < 0) return;
     tree_.toggle_source(merged, want);
+    // ★★ 2026-10-01 用户第 7 条（原话）：「每次勾选或取消勾选包列表当中的文件，右边的文件列表
+    //   似乎都会重建（因为在文件列表里勾选已展开的母文件夹，不会收起，而操作包，文件列表的
+    //   所有文件夹都会收起）。这明明不需要重建，只有包列表内容改变（增加，减少，替换等）
+    //   才需要重建右边的文件树。」
+    //   ⇒ 这里**不再调 `refresh_rows()`**（那会 clear + 重建整棵树 ⇒ 展开态全丢），
+    //     只按模型刷**勾选态**与计数 —— 与 `on_entry_item_changed` 走同一套（三态 + 计数）。
+    rebuild_dir_states();
+    sync_entry_states();
     refresh_package_checks();
-    refresh_rows();
+    refresh_counts();
 }
 
 void FsPage::refresh_package_checks() {
     rebuilding_package_list_ = true;
-    for (int row = 0; row < package_list_->count() && row < static_cast<int>(sources_.size());
+    for (int row = 0; row < package_list_->topLevelItemCount() &&
+                      row < static_cast<int>(sources_.size());
          ++row) {
         int files = 0;
         int checked = 0;
@@ -1223,9 +1390,10 @@ void FsPage::refresh_package_checks() {
             tree_.source_check_state(loaded_index_for_source(static_cast<size_t>(row)), &files,
                                      &checked);
         }
-        QListWidgetItem* item = package_list_->item(row);
-        item->setCheckState(checked == 0 ? Qt::Unchecked
-                                        : (checked == files ? Qt::Checked : Qt::PartiallyChecked));
+        QTreeWidgetItem* item = package_list_->topLevelItem(row);
+        item->setCheckState(0, checked == 0 ? Qt::Unchecked
+                                            : (checked == files ? Qt::Checked
+                                                                : Qt::PartiallyChecked));
     }
     rebuilding_package_list_ = false;
 }
@@ -1233,9 +1401,9 @@ void FsPage::refresh_package_checks() {
 int FsPage::load_selected() {
     // 1.x `_load_selected`：只加载**选中的**包，勾选态不碰
     int loaded = 0;
-    const QList<QListWidgetItem*> chosen = package_list_->selectedItems();
-    for (QListWidgetItem* item : chosen) {
-        const int row = package_list_->row(item);
+    const QList<QTreeWidgetItem*> chosen = package_list_->selectedItems();
+    for (QTreeWidgetItem* item : chosen) {
+        const int row = package_list_->indexOfTopLevelItem(item);
         if (row < 0 || row >= static_cast<int>(sources_.size())) continue;
         if (sources_[static_cast<size_t>(row)].loaded) continue;
         QString gated = sources_[static_cast<size_t>(row)].path;
@@ -1281,8 +1449,8 @@ int FsPage::load_selected() {
 int FsPage::unload_selected() {
     // 1.x `_unload_selected`：只改"加载"状态，勾选态跟随原节点（merge 的既有语义）
     int unloaded = 0;
-    for (QListWidgetItem* item : package_list_->selectedItems()) {
-        const int row = package_list_->row(item);
+    for (QTreeWidgetItem* item : package_list_->selectedItems()) {
+        const int row = package_list_->indexOfTopLevelItem(item);
         if (row < 0 || row >= static_cast<int>(sources_.size())) continue;
         if (!sources_[static_cast<size_t>(row)].loaded) continue;
         sources_[static_cast<size_t>(row)].loaded = false;
@@ -1295,8 +1463,8 @@ int FsPage::unload_selected() {
 
 int FsPage::remove_selected() {
     std::vector<size_t> doomed;
-    for (QListWidgetItem* item : package_list_->selectedItems()) {
-        const int row = package_list_->row(item);
+    for (QTreeWidgetItem* item : package_list_->selectedItems()) {
+        const int row = package_list_->indexOfTopLevelItem(item);
         if (row >= 0 && row < static_cast<int>(sources_.size())) {
             doomed.push_back(static_cast<size_t>(row));
         }

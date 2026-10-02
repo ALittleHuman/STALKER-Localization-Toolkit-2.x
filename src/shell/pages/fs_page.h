@@ -70,6 +70,10 @@ public:
     QStringList load_errors() const { return load_errors_; }
     // 自检用：拖放过滤器到底装在哪些控件上（判据是**接线**，见 drop_filter.h）
     FileDropFilter* drop_filter() const { return drop_filter_; }
+    // ★ 2026-10-01 用户第 3 条：「扫描时有Bug的，选择包模式的时候，是扫不出金球奖的db的」
+    //   ⇒ 加包对话框的过滤器**恰好两段**（`*.db*` / `*.sq*` 各一段），自检直接断言它，
+    //   避免有人再回去枚举 `*.db0 *.db1 …`（那正是看不到 `gamedata.db_textures_1` 的原因）。
+    static QString package_dialog_filter();
 
     int source_count() const { return static_cast<int>(sources_.size()); }
     // 已加载的源数（`refresh_counts` 的"已加载 k"与自检都用它）
@@ -110,7 +114,11 @@ public:
                                             const std::vector<std::string>& only = {});
 
     QComboBox* format_combo() const { return format_combo_; }
-    QListWidget* package_list() const { return package_list_; }
+    // ★ 2026-10-01 用户第 6 条：「包列表和文件列表引用的子组件是不是不一样？…所以，使用同一个
+    //   小组件来完成。包列表的内容和文件列表的结构实际上是一样的。统一使用文件列表的那个，
+    //   因为那个已经打磨过。」⇒ 由 `QListWidget` 换成与 `entry_tree_` **同一个组件、同一套配置**
+    //   的 `QTreeWidget`（三列：包 / 大小 / ✕ 按钮列）。
+    QTreeWidget* package_list() const { return package_list_; }
     // ★ 2026-09-28（用户贴 1.x 对照截图："差距。"）：包内文件区**从扁平路径文本改成真树**
     //   —— 可展开/折叠（**懒建子节点**，几万条目的大包不卡）、每行**三态勾选框**
     //   （能勾单个文件/整个目录，回灌引擎 `MergeTree`）、右列**大小**（1.x `_fmt_size` 同格式）
@@ -135,7 +143,8 @@ public:
     QLineEdit* search_edit() const { return search_edit_; }
     QLabel* entry_count_label() const { return entry_count_label_; }
     QPushButton* open_out_button() const { return open_out_button_; }
-    QPushButton* scan_button() const { return scan_button_; }
+    // ★ 2026-10-01 用户第 4 条：加包增加**文件夹模式** ⇒ 「扫描目录」按钮删掉（`scan_dir` 保留，
+    //   文件夹模式走 `add_paths({dir})`，它自己就会递归找包并加载）。
     QPushButton* clear_button() const { return clear_button_; }
     QPushButton* check_none_button() const { return check_none_button_; }
     QPushButton* unpack_checked_button() const { return unpack_checked_button_; }
@@ -204,8 +213,10 @@ public:
     void clear_pack();
     void refresh_pack_list();
     // 包列表勾选框（1.x `_db_toggle`/`_db_chk_state`）
-    void on_package_item_changed(QListWidgetItem* item);
+    void on_package_item_changed(QTreeWidgetItem* item);
     void refresh_package_checks();
+    // ★ 2026-10-01 用户第 5 条：行尾 ✕ 与右键菜单「移除选中」**共用这一条**（按行号移除一个源）
+    void remove_source_at(int row);
     // 1.x `_pack_root`：设了输入目录就用它（2.x 用「解包到」当这个"根"）
     QString pack_base_dir() const;
     // 1.x `_pack_output_basename`（没有"输入目录"那一支）：顶层同名 ⇒ 用那个名字；
@@ -300,7 +311,7 @@ private:
     QString last_gate_error_;
     QStringList load_errors_;
 
-    QListWidget* package_list_ = nullptr;
+    QTreeWidget* package_list_ = nullptr;
     QComboBox* format_combo_ = nullptr;
     QTreeWidget* entry_tree_ = nullptr;
     QTabWidget* tabs_ = nullptr;
@@ -317,7 +328,6 @@ private:
     QLabel* entry_count_label_ = nullptr;
     QLabel* package_count_label_ = nullptr;
     QPushButton* open_out_button_ = nullptr;
-    QPushButton* scan_button_ = nullptr;
     QPushButton* clear_button_ = nullptr;
     QPushButton* check_none_button_ = nullptr;
     QPushButton* unpack_checked_button_ = nullptr;

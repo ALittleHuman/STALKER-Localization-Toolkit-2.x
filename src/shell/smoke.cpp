@@ -1155,6 +1155,73 @@ SmokeResult run_smoke() {
         check(page.package_list() != nullptr && page.package_list()->acceptDrops(),
               QStringLiteral("6.4 拖放直接挂在包列表上（acceptDrops）"));
 
+        // ★★ 2026-10-01 用户第 6 条（原话）：「包列表和文件列表引用的子组件是不是不一样？…
+        //   所以，使用同一个小组件来完成。包列表的内容和文件列表的结构实际上是一样的。
+        //   统一使用文件列表的那个，因为那个已经打磨过。」
+        //   可判红的形式：两者**同一套关键配置**（原来包列表是 `QListWidget`，这几条天然对不上）。
+        {
+            // 对齐的是**组件模板**那一组属性：列数 / ExtendedSelection / uniformRowHeights /
+            // alternatingRowColors / 表头策略（三列 Interactive + 同一个 minimumSectionSize）。
+            // **`acceptDrops` 不算"对齐项"**：它是**实例级特性**（包列表是拖放目标，`drop_filter_`
+            // 只挂在它身上；条目树就算设了也没有 handler ⇒ 拖上去没反应，反而误导）——
+            // 所以这里只单独要求包列表可接收拖放（6.4 的要求），不拿它跟条目树比。
+            const auto header_interactive = [](QTreeWidget* tree) {
+                if (tree == nullptr || tree->header() == nullptr) return false;
+                for (int col = 0; col < tree->columnCount(); ++col) {
+                    if (tree->header()->sectionResizeMode(col) != QHeaderView::Interactive) {
+                        return false;
+                    }
+                }
+                return tree->columnCount() > 0;
+            };
+            check(qobject_cast<QTreeWidget*>(page.package_list()) != nullptr &&
+                      page.package_list()->columnCount() == 3 &&
+                      page.package_list()->selectionMode() ==
+                          page.entry_tree()->selectionMode() &&
+                      page.package_list()->selectionMode() ==
+                          QAbstractItemView::ExtendedSelection &&
+                      page.package_list()->uniformRowHeights() ==
+                          page.entry_tree()->uniformRowHeights() &&
+                      page.package_list()->uniformRowHeights() &&
+                      page.package_list()->alternatingRowColors() ==
+                          page.entry_tree()->alternatingRowColors() &&
+                      header_interactive(page.package_list()) &&
+                      header_interactive(page.entry_tree()) &&
+                      page.package_list()->header()->minimumSectionSize() ==
+                          page.entry_tree()->header()->minimumSectionSize() &&
+                      page.package_list()->acceptDrops(),
+                  QStringLiteral("第6条 包列表与条目树同一套小组件配置（列 %1 / selection %2==%3 / "
+                                 "uniform %4==%5 / alt %6==%7 / 表头三列 Interactive %8==%9 / "
+                                 "minSection %10==%11 / 包列表可接收拖放 %12）")
+                      .arg(page.package_list()->columnCount())
+                      .arg(static_cast<int>(page.package_list()->selectionMode()))
+                      .arg(static_cast<int>(page.entry_tree()->selectionMode()))
+                      .arg(page.package_list()->uniformRowHeights() ? 1 : 0)
+                      .arg(page.entry_tree()->uniformRowHeights() ? 1 : 0)
+                      .arg(page.package_list()->alternatingRowColors() ? 1 : 0)
+                      .arg(page.entry_tree()->alternatingRowColors() ? 1 : 0)
+                      .arg(header_interactive(page.package_list()) ? 1 : 0)
+                      .arg(header_interactive(page.entry_tree()) ? 1 : 0)
+                      .arg(page.package_list()->header()->minimumSectionSize())
+                      .arg(page.entry_tree()->header()->minimumSectionSize())
+                      .arg(page.package_list()->acceptDrops() ? 1 : 0));
+        }
+
+        // ★★ 2026-10-01 用户第 3 条（原话）：「并且扫描时有Bug的，选择包模式的时候，是扫不出
+        //   金球奖的db的。这是个Bug。不要想着增加后缀的样式（.db0，.db_base等），因为这是
+        //   遍历不完的。然后点击"所有文件"才能看见那些包。」
+        //   判据：过滤器里必须有 `*.db*` / `*.sq*` 这两段通配，且**不许**再枚举具体后缀
+        //   （枚举是"扫不出"的根因：`gamedata.db_textures_1` 不在任何一张名单里）。
+        {
+            const QString filter = FsPage::package_dialog_filter();
+            check(filter.contains(QStringLiteral("*.db*")) &&
+                      filter.contains(QStringLiteral("*.sq*")) &&
+                      !filter.contains(QStringLiteral("*.db0")) &&
+                      !filter.contains(QStringLiteral("*.db_base")),
+                  QStringLiteral("第3条 加包过滤器=「%1」（含 *.db* / *.sq*，不枚举具体后缀）")
+                      .arg(filter));
+        }
+
         // ★ 2026-09-30 结构重排（用户第四轮 ①「你不认为，堆起来很丑吗？」+ 授权「按自己审美来改」）
         //   判据＝**工具行归位**：工具行与它服务的那个列表**同一父控件**、且行在列表**上面**；
         //   两个面板一起进同一个分隔条。**修前第一条就红**：条目工具行（搜索/全选）的父控件是
@@ -1531,9 +1598,9 @@ SmokeResult run_smoke() {
               QStringLiteral("① 包内全选/全不选（全选 %1 → 全不选 %2）")
                   .arg(all_checked)
                   .arg(page.checked_file_count()));
-        check(page.package_list()->count() == 1 && page.loaded_source_count() == 1,
+        check(page.package_list()->topLevelItemCount() == 1 && page.loaded_source_count() == 1,
               QStringLiteral("① 包列表行数/已加载数对得上（行 %1 / 已加载 %2）")
-                  .arg(page.package_list()->count())
+                  .arg(page.package_list()->topLevelItemCount())
                   .arg(page.loaded_source_count()));
 
         // —— 扫描目录：1.x `_scan_dir`（递归找包、**不自动加载**）→ 选中 → 加载选中
@@ -1550,8 +1617,8 @@ SmokeResult run_smoke() {
             check(scan_page.loaded_source_count() == 0,
                   QStringLiteral("① 扫描目录**不自动加载**（已加载 %1，应为 0）")
                       .arg(scan_page.loaded_source_count()));
-            for (int i = 0; i < scan_page.package_list()->count(); ++i) {
-                scan_page.package_list()->item(i)->setSelected(true);
+            for (int i = 0; i < scan_page.package_list()->topLevelItemCount(); ++i) {
+                scan_page.package_list()->topLevelItem(i)->setSelected(true);
             }
             scan_page.load_selected();
             check(scan_page.loaded_source_count() == scan_page.source_count(),
@@ -1559,8 +1626,8 @@ SmokeResult run_smoke() {
                       .arg(scan_page.loaded_source_count())
                       .arg(scan_page.source_count()));
             const int before_unload = scan_page.entry_built_file_count();
-            for (int i = 0; i < scan_page.package_list()->count(); ++i) {
-                scan_page.package_list()->item(i)->setSelected(true);
+            for (int i = 0; i < scan_page.package_list()->topLevelItemCount(); ++i) {
+                scan_page.package_list()->topLevelItem(i)->setSelected(true);
             }
             scan_page.unload_selected();
             check(before_unload > 0 && scan_page.loaded_source_count() == 0 &&
@@ -1571,10 +1638,11 @@ SmokeResult run_smoke() {
                       .arg(scan_page.entry_built_file_count())
                       .arg(scan_page.entry_top_level_count()));
             scan_page.clear_all();
-            check(scan_page.source_count() == 0 && scan_page.package_list()->count() == 0,
+            check(scan_page.source_count() == 0 &&
+                      scan_page.package_list()->topLevelItemCount() == 0,
                   QStringLiteral("① 清空：已知包与列表都空（源 %1 / 行 %2）")
                       .arg(scan_page.source_count())
-                      .arg(scan_page.package_list()->count()));
+                      .arg(scan_page.package_list()->topLevelItemCount()));
             scan_page.hide();
         }
 
@@ -1676,15 +1744,15 @@ SmokeResult run_smoke() {
             QApplication::processEvents();
             check_page.add_paths({db_path});
             QApplication::processEvents();
-            check(check_page.package_list()->count() == 1 &&
-                      check_page.package_list()->item(0)->checkState() == Qt::Unchecked,
+            check(check_page.package_list()->topLevelItemCount() == 1 &&
+                      check_page.package_list()->topLevelItem(0)->checkState(0) == Qt::Unchecked,
                   QStringLiteral("② 包行有勾选框且初始未勾"));
-            check_page.package_list()->item(0)->setCheckState(Qt::Checked);
+            check_page.package_list()->topLevelItem(0)->setCheckState(0, Qt::Checked);
             QApplication::processEvents();
             check(check_page.checked_file_count() == 2,
                   QStringLiteral("② 勾一个包 = 该包条目全勾（实测 %1 个文件）")
                       .arg(check_page.checked_file_count()));
-            check_page.package_list()->item(0)->setCheckState(Qt::Unchecked);
+            check_page.package_list()->topLevelItem(0)->setCheckState(0, Qt::Unchecked);
             QApplication::processEvents();
             check(check_page.checked_file_count() == 0,
                   QStringLiteral("② 取消勾选 = 该包条目全不勾（实测 %1）")
@@ -1692,6 +1760,92 @@ SmokeResult run_smoke() {
             check_page.hide();
             pack_page.hide();
             QDir(pk_root).removeRecursively();
+        }
+
+        // ★★ 2026-10-01 用户第 7 条（原话）：「每次勾选或取消勾选包列表当中的文件，右边的文件列表
+        //   似乎都会重建（因为在文件列表里勾选已展开的母文件夹，不会收起，而操作包，文件列表的
+        //   所有文件夹都会收起）。这明明不需要重建，只有包列表内容改变（增加，减少，替换等）
+        //   才需要重建右边的文件树。」
+        //   判据（能判红：把 `on_package_item_changed` 结尾改回 `refresh_rows()` 立刻红）：
+        //   勾/取消勾**已加载**的包 ⇒ 条目树**不重建**（同一个 QTreeWidgetItem 对象、仍是展开的、
+        //   顶层项数不变）。
+        {
+            FsPage keep_page;
+            keep_page.add_source(QStringLiteral("keep_a"),
+                                 {efs::EntryInfo{std::string("d"), true, 0},
+                                  efs::EntryInfo{std::string("d/a.txt"), false, 10}});
+            keep_page.add_source(QStringLiteral("keep_b"),
+                                 {efs::EntryInfo{std::string("d"), true, 0},
+                                  efs::EntryInfo{std::string("d/b.txt"), false, 20}});
+            keep_page.resize(900, page_min_h());
+            keep_page.show();
+            QApplication::processEvents();
+            QTreeWidgetItem* dir_item = keep_page.entry_tree()->topLevelItem(0);
+            if (dir_item != nullptr) dir_item->setExpanded(true);
+            QApplication::processEvents();
+            const int top_before = keep_page.entry_tree()->topLevelItemCount();
+            const int kids_before = dir_item != nullptr ? dir_item->childCount() : -1;
+            const bool expanded_before = dir_item != nullptr && dir_item->isExpanded();
+            // 勾这一行的勾选框（这一包是"已加载"的 ⇒ 只该 toggle_source，不该重建树）
+            keep_page.package_list()->topLevelItem(0)->setCheckState(0, Qt::Checked);
+            QApplication::processEvents();
+            QTreeWidgetItem* dir_after = keep_page.entry_tree()->topLevelItem(0);
+            check(expanded_before && dir_after == dir_item &&
+                      dir_after->isExpanded() &&
+                      keep_page.entry_tree()->topLevelItemCount() == top_before &&
+                      dir_after->childCount() == kids_before,
+                  QStringLiteral("第7条 勾包**不重建**右树：同一对象 %1 / expanded %2 / "
+                                 "顶层 %3→%4 / 子项 %5→%6")
+                      .arg(dir_after == dir_item ? 1 : 0)
+                      .arg(dir_after != nullptr && dir_after->isExpanded() ? 1 : 0)
+                      .arg(top_before)
+                      .arg(keep_page.entry_tree()->topLevelItemCount())
+                      .arg(kids_before)
+                      .arg(dir_after != nullptr ? dir_after->childCount() : -1));
+            // 取消勾选同理
+            keep_page.package_list()->topLevelItem(0)->setCheckState(0, Qt::Unchecked);
+            QApplication::processEvents();
+            QTreeWidgetItem* dir_last = keep_page.entry_tree()->topLevelItem(0);
+            check(dir_last == dir_item && dir_last->isExpanded(),
+                  QStringLiteral("第7条 取消勾选同样不重建（同一对象 %1 / expanded %2）")
+                      .arg(dir_last == dir_item ? 1 : 0)
+                      .arg(dir_last != nullptr && dir_last->isExpanded() ? 1 : 0));
+            keep_page.hide();
+        }
+
+        // ★ 2026-10-01 用户第 5 条：「移除这个按钮也可以优化掉，在包的条目后面增加一个叉叉按钮。」
+        //   判据＝**点行尾 ✕ 真的移除那一行**：用合成的 `MouseButtonRelease` 驱动 col2 的委托
+        //   `editorEvent`（判红：拿掉落点判定或回调 ⇒ 这条立刻红），并且"移除"只有
+        //   `remove_source_at` 一个入口（工具行里的「移除」按钮已删）。
+        {
+            FsPage chai_page;
+            chai_page.add_source(QStringLiteral("chai_a"),
+                                 {efs::EntryInfo{std::string("x.txt"), false, 5}});
+            chai_page.resize(760, page_min_h());
+            chai_page.show();
+            QApplication::processEvents();
+            check(chai_page.source_count() == 1 &&
+                      chai_page.package_list()->itemDelegateForColumn(2) != nullptr,
+                  QStringLiteral("第5条 ✕ 列有自己的委托（源 %1 个）").arg(chai_page.source_count()));
+            QAbstractItemDelegate* del = chai_page.package_list()->itemDelegateForColumn(2);
+            const QModelIndex idx = chai_page.package_list()->model()->index(0, 2);
+            QStyleOptionViewItem opt;
+            opt.rect = chai_page.package_list()->visualRect(idx);
+            QMouseEvent release(QEvent::MouseButtonRelease, QPointF(opt.rect.center()),
+                                QPointF(chai_page.package_list()->viewport()->mapToGlobal(
+                                    opt.rect.center())),
+                                Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            const bool handled = del != nullptr &&
+                                 del->editorEvent(&release, chai_page.package_list()->model(), opt,
+                                                  idx);
+            QApplication::processEvents();
+            check(handled && chai_page.source_count() == 0 &&
+                      chai_page.package_list()->topLevelItemCount() == 0,
+                  QStringLiteral("第5条 点行尾 ✕ = 移除该行（handled=%1 / 源 %2 / 行 %3）")
+                      .arg(handled ? 1 : 0)
+                      .arg(chai_page.source_count())
+                      .arg(chai_page.package_list()->topLevelItemCount()));
+            chai_page.hide();
         }
 
         // —— ③ 解包/封包**走任务壳**（1.x `TaskRunner` 的那半边"方便"：大包不冻界面）
@@ -2292,14 +2446,12 @@ SmokeResult run_smoke() {
 
         // 6.3：两个"全选"
         page.select_all_button()->click();
-        check(page.selection().size() == 2, QStringLiteral("6.3 「全选包」改了包列表选中态"));
-        // ★★ 2026-10-01 **口径有意改写**（用户：「包列表全选是能全选，但是并没有勾选。」）：
-        //   旧口径是「全选包**只**动选中态、不碰包内勾选」（6.3 的"两套状态"），但用户看到的是
-        //   "点了全选、框里还是空的，像没生效"。现改为：**全选包 = 选中 + 勾选一起做**
-        //   （勾选态＝这一包进合并树，才是"选它"在这个界面里的真含义）。
-        //   保留的区分：**「包内全选/全不选」仍然只动包内勾选**（下面那条接着验）。
-        check(page.checked_file_count() > 0,
-              QStringLiteral("6.3 「全选包」现在**同时勾选**（实测勾了 %1 个）")
+        check(page.selection().size() == 2, QStringLiteral("6.3 「全选」改了包列表选中态"));
+        // ★★ 2026-10-01 **口径再次改写（回退）**——用户原话：「全选就直接勾选了？不能这样。」
+        //   「全选包，功能是选中而非勾选。」⇒ 「全选」（原「全选包」）**只改选中态**，
+        //   勾选态一个都不碰（上一轮我把它改成"选中+勾选"，被用户当场否掉）。
+        check(page.checked_file_count() == 0,
+              QStringLiteral("6.3 「全选」**不碰**包内勾选态（实测勾了 %1 个）")
                   .arg(page.checked_file_count()));
         page.check_all_button()->click();
         check(page.checked_file_count() == 3,
