@@ -221,6 +221,26 @@ int main(int argc, char** argv) {
                            .arg(total)
                            .arg(vp)
                            .arg(total >= vp - 2 ? 1 : 0);
+                // ★ 2026-10-02 用户这次的头号诉求是"左边的包列表也该是文件树" ⇒
+                //   把**层级**打出来（缩进 d / 文本 / 是不是源节点），用数字验收，不靠看图猜。
+                int prow = 0;
+                std::function<void(QTreeWidgetItem*, int)> dump_pkg = [&](QTreeWidgetItem* item,
+                                                                         int depth) {
+                    if (item == nullptr || prow >= 40) return;
+                    ++prow;
+                    out << QStringLiteral("PROW d=%1 text='%2' src=%3 kids=%4\n")
+                               .arg(depth)
+                               .arg(item->text(0))
+                               .arg(item->data(0, Qt::UserRole).toInt())
+                               .arg(item->childCount());
+                    for (int i = 0; i < item->childCount(); ++i) {
+                        dump_pkg(item->child(i), depth + 1);
+                    }
+                };
+                for (int i = 0; i < pkg->topLevelItemCount(); ++i) {
+                    dump_pkg(pkg->topLevelItem(i), 0);
+                }
+                out << QStringLiteral("PROW total_top=%1\n").arg(pkg->topLevelItemCount());
             }
             // 表头裁字专项诊断（用户 2026-09-30 与 2026-10-01 两次指出"那行字顶部被切"）
             if (auto* tree = fs->findChild<QTreeWidget*>(QStringLiteral("fs_entry_tree"))) {

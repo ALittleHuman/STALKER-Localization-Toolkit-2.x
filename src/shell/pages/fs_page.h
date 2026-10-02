@@ -215,8 +215,10 @@ public:
     // 包列表勾选框（1.x `_db_toggle`/`_db_chk_state`）
     void on_package_item_changed(QTreeWidgetItem* item);
     void refresh_package_checks();
-    // ★ 2026-10-01 用户第 5 条：行尾 ✕ 与右键菜单「移除选中」**共用这一条**（按行号移除一个源）
-    void remove_source_at(int row);
+    // ★ 2026-10-01 用户第 5 条：行尾 ✕ 与右键菜单「移除选中」**共用这一条**；
+    //   ★ 2026-10-02 包列表树化之后，参数是**节点上存的 `sources_` 下标**（分组节点为 -1、直接忽略），
+    //   **不是行号** —— 行号＝源下标这个巧合已被树结构打破。
+    void remove_source_at(int source_index);
     // 1.x `_pack_root`：设了输入目录就用它（2.x 用「解包到」当这个"根"）
     QString pack_base_dir() const;
     // 1.x `_pack_output_basename`（没有"输入目录"那一支）：顶层同名 ⇒ 用那个名字；

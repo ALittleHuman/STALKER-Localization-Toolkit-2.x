@@ -53,12 +53,22 @@ QString utf8(const std::string& text) { return QString::fromStdString(text); }
 //   `remove_source_at`；右键菜单的「移除选中」也走它 ⇒ 移除逻辑只有一套。
 class PackageRemoveDelegate : public QStyledItemDelegate {
 public:
-    explicit PackageRemoveDelegate(std::function<void(int)> on_remove)
+    explicit PackageRemoveDelegate(std::function<void(QTreeWidgetItem*, int)> on_remove)
         : on_remove_(std::move(on_remove)) {}
+
+    // ★ 2026-10-02：源下标**必须从同一行的第 0 列读** —— 数据是用 `setData(0, Qt::UserRole, …)` 存的，
+    //   而委托拿到的 `index` 永远在第 2 列 ⇒ `index.data(Qt::UserRole)` 是**无效值**（`toInt()`=0），
+    //   那样分组节点会被当成源节点、✕ 也会画到分组节点上。用 `sibling(row, 0)` 才是同一项的那一格。
+    static int source_index_of(const QModelIndex& index) {
+        if (!index.isValid()) return -1;
+        return index.sibling(index.row(), 0).data(Qt::UserRole).toInt();
+    }
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option,
                const QModelIndex& index) const override {
-        if (index.column() != 2) {
+        // 只有**源节点**（第 0 列 `UserRole` 存着 `sources_` 下标 ≥0）才画 ✕；
+        // **纯分组节点**（目录、不对应任何源）没有 ✕。
+        if (index.column() != 2 || source_index_of(index) < 0) {
             QStyledItemDelegate::paint(painter, option, index);
             return;
         }
@@ -74,17 +84,28 @@ public:
     bool editorEvent(QEvent* event, QAbstractItemModel*, const QStyleOptionViewItem& option,
                      const QModelIndex& index) override {
         if (index.column() != 2 || event == nullptr) return false;
+        const int source_index = source_index_of(index);
+        if (source_index < 0) return false;   // 分组节点：没有 ✕ 可点
         if (event->type() != QEvent::MouseButtonRelease) return false;
         auto* mouse = static_cast<QMouseEvent*>(event);
         if (mouse->button() != Qt::LeftButton) return false;
         if (!hit_rect(option).contains(mouse->position().toPoint())) return false;
-        if (on_remove_ != nullptr) on_remove_(index.row());
+        // ★ 回调给**节点**（不再是行号）：树化之后行号与 `sources_` 下标已经不是一回事。
+        //   `option.widget` 在**合成事件**（自检里手搓的 `QStyleOptionViewItem`）里是空的 ⇒
+        //   取不到节点时**也要认这次点击**（源下标已经拿到，别让"✕ 点了没反应"）。
+        QTreeWidgetItem* item = nullptr;
+        if (auto* tree = qobject_cast<QTreeWidget*>(const_cast<QWidget*>(option.widget))) {
+            item = tree->itemFromIndex(index);
+        }
+        if (on_remove_ != nullptr) on_remove_(item, source_index);
         return true;   // 吃掉：别让它变成"点了一下整行"
     }
 
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override {
         QSize size = QStyledItemDelegate::sizeHint(option, index);
-        if (index.column() == 2) size.setWidth(xrkit::core::px(30));
+        if (index.column() == 2 && source_index_of(index) >= 0) {
+            size.setWidth(xrkit::core::px(30));
+        }
         return size;
     }
 
@@ -94,7 +115,7 @@ private:
         const QRect rect = option.rect;
         return QRect(rect.center().x() - box / 2, rect.center().y() - box / 2, box, box);
     }
-    std::function<void(int)> on_remove_;
+    std::function<void(QTreeWidgetItem*, int)> on_remove_;
 };
 
 // ★ 用户第 3 条原话：「并且扫描时有Bug的，选择包模式的时候，是扫不出金球奖的db的。这是个Bug。
@@ -112,6 +133,105 @@ void drop_placeholder(QTreeWidgetItem* item) {
     if (item->childCount() == 1 && item->child(0)->data(0, Qt::UserRole).toString().isEmpty()) {
         item->removeChild(item->child(0));
     }
+}
+
+// ═══ 包列表的"文件树"折叠（2026-10-02）═════════════════════════════════════
+// 用户原话：「这玩意，一把 `E:\...\IWP\database` 拖进去就这样。**左边的包列表的结构也应该
+// 是一个文件树**，而且**拖入文件夹的一些逻辑也要修复一下，和单个包文件那种结构的逻辑统一**。」
+// —— 原来 58 个包**平铺**成一列、还夹着一行 `database [已加载] 0 B`。
+// 口径：
+//   · **锚点 = 所有源路径的公共祖先目录**；目录型源取它的**父目录**参与比较 ⇒ 这个目录自己会成为
+//     树里的一个节点（例：源＝`…\database`(目录) + `…\database\ai.db` ⇒ 树＝`database/` → `ai.db`）。
+//   · 只拖一个 `…\Golden Sphere\gamedata.db_base` ⇒ 锚点就是 `…\Golden Sphere`，树里只有
+//     `gamedata.db_base` 一个根节点（**不画** `Golden Sphere` 之类的祖先）。
+//   · 同一层：**目录在前、文件在后**，各自按名（不区分大小写）。
+struct PkgTreeNode {
+    QString name;           // 单段名字（不加尾斜杠，画的时候按 `is_dir` 补）
+    int source_index = -1;  // ≥0 ⇒ 源节点（对应 `sources_` 下标）；-1 ⇒ **纯分组节点**
+    bool is_dir = false;
+    std::vector<PkgTreeNode> children;
+};
+
+QString pkg_parent_dir(const QString& path) {
+    // 目录型源取**父目录**（这样它自己会成为树里一个节点）；文件型源取所在目录
+    return QFileInfo(path).absolutePath();
+}
+
+QString pkg_common_ancestor(const QStringList& dirs) {
+    if (dirs.isEmpty()) return QString();
+    const QStringList first =
+        QDir::fromNativeSeparators(dirs.front()).split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    int keep = first.size();
+    for (int i = 1; i < dirs.size(); ++i) {
+        const QStringList parts =
+            QDir::fromNativeSeparators(dirs[i]).split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        int n = 0;
+        while (n < keep && n < parts.size() &&
+               first[n].compare(parts[n], Qt::CaseInsensitive) == 0) {
+            ++n;
+        }
+        keep = n;
+    }
+    return first.mid(0, keep).join(QLatin1Char('/'));
+}
+
+void pkg_sort_nodes(std::vector<PkgTreeNode>& nodes) {
+    std::sort(nodes.begin(), nodes.end(), [](const PkgTreeNode& a, const PkgTreeNode& b) {
+        if (a.is_dir != b.is_dir) return a.is_dir;   // 目录在前
+        return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
+    });
+    for (PkgTreeNode& node : nodes) pkg_sort_nodes(node.children);
+}
+
+std::vector<PkgTreeNode> pkg_build_nodes(const QStringList& paths) {
+    QStringList parents;
+    for (const QString& path : paths) parents << pkg_parent_dir(path);
+    const QString anchor = pkg_common_ancestor(parents);
+    std::vector<PkgTreeNode> roots;
+    for (int i = 0; i < paths.size(); ++i) {
+        QString rel = anchor.isEmpty()
+                          ? QFileInfo(paths[i]).fileName()
+                          : QDir(anchor).relativeFilePath(QDir::fromNativeSeparators(paths[i]));
+        if (rel.isEmpty() || rel.startsWith(QStringLiteral(".."))) {
+            rel = QFileInfo(paths[i]).fileName();   // 跨盘等退化情形：至少给它一个名字
+        }
+        const QStringList segments = rel.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        if (segments.isEmpty()) continue;
+        std::vector<PkgTreeNode>* level = &roots;
+        for (int s = 0; s < segments.size(); ++s) {
+            auto it = std::find_if(level->begin(), level->end(), [&](const PkgTreeNode& node) {
+                return node.name.compare(segments[s], Qt::CaseInsensitive) == 0;
+            });
+            if (it == level->end()) {
+                PkgTreeNode node;
+                node.name = segments[s];
+                level->push_back(node);
+                it = level->end() - 1;
+            }
+            if (s + 1 == segments.size()) {
+                it->source_index = i;
+                it->is_dir = QFileInfo(paths[i]).isDir();   // 目录型源：不显大小、名字带 '/'
+            } else {
+                it->is_dir = true;                          // 中间段 ⇒ 目录
+            }
+            level = &it->children;
+        }
+    }
+    pkg_sort_nodes(roots);
+    return roots;
+}
+
+// 遍历包列表树里的**源节点**（纯分组节点跳过）——"找源"一律读 `data(0, Qt::UserRole)` 的
+// **`sources_` 下标**，**不许再按行号**（行号＝源下标这个巧合已经被树结构打破）。
+void pkg_for_each_source(QTreeWidget* list,
+                         const std::function<void(QTreeWidgetItem*, int)>& fn) {
+    if (list == nullptr) return;
+    std::function<void(QTreeWidgetItem*)> walk = [&](QTreeWidgetItem* item) {
+        const int index = item->data(0, Qt::UserRole).toInt();
+        if (index >= 0) fn(item, index);
+        for (int i = 0; i < item->childCount(); ++i) walk(item->child(i));
+    };
+    for (int i = 0; i < list->topLevelItemCount(); ++i) walk(list->topLevelItem(i));
 }
 
 }  // namespace
@@ -205,8 +325,11 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     package_list_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     package_list_->setMinimumHeight(xrkit::core::px(120));
     // 行尾 ✕（第 5 条）：委托画 + 自己处理点击 ⇒ 删掉工具行里的「移除」按钮
+    //   ★ 2026-10-02 树化之后回调给**节点**，源下标从 `data(0, Qt::UserRole)` 读（分组节点 -1 ⇒ 不画）
     package_list_->setItemDelegateForColumn(
-        2, new PackageRemoveDelegate([this](int row) { remove_source_at(row); }));
+        2, new PackageRemoveDelegate([this](QTreeWidgetItem*, int source_index) {
+            if (source_index >= 0) remove_source_at(source_index);
+        }));
 
     // ── 中：格式下拉（6.13：取值 = 内部键）+ 条目列表（虚拟化）
     format_combo_ = new QComboBox;
@@ -525,9 +648,8 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         std::vector<std::string> visible;
         for (const Source& source : sources_) visible.push_back(source.key);
         selection_.select_all(visible);
-        for (int i = 0; i < package_list_->topLevelItemCount(); ++i) {
-            package_list_->topLevelItem(i)->setSelected(true);
-        }
+        // ★ 2026-10-02 树化：「全选」＝把所有**源节点**选中（分组节点不选 —— 它不对应任何包）
+        pkg_for_each_source(package_list_, [](QTreeWidgetItem* item, int) { item->setSelected(true); });
         refresh_counts();
     });
     QObject::connect(check_all_button_, &QPushButton::clicked, this, [this] { check_all(true); });
@@ -689,32 +811,19 @@ int FsPage::add_paths(const QStringList& paths) {
         }
         push_source(gated, entries);
         ++loaded;
-        // 目录：再把里面的包递归找出来并加载（1.x `_scan_dir` 的名字规则；找不到就只留散装层）
+        // 目录：再把里面的包**递归扫进包列表**（★ 2026-10-02 口径：**只入列表、不加载**）。
+        // ★★ 用户原话：「拖入文件夹的一些逻辑也要修复一下，和单个包文件那种结构的逻辑统一。」
+        //   ⇒ **删掉旧的 `kAutoLoadMax = 8` 阈值**（≤8 个包就全自动加载、>8 才只入列表）——
+        //   那让"同一个动作"因为目录里有几个包而表现不同。现在的统一口径是：
+        //   **用户拖进来的那个东西 = 加载它**（文件＝该包；文件夹＝它的散装层），
+        //   **从文件夹里顺带扫出来的包 = 只入列表**，等用户勾选/「加载选中」。
+        //   （旧行为见历史：`IWP\database` 57 个包 18.9G 全解会卡死，当时用阈值打补丁；
+        //     现在这条规则对任何目录都成立，不再需要阈值。）
         if (QFileInfo(gated).isDir()) {
-            QStringList packages;
-            QDirIterator walk(gated, QDir::Files, QDirIterator::Subdirectories);
-            while (walk.hasNext()) {
-                const QString candidate = walk.next();
-                if (efs::is_package_file_name(candidate.toUtf8().toStdString())) {
-                    packages << candidate;
-                }
-            }
-            // ★ 用户 2026-09-30：「IWP\\database 整个文件夹拖进去会卡死……像 SoC 那种管理模式就快一些。
-            //   但是大包还是非常慢。」⇒ 目录里包**太多**时不自动加载（那等于把几十个 .db 全解一遍，
-            //   `database` 正是这种），只把包**加进包列表**，等用户按需「加载选中」。
-            constexpr int kAutoLoadMax = 8;
-            if (!packages.isEmpty()) {
-                if (packages.size() > kAutoLoadMax) {
-                    scan_dir(gated);   // 只入"已知包列表"（不加载）
-                    log_message(QStringLiteral("目录里有 %1 个包（超过 %2 个）⇒ 只加进包列表、不自动加载；"
-                                               "勾选后点「加载选中」")
-                                    .arg(packages.size())
-                                    .arg(kAutoLoadMax));
-                } else {
-                    log_message(QStringLiteral("目录里发现 %1 个包，一并加载（gamedata 树才展得开）")
-                                    .arg(packages.size()));
-                    loaded += add_paths(packages);   // 递归：这一层全是文件，不会再进目录分支
-                }
+            const int scanned = scan_dir(gated);
+            if (scanned > 0) {
+                log_message(QStringLiteral("目录里的 %1 个包已加进包列表（未加载）⇒ 勾选后点「加载选中」")
+                                .arg(scanned));
             }
         }
         log_message(QStringLiteral("已加载：%1（%2 项）")
@@ -1307,69 +1416,103 @@ int FsPage::scan_dir(const QString& dir) {
 }
 
 void FsPage::rebuild_package_list() {
-    // 包列表每行（三列）：勾选框 + 包名（加载过后缀 `[已加载]`） / 大小 / ✕ 列（委托画）。
-    // ★ 勾选框 = 该包在合并树里的**整包勾选态**（1.x `_db_chk_state` 的 partial-aware 三态），
-    //   勾上/取消 = 该包贡献的条目全勾/全不勾（1.x `_db_toggle` ⇒ 引擎 `toggle_source`）。
-    // ★ 2026-10-01：这是"**包列表内容改变**"才走的路径（新增/移除/排序/加载），
-    //   勾选态的变化**不走这里**（用户第 7 条，见 `on_package_item_changed`）。
+    // ★★ 2026-10-02（用户：「**左边的包列表的结构应该也是一个文件树**」）—— 平表 ⇒ **按目录分组的文件树**。
+    //   折叠规则见上方 `pkg_build_nodes`（锚点＝公共祖先目录；目录型源取父目录参与比较）。
+    //   两条硬口径：
+    //   · **纯分组节点**（目录、不对应任何源）：**不可勾选、无大小、无 ✕**（委托按 `UserRole<0` 跳过）；
+    //   · **源节点**：可勾选 + 三态 + ✕；**目录型源不显示大小**（别再出现 `database [已加载] 0 B`）。
+    //   ★ 源节点把 **`sources_` 下标**存进 `data(0, Qt::UserRole)` —— 树化之后**行号 ≠ 源下标**，
+    //     所有"找源"的地方都读这个下标（`pkg_for_each_source` 是配套遍历器）。
+    //   ★ 建出来的目录节点**默认展开**（只展开我们自己建的这些，不做 `expandAll`）。
+    //   ★ 勾选态变化**不走这里**（用户第 7 条，见 `on_package_item_changed`）。
+    QStringList paths;
+    for (const Source& source : sources_) paths << source.path;
+    const std::vector<PkgTreeNode> roots = pkg_build_nodes(paths);
+
     rebuilding_package_list_ = true;
-    int selected_row = -1;
-    for (int i = 0; i < package_list_->topLevelItemCount(); ++i) {
-        if (package_list_->topLevelItem(i)->isSelected()) selected_row = i;
-    }
+    // 保留选中：按**源下标**记（不能再按行号），重建后恢复
+    QSet<int> selected_before;
+    pkg_for_each_source(package_list_, [&](QTreeWidgetItem* item, int index) {
+        if (item->isSelected()) selected_before.insert(index);
+    });
     package_list_->clear();
-    for (size_t i = 0; i < sources_.size(); ++i) {
-        const Source& source = sources_[i];
-        const QFileInfo info(source.path);
-        auto* item = new QTreeWidgetItem;
-        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-        item->setText(0, source.loaded
-                             ? QStringLiteral("%1　[已加载]").arg(info.fileName())
-                             : info.fileName());
-        item->setText(1, format_size(static_cast<uint64_t>(info.size())));
-        item->setText(2, QString());                       // 委托在 col2 画 ✕
-        item->setData(0, Qt::UserRole, source.path);       // 反查用（右键/委托都按行号，够用）
-        Qt::CheckState check = Qt::Unchecked;
-        if (source.loaded) {
-            int files = 0;
-            int checked = 0;
-            tree_.source_check_state(loaded_index_for_source(i), &files, &checked);
-            check = checked == 0 ? Qt::Unchecked
-                                 : (checked == files ? Qt::Checked : Qt::PartiallyChecked);
-        }
-        item->setCheckState(0, check);
-        package_list_->addTopLevelItem(item);
-    }
+    std::function<void(const PkgTreeNode&, QTreeWidgetItem*)> add_node =
+        [&](const PkgTreeNode& node, QTreeWidgetItem* parent) {
+            auto* item = new QTreeWidgetItem;
+            const QString label = node.is_dir ? node.name + QLatin1Char('/') : node.name;
+            item->setText(2, QString());   // 委托在 col2 画 ✕
+            item->setData(0, Qt::UserRole, node.source_index);
+            const bool is_source = node.source_index >= 0 &&
+                                   node.source_index < static_cast<int>(sources_.size());
+            if (is_source) {
+                const Source& source = sources_[static_cast<size_t>(node.source_index)];
+                item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+                item->setText(0, source.loaded
+                                     ? QStringLiteral("%1　[已加载]").arg(label)
+                                     : label);
+                if (!node.is_dir) {
+                    const QFileInfo info(source.path);
+                    item->setText(1, format_size(static_cast<uint64_t>(info.size())));
+                }
+                Qt::CheckState check = Qt::Unchecked;
+                if (source.loaded) {
+                    int files = 0;
+                    int checked = 0;
+                    tree_.source_check_state(
+                        loaded_index_for_source(static_cast<size_t>(node.source_index)), &files,
+                        &checked);
+                    check = checked == 0 ? Qt::Unchecked
+                                         : (checked == files ? Qt::Checked : Qt::PartiallyChecked);
+                }
+                item->setCheckState(0, check);
+            } else {
+                // 纯分组节点：只有名字 —— **显式摘掉** `ItemIsUserCheckable`（别指望"没设过就画不出勾选框"），
+                // 也没有大小、没有 ✕（委托按 `UserRole<0` 跳过）
+                item->setFlags(item->flags() & ~Qt::ItemIsUserCheckable);
+                item->setText(0, label);
+            }
+            if (parent == nullptr) {
+                package_list_->addTopLevelItem(item);
+            } else {
+                parent->addChild(item);
+            }
+            for (const PkgTreeNode& child : node.children) add_node(child, item);
+            if (item->childCount() > 0) item->setExpanded(true);
+        };
+    for (const PkgTreeNode& node : roots) add_node(node, nullptr);
     rebuilding_package_list_ = false;
-    if (selected_row >= 0 && selected_row < package_list_->topLevelItemCount()) {
-        package_list_->topLevelItem(selected_row)->setSelected(true);
-    }
+    pkg_for_each_source(package_list_, [&](QTreeWidgetItem* item, int index) {
+        if (selected_before.contains(index)) item->setSelected(true);
+    });
     refresh_counts();
 }
 
-void FsPage::remove_source_at(int row) {
-    // ★ 第 5 条：行尾 ✕ 与右键菜单「移除选中」**共用这一条**（按行号摘掉一个源）。
-    if (row < 0 || row >= static_cast<int>(sources_.size())) return;
-    selection_.toggle(sources_[static_cast<size_t>(row)].key, false);
-    sources_.erase(sources_.begin() + row);
-    entries_.erase(entries_.begin() + row);
+void FsPage::remove_source_at(int source_index) {
+    // ★ 第 5 条：行尾 ✕ 与右键菜单「移除选中」**共用这一条**（按 **`sources_` 下标**摘掉一个源；
+    //   树化之后这个下标来自节点 `data(0, Qt::UserRole)`，**不是行号**）。
+    if (source_index < 0 || source_index >= static_cast<int>(sources_.size())) return;
+    selection_.toggle(sources_[static_cast<size_t>(source_index)].key, false);
+    sources_.erase(sources_.begin() + source_index);
+    entries_.erase(entries_.begin() + source_index);
     rebuild_package_list();
     rebuild_tree();
 }
 
 void FsPage::on_package_item_changed(QTreeWidgetItem* item) {
     if (rebuilding_package_list_ || item == nullptr) return;   // 重建列表时不要把状态回灌
-    const int row = package_list_->indexOfTopLevelItem(item);
-    if (row < 0 || row >= static_cast<int>(sources_.size())) return;
+    // ★ 2026-10-02 树化：源下标从 `data(0, Qt::UserRole)` 读（**纯分组节点是 -1**，不参与）
+    const int index = item->data(0, Qt::UserRole).toInt();
+    if (index < 0 || index >= static_cast<int>(sources_.size())) return;
     const bool want = item->checkState(0) != Qt::Unchecked;
-    if (!sources_[static_cast<size_t>(row)].loaded) {
+    if (!sources_[static_cast<size_t>(index)].loaded) {
         // 1.x `_db_toggle`：勾选一个**未加载**的包 ⇒ 先加载，再整包勾上
         if (!want) return;
-        package_list_->topLevelItem(row)->setSelected(true);
+        item->setSelected(true);
         load_selected();          // 内容变了 ⇒ 这里**允许**重建（load_selected → rebuild_tree）
+        // ★ 这一步之后 `item` 已经**悬空**（列表被重建过）⇒ 下面一律只用下标，别再碰 item
         rebuild_package_list();
     }
-    const int merged = loaded_index_for_source(static_cast<size_t>(row));
+    const int merged = loaded_index_for_source(static_cast<size_t>(index));
     if (merged < 0) return;
     tree_.toggle_source(merged, want);
     // ★★ 2026-10-01 用户第 7 条（原话）：「每次勾选或取消勾选包列表当中的文件，右边的文件列表
@@ -1385,21 +1528,21 @@ void FsPage::on_package_item_changed(QTreeWidgetItem* item) {
 }
 
 void FsPage::refresh_package_checks() {
+    // ★ 2026-10-02 树化：勾选态要**递归**刷（源节点散在树里）；分组节点**不碰**（它没有勾选框）。
     rebuilding_package_list_ = true;
-    for (int row = 0; row < package_list_->topLevelItemCount() &&
-                      row < static_cast<int>(sources_.size());
-         ++row) {
+    pkg_for_each_source(package_list_, [&](QTreeWidgetItem* item, int index) {
+        if (index >= static_cast<int>(sources_.size())) return;
+        const bool loaded = sources_[static_cast<size_t>(index)].loaded;
         int files = 0;
         int checked = 0;
-        if (sources_[static_cast<size_t>(row)].loaded) {
-            tree_.source_check_state(loaded_index_for_source(static_cast<size_t>(row)), &files,
+        if (loaded) {
+            tree_.source_check_state(loaded_index_for_source(static_cast<size_t>(index)), &files,
                                      &checked);
         }
-        QTreeWidgetItem* item = package_list_->topLevelItem(row);
         item->setCheckState(0, checked == 0 ? Qt::Unchecked
                                             : (checked == files ? Qt::Checked
                                                                 : Qt::PartiallyChecked));
-    }
+    });
     rebuilding_package_list_ = false;
 }
 
@@ -1408,7 +1551,8 @@ int FsPage::load_selected() {
     int loaded = 0;
     const QList<QTreeWidgetItem*> chosen = package_list_->selectedItems();
     for (QTreeWidgetItem* item : chosen) {
-        const int row = package_list_->indexOfTopLevelItem(item);
+        // ★ 2026-10-02 树化：读节点上的**源下标**（分组节点 -1 ⇒ 自动跳过）
+        const int row = item->data(0, Qt::UserRole).toInt();
         if (row < 0 || row >= static_cast<int>(sources_.size())) continue;
         if (sources_[static_cast<size_t>(row)].loaded) continue;
         QString gated = sources_[static_cast<size_t>(row)].path;
@@ -1455,7 +1599,8 @@ int FsPage::unload_selected() {
     // 1.x `_unload_selected`：只改"加载"状态，勾选态跟随原节点（merge 的既有语义）
     int unloaded = 0;
     for (QTreeWidgetItem* item : package_list_->selectedItems()) {
-        const int row = package_list_->indexOfTopLevelItem(item);
+        // ★ 2026-10-02 树化：读节点上的**源下标**（分组节点 -1 ⇒ 自动跳过）
+        const int row = item->data(0, Qt::UserRole).toInt();
         if (row < 0 || row >= static_cast<int>(sources_.size())) continue;
         if (!sources_[static_cast<size_t>(row)].loaded) continue;
         sources_[static_cast<size_t>(row)].loaded = false;
@@ -1469,7 +1614,8 @@ int FsPage::unload_selected() {
 int FsPage::remove_selected() {
     std::vector<size_t> doomed;
     for (QTreeWidgetItem* item : package_list_->selectedItems()) {
-        const int row = package_list_->indexOfTopLevelItem(item);
+        // ★ 2026-10-02 树化：读节点上的**源下标**
+        const int row = item->data(0, Qt::UserRole).toInt();
         if (row >= 0 && row < static_cast<int>(sources_.size())) {
             doomed.push_back(static_cast<size_t>(row));
         }

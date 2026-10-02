@@ -73,6 +73,49 @@ constexpr const char* kExpectedTitles[] = {"文件系统", "编码转换", "文�
                                            "XML校对", "视频转换", "汉化包生成"};
 constexpr int kExpectedCount = 6;
 
+// ★★ 2026-10-02 包列表**树化**（用户：「左边的包列表的结构应该也是一个文件树」）之后，
+//   "第 0 行"不再等于"第 0 个源" —— 源节点散在树里、中间还夹着**纯分组节点**。
+//   所以夹具要按**节点上的源下标**（`data(0, Qt::UserRole)` ≥0）来找源，别再数顶层行。
+// 包列表树里的**源节点**总数（纯分组节点不算）
+int package_source_node_count(QTreeWidget* list) {
+    int total = 0;
+    std::function<void(QTreeWidgetItem*)> walk = [&](QTreeWidgetItem* item) {
+        if (item->data(0, Qt::UserRole).toInt() >= 0) ++total;
+        for (int i = 0; i < item->childCount(); ++i) walk(item->child(i));
+    };
+    if (list != nullptr) {
+        for (int i = 0; i < list->topLevelItemCount(); ++i) walk(list->topLevelItem(i));
+    }
+    return total;
+}
+
+// 选中包列表树里**所有源节点**（旧夹具用 `topLevelItem(i)->setSelected(true)`，树化后那样选不到源）
+void select_all_package_sources(QTreeWidget* list) {
+    std::function<void(QTreeWidgetItem*)> walk = [&](QTreeWidgetItem* item) {
+        if (item->data(0, Qt::UserRole).toInt() >= 0) item->setSelected(true);
+        for (int i = 0; i < item->childCount(); ++i) walk(item->child(i));
+    };
+    if (list != nullptr) {
+        for (int i = 0; i < list->topLevelItemCount(); ++i) walk(list->topLevelItem(i));
+    }
+}
+
+// 按名字找源节点（树里到处找）
+QTreeWidgetItem* find_package_source_node(QTreeWidget* list, const QString& name_contains) {
+    QTreeWidgetItem* found = nullptr;
+    std::function<void(QTreeWidgetItem*)> walk = [&](QTreeWidgetItem* item) {
+        if (found == nullptr && item->data(0, Qt::UserRole).toInt() >= 0 &&
+            item->text(0).contains(name_contains, Qt::CaseInsensitive)) {
+            found = item;
+        }
+        for (int i = 0; i < item->childCount(); ++i) walk(item->child(i));
+    };
+    if (list != nullptr) {
+        for (int i = 0; i < list->topLevelItemCount(); ++i) walk(list->topLevelItem(i));
+    }
+    return found;
+}
+
 }  // namespace
 
 SmokeResult run_smoke() {
@@ -1660,18 +1703,20 @@ SmokeResult run_smoke() {
             check(scan_page.loaded_source_count() == 0,
                   QStringLiteral("① 扫描目录**不自动加载**（已加载 %1，应为 0）")
                       .arg(scan_page.loaded_source_count()));
-            for (int i = 0; i < scan_page.package_list()->topLevelItemCount(); ++i) {
-                scan_page.package_list()->topLevelItem(i)->setSelected(true);
-            }
+            // ★ 2026-10-02 树化：源节点散在树里（中间夹着分组节点）⇒ 必须**递归选源节点**，
+            //   数顶层行是选不到源的（`<dir>/pk/gamedata.db0` 现在挂在分组节点 `pk/` 下面）。
+            select_all_package_sources(scan_page.package_list());
+            check(package_source_node_count(scan_page.package_list()) == scan_page.source_count(),
+                  QStringLiteral("① 树化后**每个源**都有一个节点（源节点 %1 / 源 %2）")
+                      .arg(package_source_node_count(scan_page.package_list()))
+                      .arg(scan_page.source_count()));
             scan_page.load_selected();
             check(scan_page.loaded_source_count() == scan_page.source_count(),
                   QStringLiteral("① 加载选中：选中的都进树（已加载 %1 / 共 %2）")
                       .arg(scan_page.loaded_source_count())
                       .arg(scan_page.source_count()));
             const int before_unload = scan_page.entry_built_file_count();
-            for (int i = 0; i < scan_page.package_list()->topLevelItemCount(); ++i) {
-                scan_page.package_list()->topLevelItem(i)->setSelected(true);
-            }
+            select_all_package_sources(scan_page.package_list());
             scan_page.unload_selected();
             check(before_unload > 0 && scan_page.loaded_source_count() == 0 &&
                       scan_page.entry_top_level_count() == 0 &&
@@ -2084,13 +2129,61 @@ SmokeResult run_smoke() {
                                 Qt::NoModifier);
             if (drop_page.drop_filter() != nullptr) drop_page.drop_filter()->dispatch(&dir_drop);
             QApplication::processEvents();
-            // ★ 2026-09-29 口径更新（用户第 6 条："整包拖进去要把 gamedata 文件树展开"）：
-            //   拖目录不再**只**建散装层 —— 现在是「散装层 1 个源 + 目录里每个包各 1 个源」。
-            //   本夹具的目录里有 1 个包 ⇒ 加上前面那一份，共 3 个源；原意（同一条 add_source 路径、
-            //   认不出的不静默加）由前后两条判据守住。
-            check(drop_page.source_count() == 3,
-                  QStringLiteral("⑦ 拖目录 = 散装层 + 里面的包（实测 %1 个源，期望 3）")
-                      .arg(drop_page.source_count()));
+            // ★★ 2026-10-02 口径**有意改写**（用户：「拖入文件夹的一些逻辑也要修复一下，和单个包文件
+            //   那种结构的逻辑统一」）——
+            //   旧期望 3 = 1(先拖进来的那个包) + 1(散装层) + **1(同一个包又来一份)**：旧代码在
+            //   `packages.size() <= kAutoLoadMax` 时直接 `push_source`，**绕过了 `scan_dir` 的
+            //   "已存在就不重复加"检查** ⇒ 同一个 `gamedata.db0` 在列表里出现两遍。
+            //   现在统一走 `scan_dir()`（自带 known 去重）⇒ **2 个源、0 重复**，这才是对的。
+            {
+                QStringList seen;
+                int dup = 0;
+                for (int i = 0; i < drop_page.source_count(); ++i) {
+                    const QString one = drop_page.source_at(i);
+                    if (seen.contains(one, Qt::CaseInsensitive)) ++dup;
+                    seen << one;
+                }
+                check(drop_page.source_count() == 2 && dup == 0,
+                      QStringLiteral("⑦ 拖目录 = 散装层 + 目录里**尚未在列表里**的包（实测 %1 个源 / "
+                                     "重复 %2，期望 2/0 —— 目录里那个包先前的拖放已经在列表里了）")
+                          .arg(drop_page.source_count())
+                          .arg(dup));
+            }
+            // ★ 正向断言（别让上面那条只证明"去重"）：**另建一个目录**、里面放一个新包 ⇒ 拖它 ⇒
+            //   **源数 +2**（散装层 + 那个包）、**已加载 +1**（新口径：扫出来的包只入列表、不加载）。
+            {
+                const QString dir2 = QDir::temp().filePath(QStringLiteral("xrkit_smoke_drop2"));
+                QDir(dir2).removeRecursively();
+                QDir().mkpath(dir2);
+                std::vector<efs::DbPackItem> items2;
+                efs::DbPackItem one2;
+                one2.path = "z.txt";
+                one2.data = {static_cast<uint8_t>('Z')};
+                items2.push_back(one2);
+                const std::vector<uint8_t> raw2 = efs::pack_db(items2, *efs::format_key_to_db("xdb"));
+                std::ofstream out2((dir2 + QStringLiteral("/extra.db0")).toStdString(),
+                                   std::ios::binary | std::ios::trunc);
+                out2.write(reinterpret_cast<const char*>(raw2.data()),
+                           static_cast<std::streamsize>(raw2.size()));
+                out2.close();
+                const int before = drop_page.source_count();
+                const int loaded_before = drop_page.loaded_source_count();
+                QMimeData mime2;
+                mime2.setUrls({QUrl::fromLocalFile(dir2)});
+                QDropEvent drop2(QPointF(5, 5), Qt::CopyAction, &mime2, Qt::LeftButton,
+                                 Qt::NoModifier);
+                if (drop_page.drop_filter() != nullptr) drop_page.drop_filter()->dispatch(&drop2);
+                QApplication::processEvents();
+                check(drop_page.source_count() == before + 2 &&
+                          drop_page.loaded_source_count() == loaded_before + 1,
+                      QStringLiteral("⑦ 目录里的包确实会进列表、但**不加载**"
+                                     "（源 %1→%2 期望 +2 / 已加载 %3→%4 期望 +1）")
+                          .arg(before)
+                          .arg(drop_page.source_count())
+                          .arg(loaded_before)
+                          .arg(drop_page.loaded_source_count()));
+                QDir(dir2).removeRecursively();
+            }
             QDir(dir).removeRecursively();
             drop_page.hide();
         }
@@ -2165,19 +2258,46 @@ SmokeResult run_smoke() {
                 }
                 const int n = dir_page.add_paths({mix});
                 QApplication::processEvents();
-                check(n == 2 && dir_page.loaded_source_count() == 2,
-                      QStringLiteral("树③ 拖目录 ⇒ 散装层 + 里面的包**都加载**（返回 %1，已加载源 %2，期望 2/2）")
+                // ★★ 2026-10-02 口径**有意改写**（用户：「拖入文件夹的一些逻辑也要修复一下，和单个包
+                //   文件那种结构的逻辑统一」+ 删掉 `kAutoLoadMax`）——
+                //   旧期望 2/2 ＝「散装层 + 里面的包**都加载**」（≤8 个包就自动全解）。
+                //   新口径：**拖进来的那个东西 = 加载它**（这里是文件夹 ⇒ 它的**散装层**），
+                //   **从文件夹里扫出来的包 = 只入列表、不加载**（要用户勾选/「加载选中」）⇒ 1/1，源 2。
+                check(n == 1 && dir_page.loaded_source_count() == 1 && dir_page.source_count() == 2,
+                      QStringLiteral("树③ 拖目录 ⇒ **只有散装层**加载（返回 %1 / 已加载 %2 / 源 %3，期望 1/1/2）")
                           .arg(n)
-                          .arg(dir_page.loaded_source_count()));
+                          .arg(dir_page.loaded_source_count())
+                          .arg(dir_page.source_count()));
                 // 懒建：先展开 `gamedata`（以及 `gamedata/loose`）才找得到深层条目
                 dir_page.expand_entry(QStringLiteral("gamedata"));
                 dir_page.expand_entry(QStringLiteral("gamedata/loose"));
                 QApplication::processEvents();
                 check(dir_page.find_entry_item(QStringLiteral("gamedata/loose/readme.txt")) != nullptr &&
-                          dir_page.find_entry_item(QStringLiteral("gamedata/from_package.txt")) != nullptr,
-                      QStringLiteral("树③ gamedata 树要摊开：松散文件 %1 / 包内文件 %2")
+                          dir_page.find_entry_item(QStringLiteral("gamedata/from_package.txt")) == nullptr,
+                      QStringLiteral("树③ 未加载的包**不进**合并树：松散文件 %1 / 包内文件 %2（期望 1/0）")
                           .arg(dir_page.find_entry_item(QStringLiteral("gamedata/loose/readme.txt")) != nullptr ? 1 : 0)
                           .arg(dir_page.find_entry_item(QStringLiteral("gamedata/from_package.txt")) != nullptr ? 1 : 0));
+                // ★ 正向（别让上面那条变成"把功能删掉也绿"）：**手动加载那个包**之后，包内文件才出现。
+                {
+                    QTreeWidgetItem* pkg_node = find_package_source_node(
+                        dir_page.package_list(), QStringLiteral("configs.db0"));
+                    if (pkg_node == nullptr) {
+                        check(false, QStringLiteral("树③ 包列表里要能找到那个 `configs.db0` 源节点"));
+                    } else {
+                        pkg_node->setSelected(true);
+                        const int loaded_now = dir_page.load_selected();
+                        QApplication::processEvents();
+                        dir_page.expand_entry(QStringLiteral("gamedata"));
+                        QApplication::processEvents();
+                        check(loaded_now == 1 && dir_page.loaded_source_count() == 2 &&
+                                  dir_page.find_entry_item(QStringLiteral("gamedata/from_package.txt")) != nullptr,
+                              QStringLiteral("树③ 手动「加载选中」之后包内文件才进树"
+                                             "（本次加载 %1 / 已加载 %2 / 包内文件 %3）")
+                                  .arg(loaded_now)
+                                  .arg(dir_page.loaded_source_count())
+                                  .arg(dir_page.find_entry_item(QStringLiteral("gamedata/from_package.txt")) != nullptr ? 1 : 0));
+                    }
+                }
                 dir_page.hide();
                 QDir(mix).removeRecursively();
             }
@@ -2234,6 +2354,113 @@ SmokeResult run_smoke() {
                           .arg(many_page.source_count()));
                 many_page.hide();
                 QDir(many).removeRecursively();
+            }
+
+            // ★★ 2026-10-02 **阈值已删**（用户：「拖入文件夹的一些逻辑也要修复一下，和单个包文件那种
+            //   结构的逻辑统一」）—— 旧代码 `kAutoLoadMax = 8`：**≤8 个包就全自动加载**。
+            //   判据（**在旧代码上必红**）：目录里只有 **3 个**包 ⇒ 旧代码会加载 1(散装层)+3(包)=4，
+            //   新口径只加载"拖进来的那个" ⇒ **1**，其余 3 个包**都进列表但未加载**。
+            {
+                const QString few = QDir::temp().filePath(QStringLiteral("xrkit_smoke_fewpkg"));
+                QDir(few).removeRecursively();
+                QDir().mkpath(few);
+                for (int i = 0; i < 3; ++i) {
+                    std::vector<efs::DbPackItem> items;
+                    efs::DbPackItem one;
+                    one.path = "g" + std::to_string(i) + ".txt";
+                    one.is_dir = false;
+                    one.data = {'y'};
+                    items.push_back(one);
+                    const std::vector<uint8_t> raw = efs::pack_db(items, *efs::format_key_to_db("xdb"));
+                    std::ofstream out(few.toStdString() + "/q" + std::to_string(i) + ".db0",
+                                      std::ios::binary | std::ios::trunc);
+                    out.write(reinterpret_cast<const char*>(raw.data()),
+                              static_cast<std::streamsize>(raw.size()));
+                }
+                FsPage few_page;
+                few_page.resize(760, page_min_h());
+                few_page.show();
+                QApplication::processEvents();
+                few_page.add_paths({few});
+                QApplication::processEvents();
+                check(few_page.loaded_source_count() == 1 && few_page.source_count() == 4,
+                      QStringLiteral("阈值已删：3 个包的目录也只加载「拖进来的那层」"
+                                     "（已加载 %1 期望 1 / 源 %2 期望 4）")
+                          .arg(few_page.loaded_source_count())
+                          .arg(few_page.source_count()));
+                few_page.hide();
+                QDir(few).removeRecursively();
+            }
+
+            // ★★ 2026-10-02 包列表**树化**（用户：「左边的包列表的结构应该也是一个文件树」）——
+            //   一条夹具同时判三件事：**分组节点存在**、**分组节点不可勾选/无 ✕/无大小**、
+            //   **子目录里的包挂在分组节点下面**。夹具：`tmp/a.db0` + `tmp/sub/b.db0`。
+            {
+                const QString root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_pkgtree"));
+                QDir(root).removeRecursively();
+                QDir().mkpath(root + QStringLiteral("/sub"));
+                const QStringList rels{QStringLiteral("/a.db0"), QStringLiteral("/sub/b.db0")};
+                for (const QString& rel : rels) {
+                    std::vector<efs::DbPackItem> items;
+                    efs::DbPackItem one;
+                    one.path = "t.txt";
+                    one.is_dir = false;
+                    one.data = {'t'};
+                    items.push_back(one);
+                    const std::vector<uint8_t> raw = efs::pack_db(items, *efs::format_key_to_db("xdb"));
+                    std::ofstream out((root + rel).toStdString(), std::ios::binary | std::ios::trunc);
+                    out.write(reinterpret_cast<const char*>(raw.data()),
+                              static_cast<std::streamsize>(raw.size()));
+                }
+                FsPage tree_list_page;
+                tree_list_page.resize(760, page_min_h());
+                tree_list_page.show();
+                QApplication::processEvents();
+                tree_list_page.add_paths({root});
+                QApplication::processEvents();
+                QTreeWidget* list = tree_list_page.package_list();
+                // 顶层第一项 = 散装层（目录名带 '/'）；它的子项里应当有 `sub/`（纯分组节点）与 `a.db0`
+                QTreeWidgetItem* root_item = list != nullptr ? list->topLevelItem(0) : nullptr;
+                QTreeWidgetItem* sub_item = nullptr;
+                QTreeWidgetItem* pkg_a_item = nullptr;
+                QTreeWidgetItem* pkg_b_item = nullptr;
+                if (root_item != nullptr) {
+                    for (int i = 0; i < root_item->childCount(); ++i) {
+                        QTreeWidgetItem* child = root_item->child(i);
+                        if (child->text(0) == QStringLiteral("sub/")) sub_item = child;
+                        if (child->text(0).startsWith(QStringLiteral("a.db0"))) pkg_a_item = child;
+                    }
+                }
+                if (sub_item != nullptr) {
+                    for (int i = 0; i < sub_item->childCount(); ++i) {
+                        if (sub_item->child(i)->text(0).startsWith(QStringLiteral("b.db0"))) {
+                            pkg_b_item = sub_item->child(i);
+                        }
+                    }
+                }
+                check(root_item != nullptr && pkg_a_item != nullptr && sub_item != nullptr &&
+                          pkg_b_item != nullptr,
+                      QStringLiteral("包列表树① 分组节点 + 子目录里的包挂在它下面"
+                                     "（根 %1 / a.db0 %2 / sub %3 / b.db0 %4）")
+                          .arg(root_item != nullptr ? 1 : 0)
+                          .arg(pkg_a_item != nullptr ? 1 : 0)
+                          .arg(sub_item != nullptr ? 1 : 0)
+                          .arg(pkg_b_item != nullptr ? 1 : 0));
+                const bool group_checkable =
+                    sub_item != nullptr && sub_item->flags().testFlag(Qt::ItemIsUserCheckable);
+                check(sub_item != nullptr && !group_checkable && sub_item->text(1).isEmpty() &&
+                          sub_item->data(0, Qt::UserRole).toInt() < 0,
+                      QStringLiteral("包列表树③ 纯分组节点：不可勾选 %1、大小「%2」、源下标 %3（应 <0，"
+                                     "委托就是按它不画 ✕）")
+                          .arg(group_checkable ? 1 : 0)
+                          .arg(sub_item != nullptr ? sub_item->text(1) : QString())
+                          .arg(sub_item != nullptr ? sub_item->data(0, Qt::UserRole).toInt() : -999));
+                check(package_source_node_count(list) == tree_list_page.source_count(),
+                      QStringLiteral("包列表树 源节点数 == 源数（节点 %1 / 源 %2）")
+                          .arg(package_source_node_count(list))
+                          .arg(tree_list_page.source_count()));
+                tree_list_page.hide();
+                QDir(root).removeRecursively();
             }
 
             // ★ 用户 2026-09-30：三层结构里勾最内层文件 ⇒ **最外层祖先也要显示"部分勾选"**
