@@ -1252,6 +1252,17 @@ SmokeResult run_smoke() {
                           page.entry_tree()->alternatingRowColors() &&
                       header_stretch_columns(page.package_list()) == 1 &&
                       header_stretch_columns(page.entry_tree()) == 1 &&
+                      // ★★ 2026-10-02 用户：「为什么包树和文件树的形式不同。文件树的形式已经相当
+                      //   成熟，包树直接引用树的统一函数就行啊。」⇒ 装配已收敛成同一个
+                      //   `apply_pair_tree_spec`，这里把它**对外可测的那几项**钉住：
+                      //   · 两树的"展开语义"必须一致：**单击展开、双击不展开**；
+                      //   · 两树都**要有根装饰**（包列表在平表时代留了 `setRootIsDecorated(false)`，
+                      //     树化 + 默认收起之后**顶层节点的孩子就再也点不出来了**）——
+                      //     把这条去掉立刻红。
+                      page.package_list()->expandsOnDoubleClick() == false &&
+                      page.entry_tree()->expandsOnDoubleClick() == false &&
+                      page.package_list()->rootIsDecorated() &&
+                      page.entry_tree()->rootIsDecorated() &&
                       page.package_list()->header()->minimumSectionSize() ==
                           page.entry_tree()->header()->minimumSectionSize() &&
                       page.package_list()->acceptDrops(),
@@ -1919,9 +1930,11 @@ SmokeResult run_smoke() {
             const QModelIndex idx = chai_page.package_list()->model()->index(0, 2);
             QStyleOptionViewItem opt;
             opt.rect = chai_page.package_list()->visualRect(idx);
-            QMouseEvent release(QEvent::MouseButtonRelease, QPointF(opt.rect.center()),
-                                QPointF(chai_page.package_list()->viewport()->mapToGlobal(
-                                    opt.rect.center())),
+            // ★ 2026-10-02：✕ 改成**贴行尾**（末列吃剩余宽度，居中的话它飘在那一大块中间）⇒
+            //   合成点击也要落在**行尾那个小方块**里（画的与命中共用同一个 `hit_rect`）。
+            const QPoint click_at(opt.rect.right() - xrkit::core::px(18), opt.rect.center().y());
+            QMouseEvent release(QEvent::MouseButtonRelease, QPointF(click_at),
+                                QPointF(chai_page.package_list()->viewport()->mapToGlobal(click_at)),
                                 Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
             const bool handled = del != nullptr &&
                                  del->editorEvent(&release, chai_page.package_list()->model(), opt,
@@ -2469,6 +2482,23 @@ SmokeResult run_smoke() {
                           .arg(pkg_b_item != nullptr ? 1 : 0));
                 const bool group_checkable =
                     sub_item != nullptr && sub_item->flags().testFlag(Qt::ItemIsUserCheckable);
+                // ★★ 2026-10-02（用户「包树直接引用树的统一函数就行啊」之后）：**默认收起**的树
+                //   还必须**点得开** —— 发一条 `itemClicked`（等价于用户点条目身体）⇒ 该节点应被展开。
+                //   离屏时 `click_on_indicator` 判为"不在那一小块上"⇒ 走"点身体"这条路（见它的注释）。
+                //   ★ 这条同时守住那个坑：包列表在平表时代留过 `setRootIsDecorated(false)`，
+                //     树化 + 默认收起之后顶层节点的孩子就**再也点不出来**了（那条断言在上面第 6 条里）。
+                {
+                    const bool was_expanded = root_item != nullptr && root_item->isExpanded();
+                    if (root_item != nullptr) {
+                        QMetaObject::invokeMethod(list, "itemClicked", Q_ARG(QTreeWidgetItem*, root_item),
+                                                  Q_ARG(int, 0));
+                        QApplication::processEvents();
+                    }
+                    check(root_item != nullptr && !was_expanded && root_item->isExpanded(),
+                          QStringLiteral("包列表树④ 单击节点身体＝展开（收起 %1 → 展开 %2）")
+                              .arg(was_expanded ? 1 : 0)
+                              .arg(root_item != nullptr && root_item->isExpanded() ? 1 : 0));
+                }
                 check(sub_item != nullptr && !group_checkable && sub_item->text(1).isEmpty() &&
                           sub_item->data(0, Qt::UserRole).toInt() < 0,
                       QStringLiteral("包列表树③ 纯分组节点：不可勾选 %1、大小「%2」、源下标 %3（应 <0，"

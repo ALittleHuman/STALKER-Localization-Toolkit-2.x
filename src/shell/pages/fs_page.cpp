@@ -77,7 +77,7 @@ public:
         QFont font = option.font;
         font.setPointSizeF(font.pointSizeF() + 1.0);
         painter->setFont(font);
-        painter->drawText(option.rect, Qt::AlignCenter, QStringLiteral("✕"));
+        painter->drawText(hit_rect(option), Qt::AlignCenter, QStringLiteral("✕"));
         painter->restore();
     }
 
@@ -113,7 +113,10 @@ private:
     static QRect hit_rect(const QStyleOptionViewItem& option) {
         const int box = xrkit::core::px(20);
         const QRect rect = option.rect;
-        return QRect(rect.center().x() - box / 2, rect.center().y() - box / 2, box, box);
+        // ★★ 2026-10-02：✕ **贴行尾**（右边缘留 px(8) 边距），不再居中 —— 末列是**吃剩余宽度**的那一列
+        //   （见 `apply_pair_tree_spec`），居中的话 ✕ 会飘在那一大块中间；用户要的是"包的条目后面"。
+        //   画与命中都用这一个矩形（`paint` 也调它）⇒ 看到的和点得到的永远一致。
+        return QRect(rect.right() - xrkit::core::px(8) - box, rect.center().y() - box / 2, box, box);
     }
     std::function<void(QTreeWidgetItem*, int)> on_remove_;
 };
@@ -133,6 +136,60 @@ void drop_placeholder(QTreeWidgetItem* item) {
     if (item->childCount() == 1 && item->child(0)->data(0, Qt::UserRole).toString().isEmpty()) {
         item->removeChild(item->child(0));
     }
+}
+
+// ★★ 2026-10-02 用户：「为什么包树和文件树的形式不同。文件树的形式已经相当成熟，
+//   包树直接引用树的统一函数就行啊。」⇒ 两棵树的**装配**与**单击判据**各抽成一份，两边都调它：
+//   · `apply_pair_tree_spec` ＝ 列/行高/多选/拖放/最小高/**根装饰**/**单击才展开** 的唯一一份；
+//   · `click_on_indicator` ＝ "这一下点没点在那个小方块（勾选框/展开箭头）上"的唯一一份。
+//   两树**唯一**保留的差异在**叶子**：条目树的叶子＝点身体切勾选；包树的叶子＝点身体只选中
+//   （不顺手改"加载"状态 —— 那会把"点一下"变成一次加载/卸载，属于语义，不是观感）。
+struct PairTreeSpec {
+    QStringList headers;
+    QList<int> widths;        // 每列**初始宽**（三列一律 Interactive ⇒ 用户 09-29 要的"列之间能拖"不丢）
+    int min_height = 0;       // 0 ⇒ 不设
+    bool accept_drops = false;
+};
+
+void apply_pair_tree_spec(QTreeWidget* view, const PairTreeSpec& spec) {
+    if (view == nullptr) return;
+    view->setColumnCount(spec.headers.size());
+    view->setHeaderLabels(spec.headers);
+    view->setUniformRowHeights(true);        // 行高一致 ⇒ 几万行也不慢
+    view->setAlternatingRowColors(false);
+    // ★ **是树就得有根装饰**：包列表在"平表时代"留了一句 `setRootIsDecorated(false)`，
+    //   树化之后它会让**顶层节点没有展开箭头**（默认收起时那些孩子就再也点不出来了）。
+    view->setRootIsDecorated(true);
+    view->setExpandsOnDoubleClick(false);    // 展开只认"单击条目身体"这一条路（见 click_on_indicator）
+    view->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    for (int col = 0; col < spec.headers.size(); ++col) {
+        view->header()->setSectionResizeMode(col, QHeaderView::Interactive);
+        if (col < spec.widths.size()) {
+            view->header()->resizeSection(col, xrkit::core::px(spec.widths[col]));
+        }
+    }
+    view->header()->setMinimumSectionSize(xrkit::core::px(48));
+    // ★★ "表头/行铺满面板"与"列可拖"要**同时**成立：靠**末列吃剩余宽度**（`stretchLastSection`），
+    //   而不是把某一列设成 `Stretch` —— 后者会**失去拖拽**，正是用户 2026-09-29
+    //   「某些字段还是不能全部显示……最好也是弄一个水平方向的可拖拽分隔条」要的东西
+    //   （我第一版用首列 `Stretch` 实现"名称列吃满"，被自检当场拦下：树①/树② 两条红）。
+    view->header()->setStretchLastSection(true);
+    if (spec.min_height > 0) view->setMinimumHeight(xrkit::core::px(spec.min_height));
+    view->setAcceptDrops(spec.accept_drops);
+}
+
+// 光标是不是落在"行首那一小块"（勾选框 / 展开箭头）上：
+// 只有**光标确实在这一行里、且落在那小块上**才算；离屏/自检里光标不在行上 ⇒ 视为点**条目身体**
+// （否则自检没法验"单击展开"这条）。
+bool click_on_indicator(QTreeWidget* view, QTreeWidgetItem* item) {
+    if (view == nullptr || view->viewport() == nullptr || item == nullptr) return false;
+    const QPoint vp = view->viewport()->mapFromGlobal(QCursor::pos());
+    const QRect row = view->visualItemRect(item);
+    int depth = 0;
+    for (QTreeWidgetItem* p = item->parent(); p != nullptr; p = p->parent()) ++depth;
+    const int indent = view->indentation() * depth;
+    const int indicator = view->style()->pixelMetric(QStyle::PM_IndicatorWidth) + 8;
+    return row.contains(vp) && vp.x() < row.x() + indent + indicator;
 }
 
 // ═══ 包列表的"文件树"折叠（2026-10-02）═════════════════════════════════════
@@ -303,33 +360,25 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     package_list_->setObjectName(QStringLiteral("fs_package_list"));
     package_list_->setColumnCount(3);
     package_list_->setHeaderLabels({QStringLiteral("包"), QStringLiteral("大小"), QString()});
-    package_list_->setUniformRowHeights(true);
-    package_list_->setAlternatingRowColors(false);
-    package_list_->setRootIsDecorated(false);   // 包列表是平表，不需要展开箭头
-    // ★★ 2026-10-02 用户只圈着表头那块打了个「？」—— 真因：三列**都是 Interactive 且没有任何一列吃剩余
-    //   宽度** ⇒ 初始总宽 px(180)+px(90)+px(48)=318 ≪ 面板宽（真机约 717）⇒ **表头与每一行的右半边
-    //   是死区**（背景还在，却没有列、也没有分隔线，看着像表断了）。
-    //   修法＝**名称列吃掉剩余宽度**、后两列靠右钉住：这是文件表格的常规长相（长名字不再被截，
-    //   大小与 ✕ 永远贴右边），后两列**仍然可拖**（用户 09-29 要的拖动不许丢）。
-    //   ——**条目树不跟着改**（用户没点它，它的"来源"列吃宽是既有观感；要统一说一声即可）。
-    package_list_->header()->setStretchLastSection(false);
-    package_list_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    package_list_->header()->setSectionResizeMode(1, QHeaderView::Interactive);
-    package_list_->header()->setSectionResizeMode(2, QHeaderView::Interactive);
-    package_list_->header()->resizeSection(1, xrkit::core::px(90));
-    package_list_->header()->resizeSection(2, xrkit::core::px(48));
-    // 与 `entry_tree_` **同一个** minimumSectionSize（同一套小组件模板；28 那种"因为 ✕ 列窄"
-    // 的特例会让两条列表的表头行为不一致，正是用户第 6 条要消掉的东西）。
-    package_list_->header()->setMinimumSectionSize(xrkit::core::px(48));
-    package_list_->setAcceptDrops(true);
-    package_list_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    package_list_->setMinimumHeight(xrkit::core::px(120));
+    // ★★ 2026-10-02 用户：「为什么包树和文件树的形式不同。文件树的形式已经相当成熟，包树直接引用
+    //   树的统一函数就行啊。」⇒ 装配改成**调同一个 `apply_pair_tree_spec`**（列/行高/多选/拖放/
+    //   最小高/根装饰/单击才展开 只有一份），两树的差异只剩"各是哪三列、哪一列吃剩余宽度"。
+    //   列宽来由（用户 2026-10-02 圈着表头打「？」那条）：三列若都 Interactive 且没有一列吃剩余宽度
+    //   ⇒ 总宽 ≪ 面板宽 ⇒ 表头/每行右半边是死区 ⇒ **名称列吃满、后两列钉右**。
+    apply_pair_tree_spec(package_list_, PairTreeSpec{
+                                            {QStringLiteral("包"), QStringLiteral("大小"), QString()},
+                                            {300, 90, 48},
+                                            120,
+                                            true});
     // 行尾 ✕（第 5 条）：委托画 + 自己处理点击 ⇒ 删掉工具行里的「移除」按钮
     //   ★ 2026-10-02 树化之后回调给**节点**，源下标从 `data(0, Qt::UserRole)` 读（分组节点 -1 ⇒ 不画）
     package_list_->setItemDelegateForColumn(
         2, new PackageRemoveDelegate([this](QTreeWidgetItem*, int source_index) {
             if (source_index >= 0) remove_source_at(source_index);
         }));
+    // ★ 与条目树**同一条路**（用户：「包树直接引用树的统一函数就行啊」）：单击节点身体＝展开/折叠。
+    QObject::connect(package_list_, &QTreeWidget::itemClicked, this,
+                     [this](QTreeWidgetItem* item, int) { on_package_item_clicked(item); });
 
     // ── 中：格式下拉（6.13：取值 = 内部键）+ 条目列表（虚拟化）
     format_combo_ = new QComboBox;
@@ -340,33 +389,16 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     //   子节点**懒建**（展开时才建），所以几万条目的大包打开也不慢。
     entry_tree_ = new QTreeWidget;
     entry_tree_->setObjectName(QStringLiteral("fs_entry_tree"));
-    entry_tree_->setColumnCount(3);
-    entry_tree_->setHeaderLabels({QStringLiteral("包内条目"), QStringLiteral("大小"),
-                                  QStringLiteral("来源")});
-    entry_tree_->setUniformRowHeights(true);   // 行高一致 ⇒ 几万行也不慢
-    entry_tree_->setAlternatingRowColors(false);
-    // ★ 列宽（用户截图：名称列被挤成 "text..."，整棵树没法读）：**首列拉伸**，
-    //   后两列按内容自适应；别再用 `setStretchLastSection(true)`（那会拉伸"来源"列、
-    //   把名称列留成默认的几十像素）。
-    // ★ 用户 2026-09-29 第 4 条：「某些字段还是不能全部显示……最好也是弄一个水平方向的可拖拽分隔条」
-    //   ⇒ 三列都改成 **Interactive**（表头之间可以拖），并给一组合适的初始宽度；
-    //   不要再 Stretch/ResizeToContents（那样用户没法自己调，字段也容易被挤掉）。
-    entry_tree_->header()->setStretchLastSection(false);
-    for (int col = 0; col < 3; ++col) {
-        entry_tree_->header()->setSectionResizeMode(col, QHeaderView::Interactive);
-    }
-    entry_tree_->header()->resizeSection(0, xrkit::core::px(340));   // 用户："包内条目/大小/来源还是被截"
-    entry_tree_->header()->resizeSection(1, xrkit::core::px(110));
-    entry_tree_->header()->resizeSection(2, xrkit::core::px(220));
-    entry_tree_->header()->setMinimumSectionSize(xrkit::core::px(48));
-    entry_tree_->header()->setStretchLastSection(true);
-    // ★ 2026-09-27（用户实测"排版有很大问题"）：条目区给自己一个**最小高度**，
-    //   免得没有条目时被压成一条细线（看着像坏了）。
-    entry_tree_->setMinimumHeight(xrkit::core::px(160));
-    // ★ 用户 2026-10-01：「DB栏能拖动多选，文件栏不行。」⇒ 包内条目也要能**框选/拖选多个**
-    //   （包列表一直是 ExtendedSelection）。选中的条目本身不参与解包（解包看勾选态），
-    //   但"能多选"是他习惯的操作方式，缺了就像坏了。
-    entry_tree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    // ★★ 与包列表**同一个装配函数**（用户 2026-10-02：「包树直接引用树的统一函数就行啊」）——
+    //   既然要对齐"已经打磨过的那棵"，就把两边的列策略也统一成同一条规则：
+    //   **名称列吃剩余宽度、后两列 Interactive 钉右**（用户 09-29 要的"列之间能拖"不丢）。
+    //   这条同时消掉条目树的老毛病：名称列固定 340 被截、而"来源"列（短字符串）却吃着剩余宽度。
+    apply_pair_tree_spec(entry_tree_, PairTreeSpec{
+                                         {QStringLiteral("包内条目"), QStringLiteral("大小"),
+                                          QStringLiteral("来源")},
+                                         {340, 110, 220},
+                                         160,
+                                         false});
     // 勾选/展开都回灌模型（见 on_entry_item_changed / populate_entry_children）
     QObject::connect(entry_tree_, &QTreeWidget::itemChanged, this,
                      [this](QTreeWidgetItem* item, int) { on_entry_item_changed(item); });
@@ -374,9 +406,8 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
                      [this](QTreeWidgetItem* item) { populate_entry_children(item); });
     // ★ 用户 2026-09-29 第 5 条：「文件夹要双击才能打开，改成单击。然后单个文件要点框才能勾选，
     //   改成点击条目就能勾选（那个勾选框只是视觉效果，没有额外判定）」。
-    //   `expandsOnDoubleClick(false)` + itemClicked：文件夹单击就展开/折叠；
-    //   文件**点条目身体**即切换勾选（点勾选框本身仍由 Qt 走 itemChanged，两条路都回灌模型）。
-    entry_tree_->setExpandsOnDoubleClick(false);
+    //   `apply_pair_tree_spec` 里已经 `setExpandsOnDoubleClick(false)`；这里接"单击"这一条路：
+    //   文件夹单击即展开/折叠；文件**点条目身体**即切勾选（点勾选框本身走 itemChanged，两条路都回灌模型）。
     QObject::connect(entry_tree_, &QTreeWidget::itemClicked, this,
                      [this](QTreeWidgetItem* item, int) { on_entry_item_clicked(item); });
 
@@ -1114,19 +1145,9 @@ void FsPage::on_entry_item_clicked(QTreeWidgetItem* item) {
     const QString path = item->data(0, Qt::UserRole).toString();
     if (path.isEmpty()) return;   // 占位子项
     const bool is_dir = item->data(0, Qt::UserRole + 1).toBool();
-    // 点的是勾选框那一小块吗？是的话交给 Qt（itemChanged 会回灌模型），这里不重复处理
-    bool on_indicator = false;
-    if (entry_tree_ != nullptr && entry_tree_->viewport() != nullptr) {
-        const QPoint vp = entry_tree_->viewport()->mapFromGlobal(QCursor::pos());
-        const QRect row = entry_tree_->visualItemRect(item);
-        int depth = 0;
-        for (QTreeWidgetItem* p = item->parent(); p != nullptr; p = p->parent()) ++depth;
-        const int indent = entry_tree_->indentation() * depth;
-        const int indicator = entry_tree_->style()->pixelMetric(QStyle::PM_IndicatorWidth) + 8;
-        // 只有"光标确实落在这一行里、且落在那小块勾选框上"才算点勾选框；
-        // 离屏/自检里光标不在行上 ⇒ 视为点**条目身体**（否则自检没法验这条）
-        on_indicator = row.contains(vp) && vp.x() < row.x() + indent + indicator;
-    }
+    // 点的是勾选框那一小块吗？是的话交给 Qt（itemChanged 会回灌模型），这里不重复处理。
+    // ★ 2026-10-02：判据与包树**共用同一个 `click_on_indicator`**（两树行为只有一份实现）。
+    const bool on_indicator = click_on_indicator(entry_tree_, item);
     if (is_dir) {
         if (!on_indicator) item->setExpanded(!item->isExpanded());   // 单击文件夹 = 展开/折叠
         return;
@@ -1134,6 +1155,16 @@ void FsPage::on_entry_item_clicked(QTreeWidgetItem* item) {
     if (on_indicator) return;   // 勾选框自身交给 Qt
     // 文件：**点条目身体**即切换勾选（勾选框只是视觉效果）
     item->setCheckState(0, item->checkState(0) == Qt::Checked ? Qt::Unchecked : Qt::Checked);
+}
+
+void FsPage::on_package_item_clicked(QTreeWidgetItem* item) {
+    // ★ 2026-10-02 用户：「包树直接引用树的统一函数就行啊。」⇒ 与 `on_entry_item_clicked`
+    //   共用 `click_on_indicator`：点箭头/勾选框那一小块交给 Qt，点**条目身体**才由我们展开/折叠。
+    //   ⚠ 差异只有一条（**有意保留**）：**叶子不切勾选** —— 包列表的勾选＝"加载这一包"，
+    //   点一下身体就加载/卸载属于**改语义**；条目树那边"点身体切勾选"是用户 2026-09-29 明确要的。
+    if (item == nullptr) return;
+    if (click_on_indicator(package_list_, item)) return;
+    if (item->childCount() > 0) item->setExpanded(!item->isExpanded());
 }
 
 void FsPage::on_entry_item_changed(QTreeWidgetItem* item) {

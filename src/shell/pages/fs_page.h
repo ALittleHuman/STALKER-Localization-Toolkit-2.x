@@ -280,6 +280,9 @@ private:
     void sync_entry_states();                                  // 勾选后按模型刷三态
     void on_entry_item_changed(QTreeWidgetItem* item);
     void on_entry_item_clicked(QTreeWidgetItem* item);   // 单击展开 / 单击条目勾选
+    // ★ 2026-10-02：「包树直接引用树的统一函数就行啊」⇒ 包树也接 `itemClicked`，与条目树
+    //   共用 `click_on_indicator` 判据（差异只有"叶子不切勾选"那一条，理由在实现里）。
+    void on_package_item_clicked(QTreeWidgetItem* item);
     bool entry_visible(const engine::fs::MergeNode& node) const;
     // ★ 2026-10-01：搜索改成**按"这一项自己的名字"匹配**（文件与目录一视同仁），
     //   命中项进 `matched_paths_`（界面上加粗），祖先链进 `filter_keep_` 撑层级。
