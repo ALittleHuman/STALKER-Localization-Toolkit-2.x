@@ -228,10 +228,11 @@ int main(int argc, char** argv) {
                                                                          int depth) {
                     if (item == nullptr || prow >= 40) return;
                     ++prow;
-                    out << QStringLiteral("PROW d=%1 text='%2' src=%3 kids=%4\n")
+                    out << QStringLiteral("PROW d=%1 text='%2' src=%3 exp=%4 kids=%5\n")
                                .arg(depth)
                                .arg(item->text(0))
                                .arg(item->data(0, Qt::UserRole).toInt())
+                               .arg(item->isExpanded() ? 1 : 0)
                                .arg(item->childCount());
                     for (int i = 0; i < item->childCount(); ++i) {
                         dump_pkg(item->child(i), depth + 1);

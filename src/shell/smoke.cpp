@@ -2149,6 +2149,27 @@ SmokeResult run_smoke() {
                           .arg(drop_page.source_count())
                           .arg(dup));
             }
+            // ★★ 2026-10-02 用户：「同一个目录拖两次会出现两份散装层源这个修掉。」
+            //   判据＝**再把同一个目录拖一次 ⇒ 源数一个都不涨**，并且给出一行可见理由。
+            //   （把入口的去重去掉立刻红：会从 2 变成 3。）
+            {
+                const int before = drop_page.source_count();
+                const int errors_before = drop_page.load_errors().size();
+                QMimeData again_mime;
+                again_mime.setUrls({QUrl::fromLocalFile(dir)});
+                QDropEvent again_drop(QPointF(5, 5), Qt::CopyAction, &again_mime, Qt::LeftButton,
+                                      Qt::NoModifier);
+                if (drop_page.drop_filter() != nullptr) {
+                    drop_page.drop_filter()->dispatch(&again_drop);
+                }
+                QApplication::processEvents();
+                check(drop_page.source_count() == before &&
+                          drop_page.load_errors().size() > errors_before,
+                      QStringLiteral("⑦ 同一个目录拖两次不重复加源（源 %1→%2，理由 +%3）")
+                          .arg(before)
+                          .arg(drop_page.source_count())
+                          .arg(drop_page.load_errors().size() - errors_before));
+            }
             // ★ 正向断言（别让上面那条只证明"去重"）：**另建一个目录**、里面放一个新包 ⇒ 拖它 ⇒
             //   **源数 +2**（散装层 + 那个包）、**已加载 +1**（新口径：扫出来的包只入列表、不加载）。
             {

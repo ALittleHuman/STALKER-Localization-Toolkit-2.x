@@ -789,6 +789,27 @@ int FsPage::add_paths(const QStringList& paths) {
         }
         // ② 目录 ⇒ 散装层；文件 ⇒ 包（SquashFS 按 magic、DB 按自洽判定，
         //    歧义时用「打包/解包格式」下拉里选的那个，见 package_entries 的说明）
+        // ★★ 2026-10-02 用户：「同一个目录拖两次会出现两份散装层源这个修掉。」
+        //   ⇒ 入口按**路径**去重（同路径＝同一个源）：已经有了就不再加第二份，并给一行可见理由。
+        //   **为什么按路径、不按内容哈希**：这里要判的是"这是不是同一份东西"，路径就是它的身份；
+        //   哈希得**把整个目录读一遍**（真机 `IWP\database` 1.9 GB / 57 个包，拖一次多花几十秒），
+        //   而"内容相同但路径不同"（另拷了一份）本来就该按两份源对待、由用户自己决定去留。
+        //   去重放在**读条目之前**：重复拖一个 1.9 GB 目录时连扫都不用扫。
+        //   ⚠ 判重要先算成标志再跳 —— 第一版把 `continue` 写在内层遍历源的循环里，等于**什么都没跳过**
+        //   （自检那条"拖两次不涨源数"的锁当场抓出来：源 2→3）。
+        bool already_known = false;
+        for (const Source& source : sources_) {
+            if (QString::compare(source.path, gated, Qt::CaseInsensitive) == 0) {
+                already_known = true;
+                break;
+            }
+        }
+        if (already_known) {
+            const QString why = QStringLiteral("已经在列表里，未重复添加：%1").arg(gated);
+            log_message(why);
+            load_errors_ << why;
+            continue;   // ← 跳的是**外层**（paths）循环
+        }
         std::string error;
         std::vector<efs::EntryInfo> entries;
         if (QFileInfo(gated).isDir()) {
@@ -1477,7 +1498,10 @@ void FsPage::rebuild_package_list() {
                 parent->addChild(item);
             }
             for (const PkgTreeNode& child : node.children) add_node(child, item);
-            if (item->childCount() > 0) item->setExpanded(true);
+            // ★ 2026-10-02 用户：「重建之后，默认收起。」⇒ 目录节点建出来**不自动展开**
+            //   （上一版默认展开：拖一个大目录时几十个包一次性铺开，列表太长）。
+            //   展开态由用户自己点箭头；这里刻意不 `setExpanded(true)`。
+            (void)item;
         };
     for (const PkgTreeNode& node : roots) add_node(node, nullptr);
     rebuilding_package_list_ = false;
