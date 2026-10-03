@@ -210,7 +210,8 @@ struct PkgTreeNode {
 };
 
 QString pkg_parent_dir(const QString& path) {
-    // 目录型源取**父目录**（这样它自己会成为树里一个节点）；文件型源取所在目录
+    // 源现在**全是文件**（2026-10-03 起"文件夹＝散装层源"已作废）⇒ 一律取所在目录参与比较。
+    // （旧口径下目录型源取它的**父目录**，好让它自己成为树里一个节点 —— 那条已不需要。）
     return QFileInfo(path).absolutePath();
 }
 
@@ -244,11 +245,28 @@ std::vector<PkgTreeNode> pkg_build_nodes(const QStringList& paths) {
     QStringList parents;
     for (const QString& path : paths) parents << pkg_parent_dir(path);
     const QString anchor = pkg_common_ancestor(parents);
+    // ★★ 2026-10-03（新口径：源**全是文件**）—— 锚点规则两条，正好满足两个相反的判据：
+    //   · 所有源**都直接躺在 anchor 里**（没有源落在更深的子目录）⇒ **anchor 自己不画**，
+    //     文件就是根节点 ⇒ 保住"只拖一个包时，树里就一个根节点、**不画**它的祖先目录"。
+    //   · 否则（有源落在子目录里）⇒ **anchor 自己成为一个分组节点**，源挂在它下面 ⇒
+    //     拖 `IWP\database`（57 个包分布在 config/ maps/ mods/ patch/ resource/ sound/）时
+    //     根＝`database/`（**分组**节点：`src=-1`、可勾选三态、不显大小、无 ✕）。
+    bool all_direct = true;
+    for (const QString& parent : parents) {
+        if (!anchor.isEmpty() && parent.compare(anchor, Qt::CaseInsensitive) != 0) {
+            all_direct = false;
+            break;
+        }
+    }
+    // 基准目录：**都在同一层** ⇒ 以公共目录为基准 ⇒ 文件直接作根（不画那个目录）；
+    // 否则 ⇒ 以公共目录的**父目录**为基准 ⇒ 公共目录自己成为根节点（分组）。
+    const QString base =
+        all_direct ? anchor : QFileInfo(anchor).absolutePath();
     std::vector<PkgTreeNode> roots;
     for (int i = 0; i < paths.size(); ++i) {
-        QString rel = anchor.isEmpty()
+        QString rel = base.isEmpty()
                           ? QFileInfo(paths[i]).fileName()
-                          : QDir(anchor).relativeFilePath(QDir::fromNativeSeparators(paths[i]));
+                          : QDir(base).relativeFilePath(QDir::fromNativeSeparators(paths[i]));
         if (rel.isEmpty() || rel.startsWith(QStringLiteral(".."))) {
             rel = QFileInfo(paths[i]).fileName();   // 跨盘等退化情形：至少给它一个名字
         }
@@ -823,16 +841,31 @@ int FsPage::add_paths(const QStringList& paths) {
             load_errors_ << why;
             continue;
         }
-        // ② 目录 ⇒ 散装层；文件 ⇒ 包（SquashFS 按 magic、DB 按自洽判定，
+        // ★★ 2026-10-03 口径（用户原话，最高优先级）：「这里母文件夹的"已加载"指的是**文件夹**已加载
+        //   而不是**包的内容**已加载。怎么能这样呢？**右边永远不显示包体，除非包体本身在左边的包内，
+        //   而不是文件夹内。**」＋「**这是一个解包的工具，而右边罗列的是包的内容，换句话说就是
+        //   解包产物的预览。**」⇒ 右栏＝**解包产物预览**：只含**已加载的包**的内容；**文件夹不贡献任何条目**。
+        //   ⇒ 目录分支只剩一句：把里面的包**列进列表**（未加载）；目录自己**不成源**
+        //     （不进右栏、不显示"已加载"、不计入 `source_count()`）。
+        //   ★ 这**作废**了 2026-09-29 的旧口径"拖进来的目录＝散装层源"（那时目录自己是一个源，
+        //     于是右栏既出现包的内容、又出现"包文件本身"，逻辑关系错乱）。
+        if (QFileInfo(gated).isDir()) {
+            const int scanned = scan_dir(gated);
+            if (scanned > 0) {
+                log_message(QStringLiteral("目录里的 %1 个包已加进包列表（未加载）⇒ 勾选后点「加载选中」")
+                                .arg(scanned));
+            } else {
+                const QString why = QStringLiteral("这个目录里没有认得出的包：%1").arg(raw);
+                log_message(why);
+                load_errors_ << why;
+            }
+            continue;   // ★ 目录自己**不成为源**
+        }
+        // ② 文件 ⇒ 包（SquashFS 按 magic、DB 按自洽判定，
         //    歧义时用「打包/解包格式」下拉里选的那个，见 package_entries 的说明）
-        // ★★ 2026-10-02 用户：「同一个目录拖两次会出现两份散装层源这个修掉。」
-        //   ⇒ 入口按**路径**去重（同路径＝同一个源）：已经有了就不再加第二份，并给一行可见理由。
-        //   **为什么按路径、不按内容哈希**：这里要判的是"这是不是同一份东西"，路径就是它的身份；
-        //   哈希得**把整个目录读一遍**（真机 `IWP\database` 1.9 GB / 57 个包，拖一次多花几十秒），
-        //   而"内容相同但路径不同"（另拷了一份）本来就该按两份源对待、由用户自己决定去留。
-        //   去重放在**读条目之前**：重复拖一个 1.9 GB 目录时连扫都不用扫。
-        //   ⚠ 判重要先算成标志再跳 —— 第一版把 `continue` 写在内层遍历源的循环里，等于**什么都没跳过**
-        //   （自检那条"拖两次不涨源数"的锁当场抓出来：源 2→3）。
+        // ★ 同一路径不重复加源：判重按**路径**（不按内容哈希 —— 哈希要把整个文件读一遍，而
+        //   "重复拖"本来就是为了早点被拒）。⚠ 判重要先算成标志再跳外层：在内层循环里直接
+        //   `continue` 只跳内层（我踩过，自检那条锁当场抓出来）。
         bool already_known = false;
         for (const Source& source : sources_) {
             if (QString::compare(source.path, gated, Qt::CaseInsensitive) == 0) {
@@ -844,21 +877,12 @@ int FsPage::add_paths(const QStringList& paths) {
             const QString why = QStringLiteral("已经在列表里，未重复添加：%1").arg(gated);
             log_message(why);
             load_errors_ << why;
-            continue;   // ← 跳的是**外层**（paths）循环
+            continue;
         }
         std::string error;
         std::vector<efs::EntryInfo> entries;
-        if (QFileInfo(gated).isDir()) {
-            // ★ 用户 2026-09-29 第 6 条：「像 E:\...\IWP 这种 CoP 的文件管理方式，直接把整个文件夹
-            //   拖进去没法将 gamedata 文件树正确展开，而是仅仅显示当中的 db 包文件。」
-            //   ⇒ 目录不再"只当散装层"：**散装层（松散文件看得见）+ 递归找包并加载（包内容摊开）**，
-            //   即 1.x `_on_drop_input` → `_scan_and_load` 的语义。两条源都进同一个合并树，
-            //   所以 `gamedata/` 下既能看到松散文件，也能看到各 `.db` 里的文件。
-            entries = efs::loose_entries(gated.toUtf8().toStdString(), error);
-        } else {
-            entries = efs::package_entries(gated.toUtf8().toStdString(),
-                                           efs::format_key_to_db(current_format_key()), error);
-        }
+        entries = efs::package_entries(gated.toUtf8().toStdString(),
+                                       efs::format_key_to_db(current_format_key()), error);
         if (!error.empty()) {
             // ③ **可见失败**：认不出/解不开都要说清是哪一份、为什么（绝不静默加空包）
             const QString why = QStringLiteral("加载失败：%1 —— %2").arg(raw, utf8(error));
@@ -868,21 +892,6 @@ int FsPage::add_paths(const QStringList& paths) {
         }
         push_source(gated, entries);
         ++loaded;
-        // 目录：再把里面的包**递归扫进包列表**（★ 2026-10-02 口径：**只入列表、不加载**）。
-        // ★★ 用户原话：「拖入文件夹的一些逻辑也要修复一下，和单个包文件那种结构的逻辑统一。」
-        //   ⇒ **删掉旧的 `kAutoLoadMax = 8` 阈值**（≤8 个包就全自动加载、>8 才只入列表）——
-        //   那让"同一个动作"因为目录里有几个包而表现不同。现在的统一口径是：
-        //   **用户拖进来的那个东西 = 加载它**（文件＝该包；文件夹＝它的散装层），
-        //   **从文件夹里顺带扫出来的包 = 只入列表**，等用户勾选/「加载选中」。
-        //   （旧行为见历史：`IWP\database` 57 个包 18.9G 全解会卡死，当时用阈值打补丁；
-        //     现在这条规则对任何目录都成立，不再需要阈值。）
-        if (QFileInfo(gated).isDir()) {
-            const int scanned = scan_dir(gated);
-            if (scanned > 0) {
-                log_message(QStringLiteral("目录里的 %1 个包已加进包列表（未加载）⇒ 勾选后点「加载选中」")
-                                .arg(scanned));
-            }
-        }
         log_message(QStringLiteral("已加载：%1（%2 项）")
                         .arg(raw)
                         .arg(static_cast<int>(entries.size())));
@@ -898,6 +907,10 @@ QString FsPage::source_at(int index) const {
 void FsPage::check_all(bool checked) {
     tree_.toggle_all(checked);
     refresh_rows();
+    // ★★ 2026-10-03：右栏的勾选变了 ⇒ 左栏**包节点的三态**也要跟着刷
+    //   （用户：「包的内容没有全部勾选的时候，包的勾选框也应当处于部分勾选的状态。」）。
+    //   原来这里漏了 → "包内全选"之后包节点仍显示未勾（新锁当场抓出来）。
+    refresh_package_checks();
 }
 
 bool FsPage::entry_hint_visible() const {
@@ -1186,6 +1199,10 @@ void FsPage::on_entry_item_changed(QTreeWidgetItem* item) {
     tree_.toggle_dir(path.toUtf8().toStdString(), on);
     rebuild_dir_states();
     sync_entry_states();
+    // ★★ 2026-10-03 用户：「**包的内容没有全部勾选的时候，包的勾选框也应当处于部分勾选的状态。**」
+    //   ⇒ 在**右栏**改动条目的勾选之后，必须同步刷**左栏包节点**的三态；原来这里漏了这一句，
+    //     于是勾掉包内某个条目后，左边那个包**仍然显示全勾**（自检新锁当场抓出来）。
+    refresh_package_checks();
     refresh_counts();
 }
 
@@ -1633,6 +1650,8 @@ bool FsPage::load_one_source(int source_index, QString* error_out) {
     }
     std::string error;
     std::vector<efs::EntryInfo> entries;
+    // ★ 2026-10-03：`isDir` 这一支**现在走不到了**（目录不再成为源 —— 见 `add_paths`）；
+    //   留着是为了"万一有历史/外部构造的目录型源"仍能加载，不至于静默失败。
     if (QFileInfo(gated).isDir()) {
         entries = efs::loose_entries(gated.toUtf8().toStdString(), error);
     } else {
@@ -1758,6 +1777,7 @@ int FsPage::load_selected() {
         }
         std::string error;
         std::vector<efs::EntryInfo> entries;
+        // ★ 2026-10-03：同 `load_one_source` —— 目录型源已不再产生，这一支走不到（留着以防万一）。
         if (QFileInfo(gated).isDir()) {
             entries = efs::loose_entries(gated.toUtf8().toStdString(), error);
         } else {
