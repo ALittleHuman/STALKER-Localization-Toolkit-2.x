@@ -851,15 +851,34 @@ int FsPage::add_paths(const QStringList& paths) {
         //     于是右栏既出现包的内容、又出现"包文件本身"，逻辑关系错乱）。
         if (QFileInfo(gated).isDir()) {
             const int scanned = scan_dir(gated);
+            // ★★ 2026-10-03 用户口径（原话）：「勾文件夹要不要顺带加载**肯定要加载**。**只要拖入包或者
+            //   文件夹就加载上去**。如果拖入 `IWP\database` 一类的文件夹，**直接加载就可以，右边就是
+            //   预览文件结构、大小、名称等的。这样可以选择性解包。**」
+            //   ⇒ 目录里的包**全部加载**（撤销 2026-10-02 的"扫出来的只入列表"）；用户实测零点几秒，
+            //     而且 DB 读盘已是 seek 式 ⇒ 每个包只读"块头 + 尾部条目表"。
             if (scanned > 0) {
-                log_message(QStringLiteral("目录里的 %1 个包已加进包列表（未加载）⇒ 勾选后点「加载选中」")
-                                .arg(scanned));
+                int loaded_now = 0;
+                const QString prefix = QDir::fromNativeSeparators(gated) + QLatin1Char('/');
+                for (size_t i = 0; i < sources_.size(); ++i) {
+                    if (sources_[i].loaded) continue;
+                    const QString candidate = QDir::fromNativeSeparators(sources_[i].path);
+                    if (!candidate.startsWith(prefix, Qt::CaseInsensitive)) continue;
+                    if (load_one_source(static_cast<int>(i), nullptr)) ++loaded_now;
+                }
+                if (loaded_now > 0) rebuild_tree();   // 新加载的内容要进右栏（＝解包产物预览）
+                // ★ 2026-10-03：**返回值要如实** —— `add_paths` 的返回是"这次调用加载了几个源"，
+                //   目录分支里加载的那些必须计进去（自检那条"拖目录 ⇒ 返回 1"的锁当场抓出这里漏了）。
+                loaded += loaded_now;
+                log_message(QStringLiteral("目录里的 %1 个包已加载（右栏＝产物预览，可选择性解包）")
+                                .arg(loaded_now));
             } else {
                 const QString why = QStringLiteral("这个目录里没有认得出的包：%1").arg(raw);
                 log_message(why);
                 load_errors_ << why;
             }
-            continue;   // ★ 目录自己**不成为源**
+            refresh_package_checks();
+            refresh_counts();
+            continue;   // ★ 目录自己**不成为源**（非包文件不进左树、也不进右栏）
         }
         // ② 文件 ⇒ 包（SquashFS 按 magic、DB 按自洽判定，
         //    歧义时用「打包/解包格式」下拉里选的那个，见 package_entries 的说明）
@@ -1353,8 +1372,25 @@ std::vector<FsPage::UnpackJob> FsPage::plan_unpack(bool checked_only, QString* o
         if (!sources_[i].loaded) continue;
         UnpackJob job;
         job.image = sources_[i].path.toUtf8().toStdString();
-        job.target =
-            QDir(root).filePath(package_folder_name(sources_[i].path)).toUtf8().toStdString();
+        // ★★ 2026-10-03 用户口径（原话）：「如果就拖入 `E:\...\IWP\database\config` 的 `configs`，
+        //   那么**解包出来是一个 `configs` 文件夹**（和 `gamedata.db*`/`sq*` 解出 `gamedata` 一样），
+        //   **不包含 `database` 和 `config`**。」；追问"包内路径本身就带一层 `configs/` 会不会变成
+        //   `configs/configs`"他定案：**「这个案例，就解出来一个 configs。」**
+        //   ⇒ 规则：产物顶层＝**包名（去扩展名）**；但**包内路径已经自带这一层同名壳时不再叠一层**。
+        //   判据＝**该包所有条目路径的第一段都等于包名** ⇒ 直接把输出根当落点（路径里的那一层就成了产物顶层）。
+        const QString shell = package_folder_name(sources_[i].path);
+        bool entries_carry_shell = !entries_[i].empty();
+        for (const efs::EntryInfo& entry : entries_[i]) {
+            const QString rel = utf8(entry.path);
+            if (!rel.startsWith(shell + QLatin1Char('/'))) {
+                entries_carry_shell = false;
+                break;
+            }
+        }
+        //   ★ 落点：**包内路径已经自带这一层同名壳时不再叠一层**（否则真机会解出 `configs/configs/…`）。
+        //   ⚠ 不要再写成 `QDir(root).filePath(".")` —— 那会生成 `<root>/.`，被引擎的安全路径判据拒掉
+        //     （自检"产物布局①"当场红了：`解包：0 个文件、失败 2`）。直接用根字符串。
+        job.target = (entries_carry_shell ? root : QDir(root).filePath(shell)).toUtf8().toStdString();
         job.label = QFileInfo(sources_[i].path).fileName().toUtf8().toStdString();
         job.db_fallback = fallback;
         if (checked_only) {
@@ -1673,10 +1709,12 @@ bool FsPage::load_one_source(int source_index, QString* error_out) {
 }
 
 void FsPage::toggle_group_at(QTreeWidgetItem* group, bool on) {
-    // 分组节点：**连带**它下面的所有源。逐项置位期间必须挡住回灌 —— 否则"勾一个目录"会把
-    // 未加载的包**一个个当场加载**（57 个包 / 18.9 GB 那种会直接卡死；用户要的是"标记"，
-    // 真正的加载仍由「加载选中」触发）。
+    // 分组节点：**连带**它下面的所有源。
+    // ★★ 2026-10-03 用户口径：「勾文件夹要不要顺带加载**肯定要加载**」⇒ 勾上时对**未加载**的源
+    //   真的 `load_one_source()`（不再是"只标记"）；**加载失败的源勾选态退回未勾**（不留假勾），
+    //   失败理由由 `load_one_source` 记进日志与 `load_errors_`。
     if (group == nullptr) return;
+    std::vector<QTreeWidgetItem*> nodes;
     std::vector<int> touched;
     rebuilding_package_list_ = true;
     std::function<void(QTreeWidgetItem*)> walk = [&](QTreeWidgetItem* node) {
@@ -1685,6 +1723,7 @@ void FsPage::toggle_group_at(QTreeWidgetItem* group, bool on) {
             const int index = child->data(0, Qt::UserRole).toInt();
             if (index >= 0 && index < static_cast<int>(sources_.size())) {
                 child->setCheckState(0, on ? Qt::Checked : Qt::Unchecked);
+                nodes.push_back(child);
                 touched.push_back(index);
             }
             walk(child);
@@ -1692,11 +1731,23 @@ void FsPage::toggle_group_at(QTreeWidgetItem* group, bool on) {
     };
     walk(group);
     rebuilding_package_list_ = false;
-    for (int index : touched) {
-        if (!sources_[static_cast<size_t>(index)].loaded) continue;   // 未加载的只"标记"，等「加载选中」
+    bool loaded_any = false;
+    for (size_t k = 0; k < touched.size(); ++k) {
+        const int index = touched[k];
+        if (!sources_[static_cast<size_t>(index)].loaded) {
+            if (!on) continue;                        // 去勾不需要加载
+            if (!load_one_source(index, nullptr)) {   // 加载失败 ⇒ 别把它留在"已勾"
+                rebuilding_package_list_ = true;
+                nodes[k]->setCheckState(0, Qt::Unchecked);
+                rebuilding_package_list_ = false;
+                continue;
+            }
+            loaded_any = true;
+        }
         const int merged = loaded_index_for_source(static_cast<size_t>(index));
         if (merged >= 0) tree_.toggle_source(merged, on);
     }
+    if (loaded_any) rebuild_tree();   // 源集合变了 ⇒ 右栏（产物预览）要重放
     rebuild_dir_states();
     sync_entry_states();
     refresh_package_checks();
