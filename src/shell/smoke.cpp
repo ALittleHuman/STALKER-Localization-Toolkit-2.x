@@ -2499,13 +2499,35 @@ SmokeResult run_smoke() {
                               .arg(was_expanded ? 1 : 0)
                               .arg(root_item != nullptr && root_item->isExpanded() ? 1 : 0));
                 }
-                check(sub_item != nullptr && !group_checkable && sub_item->text(1).isEmpty() &&
+                // ★★ 2026-10-02 口径**有意改写**（用户：「包树和文件树逻辑的唯一差别，就是包树多一个
+                //   是否加载。**其他行为应当完全一样**。」）⇒ 分组节点**改成可勾选**（带三态，
+                //   勾它＝连带勾/去勾它下面的所有源），不再要求"不可勾选"。仍然无大小、无 ✕（下标 <0）。
+                check(sub_item != nullptr && sub_item->flags().testFlag(Qt::ItemIsUserCheckable) &&
+                          sub_item->text(1).isEmpty() &&
                           sub_item->data(0, Qt::UserRole).toInt() < 0,
-                      QStringLiteral("包列表树③ 纯分组节点：不可勾选 %1、大小「%2」、源下标 %3（应 <0，"
+                      QStringLiteral("包列表树③ 分组节点：可勾选（三态）%1、大小「%2」、源下标 %3（应 <0，"
                                      "委托就是按它不画 ✕）")
-                          .arg(group_checkable ? 1 : 0)
+                          .arg(sub_item != nullptr && sub_item->flags().testFlag(Qt::ItemIsUserCheckable) ? 1 : 0)
                           .arg(sub_item != nullptr ? sub_item->text(1) : QString())
                           .arg(sub_item != nullptr ? sub_item->data(0, Qt::UserRole).toInt() : -999));
+                // ★ 同一口径的可判红判据：**勾一个分组节点 ⇒ 它下面所有源都被勾上**（且不代加载）。
+                {
+                    const int before_loaded = tree_list_page.loaded_source_count();
+                    if (sub_item != nullptr) {
+                        sub_item->setCheckState(0, Qt::Checked);
+                        QApplication::processEvents();
+                    }
+                    bool all_children_checked = sub_item != nullptr && sub_item->childCount() > 0;
+                    for (int i = 0; sub_item != nullptr && i < sub_item->childCount(); ++i) {
+                        if (sub_item->child(i)->checkState(0) == Qt::Unchecked) all_children_checked = false;
+                    }
+                    check(all_children_checked &&
+                              tree_list_page.loaded_source_count() == before_loaded,
+                          QStringLiteral("包列表树⑤ 勾分组＝连带勾它下面所有源 %1、且**不代加载**（已加载 %2→%3）")
+                              .arg(all_children_checked ? 1 : 0)
+                              .arg(before_loaded)
+                              .arg(tree_list_page.loaded_source_count()));
+                }
                 check(package_source_node_count(list) == tree_list_page.source_count(),
                       QStringLiteral("包列表树 源节点数 == 源数（节点 %1 / 源 %2）")
                           .arg(package_source_node_count(list))
@@ -2514,7 +2536,53 @@ SmokeResult run_smoke() {
                 QDir(root).removeRecursively();
             }
 
-            // ★ 用户 2026-09-30：三层结构里勾最内层文件 ⇒ **最外层祖先也要显示"部分勾选"**
+            // ★★ 2026-10-02 用户报「包树崩了」。真因：**在 `itemChanged` 槽里重建了包树**
+        //   （`load_selected()` → `rebuild_package_list()` → `clear()` 把**正在处理的那个 item 删掉**，
+        //   槽返回后 Qt 继续用它 ⇒ use-after-free ⇒ 崩）。同族的第二处＝✕ 委托在 `editorEvent` 里直接重建。
+        //   判据（可判红）：勾一个**未加载**的包之后，**同一个 `QTreeWidgetItem` 对象还在**（说明没重建）。
+        //   把 `load_one_source` 换回 `load_selected() + rebuild_package_list()` ⇒ 指针变了 ⇒ 红。
+        {
+            const QString cdir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_crash"));
+            QDir(cdir).removeRecursively();
+            QDir().mkpath(cdir);
+            std::vector<efs::DbPackItem> items;
+            efs::DbPackItem one;
+            one.path = "p/x.txt";
+            one.data = {'t'};
+            items.push_back(one);
+            const std::vector<uint8_t> raw = efs::pack_db(items, *efs::format_key_to_db("xdb"));
+            std::ofstream out((cdir + QStringLiteral("/gamedata.db0")).toStdString(),
+                              std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(raw.data()),
+                      static_cast<std::streamsize>(raw.size()));
+            out.close();
+            FsPage crash_page;
+            crash_page.resize(760, page_min_h());
+            crash_page.show();
+            QApplication::processEvents();
+            crash_page.scan_dir(cdir);       // 只入列表、未加载
+            QApplication::processEvents();
+            QTreeWidgetItem* row0 = crash_page.package_list()->topLevelItem(0);
+            const int top_before = crash_page.package_list()->topLevelItemCount();
+            const bool was_loaded = crash_page.loaded_source_count() > 0;
+            if (row0 != nullptr) row0->setCheckState(0, Qt::Checked);
+            QApplication::processEvents();
+            check(row0 != nullptr && !was_loaded &&
+                      crash_page.package_list()->topLevelItemCount() == top_before &&
+                      crash_page.package_list()->topLevelItem(0) == row0 &&
+                      crash_page.loaded_source_count() > 0,
+                  QStringLiteral("包树不崩① 勾未加载的包：**就地加载、不重建包树**（同一对象 %1 / 顶层 %2→%3 / "
+                                 "已加载 %4→%5）")
+                      .arg(crash_page.package_list()->topLevelItem(0) == row0 ? 1 : 0)
+                      .arg(top_before)
+                      .arg(crash_page.package_list()->topLevelItemCount())
+                      .arg(was_loaded ? 1 : 0)
+                      .arg(crash_page.loaded_source_count()));
+            crash_page.hide();
+            QDir(cdir).removeRecursively();
+        }
+
+        // ★ 用户 2026-09-30：三层结构里勾最内层文件 ⇒ **最外层祖先也要显示"部分勾选"**
             //   （修前只算直接父目录 ⇒ 最外层恒未选中 ⇒ 这条红）。
             {
                 FsPage tri_page;

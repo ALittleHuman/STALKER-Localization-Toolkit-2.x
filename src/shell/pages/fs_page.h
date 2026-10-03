@@ -283,6 +283,10 @@ private:
     // ★ 2026-10-02：「包树直接引用树的统一函数就行啊」⇒ 包树也接 `itemClicked`，与条目树
     //   共用 `click_on_indicator` 判据（差异只有"叶子不切勾选"那一条，理由在实现里）。
     void on_package_item_clicked(QTreeWidgetItem* item);
+    // ★ 2026-10-02（用户报"包树崩了"之后）：勾选框的槽里**绝不能重建包树**（那是 Qt 正在处理
+    //   item 时发出的信号）⇒ 就地加载抽成这一步；分组节点勾选＝连带勾/去勾它的所有源（不代加载）。
+    bool load_one_source(int source_index, QString* error_out);
+    void toggle_group_at(QTreeWidgetItem* group, bool on);
     bool entry_visible(const engine::fs::MergeNode& node) const;
     // ★ 2026-10-01：搜索改成**按"这一项自己的名字"匹配**（文件与目录一视同仁），
     //   命中项进 `matched_paths_`（界面上加粗），祖先链进 `filter_keep_` 撑层级。

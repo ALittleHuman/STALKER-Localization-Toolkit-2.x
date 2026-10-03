@@ -374,7 +374,12 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     //   ★ 2026-10-02 树化之后回调给**节点**，源下标从 `data(0, Qt::UserRole)` 读（分组节点 -1 ⇒ 不画）
     package_list_->setItemDelegateForColumn(
         2, new PackageRemoveDelegate([this](QTreeWidgetItem*, int source_index) {
-            if (source_index >= 0) remove_source_at(source_index);
+            if (source_index < 0) return;
+            // ★★ 2026-10-02 用户报「包树崩了」的两条根因之一：**不能在委托的 `editorEvent` 里直接
+            //   重建包树** —— 那时视图正拿着这个 item 派发鼠标事件，`clear()` 把 item 删掉 ⇒
+            //   事件处理继续用悬空指针 ⇒ 崩。⇒ 排队到下一轮事件循环再摘。
+            QMetaObject::invokeMethod(
+                this, [this, source_index] { remove_source_at(source_index); }, Qt::QueuedConnection);
         }));
     // ★ 与条目树**同一条路**（用户：「包树直接引用树的统一函数就行啊」）：单击节点身体＝展开/折叠。
     QObject::connect(package_list_, &QTreeWidget::itemClicked, this,
@@ -1158,13 +1163,17 @@ void FsPage::on_entry_item_clicked(QTreeWidgetItem* item) {
 }
 
 void FsPage::on_package_item_clicked(QTreeWidgetItem* item) {
-    // ★ 2026-10-02 用户：「包树直接引用树的统一函数就行啊。」⇒ 与 `on_entry_item_clicked`
-    //   共用 `click_on_indicator`：点箭头/勾选框那一小块交给 Qt，点**条目身体**才由我们展开/折叠。
-    //   ⚠ 差异只有一条（**有意保留**）：**叶子不切勾选** —— 包列表的勾选＝"加载这一包"，
-    //   点一下身体就加载/卸载属于**改语义**；条目树那边"点身体切勾选"是用户 2026-09-29 明确要的。
+    // ★ 2026-10-02 用户口径：「包树和文件树逻辑的**唯一差别**，就是包树多一个是否加载。
+    //   **其他行为应当完全一样**。」⇒ 与 `on_entry_item_clicked` 共用 `click_on_indicator`：
+    //   点箭头/勾选框那一小块交给 Qt；点**条目身体**——有子节点就展开/折叠，是叶子就**切换勾选**
+    //   （与条目树的文件完全一致；勾选一个未加载的包＝加载它，沿用 1.x `_db_toggle`，由 itemChanged 处理）。
     if (item == nullptr) return;
     if (click_on_indicator(package_list_, item)) return;
-    if (item->childCount() > 0) item->setExpanded(!item->isExpanded());
+    if (item->childCount() > 0) {
+        item->setExpanded(!item->isExpanded());
+        return;
+    }
+    item->setCheckState(0, item->checkState(0) == Qt::Checked ? Qt::Unchecked : Qt::Checked);
 }
 
 void FsPage::on_entry_item_changed(QTreeWidgetItem* item) {
@@ -1518,9 +1527,10 @@ void FsPage::rebuild_package_list() {
                 }
                 item->setCheckState(0, check);
             } else {
-                // 纯分组节点：只有名字 —— **显式摘掉** `ItemIsUserCheckable`（别指望"没设过就画不出勾选框"），
-                // 也没有大小、没有 ✕（委托按 `UserRole<0` 跳过）
-                item->setFlags(item->flags() & ~Qt::ItemIsUserCheckable);
+                // 分组节点：只有名字，**但可勾选**（用户口径"其他行为应当完全一样" ⇒ 文件夹也带三态勾选框，
+                // 勾它＝连带勾/去勾它下面的所有源；三态由 `refresh_package_checks()` 统一刷）。
+                // 仍然没有大小、没有 ✕。
+                item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
                 item->setText(0, label);
             }
             if (parent == nullptr) {
@@ -1555,17 +1565,34 @@ void FsPage::remove_source_at(int source_index) {
 
 void FsPage::on_package_item_changed(QTreeWidgetItem* item) {
     if (rebuilding_package_list_ || item == nullptr) return;   // 重建列表时不要把状态回灌
-    // ★ 2026-10-02 树化：源下标从 `data(0, Qt::UserRole)` 读（**纯分组节点是 -1**，不参与）
     const int index = item->data(0, Qt::UserRole).toInt();
-    if (index < 0 || index >= static_cast<int>(sources_.size())) return;
     const bool want = item->checkState(0) != Qt::Unchecked;
+    if (index < 0) {
+        // 分组节点（用户口径：「包树和文件树逻辑的唯一差别，就是包树多一个是否加载。其他行为应当完全一样。」
+        //   ⇒ 分组节点也带三态勾选框，勾/去勾它＝连带勾/去勾它下面的**所有源**）
+        toggle_group_at(item, want);
+        return;
+    }
+    if (index >= static_cast<int>(sources_.size())) return;
     if (!sources_[static_cast<size_t>(index)].loaded) {
         // 1.x `_db_toggle`：勾选一个**未加载**的包 ⇒ 先加载，再整包勾上
         if (!want) return;
-        item->setSelected(true);
-        load_selected();          // 内容变了 ⇒ 这里**允许**重建（load_selected → rebuild_tree）
-        // ★ 这一步之后 `item` 已经**悬空**（列表被重建过）⇒ 下面一律只用下标，别再碰 item
-        rebuild_package_list();
+        // ★★ 2026-10-02 用户报「包树崩了」的另一条根因（我埋的）：这里原来调
+        //   `load_selected()` + `rebuild_package_list()` —— 而**这个槽就是 Qt 正在处理 item 时
+        //   发出来的 `itemChanged`**，`clear()` 会把 item 删掉 ⇒ 槽返回后 Qt 继续用它 ⇒ 崩。
+        //   ⇒ 改成**就地加载这一个源**（只动模型与右栏，`rebuild_tree()` 不碰包树），再刷它自己那一行。
+        if (!load_one_source(index, nullptr)) {
+            rebuilding_package_list_ = true;          // 加载失败 ⇒ 勾选态退回，别让它停在"已勾"
+            item->setCheckState(0, Qt::Unchecked);
+            rebuilding_package_list_ = false;
+            refresh_package_checks();
+            return;
+        }
+        rebuild_tree();
+        rebuilding_package_list_ = true;              // 改自己那一行（文本/勾选）时别回灌
+        item->setText(0, QStringLiteral("%1　[已加载]").arg(QFileInfo(sources_[static_cast<size_t>(index)].path).fileName()));
+        item->setCheckState(0, Qt::Checked);
+        rebuilding_package_list_ = false;
     }
     const int merged = loaded_index_for_source(static_cast<size_t>(index));
     if (merged < 0) return;
@@ -1582,22 +1609,125 @@ void FsPage::on_package_item_changed(QTreeWidgetItem* item) {
     refresh_counts();
 }
 
+bool FsPage::load_one_source(int source_index, QString* error_out) {
+    // ★ 2026-10-02：把"加载一个源"抽成**不碰包树**的一步 —— 勾选框（`itemChanged` 槽里）与
+    //   「加载选中」都能用。以前勾选走 `load_selected()`（它会 `rebuild_package_list()`）⇒ 崩。
+    if (source_index < 0 || source_index >= static_cast<int>(sources_.size())) return false;
+    Source& source = sources_[static_cast<size_t>(source_index)];
+    if (source.loaded) return true;
+    QString gated = source.path;
+    QString gate_error;
+    if (!gate_source(gated, &gate_error)) {
+        const QString why = QStringLiteral("拒绝加载（需要解密插件）：%1 —— %2").arg(source.path, gate_error);
+        log_message(why);
+        load_errors_ << why;
+        if (error_out != nullptr) *error_out = why;
+        return false;
+    }
+    std::string error;
+    std::vector<efs::EntryInfo> entries;
+    if (QFileInfo(gated).isDir()) {
+        entries = efs::loose_entries(gated.toUtf8().toStdString(), error);
+    } else {
+        entries = efs::package_entries(gated.toUtf8().toStdString(),
+                                       efs::format_key_to_db(current_format_key()), error);
+    }
+    if (!error.empty()) {
+        const QString why = QStringLiteral("加载失败：%1 —— %2").arg(source.path, utf8(error));
+        log_message(why);
+        load_errors_ << why;
+        if (error_out != nullptr) *error_out = why;
+        return false;
+    }
+    source.path = gated;
+    source.key = gated.toUtf8().toStdString();
+    source.loaded = true;
+    entries_[static_cast<size_t>(source_index)] = std::move(entries);
+    return true;
+}
+
+void FsPage::toggle_group_at(QTreeWidgetItem* group, bool on) {
+    // 分组节点：**连带**它下面的所有源。逐项置位期间必须挡住回灌 —— 否则"勾一个目录"会把
+    // 未加载的包**一个个当场加载**（57 个包 / 18.9 GB 那种会直接卡死；用户要的是"标记"，
+    // 真正的加载仍由「加载选中」触发）。
+    if (group == nullptr) return;
+    std::vector<int> touched;
+    rebuilding_package_list_ = true;
+    std::function<void(QTreeWidgetItem*)> walk = [&](QTreeWidgetItem* node) {
+        for (int i = 0; i < node->childCount(); ++i) {
+            QTreeWidgetItem* child = node->child(i);
+            const int index = child->data(0, Qt::UserRole).toInt();
+            if (index >= 0 && index < static_cast<int>(sources_.size())) {
+                child->setCheckState(0, on ? Qt::Checked : Qt::Unchecked);
+                touched.push_back(index);
+            }
+            walk(child);
+        }
+    };
+    walk(group);
+    rebuilding_package_list_ = false;
+    for (int index : touched) {
+        if (!sources_[static_cast<size_t>(index)].loaded) continue;   // 未加载的只"标记"，等「加载选中」
+        const int merged = loaded_index_for_source(static_cast<size_t>(index));
+        if (merged >= 0) tree_.toggle_source(merged, on);
+    }
+    rebuild_dir_states();
+    sync_entry_states();
+    refresh_package_checks();
+    refresh_counts();
+}
+
 void FsPage::refresh_package_checks() {
-    // ★ 2026-10-02 树化：勾选态要**递归**刷（源节点散在树里）；分组节点**不碰**（它没有勾选框）。
+    // ★ 2026-10-02 树化：勾选态要**递归**刷（源节点散在树里）；**分组节点刷成三态**
+    //   （用户口径：包树与文件树"其他行为应当完全一样" ⇒ 文件夹也带三态勾选框）。
     rebuilding_package_list_ = true;
     pkg_for_each_source(package_list_, [&](QTreeWidgetItem* item, int index) {
         if (index >= static_cast<int>(sources_.size())) return;
         const bool loaded = sources_[static_cast<size_t>(index)].loaded;
+        // ★★ 2026-10-02：**未加载的源不要拿模型去覆盖勾选态** —— 它的条目表是空的（`files=0`
+        //   ⇒ 会被算成 `Unchecked`），于是"用户勾上准备加载"这个**标记**会被立刻抹掉
+        //   （自检那条"勾分组＝连带勾下面所有源"就是这么红的）。未加载 ⇒ 勾选态就是标记，原样保留。
+        if (!loaded) return;
         int files = 0;
         int checked = 0;
-        if (loaded) {
-            tree_.source_check_state(loaded_index_for_source(static_cast<size_t>(index)), &files,
-                                     &checked);
-        }
+        tree_.source_check_state(loaded_index_for_source(static_cast<size_t>(index)), &files,
+                                 &checked);
         item->setCheckState(0, checked == 0 ? Qt::Unchecked
                                             : (checked == files ? Qt::Checked
                                                                 : Qt::PartiallyChecked));
     });
+    // 分组节点三态：统计整棵子树里的**源节点**勾选情况
+    std::function<QPair<int, int>(QTreeWidgetItem*)> tally = [&](QTreeWidgetItem* node) -> QPair<int, int> {
+        int total = 0;
+        int checked = 0;
+        for (int i = 0; i < node->childCount(); ++i) {
+            QTreeWidgetItem* child = node->child(i);
+            if (child->data(0, Qt::UserRole).toInt() >= 0) {
+                ++total;
+                if (child->checkState(0) != Qt::Unchecked) ++checked;
+            }
+            const QPair<int, int> sub = tally(child);
+            total += sub.first;
+            checked += sub.second;
+        }
+        return {total, checked};
+    };
+    std::function<void(QTreeWidgetItem*)> paint_groups = [&](QTreeWidgetItem* node) {
+        for (int i = 0; i < node->childCount(); ++i) {
+            QTreeWidgetItem* child = node->child(i);
+            paint_groups(child);
+            if (child->data(0, Qt::UserRole).toInt() >= 0) continue;   // 源节点已刷过
+            const QPair<int, int> stat = tally(child);
+            if (stat.first == 0) continue;
+            child->setCheckState(0, stat.second == 0
+                                        ? Qt::Unchecked
+                                        : (stat.second == stat.first ? Qt::Checked
+                                                                     : Qt::PartiallyChecked));
+        }
+    };
+    for (int i = 0; i < package_list_->topLevelItemCount(); ++i) {
+        paint_groups(package_list_->topLevelItem(i));
+    }
     rebuilding_package_list_ = false;
 }
 
