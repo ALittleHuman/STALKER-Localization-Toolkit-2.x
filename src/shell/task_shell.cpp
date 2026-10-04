@@ -16,6 +16,9 @@ namespace xrkit::shell {
 
 TaskShell::TaskShell(QWidget* parent) : QObject(parent) {
     panel_ = new QWidget(parent);
+    // ★ 2026-10-05：给它一个 objectName，好让 QSS **只把这一处**置成透明 —— 它是"字段行"
+    //   之外的另一个裸容器现场（用户截图图二"缺了一块"），自己不涂底、底交给所在卡片。
+    panel_->setObjectName(QStringLiteral("task_panel"));
     auto* layout = new QVBoxLayout(panel_);
     layout->setContentsMargins(px(6), px(4), px(6), px(4));
     auto* row = new QHBoxLayout;

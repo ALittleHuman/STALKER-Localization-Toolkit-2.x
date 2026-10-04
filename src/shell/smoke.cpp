@@ -27,6 +27,8 @@
 #include "virtual_list.h"
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QColor>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -34,12 +36,15 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QDropEvent>
 #include <QUrl>
 #include <QPlainTextEdit>
@@ -4876,6 +4881,237 @@ SmokeResult run_smoke() {
                                 .arg(product, description, file_version, original));
     }
 #endif
+
+    // ⑭ ★★ 2026-10-05 **像素级锁**：用户对着裁剪图说「那个露出深灰色底板的设计需要重做或者
+    //   改掉，很丑」「很多控件会露出深灰色的底板」「很多下拉栏设计太丑了」「勾就勾」。
+    //   机制（本轮实测）：泛化规则 `QWidget { background: @{bg}; }` 命中"没写 QSS 的裸容器"
+    //   （`path_row()` 的行容器、`TaskShell::panel()`、页视口…），容器自己涂了一层比卡片更深的
+    //   灰，又只露出**标签背后那一块** ⇒ 就是那块"缺了一块"的深灰圆角底板。
+    //   判据不靠肉眼：**把真实控件渲染成图，逐像素比**。
+    //     ① 行容器"标签区"的底色 == 卡片底色（`surface2`）—— 改回旧样式立刻红；
+    //     ② 同类容器（TaskShell 面板）里不许存在"整块 == `bg`"的填充；
+    //     ③ 下拉框 / 勾选框：控件矩形内**不许有与所在面板底色不同的整块填充**。
+    {
+        const auto color_of = [](const char* role) {
+            return QColor(QString::fromUtf8(
+                xrkit::core::theme_color(xrkit::core::ThemeMode::Dark, role)));
+        };
+        const QColor bg = color_of("bg");
+        const QColor surface = color_of("surface");
+        const QColor surface2 = color_of("surface2");
+        const QColor entry = color_of("entry_bg");
+        // 采样一块区域里"最常见的颜色"（跳过边框/文字的抗锯齿过渡像素）
+        const auto dominant = [](const QImage& image, const QRect& rect) {
+            QHash<QRgb, int> histogram;
+            const QRect clipped = rect.intersected(image.rect());
+            for (int y = clipped.top(); y <= clipped.bottom(); ++y) {
+                for (int x = clipped.left(); x <= clipped.right(); ++x) {
+                    const QRgb pixel = image.pixel(x, y);
+                    histogram[pixel] = histogram.value(pixel, 0) + 1;
+                }
+            }
+            QRgb best = 0;
+            int best_count = 0;
+            for (auto it = histogram.constBegin(); it != histogram.constEnd(); ++it) {
+                if (it.value() > best_count) {
+                    best_count = it.value();
+                    best = it.key();
+                }
+            }
+            // ★ 必须走 `fromRgba`：`QColor(QRgb)` 会把 **alpha 丢掉**（全透明区域会变成
+            //   "不透明的黑"）⇒ 把"容器没涂底"误判成"容器涂了 #000000"（本轮实测踩过一次）。
+            return QColor::fromRgba(best);
+        };
+        // 一块区域里有几个"整块填充色"（同一颜色出现 >= 8 次算一块）—— 用来断言
+        // "控件矩形内不存在与面板底色不同的整块填充"：文字/边框/抗锯齿都是零散像素。
+        const auto block_colors = [](const QImage& image, const QRect& rect, QColor panel,
+                                     const QList<QColor>& allowed) {
+            QHash<QRgb, int> histogram;
+            const QRect clipped = rect.intersected(image.rect());
+            for (int y = clipped.top(); y <= clipped.bottom(); ++y) {
+                for (int x = clipped.left(); x <= clipped.right(); ++x) {
+                    histogram[image.pixel(x, y)] = histogram.value(image.pixel(x, y), 0) + 1;
+                }
+            }
+            QStringList offenders;
+            for (auto it = histogram.constBegin(); it != histogram.constEnd(); ++it) {
+                if (it.value() < 8) continue;
+                const QColor color(it.key());
+                if (color == panel) continue;
+                bool ok = false;
+                for (const QColor& fine : allowed) {
+                    if (color == fine) ok = true;
+                }
+                if (!ok) offenders << color.name();
+            }
+            return offenders;
+        };
+
+        Hub style_hub(nullptr, QString());
+        // 字体系统：勾选框的"勾"由 CheckMarkStyle 画，不受字体影响；这里先量字号避免误判
+        style_hub.resize(1600, 1000);
+        style_hub.show();
+        style_hub.set_current_page(5);   // 汉化包生成页（用户截图那一页：三条路径行 + 下拉 + 勾选框）
+        for (int pass = 0; pass < 3; ++pass) {
+            style_hub.layout()->activate();
+            for (QWidget* child : style_hub.findChildren<QWidget*>()) {
+                if (child->layout() != nullptr) child->layout()->activate();
+            }
+            QApplication::processEvents();
+        }
+
+        // ① 标签背后的底板：**字段行容器**（`DropZones::attach_row` 统一挂 `field_row` 名字，
+        //    六个页面都走这一条）自己不许涂底 —— 涂了就是用户截图里标签背后那块深灰圆角。
+        int plate_hits = 0;
+        QString plate_detail;
+        for (QWidget* container : style_hub.findChildren<QWidget*>()) {
+            if (container->objectName() != QStringLiteral("field_row")) continue;
+            // 只看**当前页上真的显示出来**的行：没显示的页还没走过布局，几何是退化值
+            // （实测：隐藏页的行容器宽 640、输入框挪到 x=452）⇒ 那种残缺几何上的像素
+            // 判据不是用户看到的界面，会假红。
+            if (!container->isVisible()) continue;
+            const auto* edit = container->findChild<QLineEdit*>();
+            const auto* label = container->findChild<QLabel*>();
+            if (edit == nullptr || label == nullptr) continue;   // 只认"标签 + 输入框"这种字段行
+            const QSize size = container->size();
+            if (size.width() < 8 || size.height() < 8) continue;
+            // 判据直接盯"谁涂了底"：把**行容器自己**渲染成图（DrawWindowBackground）
+            QImage image(size, QImage::Format_ARGB32_Premultiplied);
+            image.fill(QColor(0, 0, 0, 0));
+            container->render(&image);
+            // 标签带 = 左边 2..(输入框左缘-2)，纵向取中间 3/5（避开上下边框与输入框）
+            const int right = std::max(3, edit->x() - 2);
+            const QRect strip(2, size.height() / 5, std::max(1, right - 2),
+                              std::max(1, size.height() * 3 / 5));
+            const QColor painted = dominant(image, strip);
+            if (painted.alpha() == 0) continue;   // 透明 = 容器不涂底（这就是要的）
+            if (painted != surface2) {
+                ++plate_hits;
+                if (plate_detail.isEmpty()) {
+                    plate_detail = QStringLiteral("字段行(%1,%2 %3x%4) 标签带涂了 %5（应为卡片底 %6）")
+                                       .arg(container->x())
+                                       .arg(container->y())
+                                       .arg(size.width())
+                                       .arg(size.height())
+                                       .arg(painted.name(), surface2.name());
+                }
+            }
+        }
+        check(plate_hits == 0,
+              QStringLiteral("⑭ 标签背后不许有深灰底板（%1 处；%2）")
+                  .arg(plate_hits)
+                  .arg(plate_detail.isEmpty() ? QStringLiteral("无") : plate_detail));
+
+        // ② 任务面板（同一个机制的另一处现场，用户截图图二"缺了一块"）：它是裸容器且带进度条，
+        //    渲染出来的底必须是**透明的**（底交给卡片），不许自己涂一层 `bg`。
+        {
+            int panel_hits = 0;
+            QString detail;
+            for (QWidget* panel : style_hub.findChildren<QWidget*>()) {
+                if (panel->objectName() != QStringLiteral("task_panel")) continue;
+                const QSize size = panel->size();
+                if (size.width() < 8 || size.height() < 8) continue;
+                QImage image(size, QImage::Format_ARGB32_Premultiplied);
+                image.fill(QColor(0, 0, 0, 0));
+                panel->render(&image);
+                const QColor painted =
+                    dominant(image, QRect(2, 2, std::max(1, size.width() - 4),
+                                          std::max(1, size.height() / 3)));
+                if (painted.alpha() != 0 && painted == bg) {
+                    ++panel_hits;
+                    if (detail.isEmpty()) {
+                        detail = QStringLiteral("任务面板涂了 %1").arg(painted.name());
+                    }
+                }
+            }
+            check(panel_hits == 0,
+                  QStringLiteral("⑭ 任务面板不许自己涂 %1 底（%2 处；%3）")
+                      .arg(bg.name())
+                      .arg(panel_hits)
+                      .arg(detail.isEmpty() ? QStringLiteral("无") : detail));
+        }
+
+        // ③ 下拉框：控件矩形内不许有"与面板底色不同的整块填充"
+        {
+            int offenders = 0;
+            QString detail;
+            for (QComboBox* combo : style_hub.findChildren<QComboBox*>()) {
+                if (!combo->isVisible()) continue;
+                QImage image(combo->size(), QImage::Format_ARGB32_Premultiplied);
+                image.fill(QColor(0, 0, 0, 0));
+                combo->render(&image);
+                // 判据：把控件渲染出来，看**它自己的底**是不是干净的输入框底 ——
+                // 取"文字下方那条横带"（避开文字/箭头；离屏上文字会退化成方块，
+                // 落在文字上的判据会假红），并要求那一带**只有一个颜色且 == entry_bg**。
+                // 旧样式（容器给控件涂了一层深灰 / 弹层底色撞色）在这里立刻红。
+                const QRect foot(px(4), std::max(1, combo->height() - px(8)),
+                                 std::max(1, combo->width() - px(8)), px(6));
+                const QColor painted = dominant(image, foot);
+                if (painted != entry) {
+                    ++offenders;
+                    if (detail.isEmpty()) {
+                        detail = QStringLiteral("%1 自己的底是 %2（应为 %3）")
+                                     .arg(combo->objectName(), painted.name(), entry.name());
+                    }
+                }
+            }
+            check(offenders == 0,
+                  QStringLiteral("⑭ 下拉框自己的底要与输入框同一套令牌（%1 处；%2）")
+                      .arg(offenders)
+                      .arg(detail.isEmpty() ? QStringLiteral("无") : detail));
+        }
+
+        // ④ 勾选框：**"勾就勾"** —— 选中态必须画出一个勾（勾的颜色 = 主题 text 令牌），
+        //    未选中态**不许**有勾。判据：把方框渲染到哨兵底上，数"勾色像素"。
+        {
+            const QColor mark = color_of("text");
+            // ★ 判据用**亮度**而不是"精确等于令牌色"：勾是**抗锯齿**画的，一笔里只有少数像素
+            //   恰好等于纯色（实测 7/14px 框）。亮笔画 vs 深底（`entry_bg`/`selected` 都在
+            //   #23262a~#31363b）在本主题下分得很开，所以"亮像素数"既稳又能判红。
+            const auto mark_pixels = [indicator = QSize(px(14), px(14))](bool on) {
+                QStyleOptionButton option;
+                option.rect = QRect(0, 0, indicator.width(), indicator.height());
+                option.state = QStyle::State_Enabled;
+                if (on) option.state |= QStyle::State_On;
+                option.palette = qApp->palette();
+                QImage image(indicator, QImage::Format_ARGB32_Premultiplied);
+                image.fill(QColor(255, 0, 255));   // 哨兵底（亮品红）——**不算**亮笔画
+                QPainter painter(&image);
+                qApp->style()->drawPrimitive(QStyle::PE_IndicatorCheckBox, &option, &painter);
+                painter.end();
+                int hits = 0;
+                for (int y = 0; y < image.height(); ++y) {
+                    for (int x = 0; x < image.width(); ++x) {
+                        const QColor color = QColor::fromRgba(image.pixel(x, y));
+                        if (color == QColor(255, 0, 255)) continue;   // 哨兵
+                        if (qGray(color.rgb()) >= 150) ++hits;
+                    }
+                }
+                return hits;
+            };
+            const int on_hits = mark_pixels(true);
+            const int off_hits = mark_pixels(false);
+            check(on_hits >= 12,
+                  QStringLiteral("⑭ 勾选框选中态要真的画出勾（亮笔画像素 %1 < 12）").arg(on_hits));
+            check(off_hits <= 2,
+                  QStringLiteral("⑭ 勾选框未选中态不许有勾（实测 %1 个亮笔画像素）").arg(off_hits));
+            // 尺寸令牌也一起钉住：勾随界面缩放（px(14)@1.5 时是 21）
+            {
+                const double saved = xrkit::core::ui_scale();
+                xrkit::core::set_ui_scale(1.5);
+                const bool scaled = px(14) == 21;
+                xrkit::core::set_ui_scale(saved);
+                check(scaled, QStringLiteral("⑭ 勾选框尺寸走 px() 令牌（px(14)@1.5 应为 21）"));
+            }
+        }
+
+        // ⑤ 拖放高亮仍然是中性色（强调色只许三处）：这条既有口径在本轮改动后重验一次
+        {
+            const QString sheet = stylesheet_for(xrkit::core::ThemeMode::Dark);
+            check(sheet.contains(QStringLiteral("*[drop_hover=\"true\"]")),
+                  QStringLiteral("⑭ 拖放高亮规则还在（改样式别把它弄丢）"));
+        }
+    }
 
     return result;
 }
