@@ -311,11 +311,20 @@ std::vector<TreeItem> collect_tree(const std::string& root) {
 
 bool is_package_file_name(const std::string& path) {
     // 照 1.x：`n = basename(p).lower(); d = n.rfind("."); return d >= 0 and n[d:d+3] == ".db"`
+    // ★★ 2026-10-04 补**第三个家族 `.xdb*`**（用户问「`.xdb`，我们的工具能识别吗？」⇒ 实测**不能**，真缺陷）：
+    //   旧写法只取"点后**两位**"必须等于 `db`/`sq` ⇒ `patch_00.xdb` 的 `xd` 判 false
+    //   ⇒ **拖入 / 扫目录（`ScanDir` 与"封包排除包文件"共用这一份）会把 `.xdb` 静默忽略**。
+    //   依据（实测）：`E:\Administrator01\Download\sop_standalone.7z` 里有 `patches/patch_00.xdb`(11.6 MB)、
+    //   `data/core.db`、`data/resources/resources.db00`、`data/levels/levels.db00`，
+    //   `xrkit_cli --dump` 对它们**全部判为 `format=xdb`** ⇒ `.xdb` 就是我们内部的
+    //   `DbFormat::Xdb`，是 `.db*` / `.sq*` 之外**唯一已知的包家族**。
+    //   实现：改为"点后**以** `db` / `sq` / `xdb` **开头**" —— 与旧规则对前两个家族**完全等价**
+    //   （旧的就是取前两位比较），不误认 `x.xdoc`（前两位是 `xd` 但不是 `xdb`）。
     const std::string name = basename_lower(path);
     const size_t dot = name.rfind('.');
-    if (dot == std::string::npos || dot + 2 >= name.size()) return false;
-    const std::string head = name.substr(dot + 1, 2);
-    return head == "db" || head == "sq";
+    if (dot == std::string::npos || dot + 1 >= name.size()) return false;
+    const std::string tail = name.substr(dot + 1);
+    return tail.rfind("db", 0) == 0 || tail.rfind("sq", 0) == 0 || tail.rfind("xdb", 0) == 0;
 }
 
 PackCollectResult collect_pack_files(const std::string& base,

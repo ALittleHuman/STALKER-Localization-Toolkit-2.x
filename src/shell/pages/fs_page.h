@@ -71,8 +71,8 @@ public:
     // 自检用：拖放过滤器到底装在哪些控件上（判据是**接线**，见 drop_filter.h）
     FileDropFilter* drop_filter() const { return drop_filter_; }
     // ★ 2026-10-01 用户第 3 条：「扫描时有Bug的，选择包模式的时候，是扫不出金球奖的db的」
-    //   ⇒ 加包对话框的过滤器**恰好两段**（`*.db*` / `*.sq*` 各一段），自检直接断言它，
-    //   避免有人再回去枚举 `*.db0 *.db1 …`（那正是看不到 `gamedata.db_textures_1` 的原因）。
+    //   ⇒ 加包对话框的过滤器用**家族通配**（`*.db*` / `*.sq*` / `*.xdb*` 各一段，2026-10-04 补第三段），
+    //   自检直接断言它，避免有人再回去枚举 `*.db0 *.db1 …`（那正是看不到 `gamedata.db_textures_1` 的原因）。
     static QString package_dialog_filter();
 
     int source_count() const { return static_cast<int>(sources_.size()); }

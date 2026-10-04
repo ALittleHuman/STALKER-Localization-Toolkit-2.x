@@ -1311,11 +1311,14 @@ SmokeResult run_smoke() {
         //   （枚举是"扫不出"的根因：`gamedata.db_textures_1` 不在任何一张名单里）。
         {
             const QString filter = FsPage::package_dialog_filter();
+            // ★★ 2026-10-04 补 `*.xdb*`：用户问「`.xdb`，我们的工具能识别吗？」⇒ 旧过滤器要求字面 `.db`
+            //   ⇒ "选包"对话框里看不见 `.xdb`。**删掉这条断言立刻红**。
             check(filter.contains(QStringLiteral("*.db*")) &&
                       filter.contains(QStringLiteral("*.sq*")) &&
+                      filter.contains(QStringLiteral("*.xdb*")) &&
                       !filter.contains(QStringLiteral("*.db0")) &&
                       !filter.contains(QStringLiteral("*.db_base")),
-                  QStringLiteral("第3条 加包过滤器=「%1」（含 *.db* / *.sq*，不枚举具体后缀）")
+                  QStringLiteral("第3条 加包过滤器=「%1」（含 *.db* / *.sq* / ★*.xdb*，不枚举具体后缀）")
                       .arg(filter));
         }
 
@@ -1612,12 +1615,51 @@ SmokeResult run_smoke() {
                       static_cast<std::streamsize>(raw.size()));
         }
         // 1.x `_is_db` / `_is_sq` 的名字规则（扫描目录与"封包排除包文件"共用一份）
+        // ★★ 2026-10-04 用户问「`.xdb`，我们的工具能识别吗？」⇒ 实测**不能**（旧规则只取"点后两位"＝`xd`）
+        //   ⇒ 漏了 `.xdb` 这个家族（真机依据：`sop_standalone.7z` 里的 `patch_00.xdb` 就是 `format=xdb`）。
+        //   这条锁**同时钉三个家族**：把 `.xdb` 分支删掉/改回两位比较，立刻红。
         check(efs2::is_package_file_name("x.db0") && efs2::is_package_file_name("x.db_base") &&
-                  efs2::is_package_file_name("x.sqfs") && efs2::is_package_file_name("x.sq_textures"),
-              QStringLiteral("1.x 包名规则：.db*/​.sq* 都算包（引擎只看 basename 最后一个扩展）"));
+                  efs2::is_package_file_name("x.sqfs") && efs2::is_package_file_name("x.sq_textures") &&
+                  efs2::is_package_file_name("x.xdb") && efs2::is_package_file_name("x.xdb_base") &&
+                  efs2::is_package_file_name("patch_00.xdb"),
+              QStringLiteral("1.x 包名规则：.db*/​.sq*/★.xdb* 都算包（引擎只看 basename 最后一个扩展）"));
         check(!efs2::is_package_file_name("x.txt") && !efs2::is_package_file_name("xdbc") &&
-                  !efs2::is_package_file_name("x.db.bak2"),
-              QStringLiteral("1.x 包名规则：非包文件不许误认（x.txt / xdbc / x.db.bak2）"));
+                  !efs2::is_package_file_name("x.db.bak2") && !efs2::is_package_file_name("x.xdoc") &&
+                  !efs2::is_package_file_name("x") && !efs2::is_package_file_name("x."),
+              QStringLiteral("1.x 包名规则：非包文件不许误认（x.txt / xdbc / x.db.bak2 / ★x.xdoc / x / x.）"));
+
+        // ★★ 同一条缺陷的**真实症状锁**：一个含 `.xdb` 的目录走**用户真实入口** `add_paths()`（拖入/加文件夹
+        //   模式都是它；`scan_dir()` 只负责收集、加载在调用方）⇒ 必须**收进来并加载**（源 1 / 已加载 1）。
+        //   旧规则下 `.xdb` 被判为非包 ⇒ **静默忽略**（源 0）⇒ 改回旧规则立刻红。
+        {
+            const QString xdir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_xdb"));
+            QDir(xdir).removeRecursively();
+            QDir().mkpath(xdir);
+            std::vector<efs2::DbPackItem> xitems;
+            efs2::DbPackItem xone;
+            xone.path = "t/a.txt";
+            xone.data = {'x'};
+            xitems.push_back(xone);
+            const std::vector<uint8_t> xraw = efs2::pack_db(xitems, efs2::DbFormat::Xdb);
+            std::ofstream xout((xdir + QStringLiteral("/patch_00.xdb")).toStdString(),
+                               std::ios::binary | std::ios::trunc);
+            xout.write(reinterpret_cast<const char*>(xraw.data()),
+                       static_cast<std::streamsize>(xraw.size()));
+            xout.close();
+            FsPage xdb_page;
+            xdb_page.resize(720, page_min_h());
+            xdb_page.show();
+            QApplication::processEvents();
+            xdb_page.add_paths(QStringList{xdir});
+            QApplication::processEvents();
+            check(xdb_page.source_count() == 1 && xdb_page.loaded_source_count() == 1,
+                  QStringLiteral("★.xdb 也是包：含 patch_00.xdb 的目录走 add_paths 要被收进来并加载"
+                                 "（源 %1 期望 1 / 已加载 %2 期望 1）")
+                      .arg(xdb_page.source_count())
+                      .arg(xdb_page.loaded_source_count()));
+            xdb_page.hide();
+            QDir(xdir).removeRecursively();
+        }
 
         FsPage page;
         page.resize(720, page_min_h());
