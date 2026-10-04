@@ -1,6 +1,7 @@
 #include "smoke.h"
 
 #include "xrkit/core/theme.h"
+#include "xrkit/core/version.h"
 #include "xrkit/engine/fs/db.h"
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/plugin/abi_host.h"
@@ -49,6 +50,20 @@
 #include <QProcess>
 #include <QStringList>
 #include <QThread>
+
+#if defined(_WIN32)
+// 末尾「⑬ 版本资源」那一组要读**本进程 exe 的真实资源字节**（VERSIONINFO）。
+//   · 只在 Win32 下有意义（本仓库只出 Windows 包；PE 子系统之类判据本来也都在 Win32 上）；
+//   · NOMINMAX 与全局口径一致（根 CMakeLists 的 xrkit_flags）—— 这里再兜一次：没有它的话
+//     windows.h 会定义 min/max 宏，把本文件里的 std::max / std::min 全弄坏（会编译失败）。
+//   · 不用 WIN32_LEAN_AND_MEAN：它会把 winver.h 排除掉，而本组要的 GetFileVersionInfoW /
+//     VerQueryValueW 就在 winver.h 里。
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <winver.h>
+#endif
 
 #include <cstdio>
 #include <QHeaderView>
@@ -117,6 +132,44 @@ QTreeWidgetItem* find_package_source_node(QTreeWidget* list, const QString& name
     }
     return found;
 }
+
+#if defined(_WIN32)
+// 读**本进程那个 exe**的版本资源里某一个字符串字段（读不到返回空串）。
+// 为什么直读 Win32 而不另起进程问 PowerShell：字段里有中文，管道/控制台码页会把它读坏 ——
+// 判据要的是**逐字**相等，只能自己读资源。
+QString exe_version_field(const QString& name) {
+    const QString path = QCoreApplication::applicationFilePath();
+    const auto* wide_path = reinterpret_cast<LPCWSTR>(path.utf16());
+    DWORD handle = 0;
+    const DWORD size = GetFileVersionInfoSizeW(wide_path, &handle);
+    if (size == 0) return QString();
+    std::vector<unsigned char> buffer(size);
+    if (!GetFileVersionInfoW(wide_path, 0, size, buffer.data())) return QString();
+    struct LangPair {
+        WORD language;
+        WORD code_page;
+    };
+    LangPair* pair = nullptr;
+    UINT pair_size = 0;
+    if (!VerQueryValueW(buffer.data(), L"\\VarFileInfo\\Translation",
+                        reinterpret_cast<void**>(&pair), &pair_size) ||
+        pair == nullptr || pair_size < sizeof(LangPair)) {
+        return QString();
+    }
+    const QString sub = QStringLiteral("\\StringFileInfo\\%1%2\\%3")
+                            .arg(pair->language, 4, 16, QLatin1Char('0'))
+                            .arg(pair->code_page, 4, 16, QLatin1Char('0'))
+                            .arg(name);
+    void* value = nullptr;
+    UINT value_size = 0;
+    if (!VerQueryValueW(buffer.data(), reinterpret_cast<LPCWSTR>(sub.utf16()), &value,
+                        &value_size) ||
+        value == nullptr) {
+        return QString();
+    }
+    return QString::fromWCharArray(static_cast<const wchar_t*>(value));
+}
+#endif
 
 }  // namespace
 
@@ -4437,6 +4490,41 @@ SmokeResult run_smoke() {
         QDir(empty_dir).removeRecursively();
         QDir(bad_dir).removeRecursively();
     }
+
+    // ⑬ ★★ Windows 版本资源（VERSIONINFO）——用户 2026-10-04 口径：exe "完全没有元数据、也没有签名"
+    //   是杀软误报的一半根因。判据落在**真实资源字节**上（读本进程 exe 的资源，不是看源码里写没写 .rc）：
+    //     · 三字段非空：ProductName / FileDescription / FileVersion —— 资源没挂上/挂错目标就红；
+    //     · FileVersion == core::version_string() 的版本号部分 —— **同一个进程里现取现比**：
+    //       在 .rc 里手写一个旧版本串 ⇒ 这里立刻红（.rc 与 version.h 的漂移另由门禁
+    //       `gen_winres.py --check` 拦；兄弟产物 CLI / 构建器由门禁 [30] 一起查）。
+    //       用户原话："版本只有一个事实来源，别处不许复制版本串"。
+#if defined(_WIN32)
+    {
+        const QString product = exe_version_field(QStringLiteral("ProductName"));
+        const QString description = exe_version_field(QStringLiteral("FileDescription"));
+        const QString file_version = exe_version_field(QStringLiteral("FileVersion"));
+        const QString original = exe_version_field(QStringLiteral("OriginalFilename"));
+        check(!product.isEmpty() && !description.isEmpty() && !file_version.isEmpty(),
+              QStringLiteral("⑬ 版本资源三字段非空（ProductName=%1 / FileDescription=%2 / "
+                             "FileVersion=%3）")
+                  .arg(product.isEmpty() ? QStringLiteral("(空)") : product,
+                       description.isEmpty() ? QStringLiteral("(空)") : description,
+                       file_version.isEmpty() ? QStringLiteral("(空)") : file_version));
+        const QString compiled = QString::fromStdString(xrkit::core::version_string());
+        const QString semver = compiled.section(QLatin1Char(' '), 0, 0);
+        check(!semver.isEmpty() && file_version == semver,
+              QStringLiteral("⑬ FileVersion 与 core::version_string() 的版本号部分一致"
+                             "（资源=%1 / 编译进去的版本串=%2 ⇒ 版本号部分=%3）")
+                  .arg(file_version, compiled, semver));
+        // 挂错目标的资源（把 CLI 的那份挂到本 exe 上）⇒ OriginalFilename 对不上，当场红
+        const QString self_name = QFileInfo(QCoreApplication::applicationFilePath()).fileName();
+        check(original.compare(self_name, Qt::CaseInsensitive) == 0,
+              QStringLiteral("⑬ OriginalFilename 是本 exe 的名字（资源=%1 / 实际=%2）")
+                  .arg(original, self_name));
+        result.notes.append(QStringLiteral("⑬ 版本资源：%1 | %2 | FileVersion=%3 | 原名=%4")
+                                .arg(product, description, file_version, original));
+    }
+#endif
 
     return result;
 }

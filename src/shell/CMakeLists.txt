@@ -34,11 +34,18 @@ target_link_libraries(xrkit_shell
 if(WIN32)
   # 深色标题栏（DwmSetWindowAttribute）
   target_link_libraries(xrkit_shell PRIVATE dwmapi)
+  # 版本资源判据（src/shell/smoke.cpp 读本进程 exe 的 VERSIONINFO）：
+  # GetFileVersionInfoW / VerQueryValueW 在 version.dll 里
+  target_link_libraries(xrkit_shell PRIVATE version)
 endif()
 
 qt_add_executable(xrkit_app
   main.cpp)
 target_sources(xrkit_app PRIVATE "${CMAKE_SOURCE_DIR}/assets/app.rc")
+# 版本资源（VERSIONINFO）：**生成物**（tools/gen_winres.py ← include/xrkit/core/version.h），
+# 门禁 `gen_winres.py --check` 逐字节比对 ⇒ 版本串全仓库只有 version.h 一处事实来源。
+target_sources(xrkit_app PRIVATE "${CMAKE_SOURCE_DIR}/assets/xrkit_winres.rc")
+target_compile_definitions(xrkit_app PRIVATE XRKIT_WINRES_APP)
 
 target_link_libraries(xrkit_app PRIVATE xrkit_shell Qt6::Widgets)
 
@@ -58,6 +65,9 @@ set_target_properties(xrkit_app PROPERTIES
 # 挂在 shell 目标旁边是因为这里一定已经 find_package(Qt6) 了（release 预设不带 Qt，不能放根 CMake）。
 qt_add_executable(xrkit_build_gui "${CMAKE_SOURCE_DIR}/tools/build_gui/main.cpp")
 target_sources(xrkit_build_gui PRIVATE "${CMAKE_SOURCE_DIR}/assets/app.rc")
+# 构建器也编 exe ⇒ 版本资源一并挂上（用户口径："若 tools/build_gui 也编 exe，一并挂上"）
+target_sources(xrkit_build_gui PRIVATE "${CMAKE_SOURCE_DIR}/assets/xrkit_winres.rc")
+target_compile_definitions(xrkit_build_gui PRIVATE XRKIT_WINRES_GUI)
 # ★ 必须链 xrkit_flags（带 /utf-8）：不链的话 MSVC 按系统 ANSI(GBK) 读源文件，
 #   界面里的中文字面量会变成乱码（实测：分组框标题与下拉项显示成'鐗堟湰…'）。
 target_link_libraries(xrkit_build_gui PRIVATE xrkit_core xrkit_flags Qt6::Widgets

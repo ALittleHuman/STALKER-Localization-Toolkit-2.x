@@ -15,5 +15,12 @@ indent_size = 2
 [*.{cmd,bat,ps1}]
 end_of_line = crlf
 
+# 版本资源的 BOM 是**构建判据**，不是排版偏好（2026-10-04 实测）：CMake 的 RC 规则中间夹着
+# cmcldeps/cl.exe，而 cl.exe 不认 #pragma code_page(65001) —— 无 BOM 时中文注释会被按系统
+# ANSI(936/GBK) 解码，把行尾换行/引号吃掉，报 C2001/C1018（还报在别的注释行上）。
+# 它是生成物（tools/gen_winres.py），门禁 `gen_winres.py --check` 会盯着 BOM 有没有被抹掉。
+[assets/xrkit_winres.rc]
+charset = utf-8-bom
+
 [*.md]
 trim_trailing_whitespace = false

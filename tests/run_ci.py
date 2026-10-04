@@ -1058,6 +1058,62 @@ def step_shell_smoke(release: bool) -> None:
     ok("静态锁自证：注释不算违规、活代码必被拦")
 
 
+def step_winres(release: bool) -> None:
+    """Windows 版本资源（VERSIONINFO）：exe 里的元数据必须**非空**，且与 `core::version_string()` 同源。
+
+    为什么是一等判据（用户 2026-10-04 口径）：exe "完全没有元数据、也没有签名" ⇒ 杀软误报。
+    两条锁，缺一条都守不住：
+      · `gen_winres.py --check` —— 生成物 `.rc` 与 `include/xrkit/core/version.h` **漂移即 FAIL**
+        （仓库自带文件性质，按 require_repo_file 那一档处理，绝不 SKIP）；
+      · `check_winres.py` —— 直接读 exe 里的**真实资源字节**：八个字段非空、`FileVersion` /
+        `ProductVersion` 与 CLI 打印出来的 `core::version_string()` 逐字一致、
+        `OriginalFilename` 必须是**本 exe 的名字**（把 CLI 的资源挂到 GUI 上也红）。
+    判红办法：① 把 `.rc` 里的 FileVersion 手写成一个旧版本串 ⇒ 第二条立刻红；
+              ② 改了 version.h 不重跑生成器 ⇒ 第一条立刻红。
+    """
+    say("[30] Windows 版本资源（VERSIONINFO）：元数据非空且与 core::version_string() 同源")
+    gen = ROOT / "tools" / "gen_winres.py"
+    rc_file = ROOT / "assets" / "xrkit_winres.rc"
+    checker = ROOT / "tests" / "check_winres.py"
+    if not require_repo_file(gen, "版本资源生成器"):
+        return
+    if not require_repo_file(rc_file, "版本资源生成物"):
+        return
+    if not require_repo_file(checker, "版本资源判据脚本"):
+        return
+    rc, out = run([sys.executable, str(gen), "--check"])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("GEN-WINRES"):
+            say("  " + s)
+    if rc != 0:
+        fail("版本资源生成物与 include/xrkit/core/version.h 漂移（见上）—— 重跑 tools/gen_winres.py")
+        return
+    ok("assets/xrkit_winres.rc 与 version.h 逐字节一致（--check 通过）")
+
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    wanted = [CLI_EXE, SHELL_EXE]
+    absent = [p for p in wanted if not p.exists()]
+    if absent:
+        prereq("构建产物 %s" % "、".join(p.name for p in absent), "未构建（外壳步骤没跑到）", release)
+        return
+    # 用户实测的那两个产物在 msvc-shell 里（外加构建器）；存在就一起查 —— 三个 exe 都有资源。
+    optional = [SHELL_BUILD_DIR / "tools" / "cli" / "xrkit_cli.exe",
+                SHELL_BUILD_DIR / "src" / "shell" / "xrkit_build_gui.exe"]
+    checked = wanted + [p for p in optional if p.exists()]
+    rc, out = run([sys.executable, str(checker)] + [str(p) for p in checked], timeout=180)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("WINRES"):
+            say("  " + s)
+    if rc != 0:
+        fail("版本资源判据不通过（见上）")
+        return
+    ok("版本资源：%d 个 exe 的元数据非空、且与 core::version_string() 同源" % len(checked))
+
+
 def tail(text: str, n: int) -> str:
     """取最后 n 行有效输出。
 
@@ -1249,6 +1305,8 @@ STEPS = [
     ("golden-sqfs-metacross", step_golden_sqfs_metacross),
     ("bench", step_bench),
     ("shell-smoke", step_shell_smoke),
+    # 排在 shell-smoke **之后**：那一步才把 xrkit_app.exe 编出来（这一步要读它的真实资源字节）
+    ("winres", step_winres),
 ]
 
 

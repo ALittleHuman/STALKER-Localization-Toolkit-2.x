@@ -1,0 +1,65 @@
+﻿// ★ 生成物，不许手改：由 tools/gen_winres.py 从 include/xrkit/core/version.h 生成。
+//   门禁 tests/run_ci.py 跑 `gen_winres.py --check` 逐字节比对（不一致＝FAIL，不是 SKIP）。
+//   版本唯一事实来源＝version.h（也就是 core::version_string() 那一份）——
+//   本文件里**没有一个手写的版本数字**：FileVersion/ProductVersion/FILEVERSION
+//   以及描述里的 "2.0" 全是生成时从 version.h 算出来的。
+//
+//   ★★ 本文件是 **UTF-8 带 BOM + LF**，那个 BOM **不能删**（2026-10-04 实测）：
+//   CMake 的 RC 规则中间夹着 cmcldeps/cl.exe，而 cl.exe 不认 #pragma code_page(65001) ——
+//   无 BOM 时中文注释按系统 ANSI(936/GBK) 解码，双字节把行尾换行/引号吃掉，报
+//   C2001「常量中有换行符」/ C1018「意外的 #elif」（报在别的注释行上，极具误导）。
+//   带 BOM ⇒ cl.exe 与 rc.exe 都按 UTF-8 读，中文才逐字正确。
+#include <winver.h>
+
+// 目标由 CMake 传进来（每个 exe 一份 FileDescription / OriginalFilename / InternalName）：
+//   xrkit_cli.exe          ⇒ /d XRKIT_WINRES_CLI
+//   xrkit_app.exe          ⇒ /d XRKIT_WINRES_APP
+//   xrkit_build_gui.exe    ⇒ /d XRKIT_WINRES_GUI
+// ★ 一个都没定义 ⇒ 直接 #error（CMake 的 target_compile_definitions 没传到 rc.exe 时，
+//   必须**编不过**，不许静默挂上一份别的目标的资源）。
+#if defined(XRKIT_WINRES_CLI)
+#define XRKIT_WINRES_DESC "STALKER 汉化工具集 2.0 引擎命令行"
+#define XRKIT_WINRES_FILE "xrkit_cli.exe"
+#define XRKIT_WINRES_INTERNAL "xrkit_cli"
+#elif defined(XRKIT_WINRES_APP)
+#define XRKIT_WINRES_DESC "STALKER 汉化工具集 2.0 图形外壳"
+#define XRKIT_WINRES_FILE "xrkit_app.exe"
+#define XRKIT_WINRES_INTERNAL "xrkit_app"
+#elif defined(XRKIT_WINRES_GUI)
+#define XRKIT_WINRES_DESC "STALKER 汉化工具集 2.0 构建器"
+#define XRKIT_WINRES_FILE "xrkit_build_gui.exe"
+#define XRKIT_WINRES_INTERNAL "xrkit_build_gui"
+#else
+#error 未指定 XRKIT_WINRES_CLI / XRKIT_WINRES_APP / XRKIT_WINRES_GUI（rc.exe 没收到 /d 定义）
+#endif
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 2,0,0,0
+ PRODUCTVERSION 2,0,0,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        // 0x0804 = 简体中文；1200 = Unicode（rc.exe 把串按 UTF-16 存进资源）
+        BLOCK "080404b0"
+        BEGIN
+            VALUE "CompanyName", "STALKER Toolkit"
+            VALUE "ProductName", "STALKER 汉化工具集"
+            VALUE "FileDescription", XRKIT_WINRES_DESC
+            VALUE "FileVersion", "2.0.0"
+            VALUE "ProductVersion", "2.0.0 ALPHA.0"
+            VALUE "OriginalFilename", XRKIT_WINRES_FILE
+            VALUE "InternalName", XRKIT_WINRES_INTERNAL
+            VALUE "LegalCopyright", "Copyright (C) STALKER Toolkit"
+            VALUE "Comments", "非官方汉化工具，与 GSC Game World 无关"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END

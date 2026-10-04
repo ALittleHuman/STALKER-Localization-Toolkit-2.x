@@ -1,5 +1,13 @@
 add_executable(xrkit_cli main.cpp build_cmd.cpp version_store_check.cpp
-  "${CMAKE_SOURCE_DIR}/assets/app.rc")
+  "${CMAKE_SOURCE_DIR}/assets/app.rc"
+  # 版本资源（VERSIONINFO）：**生成物**，版本串唯一事实来源＝include/xrkit/core/version.h，
+  # 由 tools/gen_winres.py 生成、门禁 `--check` 逐字节比对（别手改，也别在这里写版本号）。
+  "${CMAKE_SOURCE_DIR}/assets/xrkit_winres.rc")
+# ★ 告诉生成物"这是哪个 exe"（每个 exe 一份 FileDescription/OriginalFilename/InternalName）。
+#   这个定义会经 CMake 的 RC 规则传给 rc.exe（`$DEFINES` ⇒ `/d XRKIT_WINRES_CLI`）；
+#   万一路径变了没传到，生成物里那条 `#error` 会让**编译直接失败** ——
+#   宁可不编过，也不要静默挂上一份别的目标的资源。
+target_compile_definitions(xrkit_cli PRIVATE XRKIT_WINRES_CLI)
 target_link_libraries(xrkit_cli PRIVATE xrkit_engine xrkit_core xrkit_flags)
 
 # 测试插件：**故意用 C 编译**（.c + C 编译器）——用来证明这套 ABI 真的是纯 C ABI，
