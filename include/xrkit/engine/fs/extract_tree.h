@@ -86,11 +86,20 @@ struct ExtractTreeFailure {
 struct ExtractTreeResult {
     bool ok = false;       // 只有"整批根本没跑起来"才是 false（单项失败看 failures）
     std::string error;     // ok=false 的原因；**随返回值走**，没有全局变量（6.14）
+    // ★★ 2026-10-04（判红锁②）：三个计数一律走**最终产物**口径 —— 同一个落点被多条记录占据时
+    //   只算**一次**（后写覆盖前写 ⇒ 产物没有变多）。用户口径：右栏＝**解包产物的预览**，
+    //   所以"报出来的数"必须等于"盘上真有的东西"，不是包内记录条数。
+    //   现场：`IWP\database\maps\fake_start.db` 包内 26 条文件记录 / 实际落盘 13 个文件、
+    //   4,451,688 B / 实际 2,225,844 B（改前报数正好是真实值的 2 倍 −1）。
     uint64_t files_written = 0;
     uint64_t dirs_created = 0;
     uint64_t bytes_written = 0;
+    // 同落点被多条记录占据的次数（重复记录 ⇒ **没有**多出产物；报数/排查用）。
+    // `files_written + duplicate_records` ≈ 包内文件记录数。
+    uint64_t duplicate_records = 0;
     uint64_t skipped_dirs = 0;                 // Listed 模式下按 1.x 跳过的目录项
-    std::vector<std::string> written;          // 实际写出的镜像内路径（对拍/日志）
+    // 本次**成功处理**的镜像内路径（含同落点的重复记录；统计口径看上面的 counts）。
+    std::vector<std::string> written;          // 对拍/日志
     std::vector<ExtractTreeFailure> failures;  // 单项失败：只算这一项，不炸整批
     double elapsed_ms = 0.0;
 
@@ -133,9 +142,23 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
 //   gamedata.db0 → gamedata；gamedata.sq_base → gamedata；a.b.db0 → a.b；patch_00.xdb → patch_00
 std::string package_folder_name(const std::string& package_path);
 
-// 包内路径是否**已经自带**这一层同名壳：**所有**条目的第一段都等于 shell ⇒ true。
-//（空条目表 ⇒ false，与"不知道 ⇒ 照常规叠一层"一致。）
+// 包内路径是否**已经自带**这一层同名壳：**过半**条目的第一段等于 shell ⇒ true。
+//   ★ 2026-10-04（判红锁①）：量词由"**全部**条目都带壳"改成"**过半**带壳"。真机 9 个 VESSEL 包
+//     每个**恰好含一条**根级 `readme.md`(8148 B)、其余条目全在 `壳/…` 下 ⇒ "全部"量词把它们判成
+//     "不带壳" ⇒ 解出 `ai/ai/alife/…`（违背用户口径「这个案例，就解出来一个 configs。」）。
+//     `IWP\database\config\configs.db`（27/27 带壳，多一条 `a.txt` 就翻转）就是同族不稳的现场。
+//   · 裸壳项（`p == shell`，那条"自己那一层"的目录条目）计为带壳；
+//   · **不用**"存在裸壳目录项"当判据 —— `IWP\database\resource\meshes.db1` / `textures.db1` 是
+//     纯带壳但 `bare_shell=0`，那样会回归。
+//（空条目表 ⇒ false，与"不知道 ⇒ 照常规叠一层"一致；1.x 的空表兜底语义不变。）
 bool paths_carry_shell(const std::vector<std::string>& entry_paths, const std::string& shell);
+
+// 条目路径表**去重后**的条数（同一路径只算一条；`\` 与大小写按 Windows 口径归一）。
+// ★ 为什么需要：`IWP\database\maps\*.db` 的 HEADER 表把**除根记录外的每条记录登记了两遍**
+//   （同路径、同 offset、同 size ⇒ 同一份数据，已用不依赖工具的独立解码证实"重复在包内"）。
+//   ⇒ 包内记录数是产物数的 2 倍 −1。**分工**：协议层（`--dump`）报**包内记录数**（忠实、不去重，
+//   它有独立用途）；产物层（`--unpack-package` 的 `plan` 行 / UI 计数）报**产物口径**。
+size_t unique_entry_count(const std::vector<std::string>& entry_paths);
 
 // 落点目录＝`out_root`（自带壳时）或 `out_root/shell`。
 // ★**绝不返回 `<root>/.`** —— 那种写法会被 `safe_out_path` 当越界拒掉（真机踩过）。

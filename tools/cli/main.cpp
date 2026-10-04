@@ -2059,6 +2059,7 @@ int run_cli(const std::vector<std::string>& args) {
         }
         std::cout << "UNPACK ok files=" << res.files_written << " dirs=" << res.dirs_created
                   << " skipped_dirs=" << res.skipped_dirs << " bytes=" << res.bytes_written
+                  << " dups=" << res.duplicate_records
                   << " failed=" << res.failures.size()
                   << " ms=" << static_cast<long long>(res.elapsed_ms) << "\n";
         // 有单项失败：**不谎报成功**（1.x 的"解包失败返回 0"就是这么被吞掉的）
@@ -2166,10 +2167,18 @@ int run_cli(const std::vector<std::string>& args) {
         const std::vector<xrkit::engine::fs::UnpackTarget> plan =
             xrkit::engine::fs::plan_unpack_targets(out_root, plan_input);
         // ④ 逐包导出（`extract_package` 按类型分派 ⇒ SquashFS 与 DB 六格式同一条路）
-        uint64_t files = 0, dirs = 0, bytes = 0, failed = 0, done = 0;
+        //   ★★ 2026-10-04 **两种口径的分工**（判红锁②，别混）：
+        //     · `entries=` = **产物口径**（同路径的多条记录只算一条）—— 它和后一行
+        //       `files=/dirs=/bytes=`、以及右栏"解包产物预览"是同一把尺子；
+        //     · `records=` = **包内记录数**（忠实、不去重）—— 与 `--dump` 的 `entries=` 同口径。
+        //   为什么必须分开报：`IWP\database\maps\*.db` 的 HEADER 表把除根记录外的每条记录登记了
+        //   两遍（同路径/同 offset ⇒ 同一份数据，独立解码已证实重复在包内）⇒ 报"记录数"会正好是
+        //   盘上真相的 2 倍 −1。**`--dump` 保持忠实报记录数**（它是协议层工具，另有用途）。
+        uint64_t files = 0, dirs = 0, bytes = 0, failed = 0, done = 0, dups = 0;
         for (size_t i = 0; i < plan.size(); ++i) {
             std::cout << "UNPACK-PKG plan image=" << plan[i].image << " target=" << plan[i].target
-                      << " entries=" << plan_input[i].second.size() << "\n";
+                      << " entries=" << xrkit::engine::fs::unique_entry_count(plan_input[i].second)
+                      << " records=" << plan_input[i].second.size() << "\n";
             xrkit::engine::fs::ExtractTreeOptions options;
             if (!only_paths.empty()) {
                 for (const std::string& one : only_paths) {
@@ -2196,10 +2205,12 @@ int run_cli(const std::vector<std::string>& args) {
             files += res.files_written;
             dirs += res.dirs_created;
             bytes += res.bytes_written;
+            dups += res.duplicate_records;
             failed += res.failures.size();
         }
         std::cout << "UNPACK-PKG ok sources=" << plan.size() << " done=" << done << " files=" << files
-                  << " dirs=" << dirs << " bytes=" << bytes << " failed=" << failed << "\n";
+                  << " dirs=" << dirs << " bytes=" << bytes << " dups=" << dups
+                  << " failed=" << failed << "\n";
         return failed == 0 ? kExitOk : kExitFail;
     }
 

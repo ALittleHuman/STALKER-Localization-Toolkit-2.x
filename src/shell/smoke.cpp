@@ -2013,12 +2013,87 @@ SmokeResult run_smoke() {
                 efs2::unpack_target_dir(root, "E:/x/configs.db", {"configs", "configs/ai_tweaks/x.ltx"});
             const std::string plain = efs2::unpack_target_dir(root, "E:/x/gamedata.db0", {"levels/a"});
             const std::string empty = efs2::unpack_target_dir(root, "E:/x/gamedata.db0", {});
+            // ★★ 2026-10-04 **判红锁①**（缺陷①：量词"全部"⇒"过半"）：真机 9 个 VESSEL 包的形状 ——
+            //   裸壳项 `ai` + **一条根级 `readme.md`** + 一堆 `ai/…`。旧量词（"**全部**条目都带壳"）
+            //   被 `readme.md` 一条掀翻 ⇒ 判"不带壳" ⇒ 解出 `ai/ai/alife/…`，违背用户口径
+            //   「这个案例，就解出来一个 configs。」⇒ 新量词"**过半**带壳"必须判"自带壳"＝落点即输出根。
+            //   （把 `shelled * 2 > entry_paths.size()` 改回"任一条不带壳就 false" ⇒ 立刻红。）
+            const std::string mixed =
+                efs2::unpack_target_dir(root, "E:/x/ai.db", {"ai", "readme.md", "ai/alife/x.efd"});
             check(carry == root && carry_bare == root && plain == "E:/out/gamedata" &&
-                      empty == "E:/out/gamedata" && carry.find("/.") == std::string::npos,
+                      empty == "E:/out/gamedata" && carry.find("/.") == std::string::npos &&
+                      mixed == root,
                   QStringLiteral("落点② 自带壳不叠第二层（%1）/ **裸壳目录项也算自带壳**（%2，真机形状）/ "
-                                 "不带壳＝<根>/<包名>（%3）/ 空条目也叠（%4）/ 绝不出现 <根>/.（会被 safe_out_path 拒）")
+                                 "不带壳＝<根>/<包名>（%3）/ 空条目也叠（%4）/ 绝不出现 <根>/.（会被 "
+                                 "safe_out_path 拒）/ **过半带壳就算自带壳**（%5：VESSEL 形状 = 裸壳项 + "
+                                 "一条根级 readme.md + 一堆 壳/…）")
                       .arg(QString::fromStdString(carry), QString::fromStdString(carry_bare),
-                           QString::fromStdString(plain), QString::fromStdString(empty)));
+                           QString::fromStdString(plain), QString::fromStdString(empty),
+                           QString::fromStdString(mixed)));
+        }
+        // ★★ 2026-10-04 **判红锁②**（缺陷②：报数与"解包产物预览"口径不符）—— 合成一枚
+        //   **条目表重复登记**的 DB 包：`pack_db` 不查重，同一条路径给两条记录 ⇒ 包内两条、
+        //   盘上一份（后写覆盖前写）—— 正是真机 `IWP\database\maps\*.db` 的形状（除根记录外的
+        //   每条记录登记两遍；独立解码已证实重复在包内，不是 dump 的 bug）。
+        //   判据：计数走**最终产物**口径（files=1 / bytes=2 / dirs=1），并如实报出重复记录数。
+        //   （把计数改回"每处理一条记录就 +1" ⇒ files=2 / bytes=4 / dups=0 ⇒ 立刻红。）
+        {
+            namespace efs3 = xrkit::engine::fs;
+            const QString dup_root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_dup"));
+            QDir(dup_root).removeRecursively();
+            QDir().mkpath(dup_root);
+            const QString dup_pkg = dup_root + QStringLiteral("/dup.db");
+            std::vector<efs3::DbPackItem> items;
+            efs3::DbPackItem dup_dir;
+            dup_dir.path = "dupdir";
+            dup_dir.is_dir = true;
+            items.push_back(dup_dir);
+            efs3::DbPackItem dup_file;
+            dup_file.path = "dupdir/a.txt";
+            dup_file.data = {'X', 'Y'};
+            items.push_back(dup_file);
+            items.push_back(dup_file);   // ← 同路径的**第二条记录**（真机 maps\*.db 的形状）
+            const std::vector<uint8_t> dup_raw = efs3::pack_db(items, efs3::DbFormat::Xdb);
+            std::ofstream dup_out(dup_pkg.toStdString(), std::ios::binary | std::ios::trunc);
+            dup_out.write(reinterpret_cast<const char*>(dup_raw.data()),
+                          static_cast<std::streamsize>(dup_raw.size()));
+            dup_out.close();
+
+            const QString dup_target_root = dup_root + QStringLiteral("/out");
+            // 落点照真机那条路算（CLI/GUI 共用的"包名壳"规则）：壳 `dup`、条目首段 `dupdir`
+            //（不带壳）⇒ <根>/dup；然后才把**算好的落点**交给引擎导出（真机也是这个顺序）。
+            const std::string dup_target = efs3::unpack_target_dir(
+                dup_target_root.toStdString(), dup_pkg.toStdString(), {"dupdir", "dupdir/a.txt"});
+            const efs3::ExtractTreeResult dup_res =
+                efs3::extract_package(dup_pkg.toStdString(), dup_target);
+            // 文件内容 2 字节，而且盘上只有**一份**（第二条记录是后写覆盖前写）
+            const qint64 landed = QFileInfo(QString::fromStdString(dup_target) +
+                                            QStringLiteral("/dupdir/a.txt")).size();
+            const bool landed_at_shell =
+                dup_target == (dup_target_root + QStringLiteral("/dup")).toStdString();
+            QString dup_tree;
+            {
+                QDirIterator it(dup_root, QDir::AllEntries | QDir::NoDotAndDotDot,
+                                QDirIterator::Subdirectories);
+                while (it.hasNext()) dup_tree += it.next() + QStringLiteral(" | ");
+            }
+            dup_tree = QString::fromStdString(dup_target) + QStringLiteral(" => ") + dup_tree;
+            check(dup_res.ok && landed_at_shell && dup_res.files_written == 1 &&
+                      dup_res.bytes_written == 2 && dup_res.dirs_created == 1 &&
+                      dup_res.duplicate_records == 1 && landed == 2,
+                  QStringLiteral("产物计数① 包内条目表重复登记 ⇒ 报数走**最终产物**口径"
+                                 "（files=%1/期望 1 · bytes=%2/期望 2 · dirs=%3/期望 1 · "
+                                 "dups=%4/期望 1 · 落盘 a.txt=%5/期望 2 字节 · 树=%6）")
+                      .arg(dup_res.files_written)
+                      .arg(dup_res.bytes_written)
+                      .arg(dup_res.dirs_created)
+                      .arg(dup_res.duplicate_records)
+                      .arg(landed)
+                      .arg(dup_tree));
+            // 同一条判据的第二半：**计划行**（协议层的记录数）与**产物口径**必须是两个数
+            check(efs3::unique_entry_count({"dupdir", "dupdir/a.txt", "dupdir/a.txt"}) == 2,
+                  QStringLiteral("产物计数② 条目表去重：records=3 ⇒ entries=2（唯一路径数）"));
+            QDir(dup_root).removeRecursively();
         }
         // ★ 2026-10-04（同一条架构红线）：**输出根缺省**与**封包落点/扩展名**这两条原先也只写在 FS 页里
         //   ⇒ CLI 复现不了（命令行与界面会算出不同的根/落点）。现在实现搬到引擎（`resolve_output_root`

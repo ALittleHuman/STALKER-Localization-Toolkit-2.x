@@ -10,6 +10,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <set>
 
 namespace xrkit::engine::fs {
 namespace {
@@ -55,6 +56,53 @@ std::vector<std::string> split_segments(const std::string& text, char sep) {
     out.push_back(cur);
     return out;
 }
+
+// 「两条记录是不是指向**同一个产物**」的归一化键：`\`→`/`，Windows 下再折成小写
+//（与上面的 `component_equal` 同一口径 —— 产物层判"同一份东西"必须大小写不敏感）。
+std::string artifact_key(const std::string& path) {
+    std::string key = path;
+    for (char& c : key) {
+        if (c == '\\') c = '/';
+    }
+#ifdef _WIN32
+    for (char& c : key) {
+        if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+    }
+#endif
+    return key;
+}
+
+// ★★ 2026-10-04（判红锁②）：**产物口径**的记账器 —— 同一落点只算一次。**实现只有这一份**：
+//   GUI（`FsPage::run_unpack_jobs` 读 `files_written`）与 CLI（`--unpack-package` 的
+//   `files=/dirs=/bytes=`）都读它算出来的数 ⇒ "GUI 的功能 CLI 全有"那条红线自动成立。
+//   为什么必须记在本层：包内条目表**可以**把同一条记录登记多遍（真机 `maps\*.db` 就是），
+//   而"写"这件事是本层做的 —— "处理了几条记录"与"盘上有几份产物"是两件事，计数不能混。
+class ArtifactTally {
+public:
+    // true ⇒ 该落点**第一次**出现（计入 files/dirs/bytes）；false ⇒ 重复记录（产物没变多）。
+    // `kind` 把文件与目录分开记账（`d:`/`f:`）—— 真出现"同一路径既有目录项又有文件项"时
+    // 两条都要如实各算一次，不能互相顶掉。
+    bool note(const char* kind, const std::string& target_path) {
+        std::string key = kind;
+        key += artifact_key(target_path);
+        return seen_.insert(std::move(key)).second;
+    }
+
+private:
+    std::set<std::string> seen_;
+};
+
+}  // namespace
+
+size_t unique_entry_count(const std::vector<std::string>& entry_paths) {
+    // 与 `ArtifactTally` **同一把尺子**（`artifact_key`）：包内路径表里"同一条路径写了多遍"
+    // ⇒ 产物只有一份 ⇒ 报数只算一份。`--dump` **不**走这里（协议层要忠实报记录数）。
+    std::set<std::string> seen;
+    for (const std::string& p : entry_paths) seen.insert(artifact_key(p));
+    return seen.size();
+}
+
+namespace {
 
 // ⑤ 的兜底复核：joined 必须**逐组件**以 root 开头（不是字符串前缀比对 ——
 // `C:\out` 与 `C:\out2` 是字符串前缀关系但不是同一棵树）。
@@ -177,6 +225,7 @@ ExtractTreeResult extract_tree(const std::string& image_path, const std::string&
         return finish();
     }
     result.ok = true;  // 从这里往后：单项失败算单项，不算整批失败
+    ArtifactTally tally;   // ★ 产物口径：同一落点只算一次（见 `ArtifactTally` 的说明）
 
     // 选出本次要处理的条目（保持**清单顺序**：镜像列出的顺序已是路径字节序，
     // Listed 顺序则按调用方给的顺序，便于"谁失败"可复现）。
@@ -222,7 +271,7 @@ ExtractTreeResult extract_tree(const std::string& image_path, const std::string&
                 result.failures.push_back({entry->path, "建目录失败：" + ec.message()});
                 continue;
             }
-            ++result.dirs_created;
+            if (tally.note("d:", target.path)) ++result.dirs_created;   // 产物口径（同落点只算一次）
             result.written.push_back(entry->path);
             continue;
         }
@@ -239,8 +288,14 @@ ExtractTreeResult extract_tree(const std::string& image_path, const std::string&
             result.failures.push_back({entry->path, error});
             continue;
         }
-        ++result.files_written;
-        result.bytes_written += data.data.size();
+        // ★ 写是**照写**（同落点后写覆盖前写 —— 保持既有落盘语义不变），但计数走产物口径：
+        //   同一条落点又要写一遍时，盘上的东西没有变多 ⇒ 只记 `duplicate_records`。
+        if (tally.note("f:", target.path)) {
+            ++result.files_written;
+            result.bytes_written += data.data.size();
+        } else {
+            ++result.duplicate_records;
+        }
         result.written.push_back(entry->path);
     }
 
@@ -279,6 +334,7 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
         return finish();
     }
     result.ok = true;   // 从这里往后：单项失败算单项（与 SquashFS 分支同口径）
+    ArtifactTally tally;   // ★ 产物口径：同一落点只算一次（真机 `maps\*.db` 的重复登记就靠它）
 
     const bool want_all = options.selection == Selection::All;
     // Listed 模式下按 1.x **跳过目录项**（6.10 的同族口径）
@@ -300,7 +356,7 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
                 result.failures.push_back({entry.path, "建目录失败：" + ec.message()});
                 continue;
             }
-            ++result.dirs_created;
+            if (tally.note("d:", safe.path)) ++result.dirs_created;   // 产物口径（同落点只算一次）
             continue;
         }
         const DbExtract data = extract_entry_seek(image_path, entry);
@@ -314,8 +370,13 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
             continue;
         }
         // 空文件是**合法条目**（写出 0 字节）—— 与"解不出来"分开（6.8）
-        ++result.files_written;
-        result.bytes_written += data.data.size();
+        // ★ 写照写（后写覆盖前写，落盘语义不变）；计数走**最终产物**口径（判红锁②）。
+        if (tally.note("f:", safe.path)) {
+            ++result.files_written;
+            result.bytes_written += data.data.size();
+        } else {
+            ++result.duplicate_records;
+        }
         result.written.push_back(entry.path);
     }
     return finish();
@@ -334,20 +395,27 @@ std::string package_folder_name(const std::string& package_path) {
 }
 
 bool paths_carry_shell(const std::vector<std::string>& entry_paths, const std::string& shell) {
-    if (entry_paths.empty() || shell.empty()) return false;
+    if (entry_paths.empty() || shell.empty()) return false;   // 空表 ⇒ 照常规叠一层（1.x 兜底）
+    // ★★ 2026-10-04 **真机**抓到的坑（判红锁①）：量词**不是**"全部"，是"**过半**"。
+    //   9 个 VESSEL 真机包每个**恰好含一条**根级 `readme.md`(8148 B)、其余条目全在 `壳/…` 下
+    //   ⇒ 旧的"全部带壳才算自带壳"把它们判成"不带壳" ⇒ 解出 `ai/ai/alife/…`（违背用户口径
+    //   「这个案例，就解出来一个 configs。」）。一个 8 KB 的说明文件就能掀翻整个判定。
+    //   ★ 裸壳项（`p == shell`，即"它自己那一层"的目录条目）**算带壳**；
+    //     `IWP\database\config\configs.db` 的第一条就是裸 `configs`（2026-10-04 的坑）。
+    //   ★ **不要**改用"存在裸壳目录项"当判据 —— `IWP\database\resource\meshes.db1` /
+    //     `textures.db1` 是**纯带壳但 bare_shell=0**（条目全 `壳/…`，没有裸壳项），那样会回归。
+    size_t shelled = 0;
     for (const std::string& p : entry_paths) {
-        // ★★ 2026-10-04 **真机**抓到的坑：条目表里常常有一条**名字正好等于壳的目录条目**
-        //   （`IWP\database\config\configs.db` 的条目第一条就是 `configs`，它自己那一层）。
-        //   旧判据要求"所有条目都以 `shell/` 开头" ⇒ 被这一条裸壳目录项卡掉 ⇒ 判成"不带壳"
-        //   ⇒ 又叠一层 ⇒ 真机解出 `configs/configs/…`（违背用户口径「这个案例，就解出来一个
-        //   configs」）。合成夹具里恰好没有这条裸目录项，所以自检一直没抓到。
-        //   ⇒ 裸壳项（`p == shell`）与壳下的项（`p` 以 `shell/` 开头）**都算"自带壳"**。
-        if (p == shell) continue;
-        if (p.size() <= shell.size() + 1) return false;            // 得比 "shell/" 更长
-        if (p.compare(0, shell.size(), shell) != 0) return false;  // 第一段就得是包名
-        if (p[shell.size()] != '/' && p[shell.size()] != '\\') return false;
+        if (p == shell) {            // 裸壳项：那条名字正好等于壳的目录条目
+            ++shelled;
+            continue;
+        }
+        if (p.size() <= shell.size() + 1) continue;            // 得比 "shell/" 更长才算壳下的项
+        if (p.compare(0, shell.size(), shell) != 0) continue;  // 第一段不是包名
+        if (p[shell.size()] != '/' && p[shell.size()] != '\\') continue;
+        ++shelled;
     }
-    return true;
+    return shelled * 2 > entry_paths.size();   // 过半即判"自带壳"
 }
 
 std::string unpack_target_dir(const std::string& out_root, const std::string& package_path,

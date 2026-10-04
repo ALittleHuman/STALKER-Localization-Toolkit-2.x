@@ -422,6 +422,35 @@ def step_golden_db(release: bool) -> None:
         fail("DB 六格式与 1.x 不一致（见上）")
 
 
+def step_unpack_rules(release: bool) -> None:
+    """真机判红锁：解包**落点**（包名壳：VESSEL 不叠第二层壳 + 反向两条仍叠壳）与
+    **报数口径**（`IWP\\database\\maps\\fake_start.db` 报数==盘上真实；`--dump` 仍报包内记录数）。
+
+    为什么单独一步（而不是塞进 golden-db）：这两条是 2026-10-04 用户口径下**已查实**的缺陷，
+    现场在真机包上（VESSEL 的 `readme.md` 掀翻量词、maps 的条目表重复登记），合成夹具造不出来
+    （`pack_db` 不会自己写重复记录，smoke 里那条是**手工塞两条同路径记录**才复现的）。
+    退出码：0=三组锁全绿，1=有断言不成立，2=真机样本缺失（外部前提，按档位判定）。
+    """
+    say("[unpack-rules] 真机锁：解包落点（自带壳判定）与报数口径（最终产物）")
+    script = ROOT / "tests" / "check_unpack_rules.py"
+    if not require_repo_file(script, "解包落点/报数真机锁脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("UNPACK-LOCK") or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("解包落点与报数口径三组真机锁全绿")
+    elif rc == 2:
+        prereq("真机解包样本（VESSEL / IWP maps / Golden Sphere）", "缺样本（见上）", release)
+    else:
+        fail("解包落点/报数口径的真机锁不成立（见上）")
+
+
 def step_golden_sqfs_pack(release: bool) -> None:
     """黄金语料差分：SquashFS **封包**产物（2.x 自写 writer vs 1.x 的 sqfs_pack/tar2sqfs）。
 
@@ -1286,6 +1315,7 @@ STEPS = [
     ("golden-sqfs", step_golden_sqfs),
     ("golden-extract", step_golden_extract),
     ("golden-db", step_golden_db),
+    ("unpack-rules", step_unpack_rules),
     ("golden-sqfs-pack", step_golden_sqfs_pack),
     ("golden-sqfs-pack-real", step_golden_sqfs_pack_real),
     ("text-tables", step_text_tables),
