@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace xrkit::engine::fs {
@@ -92,5 +93,44 @@ ExtractTreeResult extract_tree(const std::string& image_path, const std::string&
 ExtractTreeResult extract_package(const std::string& image_path, const std::string& out_root,
                                   const ExtractTreeOptions& options = ExtractTreeOptions{},
                                   std::optional<DbFormat> db_fallback = std::nullopt);
+
+// ── 解包落点（用户 2026-10-03 口径；★GUI 与 CLI **必须共用这一份**）────────────────────
+//
+// 用户口径原话：「如果就拖入 `E:\...\IWP\database\config` 的 `configs`，那么**解包出来是一个
+// `configs` 文件夹**（和 `gamedata.db*`/`sq*` 解出 `gamedata` 一样），**不包含 `database` 和
+// `config`**。」追问"包内路径本身就带一层 `configs/` 会不会变成 `configs/configs`"后定案：
+// **「这个案例，就解出来一个 configs。」**
+// ⇒ 规则：① 产物顶层＝**包名去扩展名**（1.x `_package_folder`）；② **磁盘上的父目录层级不进产物**；
+//    ③ **包内路径已经自带这一层同名壳时不再叠一层**（否则真机会解出 `configs/configs/…`）。
+//
+// 为什么这条规则必须在**引擎**里：2026-10-04 用户拍了架构红线——
+// **「GUI 的功能，CLI 肯定要全部拥有啊。哪有 GUI 的细节功能比 CLI 还多的。」**
+// 此前它只写在 `FsPage::plan_unpack()` 里 ⇒ CLI 复现不了 ⇒ 真机产物布局只能在 GUI/合成夹具上验。
+// 现在 shell 与 CLI 都调这里（自检锁：GUI 算出的落点集合 == 这里算的）。
+
+// 1.x `_package_folder`：basename 去掉**最后一个**扩展名。
+//   gamedata.db0 → gamedata；gamedata.sq_base → gamedata；a.b.db0 → a.b；patch_00.xdb → patch_00
+std::string package_folder_name(const std::string& package_path);
+
+// 包内路径是否**已经自带**这一层同名壳：**所有**条目的第一段都等于 shell ⇒ true。
+//（空条目表 ⇒ false，与"不知道 ⇒ 照常规叠一层"一致。）
+bool paths_carry_shell(const std::vector<std::string>& entry_paths, const std::string& shell);
+
+// 落点目录＝`out_root`（自带壳时）或 `out_root/shell`。
+// ★**绝不返回 `<root>/.`** —— 那种写法会被 `safe_out_path` 当越界拒掉（真机踩过）。
+std::string unpack_target_dir(const std::string& out_root, const std::string& package_path,
+                              const std::vector<std::string>& entry_paths);
+
+// 一次"解包计划"里的一项：源包 → 落点。CLI 打它、shell 按它排 job、自检拿它对拍。
+struct UnpackTarget {
+    std::string image;   // 源包路径（UTF-8）
+    std::string label;   // 源包文件名（日志/显示用）
+    std::string target;  // 落点目录（已按上面的规则算好）
+};
+
+// 多源 ⇒ 落点清单（顺序与入参一致）。`sources` 每项＝(包路径, 该包的条目路径表)。
+std::vector<UnpackTarget> plan_unpack_targets(
+    const std::string& out_root,
+    const std::vector<std::pair<std::string, std::vector<std::string>>>& sources);
 
 }  // namespace xrkit::engine::fs

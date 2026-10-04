@@ -320,4 +320,60 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
     return finish();
 }
 
+// ── 解包落点：**GUI 与 CLI 共用的唯一一份实现**（用户 2026-10-03 口径 + 2026-10-04 架构红线）
+//   用户红线原话：「**GUI 的功能，CLI 肯定要全部拥有啊。哪有 GUI 的细节功能比 CLI 还多的。**」
+//   ⇒ 这条规则原来只写在 `FsPage::plan_unpack()` 里 ⇒ CLI 复现不了 ⇒ 真机产物布局只能在
+//     GUI/合成夹具上验。现在 shell 与 CLI 都调这里（自检锁：GUI 落点集合 == 这里算的）。
+std::string package_folder_name(const std::string& package_path) {
+    // 1.x `_package_folder` = `os.path.splitext(os.path.basename(p))[0]` —— **最后一个**扩展名。
+    const std::string name = core::path_to_utf8(core::path_from_utf8(package_path).filename());
+    const size_t dot = name.rfind('.');
+    if (dot == std::string::npos || dot == 0) return name;   // 无扩展名 / 以点开头 ⇒ 原样
+    return name.substr(0, dot);
+}
+
+bool paths_carry_shell(const std::vector<std::string>& entry_paths, const std::string& shell) {
+    if (entry_paths.empty() || shell.empty()) return false;
+    for (const std::string& p : entry_paths) {
+        // ★★ 2026-10-04 **真机**抓到的坑：条目表里常常有一条**名字正好等于壳的目录条目**
+        //   （`IWP\database\config\configs.db` 的条目第一条就是 `configs`，它自己那一层）。
+        //   旧判据要求"所有条目都以 `shell/` 开头" ⇒ 被这一条裸壳目录项卡掉 ⇒ 判成"不带壳"
+        //   ⇒ 又叠一层 ⇒ 真机解出 `configs/configs/…`（违背用户口径「这个案例，就解出来一个
+        //   configs」）。合成夹具里恰好没有这条裸目录项，所以自检一直没抓到。
+        //   ⇒ 裸壳项（`p == shell`）与壳下的项（`p` 以 `shell/` 开头）**都算"自带壳"**。
+        if (p == shell) continue;
+        if (p.size() <= shell.size() + 1) return false;            // 得比 "shell/" 更长
+        if (p.compare(0, shell.size(), shell) != 0) return false;  // 第一段就得是包名
+        if (p[shell.size()] != '/' && p[shell.size()] != '\\') return false;
+    }
+    return true;
+}
+
+std::string unpack_target_dir(const std::string& out_root, const std::string& package_path,
+                              const std::vector<std::string>& entry_paths) {
+    const std::string shell = package_folder_name(package_path);
+    if (shell.empty()) return out_root;                              // 算不出壳 ⇒ 直接把根当落点
+    if (paths_carry_shell(entry_paths, shell)) return out_root;      // 自带壳 ⇒ 不再叠一层
+    std::string root = out_root;
+    while (!root.empty() && (root.back() == '/' || root.back() == '\\')) root.pop_back();
+    if (root.empty()) return shell;
+    // ★ 这里**只拼目录名**：绝不生成 `<root>/.` 那种写法（`safe_out_path` 会把它当越界拒掉，真机踩过）。
+    return root + "/" + shell;
+}
+
+std::vector<UnpackTarget> plan_unpack_targets(
+    const std::string& out_root,
+    const std::vector<std::pair<std::string, std::vector<std::string>>>& sources) {
+    std::vector<UnpackTarget> out;
+    out.reserve(sources.size());
+    for (const auto& item : sources) {
+        UnpackTarget t;
+        t.image = item.first;
+        t.label = core::path_to_utf8(core::path_from_utf8(item.first).filename());
+        t.target = unpack_target_dir(out_root, item.first, item.second);
+        out.push_back(std::move(t));
+    }
+    return out;
+}
+
 }  // namespace xrkit::engine::fs

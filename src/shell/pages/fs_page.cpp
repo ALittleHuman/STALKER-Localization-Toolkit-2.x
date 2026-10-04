@@ -1335,9 +1335,11 @@ QString FsPage::resolve_output_dir() {
 }
 
 QString FsPage::package_folder_name(const QString& package_path) {
-    // 1.x `_package_folder`：`os.path.splitext(os.path.basename(p))[0]`
-    //   gamedata.db0 → gamedata；gamedata.sq_base → gamedata；a.b.db0 → a.b
-    return QFileInfo(package_path).completeBaseName();
+    // ★★ 2026-10-04：**实现搬到引擎**（`efs::package_folder_name`），这里只留一层薄包装。
+    //   用户当天拍的架构红线（原话）：「**GUI 的功能，CLI 肯定要全部拥有啊。哪有 GUI 的细节功能
+    //   比 CLI 还多的。**」—— 这条规则原先只写在本页里 ⇒ **CLI 复现不了** ⇒ 真机"产物布局"
+    //   （顶层＝包名去扩展名）只能在 GUI / 合成夹具上验。现在 shell 与 CLI 共用引擎那一份。
+    return QString::fromStdString(efs::package_folder_name(package_path.toUtf8().toStdString()));
 }
 
 efs::ExtractTreeResult FsPage::extract_job(const UnpackJob& job) {
@@ -1378,20 +1380,14 @@ std::vector<FsPage::UnpackJob> FsPage::plan_unpack(bool checked_only, QString* o
         //   **不包含 `database` 和 `config`**。」；追问"包内路径本身就带一层 `configs/` 会不会变成
         //   `configs/configs`"他定案：**「这个案例，就解出来一个 configs。」**
         //   ⇒ 规则：产物顶层＝**包名（去扩展名）**；但**包内路径已经自带这一层同名壳时不再叠一层**。
-        //   判据＝**该包所有条目路径的第一段都等于包名** ⇒ 直接把输出根当落点（路径里的那一层就成了产物顶层）。
-        const QString shell = package_folder_name(sources_[i].path);
-        bool entries_carry_shell = !entries_[i].empty();
-        for (const efs::EntryInfo& entry : entries_[i]) {
-            const QString rel = utf8(entry.path);
-            if (!rel.startsWith(shell + QLatin1Char('/'))) {
-                entries_carry_shell = false;
-                break;
-            }
-        }
-        //   ★ 落点：**包内路径已经自带这一层同名壳时不再叠一层**（否则真机会解出 `configs/configs/…`）。
-        //   ⚠ 不要再写成 `QDir(root).filePath(".")` —— 那会生成 `<root>/.`，被引擎的安全路径判据拒掉
-        //     （自检"产物布局①"当场红了：`解包：0 个文件、失败 2`）。直接用根字符串。
-        job.target = (entries_carry_shell ? root : QDir(root).filePath(shell)).toUtf8().toStdString();
+        //   ★★ 2026-10-04：这条规则**整段搬到引擎**（`efs::unpack_target_dir`）—— 用户红线要求
+        //     "GUI 的功能 CLI 全有"，而 CLI 复现不了写在本页里的落点规则。这里只把该包的条目路径
+        //     收集好交给它；**行为一字不变**（自检锁：本页算出的落点集合 == 引擎算的）。
+        std::vector<std::string> entry_paths;
+        entry_paths.reserve(entries_[i].size());
+        for (const efs::EntryInfo& entry : entries_[i]) entry_paths.push_back(entry.path);
+        job.target = efs::unpack_target_dir(root.toUtf8().toStdString(),
+                                            sources_[i].path.toUtf8().toStdString(), entry_paths);
         job.label = QFileInfo(sources_[i].path).fileName().toUtf8().toStdString();
         job.db_fallback = fallback;
         if (checked_only) {

@@ -115,7 +115,13 @@ void print_usage() {
            "  --dump <文件> [DB格式]   导出解析结果（SquashFS 条目表 或 DB 条目表 TSV）\n"
            "  --extract <源> <内部路径> <输出> [DB格式]   提取单个文件（进程内解压）\n"
            "  --unpack-tree <镜像> <输出根> [--only <清单文件>]\n"
-           "                                              整树导出（安全路径 + 原子写；空清单＝拒绝）\n"
+           "                                              整树导出（**原样摊开**：条目直接落在输出根下；\n"
+           "                                              只认 SquashFS；安全路径 + 原子写；空清单＝拒绝）\n"
+           "  --unpack-package <包|目录> <输出根> [--only <清单文件>] [DB格式]\n"
+           "                                              **与 GUI「解包」等价**：任何包类型（SquashFS +\n"
+           "                                              DB 六格式）或一个目录（递归找包）；落点＝包名去扩\n"
+           "                                              展名、磁盘父目录不进产物、包内已自带同名壳不叠一层\n"
+           "                                              （与 GUI 共用同一份落点实现）\n"
            "  --pack-db <输出> <格式> <输入目录>          按目录打包 DB（逐字节对拍用）\n"
            "  --pack-sqfs <输出> <输入目录> [--pack-dirs]  自写 SquashFS 封包（xz 块，逐字节对拍用）\n"
            "  --decode-text <输入> <输出>                 六编码链解码（把正文写成 UTF-8；对拍用）\n"
@@ -2014,6 +2020,112 @@ int run_cli(const std::vector<std::string>& args) {
                   << " ms=" << static_cast<long long>(res.elapsed_ms) << "\n";
         // 有单项失败：**不谎报成功**（1.x 的"解包失败返回 0"就是这么被吞掉的）
         return res.failures.empty() ? kExitOk : kExitFail;
+    }
+
+    // ★★ 2026-10-04 用户拍的**架构红线**（原话）：「**GUI 的功能，CLI 肯定要全部拥有啊。哪有 GUI 的
+    //   细节功能比 CLI 还多的。**」⇒ 本条动作＝GUI「解包」按钮的等价物：
+    //   · 源可以是**一枚包**（SquashFS / DB 六格式都行）或**一个目录**（递归找包，规则＝引擎的
+    //     `is_package_file_name`，与 GUI 拖入文件夹同规则）；
+    //   · 落点＝**包名去扩展名**、**磁盘父目录不进产物**、**包内已自带同名壳时不再叠一层**
+    //     —— 与 GUI **共用** `fs::plan_unpack_targets()`（此前这条只写在 `FsPage::plan_unpack()`
+    //     里 ⇒ CLI 复现不了 ⇒ 真机产物布局只能在 GUI/合成夹具上验）。
+    //   与 `--unpack-tree` 的分工：后者是"**原样摊开一棵树**"（SquashFS，条目直接落在输出根下，
+    //   保持既有行为兼容）；要"和 GUI 一样"就用本条。
+    if (action == "--unpack-package") {
+        if (operands.size() < 2) {
+            std::cerr << "UNPACK-PKG error reason=用法：--unpack-package <包|目录> <输出根> "
+                         "[--only <清单文件>] [DB格式]\n";
+            return kExitUsage;
+        }
+        const std::string& src = operands[0];
+        const std::string& out_root = operands[1];
+        std::optional<xrkit::engine::fs::DbFormat> fallback;
+        if (operands.size() >= 3) {
+            fallback = xrkit::engine::fs::format_key_to_db(operands[2]);
+            if (!fallback.has_value()) {
+                std::cerr << "UNPACK-PKG error reason=不认识的 DB 格式：" << operands[2] << "\n";
+                return kExitUsage;
+            }
+        }
+        // ① 收源（目录 ⇒ 递归找包；文件 ⇒ 它自己）
+        std::vector<std::string> images;
+        std::error_code ec;
+        const std::filesystem::path src_path = xrkit::core::path_from_utf8(src);
+        if (std::filesystem::is_directory(src_path, ec)) {
+            for (std::filesystem::recursive_directory_iterator it(src_path, ec), end; it != end;
+                 it.increment(ec)) {
+                if (ec) break;
+                if (!it->is_regular_file(ec)) continue;
+                const std::string f = xrkit::core::path_to_utf8(it->path());
+                if (xrkit::engine::fs::is_package_file_name(f)) images.push_back(f);
+            }
+            std::sort(images.begin(), images.end());
+        } else {
+            images.push_back(src);
+        }
+        // ② `--only` 清单读一次（空清单**不等于**全部 —— 与 `--unpack-tree` 同一口径）
+        std::vector<std::string> only_paths;
+        if (!only_list.empty() && !extract_all) {
+            std::ifstream in(xrkit::core::path_from_utf8(only_list), std::ios::binary);
+            if (!in) {
+                std::cout << "UNPACK-PKG error reason=读不到清单文件：" << only_list << "\n";
+                return kExitFail;
+            }
+            std::string line;
+            while (std::getline(in, line)) {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (!line.empty()) only_paths.push_back(line);
+            }
+        }
+        // ③ 多源 ⇒ 落点（**引擎那一份**）；条目表用于判断"包内是否已自带同名壳"
+        std::vector<std::pair<std::string, std::vector<std::string>>> plan_input;
+        for (const std::string& img : images) {
+            std::string err;
+            const std::vector<xrkit::engine::fs::EntryInfo> entries =
+                xrkit::engine::fs::package_entries(img, fallback, err);
+            std::vector<std::string> paths;
+            paths.reserve(entries.size());
+            for (const xrkit::engine::fs::EntryInfo& e : entries) paths.push_back(e.path);
+            plan_input.emplace_back(img, std::move(paths));
+        }
+        const std::vector<xrkit::engine::fs::UnpackTarget> plan =
+            xrkit::engine::fs::plan_unpack_targets(out_root, plan_input);
+        // ④ 逐包导出（`extract_package` 按类型分派 ⇒ SquashFS 与 DB 六格式同一条路）
+        uint64_t files = 0, dirs = 0, bytes = 0, failed = 0, done = 0;
+        for (size_t i = 0; i < plan.size(); ++i) {
+            std::cout << "UNPACK-PKG plan image=" << plan[i].image << " target=" << plan[i].target
+                      << " entries=" << plan_input[i].second.size() << "\n";
+            xrkit::engine::fs::ExtractTreeOptions options;
+            if (!only_paths.empty()) {
+                for (const std::string& one : only_paths) {
+                    if (std::find(plan_input[i].second.begin(), plan_input[i].second.end(), one) !=
+                        plan_input[i].second.end()) {
+                        options.only.push_back(one);
+                    }
+                }
+                if (options.only.empty()) continue;   // 这一包里没有清单中的项 ⇒ 不排它（同 GUI 勾选模式）
+                options.selection = xrkit::engine::fs::Selection::Listed;
+            }
+            const xrkit::engine::fs::ExtractTreeResult res =
+                xrkit::engine::fs::extract_package(plan[i].image, plan[i].target, options, fallback);
+            for (const xrkit::engine::fs::ExtractTreeFailure& f : res.failures) {
+                std::cout << "UNPACK-PKG fail image=" << plan[i].image << " path=" << f.path
+                          << " reason=" << f.reason << "\n";
+            }
+            if (!res.ok) {
+                std::cout << "UNPACK-PKG error image=" << plan[i].image << " reason=" << res.error << "\n";
+                ++failed;
+                continue;
+            }
+            ++done;
+            files += res.files_written;
+            dirs += res.dirs_created;
+            bytes += res.bytes_written;
+            failed += res.failures.size();
+        }
+        std::cout << "UNPACK-PKG ok sources=" << plan.size() << " done=" << done << " files=" << files
+                  << " dirs=" << dirs << " bytes=" << bytes << " failed=" << failed << "\n";
+        return failed == 0 ? kExitOk : kExitFail;
     }
 
     // 有损编解码探针（Python `errors="replace"` 的逐字节对拍用）。

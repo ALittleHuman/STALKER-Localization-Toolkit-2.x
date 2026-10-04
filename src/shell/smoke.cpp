@@ -1661,6 +1661,95 @@ SmokeResult run_smoke() {
             QDir(xdir).removeRecursively();
         }
 
+        // ★★ 2026-10-04 用户拍的**架构红线**（原话）：「**GUI 的功能，CLI 肯定要全部拥有啊。哪有 GUI
+        //   的细节功能比 CLI 还多的。**」⇒ 解包**落点规则**从 FS 页搬进**引擎**
+        //   （`efs::package_folder_name` / `unpack_target_dir` / `plan_unpack_targets`），
+        //   shell 与 CLI（`--unpack-package`）**共用同一份**。下面三条锁把"两处实现"钉死。
+        {
+            const std::string fn = efs2::package_folder_name("patch_00.xdb");
+            check(efs2::package_folder_name("gamedata.db0") == "gamedata" &&
+                      efs2::package_folder_name("gamedata.sq_base") == "gamedata" &&
+                      efs2::package_folder_name("a.b.db0") == "a.b" && fn == "patch_00",
+                  QStringLiteral("落点① 引擎包名去扩展名（gamedata.db0→gamedata / sq_base→gamedata / "
+                                 "a.b.db0→a.b / patch_00.xdb→%1）")
+                      .arg(QString::fromStdString(fn)));
+            const std::string root = "E:/out";
+            const std::string carry =
+                efs2::unpack_target_dir(root, "E:/x/configs.db", {"configs/a.txt", "configs/b/c.ltx"});
+            // ★★ 真机形状：条目表里**有一条名字正好等于壳的裸目录项**（`configs.db` 就是这样）
+            //   —— 这也必须算"自带壳"，否则真机会叠出 `configs/configs`（2026-10-04 实测抓到的缺陷）。
+            const std::string carry_bare =
+                efs2::unpack_target_dir(root, "E:/x/configs.db", {"configs", "configs/ai_tweaks/x.ltx"});
+            const std::string plain = efs2::unpack_target_dir(root, "E:/x/gamedata.db0", {"levels/a"});
+            const std::string empty = efs2::unpack_target_dir(root, "E:/x/gamedata.db0", {});
+            check(carry == root && carry_bare == root && plain == "E:/out/gamedata" &&
+                      empty == "E:/out/gamedata" && carry.find("/.") == std::string::npos,
+                  QStringLiteral("落点② 自带壳不叠第二层（%1）/ **裸壳目录项也算自带壳**（%2，真机形状）/ "
+                                 "不带壳＝<根>/<包名>（%3）/ 空条目也叠（%4）/ 绝不出现 <根>/.（会被 safe_out_path 拒）")
+                      .arg(QString::fromStdString(carry), QString::fromStdString(carry_bare),
+                           QString::fromStdString(plain), QString::fromStdString(empty)));
+        }
+        // ★★ **GUI 与 CLI 必须同落点**：本页 `plan_unpack()` 算出的 target 集合 == 引擎
+        //   `plan_unpack_targets()` 算的（谁把落点规则搬回页面里、或改动任一侧 ⇒ 立刻红）。
+        {
+            const QString plan_root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_plan"));
+            QDir(plan_root).removeRecursively();
+            QDir().mkpath(plan_root);
+            const QString a_path = plan_root + QStringLiteral("/plan_a.db0");
+            const QString b_path = plan_root + QStringLiteral("/plan_b.db0");
+            std::vector<efs2::DbPackItem> a_items;   // 条目**不带**同名壳 ⇒ 落点 = <根>/plan_a
+            efs2::DbPackItem ai;
+            ai.path = "levels/a.txt";
+            ai.data = {'a'};
+            a_items.push_back(ai);
+            std::vector<efs2::DbPackItem> b_items;   // 条目**自带**同名壳 `plan_b/` ⇒ 落点 = <根>
+            efs2::DbPackItem bi;
+            bi.path = "plan_b/x.txt";
+            bi.data = {'x'};
+            b_items.push_back(bi);
+            const std::pair<QString, std::vector<efs2::DbPackItem>*> pairs[2] = {{a_path, &a_items},
+                                                                                {b_path, &b_items}};
+            for (const auto& item : pairs) {
+                const std::vector<uint8_t> raw = efs2::pack_db(*item.second, efs2::DbFormat::Xdb);
+                std::ofstream out(item.first.toStdString(), std::ios::binary | std::ios::trunc);
+                out.write(reinterpret_cast<const char*>(raw.data()),
+                          static_cast<std::streamsize>(raw.size()));
+            }
+            FsPage plan_page;
+            plan_page.resize(720, page_min_h());
+            plan_page.show();
+            QApplication::processEvents();
+            plan_page.out_edit()->setText(QDir::toNativeSeparators(plan_root));
+            plan_page.add_paths(QStringList{a_path, b_path});
+            QApplication::processEvents();
+            QString root_used;
+            const std::vector<FsPage::UnpackJob> jobs = plan_page.plan_unpack(false, &root_used);
+            std::vector<std::pair<std::string, std::vector<std::string>>> srcs;
+            for (const FsPage::UnpackJob& j : jobs) {
+                std::string err;
+                const std::vector<efs2::EntryInfo> entries =
+                    efs2::package_entries(j.image, std::nullopt, err);
+                std::vector<std::string> paths;
+                paths.reserve(entries.size());
+                for (const efs2::EntryInfo& e : entries) paths.push_back(e.path);
+                srcs.emplace_back(j.image, std::move(paths));
+            }
+            const std::vector<efs2::UnpackTarget> eng =
+                efs2::plan_unpack_targets(root_used.toStdString(), srcs);
+            bool same = !jobs.empty() && eng.size() == jobs.size();
+            QString detail;
+            for (size_t i = 0; same && i < jobs.size(); ++i) {
+                if (eng[i].image != jobs[i].image || eng[i].target != jobs[i].target) same = false;
+                detail += QString::fromStdString(eng[i].target) + QStringLiteral(" | ");
+            }
+            check(same && jobs.size() == 2,
+                  QStringLiteral("落点③ GUI 与引擎**同落点**（%1 个源；引擎算的：%2）")
+                      .arg(jobs.size())
+                      .arg(detail));
+            plan_page.hide();
+            QDir(plan_root).removeRecursively();
+        }
+
         FsPage page;
         page.resize(720, page_min_h());
         page.show();
