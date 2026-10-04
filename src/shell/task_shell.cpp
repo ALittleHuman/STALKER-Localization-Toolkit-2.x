@@ -35,8 +35,12 @@ TaskShell::TaskShell(QWidget* parent) : QObject(parent) {
     //   没有一处 `connect` ⇒ 六页的「取消」都是摆设。这里就是那条缺失的接线。
     //   （静默锁：`tests/run_ci.py` 的 shell-smoke 静态锁要求本文件必须出现
     //    `connect(cancel_` —— 拆掉它立刻就红。）
-    QObject::connect(cancel_, &QPushButton::clicked, this,
-                     [this] { request_cancel(QStringLiteral("已取消：用户点了「取消」")); });
+    QObject::connect(cancel_, &QPushButton::clicked, this, [this] {
+        // ★ D2 批：页面级确认（只有编码转换页装它）。返回 false ⇒ **什么都不发生**：
+        //   不置位、不留痕、按钮保持可点 —— 1.x 的 `askyesno` 就是这个语义。
+        if (cancel_confirm_ && !cancel_confirm_()) return;
+        request_cancel(QStringLiteral("已取消：用户点了「取消」"));
+    });
     row->addWidget(bar_, 1);
     row->addWidget(cancel_);
     layout->addLayout(row);

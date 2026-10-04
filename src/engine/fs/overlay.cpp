@@ -301,19 +301,68 @@ bool format_key_is_auto(const std::string& key) {
     return false;
 }
 
-std::vector<TreeItem> collect_tree(const std::string& root) {
+namespace {
+// 层数：相对路径里的 '/' 个数 + 1（root 的直接子项 = 1 层）。
+int depth_of_rel(const std::string& rel) {
+    int depth = 1;
+    for (char c : rel) {
+        if (c == '/') ++depth;
+    }
+    return depth;
+}
+}  // namespace
+
+std::vector<TreeItem> collect_tree(const std::string& root, WalkReport* report) {
     std::vector<TreeItem> out;
+    if (report != nullptr) {
+        report->dirs = 0;
+        report->files = 0;
+        report->max_depth = 0;
+        report->errors.clear();
+    }
     std::error_code ec;
     const stdfs::path base = xrkit::core::path_from_utf8(root);
-    if (!stdfs::is_directory(base, ec)) return out;
+    if (!stdfs::is_directory(base, ec)) {
+        // ★ 零静默：原先这里**静默返回空**（"目录不存在"与"目录是空的"在返回值上
+        //   一模一样）—— 编码转换页据此会把"路径填错了"报成"没找到可转换的文件"。
+        if (report != nullptr) {
+            report->errors.push_back(root + " | 不是可读目录" +
+                                     (ec ? "（" + ec.message() + "）" : "（路径不存在或不是目录）"));
+        }
+        return out;
+    }
     for (stdfs::recursive_directory_iterator it(base, ec), end; it != end; it.increment(ec)) {
-        if (ec) break;
+        if (ec) {
+            // 原来是 `break`（后面还有多少项、为什么停，一个字都不说）。
+            if (report != nullptr) {
+                report->errors.push_back(core::path_to_utf8(it->path()) +
+                                         " | 遍历中断：" + ec.message());
+            }
+            break;
+        }
         const stdfs::path rel = stdfs::relative(it->path(), base, ec);
-        if (ec) continue;
+        if (ec) {
+            if (report != nullptr) {
+                report->errors.push_back(core::path_to_utf8(it->path()) +
+                                         " | 取相对路径失败：" + ec.message());
+            }
+            ec.clear();
+            continue;
+        }
+        std::error_code dir_ec;
+        const bool is_dir = it->is_directory(dir_ec);
         TreeItem item;
-        item.path = xrkit::core::path_to_utf8(rel);
-        item.is_dir = it->is_directory(ec);
-        if (!item.is_dir) item.source_path = xrkit::core::path_to_utf8(it->path());
+        item.path = core::path_to_utf8(rel);
+        item.is_dir = is_dir;
+        if (!item.is_dir) item.source_path = core::path_to_utf8(it->path());
+        if (report != nullptr) {
+            if (item.is_dir) {
+                ++report->dirs;
+            } else {
+                ++report->files;
+            }
+            report->max_depth = std::max(report->max_depth, depth_of_rel(item.path));
+        }
         out.push_back(std::move(item));
     }
     std::sort(out.begin(), out.end(),

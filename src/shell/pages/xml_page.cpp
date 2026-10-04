@@ -4,21 +4,27 @@
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/sniff.h"
 
+#include "../pair_tree.h"
 #include "../task_shell.h"
-#include "../virtual_list.h"
 
+#include <QClipboard>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDialog>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileDialog>
+#include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMetaObject>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QThread>
+#include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -110,14 +116,41 @@ XmlPage::XmlPage(QWidget* parent)
     body_layout()->addLayout(opt_row);
     rebuild_filter_combo();
 
-    rows_ = new VirtualList;
-    rows_->setObjectName(QStringLiteral("xml_rows"));
-    rows_->set_row_height(xrkit::core::px(20));
-    rows_->set_row_text_provider([this](int index) -> QString {
-        if (index < 0 || index >= static_cast<int>(row_texts_.size())) return QString();
-        return row_texts_[static_cast<size_t>(index)];
-    });
-    body_layout()->addWidget(rows_, 1);
+    // ★★ D2 批：结果表＝**按模式声明的多列**（原来是单列 VirtualList、用 `\t` 拼文本）。
+    //   列策略与 fs 的两棵树**同一份装配件**（末列吃剩余宽度、其余列 Interactive）。
+    result_tree_ = new QTreeWidget;
+    result_tree_->setObjectName(QStringLiteral("xml_rows"));
+    result_tree_->setRootIsDecorated(false);   // 平表：没有层级，不该画展开箭头
+    body_layout()->addWidget(result_tree_, 1);
+    apply_result_columns();
+
+    // ★★ D2 批：详情栏（1.x `:436-458`）—— 上半＝明细正文，下半＝逐条 id + 复制id。
+    detail_panel_ = new QWidget;
+    detail_panel_->setObjectName(QStringLiteral("xml_detail_panel"));
+    auto* detail_layout = new QVBoxLayout(detail_panel_);
+    detail_layout->setContentsMargins(0, 0, 0, 0);
+    detail_head_ = new QLabel;
+    detail_head_->setObjectName(QStringLiteral("xml_detail_head"));
+    detail_head_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    detail_view_ = new QPlainTextEdit;
+    detail_view_->setObjectName(QStringLiteral("xml_detail_text"));
+    detail_view_->setReadOnly(true);
+    detail_view_->setMaximumHeight(xrkit::core::px(150));
+    detail_layout->addWidget(detail_head_, 0);
+    detail_layout->addWidget(detail_view_, 0);
+    detail_layout->addWidget(new QLabel(QStringLiteral("差异 id（逐条复制）")), 0);
+    id_list_ = new QTreeWidget;
+    id_list_->setObjectName(QStringLiteral("xml_id_list"));
+    id_list_->setRootIsDecorated(false);
+    id_list_->setMaximumHeight(xrkit::core::px(150));
+    // 列表结构（列/列策略）只有一份实现：`fill_id_tree` 第一次调用时装上（这里用空表触发）
+    fill_id_tree(id_list_, {});
+    detail_layout->addWidget(id_list_, 0);
+    // ★ 1.x `:965-971` `_hide_detail`：**没选中行时详情栏不占位**（它一开始是"平时隐藏"，
+    //   选中一行才加进分栏）。这不只是观感 —— 详情栏常驻会把这一页顶到 836px，
+    //   800px 高的窗口里统计行直接被挤到折线以下（实测 GEOM xml_stats y=720 / 视口 583）。
+    detail_panel_->setVisible(false);
+    body_layout()->addWidget(detail_panel_, 0);
 
     // ★★ 2026-10-06（⑤）：统计标签 —— 1.x `xml_compare_app.py:406-409` 建 label、
     //   `:675-676` 写值：`一致 {cons}  |  不一致 {incon}  |  仅 {name_a} {oa}  |  仅 {name_b} {ob}`。
@@ -138,6 +171,16 @@ XmlPage::XmlPage(QWidget* parent)
                      [this](const QString&) { set_mode(QString()); });
     QObject::connect(filter_combo_, &QComboBox::currentTextChanged, this,
                      [this](const QString&) { refresh_rows(); });
+    // ★★ D2 批：选中回调（1.x `<<TreeviewSelect>>` → `_on_row_select`）＋双击弹窗
+    QObject::connect(result_tree_, &QTreeWidget::itemSelectionChanged, this, [this] {
+        show_detail_for_item(result_tree_->currentItem());
+    });
+    QObject::connect(result_tree_, &QTreeWidget::itemDoubleClicked, this,
+                     [this](QTreeWidgetItem* item, int) {
+                         if (item == nullptr) return;
+                         const int index = item->data(0, Qt::UserRole).toInt();
+                         if (QDialog* dialog = make_detail_dialog(index, this)) dialog->show();
+                     });
 
     auto* start = add_action(QStringLiteral("开始比较"));
     start->setObjectName(QStringLiteral("xml_start"));
@@ -425,24 +468,108 @@ bool XmlPage::row_matches(const Row& row) const {
     return true;
 }
 
+// 一行"状态"列的唯一实现：结果表 / CSV / 详情头都读它（表头与明细不可能对不上）
+QString XmlPage::row_status_text(const Row& row) const {
+    if (row.kind == "same") return QStringLiteral("一致");
+    if (row.kind == "only_a") return QStringLiteral("仅 %1").arg(utf8(name_a()));
+    if (row.kind == "only_b") return QStringLiteral("仅 %1").arg(utf8(name_b()));
+    return QStringLiteral("不一致");
+}
+
+// 一列一格的**唯一实现**（1.x `_cell_text`；结果表与 CSV 共用 ⇒ 不可能分叉）
+std::string XmlPage::cell_text(const Row& row, const exml::XmlColumn& column) const {
+    const QString status = row_status_text(row);
+    if (column.key == "rel") return row.result.rel;
+    if (column.key == "status") {
+        QString text = status;
+        if (row.result.untrusted_a || row.result.untrusted_b) {
+            text += QStringLiteral("（不可信）");
+        }
+        return text.toUtf8().toStdString();
+    }
+    if (column.key == "lines_a") return std::to_string(row.result.lines_a);
+    if (column.key == "lines_b") return std::to_string(row.result.lines_b);
+    if (column.key == "ids_a") return std::to_string(row.result.ids_a);
+    if (column.key == "ids_b") return std::to_string(row.result.ids_b);
+    if (column.key == "diff_count") {
+        return std::to_string(row.result.only_a.size() + row.result.only_b.size() +
+                              row.result.text_diff.size());
+    }
+    if (column.key == "detail") return exml::inline_detail(row.result, name_a(), name_b());
+    return std::string();
+}
+
+void XmlPage::apply_result_columns() {
+    if (result_tree_ == nullptr) return;
+    const exml::XmlModeSpec* spec = mode();
+    PairTreeSpec tree_spec;
+    std::string signature;
+    if (spec != nullptr) {
+        for (const exml::XmlColumn& column : spec->columns) {
+            tree_spec.headers << utf8(column.heading);
+            tree_spec.widths << column.width;
+            signature += column.key + "|";
+        }
+    }
+    tree_spec.min_height = 140;
+    if (signature == applied_columns_ && result_tree_->columnCount() == tree_spec.headers.size()) {
+        return;  // 列没变 ⇒ 不重装（免得把用户拖过的列宽复位）
+    }
+    applied_columns_ = signature;
+    apply_pair_tree_spec(result_tree_, tree_spec);
+}
+
+QTreeWidgetItem* XmlPage::item_for_visible_row(int index) const {
+    if (index < 0 || index >= static_cast<int>(row_items_.size())) return nullptr;
+    return row_items_[static_cast<size_t>(index)];
+}
+
+void XmlPage::select_visible_row(int index) {
+    QTreeWidgetItem* item = item_for_visible_row(index);
+    if (result_tree_ == nullptr || item == nullptr) return;
+    result_tree_->setCurrentItem(item);
+    show_detail_for_item(item);   // `setCurrentItem` 会发选择信号，但那一条路要过事件循环
+}
+
 void XmlPage::refresh_rows() {
     row_texts_.clear();
     visible_.clear();
+    row_items_.clear();
+    if (result_tree_ != nullptr) {
+        result_tree_->clear();   // 行重填（列/表头由 apply_result_columns 管，不动）
+    }
+    apply_result_columns();
+    const exml::XmlModeSpec* spec = mode();
     for (size_t i = 0; i < results_.size(); ++i) {
         const Row& row = results_[i];
         if (!row_matches(row)) continue;
+        const int visible_index = static_cast<int>(visible_.size());
         visible_.push_back(static_cast<int>(i));
-        QString text;
-        if (row.kind == "same") text += QStringLiteral("一致");
-        else if (row.kind == "diff") text += QStringLiteral("不一致");
-        else if (row.kind == "only_a") text += QStringLiteral("仅 A");
-        else text += QStringLiteral("仅 B");
+        // 行文本（`\t` 拼接）保留下来：它是"这一行会显示成什么"的**单一口径**，
+        // 自检与日志都读它；表格则按模式声明的列画（两者同源于 cell_text）。
+        QString text = row_status_text(row);
         if (row.result.untrusted_a || row.result.untrusted_b) text += QStringLiteral("(不可信)");
         text += QStringLiteral("\t") + utf8(row.result.rel) + QStringLiteral("\t") +
                 utf8(exml::inline_detail(row.result, name_a(), name_b()));
         row_texts_.push_back(text);
+
+        if (result_tree_ != nullptr && spec != nullptr) {
+            auto* item = new QTreeWidgetItem;
+            for (int col = 0; col < static_cast<int>(spec->columns.size()); ++col) {
+                item->setText(col, utf8(cell_text(row, spec->columns[static_cast<size_t>(col)])));
+            }
+            // 可见行下标存在**第 0 列**（与 fs 的包列表同一约定：数据永远从第 0 列读）
+            item->setData(0, Qt::UserRole, visible_index);
+            result_tree_->addTopLevelItem(item);
+            row_items_.push_back(item);
+        }
     }
-    rows_->set_row_count(static_cast<int>(row_texts_.size()));
+    if (selected_visible_ >= static_cast<int>(visible_.size())) {
+        selected_visible_ = -1;
+        if (detail_head_ != nullptr) detail_head_->clear();
+        if (detail_view_ != nullptr) detail_view_->clear();
+        if (id_list_ != nullptr) id_list_->clear();
+    }
 }
 
 QString XmlPage::row_text(int index) const {
@@ -459,6 +586,140 @@ QString XmlPage::detail_text(int index) const {
                                  : exml::full_detail(row.result, name_a(), name_b());
     if (!row.result.warning.empty()) return utf8(row.result.warning + "\n\n" + text);
     return utf8(text);
+}
+
+// 1.x `:937-950`：头行按行类别给不同形状（一致 ✓ / 仅单侧 / 不一致 ✗ + ID 数）
+QString XmlPage::detail_head_for(int index) const {
+    if (index < 0 || index >= static_cast<int>(visible_.size())) return QString();
+    const Row& row = results_[static_cast<size_t>(visible_[static_cast<size_t>(index)])];
+    const QString rel = utf8(row.result.rel);
+    const QString status = row_status_text(row);
+    if (row.kind == "same") return QStringLiteral("[ %1 ] ✓ %2").arg(rel, status);
+    if (row.kind == "only_a" || row.kind == "only_b") {
+        return QStringLiteral("[ %1 ] %2").arg(rel, status);
+    }
+    return QStringLiteral("[ %1 ] ✗ %2  ID 数: A=%3 B=%4")
+        .arg(rel, status)
+        .arg(static_cast<qulonglong>(row.result.ids_a))
+        .arg(static_cast<qulonglong>(row.result.ids_b));
+}
+
+// 1.x `_detail_ids`（`:1018-1046`）：四类差异来源汇总、**去重保序**。
+std::vector<XmlDetailId> XmlPage::detail_ids_for(int index) const {
+    std::vector<XmlDetailId> out;
+    if (index < 0 || index >= static_cast<int>(visible_.size())) return out;
+    const Row& row = results_[static_cast<size_t>(visible_[static_cast<size_t>(index)])];
+    std::set<std::string> seen;
+    const auto add = [&out, &seen](const QString& category, const std::string& value) {
+        if (value.empty() || seen.count(value) != 0) return;
+        seen.insert(value);
+        out.push_back(XmlDetailId{category, utf8(value)});
+    };
+    for (const std::string& id : row.result.only_a) {
+        add(QStringLiteral("仅 %1").arg(utf8(name_a())), id);
+    }
+    for (const std::string& id : row.result.only_b) {
+        add(QStringLiteral("仅 %1").arg(utf8(name_b())), id);
+    }
+    for (const auto& item : row.result.text_diff) {
+        add(QStringLiteral("文本不同"), item[0]);
+    }
+    for (const auto& item : row.result.count_diff) {
+        add(QStringLiteral("次数不同"), item[0]);
+    }
+    return out;
+}
+
+void XmlPage::fill_id_tree(QTreeWidget* tree, const std::vector<XmlDetailId>& ids) {
+    if (tree == nullptr) return;
+    tree->clear();
+    if (tree->columnCount() != 3) {
+        // 列策略与结果表**同一份装配件**（一律 Interactive ＋ 末列吃剩余宽度）。
+        // 「复制id」按钮放在**第 0 列**（窄列），中间的 id 文本吃剩余宽度 —— 按钮在行首，
+        // 不会像"按钮列在末列"那样被 stretchLastSection 拉到右边、中间留一大块空白。
+        apply_pair_tree_spec(tree, PairTreeSpec{QStringList{QStringLiteral("复制"),
+                                                            QStringLiteral("来源"),
+                                                            QStringLiteral("id")},
+                                                QList<int>{96, 110, 240}, 0, false});
+    }
+    for (const XmlDetailId& one : ids) {
+        auto* item = new QTreeWidgetItem;
+        item->setText(1, one.category);
+        item->setText(2, one.id);
+        tree->addTopLevelItem(item);
+        auto* copy = new QPushButton(QStringLiteral("复制id"));
+        copy->setObjectName(QStringLiteral("xml_copy_id"));
+        const QString id_text = one.id;
+        QObject::connect(copy, &QPushButton::clicked, this, [this, id_text] { copy_id(id_text); });
+        tree->setItemWidget(item, 0, copy);
+    }
+}
+
+bool XmlPage::copy_id(const QString& id) {
+    QClipboard* clip = QGuiApplication::clipboard();
+    if (clip == nullptr) {
+        status_->setText(QStringLiteral("复制失败：拿不到剪贴板"));
+        return false;
+    }
+    clip->setText(id);
+    const QString done = QStringLiteral("已复制 id: %1").arg(id);
+    status_->setText(done);
+    log_to_host(done);
+    return true;
+}
+
+void XmlPage::show_detail_for_item(QTreeWidgetItem* item) {
+    if (item == nullptr) {
+        selected_visible_ = -1;
+        if (detail_head_ != nullptr) detail_head_->clear();
+        if (detail_view_ != nullptr) detail_view_->clear();
+        if (id_list_ != nullptr) id_list_->clear();
+        if (detail_panel_ != nullptr) detail_panel_->setVisible(false);  // 1.x `_hide_detail`
+        return;
+    }
+    const int index = item->data(0, Qt::UserRole).toInt();
+    selected_visible_ = index;
+    if (detail_head_ != nullptr) detail_head_->setText(detail_head_for(index));
+    // 完整明细**只在这一刻**生成（10.3：摘要路径绝不调它）
+    if (detail_view_ != nullptr) detail_view_->setPlainText(detail_text(index));
+    fill_id_tree(id_list_, detail_ids_for(index));
+    if (detail_panel_ != nullptr) detail_panel_->setVisible(true);  // 1.x `_show_detail`
+}
+
+QDialog* XmlPage::make_detail_dialog(int index, QWidget* parent) {
+    if (index < 0 || index >= static_cast<int>(visible_.size())) return nullptr;
+    auto* dialog = new QDialog(parent != nullptr ? parent : this);
+    dialog->setObjectName(QStringLiteral("xml_detail_dialog"));
+    dialog->setWindowTitle(QStringLiteral("明细：%1").arg(utf8(results_[static_cast<size_t>(
+        visible_[static_cast<size_t>(index)])].result.rel)));
+    dialog->resize(xrkit::core::px(760), xrkit::core::px(520));
+    auto* layout = new QVBoxLayout(dialog);
+    auto* head = new QLabel(detail_head_for(index), dialog);
+    head->setObjectName(QStringLiteral("xml_dialog_head"));
+    head->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    auto* view = new QPlainTextEdit(dialog);
+    view->setObjectName(QStringLiteral("xml_dialog_text"));
+    view->setReadOnly(true);
+    view->setPlainText(detail_text(index));
+    auto* id_title = new QLabel(QStringLiteral("差异 id（逐条复制）"), dialog);
+    auto* ids = new QTreeWidget(dialog);
+    ids->setObjectName(QStringLiteral("xml_dialog_id_list"));
+    ids->setRootIsDecorated(false);
+    fill_id_tree(ids, detail_ids_for(index));
+    auto* close = new QPushButton(QStringLiteral("关闭"), dialog);
+    close->setObjectName(QStringLiteral("xml_dialog_close"));
+    QObject::connect(close, &QPushButton::clicked, dialog, &QDialog::accept);
+    auto* button_row = new QHBoxLayout;
+    button_row->addStretch(1);
+    button_row->addWidget(close, 0);
+    layout->addWidget(head, 0);
+    layout->addWidget(view, 1);
+    layout->addWidget(id_title, 0);
+    layout->addWidget(ids, 1);
+    layout->addLayout(button_row);
+    // 双击弹出来的那个：用完自己销毁（自检里 `deleteLater` 也不冲突）
+    dialog->setAttribute(Qt::WA_DeleteOnClose, true);
+    return dialog;
 }
 
 bool XmlPage::export_csv(const QString& path, const QString& generated_at) {
@@ -481,30 +742,11 @@ bool XmlPage::export_csv(const QString& path, const QString& generated_at) {
     for (int index : visible_) {
         const Row& row = results_[static_cast<size_t>(index)];
         std::vector<std::string> cells;
-        for (const exml::XmlColumn& column : spec->columns) {
-            if (column.key == "rel") {
-                cells.push_back(row.result.rel);
-            } else if (column.key == "status") {
-                cells.push_back(row.kind == "same"      ? "一致"
-                                : row.kind == "diff"    ? "不一致"
-                                : row.kind == "only_a"  ? "仅 A 有"
-                                                        : "仅 B 有");
-            } else if (column.key == "lines_a") {
-                cells.push_back(std::to_string(row.result.lines_a));
-            } else if (column.key == "lines_b") {
-                cells.push_back(std::to_string(row.result.lines_b));
-            } else if (column.key == "ids_a") {
-                cells.push_back(std::to_string(row.result.ids_a));
-            } else if (column.key == "ids_b") {
-                cells.push_back(std::to_string(row.result.ids_b));
-            } else if (column.key == "diff_count") {
-                cells.push_back(std::to_string(row.result.only_a.size() +
-                                               row.result.only_b.size() +
-                                               row.result.text_diff.size()));
-            } else if (column.key == "detail") {
-                cells.push_back(exml::inline_detail(row.result, name_a(), name_b()));
-            } else {
-                cells.push_back("");
+        if (spec != nullptr) {
+            for (const exml::XmlColumn& column : spec->columns) {
+                // ★ D2 批：**同一份 cell_text** —— 表格里看到的与 CSV 里导出的
+                //   不可能再分叉（原来这里是页面里另抄一份 if-else 链）。
+                cells.push_back(cell_text(row, column));
             }
         }
         report.rows.push_back(std::move(cells));

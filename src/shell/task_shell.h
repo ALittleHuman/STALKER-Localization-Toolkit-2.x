@@ -77,6 +77,15 @@ public:
     QString cancel_reason() const;
     int cancel_requests() const { return cancel_requests_.load(); }
 
+    // ★ 2026-10-06（D2 批）：**取消确认**是页面级的事，但按钮属于**共用**的任务壳 ⇒
+    //   壳出一个可选钩子：非空时点「取消」先问它，返回 false ⇒ **什么都不发生**
+    //   （不置位、不留痕、按钮照样可点）。1.x `convert_app.cancel_convert` 就是
+    //   "先 `askyesno` 再置 cancelled"；六页里只有它要确认，所以不能把这颗按钮
+    //   拆成两套接线（那正是"同类东西维护两套"）。
+    //   默认空 ⇒ 老行为（点了就请求），其余五页不受影响。
+    void set_cancel_confirm(std::function<bool()> confirm) { cancel_confirm_ = std::move(confirm); }
+    bool has_cancel_confirm() const { return cancel_confirm_ != nullptr; }
+
     int last_progress() const { return last_progress_; }
     // 事件序列（自检用）：p=进度 / m=消息 / e=错误 / c=取消请求 / f=结束；并记下**到达时的线程**
     struct Event {
@@ -115,6 +124,7 @@ private:
     std::atomic<bool> cancel_requested_{false};
     std::atomic<int> cancel_requests_{0};
     QString cancel_reason_;
+    std::function<bool()> cancel_confirm_;   // 可空：取消前确认（见 set_cancel_confirm）
 };
 
 }  // namespace xrkit::shell

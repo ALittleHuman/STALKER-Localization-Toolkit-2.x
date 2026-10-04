@@ -30,8 +30,15 @@ CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 
 # 与引擎里实现对拍过的编码（门禁 [12]）。utf-16/utf-32 家族**故意不在列**：
 # `decode_lossy` 对它们如实报错（不做没对拍过的语义）。
-DECODE_CODECS = ["windows-1251", "windows-1252", "latin-1", "utf-8", "gb18030", "gbk", "gb2312"]
-ENCODE_CODECS = ["windows-1251", "windows-1252", "latin-1", "utf-8", "gb18030"]
+#
+# ★ 2026-10-06（D2 批）：把 **ascii** 加进两列。为什么必须在这里加：编码转换页的
+#   目标编码下拉有一条硬纪律「**只列我们对拍过的编码**」—— 1.x 的目标下拉里有 ascii，
+#   引擎（`etxt::kAscii`）也早就实现了，但它一直不在下拉里，原因正是"没对拍过"。
+#   补上对拍（Python 的 `ascii` codec 同样走 `errors="replace"`：非 ASCII 编码成 `?`、
+#   非法字节解成 U+FFFD），它才有资格出现在下拉里。
+DECODE_CODECS = ["windows-1251", "windows-1252", "latin-1", "utf-8", "gb18030", "gbk", "gb2312",
+                 "ascii"]
+ENCODE_CODECS = ["windows-1251", "windows-1252", "latin-1", "utf-8", "gb18030", "ascii"]
 
 
 def utf8_cases() -> list[bytes]:
@@ -179,6 +186,9 @@ def main() -> int:
         ("gb18030", gb_cases()),
         ("gbk", gb_cases()),
         ("gb2312", gb_cases()),
+        # ★ D2 批：ascii 的"有损"语义 = 非 ASCII 一律 `?` / 非法字节一律 U+FFFD。
+        #   用例组与单字节家族同一套（含 `bytes(range(256))` 全排、纯 ascii、空、`\xff`*4）。
+        ("ascii", single_byte_cases()),
     ("utf-16", utf_family_cases()),
     ("utf-16-le", utf_family_cases()),
     ("utf-16-be", utf_family_cases()),

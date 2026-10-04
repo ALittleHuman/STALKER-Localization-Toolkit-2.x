@@ -8,6 +8,17 @@
 //   · 10.3 每行的摘要是**按计数拼**的 `inline_detail`（绝不逐行调完整明细）；
 //   · 10.5 导出 CSV 走引擎渲染（BOM + `\r\n` + excel 引号），范围＝**当前筛选后**的行；
 //   · 10.1 模式/筛选的取值来自模式声明，模式下拉的 `data` 是**内部键**。
+//
+// ★★ 2026-10-06（D2 批）补齐的三件（1.x `xml_compare_app.py` 有、2.x 只有引擎没有入口）：
+//   ① **结果表改多列**：1.x 是按模式声明的多列 `ttk.Treeview`（`:860`、`_apply_columns`
+//      `:467-489`）；2.x 原来是**单列** `VirtualList`、用 `\t` 拼文本 ⇒ 改成本仓库已有的
+//      `QTreeWidget` + `apply_pair_tree_spec`（列策略：一律 `Interactive` ＋ 末列
+//      `setStretchLastSection(true)` —— 用户 2026-09-29 明确要过"不许设成 Stretch"）。
+//   ② **详情栏**：选中一行 ⇒ 头部行 `[ rel ] ✓/✗ 状态  ID 数: A= B=`（1.x `:937-950`）
+//      ＋ 完整明细正文 ＋ 下半部分"差异 id（逐条复制）"（1.x `:456-458`、`:1195-1199`）。
+//   ③ **双击行 ⇒ 明细弹窗**（1.x `:907-914`、`:901-905`）。
+//   每一条差异 id 后面都有各自的「复制id」按钮（1.x `:1183`；「复制全部 id」是 1.x
+//   自己删掉的，这里也不做）。剪贴板用法照 `fs_page.cpp` 的 `QGuiApplication::clipboard()`。
 
 #include "page_base.h"
 
@@ -23,13 +34,23 @@
 #include <vector>
 
 class QComboBox;
+class QDialog;
 class QLabel;
 class QLineEdit;
+class QPlainTextEdit;
+class QPushButton;
+class QTreeWidget;
+class QTreeWidgetItem;
 
 namespace xrkit::shell {
 
 class TaskShell;
-class VirtualList;
+
+// 详情栏里"逐条复制"的那一条（1.x `_detail_ids` 的 (来源标签, id 文本)）。
+struct XmlDetailId {
+    QString category;  // "仅 a" / "仅 b" / "文本不同" / "次数不同"
+    QString id;
+};
 
 class XmlPage : public PageBase {
 public:
@@ -70,11 +91,31 @@ public:
     //   2.x 原来把 `generated_at` 写死成 `"1970-01-01 00:00:00"`（`xml_page.cpp:161`）。
     bool export_csv_auto(const QString& path);
 
+    // ── ★ 2026-10-06（D2 批）：多列结果表 / 详情栏 / 双击弹窗 ─────────────
+    QTreeWidget* result_tree() const { return result_tree_; }
+    QWidget* detail_panel() const { return detail_panel_; }
+    QLabel* detail_head() const { return detail_head_; }
+    QPlainTextEdit* detail_view() const { return detail_view_; }
+    QTreeWidget* id_list() const { return id_list_; }
+
+    // 详情头一行（1.x `:937-950` 的 `[ rel ] ✗ 状态  ID 数: A= B=`）
+    QString detail_head_for(int index) const;
+    // 该行"差异 id"逐条清单（1.x `_detail_ids`：去重、保序，四类来源汇总）
+    std::vector<XmlDetailId> detail_ids_for(int index) const;
+    // 详情栏当前显示的可见行下标（-1 = 没选）。自检读它判"选中回调真的接上了"。
+    int selected_visible_row() const { return selected_visible_; }
+    // 程序化选中（自检用：不走鼠标也能验证"选中回调 → 详情栏"这条接线）
+    void select_visible_row(int index);
+    // 造一个明细弹窗（1.x `:907-914` 双击 → `_show_detail_popup_for`）。
+    // **不 exec**：调用方决定 show() 还是只检查内容（自检拿到它就不阻塞）。
+    QDialog* make_detail_dialog(int index, QWidget* parent = nullptr);
+    // 复制单条 id 到剪贴板（1.x `_copy_one_id`；失败要**留痕**不静默）
+    bool copy_id(const QString& id);
+
     QComboBox* mode_combo() const { return mode_combo_; }
     QComboBox* filter_combo() const { return filter_combo_; }
     QLineEdit* dir_a_edit() const { return dir_a_edit_; }
     QLineEdit* dir_b_edit() const { return dir_b_edit_; }
-    VirtualList* rows() const { return rows_; }
     TaskShell* task() const { return task_; }
     QLabel* status() const { return status_; }
     QLabel* stats_label() const { return stats_label_; }
@@ -100,6 +141,17 @@ private:
     // 四个计数（一致/不一致/仅 A/仅 B）：**只有这一份**，标签与 CSV 都读它
     void count_kinds(uint64_t* consistent, uint64_t* inconsistent, uint64_t* only_a,
                      uint64_t* only_b) const;
+    // 一行的"状态"列文本（**唯一一份**：结果表 / CSV / 详情头都用它）
+    QString row_status_text(const Row& row) const;
+    // 一列一格（**唯一一份**：结果表与 CSV 都读它 ⇒ 表格与导出不可能分叉）
+    std::string cell_text(const Row& row, const engine::xml::XmlColumn& column) const;
+    // 结果表的列/表头由**模式声明**给（1.x `_apply_columns`）；列策略走共用装配件
+    void apply_result_columns();
+    // 选中一行 → 刷新详情栏（1.x `_on_row_select`）
+    void show_detail_for_item(QTreeWidgetItem* item);
+    // 把"逐条 id + 复制id 按钮"填进一棵树（详情栏与弹窗**共用这一份**）
+    void fill_id_tree(QTreeWidget* tree, const std::vector<XmlDetailId>& ids);
+    QTreeWidgetItem* item_for_visible_row(int index) const;
 
     QLineEdit* dir_a_edit_ = nullptr;
     QLineEdit* dir_b_edit_ = nullptr;
@@ -107,13 +159,20 @@ private:
     QComboBox* enc_b_combo_ = nullptr;
     QComboBox* mode_combo_ = nullptr;
     QComboBox* filter_combo_ = nullptr;
-    VirtualList* rows_ = nullptr;
+    QTreeWidget* result_tree_ = nullptr;
+    QWidget* detail_panel_ = nullptr;
+    QLabel* detail_head_ = nullptr;
+    QPlainTextEdit* detail_view_ = nullptr;
+    QTreeWidget* id_list_ = nullptr;
     TaskShell* task_ = nullptr;
     QLabel* status_ = nullptr;
     QLabel* stats_label_ = nullptr;
     QPushButton* clear_button_ = nullptr;
     bool last_compare_cancelled_ = false;
     int last_compare_total_ = 0;
+    int selected_visible_ = -1;
+    // 已应用到结果表上的"列签名"：列变了才重装表头（免得每次刷新都把用户拖过的列宽复位）
+    std::string applied_columns_;
     // 上一次比较**用的**两侧目录（用于统计标签里显示文件夹名 —— 与结果同一次快照，
     // 不跟着输入框的后续编辑乱变；1.x 同理：`self.name_a` 在 `_start_compare` 里定下）。
     QString compared_a_;
@@ -121,6 +180,7 @@ private:
     std::vector<Row> results_;
     std::vector<int> visible_;   // results_ 的下标（当前筛选后）
     std::vector<QString> row_texts_;
+    std::vector<QTreeWidgetItem*> row_items_;  // 与 visible_ 一一对应
     int scan_count_ = 0;
     const plugin::Registry* registry_ = nullptr;  // 可空（见 set_registry）
 };

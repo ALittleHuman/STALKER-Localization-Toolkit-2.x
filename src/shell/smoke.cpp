@@ -29,11 +29,13 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QColor>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDialog>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -54,6 +56,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollBar>
+#include <QSet>
 #include <QStackedWidget>
 #include <QElapsedTimer>
 #include <QProcess>
@@ -555,7 +558,17 @@ SmokeResult run_smoke() {
         // （5）汉化包生成：字体/输出 ← 文本 XML 目录
         {
             FontPackPage page;
+            // ★ 2026-10-06（D2 批，1.x `:129-149`）：字体框在**构造时**就填好了默认字体
+            //   （上次用过的 → 系统雅黑 → 仓库根）⇒ 先测"继承上次的选择"这条优先级。
+            const QString preset = page.font_edit()->text().trimmed();
             page.xml_edit()->setText(src_dir);
+            check(preset.isEmpty() ||
+                      start_of(page.font_dialog_start()) == QDir::cleanPath(preset),
+                  QStringLiteral("② 汉化包生成：已填默认字体 ⇒ 字体起点 = 它自己（继承优先；"
+                                 "实得「%1」，默认字体「%2」）")
+                      .arg(start_of(page.font_dialog_start()), preset));
+            // 再清掉字体框 ⇒ 回到"XML 唯一 ⇒ 起点 = XML 目录"这条（这才是原来那条判据）
+            page.font_edit()->clear();
             check(start_of(page.font_dialog_start()) == src_dir &&
                       start_of(page.out_dialog_start()) == src_dir,
                   QStringLiteral("② 汉化包生成：XML 唯一 ⇒ 字体/输出起点 = XML 目录"));
@@ -5914,6 +5927,597 @@ SmokeResult run_smoke() {
             check(sheet.contains(QStringLiteral("*[drop_hover=\"true\"]")),
                   QStringLiteral("⑭ 拖放高亮规则还在（改样式别把它弄丢）"));
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ★★ 2026-10-06（D2 批）：编码转换补齐 / XML 详情栏与多列 / 系统字体选择器
+    //
+    // 这一批的判据都按"能不能判红"来写：把新东西拆掉、把旧行为改回去，下面任意一条
+    // 都会立刻变红（每条的红/绿原始输出见交付报告）。三组的共同口径：
+    //   · **零静默**：跳过/排除/失败/降级都要能读出计数或理由；
+    //   · **同类东西一套组件**：批处理在 `engine::text::batch`、表格装配在 `pair_tree.h`、
+    //     字体判据在 `engine::font`、起点判据在 `dialog_start.h` —— 页面里**不许**再抄一份。
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // ── （D2-①）编码转换页：1.x 那 9 处"不必要阉割"逐条回接 ─────────────────
+    {
+        namespace etxt = xrkit::engine::text;
+        ConvertPage page;
+        page.resize(900, page_min_h());
+        page.show();
+        QApplication::processEvents();
+
+        // ① 新控件在位且**默认值照 1.x**：扩展名 `.xml`、递归**开**、备份**开**、排除空
+        check(page.ext_edit() != nullptr && page.ext_edit()->text() == QStringLiteral(".xml"),
+              QStringLiteral("D2① 扩展名默认 `.xml`（实得「%1」）")
+                  .arg(page.ext_edit() == nullptr ? QString() : page.ext_edit()->text()));
+        check(page.recursive_box() != nullptr && page.recursive_box()->isChecked(),
+              QStringLiteral("D2② 递归子目录**默认开**（1.x `:70` value=True）"));
+        check(page.backup_box() != nullptr && page.backup_box()->isChecked(),
+              QStringLiteral("D2③ 备份**默认开**（1.x `:71` value=True）"));
+        check(page.exclude_edit() != nullptr && page.exclude_edit()->text().isEmpty(),
+              QStringLiteral("D2④ 排除模式默认为空"));
+
+        // 附：★ `ascii` 只在**目标**编码里（1.x 目标下拉有它、源下拉没有）；
+        //     引擎侧的有损编解码对拍见 `tests/golden_lossy_codec.py`（补对拍时抓到真缺陷）。
+        const auto has_item = [](QComboBox* combo, const QString& text) {
+            if (combo == nullptr) return false;
+            for (int i = 0; i < combo->count(); ++i) {
+                if (combo->itemData(i).toString() == text) return true;
+            }
+            return false;
+        };
+        check(has_item(page.target_combo(), QStringLiteral("ascii")),
+              QStringLiteral("D2附 目标编码下拉里有 ascii（1.x 目标表里有它）"));
+        check(!has_item(page.source_combo(), QStringLiteral("ascii")),
+              QStringLiteral("D2附 源编码下拉里**没有** ascii（源是猜的，1.x 源表里也没有）"));
+        check(page.target_combo() != nullptr &&
+                  page.target_combo()->currentData().toString() == QStringLiteral("utf-8"),
+              QStringLiteral("D2附 目标编码默认仍是 utf-8"));
+
+        // ③ 输出目录非空 ⇒ 备份勾选框**禁用且取消勾选**（1.x `on_output_dir_change` `:575-580`）
+        page.output_edit()->setText(QStringLiteral("E:/xrkit_d2_out"));
+        check(!page.backup_box()->isEnabled() && !page.backup_box()->isChecked(),
+              QStringLiteral("D2③ 输出目录非空 ⇒ 备份禁用且取消勾选（实得 enabled=%1 checked=%2）")
+                  .arg(page.backup_box()->isEnabled() ? 1 : 0)
+                  .arg(page.backup_box()->isChecked() ? 1 : 0));
+        page.output_edit()->clear();
+        check(page.backup_box()->isEnabled(),
+              QStringLiteral("D2③ 输出目录清空 ⇒ 备份勾选框恢复可点"));
+
+        // ②⑥⑦⑧⑨ 五颗"1.x 有、2.x 没有"的按钮都在
+        check(page.restore_button() != nullptr && page.clear_backup_button() != nullptr &&
+                  page.open_output_button() != nullptr && page.export_button() != nullptr,
+              QStringLiteral("D2⑥⑦⑧⑨ 恢复备份/清空备份/打开输出/导出统计四颗按钮都在"));
+
+        // ★ 「取消」要**先确认**（1.x `:629-637` `askyesno`）—— 确认钩子挂在**共用**任务壳上
+        check(page.task() != nullptr && page.task()->has_cancel_confirm(),
+              QStringLiteral("D2⑤ 取消确认钩子挂上了（1.x 取消前 askyesno）"));
+        {
+            bool asked = false;
+            page.task()->set_cancel_confirm([&asked] {
+                asked = true;
+                return false;   // 用户点"否"
+            });
+            page.task()->run(QStringLiteral("探针"), [](const ProgressSink&, const MessageSink&) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(120));
+            });
+            page.task()->cancel_button()->click();
+            check(asked && !page.task()->cancel_requested(),
+                  QStringLiteral("D2⑤ 点取消时先确认；答「否」⇒ 不置位、不留痕"));
+            for (int i = 0; i < 200 && page.task()->running(); ++i) {
+                QThread::msleep(5);
+                QApplication::processEvents();
+            }
+            page.task()->set_cancel_confirm([] { return true; });
+        }
+
+        // ②③④⑤ 端到端：真的递归进子目录 + 备份到 源目录\backup + 行数/计数如实
+        const QString root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_d2_convert"));
+        QDir(root).removeRecursively();
+        QDir().mkpath(root + QStringLiteral("/sub"));
+        const auto write_file = [](const QString& path, const QByteArray& body) {
+            QFile file(path);
+            if (!file.open(QIODevice::WriteOnly)) return;
+            file.write(body);
+        };
+        // 源是 cp1251 的俄文 XML 声明；子目录里再放一个 —— **旧实现只读顶层，会静默漏掉它**
+        const QByteArray cp1251_decl = "<?xml version=\"1.0\" encoding=\"windows-1251\"?>\n<r>\n"
+                                       "<s id=\"a\">\xCF\xF0\xE8\xE2\xE5\xF2</s>\n</r>\n";
+        write_file(root + QStringLiteral("/top.xml"), cp1251_decl);
+        write_file(root + QStringLiteral("/sub/deep.xml"), cp1251_decl);
+        write_file(root + QStringLiteral("/skip.txt"), "not xml\n");
+        write_file(root + QStringLiteral("/temp_skip.xml"), cp1251_decl);
+
+        page.source_edit()->setText(root);
+        page.exclude_edit()->setText(QStringLiteral("*temp*"));
+        // 1.x 的备份勾选框被"输出目录非空"取消过之后**不会自己勾回来**（它只恢复可点）
+        // ⇒ 原地转换这一轮要显式勾上（这正是 1.x 的行为，不是绕过）
+        page.backup_box()->setChecked(true);
+        page.start_button()->click();
+        for (int i = 0; i < 600 && page.task()->running(); ++i) {
+            QThread::msleep(5);
+            QApplication::processEvents();
+        }
+        QApplication::processEvents();
+        const etxt::BatchOutcome outcome = page.last_outcome();
+        check(page.last_scan_text().contains(QStringLiteral("递归 2 层")),
+              QStringLiteral("D2② 台账报出递归层数（%1）").arg(page.last_scan_text()));
+        check(outcome.collect.skipped_excluded == 1 && outcome.collect.skipped_ext == 1,
+              QStringLiteral("D2④ 排除/后缀不符各自记账（排除 %1 / 后缀 %2）")
+                  .arg(outcome.collect.skipped_excluded)
+                  .arg(outcome.collect.skipped_ext));
+        // ★★ 这一条就是"子目录被静默漏掉"那个缺陷的锁：候选必须是 2 个（顶层 + 子目录）
+        check(outcome.candidates == 2 && outcome.success == 2,
+              QStringLiteral("D2② **递归进子目录**：候选 %1（应为 2）、成功 %2")
+                  .arg(outcome.candidates)
+                  .arg(outcome.success));
+        const bool saw_deep = outcome.processed == 2 && QFileInfo::exists(root + QStringLiteral("/sub/deep.xml"));
+        check(saw_deep && outcome.collect.depth == 2,
+              QStringLiteral("D2② 台账里的层数 = 2（实得 %1）").arg(outcome.collect.depth));
+        // ③ 备份落在 `源目录\backup\<相对路径>.bak`
+        check(QFileInfo::exists(root + QStringLiteral("/backup/top.xml.bak")) &&
+                  QFileInfo::exists(root + QStringLiteral("/backup/sub/deep.xml.bak")),
+              QStringLiteral("D2③ 备份落在 源目录\\backup\\<相对路径>.bak（新增 %1 个）")
+                  .arg(outcome.backed_up));
+        // ★ 输出目录模式要**保留相对结构**（否则不同子目录的同名文件会互相覆盖）
+        page.output_edit()->setText(root + QStringLiteral("/out"));
+        page.source_edit()->setText(root);
+        page.start_button()->click();
+        for (int i = 0; i < 600 && page.task()->running(); ++i) {
+            QThread::msleep(5);
+            QApplication::processEvents();
+        }
+        QApplication::processEvents();
+        check(QFileInfo::exists(root + QStringLiteral("/out/sub/deep.xml")),
+              QStringLiteral("D2② 输出目录保留相对结构（out/sub/deep.xml 在）"));
+
+        // ⑨ 导出统计：utf-8-sig + 字段与 1.x 同序
+        check(page.stats_ready(), QStringLiteral("D2⑨ 跑完一批后有统计快照"));
+        const QString csv = root + QStringLiteral("/stats.csv");
+        QString problem;
+        check(page.export_stats(csv, &problem), QStringLiteral("D2⑨ 导出统计成功（%1）").arg(problem));
+        {
+            QFile file(csv);
+            if (file.open(QIODevice::ReadOnly)) {
+                const QByteArray body = file.readAll();
+                const QString text = QString::fromUtf8(body);
+                check(body.startsWith("\xEF\xBB\xBF"), QStringLiteral("D2⑨ 统计 CSV 是 utf-8-sig"));
+                check(text.contains(QStringLiteral("编码转换统计报告")),
+                      QStringLiteral("D2⑨ 统计 CSV 有标题行"));
+                check(text.contains(QStringLiteral("输出目录,")) &&
+                          text.contains(QStringLiteral("耗时,")) &&
+                          text.contains(QStringLiteral("候选文件数,")),
+                      QStringLiteral("D2⑨ 统计 CSV 有 1.x 的那几行"));
+            } else {
+                check(false, QStringLiteral("D2⑨ 统计 CSV 读不回来"));
+            }
+        }
+
+        // ⑥ 恢复备份（页面按钮 ⇒ 引擎三件）：把文件改坏再点按钮 ⇒ 内容回到原样
+        {
+            const QByteArray good = QByteArray(cp1251_decl);
+            write_file(root + QStringLiteral("/top.xml"), "WRECKED");
+            page.output_edit()->clear();
+            page.source_edit()->setText(root);
+            page.restore_button()->click();
+            for (int i = 0; i < 600 && page.task()->running(); ++i) {
+                QThread::msleep(5);
+                QApplication::processEvents();
+            }
+            QApplication::processEvents();
+            QFile back(root + QStringLiteral("/top.xml"));
+            QByteArray got;
+            if (back.open(QIODevice::ReadOnly)) got = back.readAll();
+            check(got == good,
+                  QStringLiteral("D2⑥ 恢复备份把内容还原（实得 %1 字节，应为 %2）")
+                      .arg(got.size())
+                      .arg(good.size()));
+        }
+        // ⑦ 清空备份：点了之后 backup 里的 .bak 真没了，且状态栏报数
+        {
+            page.clear_backup_button()->click();
+            for (int i = 0; i < 600 && page.task()->running(); ++i) {
+                QThread::msleep(5);
+                QApplication::processEvents();
+            }
+            QApplication::processEvents();
+            check(!QFileInfo::exists(root + QStringLiteral("/backup/top.xml.bak")) &&
+                      page.status() != nullptr &&
+                      page.status()->text().contains(QStringLiteral("清空完成")),
+                  QStringLiteral("D2⑦ 清空备份真的删了且报数（状态栏「%1」）")
+                      .arg(page.status() == nullptr ? QString() : page.status()->text()));
+        }
+        // ⑧ 打开输出：目录不存在要**明确说**（不许点了没反应）
+        page.output_edit()->setText(root + QStringLiteral("/no_such_dir"));
+        page.open_output();
+        check(page.status() != nullptr &&
+                  page.status()->text().contains(QStringLiteral("目录不存在")),
+              QStringLiteral("D2⑧ 打开输出：目录不存在时说清楚（「%1」）")
+                  .arg(page.status() == nullptr ? QString() : page.status()->text()));
+        QDir(root).removeRecursively();
+        page.hide();
+    }
+
+    // ── （D2-②）XML 校对页：结果表多列 + 详情栏 + 逐条复制id + 双击弹窗 ──────
+    {
+        namespace exml = xrkit::engine::xml;
+        XmlPage page;
+        page.resize(980, page_min_h());
+        page.show();
+        QApplication::processEvents();
+        // 1.x `:965-971` `_hide_detail`：没选中行时详情栏**不占位**
+        check(page.detail_panel() != nullptr && !page.detail_panel()->isVisible(),
+              QStringLiteral("D2-XML 未选中时详情栏不占位（1.x `_hide_detail`）"));
+
+        const QString root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_d2_xml"));
+        QDir(root).removeRecursively();
+        QDir().mkpath(root + QStringLiteral("/a"));
+        QDir().mkpath(root + QStringLiteral("/b"));
+        const auto write = [](const QString& path, const QString& body) {
+            QFile file(path);
+            if (!file.open(QIODevice::WriteOnly)) return;
+            file.write(body.toUtf8());
+        };
+        write(root + QStringLiteral("/a/diff.xml"),
+              QStringLiteral("<r>\n<s id=\"x\"><text>v</text></s>\n</r>\n"));
+        write(root + QStringLiteral("/b/diff.xml"),
+              QStringLiteral("<r>\n<s id=\"y\"><text>V</text></s>\n"
+                             "<s id=\"z\"><text>W</text></s>\n</r>\n"));
+        page.compare_dirs(root + QStringLiteral("/a"), root + QStringLiteral("/b"),
+                          QStringLiteral("auto"), QStringLiteral("auto"));
+        page.select_visible_row(0);
+        QApplication::processEvents();
+
+        // 10.1/★ 多列：列数/列头/列策略**来自模式声明**（1.x `_apply_columns`）
+        const exml::XmlModeSpec* spec = exml::find_mode(page.current_mode_key());
+        check(page.result_tree() != nullptr && spec != nullptr &&
+                  page.result_tree()->columnCount() == static_cast<int>(spec->columns.size()),
+              QStringLiteral("D2-XML 结果表列数 = 模式声明（实得 %1 / 声明 %2）")
+                  .arg(page.result_tree() == nullptr ? -1 : page.result_tree()->columnCount())
+                  .arg(spec == nullptr ? -1 : static_cast<int>(spec->columns.size())));
+        if (page.result_tree() != nullptr && spec != nullptr) {
+            bool headers_ok = true;
+            for (int col = 0; col < static_cast<int>(spec->columns.size()); ++col) {
+                if (page.result_tree()->headerItem()->text(col) !=
+                    QString::fromStdString(spec->columns[static_cast<size_t>(col)].heading)) {
+                    headers_ok = false;
+                }
+            }
+            check(headers_ok, QStringLiteral("D2-XML 表头文本逐列等于模式声明"));
+            // 列策略：一律 Interactive ＋ **末列吃剩余宽度**（用户 09-29 口径；
+            // 把某列设成 Stretch ⇒ 丢掉"列可拖"，这条立刻红）
+            int stretched = 0;
+            bool all_interactive = true;
+            for (int col = 0; col < page.result_tree()->columnCount(); ++col) {
+                const auto mode = page.result_tree()->header()->sectionResizeMode(col);
+                if (mode == QHeaderView::Interactive) continue;
+                if (mode == QHeaderView::Stretch) {
+                    ++stretched;
+                } else {
+                    all_interactive = false;
+                }
+            }
+            if (page.result_tree()->header()->stretchLastSection()) ++stretched;
+            check(all_interactive && stretched == 1,
+                  QStringLiteral("D2-XML 列策略＝一律 Interactive ＋ 末列拉伸（stretch=%1 all_interactive=%2）")
+                      .arg(stretched)
+                      .arg(all_interactive ? 1 : 0));
+            // 行数与筛后行数一致；第 0 行第 0 列就是 rel（表格与 row_text 同源）
+            check(page.result_tree()->topLevelItemCount() == page.visible_count(),
+                  QStringLiteral("D2-XML 表格行数 = 筛后行数（%1 / %2）")
+                      .arg(page.result_tree()->topLevelItemCount())
+                      .arg(page.visible_count()));
+        }
+
+        // ② 选中 ⇒ 详情栏出现：头行 `[ rel ] ✓/✗ …`、正文非空、逐条 id 列表行数对得上
+        check(page.detail_panel() != nullptr && page.detail_panel()->isVisible(),
+              QStringLiteral("D2-XML 选中一行 ⇒ 详情栏出现（1.x `_show_detail`）"));
+        const QString head = page.detail_head() == nullptr ? QString() : page.detail_head()->text();
+        check(head.startsWith(QStringLiteral("[ ")) &&
+                  (head.contains(QStringLiteral("✗")) || head.contains(QStringLiteral("✓"))) &&
+                  head.contains(QStringLiteral("ID 数: A=")),
+              QStringLiteral("D2-XML 头行形如 `[ rel ] ✗ 状态 ID 数: A= B=`（实得「%1」）").arg(head));
+        check(page.detail_view() != nullptr && !page.detail_view()->toPlainText().isEmpty(),
+              QStringLiteral("D2-XML 详情正文非空（%1 字节）")
+                  .arg(page.detail_view() == nullptr ? 0
+                                                     : page.detail_view()->toPlainText().size()));
+        const std::vector<XmlDetailId> ids = page.detail_ids_for(page.selected_visible_row());
+        check(page.id_list() != nullptr &&
+                  page.id_list()->topLevelItemCount() == static_cast<int>(ids.size()) &&
+                  !ids.empty(),
+              QStringLiteral("D2-XML 逐条 id 列表行数 = 该行差异 id 数（%1 / %2）")
+                  .arg(page.id_list() == nullptr ? -1 : page.id_list()->topLevelItemCount())
+                  .arg(ids.size()));
+        // ★ 每行一个「复制id」按钮 ⇒ 点它真的进剪贴板（1.x `:1183`/`_copy_one_id`）
+        if (page.id_list() != nullptr && page.id_list()->topLevelItemCount() > 0) {
+            QTreeWidgetItem* item = page.id_list()->topLevelItem(0);
+            auto* button = qobject_cast<QPushButton*>(page.id_list()->itemWidget(item, 0));
+            check(button != nullptr && button->text() == QStringLiteral("复制id"),
+                  QStringLiteral("D2-XML 每条 id 后面有「复制id」按钮"));
+            if (button != nullptr) {
+                QGuiApplication::clipboard()->clear();
+                button->click();
+                check(QGuiApplication::clipboard()->text() == ids.front().id &&
+                          page.status() != nullptr &&
+                          page.status()->text().contains(QStringLiteral("已复制 id")),
+                      QStringLiteral("D2-XML 点「复制id」进剪贴板（实得「%1」，应为「%2」）")
+                          .arg(QGuiApplication::clipboard()->text(), ids.front().id));
+            }
+        }
+
+        // ③ 双击 ⇒ 明细弹窗（1.x `:907-914`）：不 exec，只看内容
+        {
+            QDialog* dialog = page.make_detail_dialog(0, &page);
+            check(dialog != nullptr, QStringLiteral("D2-XML 双击能造出明细弹窗"));
+            if (dialog != nullptr) {
+                dialog->show();
+                QApplication::processEvents();
+                auto* text = dialog->findChild<QPlainTextEdit*>(QStringLiteral("xml_dialog_text"));
+                auto* list = dialog->findChild<QTreeWidget*>(QStringLiteral("xml_dialog_id_list"));
+                auto* head_label = dialog->findChild<QLabel*>(QStringLiteral("xml_dialog_head"));
+                check(text != nullptr && !text->toPlainText().isEmpty(),
+                      QStringLiteral("D2-XML 弹窗里有完整明细正文"));
+                check(list != nullptr && list->topLevelItemCount() == static_cast<int>(ids.size()),
+                      QStringLiteral("D2-XML 弹窗里也有逐条 id（%1）")
+                          .arg(list == nullptr ? -1 : list->topLevelItemCount()));
+                check(head_label != nullptr && head_label->text() == head,
+                      QStringLiteral("D2-XML 弹窗头行与详情栏**同一份**判据"));
+                check(page.make_detail_dialog(9999, &page) == nullptr,
+                      QStringLiteral("D2-XML 越界下标不造弹窗（不许空指针解引用）"));
+                dialog->close();
+                dialog->deleteLater();
+            }
+        }
+
+        // ★ 表格与 CSV **同源**（`cell_text` 唯一一份）：CSV 第一个数据格 == 表格第 0 行第 0 列
+        {
+            const QString csv = root + QStringLiteral("/same_source.csv");
+            check(page.export_csv(csv, QStringLiteral("2026-10-06 00:00:00")),
+                  QStringLiteral("D2-XML 导出仍成功"));
+            QFile file(csv);
+            QString body;
+            if (file.open(QIODevice::ReadOnly)) body = QString::fromUtf8(file.readAll());
+            const QStringList lines = body.split(QStringLiteral("\r\n"));
+            const QString first_cell =
+                lines.size() > 11 ? lines[11].section(QLatin1Char(','), 0, 0) : QString();
+            const QString tree_cell =
+                page.result_tree() != nullptr && page.result_tree()->topLevelItemCount() > 0
+                    ? page.result_tree()->topLevelItem(0)->text(0)
+                    : QString();
+            check(!tree_cell.isEmpty() && first_cell.contains(tree_cell),
+                  QStringLiteral("D2-XML 表格与 CSV 同源（CSV「%1」/ 表格「%2」）")
+                      .arg(first_cell, tree_cell));
+        }
+        QDir(root).removeRecursively();
+        page.hide();
+    }
+
+    // ── （D2-③）汉化包生成页：系统字体选择器 / 尺寸档位 / 打开输出 / 语言后缀 ────
+    {
+        namespace fnt = xrkit::engine::font;
+        FontPackPage page;
+        page.resize(980, page_min_h());
+        page.show();
+        QApplication::processEvents();
+
+        // ★ 1.x `toolkit_platform.system_font_dirs` `:222-234`：**不写死 C:\Windows**
+        const QStringList dirs = page.system_font_dirs();
+        const QString win_root = qEnvironmentVariable("SystemRoot");
+        check(!dirs.isEmpty(), QStringLiteral("D2-字体 系统字体目录非空（%1 个）").arg(dirs.size()));
+        check(win_root.isEmpty() ||
+                  QDir::cleanPath(dirs.first()) ==
+                      QDir::cleanPath(QDir(win_root).filePath(QStringLiteral("Fonts"))),
+              QStringLiteral("D2-字体 第一个目录来自 %%SystemRoot%%（实得「%1」，SystemRoot=「%2」）")
+                  .arg(dirs.isEmpty() ? QString() : dirs.first(), win_root));
+
+        // ★ 过滤：白名单后缀 + 文件名子串 + **完整路径**去重（1.x `:494-511`）
+        const QStringList all_fonts = page.font_candidates(QString());
+        const QStringList msyh_fonts = page.font_candidates(QStringLiteral("MSYH"));  // 大小写不敏感
+        int bad_ext = 0;
+        int bad_keyword = 0;
+        for (const QString& path : msyh_fonts) {
+            const QString name = QFileInfo(path).fileName().toLower();
+            if (!name.endsWith(QStringLiteral(".ttf")) && !name.endsWith(QStringLiteral(".ttc")) &&
+                !name.endsWith(QStringLiteral(".otf"))) {
+                ++bad_ext;
+            }
+            if (!name.contains(QStringLiteral("msyh"))) ++bad_keyword;
+        }
+        check(bad_ext == 0 && bad_keyword == 0,
+              QStringLiteral("D2-字体 候选项都在白名单后缀内且命中子串（坏后缀 %1 / 未命中 %2）")
+                  .arg(bad_ext)
+                  .arg(bad_keyword));
+        check(QSet<QString>(all_fonts.begin(), all_fonts.end()).size() == all_fonts.size(),
+              QStringLiteral("D2-字体 候选项按**完整路径**去重（%1 项）").arg(all_fonts.size()));
+        check(all_fonts.size() >= msyh_fonts.size(),
+              QStringLiteral("D2-字体 子串过滤真的在过滤（全部 %1 ≥ 命中 %2）")
+                  .arg(all_fonts.size())
+                  .arg(msyh_fonts.size()));
+
+        // ★ 默认字体三级优先级（1.x `:129-149`）：上次用过的（存在）→ 系统雅黑 → 仓库根
+        if (!msyh_fonts.isEmpty()) {
+            check(page.default_font_path(msyh_fonts.first()) ==
+                      QDir::toNativeSeparators(msyh_fonts.first()),
+                  QStringLiteral("D2-字体 默认字体：user.ltx 里那个仍存在 ⇒ 原样继承"));
+        }
+        const QString fallback = page.default_font_path(QStringLiteral("Z:/nope/none.ttf"));
+        check(fallback.isEmpty() || QFileInfo::exists(fallback),
+              QStringLiteral("D2-字体 默认字体兜底必须是个**真存在**的文件（实得「%1」）")
+                  .arg(fallback));
+
+        // 11.8 的"同一判据"：列表标记缓存 == 引擎的四态标记（不许页面自己判一遍）
+        if (!msyh_fonts.isEmpty()) {
+            check(page.cached_mark(msyh_fonts.first()) ==
+                      QString::fromUtf8(fnt::cjk_state_mark(
+                          page.check_font(msyh_fonts.first()).state)),
+                  QStringLiteral("D2-字体 列表标记与预览标题**同一判据**（引擎 cjk_state_mark）"));
+        }
+
+        // ★ 预览缩放：1.x `set_zoom` —— 步进 0.5、夹在 [0.5, 4.0]、字号 = max(12, int(40*v))
+        page.zoom_preview(10.0);
+        check(page.preview_zoom() == 4.0 && page.preview_pixel_size() == 160,
+              QStringLiteral("D2-字体 缩放上限 4.0 ⇒ 字号 160（实得 %1 / %2）")
+                  .arg(page.preview_zoom())
+                  .arg(page.preview_pixel_size()));
+        page.zoom_preview(-10.0);
+        check(page.preview_zoom() == 0.5 && page.preview_pixel_size() == 20,
+              QStringLiteral("D2-字体 缩放下限 0.5 ⇒ 字号 20（实得 %1 / %2）")
+                  .arg(page.preview_zoom())
+                  .arg(page.preview_pixel_size()));
+        // 回到 1.0（下面要判"对话框打开时缩放标签 = 100%"）
+        page.zoom_preview(0.5);
+        check(page.preview_zoom() == 1.0,
+              QStringLiteral("D2-字体 缩放可回到 1.0（实得 %1）").arg(page.preview_zoom()));
+
+        // ★ 自建字体选择器（**不是**下拉、**不是**单纯文件框）：结构逐项对上 1.x
+        {
+            QDialog* dialog = page.make_font_picker(&page);
+            check(dialog != nullptr, QStringLiteral("D2-字体 「选择…」造得出自建字体选择器"));
+            if (dialog != nullptr) {
+                dialog->show();
+                QApplication::processEvents();
+                auto* list = dialog->findChild<QListWidget*>(QStringLiteral("font_picker_list"));
+                auto* filter = dialog->findChild<QLineEdit*>(QStringLiteral("font_picker_filter"));
+                auto* preview = dialog->findChild<QLabel*>(QStringLiteral("font_picker_preview"));
+                auto* zoom = dialog->findChild<QLabel*>(QStringLiteral("font_picker_zoom"));
+                auto* caption = dialog->findChild<QLabel*>(QStringLiteral("font_picker_caption"));
+                check(list != nullptr && filter != nullptr && preview != nullptr &&
+                          zoom != nullptr && caption != nullptr,
+                      QStringLiteral("D2-字体 左过滤+列表 / 右预览+缩放+标题 都在"));
+                check(list != nullptr && list->count() == all_fonts.size(),
+                      QStringLiteral("D2-字体 列表项数 = 候选项数（%1 / %2）")
+                          .arg(list == nullptr ? -1 : list->count())
+                          .arg(all_fonts.size()));
+                check(zoom != nullptr && zoom->text() == QStringLiteral("100%"),
+                      QStringLiteral("D2-字体 缩放标签初始 100%%（实得「%1」）")
+                          .arg(zoom == nullptr ? QString() : zoom->text()));
+                check(dialog->findChild<QPushButton*>(QStringLiteral("font_picker_zoom_in")) !=
+                              nullptr &&
+                          dialog->findChild<QPushButton*>(QStringLiteral("font_picker_zoom_out")) !=
+                              nullptr &&
+                          dialog->findChild<QPushButton*>(QStringLiteral("font_picker_pick")) !=
+                              nullptr &&
+                          dialog->findChild<QPushButton*>(QStringLiteral("font_picker_browse")) !=
+                              nullptr &&
+                          dialog->findChild<QPushButton*>(QStringLiteral("font_picker_cancel")) !=
+                              nullptr,
+                      QStringLiteral("D2-字体 ±缩放 / 选择 / 浏览其他目录 / 取消 都在"));
+                // ★ **双击＝选择**（1.x `:641`）：直接发那个信号，看字体框是否真的被填上
+                //   ⚠ 这条会**真的写 user.ltx**（"任何选择路径都记住"就是它的语义）⇒
+                //   先备份、后复原：自检不许把"上次选择的字体"留在构建机（发行包更是
+                //   在**包目录里**跑 `--smoke` —— 留着就等于往包里塞一个 user.ltx）。
+                const QString ltx_path = QString::fromStdString(xrkit::core::user_ltx_path());
+                const bool ltx_existed = QFileInfo::exists(ltx_path);
+                QByteArray ltx_before;
+                if (ltx_existed) {
+                    QFile before(ltx_path);
+                    if (before.open(QIODevice::ReadOnly)) ltx_before = before.readAll();
+                }
+                if (list != nullptr && list->count() > 0) {
+                    QListWidgetItem* item = list->item(0);
+                    list->setCurrentItem(item);
+                    QMetaObject::invokeMethod(list, "itemDoubleClicked", Qt::DirectConnection,
+                                              Q_ARG(QListWidgetItem*, item));
+                    check(page.font_edit()->text() ==
+                              QDir::toNativeSeparators(item->data(Qt::UserRole).toString()),
+                          QStringLiteral("D2-字体 **双击＝选择**（字体框「%1」/ 候选项「%2」）")
+                              .arg(page.font_edit()->text(),
+                                   item->data(Qt::UserRole).toString()));
+                }
+                // user.ltx 复原（判据已经在上面取过，这里只是把机器状态还回去）
+                if (ltx_existed) {
+                    QFile restore(ltx_path);
+                    if (restore.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                        restore.write(ltx_before);
+                    }
+                } else {
+                    QFile::remove(ltx_path);
+                }
+                check(QFileInfo::exists(ltx_path) == ltx_existed &&
+                          (!ltx_existed || QFile(ltx_path).size() == ltx_before.size()),
+                      QStringLiteral("D2-字体 自检把 user.ltx 还原（存在=%1）")
+                          .arg(ltx_existed ? 1 : 0));
+                // ± 缩放按钮真的改状态与标签
+                if (auto* zoom_in =
+                        dialog->findChild<QPushButton*>(QStringLiteral("font_picker_zoom_in"))) {
+                    const double before_zoom = page.preview_zoom();
+                    zoom_in->click();
+                    QApplication::processEvents();
+                    check(page.preview_zoom() > before_zoom && zoom != nullptr &&
+                              zoom->text() != QStringLiteral("100%"),
+                          QStringLiteral("D2-字体 「+」真的放大并刷新标签（%1%% → %2）")
+                              .arg(static_cast<int>(before_zoom * 100))
+                              .arg(zoom == nullptr ? QString() : zoom->text()));
+                }
+                dialog->close();
+                dialog->deleteLater();
+            }
+        }
+
+        // 尺寸档位（1.x `:84-89` ⇒ `PackageOptions::offset`）
+        check(page.size_combo() != nullptr && page.size_combo()->count() == 5 &&
+                  page.size_combo()->currentData().toInt() == 0,
+              QStringLiteral("D2-字体 尺寸档位 5 项且默认「标准」= 0"));
+        if (page.size_combo() != nullptr) {
+            page.size_combo()->setCurrentIndex(1);
+            check(page.size_offset() == 3,
+                  QStringLiteral("D2-字体 +3 ⇒ offset=3（实得 %1）").arg(page.size_offset()));
+            page.size_combo()->setCurrentIndex(0);
+        }
+
+        // 语言"自定义 + 输入框"（1.x `_lang_changed` `:202-209`）
+        {
+            const int custom = page.lang_combo()->findText(QStringLiteral("自定义"));
+            check(custom >= 0, QStringLiteral("D2-字体 加载语言有「自定义」"));
+            page.lang_combo()->setCurrentIndex(custom);
+            QApplication::processEvents();
+            check(page.lang_edit() != nullptr && page.lang_edit()->isVisible(),
+                  QStringLiteral("D2-字体 选「自定义」⇒ 语言输入框出现"));
+            page.lang_edit()->setText(QStringLiteral("jpn"));
+            engine::font::PackageOptions options =
+                page.options_for(QStringLiteral("X"), QStringLiteral("Y"), QStringLiteral("Z"));
+            check(options.lang == "jpn",
+                  QStringLiteral("D2-字体 自定义语言进 options（实得「%1」）")
+                      .arg(QString::fromStdString(options.lang)));
+            page.lang_combo()->setCurrentIndex(page.lang_combo()->findText(QStringLiteral("chs")));
+            QApplication::processEvents();
+            check(page.lang_edit() != nullptr && !page.lang_edit()->isVisible(),
+                  QStringLiteral("D2-字体 切回 chs ⇒ 输入框收起"));
+        }
+        // 后缀预设 无/_chs/自定义（1.x `_suf_changed` `:211-220`）
+        {
+            page.suffix_combo()->setCurrentIndex(0);
+            engine::font::PackageOptions options =
+                page.options_for(QStringLiteral("X"), QStringLiteral("Y"), QStringLiteral("Z"));
+            check(options.suffix.empty(), QStringLiteral("D2-字体 后缀「无」⇒ 空串"));
+            page.suffix_combo()->setCurrentIndex(1);
+            options = page.options_for(QStringLiteral("X"), QStringLiteral("Y"), QStringLiteral("Z"));
+            check(options.suffix == "_chs", QStringLiteral("D2-字体 后缀「_chs」⇒ \"_chs\""));
+            const int custom = page.suffix_combo()->findText(QStringLiteral("自定义"));
+            page.suffix_combo()->setCurrentIndex(custom);
+            QApplication::processEvents();
+            page.suffix_edit()->setText(QStringLiteral("_rus"));
+            options = page.options_for(QStringLiteral("X"), QStringLiteral("Y"), QStringLiteral("Z"));
+            check(options.suffix == "_rus" &&
+                      page.suffix_edit() != nullptr && page.suffix_edit()->isVisible(),
+                  QStringLiteral("D2-字体 自定义后缀进 options（实得「%1」）")
+                      .arg(QString::fromStdString(options.suffix)));
+            page.suffix_combo()->setCurrentIndex(0);
+        }
+
+        // 打开输出目录（1.x `:649-659`：目录无效 / 打开失败都要有反馈）
+        {
+            page.out_edit()->setText(QStringLiteral("Z:/definitely_missing_dir"));
+            QString problem;
+            check(!page.open_output(&problem) && !problem.isEmpty(),
+                  QStringLiteral("D2-字体 打开输出：无效目录给理由（「%1」）").arg(problem));
+            page.out_edit()->clear();
+            problem.clear();
+            check(!page.open_output(&problem) && problem.contains(QStringLiteral("无效")),
+                  QStringLiteral("D2-字体 打开输出：空目录也明说（「%1」）").arg(problem));
+        }
+        page.hide();
     }
 
     return result;

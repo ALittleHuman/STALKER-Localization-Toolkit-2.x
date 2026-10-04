@@ -6,6 +6,7 @@
 #include "xrkit/engine/fs/squashfs.h"
 
 #include "../drop_filter.h"
+#include "../pair_tree.h"
 
 
 #include <QComboBox>
@@ -128,6 +129,16 @@ private:
 //   ⇒ **"选包"对话框里看不见 `.xdb`**（实测 `sop_standalone.7z` 里的 `patch_00.xdb` 就是 `format=xdb`）。
 constexpr const char* kPackageDialogFilter = "包 (*.db* *.sq* *.xdb*);;所有文件 (*.*)";
 
+// ★★ 2026-10-02 用户：「为什么包树和文件树的形式不同。文件树的形式已经相当成熟，
+//   包树直接引用树的统一函数就行啊。」⇒ 两棵树的**装配**与**单击判据**各抽成一份：
+//   · `apply_pair_tree_spec` ＝ 列/行高/多选/拖放/最小高/**根装饰**/**单击才展开** 的唯一一份；
+//   · `click_on_indicator` ＝ "这一下点没点在那个小方块（勾选框/展开箭头）上"的唯一一份。
+//   两树**唯一**保留的差异在**叶子**：条目树的叶子＝点身体切勾选；包树的叶子＝点身体只选中
+//   （不顺手改"加载"状态 —— 那会把"点一下"变成一次加载/卸载，属于语义，不是观感）。
+//
+// ★ 2026-10-06（D2 批）：这两件**搬到了 `src/shell/pair_tree.h`**（XML 校对页的结果表也要用，
+//   用户口径「同类东西只维护一套组件」）。这里的注释保留，实现不再留在本文件里。
+
 // 占位子项：`make_entry_item` 给"模型里有子节点的目录"塞的那个空项（只为让展开箭头出现，
 // 真子项在展开时才建）。★ 2026-10-01 用户报「在筛选的时候，文件夹下会多出一个空的行」——
 // 真因就是**只要接着要建真子项的地方**没把这个占位项摘掉，它就留在第一个位置当空行。
@@ -137,60 +148,6 @@ void drop_placeholder(QTreeWidgetItem* item) {
     if (item->childCount() == 1 && item->child(0)->data(0, Qt::UserRole).toString().isEmpty()) {
         item->removeChild(item->child(0));
     }
-}
-
-// ★★ 2026-10-02 用户：「为什么包树和文件树的形式不同。文件树的形式已经相当成熟，
-//   包树直接引用树的统一函数就行啊。」⇒ 两棵树的**装配**与**单击判据**各抽成一份，两边都调它：
-//   · `apply_pair_tree_spec` ＝ 列/行高/多选/拖放/最小高/**根装饰**/**单击才展开** 的唯一一份；
-//   · `click_on_indicator` ＝ "这一下点没点在那个小方块（勾选框/展开箭头）上"的唯一一份。
-//   两树**唯一**保留的差异在**叶子**：条目树的叶子＝点身体切勾选；包树的叶子＝点身体只选中
-//   （不顺手改"加载"状态 —— 那会把"点一下"变成一次加载/卸载，属于语义，不是观感）。
-struct PairTreeSpec {
-    QStringList headers;
-    QList<int> widths;        // 每列**初始宽**（三列一律 Interactive ⇒ 用户 09-29 要的"列之间能拖"不丢）
-    int min_height = 0;       // 0 ⇒ 不设
-    bool accept_drops = false;
-};
-
-void apply_pair_tree_spec(QTreeWidget* view, const PairTreeSpec& spec) {
-    if (view == nullptr) return;
-    view->setColumnCount(spec.headers.size());
-    view->setHeaderLabels(spec.headers);
-    view->setUniformRowHeights(true);        // 行高一致 ⇒ 几万行也不慢
-    view->setAlternatingRowColors(false);
-    // ★ **是树就得有根装饰**：包列表在"平表时代"留了一句 `setRootIsDecorated(false)`，
-    //   树化之后它会让**顶层节点没有展开箭头**（默认收起时那些孩子就再也点不出来了）。
-    view->setRootIsDecorated(true);
-    view->setExpandsOnDoubleClick(false);    // 展开只认"单击条目身体"这一条路（见 click_on_indicator）
-    view->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    for (int col = 0; col < spec.headers.size(); ++col) {
-        view->header()->setSectionResizeMode(col, QHeaderView::Interactive);
-        if (col < spec.widths.size()) {
-            view->header()->resizeSection(col, xrkit::core::px(spec.widths[col]));
-        }
-    }
-    view->header()->setMinimumSectionSize(xrkit::core::px(48));
-    // ★★ "表头/行铺满面板"与"列可拖"要**同时**成立：靠**末列吃剩余宽度**（`stretchLastSection`），
-    //   而不是把某一列设成 `Stretch` —— 后者会**失去拖拽**，正是用户 2026-09-29
-    //   「某些字段还是不能全部显示……最好也是弄一个水平方向的可拖拽分隔条」要的东西
-    //   （我第一版用首列 `Stretch` 实现"名称列吃满"，被自检当场拦下：树①/树② 两条红）。
-    view->header()->setStretchLastSection(true);
-    if (spec.min_height > 0) view->setMinimumHeight(xrkit::core::px(spec.min_height));
-    view->setAcceptDrops(spec.accept_drops);
-}
-
-// 光标是不是落在"行首那一小块"（勾选框 / 展开箭头）上：
-// 只有**光标确实在这一行里、且落在那小块上**才算；离屏/自检里光标不在行上 ⇒ 视为点**条目身体**
-// （否则自检没法验"单击展开"这条）。
-bool click_on_indicator(QTreeWidget* view, QTreeWidgetItem* item) {
-    if (view == nullptr || view->viewport() == nullptr || item == nullptr) return false;
-    const QPoint vp = view->viewport()->mapFromGlobal(QCursor::pos());
-    const QRect row = view->visualItemRect(item);
-    int depth = 0;
-    for (QTreeWidgetItem* p = item->parent(); p != nullptr; p = p->parent()) ++depth;
-    const int indent = view->indentation() * depth;
-    const int indicator = view->style()->pixelMetric(QStyle::PM_IndicatorWidth) + 8;
-    return row.contains(vp) && vp.x() < row.x() + indent + indicator;
 }
 
 // ═══ 包列表的"文件树"折叠（2026-10-02）═════════════════════════════════════

@@ -1208,6 +1208,101 @@ def step_shell_smoke(release: bool) -> None:
         return
     ok("取消轮询（①：每个用 task_->run 的页面都轮询 cancel_requested()）")
 
+    # ★★ 2026-10-06（D2 批）：**"同类东西只维护一套组件"**的五条静态锁。
+    #
+    # 这批修的是审计里"不必要的阉割"，而其中三处的**根源**都是"各页自己又抄了一份"：
+    #   · 编码转换页要用"递归遍历" ⇒ 它自己写一份 `recursive_directory_iterator` 就是第 5 份；
+    #   · XML 结果表要"多列"     ⇒ 它自己写 `setSectionResizeMode`/`setStretchLastSection`
+    #     就是第 2 份列策略（而且最容易漏的就是"末列吃剩余宽度"这条，漏了右半边是死区）；
+    #   · 汉化包页要"从系统字体里找" ⇒ 写死 `C:\Windows\Fonts` 就丢了 `%SystemRoot%`。
+    # 这五条锁各自**都能判红**（删掉共用件、把实现抄回页面、把路径写死，立刻红）。
+    #
+    # ① 递归遍历件**全仓库恰好那 4 份**（都是引擎里既有的：charset / overlay×2 / extract）——
+    #    多出第 5 份就红。判据只认**活代码**（注释里为了讲清口径提到这个名字不算违规）。
+    hits = []
+    for src in sorted((ROOT / "src").rglob("*.cpp")):
+        code = active_code(src.read_text(encoding="utf-8", errors="replace"))
+        n = code.count("recursive_directory_iterator")
+        if n:
+            hits.append((str(src.relative_to(ROOT)).replace("\\", "/"), n))
+    total_iter = sum(n for _, n in hits)
+    shell_iter = [p for p, _ in hits if p.startswith("src/shell/")]
+    if total_iter != 4 or shell_iter:
+        fail("递归遍历件（D2：同类东西只有一套）：src/ 下 `recursive_directory_iterator` 必须恰好 4 份"
+             "（引擎里既有的那些）、src/shell 下 0 份；实测 %d 份：%s"
+             % (total_iter, "、".join("%s×%d" % (p, n) for p, n in hits)))
+        return
+    ok("递归遍历件只有 4 份、外壳侧 0 份（D2①：没有第 5 份遍历）")
+
+    # ② 编码转换页的批处理**只有一条路**：必须调引擎的 `convert_batch(`，
+    #    且不许再出现"只读顶层"的旧实现（`entryList(`）——那正是"子目录被静默漏掉"的根源。
+    conv = active_code((ROOT / "src" / "shell" / "pages" / "convert_page.cpp")
+                       .read_text(encoding="utf-8", errors="replace"))
+    need = ["convert_batch(", "batch_options_for(", "restore_backups(", "clear_backups(",
+            "export_stats(", "etxt::BatchHooks"]
+    missing = [token for token in need if token not in conv]
+    if missing:
+        fail("编码转换页批处理（D2②）：convert_page.cpp 里缺 %s —— 批处理必须走引擎那一份"
+             % "、".join(missing))
+        return
+    if "entryList(" in conv:
+        fail("编码转换页批处理（D2②）：convert_page.cpp 里还有 `entryList(` —— "
+             "那是「只读顶层、子目录静默漏掉」的旧实现，必须走引擎的递归遍历")
+        return
+    ok("编码转换页批处理只有一条路（D2②：引擎 convert_batch + 无 entryList 旧路）")
+
+    # ③ XML 结果表＝**多列**且列策略走共用装配件：不许再回退成单列虚拟列表，
+    #    也不许自己写一份列策略（那一份只许在 pair_tree.cpp 里）。
+    xml_code = active_code((ROOT / "src" / "shell" / "pages" / "xml_page.cpp")
+                           .read_text(encoding="utf-8", errors="replace"))
+    xml_head = active_code((ROOT / "src" / "shell" / "pages" / "xml_page.h")
+                           .read_text(encoding="utf-8", errors="replace"))
+    if "apply_pair_tree_spec(" not in xml_code:
+        fail("XML 结果表（D2③）：xml_page.cpp 必须调**共用**的 apply_pair_tree_spec()（不是自己写列策略）")
+        return
+    # ★ 判据取两个形态：**类型名**（`VirtualList`）与**包含**（`virtual_list.h`）——
+    #   只判类型名会漏掉"把单列列表接回来"的另一种写法（2026-10-06 实测：只判 `VirtualList`
+    #   时，往 xml_page.cpp 加一句 `#include "../virtual_list.h"` 竟然没判红）。
+    if "VirtualList" in xml_code or "VirtualList" in xml_head or \
+            "virtual_list.h" in xml_code or "virtual_list.h" in xml_head:
+        fail("XML 结果表（D2③）：xml 页又出现 VirtualList / virtual_list.h —— 结果表必须按模式声明"
+             "画**多列**（单列 `\\t` 拼文本正是被改掉的那份）")
+        return
+    if "itemDoubleClicked" not in xml_code or "copy_id(" not in xml_code:
+        fail("XML 详情栏（D2③）：xml_page.cpp 里缺 itemDoubleClicked（双击弹窗）或 copy_id（逐条复制id）")
+        return
+    ok("XML 结果表多列 + 详情栏/双击/复制id 接线在位（D2③）")
+
+    # ④ 列策略**只许一份**：`setSectionResizeMode(` / `setStretchLastSection(` 在 src/shell 下
+    #    只能出现在 pair_tree.cpp 里（包含它的 .h 也只许 pair_tree.h 提到 —— 注释不算）。
+    col_offenders = []
+    for src in sorted((ROOT / "src" / "shell").rglob("*")):
+        if src.suffix not in (".cpp", ".h"):
+            continue
+        if src.name in ("pair_tree.cpp", "pair_tree.h"):
+            continue
+        code = active_code(src.read_text(encoding="utf-8", errors="replace"))
+        if "setSectionResizeMode(" in code or "setStretchLastSection(" in code:
+            col_offenders.append(str(src.relative_to(ROOT)).replace("\\", "/"))
+    if col_offenders:
+        fail("列策略（D2④）：%s 里自己写了列策略 —— 那一份只许在 src/shell/pair_tree.cpp 里"
+             % "、".join(col_offenders))
+        return
+    ok("列策略只有 pair_tree.cpp 一份（D2④：末列吃剩余宽度那条口径不会各写各的）")
+
+    # ⑤ 汉化包页的字体来源走 `%SystemRoot%`（**不写死 C:\Windows\Fonts**），
+    #    并且"记住上次选择"真的落 user.ltx。
+    font_code = active_code((ROOT / "src" / "shell" / "pages" / "fontpack_page.cpp")
+                            .read_text(encoding="utf-8", errors="replace"))
+    font_need = ["SystemRoot", "qEnvironmentVariable", "font_candidates(", "default_font_path(",
+                 "make_font_picker(", "save_user_value(", "QFontDatabase::addApplicationFont"]
+    font_missing = [token for token in font_need if token not in font_code]
+    if font_missing:
+        fail("系统字体选择器（D2⑤）：fontpack_page.cpp 里缺 %s —— 字体要从系统字体目录找、"
+             "并把上次的选择写进 user.ltx" % "、".join(font_missing))
+        return
+    ok("系统字体选择器（D2⑤：%SystemRoot%\\Fonts + 候选过滤 + user.ltx 记住上次选择）")
+
 
 def step_winres(release: bool) -> None:
     """Windows 版本资源（VERSIONINFO）：exe 里的元数据必须**非空**，且与 `core::version_string()` 同源。

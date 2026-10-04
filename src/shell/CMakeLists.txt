@@ -16,6 +16,7 @@ screen_scale.cpp
   plugin_ui.cpp
   drop_filter.cpp
   drop_zone.cpp
+  pair_tree.cpp
   dialog_start.cpp
   virtual_list.cpp
   pages/page_base.cpp

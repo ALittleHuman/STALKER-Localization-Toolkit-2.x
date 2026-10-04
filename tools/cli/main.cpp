@@ -35,6 +35,7 @@
 #include "xrkit/engine/font/package.h"
 #include "xrkit/engine/font/render.h"
 #include "xrkit/engine/font/resample.h"
+#include "xrkit/engine/text/batch.h"
 #include "xrkit/engine/text/convert.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/extract.h"
@@ -537,6 +538,234 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         //（1.x 的 `_plan_output_dirs` 并不拒绝）—— 判据照代码，不照文档的简化措辞
         check(ctx, guard(gameplay, gameplay).empty(),
               "输出目录=源目录本身被误拒了（1.x 并不拒这一例）");
+        fsys::remove_all(root, ec);
+    });
+
+    // ★★ 2026-10-06（D2 批）：编码转换页"批处理层"的判据面（`engine::text::batch`）。
+    //
+    // 这批修的是审计里 9 处"不必要阉割"，**最容易悄悄回去的就是"子目录被静默漏掉"**：
+    // 旧实现是 `QDir::entryList(QDir::Files)` ⇒ 只读顶层、且一个字都不说。所以这里的
+    // 判据按"能不能判红"来设计：
+    //   ① 递归真的进去了（深层文件出现在结果里）、并且**报了几层/几个**；
+    //   ② 非递归时只认顶层，且把"被挡掉的"计入 `skipped_depth`（不是默默少几个）；
+    //   ③ 后缀过滤 / 排除模式 / 跳备份区各自的**计数**对得上；
+    //   ④ 备份 → 改坏 → 恢复，**逐字节回到原样**；清空真的删且报数；
+    //   ⑤ 导出统计是 utf-8-sig（BOM 在最前面），字段与 1.x 逐行同序；
+    //   ⑥ 遍历不存在的目录**必须报错**（旧 `collect_tree` 是静默返回空）。
+    reg.add("text: 编码转换批处理（递归/排除/备份三件/统计 CSV）", [](CheckContext& ctx) {
+        namespace fsys = std::filesystem;
+        namespace etxt = xrkit::engine::text;
+        std::error_code ec;
+        const fsys::path root = fsys::temp_directory_path(ec) / "xrkit_selftest_convert_batch";
+        fsys::remove_all(root, ec);
+        fsys::create_directories(root / "sub" / "deep", ec);
+        fsys::create_directories(root / "backup", ec);
+        {
+            std::ofstream(root / "top.xml") << "<a>1</a>";
+            std::ofstream(root / "skip.txt") << "not xml";
+            std::ofstream(root / "sub" / "mid.xml") << "<b>2</b>";
+            std::ofstream(root / "sub" / "deep" / "leaf.xml") << "<c>3</c>";
+            std::ofstream(root / "sub" / "deep" / "temp.xml") << "<d>4</d>";
+            // 备份区里的东西**不许**参与候选（1.x 按段跳过整个 backup 子树）
+            std::ofstream(root / "backup" / "old.xml") << "<e>5</e>";
+        }
+
+        // ① 递归（默认开）+ ② 台账：层数 3（sub/deep/leaf.xml）⇒ 4 个 xml 候选
+        etxt::CollectOptions co;
+        co.extensions = {".xml"};
+        co.recursive = true;
+        etxt::CollectReport rep;
+        const auto deep_files = etxt::collect_files(root.string(), co, &rep);
+        check(ctx, rep.depth == 3, "递归层数不对（实测 " + std::to_string(rep.depth) + "）");
+        check(ctx, rep.selected == 4,
+              "递归候选数不对（实测 " + std::to_string(rep.selected) + "，期望 4）");
+        check(ctx, rep.skipped_ext >= 1, "后缀不符没记账（skip.txt）");
+        check(ctx, rep.skipped_backup >= 1, "备份区里的文件没被跳过记账");
+        bool saw_deep = false;
+        for (const etxt::CollectedFile& f : deep_files) {
+            if (f.rel == "sub/deep/leaf.xml") saw_deep = true;
+        }
+        // ★ 这一条就是"子目录被静默漏掉"那个缺陷的锁：非递归时它必须**不在**结果里，
+        //   递归时必须在。把递归关掉/写成顶层列举 ⇒ 上面那两条立刻红。
+        check(ctx, saw_deep, "递归没进子目录：结果里找不到 sub/deep/leaf.xml");
+
+        // ② 非递归：只剩顶层 1 个，且被挡掉的计入 skipped_depth（不是静默少几个）
+        etxt::CollectOptions flat = co;
+        flat.recursive = false;
+        etxt::CollectReport rep_flat;
+        const auto flat_files = etxt::collect_files(root.string(), flat, &rep_flat);
+        check(ctx, rep_flat.selected == 1,
+              "非递归候选数不对（实测 " + std::to_string(rep_flat.selected) + "，期望 1）");
+        check(ctx, rep_flat.skipped_depth == 3,
+              "非递归挡掉的文件数没记账（实测 " + std::to_string(rep_flat.skipped_depth) +
+                  "，期望 3）");
+        for (const etxt::CollectedFile& f : flat_files) {
+            check(ctx, f.rel != "sub/deep/leaf.xml", "非递归模式仍然进了子目录：" + f.rel);
+        }
+
+        // ③ 排除模式：文件名 + 相对路径两种写法都要命中；`\` 分隔符写法也认
+        check(ctx, etxt::is_excluded("sub/deep/temp.xml", "temp.xml", "*temp*"),
+              "文件名通配没命中");
+        check(ctx, etxt::is_excluded("sub/deep/temp.xml", "temp.xml", "sub/deep/*"),
+              "'/' 相对路径通配没命中");
+        check(ctx, etxt::is_excluded("sub/deep/temp.xml", "temp.xml", "sub\\deep\\*"),
+              "'\\' 相对路径通配没命中（Windows 习惯写法）");
+        check(ctx, !etxt::is_excluded("sub/deep/temp.xml", "temp.xml", "other*"),
+              "不该命中的模式命中了");
+        etxt::CollectOptions excl = co;
+        excl.exclude_patterns = "*temp*";
+        etxt::CollectReport rep_excl;
+        const auto excl_files = etxt::collect_files(root.string(), excl, &rep_excl);
+        check(ctx, rep_excl.selected == 3 && rep_excl.skipped_excluded == 1,
+              "排除后计数不对（选中 " + std::to_string(rep_excl.selected) + " / 排除 " +
+                  std::to_string(rep_excl.skipped_excluded) + "）");
+        check(ctx, rep_excl.excluded.size() == 1, "被排除的项没逐条留痕");
+
+        // ⑥ 遍历不存在的目录：必须留下错误（旧实现静默返回空）
+        etxt::CollectReport rep_missing;
+        const auto none = etxt::collect_files((root / "nope").string(), co, &rep_missing);
+        check(ctx, none.empty() && !rep_missing.errors.empty(),
+              "遍历不存在的目录没有报错（静默）");
+
+        // ④ 备份三件：backup → 改坏 → restore 回原样；clear 报数
+        const std::string top = (root / "top.xml").string();
+        const std::string original = "<a>1</a>";
+        const etxt::BackupOutcome b1 = etxt::backup_file(top, root.string(), "backup", ".bak");
+        check(ctx, b1.ok && !b1.existed && b1.bytes == original.size(),
+              "备份没成功：" + b1.error);
+        check(ctx, b1.path.find("backup") != std::string::npos &&
+                       b1.path.find(".bak") != std::string::npos,
+              "备份落点不对：" + b1.path);
+        // 再备份一次 ⇒ 已有备份，跳过（不覆盖）
+        const etxt::BackupOutcome b2 = etxt::backup_file(top, root.string(), "backup", ".bak");
+        check(ctx, b2.ok && b2.existed, "重复备份没有被判为'已有备份'");
+
+        std::ofstream(top, std::ios::binary | std::ios::trunc) << "<a>WRECKED</a>";
+        etxt::BackupTaskOptions bopt;
+        bopt.source_root = root.string();
+        bopt.extensions = {".xml"};
+        int restores_seen = 0;
+        etxt::BatchHooks hooks;
+        hooks.message = [&](const std::string&) { ++restores_seen; };
+        const etxt::BackupTaskResult restored = etxt::restore_backups(bopt, hooks);
+        check(ctx, restored.total >= 1 && restored.failed == 0,
+              "恢复失败（候选 " + std::to_string(restored.total) + " / 失败 " +
+                  std::to_string(restored.failed) + "）");
+        {
+            std::ifstream in(top, std::ios::binary);
+            const std::string back((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            check(ctx, back == original,
+                  "恢复后内容不是原样（实测 " + std::to_string(back.size()) + " 字节）");
+        }
+        check(ctx, restores_seen >= 2, "恢复过程没有逐条留痕（零静默）");
+
+        // 恢复的**反面**：目标不存在 ⇒ 该条失败 + 给理由（1.x 同）
+        fsys::create_directories(root / "backup" / "sub", ec);
+        std::ofstream(root / "backup" / "sub" / "mid.xml.bak", std::ios::binary) << "<b>2</b>";
+        fsys::remove(root / "sub" / "mid.xml", ec);
+        const etxt::BackupTaskResult restored2 = etxt::restore_backups(bopt, hooks);
+        check(ctx, restored2.failed >= 1, "原文件不存在时没报失败（静默跳过）");
+
+        // 清空：真的删掉且报数
+        const etxt::BackupTaskResult cleared = etxt::clear_backups(bopt, hooks);
+        check(ctx, cleared.total >= 1 && cleared.failed == 0 && cleared.ok == cleared.total,
+              "清空备份计数不对（候选 " + std::to_string(cleared.total) + " / 成功 " +
+                  std::to_string(cleared.ok) + "）");
+        const etxt::BackupTaskResult cleared2 = etxt::clear_backups(bopt, hooks);
+        check(ctx, cleared2.total == 0, "清空之后还能列出备份（残留）");
+
+        // 取消：恢复/清空在**文件边界**也要真停（D1 的取消锁在本层的落点）
+        std::ofstream(root / "top.xml", std::ios::binary | std::ios::trunc) << "<a>1</a>";
+        etxt::backup_file((root / "top.xml").string(), root.string(), "backup", ".bak");
+        etxt::BatchHooks cancel_hooks;
+        cancel_hooks.should_stop = []() { return true; };
+        const etxt::BackupTaskResult cancelled = etxt::clear_backups(bopt, cancel_hooks);
+        check(ctx, cancelled.cancelled && cancelled.ok == 0 && cancelled.total >= 1,
+              "清空备份没在文件边界响应取消（已删 " + std::to_string(cancelled.ok) + "）");
+
+        // ⑤ 统计 CSV：utf-8-sig（BOM 在最前面）+ 字段逐行同序
+        etxt::ConvertStats st;
+        st.generated_at = "2026-10-06 12:00:00";
+        st.source = root.string();
+        st.source_enc = "auto";
+        st.target_enc = "utf-8";
+        st.candidates = 4;
+        st.processed = 4;
+        st.success = 3;
+        st.skipped = 1;
+        st.duration = etxt::format_duration(3725.0);
+        check(ctx, st.duration == "1:02:05", "耗时格式不是 Python timedelta 口径：" + st.duration);
+        check(ctx, etxt::format_duration(90061.0) == "1 day, 1:01:01",
+              "跨天耗时格式不对：" + etxt::format_duration(90061.0));
+        const fsys::path csv = root / "stats.csv";
+        std::string csv_error;
+        check(ctx, etxt::write_stats_csv(csv.string(), st, &csv_error),
+              "统计 CSV 写失败：" + csv_error);
+        {
+            std::ifstream in(csv, std::ios::binary);
+            const std::string body((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            check(ctx, body.size() >= 3 && static_cast<unsigned char>(body[0]) == 0xEF &&
+                           static_cast<unsigned char>(body[1]) == 0xBB &&
+                           static_cast<unsigned char>(body[2]) == 0xBF,
+                  "统计 CSV 不是 utf-8-sig（缺 BOM）");
+            check(ctx, body.find("生成时间,2026-10-06 12:00:00\n") != std::string::npos,
+                  "统计 CSV 缺'生成时间'那行");
+            check(ctx, body.find("输出目录,原地转换\n") != std::string::npos,
+                  "统计 CSV 的'原地转换'口径不对");
+            check(ctx, body.find("耗时,1:02:05\n") != std::string::npos,
+                  "统计 CSV 的耗时那行不对");
+            check(ctx, body.find("处理模式,文件夹\n") != std::string::npos,
+                  "统计 CSV 的处理模式那行不对");
+        }
+
+        // 端到端：真的转换一批 ⇒ **部分失败 ⇒ 退出码非 0**；输出保持相对结构
+        {
+            const fsys::path src = root / "e2e";
+            fsys::create_directories(src / "sub", ec);
+            std::ofstream(src / "a.xml") << "<?xml version='1.0' encoding='windows-1251'?>\n<x/>";
+            std::ofstream(src / "sub" / "b.xml") << "<?xml version=\"1.0\" encoding=\"gbk\"?>\n<y/>";
+            const fsys::path out_dir = root / "e2e_out";
+            etxt::BatchOptions bo;
+            bo.source = src.string();
+            bo.output_dir = out_dir.string();
+            bo.extensions = {".xml"};
+            bo.target_encoding = "utf-8";
+            bo.backup = false;
+            int messages = 0;
+            etxt::BatchHooks bh;
+            bh.message = [&](const std::string&) { ++messages; };
+            const etxt::BatchOutcome e2e = etxt::convert_batch(bo, bh);
+            check(ctx, e2e.exit_code == 0 && e2e.success == 2 && e2e.failed == 0,
+                  "端到端转换不为全绿（成功 " + std::to_string(e2e.success) + " / 失败 " +
+                      std::to_string(e2e.failed) + " / 退出码 " +
+                      std::to_string(e2e.exit_code) + "）");
+            // 输出保持**相对结构**（否则不同子目录的同名文件会互相覆盖）
+            check(ctx, fsys::exists(out_dir / "sub" / "b.xml"),
+                  "输出目录没有保留相对结构（sub/b.xml 不在）");
+            check(ctx, messages >= 5, "批处理没有逐条留痕（零静默）");
+
+            // 反面：源路径不存在 ⇒ 退出码 2 + 报错（不许静默成功）
+            bo.source = (root / "e2e_missing").string();
+            const etxt::BatchOutcome bad = etxt::convert_batch(bo, bh);
+            check(ctx, bad.exit_code == 2 && !bad.collect.errors.empty(),
+                  "源路径不可用时没有如实报错");
+
+            // ★ 零静默的收口：**部分失败 ⇒ 退出码非 0**。
+            //   造法：把输出目录指到一个"已经是文件"的路径 ⇒ 建目录必失败 ⇒ 该文件计入 failed。
+            //   （这条锁把 `out.exit_code = bad ? 1 : 0` 改成恒 0 就会立刻红。）
+            bo.source = src.string();
+            bo.output_dir = (root / "e2e_blocker").string();
+            {
+                std::ofstream blocker(bo.output_dir, std::ios::binary);
+                blocker << "not a dir";
+            }
+            const etxt::BatchOutcome partial = etxt::convert_batch(bo, bh);
+            check(ctx, partial.failed > 0 && partial.exit_code == 1,
+                  "部分失败没有如实收口（失败 " + std::to_string(partial.failed) + " / 退出码 " +
+                      std::to_string(partial.exit_code) + "，期望失败>0 且退出码 1）");
+        }
         fsys::remove_all(root, ec);
     });
 

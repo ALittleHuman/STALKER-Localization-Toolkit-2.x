@@ -9,6 +9,7 @@
 #include "hub.h"
 #include "log_box.h"
 #include "pages/fs_page.h"
+#include "pages/fontpack_page.h"
 #include "pages/page_base.h"
 #include "pages/video_page.h"
 #include "smoke.h"
@@ -16,6 +17,7 @@
 #include "theme.h"
 
 #include <QApplication>
+#include <QDialog>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QGuiApplication>
@@ -23,6 +25,7 @@
 #include <QLabel>
 #include <QLayout>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPixmap>
 #include <QPushButton>
 #include <QScreen>
@@ -66,6 +69,11 @@ int main(int argc, char** argv) {
     const QString filter_text = (filter_arg >= 0 && filter_arg + 1 < args.size())
                                     ? args[filter_arg + 1]
                                     : QString();
+    // ★ 2026-10-06（D2 批）：`--font-picker` —— 抓图前把汉化包页的**系统字体选择器**打开，
+    //   并把它**自己**也抓成 `<shot>.picker.png`。为什么需要这个开关：那个对话框是一个
+    //   独立的顶层窗口，`hub.grab()` 抓不到它 ⇒ 不这样抓就等于"新做的对话框没有图"。
+    //   （与 `--load` / `--video-in` 同一族诊断开关：让"有内容/有面板"的那种状态能被看见。）
+    const bool shot_font_picker = args.contains(QStringLiteral("--font-picker"));
     // `--video-in <源文件>` / `--video-ref <参考 OGM>` / `--video-out <输出 OGM>`：
     //   抓视频页"有输入"的那个状态（空状态与有输入长得完全不同，只看空状态等于没看）。
     const int vin_arg = args.indexOf(QStringLiteral("--video-in"));
@@ -271,8 +279,11 @@ int main(int argc, char** argv) {
             const QString prefix = fs->page_id() + QStringLiteral("_");
             for (QWidget* child : fs->findChildren<QWidget*>()) {
                 const QString name = child->objectName();
+                // ★ 2026-10-06（D2）：汉化包页的页 id 是 `fontpack`、控件前缀却是 `font_`
+                //   （历史命名）⇒ 只按页 id 取前缀会**一条都量不到**这页的控件。这里显式
+                //   补上这个别名（纯诊断用；影响不了任何产品行为）。
                 if (name.startsWith(prefix) || name.startsWith(QStringLiteral("page_")) ||
-                    name == QStringLiteral("card")) {
+                    name.startsWith(QStringLiteral("font_")) || name == QStringLiteral("card")) {
                     dump("child", child);
                 }
             }
@@ -280,7 +291,7 @@ int main(int argc, char** argv) {
             //   把**带对象名的 QLabel 原文**打出来（截图判几何、这行判文案，两处都留证据）。
             for (QLabel* label : fs->findChildren<QLabel*>()) {
                 const QString name = label->objectName();
-                if (!name.startsWith(prefix)) continue;
+                if (!name.startsWith(prefix) && !name.startsWith(QStringLiteral("font_"))) continue;
                 out << QStringLiteral("LBL %1 w=%2 h=%3 text=\"%4\"\n")
                            .arg(name)
                            .arg(label->width())
@@ -372,6 +383,47 @@ int main(int argc, char** argv) {
                    .arg(hub.width())
                    .arg(hub.height())
                    .arg(shot_page);
+        // ★ D2 批：把"选择字体"对话框自己也抓一张（独立顶层窗口，hub.grab() 抓不到）。
+        if (shot_font_picker) {
+            if (auto* font_page = dynamic_cast<xrkit::shell::FontPackPage*>(
+                    hub.page_at(shot_page >= 0 && shot_page < hub.page_count() ? shot_page : 0))) {
+                if (QDialog* picker = font_page->make_font_picker(&hub)) {
+                    picker->show();
+                    QApplication::processEvents();
+                    const QString picker_path = shot_path + QStringLiteral(".picker.png");
+                    const bool picker_saved = picker->grab().save(picker_path);
+                    auto* list = picker->findChild<QListWidget*>(QStringLiteral("font_picker_list"));
+                    auto* preview =
+                        picker->findChild<QLabel*>(QStringLiteral("font_picker_preview"));
+                    auto* zoom = picker->findChild<QLabel*>(QStringLiteral("font_picker_zoom"));
+                    auto* caption =
+                        picker->findChild<QLabel*>(QStringLiteral("font_picker_caption"));
+                    out << QStringLiteral(
+                               "PICKER ok=%1 path=%2 size=%3x%4 items=%5 zoom=%6 "
+                               "preview=%7x%8\n")
+                               .arg(picker_saved ? QStringLiteral("ok") : QStringLiteral("fail"))
+                               .arg(picker_path)
+                               .arg(picker->width())
+                               .arg(picker->height())
+                               .arg(list != nullptr ? list->count() : -1)
+                               .arg(zoom != nullptr ? zoom->text() : QStringLiteral("-"))
+                               .arg(preview != nullptr ? preview->pixmap().width() : -1)
+                               .arg(preview != nullptr ? preview->pixmap().height() : -1);
+                    if (caption != nullptr) {
+                        out << QStringLiteral("PICKER note caption=\"%1\"\n")
+                                   .arg(QString(caption->text())
+                                            .replace(QLatin1Char('\n'), QStringLiteral(" ⏎ ")));
+                    }
+                    picker->close();
+                    delete picker;
+                } else {
+                    out << QStringLiteral("PICKER ok=fail reason=没有造出对话框\n");
+                }
+            } else {
+                out << QStringLiteral("PICKER ok=fail reason=第 %1 页不是 FontPackPage（用 --page 5）\n")
+                           .arg(shot_page);
+            }
+        }
         out.flush();
         return ok_save ? 0 : 1;
     }

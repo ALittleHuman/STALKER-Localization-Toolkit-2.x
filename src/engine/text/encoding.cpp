@@ -1025,6 +1025,33 @@ bool encode_strict(const std::string& encoding, const std::string& text,
         }
         return true;
     }
+    // ★★ 2026-10-06（D2 批，**实测查实的真缺陷**）：`ascii` 原来**只有解码侧**，
+    //   编码侧一行都没有 ⇒ `encode_strict("ascii", "abc")` 报"未知编码：ascii"，
+    //   `encode_lossy` 于是走"逐码位、表示不了就写 `?`"的兜底 ⇒ **连纯 ASCII 正文
+    //   也被整篇写成 `?`**（`tests/golden_lossy_codec.py` 加进 ascii 后立刻判红：
+    //   `encode ascii 'ascii only'：期望 6173636969206f6e6c79，得到 3f3f…`）。
+    //   这就是"目标编码下拉里不能列没对拍过的编码"那条纪律救回来的一次：1.x 的下拉里
+    //   有 ascii，我们一直没列，理由正是"没对拍过" —— 补对拍时才发现它根本不能编码。
+    //   严格语义照 Python 的 `ascii` codec：任何 > 0x7F 的码位都报错（有损侧由
+    //   `encode_lossy` 的逐码位兜底写成 `?`）。
+    if (encoding == kAscii) {
+        out.clear();
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(text.data());
+        size_t i = 0;
+        while (i < text.size()) {
+            uint32_t cp = 0;
+            if (!utf8_decode_one(p, text.size(), i, cp)) {
+                err = "正文不是合法 UTF-8（ascii 编码前）";
+                return false;
+            }
+            if (cp > 0x7F) {
+                err = "码位 U+" + std::to_string(cp) + " 无法用 ascii 表示";
+                return false;
+            }
+            out.push_back(static_cast<uint8_t>(cp));
+        }
+        return true;
+    }
     err = "未知编码：" + encoding;
     return false;
 }

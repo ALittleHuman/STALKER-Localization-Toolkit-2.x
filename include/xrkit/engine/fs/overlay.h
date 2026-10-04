@@ -206,8 +206,22 @@ struct TreeItem {
     std::string source_path;  // 本机路径（目录为空）
 };
 
+// 遍历台账（**零静默**口径，2026-10-06 D2 批）。
+//
+// 为什么要它：原来 `collect_tree` 遇到 `ec` 就 `break` / `continue`，**扫不到的东西
+// 一个字都不报**。编码转换页那条"递归子目录"要如实说出"走了几层、扫到多少文件、
+// 哪些没读到"，靠原来的返回值说不出来。所以台账跟着**同一份**遍历实现一起出来
+// （而不是让调用方自己再写一遍遍历 —— 那就是第 5 份 `recursive_directory_iterator`）。
+struct WalkReport {
+    int dirs = 0;                     // 扫到的目录数（不含 root 自己）
+    int files = 0;                    // 扫到的常规文件数
+    int max_depth = 0;                // 层数：root 的直接子项 = 1
+    std::vector<std::string> errors;  // 逐条："路径 | 原因"（读不到就记账，绝不静默跳过）
+};
+
 // 递归收集 root 下的条目，**目录如实带 is_dir**（1.x 在 App 侧写死 False）。
 // 顺序 = 相对路径的 UTF-8 字节序（确定性，便于对拍）。
-std::vector<TreeItem> collect_tree(const std::string& root);
+// `report` 非空 ⇒ 顺便把台账填好（可空，老调用点行为不变）。
+std::vector<TreeItem> collect_tree(const std::string& root, WalkReport* report = nullptr);
 
 }  // namespace xrkit::engine::fs

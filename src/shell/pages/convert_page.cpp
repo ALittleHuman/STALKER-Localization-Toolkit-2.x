@@ -6,19 +6,24 @@
 #include "../task_shell.h"
 #include "../virtual_list.h"
 
+#include <QCheckBox>
 #include <QComboBox>
+#include <QDateTime>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
+#include <QMetaObject>
 #include <QPushButton>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 
-#include <chrono>
-#include <thread>
+#include <memory>
 
 namespace xrkit::shell {
 namespace {
@@ -29,6 +34,15 @@ QString utf8(const std::string& text) { return QString::fromStdString(text); }
 
 // 手动指定时能选的编码：**只列我们对拍过的那些**（严格解码 + 有损替换都有 golden）。
 // 没对拍的编码宁可不给选，也不让人选到一个我们没验证过的行为。
+//
+// ★ 2026-10-06（D2 批）：**源/目标拆成两张表**。理由不是"好看"，是纪律：
+//   · 目标侧多一个 `ascii`（1.x 的目标下拉里有它）。补它对拍时**当场抓到一个真缺陷**：
+//     引擎的 ascii 原来只有解码侧、编码侧一行都没有 ⇒ 连纯 ASCII 正文也被整篇写成 `?`
+//     （见 `encoding.cpp` 的 `encode_strict` 与 `golden_lossy_codec.py`）。要不是"只列
+//     对拍过的编码"这条纪律卡着，用户会静默拿到一整个目录的 `?`。
+//   · 源侧**不放** `ascii`：源是"猜"的，把 ascii 塞进源下拉只会让人以为工具会猜 ascii。
+//   · `big5 / shift_jis / euc-kr`（1.x 源侧有）**仍未列** —— 引擎没有这三张表，
+//     等用户拍板（见 D2 报告的"待拍板"条目）。
 const char* kManualEncodings[] = {etxt::kUtf8,          etxt::kWindows1251, etxt::kWindows1252,
                                   etxt::kGb18030,       etxt::kGbk,         etxt::kGb2312,
                                   etxt::kLatin1,
@@ -37,6 +51,47 @@ const char* kManualEncodings[] = {etxt::kUtf8,          etxt::kWindows1251, etxt
                                   // 从 114 涨到 294）⇒ 按"只列对拍过的编码"这条纪律可以列了。
                                   etxt::kUtf16,     etxt::kUtf16Le, etxt::kUtf16Be,
                                   etxt::kUtf32,     etxt::kUtf32Le, etxt::kUtf32Be};
+
+// 目标侧多一项：ascii（D2 批补上对拍后才允许出现，见上面的长注释）
+const char* kTargetOnlyEncodings[] = {etxt::kAscii};
+
+// 扫描台账的那一行（**零静默**：递归几层、扫到多少、各自为什么被刷掉）。
+// 页面只负责把它画出来，计数**全部来自引擎**（`CollectReport`），不在这里重算。
+QString scan_line_of(const etxt::BatchOutcome& outcome) {
+    const etxt::CollectReport& c = outcome.collect;
+    if (outcome.single_file) return QStringLiteral("扫描：单个文件");
+    QString text = QStringLiteral("扫描：递归 %1 层，目录 %2 个，文件 %3 个 ⇒ 选中 %4")
+                       .arg(c.depth)
+                       .arg(c.dirs)
+                       .arg(c.files_seen)
+                       .arg(c.selected);
+    text += QStringLiteral("，后缀不符 %1").arg(c.skipped_ext);
+    text += QStringLiteral("，命中排除 %1").arg(c.skipped_excluded);
+    text += QStringLiteral("，备份区跳过 %1").arg(c.skipped_backup);
+    if (c.skipped_depth > 0) text += QStringLiteral("，只扫顶层挡掉 %1").arg(c.skipped_depth);
+    if (!c.errors.empty()) text += QStringLiteral("，遍历错误 %1").arg(c.errors.size());
+    return text;
+}
+
+// 扩展名框 → 小写带点列表（1.x：`[e.strip().lower() for e in text.split(',') if e.strip()]`）
+QStringList parse_extensions(const QString& text) {
+    QStringList out;
+    const QStringList parts = text.split(QLatin1Char(','), Qt::SkipEmptyParts);
+    for (const QString& part : parts) {
+        const QString item = part.trimmed().toLower();
+        if (!item.isEmpty()) out << item;
+    }
+    return out;
+}
+
+// 一次批处理的结果盒子：**工作线程只写它，主线程只读它**（13.2：worker 不碰 UI）。
+struct BatchResultBox {
+    etxt::BatchOutcome outcome;
+    QString source;
+    QString out_dir;
+    QString source_enc;
+    QString target_enc;
+};
 
 }  // namespace
 
@@ -99,6 +154,38 @@ ConvertPage::ConvertPage(QWidget* parent)
     enc_row->addStretch(1);
     body_layout()->addLayout(enc_row);
 
+    // ═══ ★ 2026-10-06 D2 批：1.x 的"转换设置"那一整行 ═══
+    //   扩展名（默认 `.xml`）/ 递归子目录（**默认开**）/ 备份（默认开）/ 排除模式。
+    //   控件名都带 `convert_` 前缀 ⇒ `--shot` 的 GEOM/LBL 能直接量到它们。
+    ext_edit_ = new QLineEdit;
+    ext_edit_->setObjectName(QStringLiteral("convert_exts"));
+    ext_edit_->setText(QStringLiteral(".xml"));
+    ext_edit_->setMaximumWidth(xrkit::core::px(140));
+    ext_edit_->setPlaceholderText(QStringLiteral(".xml"));
+    recursive_box_ = new QCheckBox(QStringLiteral("递归子目录"));
+    recursive_box_->setObjectName(QStringLiteral("convert_recursive"));
+    recursive_box_->setChecked(true);  // 1.x `self.recursive = tk.BooleanVar(value=True)`
+    backup_box_ = new QCheckBox(QStringLiteral("备份到 源目录\\backup"));
+    backup_box_->setObjectName(QStringLiteral("convert_backup"));
+    backup_box_->setChecked(true);     // 1.x `self.backup_files = tk.BooleanVar(value=True)`
+    exclude_edit_ = new QLineEdit;
+    exclude_edit_->setObjectName(QStringLiteral("convert_exclude"));
+    exclude_edit_->setPlaceholderText(QStringLiteral("排除模式（逗号分隔，如 *backup*,temp*）"));
+    auto* opt_row = new QHBoxLayout;
+    opt_row->addWidget(new QLabel(QStringLiteral("扩展名：")), 0);
+    opt_row->addWidget(ext_edit_, 0);
+    opt_row->addWidget(recursive_box_, 0);
+    opt_row->addWidget(backup_box_, 0);
+    opt_row->addSpacing(xrkit::core::px(12));
+    opt_row->addWidget(new QLabel(QStringLiteral("排除：")), 0);
+    opt_row->addWidget(exclude_edit_, 1);
+    body_layout()->addLayout(opt_row);
+    // 1.x `on_output_dir_change`：输出目录非空 ⇒ 备份勾选框**取消勾选并禁用**
+    //   （备份只对"原地转换"有意义 —— 输出到新目录时源文件根本不会被改）。
+    QObject::connect(output_edit_, &QLineEdit::textChanged, this,
+                     [this](const QString&) { sync_backup_enabled(); });
+    sync_backup_enabled();
+
     rows_ = new VirtualList;
     rows_->setObjectName(QStringLiteral("convert_rows"));
     rows_->set_row_height(xrkit::core::px(20));
@@ -112,36 +199,62 @@ ConvertPage::ConvertPage(QWidget* parent)
     task_ = new TaskShell(this);
     task_->set_idle_status(QStringLiteral("就绪"));  // ⑬13.5：空闲文案必须非空
     task_->set_message_handler([this](const QString& text) { add_row(text); });
+    // ★ D2 批：1.x 的「取消」**先确认**（`messagebox.askyesno`）—— 确认钩子挂在共用的
+    //   任务壳上（六页里只有本页装它），不另造一颗按钮。
+    task_->set_cancel_confirm([this] {
+        return QMessageBox::question(this, QStringLiteral("确认"),
+                                     QStringLiteral("确定要取消当前转换任务吗？")) ==
+               QMessageBox::Yes;
+    });
     body_layout()->addWidget(task_->panel(), 0);
 
     status_ = new QLabel(task_->status());
     status_->setObjectName(QStringLiteral("convert_status"));
 
-    auto* start = add_action(QStringLiteral("开始转换"));
-    start->setObjectName(QStringLiteral("convert_start"));
-    auto* pause = add_action(QStringLiteral("暂停"));
-    pause->setObjectName(QStringLiteral("convert_pause"));
-    QObject::connect(pause, &QPushButton::clicked, this, [this, pause] {
+    start_button_ = add_action(QStringLiteral("开始转换"));
+    start_button_->setObjectName(QStringLiteral("convert_start"));
+    pause_button_ = add_action(QStringLiteral("暂停"));
+    pause_button_->setObjectName(QStringLiteral("convert_pause"));
+    QObject::connect(pause_button_, &QPushButton::clicked, this, [this] {
         toggle_pause();
-        pause->setText(paused() ? QStringLiteral("继续") : QStringLiteral("暂停"));
+        pause_button_->setText(paused() ? QStringLiteral("继续") : QStringLiteral("暂停"));
     });
-    QObject::connect(start, &QPushButton::clicked, this, [this] {
+    // ★ 1.x 的另外四颗按钮（原来 2.x 一颗都没有）
+    restore_button_ = add_action(QStringLiteral("恢复备份"));
+    restore_button_->setObjectName(QStringLiteral("convert_restore"));
+    QObject::connect(restore_button_, &QPushButton::clicked, this, [this] { run_restore(); });
+    clear_backup_button_ = add_action(QStringLiteral("清空备份"));
+    clear_backup_button_->setObjectName(QStringLiteral("convert_clear_backup"));
+    QObject::connect(clear_backup_button_, &QPushButton::clicked, this,
+                     [this] { run_clear_backup(); });
+    open_output_button_ = add_action(QStringLiteral("打开输出"));
+    open_output_button_->setObjectName(QStringLiteral("convert_open_out"));
+    QObject::connect(open_output_button_, &QPushButton::clicked, this, [this] { open_output(); });
+    export_button_ = add_action(QStringLiteral("导出统计"));
+    export_button_->setObjectName(QStringLiteral("convert_export_stats"));
+    QObject::connect(export_button_, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getSaveFileName(
+            this, QStringLiteral("导出统计"),
+            QStringLiteral("转换统计_%1.csv").arg(
+                QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"))),
+            QStringLiteral("CSV 文件 (*.csv)"));
+        if (path.isEmpty()) return;
+        QString problem;
+        if (!export_stats(path, &problem)) {
+            status_->setText(problem);
+            return;
+        }
+        status_->setText(QStringLiteral("统计已导出：%1").arg(QDir::toNativeSeparators(path)));
+        log_to_host(QStringLiteral("统计已导出到：%1").arg(QDir::toNativeSeparators(path)));
+    });
+
+    QObject::connect(start_button_, &QPushButton::clicked, this, [this] {
         const QString source = source_edit_->text().trimmed();
         if (source.isEmpty()) {
             status_->setText(QStringLiteral("请先选源路径"));
             return;
         }
-        QDir dir(source);
-        std::vector<QString> files;
-        if (dir.exists()) {
-            const QStringList names =
-                dir.entryList(QDir::Files | QDir::NoDotAndDotDot, QDir::Name);
-            for (const QString& name : names) files.push_back(dir.filePath(name));
-        } else {
-            files.push_back(source);
-        }
-        run_batch(files, output_edit_->text().trimmed(), utf8(current_source_encoding()),
-                  utf8(current_target_encoding()));
+        run_batch(source, output_edit_->text().trimmed());
     });
 
     refresh_rows();
@@ -153,7 +266,21 @@ void ConvertPage::fill_encoding_combos() {
         source_combo_->addItem(utf8(name), utf8(name));
         target_combo_->addItem(utf8(name), utf8(name));
     }
+    // ★ D2 批：目标侧独有的项（ascii）。**源侧不加** —— 源是猜的，见文件头的长注释。
+    for (const char* name : kTargetOnlyEncodings) {
+        target_combo_->addItem(utf8(name), utf8(name));
+    }
     target_combo_->setCurrentIndex(0);  // utf-8
+}
+
+QStringList ConvertPage::extensions() const { return parse_extensions(ext_edit_->text()); }
+
+QStringList ConvertPage::backup_extensions() const {
+    // 1.x：恢复/清空都按 `bak_exts = [f"{e}.bak" for e in exts]` 过滤 ⇒ 与扩展名框同源。
+    // 扩展名为空 ⇒ 退回默认 `.xml`（否则这条按钮会"点了没反应"）。
+    QStringList exts = extensions();
+    if (exts.isEmpty()) exts << QStringLiteral(".xml");
+    return exts;
 }
 
 std::string ConvertPage::current_source_encoding() const {
@@ -162,6 +289,30 @@ std::string ConvertPage::current_source_encoding() const {
 
 std::string ConvertPage::current_target_encoding() const {
     return target_combo_->currentData().toString().toUtf8().toStdString();
+}
+
+void ConvertPage::sync_backup_enabled() {
+    if (backup_box_ == nullptr || output_edit_ == nullptr) return;
+    const bool in_place = output_edit_->text().trimmed().isEmpty();
+    backup_box_->setEnabled(in_place);
+    if (!in_place) backup_box_->setChecked(false);
+}
+
+etxt::BatchOptions ConvertPage::batch_options_for(const QString& source,
+                                                  const QString& out_dir) const {
+    etxt::BatchOptions options;
+    options.source = source.toUtf8().toStdString();
+    options.output_dir = out_dir.toUtf8().toStdString();
+    const QStringList exts = extensions();
+    for (const QString& ext : exts) options.extensions.push_back(ext.toStdString());
+    options.recursive = recursive_box_ == nullptr ? true : recursive_box_->isChecked();
+    options.backup = backup_box_ == nullptr ? false : backup_box_->isChecked();
+    options.exclude_patterns = exclude_edit_ == nullptr
+                                   ? std::string()
+                                   : exclude_edit_->text().trimmed().toStdString();
+    options.source_encoding = current_source_encoding();
+    options.target_encoding = current_target_encoding();
+    return options;
 }
 
 engine::text::ConvertOutcome ConvertPage::convert_one(const QString& source_path,
@@ -202,46 +353,275 @@ void ConvertPage::refresh_rows() {
     rows_->set_row_count(static_cast<int>(row_texts_.size()));
 }
 
-void ConvertPage::run_batch(const std::vector<QString>& files, const QString& out_dir,
-                            const QString& source_enc, const QString& target_enc) {
-    if (files.empty()) {
-        status_->setText(QStringLiteral("没找到可转换的文件"));
+void ConvertPage::record_stats(const etxt::BatchOutcome& outcome, const QString& source,
+                               const QString& out_dir, const QString& source_enc,
+                               const QString& target_enc) {
+    last_outcome_ = outcome;
+    last_scan_text_ = scan_line_of(outcome);
+    stats_ = etxt::ConvertStats{};
+    stats_.generated_at = QDateTime::currentDateTime()
+                              .toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+                              .toStdString();
+    stats_.source = source.toStdString();
+    stats_.single_file = outcome.single_file;
+    stats_.output_dir = out_dir.toStdString();
+    stats_.source_enc = source_enc.toStdString();
+    stats_.target_enc = target_enc.toStdString();
+    stats_.candidates = static_cast<uint64_t>(outcome.candidates);
+    stats_.processed = static_cast<uint64_t>(outcome.processed);
+    stats_.success = static_cast<uint64_t>(outcome.success);
+    stats_.skipped = static_cast<uint64_t>(outcome.skipped);
+    stats_.failed = static_cast<uint64_t>(outcome.failed);
+    stats_.duration = outcome.duration;
+    stats_ready_ = true;
+    // 零静默：部分失败要**显式收口**（不是只把最后一行日志留成"失败"）
+    if (outcome.exit_code != 0) {
+        status_->setText(QStringLiteral("完成，但有失败：成功 %1 / 跳过 %2 / 失败 %3")
+                             .arg(outcome.success)
+                             .arg(outcome.skipped)
+                             .arg(outcome.failed));
+    } else if (outcome.cancelled) {
+        status_->setText(utf8(outcome.stop_reason));
+    } else {
+        status_->setText(QStringLiteral("全部完成：成功 %1 / 跳过 %2 / 失败 %3")
+                             .arg(outcome.success)
+                             .arg(outcome.skipped)
+                             .arg(outcome.failed));
+    }
+}
+
+void ConvertPage::set_busy(bool busy) {
+    if (start_button_ != nullptr) start_button_->setEnabled(!busy);
+    if (restore_button_ != nullptr) restore_button_->setEnabled(!busy);
+    if (clear_backup_button_ != nullptr) clear_backup_button_->setEnabled(!busy);
+}
+
+void ConvertPage::run_batch(const QString& source, const QString& out_dir) {
+    const etxt::BatchOptions options = batch_options_for(source, out_dir);
+    if (options.source.empty()) {
+        status_->setText(QStringLiteral("请先选源路径"));
         return;
     }
+    if (options.extensions.empty() && !QFileInfo(source).isFile()) {
+        // 1.x：目录模式下没有扩展名直接抛"请输入文件扩展名，例如 .xml,.txt"
+        status_->setText(QStringLiteral("请输入文件扩展名，例如 .xml,.txt"));
+        return;
+    }
+    auto box = std::make_shared<BatchResultBox>();
+    box->source = source;
+    box->out_dir = out_dir;
+    box->source_enc = utf8(current_source_encoding());
+    box->target_enc = utf8(current_target_encoding());
+
+    set_busy(true);
     // ⑬13.2：工作线程**不许碰 UI**（连读控件都不行）—— 参数在主线程冻结成值传进去。
-    const int total = static_cast<int>(files.size());
-    task_->run(QStringLiteral("编码转换"), [this, files, out_dir, source_enc, target_enc,
-                                            total](const ProgressSink& progress,
-                                                   const MessageSink& message) {
-        int done = 0;
-        int failed = 0;
-        for (const QString& file : files) {
-            // ★ 2026-10-06（①）：**文件边界**轮询取消请求 —— 停在这里，已转换的文件都是
-            //   完整的（不写半个），并把"停在哪、转了几个、失败几个"**如实报出来**（零静默）。
-            //   （这条轮询就是"取消按钮不是死按钮"这一条在**本页**的落点：拆掉它，
-            //     run_ci 的静态锁 `cancel_requested()` 会立刻红。）
-            if (task_ != nullptr && task_->cancel_requested()) {
-                message("已取消：在文件边界停下（已转换 " + std::to_string(done) +
-                        " / " + std::to_string(total) + " 个文件，失败 " +
-                        std::to_string(failed) + " 个；已转换的产物都已完整落盘）");
-                return;
+    const bool started = task_->run(
+        QStringLiteral("编码转换"),
+        [this, options, box](const ProgressSink& progress, const MessageSink& message) {
+            etxt::BatchHooks hooks;
+            hooks.should_stop = [this]() { return task_ != nullptr && task_->cancel_requested(); };
+            hooks.gate = [this]() { return wait_if_paused(true); };
+            hooks.message = [&message](const std::string& text) { message(text); };
+            hooks.progress = [&progress](int done, int total) {
+                progress(total <= 0 ? 100 : done * 100 / total);
+            };
+            box->outcome = etxt::convert_batch(options, hooks);
+            if (!box->outcome.stop_reason.empty()) message(box->outcome.stop_reason);
+            // 结果回到主线程再落到成员上（成员是 UI 侧状态，worker 不碰）
+            QMetaObject::invokeMethod(
+                this,
+                [this, box] {
+                    record_stats(box->outcome, box->source, box->out_dir, box->source_enc,
+                                 box->target_enc);
+                },
+                Qt::QueuedConnection);
+            QMetaObject::invokeMethod(this, [this] { set_busy(false); }, Qt::QueuedConnection);
+        });
+    if (!started) {
+        set_busy(false);
+        status_->setText(QStringLiteral("已有任务在跑，请等它结束或先取消"));
+    }
+}
+
+void ConvertPage::run_restore() {
+    const QString source = source_edit_->text().trimmed();
+    if (source.isEmpty()) {
+        status_->setText(QStringLiteral("请先选源目录（备份在 源目录\\backup 下）"));
+        return;
+    }
+    const QString root = QFileInfo(source).isFile() ? QFileInfo(source).absolutePath() : source;
+    etxt::BackupTaskOptions options;
+    options.source_root = root.toUtf8().toStdString();
+    options.recursive = recursive_box_ == nullptr ? true : recursive_box_->isChecked();
+    const QStringList exts = backup_extensions();
+    for (const QString& ext : exts) options.extensions.push_back(ext.toStdString());
+
+    set_busy(true);
+    const bool started = task_->run(
+        QStringLiteral("恢复备份"),
+        [this, options](const ProgressSink& progress, const MessageSink& message) {
+            progress(0);
+            etxt::BatchHooks hooks;
+            hooks.should_stop = [this]() { return task_ != nullptr && task_->cancel_requested(); };
+            hooks.gate = [this]() { return wait_if_paused(true); };
+            hooks.message = [&message](const std::string& text) { message(text); };
+            hooks.progress = [&progress](int done, int total) {
+                progress(total <= 0 ? 100 : done * 100 / total);
+            };
+            const etxt::BackupTaskResult result = etxt::restore_backups(options, hooks);
+            // 零静默：没有 backup 目录 / 没有 .bak / 有失败，各自说清楚（不报成"完成 0 个"）
+            if (result.dir_missing) {
+                message("未找到 backup 目录，无备份可恢复：" + options.source_root);
+            } else if (result.total == 0) {
+                message("未找到可恢复的 .bak 备份文件（扩展名：" + options.extensions.front() +
+                        " 等）");
+            } else if (result.cancelled) {
+                message(result.stop_reason);
+            } else {
+                message("恢复结束：成功 " + std::to_string(result.ok) + " / 失败 " +
+                        std::to_string(result.failed) + " / 候选 " +
+                        std::to_string(result.total));
             }
-            if (!wait_if_paused(true)) return;  // 取消/退出：直接收工，由壳收尾
-            const etxt::ConvertOutcome outcome =
-                convert_one(file, out_dir, source_enc, target_enc);
-            if (!outcome.ok) ++failed;
-            message(QFileInfo(file).fileName().toUtf8().toStdString() + " | " + outcome.step_label +
-                    (outcome.skipped ? " | 已是目标编码" : "") + " → " + target_enc.toUtf8().toStdString());
-            ++done;
-            // ⑬13.7：**只发一个 0~100 值**，壳里不乘不除
-            progress(total == 0 ? 100 : done * 100 / total);
+            for (const std::string& e : result.errors) message("[恢复] " + e);
+            progress(100);
+            QMetaObject::invokeMethod(
+                this,
+                [this, result] {
+                    set_busy(false);
+                    if (result.dir_missing) {
+                        status_->setText(QStringLiteral("未找到 backup 目录，无备份可恢复"));
+                    } else if (result.failed > 0) {
+                        status_->setText(QStringLiteral("恢复完成，但有失败：成功 %1 / 失败 %2")
+                                             .arg(result.ok)
+                                             .arg(result.failed));
+                    } else {
+                        status_->setText(
+                            QStringLiteral("恢复完成：成功 %1 / 候选 %2").arg(result.ok).arg(result.total));
+                    }
+                },
+                Qt::QueuedConnection);
+        });
+    if (!started) {
+        set_busy(false);
+        status_->setText(QStringLiteral("已有任务在跑，请等它结束或先取消"));
+    }
+}
+
+void ConvertPage::run_clear_backup() {
+    const QString source = source_edit_->text().trimmed();
+    if (source.isEmpty()) {
+        status_->setText(QStringLiteral("请先选源目录（备份在 源目录\\backup 下）"));
+        return;
+    }
+    const QString root = QFileInfo(source).isFile() ? QFileInfo(source).absolutePath() : source;
+    etxt::BackupTaskOptions options;
+    options.source_root = root.toUtf8().toStdString();
+    options.recursive = recursive_box_ == nullptr ? true : recursive_box_->isChecked();
+    const QStringList exts = backup_extensions();
+    for (const QString& ext : exts) options.extensions.push_back(ext.toStdString());
+
+    set_busy(true);
+    const bool started = task_->run(
+        QStringLiteral("清空备份"),
+        [this, options](const ProgressSink& progress, const MessageSink& message) {
+            progress(0);
+            etxt::BatchHooks hooks;
+            hooks.should_stop = [this]() { return task_ != nullptr && task_->cancel_requested(); };
+            hooks.gate = [this]() { return wait_if_paused(true); };
+            hooks.message = [&message](const std::string& text) { message(text); };
+            hooks.progress = [&progress](int done, int total) {
+                progress(total <= 0 ? 100 : done * 100 / total);
+            };
+            const etxt::BackupTaskResult result = etxt::clear_backups(options, hooks);
+            if (result.dir_missing) {
+                message("未找到 backup 目录，无备份可清空：" + options.source_root);
+            } else if (result.total == 0) {
+                message("未找到可清空的 .bak 备份文件（删了 0 个）");
+            } else if (result.cancelled) {
+                message(result.stop_reason);
+            } else {
+                message("清空结束：成功 " + std::to_string(result.ok) + " / 失败 " +
+                        std::to_string(result.failed) + " / 候选 " +
+                        std::to_string(result.total));
+            }
+            for (const std::string& e : result.errors) message("[清空] " + e);
+            progress(100);
+            QMetaObject::invokeMethod(
+                this,
+                [this, result] {
+                    set_busy(false);
+                    if (result.dir_missing) {
+                        status_->setText(QStringLiteral("未找到 backup 目录，无备份可清空"));
+                    } else if (result.failed > 0) {
+                        status_->setText(QStringLiteral("清空完成，但有失败：删除 %1 / 失败 %2")
+                                             .arg(result.ok)
+                                             .arg(result.failed));
+                    } else {
+                        status_->setText(QStringLiteral("清空完成：删除 %1 个 .bak（候选 %2）")
+                                             .arg(result.ok)
+                                             .arg(result.total));
+                    }
+                },
+                Qt::QueuedConnection);
+        });
+    if (!started) {
+        set_busy(false);
+        status_->setText(QStringLiteral("已有任务在跑，请等它结束或先取消"));
+    }
+}
+
+void ConvertPage::open_output() {
+    // 1.x `open_out_dir`：无输出目录 ⇒ 退到源目录（单文件模式退到它所在目录）
+    QString dir = output_edit_->text().trimmed();
+    if (dir.isEmpty()) {
+        const QString src = source_edit_->text().trimmed();
+        if (src.isEmpty()) {
+            status_->setText(QStringLiteral("请先选源路径或输出目录"));
+            return;
         }
-        message(failed == 0 ? "全部完成" : ("有 " + std::to_string(failed) + " 个文件失败"));
-    });
+        dir = QFileInfo(src).isFile() ? QFileInfo(src).absolutePath() : src;
+    }
+    if (!QFileInfo(dir).isDir()) {
+        status_->setText(QStringLiteral("目录不存在：%1").arg(QDir::toNativeSeparators(dir)));
+        return;
+    }
+    // 1.x：`open_in_explorer` 失败返回 False，原先忽略返回值 ⇒ 点了没反应（用户以为工具坏了）
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(dir))) {
+        status_->setText(QStringLiteral("打开失败：%1（可能缺少文件管理器关联或权限不足）")
+                             .arg(QDir::toNativeSeparators(dir)));
+        return;
+    }
+    status_->setText(QStringLiteral("已打开：%1").arg(QDir::toNativeSeparators(dir)));
+}
+
+bool ConvertPage::export_stats(const QString& path, QString* problem) {
+    etxt::ConvertStats stats = stats_;
+    if (!stats_ready_) {
+        // 1.x：没有统计快照时用**当前界面值**（`_ensure_snap()`），计数留 0。
+        // 不静默：调用方会看到"还没有可导出的统计"这句提示，而文件照样按字段全写。
+        stats = etxt::ConvertStats{};
+        const QString source = source_edit_->text().trimmed();
+        stats.generated_at = QDateTime::currentDateTime()
+                                 .toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+                                 .toStdString();
+        stats.source = source.toStdString();
+        stats.single_file = QFileInfo(source).isFile();
+        stats.output_dir = output_edit_->text().trimmed().toStdString();
+        stats.source_enc = current_source_encoding();
+        stats.target_enc = current_target_encoding();
+        stats.duration = etxt::format_duration(0.0);
+    }
+    std::string error;
+    if (!etxt::write_stats_csv(path.toUtf8().toStdString(), stats, &error)) {
+        if (problem != nullptr) *problem = QStringLiteral("导出失败：") + utf8(error);
+        return false;
+    }
+    if (problem != nullptr) problem->clear();
+    return true;
 }
 
 // ★ 2026-10-04 用户第 2 条（"目录定向"）：这两个函数是**各"选择"调用点的判据唯一实现** ——
-//   按钮 lambda 先绑它们（见构造期 `source_inputs` / `output_inputs`），自检也断言它们
+//   按钮 lambda 先绑它们（见构造期 `source_judge` / `output_judge`），自检也断言它们
 //   ⇒ "自检断言的东西"与"真点按钮跑的东西"是同一份，不可能分叉。
 DialogStart ConvertPage::source_dialog_start() const {
     // 源路径是**第一输入**：没有对应的输入目录 ⇒ 走到"工具自身所在文件夹"
