@@ -12,6 +12,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMetaObject>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -93,6 +94,15 @@ TextPage::TextPage(QWidget* parent)
     });
     body_layout()->addWidget(rows_, 1);
 
+    // ★★ 2026-10-06（②）：统计框三行 —— 1.x `text_extract_app.py:647-656` 的
+    //   `stat_grid([("gameplay",…),("scripts",…),("总计",…)])`，写值在 `:725-729`。
+    //   2.x 原来只有"跑完塞一行消息"（`:170-175`），用户看不到分项与总计。
+    stats_label_ = new QLabel;
+    stats_label_->setObjectName(QStringLiteral("text_stats"));
+    stats_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    body_layout()->addWidget(stats_label_, 0);
+    note_stats(etxt::ExtractStats{});   // 初值：三行都在（"没跑过"= 0，不是空白）
+
     task_ = new TaskShell(this);
     task_->set_idle_status(QStringLiteral("就绪"));
     task_->set_message_handler([this](const QString& text) { add_row(text); });
@@ -119,7 +129,8 @@ QString TextPage::validate(const QString& source_dir, const QString& target_dir)
 engine::text::ExtractStats TextPage::extract_one(const QString& source_dir,
                                                  const QString& target_dir,
                                                  const QString& prefix, const QString& id_prefix,
-                                                 bool clean) {
+                                                 bool clean,
+                                                 const std::function<bool()>& should_stop) {
     etxt::ExtractKind kind = etxt::ExtractKind::Gameplay;
     std::string err;
     etxt::ExtractStats stats;
@@ -133,9 +144,40 @@ engine::text::ExtractStats TextPage::extract_one(const QString& source_dir,
     options.prefix = prefix.toUtf8().toStdString();
     options.id_prefix = id_prefix.toUtf8().toStdString();
     options.clean = clean;
+    // ①：把"取消请求位"包成引擎的停止谓词（引擎不依赖 Qt ⇒ 走 std::function）
+    options.should_stop = should_stop;
     const QDir target(target_dir);
     return etxt::extract_dir(source_dir.toUtf8().toStdString(), target.filePath(sub).toUtf8().toStdString(),
                              target_dir.toUtf8().toStdString(), options);
+}
+
+QString TextPage::stats_text() const {
+    // 三行 = gameplay / scripts / 总计（数字**只来自引擎给的 ExtractStats**）。
+    // 总计＝两行逐字段相加（不是"再数一遍"，免得两处口径分叉）。
+    const auto line = [](const QString& title, const etxt::ExtractStats& s) {
+        return QStringLiteral("%1：%2 字符串 · %3 文件 · %4 字符")
+            .arg(title)
+            .arg(static_cast<qulonglong>(s.strings))
+            .arg(static_cast<qulonglong>(s.files))
+            .arg(static_cast<qulonglong>(s.chars));
+    };
+    etxt::ExtractStats total;
+    total.files = stats_gameplay_.files + stats_scripts_.files;
+    total.strings = stats_gameplay_.strings + stats_scripts_.strings;
+    total.chars = stats_gameplay_.chars + stats_scripts_.chars;
+    return line(QStringLiteral("gameplay"), stats_gameplay_) + QLatin1Char('\n') +
+           line(QStringLiteral("scripts"), stats_scripts_) + QLatin1Char('\n') +
+           line(QStringLiteral("总计"), total);
+}
+
+void TextPage::note_stats(const etxt::ExtractStats& stats) {
+    // 一次 run 只跑一个分支（源目录名决定）⇒ 按 `kind` 落到对应那一行；总计是算出来的。
+    if (stats.kind == etxt::ExtractKind::Gameplay) {
+        stats_gameplay_ = stats;
+    } else {
+        stats_scripts_ = stats;
+    }
+    if (stats_label_ != nullptr) stats_label_->setText(stats_text());
 }
 
 void TextPage::add_row(const QString& text) {
@@ -161,8 +203,28 @@ void TextPage::run_batch() {
                                              clean](const ProgressSink& progress,
                                                     const MessageSink& message) {
         progress(0);
-        const etxt::ExtractStats stats = extract_one(source, target, prefix, id_prefix, clean);
+        // ①：取消谓词 = 本页任务壳的取消位（引擎在**文件边界**轮询它）
+        const auto should_stop = [this]() {
+            return task_ != nullptr && task_->cancel_requested();
+        };
+        const etxt::ExtractStats stats =
+            extract_one(source, target, prefix, id_prefix, clean, should_stop);
         progress(100);
+        // ②：统计框**只能在主线程**更新（⑬13.2：工作线程不碰控件）⇒ 排队回主线程。
+        //   先于收尾入队（同一队列保序）⇒ 自检"跑完读标签"时它已经落地。
+        etxt::ExtractStats for_ui = stats;
+        QMetaObject::invokeMethod(
+            this, [this, for_ui] { note_stats(for_ui); }, Qt::QueuedConnection);
+        if (stats.cancelled) {
+            // ①零静默：取消必须**说清停在哪、已产出多少**（绝不报成"完成"）
+            message(QStringLiteral("已取消：在文件边界停下（已提取 %1 个文件 / %2 字符串 / %3 字符；"
+                                   "已写出的产物都是完整的）")
+                        .arg(static_cast<qulonglong>(stats.files))
+                        .arg(static_cast<qulonglong>(stats.strings))
+                        .arg(static_cast<qulonglong>(stats.chars))
+                        .toUtf8().toStdString());
+            return;
+        }
         if (!stats.ok) {
             message("提取失败：" + stats.error);
             return;

@@ -934,6 +934,13 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
     uint64_t counter = 0;
 
     for (const Found& f : files) {
+        // ★ 2026-10-06（用户红线：取消要真停 + 留痕 + 理由可见）：**只在文件边界停** ——
+        //   停下来时已写出的每个文件都是完整的（绝不写半个文件）；计数如实反映"停下前
+        //   已经落盘的那部分"，由前端把 `cancelled` + 计数一起报出来（不许报成"完成"）。
+        if (options.should_stop && options.should_stop()) {
+            st.cancelled = true;
+            break;
+        }
         // 1.x 的排除：translated_* 路径段 / gameplay 额外排除 text/ 与自己的产物
         if (path_has_segment(f.rel, "translated_", true)) continue;
         if (gameplay && (path_has_segment(f.rel, "text", false) ||
@@ -1029,6 +1036,9 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
         ++st.files;
     }
 
+    // 取消时**照样**写这一份文本 XML：内容是"停下来之前已经提取出来的那部分"，
+    // 与已经写出的改写文件**自洽**（不会出现"文件在、XML 里没有"的错位）；
+    // "这是部分结果"由前端按 `cancelled` + 计数如实报出（见 ExtractStats::cancelled）。
     if (!extracted.empty()) {
         const std::string name = prefix + "_" + type_dir + "_texts.xml";
         const std::string body = to_windows_newlines(generate_text_xml_body(extracted));

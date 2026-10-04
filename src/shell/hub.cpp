@@ -9,19 +9,25 @@
 
 #include "xrkit/core/path.h"
 #include "xrkit/core/theme.h"
+#include "xrkit/core/log.h"
 #include "xrkit/engine/plugin/loader.h"
 #include "xrkit/engine/xml/compare.h"
 #include "theme.h"
 
 #include <QApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QDockWidget>
+#include <QFile>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QTabBar>
 #include <QMenu>
 #include <QMenuBar>
 #include <QPushButton>
+#include <QStringConverter>
+#include <QTextStream>
 #include <QHash>
 #include <QComboBox>
 #include <QPlainTextEdit>
@@ -75,6 +81,19 @@ QWidget* make_placeholder(const PageInfo& page) {
 }
 
 }  // namespace
+
+// ── ★ 2026-10-06（③）落盘日志的目录（进程级；见 hub.h 的说明）────────────
+namespace {
+QString g_log_dir;  // 空 = 用默认（exe 目录 / logs）
+}  // namespace
+
+QString hub_log_dir() {
+    if (!g_log_dir.isEmpty()) return g_log_dir;
+    // 1.x `os.path.join(app_dir(), "logs")`：**exe 所在目录**（发行版就在程序旁边）
+    return QDir(QString::fromStdString(xrkit::core::app_dir())).filePath(QStringLiteral("logs"));
+}
+
+void set_hub_log_dir(const QString& dir) { g_log_dir = dir; }
 
 int builtin_page_count() { return kBuiltinPageCount; }
 
@@ -132,6 +151,22 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     QObject::connect(log_clear_, &QPushButton::clicked, this, [this] {
         if (log_box_ != nullptr) log_box_->clear_log();
     });
+    // ★★ 2026-10-06（③）「导出」（1.x `stalker_toolkit.py:355-373, 390`）——
+    //   2.x 原来只有「清空」，`导出` 全仓零命中 ⇒ 用户拿不到可发出来的日志文件。
+    log_export_ = new QPushButton(QStringLiteral("导出日志"));
+    log_export_->setObjectName(QStringLiteral("log_export"));
+    QObject::connect(log_export_, &QPushButton::clicked, this, [this] {
+        QString path;
+        QString why;
+        if (export_log(&path, &why)) {
+            log_line(QStringLiteral("日志已导出：%1").arg(QDir::toNativeSeparators(path)));
+        } else {
+            // 零静默：**写不出去必须明确报**（日志栏 + 状态栏两处可见）
+            const QString text = QStringLiteral("导出日志失败：%1").arg(why);
+            log_line(text);
+            if (status_label_ != nullptr) status_label_->setText(text);
+        }
+    });
 
     log_panel_ = new QWidget;
     log_panel_->setObjectName(QStringLiteral("log_panel"));
@@ -142,8 +177,26 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     log_panel_layout->setContentsMargins(px(8), px(4), px(8), px(4));
     log_panel_layout->setSpacing(px(6));
     log_panel_layout->addWidget(log_box_, 1);
+    log_panel_layout->addWidget(log_export_, 0);
     log_panel_layout->addWidget(log_clear_, 0);
     log_panel_->setVisible(false);  // 默认折叠
+
+    // ★★ 2026-10-06（③）：**把本次运行的详细日志落盘**（改动前 `set_log_file` 零命中 ⇒
+    //   GUI 日志一条都不落盘）。1.x 口径：`logs/log_YYYYmmdd_HHMMSS.txt`；**挂不上要说**。
+    {
+        const QString log_dir = hub_log_dir();
+        QDir().mkpath(log_dir);
+        log_file_path_ = QDir(log_dir).filePath(
+            QStringLiteral("log_%1.txt")
+                .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"))));
+        xrkit::core::set_log_file(log_file_path_.toStdString());
+        // 1.x A-2：「日志**写不出去**必须让用户看见」——`set_log_file` 自己会静默降级，
+        //   所以这里读它的状态位把话说明白（进日志栏，用户至少知道"这次没有文件可查"）。
+        if (!log_file_active()) {
+            log_line(QStringLiteral("日志无法落盘：%1（本次运行的日志没有保存到文件）")
+                         .arg(QDir::toNativeSeparators(log_file_path_)));
+        }
+    }
 
     log_toggle_ = new QPushButton(QStringLiteral("▸ 日志"));
     log_toggle_->setObjectName(QStringLiteral("log_toggle"));
@@ -242,6 +295,58 @@ PageBase* Hub::page_at(int index) const {
 void Hub::log_line(const QString& text) {
     // 攒批写入（4.4）；用户在日志栏里看到的是它**自己的**条子（4.1）
     if (log_box_ != nullptr) log_box_->append_batched(text);
+}
+
+bool Hub::log_file_active() const { return xrkit::core::log_file_active(); }
+
+// ★★ 2026-10-06（③）：1.x `stalker_toolkit.py:355-373` 的 `export_log()` 等价物 ——
+//   **GUI 简略日志 + 落盘详细日志合并**写一份新文件（文件名 `log_YYYYmmdd_HHMMSS.txt`）。
+// 零静默：① 目录建不出来 / ② 文件打不开 / ③ 详细日志读不回来 —— 全部要**说出来**
+//   （③ 按 1.x 的做法写进导出文件里，① ② 直接返回非空理由让调用方报给用户）。
+bool Hub::export_log(QString* out_path, QString* error) {
+    const auto bail = [this, error](const QString& why) {
+        last_export_error_ = why;
+        if (error != nullptr) *error = why;
+        return false;
+    };
+    const QString dir = hub_log_dir();
+    if (!QDir().mkpath(dir)) {
+        return bail(QStringLiteral("日志目录建不出来：%1").arg(QDir::toNativeSeparators(dir)));
+    }
+    const QString path = QDir(dir).filePath(
+        QStringLiteral("log_%1.txt")
+            .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"))));
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return bail(QStringLiteral("日志文件打不开：%1（%2）")
+                        .arg(QDir::toNativeSeparators(path), file.errorString()));
+    }
+    QTextStream out(&file);
+    out.setEncoding(QStringConverter::Utf8);
+    out << QStringLiteral("═══ 简略日志 (GUI) ═══\n");
+    if (log_box_ != nullptr) {
+        // 先落 pending（80 ms 攒批）—— 否则"刚刚写的那条标记"可能还在缓冲里，导出看不到它。
+        log_box_->flush();
+        out << log_box_->toPlainText();
+    }
+    out << QStringLiteral("\n═══ 详细日志 (%1) ═══\n")
+               .arg(QFileInfo(log_file_path_).fileName());
+    QFile detail(log_file_path_);
+    if (detail.open(QIODevice::ReadOnly)) {
+        out << QString::fromUtf8(detail.readAll());
+    } else {
+        out << QStringLiteral("(详细日志读取失败：%1)\n")
+                   .arg(QDir::toNativeSeparators(log_file_path_));
+    }
+    out.flush();
+    file.close();
+    if (file.error() != QFileDevice::NoError) {
+        return bail(QStringLiteral("日志写盘出错：%1（%2）")
+                        .arg(QDir::toNativeSeparators(path), file.errorString()));
+    }
+    last_export_error_.clear();
+    if (out_path != nullptr) *out_path = path;
+    return true;
 }
 
 void Hub::render_plugin_slots() {

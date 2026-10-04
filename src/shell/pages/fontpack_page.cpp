@@ -126,12 +126,24 @@ FontPackPage::FontPackPage(QWidget* parent)
                                                      const ProgressSink& progress,
                                                      const MessageSink& message) {
             progress(0);
+            // ★ 2026-10-06（①）：本页 worker 也**轮询取消位**。这一支是"开始之前"的边界：
+            //   什么都没写就停 ⇒ 报"一个文件都没写"（绝不留半个产物）。
+            if (task_ != nullptr && task_->cancel_requested()) {
+                message("已取消：生成尚未开始（一个文件都没写）");
+                progress(100);
+                return;
+            }
             QString reason;
             if (!build(xml_dir, font, out, &reason)) {
                 // 11.9：拒绝式检查 —— 这里**没有**任何目录被建出来
                 message(reason.toUtf8().toStdString());
                 progress(100);
                 return;
+            }
+            // 生成中收到取消请求 ⇒ 如实说明**本步骤不可中断**（零静默：不许假装停了）
+            if (task_ != nullptr && task_->cancel_requested()) {
+                message("已取消（请求已记录）：字体打包 + 原子写盘不可中途停止，"
+                        "产物已完整写出；如需撤销请手动删除上条日志里的产物目录。");
             }
             message(QStringLiteral("产物写到 %1/gamedata").arg(out).toUtf8().toStdString());
             progress(100);

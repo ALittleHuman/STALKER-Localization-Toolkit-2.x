@@ -300,9 +300,24 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
     reg.add("fs: 格式下拉用内部键、显示名解析不出来（⑥6.13）", [](CheckContext& ctx) {
         namespace efs = xrkit::engine::fs;
         const std::vector<efs::FsFormatItem>& items = efs::fs_formats();
-        check(ctx, items.size() == 7, "格式表条数不对（6 种 DB + SquashFS）");
+        // ★ 2026-10-06（④）：格式表现在是 **auto + 6 种 DB + SquashFS = 8 条**
+        //   （1.x `fs_app.py:154/193` 的下拉第一项就是 "auto"）。
+        check(ctx, items.size() == 8, "格式表条数不对（auto + 6 种 DB + SquashFS）");
+        check(ctx, !items.empty() && items.front().is_auto &&
+                       efs::format_key_is_auto(items.front().key),
+              "auto 不是格式表第一项（1.x 的下拉默认值就是 auto）");
         int sqfs_count = 0;
+        int auto_count = 0;
         for (const efs::FsFormatItem& item : items) {
+            if (item.is_auto) {
+                ++auto_count;
+                check(ctx, efs::format_key_is_auto(item.key), "auto 键没被认出来");
+                // auto ＝**不给格式**：它不是 DB 格式、也不是 SquashFS
+                check(ctx, !efs::format_key_to_db(item.key).has_value(),
+                      "auto 被当成 DB 格式了");
+                check(ctx, !efs::format_key_is_sqfs(item.key), "auto 被当成 SquashFS 了");
+                continue;
+            }
             if (item.is_sqfs) ++sqfs_count;
             // 内部键必须能解析（sqfs 除外）
             if (item.is_sqfs) {
@@ -318,6 +333,7 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
                   "显示名被当成下拉取值解析了: " + item.label);
         }
         check(ctx, sqfs_count == 1, "SquashFS 在格式表里不是唯一一条");
+        check(ctx, auto_count == 1, "auto 在格式表里不是唯一一条");
         // 历史取值 "sqfs" 继续被识别（老配置/插件条目不能因此失效）
         check(ctx, efs::format_key_is_sqfs("sqfs"), "历史取值 sqfs 不被识别");
     });
@@ -2004,7 +2020,10 @@ int run_cli(const std::vector<std::string>& args) {
         }
 
         std::optional<xrkit::engine::fs::DbFormat> fmt;
-        if (operands.size() >= 2) {
+        // ★ 2026-10-06（1.x `fs_app.py:154` 的下拉默认值就是 "auto"）：CLI 侧要**认** auto，
+        //   且它与"不传格式"必须**逐值等价**（同一条自洽判定；歧义时由引擎**显式拒绝**）。
+        //   判"是不是 auto"只有引擎那一个谓词，别在这里手写字符串比较。
+        if (operands.size() >= 2 && !xrkit::engine::fs::format_key_is_auto(operands[1])) {
             fmt = xrkit::engine::fs::db_format_from_any(operands[1]);
             if (!fmt) {
                 std::cout << "DUMP error reason=未知格式名: " << operands[1] << "\n";
@@ -2157,8 +2176,12 @@ int run_cli(const std::vector<std::string>& args) {
         std::string out_root;
         std::string fmt_operand;
         if (operands.size() >= 2) {
+            // ★ 2026-10-06：`auto` 也算"格式位置上的操作数"（它＝不给格式）——
+            //   否则 `--unpack-package <包> auto` 会把 auto 当成**输出根**（静默错落点）。
             const bool second_is_fmt =
-                xrkit::engine::fs::format_key_to_db(operands[1]).has_value() && operands.size() == 2;
+                (xrkit::engine::fs::format_key_is_auto(operands[1]) ||
+                 xrkit::engine::fs::format_key_to_db(operands[1]).has_value()) &&
+                operands.size() == 2;
             if (second_is_fmt) {
                 fmt_operand = operands[1];
             } else {
@@ -2168,7 +2191,7 @@ int run_cli(const std::vector<std::string>& args) {
             }
         }
         std::optional<xrkit::engine::fs::DbFormat> fallback;
-        if (!fmt_operand.empty()) {
+        if (!fmt_operand.empty() && !xrkit::engine::fs::format_key_is_auto(fmt_operand)) {
             fallback = xrkit::engine::fs::format_key_to_db(fmt_operand);
             if (!fallback.has_value()) {
                 std::cerr << "UNPACK-PKG error reason=不认识的 DB 格式：" << fmt_operand << "\n";
@@ -2558,7 +2581,11 @@ int run_cli(const std::vector<std::string>& args) {
             if (!f.is_dir) item.data = read_all_path(f.full);
             items.push_back(std::move(item));
         }
-        const std::vector<uint8_t> bytes = xrkit::engine::fs::pack_db(items, *fmt);
+        // ★ 2026-10-06（用户红线）：「**不能静默报错，不然出问题了还不知道**」——
+        //   封包侧接住 `utf8_to_cp1251` 的返回值（语义＝"这次编码有没有发生顶替"），
+        //   把**逐条改写清单 + 计数**打出来。**不阻塞、不加 --strict-names**：包照常产出。
+        std::vector<xrkit::engine::fs::DbNameRewrite> rewrites;
+        const std::vector<uint8_t> bytes = xrkit::engine::fs::pack_db(items, *fmt, &rewrites);
         // ★★ 2026-10-04（用户红线「GUI 的功能，CLI 肯定要全部拥有」）：输出 operand **可以是目录、
         //   也可以没有扩展名** ⇒ 与 GUI 走同一条引擎规则补落点与扩展名（`xdb→.xdb.db`、`sqfs→.sqfs`）。
         //   给了带扩展名的完整路径 ⇒ 原样不动（不破坏既有用法）。
@@ -2574,6 +2601,19 @@ int run_cli(const std::vector<std::string>& args) {
                   static_cast<std::streamsize>(bytes.size()));
         out.close();
         std::cout << "PACKDB ok items=" << items.size() << " bytes=" << bytes.size() << "\n";
+        // 名字改写台账（**清零静默**）：只在真发生改写时打，逐条给「源名 → 写进包里的名字」。
+        // 计数行**恒在**（=0 也要说）——"没打印"与"没发生"必须能区分开。
+        if (!rewrites.empty()) {
+            std::cout << "PACKDB warning names_rewritten=" << rewrites.size()
+                      << " reason=cp1251 表示不了的字符被逐码点顶替成 '?'"
+                         "（引擎不认中文名；包照常产出，请核对下列名字）\n";
+            for (const xrkit::engine::fs::DbNameRewrite& r : rewrites) {
+                std::cout << "PACKDB rewrite src=" << r.source << " -> written=" << r.written
+                          << "\n";
+            }
+        } else {
+            std::cout << "PACKDB warning names_rewritten=0\n";
+        }
         return kExitOk;
     }
 

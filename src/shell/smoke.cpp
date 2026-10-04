@@ -2,6 +2,7 @@
 
 #include "xrkit/core/theme.h"
 #include "xrkit/core/version.h"
+#include "xrkit/core/log.h"
 #include "xrkit/engine/fs/db.h"
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/plugin/abi_host.h"
@@ -32,6 +33,7 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -84,8 +86,12 @@
 #include <QWheelEvent>
 #include <QWidget>
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <fstream>
 #include <iterator>
+#include <string>
+#include <thread>
 #include <utility>
 
 namespace xrkit::shell {
@@ -190,6 +196,16 @@ SmokeResult run_smoke() {
             result.failures.append(what);
         }
     };
+
+    // ★★ 2026-10-06（③）：落盘日志的目录 —— **先把自检的落盘目录改成临时目录**，
+    //   免得门禁每跑一次就往构建目录里写一堆 `logs/log_*.txt`。默认口径先在这里钉住。
+    const QString smoke_log_dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_logs"));
+    check(hub_log_dir() == QDir(QCoreApplication::applicationDirPath()).filePath(
+                               QStringLiteral("logs")),
+          QStringLiteral("③ 默认落盘目录 = exe 目录/logs（1.x `app_dir()/logs`；实得 %1）")
+              .arg(hub_log_dir()));
+    QDir(smoke_log_dir).removeRecursively();
+    set_hub_log_dir(smoke_log_dir);
 
     // ① 真实清单 vs 契约（少一页/改个名字都要红）
     {
@@ -1180,6 +1196,63 @@ SmokeResult run_smoke() {
         check(hub.log_panel() != nullptr && !hub.log_panel()->isHidden(),
               QStringLiteral("点折叠按钮后日志面板展开"));
 
+        // ★★ 2026-10-06（③）Hub 日志**落盘 + 导出**（1.x `stalker_toolkit.py:355-391`）——
+        //   改动前 `导出` / `set_log_file` 在 hub.cpp 里**零命中** ⇒ GUI 日志一条都不落盘。
+        {
+            // 先把 `core::set_log_file` 的全局状态**清空**再建 Hub：
+            // 这样"Hub 构造期挂了落盘文件"这条判据就是**在测 Hub 自己**（拆掉 ctor 里那行 ⇒ 红），
+            // 而不是被上一个 Hub 顺手挂上的状态兜着。
+            xrkit::core::set_log_file(std::string());
+            Hub log_hub;
+            check(!log_hub.log_file_path().isEmpty() && log_hub.log_file_active() &&
+                      QFile::exists(log_hub.log_file_path()),
+                  QStringLiteral("③ Hub 启动即挂上落盘日志（%1，active=%2）")
+                      .arg(log_hub.log_file_path())
+                      .arg(log_hub.log_file_active() ? 1 : 0));
+            check(log_hub.log_export_button() != nullptr,
+                  QStringLiteral("③ 日志面板里有「导出日志」按钮"));
+            // 写一条**标记**：内存日志（日志栏）与落盘日志（core::log）两条通道都走
+            const QString marker =
+                QStringLiteral("SMOKE-MARKER-EXPORT-LOG-%1")
+                    .arg(QDateTime::currentMSecsSinceEpoch());
+            log_hub.log_line(marker);
+            xrkit::core::log(xrkit::core::Level::Info, marker.toStdString());
+            QString exported;
+            QString why;
+            const bool export_ok = log_hub.export_log(&exported, &why);
+            check(export_ok && QFile::exists(exported),
+                  QStringLiteral("③ 导出日志文件存在（%1；失败理由「%2」）").arg(exported, why));
+            check(QFileInfo(exported).fileName().startsWith(QStringLiteral("log_")) &&
+                      QFileInfo(exported).suffix() == QStringLiteral("txt"),
+                  QStringLiteral("③ 导出文件名口径 = logs/log_YYYYmmdd_HHMMSS.txt（实得 %1）")
+                      .arg(QFileInfo(exported).fileName()));
+            QString body;
+            {
+                QFile file(exported);
+                if (file.open(QIODevice::ReadOnly)) body = QString::fromUtf8(file.readAll());
+            }
+            check(body.contains(marker) && body.contains(QStringLiteral("简略日志")) &&
+                      body.contains(QStringLiteral("详细日志")),
+                  QStringLiteral("③ 导出内容 = 内存日志 + 落盘日志**合并**（含刚写的标记；%1 字节）")
+                      .arg(body.size()));
+            // 写失败必须**明确报**：把落盘目录指到一个**文件**下面（mkpath 必失败）
+            const QString blocker =
+                QDir::temp().filePath(QStringLiteral("xrkit_smoke_log_blocker.txt"));
+            {
+                QFile file(blocker);
+                if (file.open(QIODevice::WriteOnly)) file.write("x");
+            }
+            set_hub_log_dir(blocker + QStringLiteral("/logs"));
+            QString bad_path;
+            QString bad_why;
+            const bool bad_ok = log_hub.export_log(&bad_path, &bad_why);
+            check(!bad_ok && !bad_why.isEmpty() && !log_hub.last_export_error().isEmpty(),
+                  QStringLiteral("③ 路径不可写 ⇒ 返回 false 且错误文本非空（实得「%1」）").arg(bad_why));
+            set_hub_log_dir(smoke_log_dir);
+            QFile::remove(blocker);
+            QFile::remove(exported);
+        }
+
         // ★ 6.x 排版口径（用户 2026-09-27："排版有很大问题"）—— **几何断言，不看截图**。
         //   为什么用 SplitPane 夹具而不是 Hub：离屏下 **Hub 的几何不落地**（实测子控件高度为 0），
         //   而真正决定比例的机制就是 SplitPane 的分配算法（富余给谁、受不受上限约束）。
@@ -1273,6 +1346,95 @@ SmokeResult run_smoke() {
               QStringLiteral("13.4 失败文案回主线程（实测 %1）").arg(task2.status()));
         result.notes.append(QStringLiteral("13.3 事件序列 = %1（p=进度 m=消息 e=错误 f=结束）")
                                 .arg(order));
+
+        // ★★ 2026-10-06（①）取消：**真停 + 留痕 + 理由可见**
+        //   事实（改动前）：`task_shell.cpp` 里 `cancel_->setEnabled(...)` 三处、
+        //   **一处 `connect` 都没有** ⇒ 六页那颗「取消」是一颗**死按钮**。
+        {
+            // ⚠ 声明顺序：worker 线程按引用捕获下面这几个原子 ⇒ 它们必须**先于** TaskShell
+            //   声明（TaskShell 的析构会 join 线程；后声明的先销毁 ⇒ 反了就是 use-after-free）。
+            std::atomic<bool> worker_stopped{false};
+            std::atomic<int> steps{0};
+            TaskShell cancel_shell;
+            cancel_shell.set_idle_status(QStringLiteral("就绪"));
+            check(cancel_shell.run(
+                      QStringLiteral("长任务"),
+                      [&cancel_shell, &worker_stopped, &steps](const ProgressSink& progress,
+                                                               const MessageSink& message) {
+                          for (int i = 0; i < 400; ++i) {
+                              if (cancel_shell.cancel_requested()) {
+                                  message("已取消：在循环边界停下（已跑 " + std::to_string(i) +
+                                          " 步）");
+                                  worker_stopped = true;
+                                  return;
+                              }
+                              steps = i;
+                              std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                              progress(i * 100 / 400);
+                          }
+                      }),
+                  QStringLiteral("① 取消：长任务起得来（13.1 闸门不变）"));
+            QElapsedTimer cancel_clock;
+            cancel_clock.start();
+            while (steps.load() < 3 && cancel_clock.elapsed() < 5000) {
+                QApplication::processEvents();
+                QThread::msleep(5);
+            }
+            check(cancel_shell.cancel_button() != nullptr &&
+                      cancel_shell.cancel_button()->isEnabled(),
+                  QStringLiteral("① 取消：跑起来时按钮可点（实得 enabled=%1）")
+                      .arg(cancel_shell.cancel_button() != nullptr &&
+                                   cancel_shell.cancel_button()->isEnabled()
+                               ? 1
+                               : 0));
+            // 点那颗**以前是死的**按钮
+            if (cancel_shell.cancel_button() != nullptr) cancel_shell.cancel_button()->click();
+            check(cancel_shell.cancel_requested() && cancel_shell.cancel_requests() == 1,
+                  QStringLiteral("① 取消：点按钮真的置上取消位（requests=%1）")
+                      .arg(cancel_shell.cancel_requests()));
+            cancel_clock.restart();
+            while (cancel_shell.running() && cancel_clock.elapsed() < 5000) {
+                QApplication::processEvents();
+                QThread::msleep(5);
+            }
+            const qint64 stop_ms = cancel_clock.elapsed();
+            check(!cancel_shell.running() && worker_stopped.load() && stop_ms < 2000,
+                  QStringLiteral("① 取消：点后 worker 在 %1 ms 内退出（真停；已跑 %2 步）")
+                      .arg(stop_ms)
+                      .arg(steps.load()));
+            bool saw_cancel_event = false;
+            for (const TaskShell::Event& e : cancel_shell.take_events()) {
+                if (e.kind == 'c') saw_cancel_event = true;
+            }
+            check(saw_cancel_event, QStringLiteral("① 取消：事件流里留痕（'c'）"));
+            check(!cancel_shell.cancel_reason().isEmpty() &&
+                      cancel_shell.status().contains(QStringLiteral("已取消")) &&
+                      cancel_shell.status() == cancel_shell.cancel_reason(),
+                  QStringLiteral("① 取消：理由可见且**优先收尾**（状态栏＝「%1」）")
+                      .arg(cancel_shell.status()));
+            check(cancel_shell.cancel_button() != nullptr &&
+                      !cancel_shell.cancel_button()->isEnabled() &&
+                      cancel_shell.cancel_button()->text() == QStringLiteral("取消"),
+                  QStringLiteral("① 取消：收尾后按钮复位（disabled + 文案回「取消」）"));
+            result.notes.append(
+                QStringLiteral("① 取消：点后 %1 ms 内真停（已跑 %2 步；理由＝%3）")
+                    .arg(stop_ms)
+                    .arg(steps.load())
+                    .arg(cancel_shell.cancel_reason()));
+            // 反向：**没点取消**的正常任务不许被这位置位
+            std::atomic<int> ran{0};
+            TaskShell plain_shell;
+            plain_shell.run(QStringLiteral("跑完"), [&ran](const ProgressSink&, const MessageSink&) {
+                ++ran;
+            });
+            for (int i = 0; i < 200 && plain_shell.running(); ++i) {
+                QThread::msleep(5);
+                QApplication::processEvents();
+            }
+            check(ran.load() == 1 && !plain_shell.cancel_requested() &&
+                      plain_shell.cancel_requests() == 0,
+                  QStringLiteral("① 取消：没点取消时取消位恒为假（反向锁）"));
+        }
     }
 
     // ⑩ 虚拟化列表（M2-5）：对照表 10.2 的范围规则 + 10.3 的同族原则（只对视口内行取文本）。
@@ -1509,13 +1671,62 @@ SmokeResult run_smoke() {
         const std::vector<efs::FsFormatItem>& formats = efs::fs_formats();
         check(combo != nullptr && combo->count() == static_cast<int>(formats.size()),
               QStringLiteral("6.13 格式下拉条数 = 格式表条数（%1）").arg(formats.size()));
+        // ★★ 2026-10-06（④）：1.x `fs_app.py:154` 的默认值就是 "auto"、`:193` 的
+        //   `fmt_keys` 第一位也是 "auto" ⇒ 2.x 补上它，且**必须在第一项**。
+        check(combo != nullptr && combo->itemData(0).toString() == QStringLiteral("auto"),
+              QStringLiteral("6.13 auto 是格式下拉第一项（实得 %1）")
+                  .arg(combo != nullptr ? combo->itemData(0).toString() : QStringLiteral("<无下拉>")));
+        check(efs::format_key_is_auto("auto") && !efs::format_key_to_db("auto").has_value() &&
+                  !efs::format_key_is_sqfs("auto"),
+              QStringLiteral("6.13 auto ＝**不给格式**（既不是 DB 六格式、也不是 SquashFS）"));
+        // ④ 锁②：选 auto ⇒ 交给引擎的 fallback 就是 `nullopt`（与"不传格式"同一条路）
+        check(!efs::format_key_to_db(combo->currentData().toString().toStdString()).has_value(),
+              QStringLiteral("6.13 选 auto ⇒ 不传格式（fallback=nullopt）"));
+        // ② 说明标签：非空、选 auto 时含"自动检测"、换成具体格式后**跟着变**
+        {
+            const QString auto_hint = page.format_hint_text();
+            check(page.format_hint() != nullptr && !auto_hint.isEmpty() &&
+                      auto_hint.contains(QStringLiteral("自动检测")),
+                  QStringLiteral("6.13 选 auto ⇒ 说明标签非空且说明是「自动检测」（实得 %1）")
+                      .arg(auto_hint));
+            QString other_hint;
+            if (combo != nullptr && combo->count() > 1) {
+                combo->setCurrentIndex(1);
+                other_hint = page.format_hint_text();
+                combo->setCurrentIndex(0);
+            }
+            check(!other_hint.isEmpty() && other_hint != auto_hint &&
+                      page.format_hint() != nullptr &&
+                      page.format_hint()->text() == auto_hint,
+                  QStringLiteral("6.13 说明标签随所选格式变化（auto=「%1」/ 具体=「%2」）")
+                      .arg(auto_hint, other_hint));
+        }
+        // ④ 封包下拉**不含 auto**（1.x `fs_app.py:196` `[k for k in fmt_keys if k != "auto"]`）
+        {
+            int auto_items = 0;
+            QComboBox* pack_combo = page.pack_format_combo();
+            for (int i = 0; pack_combo != nullptr && i < pack_combo->count(); ++i) {
+                if (efs::format_key_is_auto(pack_combo->itemData(i).toString().toStdString())) {
+                    ++auto_items;
+                }
+            }
+            check(pack_combo != nullptr && auto_items == 0 &&
+                      pack_combo->count() == static_cast<int>(formats.size()) - 1,
+                  QStringLiteral("6.13 封包下拉 = 非 auto 的全部格式（auto 项 %1、条数 %2 / 期望 %3）")
+                      .arg(auto_items)
+                      .arg(pack_combo != nullptr ? pack_combo->count() : -1)
+                      .arg(static_cast<int>(formats.size()) - 1));
+        }
         int key_bad = 0;
         int sqfs_items = 0;
         for (int i = 0; combo != nullptr && i < combo->count(); ++i) {
             const std::string key = combo->itemData(i).toString().toStdString();
             const std::string label = combo->itemText(i).toStdString();
-            const bool key_ok =
-                efs::format_key_is_sqfs(key) || efs::format_key_to_db(key).has_value();
+            // ★ 2026-10-06（④）：`auto` 也是一个**引擎认得的内部键**（它＝不给格式），
+            //   所以"取值合法性"这条判据要把它算进来（`format_key_to_db` 仍不认它 —— 见上）。
+            const bool key_ok = efs::format_key_is_sqfs(key) ||
+                                efs::format_key_to_db(key).has_value() ||
+                                efs::format_key_is_auto(key);
             // 显示名**不该**能被当成取值解析（这就是那个事故的判据）
             const bool label_resolves =
                 efs::format_key_is_sqfs(label) || efs::format_key_to_db(label).has_value();
@@ -2911,6 +3122,15 @@ SmokeResult run_smoke() {
                 // 里面放一个**真 XDB 包**（用引擎自己打的），验证"包内容也摊进树里"
                 {
                     std::vector<efs::DbPackItem> items;
+                    // ★ 2026-10-06（④）：格式下拉的**默认值现在是 auto**（1.x `fs_app.py:154`
+                    //   `tk.StringVar(value="auto")`）⇒ 判定不再被"默认 xdb"兜着，而是走
+                    //   引擎的**自洽判定**（歧义时显式拒绝，这是既有正确行为）。
+                    //   夹具必须像**工具自己产出的包**那样带上目录条目：只有一条文件条目的
+                    //   60 字节包在六种 DB 格式里**本来就分不开**（那是夹具不真实，不是回归）。
+                    efs::DbPackItem dir_item;
+                    dir_item.path = "gamedata";
+                    dir_item.is_dir = true;
+                    items.push_back(dir_item);
                     efs::DbPackItem one;
                     one.path = "gamedata/from_package.txt";   // CoP：包里的路径本身就带 gamedata 前缀
                     one.is_dir = false;
@@ -3857,6 +4077,60 @@ SmokeResult run_smoke() {
               QStringLiteral("⑦ 前缀透传（%1 vs %2）")
                   .arg(QString::fromStdString(first.texts_xml_name))
                   .arg(QString::fromStdString(other_prefix.texts_xml_name)));
+
+        // ★★ 2026-10-06（②）统计框三行：`gameplay / scripts / 总计`
+        //   （1.x `text_extract_app.py:647-656` 的 `stat_grid` + `:725-729` 写值）
+        //   ① 真跑一遍：标签上的数字必须**来自引擎给的 `ExtractStats`**（页面不自己数）
+        {
+            const etxt::ExtractStats real = page.extract_one(
+                root + QStringLiteral("/scripts"), root + QStringLiteral("/out_d"),
+                QStringLiteral("smoke"), QStringLiteral("smoke_sc_0"), true);
+            // 与 worker 里那条 `QMetaObject::invokeMethod(... note_stats ...)` 是**同一条入口**
+            page.note_stats(real);
+            const QStringList lines = page.stats_text().split(QLatin1Char('\n'));
+            check(real.ok && lines.size() == 3 && lines[1].startsWith(QStringLiteral("scripts")) &&
+                      lines[1].contains(QString::number(static_cast<qulonglong>(real.strings))) &&
+                      lines[1].contains(QString::number(static_cast<qulonglong>(real.files))) &&
+                      lines[1].contains(QString::number(static_cast<qulonglong>(real.chars))) &&
+                      page.stats_label() != nullptr &&
+                      page.stats_label()->text() == page.stats_text(),
+                  QStringLiteral("② 真提取后 scripts 行 = ExtractStats（strings=%1 files=%2 chars=%3 →「%4」）")
+                      .arg(real.strings)
+                      .arg(real.files)
+                      .arg(real.chars)
+                      .arg(lines.size() > 1 ? lines[1] : QString()));
+        }
+        //   ② 固定夹具：三行数字**逐字段**对得上（把某一行删掉 ⇒ 立刻红）
+        {
+            etxt::ExtractStats gp;
+            gp.ok = true;
+            gp.kind = etxt::ExtractKind::Gameplay;
+            gp.files = 7;
+            gp.strings = 11;
+            gp.chars = 1234;
+            etxt::ExtractStats sc;
+            sc.ok = true;
+            sc.kind = etxt::ExtractKind::Scripts;
+            sc.files = 3;
+            sc.strings = 5;
+            sc.chars = 66;
+            page.note_stats(gp);
+            page.note_stats(sc);
+            const QStringList lines = page.stats_text().split(QLatin1Char('\n'));
+            check(lines.size() == 3 && lines[0].startsWith(QStringLiteral("gameplay")) &&
+                      lines[1].startsWith(QStringLiteral("scripts")) &&
+                      lines[2].startsWith(QStringLiteral("总计")),
+                  QStringLiteral("② 统计框**三行**：gameplay / scripts / 总计（实得 %1 行）")
+                      .arg(lines.size()));
+            check(lines.size() == 3 &&
+                      lines[0] == QStringLiteral("gameplay：11 字符串 · 7 文件 · 1234 字符") &&
+                      lines[1] == QStringLiteral("scripts：5 字符串 · 3 文件 · 66 字符"),
+                  QStringLiteral("② 三行数字逐字段 = ExtractStats（实得「%1」/「%2」）")
+                      .arg(lines.value(0), lines.value(1)));
+            check(lines.size() == 3 &&
+                      lines[2] == QStringLiteral("总计：16 字符串 · 10 文件 · 1300 字符"),
+                  QStringLiteral("② 总计 = 两支逐字段之和（实得「%1」）").arg(lines.value(2)));
+        }
         QDir(root).removeRecursively();
     }
 
@@ -3976,6 +4250,66 @@ SmokeResult run_smoke() {
         const QString detail = page.detail_text(0);
         check(detail.contains(QStringLiteral("id=\"")) || detail.contains(QStringLiteral("仅")),
               QStringLiteral("⑩10.3 完整明细在需要时才给（%1）").arg(detail.left(40)));
+
+        // ★★ 2026-10-06（⑤）三个小件：清除 / 统计标签（文件夹名）/ CSV 真实时间
+        //   ① 「清除」（1.x `:391-392` + `_clear_entries` `:514-518`）：清两个目录栏
+        {
+            check(page.clear_button() != nullptr, QStringLiteral("⑤ 页面上有「清除」按钮"));
+            page.dir_a_edit()->setText(QStringLiteral("E:/somewhere/a"));
+            page.dir_b_edit()->setText(QStringLiteral("E:/somewhere/b"));
+            if (page.clear_button() != nullptr) page.clear_button()->click();
+            check(page.dir_a_edit()->text().isEmpty() && page.dir_b_edit()->text().isEmpty(),
+                  QStringLiteral("⑤ 清除后两栏为空（实得「%1」/「%2」）")
+                      .arg(page.dir_a_edit()->text(), page.dir_b_edit()->text()));
+            // 复位成"刚比较过的那两个目录"（后面的名字/CSV 判据要用）
+            page.dir_a_edit()->setText(root + QStringLiteral("/a"));
+            page.dir_b_edit()->setText(root + QStringLiteral("/b"));
+        }
+        //   ② 统计标签：`一致 N | 不一致 N | 仅 {A名} N | 仅 {B名} N`，且**用文件夹名**
+        {
+            const QString stats = page.stats_text();
+            check(stats == QStringLiteral("一致 2  |  不一致 1  |  仅 a 1  |  仅 b 0"),
+                  QStringLiteral("⑤ 统计标签逐字段对得上夹具（实得「%1」）").arg(stats));
+            check(stats.contains(QStringLiteral("仅 a ")) &&
+                      stats.contains(QStringLiteral("仅 b ")),
+                  QStringLiteral("⑤ 统计标签用**文件夹名**（a / b），不是字面量 A/B"));
+            check(page.stats_label() != nullptr && page.stats_label()->text() == stats,
+                  QStringLiteral("⑤ 统计标签真的挂在界面上"));
+        }
+        //   ③ CSV：生成时间 = **真实时间**（不是 1970）；统计行用文件夹名
+        {
+            const QString csv2 = root + QStringLiteral("/out_auto.csv");
+            check(page.export_csv_auto(csv2), QStringLiteral("⑤ CSV 自动时间导出成功"));
+            QFile file(csv2);
+            QString body;
+            if (file.open(QIODevice::ReadOnly)) body = QString::fromUtf8(file.readAll());
+            const QStringList lines = body.split(QStringLiteral("\r\n"));
+            const QString stamp_line =
+                lines.size() > 1 ? lines[1] : QString();   // "生成时间: yyyy-MM-dd HH:mm:ss"
+            const QString stamp = stamp_line.section(QStringLiteral(": "), 1);
+            const QDateTime parsed = QDateTime::fromString(stamp, QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+            check(!stamp.isEmpty() && !stamp.startsWith(QStringLiteral("1970")) && parsed.isValid() &&
+                      qAbs(parsed.secsTo(QDateTime::currentDateTime())) < 3600,
+                  QStringLiteral("⑤ CSV 生成时间 = 真实时间且可解析（实得「%1」）").arg(stamp));
+            check(body.contains(QStringLiteral("一致: 2 | 不一致: 1 | 仅 a: 1 | 仅 b: 0")),
+                  QStringLiteral("⑤ CSV 统计行用文件夹名（含「仅 a: 1 | 仅 b: 0」）"));
+        }
+        //   ④ ①（取消）：compare_dirs 在每个文件之前轮询 ⇒ 停在文件边界、行数＝已比较数
+        {
+            std::atomic<int> seen{0};
+            const int stopped =
+                page.compare_dirs(root + QStringLiteral("/a"), root + QStringLiteral("/b"),
+                                  QStringLiteral("auto"), QStringLiteral("auto"),
+                                  [&seen]() { return seen.fetch_add(1) >= 2; });
+            check(page.last_compare_cancelled() && stopped == 2 && page.last_compare_total() == 4,
+                  QStringLiteral("① XML 取消：停在文件边界（已比较 %1 / 共 %2，cancelled=%3）")
+                      .arg(stopped)
+                      .arg(page.last_compare_total())
+                      .arg(page.last_compare_cancelled() ? 1 : 0));
+            // 恢复：重跑一次不取消，后面的判据不受影响
+            page.compare_dirs(root + QStringLiteral("/a"), root + QStringLiteral("/b"),
+                              QStringLiteral("auto"), QStringLiteral("auto"));
+        }
         QDir(root).removeRecursively();
     }
 

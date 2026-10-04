@@ -152,6 +152,11 @@ struct XmlCsvReport {
     std::string mode_name;      // 显示名（导出表头用）
     std::string folder_a;
     std::string folder_b;
+    // ★ 2026-10-06（1.x `xml_compare_app.py:675-676 / 1321`）：统计行里用的是**文件夹名**
+    //   （`self.name_a = root_a.name`），不是字面量 "A"/"B"。留空 ⇒ 退回 "A"/"B"
+    //   （CLI 的 CSV 探针不设它 ⇒ 那份参照逐字节不变）。
+    std::string name_a;
+    std::string name_b;
     std::string enc_a = "auto";
     std::string enc_b = "auto";
     std::string filter_label;

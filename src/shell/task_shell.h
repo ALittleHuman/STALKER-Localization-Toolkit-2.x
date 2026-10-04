@@ -13,6 +13,7 @@
 #include <QObject>
 #include <QString>
 #include <QVector>
+#include <atomic>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -62,8 +63,22 @@ public:
     void report_error(const std::string& text);
     void finish(const QString& final_status = QString());
 
+    // ── ★ 2026-10-06 取消（①，用户红线：真停 + 留痕 + 理由可见）─────────────
+    // 事实（改动前）：`cancel_->setEnabled(...)` 只有三处，**全文件没有 connect**
+    //   ⇒ 六页那颗「取消」按钮是一个**死按钮**（点了什么都不发生，也不留任何痕迹）。
+    // 口径：
+    //   · 点「取消」＝ 置一个**取消请求位**（原子；工作线程只读它，不碰 UI）；
+    //   · worker 在**自己的循环边界**轮询 `cancel_requested()`，自己决定停在哪儿，
+    //     并把"停在哪、已处理多少、半成品怎么处理"**报出来**（零静默）；
+    //   · 壳保证"请求"这件事**一定留痕**：事件流里记一条 `c`，状态栏立刻显示理由，
+    //     收尾时**取消理由优先**（不会被 worker 的最后一句或 idle 文案盖掉）。
+    void request_cancel(const QString& reason = QString());
+    bool cancel_requested() const { return cancel_requested_.load(); }
+    QString cancel_reason() const;
+    int cancel_requests() const { return cancel_requests_.load(); }
+
     int last_progress() const { return last_progress_; }
-    // 事件序列（自检用）：p=进度 / m=消息 / e=错误 / f=结束；并记下**到达时的线程**
+    // 事件序列（自检用）：p=进度 / m=消息 / e=错误 / c=取消请求 / f=结束；并记下**到达时的线程**
     struct Event {
         char kind;
         int value;
@@ -95,6 +110,11 @@ private:
     QVector<Event> events_;
     std::vector<std::thread> threads_;
     std::function<void(const QString&)> message_handler_;
+
+    // ★ 取消位：**工作线程要读** ⇒ 必须是原子的；理由只在主线程读写。
+    std::atomic<bool> cancel_requested_{false};
+    std::atomic<int> cancel_requests_{0};
+    QString cancel_reason_;
 };
 
 }  // namespace xrkit::shell

@@ -177,9 +177,14 @@ struct FsSelection {
 // ── 6.13 格式下拉 ────────────────────────────────────────────────────
 
 struct FsFormatItem {
-    std::string key;    // **下拉的取值**（内部键，如 "xdb" / "sqfs"）
+    std::string key;    // **下拉的取值**（内部键，如 "auto" / "xdb" / "sqfs"）
     std::string label;  // 用户可见名（如 "XDB (CS/CoP)" / "SquashFS"）
     bool is_sqfs = false;
+    // ★ 2026-10-06（1.x `fs_app.py:154` 的默认值就是 `tk.StringVar(value="auto")`）：
+    //   **"auto" = 不给格式** —— 走自洽判定（歧义时**显式拒绝**，那是既有正确行为，不改）。
+    //   它既不是 DB 格式也不是 SquashFS ⇒ `format_key_to_db` / `format_key_is_sqfs`
+    //   都**不认**它；要判它只走 `format_key_is_auto`（一个谓词，别在两处各判一次）。
+    bool is_auto = false;
 };
 
 const std::vector<FsFormatItem>& fs_formats();
@@ -189,6 +194,9 @@ const std::vector<FsFormatItem>& fs_formats();
 // → SquashFS 被静默按 xdb 打包。自检拿显示名喂进来看它必须解析不出来。
 std::optional<DbFormat> format_key_to_db(const std::string& key);
 bool format_key_is_sqfs(const std::string& key);
+// "auto" 这一项：**不给格式**（等价于格式参数缺省）。两条读侧入口据此把"用户选的
+// auto"与"没给格式"**收敛成同一条路**，而不是各自写一遍 `if (key == "auto")`。
+bool format_key_is_auto(const std::string& key);
 
 // ── 6.12 目录条目 ────────────────────────────────────────────────────
 

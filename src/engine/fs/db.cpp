@@ -822,10 +822,20 @@ DbExtract extract_entry_seek(const std::string& path, const DbEntry& entry) {
 
 namespace {
 
+// ★ 2026-10-06：接住 `utf8_to_cp1251` 的返回值（它的语义已经是"这次编码**有没有发生顶替**"），
+//   发生顶替 ⇒ 把「源名 → 实际写进包里的名字」记进台账（`log` 可空）。
+//   为什么记"写进去的那个名字"而不是只记源名：用户要能对得上产物（`?` 顶替后长什么样）。
+void note_rewrite(const std::string& name, const std::vector<uint8_t>& nb, bool clean,
+                  std::vector<DbNameRewrite>* log) {
+    if (clean || log == nullptr) return;
+    log->push_back({name, cp1251_to_utf8(nb.data(), nb.size())});
+}
+
 void append_entry_xdb(std::vector<uint8_t>& h, const std::string& name, uint32_t sr, uint32_t sc,
-                      uint32_t crc, uint32_t off) {
+                      uint32_t crc, uint32_t off, std::vector<DbNameRewrite>* log) {
     std::vector<uint8_t> nb;
-    utf8_to_cp1251(name, nb);
+    const bool clean = utf8_to_cp1251(name, nb);
+    note_rewrite(name, nb, clean, log);
     put16(h, static_cast<uint16_t>(nb.size() + 16));
     put32(h, sr);
     put32(h, sc);
@@ -835,26 +845,28 @@ void append_entry_xdb(std::vector<uint8_t>& h, const std::string& name, uint32_t
 }
 
 void append_entry_null(std::vector<uint8_t>& h, const std::string& name,
-                       const std::vector<uint32_t>& fields) {
+                       const std::vector<uint32_t>& fields, std::vector<DbNameRewrite>* log) {
     std::vector<uint8_t> nb;
-    utf8_to_cp1251(name, nb);
+    const bool clean = utf8_to_cp1251(name, nb);
+    note_rewrite(name, nb, clean, log);
     h.insert(h.end(), nb.begin(), nb.end());
     h.push_back(0);
     for (uint32_t v : fields) put32(h, v);
 }
 
-std::vector<uint8_t> build_header(const std::vector<DbPackItem>& items, DbFormat fmt) {
+std::vector<uint8_t> build_header(const std::vector<DbPackItem>& items, DbFormat fmt,
+                                 std::vector<DbNameRewrite>* log) {
     std::vector<uint8_t> h;
     uint32_t off = 8;  // file-absolute offset（在 DATA chunk 头之后）
     for (const DbPackItem& it : items) {
         const uint32_t sz = static_cast<uint32_t>(it.data.size());
         if (it.is_dir) {
             if (fmt == DbFormat::Xdb || fmt == DbFormat::Ru2947 || fmt == DbFormat::Ww2947) {
-                append_entry_xdb(h, it.path + "\\", 0, 0, 0, 0);
+                append_entry_xdb(h, it.path + "\\", 0, 0, 0, 0, log);
             } else if (fmt == DbFormat::F2945) {
-                append_entry_null(h, it.path + "\\", {0, 0, 0, 0});
+                append_entry_null(h, it.path + "\\", {0, 0, 0, 0}, log);
             } else if (fmt == DbFormat::F2215) {
-                append_entry_null(h, it.path + "\\", {0, 0, 0});
+                append_entry_null(h, it.path + "\\", {0, 0, 0}, log);
             } else {
                 // ★ 2026-10-05：11xx 的目录条目**三个字段必须全零**。
                 //   曾经写 `{1, 0, 0}`（第 1 字段＝`uncompressed`/标志位）——那是**非法**写法：
@@ -865,17 +877,17 @@ std::vector<uint8_t> build_header(const std::vector<DbPackItem>& items, DbFormat
                 //     而 `dir\`+(1,0,0)、`dir\`+(1,0,1)、以及把它排在文件之前 ⇒ 一律栈溢出。
                 //   取 `{0,0,0}` 而不是"干脆不写"：**保留目录条目 ⇒ 不丢空目录信息**。
                 //   读侧不用改：`fmt_11xx` 用 `is_dir = (offset == 0)`，两种写法都判为目录。
-                append_entry_null(h, it.path + "\\", {0, 0, 0});
+                append_entry_null(h, it.path + "\\", {0, 0, 0}, log);
             }
         } else {
             if (fmt == DbFormat::Xdb || fmt == DbFormat::Ru2947 || fmt == DbFormat::Ww2947) {
-                append_entry_xdb(h, it.path, sz, sz, 0, off);
+                append_entry_xdb(h, it.path, sz, sz, 0, off, log);
             } else if (fmt == DbFormat::F2945) {
-                append_entry_null(h, it.path, {0, off, sz, sz});
+                append_entry_null(h, it.path, {0, off, sz, sz}, log);
             } else if (fmt == DbFormat::F2215) {
-                append_entry_null(h, it.path, {off, sz, sz});
+                append_entry_null(h, it.path, {off, sz, sz}, log);
             } else {
-                append_entry_null(h, it.path, {1, off, sz});
+                append_entry_null(h, it.path, {1, off, sz}, log);
             }
             off += sz;
         }
@@ -885,7 +897,8 @@ std::vector<uint8_t> build_header(const std::vector<DbPackItem>& items, DbFormat
 
 }  // namespace
 
-std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& in_items, DbFormat fmt) {
+std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& in_items, DbFormat fmt,
+                             std::vector<DbNameRewrite>* rewrites) {
     std::vector<DbPackItem> items;
     items.reserve(in_items.size());
     for (const DbPackItem& it : in_items) {
@@ -896,7 +909,8 @@ std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& in_items, DbFormat f
         items.push_back(std::move(copy));
     }
 
-    std::vector<uint8_t> header = build_header(items, fmt);
+    if (rewrites != nullptr) rewrites->clear();
+    std::vector<uint8_t> header = build_header(items, fmt, rewrites);
     std::vector<uint8_t> compressed = lzhuf_encode(header.data(), header.size());
     if (const Scrambler* sc = scrambler_for(fmt)) compressed = sc->encrypt(compressed);
 

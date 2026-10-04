@@ -17,6 +17,7 @@
 
 #include <QString>
 
+#include <functional>
 #include <vector>
 
 class QCheckBox;
@@ -36,12 +37,22 @@ public:
     // ⑦7.1/7.5：**直接返回引擎给的理由**（空串＝通过）。页面不重复实现判据。
     QString validate(const QString& source_dir, const QString& target_dir) const;
 
-    // 跑一个分支（界面与自检共用同一条入口）
+    // 跑一个分支（界面与自检共用同一条入口）。`should_stop` 非空 ⇒ 引擎在**文件边界**
+    // 轮询它（①：取消要真停；停在哪由引擎按文件边界决定，产物不会半截）。
     engine::text::ExtractStats extract_one(const QString& source_dir, const QString& target_dir,
                                            const QString& prefix, const QString& id_prefix,
-                                           bool clean);
+                                           bool clean,
+                                           const std::function<bool()>& should_stop = {});
 
     void add_row(const QString& text);
+    // ── ★ 2026-10-06（②）统计框三行（1.x `text_extract_app.py:647-656` 的
+    //   `stat_grid([("gameplay",…),("scripts",…),("总计",…)])`，写值在 `:725-729`）──
+    //   gameplay / scripts / 总计，数字**逐字段来自 `ExtractStats`**（引擎给的那一份，
+    //   页面不自己数）。1.x 一次跑两个分支，2.x 一次只跑一个（源目录名决定）⇒ 这里**累加**：
+    //   跑过 gameplay 就填 gameplay 那一行，总计＝两行之和。
+    void note_stats(const engine::text::ExtractStats& stats);
+    QString stats_text() const;
+    QLabel* stats_label() const { return stats_label_; }
     QLineEdit* source_edit() const { return source_edit_; }
     QLineEdit* target_edit() const { return target_edit_; }
     QLineEdit* prefix_edit() const { return prefix_edit_; }
@@ -67,6 +78,10 @@ private:
     VirtualList* rows_ = nullptr;
     TaskShell* task_ = nullptr;
     QLabel* status_ = nullptr;
+    QLabel* stats_label_ = nullptr;
+    // 三个统计格子的真值（**只由 `note_stats` 写** ⇒ 界面上看到的数与引擎给的是同一份）
+    engine::text::ExtractStats stats_gameplay_;
+    engine::text::ExtractStats stats_scripts_;
     std::vector<QString> row_texts_;
 };
 

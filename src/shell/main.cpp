@@ -7,6 +7,7 @@
 
 #include "xrkit/core/theme.h"
 #include "hub.h"
+#include "log_box.h"
 #include "pages/fs_page.h"
 #include "pages/page_base.h"
 #include "pages/video_page.h"
@@ -19,9 +20,11 @@
 #include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QHeaderView>
+#include <QLabel>
 #include <QLayout>
 #include <QLineEdit>
 #include <QPixmap>
+#include <QPushButton>
 #include <QScreen>
 #include <QStringList>
 #include <QTextStream>
@@ -74,6 +77,10 @@ int main(int argc, char** argv) {
     const int vout_arg = args.indexOf(QStringLiteral("--video-out"));
     const QString video_out =
         (vout_arg >= 0 && vout_arg + 1 < args.size()) ? args[vout_arg + 1] : QString();
+    // ★ 2026-10-06：`--log-open` —— 抓图前把底部日志抽屉**展开**。
+    //   为什么需要它：D1 批给日志面板加了「导出日志」（原来只有「清空」），而抽屉默认
+    //   折叠 ⇒ 只看截图根本看不见那颗新按钮。与 `--filter`/`--video-in` 同一族诊断开关。
+    const bool log_open = args.contains(QStringLiteral("--log-open"));
 
     // 离屏：不依赖真实显示器（门禁机器上也可能没有交互桌面）
     if ((smoke || !shot_path.isEmpty()) && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
@@ -166,6 +173,8 @@ int main(int argc, char** argv) {
         hub.resize(shot_size);
         hub.show();
         if (shot_page > 0 && shot_page < hub.page_count()) hub.set_current_page(shot_page);
+        // 日志抽屉展开（`--log-open`）：不展开的话「导出日志」按钮在抓图里是看不见的
+        if (log_open && hub.log_toggle() != nullptr) hub.log_toggle()->click();
         // 视频页"有输入"：填三个框 + **等异步 ffprobe 落地**（不然面板还停在"正在解析"）
         if (!video_in.isEmpty() || !video_ref.isEmpty()) {
             if (auto* video_page =
@@ -237,9 +246,12 @@ int main(int argc, char** argv) {
         }
         const bool ok_save = hub.grab().save(shot_path);
         QTextStream out(stdout);
-        // 顺带把**解包页里的真实几何**打出来（`名称 x y w h 可见`）—— 截图能看出"丑"，
+        // 顺带把**被抓那一页的真实几何**打出来（`名称 x y w h 可见`）—— 截图能看出"丑"，
         // 但"哪一块占了谁的位置"要看数字（2026-09-30 用户对 FS 页排版发火后加的诊断）。
-        if (xrkit::shell::PageBase* fs = hub.page_at(0)) {
+        // ★ 2026-10-06：从"只量第 0 页"改成**量被抓的那一页**（D1 批要量文本页/XML 页的新控件）。
+        if (xrkit::shell::PageBase* fs = hub.page_at(shot_page >= 0 && shot_page < hub.page_count()
+                                                         ? shot_page
+                                                         : 0)) {
             const auto dump = [&out](const char* tag, QWidget* w) {
                 if (w == nullptr) return;
                 out << QStringLiteral("GEOM %1 %2 x=%3 y=%4 w=%5 h=%6 vis=%7\n")
@@ -253,14 +265,35 @@ int main(int argc, char** argv) {
             };
             dump("page", fs);
             dump("body", fs->body());
+            // ★ 2026-10-06（D1）：前缀不再写死 `fs_` —— 抓哪一页就量那一页的控件
+            // ★ 2026-10-06（D1）：前缀不再写死 `fs_` —— 抓哪一页就量那一页的控件
+            //   （文本页的 `text_stats`、XML 页的 `xml_stats`/`xml_clear`… 都要能量到）。
+            const QString prefix = fs->page_id() + QStringLiteral("_");
             for (QWidget* child : fs->findChildren<QWidget*>()) {
                 const QString name = child->objectName();
-                if (name.startsWith(QStringLiteral("fs_")) ||
-                    name.startsWith(QStringLiteral("page_")) ||
+                if (name.startsWith(prefix) || name.startsWith(QStringLiteral("page_")) ||
                     name == QStringLiteral("card")) {
                     dump("child", child);
                 }
             }
+            // ★ 2026-10-06：离屏无字体（中文渲染成方块）⇒ 光看几何判不了文案。
+            //   把**带对象名的 QLabel 原文**打出来（截图判几何、这行判文案，两处都留证据）。
+            for (QLabel* label : fs->findChildren<QLabel*>()) {
+                const QString name = label->objectName();
+                if (!name.startsWith(prefix)) continue;
+                out << QStringLiteral("LBL %1 w=%2 h=%3 text=\"%4\"\n")
+                           .arg(name)
+                           .arg(label->width())
+                           .arg(label->height())
+                           .arg(QString(label->text()).replace(QLatin1Char('\n'),
+                                                              QStringLiteral(" ⏎ ")));
+            }
+            // ★ 2026-10-06（③）：Hub 自己的日志区（`--log-open` 展开时才有几何）
+            dump("hub", hub.log_toggle());
+            dump("hub", hub.log_panel());
+            dump("hub", hub.log_export_button());
+            dump("hub", hub.log_clear_button());
+            dump("hub", hub.log_box());
             // ★ 2026-10-02 用户圈着包列表表头打了个「？」（三列总宽 < 面板宽 ⇒ 右半边死区）：
             //   把**列宽合计 vs 视口宽**打出来，这种"没铺满"的毛病以后用数字判，不靠眯眼看图。
             if (auto* pkg = fs->findChild<QTreeWidget*>(QStringLiteral("fs_package_list"))) {

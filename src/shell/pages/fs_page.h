@@ -25,6 +25,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -132,6 +133,10 @@ public:
                                             const std::vector<std::string>& only = {});
 
     QComboBox* format_combo() const { return format_combo_; }
+    // ★ 2026-10-06（④，1.x `fs_app.py:207-208` + `_on_fmt_change`）：格式说明标签 ——
+    //   选 auto 显示「自动检测」，选具体格式显示该格式名。**随所选格式变化**。
+    QLabel* format_hint() const { return format_hint_; }
+    QString format_hint_text() const;
     // ★ 2026-10-01 用户第 6 条：「包列表和文件列表引用的子组件是不是不一样？…所以，使用同一个
     //   小组件来完成。包列表的内容和文件列表的结构实际上是一样的。统一使用文件列表的那个，
     //   因为那个已经打磨过。」⇒ 由 `QListWidget` 换成与 `entry_tree_` **同一个组件、同一套配置**
@@ -212,11 +217,15 @@ public:
         std::vector<engine::fs::PackFileItem> items;
     };
     std::vector<UnpackJob> plan_unpack(bool checked_only, QString* out_root);
+    // ①（取消）：两个执行入口都收一个"该停了吗"的谓词（默认空 = 旧行为逐值相同）；
+    // 停在**包边界**（解包）/ **封包前**（封包），并把"停在哪、已写出多少"如实返回。
     static QString run_unpack_jobs(const std::vector<UnpackJob>& jobs,
-                                   const ProgressSink& progress, const MessageSink& message);
+                                   const ProgressSink& progress, const MessageSink& message,
+                                   const std::function<bool()>& should_stop = {});
     PackJob plan_pack(bool* ok, QString* why);
     static QString run_pack_job(const PackJob& job, const ProgressSink& progress,
-                                const MessageSink& message);
+                                const MessageSink& message,
+                                const std::function<bool()>& should_stop = {});
     void start_unpack(bool checked_only);   // 按钮：计划（主线程）+ task_->run
     void start_pack();
     TaskShell* task() const { return task_; }
@@ -345,6 +354,7 @@ private:
 
     QTreeWidget* package_list_ = nullptr;
     QComboBox* format_combo_ = nullptr;
+    QLabel* format_hint_ = nullptr;
     QTreeWidget* entry_tree_ = nullptr;
     QTabWidget* tabs_ = nullptr;
     QSplitter* split_list_tree_ = nullptr;   // 包列表 ↔ 包内树

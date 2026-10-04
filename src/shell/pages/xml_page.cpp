@@ -8,13 +8,17 @@
 #include "../virtual_list.h"
 
 #include <QComboBox>
+#include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMetaObject>
 #include <QPushButton>
+#include <QThread>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -115,6 +119,14 @@ XmlPage::XmlPage(QWidget* parent)
     });
     body_layout()->addWidget(rows_, 1);
 
+    // ★★ 2026-10-06（⑤）：统计标签 —— 1.x `xml_compare_app.py:406-409` 建 label、
+    //   `:675-676` 写值：`一致 {cons}  |  不一致 {incon}  |  仅 {name_a} {oa}  |  仅 {name_b} {ob}`。
+    //   2.x 原来只在完成时往表里塞一句消息（`:147-150`），界面上**没有**这个统计行。
+    stats_label_ = new QLabel;
+    stats_label_->setObjectName(QStringLiteral("xml_stats"));
+    stats_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    body_layout()->addWidget(stats_label_, 0);
+
     task_ = new TaskShell(this);
     task_->set_idle_status(QStringLiteral("就绪"));
     body_layout()->addWidget(task_->panel(), 0);
@@ -142,14 +154,31 @@ XmlPage::XmlPage(QWidget* parent)
                                                   const ProgressSink& progress,
                                                   const MessageSink& message) {
             progress(0);
-            const int count = compare_dirs(a, b, enc_a, enc_b);
+            // ①：取消谓词 = 本页任务壳的取消位（compare_dirs 在**每个文件之前**轮询它）
+            const auto should_stop = [this]() {
+                return task_ != nullptr && task_->cancel_requested();
+            };
+            const int count = compare_dirs(a, b, enc_a, enc_b, should_stop);
             progress(100);
+            if (last_compare_cancelled_) {
+                // ①零静默：说清"停在哪、已经比了多少"（绝不报成"比较完成"）
+                message(QStringLiteral("已取消：在文件边界停下（已比较 %1 / 共 %2 个文件）")
+                            .arg(count)
+                            .arg(last_compare_total_)
+                            .toUtf8().toStdString());
+                return;
+            }
             message(QStringLiteral("比较完成：%1 个文件（当前筛选后 %2 行）")
                         .arg(count)
                         .arg(visible_count())
                         .toUtf8().toStdString());
         });
     });
+    // ★ 2026-10-06（⑤）：1.x `xml_compare_app.py:391-392` 的「清除」——
+    //   2.x 原来全文件 `清除` 零命中（这条用户可达功能整体消失）。
+    clear_button_ = add_action(QStringLiteral("清除"));
+    clear_button_->setObjectName(QStringLiteral("xml_clear"));
+    QObject::connect(clear_button_, &QPushButton::clicked, this, [this] { clear_dirs(); });
     auto* export_button = add_action(QStringLiteral("导出 CSV"));
     export_button->setObjectName(QStringLiteral("xml_export"));
     QObject::connect(export_button, &QPushButton::clicked, this, [this] {
@@ -158,7 +187,8 @@ XmlPage::XmlPage(QWidget* parent)
             QStringLiteral("CSV 文件 (*.csv)"));
         if (path.isEmpty()) return;
         QString problem;
-        if (!export_csv(path, QStringLiteral("1970-01-01 00:00:00"))) {
+        // ⑤：生成时间 = **真实当前时间**（原来是写死的 `1970-01-01 00:00:00`）
+        if (!export_csv_auto(path)) {
             problem = QStringLiteral("导出失败");
         }
         status_->setText(problem.isEmpty()
@@ -166,6 +196,49 @@ XmlPage::XmlPage(QWidget* parent)
                              : problem);
     });
     refresh_rows();
+    refresh_stats_label();
+}
+
+// ★ 2026-10-06（⑤）：1.x `_clear_entries`（`:514-518`）——**只清两个目录栏**。
+void XmlPage::clear_dirs() {
+    if (dir_a_edit_ != nullptr) dir_a_edit_->clear();
+    if (dir_b_edit_ != nullptr) dir_b_edit_->clear();
+}
+
+QString XmlPage::stats_text() const {
+    uint64_t consistent = 0;
+    uint64_t inconsistent = 0;
+    uint64_t only_a = 0;
+    uint64_t only_b = 0;
+    count_kinds(&consistent, &inconsistent, &only_a, &only_b);
+    // 1.x 的空格口径照抄：`一致 N  |  不一致 N  |  仅 {名} N  |  仅 {名} N`
+    return QStringLiteral("一致 %1  |  不一致 %2  |  仅 %3 %4  |  仅 %5 %6")
+        .arg(static_cast<qulonglong>(consistent))
+        .arg(static_cast<qulonglong>(inconsistent))
+        .arg(utf8(name_a()))
+        .arg(static_cast<qulonglong>(only_a))
+        .arg(utf8(name_b()))
+        .arg(static_cast<qulonglong>(only_b));
+}
+
+void XmlPage::refresh_stats_label() {
+    if (stats_label_ != nullptr) stats_label_->setText(stats_text());
+}
+
+// 四个计数只有这一份实现（标签与 CSV 读同一份 ⇒ 不可能分叉）
+void XmlPage::count_kinds(uint64_t* consistent, uint64_t* inconsistent, uint64_t* only_a,
+                          uint64_t* only_b) const {
+    for (const Row& row : results_) {
+        if (row.result.consistent) {
+            ++*consistent;
+        } else if (row.kind == "only_a") {
+            ++*only_a;
+        } else if (row.kind == "only_b") {
+            ++*only_b;
+        } else {
+            ++*inconsistent;
+        }
+    }
 }
 
 void XmlPage::fill_mode_combo() {
@@ -231,32 +304,51 @@ void XmlPage::set_mode(const QString& key) {
     visible_.clear();
     rebuild_filter_combo();
     refresh_rows();
+    refresh_stats_label();   // ⑤ 结果被清空 ⇒ 统计标签跟着归零（不许留着上一轮的数）
 }
 
 std::string XmlPage::name_a() const {
-    const QString text = dir_a_edit_ != nullptr ? dir_a_edit_->text().trimmed() : QString();
+    // ★ 2026-10-06（⑤）：1.x `:580` `self.name_a = root_a.name` —— 名字在**比较开始时**
+    //   定下（`compared_a_`），之后不跟着输入框的编辑乱变（否则"统计行显示的名字"
+    //   会与"这次结果对应的目录"错位）。没比过 ⇒ 用当前输入框（导出前没比也一样）。
+    const QString text = !compared_a_.isEmpty()
+                             ? compared_a_
+                             : (dir_a_edit_ != nullptr ? dir_a_edit_->text().trimmed() : QString());
     if (text.isEmpty()) return "A";
     return QDir(text).dirName().toUtf8().toStdString();
 }
 
 std::string XmlPage::name_b() const {
-    const QString text = dir_b_edit_ != nullptr ? dir_b_edit_->text().trimmed() : QString();
+    const QString text = !compared_b_.isEmpty()
+                             ? compared_b_
+                             : (dir_b_edit_ != nullptr ? dir_b_edit_->text().trimmed() : QString());
     if (text.isEmpty()) return "B";
     return QDir(text).dirName().toUtf8().toStdString();
 }
 
 int XmlPage::compare_dirs(const QString& dir_a, const QString& dir_b, const QString& enc_a,
-                          const QString& enc_b) {
+                          const QString& enc_b, const std::function<bool()>& should_stop) {
     ++scan_count_;  // 10.4：这个计数只在真扫目录时涨（切模式不许涨）
+    // ⑤：这一轮比较的对象（名字快照，统计标签/CSV 都用它）
+    compared_a_ = dir_a;
+    compared_b_ = dir_b;
+    last_compare_cancelled_ = false;
     const std::map<std::string, QString> a = list_xml(dir_a);
     const std::map<std::string, QString> b = list_xml(dir_b);
     std::set<std::string> all;
     for (const auto& [rel, path] : a) all.insert(rel);
     for (const auto& [rel, path] : b) all.insert(rel);
+    last_compare_total_ = static_cast<int>(all.size());
 
     results_.clear();
     const bool text_mode = current_mode_key() == "text";
     for (const std::string& rel : all) {
+        // ★ 2026-10-06（①）：**每个文件之前**轮询取消请求 —— 停下时 results_ 里都是
+        //   已经比完的完整结果（不写半个），行数就是"已比较数"，由前端如实报出。
+        if (should_stop && should_stop()) {
+            last_compare_cancelled_ = true;
+            break;
+        }
         const auto ita = a.find(rel);
         const auto itb = b.find(rel);
         Row row;
@@ -298,6 +390,13 @@ int XmlPage::compare_dirs(const QString& dir_a, const QString& dir_b, const QStr
         results_.push_back(std::move(row));
     }
     refresh_rows();
+    // ⑤ 统计标签：**只在主线程刷**（本函数也被工作线程调用 ⇒ 那种情况排队回主线程；
+    //   自检/直接调用在主线程 ⇒ 立刻落地，读标签的断言不用额外 pump）。
+    if (QThread::currentThread() == QCoreApplication::instance()->thread()) {
+        refresh_stats_label();
+    } else {
+        QMetaObject::invokeMethod(this, [this] { refresh_stats_label(); }, Qt::QueuedConnection);
+    }
     return static_cast<int>(results_.size());
 }
 
@@ -368,6 +467,9 @@ bool XmlPage::export_csv(const QString& path, const QString& generated_at) {
     report.mode_name = spec != nullptr ? spec->name : "";
     report.folder_a = dir_a_edit_->text().trimmed().toUtf8().toStdString();
     report.folder_b = dir_b_edit_->text().trimmed().toUtf8().toStdString();
+    // ★ 2026-10-06（⑤）：统计行用**文件夹名**（1.x `:1321` 的 `仅 {na}: {oa}`）
+    report.name_a = name_a();
+    report.name_b = name_b();
     report.enc_a = enc_a_combo_->currentData().toString().toUtf8().toStdString();
     report.enc_b = enc_b_combo_->currentData().toString().toUtf8().toStdString();
     report.filter_label = filter_combo_->currentText().toUtf8().toStdString();
@@ -407,18 +509,16 @@ bool XmlPage::export_csv(const QString& path, const QString& generated_at) {
         }
         report.rows.push_back(std::move(cells));
     }
-    for (const Row& row : results_) {
-        if (row.result.consistent) {
-            ++report.consistent;
-        } else if (row.kind == "only_a") {
-            ++report.only_a;
-        } else if (row.kind == "only_b") {
-            ++report.only_b;
-        } else {
-            ++report.inconsistent;
-        }
-    }
-    // "实际使用编码"那行：从结果里取两侧第一个非空的实际编码
+    // 计数只有一份实现（`count_kinds`）—— 统计标签与这张报表读同一份
+    uint64_t consistent = 0;
+    uint64_t inconsistent = 0;
+    uint64_t only_a = 0;
+    uint64_t only_b = 0;
+    count_kinds(&consistent, &inconsistent, &only_a, &only_b);
+    report.consistent = consistent;
+    report.inconsistent = inconsistent;
+    report.only_a = only_a;
+    report.only_b = only_b;    // "实际使用编码"那行：从结果里取两侧第一个非空的实际编码
     std::string enc_a_used;
     std::string enc_b_used;
     for (const Row& row : results_) {
@@ -431,6 +531,13 @@ bool XmlPage::export_csv(const QString& path, const QString& generated_at) {
     }
     std::string error;
     return exml::write_csv_file(path.toUtf8().toStdString(), report, error);
+}
+
+// ★ 2026-10-06（⑤）：CSV 的生成时间＝**真实当前时间**（1.x `:1312` `datetime.now()` 的
+//   `%Y-%m-%d %H:%M:%S` 口径）。2.x 原来在按钮里写死 `"1970-01-01 00:00:00"`。
+bool XmlPage::export_csv_auto(const QString& path) {
+    return export_csv(path, QDateTime::currentDateTime().toString(QStringLiteral(
+                                "yyyy-MM-dd HH:mm:ss")));
 }
 
 // ★ 2026-10-04 用户第 2 条：两个"选择"调用点的起点判据（与按钮 lambda 里那一行同源）

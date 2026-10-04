@@ -216,6 +216,16 @@ void ConvertPage::run_batch(const std::vector<QString>& files, const QString& ou
         int done = 0;
         int failed = 0;
         for (const QString& file : files) {
+            // ★ 2026-10-06（①）：**文件边界**轮询取消请求 —— 停在这里，已转换的文件都是
+            //   完整的（不写半个），并把"停在哪、转了几个、失败几个"**如实报出来**（零静默）。
+            //   （这条轮询就是"取消按钮不是死按钮"这一条在**本页**的落点：拆掉它，
+            //     run_ci 的静态锁 `cancel_requested()` 会立刻红。）
+            if (task_ != nullptr && task_->cancel_requested()) {
+                message("已取消：在文件边界停下（已转换 " + std::to_string(done) +
+                        " / " + std::to_string(total) + " 个文件，失败 " +
+                        std::to_string(failed) + " 个；已转换的产物都已完整落盘）");
+                return;
+            }
             if (!wait_if_paused(true)) return;  // 取消/退出：直接收工，由壳收尾
             const etxt::ConvertOutcome outcome =
                 convert_one(file, out_dir, source_enc, target_enc);

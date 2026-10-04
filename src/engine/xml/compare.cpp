@@ -800,10 +800,14 @@ std::string render_csv(const XmlCsvReport& report) {
     row({"编码（auto=自动判定）: A=" + report.enc_a + " / B=" + report.enc_b});
     if (!report.encodings_used.empty()) row({"实际使用编码: " + report.encodings_used});
     row({"筛选条件: " + report.filter_label});
+    // ★ 2026-10-06（1.x `:1321` `f"一致: {cons} | 不一致: {incon} | 仅 {na}: {oa} | 仅 {nb}: {ob}"`）：
+    //   统计行用**文件夹名**；调用方没给名字（CLI 探针）才退回 "A"/"B"。
+    const std::string na = report.name_a.empty() ? "A" : report.name_a;
+    const std::string nb = report.name_b.empty() ? "B" : report.name_b;
     row({"一致: " + std::to_string(report.consistent) +
          " | 不一致: " + std::to_string(report.inconsistent) +
-         " | 仅 A: " + std::to_string(report.only_a) +
-         " | 仅 B: " + std::to_string(report.only_b)});
+         " | 仅 " + na + ": " + std::to_string(report.only_a) +
+         " | 仅 " + nb + ": " + std::to_string(report.only_b)});
     row({});
     row(report.columns);
     for (const std::vector<std::string>& cells : report.rows) row(cells);

@@ -259,15 +259,19 @@ void FsSelection::toggle(const std::string& key, bool on) {
 }
 
 const std::vector<FsFormatItem>& fs_formats() {
-    // 顺序照 1.x 的下拉构造：六种 DB 格式 + SquashFS。**key 一律内部键**。
+    // 顺序照 1.x 的下拉构造：**auto 在第一位**（`fs_app.py:154` 的默认值就是 "auto"）
+    // + 六种 DB 格式 + SquashFS。**key 一律内部键**。
     static const std::vector<FsFormatItem> items = [] {
         std::vector<FsFormatItem> out;
+        // 1.x `fs_app.py:193`：`self.fmt_keys = ["auto"] + [ALL_FMTS[k]["name"] ...]`
+        //   ⇒ auto 永远是第一项；它的"说明文字"由界面那一行标签给（1.x `fmt_desc`）。
+        out.push_back({"auto", "auto", false, true});
         const DbFormat all[] = {DbFormat::Xdb, DbFormat::Ru2947, DbFormat::Ww2947,
                                 DbFormat::F2945, DbFormat::F2215, DbFormat::F11xx};
         for (DbFormat f : all) {
-            out.push_back({db_format_key(f), db_format_name(f), false});
+            out.push_back({db_format_key(f), db_format_name(f), false, false});
         }
-        out.push_back({"sqfs", "SquashFS", true});
+        out.push_back({"sqfs", "SquashFS", true, false});
         return out;
     }();
     return items;
@@ -277,7 +281,8 @@ std::optional<DbFormat> format_key_to_db(const std::string& key) {
     // **只认内部键**：显示名（含空格/括号/CJK）不许解析得出来 ——
     // 1.x 的事故正是把显示名当下拉取值。
     for (const FsFormatItem& item : fs_formats()) {
-        if (!item.is_sqfs && item.key == key) return db_format_from_any(key);
+        if (item.is_auto || item.is_sqfs) continue;   // auto＝不给格式；sqfs 不是 DB 格式
+        if (item.key == key) return db_format_from_any(key);
     }
     return std::nullopt;
 }
@@ -285,6 +290,13 @@ std::optional<DbFormat> format_key_to_db(const std::string& key) {
 bool format_key_is_sqfs(const std::string& key) {
     for (const FsFormatItem& item : fs_formats()) {
         if (item.is_sqfs && item.key == key) return true;
+    }
+    return false;
+}
+
+bool format_key_is_auto(const std::string& key) {
+    for (const FsFormatItem& item : fs_formats()) {
+        if (item.is_auto && item.key == key) return true;
     }
     return false;
 }

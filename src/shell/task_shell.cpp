@@ -30,6 +30,13 @@ TaskShell::TaskShell(QWidget* parent) : QObject(parent) {
     status_->setObjectName(QStringLiteral("task_status"));
     cancel_ = new QPushButton(QStringLiteral("取消"), panel_);
     cancel_->setEnabled(false);
+    cancel_->setObjectName(QStringLiteral("task_cancel"));
+    // ★★ 2026-10-06（①）：**这颗按钮以前是死的** —— 全文件只有三处 `setEnabled`，
+    //   没有一处 `connect` ⇒ 六页的「取消」都是摆设。这里就是那条缺失的接线。
+    //   （静默锁：`tests/run_ci.py` 的 shell-smoke 静态锁要求本文件必须出现
+    //    `connect(cancel_` —— 拆掉它立刻就红。）
+    QObject::connect(cancel_, &QPushButton::clicked, this,
+                     [this] { request_cancel(QStringLiteral("已取消：用户点了「取消」")); });
     row->addWidget(bar_, 1);
     row->addWidget(cancel_);
     layout->addLayout(row);
@@ -56,8 +63,15 @@ bool TaskShell::run(const QString& title, const WorkerFn& worker) {
     run_line_ = title;
     error_text_.clear();
     last_progress_ = 0;
+    // ★ 10-06：取消位**每次 run 都归零**（上一轮的取消不许把这一轮一开始就掐掉），
+    //   理由也清掉；按钮恢复成可点、文案回到「取消」。
+    cancel_requested_.store(false);
+    cancel_reason_.clear();
+    if (cancel_ != nullptr) {
+        cancel_->setText(QStringLiteral("取消"));
+        cancel_->setEnabled(true);
+    }
     bar_->setValue(0);
-    cancel_->setEnabled(true);
     status_text_ = title;
     status_->setText(status_text_);
 
@@ -99,6 +113,27 @@ void TaskShell::report_message(const std::string& text) {
 void TaskShell::report_error(const std::string& text) { apply_error(QString::fromStdString(text)); }
 void TaskShell::finish(const QString& final_status) { apply_finish(final_status); }
 
+QString TaskShell::cancel_reason() const { return cancel_reason_; }
+
+void TaskShell::request_cancel(const QString& reason) {
+    // 没在跑 ⇒ 不记（否则"空闲时点一下"会污染下一轮的结论）。
+    if (!running_) return;
+    cancel_requested_.store(true);
+    const int n = ++cancel_requests_;
+    cancel_reason_ = reason.isEmpty() ? QStringLiteral("已取消：用户请求停止") : reason;
+    if (cancel_ != nullptr) {
+        // 按钮收起来（已请求 ⇒ 再点没有意义），并把**正在取消**这件事摆在界面上。
+        cancel_->setEnabled(false);
+        cancel_->setText(QStringLiteral("正在取消…"));
+    }
+    // 理由**立刻**可见（不等 worker 回来）：状态栏就是用户看的那个地方。
+    status_text_ = cancel_reason_;
+    status_->setText(cancel_reason_);
+    const bool on_main = QThread::currentThread() == QCoreApplication::instance()->thread();
+    std::lock_guard<std::mutex> lock(mutex_);
+    events_.push_back({'c', n, on_main});
+}
+
 void TaskShell::apply_progress(int percent) {
     // 13.7：**一个 0~100 值，原样用**（不乘不除；越界才夹）
     const int value = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
@@ -136,7 +171,10 @@ void TaskShell::apply_error(QString text) {
 
 void TaskShell::apply_finish(QString final_status) {
     running_ = false;
-    cancel_->setEnabled(false);
+    if (cancel_ != nullptr) {
+        cancel_->setEnabled(false);
+        cancel_->setText(QStringLiteral("取消"));   // 文案复位（下一轮 run 还会再置一次）
+    }
     // 13.4：没给最终文案、无错误、且状态栏还是 run() 那句 ⇒ **恢复前置状态**
     QString next = final_status;
     if (next.isEmpty() && error_text_.isEmpty() && status_text_ == run_line_) {
@@ -144,6 +182,15 @@ void TaskShell::apply_finish(QString final_status) {
     }
     if (next.isEmpty() && error_text_.isEmpty()) next = idle_status_;  // 13.5 兜底
     if (!error_text_.isEmpty()) next = QStringLiteral("失败：") + error_text_;
+    // ★ 2026-10-06（用户红线：取消要**理由可见**）：取消理由**优先收尾** ——
+    //   否则会被 worker 的最后一句（"完成"/idle 兜底）盖掉，用户就看不到"为什么停了"。
+    //   若同时还有错误，两个都报（不许把错误吞掉）。
+    if (cancel_requested_.load() && !cancel_reason_.isEmpty()) {
+        next = cancel_reason_;
+        if (!error_text_.isEmpty()) {
+            next += QStringLiteral("（另有错误：") + error_text_ + QStringLiteral("）");
+        }
+    }
     // 13.5：兜底**必须**非空（空串会让状态栏变成空白）
     if (next.isEmpty()) next = idle_status_.isEmpty() ? QStringLiteral("就绪") : idle_status_;
     status_text_ = next;

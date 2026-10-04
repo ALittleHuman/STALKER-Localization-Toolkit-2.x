@@ -13,6 +13,7 @@
 //   · 源目录名必须是 gameplay / scripts（只看文件夹自己的名字，不向下查找）。
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,11 @@ struct ExtractOptions {
     std::string id_prefix;
     // 先清目标目录里的 gameplay/scripts 与 {prefix}_*_texts.xml（1.x UI 里默认勾选）
     bool clean = false;
+    // ★ 2026-10-06（用户红线：取消要**真停**）：可选的停止谓词。**只在文件边界轮询**
+    //   ⇒ 停下来时已写出的产物都是**完整的单文件产物**，绝不写半个文件（零静默的反面：
+    //   "停是停了，但产物半截" 比不停更糟）。默认空 ⇒ 行为与旧版逐字节相同。
+    //   引擎**不依赖 Qt**：这里用 std::function（前端把"取消请求位"包成 lambda）。
+    std::function<bool()> should_stop;
 };
 
 struct ExtractStats {
@@ -43,6 +49,11 @@ struct ExtractStats {
     std::vector<std::string> skipped;  // 「相对路径：原因」，对应 1.x 的 log_detail
     std::string texts_xml_name;        // 实际产出的文本 XML 文件名（空=这一类没提到文本）
     double elapsed_ms = 0.0;
+    // ★ 2026-10-06：`should_stop()` 在文件边界返回 true ⇒ **已按请求停下**。
+    //   此时 `files/strings/chars` 是**停下前已经落盘的那部分**的如实计数（不是"全部"）。
+    //   `ok` 仍为 true（没出错）；调用方**必须先看这个位**再报结论（否则会把"取消"
+    //   报成"完成"——那就是静默）。
+    bool cancelled = false;
 };
 
 // 源目录名 → 类型（不是 gameplay/scripts 就失败，理由同 1.x：不要选它们的上层目录）

@@ -58,8 +58,21 @@ struct DbPackItem {
     bool is_dir = false;
 };
 
+// ★ 2026-10-06（用户红线）：「**不能静默报错，不然出问题了还不知道**」——
+//   cp1251 表示不了的码点会被**逐码点顶替成 `?`**（ALPHA.40 修掉了"截断成空名/撞名"），
+//   但那件事以前**只发生在字节里**：产物名字与源名对不上，用户没有任何提示。
+//   这里把"改写台账"作为**可选出参**给出来，由调用方（GUI 日志 / CLI 收尾）**逐条打印 + 计数**。
+//   口径：**不阻塞、不加 `--strict-names`** —— 封包照样成功，只把事实说清楚。
+struct DbNameRewrite {
+    std::string source;   // UTF-8 原名（目录名**带尾部 `\`**，与写进包里的形态一致）
+    std::string written;  // 实际写进包里的名字（cp1251 字节 → UTF-8 回读，`?` 原样保留）
+};
+
 // 封包（写路径）：LZHUF 编码 + scrambler，产物应与 1.x 的 pack_db **逐字节一致**。
-std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& items, DbFormat fmt);
+// `rewrites` 非空 ⇒ 填**逐条**改写台账（返回后为空 vector = 一个名字都没被改写）。
+// 默认 `nullptr` ⇒ 行为与旧版**逐字节相同**（不给台账的调用点不用改）。
+std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& items, DbFormat fmt,
+                             std::vector<DbNameRewrite>* rewrites = nullptr);
 
 // ── seek 式读盘（大包的唯一可行路径）─────────────────────────────────
 // X-Ray DB 的布局是 `[DATA 块头 + 数据][HEADER 块头 + 条目表]` ⇒ **条目表在文件尾部**。

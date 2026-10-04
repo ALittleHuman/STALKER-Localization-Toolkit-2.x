@@ -412,6 +412,13 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     format_combo_ = new QComboBox;
     format_combo_->setObjectName(QStringLiteral("fs_format_combo"));
     fill_format_combo();
+    // ★ 2026-10-06（④）：格式说明标签（1.x `fs_app.py:207` `self.fmt_desc` +
+    //   `_on_fmt_change`：auto ⇒ "自动检测"，其余 ⇒ 该格式名）。
+    format_hint_ = new QLabel;
+    format_hint_->setObjectName(QStringLiteral("fs_format_hint"));
+    QObject::connect(format_combo_, &QComboBox::currentIndexChanged, this,
+                     [this](int) { format_hint_->setText(format_hint_text()); });
+    format_hint_->setText(format_hint_text());
 
     // ★ 真树（1.x CanvasTree 的对位件）：三列 = 名称（带三态勾选框）/ 大小 / 来源包；
     //   子节点**懒建**（展开时才建），所以几万条目的大包打开也不慢。
@@ -464,6 +471,7 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     row->setContentsMargins(0, 0, 0, 0);
     row->addWidget(new QLabel(QStringLiteral("打包/解包格式：")), 0);
     row->addWidget(format_combo_, 0);
+    row->addWidget(format_hint_, 0);   // ④：格式说明（auto ⇒ 自动检测）
     row->addSpacing(xrkit::core::px(12));
     row->addWidget(new QLabel(QStringLiteral("解包到：")), 0);
     out_edit_ = new QLineEdit;
@@ -592,7 +600,11 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         pack_format_combo_ = new QComboBox;
         pack_format_combo_->setObjectName(QStringLiteral("fs_pack_format"));
         for (const efs::FsFormatItem& item : efs::fs_formats()) {
-            // 1.x 的封包下拉 = 非 auto 的全部格式（六种 DB + SquashFS）；取值仍是**内部键**
+            // 1.x 的封包下拉 = 非 auto 的全部格式（六种 DB + SquashFS）；取值仍是**内部键**。
+            // ★ 2026-10-06（④）：`fs_formats()` 现在第一位是 auto（1.x `fs_app.py:196`
+            //   `pack_fmt_keys = [k for k in fmt_keys if k != "auto"]`）⇒ 这里按 **is_auto 标志**
+            //   跳过，而不是再手写一次字符串比较（判"是不是 auto"只有引擎那一个谓词）。
+            if (item.is_auto) continue;
             pack_format_combo_->addItem(utf8(item.label), utf8(item.key));
         }
         row->addWidget(pack_format_combo_, 0);
@@ -817,8 +829,20 @@ void FsPage::fill_format_combo() {    format_combo_->clear();
     for (const efs::FsFormatItem& item : efs::fs_formats()) {
         // 显示名给人看，**取值给机器用**（内部键）—— 1.x 把显示名当取值存，
         // 于是 `ALL_FMTS.get(fmt)` 必然取不到，SquashFS 被静默按 xdb 打包。
+        // ★ 2026-10-06（④）：`fs_formats()` 的第一项就是 auto（1.x `fs_app.py:154` 的默认值）
+        //   ⇒ auto 自动落在**第一位**，无需在这里特殊处理。
         format_combo_->addItem(utf8(item.label), utf8(item.key));
     }
+}
+
+QString FsPage::format_hint_text() const {
+    // 1.x `_on_fmt_change`：auto ⇒ "自动检测"；其余 ⇒ 该格式的显示名。
+    if (format_combo_ == nullptr) return QString();
+    const std::string key = format_combo_->currentData().toString().toStdString();
+    if (efs::format_key_is_auto(key)) {
+        return QStringLiteral("自动检测（不给格式：按包自洽判定；歧义时显式拒绝）");
+    }
+    return format_combo_->currentText();
 }
 
 std::string FsPage::current_format_key() const {
@@ -1475,12 +1499,25 @@ std::vector<FsPage::UnpackJob> FsPage::plan_unpack(bool checked_only, QString* o
 }
 
 QString FsPage::run_unpack_jobs(const std::vector<UnpackJob>& jobs, const ProgressSink& progress,
-                                const MessageSink& message) {
+                                const MessageSink& message,
+                                const std::function<bool()>& should_stop) {
     // **纯执行**：不读任何控件、不写任何界面（任务壳的 worker 与自检共用这一条）
     int written = 0;
     int failed = 0;
     QStringList per_package;
     for (size_t i = 0; i < jobs.size(); ++i) {
+        // ★ 2026-10-06（①）：**包边界**轮询取消 —— 停下来时已解完的包都是完整的，
+        //   并如实报出"已解 N 个包 / 共 M 个、已写 K 个文件"（绝不报成"解包完成"）。
+        if (should_stop && should_stop()) {
+            const QString why =
+                QStringLiteral("已取消：在包边界停下（已解 %1 / 共 %2 个包，已写出 %3 个文件，失败 %4）")
+                    .arg(static_cast<int>(i))
+                    .arg(static_cast<int>(jobs.size()))
+                    .arg(written)
+                    .arg(failed);
+            if (message) message(why.toUtf8().toStdString());
+            return why;
+        }
         const efs::ExtractTreeResult result = FsPage::extract_job(jobs[i]);
         written += static_cast<int>(result.files_written);
         failed += static_cast<int>(result.failures.size());
@@ -1513,9 +1550,13 @@ void FsPage::start_unpack(bool checked_only) {
     }
     const QString title = checked_only ? QStringLiteral("解包选中") : QStringLiteral("批量解包");
     log_message(QStringLiteral("%1：%2 个包 → %3").arg(title).arg(static_cast<int>(jobs.size())).arg(root));
-    if (task_ == nullptr || !task_->run(title, [jobs](const ProgressSink& progress,
-                                                      const MessageSink& message) {
-            run_unpack_jobs(jobs, progress, message);
+    if (task_ == nullptr || !task_->run(title, [this, jobs](const ProgressSink& progress,
+                                                             const MessageSink& message) {
+            // ①：取消谓词 = 本页任务壳的取消位
+            const auto should_stop = [this]() {
+                return task_ != nullptr && task_->cancel_requested();
+            };
+            run_unpack_jobs(jobs, progress, message, should_stop);
         })) {
         log_message(QStringLiteral("有任务在跑，稍后再试"));
     }
@@ -2122,12 +2163,21 @@ FsPage::PackJob FsPage::plan_pack(bool* ok, QString* why) {
 }
 
 QString FsPage::run_pack_job(const PackJob& job, const ProgressSink& progress,
-                             const MessageSink& message) {
+                             const MessageSink& message,
+                             const std::function<bool()>& should_stop) {
     // **纯执行**（工作线程里不碰控件）：sqfs ⇒ pack_squashfs；其余 ⇒ pack_db + 原子写
     const auto say = [&message](const QString& text) {
         if (message) message(text.toUtf8().toStdString());
     };
     if (progress) progress(0);
+    // ★ 2026-10-06（①）：封包是**一次原子写**（`write_file_atomic`）——开始在写之后
+    //   硬停会留下半个包。所以取消**只在开始之前**生效；开始之后请求取消 ⇒ 如实说明
+    //   "本步骤不可中断"（零静默：不许假装停了，也不许把能停的说成不能停）。
+    if (should_stop && should_stop()) {
+        const QString why = QStringLiteral("已取消：封包尚未开始（一个字节都没写）");
+        say(why);
+        return why;
+    }
     if (efs::format_key_is_sqfs(job.key)) {
         std::vector<efs::PackItem> items;
         items.reserve(job.items.size());
@@ -2163,7 +2213,11 @@ QString FsPage::run_pack_job(const PackJob& job, const ProgressSink& progress,
         pack_item.data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         items.push_back(std::move(pack_item));
     }
-    const std::vector<uint8_t> raw = efs::pack_db(items, *fmt);
+    // ★ 2026-10-06（⑥ 零静默红线）：接住"名字被改写"的台账 —— cp1251 表示不了的名字
+    //   会被逐码点顶替成 `?`（引擎不认中文名），用户**必须看得见**改了哪些、改成了什么。
+    //   **不阻塞**：包照样写出来（用户口径：不需要支持中文名，但不能静默）。
+    std::vector<efs::DbNameRewrite> rewrites;
+    const std::vector<uint8_t> raw = efs::pack_db(items, *fmt, &rewrites);
     if (progress) progress(70);
     std::string write_error;
     if (!core::write_file_atomic(job.out, raw, true, write_error)) {
@@ -2176,6 +2230,18 @@ QString FsPage::run_pack_job(const PackJob& job, const ProgressSink& progress,
                              .arg(raw.size())
                              .arg(utf8(job.out));
     say(text);
+    // ⑥：台账**逐条**打出来 + 计数（没发生改写也说明"0"，让"没打印"与"没发生"能区分）
+    if (rewrites.empty()) {
+        say(QStringLiteral("名字改写：无（%1 个条目名都能用 cp1251 原样写出）")
+                .arg(static_cast<int>(items.size())));
+    } else {
+        say(QStringLiteral("警告：%1 个条目名被改写（cp1251 表示不了的字符逐码点顶替成 '?'；"
+                           "包已照常产出，请核对下列名字）")
+                .arg(static_cast<int>(rewrites.size())));
+        for (const efs::DbNameRewrite& r : rewrites) {
+            say(QStringLiteral("  改名：%1 → %2").arg(utf8(r.source), utf8(r.written)));
+        }
+    }
     return text;
 }
 
@@ -2207,8 +2273,14 @@ void FsPage::start_pack() {
                     .arg(static_cast<int>(job.items.size()))
                     .arg(out));
     if (task_ == nullptr || !task_->run(QStringLiteral("封包"),
-                                        [job](const ProgressSink& progress, const MessageSink& message) {
-                                            run_pack_job(job, progress, message);
+                                        [this, job](const ProgressSink& progress,
+                                                    const MessageSink& message) {
+                                            // ①：取消谓词 = 本页任务壳的取消位
+                                            const auto should_stop = [this]() {
+                                                return task_ != nullptr &&
+                                                       task_->cancel_requested();
+                                            };
+                                            run_pack_job(job, progress, message, should_stop);
                                         })) {
         log_message(QStringLiteral("有任务在跑，稍后再试"));
     }

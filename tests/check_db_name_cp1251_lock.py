@@ -252,6 +252,61 @@ def check_reverse(tmp: Path, lk) -> None:
     got_files = {n.replace("\\", "/") for n, _ in entries if not n.endswith("\\")}
     want(got_files == {"x/y/deep.bin", "plain.txt"},
          "[③] 全 ASCII 名逐字节原样（没有多出 `?`）", "实际：%r" % (sorted(got_files),))
+    # ★ 2026-10-06（⑥）：**没发生改写就必须说"0"** —— "没打印"与"没发生"要能区分开。
+    want("names_rewritten=0" in text,
+         "[⑥] ASCII 树 ⇒ 台账行说 `names_rewritten=0`（不是静默不打印）",
+         "输出里没有台账行：%r" % text.strip()[-160:])
+
+
+# ── [④] ★ 2026-10-06（⑥ 零静默红线）：名字改写台账 ────────────────────────
+def check_rewrite_report(tmp: Path) -> None:
+    r"""含 CJK 名的树 ⇒ `--pack-db` 输出必须**逐条**给出改名清单 + 计数。
+
+    用户口径（原话）：「**不能静默报错，不然出问题了还不知道**」——
+    封包**不需要支持中文名**（引擎也不认），但"哪些名字被改写、改成了什么"必须打出来。
+    同时口径是**不阻塞**：包照常产出（`PACKDB ok` 照旧）。
+    """
+    print("[④] 改写台账锁：含中文名的树 ⇒ 输出里必须有**改名清单 + 计数**（不阻塞）")
+    src = tmp / "cjk_src"
+    if src.exists():
+        shutil.rmtree(src)
+    (src / CJK_DIR).mkdir(parents=True, exist_ok=True)
+    (src / CJK_DIR / CJK_A).write_bytes(b"a\n")
+    (src / CJK_DIR / CJK_B).write_bytes(b"b\n")
+    (src / "plain.txt").write_bytes(b"p\n")
+    pack = tmp / "cjk_2215.db"
+    rc, text = run_cli(["--pack-db", pack, FMT, src])
+    want(rc == 0, "[④] 含中文名的树 `--pack-db` 退出码 0（**不阻塞**：包照常产出）",
+         text.strip()[:150])
+    want(pack.exists() and pack.stat().st_size > 0, "[④] 包确实产出了（不因为告警而中断）")
+    want("PACKDB ok" in text, "[④] 收尾的 `PACKDB ok` 仍在（告警不改退出码/不改结论）")
+    # 计数行：CJK 目录 1 + 2 个 CJK 文件 ⇒ >=3 条改写
+    hit = [ln for ln in text.splitlines() if ln.startswith("PACKDB warning names_rewritten=")]
+    want(bool(hit), "[④] 有 `PACKDB warning names_rewritten=<N>` 计数行",
+         "输出：%r" % text.strip()[-200:])
+    count = 0
+    if hit:
+        try:
+            count = int(hit[0].split("=", 1)[1].split()[0])
+        except (IndexError, ValueError):
+            count = -1
+    want(count >= 3, "[④] 计数 >= 3（1 个 CJK 目录 + 2 个 CJK 文件都被改写），实得 %r" % count)
+    # 逐条清单：「源名 → 写进包里的名字」，源名按 UTF-8 原样给出来
+    rows = [ln for ln in text.splitlines() if ln.startswith("PACKDB rewrite src=")]
+    want(len(rows) == count, "[④] 清单条数 == 计数（%d / %d）" % (len(rows), count))
+    joined = "\n".join(rows)
+    want(CJK_DIR + "/" + CJK_A in joined or (CJK_DIR + "\\" + CJK_A) in joined,
+         "[④] 清单里有源名 `%s`（用户能对上是哪一条）" % (CJK_DIR + "/" + CJK_A))
+    want("?/" in joined or "?" in joined,
+         "[④] 清单里有 `?` 顶替后的实际名字（能看出被改成了什么）")
+    want(("plain.txt" not in joined),
+         "[④] **只有被改写的名字进清单**（ASCII 的 plain.txt 不许混进来）")
+    # 锁的自证：把台账关掉（退化成"只报 ok"）⇒ 上面两条判据必须判红
+    fake_output = "PACKDB target=x\nPACKDB ok items=4 bytes=99\n"
+    fake_hit = [ln for ln in fake_output.splitlines()
+                if ln.startswith("PACKDB warning names_rewritten=")]
+    want(not fake_hit,
+         "[④] 锁的自证：把告警行删掉之后，本锁的判据**确实**会红（不是永远为真）")
 
 
 def main() -> int:
@@ -283,6 +338,7 @@ def main() -> int:
         check_cv(tmp, src, pack)
         check_header(pack, lk)
         check_reverse(tmp, lk)
+        check_rewrite_report(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

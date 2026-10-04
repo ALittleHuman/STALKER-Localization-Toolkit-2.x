@@ -21,6 +21,7 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -325,6 +326,32 @@ def step_cli_contract(release: bool) -> None:
         else:
             UNCOVERED.append("%s（尚未实现，CLI 显式 SKIP）" % label)
             ok("%s → exit=2（已记入未覆盖）" % label)
+
+    # ★★ 2026-10-06（④）：FS 的「auto」= **不给格式** —— CLI 侧两种走法必须**逐值等价**
+    #   （同一枚包：`--dump <包>` vs `--dump <包> auto`，条目表逐字节相同）。
+    #   为什么在门禁里造夹具：这条判据要"同一枚包两种走法"，而仓库自带语料里没有
+    #   恰好能自洽判定的合成包；用引擎自己的写侧造一枚，正是 GUI 拖进来的那种包。
+    if CLI_EXE.exists():
+        with tempfile.TemporaryDirectory(prefix="xrkit_auto_lock_") as tmp:
+            src = Path(tmp) / "src"
+            (src / "gamedata").mkdir(parents=True, exist_ok=True)
+            (src / "gamedata" / "a.txt").write_bytes(b"AAAA")
+            (src / "readme.md").write_bytes(b"root\n")
+            pack = Path(tmp) / "auto.db0"
+            rc, out = run([str(CLI_EXE), "--pack-db", str(pack), "xdb", str(src)])
+            if rc != 0 or not pack.exists():
+                fail("auto 等价锁：夹具包没造出来（exit=%d，输出 %r）" % (rc, out.strip()[:120]))
+            else:
+                rc_plain, plain = run([str(CLI_EXE), "--dump", str(pack)])
+                rc_auto, auto = run([str(CLI_EXE), "--dump", str(pack), "auto"])
+                if rc_plain != 0 or rc_auto != 0:
+                    fail("auto 等价锁：`--dump` 两种走法都要 exit=0（实得 %d / %d）"
+                         % (rc_plain, rc_auto))
+                elif plain != auto:
+                    fail("auto 等价锁：`--dump <包>` 与 `--dump <包> auto` 输出不一致 —— "
+                         "auto 必须**等价于不传格式**（同一条自洽判定）")
+                else:
+                    ok("auto 等价锁（④：`--dump <包>` ≡ `--dump <包> auto`，条目表逐值相同）")
 
 
 def step_corpus(release: bool) -> None:
@@ -1153,6 +1180,33 @@ def step_shell_smoke(release: bool) -> None:
         fail("静态锁自证失败：active_code 没滤掉整行注释（锁会被一句注释绕过）")
         return
     ok("静态锁自证：注释不算违规、活代码必被拦")
+
+    # ★★ 2026-10-06（D1 ①）：**「取消」不是死按钮** —— 两层静态锁。
+    #   事实（改动前）：`task_shell.cpp` 里只有三处 `cancel_->setEnabled(...)`、
+    #   **一处 `connect` 都没有** ⇒ 六页共用任务壳的那颗「取消」点了什么都不发生。
+    #   ① 任务壳自己必须把按钮接起来（拆掉那行 ⇒ 立刻红）；
+    #   ② 每个用 `task_->run(...)` 的页面都必须在 worker 里轮询 `cancel_requested()`
+    #      （「接线在」不等于「各页真停」—— 只有壳接线而 worker 不轮询，按钮照样是摆设）。
+    shell_src = ROOT / "src" / "shell" / "task_shell.cpp"
+    code = active_code(shell_src.read_text(encoding="utf-8", errors="replace"))
+    if "connect(cancel_" not in code:
+        fail("取消接线（①）：task_shell.cpp 里必须有 `connect(cancel_` —— "
+             "没有它，「取消」按钮就是死的（点了不留痕、worker 也不停）")
+        return
+    ok("取消接线（①：task_shell.cpp 里 `connect(cancel_` 在位）")
+
+    offenders = []
+    for src in sorted((ROOT / "src" / "shell" / "pages").rglob("*.cpp")):
+        code = active_code(src.read_text(encoding="utf-8", errors="replace"))
+        if "task_->run(" not in code:
+            continue
+        if "cancel_requested()" not in code:
+            offenders.append(str(src.relative_to(ROOT)))
+    if offenders:
+        fail("取消轮询（①）：%s 起了任务壳却**不轮询取消位** —— 那颗按钮在它这一页仍是死的"
+             % "、".join(offenders))
+        return
+    ok("取消轮询（①：每个用 task_->run 的页面都轮询 cancel_requested()）")
 
 
 def step_winres(release: bool) -> None:
