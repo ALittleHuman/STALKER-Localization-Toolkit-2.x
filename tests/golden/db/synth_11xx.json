@@ -1,15 +1,15 @@
 {
   "kind": "synth",
   "format": "11xx",
-  "db_sha256": "0f786ac5b5f77e60540a755f823cd7906ed760eada798070cbf656bf22a82ead",
+  "db_sha256": "be702cfccbd26dca4e8823cc09fcb991da4a703042ca23fb4911af05ac1baa24",
   "entries": [
-    "d\tbin\t0\t0\t0\t0",
+    "d\tbin\t0\t0\t0\t1",
     "f\tbin/blob.dat\t400\t400\t8\t0",
-    "d\tdata\t0\t0\t0\t0",
+    "d\tdata\t0\t0\t0\t1",
     "f\tdata/empty.dat\t0\t0\t408\t0",
     "f\tdata/nested.bin\t1024\t1024\t408\t0",
     "f\treadme.txt\t14\t14\t1432\t0",
-    "d\tпапка\t0\t0\t0\t0",
+    "d\tпапка\t0\t0\t0\t1",
     "f\tпапка/файл_тест.txt\t11\t11\t1446\t0"
   ],
   "extract": [

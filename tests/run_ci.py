@@ -422,6 +422,40 @@ def step_golden_db(release: bool) -> None:
         fail("DB 六格式与 1.x 不一致（见上）")
 
 
+def step_db_11xx_dirlock(release: bool) -> None:
+    """11xx **写侧目录条目**的三道锁（2026-10-05 已查实的真缺陷，官方 cv 判据）。
+
+    判据本体在 `tests/check_db_11xx_dirlock.py`：①官方 `converter.exe -unpack -11xx`
+    **退出码必须 == 0**（修前是栈溢出 `0xC00000FD`）；②不依赖 cv 的**字节级锁**（打包产物
+    HEADER 明文里目录条目字段必须全零，自带 LZHUF 解码 + 判据自证）；③反向锁（2215/2945
+    目录条目仍全零 + 三格式自往返仍过）。
+
+    ★ 为什么独立成步、且**缺 cv 时不判红**（与其它步的 prereq 口径不同）：cv 是**外部参照工具**，
+    不是仓库自带件；而"没有 cv 就整条锁失效"是最坏的形态（锁会悄悄消失）。所以脚本里
+    cv 缺失只打 `!!` note、退码仍是 0 —— ②③ 两条不依赖 cv 的锁照跑照判红。
+    退出码：0=全绿（cv 缺失只记 note），1=有断言不成立，2=CLI 缺失（外部前提，按档位判定）。
+    """
+    say("[db-11xx] 11xx 写侧目录条目：cv 判据锁 + 字节级锁 + 反向锁")
+    script = ROOT / "tests" / "check_db_11xx_dirlock.py"
+    if not require_repo_file(script, "11xx 目录条目判据脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("DB-11XX-DIRLOCK") \
+                or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("11xx 目录条目写侧：cv 判据 / 字节级 / 反向三组锁全绿")
+    elif rc == 2:
+        prereq("构建产物 xrkit_cli.exe", "缺失（见上）", release)
+    else:
+        fail("11xx 目录条目写侧有断言不成立（见上）")
+
+
 def step_unpack_rules(release: bool) -> None:
     """真机判红锁：解包**落点**（包名壳：VESSEL 不叠第二层壳 + 反向两条仍叠壳）与
     **报数口径**（`IWP\\database\\maps\\fake_start.db` 报数==盘上真实；`--dump` 仍报包内记录数）。
@@ -1315,6 +1349,7 @@ STEPS = [
     ("golden-sqfs", step_golden_sqfs),
     ("golden-extract", step_golden_extract),
     ("golden-db", step_golden_db),
+    ("db-11xx-dirlock", step_db_11xx_dirlock),
     ("unpack-rules", step_unpack_rules),
     ("golden-sqfs-pack", step_golden_sqfs_pack),
     ("golden-sqfs-pack-real", step_golden_sqfs_pack_real),

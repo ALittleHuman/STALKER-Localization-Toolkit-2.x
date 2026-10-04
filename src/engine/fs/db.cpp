@@ -831,7 +831,16 @@ std::vector<uint8_t> build_header(const std::vector<DbPackItem>& items, DbFormat
             } else if (fmt == DbFormat::F2215) {
                 append_entry_null(h, it.path + "\\", {0, 0, 0});
             } else {
-                append_entry_null(h, it.path + "\\", {1, 0, 0});
+                // ★ 2026-10-05：11xx 的目录条目**三个字段必须全零**。
+                //   曾经写 `{1, 0, 0}`（第 1 字段＝`uncompressed`/标志位）——那是**非法**写法：
+                //   官方 `converter.exe -unpack -11xx` 读到这种目录条目会**栈溢出**
+                //   （exit 3221225725 = 0xC00000FD，产物 0 文件，实测复现）。
+                //   cv 变体实测（同一棵含目录树，只改目录条目表示）：
+                //     不写目录条目 / `dir\`+(0,0,0) / `dir`+(1,0,0) ⇒ exit 0 且逐字节 MATCH；
+                //     而 `dir\`+(1,0,0)、`dir\`+(1,0,1)、以及把它排在文件之前 ⇒ 一律栈溢出。
+                //   取 `{0,0,0}` 而不是"干脆不写"：**保留目录条目 ⇒ 不丢空目录信息**。
+                //   读侧不用改：`fmt_11xx` 用 `is_dir = (offset == 0)`，两种写法都判为目录。
+                append_entry_null(h, it.path + "\\", {0, 0, 0});
             }
         } else {
             if (fmt == DbFormat::Xdb || fmt == DbFormat::Ru2947 || fmt == DbFormat::Ww2947) {
