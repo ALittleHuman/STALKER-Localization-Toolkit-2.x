@@ -10,6 +10,8 @@
 
 #include "page_base.h"
 
+#include "../dialog_start.h"
+
 #include "xrkit/engine/font/metrics.h"
 #include "xrkit/engine/font/package.h"
 
@@ -44,6 +46,12 @@ public:
     QLabel* result_label() const { return result_label_; }
     TaskShell* task() const { return task_; }
     int refused_count() const { return refused_count_; }
+
+    // ★ 2026-10-04（用户第 1/2 条）：拖放区域清单 + 三个"选择"调用点的起点判据
+    //   （字体 ← 文本 XML 所在的上一级；输出目录 ← 文本 XML 目录）
+    DialogStart xml_dialog_start() const;
+    DialogStart font_dialog_start() const;
+    DialogStart out_dialog_start() const;
 
     engine::font::PackageOptions options_for(const QString& xml_dir, const QString& font_path,
                                              const QString& out_dir) const;

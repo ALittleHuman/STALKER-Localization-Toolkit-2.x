@@ -14,6 +14,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QWidget>
 #include <filesystem>
 
 namespace xrkit::shell {
@@ -28,15 +29,12 @@ FontPackPage::FontPackPage(QWidget* parent)
     // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内说明整段删（六页统一）
     xml_edit_ = new QLineEdit;
     xml_edit_->setObjectName(QStringLiteral("font_xml_dir"));
-    xml_edit_->setAcceptDrops(true);
     xml_edit_->setPlaceholderText(QStringLiteral("文本 XML 目录（只扫顶层）"));
     font_edit_ = new QLineEdit;
     font_edit_->setObjectName(QStringLiteral("font_path"));
-    font_edit_->setAcceptDrops(true);
     font_edit_->setPlaceholderText(QStringLiteral("字体文件（.ttf/.ttc）"));
     out_edit_ = new QLineEdit;
     out_edit_->setObjectName(QStringLiteral("font_out_dir"));
-    out_edit_->setAcceptDrops(true);
     out_edit_->setPlaceholderText(QStringLiteral("输出目录（产物是 <输出>/gamedata）"));
 
     // 11.8：状态标记与预览标题共用同一判据（引擎）
@@ -45,29 +43,41 @@ FontPackPage::FontPackPage(QWidget* parent)
     result_label_ = new QLabel;
     result_label_->setObjectName(QStringLiteral("font_result"));
 
+    // ★ 2026-10-04 用户第 2 条（"目录定向"）：判据只有成员函数那一份（自检断言同一份）
+    const auto xml_judge = [this]() { return xml_dialog_start(); };
+    const auto font_judge = [this]() { return font_dialog_start(); };
+    const auto out_judge = [this]() { return out_dialog_start(); };
+
     const auto path_row = [this](const QString& label, QLineEdit* edit, bool directory,
-                                 const QString& title) {
-        auto* layout = new QHBoxLayout;
+                                 const QString& title, std::function<DialogStart()> judge) {
+        // ★ 2026-10-04 用户第 1 条：整行成容器 ⇒ "拖到相应区域"
+        auto* container = new QWidget;
+        auto* layout = new QHBoxLayout(container);
+        layout->setContentsMargins(0, 0, 0, 0);
         layout->addWidget(new QLabel(label), 0);
         layout->addWidget(edit, 1);
         auto* browse = new QPushButton(QStringLiteral("选择…"));
         layout->addWidget(browse, 0);
-        QObject::connect(browse, &QPushButton::clicked, this, [this, edit, directory, title] {
+        QObject::connect(browse, &QPushButton::clicked, this,
+                         [this, edit, directory, title, judge] {
+            // ★ 2026-10-04 用户第 2 条：①上次的选择 → ②唯一输入目录 → ③工具自身所在文件夹
+            const QString start = resolve_dialog_start(judge ? judge() : DialogStart{});
             const QString picked =
-                directory ? QFileDialog::getExistingDirectory(this, title, edit->text())
-                          : QFileDialog::getOpenFileName(this, title, edit->text(),
+                directory ? QFileDialog::getExistingDirectory(this, title, start)
+                          : QFileDialog::getOpenFileName(this, title, start,
                                                         QStringLiteral("字体 (*.ttf *.ttc)"));
             if (!picked.isEmpty()) edit->setText(QDir::toNativeSeparators(picked));
             refresh_state();
         });
-        return layout;
+        drop_zones_.attach_row(container, this);
+        return container;
     };
-    body_layout()->addLayout(path_row(QStringLiteral("文本 XML："), xml_edit_, true,
-                                      QStringLiteral("选择 XML 目录")));
-    body_layout()->addLayout(path_row(QStringLiteral("字体："), font_edit_, false,
-                                      QStringLiteral("选择字体文件")));
-    body_layout()->addLayout(path_row(QStringLiteral("输出目录："), out_edit_, true,
-                                      QStringLiteral("选择输出目录")));
+    body_layout()->addWidget(path_row(QStringLiteral("文本 XML："), xml_edit_, true,
+                                      QStringLiteral("选择 XML 目录"), xml_judge));
+    body_layout()->addWidget(path_row(QStringLiteral("字体："), font_edit_, false,
+                                      QStringLiteral("选择字体文件"), font_judge));
+    body_layout()->addWidget(path_row(QStringLiteral("输出目录："), out_edit_, true,
+                                      QStringLiteral("选择输出目录"), out_judge));
 
     game_combo_ = new QComboBox;
     game_combo_->setObjectName(QStringLiteral("font_game"));
@@ -204,6 +214,23 @@ bool FontPackPage::build(const QString& xml_dir, const QString& font_path, const
                               QStringLiteral("（已按繁体回退生成）"));
     }
     return true;
+}
+
+// ★ 2026-10-04 用户第 2 条（"目录定向"）：这三个函数是各"选择"调用点的判据唯一实现 ——
+//   按钮 lambda 绑它们（见构造期的 `*_judge`），自检也断言它们。
+DialogStart FontPackPage::xml_dialog_start() const {
+    // 文本 XML 是这一页的**第一输入** ⇒ 空时落到"工具自身所在文件夹"
+    return dialog_start_for(xml_edit_->text(), QStringList(), false);
+}
+
+DialogStart FontPackPage::font_dialog_start() const {
+    // 字体 ← 文本 XML 所在目录（唯一才用；XML 是目录输入）
+    return dialog_start_for(font_edit_->text(), QStringList{xml_edit_->text()}, false);
+}
+
+DialogStart FontPackPage::out_dialog_start() const {
+    // 输出目录 ← 文本 XML 目录（唯一才用）
+    return dialog_start_for(out_edit_->text(), QStringList{xml_edit_->text()}, false);
 }
 
 }  // namespace xrkit::shell

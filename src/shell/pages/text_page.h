@@ -11,6 +11,8 @@
 
 #include "page_base.h"
 
+#include "../dialog_start.h"
+
 #include "xrkit/engine/text/extract.h"
 
 #include <QString>
@@ -48,6 +50,10 @@ public:
     VirtualList* rows() const { return rows_; }
     TaskShell* task() const { return task_; }
     QLabel* status() const { return status_; }
+
+    // ★ 2026-10-04（用户第 1/2 条）：拖放区域清单 + 两个"选择"调用点的起点判据
+    DialogStart source_dialog_start() const;
+    DialogStart target_dialog_start() const;
 
 private:
     void run_batch();

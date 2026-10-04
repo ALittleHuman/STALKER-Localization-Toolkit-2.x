@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include "../drop_zone.h"
 // xrkit::shell —— 页基类（M2-6a）：对照表 ⑤（页内滚动 + 标签条）的落地形态。
 //
 // ⑤ 的三条口径逐条照抄（出处见 `docs/2.0.0-行为口径对照表.md`）：
@@ -70,8 +71,18 @@ public:
     //（自检用它做"忘了设就红"的断言，而不是自己抄一份期望值）
     bool minsize_ok() const;
 
+    // ★ 2026-10-04 用户第 1 条：「所有目录都需要拖拽，而且是**拖拽到相应区域**。」
+    //   每页一份的拖放区域登记簿 = **只有一个实例**（在基类里）—— 六页各写一份成员就是
+    //   "同类东西维护六套"（用户红线）。页面想加区域就 `drop_zones().attach_row(整行, this)`。
+    DropZones& drop_zones() { return drop_zones_; }
+    const DropZones& drop_zones() const { return drop_zones_; }
+
     // ② 点页面空白 ⇒ 把输入框焦点收回页面（用户真机："点空白并不能取消，还是一闪一闪"）
     bool eventFilter(QObject* watched, QEvent* event) override;
+
+protected:
+    // ★ 2026-10-04 用户第 1 条：拖放区域登记簿**唯一实例**在基类（页面直接 `drop_zones_` 用）
+    DropZones drop_zones_;
 
 private:
     std::function<void(const QString&)> log_sink_;   // ★ Hub 接进来的日志口（见 set_log_sink）

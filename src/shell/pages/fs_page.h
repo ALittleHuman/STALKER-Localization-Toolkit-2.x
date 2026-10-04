@@ -13,6 +13,7 @@
 
 #include "page_base.h"
 #include "../task_shell.h"
+#include "../dialog_start.h"
 
 #include "xrkit/engine/fs/extract_tree.h"
 #include "xrkit/engine/plugin/registry.h"
@@ -70,6 +71,14 @@ public:
     QStringList load_errors() const { return load_errors_; }
     // 自检用：拖放过滤器到底装在哪些控件上（判据是**接线**，见 drop_filter.h）
     FileDropFilter* drop_filter() const { return drop_filter_; }
+    // ★ 2026-10-04（用户第 1 条"拖拽到相应区域"）：这一页新增的**行级**拖放区域
+    //   （解包到那一行 / 封包输出那一行；卡片与包列表仍走 `drop_filter_` —— 丢进去＝加包）
+    // ★ 2026-10-04（用户第 2 条"目录定向"）：各"选择"调用点的起点判据（唯一实现在
+    //   `dialog_start.h`；解包目标 ← **来源包所在目录**，唯一才用）
+    DialogStart unpack_output_dialog_start() const;
+    DialogStart pack_output_dialog_start() const;
+    DialogStart pack_add_files_dialog_start() const;
+    DialogStart load_package_dialog_start() const;
     // ★ 2026-10-01 用户第 3 条：「扫描时有Bug的，选择包模式的时候，是扫不出金球奖的db的」
     //   ⇒ 加包对话框的过滤器用**家族通配**（`*.db*` / `*.sq*` / `*.xdb*` 各一段，2026-10-04 补第三段），
     //   自检直接断言它，避免有人再回去枚举 `*.db0 *.db1 …`（那正是看不到 `gamedata.db_textures_1` 的原因）。
@@ -88,6 +97,8 @@ public:
     //   删掉"）⇒ 本访问器恒为 false，只供自检做"这条不许再冒出来"的反向断言。
     bool entry_hint_visible() const;
     QString source_at(int index) const;
+    // ★ 2026-10-04：所有已知源的路径（"唯一输入目录"判据要吃它 —— 见 dialog_start.h）
+    QStringList source_paths() const;
     int conflict_count() const { return tree_.conflict_count(); }
 
     // 6.3：两套状态 —— 包列表选中态归「全选/加载选中/取消加载/移除」用

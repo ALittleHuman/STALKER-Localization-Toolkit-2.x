@@ -16,6 +16,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QWidget>
 
 #include <algorithm>
 #include <map>
@@ -51,15 +52,21 @@ XmlPage::XmlPage(QWidget* parent)
     // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内说明整段删（六页统一）
     dir_a_edit_ = new QLineEdit;
     dir_a_edit_->setObjectName(QStringLiteral("xml_dir_a"));
-    dir_a_edit_->setAcceptDrops(true);
     dir_a_edit_->setPlaceholderText(QStringLiteral("文件夹 A"));
     dir_b_edit_ = new QLineEdit;
     dir_b_edit_->setObjectName(QStringLiteral("xml_dir_b"));
-    dir_b_edit_->setAcceptDrops(true);
     dir_b_edit_->setPlaceholderText(QStringLiteral("文件夹 B"));
 
-    const auto dir_row = [this](const QString& label, QLineEdit* edit, QComboBox*& enc) {
-        auto* layout = new QHBoxLayout;
+    // ★ 2026-10-04 用户第 2 条（"目录定向"）：判据只有成员函数那一份（自检断言同一份）
+    const auto dir_a_judge = [this]() { return dir_a_dialog_start(); };
+    const auto dir_b_judge = [this]() { return dir_b_dialog_start(); };
+
+    const auto dir_row = [this](const QString& label, QLineEdit* edit, QComboBox*& enc,
+                                std::function<DialogStart()> judge) {
+        // ★ 2026-10-04 用户第 1 条：整行成容器 ⇒ 两侧文件夹都是"拖到相应区域"
+        auto* container = new QWidget;
+        auto* layout = new QHBoxLayout(container);
+        layout->setContentsMargins(0, 0, 0, 0);
         layout->addWidget(new QLabel(label), 0);
         layout->addWidget(edit, 1);
         enc = new QComboBox;
@@ -68,15 +75,21 @@ XmlPage::XmlPage(QWidget* parent)
         layout->addWidget(enc, 0);
         auto* browse = new QPushButton(QStringLiteral("选择…"));
         layout->addWidget(browse, 0);
-        QObject::connect(browse, &QPushButton::clicked, this, [this, edit] {
-            const QString picked = QFileDialog::getExistingDirectory(this, QStringLiteral("选择目录"),
-                                                                    edit->text());
+        QObject::connect(browse, &QPushButton::clicked, this, [this, edit, judge] {
+            // ★ 2026-10-04 用户第 2 条：①上次的选择 → ②唯一输入目录 → ③工具自身所在文件夹
+            const QString picked = QFileDialog::getExistingDirectory(
+                this, QStringLiteral("选择目录"),
+                resolve_dialog_start(judge ? judge() : DialogStart{}));
             if (!picked.isEmpty()) edit->setText(QDir::toNativeSeparators(picked));
         });
-        return layout;
+        drop_zones_.attach_row(container, this);
+        return container;
     };
-    body_layout()->addLayout(dir_row(QStringLiteral("文件夹 A："), dir_a_edit_, enc_a_combo_));
-    body_layout()->addLayout(dir_row(QStringLiteral("文件夹 B："), dir_b_edit_, enc_b_combo_));
+    body_layout()->addWidget(dir_row(QStringLiteral("文件夹 A："), dir_a_edit_, enc_a_combo_,
+                                     dir_a_judge));
+    // 文件夹 B ← 文件夹 A（唯一才用；A 空/多元 ⇒ 工具目录）
+    body_layout()->addWidget(dir_row(QStringLiteral("文件夹 B："), dir_b_edit_, enc_b_combo_,
+                                     dir_b_judge));
 
     mode_combo_ = new QComboBox;
     mode_combo_->setObjectName(QStringLiteral("xml_mode"));
@@ -418,6 +431,15 @@ bool XmlPage::export_csv(const QString& path, const QString& generated_at) {
     }
     std::string error;
     return exml::write_csv_file(path.toUtf8().toStdString(), report, error);
+}
+
+// ★ 2026-10-04 用户第 2 条：两个"选择"调用点的起点判据（与按钮 lambda 里那一行同源）
+DialogStart XmlPage::dir_a_dialog_start() const {
+    return dialog_start_for(dir_a_edit_->text(), QStringList(), false);
+}
+
+DialogStart XmlPage::dir_b_dialog_start() const {
+    return dialog_start_for(dir_b_edit_->text(), QStringList{dir_a_edit_->text()}, false);
 }
 
 }  // namespace xrkit::shell

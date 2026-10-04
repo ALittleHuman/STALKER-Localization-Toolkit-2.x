@@ -11,6 +11,8 @@
 
 #include "page_base.h"
 
+#include "../dialog_start.h"
+
 #include "xrkit/engine/plugin/registry.h"
 #include "xrkit/engine/xml/compare.h"
 
@@ -58,6 +60,11 @@ public:
     VirtualList* rows() const { return rows_; }
     TaskShell* task() const { return task_; }
     QLabel* status() const { return status_; }
+
+    // ★ 2026-10-04（用户第 1/2 条）：拖放区域清单 + 两个"选择"调用点的起点判据
+    //   （B ← A；A 是这一页的第一输入 ⇒ 空/多元时落到工具目录）
+    DialogStart dir_a_dialog_start() const;
+    DialogStart dir_b_dialog_start() const;
 
 private:
     struct Row {

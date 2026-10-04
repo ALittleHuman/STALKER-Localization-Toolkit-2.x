@@ -14,6 +14,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QWidget>
 
 namespace xrkit::shell {
 namespace {
@@ -29,29 +30,40 @@ TextPage::TextPage(QWidget* parent)
     // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内说明整段删（六页统一）
     source_edit_ = new QLineEdit;
     source_edit_->setObjectName(QStringLiteral("text_source"));
-    source_edit_->setAcceptDrops(true);  // 6.4 同族：拖放挂在既有控件上
+    // ★ 2026-10-04：输入框自己**不接**拖放 —— 接住它的必须是**整行区域**（`drop_zones_`）。
     source_edit_->setPlaceholderText(QStringLiteral("gameplay 或 scripts 文件夹"));
     target_edit_ = new QLineEdit;
     target_edit_->setObjectName(QStringLiteral("text_target"));
-    target_edit_->setAcceptDrops(true);
     target_edit_->setPlaceholderText(QStringLiteral("输出目录（必填，不能是源目录的父目录）"));
 
-    const auto row = [this](const QString& label, QLineEdit* edit, const QString& title) {
-        auto* layout = new QHBoxLayout;
+    // ★ 2026-10-04 用户第 2 条（"目录定向"）：判据只有成员函数那一份（自检断言同一份）
+    const auto source_judge = [this]() { return source_dialog_start(); };
+    const auto target_judge = [this]() { return target_dialog_start(); };
+
+    const auto row = [this](const QString& label, QLineEdit* edit, const QString& title,
+                            std::function<DialogStart()> judge) {
+        // ★ 2026-10-04 用户第 1 条：整行成一个容器 ⇒ 「拖拽到**相应区域**」（不是只有细长输入框）
+        auto* container = new QWidget;
+        auto* layout = new QHBoxLayout(container);
+        layout->setContentsMargins(0, 0, 0, 0);
         layout->addWidget(new QLabel(label), 0);
         layout->addWidget(edit, 1);
         auto* browse = new QPushButton(QStringLiteral("选择…"));
         layout->addWidget(browse, 0);
-        QObject::connect(browse, &QPushButton::clicked, this, [this, edit, title] {
-            const QString picked = QFileDialog::getExistingDirectory(this, title, edit->text());
+        QObject::connect(browse, &QPushButton::clicked, this, [this, edit, title, judge] {
+            // ★ 2026-10-04 用户第 2 条：①上次的选择 → ②唯一输入目录 → ③工具自身所在文件夹
+            const QString picked = QFileDialog::getExistingDirectory(
+                this, title, resolve_dialog_start(judge ? judge() : DialogStart{}));
             if (!picked.isEmpty()) edit->setText(QDir::toNativeSeparators(picked));
         });
-        return layout;
+        drop_zones_.attach_row(container, this);
+        return container;
     };
-    body_layout()->addLayout(row(QStringLiteral("源目录："), source_edit_,
-                                 QStringLiteral("选择 gameplay / scripts 文件夹")));
-    body_layout()->addLayout(row(QStringLiteral("输出目录："), target_edit_,
-                                 QStringLiteral("选择输出目录")));
+    body_layout()->addWidget(row(QStringLiteral("源目录："), source_edit_,
+                                 QStringLiteral("选择 gameplay / scripts 文件夹"), source_judge));
+    // 输出目录 ← 源目录（唯一才用）
+    body_layout()->addWidget(row(QStringLiteral("输出目录："), target_edit_,
+                                 QStringLiteral("选择输出目录"), target_judge));
 
     prefix_edit_ = new QLineEdit(utf8(etxt::kDefaultIdPrefix));
     prefix_edit_->setObjectName(QStringLiteral("text_prefix"));
@@ -163,6 +175,15 @@ void TextPage::run_batch() {
                     .toUtf8().toStdString());
         for (const std::string& skipped : stats.skipped) message("跳过 " + skipped);
     });
+}
+
+// ★ 2026-10-04 用户第 2 条：两个"选择"调用点的起点判据（与按钮 lambda 里那一行同源）
+DialogStart TextPage::source_dialog_start() const {
+    return dialog_start_for(source_edit_->text(), QStringList(), false);
+}
+
+DialogStart TextPage::target_dialog_start() const {
+    return dialog_start_for(target_edit_->text(), QStringList{source_edit_->text()}, false);
 }
 
 }  // namespace xrkit::shell

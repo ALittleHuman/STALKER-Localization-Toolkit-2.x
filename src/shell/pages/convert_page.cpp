@@ -15,6 +15,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QWidget>
 
 #include <chrono>
 #include <thread>
@@ -45,29 +46,44 @@ ConvertPage::ConvertPage(QWidget* parent)
     //   （六页统一；用户对"满屏解释"的口径与词汇口径同源：「不用带括号。一般人又看不懂。」）
     source_edit_ = new QLineEdit;
     source_edit_->setObjectName(QStringLiteral("convert_source"));
-    source_edit_->setAcceptDrops(true);  // 6.4 同族：拖放挂在既有控件上
+    // ★ 2026-10-04：输入框自己**不接**拖放 —— 接住它的必须是**整行区域**（`drop_zones_`）。
+    //   输入框自己设了 `acceptDrops` 又不处理事件的话，落在框上的拖放会被它吞掉 ⇒ 行区域收不到。
     source_edit_->setPlaceholderText(QStringLiteral("源文件或目录"));
     output_edit_ = new QLineEdit;
     output_edit_->setObjectName(QStringLiteral("convert_output"));
-    output_edit_->setAcceptDrops(true);
     output_edit_->setPlaceholderText(QStringLiteral("输出目录"));
 
-    auto make_row = [this](const QString& label, QLineEdit* edit, const QString& title) {
-        auto* row = new QHBoxLayout;
+    // ★ 2026-10-04 用户第 2 条（"目录定向"）：每个"选择"调用点的起点判据**只有这一份**
+    //   ——按钮 lambda 绑的就是下面这两个成员函数（自检也断言它们 ⇒ 两边不可能分叉）。
+    const auto source_judge = [this]() { return source_dialog_start(); };
+    const auto output_judge = [this]() { return output_dialog_start(); };
+
+    auto make_row = [this](const QString& label, QLineEdit* edit, const QString& title,
+                           std::function<DialogStart()> judge) {
+        // ★ 2026-10-04 用户第 1 条「拖拽到相应区域」：整行是一个 QWidget 容器 ⇒ 丢在
+        //   标签/按钮/空白处都能接住（`drop_zones_` 只有这一份接线实现）。
+        auto* container = new QWidget;
+        auto* row = new QHBoxLayout(container);
+        row->setContentsMargins(0, 0, 0, 0);
         row->addWidget(new QLabel(label), 0);
         row->addWidget(edit, 1);
         auto* browse = new QPushButton(QStringLiteral("选择…"));
         row->addWidget(browse, 0);
-        QObject::connect(browse, &QPushButton::clicked, this, [this, edit, title] {
-            const QString picked = QFileDialog::getExistingDirectory(this, title, edit->text());
+        QObject::connect(browse, &QPushButton::clicked, this, [this, edit, title, judge] {
+            // ★ 2026-10-04 用户第 2 条：起点 = ①上次的选择（＝框里现有的值）→ ②唯一输入目录
+            //   → ③工具自身所在文件夹（exe 位置；**不是 CWD**）。算法只有 dialog_start.h 一份。
+            const QString picked = QFileDialog::getExistingDirectory(
+                this, title, resolve_dialog_start(judge ? judge() : DialogStart{}));
             if (!picked.isEmpty()) edit->setText(QDir::toNativeSeparators(picked));
         });
-        return row;
+        drop_zones_.attach_row(container, this);
+        return container;
     };
-    body_layout()->addLayout(make_row(QStringLiteral("源路径："), source_edit_,
-                                      QStringLiteral("选择源目录")));
-    body_layout()->addLayout(make_row(QStringLiteral("输出目录："), output_edit_,
-                                      QStringLiteral("选择输出目录")));
+    body_layout()->addWidget(make_row(QStringLiteral("源路径："), source_edit_,
+                                      QStringLiteral("选择源目录"), source_judge));
+    // 输出目录 ← 源路径（唯一才用；"输入目录多元或没有输入"由 `DialogStart` 自己判）
+    body_layout()->addWidget(make_row(QStringLiteral("输出目录："), output_edit_,
+                                      QStringLiteral("选择输出目录"), output_judge));
 
     source_combo_ = new QComboBox;
     source_combo_->setObjectName(QStringLiteral("convert_source_enc"));
@@ -212,6 +228,19 @@ void ConvertPage::run_batch(const std::vector<QString>& files, const QString& ou
         }
         message(failed == 0 ? "全部完成" : ("有 " + std::to_string(failed) + " 个文件失败"));
     });
+}
+
+// ★ 2026-10-04 用户第 2 条（"目录定向"）：这两个函数是**各"选择"调用点的判据唯一实现** ——
+//   按钮 lambda 先绑它们（见构造期 `source_inputs` / `output_inputs`），自检也断言它们
+//   ⇒ "自检断言的东西"与"真点按钮跑的东西"是同一份，不可能分叉。
+DialogStart ConvertPage::source_dialog_start() const {
+    // 源路径是**第一输入**：没有对应的输入目录 ⇒ 走到"工具自身所在文件夹"
+    return dialog_start_for(source_edit_->text(), QStringList(), false);
+}
+
+DialogStart ConvertPage::output_dialog_start() const {
+    // 输出目录 ← 源路径（唯一才用；空/多元 ⇒ 工具目录）
+    return dialog_start_for(output_edit_->text(), QStringList{source_edit_->text()}, false);
 }
 
 }  // namespace xrkit::shell

@@ -18,6 +18,7 @@
 #endif
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QWidget>
 #include <filesystem>
 
 namespace xrkit::shell {
@@ -112,29 +113,39 @@ VideoPage::VideoPage(QWidget* parent)
     // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内说明整段删（六页统一）
     source_edit_ = new QLineEdit;
     source_edit_->setObjectName(QStringLiteral("video_source"));
-    source_edit_->setAcceptDrops(true);
     source_edit_->setPlaceholderText(QStringLiteral("源视频文件"));
     output_edit_ = new QLineEdit;
     output_edit_->setObjectName(QStringLiteral("video_output"));
-    output_edit_->setAcceptDrops(true);
     output_edit_->setPlaceholderText(QStringLiteral("输出目录"));
 
-    const auto row = [this](const QString& label, QLineEdit* edit, const QString& title) {
-        auto* layout = new QHBoxLayout;
+    // ★ 2026-10-04 用户第 2 条（"目录定向"）：判据只有成员函数那一份（自检断言同一份）
+    const auto source_judge = [this]() { return source_dialog_start(); };
+    const auto output_judge = [this]() { return output_dialog_start(); };
+
+    const auto row = [this](const QString& label, QLineEdit* edit, const QString& title,
+                            std::function<DialogStart()> judge) {
+        // ★ 2026-10-04 用户第 1 条：整行成容器 ⇒ "拖到相应区域"
+        auto* container = new QWidget;
+        auto* layout = new QHBoxLayout(container);
+        layout->setContentsMargins(0, 0, 0, 0);
         layout->addWidget(new QLabel(label), 0);
         layout->addWidget(edit, 1);
         auto* browse = new QPushButton(QStringLiteral("选择…"));
         layout->addWidget(browse, 0);
-        QObject::connect(browse, &QPushButton::clicked, this, [this, edit, title] {
-            const QString picked = QFileDialog::getExistingDirectory(this, title, edit->text());
+        QObject::connect(browse, &QPushButton::clicked, this, [this, edit, title, judge] {
+            // ★ 2026-10-04 用户第 2 条：①上次的选择 → ②唯一输入目录 → ③工具自身所在文件夹
+            const QString picked = QFileDialog::getExistingDirectory(
+                this, title, resolve_dialog_start(judge ? judge() : DialogStart{}));
             if (!picked.isEmpty()) edit->setText(QDir::toNativeSeparators(picked));
         });
-        return layout;
+        drop_zones_.attach_row(container, this);
+        return container;
     };
-    body_layout()->addLayout(row(QStringLiteral("源文件："), source_edit_,
-                                 QStringLiteral("选择输出目录")));
-    body_layout()->addLayout(row(QStringLiteral("输出目录："), output_edit_,
-                                 QStringLiteral("选择输出目录")));
+    body_layout()->addWidget(row(QStringLiteral("源文件："), source_edit_,
+                                 QStringLiteral("选择源文件所在目录"), source_judge));
+    // 输出目录 ← 源视频**所在目录**（文件输入取它所在目录；唯一才用）
+    body_layout()->addWidget(row(QStringLiteral("输出目录："), output_edit_,
+                                 QStringLiteral("选择输出目录"), output_judge));
 
     // 8.5：三态状态栏。构造期**不探测**（8.2）⇒ 这里显示"未检测"，不是 ✗
     status_ = new QLabel;
@@ -249,6 +260,16 @@ QString VideoPage::auto_install() {
     }
     return QStringLiteral("请运行 ") + utf8(xrkit::core::path_to_utf8(script)) +
            QStringLiteral(" 完成下载（它会校验并拒绝 ffmpeg 8.x）");
+}
+
+// ★ 2026-10-04 用户第 2 条：两个"选择"调用点的起点判据（与按钮 lambda 里那一行同源）
+DialogStart VideoPage::source_dialog_start() const {
+    return dialog_start_for(source_edit_->text(), QStringList(), false);
+}
+
+DialogStart VideoPage::output_dialog_start() const {
+    // 源视频是**文件** ⇒ 起点＝它所在目录（唯一才用）
+    return dialog_start_for(output_edit_->text(), QStringList{source_edit_->text()}, true);
 }
 
 }  // namespace xrkit::shell

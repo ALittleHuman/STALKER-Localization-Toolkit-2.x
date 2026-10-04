@@ -13,6 +13,8 @@
 
 #include "page_base.h"
 
+#include "../dialog_start.h"
+
 #include "xrkit/engine/video/ffmpeg.h"
 #include "xrkit/engine/video/transcode.h"
 
@@ -45,6 +47,11 @@ public:
     QLineEdit* source_edit() const { return source_edit_; }
     QLineEdit* output_edit() const { return output_edit_; }
     QPushButton* detect_button() const { return detect_button_; }
+
+    // ★ 2026-10-04（用户第 1/2 条）：拖放区域清单 + 两个"选择"调用点的起点判据
+    //   （输出目录 ← 源视频**所在目录**）
+    DialogStart source_dialog_start() const;
+    DialogStart output_dialog_start() const;
 
     // 转码（用户 2026-09-26 决策：完整移植）。argv 一律由 `plan_transcode` 算，
     // 页面只负责起进程、把 stderr 喂给 `progress_from_line`、以及把失败如实报出来。

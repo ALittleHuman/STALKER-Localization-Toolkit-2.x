@@ -459,14 +459,16 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     // ── 顶部一行 = **整页级**的东西（与两张列表都无关）：打包/解包格式 + 解包输出。
     // 1.x 的「输入」行在这里换成了「解包到」：2.x 的包是"加进来"的（加包/拖放/扫描），
     // 所以缺的不是输入行而是**解包输出行**（原来写死 `<包路径>.out`，用户没法选）。
-    auto* row = new QHBoxLayout;
+    auto* row_holder = new QWidget;
+    auto* row = new QHBoxLayout(row_holder);
+    row->setContentsMargins(0, 0, 0, 0);
     row->addWidget(new QLabel(QStringLiteral("打包/解包格式：")), 0);
     row->addWidget(format_combo_, 0);
     row->addSpacing(xrkit::core::px(12));
     row->addWidget(new QLabel(QStringLiteral("解包到：")), 0);
     out_edit_ = new QLineEdit;
     out_edit_->setObjectName(QStringLiteral("fs_output_dir"));
-    out_edit_->setAcceptDrops(true);  // 6.4 同族：拖放挂在既有控件上
+    // ★ 2026-10-04：输入框自己**不接**拖放 —— 接住它的是**整行区域**（`drop_zones_`）。
     out_edit_->setPlaceholderText(QStringLiteral("输出目录（留空＝与包同目录）"));
     row->addWidget(out_edit_, 1);
     auto* browse_out = new QPushButton(QStringLiteral("选择…"));
@@ -475,7 +477,10 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     open_out_button_ = new QPushButton(QStringLiteral("打开"));
     open_out_button_->setObjectName(QStringLiteral("fs_open_output"));
     row->addWidget(open_out_button_, 0);
-    unpack_layout_->addLayout(row);
+    // ★ 2026-10-04 用户第 1 条：「所有目录都需要拖拽，而且是**拖拽到相应区域**。」
+    //   整行成容器 ⇒ 丢在标签/按钮/空白处都接住（丢进来的路径填「解包到」那一格）。
+    drop_zones_.attach_row(row_holder, this);
+    unpack_layout_->addWidget(row_holder);
     // 「加包」**不在这条页级行上**：它服务的是包列表 ⇒ 归包列表工具行（见下）。
 
     // ── ★ 2026-09-30 结构重排（用户第四轮 ①：「你不认为，堆起来很丑吗？」+ 授权「按自己审美来改」）
@@ -580,7 +585,9 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     {
     body_layout()->addWidget(tabs_, 1);   // 标签区＝下方工作区，自己拿拉伸
 
-        auto* row = new QHBoxLayout;
+        auto* pack_row_holder = new QWidget;
+        auto* row = new QHBoxLayout(pack_row_holder);
+        row->setContentsMargins(0, 0, 0, 0);
         row->addWidget(new QLabel(QStringLiteral("封包格式：")), 0);
         pack_format_combo_ = new QComboBox;
         pack_format_combo_->setObjectName(QStringLiteral("fs_pack_format"));
@@ -600,7 +607,9 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         pack_button_ = new QPushButton(QStringLiteral("封包"));
         pack_button_->setObjectName(QStringLiteral("fs_pack"));
         row->addWidget(pack_button_, 0);
-        pack_page_layout_->addLayout(row);
+        // ★ 2026-10-04 用户第 1 条：整行成容器 ⇒ 丢进来的路径填「封包输出」那一格
+        drop_zones_.attach_row(pack_row_holder, this);
+        pack_page_layout_->addWidget(pack_row_holder);
 
         auto* bar = new QHBoxLayout;
         auto* add_files = new QPushButton(QStringLiteral("＋文件"));
@@ -628,14 +637,17 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         pack_page_layout_->addWidget(pack_list_, 1);
 
         QObject::connect(add_files, &QPushButton::clicked, this, [this] {
+            // ★ 2026-10-04 用户第 2 条：起点＝①上次的选择 → ②唯一输入目录 → ③工具自身所在文件夹
             const QStringList picked = QFileDialog::getOpenFileNames(
-                this, QStringLiteral("选择要打进去的文件"), pack_base_dir(),
+                this, QStringLiteral("选择要打进去的文件"),
+                resolve_dialog_start(pack_add_files_dialog_start()),
                 QStringLiteral("所有文件 (*.*)"));
             if (!picked.isEmpty()) add_pack_files(picked);
         });
         QObject::connect(add_dir, &QPushButton::clicked, this, [this] {
             const QString dir = QFileDialog::getExistingDirectory(
-                this, QStringLiteral("选择要打进去的目录（递归，自动排除包文件）"), pack_base_dir());
+                this, QStringLiteral("选择要打进去的目录（递归，自动排除包文件）"),
+                resolve_dialog_start(pack_add_files_dialog_start()));
             if (!dir.isEmpty()) add_pack_dir(dir);
         });
         QObject::connect(rm, &QPushButton::clicked, this, [this] { remove_pack_selected(); });
@@ -643,7 +655,8 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         QObject::connect(browse_pack, &QPushButton::clicked, this, [this] {
             // 1.x 走 `_resolve_pack_target` 的保存框分支；这里显式选一次（选完回填）
             const QString picked = QFileDialog::getSaveFileName(
-                this, QStringLiteral("封包输出文件"), pack_out_edit_->text(),
+                this, QStringLiteral("封包输出文件"),
+                resolve_dialog_start(pack_output_dialog_start()),
                 QStringLiteral("包 (*.db *.sqfs);;所有文件 (*.*)"));
             if (!picked.isEmpty()) pack_out_edit_->setText(QDir::toNativeSeparators(picked));
         });
@@ -667,19 +680,24 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         if (chosen == nullptr) return;
         if (chosen == pick_dir) {
             const QString dir = QFileDialog::getExistingDirectory(
-                this, QStringLiteral("选择要加载的文件夹"), resolve_output_dir());
+                this, QStringLiteral("选择要加载的文件夹"),
+                resolve_dialog_start(load_package_dialog_start()));
             if (!dir.isEmpty()) add_paths({dir});   // 目录 ⇒ 散装层 + 递归找包并加载
             return;
         }
         const QStringList picked = QFileDialog::getOpenFileNames(
-            this, QStringLiteral("选择要加载的包（可多选）"), QString(),
+            this, QStringLiteral("选择要加载的包（可多选）"),
+            resolve_dialog_start(load_package_dialog_start()),
             QString::fromUtf8(kPackageDialogFilter));
         if (!picked.isEmpty()) add_paths(picked);
     });
     QObject::connect(browse_out, &QPushButton::clicked, this, [this] {
-        const QString picked =
-            QFileDialog::getExistingDirectory(this, QStringLiteral("选择解包输出目录"),
-                                              out_edit_->text());
+        // ★ 2026-10-04 用户第 2 条（原话）：「比如**解包的目标目录**，点击"选择"，默认定向到
+        //   工具所在的目录。**改成定向到输入的目录**。」⇒ 起点＝来源包**所在目录**（唯一才用），
+        //   空/多元 ⇒ 工具自身所在文件夹。
+        const QString picked = QFileDialog::getExistingDirectory(
+            this, QStringLiteral("选择解包输出目录"),
+            resolve_dialog_start(unpack_output_dialog_start()));
         if (!picked.isEmpty()) out_edit_->setText(QDir::toNativeSeparators(picked));
     });
     QObject::connect(open_out_button_, &QPushButton::clicked, this, [this] {
@@ -1333,6 +1351,39 @@ void FsPage::build_all_descendants(const efs::MergeNode& node, QTreeWidgetItem* 
 }
 QString FsPage::output_dir() const {
     return out_edit_ != nullptr ? out_edit_->text().trimmed() : QString();
+}
+
+QStringList FsPage::source_paths() const {
+    QStringList out;
+    for (const Source& source : sources_) out << source.path;
+    return out;
+}
+
+// ★ 2026-10-04 用户第 2 条（"目录定向"）：这四个函数是各"选择"调用点的判据唯一实现 ——
+//   按钮 lambda 直接调它们（见构造期那几处 `resolve_dialog_start(...)`），自检也断言它们。
+DialogStart FsPage::unpack_output_dialog_start() const {
+    // 用户原话里的例子：「**解包的目标目录**…**改成定向到输入的目录**」
+    //   ⇒ 来源包**所在目录**（包是文件 ⇒ 取它所在目录）；0 个或 ≥2 个源 ⇒ 落到工具自身所在文件夹
+    return dialog_start_for(output_dir(), source_paths(), true);
+}
+
+DialogStart FsPage::pack_output_dialog_start() const {
+    // 封包输出没有"唯一输入目录"这种语义 ⇒ 继承上次的选择（框里现有的值）
+    return dialog_start_for(pack_out_edit_ != nullptr ? pack_out_edit_->text() : QString(),
+                            QStringList(), false);
+}
+
+DialogStart FsPage::pack_add_files_dialog_start() const {
+    // ＋文件 / ＋目录：待打包列表是**多个**文件 ⇒ 天然落到工具自身所在文件夹；
+    //   真正能当"输入目录"的只有**唯一**的一份待打包内容（例：刚＋进来的那个目录）
+    QStringList inputs;
+    if (pack_items_.size() == 1) inputs << QString::fromStdString(pack_items_.front().source_path);
+    return dialog_start_for(pack_base_dir(), inputs, false);
+}
+
+DialogStart FsPage::load_package_dialog_start() const {
+    // 加包：还没有任何源时**没有"输入目录"可继承** ⇒ 工具自身所在文件夹（不再隐式用"解包到"）
+    return dialog_start_for(QString(), source_paths(), true);
 }
 
 QString FsPage::resolve_output_dir() {

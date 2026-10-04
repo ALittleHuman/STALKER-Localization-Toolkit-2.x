@@ -7,7 +7,9 @@
 #include "xrkit/engine/plugin/abi_host.h"
 #include "xrkit/engine/plugin/loader.h"
 #include "hub.h"
+#include "dialog_start.h"
 #include "drop_filter.h"
+#include "drop_zone.h"
 #include "log_box.h"
 #include "plugin_ui.h"
 #include "pages/convert_page.h"
@@ -49,6 +51,7 @@
 #include <QElapsedTimer>
 #include <QProcess>
 #include <QStringList>
+#include <QTemporaryDir>
 #include <QThread>
 
 #if defined(_WIN32)
@@ -232,6 +235,13 @@ SmokeResult run_smoke() {
             QStringLiteral("与 1.x 逐字节一致"),     // 汉化包页说明
             QStringLiteral("产出可直接分发的压缩包"),  // 汉化包页副标题
             QStringLiteral("勾选后解包或重打包"),      // 文件系统页副标题
+            // ★ 2026-10-04（用户：「**我截图的文字全部删除。**」）四页副标题也删了 ⇒ 一并进锁。
+            //   判据仍照 2026-09-27 那条经验：**挑只有被删对象才有的字串**
+            //   （用 `批量转换` 会打到合法文案；cp1251 / ffmpeg / XML 这类词更是满地都是）。
+            QStringLiteral("逐条对比转换前后"),  // 编码转换页副标题（独有的那半句）
+            QStringLiteral("提取可翻译文本"),      // 文本提取页副标题（独有的那半句）
+            QStringLiteral("结构与条目差异"),      // XML 校对页副标题（独有的那半句）
+            QStringLiteral("缺失时可见跳过"),      // 视频转换页副标题（独有的那半句）
         };
         QStringList hit;
         // ① 六页的 QLabel（含卡片里的说明段落）
@@ -283,6 +293,272 @@ SmokeResult run_smoke() {
               QStringLiteral("第 %1 页 id 可查").arg(i));
     }
     check(hub.stack()->currentIndex() == 0, QStringLiteral("默认停在第一页"));
+
+    // ★★ 2026-10-04 用户第 1 条（原话）：「**首先，所有目录都需要拖拽，而且是拖拽到相应区域。**」
+    //   判据分三层，全部**可判红**：
+    //     ① 结构：每一页"要选目录/文件"的输入（QLineEdit）都落在**比它更大**的一个拖放区域里，
+    //        那个区域真的装了 `FileDropFilter`（区域 ≠ 输入框本身 —— 旧做法就是挂在框上）：
+    //        ⚠ 判据**不能用** `acceptDrops()`：Qt6 的 `QLineEdit` 默认就是 true（实测断言过）；
+    //     ② 行为：对**每个**区域构造真 `QDropEvent` ⇒ **该区域对应的那个输入框被填上**；
+    //     ③ 反馈：DragEnter 后区域带上 `drop_hover`（QSS 高亮它），Drop 后撤掉。
+    {
+        QTemporaryDir drop_tmp;
+        const QList<QWidget*> page_widgets = {
+            create_page(0), create_page(1), create_page(2),
+            create_page(3), create_page(4), create_page(5)};
+        const auto zone_ok = [](PageBase* page, QWidget* zone) {
+            // 区域自己必须是拖放目标、必须带反馈属性，且**过滤器真的挂在它身上**
+            if (page == nullptr || zone == nullptr) return false;
+            if (!zone->acceptDrops()) return false;
+            if (!zone->property("drop_hover").isValid()) return false;
+            const std::vector<QWidget*>& zones = page->drop_zones().containers();
+            const std::vector<FileDropFilter*>& filters = page->drop_zones().filters();
+            if (zones.size() != filters.size()) return false;
+            for (size_t i = 0; i < zones.size(); ++i) {
+                if (zones[i] == zone) return filters[i] != nullptr && filters[i]->is_attached_to(zone);
+            }
+            return false;
+        };
+
+        // ① 每个目录/文件输入都要有一个能接住它的区域（"所有目录都需要拖拽"）。
+        //    这份名单就是**要选目录/文件**的那些输入（搜索框/行内编辑不在其中）。
+        const QStringList input_names = {
+            QStringLiteral("convert_source"), QStringLiteral("convert_output"),
+            QStringLiteral("text_source"),    QStringLiteral("text_target"),
+            QStringLiteral("xml_dir_a"),      QStringLiteral("xml_dir_b"),
+            QStringLiteral("video_source"),   QStringLiteral("video_output"),
+            QStringLiteral("font_xml_dir"),   QStringLiteral("font_path"),
+            QStringLiteral("font_out_dir"),   QStringLiteral("fs_output_dir"),
+            QStringLiteral("fs_pack_out")};
+        int edit_total = 0;
+        QStringList not_droppable;
+        for (QWidget* page : page_widgets) {
+            auto* as_page = dynamic_cast<PageBase*>(page);
+            if (as_page == nullptr) continue;
+            for (QLineEdit* edit : page->findChildren<QLineEdit*>()) {
+                if (!input_names.contains(edit->objectName())) continue;
+                ++edit_total;
+                QWidget* holder = edit;
+                QWidget* covering_zone = nullptr;
+                while (holder != nullptr && covering_zone == nullptr) {
+                    if (as_page->drop_zones().is_zone(holder)) covering_zone = holder;
+                    holder = holder->parentWidget();
+                }
+                // 区域必须**真的是**注册过的那个区域，且**过滤器真的挂在区域身上**
+                //   （`is_attached_to` 判的是接线；区域里有没有输入框由 `containers()` 那一份
+                //    登记表说得清 —— 所以这条不用遍历子控件，也就不会踩
+                //    `QObject::findChild` 的形式要求）。
+                // ⚠ 这里**不能**用 `edit->acceptDrops()`：Qt6 的 `QLineEdit` 默认就是 true
+                //   （实测：裸 QLineEdit acceptDrops()=1、裸 QWidget=0）⇒ 拿它当锁等于"永远为真"。
+                //   "输入框没把拖放吞掉"这件事由**② 的行为判据**证明：drop 事件直接把路径填进了
+                //   这个 region 的输入框 ⇒ 说明事件真的到了区域这一层。
+                const auto& zone_list = as_page->drop_zones().containers();
+                const auto& filter_list = as_page->drop_zones().filters();
+                bool zone_wired = false;
+                for (size_t zi = 0; zi < zone_list.size() && zi < filter_list.size(); ++zi) {
+                    if (zone_list[zi] != covering_zone) continue;
+                    zone_wired = filter_list[zi] != nullptr &&
+                                 filter_list[zi]->is_attached_to(covering_zone);
+                }
+                // 区域本身**不许是那个输入框**（挂在框上的旧做法就是这么绿过去的）
+                if (covering_zone == edit || !zone_wired) {
+                    not_droppable << QStringLiteral("%1(%2)").arg(as_page->page_id(), edit->objectName());
+                }
+            }
+        }
+        check(edit_total >= 13 && not_droppable.isEmpty(),
+              QStringLiteral("① 每个目录/文件输入都在拖放区域里、且输入框自己不吞拖放"
+                             "（输入 %1 个；不合格 %2）")
+                  .arg(edit_total)
+                  .arg(not_droppable.isEmpty() ? QStringLiteral("无")
+                                               : not_droppable.join(QStringLiteral(" "))));
+
+        // ②③ 逐页逐区域**构造真 Drop/DragEnter 事件** ⇒ 对应输入被填上 + 反馈属性到位
+        QStringList drop_fail;
+        int zones_checked = 0;
+        for (int i = 0; i < page_widgets.size(); ++i) {
+            auto* as_page = dynamic_cast<PageBase*>(page_widgets[i]);
+            if (as_page == nullptr) {
+                drop_fail << QStringLiteral("page%1-not-page-base").arg(i);
+                continue;
+            }
+            const std::vector<QWidget*>& zones = as_page->drop_zones().containers();
+            const std::vector<FileDropFilter*>& filters = as_page->drop_zones().filters();
+            if (zones.size() < 2 || zones.size() != filters.size()) {
+                drop_fail << QStringLiteral("%1-zones=%2").arg(as_page->page_id()).arg(zones.size());
+                continue;
+            }
+            // 同页每个区域用**不同**的路径（否则"填上了"可能是上一个区域那次的残留）
+            for (size_t zone_index = 0; zone_index < zones.size(); ++zone_index) {
+                QWidget* zone = zones[zone_index];
+                FileDropFilter* filter = filters[zone_index];
+                const QString probe = QDir::toNativeSeparators(
+                    drop_tmp.path() +
+                    QStringLiteral("/drop_p%1_z%2/data.txt").arg(i).arg(static_cast<int>(zone_index)));
+                QMimeData mime;
+                mime.setUrls({QUrl::fromLocalFile(probe)});
+                QDragEnterEvent enter(QPoint(5, 5), Qt::CopyAction, &mime, Qt::LeftButton,
+                                      Qt::NoModifier);
+                const bool accepted = filter != nullptr && filter->dispatch(&enter, zone);
+                const bool highlighted = zone->property("drop_hover").toBool();
+                QDropEvent drop(QPointF(5, 5), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+                const bool dropped = filter != nullptr && filter->dispatch(&drop, zone);
+                const bool cleared = !zone->property("drop_hover").toBool();
+                ++zones_checked;
+
+                // 区域里正好一个输入 ⇒ 它必须变成这次丢进来的路径（多输入的按顺序，只查第一个）
+                const QList<QLineEdit*> edits = zone->findChildren<QLineEdit*>();
+                const bool filled = edits.isEmpty() ||
+                                    edits.front()->text() == QDir::toNativeSeparators(probe);
+                if (!accepted || !dropped || !filled || !highlighted || !cleared ||
+                    !zone_ok(as_page, zone)) {
+                    drop_fail << QStringLiteral("%1-%2(a%3 d%4 f%5 h%6 c%7)")
+                                     .arg(as_page->page_id())
+                                     .arg(static_cast<int>(zone_index))
+                                     .arg(accepted ? 1 : 0)
+                                     .arg(dropped ? 1 : 0)
+                                     .arg(filled ? 1 : 0)
+                                     .arg(highlighted ? 1 : 0)
+                                     .arg(cleared ? 1 : 0);
+                }
+            }
+        }
+        check(drop_fail.isEmpty() && zones_checked >= 13,
+              QStringLiteral("② 拖到**相应区域** ⇒ 该区域的输入被填上、且区域看得见接住了"
+                             "（验了 %1 个区域；不合格 %2）")
+                  .arg(zones_checked)
+                  .arg(drop_fail.isEmpty() ? QStringLiteral("无")
+                                           : drop_fail.join(QStringLiteral(" "))));
+        for (QWidget* page : page_widgets) delete page;
+    }
+
+    // ★★ 2026-10-04 用户第 2 条（原话）：「比如**解包的目标目录**，点击"选择"，**默认定向到工具
+    //   所在的目录**。**改成定向到输入的目录**。**如果输入目录多元或没有输入，那才定向到本身
+    //   所在的文件夹**。然后**其他定向保持现有逻辑**，即**继承上次的选择**。」
+    //   判据：三条优先级各一条断言（决策不许被改回去），且"求默认起点"只有**一份共用函数**。
+    {
+        QTemporaryDir pick_tmp;
+        const QString exe_dir = QDir::cleanPath(QCoreApplication::applicationDirPath());
+        const QString tmp_a = QDir::cleanPath(pick_tmp.path() + QStringLiteral("/pickA"));
+        const QString tmp_b = QDir::cleanPath(pick_tmp.path() + QStringLiteral("/pickB"));
+        const QString tmp_file = QDir::cleanPath(pick_tmp.path() + QStringLiteral("/pickA/movie.avi"));
+        QDir().mkpath(tmp_a);
+        QDir().mkpath(tmp_b);
+        QFile(tmp_file).open(QIODevice::WriteOnly);
+
+        reset_last_dialog_start();
+        const QString unique_in =
+            resolve_dialog_start(dialog_start_for_input_dir(QString(), QStringList{tmp_a}));
+        const QString none_in =
+            resolve_dialog_start(dialog_start_for_input_dir(QString(), QStringList()));
+        const QString many_in =
+            resolve_dialog_start(dialog_start_for_input_dir(QString(), QStringList{tmp_a, tmp_b}));
+        const QString inherited =
+            resolve_dialog_start(dialog_start_for_input_dir(tmp_b, QStringList{tmp_a, tmp_b}));
+        const QString from_file =
+            resolve_dialog_start(dialog_start_for_input_file(QString(), QStringList{tmp_file}));
+        check(QDir::cleanPath(unique_in) == tmp_a && QDir::cleanPath(none_in) == exe_dir &&
+                  QDir::cleanPath(many_in) == exe_dir && QDir::cleanPath(inherited) == tmp_b &&
+                  QDir::cleanPath(from_file) == tmp_a,
+              QStringLiteral("② 共用起点函数：唯一输入→输入目录 / 空→exe 目录 / 多元→exe 目录 / "
+                             "有值→继承 / 文件输入→它所在目录（实测 %1 | %2 | %3 | %4 | %5）")
+                  .arg(unique_in, none_in, many_in, inherited, from_file));
+        check(last_dialog_start_calls() == 5 &&
+                  QDir::cleanPath(last_dialog_start_dir()) == tmp_a,
+              QStringLiteral("② 起点只由这一份共用函数给（调用 %1 次；最后一次 %2）")
+                  .arg(last_dialog_start_calls())
+                  .arg(last_dialog_start_dir()));
+    }
+
+    // ★★ 2026-10-04 逐页钉住"选择"的起点（三条规则在**真实页面**上各来一遍）——
+    //   页面把这些字段交给**共用函数**算（`resolve_dialog_start`），这里断言算出来的值。
+    {
+        QTemporaryDir start_tmp;
+        const QString exe_dir = QDir::cleanPath(QCoreApplication::applicationDirPath());
+        const QString src_dir = QDir::cleanPath(start_tmp.path() + QStringLiteral("/start_src"));
+        const QString other = QDir::cleanPath(start_tmp.path() + QStringLiteral("/start_other"));
+        const QString pkg_dir = QDir::cleanPath(start_tmp.path() + QStringLiteral("/startpkg"));
+        QDir().mkpath(src_dir);
+        QDir().mkpath(other);
+        QDir().mkpath(pkg_dir);
+        const QString pack_file = pkg_dir + QStringLiteral("/gamedata.db0");
+        QFile(pack_file).open(QIODevice::WriteOnly);
+        const auto start_of = [](const DialogStart& spec) {
+            return QDir::cleanPath(resolve_dialog_start(spec));
+        };
+
+        // （1）编码转换：输出目录 ← 源路径
+        {
+            ConvertPage page;
+            check(start_of(page.output_dialog_start()) == exe_dir,
+                  QStringLiteral("② 编码转换：源为空 ⇒ 输出起点 = 工具目录"));
+            page.source_edit()->setText(src_dir);
+            check(start_of(page.output_dialog_start()) == src_dir,
+                  QStringLiteral("② 编码转换：源唯一 ⇒ 输出起点 = 源目录"));
+            page.output_edit()->setText(other);
+            check(start_of(page.output_dialog_start()) == other,
+                  QStringLiteral("② 编码转换：框里已有值 ⇒ **继承优先**"));
+            check(start_of(page.source_dialog_start()) == src_dir,
+                  QStringLiteral("② 编码转换：源本身没有输入目录 ⇒ 继承自己的值"));
+        }
+        // （2）文本提取：输出目录 ← 源目录
+        {
+            TextPage page;
+            page.source_edit()->setText(src_dir);
+            check(start_of(page.target_dialog_start()) == src_dir,
+                  QStringLiteral("② 文本提取：源唯一 ⇒ 输出起点 = 源目录"));
+            page.source_edit()->clear();
+            check(start_of(page.target_dialog_start()) == exe_dir,
+                  QStringLiteral("② 文本提取：源空 ⇒ 输出起点 = 工具目录"));
+        }
+        // （3）XML 校对：B ← A
+        {
+            XmlPage page;
+            page.dir_a_edit()->setText(src_dir);
+            check(start_of(page.dir_b_dialog_start()) == src_dir,
+                  QStringLiteral("② XML 校对：A 唯一 ⇒ B 起点 = A"));
+            page.dir_a_edit()->clear();
+            check(start_of(page.dir_a_dialog_start()) == exe_dir,
+                  QStringLiteral("② XML 校对：A 为空 ⇒ A 起点 = 工具目录"));
+        }
+        // （4）视频转换：输出目录 ← 源视频**所在目录**（文件语义）
+        {
+            VideoPage page;
+            const QString movie = src_dir + QStringLiteral("/intro.avi");
+            QFile(movie).open(QIODevice::WriteOnly);
+            page.source_edit()->setText(movie);
+            check(start_of(page.output_dialog_start()) == src_dir,
+                  QStringLiteral("② 视频转换：源是**文件** ⇒ 输出起点 = 它所在目录"));
+        }
+        // （5）汉化包生成：字体/输出 ← 文本 XML 目录
+        {
+            FontPackPage page;
+            page.xml_edit()->setText(src_dir);
+            check(start_of(page.font_dialog_start()) == src_dir &&
+                      start_of(page.out_dialog_start()) == src_dir,
+                  QStringLiteral("② 汉化包生成：XML 唯一 ⇒ 字体/输出起点 = XML 目录"));
+            page.xml_edit()->clear();
+            check(start_of(page.out_dialog_start()) == exe_dir,
+                  QStringLiteral("② 汉化包生成：XML 空 ⇒ 输出起点 = 工具目录"));
+        }
+        // （6）文件系统：**用户点名的那个例子** —— 解包的目标目录 ← 来源包所在目录
+        {
+            FsPage page;
+            page.add_source(pack_file, {{"a.txt", false}});
+            check(start_of(page.unpack_output_dialog_start()) == pkg_dir,
+                  QStringLiteral("② 文件系统：解包目标起点 = **来源包所在目录**（用户原话那条）"));
+            reset_last_dialog_start();
+            const QString first = start_of(page.unpack_output_dialog_start());
+            check(last_dialog_start_calls() == 1 && last_dialog_start_dir() == first,
+                  QStringLiteral("② 文件系统的起点也出自共用函数（%1）").arg(first));
+            page.add_source(other + QStringLiteral("/second.db0"), {{"b.txt", false}});
+            check(start_of(page.unpack_output_dialog_start()) == exe_dir,
+                  QStringLiteral("② 文件系统：来源**多元** ⇒ 解包目标起点 = 工具目录"));
+            page.out_edit()->setText(other);
+            check(start_of(page.unpack_output_dialog_start()) == other,
+                  QStringLiteral("② 文件系统：框里已有值 ⇒ 继承优先"));
+        }
+    }
 
     // ③ 日志栏存在、只读（1.x 口径：日志不归主窗口那根滚动条管）
     check(hub.log_view() != nullptr, QStringLiteral("日志栏存在"));

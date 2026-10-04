@@ -46,6 +46,9 @@ public:
     // 到过滤器"这一环依赖 Qt 自己的契约（`setAcceptDrops(true)` + `installEventFilter`
     // 都是同一个函数里做的，漏一个自检就会红）。
     bool dispatch(QEvent* event);
+    // 同上，但显式带上**收到事件的那个控件** —— 它的作用是"接住了"的视觉反馈
+    // （`drop_hover` 属性；`eventFilter` 走这一条，把光标下的那个区域点亮）。
+    bool dispatch(QEvent* event, QWidget* target);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

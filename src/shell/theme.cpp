@@ -200,7 +200,15 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                //   ③ `min-height` 用同一个字号令牌兜底。**改任何一个数都要重看 HDR 行与截图。**
                "QHeaderView::section { font-size: @{font_content}; min-height: @{font_content};"
                "  padding: @{pad4} @{pad10}; }"
-               "QLabel#page_header { padding: @{pad8} 0; }");
+               "QLabel#page_header { padding: @{pad8} 0; }"
+               // ★ 2026-10-04 用户第 1 条：「所有目录都需要拖拽，而且是**拖拽到相应区域**。」
+               //   "看得见它接住了"＝拖放区域高亮。**只改颜色，一个像素都不动布局**
+               //   ★ 用**中性色** `@{selected}`，**不用** `@{accent}`：强调色（蓝）只许出现在
+               //     三处（主按钮 / 当前标签项 / 进度条，见配色口径第二节），这里刷蓝会被那条锁判红
+               //     （本轮真被拦住过一次 —— 锁是对的，改的是我）。
+               //   （属性由 `drop_filter.cpp` 在 DragEnter/Drop/DragLeave 置位）。
+               "*[drop_hover=\"true\"] { background: @{surface};"
+               "  border: 1px solid @{selected}; }");
 
     for (const auto& kv : tokens) sheet.replace(kv.first, kv.second);
     return sheet;

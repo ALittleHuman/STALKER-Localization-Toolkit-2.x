@@ -14,6 +14,8 @@
 
 #include "page_base.h"
 
+#include "../dialog_start.h"
+
 #include "xrkit/engine/text/convert.h"
 #include "xrkit/engine/text/sniff.h"
 
@@ -59,6 +61,11 @@ public:
     TaskShell* task() const { return task_; }
     QLabel* status() const { return status_; }
     int pause_gate_hits() const { return pause_gate_hits_; }
+
+    // ★ 2026-10-04（用户第 2 条"目录定向"）：各"选择"调用点的**起点判据**声明（算法只有
+    //   `dialog_start.h` 那一份；页面只声明"哪个输入是它的来源"）。自检据此逐条断言。
+    DialogStart source_dialog_start() const;
+    DialogStart output_dialog_start() const;
 
     // 源编码下拉的取值："auto" 或某个编码名（内部键，与引擎同名）
     std::string current_source_encoding() const;
