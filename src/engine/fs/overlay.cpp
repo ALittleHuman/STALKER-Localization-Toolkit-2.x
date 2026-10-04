@@ -417,15 +417,27 @@ std::vector<EntryInfo> loose_entries(const std::string& root, std::string& error
 
 std::vector<EntryInfo> package_entries(const std::string& path,
                                        std::optional<DbFormat> db_fallback,
-                                       std::string& error) {
+                                       std::string& error,
+                                       const plugin::Registry* registry) {
     error.clear();
     std::vector<EntryInfo> out;
+
+    // ★ 2026-10-04 解密闸门（⑫12.1 消费端）：CLI 与 GUI **共用这一枚**（见 overlay.h 的说明）。
+    //   没有活动注册表 ⇒ 下面这段一个字节都不改行为（`source` 就是 `path`）。
+    const plugin::DecryptGateResult gate = plugin::gate_active_read(path, registry);
+    if (!gate.ok) {
+        error = gate.error;   // 与 GUI 同一条文案（外面各自决定怎么显示/退出）
+        return out;
+    }
+    const std::string& source = gate.used_plugin ? gate.path : path;
 
     // ① SquashFS：**先只读 96 字节超块**判 magic（8.3 GB 的镜像不能整包进内存）
     SuperBlock super;
     std::string super_error;
-    if (read_superblock(path, super, super_error)) {
-        const ListResult listed = list_entries(path);
+    if (read_superblock(source, super, super_error)) {
+        // ★ 把**同一份** registry 传下去：内层若再去问全局钩子，就会把上面这次判定推翻
+        //   （显式传入者优先这条判据就是这么被自检抓出来的）。
+        const ListResult listed = list_entries(source, registry);
         if (!listed.ok) {
             error = listed.error.empty() ? std::string("读不出 SquashFS 条目表") : listed.error;
             return out;
@@ -441,7 +453,7 @@ std::vector<EntryInfo> package_entries(const std::string& path,
     //    ★ 2026-09-30 用户第四轮 ⑦（"现在还是慢得不行"）：旧实现把整文件读进内存，
     //      实测 1900 MB 的包光读盘就要 8,063 ms（耗时只与文件大小成正比、与条目数无关）。
     //      `list_db_seek` 的判定/错误文案与旧路径**逐值一致**（对不上就退回整文件读）。
-    const DbListing listed = list_db_seek(path, db_fallback);
+    const DbListing listed = list_db_seek(source, db_fallback, registry);
     if (!listed.ok) {
         error = listed.error;
         return out;

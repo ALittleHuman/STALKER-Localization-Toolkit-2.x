@@ -104,7 +104,14 @@ public:
     //   · 没有解密器命中 ⇒ 原样放行（行为完全不变）；
     //   · 命中并解开 ⇒ 路径换成解密产物，照常加载；
     //   · 命中却解不开 ⇒ **拒绝加载**并把理由显示出来（绝不静默当普通包读）。
-    void set_registry(const plugin::Registry* registry) { registry_ = registry; }
+    void set_registry(const plugin::Registry* registry) {
+        registry_ = registry;
+        // ★ 2026-10-04（用户口径：「GUI 的功能，CLI 肯定要全部拥有啊」）：闸门已经抬到
+        //   **引擎读入口**（`plugin::gate_active_read`），所以外壳这一份注册表也要让引擎看见
+        //   —— 否则"外壳过闸门、引擎不过"又是两套行为。GUI 自身行为不变（本页仍先调
+        //   `gate_source`，引擎那道闸门认得出解密产物、不会二次解密）。
+        plugin::set_active_registry(registry);
+    }
     bool gate_source(QString& path_in_out, QString* error_out);
     QString last_gate_error() const { return last_gate_error_; }
     void log_message(const QString& text);
@@ -167,6 +174,11 @@ public:
         const engine::fs::MergeNode* node = tree_.find(path.toUtf8().toStdString());
         return node != nullptr ? node->size : 0;
     }
+    // ★ 2026-10-04（真机复验用）：**已加载源列出来的条目总数**（各源 `entries_` 之和）——
+    //   与 CLI `--dump` 的 `entries=` **同一个口径**（都是引擎对同一份包列出的条目表长度）。
+    //   `--shot --load` 把它打在 SHOT 行上，好让"GUI 与 CLI 两侧条目数一致"拿数字说，
+    //   不靠看截图。
+    int loaded_entry_count() const;
     int unpack_selected(QString* summary);
     int unpack_all(QString* summary);
 

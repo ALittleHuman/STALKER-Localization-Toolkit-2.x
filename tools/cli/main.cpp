@@ -147,6 +147,11 @@ void print_usage() {
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
+           "  --plugins <目录> 插件目录（默认 exe 旁边的 plugins/，与 GUI 同一份口径）。\n"
+           "                  装了插件 ⇒ 读包的每个入口都过**同一枚解密闸门**（CLI 的动作路径\n"
+           "                  以前从不建注册表 ⇒ 加密包会被当普通包读）；被闸门拒绝时\n"
+           "                  打印与 GUI **同一条**理由并非零退出。目录不存在/加载失败只记错，\n"
+           "                  不阻塞动作（与 GUI 的启动口径一致）。\n"
            "  --verbose, -v   逐条打印自检结果\n"
            "\n"
            "退出码: 0=通过  1=有失败  2=显式跳过（未实现）  3=用法错误\n";
@@ -1667,6 +1672,8 @@ int run_cli(const std::vector<std::string>& args) {
     std::string text_encoding = "auto";
     std::string only_list;   // --unpack-tree 的 --only <清单文件>（每行一个镜像内路径）
     bool extract_all = false;
+    std::string plugins_dir;   // --plugins <目录>（空 ⇒ exe 旁边的 plugins/，与 GUI 同口径）
+    bool plugins_given = false;
     std::string action;
     std::vector<std::string> operands;
 
@@ -1700,6 +1707,15 @@ int run_cli(const std::vector<std::string>& args) {
             only_list = args[++i];
             continue;
         }
+        if (a == "--plugins" && i + 1 < args.size()) {
+            plugins_dir = args[++i];
+            plugins_given = true;
+            continue;
+        }
+        if (a == "--plugins") {
+            std::cerr << "PLUGINS error reason=用法：--plugins <目录>\n";
+            return kExitUsage;
+        }
         if (a == "--all") {
             extract_all = true;
             continue;
@@ -1724,6 +1740,32 @@ int run_cli(const std::vector<std::string>& args) {
         print_usage();
         return kExitUsage;
     }
+
+    // ── ★ 2026-10-04 动作分派前：建**同一个**插件注册表并注入引擎（⑫12.1 的消费端）──
+    // 用户口径（原话）：「**GUI 的功能，CLI 肯定要全部拥有啊。哪有 GUI 的细节功能比 CLI 还多的。**」
+    // 修前的缺陷：闸门只在外壳里，CLI 的动作路径**从不建注册表**、也从不加载插件 ⇒ 加密包
+    // 被 CLI 当普通包读（同一引擎、两个前端两套行为）。
+    // 现在与 GUI 共用一条口径：
+    //   · 目录 = `--plugins <目录>` 优先，否则 `core::app_dir()/plugins`（GUI 的 `Hub::load_plugins` 同源）；
+    //   · **加载失败只记错、不阻塞**动作（1.x 口径，也是 GUI 的口径）；
+    //   · 没装解密器 ⇒ 没有任何命中 ⇒ 一切照旧（默认 `plugins/` 常为空 ⇒ 行为与修前一致）。
+    //   · 用完复位：注册表是**局部对象**，动作跑完就得把钩子收回来（不许留野指针）。
+    xrkit::plugin::Registry plugin_registry;
+    {
+        const std::string dir = plugins_given ? plugins_dir : (xrkit::core::app_dir() + "/plugins");
+        const std::vector<xrkit::plugin::RegistrationError> plugin_errors =
+            xrkit::plugin::load_plugins_from_dir(dir, plugin_registry, /*ui=*/nullptr);
+        if (plugins_given) {
+            // 显式指定了插件目录才报账（默认路径下保持 CLI 输出与修前逐字节一致）
+            std::cout << "PLUGINS dir=" << dir << " errors=" << plugin_errors.size() << "\n";
+            for (const xrkit::plugin::RegistrationError& e : plugin_errors) {
+                std::cout << "PLUGINS warn plugin=" << e.plugin << " reason=" << e.message << "\n";
+            }
+        }
+    }
+    // RAII：钩子在**任何** return 路径上都会被收回（注册表是这个函数的局部对象，
+    // 钩子绝不允许活得比它久）。作用域要罩住后面整段动作分派。
+    const xrkit::plugin::ActiveRegistryScope active_plugin_registry(&plugin_registry);
 
     if (action == "--selftest") {
         xrkit::core::CheckRegistry reg;
@@ -2109,6 +2151,13 @@ int run_cli(const std::vector<std::string>& args) {
             std::string err;
             const std::vector<xrkit::engine::fs::EntryInfo> entries =
                 xrkit::engine::fs::package_entries(img, fallback, err);
+            if (!err.empty()) {
+                // ★ 2026-10-04：改前这里**把 `err` 直接丢掉**（列不出条目也照样往下排）⇒
+                //   解密闸门拒绝的理由会消失。现在如实打印理由并**非零退出**
+                //   （与 GUI 同一条文案：理由由引擎给出，前端只负责显示）。
+                std::cout << "UNPACK-PKG error image=" << img << " reason=" << err << "\n";
+                return kExitFail;
+            }
             std::vector<std::string> paths;
             paths.reserve(entries.size());
             for (const xrkit::engine::fs::EntryInfo& e : entries) paths.push_back(e.path);

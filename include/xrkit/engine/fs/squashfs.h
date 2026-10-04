@@ -9,6 +9,7 @@
 // 本文件只做"读元数据"（列条目 + 取大小），不做数据块解压（那是提取路径，M1 后续）。
 
 #include "xrkit/engine/fs/decompress.h"
+#include "xrkit/engine/plugin/registry.h"
 
 #include <cstdint>
 #include <string>
@@ -63,7 +64,10 @@ struct FileData {
 bool read_superblock(const std::string& path, SuperBlock& out, std::string& err);
 
 // 列出全部条目（含目录项），按 path 字节序排序（确定性，便于逐条对拍）。
-ListResult list_entries(const std::string& path);
+// ★ 2026-10-04：本入口也过**解密闸门**（`plugin::gate_active_read`）—— CLI 的 `--dump` 的
+//   SquashFS 分支直接走它。`registry` 显式传入者优先（`package_entries` 会把自己的那份传下来）；
+//   为空 ⇒ 用 `plugin::active_registry()`；没有活动注册表 ⇒ 行为与今天逐字节一致。
+ListResult list_entries(const std::string& path, const plugin::Registry* registry = nullptr);
 
 // 读取单个文件的完整内容（进程内解压）：
 //   · 数据块（block_size 一块，bit24 = 未压缩，size==0 表示空洞）

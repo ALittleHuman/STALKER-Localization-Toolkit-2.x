@@ -361,7 +361,11 @@ void FsPage::log_message(const QString& text) {
 }
 
 FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral("文件系统"), parent) {
-    decrypt_dir_ = QDir::temp().filePath(QStringLiteral("xrkit_decrypted"));
+    // ★ 2026-10-04：解密产物落点改为**引擎那一份口径**（`plugin::decrypt_output_dir()`）。
+    //   闸门现在在引擎读入口也跑（CLI 同样走它），落点若由外壳自己算（原来这里是
+    //   `QDir::temp()`），两边就可能不是同一个目录 ⇒ 引擎那道闸门认不出"这是产物"、
+    //   会二次解密。GUI 看到的目录不变（两边都是系统临时目录下的 `xrkit_decrypted`）。
+    decrypt_dir_ = QString::fromStdString(plugin::decrypt_output_dir());
     QDir().mkpath(decrypt_dir_);
     // ★ 2026-09-28（用户："FS 的方便程度比 1.x 下降了不少，你回头看看 1.1.0"）——
     //   本页布局按 **1.x `apps/fs_app.py` 的控件组织**重排（照代码，不照印象）：
@@ -902,7 +906,8 @@ int FsPage::add_paths(const QStringList& paths) {
         std::string error;
         std::vector<efs::EntryInfo> entries;
         entries = efs::package_entries(gated.toUtf8().toStdString(),
-                                       efs::format_key_to_db(current_format_key()), error);
+                                       efs::format_key_to_db(current_format_key()), error,
+                                       registry_);
         if (!error.empty()) {
             // ③ **可见失败**：认不出/解不开都要说清是哪一份、为什么（绝不静默加空包）
             const QString why = QStringLiteral("加载失败：%1 —— %2").arg(raw, utf8(error));
@@ -1053,6 +1058,17 @@ void FsPage::rebuild_dir_states() {
 
 int FsPage::entry_top_level_count() const {
     return entry_tree_ != nullptr ? entry_tree_->topLevelItemCount() : 0;
+}
+
+int FsPage::loaded_entry_count() const {
+    // 已加载源列出来的条目总数（各源 `entries_` 之和）—— 与 CLI `--dump` 的 `entries=`
+    // 同一个口径（引擎对同一份包列出的条目表长度）。`--shot --load` 用它做真机对拍。
+    int total = 0;
+    for (size_t i = 0; i < sources_.size() && i < entries_.size(); ++i) {
+        if (!sources_[i].loaded) continue;
+        total += static_cast<int>(entries_[i].size());
+    }
+    return total;
 }
 
 int FsPage::entry_built_file_count() const {
@@ -1691,7 +1707,8 @@ bool FsPage::load_one_source(int source_index, QString* error_out) {
         entries = efs::loose_entries(gated.toUtf8().toStdString(), error);
     } else {
         entries = efs::package_entries(gated.toUtf8().toStdString(),
-                                       efs::format_key_to_db(current_format_key()), error);
+                                       efs::format_key_to_db(current_format_key()), error,
+                                       registry_);
     }
     if (!error.empty()) {
         const QString why = QStringLiteral("加载失败：%1 —— %2").arg(source.path, utf8(error));
@@ -1832,7 +1849,8 @@ int FsPage::load_selected() {
             entries = efs::loose_entries(gated.toUtf8().toStdString(), error);
         } else {
             entries = efs::package_entries(gated.toUtf8().toStdString(),
-                                           efs::format_key_to_db(current_format_key()), error);
+                                           efs::format_key_to_db(current_format_key()), error,
+                                           registry_);
         }
         if (!error.empty()) {
             const QString why = QStringLiteral("加载失败：%1 —— %2")

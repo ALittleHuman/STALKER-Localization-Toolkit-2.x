@@ -4,6 +4,7 @@
 #include "xrkit/engine/fs/db.h"
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/plugin/abi_host.h"
+#include "xrkit/engine/plugin/loader.h"
 #include "hub.h"
 #include "drop_filter.h"
 #include "log_box.h"
@@ -62,6 +63,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iterator>
+#include <utility>
 
 namespace xrkit::shell {
 namespace {
@@ -3923,6 +3925,297 @@ SmokeResult run_smoke() {
         check(refused.source_count() == 0 && !refused.last_gate_error().isEmpty(),
               QStringLiteral("⑫12.1 解密失败必须拒绝加载并给出理由（实得 %1 个源）")
                   .arg(refused.source_count()));
+
+        // ★ 2026-10-04：`set_registry` 现在**同时**把这份注册表交给引擎（活动钩子）。
+        //   本用例里的注册表是**局部对象**，出块就死 ⇒ 必须在这里收回钩子（否则下一个用例
+        //   读到的是野指针）。这一条本身也是判据：钩子不许悬空。
+        plug::set_active_registry(nullptr);
+        check(plug::active_registry() == nullptr,
+              QStringLiteral("⑫12.1 自检用完活动注册表钩子必须复位（不许悬空）"));
+    }
+
+    // ★★ 2026-10-04 **引擎层解密闸门**（用户口径原话：「GUI 的功能，CLI 肯定要全部拥有啊。
+    //   哪有 GUI 的细节功能比 CLI 还多的。」）——
+    //   修前的违例：闸门只在外壳（`FsPage::gate_source`）里，CLI 直接调引擎、动作路径**从不建
+    //   注册表** ⇒ 加密包被 CLI 当普通包读（同一引擎、两个前端两套行为）。
+    //   这一组锁的是"闸门真的搬进了**引擎读入口**"（`package_entries` / `list_db_seek`）：
+    //     ① 有活动注册表且命中 ⇒ 拒绝，理由**逐字等于** `gate_db_path` 给的那一条
+    //        （GUI 显示的就是它）—— 把引擎里那句 `gate_active_read` 去掉立刻红；
+    //     ② 命中且解得开 ⇒ 真的读**解密产物**（条目名换成明文里的那个）；
+    //     ③ 显式传入的 registry 优先于活动钩子；
+    //     ④ 钩子复位（`nullptr`）后条目表与"从来没有过钩子"**逐值一致**（默认行为不许被改）；
+    //     ⑤ 闸门不二次解密自己的产物（外壳先过一遍、引擎再过一遍时必须认出来）。
+    {
+        namespace plug = xrkit::plugin;
+        namespace efs = xrkit::engine::fs;
+        std::error_code ec;
+        const std::filesystem::path work =
+            std::filesystem::temp_directory_path(ec) / "xrkit_smoke_engine_gate";
+        std::filesystem::remove_all(work, ec);
+        std::filesystem::create_directories(work, ec);
+        // ① 夹具：两枚**真的** X-Ray DB 包（引擎写侧产物）——一枚"加密包"、一枚"明文"
+        const QString pkg = QString::fromStdString((work / "cipher.stkenc.db").string());
+        const QString plain_db = QString::fromStdString((work / "plain.db").string());
+        const auto write_db = [](const QString& path, const std::string& name) {
+            std::vector<efs::DbPackItem> items;
+            efs::DbPackItem item;
+            item.path = name;
+            item.data = {static_cast<uint8_t>('X')};
+            items.push_back(item);
+            const std::vector<uint8_t> raw = efs::pack_db(items, efs::DbFormat::Xdb);
+            std::ofstream out(path.toStdString(), std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(raw.data()),
+                      static_cast<std::streamsize>(raw.size()));
+            return raw.size() > 0;
+        };
+        const bool built = write_db(pkg, "a.txt") && write_db(plain_db, "plain.txt");
+        check(built, QStringLiteral("引擎闸门夹具：造不出测试 DB 包"));
+
+        // 条目表的**指纹**（path/is_dir/size 三样都算）——"逐值一致"要拿它比，不靠条数
+        const auto fingerprint = [](const std::vector<xrkit::engine::fs::EntryInfo>& entries) {
+            std::string text;
+            for (const xrkit::engine::fs::EntryInfo& e : entries) {
+                text += e.path + "\t" + (e.is_dir ? "d" : "f") + "\t" +
+                        std::to_string(e.size) + "\n";
+            }
+            return text;
+        };
+        const std::string pkg_utf8 = pkg.toStdString();
+        std::string error;
+
+        // ④ 基线：**从来没有过钩子**时读出来的条目表（后面复位后必须与它逐值一致）
+        const std::vector<xrkit::engine::fs::EntryInfo> baseline =
+            efs::package_entries(pkg_utf8, std::nullopt, error);
+        const std::string baseline_print = fingerprint(baseline);
+        check(error.empty() && baseline.size() == 1 && baseline[0].path == "a.txt",
+              QStringLiteral("引擎闸门基线：裸读应得 a.txt 一条（err=%1，实得 %2 条）")
+                  .arg(QString::fromStdString(error))
+                  .arg(baseline.size()));
+
+        // ② 一枚"命中却解不开"的解密器
+        plug::Registry reject_reg;
+        reject_reg.register_decryptor("smoke_gate.dll", [](const std::string&) { return true; },
+                                      [](const std::string&, std::string&) { return false; });
+        const plug::DecryptGateResult expected_gate =
+            plug::gate_db_path(reject_reg, pkg_utf8, plug::decrypt_output_dir());
+        check(!expected_gate.ok && !expected_gate.error.empty(),
+              QStringLiteral("引擎闸门夹具：gate_db_path 没给出拒绝理由"));
+        plug::set_active_registry(&reject_reg);
+        error.clear();
+        const std::vector<xrkit::engine::fs::EntryInfo> gated =
+            efs::package_entries(pkg_utf8, std::nullopt, error);
+        check(gated.empty() && error == expected_gate.error,
+              QStringLiteral("引擎闸门没生效：`package_entries` 应拒绝并给**同一条**理由"
+                             "（实得 %1 条；理由 %2）")
+                  .arg(gated.size())
+                  .arg(QString::fromStdString(error)));
+        // 同一条闸门也在 `--dump`/`--extract` 走的那个入口上（CLI 黑盒判据的引擎侧一半）
+        const xrkit::engine::fs::DbListing also_gated =
+            xrkit::engine::fs::list_db_seek(pkg_utf8, std::nullopt);
+        check(!also_gated.ok && also_gated.error == expected_gate.error,
+              QStringLiteral("引擎闸门没覆盖 `list_db_seek`（--dump 走的入口）：%1")
+                  .arg(QString::fromStdString(also_gated.error)));
+
+        // ③ 显式传入的 registry 优先：活动钩子里那枚会拒，但显式传的这枚没有解密器 ⇒ 放行
+        //   （★ 这条自检第一次跑就抓出一个真缺陷：`package_entries` 把显式 registry 丢了，
+        //     内层 `list_db_seek` 又去问全局钩子 ⇒ 上面那次"放行"被内层推翻。修法是把同一份
+        //     registry **逐层传下去**。）
+        plug::Registry empty_reg;
+        error.clear();
+        const std::vector<xrkit::engine::fs::EntryInfo> explicit_ok =
+            efs::package_entries(pkg_utf8, std::nullopt, error, &empty_reg);
+        check(error.empty() && fingerprint(explicit_ok) == baseline_print,
+              QStringLiteral("显式传入的 registry 没有优先于活动钩子（实得 %1 条 / err=%2）")
+                  .arg(explicit_ok.size())
+                  .arg(QString::fromStdString(error)));
+        const xrkit::engine::fs::DbListing explicit_seek =
+            xrkit::engine::fs::list_db_seek(pkg_utf8, std::nullopt, &empty_reg);
+        check(explicit_seek.ok && explicit_seek.entries.size() == 1,
+              QStringLiteral("显式传入的 registry 没传进 `list_db_seek`（ok=%1 err=%2）")
+                  .arg(explicit_seek.ok ? 1 : 0)
+                  .arg(QString::fromStdString(explicit_seek.error)));
+
+        // ⑤ 命中且解得开 ⇒ 读的必须是**解密产物**（明文里那枚条目），且**不二次解密**自己的产物
+        int decrypt_calls = 0;
+        plug::Registry ok_reg;
+        {
+            std::ifstream in(plain_db.toStdString(), std::ios::binary);
+            const std::string plain((std::istreambuf_iterator<char>(in)),
+                                    std::istreambuf_iterator<char>());
+            ok_reg.register_decryptor(
+                "smoke_gate_ok.dll", [](const std::string&) { return true; },
+                [&decrypt_calls, plain](const std::string&, std::string& out) {
+                    ++decrypt_calls;
+                    out = plain;
+                    return true;
+                });
+        }
+        plug::set_active_registry(&ok_reg);
+        error.clear();
+        const std::vector<xrkit::engine::fs::EntryInfo> decrypted =
+            efs::package_entries(pkg_utf8, std::nullopt, error);
+        check(error.empty() && decrypted.size() == 1 && decrypted[0].path == "plain.txt",
+              QStringLiteral("闸门命中且解得开时应读**明文**（期望 plain.txt，实得 %1 条 first=%2）")
+                  .arg(decrypted.size())
+                  .arg(decrypted.empty() ? QStringLiteral("<空>")
+                                         : QString::fromStdString(decrypted[0].path)));
+        check(decrypt_calls == 1, QStringLiteral("解密回调应恰好被调 1 次（实测 %1）")
+                                      .arg(decrypt_calls));
+        // 产物落点：必须落在**引擎那一份**目录里（外壳从同一处取值，才认得出"这是产物"）
+        const QString decrypted_path =
+            QDir(QString::fromStdString(plug::decrypt_output_dir()))
+                .filePath(QStringLiteral("cipher.stkenc.db.decrypted"));
+        check(QFileInfo::exists(decrypted_path),
+              QStringLiteral("解密产物没落在引擎口径的目录里：%1").arg(decrypted_path));
+        // 外壳先过 `gate_source`（产物入目录）再交给引擎 ⇒ 引擎那道闸门必须**认出来**、不二次解密
+        if (QFileInfo::exists(decrypted_path)) {
+            const int before = decrypt_calls;
+            error.clear();
+            const std::vector<xrkit::engine::fs::EntryInfo> again =
+                efs::package_entries(decrypted_path.toStdString(), std::nullopt, error);
+            check(error.empty() && fingerprint(again) == fingerprint(decrypted) &&
+                      decrypt_calls == before,
+                  QStringLiteral("闸门对自己的产物二次解密了（回调 %1→%2 次 / err=%3）")
+                      .arg(before)
+                      .arg(decrypt_calls)
+                      .arg(QString::fromStdString(error)));
+        }
+
+        // ④ 复位 ⇒ 与基线**逐值一致**（默认行为不许被这段新代码顺手改掉）
+        plug::set_active_registry(nullptr);
+        error.clear();
+        const std::vector<xrkit::engine::fs::EntryInfo> after_reset =
+            efs::package_entries(pkg_utf8, std::nullopt, error);
+        check(error.empty() && fingerprint(after_reset) == baseline_print,
+              QStringLiteral("钩子复位后条目表与今天不一致（实得 %1 条 / err=%2）")
+                  .arg(after_reset.size())
+                  .arg(QString::fromStdString(error)));
+        check(plug::active_registry() == nullptr,
+              QStringLiteral("引擎闸门用例：钩子用完必须复位"));
+
+        std::filesystem::remove_all(work, ec);
+    }
+
+    // ★★ 2026-10-04 **CLI 过闸门**（黑盒：真的起 `xrkit_cli.exe`）——
+    //   锁的是"CLI 的动作路径也建注册表、并把引擎的拒绝理由如实打出来 + 非零退出"。
+    //   判据用的插件是本构建产出的 `xrkit_test_plugin.dll`（纯 C；它注册了一枚判据为
+    //   "文件名含 `.stkenc`" 且**解密必失败**的解密器）。
+    //   把 CLI 里"动作分派前建注册表"那段删掉 ⇒ 第②条立刻红。
+    {
+        namespace plug = xrkit::plugin;
+        namespace efs = xrkit::engine::fs;
+        // 找 `xrkit_cli.exe` 与插件夹具。**两种布局**都要能活：
+        //   · 构建树：`<build>/src/shell/xrkit_app.exe` ⇒ `../../tools/cli/`（自检/门禁跑的就是它）；
+        //   · 部署包：`scripts/package.ps1` 的舞台**只放 xrkit_app.exe + Qt 运行时**
+        //     （`dist\<版本>\<标记>\<序号>\`）⇒ 那里根本没有 CLI。
+        //   找不到 ⇒ **如实记 note 跳过**（不是"通过"）；找到了 ⇒ 三条判据全跑，删掉 CLI 里
+        //   "动作分派前建注册表"那段就当场红。★ 第一版把"找不到"写成硬红，结果**打包自检**
+        //   在部署布局里红掉（打包直接失败）—— 布局不适用 ≠ 判据失败。
+        const QString app_dir = QCoreApplication::applicationDirPath();
+        QString cli;
+        for (const QString& candidate :
+             {app_dir + QStringLiteral("/xrkit_cli.exe"),
+              QDir::cleanPath(app_dir + QStringLiteral("/../../tools/cli/xrkit_cli.exe"))}) {
+            if (QFileInfo::exists(candidate)) {
+                cli = candidate;
+                break;
+            }
+        }
+        QString plugin_dll;
+        if (!cli.isEmpty()) {
+            const QString cli_dir = QFileInfo(cli).absolutePath();
+            for (const QString& candidate :
+                 {cli_dir + QStringLiteral("/xrkit_test_plugin.dll"),
+                  app_dir + QStringLiteral("/xrkit_test_plugin.dll")}) {
+                if (QFileInfo::exists(candidate)) {
+                    plugin_dll = candidate;
+                    break;
+                }
+            }
+        }
+        if (cli.isEmpty() || plugin_dll.isEmpty()) {
+            result.notes.append(
+                QStringLiteral("CLI 闸门黑盒判据：这个布局里找不到 xrkit_cli.exe / "
+                               "xrkit_test_plugin.dll（app_dir=%1）⇒ 本用例跳过（构建树/门禁里会真跑）")
+                    .arg(app_dir));
+        } else {
+            const QString plugin_dir = QFileInfo(plugin_dll).absolutePath();
+            std::error_code ec;
+            const std::filesystem::path work =
+                std::filesystem::temp_directory_path(ec) / "xrkit_smoke_cli_gate";
+            std::filesystem::remove_all(work, ec);
+            std::filesystem::create_directories(work, ec);
+            // 一枚**真的** DB 包，文件名带 `.stkenc`（插件那条解密器的判据）
+            const QString enc_db = QString::fromStdString((work / "cli.stkenc.db").string());
+            {
+                std::vector<efs::DbPackItem> items;
+                efs::DbPackItem item;
+                item.path = "cli.txt";
+                item.data = {static_cast<uint8_t>('C')};
+                items.push_back(item);
+                const std::vector<uint8_t> raw = efs::pack_db(items, efs::DbFormat::Xdb);
+                std::ofstream out(enc_db.toStdString(), std::ios::binary | std::ios::trunc);
+                out.write(reinterpret_cast<const char*>(raw.data()),
+                          static_cast<std::streamsize>(raw.size()));
+            }
+            const auto run_cli = [](const QString& exe, const QStringList& argv) {
+                QProcess process;
+                process.setProcessChannelMode(QProcess::MergedChannels);
+                process.start(exe, argv);
+                const bool finished = process.waitForFinished(120000);
+                return std::make_pair(static_cast<int>(finished ? process.exitCode() : -1),
+                                      QString::fromUtf8(process.readAllStandardOutput()));
+            };
+
+            // ① **默认（不带 --plugins）照旧放行** —— 这就是"NLC 那一类"在本机的现状：
+            //    CLI 的 plugins/ 常为空 ⇒ 有注册表但无解密器 ⇒ 与 GUI 现状一致（不许被这次改动打破）
+            {
+                const auto [rc, out] = run_cli(cli, {QStringLiteral("--dump"), enc_db});
+                check(rc == 0 && out.contains(QStringLiteral("DUMP ok")) &&
+                          out.contains(QStringLiteral("entries=1")),
+                      QStringLiteral("CLI 默认（无插件）必须照旧放行（exit=%1 out=%2）")
+                          .arg(rc)
+                          .arg(out.trimmed().right(120)));
+            }
+            // ② `--plugins <目录>` ⇒ 闸门拒绝 + **同一条理由** + 非零退出
+            {
+                const auto [rc, out] = run_cli(
+                    cli, {QStringLiteral("--plugins"), plugin_dir, QStringLiteral("--dump"), enc_db});
+                // 期望文案：本进程用**同一个**插件 DLL 装出的注册表问一遍 `gate_db_path`
+                //（GUI 显示的就是这条；"同一条文案"要逐字比，不许各写一份）
+                plug::Registry mirror;
+                plug::PluginApiAdapter adapter(mirror, "xrkit_test_plugin.dll", nullptr);
+                const plug::LoadResult loaded = plug::load_plugin(plugin_dll.toStdString(),
+                                                                  adapter.api());
+                new plug::PluginApiAdapter(std::move(adapter));   // 回调活着要一直有效
+                const plug::DecryptGateResult want =
+                    plug::gate_db_path(mirror, enc_db.toStdString(), plug::decrypt_output_dir());
+                const QString want_text = QString::fromStdString(want.error);
+                check(rc != 0 && !out.contains(QStringLiteral("DUMP ok")) && want_text.size() > 0 &&
+                          out.contains(want_text),
+                      QStringLiteral("CLI 装了插件后必须被闸门拦下并给**同一条**理由"
+                                     "（exit=%1；期望含 %2；实得 %3）")
+                          .arg(rc)
+                          .arg(want_text)
+                          .arg(out.trimmed().right(160)));
+                check(loaded.ok, QStringLiteral("CLI 闸门判据：本进程装测试插件失败：%1")
+                                     .arg(QString::fromStdString(loaded.error)));
+            }
+            // ③ 插件目录不存在 ⇒ 只记错、**不阻塞**（与 GUI 的启动口径一致）
+            {
+                const QString ghost =
+                    QString::fromStdString((work / "no_such_plugins").string());
+                const auto [rc, out] =
+                    run_cli(cli, {QStringLiteral("--plugins"), ghost, QStringLiteral("--dump"),
+                                  enc_db});
+                check(rc == 0 && out.contains(QStringLiteral("entries=1")) &&
+                          out.contains(QStringLiteral("PLUGINS dir=")),
+                      QStringLiteral("插件目录不存在不许阻塞动作（exit=%1 out=%2）")
+                          .arg(rc)
+                          .arg(out.trimmed().right(160)));
+            }
+            std::filesystem::remove_all(work, ec);
+        }
     }
 
     // ⑫12.1/12.4：插件槽位要**渲染出来**（工具栏菜单项 → 页面的操作栏按钮）

@@ -2,11 +2,14 @@
 
 #include "xrkit/core/atomic_write.h"
 #include "xrkit/core/log.h"
+#include "xrkit/core/path.h"
 #include "xrkit/engine/plugin/contract.h"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
+#include <filesystem>
 #include <set>
 
 namespace xrkit::plugin {
@@ -424,6 +427,58 @@ DecryptGateResult gate_db_path(const Registry& registry, const std::string& path
     result.path = target;
     core::log(core::Level::Info, "已用插件解密器 " + decryptor->plugin + " 解开：" + path);
     return result;
+}
+
+// ── 活动注册表钩子（见 registry.h 的说明）────────────────────────────
+namespace {
+
+// 存指针而不是值：注册表由前端持有（Hub / CLI 的局部变量），引擎只借用。
+// 用 atomic 是因为解包在**工作线程**里跑（GUI 的 TaskShell），钩子在主线程注入。
+std::atomic<const Registry*>& active_slot() {
+    static std::atomic<const Registry*> slot{nullptr};
+    return slot;
+}
+
+// path 是否落在 dir 里（含 dir 自身）？只做**词法**比较（与 `core::path_equals` 同口径：
+// 不碰盘、不解析符号链接，Windows 下大小写不敏感）—— 闸门用它认出自己的产物。
+bool path_inside_dir(const std::string& path, const std::string& dir) {
+    if (path.empty() || dir.empty()) return false;
+    const std::filesystem::path target = core::path_from_utf8(dir).lexically_normal();
+    std::filesystem::path probe = core::path_from_utf8(path).lexically_normal();
+    while (!probe.empty()) {
+        if (core::path_equals(core::path_to_utf8(probe), core::path_to_utf8(target))) return true;
+        const std::filesystem::path up = probe.parent_path();
+        if (up == probe) break;   // 到根了（"/" 的父还是它自己）
+        probe = up;
+    }
+    return false;
+}
+
+}  // namespace
+
+void set_active_registry(const Registry* registry) { active_slot().store(registry); }
+
+const Registry* active_registry() { return active_slot().load(); }
+
+std::string decrypt_output_dir() {
+    std::error_code ec;
+    std::filesystem::path dir = std::filesystem::temp_directory_path(ec);
+    if (ec) dir = std::filesystem::path(".");
+    dir /= "xrkit_decrypted";
+    // 建不出来不在这里报错：真落盘失败时 `gate_db_path` 会给出"解密结果落盘失败"的可见失败
+    std::error_code ignore;
+    std::filesystem::create_directories(dir, ignore);
+    return core::path_to_utf8(dir);
+}
+
+DecryptGateResult gate_active_read(const std::string& path, const Registry* registry) {
+    const Registry* active = registry != nullptr ? registry : active_registry();
+    DecryptGateResult result;
+    result.path = path;
+    if (active == nullptr) return result;   // 没有活动注册表 ⇒ 与"没有这段代码"一致
+    const std::string out_dir = decrypt_output_dir();
+    if (path_inside_dir(path, out_dir)) return result;   // 已是闸门产物 ⇒ 不二次解密
+    return gate_db_path(*active, path, out_dir);
 }
 
 }  // namespace xrkit::plugin

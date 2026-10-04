@@ -17,6 +17,7 @@
 //   · 6.13 格式下拉存的是**内部键**（1.x 存显示名 ⇒ `ALL_FMTS.get(fmt)` 必然取不到）。
 
 #include "xrkit/engine/fs/db.h"
+#include "xrkit/engine/plugin/registry.h"
 
 #include <cstdint>
 #include <optional>
@@ -107,7 +108,18 @@ PackCollectResult collect_pack_files(const std::string& base,
 // `db_fallback` 传 nullopt = "只认自动判定"。
 std::vector<EntryInfo> package_entries(const std::string& path,
                                        std::optional<DbFormat> db_fallback,
-                                       std::string& error);
+                                       std::string& error,
+                                       const plugin::Registry* registry = nullptr);
+// ★ 2026-10-04（用户口径：「GUI 的功能，CLI 肯定要全部拥有啊。哪有 GUI 的细节功能比
+//   CLI 还多的。」）：**读入口过解密闸门**。闸门原来只在外壳的 `FsPage::gate_source` 里
+//   ⇒ CLI 直接调引擎，加密包被当普通包读（前端分叉）。现在这里先过
+//   `plugin::gate_active_read`：
+//     · 没有活动注册表 / 没有解密器命中 ⇒ **行为与今天逐字节一致**（路径、文案都不动）；
+//     · 命中且解开 ⇒ 读的是解密产物（闸门写在 `plugin::decrypt_output_dir()` 下）；
+//     · 命中却解不开 ⇒ `error` 里是与 GUI **同一条**文案，零条目返回（绝不回落成普通包）。
+//   `registry` 显式传入者优先；为空（默认）⇒ 用 `plugin::active_registry()`。
+//   散装层 `loose_entries` **不过闸门**：它吃的是目录，没有"这个包需要解密"的语义；
+//   目录里的包各自走这里时已经过闸门了。
 
 struct MergeTree {
     MergeNode root;                      // 虚拟根（name/path 为空）

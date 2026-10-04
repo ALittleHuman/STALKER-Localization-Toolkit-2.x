@@ -159,9 +159,13 @@ int main(int argc, char** argv) {
                     fs_page->search_edit()->setText(filter_text);
                 }
                 QTextStream out(stdout);
-                out << QStringLiteral("SHOT load=%1 sources=%2 errors=%3\n")
+                // ★ 2026-10-04：加 `entries=`（已加载源列出来的条目总数，与 CLI `--dump` 的
+                //   `entries=` 同口径）—— 真机复验要拿它对数字（"GUI 的功能 CLI 全都有"
+                //   不能靠看截图）。
+                out << QStringLiteral("SHOT load=%1 sources=%2 entries=%3 errors=%4\n")
                            .arg(load_path)
                            .arg(fs_page->source_count())
+                           .arg(fs_page->loaded_entry_count())
                            .arg(fs_page->load_errors().join(QStringLiteral(" | ")));
                 out.flush();
             } else {

@@ -43,6 +43,29 @@ static int demo_format(void* user, const char* path) {
     return strstr(path, ".demo") != 0 ? 1 : 0;
 }
 
+/* ★ 2026-10-04（用户口径「GUI 的功能，CLI 肯定要全部拥有啊」）：注册一条"**这个包需要解密**"
+ * 的判定 —— 供 CLI 黑盒判据用（引擎读入口的闸门必须在 CLI 上也生效）。
+ *
+ * 判据刻意挑**文件名里的 `.stkenc` 标记**（确定性：不看内容、不碰盘、不依赖样本），
+ * 解密**故意永远失败** —— 它锁的是"命中却解不开 ⇒ **可见失败**、绝不回落成普通包读"
+ * 那条分支：
+ *   · `xrkit_cli --plugins <本 DLL 所在目录> --dump x.stkenc.db`
+ *     ⇒ 必须**拒绝 + 与 GUI 同一条理由 + 非零退出**；
+ *   · 同名文件不加 `--plugins` ⇒ 照旧放行（没有注册表就没有闸门，与修前一致）。
+ */
+static int demo_decrypt_check(void* user, const char* path) {
+    (void)user;
+    return (path != 0 && strstr(path, ".stkenc") != 0) ? 1 : 0;
+}
+
+static int demo_decrypt(void* user, const char* path, void** out_data, size_t* out_size) {
+    (void)user;
+    (void)path;
+    (void)out_data;
+    (void)out_size;
+    return 0; /* 解不开（这条夹具就是要验"可见失败"） */
+}
+
 static stk_widget* demo_builder(void* user, stk_widget* parent) {
     (void)user;
     (void)parent;
@@ -67,6 +90,10 @@ STK_EXPORT int stk_plugin_init(const stk_api* api) {
     if (api->register_menu_item(api->host, "xml", "toolbar", cid, 3) == 0) return 0;
     if (api->register_option_entry(api->host, "xml", "filter", "demo 筛选项", 0) == 0) return 0;
     if (api->register_format(api->host, "demo", demo_format, 0) == 0) return 0;
+    if (api->register_decryptor(api->host, "demo 加密包", demo_decrypt_check, demo_decrypt, 0) ==
+        0) {
+        return 0;
+    }
     if (api->register_panel(api->host, "demo 面板", demo_builder, 0, "xml", "top_bar", 0, 9) == 0) {
         return 0;
     }

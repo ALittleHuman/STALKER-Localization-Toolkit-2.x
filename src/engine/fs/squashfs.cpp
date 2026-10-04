@@ -1,6 +1,7 @@
 #include "xrkit/engine/fs/squashfs.h"
 
 #include "xrkit/core/path.h"
+#include "xrkit/engine/plugin/registry.h"
 
 #include <algorithm>
 #include <chrono>
@@ -578,12 +579,22 @@ bool read_superblock(const std::string& path, SuperBlock& out, std::string& err)
     return parse_superblock(head, sizeof(head), out, err);
 }
 
-ListResult list_entries(const std::string& path) {
+ListResult list_entries(const std::string& path, const xrkit::plugin::Registry* registry) {
     ListResult res;
     const auto t0 = std::chrono::steady_clock::now();
+    // ★ 2026-10-04 解密闸门（⑫12.1 消费端）：`--dump` 的 SquashFS 分支走的就是这个入口，
+    //   CLI 与 GUI 共用同一枚闸门（判据见 registry.h）。没有活动注册表 / 没有解密器命中
+    //   ⇒ `source == path`，下面逐字节与今天一致。
+    const xrkit::plugin::DecryptGateResult gate =
+        xrkit::plugin::gate_active_read(path, registry);
+    if (!gate.ok) {
+        res.error = gate.error;
+        return res;
+    }
+    const std::string& source = gate.used_plugin ? gate.path : path;
     Image img;
     std::string err;
-    if (!img.open(path, err)) {
+    if (!img.open(source, err)) {
         res.error = err;
         return res;
     }

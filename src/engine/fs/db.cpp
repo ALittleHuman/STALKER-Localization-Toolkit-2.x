@@ -13,6 +13,7 @@
 
 #include "xrkit/core/path.h"
 #include "xrkit/engine/fs/lzhuf.h"
+#include "xrkit/engine/plugin/registry.h"
 
 namespace xrkit::engine::fs {
 namespace {
@@ -656,7 +657,8 @@ DbExtract extract_entry(const std::vector<uint8_t>& raw, const DbEntry& entry) {
     return decode_entry_bytes(raw.data() + entry.offset, static_cast<size_t>(sc), entry);
 }
 
-DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallback) {
+DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallback,
+                       const xrkit::plugin::Registry* registry) {
     DbListing res;
     const auto t0 = std::chrono::steady_clock::now();
     const auto stamp = [&res, t0]() {
@@ -666,22 +668,32 @@ DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallb
     };
 
     std::error_code ec;
-    const auto bytes = std::filesystem::file_size(xrkit::core::path_from_utf8(path), ec);
+    // ★ 2026-10-04 解密闸门（⑫12.1 消费端）：`--dump`/`--extract` 走的就是这个入口，
+    //   CLI 与 GUI **共用这一枚**闸门（判据见 registry.h）。没有活动注册表 / 没有解密器
+    //   命中 ⇒ `source == path`，下面逐字节与今天一致。
+    const xrkit::plugin::DecryptGateResult gate = xrkit::plugin::gate_active_read(path, registry);
+    if (!gate.ok) {
+        res.error = gate.error;
+        stamp();
+        return res;
+    }
+    const std::string& source = gate.used_plugin ? gate.path : path;
+    const auto bytes = std::filesystem::file_size(xrkit::core::path_from_utf8(source), ec);
     if (ec) {
-        res.error = "读不出文件：" + path;
+        res.error = "读不出文件：" + source;
         stamp();
         return res;
     }
     res.file_size = static_cast<uint64_t>(bytes);
     if (res.file_size == 0) {
-        res.error = "文件是空的：" + path;
+        res.error = "文件是空的：" + source;
         stamp();
         return res;
     }
 
-    std::ifstream in(xrkit::core::path_from_utf8(path), std::ios::binary);
+    std::ifstream in(xrkit::core::path_from_utf8(source), std::ios::binary);
     if (!in) {
-        res.error = "读不出文件：" + path;
+        res.error = "读不出文件：" + source;
         stamp();
         return res;
     }
@@ -725,7 +737,7 @@ DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallb
     const std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),
                                    std::istreambuf_iterator<char>());
     if (raw.empty()) {
-        res.error = "文件是空的：" + path;
+        res.error = "文件是空的：" + source;
         stamp();
         return res;
     }

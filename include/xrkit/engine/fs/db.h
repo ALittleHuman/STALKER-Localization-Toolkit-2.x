@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "xrkit/engine/plugin/registry.h"
+
 namespace xrkit::engine::fs {
 
 enum class DbFormat { Unknown = 0, Xdb, Ru2947, Ww2947, F2945, F2215, F11xx };
@@ -81,7 +83,13 @@ struct DbListing {
 
 // 列条目（`package_entries` 与 CLI `--dump` 用）。`db_fallback` 语义与原来完全一致：
 // 先唯一自洽判定，判不出来才用它。
-DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallback);
+//
+// ★ 2026-10-04：本入口也过**解密闸门**（`plugin::gate_active_read`）—— CLI 的 `--dump`/`--extract`
+//   直接走它，闸门不许只出现在"加载包"那条路上。`registry` 显式传入者优先（`package_entries`
+//   会把自己的那一份传下来，免得内层又去问全局钩子、把上面那份判定推翻）；
+//   为空 ⇒ 用 `plugin::active_registry()`；没有活动注册表 ⇒ 行为与今天逐字节一致。
+DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallback,
+                       const plugin::Registry* registry = nullptr);
 
 // 单条目 seek 提取：只读那一条的那一段（解包大 DB 时不再整包进内存）。
 // 与 `extract_entry(raw, entry)` 的产物**逐值一致**（同一段字节、同一套解码）。

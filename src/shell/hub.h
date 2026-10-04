@@ -39,6 +39,10 @@ class Hub : public QMainWindow {
 public:
     // `plugin_dir` 为空 ⇒ 用 exe 旁边的 `plugins/`；自检可以指定临时目录
     explicit Hub(QWidget* parent = nullptr, const QString& plugin_dir = QString());
+    // ★ 2026-10-04：引擎读入口现在借的是**指针**（`plugin::set_active_registry`，由 fs 页
+    //   的 `set_registry` 注入）。Hub 死掉时那份注册表也跟着死 ⇒ 必须在析构里把钩子收回来，
+    //   否则钩子指向已死对象（自检里 `Hub` 是局部对象，下一个用例就会踩到野指针）。
+    ~Hub() override;
 
     // 探针/自检用：核对**真实**创建的页面数、标题与顺序
     int page_count() const;

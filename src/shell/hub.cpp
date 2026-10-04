@@ -211,6 +211,12 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
 
 int Hub::page_count() const { return stack_ == nullptr ? 0 : stack_->count(); }
 
+Hub::~Hub() {
+    // 引擎读入口的活动注册表钩子只有**指针**：本对象一死，`registry_` 也跟着死。
+    // 只在钩子确实指着**我自己这一份**时收回（两个 Hub 同时活着时不许互相踩）。
+    if (plugin::active_registry() == &registry_) plugin::set_active_registry(nullptr);
+}
+
 void Hub::set_current_page(int index) {
     if (page_tabs_ == nullptr || index < 0 || index >= page_tabs_->count()) return;
     page_tabs_->setCurrentIndex(index);   // 与页栈的连接已存在 ⇒ 两处同步

@@ -239,4 +239,42 @@ struct DecryptGateResult {
 DecryptGateResult gate_db_path(const Registry& registry, const std::string& path,
                                const std::string& out_dir);
 
+// ── 活动注册表钩子（★ 2026-10-04：把闸门从"只有外壳过"抬到**引擎读入口**）──────
+//
+// 用户口径（原话）：「**GUI 的功能，CLI 肯定要全部拥有啊。哪有 GUI 的细节功能比 CLI 还多的。**」
+// 修前的违例：闸门只在外壳（`FsPage::gate_source`）里，CLI 的动作路径**从不建注册表** ⇒
+// 加密包被 CLI 当普通包读 —— 同一个引擎、两个前端两套行为（前端分叉）。
+//
+// 所以钩子必须是**引擎侧的全局约定**，两个前端各自注入自己那份 `Registry`：
+//   · `set_active_registry(nullptr)` / 从未注入 ⇒ `gate_active_read` 立刻原样放行，
+//     读入口的行为与"没有这段代码"**逐字节一致**（shell/CLI 都不注入时就是今天）；
+//   · 两个前端注的是**同一份东西**（目录都是 `app_dir()/plugins`）⇒ 判据不会分叉。
+//
+// ⚠ 生命周期：存的是**指针**。注入方（Hub / FsPage / CLI）必须在注册表析构前复位
+//   （`set_active_registry(nullptr)`），否则钩子会指向已死对象。
+void set_active_registry(const Registry* registry);
+const Registry* active_registry();
+
+// RAII 版注入：作用域内钩子指向 `registry`，析构时收回（置 `nullptr`）。
+// 给"注册表是**局部对象**、出口很多"的前端用（CLI 的 `run_cli` 就是那种形状）——
+// 任何一条 return 路径上钩子都不会指向已死的注册表。
+struct ActiveRegistryScope {
+    explicit ActiveRegistryScope(const Registry* registry) { set_active_registry(registry); }
+    ~ActiveRegistryScope() { set_active_registry(nullptr); }
+    ActiveRegistryScope(const ActiveRegistryScope&) = delete;
+    ActiveRegistryScope& operator=(const ActiveRegistryScope&) = delete;
+};
+
+// 解密产物的落盘目录（引擎侧唯一一份口径）：`<系统临时目录>/xrkit_decrypted`。
+// 为什么放引擎：闸门现在在引擎里跑（CLI 也走它），产物落点不能再由外壳的 `QDir::temp()` 说了算；
+// 外壳从同一处取值 ⇒ 两边认出"这是闸门自己的产物"，不会二次解密。目录不存在时**建出来**。
+std::string decrypt_output_dir();
+
+// 引擎读入口统一走的**活动闸门**：
+//   · `registry` 显式传入者优先，为空 ⇒ 用 `active_registry()`；两者都空 ⇒ 原样放行；
+//   · 路径已在 `decrypt_output_dir()` 里 ⇒ 原样放行（那是闸门自己的产物，二次解密会把
+//     已经解开的包再解一遍 —— 外壳先过一遍 `gate_source` 再交给引擎，必然会碰到这一条）；
+//   · 其余情况 = `gate_db_path(*registry, path, decrypt_output_dir())`（三种结局一字不改）。
+DecryptGateResult gate_active_read(const std::string& path, const Registry* registry = nullptr);
+
 }  // namespace xrkit::plugin
