@@ -456,6 +456,40 @@ def step_db_11xx_dirlock(release: bool) -> None:
         fail("11xx 目录条目写侧有断言不成立（见上）")
 
 
+def step_db_name_cp1251_lock(release: bool) -> None:
+    """DB 写侧 **cp1251 名编码**的锁（2026-10-06 用官方 cv 查实的真缺陷）。
+
+    判据本体在 `tests/check_db_name_cp1251_lock.py`：①官方 `converter.exe -unpack -2215`
+    **退出码必须 == 0**（修前是**栈溢出** `0xC00000FD`：`utf8_to_cp1251` 遇到 cp1251
+    不可表示的码点就 `return false`，调用点忽略返回值 ⇒ 名字被静默截断成空名/撞名）；
+    ②不依赖 cv 的**字节级锁**（自己解产物 HEADER 明文：不许有空名/重名，不可表示名按 `?`
+    逐码点顶替且一一对应，cp1251 西里尔名原样，自带判据自证）；③反向锁（全 ASCII 名必须
+    逐字节原样 —— 防"靠一刀切改名把锁混绿"）。
+
+    ★ 与 `db-11xx-dirlock` 同款：cv 缺失只打 `!!` note、退码仍 0（②③ 不依赖 cv 照跑）。
+    退出码：0=全绿（cv 缺失只记 note），1=有断言不成立，2=CLI 缺失（外部前提，按档位判定）。
+    """
+    say("[db-name1251] DB 写侧 cp1251 名编码：cv 判据锁 + 字节级锁 + 反向锁")
+    script = ROOT / "tests" / "check_db_name_cp1251_lock.py"
+    if not require_repo_file(script, "cp1251 名编码判据脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("DB-NAME1251-LOCK") \
+                or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("DB 写侧 cp1251 名编码：cv 判据 / 字节级 / 反向三组锁全绿")
+    elif rc == 2:
+        prereq("构建产物 xrkit_cli.exe", "缺失（见上）", release)
+    else:
+        fail("DB 写侧 cp1251 名编码有断言不成立（见上）")
+
+
 def step_unpack_rules(release: bool) -> None:
     """真机判红锁：解包**落点**（包名壳：VESSEL 不叠第二层壳 + 反向两条仍叠壳）与
     **报数口径**（`IWP\\database\\maps\\fake_start.db` 报数==盘上真实；`--dump` 仍报包内记录数）。
@@ -1350,6 +1384,7 @@ STEPS = [
     ("golden-extract", step_golden_extract),
     ("golden-db", step_golden_db),
     ("db-11xx-dirlock", step_db_11xx_dirlock),
+    ("db-name1251-lock", step_db_name_cp1251_lock),
     ("unpack-rules", step_unpack_rules),
     ("golden-sqfs-pack", step_golden_sqfs_pack),
     ("golden-sqfs-pack-real", step_golden_sqfs_pack_real),

@@ -61,32 +61,57 @@ const std::array<int16_t, 0x10000>& unicode_to_cp1251() {
     return table;
 }
 
+// ★ 2026-10-06 修的真缺陷：**不可表示的码点必须逐码点顶替，绝不截断**。
+//   原来是"遇到不可表示就 `return false`"，而两个调用点（`append_entry_null` /
+//   `append_entry_xdb`）**忽略返回值**、把失败前已追加的那一段当名字写进 HEADER。
+//   于是 UTF-8 名被静默**截断**，甚至截成**空名**：
+//     `sounds/音效`（目录）      → `sounds/`   （与已有的 `sounds` 目录**撞名**）
+//     `sounds/音效/虫鸣.wav`     → `sounds/`   （文件条目也叫 `sounds`，再撞一次）
+//     `中文/说明.txt`            → ``          （**空名条目**）
+//   实测后果（官方 `converter.exe -unpack -2215`）：**栈溢出** `0xC00000FD`
+//   （exit 3221225725 = -1073741571）、产物 0 文件。只含 ASCII 或 cp1251 名的包都不触发。
+//   修法：不可表示 ⇒ 写 `?`（Windows/XR 的惯例顶替符；非 UTF-8 字节同样顶替并前进 1 字节）
+//   ⇒ 名字长度与源路径**一一对应**，既不会空名也不会与别的目录/文件撞名。
+//   返回值语义随之收窄成"这次编码**有没有发生顶替**"，不再是"能不能编"。
 bool utf8_to_cp1251(const std::string& s, std::vector<uint8_t>& out) {
     const auto& rev = unicode_to_cp1251();
+    bool lossy = false;
     size_t i = 0;
     while (i < s.size()) {
         const uint8_t c = static_cast<uint8_t>(s[i]);
         uint32_t cp = 0;
         size_t len = 1;
+        bool ok = true;
         if (c < 0x80) {
             cp = c;
         } else if ((c & 0xE0) == 0xC0) {
-            if (i + 1 >= s.size()) return false;
-            cp = ((c & 0x1Fu) << 6) | (static_cast<uint8_t>(s[i + 1]) & 0x3Fu);
-            len = 2;
+            if (i + 1 >= s.size()) {
+                ok = false;
+            } else {
+                cp = ((c & 0x1Fu) << 6) | (static_cast<uint8_t>(s[i + 1]) & 0x3Fu);
+                len = 2;
+            }
         } else if ((c & 0xF0) == 0xE0) {
-            if (i + 2 >= s.size()) return false;
-            cp = ((c & 0x0Fu) << 12) | ((static_cast<uint8_t>(s[i + 1]) & 0x3Fu) << 6) |
-                 (static_cast<uint8_t>(s[i + 2]) & 0x3Fu);
-            len = 3;
+            if (i + 2 >= s.size()) {
+                ok = false;
+            } else {
+                cp = ((c & 0x0Fu) << 12) | ((static_cast<uint8_t>(s[i + 1]) & 0x3Fu) << 6) |
+                     (static_cast<uint8_t>(s[i + 2]) & 0x3Fu);
+                len = 3;
+            }
         } else {
-            return false;
+            ok = false;
         }
-        if (cp >= 0x10000 || rev[cp] < 0) return false;
+        if (!ok || cp >= 0x10000 || rev[cp] < 0) {
+            out.push_back('?');  // ★ 顶替，不截断（截断 ⇒ 空名/撞名 ⇒ cv 栈溢出）
+            lossy = true;
+            i += len;            // 非 UTF-8 字节时 len == 1 ⇒ 每字节消耗一个 `?`
+            continue;
+        }
         out.push_back(static_cast<uint8_t>(rev[cp]));
         i += len;
     }
-    return true;
+    return !lossy;
 }
 
 std::string normalize_path(std::string s) {
