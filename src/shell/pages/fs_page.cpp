@@ -1322,13 +1322,15 @@ QString FsPage::output_dir() const {
 QString FsPage::resolve_output_dir() {
     // 1.x `_resolve_output`：空则按"第一个包所在目录"推断，并**回填**输入框
     //（界面必须反映真实落盘位置 —— 1.x 的 H1 就是"框里空着，实际落到别处"）。
+    // ★★ 2026-10-04：**推断规则搬到引擎**（`efs::resolve_output_root`），本页只剩"调它 + 回填"。
+    //   用户当天的架构红线（原话）：「**GUI 的功能，CLI 肯定要全部拥有啊。哪有 GUI 的细节功能
+    //   比 CLI 还多的。**」—— 否则命令行算不出同一个缺省根（CLI 的 `--unpack-package` 省略根时
+    //   走的就是引擎这一份）。
     QString out = output_dir();
     if (out.isEmpty()) {
-        if (!sources_.empty()) {
-            out = QFileInfo(sources_.front().path).absolutePath();
-        } else {
-            out = QDir::toNativeSeparators(QDir::currentPath());
-        }
+        const QString front = sources_.empty() ? QString() : sources_.front().path;
+        out = QString::fromStdString(
+            efs::resolve_output_root(front.toStdString(), QDir::currentPath().toStdString()));
         if (out_edit_ != nullptr) out_edit_->setText(QDir::toNativeSeparators(out));
     }
     return out;
@@ -2005,32 +2007,25 @@ QString FsPage::pack_output_basename() const {
 QString FsPage::pack_ext_for(const QString& key) {
     // 1.x `_pack_ext`：sqfs ⇒ `.sqfs`；其余 ⇒ `.<内部键>.db`（六种格式产物不同名，
     // 否则用户在资源管理器里分不出打的是哪种格式）
-    if (efs::format_key_is_sqfs(key.toUtf8().toStdString())) return QStringLiteral(".sqfs");
-    return QStringLiteral(".") + key + QStringLiteral(".db");
+    // ★★ 2026-10-04：实现**搬到引擎**（`efs::pack_ext_for`）—— 用户红线「GUI 的功能，CLI 肯定要
+    //   全部拥有」⇒ 命令行封包时必须按同一规则补扩展名。本页只剩一层薄包装。
+    return QString::fromStdString(efs::pack_ext_for(key.toStdString()));
 }
 
 QString FsPage::resolve_pack_target() {
-    const std::string key = pack_format_combo_->currentData().toString().toUtf8().toStdString();
-    const QString ext = pack_ext_for(utf8(key));
-    const QString base = pack_output_basename();
-    QString out = pack_out_edit_->text().trimmed();
-    if (out.isEmpty()) {
-        const QString initial =
-            base.isEmpty() ? QStringLiteral("packed") + ext : base + ext;
-        out = QFileDialog::getSaveFileName(this, QStringLiteral("封包保存到"), initial,
-                                           QStringLiteral("包 (*.db *.sqfs);;所有文件 (*.*)"));
-        if (out.isEmpty()) return QString();
-    } else if (QFileInfo(out).isDir()) {
-        if (!base.isEmpty()) {
-            out = QDir(out).filePath(base + ext);
-        } else {
-            out = QFileDialog::getSaveFileName(this, QStringLiteral("封包保存到"),
-                                               QDir(out).filePath(QStringLiteral("packed") + ext),
-                                               QStringLiteral("包 (*.db *.sqfs);;所有文件 (*.*)"));
-            if (out.isEmpty()) return QString();
-        }
-    } else if (QFileInfo(out).suffix().isEmpty()) {
-        out += ext;
+    // ★★ 2026-10-04：**推断规则搬到引擎**（`efs::resolve_pack_target`），本页只剩"调它 + 该弹框时弹框 + 回填"。
+    //   引擎返回 `needs_frontend_dialog` ⇒ 这里才弹 `getSaveFileName`（弹框属于前端交互，不进引擎）。
+    const std::string key = pack_format_combo_->currentData().toString().toStdString();
+    const std::string base = pack_output_basename().toStdString();
+    const efs::PackTarget t =
+        efs::resolve_pack_target(pack_out_edit_->text().trimmed().toStdString(), base, key);
+    QString out = QString::fromStdString(t.path);
+    if (t.needs_frontend_dialog) {
+        const QString chosen = QFileDialog::getSaveFileName(
+            this, QStringLiteral("封包保存到"), QDir::toNativeSeparators(out),
+            QStringLiteral("包 (*.db *.sqfs);;所有文件 (*.*)"));
+        if (chosen.isEmpty()) return QString();
+        out = chosen;
     }
     pack_out_edit_->setText(QDir::toNativeSeparators(out));   // 1.x H1：最终路径必须回填
     return out;

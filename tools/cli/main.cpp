@@ -117,7 +117,8 @@ void print_usage() {
            "  --unpack-tree <镜像> <输出根> [--only <清单文件>]\n"
            "                                              整树导出（**原样摊开**：条目直接落在输出根下；\n"
            "                                              只认 SquashFS；安全路径 + 原子写；空清单＝拒绝）\n"
-           "  --unpack-package <包|目录> <输出根> [--only <清单文件>] [DB格式]\n"
+           "  --unpack-package <包|目录> [输出根] [--only <清单文件>] [DB格式]\n"
+           "        （**输出根可省**：省略 ⇒ 与 GUI 同一条引擎规则 —— 第一个源所在目录；没有源 ⇒ 当前目录）\n"
            "                                              **与 GUI「解包」等价**：任何包类型（SquashFS +\n"
            "                                              DB 六格式）或一个目录（递归找包）；落点＝包名去扩\n"
            "                                              展名、磁盘父目录不进产物、包内已自带同名壳不叠一层\n"
@@ -2032,21 +2033,39 @@ int run_cli(const std::vector<std::string>& args) {
     //   与 `--unpack-tree` 的分工：后者是"**原样摊开一棵树**"（SquashFS，条目直接落在输出根下，
     //   保持既有行为兼容）；要"和 GUI 一样"就用本条。
     if (action == "--unpack-package") {
-        if (operands.size() < 2) {
-            std::cerr << "UNPACK-PKG error reason=用法：--unpack-package <包|目录> <输出根> "
+        if (operands.size() < 1) {
+            std::cerr << "UNPACK-PKG error reason=用法：--unpack-package <包|目录> [输出根] "
                          "[--only <清单文件>] [DB格式]\n";
             return kExitUsage;
         }
         const std::string& src = operands[0];
-        const std::string& out_root = operands[1];
+        // ★★ 2026-10-04：**输出根可省**（用户红线「GUI 的功能，CLI 肯定要全部拥有」）——
+        //   省略时走引擎同一条规则 `resolve_output_root`（第一个源所在目录；没有源 ⇒ 当前目录），
+        //   与 GUI 的「解包到」留空行为**逐字符一致**。
+        //   歧义消解：`operands[1]` 若**能当 DB 格式名**且后面没有第 3 个操作数 ⇒ 它是格式、不是根。
+        bool out_root_given = false;
+        std::string out_root;
+        std::string fmt_operand;
+        if (operands.size() >= 2) {
+            const bool second_is_fmt =
+                xrkit::engine::fs::format_key_to_db(operands[1]).has_value() && operands.size() == 2;
+            if (second_is_fmt) {
+                fmt_operand = operands[1];
+            } else {
+                out_root = operands[1];
+                out_root_given = true;
+                if (operands.size() >= 3) fmt_operand = operands[2];
+            }
+        }
         std::optional<xrkit::engine::fs::DbFormat> fallback;
-        if (operands.size() >= 3) {
-            fallback = xrkit::engine::fs::format_key_to_db(operands[2]);
+        if (!fmt_operand.empty()) {
+            fallback = xrkit::engine::fs::format_key_to_db(fmt_operand);
             if (!fallback.has_value()) {
-                std::cerr << "UNPACK-PKG error reason=不认识的 DB 格式：" << operands[2] << "\n";
+                std::cerr << "UNPACK-PKG error reason=不认识的 DB 格式：" << fmt_operand << "\n";
                 return kExitUsage;
             }
         }
+        (void)out_root_given;
         // ① 收源（目录 ⇒ 递归找包；文件 ⇒ 它自己）
         std::vector<std::string> images;
         std::error_code ec;
@@ -2063,6 +2082,13 @@ int run_cli(const std::vector<std::string>& args) {
         } else {
             images.push_back(src);
         }
+        // ★★ 输出根缺省：与 GUI **同一条引擎规则**（省略根 ⇒ 第一个源所在目录；没有源 ⇒ 当前目录）。
+        if (out_root.empty()) {
+            const std::string front = images.empty() ? std::string() : images.front();
+            out_root = xrkit::engine::fs::resolve_output_root(
+                front, xrkit::core::path_to_utf8(std::filesystem::current_path()));
+        }
+        std::cout << "UNPACK-PKG root=" << out_root << "\n";
         // ② `--only` 清单读一次（空清单**不等于**全部 —— 与 `--unpack-tree` 同一口径）
         std::vector<std::string> only_paths;
         if (!only_list.empty() && !extract_all) {
@@ -2406,7 +2432,13 @@ int run_cli(const std::vector<std::string>& args) {
             items.push_back(std::move(item));
         }
         const std::vector<uint8_t> bytes = xrkit::engine::fs::pack_db(items, *fmt);
-        std::ofstream out(path_from_utf8(operands[0]), std::ios::binary | std::ios::trunc);
+        // ★★ 2026-10-04（用户红线「GUI 的功能，CLI 肯定要全部拥有」）：输出 operand **可以是目录、
+        //   也可以没有扩展名** ⇒ 与 GUI 走同一条引擎规则补落点与扩展名（`xdb→.xdb.db`、`sqfs→.sqfs`）。
+        //   给了带扩展名的完整路径 ⇒ 原样不动（不破坏既有用法）。
+        const xrkit::engine::fs::PackTarget tgt = xrkit::engine::fs::resolve_pack_target(
+            operands[0], xrkit::core::path_to_utf8(root.filename()), operands[1]);
+        std::cout << "PACKDB target=" << tgt.path << "\n";
+        std::ofstream out(path_from_utf8(tgt.path), std::ios::binary | std::ios::trunc);
         if (!out) {
             std::cout << "PACKDB error reason=无法写输出文件\n";
             return kExitFail;
@@ -2428,8 +2460,13 @@ int run_cli(const std::vector<std::string>& args) {
             std::cerr << "PACK error reason=用法：--pack-sqfs <输出> <输入目录> [--pack-dirs]\n";
             return kExitUsage;
         }
-        const std::string& out_path = operands[0];
+        // ★★ 2026-10-04（用户红线「GUI 的功能，CLI 肯定要全部拥有」）：输出 operand **可以是目录、
+        //   也可以没有扩展名** ⇒ 与 GUI 走同一条引擎规则（sqfs ⇒ `.sqfs`）。给了带扩展名的完整路径 ⇒ 原样不动。
         const std::filesystem::path root = path_from_utf8(operands[1]);
+        const xrkit::engine::fs::PackTarget tgt = xrkit::engine::fs::resolve_pack_target(
+            operands[0], xrkit::core::path_to_utf8(root.filename()), "sqfs");
+        std::cout << "PACK target=" << tgt.path << "\n";
+        const std::string& out_path = tgt.path;
         std::error_code ec;
         if (!std::filesystem::is_directory(root, ec)) {
             std::cout << "PACK error reason=输入目录不存在：" << operands[1] << "\n";

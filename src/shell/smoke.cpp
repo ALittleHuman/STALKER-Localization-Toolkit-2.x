@@ -1689,6 +1689,44 @@ SmokeResult run_smoke() {
                       .arg(QString::fromStdString(carry), QString::fromStdString(carry_bare),
                            QString::fromStdString(plain), QString::fromStdString(empty)));
         }
+        // ★ 2026-10-04（同一条架构红线）：**输出根缺省**与**封包落点/扩展名**这两条原先也只写在 FS 页里
+        //   ⇒ CLI 复现不了（命令行与界面会算出不同的根/落点）。现在实现搬到引擎（`resolve_output_root`
+        //   / `pack_ext_for` / `resolve_pack_target`），这里钉住引擎那一份的值，并断言**页面侧==引擎侧**
+        //   （页面侧现已是对引擎的薄包装 ⇒ 谁把规则搬回页面或改任一侧，立刻红）。
+        {
+            const std::string eng_root = efs2::resolve_output_root("E:/x/a.db", "C:/cur");
+            const std::string eng_root_empty = efs2::resolve_output_root("", "C:/cur");
+            check(eng_root == "E:/x" && eng_root_empty == "C:/cur",
+                  QStringLiteral("落点④ 输出根缺省（引擎）：有源⇒源所在目录「%1」；无源⇒当前目录「%2」")
+                      .arg(QString::fromStdString(eng_root), QString::fromStdString(eng_root_empty)));
+            check(FsPage::pack_ext_for(QStringLiteral("xdb")) ==
+                          QString::fromStdString(efs2::pack_ext_for("xdb")) &&
+                      FsPage::pack_ext_for(QStringLiteral("sqfs")) ==
+                          QString::fromStdString(efs2::pack_ext_for("sqfs")) &&
+                      efs2::pack_ext_for("xdb") == ".xdb.db" &&
+                      efs2::pack_ext_for("sqfs") == ".sqfs",
+                  QStringLiteral("落点⑤ 封包扩展名：页面==引擎（xdb「%1」/ sqfs「%2」）")
+                      .arg(FsPage::pack_ext_for(QStringLiteral("xdb")),
+                           FsPage::pack_ext_for(QStringLiteral("sqfs"))));
+            // ⚠ 目录分支必须喂**真实存在的目录**（引擎照 GUI 用 `is_directory()` 判 —— 不存在的路径
+            //   会按"无扩展名的路径"处理 ⇒ 补扩展名到它后面；这正是 1.x/GUI 的行为，别改语义）。
+            const QString tdir = QDir::temp().filePath(QStringLiteral("xrkit_pack_target"));
+            QDir(tdir).removeRecursively();
+            QDir().mkpath(tdir);
+            const efs2::PackTarget t_dir =
+                efs2::resolve_pack_target(tdir.toStdString(), "mypack", "xdb");
+            const efs2::PackTarget t_ext = efs2::resolve_pack_target("E:/out/mypack", "", "xdb");
+            const efs2::PackTarget t_full = efs2::resolve_pack_target("E:/out/keep.db0", "", "xdb");
+            const efs2::PackTarget t_none = efs2::resolve_pack_target("", "mypack", "xdb");
+            const QString dir_path = QString::fromStdString(t_dir.path);
+            check(!t_dir.needs_frontend_dialog && dir_path.endsWith(QStringLiteral("mypack.xdb.db")) &&
+                      t_ext.path == "E:/out/mypack.xdb.db" &&   // 无扩展名 ⇒ 补 `.xdb.db`
+                      t_full.path == "E:/out/keep.db0" &&       // 给了全路径 ⇒ 原样不动
+                      t_none.needs_frontend_dialog && t_none.path == "mypack.xdb.db",
+                  QStringLiteral("落点⑤ 封包落点：目录+基名「%1」/ 无扩展名「%2」/ 全路径「%3」/ 空⇒需前端弹框「%4」")
+                      .arg(dir_path, QString::fromStdString(t_ext.path),
+                           QString::fromStdString(t_full.path), QString::fromStdString(t_none.path)));
+        }
         // ★★ **GUI 与 CLI 必须同落点**：本页 `plan_unpack()` 算出的 target 集合 == 引擎
         //   `plan_unpack_targets()` 算的（谁把落点规则搬回页面里、或改动任一侧 ⇒ 立刻红）。
         {

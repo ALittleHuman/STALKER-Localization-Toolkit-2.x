@@ -44,6 +44,27 @@ struct OutPathResult {
 //      跨盘/盘符相对路径在这一步被拦）
 OutPathResult safe_out_path(const std::string& out_dir, const std::string& rel);
 
+// ── 前端共用的**纯路径逻辑**（★ 架构红线：GUI 的功能 CLI 必须全有 ⇒ 这类逻辑只许一份）──
+//
+// 用户 2026-10-04 原话：「GUI 的功能，CLI 肯定要全部拥有啊。哪有 GUI 的细节功能比 CLI 还多的。」
+// 下面这几条原先只写在 FS 页里（`resolve_output_dir` / `pack_ext_for` / `resolve_pack_target`），
+// **CLI 复现不了** ⇒ 命令行与界面会算出不同的根与落点。现在实现只有这一份，页面只剩"调 + 回填"。
+
+// 「解包到」留空时的缺省根：**第一个源所在目录**（1.x `_resolve_output`）；没有源 ⇒ current_dir。
+std::string resolve_output_root(const std::string& front_source_path, const std::string& current_dir);
+
+// 封包产物的扩展名：sqfs ⇒ `.sqfs`；其余 ⇒ `.<内部键>.db`（1.x `_pack_ext`）。
+std::string pack_ext_for(const std::string& format_key);
+
+// 封包落点：`typed` ＝调用方给的输出（可为空 / 可为目录 / 可为无扩展名路径）。
+// `needs_frontend_dialog=true` ⇒ **需要前端弹"保存到"**（CLI 无界面 ⇒ 直接用默认 `path`）。
+struct PackTarget {
+    std::string path;  // 推断出的目标（UTF-8；可能只是文件名 ⇒ 由前端定目录）
+    bool needs_frontend_dialog = false;
+};
+PackTarget resolve_pack_target(const std::string& typed, const std::string& output_basename,
+                               const std::string& format_key);
+
 // ── 整树导出 ─────────────────────────────────────────────────────────
 
 enum class Selection {

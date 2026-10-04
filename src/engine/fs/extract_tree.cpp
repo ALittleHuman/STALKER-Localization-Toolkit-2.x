@@ -2,6 +2,7 @@
 
 #include "xrkit/core/atomic_write.h"
 #include "xrkit/core/path.h"
+#include "xrkit/engine/fs/overlay.h"   // format_key_is_sqfs（`pack_ext_for` 要按 1.x 规则判 sqfs）
 #include "xrkit/engine/fs/squashfs.h"
 
 #include <algorithm>
@@ -373,6 +374,42 @@ std::vector<UnpackTarget> plan_unpack_targets(
         t.target = unpack_target_dir(out_root, item.first, item.second);
         out.push_back(std::move(t));
     }
+    return out;
+}
+
+std::string resolve_output_root(const std::string& front_source_path, const std::string& current_dir) {
+    // 1.x `_resolve_output`：空则按"第一个包所在目录"推断（界面侧还要把它**回填**到输入框）。
+    if (front_source_path.empty()) return current_dir;
+    const stdfs::path p = core::path_from_utf8(front_source_path);
+    const stdfs::path parent = p.parent_path();
+    if (parent.empty()) return current_dir;
+    return core::path_to_utf8(parent);
+}
+
+std::string pack_ext_for(const std::string& format_key) {
+    if (format_key_is_sqfs(format_key)) return ".sqfs";
+    return "." + format_key + ".db";
+}
+
+PackTarget resolve_pack_target(const std::string& typed, const std::string& output_basename,
+                               const std::string& format_key) {
+    const std::string ext = pack_ext_for(format_key);
+    const std::string base = output_basename.empty() ? std::string("packed") : output_basename;
+    PackTarget out;
+    if (typed.empty()) {
+        out.path = base + ext;              // 只有文件名 ⇒ 前端弹框时用它当初始值
+        out.needs_frontend_dialog = true;
+        return out;
+    }
+    std::error_code ec;
+    const stdfs::path p = core::path_from_utf8(typed);
+    if (stdfs::is_directory(p, ec)) {
+        out.path = core::path_to_utf8(p / core::path_from_utf8(base + ext));
+        out.needs_frontend_dialog = output_basename.empty();   // 连基名都没有 ⇒ 还得让前端定
+        return out;
+    }
+    if (p.extension().empty()) out.path = typed + ext;
+    else out.path = typed;
     return out;
 }
 
