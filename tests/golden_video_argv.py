@@ -46,11 +46,14 @@ def main() -> int:
         return 1
 
     got = {}
+    summaries = {}
     for line in proc.stdout.decode("utf-8", "replace").splitlines():
-        if not line.startswith("PLAN\t"):
-            continue
-        _, name, joined = line.split("\t", 2)
-        got[name] = joined.split("\x1f")
+        if line.startswith("PLAN\t"):
+            _, name, joined = line.split("\t", 2)
+            got[name] = joined.split("\x1f")
+        elif line.startswith("PLANSUM\t"):
+            _, name, text = line.split("\t", 2)
+            summaries[name] = text
 
     compared = 0
     failed = 0
@@ -75,6 +78,42 @@ def main() -> int:
     extra = sorted(set(got) - set(want))
     if extra:
         print("注意：我们多输出了 %s（基线里没有）" % extra)
+
+    # ── PLANSUM：界面「视频参数」面板读的那几个值的判据 ─────────────────────
+    # 期望值**从 1.x 录下来的 argv 反推**（哪个开关真在命令行里 ⇒ 摘要该报什么），
+    # 不是我照实现手写的 —— 否则"面板说的"和"真正交给 ffmpeg 的"能一起错。
+    def summary_from_argv(argv):
+        def value_after(flag):
+            if flag in argv:
+                index = argv.index(flag)
+                if index + 1 < len(argv):
+                    return argv[index + 1]
+            return None
+
+        vf = value_after("-vf") or ""
+        encoder = value_after("-c:v") or ""
+        video_bitrate = value_after("-b:v") or "0"
+        audio_bitrate = value_after("-b:a") or "0"
+        sample_rate = value_after("-ar") or "0"
+        channels = value_after("-ac") or "0"
+        return ("%s|scale=%d|fps=%d|vbr=%s|abr=%s|ar=%s|ac=%s|an=%d"
+                % (encoder, 1 if "scale=" in vf else 0, 1 if "fps=" in vf else 0,
+                   video_bitrate, audio_bitrate, sample_rate, channels,
+                   1 if "-an" in argv else 0))
+
+    for name, argv in want.items():
+        if name not in summaries:
+            print("[%s] 我们的 CLI 没输出 PLANSUM" % name)
+            failed += 1
+            continue
+        expected = summary_from_argv(argv)
+        if summaries[name] != expected:
+            failed += 1
+            print("[%s] PLANSUM 与 1.x argv 反推的不一致" % name)
+            print("   1.x argv 反推: %s" % expected)
+            print("   我们:          %s" % summaries[name])
+        else:
+            print("[%s] PLANSUM ok %s" % (name, summaries[name]))
 
     verdict = "FAIL" if failed else "PASS"
     print("")

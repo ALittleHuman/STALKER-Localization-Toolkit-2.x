@@ -43,6 +43,16 @@ endif()
 
 qt_add_executable(xrkit_app
   main.cpp)
+# ★ 自检夹具：**假的 ffmpeg**（见 fake_ffmpeg.cpp 的头注释）。进度条 / 取消（终止进程 +
+#   删半成品）/ 跑完收干净进程 这三条判据必须落在"真进程"上，桩函数替不掉；而真 ffmpeg
+#   在本机不一定按 ⑧8.1 的口径可见（只认 user.ltx 与程序目录、不搜 PATH）⇒ 自己造一个。
+#   它**不进发行包**（package.ps1 只拷 xrkit_app.exe + Qt 运行时），纯粹是构建产物。
+add_executable(xrkit_fake_ffmpeg fake_ffmpeg.cpp)
+target_link_libraries(xrkit_fake_ffmpeg PRIVATE xrkit_flags)
+set_target_properties(xrkit_fake_ffmpeg PROPERTIES
+  OUTPUT_NAME "xrkit_fake_ffmpeg"
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
 target_sources(xrkit_app PRIVATE "${CMAKE_SOURCE_DIR}/assets/app.rc")
 # 版本资源（VERSIONINFO）：**生成物**（tools/gen_winres.py ← include/xrkit/core/version.h），
 # 门禁 `gen_winres.py --check` 逐字节比对 ⇒ 版本串全仓库只有 version.h 一处事实来源。

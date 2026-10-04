@@ -331,7 +331,8 @@ SmokeResult run_smoke() {
             QStringLiteral("convert_source"), QStringLiteral("convert_output"),
             QStringLiteral("text_source"),    QStringLiteral("text_target"),
             QStringLiteral("xml_dir_a"),      QStringLiteral("xml_dir_b"),
-            QStringLiteral("video_source"),   QStringLiteral("video_output"),
+            QStringLiteral("video_source"),   QStringLiteral("video_reference"),
+            QStringLiteral("video_output"),
             QStringLiteral("font_xml_dir"),   QStringLiteral("font_path"),
             QStringLiteral("font_out_dir"),   QStringLiteral("fs_output_dir"),
             QStringLiteral("fs_pack_out")};
@@ -371,7 +372,7 @@ SmokeResult run_smoke() {
                 }
             }
         }
-        check(edit_total >= 13 && not_droppable.isEmpty(),
+        check(edit_total >= 14 && not_droppable.isEmpty(),
               QStringLiteral("① 每个目录/文件输入都在拖放区域里、且输入框自己不吞拖放"
                              "（输入 %1 个；不合格 %2）")
                   .arg(edit_total)
@@ -4700,9 +4701,11 @@ SmokeResult run_smoke() {
                       labels.contains(QStringLiteral("稍后")),
                   QStringLiteral("⑧8.3 三个按钮齐（%1）").arg(labels.join(QStringLiteral("/"))));
         }
-        // 8.4：自动安装缺 download_ffmpeg.py 时如实报（不联网、不静默自救）
+        // 8.4：自动安装缺件时如实报（不联网、不静默自救）；用户口径"依赖自带"之后，程序目录里
+        //      可能已经有随包自带的 ffmpeg.exe ⇒ 那也是一条**如实结论**
         const QString install = page.auto_install();
         check(install.contains(QStringLiteral("download_ffmpeg.py")) ||
+                  install.contains(QStringLiteral("自带")) ||
                   install.contains(QStringLiteral("不可用")) ||
                   install.contains(QStringLiteral("ffmpeg 8.x")),
               QStringLiteral("⑧8.4 自动安装按钮给出如实结论（%1）").arg(install.left(48)));
@@ -4712,6 +4715,412 @@ SmokeResult run_smoke() {
         check(!page.set_manual(ghost, QString(), &error) && !error.isEmpty(),
               QStringLiteral("⑧8.7 手动指定不存在的文件被拒"));
     }
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// 视频页**补全**（本轮）的自检：引擎早就绪，缺的全是界面接线 ⇒ 每条锁都判"接线真的接上了"。
+//   · 两条**单文件**输入行（源 + 参考 OGM）+ 输出行，三行都是整行拖放区；
+//   · 「转换为 OGM」主按钮：未选源 ⇒ 灰；参考没落地 ⇒ 灰；两条都落地 ⇒ 亮（1.x `:574-577`/`:708`）；
+//   · 输出＝**文件**：默认名按 1.x `_auto_output` 三条规则推导，选择走**保存文件**对话框；
+//   · 进度条 + 文案接引擎 `progress_from_line`；
+//   · **取消**＝终止进程 + 删半成品，且"删没删掉"要**可见**（用户 2026-10-04：「不能静默报错」）；
+//   · 「视频参数」面板＝1.x `_refresh_display` 的字段，值取自引擎 `TranscodePlan`（不是页面自己判阈值）。
+// 夹具：`xrkit_fake_ffmpeg.exe`（见 fake_ffmpeg.cpp），**同时当 ffmpeg / ffprobe 用**（真起进程）。
+// ═══════════════════════════════════════════════════════════════════════════════════════
+{
+    namespace evid = xrkit::engine::video;
+    const QString fake =
+        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("xrkit_fake_ffmpeg.exe"));
+    check(QFileInfo::exists(fake),
+          QStringLiteral("视频：夹具 xrkit_fake_ffmpeg.exe 不在 exe 旁边（%1）").arg(fake));
+
+    // 自检用页面：把"ffmpeg 从哪来"与"两个文件对话框"换成可控实现（三点都是**虚拟缝**，
+    // 生产路径与自检走同一份接线 ⇒ 判的是接线，不是桩）。
+    class SelfCheckVideoPage : public VideoPage {
+    public:
+        SelfCheckVideoPage() : VideoPage(nullptr) {}
+        evid::FfmpegPaths paths;
+        QString open_title, open_filter, open_start, open_pick;
+        QString save_start, save_initial, save_pick;
+        int open_calls = 0, save_calls = 0;
+
+    protected:
+        evid::FfmpegPaths resolve_ffmpeg() override { return paths; }
+
+    public:
+        QString ask_open_file(const QString& title, const QString& filter,
+                              const QString& start_path) override {
+            open_title = title;
+            open_filter = filter;
+            open_start = start_path;
+            ++open_calls;
+            return open_pick;
+        }
+        QString ask_save_output(const QString& start_dir, const QString& initial_name) override {
+            save_start = start_dir;
+            save_initial = initial_name;
+            ++save_calls;
+            return save_pick;
+        }
+    };
+
+    QTemporaryDir vt;
+    QDir().mkpath(vt.path() + QStringLiteral("/vidsrc"));
+    QDir().mkpath(vt.path() + QStringLiteral("/refdir"));
+    const QString src_dir2 = vt.path() + QStringLiteral("/vidsrc");
+    const QString ref_dir2 = vt.path() + QStringLiteral("/refdir");
+    const QString src_file = src_dir2 + QStringLiteral("/intro.avi");
+    // 参考**故意不同主名**：1.x `_auto_output` 在"源与参考同主名同目录"时会退成 `.new.ogm`，
+    // 那条专测放在下面（否则这条"落参考目录同主名"会一直被防自毁分支吃掉）。
+    const QString ref_file = ref_dir2 + QStringLiteral("/ref.ogm");
+    { std::ofstream out(src_file.toStdString(), std::ios::binary); out << "SRC"; }
+    { std::ofstream out(ref_file.toStdString(), std::ios::binary); out << "REF"; }
+
+    const auto pump = [](int ms) {
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < ms) {
+            QCoreApplication::processEvents();
+            QThread::msleep(10);
+        }
+    };
+    const auto make_info = [](bool video, int w, int h, double fps, long long vbr, bool audio,
+                              int ch, int ar, long long abr, double duration) {
+        evid::MediaInfo info;
+        info.parsed = true;
+        info.duration = duration;
+        info.size_mb = 1.0;
+        info.has_video = video;
+        if (video) {
+            info.video.codec = "theora";
+            info.video.width = w;
+            info.video.height = h;
+            info.video.fps = fps;
+            info.video.bitrate = vbr;
+        }
+        info.has_audio = audio;
+        if (audio) {
+            info.audio.codec = "vorbis";
+            info.audio.channels = ch;
+            info.audio.sample_rate = ar;
+            info.audio.bitrate = abr;
+        }
+        return info;
+    };
+    // 源：320x240@30，有音轨；参考：640x480@25 + 800kbps + 44.1k/2ch ⇒ 两条都该"将…"
+    const evid::MediaInfo src_info = make_info(true, 320, 240, 30.0, 0, true, 2, 48000, 160000, 10.0);
+    const evid::MediaInfo ref_info = make_info(true, 640, 480, 25.0, 800000, true, 2, 44100, 128000, 12.0);
+
+    SelfCheckVideoPage page;
+    page.resize(820, page_min_h());
+    page.show();
+    QApplication::processEvents();
+    // 夹具当 ffmpeg/ffprobe（页面只通过 `resolve_ffmpeg()` 这一个入口拿路径）
+    page.paths.found = true;
+    page.paths.has_probe = true;
+    page.paths.ffmpeg = fake.toStdString();
+    page.paths.ffprobe = fake.toStdString();
+
+    // ① 三条**单文件**输入行 + 三条整行拖放区
+    check(page.source_edit() != nullptr && page.reference_edit() != nullptr &&
+              page.output_edit() != nullptr,
+          QStringLiteral("视频①：源 / 参考 OGM / 输出 三条输入行都在"));
+    check(page.drop_zones().zone_count() == 3,
+          QStringLiteral("视频①：三行各有拖放区（实测 %1）").arg(page.drop_zones().zone_count()));
+    check(page.reference_edit()->objectName() == QStringLiteral("video_reference") &&
+              page.output_edit()->placeholderText().contains(QStringLiteral("OGM")) &&
+              !page.output_edit()->placeholderText().contains(QStringLiteral("目录")),
+          QStringLiteral("视频①：输出是**文件**（占位 %1）").arg(page.output_edit()->placeholderText()));
+
+    // ② 主按钮的置灰口径：真走一遍"选源 → 参考"（源用夹具的真 ffprobe 探一遍，再把结论换成用例要的）
+    check(page.convert_button() != nullptr &&
+              page.convert_button()->text() == QStringLiteral("转换为 OGM") &&
+              !page.convert_button()->isEnabled(),
+          QStringLiteral("视频②：未选源时「转换为 OGM」置灰"));
+    page.source_edit()->setText(src_file);  // 走"拖入/选择…"那条**真实接线**（起真 ffprobe + 编码器扫描）
+    {
+        QElapsedTimer clock;
+        clock.start();
+        while ((!page.source_ready() || !page.encoders_scanned()) && clock.elapsed() < 15000) {
+            QCoreApplication::processEvents();
+            QThread::msleep(10);
+        }
+    }
+    check(page.source_ready() && page.encoders_scanned(),
+          QStringLiteral("视频②：源经真 ffprobe 落地（源 %1 / 编码器表 %2）")
+              .arg(page.source_ready() ? 1 : 0)
+              .arg(page.encoders_scanned() ? 1 : 0));
+    check(page.convert_button()->isEnabled() == false,
+          QStringLiteral("视频②：源落地、参考没落地 ⇒ 仍灰（1.x：参考必需）"));
+    // 把源/参考结论换成用例要判的那一组（面板的对比行必须**读引擎的结论**）
+    page.apply_probe_result(src_file, VideoPage::ProbeTarget::Source, src_info, QString());
+    page.reference_edit()->setText(ref_file);
+    pump(300);  // 让"设参考文本"触发的异步探测先落地，免得盖掉下面这组
+    page.apply_probe_result(ref_file, VideoPage::ProbeTarget::Reference, ref_info, QString());
+    check(page.convert_button()->isEnabled(),
+          QStringLiteral("视频②：源 + 参考都落地 ⇒ 主按钮亮"));
+
+    // ③「视频参数」面板：三段 + 1.x 的标记字段（值来自引擎的 plan）
+    const QString panel = page.info_panel_text();
+    check(panel.contains(QStringLiteral("══ 参考 OGM ══")) &&
+              panel.contains(QStringLiteral("══ 源文件 ══")) &&
+              panel.contains(QStringLiteral("══ 转换参数（匹配参考 OGM） ══")),
+          QStringLiteral("视频③：参数面板三段齐（1.x `_refresh_display`）"));
+    check(panel.contains(QStringLiteral("30.00 -> 25.00")) &&
+              panel.contains(QStringLiteral("将调整")) &&
+              panel.contains(QStringLiteral("320x240 -> 640x480")) &&
+              panel.contains(QStringLiteral("将缩放")) &&
+              panel.contains(QStringLiteral("800 kbps")) &&
+              panel.contains(QStringLiteral("theora -> libtheora")),
+          QStringLiteral("视频③：对比行要给出引擎的结论（含将缩放/将调整/编码器）"));
+    // 同尺寸同帧率 ⇒ 两条都该报 OK（阈值判据在引擎里，页面不许再判一遍）
+    page.apply_probe_result(src_file, VideoPage::ProbeTarget::Source,
+                            make_info(true, 640, 480, 25.0, 0, true, 2, 48000, 160000, 10.0),
+                            QString());
+    const QString same = page.info_panel_text();
+    check(same.contains(QStringLiteral("640x480 -> 640x480  [OK]")) &&
+              same.contains(QStringLiteral("25.00 -> 25.00  [OK]")) &&
+              !same.contains(QStringLiteral("将缩放")) && !same.contains(QStringLiteral("将调整")),
+          QStringLiteral("视频③：同尺寸/同帧率 ⇒ [OK]（与 argv 同一判据）"));
+    page.apply_probe_result(src_file, VideoPage::ProbeTarget::Source, src_info, QString());
+
+    // ④ 输出默认名（1.x `_auto_output` 三条规则）
+    const QString want_default =
+        QDir::toNativeSeparators(QDir::cleanPath(ref_dir2 + QStringLiteral("/intro.ogm")));
+    check(QDir::cleanPath(page.default_output_path()) == QDir::cleanPath(want_default),
+          QStringLiteral("视频④：有参考 ⇒ 输出落**参考所在目录**同主名（实得 %1）")
+              .arg(page.default_output_path()));
+    // 源与参考同目录同主名 ⇒ 默认值会砸到参考文件本身 ⇒ 必须改成 .new.ogm（1.x 的防自毁）
+    const QString clash_ref = src_dir2 + QStringLiteral("/intro.ogm");
+    { std::ofstream out(clash_ref.toStdString(), std::ios::binary); out << "REF2"; }
+    page.reference_edit()->setText(clash_ref);
+    page.apply_probe_result(clash_ref, VideoPage::ProbeTarget::Reference, ref_info, QString());
+    check(QDir::cleanPath(page.default_output_path()) ==
+              QDir::cleanPath(QDir::toNativeSeparators(src_dir2 + QStringLiteral("/intro.new.ogm"))),
+          QStringLiteral("视频④：默认输出不许指向参考文件本身（实得 %1）")
+              .arg(page.default_output_path()));
+    page.reference_edit()->setText(ref_file);
+    page.apply_probe_result(ref_file, VideoPage::ProbeTarget::Reference, ref_info, QString());
+    page.output_edit()->clear();
+    check(QDir::cleanPath(page.default_output_path()) == QDir::cleanPath(want_default),
+          QStringLiteral("视频④：默认名只由源+参考决定"));
+
+    // ⑤「选择…」：源/参考是**打开文件**、输出是**保存文件**，起点走 resolve_dialog_start（唯一源目录）
+    const std::vector<QWidget*>& zones = page.drop_zones().containers();
+    const auto browse_of = [&zones](size_t index) -> QPushButton* {
+        return index < zones.size() ? zones[index]->findChild<QPushButton*>() : nullptr;
+    };
+    check(browse_of(0) != nullptr && browse_of(1) != nullptr && browse_of(2) != nullptr,
+          QStringLiteral("视频⑤：三行都有「选择…」按钮"));
+    page.open_pick = src_file;
+    if (browse_of(0) != nullptr) browse_of(0)->click();
+    check(page.open_calls == 1 && page.open_title.contains(QStringLiteral("源视频")) &&
+              page.open_filter.contains(QStringLiteral("*.mp4")) &&
+              page.source_edit()->text() == QDir::toNativeSeparators(src_file),
+          QStringLiteral("视频⑤：源行走**打开文件**对话框（标题 %1）").arg(page.open_title));
+    page.open_pick = ref_file;
+    if (browse_of(1) != nullptr) browse_of(1)->click();
+    check(page.open_title.contains(QStringLiteral("参考 OGM")) &&
+              page.open_filter.contains(QStringLiteral("*.ogm")) &&
+              page.reference_edit()->text() == QDir::toNativeSeparators(ref_file),
+          QStringLiteral("视频⑤：参考行走**打开文件**对话框（过滤器 %1）").arg(page.open_filter));
+    reset_last_dialog_start();
+    page.output_edit()->clear();
+    pump(300);
+    page.save_pick = QDir::toNativeSeparators(vt.path() + QStringLiteral("/picked.ogm"));
+    if (browse_of(2) != nullptr) browse_of(2)->click();
+    check(page.save_calls == 1 && page.save_initial.endsWith(QStringLiteral(".ogm")) &&
+              page.output_edit()->text() == page.save_pick,
+          QStringLiteral("视频⑤：输出走**保存文件**对话框（默认名 %1）").arg(page.save_initial));
+    check(QDir::cleanPath(page.save_start) == QDir::cleanPath(src_dir2) &&
+              last_dialog_start_calls() == 1,
+          QStringLiteral("视频⑤：保存起点 = **唯一输入所在目录**（%1，走共用函数 %2 次）")
+              .arg(page.save_start)
+              .arg(last_dialog_start_calls()));
+
+    // ⑥ 夹具当 ffmpeg/ffprobe：按钮 → argv → 进程 → 进度 → 跑完收干净
+    pump(300);  // 让上面的文本改动触发的探测先落地
+    page.apply_probe_result(src_file, VideoPage::ProbeTarget::Source, src_info, QString());
+    page.apply_probe_result(ref_file, VideoPage::ProbeTarget::Reference, ref_info, QString());
+    const QString out_file = vt.path() + QStringLiteral("/out.ogm");
+    QFile::remove(out_file);
+    page.output_edit()->setText(out_file);
+    qputenv("XRKIT_FAKE_FFMPEG_MODE", "finish");
+
+    QElapsedTimer vclock;
+    vclock.start();
+    if (page.convert_button() != nullptr) page.convert_button()->click();
+    while (!page.transcode_running() && vclock.elapsed() < 20000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(10);
+    }
+    check(page.transcode_running(),
+          QStringLiteral("视频⑥：点「转换为 OGM」要真的起进程（路径＝夹具）"));
+    while (page.progress_percent() == 0 && vclock.elapsed() < 20000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(10);
+    }
+    check(page.progress_percent() > 0 && page.progress_bar() != nullptr &&
+              page.progress_bar()->value() == page.progress_percent() &&
+              page.progress_label() != nullptr &&
+              page.progress_label()->text().contains(QStringLiteral("%")),
+          QStringLiteral("视频⑥：进度条/文案跟着 ffmpeg 的 time= 走（实得 %1）")
+              .arg(page.progress_percent()));
+    while (page.transcode_running() && vclock.elapsed() < 60000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(10);
+    }
+    check(!page.transcode_running() && page.progress_percent() == 100 &&
+              page.progress_bar() != nullptr && page.progress_bar()->value() == 100 &&
+              page.progress_label() != nullptr &&
+              page.progress_label()->text().contains(QStringLiteral("完成")),
+          QStringLiteral("视频⑥：跑完进度到 100、状态报「完成」"));
+    check(QFile::exists(out_file) && QFileInfo(out_file).size() > 0,
+          QStringLiteral("视频⑥：产物存在（夹具写的）"));
+    check(page.convert_button() != nullptr && page.convert_button()->isEnabled() &&
+              page.cancel_button() != nullptr && !page.cancel_button()->isVisible(),
+          QStringLiteral("视频⑥：跑完主按钮恢复、取消收起"));
+    // 产物那一屏：跑完会再解析一次产物（夹具的 `-print_format json`）
+    {
+        QElapsedTimer wait;
+        wait.start();
+        while (!page.info_panel_text().contains(QStringLiteral("══ 输出文件（本次转换结果） ══")) &&
+               wait.elapsed() < 10000) {
+            QCoreApplication::processEvents();
+            QThread::msleep(10);
+        }
+        check(page.info_panel_text().contains(QStringLiteral("══ 输出文件（本次转换结果） ══")) &&
+                  page.info_panel_text().contains(QStringLiteral("vorbis")),
+              QStringLiteral("视频⑥：转换完成后**再解析一次产物**并贴到面板（1.x）"));
+    }
+
+    // ⑦ 取消：真停 + **删半成品** + 理由可见（用户红线：不能静默）
+    QFile::remove(out_file);
+    qputenv("XRKIT_FAKE_FFMPEG_MODE", "loop");
+    vclock.restart();
+    if (page.convert_button() != nullptr) page.convert_button()->click();
+    while (!page.transcode_running() && vclock.elapsed() < 20000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(10);
+    }
+    while ((page.progress_percent() == 0 || !QFile::exists(out_file)) &&
+           vclock.elapsed() < 20000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(10);
+    }
+    check(page.transcode_running() && page.progress_percent() > 0 && QFile::exists(out_file),
+          QStringLiteral("视频⑦：取消前——进程在跑、进度在走、半成品已产生"));
+    check(page.cancel_button() != nullptr && page.cancel_button()->isVisible(),
+          QStringLiteral("视频⑦：跑起来时取消按钮出现在主按钮左边"));
+    if (page.cancel_button() != nullptr) page.cancel_button()->click();
+    vclock.restart();
+    while (page.transcode_running() && vclock.elapsed() < 10000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(10);
+    }
+    check(!page.transcode_running(), QStringLiteral("视频⑦：取消要**真停**（进程没了）"));
+    check(!QFile::exists(out_file),
+          QStringLiteral("视频⑦：取消要**删掉半成品**（1.x：不留「看着像成功」的输出）"));
+    const QString cancel_msg = page.last_error();
+    check(cancel_msg.contains(QStringLiteral("已取消")) &&
+              cancel_msg.contains(QStringLiteral("已删除半成品")) &&
+              cancel_msg.contains(QFileInfo(out_file).fileName()),
+          QStringLiteral("视频⑦：取消理由要可见（含文件名）——实得 %1").arg(cancel_msg));
+    check(page.progress_percent() == 0 && page.progress_bar() != nullptr &&
+              page.progress_bar()->value() == 0 && page.progress_label() != nullptr &&
+              page.progress_label()->text() == cancel_msg &&
+              page.convert_button() != nullptr && page.convert_button()->isEnabled() &&
+              page.cancel_button() != nullptr && !page.cancel_button()->isVisible(),
+          QStringLiteral("视频⑦：取消后进度归零、文案＝取消理由、按钮恢复"));
+
+    // ⑧ 失败：**ffmpeg 的 stderr 原文**要带出来（不能只给"失败"）
+    QFile::remove(out_file);
+    qputenv("XRKIT_FAKE_FFMPEG_MODE", "fail");
+    vclock.restart();
+    if (page.convert_button() != nullptr) page.convert_button()->click();
+    while (page.transcode_running() && vclock.elapsed() < 20000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(10);
+    }
+    check(page.last_error().contains(QStringLiteral("退出码")) &&
+              page.last_error().contains(QStringLiteral("boom-invalid-input")),
+          QStringLiteral("视频⑧：失败理由要带 stderr 原文（实得 %1）").arg(page.last_error().left(90)));
+    check(page.progress_label() != nullptr &&
+              page.progress_label()->text().contains(QStringLiteral("失败")) &&
+              page.info_panel_text().contains(QStringLiteral("错误原文")),
+          QStringLiteral("视频⑧：失败在状态栏与面板上都可见"));
+    qunsetenv("XRKIT_FAKE_FFMPEG_MODE");
+
+    // ⑨ 找不到 ffmpeg：要说明**试过哪些路径**（不能只灰着、不能只给一行泛泛的话）
+    {
+        SelfCheckVideoPage bare;  // paths 全空 ⇒ resolve_ffmpeg 报"没找到"
+        bare.resize(820, page_min_h());
+        bare.source_edit()->setText(src_file);
+        bare.apply_probe_result(src_file, VideoPage::ProbeTarget::Source, src_info, QString());
+        bare.reference_edit()->setText(ref_file);
+        bare.apply_probe_result(ref_file, VideoPage::ProbeTarget::Reference, ref_info, QString());
+        check(bare.convert_button() != nullptr && bare.convert_button()->isEnabled(),
+              QStringLiteral("视频⑨：ffmpeg 缺失**不是**主按钮置灰的理由（灰＝说不清）"));
+        if (bare.convert_button() != nullptr) bare.convert_button()->click();
+        const QString miss = bare.last_error();
+        check(miss.contains(QStringLiteral("找不到 ffmpeg")) &&
+                  miss.contains(QStringLiteral("user.ltx")) &&
+                  miss.contains(QStringLiteral("程序目录")) &&
+                  miss.contains(QStringLiteral("不搜 PATH")),
+              QStringLiteral("视频⑨：缺失理由要含**试过哪些路径**（实得 %1）").arg(miss.left(110)));
+        check(bare.progress_label() != nullptr &&
+                  bare.progress_label()->text().contains(QStringLiteral("失败")),
+              QStringLiteral("视频⑨：缺失在进度文案上也可见"));
+        // 状态栏三态：探测之前是"未检测"（**不是 ✗**）；探测之后按**真实结论**报
+        //（本机 build 目录里恰好有实物 ffmpeg/ffprobe ⇒ 两种结论都要如实、都要带路径信息）
+        bare.detect();
+        const QString state_text = bare.status_text();
+        if (bare.probe_state() == evid::ProbeState::Missing) {
+            check(state_text.contains(QStringLiteral("✗")) &&
+                      state_text.contains(QStringLiteral("试过")),
+                  QStringLiteral("视频⑨：找不到时状态栏要报出试过的路径（%1）")
+                      .arg(state_text.left(90)));
+        } else {
+            check(state_text.contains(QStringLiteral("✓")) &&
+                      state_text.contains(QStringLiteral("ffmpeg")),
+                  QStringLiteral("视频⑨：找得到时状态栏要报**哪一份** ffmpeg（%1）")
+                      .arg(state_text.left(90)));
+        }
+
+        // ⑩ 自动安装按钮**不再是空壳**：点一下要真做事、结论可见
+        QWidget* setup = bare.request_setup();
+        QPushButton* install_button = nullptr;
+        if (setup != nullptr) {
+            for (QPushButton* candidate : setup->findChildren<QPushButton*>()) {
+                if (candidate->text() == QStringLiteral("自动安装")) install_button = candidate;
+            }
+        }
+        check(install_button != nullptr, QStringLiteral("视频⑩：设置小窗里有「自动安装」"));
+        if (install_button != nullptr) install_button->click();
+        const QString after = bare.status_label() != nullptr ? bare.status_label()->text() : QString();
+        check(!after.trimmed().isEmpty() &&
+                  (after.contains(QStringLiteral("自动安装")) ||
+                   after.contains(QStringLiteral("自带")) ||
+                   after.contains(QStringLiteral("download_ffmpeg.py"))),
+              QStringLiteral("视频⑩：点「自动安装」要给出**结论**（%1）").arg(after.left(70)));
+    }
+
+    // ⑪ 跳过要**计数 + 逐条原因**（用户红线）
+    {
+        SelfCheckVideoPage busy;
+        busy.resize(820, page_min_h());
+        busy.paths.found = true;
+        busy.paths.has_probe = true;
+        busy.paths.ffmpeg = fake.toStdString();
+        busy.paths.ffprobe = fake.toStdString();
+        busy.apply_file(src_file, false);   // 起进程（异步）
+        busy.apply_file(ref_file, true);    // 忙 ⇒ 跳过并留痕
+        check(busy.skipped_count() >= 1 && !busy.skip_reasons().isEmpty(),
+              QStringLiteral("视频⑪：跳过要计数（%1 项）").arg(busy.skipped_count()));
+        check(busy.info_panel_text().contains(QStringLiteral("跳过")),
+              QStringLiteral("视频⑪：跳过要逐条可见（面板）"));
+        pump(800);
+    }
+}
 
     // ⑪ 汉化包生成页（M2-6g）：11.8 四态标记由引擎给 / 11.9 缺字形**先判后建**且不留半成品。
     {

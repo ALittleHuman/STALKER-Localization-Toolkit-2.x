@@ -46,6 +46,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <filesystem>
@@ -133,6 +134,9 @@ void print_usage() {
            "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
            "                                              文本提取（gameplay|scripts 一个分支）\n"
            "  --text-plan <源目录> <输出目录>              文本提取的请求守卫（7.1 文件夹名 / 7.5 覆盖源目录）\n"
+           "  --video-plan                                视频转码 argv + 摘要（PLAN/PLANSUM；与 1.x 对拍）\n"
+           "  --video-probe <ffprobe-json 文件>           视频参数解析（与 1.x parse_video_info 对拍）\n"
+           "  --video-encoders <ffmpeg -encoders 输出>    可用编码器解析（与 1.x _ensure_encoders 对拍）\n"
            "  --glyph-dump <字体> <字号> <输出> [字符集文件]  导出 FreeType 栅格（与 Pillow 对拍）\n"
            "  --font-metrics <输出>                       导出字库几何/宽度表（与 1.x font_pack 对拍）\n"
            "  --font-render <字体> <字号> <x2> <fmt> <字符集文件> <输出前缀>\n"
@@ -1853,7 +1857,70 @@ int run_cli(const std::vector<std::string>& args) {
                 joined += part;
             }
             std::cout << "PLAN\t" << item.name << "\t" << joined << "\n";
+            // PLANSUM：界面「视频参数」面板读的那些值（scale/fps/码率/音频）。
+            // 期望值由 `tests/golden_video_argv.py` **从 1.x 的 argv 反推**（不是我手写）⇒
+            // 面板显示的东西与真正交给 ffmpeg 的东西不可能对不上。
+            std::cout << "PLANSUM\t" << item.name << "\t" << plan.video_encoder
+                      << "|scale=" << (plan.scale_applied ? 1 : 0)
+                      << "|fps=" << (plan.fps_applied ? 1 : 0) << "|vbr=" << plan.video_bitrate
+                      << "|abr=" << plan.audio_bitrate << "|ar=" << plan.audio_sample_rate
+                      << "|ac=" << plan.audio_channels << "|an=" << (plan.audio_disabled ? 1 : 0)
+                      << "\n";
         }
+        return kExitOk;
+    }
+    if (action == "--video-probe") {
+        // 解析判据：把**录下来的真 ffprobe 输出**（tests/golden/video_probe/）喂给
+        // `parse_ffprobe_json`，逐字段打印；`tests/golden_video_probe.py` 拿 1.x 的
+        // `parse_video_info` 吃同一份字节，两边比字段（期望值不是我手写的）。
+        if (operands.empty()) {
+            std::cerr << "VIDEOPROBE error reason=用法：--video-probe <ffprobe-json 文件>\n";
+            return kExitUsage;
+        }
+        const std::vector<uint8_t> raw = read_all(operands[0]);
+        const std::string text(raw.begin(), raw.end());
+        const xrkit::engine::video::MediaInfo info =
+            xrkit::engine::video::parse_ffprobe_json(text);
+        char buffer[128];
+        auto emit = [](const char* key, const char* value) {
+            std::cout << "PROBE\t" << key << "\t" << value << "\n";
+        };
+        emit("parsed", info.parsed ? "1" : "0");
+        emit("has_video", info.has_video ? "1" : "0");
+        emit("has_audio", info.has_audio ? "1" : "0");
+        std::snprintf(buffer, sizeof(buffer), "%.6f", info.duration);
+        emit("duration", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.6f", info.size_mb);
+        emit("size_mb", buffer);
+        emit("video.codec", info.video.codec.c_str());
+        std::snprintf(buffer, sizeof(buffer), "%d", info.video.width);
+        emit("video.width", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%d", info.video.height);
+        emit("video.height", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.6f", info.video.fps);
+        emit("video.fps", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%lld", info.video.bitrate);
+        emit("video.bitrate", buffer);
+        emit("audio.codec", info.audio.codec.c_str());
+        std::snprintf(buffer, sizeof(buffer), "%d", info.audio.channels);
+        emit("audio.channels", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%d", info.audio.sample_rate);
+        emit("audio.sample_rate", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%lld", info.audio.bitrate);
+        emit("audio.bitrate", buffer);
+        return kExitOk;
+    }
+    if (action == "--video-encoders") {
+        // 解析判据：`ffmpeg -encoders` 的**真输出**喂给 `parse_encoder_list`。
+        if (operands.empty()) {
+            std::cerr << "VIDEOENC error reason=用法：--video-encoders <ffmpeg -encoders 输出文件>\n";
+            return kExitUsage;
+        }
+        const std::vector<uint8_t> raw = read_all(operands[0]);
+        const std::string text(raw.begin(), raw.end());
+        const std::vector<std::string> names = xrkit::engine::video::parse_encoder_list(text);
+        std::cout << "ENCODERS\t" << names.size() << "\n";
+        for (const std::string& name : names) std::cout << "ENC\t" << name << "\n";
         return kExitOk;
     }
     if (action == "--version-store") {

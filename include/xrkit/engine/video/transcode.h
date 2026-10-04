@@ -22,6 +22,9 @@ struct VideoStream {
 };
 
 struct AudioStream {
+    // 1.x `_fmt` 的音频行列的是 `a.codec`（如 vorbis）⇒ 解析结果里必须有它。
+    // 转码命令行本身不用它（只用声道/采样率/码率），是**信息面板**要显示。
+    std::string codec;
     int sample_rate = 0;
     int channels = 0;
     long long bitrate = 0;
@@ -34,6 +37,8 @@ struct MediaInfo {
     VideoStream video;
     AudioStream audio;
     double duration = 0.0;
+    // 1.x `VideoInfo.size_mb = float(format.size) / 1024 / 1024`（信息面板的"大小"行）
+    double size_mb = 0.0;
 };
 
 struct TranscodeRequest {
@@ -52,12 +57,39 @@ struct TranscodePlan {
     bool encoder_warning = false;  // 一个可用编码器都没有 ⇒ 回退内置 mpeg4（要告警）
     bool audio_kept_on_probe_failure = false;
     double duration = 0.0;
+
+    // ★ 界面「视频参数」面板要显示的**正是这些值**（1.x `_refresh_display` 的对比行）。
+    //   它们全由本函数决定 ⇒ 面板直接读，**不许**在页面里把阈值/默认值再判一遍
+    //   （否则 23.98 vs 24.00 那类边界会出现"面板说 OK、argv 里却插了 fps 滤镜"）。
+    bool scale_applied = false;   // 真的写了 `scale=`（1.x 的「将缩放 / OK」）
+    bool fps_applied = false;     // 真的写了 `fps=`（1.x 的「将调整 / OK」）
+    long long video_bitrate = 0;  // 实际写进 `-b:v` 的值（0 = 没写，如 theora 的 `-q:v` 路线）
+    long long audio_bitrate = 0;  // 实际写进 `-b:a` 的值
+    int audio_sample_rate = 0;    // 实际写进 `-ar` 的值
+    int audio_channels = 0;       // 实际写进 `-ac` 的值
+    bool audio_disabled = false;  // 源**确认无音轨** ⇒ `-an`
 };
 
 // 参照有编码/码率 ⇒ 匹配；否则默认（见规格 §2）
 std::string pick_video_encoder(const std::string& reference_codec,
                                const std::vector<std::string>& available);
 TranscodePlan plan_transcode(const TranscodeRequest& request);
+
+// ── ffprobe / ffmpeg 输出的**纯解析段**（1.x `parse_video_info` / `_ensure_encoders`）──
+//
+// 只做"文本 → 结构"（不起进程、不碰 Qt），所以判据可以拿**录下来的真输出**逐字段对拍
+// （见 `tests/golden_video_probe.py`：1.x 的同名函数吃同一份字节，两边比字段）。
+//
+// `parse_ffprobe_json`：吃 `ffprobe -v quiet -print_format json -show_format -show_streams`
+// 的 stdout。逐字段照 1.x：`format.duration`/`format.size`（字符串数字）、
+// 第一个 `codec_type=="video"` 的 `codec_name/width/height/avg_frame_rate|r_frame_rate/
+// bit_rate`、第一个 `codec_type=="audio"` 的 `codec_name/channels/sample_rate/bit_rate`。
+// 不是合法 JSON ⇒ 返回 `parsed=false`（调用方据此走 1.x"保留音频选项 + 告警"的分支）。
+MediaInfo parse_ffprobe_json(const std::string& json);
+
+// `parse_encoder_list`：吃 `ffmpeg -encoders` 的 stdout。1.x 只认以 ` V`/` A` 开头的行、
+// 取该行第 2 列（`V....D libtheora ...` ⇒ `libtheora`）。返回**按出现顺序**（去重）。
+std::vector<std::string> parse_encoder_list(const std::string& output);
 
 // ── 进度与取消（1.x `convert()` 340–372 行，逐句取证）────────────────
 //

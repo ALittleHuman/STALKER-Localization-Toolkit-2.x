@@ -1236,25 +1236,32 @@ def step_golden_video_argv(release: bool) -> None:
 
     基线 `tests/golden/video_argv.json` 由 `tests/probe_video_argv.py --write` 生成（期望值现算
     自 1.x 源码，不是我手写的）。退出码：0=逐段一致，1=不一致，2=基线或 CLI 缺失。
+
+    同一档里还有**解析**对拍（`tests/golden_video_probe.py`）：喂**真 ffprobe / 真
+    `ffmpeg -encoders` 的输出字节**给我们的解析器与 1.x 的 `parse_video_info` /
+    `_ensure_encoders`，逐字段比（信息面板的字段就是这么来的）。
     """
-    say("[25] 视频转码 argv 对拍（2.x vs 1.x convert() 实调）")
-    script = ROOT / "tests" / "golden_video_argv.py"
-    if not require_repo_file(script, "视频 argv 对拍脚本"):
-        return
+    say("[25] 视频转码 argv + 视频参数解析对拍（2.x vs 1.x 本体）")
     if not CLI_EXE.exists():
         prereq("构建产物 xrkit_cli.exe", "未构建", release)
         return
-    rc, out = run([sys.executable, str(script)])
-    for line in out.splitlines():
-        s = line.strip()
-        if s.startswith("[") or s.startswith("GOLDEN-VIDEO-ARGV"):
-            say("  " + s)
-    if rc == 0:
-        ok("视频转码 argv 与 1.x 逐段一致")
-    elif rc == 2:
-        prereq("视频 argv 基线", "缺基线或 CLI（见上）", release)
-    else:
-        fail("视频转码 argv 与 1.x 不一致（见上）")
+    steps = [("argv", ROOT / "tests" / "golden_video_argv.py", "视频转码 argv 与 1.x 逐段一致"),
+             ("probe", ROOT / "tests" / "golden_video_probe.py",
+              "视频参数解析（ffprobe JSON / 编码器表）与 1.x 逐字段一致")]
+    for name, script, ok_text in steps:
+        if not require_repo_file(script, "视频%s对拍脚本" % name):
+            continue
+        rc, out = run([sys.executable, str(script)])
+        for line in out.splitlines():
+            s = line.strip()
+            if s.startswith("[") or s.startswith("GOLDEN-VIDEO"):
+                say("  " + s)
+        if rc == 0:
+            ok(ok_text)
+        elif rc == 2:
+            prereq("视频%s基线" % name, "缺基线或 CLI（见上）", release)
+        else:
+            fail("视频%s与 1.x 不一致（见上）" % name)
 
 
 def step_golden_sqfs_compressors(release: bool) -> None:

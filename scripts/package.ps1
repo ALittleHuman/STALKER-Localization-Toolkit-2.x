@@ -39,6 +39,40 @@ New-Item -ItemType Directory -Force -Path (Join-Path $stage 'plugins') | Out-Nul
 Write-Host "== 复制主程序 =="
 Copy-Item -LiteralPath $exe.FullName -Destination $stage
 
+# ★★ 用户口径（2026-10-05）：「ffmpeg 等依赖应当自带」。
+#   视频页按 ⑧8.1 只认**程序目录**与 user.ltx 两处（不搜 PATH）⇒ 自带件必须落在包根，
+#   页面才可能"不填路径也能用"。找不到就**报错**（不静默跳过：静默跳过的结果就是
+#   用户拿到一个视频页不能用的包，而没人知道为什么）。
+#   版本守卫照 ⑧8.6：ffmpeg **8.x 拒收**（8.x 的 theora 编码器对 STALKER OGM 有 bug）。
+$depDirs = @()
+if ($env:XRKIT_FFMPEG_DIR) { $depDirs += $env:XRKIT_FFMPEG_DIR }
+$depDirs += (Join-Path $root 'third_party\ffmpeg')
+$depDirs += (Join-Path $root 'deps\ffmpeg')
+$depDirs += 'E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit'
+$depSrc = $null
+foreach ($dir in $depDirs) {
+    if ((Test-Path (Join-Path $dir 'ffmpeg.exe')) -and (Test-Path (Join-Path $dir 'ffprobe.exe'))) {
+        $depSrc = $dir
+        break
+    }
+}
+if (-not $depSrc) {
+    throw ("ffmpeg.exe / ffprobe.exe not found. Looked in: " + ($depDirs -join '; ') +
+           ". Put both in the same directory and set XRKIT_FFMPEG_DIR, or pass a directory there.")
+}
+Write-Host "  自带依赖来源: $depSrc"
+Copy-Item -LiteralPath (Join-Path $depSrc 'ffmpeg.exe') -Destination $stage
+Copy-Item -LiteralPath (Join-Path $depSrc 'ffprobe.exe') -Destination $stage
+$ffVersion = (& (Join-Path $stage 'ffmpeg.exe') -version 2>&1 | Select-Object -First 1)
+Write-Host "  $ffVersion"
+if ($ffVersion -match 'ffmpeg version n?(\d+)\.') {
+    if ([int]$Matches[1] -eq 8) {
+        throw "bundled ffmpeg is 8.x - rejected by 8.6 (its theora encoder is buggy for STALKER OGM)"
+    }
+}
+# 自动安装按钮的真身（程序目录里没有自带件时，页面用得上它）
+Copy-Item -LiteralPath (Join-Path $root 'scripts\download_ffmpeg.py') -Destination $stage
+
 Write-Host "== windeployqt（铺 Qt 运行时；不铺翻译/示例）=="
 & (Join-Path $qt 'bin\windeployqt.exe') --release --no-translations --no-system-d3d-compiler `
     --no-opengl-sw (Join-Path $stage 'xrkit_app.exe')
@@ -55,7 +89,8 @@ STALKER 汉化工具集 2.0.0（xrkit）
       唯一的写盘位置是用户设置 user.ltx，删除它即恢复默认）。
 插件：plugins\ 为空目录。需要插件时把 <name>.dll 放进去，重启程序；
       插件加载失败不会阻塞启动，问题会显示在启动后的日志栏里。
-不含：ffmpeg（视频页要你自己在页面里手动指定）、NLC 解密插件、实验性引擎补丁。
+自带：ffmpeg.exe / ffprobe.exe（视频页不填路径也能直接用）+ download_ffmpeg.py（缺件时重下）。
+不含：NLC 解密插件、实验性引擎补丁。
 自检：命令行跑 `xrkit_app.exe --smoke`（离屏，ASCII 输出）可核对包是否完整。
 "@ | Set-Content -LiteralPath (Join-Path $stage 'README.txt') -Encoding UTF8
 $verLine = if ($VersionString -ne '') { $VersionString } else { '2.0.0' }

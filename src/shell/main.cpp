@@ -9,11 +9,14 @@
 #include "hub.h"
 #include "pages/fs_page.h"
 #include "pages/page_base.h"
+#include "pages/video_page.h"
 #include "smoke.h"
 #include "screen_scale.h"
 #include "theme.h"
 
 #include <QApplication>
+#include <QDir>
+#include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QHeaderView>
 #include <QLayout>
@@ -22,6 +25,7 @@
 #include <QScreen>
 #include <QStringList>
 #include <QTextStream>
+#include <QThread>
 #include <QTreeWidget>
 #include <functional>
 
@@ -59,6 +63,17 @@ int main(int argc, char** argv) {
     const QString filter_text = (filter_arg >= 0 && filter_arg + 1 < args.size())
                                     ? args[filter_arg + 1]
                                     : QString();
+    // `--video-in <源文件>` / `--video-ref <参考 OGM>` / `--video-out <输出 OGM>`：
+    //   抓视频页"有输入"的那个状态（空状态与有输入长得完全不同，只看空状态等于没看）。
+    const int vin_arg = args.indexOf(QStringLiteral("--video-in"));
+    const QString video_in =
+        (vin_arg >= 0 && vin_arg + 1 < args.size()) ? args[vin_arg + 1] : QString();
+    const int vref_arg = args.indexOf(QStringLiteral("--video-ref"));
+    const QString video_ref =
+        (vref_arg >= 0 && vref_arg + 1 < args.size()) ? args[vref_arg + 1] : QString();
+    const int vout_arg = args.indexOf(QStringLiteral("--video-out"));
+    const QString video_out =
+        (vout_arg >= 0 && vout_arg + 1 < args.size()) ? args[vout_arg + 1] : QString();
 
     // 离屏：不依赖真实显示器（门禁机器上也可能没有交互桌面）
     if ((smoke || !shot_path.isEmpty()) && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
@@ -151,6 +166,45 @@ int main(int argc, char** argv) {
         hub.resize(shot_size);
         hub.show();
         if (shot_page > 0 && shot_page < hub.page_count()) hub.set_current_page(shot_page);
+        // 视频页"有输入"：填三个框 + **等异步 ffprobe 落地**（不然面板还停在"正在解析"）
+        if (!video_in.isEmpty() || !video_ref.isEmpty()) {
+            if (auto* video_page =
+                    dynamic_cast<xrkit::shell::VideoPage*>(hub.page_at(shot_page))) {
+                if (!video_out.isEmpty()) video_page->output_edit()->setText(video_out);
+                QElapsedTimer shot_clock;
+                shot_clock.start();
+                const auto settle = [&shot_clock](xrkit::shell::VideoPage* target,
+                                                  bool want_source, bool want_reference) {
+                    while (shot_clock.elapsed() < 30000) {
+                        const bool source_ok = !want_source || target->source_ready();
+                        const bool reference_ok = !want_reference || target->reference_ready();
+                        if (source_ok && reference_ok) return;
+                        QApplication::processEvents();
+                        QThread::msleep(20);
+                    }
+                };
+                // 走"拖入/选择…"那条**真实接线**（填框 → textChanged → 异步探测），
+                // 页面口径：同一时刻只允许一次探测 ⇒ 两份文件**排队**等
+                if (!video_in.isEmpty()) {
+                    video_page->source_edit()->setText(QDir::toNativeSeparators(video_in));
+                }
+                settle(video_page, true, false);
+                if (!video_ref.isEmpty()) {
+                    video_page->reference_edit()->setText(QDir::toNativeSeparators(video_ref));
+                }
+                settle(video_page, true, true);
+                QTextStream out(stdout);
+                out << QStringLiteral("SHOT video src_ready=%1 ref_ready=%2 panel_lines=%3\n")
+                           .arg(video_page->source_ready() ? 1 : 0)
+                           .arg(video_page->reference_ready() ? 1 : 0)
+                           .arg(video_page->info_panel_text().count(QLatin1Char('\n')) + 1);
+                // 面板原文（换行折成 " | "）：截图里中文在离屏环境会退化成方块 ⇒ 判读靠这行文字
+                out << QStringLiteral("SHOT video panel=%1\n")
+                           .arg(QString(video_page->info_panel_text())
+                                    .replace(QLatin1Char('\n'), QStringLiteral(" | ")));
+                out.flush();
+            }
+        }
         if (!load_path.isEmpty()) {
             if (auto* fs_page = dynamic_cast<xrkit::shell::FsPage*>(hub.page_at(0))) {
                 fs_page->add_paths(QStringList{load_path});
