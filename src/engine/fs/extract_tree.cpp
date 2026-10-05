@@ -226,6 +226,11 @@ ExtractTreeResult extract_tree(const std::string& image_path, const std::string&
     }
     result.ok = true;  // 从这里往后：单项失败算单项，不算整批失败
     ArtifactTally tally;   // ★ 产物口径：同一落点只算一次（见 `ArtifactTally` 的说明）
+    // ★★ 2026-10-05（性能）：整批**只打开一次镜像、只列一次目录树**。
+    //   原先循环里每条目都调 `read_file()`，而它每条目都重开镜像 + 重新 list() 整棵目录树
+    //   ⇒ 14861 个条目把同一份元数据遍历了 14861 遍（探针实测 100.3 s / 总 135.3 s，74%）。
+    //   作用域只活在本函数内 ⇒ 函数外的 `read_file` 行为与今天逐字节一致。
+    const ReadSessionScope read_session;
 
     // 选出本次要处理的条目（保持**清单顺序**：镜像列出的顺序已是路径字节序，
     // Listed 顺序则按调用方给的顺序，便于"谁失败"可复现）。

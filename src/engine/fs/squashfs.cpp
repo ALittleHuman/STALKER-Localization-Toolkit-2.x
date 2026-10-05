@@ -4,9 +4,12 @@
 #include "xrkit/engine/plugin/registry.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -140,11 +143,20 @@ public:
     // 按镜像内路径读一个文件的完整内容（列表结果复用同一次遍历）
     bool read_entry_file(const std::string& path, std::vector<uint8_t>& out, std::string& err);
 
+    // ★★ 2026-10-05（性能）：`list()` 建一次 `path -> Entry` 索引 ⇒ 之后按路径取条目是查表，
+    //   **不再遍历整棵目录树**。`std::map::emplace` 保留第一次插入 ⇒ 与原先"线性扫描取首个
+    //   同名项"同语义（包内重复登记的路径本来就指向同一份数据）。
+    const Entry* find_entry(const std::string& path) const {
+        const auto it = entry_paths_.find(path);
+        return it == entry_paths_.end() ? nullptr : &it->second;
+    }
+
 private:
 
     FileReader file_;
     SuperBlock sb_;
     std::unordered_map<uint64_t, MetaBlock> cache_;
+    std::map<std::string, Entry> entry_paths_;
 };
 
 bool parse_superblock(const uint8_t* d, size_t n, SuperBlock& sb, std::string& err) {
@@ -412,6 +424,10 @@ bool Image::list(std::vector<Entry>& out, std::string& err) {
 
     std::sort(out.begin(), out.end(),
               [](const Entry& a, const Entry& b) { return a.path < b.path; });
+
+    // ★★ 2026-10-05（性能）：建一次 `path -> Entry` 索引（**必须在 sort 之后**：索引里是值
+    //   拷贝，排序后拷出来的才是最终顺序）。`emplace` 保留第一次插入 ⇒ 与线性扫描同语义。
+    for (const Entry& e : out) entry_paths_.emplace(e.path, e);
     return true;
 }
 
@@ -547,18 +563,18 @@ bool Image::read_file_data(uint64_t ref, const Inode& ino, std::vector<uint8_t>&
 
 bool Image::read_entry_file(const std::string& path, std::vector<uint8_t>& out,
                             std::string& err) {
-    std::vector<Entry> entries;
-    if (!list(entries, err)) return false;
-    const Entry* found = nullptr;
-    for (const Entry& e : entries) {
-        if (e.path == path) {
-            found = &e;
-            break;
-        }
-    }
+    // ★★ 2026-10-05（性能）：原先这里**每次都 `list()` 整棵目录树**再线性找条目 ——
+    //   单次 `--extract` 无所谓，但 `--unpack-tree` 会按条目数把它跑 N 遍（真机 14861 遍
+    //   ≈ 100.3 s，占解包总耗时的 74%）。现在：有索引就查表；没有索引才退回"列一次 + 查表"。
+    const Entry* found = find_entry(path);
     if (found == nullptr) {
-        err = "镜像里没有该条目：" + path;
-        return false;
+        std::vector<Entry> entries;
+        if (!list(entries, err)) return false;
+        found = find_entry(path);   // list() 已建索引（见 Image::list 尾部）
+        if (found == nullptr) {
+            err = "镜像里没有该条目：" + path;
+            return false;
+        }
     }
     if (found->is_dir) {
         err = "该条目是目录，不是文件：" + path;
@@ -570,6 +586,51 @@ bool Image::read_entry_file(const std::string& path, std::vector<uint8_t>& out,
 }
 
 }  // namespace
+
+// ── ★★ 2026-10-05（性能）：批量读取会话（见 squashfs.h 的 `ReadSessionScope`）──────────
+//
+// 病根：`read_file` 每条目都 new 一个 `Image` 并 `read_entry_file`，而后者每条目都
+//   `list()` 重列整棵目录树。真机 `--unpack-tree`（14861 条目）探针实测：
+//     read_file 100.3 s / 总 135.3 s（74%）—— 全是"同一次遍历重复了 14861 遍"。
+// 修法：作用域内把"已打开的镜像 + 条目索引"留在 `current()` 里复用；离开作用域立刻失效。
+//
+// 为什么用 `shared_ptr<Image>`：`Image` 在 `.cpp` 的匿名命名空间里（实现细节不进公开头），
+//   匿名命名空间没有可写出的名字 ⇒ 公开头里放不下 `Image` 成员，只能放这个不透明作用域类。
+namespace {
+
+struct ReadSession {
+    std::shared_ptr<Image> image;
+    std::string image_path;   // 本会话属于哪个镜像（换包即重开）
+    long long token = 0;      // -1 = 无活动会话
+};
+
+ReadSession& current() {
+    static thread_local ReadSession session;
+    return session;
+}
+
+long long next_token() {
+    static std::atomic<long long> counter{0};
+    return ++counter;
+}
+
+}  // namespace
+
+ReadSessionScope::ReadSessionScope() {
+    ReadSession& s = current();
+    if (s.token < 0) {
+        s.image.reset();
+        s.image_path.clear();
+    }
+    s.token = next_token();
+}
+
+ReadSessionScope::~ReadSessionScope() {
+    ReadSession& s = current();
+    s.token = -1;
+    s.image.reset();
+    s.image_path.clear();
+}
 
 bool read_superblock(const std::string& path, SuperBlock& out, std::string& err) {
     FileReader fr;
@@ -611,16 +672,36 @@ ListResult list_entries(const std::string& path, const xrkit::plugin::Registry* 
 FileData read_file(const std::string& image_path, const std::string& entry_path) {
     FileData res;
     const auto t0 = std::chrono::steady_clock::now();
-    Image img;
-    std::string err;
-    if (!img.open(image_path, err)) {
-        res.error = err;
-        return res;
+    ReadSession& session = current();
+
+    // 作用域内且同一镜像 ⇒ 复用（**不重开、不重列**）；否则照旧新鲜打开。
+    const bool reuse = session.token >= 0 && session.image && session.image_path == image_path;
+    if (reuse) {
+        if (!session.image->read_entry_file(entry_path, res.data, res.error)) return res;
+    } else {
+        const xrkit::plugin::DecryptGateResult gate = xrkit::plugin::gate_active_read(image_path);
+        if (!gate.ok) {
+            res.error = gate.error;
+            return res;
+        }
+        const std::string& source = gate.used_plugin ? gate.path : image_path;
+        auto img = std::make_shared<Image>();
+        std::string open_err;
+        if (!img->open(source, open_err)) {
+            res.error = open_err;
+            return res;
+        }
+        // 会话内：把这份镜像留给后续条目（**条目索引随 `list()` 只建一次**）。
+        if (session.token >= 0) {
+            session.image = img;
+            session.image_path = image_path;
+        }
+        if (!img->read_entry_file(entry_path, res.data, open_err)) {
+            res.error = open_err;
+            return res;
+        }
     }
-    if (!img.read_entry_file(entry_path, res.data, err)) {
-        res.error = err;
-        return res;
-    }
+
     const auto t1 = std::chrono::steady_clock::now();
     res.elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     res.ok = true;

@@ -63,6 +63,25 @@ struct FileData {
 // 只读 96 字节超块。magic 不是 hsqs/sqsh 时返回 false。
 bool read_superblock(const std::string& path, SuperBlock& out, std::string& err);
 
+// ★★ 2026-10-05（性能）：**批量读取会话**。—— `--unpack-tree` 原先每条目都调一次
+//   `read_file()`，而它每条目都重开镜像 + **重新 list() 整棵目录树** ⇒ 真机 14861 个条目
+//   把同一份元数据遍历了 14861 遍（探针实测占解包总耗时的 **74%**：100.3 s / 135.3 s）。
+//
+//   用法：在整批循环**外面**建一个作用域对象，循环里照旧调 `read_file` / `list_entries`：
+//     { ReadSessionScope session; for (...) read_file(pkg, rel); }   // 只打开/列一次
+//
+//   · 作用域内对**同一个镜像路径**的读取复用同一份已打开镜像与条目索引；
+//   · 离开作用域立刻失效 ⇒ 作用域外的 `read_file` 行为与今天**一字不差**（每次都新鲜打开）；
+//   · 换路径会自动重开（不会读到上一个包的东西）。
+//   语义不变：镜像在本进程内是只读的，读到的字节与"每次重开"逐字节相同。
+class ReadSessionScope {
+public:
+    ReadSessionScope();
+    ~ReadSessionScope();
+    ReadSessionScope(const ReadSessionScope&) = delete;
+    ReadSessionScope& operator=(const ReadSessionScope&) = delete;
+};
+
 // 列出全部条目（含目录项），按 path 字节序排序（确定性，便于逐条对拍）。
 // ★ 2026-10-04：本入口也过**解密闸门**（`plugin::gate_active_read`）—— CLI 的 `--dump` 的
 //   SquashFS 分支直接走它。`registry` 显式传入者优先（`package_entries` 会把自己的那份传下来）；

@@ -21,7 +21,13 @@ MANIFEST = HERE / "golden" / "manifest.json"
 CORPUS = HERE / "golden" / "text_decode.json"
 
 # 门禁只守"防数量级回归"的宽松上界（口径文档 §判据）
-LIMITS = {"dump_ms": 60000, "extract_mbps": 1.0, "text_decode_ms": 20000}
+# `unpack_ms` 口径：200 条 `--only` 走完整解包路径。
+#   · 修后实测（2026-10-05，真机 13.5 MB / 14861 文件样本，200 条）：约 0.5~0.6 s ⇒ 每条 ~3 ms；
+#   · 病根回归（每条目重开镜像 + 重列整棵树）时，同一台机器上每条会升到 ~7 ms ⇒ ~1.4 s；
+#   · 上界 60000 ms 是**两个数量级**的余量：只为拦住量级回归（例如整镜像被重复遍历 N 遍），
+#     不参与"本机快慢"的评判。
+LIMITS = {"dump_ms": 60000, "extract_mbps": 1.0, "text_decode_ms": 20000,
+          "unpack_ms": 60000}
 
 
 def pick_image() -> Path | None:
@@ -122,6 +128,35 @@ def main() -> int:
             print("BENCH metric=text_decode_ms value=%.1f files=%d ok=%d" % (ms, len(files), ok))
     if "text_decode_ms" not in metrics:
         print("BENCH skip metric=text_decode_ms reason=no-corpus")
+
+    # ── ★★ 2026-10-05（性能锁①）：`--unpack-tree` 的**缩放**必须守住数量级 ──────────
+    #   病根（已修）：`extract_tree` 原先每条目都调 `read_file()`，而后者每条目都重开镜像 +
+    #   **重新 list() 整棵目录树** ⇒ 真机 14861 条目把同一份元数据遍历了 14861 遍
+    #   （实测 100.3 s / 总 135.3 s，74%）。修后同一镜像 31.1 s（5.3×）。
+    #   这一条**不**解整镜像（样本可能上 GB）：抽 N 条走 `--only`，报"N 条的 ms 与每条 ms"
+    #   —— N 固定 ⇒ 任何"每条目又重开一次镜像"的回归都会把每条 ms 按数量级抬起来。
+    unpack_n = 200
+    if rels:
+        import tempfile
+        sel = rels[:unpack_n]
+        with tempfile.TemporaryDirectory(prefix="xrkit_bench_u_") as tmp:
+            listfile = Path(tmp) / "only.txt"
+            listfile.write_text("\n".join(sel), encoding="utf-8")
+            outdir = Path(tmp) / "out"
+            t0 = time.perf_counter()
+            rc_u, out_u = run(["--unpack-tree", str(image), str(outdir),
+                               "--only", str(listfile)])
+            ms_u = (time.perf_counter() - t0) * 1000.0
+            got = sum(1 for _ in outdir.rglob("*") if _.is_file()) if outdir.exists() else 0
+        if rc_u != 0 or got != len(sel):
+            print("BENCH skip metric=unpack_ms reason=rc%d files=%d/%d %s"
+                  % (rc_u, got, len(sel), out_u.strip()[:100]))
+        else:
+            metrics["unpack_ms"] = ms_u
+            print("BENCH metric=unpack_ms value=%.1f files=%d per_file_ms=%.3f image=%s"
+                  % (ms_u, len(sel), ms_u / max(1, len(sel)), image.name))
+    else:
+        print("BENCH skip metric=unpack_ms reason=no-file-entries")
 
     failures = 0
     for name, limit in LIMITS.items():
