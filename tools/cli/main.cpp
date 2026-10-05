@@ -155,6 +155,14 @@ void print_usage() {
            "  --build-font-pack <SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录>\n"
            "                    [--suffix s] [--offset n] [--no-full-cyrillic]\n"
            "                                              出整棵 gamedata 汉化包（与 1.x 对拍）\n"
+           // ★★ 2026-10-05（小件 ①）：`--build-package` **实现早已存在**（`tools/cli/build_cmd.cpp`，
+           //   `run_cli()` 里的分派也在），但帮助的动作表里**漏写了这一条** ⇒ `--help` 上
+           //   看不见它。用户口径是"CLI 是能力全集"，能力清单里漏一条就是"这功能好像没有"。
+           //   用法逐字照 `run_build_package()` 的操作数顺序与 `build_cmd.h` 的契约：
+           //   <version.json> <版本> <标记> <序号>（版本口径只有 `version.json` 一处）。
+           "  --build-package <version.json> <版本> <标记> <序号>\n"
+           "                                              构建 + 打包（GUI 的「构建」按钮走的就是本动作；\n"
+           "                                              只此一份实现 —— GUI 只是调它，不自己拼参数）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -173,6 +181,10 @@ void print_usage() {
 //   （散装层样本、解密闸门）也用 `write_file_atomic` —— 不给闸门就会把**别人的**检查搞红。
 //   只有那条自校验锁自己会把它置位，所以注入永远只影响它自己。
 bool g_atomic_probe_armed = false;
+
+// ★★ 2026-10-05（本批小件 ② 行为型锁）：`WriteProbe::record` 的落点 —— 记下每次原子写
+//   **实际用的档位**（顺序即调用顺序）。必须是**普通函数指针**能访问到的东西（见锁里的 lambda）。
+std::vector<xrkit::core::WriteVerify> g_verify_probe_log;
 
 // 自校验锁**自带**的探针（`--selftest` 单独跑也照样验）。
 // ★ 必须是**静态存活期**的对象：`set_write_probe` 存的是函数指针的**值**，但探针结构体本身
@@ -1791,6 +1803,147 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         std::filesystem::remove_all(dir, ec);
     });
 
+    // ★★ 2026-10-05（本批小件 ②）**性能锁换成"行为型"**。
+    //
+    // 旧判据是**耗时上界**（"默认档不比参照慢出量级"）—— 现场：本机余量只有 8%，
+    // 而**旧默认档 47 s 也照样能过** ⇒ 既假红又没用。
+    // 新判据是**结构事实**，与机器快慢无关：用 `WriteProbe::record` 抓"这一次实际用的是
+    // 哪一档"，断言 **默认档 ⇒ Streamed（零额外读盘）/ `--verify-readback` ⇒ Readback**。
+    //   · 为什么能判红：把 `extract_tree` 里 `options.verify_readback ? Readback : Streamed`
+    //     写死成任一侧 ⇒ 这里立刻红（耗时上界看不出来）。
+    //   · 为什么走**真引擎**（`extract_package`）而不是直接调 `write_file_atomic`：
+    //     要钉的是"解包那条路"的档位，不是"这个开关本身能不能传值"。
+    //   · 夹具是一枚**自造的真 DB 包**（引擎自己的写侧产出）⇒ 不依赖语料/外部样本。
+    reg.add("core: 解包写后校验档位＝行为型锁（默认 Streamed / --verify-readback Readback）",
+            [](CheckContext& ctx) {
+                namespace core = xrkit::core;
+                namespace efs = xrkit::engine::fs;
+                std::error_code ec;
+                const std::filesystem::path dir =
+                    std::filesystem::temp_directory_path(ec) / "xrkit_selftest_verify_mode";
+                std::filesystem::remove_all(dir, ec);
+                std::filesystem::create_directories(dir, ec);
+                const std::filesystem::path pkg = dir / "xr.db";
+
+                std::vector<efs::DbPackItem> items;
+                efs::DbPackItem one;
+                one.path = "a.txt";
+                one.data = {'A', 'B', 'C'};
+                items.push_back(one);
+                const std::vector<uint8_t> raw = efs::pack_db(items, efs::DbFormat::Xdb);
+                bool wrote = false;
+                {
+                    std::ofstream out(pkg, std::ios::binary | std::ios::trunc);
+                    wrote = static_cast<bool>(out);
+                    if (wrote) {
+                        out.write(reinterpret_cast<const char*>(raw.data()),
+                                  static_cast<std::streamsize>(raw.size()));
+                    }
+                }
+                check(ctx, wrote && std::filesystem::exists(pkg), "行为型锁：夹具包没造出来");
+
+                // 探针逐次回调 ⇒ 记下**每一次**实际用的档位（顺序即调用顺序）。
+                //   ★ 存活期：与 `write_file_atomic` 的回调签名一致（普通函数指针）。
+                auto record = +[](const std::string&, core::WriteVerify mode) {
+                    g_verify_probe_log.push_back(mode);
+                };
+                core::WriteProbe probe;
+                probe.record = record;
+                g_verify_probe_log.clear();
+                const core::WriteProbe saved_probe = core::set_write_probe(probe);
+
+                const auto unpack_with = [&](bool readback, const std::string& out_name) {
+                    efs::ExtractTreeOptions options;
+                    options.verify_readback = readback;
+                    return efs::extract_package(core::path_to_utf8(pkg),
+                                                core::path_to_utf8(dir / out_name), options);
+                };
+
+                // ① 默认档（用户没给开关）
+                const efs::ExtractTreeResult first = unpack_with(false, "out_default");
+                const std::vector<core::WriteVerify> after_default = g_verify_probe_log;
+                check(ctx, first.ok && first.files_written == 1,
+                      "行为型锁：默认档解包没写出 1 个文件（files=" +
+                          std::to_string(first.files_written) + " error=" + first.error + "）");
+                // ② 读回档（`--verify-readback` 那一档）
+                const efs::ExtractTreeResult second = unpack_with(true, "out_readback");
+                const std::vector<core::WriteVerify> after_readback = g_verify_probe_log;
+                core::set_write_probe(saved_probe);
+
+                // 判据：两次各写一次、各报一次 ⇒ 共 2 条；**第 1 条必须是 Streamed、第 2 条必须是
+                // Readback**（顺序与调用顺序一致）。
+                check(ctx, after_default.size() == 1,
+                      "行为型锁：默认档应当只报一次写档位（实测 " +
+                          std::to_string(after_default.size()) + " 次）");
+                check(ctx, after_default.size() == 1 &&
+                               after_default[0] == core::WriteVerify::Streamed,
+                      "行为型锁：**默认档必须走 Streamed**（零额外读盘）—— 实测走了 Readback 或没报");
+                check(ctx, after_readback.size() == 2 &&
+                               after_readback[1] == core::WriteVerify::Readback,
+                      "行为型锁：**--verify-readback 必须走 Readback** —— 实测档位没换");
+                check(ctx, second.ok && second.files_written == 1,
+                      "行为型锁：读回档解包没写出 1 个文件（error=" + second.error + "）");
+                g_verify_probe_log.clear();
+                std::filesystem::remove_all(dir, ec);
+            });
+
+    // ★★ 2026-10-05（**落点覆盖必须可见 / 零静默**）。
+    // 现场：一次默认落点解包把 **3.9 万个文件**盖在模组目录上，工具一个字都没说。
+    // 口径（用户没改）：**默认落点就是来源所在目录**、**不弹模态确认框**（那会改交互口径）；
+    // 但"任何改写都必须可见：**逐条 + 计数**"（零静默红线）。
+    // 判据：对同一枚夹具**解两遍** —— 第二遍必须逐条报出被覆盖的文件，且**计数非零**。
+    //   · 判红办法：把 `result.overwritten.push_back(...)` 那两处去掉（或把 `had_file` 写死
+    //     false）⇒ 第二遍 `overwritten_size()==0` ⇒ 立刻红。
+    reg.add("core: 落点覆盖可见（逐条 + 计数；零静默）", [](CheckContext& ctx) {
+        namespace core = xrkit::core;
+        namespace efs = xrkit::engine::fs;
+        std::error_code ec;
+        const std::filesystem::path dir =
+            std::filesystem::temp_directory_path(ec) / "xrkit_selftest_overwrite";
+        std::filesystem::remove_all(dir, ec);
+        std::filesystem::create_directories(dir, ec);
+        const std::filesystem::path pkg = dir / "ov.db";
+
+        std::vector<efs::DbPackItem> items;
+        efs::DbPackItem one;
+        one.path = "dir/keep.txt";
+        one.data = {'K'};
+        items.push_back(one);
+        const std::vector<uint8_t> raw = efs::pack_db(items, efs::DbFormat::Xdb);
+        bool wrote = false;
+        {
+            std::ofstream out(pkg, std::ios::binary | std::ios::trunc);
+            wrote = static_cast<bool>(out);
+            if (wrote) {
+                out.write(reinterpret_cast<const char*>(raw.data()),
+                          static_cast<std::streamsize>(raw.size()));
+            }
+        }
+        check(ctx, wrote, "覆盖锁：夹具包没造出来");
+
+        // 落点照**引擎**那条规则算（与 GUI/CLI 同一个函数）：不带壳 ⇒ <根>/<包名>
+        const std::string target = efs::unpack_target_dir(
+            core::path_to_utf8(dir / "out"), core::path_to_utf8(pkg), {"dir/keep.txt"});
+        const efs::ExtractTreeResult first = efs::extract_package(
+            core::path_to_utf8(pkg), target, efs::ExtractTreeOptions{});
+        check(ctx, first.ok && first.files_written == 1,
+              "覆盖锁：第一遍解包没成功（error=" + first.error + "）");
+        check(ctx, first.overwritten_size() == 0,
+              "覆盖锁：**第一遍**不该报覆盖（落点本来是空的）—— 实测 " +
+                  std::to_string(first.overwritten_size()) + " 条");
+        // 第二遍：落点上已经有那个文件了 ⇒ 必须**逐条**报出来 + 计数非零
+        const efs::ExtractTreeResult second = efs::extract_package(
+            core::path_to_utf8(pkg), target, efs::ExtractTreeOptions{});
+        check(ctx, second.ok && second.files_written == 1,
+              "覆盖锁：第二遍解包没成功（error=" + second.error + "）");
+        check(ctx, second.overwritten_size() == 1,
+              "覆盖锁：第二遍必须报出**恰好 1 条**被覆盖的文件 —— 实测 " +
+                  std::to_string(second.overwritten_size()) + " 条（静默覆盖＝红）");
+        check(ctx, second.overwritten_size() == 1 && second.overwritten[0] == "dir/keep.txt",
+              "覆盖锁：被覆盖的路径要**逐条**报对（期望 dir/keep.txt）");
+        std::filesystem::remove_all(dir, ec);
+    });
+
     // ⑫12.1/12.2/12.3 纯 C ABI：**像插件那样**通过函数表把 10 个注册点全跑一遍，
     // 再从消费端把每一条捞回来。无 Qt 路径（`api.ui == nullptr`）——UI 那 16 个方法
     // 由外壳注入，这里证的是"注册面 + 回调 + when 数据化"这套 ABI 形状真的通。
@@ -2625,7 +2778,7 @@ int run_cli(const std::vector<std::string>& args) {
     if (action == "--unpack-package") {
         if (operands.size() < 1) {
             std::cerr << "UNPACK-PKG error reason=用法：--unpack-package <包|目录> [输出根] "
-                         "[--only <清单文件>] [DB格式]\n";
+                         "[--only <清单文件>] [--verify-readback] [DB格式]\n";
             return kExitUsage;
         }
         const std::string& src = operands[0];
@@ -2725,12 +2878,18 @@ int run_cli(const std::vector<std::string>& args) {
         //   为什么必须分开报：`IWP\database\maps\*.db` 的 HEADER 表把除根记录外的每条记录登记了
         //   两遍（同路径/同 offset ⇒ 同一份数据，独立解码已证实重复在包内）⇒ 报"记录数"会正好是
         //   盘上真相的 2 倍 −1。**`--dump` 保持忠实报记录数**（它是协议层工具，另有用途）。
-        uint64_t files = 0, dirs = 0, bytes = 0, failed = 0, done = 0, dups = 0;
+        uint64_t files = 0, dirs = 0, bytes = 0, failed = 0, done = 0, dups = 0, overwritten = 0;
         for (size_t i = 0; i < plan.size(); ++i) {
             std::cout << "UNPACK-PKG plan image=" << plan[i].image << " target=" << plan[i].target
                       << " entries=" << xrkit::engine::fs::unique_entry_count(plan_input[i].second)
                       << " records=" << plan_input[i].second.size() << "\n";
             xrkit::engine::fs::ExtractTreeOptions options;
+            // ★★ 2026-10-05（小件 ③）：**`--verify-readback` 也接到本动作**。
+            //   用户红线（原话）：「**GUI 的功能，CLI 肯定要全部拥有啊。哪有 GUI 的细节功能
+            //   比 CLI 还多的。**」的同一面 —— **CLI 是能力全集**，那么"两个入口该一致"：
+            //   本动作就是 GUI「解包」按钮的等价物（`--unpack-tree` 是"原样摊开"那条老路），
+            //   而写后校验档位此前**只有 `--unpack-tree` 能选** ⇒ 同一个按钮的等价物少一档。
+            options.verify_readback = verify_readback;   // 默认 false ⇒ 边写边算哈希
             if (!only_paths.empty()) {
                 for (const std::string& one : only_paths) {
                     if (std::find(plan_input[i].second.begin(), plan_input[i].second.end(), one) !=
@@ -2758,9 +2917,19 @@ int run_cli(const std::vector<std::string>& args) {
             bytes += res.bytes_written;
             dups += res.duplicate_records;
             failed += res.failures.size();
+            // ★★ 2026-10-05（**落点覆盖必须可见 / 零静默**）：逐条报出被**覆盖**的已存在文件
+            //   + 计数。起因：一次默认落点解包把 3.9 万个文件盖在模组目录上，工具一个字没说。
+            //   ★ **不改默认落点**（默认＝来源所在目录，用户口径），也**不弹模态确认框**
+            //     （那会改交互口径）—— 只做"看得见"：目标在解包前已打印（上面的 plan 行），
+            //     这里逐条报"哪一条被盖了"。
+            for (const std::string& p : res.overwritten) {
+                std::cout << "UNPACK-PKG overwrite image=" << plan[i].image << " path=" << p << "\n";
+            }
+            overwritten += res.overwritten_size();
         }
         std::cout << "UNPACK-PKG ok sources=" << plan.size() << " done=" << done << " files=" << files
                   << " dirs=" << dirs << " bytes=" << bytes << " dups=" << dups
+                  << " overwritten=" << overwritten
                   << " failed=" << failed << "\n";
         return failed == 0 ? kExitOk : kExitFail;
     }

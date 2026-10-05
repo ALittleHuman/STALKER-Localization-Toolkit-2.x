@@ -17,6 +17,8 @@
 
 #include <QWidget>
 
+#include <functional>
+
 class QResizeEvent;
 class QScrollBar;
 class QWheelEvent;
@@ -44,6 +46,27 @@ public:
     // 1.x `minsize_y`：内容高**不许**用"内容请求高度"当内容高（3.3）
     void set_min_body_height(int height);
     int min_body_height() const { return min_body_height_; }
+
+    // ── ★★ 2026-10-05（用户报告 #6）**自带滚动的画布**（`VirtualList` 这一类）──────────
+    //
+    // 为什么需要它：本视口原来的滚动模型是"**把整块画布往上挪**"（`sync_layout` 里
+    // `body_->setGeometry(-hbar, -vbar, …)`），配套的是"画布高 = 内容高"。这对**静态**内容
+    // 是对的，对 `VirtualList` 是**错的**：那个类自己只画"`top_` 起的那几行"
+    // （`refresh()` 用**自己的 `height()`** 当视口高算 `visible_range`），
+    // 把它撑到内容高等于**把虚拟化关掉**（行控件池会涨到全量行），
+    // 而且它的 `top_` 恒为 0 ⇒ 条子拖动**看不出任何变化**（自检 #6 ③ 实测：
+    // `value=1935` 但 `scroll_top()=0`）。
+    //
+    // 口径（本批定，也是 1.x 的口径）：画布是"自带滚动"的 ⇒
+    //   · **画布几何＝视口**（`0,0,view_w,view_h`；**不挪**它）；
+    //   · 条子量程仍按 `min_body_height_`（＝**内容总高**，由页面给）算；
+    //   · 条子的值通过 `set_offset_delegate()` 交回画布自己（`VirtualList::set_scroll_top`）。
+    //   ⇒ 虚拟化保住（只画视口里那几行）、条子真的改变内容、装得下时条子照样不占位。
+    //   ★ 判据：`smoke` #6 ③（拖动 ⇒ `rows()->scroll_top()` 跟着变）。
+    void set_self_scrolling_body(bool on);
+    bool self_scrolling_body() const { return self_scrolling_; }
+    // 条子值变化时的落点（`VirtualList` 由页面接到 `set_scroll_top`）
+    void set_offset_delegate(std::function<void(int)> fn);
 
     QScrollBar* vbar() const { return vbar_; }
     QScrollBar* hbar() const { return hbar_; }
@@ -102,6 +125,11 @@ private:
     int min_body_height_ = 0;
     int body_w_ = 0;   // apply_fit 算出的"内容尺寸"（画布几何用它，别用视口尺寸覆盖）
     int body_h_ = 0;
+    // ★ 2026-10-05（#6）：自带滚动的画布（见 set_self_scrolling_body）
+    bool self_scrolling_ = false;
+    bool offset_connected_ = false;           // 条子→画布 的那条连接只接一次
+    int scroll_h_ = 0;                        // 条子量程用的"滚动高"（自带滚动时≠画布高）
+    std::function<void(int)> offset_delegate_;
     bool need_v_ = false;  // 本轮算出来的"要不要条"（几何用它，**别用 isVisible()**）
     bool need_h_ = false;
     bool syncing_ = false;

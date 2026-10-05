@@ -16,7 +16,11 @@ param(
     [string]$OutDir = 'dist',
     # 构建序号与完整版本串由 CLI（--build-package）传进来 —— 版本口径只有一处：version.json
     [int]$BuildIndex = 0,
-    [string]$VersionString = ''
+    [string]$VersionString = '',
+    # ★★ 2026-10-05（本批 #8）：**开发版默认带全部插件**。默认值按下文 `current.prerelease`
+    #   推导（ALPHA/BETA ⇒ 开发版）；显式 `-Dev:$false` ⇒ 强制发行口径（plugins\ 为空）。
+    #   `DevWasSet` 用来区分"用户显式关了"与"默认值"两种情况。
+    [bool]$Dev = $false
 )
 
 $ErrorActionPreference = 'Stop'
@@ -38,6 +42,59 @@ New-Item -ItemType Directory -Force -Path (Join-Path $stage 'plugins') | Out-Nul
 
 Write-Host "== 复制主程序 =="
 Copy-Item -LiteralPath $exe.FullName -Destination $stage
+
+# ★★ 2026-10-05（本批 #8）：开发版 = 标记 ∈ {ALPHA, BETA}（版本口径仍是 version.json 一处）。
+#   在复制插件**之前**先把这个开关定下来 —— 它决定 `plugins\` 是"带全部插件"还是"空目录"。
+$Prerelease = ''
+try {
+    $vjDev = Join-Path $root 'version.json'
+    if (Test-Path $vjDev) {
+        $curDev = (Get-Content -LiteralPath $vjDev -Raw -Encoding UTF8 | ConvertFrom-Json).current
+        if ($curDev -and $curDev.prerelease) { $Prerelease = [string]$curDev.prerelease }
+    }
+} catch {
+    Write-Warning "读 version.json 的 prerelease 失败（按发行版口径处理）：$_"
+}
+
+# ★★ 2026-10-05（本批 #8，用户约定）：**开发版默认带上所有插件**（2.0.0 有测试插件）。
+#   背景：`plugins\` 一直**存在但为空**（① 里那条"发行包为空"是**发行**口径，本身不变）——
+#   但开发/自测时每次都要手动把插件拷进去，而"包内自检"因此**从来验不到插件链路**。
+#   口径（本批定）：
+#     · **开发版**（标记 ∈ {ALPHA, BETA}）⇒ 把已构建插件**复制进包** `plugins\`（含测试插件）；
+#     · **发行版**（标记 ∈ {RC, FINAL}，或显式 `-Dev:$false`）⇒ **仍按既定策略**：
+#       `plugins\` 存在但为空、**NLC 解密插件不随包发布**。
+#   ★ 判据（可判红）：开发版包里 `plugins\*.dll` **非空** + 包内自检**打印插件数与名字**；
+#     改回"空目录"（或把这一段删掉）⇒ 立刻红。
+$isDev = ($Prerelease -match '^(?i)ALPHA|BETA')   # 标记口径见 docs/2.0.0-打包与发版规格.md
+if ($PSBoundParameters.ContainsKey('Dev')) { $isDev = $Dev }   # 显式 -Dev 覆盖标记推导
+$copiedPlugins = @()
+if ($isDev) {
+    Write-Host "== 开发版：把已构建插件复制进包（用户约定：开发版带全部插件）=="
+    # 只认**我们自己构建出来的插件 DLL**（`xrkit_*_plugin.dll`）：
+    #   插件目录的加载器会吃**任意** .dll（loader.cpp 只按后缀过滤），照搬整目录会把
+    #   Qt 运行时那堆 DLL 也当成插件、并把它们从包根"搬走" ⇒ 包直接坏掉。
+    #   命名前缀既是构建约定，也是"这是我的插件"的判据。
+    $pluginDirs = @(
+        (Join-Path $root 'build\msvc-release\tools\cli'),   # xrkit_test_plugin.dll 落点
+        (Join-Path $root 'build\msvc-shell\tools\cli'),     # 外壳预设下的同一目标
+        (Join-Path $root 'build\plugins')
+    )
+    foreach ($d in $pluginDirs) {
+        if (-not (Test-Path $d)) { continue }
+        Get-ChildItem -LiteralPath $d -Filter 'xrkit_*_plugin.dll' -File -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stage 'plugins') -Force
+                $copiedPlugins += $_.Name
+            }
+    }
+    if ($copiedPlugins.Count -gt 0) {
+        Write-Host ("  插件 {0} 个：{1}" -f $copiedPlugins.Count, ($copiedPlugins -join ', '))
+    } else {
+        Write-Host "  插件 0 个（没有已构建的 xrkit_*_plugin.dll）"
+    }
+} else {
+    Write-Host "== 发行版：plugins\ 保持为空（既定策略：NLC 解密插件不随包发布）=="
+}
 
 # ★★ 用户口径（2026-10-05）：「ffmpeg 等依赖应当自带」。
 #   视频页按 ⑧8.1 只认**程序目录**与 user.ltx 两处（不搜 PATH）⇒ 自带件必须落在包根，
@@ -81,17 +138,28 @@ if ($LASTEXITCODE -ne 0) { throw "windeployqt 失败（退出码 $LASTEXITCODE�
 Write-Host "== README / version =="
 $commit = (& git -C $root rev-parse --short HEAD)
 $stamp  = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+# ★ 2026-10-05（#8）：README 里那句"plugins\ 为空"必须与**实际打出来的包**一致 ——
+#   开发版带插件时还写"为空"就是谎报（零静默红线同源：说明书也是"可见面"的一部分）。
+if ($isDev) {
+    $pluginLine = if ($copiedPlugins.Count -gt 0) {
+        "插件：本包是**开发版**，plugins\ 已带 {0} 个插件：{1}。" -f $copiedPlugins.Count, ($copiedPlugins -join ', ')
+    } else {
+        "插件：本包是**开发版**，但构建产物里没有 xrkit_*_plugin.dll，plugins\ 为空。"
+    }
+} else {
+    $pluginLine = "插件：plugins\ 为空目录（发行版策略：NLC 解密插件闭源、不随包发布）。需要时把 <name>.dll 放进去，重启程序。"
+}
 @"
 STALKER 汉化工具集 2.0.0（xrkit）
 --------------------------------
 安装：整个目录解压到任意位置，双击 xrkit_app.exe。
 回退：删除该目录即可（本工具**不改动**游戏目录里的任何文件；
       唯一的写盘位置是用户设置 user.ltx，删除它即恢复默认）。
-插件：plugins\ 为空目录。需要插件时把 <name>.dll 放进去，重启程序；
+$pluginLine
       插件加载失败不会阻塞启动，问题会显示在启动后的日志栏里。
 自带：ffmpeg.exe / ffprobe.exe（视频页不填路径也能直接用；ffprobe 沿用 1.x 自带那份，
       实测可用，不为它做版本守卫）+ download_ffmpeg.py（缺件时重下）。
-不含：NLC 解密插件、实验性引擎补丁。
+不含：NLC 解密插件（发行版）、实验性引擎补丁。
 自检：命令行跑 `xrkit_app.exe --smoke`（离屏，ASCII 输出）可核对包是否完整。
 "@ | Set-Content -LiteralPath (Join-Path $stage 'README.txt') -Encoding UTF8
 $verLine = if ($VersionString -ne '') { $VersionString } else { '2.0.0' }
@@ -150,6 +218,70 @@ try {
     }
 }
 if (-not $smokeOk) { throw "包内 exe 的离屏自检没通过（包可能缺 Qt 运行时）" }
+
+# ★★ 2026-10-05（本批 #8）：**包内插件自检** —— 打印**插件数与名字**（开发版非空即判据）。
+#   为什么必须打印：`plugins\` 非空只是"文件在那儿"，而"包里的 exe 真的能加载它"是另一回事
+#   （插件是 LoadLibrary 的动态库，缺依赖/ABI 不匹配都会加载失败）。所以用**包内**的 CLI
+#   跑 `--plugins` 那一份加载链路，把结果打出来；开发版要求 **loaded ≥ 1 且 errors == 0**。
+$cliExe = Join-Path $stage 'xrkit_cli.exe'
+if ((-not $isDev) -and (-not (Test-Path $cliExe))) {
+    Write-Host "  插件自检跳过：包内没有 xrkit_cli.exe（发行包只带 xrkit_app.exe）"
+} elseif (-not (Test-Path $cliExe)) {
+    # 开发版：CLI 是"能力全集"的载体，没有它就没法从包里验插件链路 —— 如实报出来
+    Write-Host "  !! 开发版插件自检跑不了：包内没有 xrkit_cli.exe（package.ps1 目前只拷 xrkit_app.exe）"
+    if ($isDev -and $copiedPlugins.Count -gt 0) {
+        throw ("开发版带插件 {0} 个，但包里没有 xrkit_cli.exe ⇒ 插件链路**没有被验过**" -f `
+            $copiedPlugins.Count)
+    }
+} else {
+    Write-Host "== 包内插件自检（CLI --plugins）=="
+    $prevEap2 = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $plog = Join-Path $stage 'plugins.log'
+        $perr = Join-Path $stage 'plugins.err.log'
+        $p = Start-Process -FilePath $cliExe -ArgumentList @('--plugins', (Join-Path $stage 'plugins'),
+                                                            '--version') `
+            -NoNewWindow -Wait -PassThru -RedirectStandardOutput $plog -RedirectStandardError $perr
+        $plines = @(Get-Content -LiteralPath $plog -ErrorAction SilentlyContinue)
+        $perrLines = @(Get-Content -LiteralPath $perr -ErrorAction SilentlyContinue)
+        $dlls = @(Get-ChildItem -LiteralPath (Join-Path $stage 'plugins') -Filter '*.dll' -File `
+                    -ErrorAction SilentlyContinue)
+        # `PLUGINS dir=<目录> errors=<N>` 那一行是加载台账（CLI 侧固定格式）
+        $head = $plines | Where-Object { $_ -match '^PLUGINS dir=' } | Select-Object -First 1
+        $warn = @($plines | Where-Object { $_ -match '^PLUGINS warn' })
+        $errCount = if ($head -match 'errors=(\d+)') { [int]$Matches[1] } else { -1 }
+        $names = ($dlls | ForEach-Object { $_.Name }) -join ', '
+        if ([string]::IsNullOrEmpty($names)) { $names = '(空)' }
+        Write-Host ("  包内 plugins\：{0} 个 dll：{1}" -f $dlls.Count, $names)
+        Write-Host ("  加载台账：{0}" -f ($(if ($head) { $head.Trim() } else { '(没有 PLUGINS dir= 行)' })))
+        foreach ($w in $warn) { Write-Host ("  " + $w.Trim()) }
+        if ($isDev) {
+            if ($dlls.Count -lt 1) {
+                throw "开发版的 plugins\ 是空的 —— 用户约定：开发版包内带全部插件（#8）"
+            }
+            if ($errCount -ne 0) {
+                throw ("开发版插件加载有失败（errors={0}）—— 见上面的 PLUGINS warn 行" -f $errCount)
+            }
+            Write-Host ("  插件自检通过：{0} 个 dll、加载 errors=0" -f $dlls.Count)
+        } else {
+            if ($dlls.Count -ne 0) {
+                throw ("发行版的 plugins\ 必须为空（既定策略：NLC 解密插件不随包发布），实测 {0} 个" -f `
+                    $dlls.Count)
+            }
+            Write-Host "  插件自检通过：发行版 plugins\ 为空（既定策略）"
+        }
+        if ($perrLines.Count -gt 0) {
+            Get-Content -LiteralPath $perr -Tail 5 -ErrorAction SilentlyContinue | ForEach-Object {
+                Write-Host ("  [stderr] " + $_)
+            }
+        }
+    } finally {
+        $ErrorActionPreference = $prevEap2
+        Remove-Item -Force (Join-Path $stage 'plugins.log'), (Join-Path $stage 'plugins.err.log') `
+            -ErrorAction SilentlyContinue
+    }
+}
 
 # ★ 2026-09-28 用户口径（原话）：
 #   「构建出来不要使用压缩包的形式，因为我是单人开发，压缩包方便分发但不方便测试。

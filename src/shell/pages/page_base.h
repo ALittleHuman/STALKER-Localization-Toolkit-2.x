@@ -69,6 +69,24 @@ public:
     QWidget* action_bar() const { return action_bar_; }
     QHBoxLayout* action_layout() const { return action_layout_; }
 
+    // ── ★★ 2026-10-05（用户报告 #6）：**页内一块自足内容区的滚动条**（第二层视口）──────
+    //
+    // 现状（修前）：页里那块"结果区"（编码转换/文本提取的行列表 `VirtualList`）**根本没有
+    // 自己的条子** —— 它只是个 QWidget，高度由卡片给（实测 1034×232），行数超了就**够不着**。
+    // 用户原话：「编码转换的中间那块区域并没有设计滚动条。」
+    //
+    // 为什么入口在**基类**而不是各页自己 `new ScrollViewport`：
+    //   门禁那条"页内视口（5.1）：视口只能由 PageBase 造"的静态锁**就是这么要求的** ——
+    //   各页自己 new 一层视口＝各写各的 `fit`/`min_body_height`，而 1.x 的 `min_y=` 事故
+    //   正是这么来的（一处写错、整页起不来）。所以第二层视口**也**由基类造、各页只登记内容件。
+    //   判据（smoke）：`inner_scroll_active()` ⇒ 条子存在 + `maximum()>0`（能滚）；
+    //   装得下 ⇒ `bar_shown()` 假（不占位）。**改回"没有条子"即红。**
+    ScrollViewport* make_inner_scroll(QWidget* content, const QString& object_name);
+    ScrollViewport* inner_scroll() const { return inner_viewport_; }
+    QWidget* inner_scroll_content() const { return inner_content_; }
+    // 内容件（VirtualList）行数变了 ⇒ 把它**自己说的内容高**同步给视口（能滚/装得下由它决定）。
+    void sync_inner_scroll();
+
     // 往操作栏里加一个按钮（右对齐；操作栏贴底且不进视口）
     QPushButton* add_action(const QString& text);
 
@@ -131,6 +149,9 @@ private:
     QLabel* subtitle_ = nullptr;
     QWidget* card_ = nullptr;
     ScrollViewport* viewport_ = nullptr;
+    // ★ 2026-10-05（#6）：页内的第二层视口（可选；由 make_inner_scroll() 造）
+    ScrollViewport* inner_viewport_ = nullptr;
+    QWidget* inner_content_ = nullptr;
     QWidget* body_ = nullptr;
     QVBoxLayout* body_layout_ = nullptr;
     QWidget* action_bar_ = nullptr;

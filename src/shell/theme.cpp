@@ -62,8 +62,91 @@ class CheckMarkStyle : public QProxyStyle {
 public:
     explicit CheckMarkStyle(QStyle* base) : QProxyStyle(base) {}
 
-    void drawPrimitive(PrimitiveElement element, const QStyleOption* option,
-                       QPainter* painter, const QWidget* widget) const override {
+    // ★★ 2026-10-05（用户第 3 条「**所有下拉老样式**…1.x 线条比 2.0.0 硬朗多了」）：
+    //   下拉的**三角箭头**颜色由 `apply_theme` 每次灌进来（＝主题令牌 `text_dim`）。
+    //   为什么不读 palette：`text_dim` 在 palette 里**没有对应的标准角色**
+    //   （Base/Button/Mid/Text 都已经各有其主，见 apply_theme 那一段），硬塞一个角色
+    //   会连带改掉别的控件观感；而"颜色只有一处真值"这条仍然成立 —— 真值就是主题令牌，
+    //   这里只是把它搬过来。**本文件里没有任何写死的色值。**
+    void set_arrow_color(const QColor& color) { arrow_color_ = color; }
+    void set_arrow_colors(const QColor& arrow, const QColor& slot, const QColor& edge) {
+        arrow_color_ = arrow;
+        slot_color_ = slot;
+        edge_color_ = edge;
+    }
+
+    // ★★ 2026-10-05（用户第 3 条「**所有下拉老样式**…1.x 线条比 2.0.0 硬朗多了」）：
+    //   **本类在 `PE_IndicatorArrowDown` 里画下拉的「箭头槽 + 三角箭头」** ——
+    //   本批**实测出来的机制**，不是猜的（真 combo `grab()` 后数 `text_dim` 像素，四种 QSS 变体）：
+    //     · 只要 QSS 里**存在**一条 `QComboBox::drop-down` 规则（哪怕内容只有 `border: 0`），
+    //       Qt 的样式表样式就接管整个 combo 的绘制、**连箭头都不画** ⇒ **0** 个箭头像素；
+    //     · 去掉那条规则 ⇒ 箭头出来，但 Fusion 那个只有 **6** 个像素大（远不是 1.x 的硬朗三角）。
+    //   为什么在这里画（而不是 `drawComplexControl(CC_ComboBox)`）：**实测 Qt 对 combo 走的就是
+    //   这个 primitive**（抓到的 `option->rect` = `[367,4 10x26]`，`widget` = 那个 381×34 的
+    //   combo）—— 而 `drawComplexControl` 在本项目的样式栈下**根本不被调**（本批先写在那里，
+    //   真机上一个箭头都出不来）。
+    //   ⇒ 定案：**QSS 不再给 `::drop-down` 写任何规则**（槽几何与槽底都归本类），
+    //     本类在基类画完"框 + 文本"之后补上 1.x 的**箭头槽（surface2）+ 三角（text_dim）**。
+    //   ★ 只画一次：交给基类的**副本**里摘掉 `SC_ComboBoxArrow`，否则 Fusion 会再画一个。
+    //   ★ 判据（SHELL-SMOKE 下拉①′）：真 combo 的槽里必须量到 ≥6 个 `text_dim` 像素
+    //     （把 `::drop-down` 规则加回来 / 或本函数不画 ⇒ 立刻红，实测 0）。
+    // ★★ 2026-10-05（用户第 3 条「**所有下拉老样式**…1.x 线条比 2.0.0 硬朗多了」）：
+    //   **箭头槽 + 三角箭头整块在这里画** —— 这是本批**实测出来的机制**，不是猜的：
+    //
+    //   ★ 为什么不能靠 QSS：
+    //     · `image:` 走不通（实测 QSS 不加载 `url(data:…)`，见类顶注释）；
+    //     · `::down-arrow { background: … }` 也不行 —— Qt 自己把那一格涂完
+    //       **就不再调本 primitive**（与 `::indicator` 那条坑同源）⇒ 真机上是**空槽**；
+    //     · `::drop-down` 规则**只要存在**（哪怕只有 `border: 0`）—— Qt 会接管整个 combo
+    //       的绘制、**连箭头都不画**（本批实测四种 QSS 变体，真 combo `grab()` 后数
+    //       `text_dim` 像素：带 `::drop-down` 规则 = **0**；去掉 = 有）。
+    //   ⇒ 定案（与任务书"箭头优先在 CheckMarkStyle 层重写"一致）：**QSS 里没有 `::drop-down`
+    //     规则**、`::down-arrow` 只留几何声明；**槽底与三角都在本 primitive 里画**。
+    //   ★ 实测到的 primitive 矩形：`[367,4 10x26]`（widget 381×34 的那个 combo）—— 所以
+    //     **尺寸要按"槽宽"算，不能用 `min(w,h)*0.5`**（本批踩过：那样只有 5px 宽、1.5px 高，
+    //     真机上几乎看不见，探针里只有 6 个像素）。现在的算式给 10×26 的槽 ⇒ 底 8px、高 4.8px。
+    //   ★ 判据（SHELL-SMOKE 下拉①′）：真 combo 的槽里必须量到 ≥6 个 `text_dim` 像素
+    //     （实测 19；把 `::drop-down` 规则加回 / 给 `::down-arrow` 加 `background` ⇒ 0）。
+    void drawPrimitive(PrimitiveElement element, const QStyleOption* option, QPainter* painter,
+                       const QWidget* widget) const override {
+        if (element != PE_IndicatorArrowDown || option == nullptr || painter == nullptr) {
+            draw_check_or_base(element, option, painter, widget);
+            return;
+        }
+        const QRect r = option->rect;
+        if (r.width() <= 2 || r.height() <= 2) {
+            draw_check_or_base(element, option, painter, widget);
+            return;
+        }
+        const QColor slot_fill =
+            slot_color_.isValid() ? slot_color_ : option->palette.color(QPalette::Button);
+        const QColor edge = edge_color_.isValid() ? edge_color_ : option->palette.color(QPalette::Mid);
+        const QColor fill = arrow_color_.isValid() ? arrow_color_ : option->palette.color(QPalette::Text);
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing, false);   // "硬朗"＝不羽化
+        painter->setRenderHint(QPainter::SmoothPixmapTransform, false);
+        // ① 槽底（1.x `TStyle` 的 `background=surface2`）＋ 与主体之间一条 1px 分隔
+        painter->fillRect(r, slot_fill);
+        painter->setPen(QPen(edge, 1));
+        painter->drawLine(r.topLeft(), r.bottomLeft());
+        // ② 三角箭头（色＝主题令牌 `text_dim`；底 ≈ 槽宽 ×0.8，高 ≈ 底 ×0.6）
+        const qreal base = std::max<qreal>(6.0, std::min<qreal>(r.width() * 0.8, r.height() * 0.6));
+        const qreal height = base * 0.6;
+        const QPointF c = QRectF(r).center();
+        const QPolygonF tri({QPointF(c.x() - base / 2.0, c.y() - height / 2.0),
+                             QPointF(c.x() + base / 2.0, c.y() - height / 2.0),
+                             QPointF(c.x(), c.y() + height / 2.0)});
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(fill);
+        painter->drawPolygon(tri);
+        painter->restore();
+    }
+
+private:
+    // 勾选框那一笔（其余 primitive 原样委托给基类）——从 `drawPrimitive` 里拆出来，
+    // 让箭头那一条分支能共用同一个出口。
+    void draw_check_or_base(PrimitiveElement element, const QStyleOption* option, QPainter* painter,
+                            const QWidget* widget) const {
         if (element != PE_IndicatorCheckBox || option == nullptr || painter == nullptr) {
             QProxyStyle::drawPrimitive(element, option, painter, widget);
             return;
@@ -98,7 +181,18 @@ public:
         }
         painter->restore();
     }
+
+    QColor arrow_color_;   // 主题令牌 `text_dim`（箭头本体）
+    QColor slot_color_;    // 主题令牌 `surface2`（箭头槽底）
+    QColor edge_color_;    // 主题令牌 `border`（槽与主体之间的 1px 分隔）
 };
+
+// 本进程里那一份 `CheckMarkStyle`（**造一次、复用**）。
+// ★ 为什么不靠 `dynamic_cast<CheckMarkStyle*>(app.style())` 去认它：设过样式表之后
+//   `QApplication::style()` 返回的是 **QStyleSheetStyle 包装** ⇒ 那个 cast 恒为 nullptr
+//   （原句 `if (dynamic_cast<…> == nullptr)` 因此**每次**都为真、每次 apply_theme 都重造一个
+//    样式对象 —— 只影响样式对象的身份、不影响观感，所以一直没被注意到）。本批顺手修掉。
+CheckMarkStyle* g_check_mark_style = nullptr;
 
 }  // namespace
 
@@ -157,6 +251,11 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
     size("ctl", 24);
     // 内容区（包列表/包内树/日志）字号：比界面正文大一档，且走 px() ⇒ 跟着界面大小缩
     size("font_content", 16);;
+    // ★★ 2026-10-05（用户第 3 条「所有下拉老样式…1.x 线条比 2.0.0 硬朗多了」）：
+    //   下拉箭头**槽**那一格（`::drop-down`）与箭头本身（`::down-arrow`）的尺寸。
+    //   1.x `TStyle` 里的 `arrowcolor=text_dim`、`background=surface2`（toolkit_theme.py:311-322）
+    //   ⇒ 2.0.0 的对应物就是一条 `QComboBox::down-arrow` 规则；`arrow12` 是那块箭头的槽宽。
+    size("arrow12", 12);
     xrkit::core::set_theme_mode(saved);
 
     // ★ 配色口径（用户 2026-09-27：「配色里为什么这么多蓝色」⇒ 与
@@ -244,12 +343,34 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                "  border: 1px solid @{border}; border-radius: @{r3}; padding: @{pad4} @{pad8}; }"
                "QComboBox:hover, QLineEdit:hover { border-color: @{border}; background: @{surface2}; }"
                "QComboBox:disabled, QLineEdit:disabled { color: @{text_dim}; }"
-               "QComboBox::drop-down { border: 0; background: transparent; width: @{pad10}; }"
+               // ★★ 2026-10-05（用户第 3 条）：**这里刻意没有 `QComboBox::drop-down` 规则** ——
+               //   本批实测：那条规则**只要存在**（哪怕只有 `border: 0`），Qt 的样式表样式就
+               //   接管整个 combo 的绘制、**连箭头都不画**（真 combo `grab()` 后数 `text_dim`
+               //   像素 = **0**）⇒ 真机上是一个**没有箭头的空槽**。
+               //   箭头槽（surface2 底）+ 三角（text_dim）现在整块归
+               //   `CheckMarkStyle::drawPrimitive(PE_IndicatorArrowDown)`（见那里的实测数据）。
+               // ★★ 2026-10-05（用户第 3 条「**所有下拉老样式**…我实际想要的样式是 1.x 里的
+               //   那种，**1.x 线条比 2.0.0 硬朗多了**」）：补上 1.x 的**三角箭头**那一套。
+               //   1.x（toolkit_theme.py:311-322）的口径是 `arrowcolor=text_dim`、
+               //   `background=surface2`（箭头**槽**的底），两样都给出来。
+               //   ★ 为什么箭头**不可能**用 QSS 画（本批实测，两处都试过）：
+               //     ① `image:` 走不通 —— Qt 的样式表引擎不加载 `url(data:…)` 图片（勾选框那一族
+               //        已经踩过同一个坑，见 CheckMarkStyle 顶部）；
+               //     ② 给 `::down-arrow` 配 `background` 也不行 —— Qt 会**自己把那一格涂完就完事**、
+               //        **根本不再调 `PE_IndicatorArrowDown`**（与 `::indicator` 那条坑同源）
+               //        ⇒ 用户在真机上看到的是一个**没有箭头的空槽**（实测：真 combo 槽里
+               //        `text_dim` 像素 0 个）。
+               //   ⇒ 定案：**槽底 + 三角整块由 `CheckMarkStyle` 在那个 primitive 里画**
+               //     （任务书说的"箭头优先在 CheckMarkStyle 层重写"；实测 Qt 对 combo 走的就是
+               //     这个 primitive —— 见那里的注释）；本行只留**几何声明**，
+               //     让"槽是 12px"这件事在 QSS 里也看得见（自检锁按它断言）。
+               //   ★ **不引 accent**：强调色只许出现在三处（主按钮 / 当前标签 / 进度条）。
+               "QComboBox::down-arrow { width: @{arrow12}; height: @{arrow12}; }"
                // ★ 2026-10-05：下拉的**弹层**统一到与输入框同一套令牌（原来弹层底是 `surface`、
                //   与"选中的那一行"的灰底 `selected` 撞色 ⇒ 用户说"下拉栏设计太丑"）。
                //   `item` 也补上内距与圆角，与列表项同一套几何。
                "QComboBox QAbstractItemView { background: @{entry_bg}; color: @{text};"
-               "  border: 1px solid @{border}; border-radius: @{r2}; outline: none;"
+               "  border: 1px solid @{border}; border-radius: 0; outline: none;"
                "  padding: @{pad2}; selection-background-color: @{selected};"
                "  selection-color: @{text_bright}; }"
                "QComboBox QAbstractItemView::item { padding: @{pad4} @{pad8};"
@@ -280,6 +401,24 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                "QMainWindow::separator { background: @{border}; width: @{pad4}; height: @{pad4}; }"
                "QToolTip { background: @{surface2}; color: @{text}; border: 1px solid @{border};"
                "  border-radius: @{r3}; padding: @{pad4}; }"
+               // ★★ 2026-10-05（用户第 3 条同一批）：**补 QMenu 一套**。
+               //   修前的事实：整个 QSS 里 `QMenu` **一条规则都没有**（本轮全库核过）⇒
+               //   菜单栏的下拉、各页右键菜单全走 Qt 默认外观：**系统蓝高亮** +
+               //   有立体感的弹层 —— 正是用户说的"2.0.0 观感不对"。
+               //   1.x 的对应物（toolkit_theme.py:317-322 的 TOptionMenu/TMenubutton）：
+               //   `background=surface2`、`relief=flat`、`borderwidth=1` + `bordercolor=border`，
+               //   选中态用**中性灰**（`selected`，与列表项同一套），**不是**系统蓝。
+               //   ★ 为什么把 `relief: flat` 写在这里（而不是只写子控件）：Qt 的 style hint
+               //     只从 `QMenu` 这一条规则里认 `relief`，写在别的选择器上等于没写。
+               //   ★ 这一条**整块只此一份**（同名选择器后写的赢 ⇒ 绝不再补第二条 QMenu）。
+               //   ★ **`QMenu { … }` 里恰好三条**（background / border / relief）：
+               //     1.x `TOptionMenu` 的 `background=surface2 + relief=flat + borderwidth=1`。
+               //     文字色与内距**不写在这一条里**（写在 `::item` 上）—— 一是 1.x 的口径就是
+               //     这三条，二是自检那条锁钉的就是"这一块恰好三条"。多写一条即红。
+               "QMenu { background: @{surface2}; border: 1px solid @{border}; relief: flat; }"
+               "QMenu::item { color: @{text}; padding: @{pad4} @{pad8}; }"
+               "QMenu::item:selected { background: @{selected}; color: @{text_bright}; }"
+               "QMenu::separator { height: 1px; background: @{border}; margin: @{pad2} 0; }"
                "QProgressBar { background: @{entry_bg}; border: 1px solid @{border}; border-radius: @{r3};"
                "  text-align: center; color: @{text}; }"
                "QProgressBar::chunk { background: @{accent}; border-radius: @{r3}; }"
@@ -303,7 +442,12 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                // ★ 用户真机反馈「又挤又空」的根因＝控件太小、间距太小 ⇒ 控件最小高度与内边距**整体上调
                //   一档**（值都在上面那批命名令牌里；这块原先用独立 `%1..%4` 是对的，一并并进来）
                "QPushButton { min-height: @{ctl}; padding: @{pad8} @{pad14}; }"
-               "QComboBox, QLineEdit, QSpinBox { min-height: @{ctl}; padding: @{pad8} @{pad10}; }"
+               // ★★ 2026-10-05（用户第 3 条）：这一条**原来写的是 `pad8 @{pad10}`**，
+               //   它同名同选择器地**盖掉**了上面那份 `pad4 pad8`（后写的赢）⇒ 生效的一直是
+               //   宽内距 10 + 高内距 8，也就是用户说的"2.0.0 不硬朗"。1.x 的
+               //   `TCombobox padding=(6,4)` / `TOptionMenu padding=(10,4)` 是**扁的**，
+               //   所以这里回到 `pad4 @{pad8}`：与上面那一份**逐字一致**（同类只维护一套）。
+               "QComboBox, QLineEdit, QSpinBox { min-height: @{ctl}; padding: @{pad4} @{pad8}; }"
                "QListWidget::item, QListView::item, QTreeView::item { min-height: @{ctl}; }"
                // ★★ 表头不许裁字（用户 2026-09-30 与 2026-10-01 两次指出"那行字顶部被切"）：
                //   **实测过的机制**（`--shot` 打的 HDR 行）：QSS 给 section 配了 8 px 上下内边距，
@@ -405,7 +549,19 @@ void apply_theme(QApplication& app, xrkit::core::ThemeMode mode) {
     if (dynamic_cast<CheckMarkStyle*>(app.style()) == nullptr) {
         QStyle* fusion = QStyleFactory::create(QStringLiteral("Fusion"));
         if (fusion == nullptr) fusion = app.style();
-        app.setStyle(new CheckMarkStyle(fusion));
+        g_check_mark_style = new CheckMarkStyle(fusion);
+        app.setStyle(g_check_mark_style);
+    }
+    // ★★ 2026-10-05（用户第 3 条）：**每次 apply_theme 都把下拉箭头的颜色刷一遍** ——
+    //   样式对象是复用的（上面那个 `dynamic_cast` 只造一次），只造的时候设一次的话，
+    //   切主题后箭头还是旧主题的色。真值＝主题令牌 `text_dim`（见 CheckMarkStyle）。
+    //   ★ 注意：**必须用 `g_check_mark_style` 这个指针**，不能用
+    //     `dynamic_cast<CheckMarkStyle*>(app.style())` —— 设过样式表之后
+    //     `QApplication::style()` 返回的是 **QStyleSheetStyle 包装**，那个 cast 恒为 nullptr
+    //     （这也正是上面那句 `== nullptr` 判据**一直成立**、每次都重造样式对象的原因；
+    //      本批顺手把它改成"真只造一次"）。
+    if (g_check_mark_style != nullptr) {
+        g_check_mark_style->set_arrow_colors(role("text_dim"), role("surface2"), role("border"));
     }
     app.setStyleSheet(stylesheet_for(mode));
 

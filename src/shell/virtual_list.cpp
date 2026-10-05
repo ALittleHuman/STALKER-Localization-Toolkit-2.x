@@ -14,12 +14,22 @@ VirtualList::VirtualList(QWidget* parent) : QWidget(parent) {
 
 void VirtualList::set_row_height(int height) {
     row_height_ = std::max(1, height);
+    publish_content_height();
     refresh();
 }
 
 void VirtualList::set_row_count(int total) {
     total_ = std::max(0, total);
+    publish_content_height();
     refresh();
+}
+
+// ★★ 2026-10-05（#6）：把"我多高"**说出来**（Qt 动态属性），外层 `PageBase::sync_inner_scroll()`
+//   读它当 `min_body_height`。为什么不直接让外层 `qobject_cast<VirtualList*>`：
+//   那样基类就得认识这个具体类（基类只该认识"内容件"这个角色）；也不用 signals/slots ——
+//   本页在改行数的地方**显式**调一次同步（改的行数点很少，显式更清楚）。
+void VirtualList::publish_content_height() {
+    setProperty("xrkit_content_height", content_height());
 }
 
 void VirtualList::set_row_text_provider(std::function<QString(int)> provider) {

@@ -55,12 +55,24 @@ public:
     void set_selected_row(int row);
     int selected_row() const { return selected_; }
 
+    // ★★ 2026-10-05（用户报告 #6「编码转换的中间那块区域并没有设计滚动条。」）：
+    //   **内容总高**（＝ `总行数 × 行高`）。本来这个类够不到"自己要多大"——它只是个
+    //   `QWidget`，高度由所在布局给（于是"装不下"的那部分行**永远没有机会显示**：
+    //   `top_` 恒为 0，`visible_range()` 只覆盖视口那几行 ⇒ 后面的行用户在界面上够不着）。
+    //   现在把内容高**说出来**，由外层 `ScrollViewport` 的 `min_body_height` 接住：
+    //   装得下 ⇒ 与视口同高（条子不占位）；装不下 ⇒ 撑到内容高（条子出现，能滚）。
+    //   ★ 判据见 smoke：`set_row_count(200)` ⇒ 条子存在且 `maximum()>0`；
+    //     `set_row_count(3)` ⇒ 装得下 ⇒ **不占位**。
+    int content_height() const { return total_ * row_height_; }
     void refresh();  // 按当前偏移/尺寸重算范围并复用行控件
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
+    // 把"内容总高"发布成 Qt 动态属性（外层页的 `sync_inner_scroll()` 读它当 min_body_height）
+    void publish_content_height();
+
     int row_height_ = 20;
     int total_ = 0;
     int top_ = 0;

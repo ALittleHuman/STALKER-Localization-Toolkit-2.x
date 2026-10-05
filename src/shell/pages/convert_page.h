@@ -39,6 +39,7 @@ namespace xrkit::shell {
 
 class TaskShell;
 class VirtualList;
+class ScrollViewport;
 
 class ConvertPage : public PageBase {
 public:
@@ -65,6 +66,12 @@ public:
     QLineEdit* source_edit() const { return source_edit_; }
     QLineEdit* output_edit() const { return output_edit_; }
     VirtualList* rows() const { return rows_; }
+    // ★★ 2026-10-05（用户报告 #6「编码转换的中间那块区域并没有设计滚动条。」）：
+    //   结果区（行列表）外面那层**页内视口** —— 自检拿它断言"能滚（maximum>0）/ 装得下不占位"，
+    //   `--shot` 拿它量几何。修前没有它（`addWidget(rows_, 1)` 直接放进卡片）⇒ 那条判据红。
+    ScrollViewport* rows_viewport() const { return rows_viewport_; }
+    // 行数变了 ⇒ 把内容高同步给那层视口（自检直接驱它，避免"只有跑完一批才生效"）
+    void sync_rows_viewport() { sync_inner_scroll(); }
     TaskShell* task() const { return task_; }
     QLabel* status() const { return status_; }
     int pause_gate_hits() const { return pause_gate_hits_; }
@@ -131,6 +138,8 @@ private:
     QPushButton* open_output_button_ = nullptr;
     QPushButton* export_button_ = nullptr;
     VirtualList* rows_ = nullptr;
+    // ★ 2026-10-05（#6）：结果区的页内视口（由 `PageBase::make_inner_scroll()` 造）
+    ScrollViewport* rows_viewport_ = nullptr;
     TaskShell* task_ = nullptr;
     QLabel* status_ = nullptr;
     std::vector<QString> row_texts_;

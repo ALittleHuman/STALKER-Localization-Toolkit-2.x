@@ -292,10 +292,16 @@ ExtractTreeResult extract_tree(const std::string& image_path, const std::string&
         // 6.9 原子写：默认"边写边算哈希"自校验；`options.verify_readback` 才走读回逐字节复核。
         const core::WriteVerify verify = options.verify_readback ? core::WriteVerify::Readback
                                                                 : core::WriteVerify::Streamed;
+        // ★★ 2026-10-05（**落点覆盖必须可见**）：写之前先看落点上有没有东西。
+        //   为什么记在**写成功之后**（而不是发现存在就记）：本次写失败时落点没被改写，
+        //   记进 `overwritten` 就是**谎报**（"报出来的必须等于盘上真发生的"）。
+        std::error_code exists_ec;
+        const bool had_file = stdfs::exists(core::path_from_utf8(target.path), exists_ec);
         if (!xrkit::core::write_file_atomic(target.path, data.data, options.atomic, error, verify)) {
             result.failures.push_back({entry->path, error});
             continue;
         }
+        if (had_file) result.overwritten.push_back(entry->path);
         // ★ 写是**照写**（同落点后写覆盖前写 —— 保持既有落盘语义不变），但计数走产物口径：
         //   同一条落点又要写一遍时，盘上的东西没有变多 ⇒ 只记 `duplicate_records`。
         if (tally.note("f:", target.path)) {
@@ -376,10 +382,15 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
         // 与 SquashFS 分支同一条纪律（6.9）：默认流式哈希自校验，开关打开才读回。
         const core::WriteVerify verify = options.verify_readback ? core::WriteVerify::Readback
                                                                 : core::WriteVerify::Streamed;
+        // ★★ 2026-10-05（**落点覆盖必须可见**）：与 SquashFS 分支**逐条同口径**（两个分支
+        //   都不许漏 —— DB 六格式是本工具的主要入口，漏了它等于这条锁形同虚设）。
+        std::error_code exists_ec;
+        const bool had_file = stdfs::exists(core::path_from_utf8(safe.path), exists_ec);
         if (!core::write_file_atomic(safe.path, data.data, options.atomic, write_error, verify)) {
             result.failures.push_back({entry.path, write_error});
             continue;
         }
+        if (had_file) result.overwritten.push_back(entry.path);
         // 空文件是**合法条目**（写出 0 字节）—— 与"解不出来"分开（6.8）
         // ★ 写照写（后写覆盖前写，落盘语义不变）；计数走**最终产物**口径（判红锁②）。
         if (tally.note("f:", safe.path)) {
@@ -456,8 +467,64 @@ std::vector<UnpackTarget> plan_unpack_targets(
     return out;
 }
 
-std::string resolve_output_root(const std::string& front_source_path, const std::string& current_dir) {
-    // 1.x `_resolve_output`：空则按"第一个包所在目录"推断（界面侧还要把它**回填**到输入框）。
+// ── ★★ 2026-10-05：**解包产物预览**（右栏）＝落点规则的**同一份真值**（见头文件说明）──
+std::vector<EntryInfo> preview_entries_in_layout(const std::string& package_path,
+                                                 const std::vector<EntryInfo>& entries) {
+    std::vector<std::string> raw;
+    raw.reserve(entries.size());
+    for (const EntryInfo& e : entries) raw.push_back(e.path);
+
+    // 这一段就是**包名壳**（自带壳的包 ⇒ 空串）。它必须与落点规则同源 ⇒ 直接调落点函数，
+    // 拿一个"根"去减 —— 因为 `unpack_target_dir` 的返回值只有 "根" 或 "根/壳" 两种形态
+    //（见它的实现：`return out_root;` 或 `return root + "/" + shell;`），
+    // 所以拿一个**不可能出现在壳里**的哨兵根去减，得到的正好就是壳。
+    const std::string kSentinelRoot = "\x01preview-root\x02";
+    const std::string target = unpack_target_dir(kSentinelRoot, package_path, raw);
+    std::string prefix;
+    if (target.size() > kSentinelRoot.size() &&
+        target.compare(0, kSentinelRoot.size(), kSentinelRoot) == 0) {
+        prefix = target.substr(kSentinelRoot.size());
+        while (!prefix.empty() && (prefix.front() == '/' || prefix.front() == '\\')) {
+            prefix.erase(prefix.begin());
+        }
+    }
+    if (prefix.empty()) return entries;   // 自带壳 / 算不出壳 ⇒ 条目路径原样（**不叠第二层**）
+
+    std::vector<EntryInfo> out;
+    out.reserve(entries.size() + 8);
+    // ★ 目录项也要补（否则右栏建不出中间层）。用集合去重，避免与包内已有的同名目录项重复。
+    std::set<std::string> made_dirs;
+    auto add_dir = [&](const std::string& path) {
+        if (path.empty()) return;
+        if (!made_dirs.insert(path).second) return;
+        out.emplace_back(path, /*d=*/true, /*s=*/0);
+    };
+    // 壳自己那一层
+    add_dir(prefix);
+    const std::string lead = prefix + "/";
+    for (const EntryInfo& e : entries) {
+        if (e.path.empty()) continue;
+        // 逐级补祖先目录（条目自己带 `a/b/c` 时中间那几层也要在）
+        std::string acc = prefix;
+        std::string seg;
+        for (size_t i = 0; i <= e.path.size(); ++i) {
+            const char c = i < e.path.size() ? e.path[i] : '/';
+            if (c == '/' || c == '\\') {
+                if (!seg.empty()) {
+                    acc += "/" + seg;
+                    add_dir(acc);
+                    seg.clear();
+                }
+            } else {
+                seg += c;
+            }
+        }
+        out.emplace_back(lead + e.path, e.is_dir, e.size);
+    }
+    return out;
+}
+
+std::string resolve_output_root(const std::string& front_source_path, const std::string& current_dir) {    // 1.x `_resolve_output`：空则按"第一个包所在目录"推断（界面侧还要把它**回填**到输入框）。
     if (front_source_path.empty()) return current_dir;
     const stdfs::path p = core::path_from_utf8(front_source_path);
     const stdfs::path parent = p.parent_path();

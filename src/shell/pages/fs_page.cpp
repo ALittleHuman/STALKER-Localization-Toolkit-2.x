@@ -954,11 +954,26 @@ QString FsPage::source_at(int index) const {
 
 void FsPage::check_all(bool checked) {
     tree_.toggle_all(checked);
-    refresh_rows();
+    // ★★ 2026-10-05（#4 回归锁）：勾选**不许刷状态** —— 用户已复测「勾选不会刷状态」，
+    //   而本批把它钉成硬判据：**勾选前后所有已展开节点的 `isExpanded()` 快照、item 指针、
+    //   滚动位置逐字不变**，而且明确包含"**按钮触发**的勾选"（`smoke` 的 #4 ②）。
+    //
+    //   修前这里是 `refresh_rows()`（＝ `entry_tree_->clear()` + 整棵重建）⇒ 展开态、
+    //   item 指针、滚动位置**全被抹掉**：「包内全选」这条按钮路径因此当场违反 #4
+    //   （自检实测：指针 0/0、展开 0/0、滚动 2→0）。
+    //   ⇒ 与 `on_entry_item_changed` 走**同一条**"就地刷状态"的路：
+    //     `rebuild_dir_states()` 重算目录三态的**模型**，
+    //     `sync_entry_states()` 只改 `setCheckState`（不碰控件树、不碰展开态）。
+    //   ★ 为什么不是"再补一个重建后恢复展开态"的补丁：那等于把重建留在热路径上，
+    //     大包（3.9 万条）每点一次按钮就重建一次，而且 item 指针必然变 ⇒ 判据照样红。
+    //   ★ 判红锁：`smoke` #4 ②（把这两句换回 `refresh_rows()` ⇒ 立刻红）。
+    rebuild_dir_states();
+    sync_entry_states();
     // ★★ 2026-10-03：右栏的勾选变了 ⇒ 左栏**包节点的三态**也要跟着刷
     //   （用户：「包的内容没有全部勾选的时候，包的勾选框也应当处于部分勾选的状态。」）。
     //   原来这里漏了 → "包内全选"之后包节点仍显示未勾（新锁当场抓出来）。
     refresh_package_checks();
+    refresh_counts();
 }
 
 bool FsPage::entry_hint_visible() const {
@@ -977,7 +992,16 @@ void FsPage::rebuild_tree() {
         if (!source.loaded) continue;
         efs::MergeInput input;
         input.source = source.key;
-        input.entries = entries_[i];
+        // ★★ 2026-10-05（用户报告 #2「右栏预览未体现「包名壳」」）：右栏＝**解包产物预览**
+        //   （用户 2026-10-03 原话：「**这是一个解包的工具，而右边罗列的是包的内容，换句话说
+        //   就是解包产物的预览。**」）⇒ 每一条显示的路径必须**恰好等于**它真正会被写到的
+        //   落点相对路径。修前这里直接喂**包内原始路径** ⇒ `IWP\database\config\xr.db` 的
+        //   条目显示成根级 `gamemtl.xr`，而实际解出来是 `xr\gamemtl.xr`（用户原话：
+        //   「`…\IWP\新建文件夹`还是那样。」）。
+        //   ★ 拼法**只此一份**：引擎 `efs::preview_entries_in_layout`（与 `unpack_target_dir`
+        //     同源）—— 谁把"加壳"写回页面里，就等于又造了第二份落点规则。
+        //   ★ 自带壳的包（`ai.db` 的条目已经 `ai/…`）⇒ 该函数直接原样返回，**不叠第二层**。
+        input.entries = efs::preview_entries_in_layout(source.key, entries_[i]);
         efs::MergeTree incoming = efs::build_tree(input);
         if (tree_.sources.empty()) {
             // `build_tree` 自己就把这个源写进 `sources`（**别再 push 一次**：多算一个会让
@@ -1487,11 +1511,35 @@ QString FsPage::run_unpack_jobs(const std::vector<UnpackJob>& jobs, const Progre
     //   返回"已取消：在包边界停下…"；那段（连同任务壳的取消按钮）整块删掉了。
     int written = 0;
     int failed = 0;
+    int overwritten = 0;
     QStringList per_package;
+    // ★★ 2026-10-05（**落点覆盖必须可见 / 零静默**）：**解包前先把每个包的落点打出来**。
+    //   起因（用户报的真事故）：一次默认落点（＝**来源所在目录**）解包，把 **3.9 万个文件**
+    //   盖在了模组目录上，而工具**一个字都没说**。
+    //   口径（用户口径，一个字不改）：**不改默认落点**、**不弹模态确认框**（那会改交互口径）
+    //   —— 要的只是"**任何改写都必须看得见：逐条原因 + 计数**"。
+    //   所以这里做两件事：① 解包**前**把 `包 → 落点` 逐条打出来（下面这个循环）；
+    //   ② 解包**中/后**把被覆盖的已存在文件**逐条**报出来 + 汇总计数（见下面的 `overwritten`）。
+    for (size_t i = 0; i < jobs.size(); ++i) {
+        const QString pre = QStringLiteral("解包目标：%1 → %2").arg(utf8(jobs[i].label), utf8(jobs[i].target));
+        per_package << pre;
+        if (message) message(pre.toUtf8().toStdString());
+    }
     for (size_t i = 0; i < jobs.size(); ++i) {
         const efs::ExtractTreeResult result = FsPage::extract_job(jobs[i]);
         written += static_cast<int>(result.files_written);
         failed += static_cast<int>(result.failures.size());
+        // ★★ 2026-10-05（零静默）：**逐条**报出这次被**覆盖**掉的已存在文件（引擎侧的
+        //   `overwritten` 是"盘上真发生过的"那份真值 —— 见 `extract_tree.cpp` 的说明：
+        //   记在**写成功之后**，失败的写不算）。计数在下面的汇总行里。
+        //   ★ 判红锁（smoke 的本页夹具）：解两遍 ⇒ 第二遍必须出现「覆盖：…」且计数非零；
+        //     把这一段删掉（或把引擎那两处 `overwritten.push_back` 去掉）⇒ 立刻红。
+        for (const std::string& one_path : result.overwritten) {
+            const QString one = QStringLiteral("覆盖：%1").arg(utf8(one_path));
+            per_package << one;
+            if (message) message(one.toUtf8().toStdString());
+        }
+        overwritten += static_cast<int>(result.overwritten_size());
         const QString line = QStringLiteral("%1→%2（%3 文件%4）")
                                  .arg(utf8(jobs[i].label), utf8(jobs[i].target))
                                  .arg(result.files_written)
@@ -1506,8 +1554,9 @@ QString FsPage::run_unpack_jobs(const std::vector<UnpackJob>& jobs, const Progre
     if (per_package.isEmpty()) {
         return QStringLiteral("没有可解的内容（先「加包」/「扫描目录」并勾选，或先加载包）");
     }
-    return QStringLiteral("解包：%1 个文件、失败 %2\n  %3")
+    return QStringLiteral("解包：%1 个文件、覆盖 %2、失败 %3\n  %4")
         .arg(written)
+        .arg(overwritten)
         .arg(failed)
         .arg(per_package.join(QStringLiteral("\n  ")));
 }

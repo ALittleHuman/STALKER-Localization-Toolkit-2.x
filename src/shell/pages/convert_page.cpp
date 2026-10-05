@@ -4,6 +4,7 @@
 #include "xrkit/engine/text/encoding.h"
 
 #include "../task_shell.h"
+#include "../scroll_viewport.h"   // ★ 2026-10-05（#6）：结果区的页内视口（`rows_viewport_`）
 #include "../virtual_list.h"
 
 #include <QCheckBox>
@@ -23,6 +24,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <cstdlib>
 #include <memory>
 
 namespace xrkit::shell {
@@ -201,7 +203,27 @@ ConvertPage::ConvertPage(QWidget* parent)
         if (row < 0 || row >= static_cast<int>(row_texts_.size())) return QString();
         return row_texts_[static_cast<size_t>(row)];
     });
-    body_layout()->addWidget(rows_, 1);
+    // ★★ 2026-10-05（用户报告 #6，原话：「**编码转换的中间那块区域并没有设计滚动条。**」）：
+    //   修前这里直接 `addWidget(rows_, 1)` —— 行列表高度由卡片给（实测 1034×232），
+    //   行数超了就**永远够不着**（`VirtualList::scroll_top()` 恒为 0）。用户点得出来的现象
+    //   就是"没有滚动条"。
+    //   ⇒ 给它套一层**页内视口**（由 `PageBase` 造，见那里的说明）：装不下就出现条子、能滚；
+    //     装得下就不占位（滚动不变量 ①②：判据是"能不能滚"，不是"条子看不看得见"）。
+    rows_viewport_ = make_inner_scroll(rows_, QStringLiteral("convert_rows_viewport"));
+    body_layout()->addWidget(rows_viewport_, 1);
+    if (rows_viewport_ != nullptr) {
+        // ★★ 2026-10-05（#6 的真接线）：行列表是**自绘虚拟列表** —— 它拿自己的 `height()`
+        //   当视口高、按内部 `top_` 只画那几行。所以这层视口必须按"**自带滚动的画布**"走：
+        //   · **不挪**行列表（不然 `top_` 恒为 0、池子涨到全量行 ＝ 虚拟化被关掉）；
+        //   · 画布高＝视口高（`visible_range` 才对）；
+        //   · 条子的值交回 `VirtualList::set_scroll_top` —— 这一步不做，用户拖条子**看不出任何变化**
+        //     （自检 #6 ③ 实测：`value=1935` 而 `scroll_top()=0`）。
+        //   修前只有 `make_inner_scroll` 那一层（＝"挪整块画布"的模型）⇒ 条子在、但内容不动。
+        rows_viewport_->set_self_scrolling_body(true);
+        rows_viewport_->set_offset_delegate([this](int value) {
+            if (rows_ != nullptr) rows_->set_scroll_top(value);
+        });
+    }
 
     // ⑬13.6：任务壳负责 running/线程/失败路径/进度；**暂停是 App 自己的状态机**。
     task_ = new TaskShell(this);
@@ -355,10 +377,13 @@ bool ConvertPage::wait_if_paused(bool block) {
 void ConvertPage::add_row(const QString& text) {
     row_texts_.push_back(text);
     rows_->set_row_count(static_cast<int>(row_texts_.size()));
+    // ★ 2026-10-05（#6）：行数变了 ⇒ 把内容高同步给页内视口（装不下就出条子、能滚）
+    sync_inner_scroll();
 }
 
 void ConvertPage::refresh_rows() {
     rows_->set_row_count(static_cast<int>(row_texts_.size()));
+    sync_inner_scroll();
 }
 
 void ConvertPage::record_stats(const etxt::BatchOutcome& outcome, const QString& source,

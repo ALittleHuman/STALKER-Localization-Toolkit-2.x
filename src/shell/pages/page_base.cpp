@@ -123,8 +123,43 @@ void PageBase::set_subtitle(const QString& text) {
     subtitle_->setVisible(!text.isEmpty());
 }
 
-QPushButton* PageBase::add_action(const QString& text) {
-    auto* button = new QPushButton(text, action_bar_);
+// ── ★★ 2026-10-05（用户报告 #6）：页内自足内容区的**第二层视口**（见 page_base.h 的说明）──
+//
+// 为什么第二层视口也由基类造：门禁那条静态锁（"页内视口只能由 PageBase 造"）拦的就是
+// "各页各写一份 fit/minsize" —— 1.x 的 `min_y=` 事故是这么来的。所以这里只提供**一个**入口，
+// 页面负责把内容件交进来、并在内容变化时调 `sync_inner_scroll()`。
+//
+// fit＝**Content**（静态内容，条子由本视口造）：装得下时 `min_body_height` 就是内容高
+// （小于视口高 ⇒ 画布与视口同高 ⇒ 条子不占位）；装不下时画布撑到内容高 ⇒ 条子出现、能滚。
+ScrollViewport* PageBase::make_inner_scroll(QWidget* content, const QString& object_name) {
+    if (content == nullptr) return nullptr;
+    if (inner_viewport_ != nullptr) return inner_viewport_;   // 一页只造一层（幂等）
+    inner_viewport_ = new ScrollViewport(this);
+    inner_viewport_->setObjectName(object_name);
+    inner_viewport_->set_fit(ScrollViewport::Fit::Content);
+    // 内容件挂进来时它会接管 body 的尺寸（见 set_body）；先把内容件挂到视口下再 set_body，
+    // 否则内容件没有父对象、Qt 会把它当顶层窗口。
+    content->setParent(inner_viewport_);
+    inner_viewport_->set_body(content);
+    inner_content_ = content;
+    // 与页视口同一套"点空白收焦点"口径（否则点结果区空白会留焦点在输入框里闪）
+    inner_viewport_->installEventFilter(this);
+    sync_inner_scroll();
+    return inner_viewport_;
+}
+
+void PageBase::sync_inner_scroll() {
+    if (inner_viewport_ == nullptr || inner_content_ == nullptr) return;
+    // ★ 内容高从**内容件自己**问（VirtualList::content_height）—— 基类不认识 VirtualList，
+    //   它只认"这个 QWidget 愿意说自己多高"。这样一来也不会有第二处"行数 × 行高"的算法。
+    //   兜底：内容件没有那个属性 ⇒ 用 Qt 的 `sizeHint().height()`（原生控件也能用）。
+    int content_h = inner_content_->property("xrkit_content_height").toInt();
+    if (content_h <= 0) content_h = inner_content_->sizeHint().height();
+    if (content_h > 0) inner_viewport_->set_min_body_height(content_h);
+    inner_viewport_->sync_layout();
+}
+
+QPushButton* PageBase::add_action(const QString& text) {    auto* button = new QPushButton(text, action_bar_);
     button->setObjectName(QStringLiteral("action_") + text);
     // ★ 2026-09-30 修（真缺陷）：那个 stretch 是在构造函数里**第一个**加进来的（在 index 0），
     //   所以"插在末尾那个 stretch 之前"其实插到了 stretch **前面** ⇒ 按钮全被顶到**左边**，

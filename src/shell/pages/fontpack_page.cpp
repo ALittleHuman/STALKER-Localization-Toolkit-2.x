@@ -480,7 +480,24 @@ QDialog* FontPackPage::make_font_picker(QWidget* parent) {
                                    QFileInfo(items[i]).absolutePath(), mark));
         }
         if (end < static_cast<int>(items.size())) {
-            if (auto keep = weak.lock()) QTimer::singleShot(25, [keep, end] { (*keep)(end); });
+            // ★★ 2026-10-05 真缺陷修复（血账：`--smoke` 里 0xC0000005 的**真因**就在这里）：
+            //   这条自续期链**必须绑在页的生命期上**。修前这里写的是
+            //   `QTimer::singleShot(25, [keep, end] { (*keep)(end); })` —— **没有 context 对象**，
+            //   于是它既不属于 dialog、也不属于 page，谁析构都拦不住它；而 `detect_batch`
+            //   捕获的是**裸 `this`**，下一跳里 `cached_mark(items[i])` 直接摸
+            //   `font_mark_cache_`（`std::map<QString,QString>`，页的成员）。
+            //   现场（门禁 [23] 实崩）：`FontPackPage` 夹具析构后链还在 25 ms 一跳地跑
+            //  ⇒ 下一个 `processEvents()` 里 `_Find_lower_bound` 解引用已释放的树节点
+            //  ⇒ 访问违例。实测栈（VEH + `/MAP` 符号化，与 WER 记录一致）：
+            //     `run_smoke` ← `make_font_picker 的 lambda_2` ← `FontPackPage::cached_mark`
+            //     ← `std::_Tree<...>::_Find_lower_bound` ← 崩在 `Qt6Core.dll+0x16B260`。
+            //   ★ 修法：把 `this`（**页**）交给 `singleShot` 当 context —— 页一析构，Qt 就把
+            //     这一跳取消，链**自然终止**（`keep` 那个 shared_ptr 随之释放）。
+            //     为什么不写 `QPointer` 自己判：context 对象是 Qt 给这件事的**原生机制**，
+            //     少一层手写判空，也不会漏掉"下一跳已经排上队但页刚死"的窗口。
+            //   ★ 反证锁：把 context 参数去掉（还原成修前那行）⇒ 门禁 [23] 外壳自检
+            //     以 3221225477（0xC0000005）退出。
+            if (auto keep = weak.lock()) QTimer::singleShot(25, this, [keep, end] { (*keep)(end); });
         }
     };
 

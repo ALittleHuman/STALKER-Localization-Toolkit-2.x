@@ -73,6 +73,29 @@ void ScrollViewport::set_min_body_height(int height) {
     sync_layout();
 }
 
+// ★★ 2026-10-05（#6）：自带滚动的画布 —— 见头文件的长注释（为什么 `VirtualList` 必须走这条）
+void ScrollViewport::set_self_scrolling_body(bool on) {
+    if (self_scrolling_ == on) {
+        sync_layout();
+        return;
+    }
+    self_scrolling_ = on;
+    if (on && !offset_connected_) {
+        offset_connected_ = true;
+        // 条子动 ⇒ **通知画布自己**（而不是本视口去挪它）。`vbar_` 是本组件自己造的（1.6）。
+        QObject::connect(vbar_, &QScrollBar::valueChanged, this, [this](int value) {
+            if (offset_delegate_) offset_delegate_(value);
+        });
+    }
+    sync_layout();
+}
+
+void ScrollViewport::set_offset_delegate(std::function<void(int)> fn) {
+    offset_delegate_ = std::move(fn);
+    // 立刻对齐一次：调用方通常"先挂委托、再喂内容"，这里保证第一次就有正确的偏移
+    if (self_scrolling_ && offset_delegate_) offset_delegate_(vbar_->value());
+}
+
 bool ScrollViewport::bar_shown(const QScrollBar* bar) {
     if (bar == nullptr) return false;
     // ① 不是显式隐藏（`isHidden()` = 自己或祖先被 hide）
@@ -116,12 +139,20 @@ void ScrollViewport::apply_fit() {
     // 两遍：条子的显隐会改变可用视口 ⇒ 先按"没有条子"算，需要条子再算一次（1.8 的精神）
     const auto compute = [&](int avail_w, int avail_h) {
         const QSize req = request_size();
-        if (fit_ == Fit::Content) {
+        if (self_scrolling_) {
+            // ★★ 2026-10-05（#6）：**自带滚动的画布**（`VirtualList`）——
+            //   画布高**必须**等于视口高：那个类拿 `height()` 当视口高算 `visible_range`，
+            //   撑到内容高就等于把虚拟化关掉；量程单独用 `scroll_h_`（＝页面声明的内容总高）。
+            body_h_ = avail_h;
+            scroll_h_ = std::max(min_body_height_, avail_h);
+        } else if (fit_ == Fit::Content) {
             // 3.2 `fit="content"`：内容高 = max(内容请求高, minsize_y, 视口高)
             body_h_ = std::max({req.height(), min_body_height_, avail_h});
+            scroll_h_ = body_h_;
         } else {
             // 3.2 `fit="viewport"`：内容高 = max(minsize_y, 视口高) —— **不掺**内容请求高
             body_h_ = std::max(min_body_height_, avail_h);
+            scroll_h_ = body_h_;
         }
         body_w_ = std::max(req.width(), avail_w);
     };
@@ -130,20 +161,21 @@ void ScrollViewport::apply_fit() {
     const auto avail_h = [&](bool need_h) { return std::max(0, height() - (need_h ? bar : 0)); };
 
     compute(std::max(0, width() - bar_w), std::max(0, height() - bar_h));
-    bool need_v = body_h_ > avail_h(false);
+    bool need_v = scroll_h_ > avail_h(false);
     bool need_h = body_w_ > avail_w(false);
     if (need_v || need_h) {
         compute(avail_w(need_v), avail_h(need_h));
-        need_v = body_h_ > avail_h(need_h);
+        need_v = scroll_h_ > avail_h(need_h);
         need_h = body_w_ > avail_w(need_v);
     }
     body_w_ = std::max(body_w_, avail_w(need_v));
-    body_h_ = std::max(body_h_, avail_h(need_h));
+    // ★ 自带滚动的画布**不许**被抬到 avail 之上（否则又回到"画布比视口高"那条错路上）
+    body_h_ = self_scrolling_ ? avail_h(need_h) : std::max(body_h_, avail_h(need_h));
 
     // 1.2：装得下就收起（滞回 >= 1.0）；否则必须看得见条
     need_v_ = need_v;
     need_h_ = need_h;
-    vbar_->setRange(0, need_v ? body_h_ - avail_h(need_h) : 0);
+    vbar_->setRange(0, need_v ? scroll_h_ - avail_h(need_h) : 0);
     vbar_->setPageStep(avail_h(need_h));
     vbar_->setSingleStep(px(24));
     hbar_->setRange(0, need_h ? body_w_ - avail_w(need_v) : 0);
@@ -170,8 +202,14 @@ void ScrollViewport::sync_layout() {
     const int view_w = std::max(0, width() - vw);
     const int view_h = std::max(0, height() - hh);
     if (body_ != nullptr) {
-        // 画布位置 = 负偏移（等价 Tk 里 canvas 的滑动）
-        body_->setGeometry(-hbar_->value(), -vbar_->value(), body_w_, body_h_);
+        if (self_scrolling_) {
+            // ★ 2026-10-05（#6）：**自带滚动的画布不许挪** —— 偏移由它自己按
+            //   `set_offset_delegate` 收到的值体现；几何＝视口（见 set_self_scrolling_body）。
+            body_->setGeometry(0, 0, view_w, view_h);
+        } else {
+            // 画布位置 = 负偏移（等价 Tk 里 canvas 的滑动）
+            body_->setGeometry(-hbar_->value(), -vbar_->value(), body_w_, body_h_);
+        }
     }
     vbar_->setGeometry(view_w, 0, vw, view_h);
     hbar_->setGeometry(0, view_h, view_w, hh);

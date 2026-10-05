@@ -18,6 +18,9 @@
 //   · 6.14 失败原因**随返回值走**（1.x 用模块级全局变量报错，并发任务互相覆盖）。
 
 #include "xrkit/engine/fs/db.h"
+// `EntryInfo`（右栏预览的条目表要和合并树**同一个类型** —— 免得两处各写一份同形结构）。
+// 方向是单向的（`overlay.*` 不 include 本文件），不会绕回来。
+#include "xrkit/engine/fs/overlay.h"
 
 #include <cstdint>
 #include <optional>
@@ -109,6 +112,18 @@ struct ExtractTreeResult {
     // `files_written + duplicate_records` ≈ 包内文件记录数。
     uint64_t duplicate_records = 0;
     uint64_t skipped_dirs = 0;                 // Listed 模式下按 1.x 跳过的目录项
+    // ★★ 2026-10-05（**落点覆盖必须可见**）：本次写盘**覆盖掉**的已存在文件（逐条）。
+    //
+    // 起因（用户报的真实事故）：解包到**默认落点**（＝来源所在目录）时，一次把 3.9 万个文件
+    // 盖在了模组目录上，而工具**一个字都没说**。用户口径不变（**不改默认落点** —— 默认落点就是
+    // 来源所在目录），但要满足**零静默红线**："任何改写都必须可见：逐条原因 + 计数"。
+    //   · `overwritten` ＝ 逐条路径（GUI/CLI 拿它去打"哪一条被盖了"）；
+    //   · `overwritten.size()` ＝ 计数（CLI 的 `overwritten=` 那一格）。
+    // ★ 判据落点：`overwritten_size()` —— 写回"不检测"（永远 0）即红（见 smoke / CLI 自检）。
+    // ★ 本项**不弹模态确认框**：那会改交互口径（用户没要），只做"看得见"。
+    std::vector<std::string> overwritten;
+    // 覆盖计数（`overwritten.size()` 的显式入口 —— 调用方不必自己 `.size()` 出下溢风险）。
+    size_t overwritten_size() const { return overwritten.size(); }
     // 本次**成功处理**的镜像内路径（含同落点的重复记录；统计口径看上面的 counts）。
     std::vector<std::string> written;          // 对拍/日志
     std::vector<ExtractTreeFailure> failures;  // 单项失败：只算这一项，不炸整批
@@ -187,5 +202,28 @@ struct UnpackTarget {
 std::vector<UnpackTarget> plan_unpack_targets(
     const std::string& out_root,
     const std::vector<std::pair<std::string, std::vector<std::string>>>& sources);
+
+// ── ★★ 2026-10-05：**解包产物预览**（右栏）的条目表 —— 与上面那套落点规则**同一份真值** ──
+//
+// 用户口径（2026-10-03，原话）：「**这是一个解包的工具，而右边罗列的是包的内容，换句话说
+// 就是解包产物的预览。**」⇒ 右栏每一条显示的路径，必须**恰好等于** `--unpack-package` /
+// GUI「解包」真正会把那个文件写到的**落点相对路径**。
+//
+// 为什么必须在引擎里（架构红线）：用户 2026-10-04 原话「**GUI 的功能，CLI 肯定要全部拥有啊。
+// 哪有 GUI 的细节功能比 CLI 还多的。**」—— 落点规则（`unpack_target_dir`）已经在引擎里，
+// 但"预览怎么拼出那条路径"如果写在外壳里，就又变成"同一条规则两个实现"（CLI 复现不了）。
+//
+// 规则（与 `extract_package` 的落盘顺序逐字对应：`safe_out_path(target, entry.path)`）：
+//   ① `unpack_target_dir(...)` 相对 `out_root` 那一段（＝包名壳；**不带壳时为空**）
+//      就是**前缀**；② 前缀非空 ⇒ 条目路径前面拼 `前缀 + '/'`。
+//   ★ 自带壳的包（`ai.db` 的条目已经是 `ai/…`）⇒ 前缀为空 ⇒ **条目路径原样**（不叠第二层）。
+//   ★ **目录项也补**：否则右栏的目录树缺中间层（`xr/a/b.txt` 的 `xr`、`xr/a` 建不出来）。
+//   ★ 签名里**没有输出根**（有意的）：`unpack_target_dir` 的返回相对根那一段只可能是
+//     "**空**" 或 "**壳**"（`resolve_output_root` 已经把根归一过了），所以预览与"解包到哪"
+//     无关 —— 也就不需要为了预览去回填/推算用户的"解包到"输入框（不留副作用）。
+//
+// 返回表的顺序：先是补出来的那批目录（祖先在前），再是 `entries` 原序。
+std::vector<EntryInfo> preview_entries_in_layout(const std::string& package_path,
+                                                 const std::vector<EntryInfo>& entries);
 
 }  // namespace xrkit::engine::fs
