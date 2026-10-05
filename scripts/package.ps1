@@ -199,6 +199,12 @@ try {
         $proc = Start-Process -FilePath (Join-Path $stage 'xrkit_app.exe') -ArgumentList '--smoke' `
             -NoNewWindow -Wait -PassThru -RedirectStandardOutput $log -RedirectStandardError $errLog
         $line = Select-String -Path $log -Pattern 'SHELL-SMOKE ok' | Select-Object -First 1
+        # ★★ 2026-10-05（本批 #8）：**包内自检要把插件数与名字打出来** —— 那一行由 smoke 自己发
+        #   （`SHELL-SMOKE note #8 包内插件：N 个 dll（<名字>）· 加载器 loaded=M · dir=…`）。
+        #   为什么不用"包内 CLI 跑 `--plugins`"：包里**只有 xrkit_app.exe**（发版规格 §1），
+        #   没有 CLI 可跑 ⇒ 上一版那条判据是**自相矛盾**的（开发版必被 throw，实测打包直接失败）。
+        #   改成读**包内 exe 自己**的那一行：它既数了目录，又给了**加载器**的真结论。
+        $pluginNote = Select-String -Path $log -Pattern '#8 包内插件：' | Select-Object -First 1
         if ($line -and $proc.ExitCode -eq 0) {
             Write-Host "  $($line.Line.Trim())  (exit=$($proc.ExitCode))"
             $smokeOk = $true
@@ -219,68 +225,41 @@ try {
 }
 if (-not $smokeOk) { throw "包内 exe 的离屏自检没通过（包可能缺 Qt 运行时）" }
 
-# ★★ 2026-10-05（本批 #8）：**包内插件自检** —— 打印**插件数与名字**（开发版非空即判据）。
-#   为什么必须打印：`plugins\` 非空只是"文件在那儿"，而"包里的 exe 真的能加载它"是另一回事
-#   （插件是 LoadLibrary 的动态库，缺依赖/ABI 不匹配都会加载失败）。所以用**包内**的 CLI
-#   跑 `--plugins` 那一份加载链路，把结果打出来；开发版要求 **loaded ≥ 1 且 errors == 0**。
-$cliExe = Join-Path $stage 'xrkit_cli.exe'
-if ((-not $isDev) -and (-not (Test-Path $cliExe))) {
-    Write-Host "  插件自检跳过：包内没有 xrkit_cli.exe（发行包只带 xrkit_app.exe）"
-} elseif (-not (Test-Path $cliExe)) {
-    # 开发版：CLI 是"能力全集"的载体，没有它就没法从包里验插件链路 —— 如实报出来
-    Write-Host "  !! 开发版插件自检跑不了：包内没有 xrkit_cli.exe（package.ps1 目前只拷 xrkit_app.exe）"
-    if ($isDev -and $copiedPlugins.Count -gt 0) {
-        throw ("开发版带插件 {0} 个，但包里没有 xrkit_cli.exe ⇒ 插件链路**没有被验过**" -f `
-            $copiedPlugins.Count)
-    }
-} else {
-    Write-Host "== 包内插件自检（CLI --plugins）=="
-    $prevEap2 = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $plog = Join-Path $stage 'plugins.log'
-        $perr = Join-Path $stage 'plugins.err.log'
-        $p = Start-Process -FilePath $cliExe -ArgumentList @('--plugins', (Join-Path $stage 'plugins'),
-                                                            '--version') `
-            -NoNewWindow -Wait -PassThru -RedirectStandardOutput $plog -RedirectStandardError $perr
-        $plines = @(Get-Content -LiteralPath $plog -ErrorAction SilentlyContinue)
-        $perrLines = @(Get-Content -LiteralPath $perr -ErrorAction SilentlyContinue)
-        $dlls = @(Get-ChildItem -LiteralPath (Join-Path $stage 'plugins') -Filter '*.dll' -File `
+# ★★ 2026-10-05（本批 #8）：**开发版包内带全部插件** —— 判据落在**包内自检那一行**上。
+#   口径（任务书 #8）：开发版把已构建插件（含测试插件）复制进包 `plugins\`；发行版仍为空
+#   （既定策略：NLC 解密插件不随包发布）。
+#   判据 = 开发版 `plugins\` **非空** + **包内自检打印插件数与名字**（`#8 包内插件：N 个 dll（…）
+#   · 启动时 loaded=M`），且 `N ≥ 1`、`M ≥ 1`、没有"插件加载失败"；发行版 `N == 0`。
+#   ★ 判红办法：把上面复制插件那一段删掉（⇒ N=0）⇒ 立刻红；把 smoke 里那一段 note 删掉
+#     （⇒ 找不到那一行）⇒ 也红。
+if ($null -eq $pluginNote) {
+    throw "包内自检没有打出「#8 包内插件：…」那一行（插件数与名字必须可见）"
+}
+$pluginText = $pluginNote.Line.Trim()
+$pluginCount = if ($pluginText -match '插件：(\d+)\s*个\s*dll') { [int]$Matches[1] } else { -1 }
+$pluginLoaded = if ($pluginText -match '启动时 loaded=(\d+)') { [int]$Matches[1] } else { -1 }
+$stagePlugins = @(Get-ChildItem -LiteralPath (Join-Path $stage 'plugins') -Filter '*.dll' -File `
                     -ErrorAction SilentlyContinue)
-        # `PLUGINS dir=<目录> errors=<N>` 那一行是加载台账（CLI 侧固定格式）
-        $head = $plines | Where-Object { $_ -match '^PLUGINS dir=' } | Select-Object -First 1
-        $warn = @($plines | Where-Object { $_ -match '^PLUGINS warn' })
-        $errCount = if ($head -match 'errors=(\d+)') { [int]$Matches[1] } else { -1 }
-        $names = ($dlls | ForEach-Object { $_.Name }) -join ', '
-        if ([string]::IsNullOrEmpty($names)) { $names = '(空)' }
-        Write-Host ("  包内 plugins\：{0} 个 dll：{1}" -f $dlls.Count, $names)
-        Write-Host ("  加载台账：{0}" -f ($(if ($head) { $head.Trim() } else { '(没有 PLUGINS dir= 行)' })))
-        foreach ($w in $warn) { Write-Host ("  " + $w.Trim()) }
-        if ($isDev) {
-            if ($dlls.Count -lt 1) {
-                throw "开发版的 plugins\ 是空的 —— 用户约定：开发版包内带全部插件（#8）"
-            }
-            if ($errCount -ne 0) {
-                throw ("开发版插件加载有失败（errors={0}）—— 见上面的 PLUGINS warn 行" -f $errCount)
-            }
-            Write-Host ("  插件自检通过：{0} 个 dll、加载 errors=0" -f $dlls.Count)
-        } else {
-            if ($dlls.Count -ne 0) {
-                throw ("发行版的 plugins\ 必须为空（既定策略：NLC 解密插件不随包发布），实测 {0} 个" -f `
-                    $dlls.Count)
-            }
-            Write-Host "  插件自检通过：发行版 plugins\ 为空（既定策略）"
-        }
-        if ($perrLines.Count -gt 0) {
-            Get-Content -LiteralPath $perr -Tail 5 -ErrorAction SilentlyContinue | ForEach-Object {
-                Write-Host ("  [stderr] " + $_)
-            }
-        }
-    } finally {
-        $ErrorActionPreference = $prevEap2
-        Remove-Item -Force (Join-Path $stage 'plugins.log'), (Join-Path $stage 'plugins.err.log') `
-            -ErrorAction SilentlyContinue
+Write-Host ("  包内 plugins\：{0} 个 dll：{1}" -f $stagePlugins.Count,
+    $(if ($stagePlugins.Count -gt 0) { ($stagePlugins | ForEach-Object { $_.Name }) -join ', ' }
+      else { '(空)' }))
+Write-Host ("  包内自检那一行：{0}" -f $pluginText)
+if ($isDev) {
+    if ($pluginCount -lt 1 -or $stagePlugins.Count -lt 1) {
+        throw ("开发版的 plugins\ 是空的（自检报 {0} 个 / 目录 {1} 个）—— 用户约定：开发版包内带全部插件（#8）" -f `
+            $pluginCount, $stagePlugins.Count)
     }
+    if ($pluginLoaded -lt 1) {
+        throw ("开发版包内插件**没有被加载器装上**（启动时 loaded={0}）—— 见包内自检的日志" -f $pluginLoaded)
+    }
+    Write-Host ("  插件自检通过：{0} 个 dll（自检与目录一致）、启动时 loaded={1}" -f $pluginCount,
+        $pluginLoaded)
+} else {
+    if ($pluginCount -ne 0 -or $stagePlugins.Count -ne 0) {
+        throw ("发行版的 plugins\ 必须为空（既定策略：NLC 解密插件不随包发布），实测自检 {0} / 目录 {1}" -f `
+            $pluginCount, $stagePlugins.Count)
+    }
+    Write-Host "  插件自检通过：发行版 plugins\ 为空（既定策略）"
 }
 
 # ★ 2026-09-28 用户口径（原话）：
