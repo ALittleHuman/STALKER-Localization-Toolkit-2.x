@@ -718,6 +718,89 @@ SmokeResult run_smoke() {
                   .arg(accent_strays.join(QStringLiteral(" / "))));
     }
 
+    // ④-b ★ 2026-10-06：**主题 / 界面大小要"记住上次的选择"**（用户原话：「主题和字体大小
+    //   目前并没有保留继承的功能（即下次开启又是默认的方案）」）。判据是"先证红再改绿"那种：
+    //   ① 改主题 ⇒ `user.ltx` 里 `[theme] mode` 变成新值 ⇒ **重新读回**（= 重启路径）拿到同一主题；
+    //   ② 界面大小档位同样；③ 另**预置一个别的键**（`[ffmpeg] path`），断言那次改动**只动了该动的键**。
+    //   ⚠ 这一段会真的写 `user.ltx` ⇒ 结束后**原样复原**（发行包会在包目录里跑 `--smoke`，
+    //     留一个 user.ltx 进去等于往包里塞用户设置）。
+    {
+        const QString ltx = QString::fromStdString(xrkit::core::user_ltx_path());
+        const bool ltx_existed = QFileInfo::exists(ltx);
+        QByteArray ltx_before;
+        if (ltx_existed) {
+            QFile before(ltx);
+            if (before.open(QIODevice::ReadOnly)) ltx_before = before.readAll();
+        }
+        // 预置一个**别的**段/键（"只动该动的键"那条判据的哨兵）
+        check(xrkit::core::save_user_value("ffmpeg", "path", "E:/sentinel/ffmpeg.exe"),
+              QStringLiteral("④-b 夹具：[ffmpeg] path 写进去了（哨兵键）"));
+
+        // ── 主题：改 ⇒ 落盘 ⇒ 读回 ──
+        QString problem;
+        hub.apply_theme_mode(xrkit::core::ThemeMode::Light, &problem);
+        const QString mode_raw =
+            QString::fromStdString(xrkit::core::load_user_value("theme", "mode", ""));
+        check(problem.isEmpty() && mode_raw == QStringLiteral("light"),
+              QStringLiteral("④-b 改主题 ⇒ user.ltx 的 [theme] mode=light（实得「%1」，problem=「%2」）")
+                  .arg(mode_raw, problem));
+        check(xrkit::core::load_theme_mode(xrkit::core::ThemeMode::Dark) ==
+                  xrkit::core::ThemeMode::Light,
+              QStringLiteral("④-b **重启路径**：load_theme_mode() 读回同一主题（light）"));
+        hub.apply_theme_mode(xrkit::core::ThemeMode::Dark, &problem);
+        check(problem.isEmpty() &&
+                  QString::fromStdString(xrkit::core::load_user_value("theme", "mode", "")) ==
+                      QStringLiteral("dark") &&
+                  xrkit::core::load_theme_mode(xrkit::core::ThemeMode::Light) ==
+                      xrkit::core::ThemeMode::Dark,
+              QStringLiteral("④-b 来回切一次，读回也跟着变（dark）"));
+
+        // ── 界面大小档位：改 ⇒ 落盘 ⇒ 读回（取值集合与默认值都不许变）──
+        const auto& choices = xrkit::shell::ui_size_choices();
+        check(choices.size() == 4 && choices.front().scale == 0.9 && choices.back().scale == 1.2,
+              QStringLiteral("④-b 界面大小档位仍是 4 档 0.9/1.0/1.1/1.2（不许被这次改动挪动）"));
+        const double want_scale = 1.1;
+        hub.apply_ui_size(want_scale, &problem);
+        const QString scale_raw =
+            QString::fromStdString(xrkit::core::load_user_value("theme", "scale", ""));
+        check(problem.isEmpty() && scale_raw == QStringLiteral("1.1"),
+              QStringLiteral("④-b 改界面大小 ⇒ user.ltx 的 [theme] scale=1.1（实得「%1」，problem=「%2」）")
+                  .arg(scale_raw, problem));
+        check(xrkit::core::load_ui_scale() == want_scale,
+              QStringLiteral("④-b **重启路径**：load_ui_scale() 读回 1.1（实得 %1）")
+                  .arg(xrkit::core::load_ui_scale()));
+        check(qAbs(xrkit::core::ui_scale() - want_scale) < 1e-9,
+              QStringLiteral("④-b 档位也真的生效在 core::ui_scale()（实得 %1）")
+                  .arg(xrkit::core::ui_scale()));
+
+        // ── 只动该动的键：哨兵键与 [font] 段必须原样还在 ──
+        check(QString::fromStdString(xrkit::core::load_user_value("ffmpeg", "path", "")) ==
+                  QStringLiteral("E:/sentinel/ffmpeg.exe"),
+              QStringLiteral("④-b 写主题/档位**没有动** [ffmpeg] path（只动该动的键）"));
+        // 主题与档位都写在**同一个** [theme] 段里，但互相不许踩
+        hub.apply_theme_mode(xrkit::core::ThemeMode::Light, &problem);
+        check(QString::fromStdString(xrkit::core::load_user_value("theme", "scale", "")) ==
+                  QStringLiteral("1.1"),
+              QStringLiteral("④-b 只改主题时 [theme] scale 不被抹掉"));
+        hub.apply_ui_size(0.9, &problem);
+        check(QString::fromStdString(xrkit::core::load_user_value("theme", "mode", "")) ==
+                  QStringLiteral("light"),
+              QStringLiteral("④-b 只改档位时 [theme] mode 不被抹掉"));
+
+        // 收到默认态（自检不留状态：后面的用例仍按"没有偏好"跑）
+        hub.apply_theme_mode(xrkit::core::ThemeMode::Dark, &problem);
+        hub.apply_ui_size(1.0, &problem);
+        if (ltx_existed) {
+            QFile restore(ltx);
+            if (restore.open(QIODevice::WriteOnly | QIODevice::Truncate)) restore.write(ltx_before);
+        } else {
+            QFile::remove(ltx);
+        }
+        check(QFileInfo::exists(ltx) == ltx_existed &&
+                  (!ltx_existed || QFile(ltx).size() == ltx_before.size()),
+              QStringLiteral("④-b 自检把 user.ltx 还原（存在=%1）").arg(ltx_existed ? 1 : 0));
+    }
+
     // ⑤ HiDPI：外壳里所有硬编码尺寸都要过 px()
     xrkit::core::set_ui_scale(1.0);
     check(px(24) == 24, QStringLiteral("px(24) @1.0 = 24"));

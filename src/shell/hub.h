@@ -9,6 +9,7 @@
 #include <QMainWindow>
 #include <QString>
 
+#include "xrkit/core/theme.h"
 #include "xrkit/engine/plugin/registry.h"
 
 #include <vector>
@@ -106,6 +107,13 @@ public:
 
     // ⑫12.4：加载插件并把注册期问题显示出来（构造末尾调一次；空目录＝没有插件）
     void load_plugins(const QString& plugin_dir);
+
+    // ★ 2026-10-06：视图菜单的「暗色/亮色主题」与「界面大小」——**改动立即写盘**
+    //   （用户原话：「主题和字体大小目前并没有保留继承的功能」⇒ 下次启动要回默认）。
+    //   口径：`apply` + `core::save_*` 同一个入口，**保证"看到的"与"记下的"不可能不同**；
+    //   写失败**零静默**（`problem` 非空 + 落一行日志），界面照常切换（不回滚）。
+    void apply_theme_mode(xrkit::core::ThemeMode mode, QString* problem = nullptr);
+    void apply_ui_size(double scale, QString* problem = nullptr);
 
 private:
     QTabBar* page_tabs_ = nullptr;

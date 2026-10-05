@@ -136,9 +136,7 @@ int main(int argc, char** argv) {
 
     if (smoke) {
         // 主题先按 user.ltx 的偏好铺上（读不到就用默认暗色）
-        const std::string saved = xrkit::core::load_user_value("theme", "mode", "");
-        xrkit::core::ThemeMode mode = xrkit::core::ThemeMode::Dark;
-        if (!saved.empty()) xrkit::core::theme_mode_from_name(saved, mode);
+        const xrkit::core::ThemeMode mode = xrkit::core::load_theme_mode();
         xrkit::shell::apply_theme(app, mode);
 
         const xrkit::shell::SmokeResult result = xrkit::shell::run_smoke();
@@ -157,9 +155,7 @@ int main(int argc, char** argv) {
         return result.failed == 0 ? 0 : 1;
     }
 
-    const std::string saved = xrkit::core::load_user_value("theme", "mode", "");
-    xrkit::core::ThemeMode mode = xrkit::core::ThemeMode::Dark;
-    if (!saved.empty()) xrkit::core::theme_mode_from_name(saved, mode);
+    const xrkit::core::ThemeMode mode = xrkit::core::load_theme_mode();
     xrkit::shell::apply_theme(app, mode);
 
     // ★ 屏幕自适应（用户 2026-09-27："2.5K 屏…做一个自适应，所有屏幕都能正常用"）：
@@ -167,6 +163,14 @@ int main(int argc, char** argv) {
     //      因为字体与几何都在构造时用 px() 换算）；
     //   ② 再按屏幕可用区给窗口一个合适的默认尺寸（小屏不溢出、大屏不缩成一小块）。
     xrkit::shell::apply_screen_ui_scale();
+    // ★★ 2026-10-06：**用户上次选的「界面大小」压过屏幕自适应那一步** ——
+    //   用户原话「主题和字体大小目前并没有保留继承的功能（即下次开启又是默认的方案）」。
+    //   顺序有意如此：先让自适应给出"没有偏好时"的基准（并吃掉 DPI 检测的副作用），
+    //   再在有偏好时覆盖它 ⇒ 两者都不会互相污染，且**不许**改动档位取值范围。
+    {
+        const double saved_scale = xrkit::core::load_ui_scale();
+        if (saved_scale > 0.0) xrkit::core::set_ui_scale(saved_scale);
+    }
 
     xrkit::shell::Hub hub;
     xrkit::shell::apply_dark_titlebar(&hub, mode);

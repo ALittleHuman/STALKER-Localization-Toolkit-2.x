@@ -290,6 +290,43 @@ bool save_user_value(const std::string& section, const std::string& key,
     return save_user_values(section, {{key, value}});
 }
 
+// ── 用户偏好：主题 / 界面大小（键名与读写形态见 core/theme.h 的说明）──
+
+ThemeMode load_theme_mode(ThemeMode fallback) {
+    const std::string raw = load_user_value(kPrefSection, kPrefModeKey, "");
+    ThemeMode mode = fallback;
+    if (theme_mode_from_name(raw, mode)) return mode;
+    return fallback;   // 缺键/垃圾值 ⇒ 默认（口径：**不改默认值**）
+}
+
+bool save_theme_mode(ThemeMode mode) {
+    return save_user_value(kPrefSection, kPrefModeKey, theme_mode_name(mode));
+}
+
+double load_ui_scale(double fallback) {
+    const std::string raw = trim(load_user_value(kPrefSection, kPrefScaleKey, ""));
+    if (raw.empty()) return fallback;
+    // 只认十进制浮点（`strtod` 的 `end` 必须走到串尾 ⇒ "1.1abc" 不算）
+    char* end = nullptr;
+    const double value = std::strtod(raw.c_str(), &end);
+    if (end == nullptr || *end != '\0') return fallback;
+    if (!(value > 0.0)) return fallback;
+    return value;
+}
+
+bool save_ui_scale(double scale) {
+    if (!(scale > 0.0)) return false;
+    // 十进制、最多 4 位小数、去掉尾随 0（`1.1` 而不是 `1.1000`）—— 只影响可读性
+    std::string text = std::to_string(scale);
+    const size_t dot = text.find('.');
+    if (dot != std::string::npos) {
+        while (!text.empty() && text.back() == '0') text.pop_back();
+        if (!text.empty() && text.back() == '.') text.pop_back();
+    }
+    if (text.empty()) text = "1";
+    return save_user_value(kPrefSection, kPrefScaleKey, text);
+}
+
 std::string to_windows_newlines(const std::string& text) {
     std::string out;
     out.reserve(text.size() + text.size() / 16 + 8);

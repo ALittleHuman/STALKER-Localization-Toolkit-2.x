@@ -82,6 +82,33 @@ bool save_user_values(const std::string& section,
 bool save_user_value(const std::string& section, const std::string& key,
                      const std::string& value);
 
+// ── 用户偏好：主题模式 / 界面大小档位（2026-10-06 用户）─────────────────
+// 用户原话：「主题和字体大小**目前并没有保留继承的功能**（即下次开启又是默认的方案）」
+//   （说的是 2.x 视图菜单里的「暗色/亮色主题」与「界面大小」两项）。
+//
+// ★ 落点与形态**照抄**已在用的那份惯例（`[font] path` 的字体选择器路径）：
+//   `user.ltx` 的 `[theme]` 段 + `read → 改一项 → 整体写回、保留其它段`。
+//   · `mode`  = "dark" / "light"（1.x `toolkit_theme.load_user_theme/save_user_theme` 的**同一个**键）
+//   · `scale` = 十进制倍率（如 `1.1`），十进制点号，与 1.x INI 里写浮点的写法一致
+// ★ 取值范围与默认值**不变**：`scale` 的合法集合由外壳的 `ui_size_choices()` 决定
+//   （`core` 不依赖 Qt/外壳 ⇒ 这里只做"能解析成 >0 的十进制数"这一层过滤，
+//   越界/垃圾值一律当作"用户没选过"⇒ 回落屏幕自适应，**不发明新的默认值**）。
+// ★ 读失败/键不存在都返回 fallback（不抛）；写失败返回 false —— 调用方**必须**把它说出来。
+// ★ 每次只写**改的那一项**（`save_user_value` 单键），不整块覆盖别的键。
+inline constexpr const char* kPrefSection = "theme";        // 段名与 1.x 的 [theme] 相同
+inline constexpr const char* kPrefModeKey = "mode";         // 1.x `save_user_theme` 用的键
+inline constexpr const char* kPrefScaleKey = "scale";       // 界面大小档位（2.x 新增的项）
+
+// 读回上次的主题：缺失/垃圾值 ⇒ `fallback`（默认暗色），**不抛**。
+ThemeMode load_theme_mode(ThemeMode fallback = ThemeMode::Dark);
+// 写主题。返回 false = 写盘失败（调用方要可见地报出来）。
+bool save_theme_mode(ThemeMode mode);
+
+// 读回上次的界面大小倍率：缺失/无法解析/非正数 ⇒ `fallback`（0.0 = 没有偏好）。
+double load_ui_scale(double fallback = 0.0);
+// 写界面大小倍率（十进制、最多 4 位小数，去掉尾随 0）。false = 写盘失败。
+bool save_ui_scale(double scale);
+
 // Python 文本模式（`open(..., "w")`）在 Windows 的换行翻译：**每一个** `\n` → `\r\n`。
 std::string to_windows_newlines(const std::string& text);
 

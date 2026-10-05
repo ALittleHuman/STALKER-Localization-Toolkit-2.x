@@ -242,29 +242,65 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
             QAction* act = size_menu->addAction(label);
             const double scale = item.scale;
             connect(act, &QAction::triggered, this, [this, scale, label] {
-                xrkit::shell::apply_ui_size(*qApp, scale);
-                log_line(QStringLiteral("界面大小已切到「%1」（缩放 %2×）").arg(label).arg(scale));
+                // ★ 2026-10-06：改动**立即写盘**（用户：'字体大小没有保留继承的功能'）。
+                //   写失败**零静默**：`apply_ui_size` 返回后 `problem` 非空 ⇒ 状态栏 + 日志都要说出来。
+                QString problem;
+                apply_ui_size(scale, &problem);
+                log_line(problem.isEmpty()
+                             ? QStringLiteral("界面大小已切到「%1」（缩放 %2×，已记住）")
+                                   .arg(label)
+                                   .arg(scale)
+                             : QStringLiteral("界面大小已切到「%1」（缩放 %2×），但%3")
+                                   .arg(label)
+                                   .arg(scale)
+                                   .arg(problem));
+                if (!problem.isEmpty() && status_label_ != nullptr) {
+                    status_label_->setText(problem);
+                }
             });
         }
     }
-    QObject::connect(dark, &QAction::triggered, this, [this] {
-        qApp->setProperty("xrkit_theme", "dark");
-        apply_theme(*qApp, xrkit::core::ThemeMode::Dark);
-        apply_dark_titlebar(this, xrkit::core::ThemeMode::Dark);
-        log_line(QStringLiteral("已切到暗色主题"));
-    });
-    QObject::connect(light, &QAction::triggered, this, [this] {
-        qApp->setProperty("xrkit_theme", "light");
-        apply_theme(*qApp, xrkit::core::ThemeMode::Light);
-        apply_dark_titlebar(this, xrkit::core::ThemeMode::Light);
-        log_line(QStringLiteral("已切到亮色主题"));
-    });
+    QObject::connect(dark, &QAction::triggered, this, [this] { apply_theme_mode(xrkit::core::ThemeMode::Dark); });
+    QObject::connect(light, &QAction::triggered, this, [this] { apply_theme_mode(xrkit::core::ThemeMode::Light); });
 
     log_line(QStringLiteral("Hub 就绪：%1 个内置页").arg(kBuiltinPageCount));
     load_plugins(plugin_dir);
 }
 
 int Hub::page_count() const { return stack_ == nullptr ? 0 : stack_->count(); }
+
+void Hub::apply_theme_mode(xrkit::core::ThemeMode mode, QString* problem) {
+    if (problem != nullptr) problem->clear();
+    // ① 先落地在界面上（与改动前逐字一致：属性 + 主题 + 标题栏）
+    qApp->setProperty("xrkit_theme",
+                      QString::fromUtf8(xrkit::core::theme_mode_name(mode)));
+    apply_theme(*qApp, mode);
+    apply_dark_titlebar(this, mode);
+    // ② 再记住（写 user.ltx 的 [theme] mode；**只动这一个键**）
+    if (!xrkit::core::save_theme_mode(mode)) {
+        if (problem != nullptr) {
+            *problem = QStringLiteral("写不进 user.ltx 的 [theme] mode —— 下次启动会回到上次记住的主题");
+        }
+        log_line(QStringLiteral("警告: 无法写入 user.ltx，下次启动需重新选择主题"));
+        return;
+    }
+    log_line(mode == xrkit::core::ThemeMode::Light ? QStringLiteral("已切到亮色主题（已记住）")
+                                                   : QStringLiteral("已切到暗色主题（已记住）"));
+}
+
+void Hub::apply_ui_size(double scale, QString* problem) {
+    if (problem != nullptr) problem->clear();
+    // ① 立即生效（控件尺寸 + 字体 + 重套样式表；模式从属性里读）
+    xrkit::shell::apply_ui_size(*qApp, scale);
+    // ② 再记住（写 user.ltx 的 [theme] scale；**只动这一个键**）
+    if (!xrkit::core::save_ui_scale(scale)) {
+        if (problem != nullptr) {
+            *problem = QStringLiteral("写不进 user.ltx 的 [theme] scale —— 下次启动会回到屏幕自适应的档位");
+        }
+        log_line(QStringLiteral("警告: 无法写入 user.ltx，下次启动需重新调整界面大小"));
+        return;
+    }
+}
 
 Hub::~Hub() {
     // 引擎读入口的活动注册表钩子只有**指针**：本对象一死，`registry_` 也跟着死。
