@@ -634,7 +634,12 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
 
     // ── 任务壳（13.1/13.2）：解包/封包在**后台线程**跑，界面不冻（1.x TaskRunner 同族；
     //    2.x 的 convert/text 页也是这么接的 —— 用户要的「方便」里包含「大包不卡界面」）。
-    task_ = new TaskShell(this);
+    // ★★ 2026-10-06（② 用户拍板）：「封包和字库的取消，在这里本质是完全没有的，故直接删除即可。」
+    //   ⇒ 本页按 `CancelButton::No` 造任务壳：**连取消按钮都不创建**。
+    //   事实依据：封包是一次原子写（`write_file_atomic`），硬停只会留下半个包；解包也没法
+    //   在一份包的中途停干净 ⇒ 这颗按钮在本页"本质是完全没有的"（用户口径）。
+    //   其余三页（编码转换 / 文本提取 / XML 校对）的取消照旧保留。
+    task_ = new TaskShell(this, TaskShell::CancelButton::No);
     task_->set_idle_status(QStringLiteral("就绪"));
     task_->set_message_handler([this](const QString& text) { log_message(text); });
     body_layout()->addWidget(task_->panel(), 0);
@@ -717,6 +722,8 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     QObject::connect(package_list_, &QWidget::customContextMenuRequested, this,
                      [this](const QPoint& pos) {
                          QMenu menu(this);
+                         // ★★ 2026-10-06（①）：记下**真右键路径**上弹出的这个菜单（自检要看到它）
+                         last_package_context_menu_ = &menu;
                          QAction* act_load = menu.addAction(QStringLiteral("加载选中"));
                          QAction* act_unload = menu.addAction(QStringLiteral("取消加载"));
                          menu.addSeparator();
@@ -724,8 +731,15 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
                          menu.addSeparator();
                          QAction* act_remove = menu.addAction(QStringLiteral("移除选中"));
                          QAction* act_clear = menu.addAction(QStringLiteral("清空"));
+                         // ★★ 2026-10-06（①）：`context` 槽 —— 插件注册的右键命令追加在
+                         //   **原有项之后**（「原有项 → 分隔符 → 插件项」，1.x
+                         //   `attach_plugin_context_menu` / `PLUGINS.md` §3.3）。
+                         //   context **每次弹菜单现算**（`plugin_context()`）⇒ `when` 不是
+                         //   构造时冻结的死条件（1.x `fs_app.py:314-349` 同口径）。
+                         append_plugin_context_items(&menu, plugin_context());
                          QAction* chosen =
                              menu.exec(package_list_->viewport()->mapToGlobal(pos));
+                         last_package_context_menu_ = nullptr;
                          if (chosen == nullptr) return;
                          if (chosen == act_load) load_selected();
                          else if (chosen == act_unload) unload_selected();
@@ -781,6 +795,16 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
 }
 
 QString FsPage::package_dialog_filter() { return QString::fromUtf8(kPackageDialogFilter); }
+
+// ★★ 2026-10-06（①）：右键菜单（`context` 槽）的插件 context —— 照 1.x `fs_app.py:339`
+// 传的就是 `{"loaded": bool(self.loaded)}`（"有没有已加载的包"），每次弹菜单现算。
+// C ABI 的 `when` 值是字符串（见 `abi.h` 的 `stk_when`）⇒ 这里写 `"1"` / `"0"`：
+// 插件侧 `when={"loaded": "1"}` 就是 1.x 的 `{"loaded": True}`。
+plugin::Context FsPage::plugin_context() const {
+    plugin::Context context;
+    context["loaded"] = std::string(loaded_source_count() > 0 ? "1" : "0");
+    return context;
+}
 
 void FsPage::fill_format_combo() {    format_combo_->clear();
     for (const efs::FsFormatItem& item : efs::fs_formats()) {
@@ -1456,25 +1480,15 @@ std::vector<FsPage::UnpackJob> FsPage::plan_unpack(bool checked_only, QString* o
 }
 
 QString FsPage::run_unpack_jobs(const std::vector<UnpackJob>& jobs, const ProgressSink& progress,
-                                const MessageSink& message,
-                                const std::function<bool()>& should_stop) {
+                                const MessageSink& message) {
     // **纯执行**：不读任何控件、不写任何界面（任务壳的 worker 与自检共用这一条）
+    // ★★ 2026-10-06（② 用户拍板）：**解包不再有取消** —— 用户原话「封包和字库的取消，
+    //   在这里本质是完全没有的，故直接删除即可。」修前这里在**包边界**轮询取消位并提前
+    //   返回"已取消：在包边界停下…"；那段（连同任务壳的取消按钮）整块删掉了。
     int written = 0;
     int failed = 0;
     QStringList per_package;
     for (size_t i = 0; i < jobs.size(); ++i) {
-        // ★ 2026-10-06（①）：**包边界**轮询取消 —— 停下来时已解完的包都是完整的，
-        //   并如实报出"已解 N 个包 / 共 M 个、已写 K 个文件"（绝不报成"解包完成"）。
-        if (should_stop && should_stop()) {
-            const QString why =
-                QStringLiteral("已取消：在包边界停下（已解 %1 / 共 %2 个包，已写出 %3 个文件，失败 %4）")
-                    .arg(static_cast<int>(i))
-                    .arg(static_cast<int>(jobs.size()))
-                    .arg(written)
-                    .arg(failed);
-            if (message) message(why.toUtf8().toStdString());
-            return why;
-        }
         const efs::ExtractTreeResult result = FsPage::extract_job(jobs[i]);
         written += static_cast<int>(result.files_written);
         failed += static_cast<int>(result.failures.size());
@@ -1509,11 +1523,7 @@ void FsPage::start_unpack(bool checked_only) {
     log_message(QStringLiteral("%1：%2 个包 → %3").arg(title).arg(static_cast<int>(jobs.size())).arg(root));
     if (task_ == nullptr || !task_->run(title, [this, jobs](const ProgressSink& progress,
                                                              const MessageSink& message) {
-            // ①：取消谓词 = 本页任务壳的取消位
-            const auto should_stop = [this]() {
-                return task_ != nullptr && task_->cancel_requested();
-            };
-            run_unpack_jobs(jobs, progress, message, should_stop);
+            run_unpack_jobs(jobs, progress, message);
         })) {
         log_message(QStringLiteral("有任务在跑，稍后再试"));
     }
@@ -2120,21 +2130,15 @@ FsPage::PackJob FsPage::plan_pack(bool* ok, QString* why) {
 }
 
 QString FsPage::run_pack_job(const PackJob& job, const ProgressSink& progress,
-                             const MessageSink& message,
-                             const std::function<bool()>& should_stop) {
+                             const MessageSink& message) {
     // **纯执行**（工作线程里不碰控件）：sqfs ⇒ pack_squashfs；其余 ⇒ pack_db + 原子写
+    // ★★ 2026-10-06（② 用户拍板）：**封包不再有取消** —— 用户原话「封包和字库的取消，
+    //   在这里本质是完全没有的，故直接删除即可。」修前这里有一段"开始之前"的空转取消
+    //   （`should_stop()` ⇒ 直接返回"已取消：封包尚未开始"）；整块删掉了。
     const auto say = [&message](const QString& text) {
         if (message) message(text.toUtf8().toStdString());
     };
     if (progress) progress(0);
-    // ★ 2026-10-06（①）：封包是**一次原子写**（`write_file_atomic`）——开始在写之后
-    //   硬停会留下半个包。所以取消**只在开始之前**生效；开始之后请求取消 ⇒ 如实说明
-    //   "本步骤不可中断"（零静默：不许假装停了，也不许把能停的说成不能停）。
-    if (should_stop && should_stop()) {
-        const QString why = QStringLiteral("已取消：封包尚未开始（一个字节都没写）");
-        say(why);
-        return why;
-    }
     if (efs::format_key_is_sqfs(job.key)) {
         std::vector<efs::PackItem> items;
         items.reserve(job.items.size());
@@ -2232,12 +2236,7 @@ void FsPage::start_pack() {
     if (task_ == nullptr || !task_->run(QStringLiteral("封包"),
                                         [this, job](const ProgressSink& progress,
                                                     const MessageSink& message) {
-                                            // ①：取消谓词 = 本页任务壳的取消位
-                                            const auto should_stop = [this]() {
-                                                return task_ != nullptr &&
-                                                       task_->cancel_requested();
-                                            };
-                                            run_pack_job(job, progress, message, should_stop);
+                                            run_pack_job(job, progress, message);
                                         })) {
         log_message(QStringLiteral("有任务在跑，稍后再试"));
     }

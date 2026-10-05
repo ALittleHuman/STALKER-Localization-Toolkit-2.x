@@ -28,6 +28,7 @@
 #include "virtual_list.h"
 
 #include <QApplication>
+#include <QAction>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QColor>
@@ -46,6 +47,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
@@ -63,6 +65,7 @@
 #include <QStringList>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QTimer>
 
 #if defined(_WIN32)
 // 末尾「⑬ 版本资源」那一组要读**本进程 exe 的真实资源字节**（VERSIONINFO）。
@@ -1448,6 +1451,34 @@ SmokeResult run_smoke() {
                       plain_shell.cancel_requests() == 0,
                   QStringLiteral("① 取消：没点取消时取消位恒为假（反向锁）"));
         }
+    }
+
+    // ★★ 2026-10-06（②，用户拍板）**封包与字库的「取消」整块删除**
+    //   用户原话：「**封包和字库的取消，在这里本质是完全没有的，故直接删除即可。**」
+    //   口径：这两页**连按钮对象都不许存在**（藏起来/置灰/点不动的"取消"仍是假的取消）；
+    //        其余三页（编码转换 / 文本提取 / XML 校对）共用任务壳的那颗取消**照旧保留**。
+    //   反向锁的形态：删掉 `CancelButton::No` 的参数（＝按钮又回来了）⇒ 立刻红。
+    {
+        FsPage fs;
+        FontPackPage fontpack;
+        ConvertPage convert;
+        TextPage text;
+        XmlPage xml;
+        check(fs.task() != nullptr && fs.task()->cancel_button() == nullptr,
+              QStringLiteral("② 取消：文件系统页（封包/解包）不许有取消按钮（实得 %1）")
+                  .arg(fs.task() != nullptr && fs.task()->cancel_button() != nullptr ? 1 : 0));
+        check(fontpack.task() != nullptr && fontpack.task()->cancel_button() == nullptr,
+              QStringLiteral("② 取消：汉化包生成页（字库）不许有取消按钮（实得 %1）")
+                  .arg(fontpack.task() != nullptr && fontpack.task()->cancel_button() != nullptr
+                           ? 1
+                           : 0));
+        check(convert.task() != nullptr && convert.task()->cancel_button() != nullptr &&
+                  convert.task()->cancel_button()->text() == QStringLiteral("取消"),
+              QStringLiteral("② 取消：编码转换页的取消**保留**（共用任务壳那颗）"));
+        check(text.task() != nullptr && text.task()->cancel_button() != nullptr,
+              QStringLiteral("② 取消：文本提取页的取消**保留**"));
+        check(xml.task() != nullptr && xml.task()->cancel_button() != nullptr,
+              QStringLiteral("② 取消：XML 校对页的取消**保留**"));
     }
 
     // ⑩ 虚拟化列表（M2-5）：对照表 10.2 的范围规则 + 10.3 的同族原则（只对视口内行取文本）。
@@ -4445,6 +4476,110 @@ SmokeResult run_smoke() {
         hub.render_plugin_slots();
         check(hub.page_count() == builtin + 1 && hub.plugin_pages_added() == 1,
               QStringLiteral("⑫12.1 重渲染把插件页装了两遍（pages=%1）").arg(hub.page_count()));
+        QDir(empty).removeRecursively();
+    }
+
+    // ★★ 2026-10-06（① 用户拍板「**插件的架构Bug，那必须修啊。**」）：两类槽位的**消费端**
+    //   修前（本块就是它的锁）：
+    //     · `context`（右键菜单）槽**根本没渲染** —— 全 2.x 源码搜 `"context"` 只命中自检断言，
+    //       插件注册的右键命令哪儿都不出现；
+    //     · `option_entry` 的下拉虽然建出来了（`hub.cpp` 把它塞进操作栏），但指针只在
+    //       `render_plugin_slots` 的**局部 QHash** 里 ⇒ 插件加的下拉条目"只显示、不生效"
+    //       （页面读不到它的值）。
+    //   锁的形态（两处都能判红）：
+    //     ① 页面侧 `plugin_option_value(area)` 必须返回插件条目的当前值 —— 拆掉 Hub 的
+    //        `set_plugin_option_combo` 登记就红；
+    //     ② 包列表**真右键路径**（`customContextMenuRequested`）弹出的那个菜单里必须有插件命令、
+    //        且**点它真的调回插件**（走既有 `CommandReg`/`Registry::invoke`，没有新 ABI）；
+    //        `when={"loaded":"1"}` 在没加载任何包时**不许**出现（＝`when` 按当前状态**重算**，
+    //        不是构造时冻结的死条件）。
+    {
+        namespace plug = xrkit::plugin;
+        const QString empty = QDir::temp().filePath(QStringLiteral("xrkit_smoke_slots_ctx"));
+        QDir(empty).removeRecursively();
+        QDir().mkpath(empty);
+        Hub hub(nullptr, empty);
+        // 静态：`stk_command_fn` 是**裸函数指针**（不能捕获局部变量）⇒ 次数只能记在静态上
+        static int ctx_clicks = 0;
+        ctx_clicks = 0;
+        plug::PluginApiAdapter adapter(hub.registry(), "slots_ctx.dll", nullptr);
+        const auto on_ctx = +[](void*) { ++ctx_clicks; };
+        // when={"loaded": "1"}（C ABI 的 when 值是字符串；1.x 写的是 True，见 abi.h 的 stk_when）
+        const char* when_keys[] = {"loaded"};
+        const char* when_values[] = {"1"};
+        stk_when when;
+        when.keys = when_keys;
+        when.values = when_values;
+        when.count = 1;
+        when.fn = nullptr;
+        when.user = nullptr;
+        const char* cid = adapter.api().register_command(adapter.api().host, "ctx_action",
+                                                         "插件右键动作", on_ctx, nullptr, &when);
+        check(cid != nullptr, QStringLiteral("① context：插件命令注册失败"));
+        check(adapter.api().register_menu_item(adapter.api().host, "fs", "context", cid, 0) == 1,
+              QStringLiteral("① context：fs 的 context 挂载点注册失败"));
+        check(adapter.api().register_option_entry(adapter.api().host, "fs", "top_bar", "插件下拉值",
+                                                  nullptr) == 1,
+              QStringLiteral("① option_entry：下拉条目注册失败"));
+        hub.render_plugin_slots();
+
+        FsPage* fs = nullptr;
+        for (int i = 0; i < hub.page_count(); ++i) {
+            if (auto* candidate = dynamic_cast<FsPage*>(hub.page_at(i))) fs = candidate;
+        }
+        check(fs != nullptr, QStringLiteral("① 找不到 fs 页（Hub 没造出来？）"));
+        if (fs != nullptr) {
+            // ①-a **页面侧的取值入口**：插件下拉的"当前值"页面读得到（修前恒为空串）
+            const QString value = fs->plugin_option_value(QStringLiteral("top_bar"));
+            check(value == QStringLiteral("插件下拉值"),
+                  QStringLiteral("① option_entry：页面读不到插件下拉的值（实得「%1」）").arg(value));
+            // 反向：没登记过的 area 必须读成空 —— 证明这不是"恒定返回某个值"的假入口
+            check(fs->plugin_option_value(QStringLiteral("nope")).isEmpty(),
+                  QStringLiteral("① option_entry：不存在的 area 必须读成空"));
+
+            // ①-b context：**没加载任何包**（loaded=0）⇒ when 不满足 ⇒ 菜单里一条插件项都没有
+            QMenu denied(fs);
+            const int added_denied = fs->append_plugin_context_items(&denied, fs->plugin_context());
+            check(added_denied == 0 && denied.actions().isEmpty(),
+                  QStringLiteral("① context：loaded=0 时不许出现插件项（实得 %1 条 / 菜单 %2 项）")
+                      .arg(added_denied)
+                      .arg(denied.actions().size()));
+
+            // 加载一个源 ⇒ loaded=1 ⇒ when 满足 ⇒ 出现，且**点它真的调回插件**
+            fs->add_source(QStringLiteral("xrkit_smoke_ctx.db"), {});
+            check(fs->loaded_source_count() == 1,
+                  QStringLiteral("① context：夹具没把包加载起来（loaded=%1）")
+                      .arg(fs->loaded_source_count()));
+            QMenu allowed(fs);
+            const int added_allowed = fs->append_plugin_context_items(&allowed, fs->plugin_context());
+            QAction* plugin_action = nullptr;
+            for (QAction* act : allowed.actions()) {
+                if (act->text() == QStringLiteral("插件右键动作")) plugin_action = act;
+            }
+            check(added_allowed == 1 && plugin_action != nullptr,
+                  QStringLiteral("① context：loaded=1 时插件命令必须出现在菜单里（实得 %1 条）")
+                      .arg(added_allowed));
+            if (plugin_action != nullptr) plugin_action->trigger();
+            check(ctx_clicks == 1,
+                  QStringLiteral("① context：点菜单项必须把命令**回传插件**（既有 CommandReg/invoke；"
+                                 "实测调用 %1 次）")
+                      .arg(ctx_clicks));
+
+            // ①-c **真右键路径**：`customContextMenuRequested` 弹出的那个菜单里也得有它
+            //   （证明页面的右键处理器**真的调了** `append_plugin_context_items`；
+            //    只测基类方法的话，"页面根本没接线"这种漏法测不出来）。
+            QStringList seen;
+            QTimer::singleShot(0, [&seen, fs]() {
+                QMenu* shown = fs->last_package_context_menu();
+                if (shown == nullptr) return;
+                for (QAction* act : shown->actions()) seen << act->text();
+                shown->close();   // 让 `menu.exec()` 的嵌套事件循环退出来（自检不许卡住）
+            });
+            emit fs->package_list()->customContextMenuRequested(QPoint(4, 4));
+            check(seen.contains(QStringLiteral("插件右键动作")),
+                  QStringLiteral("① context：真右键路径的菜单里没有插件命令（实得 [%1]）")
+                      .arg(seen.join(QStringLiteral("/"))));
+        }
         QDir(empty).removeRecursively();
     }
 

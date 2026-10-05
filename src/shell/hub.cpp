@@ -28,7 +28,6 @@
 #include <QPushButton>
 #include <QStringConverter>
 #include <QTextStream>
-#include <QHash>
 #include <QComboBox>
 #include <QPlainTextEdit>
 #include <QStackedWidget>
@@ -127,6 +126,10 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
         QWidget* page = create_page(i);
         if (auto* as_page = dynamic_cast<PageBase*>(page)) {
             as_page->set_subtitle(QString::fromUtf8(kBuiltinPages[i].subtitle));
+            // ★★ 2026-10-06（①）：**每一页**都要拿到注册表 —— `context`（右键菜单）与
+            //   `option_entry`（下拉取值）都是"页面侧的消费端"，只有 fs/xml 拿表的话，
+            //   其余四页的右键槽/下拉条目照样是"注册了却没人读"。
+            as_page->set_plugin_registry(&registry_);
         }
         stack_->addWidget(page != nullptr ? page : make_placeholder(kBuiltinPages[i]));
         if (auto* fs_page = dynamic_cast<FsPage*>(page)) {
@@ -351,7 +354,9 @@ bool Hub::export_log(QString* out_path, QString* error) {
 
 void Hub::render_plugin_slots() {
     // ⑫12.1：注册表里的每一类槽位都要**真的出现在界面上**（用户 2026-09-26 决策"补六类"）。
-    // 本函数覆盖五类：工具栏菜单项 / 新建下拉 / 下拉条目 / 面板 / Hub 插件页
+    // 本函数覆盖六类：工具栏菜单项 / 新建下拉 / 下拉条目 / 面板 / Hub 插件页 / **右键菜单
+    //（context —— 2026-10-06 ① 补齐；它的渲染端在**页面**里：`PageBase::append_plugin_context_items`
+    //   由各页在弹右键菜单时调用，Hub 只负责把注册表注入下去，见构造函数）**。
     //（decryptor 走 fs 页闸门，format 六格式仍内置、可选）。
     // **幂等**：重渲染先把上一轮的插件页摘掉，避免"点两次按钮装两遍"。
     for (QWidget* widget : plugin_pages_) {
@@ -392,18 +397,26 @@ void Hub::render_plugin_slots() {
 
         // ② 新建下拉（option）+ ③ 下拉条目（option_entry）：都落在页面的操作栏里。
         //    条目按 area 塞进"该 area 的下拉"；没有就为该 area 现建一个（与 1.x 一致）。
-        QHash<QString, QComboBox*> combos;
+        // ★★ 2026-10-06（①）：area → 下拉 的登记**从局部 QHash 挪到页面自己身上**
+        //    （`PageBase::set_plugin_option_combo`）。修前那张 QHash 是**局部变量**，
+        //    函数一返回指针就没人拿着 ⇒ 插件加的下拉条目"只显示、不生效"（页面读不到它的值）；
+        //    挪到页面之后，页面侧的取值入口就是 `plugin_option_value(area)`。
+        page->clear_plugin_option_combos();   // 重渲染：先摘掉上一轮的登记（幂等）
         for (const plugin::OptionReg* option : registry_.options_for(host)) {
-            auto* combo = new QComboBox(page);
-            combo->setObjectName(QStringLiteral("plugin_option_") +
-                                 QString::fromStdString(option->label));
+            const QString area = QString::fromStdString(option->area);
+            QComboBox* combo = page->plugin_option_combo(area);
+            if (combo == nullptr) {
+                combo = new QComboBox(page);
+                combo->setObjectName(QStringLiteral("plugin_option_") +
+                                     QString::fromStdString(option->label));
+                if (page->action_bar()->layout() != nullptr) {
+                    page->action_bar()->layout()->addWidget(combo);
+                }
+                page->set_plugin_option_combo(area, combo);
+            }
             for (const std::string& choice : option->choices) {
                 combo->addItem(QString::fromStdString(choice));
             }
-            if (page->action_bar()->layout() != nullptr) {
-                page->action_bar()->layout()->addWidget(combo);
-            }
-            combos.insert(QString::fromStdString(option->area), combo);
             ++plugin_slots_rendered_;
             log_line(QStringLiteral("插件槽位：%1 → 下拉 %2（%3）")
                          .arg(QString::fromStdString(host))
@@ -414,14 +427,14 @@ void Hub::render_plugin_slots() {
             if (entry.host != host) continue;
             if (!plugin::when_ok(entry.when, plugin::Context{})) continue;
             const QString area = QString::fromStdString(entry.area);
-            QComboBox* combo = combos.value(area, nullptr);
+            QComboBox* combo = page->plugin_option_combo(area);
             if (combo == nullptr) {
                 combo = new QComboBox(page);  // 该 area 没有下拉 ⇒ 现建一个（与 1.x 一致）
                 combo->setObjectName(QStringLiteral("plugin_area_") + area);
                 if (page->action_bar()->layout() != nullptr) {
                     page->action_bar()->layout()->addWidget(combo);
                 }
-                combos.insert(area, combo);
+                page->set_plugin_option_combo(area, combo);
             }
             combo->addItem(QString::fromStdString(entry.value));
             ++plugin_slots_rendered_;

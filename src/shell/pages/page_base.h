@@ -19,11 +19,16 @@
 //   · 窗口压到 `page_min_h()` 时操作栏**必须还在**（不能被内容挤没）。
 // 两条都在自检里量，不靠"看着对"。
 
+#include "xrkit/engine/plugin/registry.h"
+
+#include <QHash>
 #include <QString>
 #include <QWidget>
 
+class QComboBox;
 class QHBoxLayout;
 class QLabel;
+class QMenu;
 class QPushButton;
 class QVBoxLayout;
 
@@ -77,6 +82,35 @@ public:
     DropZones& drop_zones() { return drop_zones_; }
     const DropZones& drop_zones() const { return drop_zones_; }
 
+    // ── ★★ 2026-10-06（① 用户拍板「插件的架构Bug，那必须修啊。」）插件槽位在页面侧的入口 ──
+    // 两类能力的"消费端"都必须落在**页面**上，否则插件注册的东西只是画出来了、没人读：
+    //   · `context`（右键菜单）——页面把插件命令追加进**自己那张表的右键菜单**；
+    //   · `option_entry`（下拉条目）——页面要能**读到**插件下拉的当前值。
+    // 注册表由 Hub 造页时注入（同一份 `Hub::registry_`，页面只借用、不持有所有权）。
+    void set_plugin_registry(plugin::Registry* registry) { plugin_registry_ = registry; }
+    plugin::Registry* plugin_registry() const { return plugin_registry_; }
+
+    // ⑫12.1 `context` 槽：把插件注册在这页（`page_id`）的右键命令追加到 menu 末尾，
+    // 顺序照 1.x `attach_plugin_context_menu` / `PLUGINS.md` §3.3：**「原有项 → 分隔符 → 插件项」**。
+    //   · 返回追加了几条；**一条都没有时连分隔符都不加**（1.x「无注册即无痕迹」，
+    //     绝不吞掉控件原有的右键行为）；
+    //   · `context` 由**页面**给（例：fs 页的 `{"loaded": "1"|"0"}`）⇒ 菜单每次弹出都现算，
+    //     所以 `when` 不是"构造时冻结的死条件"（1.x `fs_app.py:314-349` 同口径）；
+    //   · 菜单项点击⇒ `Registry::invoke(plugin, label, handler)`：**命令回传走既有
+    //     `CommandReg`/契约**，ABI 一个字都没加。
+    int append_plugin_context_items(QMenu* menu, const plugin::Context& context);
+
+    // ⑫12.1 `option_entry` 值回流：Hub 为某页渲染出来的插件下拉（`register_option` 新建的、
+    // 或某个 area 现建的）都**登记到页面**上（area → 控件）；页面侧的取值入口就是下面三个。
+    // 修前的事实：`hub.cpp` 建完 QComboBox 就把指针放在**局部 QHash** 里，函数一返回就没了
+    // ⇒ 插件加的下拉条目"只显示不生效"（页面拿不到它的值）。
+    void set_plugin_option_combo(const QString& area, QComboBox* combo);
+    QComboBox* plugin_option_combo(const QString& area) const;
+    // 该 area 插件下拉的**当前值**（空串 = 这页没有该 area 的插件下拉）
+    QString plugin_option_value(const QString& area) const;
+    // Hub 重渲染前清登记（重渲染要幂等：上一轮的控件已不可达，登记不许留着）
+    void clear_plugin_option_combos() { plugin_option_combos_.clear(); }
+
     // ② 点页面空白 ⇒ 把输入框焦点收回页面（用户真机："点空白并不能取消，还是一闪一闪"）
     bool eventFilter(QObject* watched, QEvent* event) override;
 
@@ -86,6 +120,9 @@ protected:
 
 private:
     std::function<void(const QString&)> log_sink_;   // ★ Hub 接进来的日志口（见 set_log_sink）
+    // ★★ 2026-10-06（①）：插件槽位在页面侧的两样东西（见上面的说明）
+    plugin::Registry* plugin_registry_ = nullptr;          // Hub 注入（借用，不持有）
+    QHash<QString, QComboBox*> plugin_option_combos_;      // area → 插件下拉（取值入口）
     QString page_id_;
     QString title_;
     QVBoxLayout* outer_ = nullptr;

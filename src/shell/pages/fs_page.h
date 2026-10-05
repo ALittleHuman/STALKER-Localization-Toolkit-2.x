@@ -35,6 +35,7 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
+class QMenu;
 class QPushButton;
 
 class QSplitter;
@@ -217,18 +218,27 @@ public:
         std::vector<engine::fs::PackFileItem> items;
     };
     std::vector<UnpackJob> plan_unpack(bool checked_only, QString* out_root);
-    // ①（取消）：两个执行入口都收一个"该停了吗"的谓词（默认空 = 旧行为逐值相同）；
-    // 停在**包边界**（解包）/ **封包前**（封包），并把"停在哪、已写出多少"如实返回。
+    // ★★ 2026-10-06（② 用户拍板）**封包与解包的取消整块删除** ——
+    //   用户原话：「**封包和字库的取消，在这里本质是完全没有的，故直接删除即可。**」
+    //   ⇒ 执行入口**不再收"该停了吗"谓词**（封包是一次原子写、硬停会留半个包；解包也不再
+    //     在包边界停）；本页的任务壳按 `TaskShell::CancelButton::No` 造 ⇒ **连取消按钮都没有**。
     static QString run_unpack_jobs(const std::vector<UnpackJob>& jobs,
-                                   const ProgressSink& progress, const MessageSink& message,
-                                   const std::function<bool()>& should_stop = {});
+                                   const ProgressSink& progress, const MessageSink& message);
     PackJob plan_pack(bool* ok, QString* why);
     static QString run_pack_job(const PackJob& job, const ProgressSink& progress,
-                                const MessageSink& message,
-                                const std::function<bool()>& should_stop = {});
+                                const MessageSink& message);
     void start_unpack(bool checked_only);   // 按钮：计划（主线程）+ task_->run
     void start_pack();
     TaskShell* task() const { return task_; }
+
+    // ── ★★ 2026-10-06（①）：`context`（右键菜单）槽 ──────────────────────────
+    // 包列表右键菜单 = 本页的"主内容控件右键菜单"（1.x `fs_app.py:299-312` 就是挂在
+    // `db_ctree` 上，即"db 树"）。插件命令由基类的 `append_plugin_context_items` 追加在
+    // **原有项之后**（「原有项 → 分隔符 → 插件项」）。
+    // 自检：**真右键路径**上弹出的那个菜单（只在 `menu.exec()` 期间非空）
+    QMenu* last_package_context_menu() const { return last_package_context_menu_; }
+    // 右键菜单的插件 context（1.x `fs_app.py:338-339`：`{"loaded": bool(self.loaded)}`）
+    plugin::Context plugin_context() const;
 
     QPushButton* select_all_button() const { return select_all_button_; }
     QPushButton* check_all_button() const { return check_all_button_; }
@@ -379,6 +389,8 @@ private:
     QListWidget* pack_list_ = nullptr;
     QPushButton* pack_button_ = nullptr;
     QLabel* pack_count_label_ = nullptr;
+    // ★ 2026-10-06（①）：真右键路径上弹出的那个菜单（`menu.exec()` 期间有效）
+    QMenu* last_package_context_menu_ = nullptr;
     std::vector<engine::fs::PackFileItem> pack_items_;
     bool rebuilding_package_list_ = false;   // 重建包列表时抑制 itemChanged 回灌
     FileDropFilter* drop_filter_ = nullptr;

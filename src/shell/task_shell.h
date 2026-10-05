@@ -35,7 +35,16 @@ class TaskShell : public QObject {
     Q_OBJECT
 
 public:
-    explicit TaskShell(QWidget* parent = nullptr);
+    // ★★ 2026-10-06（② 用户拍板）**谁能有「取消」**：
+    //   用户原话：「**封包和字库的取消，在这里本质是完全没有的，故直接删除即可。**」
+    //   ⇒ 文件系统页（封包/解包）与汉化包生成页**不再创建这颗按钮**（`CancelButton::No`）；
+    //     其余三页（编码转换 / 文本提取 / XML 校对）照旧共用这一颗（默认 `Yes`）。
+    //   为什么是"造不造按钮"而不是"藏起来/置灰"：藏起来或置灰的取消**仍是假的取消**
+    //   （用户要的就是"整块删除"）；`cancel_ == nullptr` 之后，本类里所有
+    //   `if (cancel_ != nullptr)` 分支自然什么都不做，那两页也**没有**取消位可点。
+    enum class CancelButton { Yes, No };
+
+    explicit TaskShell(QWidget* parent = nullptr, CancelButton cancel = CancelButton::Yes);
     ~TaskShell() override;
 
     QWidget* panel() const { return panel_; }

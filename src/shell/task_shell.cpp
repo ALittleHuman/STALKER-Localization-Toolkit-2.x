@@ -14,7 +14,7 @@
 
 namespace xrkit::shell {
 
-TaskShell::TaskShell(QWidget* parent) : QObject(parent) {
+TaskShell::TaskShell(QWidget* parent, CancelButton cancel) : QObject(parent) {
     panel_ = new QWidget(parent);
     // ★ 2026-10-05：给它一个 objectName，好让 QSS **只把这一处**置成透明 —— 它是"字段行"
     //   之外的另一个裸容器现场（用户截图图二"缺了一块"），自己不涂底、底交给所在卡片。
@@ -28,21 +28,27 @@ TaskShell::TaskShell(QWidget* parent) : QObject(parent) {
     bar_->setTextVisible(true);
     status_ = new QLabel(panel_);
     status_->setObjectName(QStringLiteral("task_status"));
-    cancel_ = new QPushButton(QStringLiteral("取消"), panel_);
-    cancel_->setEnabled(false);
-    cancel_->setObjectName(QStringLiteral("task_cancel"));
-    // ★★ 2026-10-06（①）：**这颗按钮以前是死的** —— 全文件只有三处 `setEnabled`，
-    //   没有一处 `connect` ⇒ 六页的「取消」都是摆设。这里就是那条缺失的接线。
-    //   （静默锁：`tests/run_ci.py` 的 shell-smoke 静态锁要求本文件必须出现
-    //    `connect(cancel_` —— 拆掉它立刻就红。）
-    QObject::connect(cancel_, &QPushButton::clicked, this, [this] {
-        // ★ D2 批：页面级确认（只有编码转换页装它）。返回 false ⇒ **什么都不发生**：
-        //   不置位、不留痕、按钮保持可点 —— 1.x 的 `askyesno` 就是这个语义。
-        if (cancel_confirm_ && !cancel_confirm_()) return;
-        request_cancel(QStringLiteral("已取消：用户点了「取消」"));
-    });
     row->addWidget(bar_, 1);
-    row->addWidget(cancel_);
+    // ★★ 2026-10-06（② 用户拍板）：`CancelButton::No`（文件系统页 / 汉化包生成页）
+    //   ⇒ **连控件都不造** —— 不是隐藏、不是置灰（那两种都还是"假的取消"）。
+    //   事实（改动前）：这两页共用任务壳那颗「取消」，而封包是一次原子写、字库打包+写盘
+    //   也不可中途停 ⇒ 用户口径「**本质是完全没有的，故直接删除即可**」。
+    if (cancel == CancelButton::Yes) {
+        cancel_ = new QPushButton(QStringLiteral("取消"), panel_);
+        cancel_->setEnabled(false);
+        cancel_->setObjectName(QStringLiteral("task_cancel"));
+        // ★★ 2026-10-06（①）：**这颗按钮以前是死的** —— 全文件只有三处 `setEnabled`，
+        //   没有一处 `connect` ⇒ 六页的「取消」都是摆设。这里就是那条缺失的接线。
+        //   （静默锁：`tests/run_ci.py` 的 shell-smoke 静态锁要求本文件必须出现
+        //    `connect(cancel_` —— 拆掉它立刻就红。）
+        QObject::connect(cancel_, &QPushButton::clicked, this, [this] {
+            // ★ D2 批：页面级确认（只有编码转换页装它）。返回 false ⇒ **什么都不发生**：
+            //   不置位、不留痕、按钮保持可点 —— 1.x 的 `askyesno` 就是这个语义。
+            if (cancel_confirm_ && !cancel_confirm_()) return;
+            request_cancel(QStringLiteral("已取消：用户点了「取消」"));
+        });
+        row->addWidget(cancel_);
+    }
     layout->addLayout(row);
     layout->addWidget(status_);
     status_text_ = idle_status_;

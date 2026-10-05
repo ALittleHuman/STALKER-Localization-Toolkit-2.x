@@ -283,7 +283,10 @@ int main(int argc, char** argv) {
                 //   （历史命名）⇒ 只按页 id 取前缀会**一条都量不到**这页的控件。这里显式
                 //   补上这个别名（纯诊断用；影响不了任何产品行为）。
                 if (name.startsWith(prefix) || name.startsWith(QStringLiteral("page_")) ||
-                    name.startsWith(QStringLiteral("font_")) || name == QStringLiteral("card")) {
+                    name.startsWith(QStringLiteral("font_")) ||
+                    // ★ 2026-10-06（②）：任务壳面板也是这页的控件（`task_panel`/`task_status`）——
+                    //   取消按钮删掉之后，这一页的 `task_cancel` **不该再被量到**（判据用数字说）。
+                    name.startsWith(QStringLiteral("task_")) || name == QStringLiteral("card")) {
                     dump("child", child);
                 }
             }

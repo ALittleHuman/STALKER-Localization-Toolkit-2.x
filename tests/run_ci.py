@@ -1181,12 +1181,16 @@ def step_shell_smoke(release: bool) -> None:
         return
     ok("静态锁自证：注释不算违规、活代码必被拦")
 
-    # ★★ 2026-10-06（D1 ①）：**「取消」不是死按钮** —— 两层静态锁。
+    # ★★ 2026-10-06（D1 ① → 同日 ② 用户拍板后收窄）：**「取消」不是死按钮** —— 三层静态锁。
     #   事实（改动前）：`task_shell.cpp` 里只有三处 `cancel_->setEnabled(...)`、
     #   **一处 `connect` 都没有** ⇒ 六页共用任务壳的那颗「取消」点了什么都不发生。
-    #   ① 任务壳自己必须把按钮接起来（拆掉那行 ⇒ 立刻红）；
-    #   ② 每个用 `task_->run(...)` 的页面都必须在 worker 里轮询 `cancel_requested()`
-    #      （「接线在」不等于「各页真停」—— 只有壳接线而 worker 不轮询，按钮照样是摆设）。
+    #   ① 任务壳自己必须把按钮接起来（拆掉那行 ⇒ 立刻红）—— 它仍服务**保留下来的三页**；
+    #   ② **保留取消的三页**必须在 worker 里轮询 `cancel_requested()`
+    #      （「接线在」不等于「各页真停」—— 只有壳接线而 worker 不轮询，按钮照样是摆设）；
+    #   ③ **删除取消的两页**（用户 2026-10-06 原话：「**封包和字库的取消，在这里本质是完全
+    #      没有的，故直接删除即可。**」）走**反向锁**：不许再有 `cancel_requested` 轮询，
+    #      且任务壳必须按 `CancelButton::No` 造 —— 谁把取消接线加回来就立刻红。
+    #   每页必须**明确归类**（将来新加的页漏归类也红，不许默认放行）。
     shell_src = ROOT / "src" / "shell" / "task_shell.cpp"
     code = active_code(shell_src.read_text(encoding="utf-8", errors="replace"))
     if "connect(cancel_" not in code:
@@ -1195,18 +1199,38 @@ def step_shell_smoke(release: bool) -> None:
         return
     ok("取消接线（①：task_shell.cpp 里 `connect(cancel_` 在位）")
 
-    offenders = []
+    KEEP_CANCEL = ("convert_page.cpp", "text_page.cpp", "xml_page.cpp")
+    DROP_CANCEL = ("fs_page.cpp", "fontpack_page.cpp")
+    keep_offenders, drop_offenders, unclassified = [], [], []
     for src in sorted((ROOT / "src" / "shell" / "pages").rglob("*.cpp")):
         code = active_code(src.read_text(encoding="utf-8", errors="replace"))
         if "task_->run(" not in code:
             continue
-        if "cancel_requested()" not in code:
-            offenders.append(str(src.relative_to(ROOT)))
-    if offenders:
+        name = src.name
+        if name in KEEP_CANCEL:
+            if "cancel_requested()" not in code:
+                keep_offenders.append(name)
+        elif name in DROP_CANCEL:
+            if "cancel_requested()" in code:
+                drop_offenders.append(name + "（还有 cancel_requested 轮询）")
+            if "CancelButton::No" not in code:
+                drop_offenders.append(name + "（没有按 CancelButton::No 造壳）")
+        else:
+            unclassified.append(name)
+    if keep_offenders:
         fail("取消轮询（①）：%s 起了任务壳却**不轮询取消位** —— 那颗按钮在它这一页仍是死的"
-             % "、".join(offenders))
+             % "、".join(keep_offenders))
         return
-    ok("取消轮询（①：每个用 task_->run 的页面都轮询 cancel_requested()）")
+    if drop_offenders:
+        fail("取消删除（②：用户拍板「封包和字库的取消…直接删除即可」）：%s —— "
+             "这两页（文件系统 / 汉化包生成）不许再有取消接线，任务壳必须按 CancelButton::No 造"
+             % "、".join(drop_offenders))
+        return
+    if unclassified:
+        fail("取消归类（①/②）：%s 用了 task_->run 但没归到「保留取消」或「删除取消」那一组 —— "
+             "新页必须显式归类（默认放行=又一个死按钮）" % "、".join(unclassified))
+        return
+    ok("取消归属明确（①：convert/text/xml 轮询取消位；②：fs/fontpack 无取消接线 + CancelButton::No）")
 
     # ★★ 2026-10-06（D2 批）：**"同类东西只维护一套组件"**的五条静态锁。
     #

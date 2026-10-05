@@ -89,7 +89,8 @@ STALKER 汉化工具集 2.0.0（xrkit）
       唯一的写盘位置是用户设置 user.ltx，删除它即恢复默认）。
 插件：plugins\ 为空目录。需要插件时把 <name>.dll 放进去，重启程序；
       插件加载失败不会阻塞启动，问题会显示在启动后的日志栏里。
-自带：ffmpeg.exe / ffprobe.exe（视频页不填路径也能直接用）+ download_ffmpeg.py（缺件时重下）。
+自带：ffmpeg.exe / ffprobe.exe（视频页不填路径也能直接用；ffprobe 沿用 1.x 自带那份，
+      实测可用，不为它做版本守卫）+ download_ffmpeg.py（缺件时重下）。
 不含：NLC 解密插件、实验性引擎补丁。
 自检：命令行跑 `xrkit_app.exe --smoke`（离屏，ASCII 输出）可核对包是否完整。
 "@ | Set-Content -LiteralPath (Join-Path $stage 'README.txt') -Encoding UTF8

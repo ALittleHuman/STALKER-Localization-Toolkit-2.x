@@ -9,6 +9,9 @@
 #include <QHBoxLayout>
 #include <QFrame>
 #include <QLabel>
+#include <QAction>
+#include <QComboBox>
+#include <QMenu>
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -134,6 +137,50 @@ QPushButton* PageBase::add_action(const QString& text) {
 bool PageBase::minsize_ok() const {
     return viewport_ != nullptr && viewport_->min_body_height() == page_min_h() &&
            viewport_->min_body_height() > 0;
+}
+
+// ── ★★ 2026-10-06（①）：插件槽位在页面侧的消费端（context / option_entry）──────────
+// 为什么放在基类：Hub 的 `render_plugin_slots` 只认识 `PageBase`（六页 + 插件页共用一个循环），
+// 而"右键菜单里得有插件的命令""页面得读得到插件下拉的值"必须是**每页都能做**的事 ——
+// 放基类就是一份实现，放各页就是六份（那正是 1.x 最贵的一类返工）。
+
+int PageBase::append_plugin_context_items(QMenu* menu, const plugin::Context& context) {
+    if (menu == nullptr || plugin_registry_ == nullptr) return 0;
+    // 12.4：精确匹配 (host, location="context")，`when` 用**当次**的 context 判定
+    const std::vector<const plugin::CommandReg*> items =
+        plugin_registry_->menu_items_for(page_id_.toStdString(), "context", context);
+    if (items.empty()) return 0;   // 1.x「无注册即无痕迹」：连分隔符都不加
+    if (!menu->actions().isEmpty()) menu->addSeparator();
+    int added = 0;
+    for (const plugin::CommandReg* command : items) {
+        if (command == nullptr) continue;
+        const std::string plugin = command->plugin;
+        const std::string label = command->label;
+        const plugin::CommandHandler handler = command->handler;
+        QAction* action = menu->addAction(QString::fromStdString(label));
+        action->setObjectName(QStringLiteral("plugin_ctx_") +
+                              QString::fromStdString(command->id));
+        // 与 toolbar 槽同一条通道：⑫12.9 的 `Registry::invoke`（插件回调抛异常记进
+        // registration_errors，绝不冒到 Qt 事件循环里）。
+        QObject::connect(action, &QAction::triggered, this, [this, plugin, label, handler] {
+            if (plugin_registry_ != nullptr) plugin_registry_->invoke(plugin, label, handler);
+        });
+        ++added;
+    }
+    return added;
+}
+
+void PageBase::set_plugin_option_combo(const QString& area, QComboBox* combo) {
+    plugin_option_combos_.insert(area, combo);
+}
+
+QComboBox* PageBase::plugin_option_combo(const QString& area) const {
+    return plugin_option_combos_.value(area, nullptr);
+}
+
+QString PageBase::plugin_option_value(const QString& area) const {
+    QComboBox* combo = plugin_option_combos_.value(area, nullptr);
+    return combo != nullptr ? combo->currentText() : QString();
 }
 
 }  // namespace xrkit::shell
