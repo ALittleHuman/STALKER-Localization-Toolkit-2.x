@@ -141,11 +141,13 @@ const char* PluginApiAdapter::on_command(stk_host* host, const char* action_id, 
 int PluginApiAdapter::on_menu_item(stk_host* host, const char* host_name, const char* location,
                                    const char* command_id, int order) {
     PluginApiAdapter* self_ptr = self(host);
-    if (self_ptr == nullptr || host_name == nullptr || location == nullptr ||
-        command_id == nullptr) {
-        return 0;
-    }
-    return self_ptr->registry_.register_menu_item(self_ptr->plugin_name_, host_name, location,
+    if (self_ptr == nullptr || host_name == nullptr || command_id == nullptr) return 0;
+    // ★★ 2026-10-06（①）：**1.x 口径的默认槽位** —— `toolkit_plugins.py:361` 的签名是
+    //   `register_menu_item(..., location="context", ...)`，即"不写 location ⇒ 右键菜单槽"。
+    //   C ABI 里"不写"就是 **NULL** ⇒ 落到同一个默认值；修前 NULL 会被 `_bad_slot` 当成
+    //   非法槽位**拒掉**（照 1.x 写的插件在这里就失效了，而 C 里传 NULL 是很自然的事）。
+    const std::string loc = (location != nullptr) ? location : "context";
+    return self_ptr->registry_.register_menu_item(self_ptr->plugin_name_, host_name, loc,
                                                   command_id, order)
                ? 1
                : 0;

@@ -4579,6 +4579,27 @@ SmokeResult run_smoke() {
             check(seen.contains(QStringLiteral("插件右键动作")),
                   QStringLiteral("① context：真右键路径的菜单里没有插件命令（实得 [%1]）")
                       .arg(seen.join(QStringLiteral("/"))));
+
+            // ①-d 1.x 口径的**默认槽位**：`location` 留空（C ABI 里 NULL）＝ `"context"`
+            //   （`toolkit_plugins.py:361` 的 `location="context"`）。修前 NULL 被当非法槽位拒掉。
+            const char* cid2 = adapter.api().register_command(adapter.api().host, "ctx_default",
+                                                              "插件右键动作2", on_ctx, nullptr,
+                                                              nullptr);
+            check(cid2 != nullptr &&
+                      adapter.api().register_menu_item(adapter.api().host, "fs", nullptr, cid2, 1) ==
+                          1,
+                  QStringLiteral("① context：`location` 留空必须落到 1.x 的默认值 context"));
+            QMenu defaults(fs);
+            const int added_defaults =
+                fs->append_plugin_context_items(&defaults, fs->plugin_context());
+            bool second_ok = false;
+            for (QAction* act : defaults.actions()) {
+                if (act->text() == QStringLiteral("插件右键动作2")) second_ok = true;
+            }
+            check(added_defaults == 2 && second_ok,
+                  QStringLiteral("① context：默认槽位的命令也要在菜单里（实得 %1 条 / 第 2 条 %2）")
+                      .arg(added_defaults)
+                      .arg(second_ok ? 1 : 0));
         }
         QDir(empty).removeRecursively();
     }

@@ -129,6 +129,8 @@ typedef struct stk_api {
     /* ④ 挂载点 */ int (*register_menu_item)(stk_host*, const char* host_name,
                                              const char* location, const char* command_id,
                                              int order);
+    /*   └ `location` 传 **NULL ⇒ 落到 1.x 的默认值 `"context"`**（右键菜单槽；
+     *      `toolkit_plugins.py:361` 的 `location="context"`）。 */
     /* ⑤ 下拉条目 */ int (*register_option_entry)(stk_host*, const char* host_name,
                                                   const char* area, const char* value,
                                                   const stk_when* when);
