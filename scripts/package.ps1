@@ -229,7 +229,9 @@ if (-not $smokeOk) { throw "包内 exe 的离屏自检没通过（包可能缺 Q
 #   口径（任务书 #8）：开发版把已构建插件（含测试插件）复制进包 `plugins\`；发行版仍为空
 #   （既定策略：NLC 解密插件不随包发布）。
 #   判据 = 开发版 `plugins\` **非空** + **包内自检打印插件数与名字**（`#8 包内插件：N 个 dll（…）
-#   · 启动时 loaded=M`），且 `N ≥ 1`、`M ≥ 1`、没有"插件加载失败"；发行版 `N == 0`。
+#   · Hub 启动装载 errors=M`），且 `N >= 1`、`M == 0`（加载失败会以 RegistrationError 的形式
+#   出现在 `Hub::plugin_errors()` 里 —— 实测 `not_a_plugin.dll` 那种就是 LoadLibrary 失败）；
+#   发行版 `N == 0`。
 #   ★ 判红办法：把上面复制插件那一段删掉（⇒ N=0）⇒ 立刻红；把 smoke 里那一段 note 删掉
 #     （⇒ 找不到那一行）⇒ 也红。
 if ($null -eq $pluginNote) {
@@ -237,7 +239,7 @@ if ($null -eq $pluginNote) {
 }
 $pluginText = $pluginNote.Line.Trim()
 $pluginCount = if ($pluginText -match '插件：(\d+)\s*个\s*dll') { [int]$Matches[1] } else { -1 }
-$pluginLoaded = if ($pluginText -match '启动时 loaded=(\d+)') { [int]$Matches[1] } else { -1 }
+$pluginLoaded = if ($pluginText -match 'errors=(\d+)') { [int]$Matches[1] } else { -1 }
 $stagePlugins = @(Get-ChildItem -LiteralPath (Join-Path $stage 'plugins') -Filter '*.dll' -File `
                     -ErrorAction SilentlyContinue)
 Write-Host ("  包内 plugins\：{0} 个 dll：{1}" -f $stagePlugins.Count,
@@ -249,11 +251,10 @@ if ($isDev) {
         throw ("开发版的 plugins\ 是空的（自检报 {0} 个 / 目录 {1} 个）—— 用户约定：开发版包内带全部插件（#8）" -f `
             $pluginCount, $stagePlugins.Count)
     }
-    if ($pluginLoaded -lt 1) {
-        throw ("开发版包内插件**没有被加载器装上**（启动时 loaded={0}）—— 见包内自检的日志" -f $pluginLoaded)
+    if ($pluginLoaded -ne 0) {
+        throw ("开发版包内插件**装载有失败**（Hub 启动装载 errors={0}）—— 见包内自检的日志" -f $pluginLoaded)
     }
-    Write-Host ("  插件自检通过：{0} 个 dll（自检与目录一致）、启动时 loaded={1}" -f $pluginCount,
-        $pluginLoaded)
+    Write-Host ("  插件自检通过：{0} 个 dll（自检与目录一致）、Hub 启动装载 errors=0" -f $pluginCount)
 } else {
     if ($pluginCount -ne 0 -or $stagePlugins.Count -ne 0) {
         throw ("发行版的 plugins\ 必须为空（既定策略：NLC 解密插件不随包发布），实测自检 {0} / 目录 {1}" -f `

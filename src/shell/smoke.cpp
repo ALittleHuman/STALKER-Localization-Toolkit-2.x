@@ -196,11 +196,6 @@ QString exe_version_field(const QString& name) {
 
 SmokeResult run_smoke() {
     SmokeResult result;
-    // ★★ 2026-10-05（#8）：**启动时**已经装上的插件数（给函数末尾那条 note 用，见那里的说明）。
-    //   ★ 必须在**任何自检夹具加载插件之前**取：自检自己也会 LoadLibrary 一堆测试插件，
-    //     那之后再问 `loaded_count()` 就分不清"包里的插件"与"自检自己的夹具"了
-    //     （本批实测：构建目录里 `plugins\` 是空的，而末尾问出来 loaded=1）。
-    const size_t startup_plugins = xrkit::plugin::loaded_count();
     const auto check = [&result](bool good, const QString& what) {
         ++result.checks;
         if (!good) {
@@ -7581,24 +7576,27 @@ SmokeResult run_smoke() {
     //   用户约定「开发版包内带全部插件」，任务书的判据是"包内 `plugins\` 非空 + **包内自检**
     //   打印插件数与名字"。这里报两样，缺一不可：
     //     · 目录里到底有几个 `*.dll`、叫什么 —— "文件在不在"；
-    //     · **启动时**的加载器结论 `startup_plugins`（"包里的 exe 真的加载上了没有" ——
-    //       插件是 LoadLibrary 的动态库，缺依赖 / ABI 不匹配只会在这一步现形）。
-    //   ★ 为什么不在自检里再跑一遍 `load_plugins_from_dir`：app 启动时 `Hub::load_plugins`
-    //     已经用**同一条**加载器把 `<exe目录>\plugins` 走过了，再走一遍是**重复注册**
-    //     —— 那个数不是"包能不能用"的真值。
-    //   ★ 为什么用"启动时"快照：自检自己会加载一堆测试插件夹具，末尾再问 `loaded_count()`
-    //     就把两件事混在一起了（本批实测：构建目录里 `plugins\` 空、末尾却是 loaded=1）。
-    //   ★ `package.ps1` 按这一行判：开发版要 `N ≥ 1 且 启动 loaded ≥ 1`；发行版要 `N == 0`。
+    //     · **装载结论**取自检里那个**真外壳实例** `hub`（本函数第 ⑤ 组就建好了）：它启动时走的
+    //       正是 `Hub::load_plugins` → `xrkit::plugin::load_plugins_from_dir(app_dir()/plugins)`
+    //       —— 与**用户双击启动**那条路一条不差（缺依赖 / ABI 不匹配会以 `RegistrationError`
+    //       的形式出现在 `hub.plugin_errors()` 里；实测 `not_a_plugin.dll` 那种就是 LoadLibrary 失败）。
+    //   ★ 为什么不自己再跑一遍 `load_plugins_from_dir`：那是**重复注册**（同一个 dll 的
+    //     `stk_plugin_init` 会被调第二次）。
+    //   ★ 为什么不用 `plugin::loaded_count()`：那是**进程级**的、自检自己也会 LoadLibrary
+    //     一堆测试插件夹具 ⇒ 分不清"包里的插件"与"自检自己的夹具"（本批实测：构建目录里
+    //     `plugins\` 是空的，末尾问出来却是 1）。
+    //   ★ `package.ps1` 按这一行判：开发版要 `N ≥ 1 且 errors == 0`；发行版要 `N == 0`。
     {
         const QString plugin_dir =
             QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("plugins"));
         const QStringList dlls =
             QDir(plugin_dir).entryList({QStringLiteral("*.dll")}, QDir::Files, QDir::Name);
         result.notes.append(
-            QStringLiteral("#8 包内插件：%1 个 dll（%2）· 启动时 loaded=%3 · dir=%4")
+            QStringLiteral("#8 包内插件：%1 个 dll（%2）· Hub 启动装载 errors=%3 · %4 · dir=%5")
                 .arg(dlls.size())
                 .arg(dlls.isEmpty() ? QStringLiteral("(空)") : dlls.join(QStringLiteral(", ")))
-                .arg(startup_plugins)
+                .arg(hub.plugin_errors().size())
+                .arg(hub.plugin_notice())
                 .arg(QDir::toNativeSeparators(plugin_dir)));
     }
 
