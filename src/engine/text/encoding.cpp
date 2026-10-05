@@ -16,6 +16,10 @@ namespace {
 #include "gb18030_tables.inc"  // NOLINT
 #include "gb2312_tables.inc"  // NOLINT
 #include "gbk_tables.inc"      // NOLINT
+// D3 批补的三张东亚表（同一姿势：生成器从 Python 同名 codec 导出，--check 锁住）
+#include "big5_tables.inc"       // NOLINT
+#include "euc_kr_tables.inc"     // NOLINT
+#include "shift_jis_tables.inc"  // NOLINT
 
 constexpr uint16_t kUndefined = 0xFFFF;
 constexpr size_t kGb18030FourByteCount = sizeof(kGb18030FourByte) / sizeof(kGb18030FourByte[0]);
@@ -267,6 +271,283 @@ bool gb_two_byte_decode_lossy(const uint16_t* table, const uint8_t* data, size_t
         }
         append_replacement(text);
         ++i;  // 只吃前导：后面的字节按自己的身份继续处理
+    }
+    return true;
+}
+
+// ── big5 / shift_jis / euc-kr（D3 批，2026-10-05）────────────────────────
+//
+// 这三个编码**形状各不相同**，照 gb 那套 `(b1-0x81)*191+(b2-0x40)` 硬套一定错：
+//   · trail 是**离散集合**，不是区间。big5 的 trail ∈ [0x40..0x7E] ∪ [0xA1..0xFE]
+//     —— 中间的 [0x7F..0xA0] 与 0xFF **不是 trail**。实测区别（Python 同名 codec）：
+//     `A1 7F` → 一个 U+FFFD + 0x7F（0x7F 不是 trail ⇒ 只吃 lead）；而
+//     `A1 80` → **两个** U+FFFD。所以判据必须是"是不是 trail"的布尔表，不能写成
+//     `tmin <= b2 && b2 <= tmax`。
+//   · shift_jis 另有**单字节半角片假名** 0xA1..0xDF → U+FF61..U+FF9F，而且这些字节
+//     同时又是双字节形态的 lead ⇒ 必须"**先试双字节、失败再落单字节**"。
+//     实测：`A1 A1` → `'｡｡'`（双字节表里 `A1 A1` 有定义），`A1 7F` → `'｡\x7f'`
+//     （双字节没定义、但有单字节形态 ⇒ 吃 1 字节出 '｡'），
+//     `A0 20` → `'� '`（0xA0 既不是 lead 也没单字节形态 ⇒ 替换），
+//     `81 20` → `'� '`（lead 但 trail 非法，且 0x81 无单字节形态 ⇒ 替换）。
+//     这三条穷举验证过（`tests/golden_lossy_codec.py` + 生成器同源）。
+// 字节区间的显式清单（**不能写成 `lo <= b && b <= hi` 一条区间**：三个编码的 lead/trail
+// 集合都有空洞与不连续段，实测 `A1 7F`（big5）与 `A1 80` 的结果完全不同就是这条）
+struct ByteRange {
+    uint8_t lo;
+    uint8_t hi;
+};
+
+bool in_ranges(const ByteRange* ranges, size_t n, uint8_t b) {
+    for (size_t i = 0; i < n; ++i) {
+        if (b >= ranges[i].lo && b <= ranges[i].hi) return true;
+    }
+    return false;
+}
+
+struct MultibyteSpec {
+    const uint16_t* table;
+    uint8_t lead_first;   // 表的第一行 lead
+    uint16_t cols;        // 表覆盖的 trail 列数（含非 trail 的空档列）
+    uint8_t trail_first;  // 表的第一列 trail
+    const ByteRange* lead_ranges;
+    size_t lead_range_count;
+    const ByteRange* trail_ranges;
+    size_t trail_range_count;
+    const uint16_t* single_hi;  // 单字节表（shift_jis 的半角片假名；其余为 nullptr）
+    uint8_t single_first;
+    uint8_t single_last;
+    bool is_euc_kr;  // euc-kr 专有的那条"A4 D4 丢弃剩余缓冲"实测语义（见 mw_decode_lossy）
+    uint16_t rows;   // 表的真实行数（建反向表的循环上界；写错会读出表尾之外）
+};
+
+bool is_lead_byte(const MultibyteSpec& s, uint8_t b) {
+    return b >= 0x80 && in_ranges(s.lead_ranges, s.lead_range_count, b);
+}
+
+bool is_trail_byte(const MultibyteSpec& s, uint8_t b) {
+    return in_ranges(s.trail_ranges, s.trail_range_count, b);
+}
+
+const ByteRange kBig5Lead[] = {{0xA1, 0xF9}};
+const ByteRange kBig5Trail[] = {{0x40, 0x7E}, {0xA1, 0xFE}};
+const ByteRange kShiftJisLead[] = {{0x81, 0x9F}, {0xE0, 0xFC}};
+const ByteRange kShiftJisTrail[] = {{0x40, 0x7E}, {0x80, 0xFC}};
+const ByteRange kEucKrLead[] = {{0xA1, 0xFD}};
+const ByteRange kEucKrTrail[] = {{0xA1, 0xFE}};
+
+// 表尺寸（与生成器 `emit_mw` 写出来的下标算法一一对应，**改了表就必须同步改这里**）：
+//   big5      89 行 × 190 列（trail 0x40..0xFE，含 0x7F..0xA0 的空档列）
+//   shift_jis 124 行 × 189 列（lead 0x81..0xFC；其中 0xA0..0xDF 整段是空档行）
+//   euc-kr    93 行 × 94 列（lead 0xA1..0xFD；trail 0xA1..0xFE）
+// ★ `rows` 只用来给"建反向表"的循环定上界，必须是**表的真实行数**：写成 188
+//   （= 0xFC-0x40）会让循环读出表尾之后的内存，凭空造出 `FD44 → U+FF61` 这种
+//   假映射（实测踩到：`shift_jis` 编码侧把 `｡` 写成 `fd44` 而不是 `a1`）。
+constexpr uint16_t kBig5Cols = 0xFE - 0x40 + 1;      // 190
+constexpr uint16_t kShiftJisCols = 0xFC - 0x40 + 1;  // 189
+constexpr uint16_t kEucKrCols = 0xFE - 0xA1 + 1;     // 94
+constexpr uint16_t kBig5Rows = 0xF9 - 0xA1 + 1;      // 89
+constexpr uint16_t kShiftJisRows = 0xFC - 0x81 + 1;  // 124
+constexpr uint16_t kEucKrRows = 0xFD - 0xA1 + 1;     // 93
+
+const MultibyteSpec kBig5Spec = {kBig5TwoByte,         0xA1, kBig5Cols,     0x40,
+                                 kBig5Lead,            1,    kBig5Trail,     2,
+                                 nullptr,              0,    0,              false,
+                                 kBig5Rows};
+const MultibyteSpec kShiftJisSpec = {kShiftJisTwoByte,    0x81, kShiftJisCols,    0x40,
+                                     kShiftJisLead,       2,    kShiftJisTrail,    2,
+                                     kShiftJisSingle,     0xA1, 0xDF,              false,
+                                     kShiftJisRows};
+const MultibyteSpec kEucKrSpec = {kEucKrTwoByte,      0xA1, kEucKrCols,    0xA1,
+                                  kEucKrLead,         1,    kEucKrTrail,    1,
+                                  nullptr,            0,    0,              true,
+                                  kEucKrRows};
+
+// 双字节表查表（调用方必须已确认 lead/trail 合法）
+uint16_t mw_lookup(const MultibyteSpec& s, uint8_t b1, uint8_t b2) {
+    return s.table[static_cast<size_t>(b1 - s.lead_first) * s.cols + (b2 - s.trail_first)];
+}
+
+// (b1,b2) → 表下标（编码方向的 4 处 big5 覆盖项要用）
+uint32_t mw_slot(const MultibyteSpec& s, uint8_t b1, uint8_t b2) {
+    return static_cast<uint32_t>(b1 - s.lead_first) * s.cols + (b2 - s.trail_first);
+}
+
+// ── 严格解码 ─────────────────────────────────────────────────────────
+bool mw_decode_strict(const MultibyteSpec& s, const char* name, const uint8_t* data, size_t size,
+                      std::string& text, std::string& err) {
+    text.clear();
+    text.reserve(size * 2);
+    size_t i = 0;
+    while (i < size) {
+        const uint8_t b1 = data[i];
+        if (b1 < 0x80) {
+            text.push_back(static_cast<char>(b1));
+            ++i;
+            continue;
+        }
+        // shift_jis：单字节半角片假名与其他形态**共用同一段字节区间** ⇒ 先试双字节
+        const bool single_ok =
+            s.single_hi != nullptr && b1 >= s.single_first && b1 <= s.single_last;
+        if (is_lead_byte(s, b1) && i + 1 < size && is_trail_byte(s, data[i + 1])) {
+            const uint16_t cp = mw_lookup(s, b1, data[i + 1]);
+            if (cp != kUndefined) {
+                append_utf8(text, cp);
+                i += 2;
+                continue;
+            }
+        }
+        if (single_ok) {
+            const uint16_t cp = s.single_hi[b1 - s.single_first];
+            if (cp != kUndefined) {
+                append_utf8(text, cp);
+                ++i;
+                continue;
+            }
+        }
+        err = std::string(name) + "：非法字节序列（首字节 " + hex_byte(b1) + "）";
+        return false;
+    }
+    return true;
+}
+
+// ── 有损解码（Python `errors="replace"`；逐字节对齐，见下面的实测规则）────
+//   · 合法双字节 → 码位；
+//   · "首字节是合法 lead、次字节是合法 trail、但表里没定义" ⇒ **只吃首字节**、写一个
+//     U+FFFD（实测 big5 `A3C0` → 两个替换、shift_jis `81E9` → 两个替换）；
+//   · 其余（非法首字节 / 截断 / trail 非法）也各自只吃 1 字节、写一个 U+FFFD。
+//   ★ **唯一的例外**是 euc-kr 的 `A4 D4`：它是 KS X 1001:1998 的"字母拼合（make-up）
+//     序列"领头（`A4` + FILLER），Python 的 `bytes.decode()` 里 FILLER 常量的值写成了
+//     0xD4 而判断要求 0xA4，于是这条分支永不成立 ⇒ 解码器报"输入不完整"，错误处理器写
+//     **一个**替换符后**丢弃整个剩余缓冲**。实测 `A4D4` / `A4D44141` / `A4D4CAF7D6`
+//     全都是恰好一个 `U+FFFD`。这一格必须原样复刻，否则门禁 [12] 的对拍立刻红。
+bool mw_decode_lossy(const MultibyteSpec& s, const uint8_t* data, size_t size,
+                     std::string& text) {
+    text.clear();
+    text.reserve(size * 3);
+    size_t i = 0;
+    while (i < size) {
+        const uint8_t b1 = data[i];
+        if (b1 < 0x80) {
+            text.push_back(static_cast<char>(b1));
+            ++i;
+            continue;
+        }
+        if (s.is_euc_kr && b1 == 0xA4 && i + 1 < size && data[i + 1] == 0xD4) {
+            append_replacement(text);
+            i = size;  // 错误处理器把剩余缓冲整段丢掉（实测，不是"吃掉两个字节"）
+            continue;
+        }
+        const bool single_ok =
+            s.single_hi != nullptr && b1 >= s.single_first && b1 <= s.single_last;
+        if (is_lead_byte(s, b1) && i + 1 < size && is_trail_byte(s, data[i + 1])) {
+            const uint16_t cp = mw_lookup(s, b1, data[i + 1]);
+            if (cp != kUndefined) {
+                append_utf8(text, cp);
+                i += 2;
+                continue;
+            }
+        }
+        if (single_ok) {
+            const uint16_t cp = s.single_hi[b1 - s.single_first];
+            if (cp != kUndefined) {
+                append_utf8(text, cp);
+                ++i;
+                continue;
+            }
+        }
+        append_replacement(text);
+        ++i;  // 只吃首字节：后面的字节按自己的身份继续处理
+    }
+    return true;
+}
+
+// ── 严格编码 ─────────────────────────────────────────────────────────
+// 反向表在**函数内静态构造**（第一次用到时建，避免静态初始化顺序问题）：
+// 扫一遍双字节表，**较小的字节序优先**（CPython 的生成表就是这个顺序）。实测：
+// 三个编码照这条规则建出来的表与 `str.encode(codec)` 在**全部可编码位**上一致
+// （big5 13706 / shift_jis 6942 / euc-kr 8225 项，逐项对过）。
+// ★ 不能想当然：big5 有 4 处**同义重复**码位，CPython 的编码器选的是顺序**较大**的
+//   那一格（U+FF0F→A241、U+FF3C→A242、U+5341→A451、U+5345→A4CA，而最小序是
+//   A1FE/A240/A2CC/A2CE）⇒ 这 4 格必须显式列出来，否则编码方向会写出另一个字节对。
+struct Big5EncOverride {
+    uint32_t cp;
+    uint16_t bytes;
+};
+const Big5EncOverride kBig5EncOverrides[] = {
+    {0xFF0F, 0xA241}, {0xFF3C, 0xA242}, {0x5341, 0xA451}, {0x5345, 0xA4CA}};
+
+const std::unordered_map<uint32_t, uint32_t>& mw_reverse(const MultibyteSpec& s, int which) {
+    static const std::unordered_map<uint32_t, uint32_t> tables[3] = {
+        // big5
+        [] {
+            std::unordered_map<uint32_t, uint32_t> m;
+            for (uint32_t idx = 0; idx < kBig5Rows * kBig5Cols; ++idx) {
+                const uint16_t cp = kBig5TwoByte[idx];
+                if (cp != kUndefined) m.emplace(cp, idx);
+            }
+            // 4 处同义重复：CPython 的编码器选的是顺序**较大**的那一格，覆盖掉最小序
+            for (const auto& ov : kBig5EncOverrides) {
+                m[ov.cp] = mw_slot(kBig5Spec, static_cast<uint8_t>(ov.bytes >> 8),
+                                   static_cast<uint8_t>(ov.bytes & 0xFF));
+            }
+            return m;
+        }(),
+        // shift_jis（双字节表 + 单字节半角片假名）
+        // ★ **单字节优先**：U+FF61..FF9F 在双字节表里可能也有格子（CPython 的
+        //   `_codecs_jp.c` 编码器把这段**显式路由**到单字节），实测 `'｡'.encode('shift_jis')`
+        //   = `a1` 而不是任何双字节对 ⇒ 先放单字节、再放双字节（`emplace` 不覆盖）。
+        [] {
+            std::unordered_map<uint32_t, uint32_t> m;
+            for (uint8_t b = 0xA1; b <= 0xDF; ++b) {
+                const uint16_t cp = kShiftJisSingle[b - 0xA1];
+                if (cp != kUndefined) m.emplace(cp, 0x1000000u | b);
+            }
+            for (uint32_t idx = 0; idx < kShiftJisRows * kShiftJisCols; ++idx) {
+                const uint16_t cp = kShiftJisTwoByte[idx];
+                if (cp != kUndefined) m.emplace(cp, idx);
+            }
+            return m;
+        }(),
+        // euc-kr
+        [] {
+            std::unordered_map<uint32_t, uint32_t> m;
+            for (uint32_t idx = 0; idx < kEucKrRows * kEucKrCols; ++idx) {
+                const uint16_t cp = kEucKrTwoByte[idx];
+                if (cp != kUndefined) m.emplace(cp, idx);
+            }
+            return m;
+        }()};
+    return tables[which];
+}
+
+bool mw_encode_strict(const MultibyteSpec& s, int which, const std::string& text,
+                      std::vector<uint8_t>& out, std::string& err, const char* name) {
+    const auto& rev = mw_reverse(s, which);
+    out.clear();
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(text.data());
+    size_t i = 0;
+    while (i < text.size()) {
+        uint32_t cp = 0;
+        if (!utf8_decode_one(p, text.size(), i, cp)) {
+            err = std::string("正文不是合法 UTF-8（") + name + " 编码前）";
+            return false;
+        }
+        if (cp < 0x80) {
+            out.push_back(static_cast<uint8_t>(cp));
+            continue;
+        }
+        const auto it = rev.find(cp);
+        if (it == rev.end()) {
+            err = "码位 U+" + std::to_string(cp) + " 无法用 " + name + " 表示";
+            return false;
+        }
+        const uint32_t slot = it->second;
+        if (slot & 0x1000000u) {  // shift_jis 的单字节半角片假名
+            out.push_back(static_cast<uint8_t>(slot & 0xFF));
+        } else {
+            out.push_back(static_cast<uint8_t>(s.lead_first + slot / s.cols));
+            out.push_back(static_cast<uint8_t>(s.trail_first + slot % s.cols));
+        }
     }
     return true;
 }
@@ -643,6 +924,25 @@ uint64_t utf8_codepoint_count(const std::string& utf8) {
     return n;
 }
 
+std::vector<std::pair<uint32_t, std::string>> codec_encode_table(int which) {
+    if (which < 0 || which > 2) return {};
+    const MultibyteSpec& s = (which == 0) ? kBig5Spec : (which == 1 ? kShiftJisSpec : kEucKrSpec);
+    std::vector<std::pair<uint32_t, std::string>> out;
+    for (const auto& kv : mw_reverse(s, which)) {
+        std::string bytes;
+        if ((kv.second & 0x1000000u) != 0) {
+            bytes.push_back(static_cast<char>(kv.second & 0xFF));
+        } else {
+            bytes.push_back(
+                static_cast<char>(s.lead_first + kv.second / s.cols));
+            bytes.push_back(
+                static_cast<char>(s.trail_first + kv.second % s.cols));
+        }
+        out.emplace_back(kv.first, bytes);
+    }
+    return out;
+}
+
 bool decode_strict(const std::string& encoding, const uint8_t* data, size_t size,
                    std::string& text, std::string& err) {
     err.clear();
@@ -663,6 +963,12 @@ bool decode_strict(const std::string& encoding, const uint8_t* data, size_t size
     if (encoding == kGb18030) return gb18030_decode(data, size, text, err);
     if (encoding == kGbk) return gbk_decode(data, size, text, err);
     if (encoding == kGb2312) return gb2312_decode(data, size, text, err);
+    // D3 批补的三张东亚表（big5 / shift_jis / euc-kr）
+    if (encoding == kBig5) return mw_decode_strict(kBig5Spec, kBig5, data, size, text, err);
+    if (encoding == kShiftJis) {
+        return mw_decode_strict(kShiftJisSpec, kShiftJis, data, size, text, err);
+    }
+    if (encoding == kEucKr) return mw_decode_strict(kEucKrSpec, kEucKr, data, size, text, err);
     if (encoding == kAscii) {
         text.clear();
         text.reserve(size);
@@ -811,6 +1117,10 @@ bool decode_lossy(const std::string& encoding, const uint8_t* data, size_t size,
     // 否则 `81 40`（gbk 有、gb2312 没有）与四字节序列都会判错。
     if (encoding == kGbk) return gb_two_byte_decode_lossy(kGbkTwoByte, data, size, text);
     if (encoding == kGb2312) return gb_two_byte_decode_lossy(kGb2312TwoByte, data, size, text);
+    // D3 批：三张新表的有损解码（Python `errors="replace"` 逐字节对拍过）
+    if (encoding == kBig5) return mw_decode_lossy(kBig5Spec, data, size, text);
+    if (encoding == kShiftJis) return mw_decode_lossy(kShiftJisSpec, data, size, text);
+    if (encoding == kEucKr) return mw_decode_lossy(kEucKrSpec, data, size, text);
     if (encoding == kWindows1251) {
         return decode_single_byte_lossy(kCp1251ToUnicode, data, size, text);
     }
@@ -1001,6 +1311,15 @@ bool encode_strict(const std::string& encoding, const std::string& text,
         return utf32_encode_impl(encoding, text, /*lossy=*/false, out, err);
     }
     if (encoding == kGb18030) return gb18030_encode(text, out, err);
+    // D3 批：三张新表的严格编码。★ 这一侧**必须有** —— ALPHA.44 的 `ascii` 就是
+    //   只有解码侧、编码侧一行都没有，于是 `encode_strict` 报"未知编码"，上层
+    //   `encode_lossy` 走"逐码位、表示不了就写 `?`"的兜底 ⇒ 连纯 ASCII 正文都被
+    //   整篇写成 `?`（`期望 6173… 得到 3f3f…`）。三个新编码**两侧都做**。
+    if (encoding == kBig5) return mw_encode_strict(kBig5Spec, 0, text, out, err, kBig5);
+    if (encoding == kShiftJis) {
+        return mw_encode_strict(kShiftJisSpec, 1, text, out, err, kShiftJis);
+    }
+    if (encoding == kEucKr) return mw_encode_strict(kEucKrSpec, 2, text, out, err, kEucKr);
     if (encoding == kWindows1251) {
         return encode_single_byte(kCp1251ToUnicode, text, out, err, "windows-1251");
     }

@@ -14,6 +14,22 @@
 | freetype | 2.14.3 | `dc49de6b01a266ee…` | https://gh-proxy.com/https://github.com/freetype/freetype/archive/refs/tags/VER-2-14-3.tar.gz | 字形栅格 —— **对齐 Pillow 12.3.0 捆绑的 2.14.3**（字库产物保持原样的基准） |
 | pcre2 | 10.48 | `ebcc25aadf2a51fa…` | https://mirrors.aliyun.com/debian/pool/main/p/pcre2/pcre2_10.48.orig.tar.gz | 正则（文本提取用；std::regex 不支持 lookbehind） |
 
+## 另一类"来源"：编码表（不入 third_party，随仓库走）
+
+`src/engine/text/*_tables.inc`（cp1251 / cp1252 / gb18030 / gbk / gb2312 / **big5 /
+shift_jis / euc_kr**）**不是**第三方归档，而是由 `tools/gen_encoding_tables.py`
+从**本机 CPython 的同名 codec** 导出（`--check` 是门禁 [12]，表被手改或换 Python 版本即 FAIL）。
+它们的来源与许可是：
+
+- **来源**：CPython 标准库的 `encodings` / `_codecs_*` 各编码实现（`Modules/cjkcodecs/`、
+  `Modules/_codecsmodule` 等），表数据本身派生自 Unicode Consortium / 各标准（KS X 1001、
+  JIS X 0208、Big5）的公开映射。
+- **许可**：CPython 采用 **PSF License Agreement**（Python Software Foundation License，
+  GPL 兼容、允许再分发与派生）。派生成的数据表（`.inc`）按同一许可随本仓库分发。
+- **可复现**：`python tools/gen_encoding_tables.py`（生成）/ `--check`（校验）；
+  生成物一律 **bytes + LF** 写盘（`.gitattributes` 规定源码 LF，Windows 文本模式会翻成 CRLF
+  ⇒ 混着来会让 `--check` 在"刚生成"与"刚检出"两种状态下结论不同）。
+
 ## 为什么不用 vcpkg 之类的包管理
 
 本机 **GitHub 被 hosts 指向 127.0.0.1**，且 **schannel TLS 整体不可用**

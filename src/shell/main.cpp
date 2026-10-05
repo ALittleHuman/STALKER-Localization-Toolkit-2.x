@@ -8,6 +8,7 @@
 #include "xrkit/core/theme.h"
 #include "hub.h"
 #include "log_box.h"
+#include "pages/convert_page.h"
 #include "pages/fs_page.h"
 #include "pages/fontpack_page.h"
 #include "pages/page_base.h"
@@ -17,6 +18,7 @@
 #include "theme.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QDialog>
 #include <QDir>
 #include <QElapsedTimer>
@@ -254,6 +256,24 @@ int main(int argc, char** argv) {
         }
         const bool ok_save = hub.grab().save(shot_path);
         QTextStream out(stdout);
+        // ★ 2026-10-05（D3 批）：编码转换页的下拉**逐项原文**打出来。
+        //   为什么要这一行：离屏环境没有中文字体，截图里 combo 的**展开态**也抓不到；
+        //   而"源/目标下拉里到底有哪几个编码"是这批的核心判据之一（big5/shift_jis/euc-kr
+        //   三项要一一对应引擎的编码名）。数字与原文都得能从 stdout 读出来 ⇒ 打这行。
+        if (auto* convert_page = dynamic_cast<xrkit::shell::ConvertPage*>(hub.page_at(1))) {
+            const auto names = [](QComboBox* combo) {
+                QStringList list;
+                if (combo == nullptr) return list;
+                for (int i = 0; i < combo->count(); ++i) list << combo->itemData(i).toString();
+                return list;
+            };
+            out << QStringLiteral("SHOT convert source_enc=[%1]\n")
+                       .arg(names(convert_page->source_combo()).join(QStringLiteral(",")));
+            out << QStringLiteral("SHOT convert target_enc=[%1] target_default=%2\n")
+                       .arg(names(convert_page->target_combo()).join(QStringLiteral(",")))
+                       .arg(QString::fromStdString(convert_page->current_target_encoding()));
+            out.flush();
+        }
         // 顺带把**被抓那一页的真实几何**打出来（`名称 x y w h 可见`）—— 截图能看出"丑"，
         // 但"哪一块占了谁的位置"要看数字（2026-09-30 用户对 FS 页排版发火后加的诊断）。
         // ★ 2026-10-06：从"只量第 0 页"改成**量被抓的那一页**（D1 批要量文本页/XML 页的新控件）。

@@ -130,6 +130,7 @@ void print_usage() {
            "  --decode-text <输入> <输出>                 六编码链解码（把正文写成 UTF-8；对拍用）\n"
            "  --codec-lossy <decode|encode> <编码> <输入> <输出>\n"
            "                                              有损编解码（Python errors=replace；对拍用）\n"
+           "  --codec-encode-table                        big5/shift_jis/euc-kr 反向编码表整表导出（对拍用）\n"
            "  --decl-fix <输入> <目标编码> <输出>          XML 声明规范化（1.x _fix_xml_decl；对拍用）\n"
            "  --sniff <输入> <输出> [--encoding <手动指定>]  判定链（六步）判定 + 解码（对拍用）\n"
            "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
@@ -2583,6 +2584,39 @@ int run_cli(const std::vector<std::string>& args) {
         file.close();
         std::cout << "CODEC ok mode=" << mode << " encoding=" << encoding << " bytes=" << out.size()
                   << "\n";
+        return kExitOk;
+    }
+
+    // ★ D3 批：big5 / shift_jis / euc-kr 的**反向编码表**整表导出（对拍用）。
+    //   为什么要有它：`--codec-lossy encode` 一次只编一个字符，把三张表的**每一个**
+    //   可编码码位逐条过一遍要 ~2.9 万次进程启动（实测每次约 15 ms ⇒ 十分钟级），
+    //   塞不进门禁 [12]。整表导出把"逐项核对反向表"压成**一次调用**，判据强度不变：
+    //   Python 侧枚举同名 codec 能编出的**全部**码位，逐条与本表比对（`--full`）。
+    //   输出（稳定可解析）：`T <编码> <十进制码位> <小写十六进制字节>`，末行 `T END`。
+    if (action == "--codec-encode-table") {
+        struct DumpSpec {
+            const char* name;
+            int which;
+        };
+        static const DumpSpec kDump[] = {
+            {xrkit::engine::text::kBig5, 0},
+            {xrkit::engine::text::kShiftJis, 1},
+            {xrkit::engine::text::kEucKr, 2},
+        };
+        for (const DumpSpec& spec : kDump) {
+            auto rows = xrkit::engine::text::codec_encode_table(spec.which);
+            std::sort(rows.begin(), rows.end(),
+                      [](const auto& a, const auto& b) { return a.first < b.first; });
+            for (const auto& row : rows) {
+                std::cout << "T " << spec.name << " " << row.first << " ";
+                static const char* kHex = "0123456789abcdef";
+                for (unsigned char b : row.second) {
+                    std::cout << kHex[(b >> 4) & 0xF] << kHex[b & 0xF];
+                }
+                std::cout << "\n";
+            }
+        }
+        std::cout << "T END\n";
         return kExitOk;
     }
 

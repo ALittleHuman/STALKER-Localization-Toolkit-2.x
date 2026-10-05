@@ -9,6 +9,11 @@ Python 的 codecs。手抄表一定会错（GB18030 双字节表约 2.4 万项�
   src/engine/text/cp1251_tables.inc   cp1251 0x80..0xFF → Unicode（0xFFFF = 未定义）
   src/engine/text/cp1252_tables.inc   同上
   src/engine/text/gb18030_tables.inc  双字节表（126×191）+ 四字节线性段 + 单字节 0x80
+  src/engine/text/gbk_tables.inc      同上双字节形状（gbk 只有两字节形态）
+  src/engine/text/gb2312_tables.inc   同上
+  src/engine/text/big5_tables.inc     big5 双字节表（lead 0xA1..0xF9 × trail 0x40..0xFE）
+  src/engine/text/shift_jis_tables.inc  shift_jis 双字节表 + 单字节半角片假名表
+  src/engine/text/euc_kr_tables.inc   euc-kr 双字节表（lead 0xA1..0xFD × trail 0xA1..0xFE）
 
 ★ `0xFFFF = 未定义` 是**严格性**的载体：cp1251 的 0x98、cp1252 的 0x81/0x8D/0x8F/0x90/0x9D
 在 Python 里严格解码会抛 UnicodeDecodeError。若把它们当成 U+FFFD 放行，六编码链就会在
@@ -84,6 +89,104 @@ def emit_two_byte(codec: str, name: str, values: list[int]) -> str:
     lines.append("static const uint16_t %s[%d] = {\n" % (name, GB_TWO_W))
     for i in range(0, len(values), 12):
         lines.append("    " + ", ".join("0x%04X" % v for v in values[i:i + 12]) + ",\n")
+    lines.append("};\n")
+    return "".join(lines)
+
+
+# ── big5 / shift_jis / euc-kr（2026-10-05 D3 批）────────────────────────
+#
+# 三张表的**形状不一样**，所以不能照 gb 那套 (b1-0x81)*191+(b2-0x40) 硬套：
+#   · big5      lead 0xA1..0xF9（0xC8 整列空洞）、trail ∈ [0x40..0x7E] ∪ [0xA1..0xFE]
+#               —— 中间 [0x7F..0xA0] 与 0xFF **不是 trail**（实测 `A1 7F` → 替换 + 0x7F，
+#               而 `A1 80` → 两个替换，差别就在这条）。
+#   · shift_jis lead ∈ [0x81..0x9F] ∪ [0xE0..0xFC]、trail ∈ [0x40..0xFC] 去掉 0x7F；
+#               另有**单字节半角片假名** 0xA1..0xDF → U+FF61..U+FF9F（要单独一张表）。
+#   · euc-kr    lead 0xA1..0xFD（0xAD/0xAE/0xAF/0xC9 空洞）、trail 0xA1..0xFE。
+# 下标统一记 (b - FIRST) * NTRAIL + (b2 - TRAIL_MIN)，空洞位写 0xFFFF。
+MW_SPEC = [
+    # codec, 表名, lead 区间, trail 区间
+    ("big5", "kBig5TwoByte", [(0xA1, 0xF9)], [(0x40, 0x7E), (0xA1, 0xFE)]),
+    ("shift_jis", "kShiftJisTwoByte", [(0x81, 0x9F), (0xE0, 0xFC)],
+     [(0x40, 0x7E), (0x80, 0xFC)]),
+    ("euc-kr", "kEucKrTwoByte", [(0xA1, 0xFD)], [(0xA1, 0xFE)]),
+]
+
+
+def _expand(ranges) -> list[int]:
+    out = []
+    for lo, hi in ranges:
+        out.extend(range(lo, hi + 1))
+    return out
+
+
+def mw_table(codec: str, leads: list[int], trails: list[int]) -> list[int]:
+    out = [0xFFFF] * ((leads[-1] + 1 - leads[0]) * (trails[-1] + 1 - trails[0]))
+    for b1 in leads:
+        for b2 in trails:
+            try:
+                s = bytes([b1, b2]).decode(codec)
+            except UnicodeDecodeError:
+                continue
+            if len(s) == 1:
+                out[(b1 - leads[0]) * (trails[-1] + 1 - trails[0]) + (b2 - trails[0])] = ord(s)
+    return out
+
+
+def _range_text(ranges) -> str:
+    return " ∪ ".join("[%02X..%02X]" % (lo, hi) for lo, hi in ranges)
+
+
+def emit_mw(codec: str, name: str, leads: list[int], trails: list[int],
+            values: list[int]) -> str:
+    ntrail = trails[-1] + 1 - trails[0]
+    lines = [HEADER.format(codec=codec)]
+    lines.append("// lead ∈ %s，下标 = (b1-%02X)*%d + (b2-%02X)。\n"
+                 % (_range_text(_lead_ranges_for(codec)), leads[0], ntrail, trails[0]))
+    lines.append("// trail ∈ %s（**离散集合，中间的空档不是 trail**）。\n"
+                 % _range_text(_trail_ranges_for(codec)))
+    lines.append("// 单字节只认 0x00..0x7F%s。\n\n"
+                 % ("与 0xA1..0xDF（半角片假名，见下表）" if codec == "shift_jis" else ""))
+    lines.append("static const uint16_t %s[%d] = {\n" % (name, len(values)))
+    for i in range(0, len(values), 12):
+        lines.append("    " + ", ".join("0x%04X" % v for v in values[i:i + 12]) + ",\n")
+    lines.append("};\n")
+    return "".join(lines)
+
+
+def _lead_ranges_for(codec: str):
+    for c, _, leads, _ in MW_SPEC:
+        if c == codec:
+            return leads
+    raise KeyError(codec)
+
+
+def _trail_ranges_for(codec: str):
+    for c, _, _, trails in MW_SPEC:
+        if c == codec:
+            return trails
+    raise KeyError(codec)
+
+
+def sjis_single_table() -> list[int]:
+    """shift_jis 的单字节半角片假名：0xA1..0xDF → Unicode（0xFFFF = 未定义）。"""
+    out = []
+    for b in range(0xA1, 0xE0):
+        try:
+            s = bytes([b]).decode("shift_jis")
+            out.append(ord(s) if len(s) == 1 else 0xFFFF)
+        except UnicodeDecodeError:
+            out.append(0xFFFF)
+    return out
+
+
+def emit_sjis_single(values: list[int]) -> str:
+    lines = [HEADER.format(codec="shift_jis")]
+    lines.append("// 单字节半角片假名 0xA1..0xDF：下标 = b - 0xA1（0xFFFF = 未定义）。\n")
+    lines.append("// 双字节表查不到时先落到这里：**只有这里也有定义**才谈得上「单字节回退」；\n")
+    lines.append("// 落不下来（例如 lead 0x81..0x9F/0xE0..0xFC 自己没有单字节形态）⇒ 报错/替换。\n\n")
+    lines.append("static const uint16_t kShiftJisSingle[%d] = {\n" % len(values))
+    for i in range(0, len(values), 8):
+        lines.append("    " + ", ".join("0x%04X" % v for v in values[i:i + 8]) + ",\n")
     lines.append("};\n")
     return "".join(lines)
 
@@ -181,6 +284,24 @@ def build() -> dict[Path, str]:
     gb2312 = gb_two_byte("gb2312")
     files[OUT_DIR / "gb2312_tables.inc"] = emit_two_byte("gb2312", "kGb2312TwoByte", gb2312)
     print("    gb2312：双字节有效 %d/%d" % (sum(1 for v in gb2312 if v != 0xFFFF), GB_TWO_W))
+    # ── D3 批：big5 / shift_jis / euc-kr（用户 2026-10-05：「顺手补上就是了」）──
+    # 依旧是"从 Python 同名 codec 导出"同一姿势 ⇒ 生成物与 1.x 字节级同源。
+    # shift_jis 还要多一张"单字节半角片假名"表（解码时的单字节回退就落在这张表上），
+    # 所以它由两段拼成：先双字节表、再单字节表。
+    for codec, name, lead_ranges, trail_ranges in MW_SPEC:
+        leads = _expand(lead_ranges)
+        trails = _expand(trail_ranges)
+        vals = mw_table(codec, leads, trails)
+        body = emit_mw(codec, name, leads, trails, vals)
+        if codec == "shift_jis":
+            single_sjis = sjis_single_table()
+            body += "\n" + emit_sjis_single(single_sjis)
+            print("    shift_jis：单字节半角片假名（0xA1..0xDF）有效 %d/%d"
+                  % (sum(1 for v in single_sjis if v != 0xFFFF), len(single_sjis)))
+        files[OUT_DIR / ("%s_tables.inc" % codec.replace("-", "_"))] = body
+        print("    %s：lead %d 个 / trail %d 个，双字节有效 %d/%d"
+              % (codec, len(leads), len(trails),
+                 sum(1 for v in vals if v != 0xFFFF), len(vals)))
     for codec, _ in SINGLE_BYTE:
         vals = table_1byte(codec)
         print("    %s：未定义 %d 个字节" % (codec, sum(1 for v in vals if v == 0xFFFF)))

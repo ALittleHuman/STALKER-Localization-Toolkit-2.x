@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace xrkit::engine::text {
@@ -33,6 +34,13 @@ inline constexpr const char* kUtf32Le = "utf-32-le";
 inline constexpr const char* kUtf32Be = "utf-32-be";
 inline constexpr const char* kGbk = "gbk";
 inline constexpr const char* kGb2312 = "gb2312";
+// D3 批（2026-10-05）补的三张东亚表：1.x 的 `ENCODING_CHOICES` 源侧有这三个名字，
+// 而 2.x 一直到这批都没有实现（下拉里也一直没列，理由就是"没实现对拍过"）。
+// ★ 三个都是**解码 + 编码两侧都做**：ALPHA.44 刚从 `ascii` 身上踩到"只有解码侧"的
+//   真缺陷（连纯 ASCII 正文都被整篇写成 `?`），所以这批的判据包含"**能被编码**"。
+inline constexpr const char* kBig5 = "big5";
+inline constexpr const char* kShiftJis = "shift_jis";
+inline constexpr const char* kEucKr = "euc-kr";
 
 struct DecodeResult {
     bool ok = false;
@@ -85,5 +93,13 @@ void utf8_append(std::string& out, uint32_t cp);
 
 // UTF-8 串的码位数（不合法返回 0）
 uint64_t utf8_codepoint_count(const std::string& utf8);
+
+// ── D3 批：反向编码表的整表导出（对拍用，不是给业务调用的）──────────────
+// `which`：0=big5、1=shift_jis、2=euc-kr。返回 {Unicode 码位 → 该编码的字节序列}，
+// 序列按该编码自己的形状（shift_jis 的单字节半角片假名是 1 字节，其余是 2 字节）。
+// 为什么要有它：`encode_strict` 一次只编一个字符，要把三张表的**每一个可编码码位**
+// 逐条过一遍就得 ~2.9 万次进程启动（实测每次约 15 ms ⇒ 十分钟级），塞不进门禁；
+// 整表导出把"逐项核对反向表"压成三次调用（`--codec-encode-table` + `--full`）。
+std::vector<std::pair<uint32_t, std::string>> codec_encode_table(int which);
 
 }  // namespace xrkit::engine::text

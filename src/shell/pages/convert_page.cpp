@@ -41,10 +41,18 @@ QString utf8(const std::string& text) { return QString::fromStdString(text); }
 //     （见 `encoding.cpp` 的 `encode_strict` 与 `golden_lossy_codec.py`）。要不是"只列
 //     对拍过的编码"这条纪律卡着，用户会静默拿到一整个目录的 `?`。
 //   · 源侧**不放** `ascii`：源是"猜"的，把 ascii 塞进源下拉只会让人以为工具会猜 ascii。
-//   · `big5 / shift_jis / euc-kr`（1.x 源侧有）**仍未列** —— 引擎没有这三张表，
-//     等用户拍板（见 D2 报告的"待拍板"条目）。
+//
+// ★ 2026-10-05（D3 批）：`big5 / shift_jis / euc-kr` 三项**补进这张共用表**（⇒ 源、目标
+//   两个下拉都出现）。1.x 侧的口径是：源下拉 = `ENCODING_CHOICES`（`toolkit_constants.py:76`
+//   `["auto","utf-8","gbk","gb2312","big5","shift_jis","euc-kr","windows-1251",
+//   "windows-1252","iso-8859-1","ascii","utf-16"]`），目标下拉 =
+//   `convert_app.py:192` 的 `["utf-8","gbk","gb2312","windows-1251","ascii","utf-16","big5"]`。
+//   两边的**交集**里这三个名字都有（big5 两边都在，shift_jis/euc-kr 源侧在）。
+//   三张表已按"双字节 + 编码侧"全量对拍（`tests/golden_lossy_codec.py`），
+//   所以按"只列对拍过的编码"这条纪律，它们可以列了。
 const char* kManualEncodings[] = {etxt::kUtf8,          etxt::kWindows1251, etxt::kWindows1252,
                                   etxt::kGb18030,       etxt::kGbk,         etxt::kGb2312,
+                                  etxt::kBig5,          etxt::kShiftJis,    etxt::kEucKr,
                                   etxt::kLatin1,
                                   // 2026-09-26：utf-16/32 六族的有损编解码已与 Python
                                   // `errors="replace"` 逐字节对拍（门禁 [12] 的 compared

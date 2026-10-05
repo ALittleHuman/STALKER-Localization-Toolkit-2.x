@@ -114,6 +114,10 @@ public:
 
     QComboBox* mode_combo() const { return mode_combo_; }
     QComboBox* filter_combo() const { return filter_combo_; }
+    // D3 批：编码下拉的**唯一一份**判据是文件里的 `kEncodings`（1.x
+    // `xml_compare_app.py:302` 的 `ENCODINGS` 六项）。暴露出来只是为了让自检
+    // 能钉住"那一页**故意不含** big5/shift_jis/euc-kr"（见 D3④），不新增第二份表。
+    QComboBox* enc_a_combo() const { return enc_a_combo_; }
     QLineEdit* dir_a_edit() const { return dir_a_edit_; }
     QLineEdit* dir_b_edit() const { return dir_b_edit_; }
     TaskShell* task() const { return task_; }

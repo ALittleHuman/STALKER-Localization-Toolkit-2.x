@@ -610,19 +610,22 @@ def step_text_tables(release: bool) -> None:
     这是"仓库自带门禁文件"性质：表被手改、或换了 Python 版本导致 codec 变了 → FAIL。
     表错了的后果就是整篇乱码，而且是**逐字节判据**才能发现的那种错。
     """
-    say("[12] 编码表与 Python codec 一致（cp1251 / cp1252 / gb18030 / gbk）")
+    say("[12] 编码表与 Python codec 一致（cp1251 / cp1252 / gb18030 / gbk / gb2312 / "
+        "big5 / shift_jis / euc-kr）")
     script = ROOT / "tools" / "gen_encoding_tables.py"
     if not require_repo_file(script, "编码表生成器"):
         return
     for inc in ("cp1251_tables.inc", "cp1252_tables.inc", "gb18030_tables.inc",
-                "gbk_tables.inc", "gb2312_tables.inc"):
+                "gbk_tables.inc", "gb2312_tables.inc",
+                # ★ D3 批：三张东亚表也必须**在仓库里**（缺件即失败，不是跳过）
+                "big5_tables.inc", "shift_jis_tables.inc", "euc_kr_tables.inc"):
         if not require_repo_file(ROOT / "src" / "engine" / "text" / inc, "编码表生成物"):
             return
     rc, out = run([sys.executable, str(script), "--check"])
     if rc != 0:
         fail("编码表与 codec 不一致：\n%s" % tail(out, 10))
         return
-    ok("四张表与 codec 完全一致")
+    ok("八张表与 codec 完全一致")
 
     # 表对了还不够：编码转换页用的 `errors="replace"`（有损编解码）**也要逐字节等于
     # Python 同名 codec** —— 替换符个数差一个就是产物错，而它错得"看着像对"。

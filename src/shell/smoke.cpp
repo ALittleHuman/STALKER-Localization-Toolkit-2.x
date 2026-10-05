@@ -7,6 +7,7 @@
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/plugin/abi_host.h"
 #include "xrkit/engine/plugin/loader.h"
+#include "xrkit/engine/text/encoding.h"
 #include "hub.h"
 #include "dialog_start.h"
 #include "drop_filter.h"
@@ -6130,6 +6131,86 @@ SmokeResult run_smoke() {
         check(page.target_combo() != nullptr &&
                   page.target_combo()->currentData().toString() == QStringLiteral("utf-8"),
               QStringLiteral("D2附 目标编码默认仍是 utf-8"));
+
+        // ── （D3）三张东亚表上架：下拉里出现三项，且**与引擎编码名一一对应** ──
+        //   ★ 判据写"一一对应"不是"包含"：下拉的 itemData 必须是**引擎那三个常量本身**
+        //     （`etxt::kBig5/kShiftJis/kEucKr` 的字面值），否则界面选了 `big5`、
+        //     引擎收到的是别的名字，就会静默落到"未知编码"。
+        //     拆掉源表里的对应项 ⇒ 下面任意一条立刻红。
+        {
+            const char* kNew[] = {etxt::kBig5, etxt::kShiftJis, etxt::kEucKr};
+            for (const char* name : kNew) {
+                const QString want = QString::fromUtf8(name);
+                check(has_item(page.source_combo(), want),
+                      QStringLiteral("D3① 源编码下拉里有 %1（1.x ENCODING_CHOICES 源侧有它）")
+                          .arg(want));
+                check(has_item(page.target_combo(), want),
+                      QStringLiteral("D3① 目标编码下拉里也有 %1（引擎两侧都实现了）").arg(want));
+                // 一一对应：下拉项 data → 页面取到的编码名
+                int idx = -1;
+                for (int i = 0; i < page.source_combo()->count(); ++i) {
+                    if (page.source_combo()->itemData(i).toString() == want) {
+                        idx = i;
+                        break;
+                    }
+                }
+                check(idx >= 0, QStringLiteral("D3② 源下拉里能定位到 %1").arg(want));
+                if (idx >= 0) {
+                    const int keep = page.source_combo()->currentIndex();
+                    page.source_combo()->setCurrentIndex(idx);
+                    check(QString::fromStdString(page.current_source_encoding()) == want,
+                          QStringLiteral("D3② 源下拉选中 %1 ⇒ 交给引擎的编码名就是 %1（实得 %2）")
+                              .arg(want)
+                              .arg(QString::fromStdString(page.current_source_encoding())));
+                    page.source_combo()->setCurrentIndex(keep);
+                }
+            }
+            // 三项**顺序**与 1.x 的 ENCODING_CHOICES 一致（gb2312 之后、windows-1251 之前）
+            const QStringList want_order = {QStringLiteral("big5"),
+                                            QStringLiteral("shift_jis"),
+                                            QStringLiteral("euc-kr")};
+            QStringList got_order;
+            for (int i = 0; i < page.source_combo()->count(); ++i) {
+                const QString d = page.source_combo()->itemData(i).toString();
+                if (d == QStringLiteral("big5") || d == QStringLiteral("shift_jis") ||
+                    d == QStringLiteral("euc-kr")) {
+                    got_order << d;
+                }
+            }
+            check(got_order == want_order,
+                  QStringLiteral("D3③ 三项在源下拉里的相对顺序照 1.x 的 ENCODING_CHOICES"
+                                 "（big5 → shift_jis → euc-kr，实得 %1）")
+                      .arg(got_order.join(QStringLiteral(" → "))));
+            check(!has_item(page.source_combo(), QStringLiteral("ascii")),
+                  QStringLiteral("D2附 加了三个新项之后，源下拉里**仍然没有** ascii"));
+
+            // ★ 全库"编码名列表"同类搜索的落点：XML 校对页也有一张编码下拉，但它的
+            //   模型是 **1.x `xml_compare_app.py:302` 的 `ENCODINGS`**（六项，**不含**
+            //   big5/shift_jis/euc-kr）⇒ 那一页**故意不动**，这里把它钉住，免得日后
+            //   有人"顺手统一"成转换页那张表（那会偏离 1.x 的界面口径）。
+            {
+                XmlPage xml;
+                xml.show();
+                QApplication::processEvents();
+                const auto enc_has = [&xml](const QString& text) {
+                    if (xml.enc_a_combo() == nullptr) return false;
+                    for (int i = 0; i < xml.enc_a_combo()->count(); ++i) {
+                        if (xml.enc_a_combo()->itemData(i).toString() == text) return true;
+                    }
+                    return false;
+                };
+                for (const char* name : kNew) {
+                    const QString want = QString::fromUtf8(name);
+                    check(!enc_has(want),
+                          QStringLiteral("D3④ XML 校对页的编码下拉**不含** %1"
+                                         "（1.x 那一页的 ENCODINGS 只有六项）")
+                              .arg(want));
+                }
+                check(enc_has(QStringLiteral("windows-1251")),
+                      QStringLiteral("D3④ XML 校对页的编码下拉仍是 1.x 那六项之一"));
+                xml.close();
+            }
+        }
 
         // ③ 输出目录非空 ⇒ 备份勾选框**禁用且取消勾选**（1.x `on_output_dir_change` `:575-580`）
         page.output_edit()->setText(QStringLiteral("E:/xrkit_d2_out"));
