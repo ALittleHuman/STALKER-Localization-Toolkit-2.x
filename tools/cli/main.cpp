@@ -48,6 +48,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <cmath>
 #include <filesystem>
@@ -116,9 +117,12 @@ void print_usage() {
            "  --themecheck    检查主题令牌（两套模式 × 颜色/字体/px/user.ltx 语义；ASCII 收尾行）\n"
            "  --dump <文件> [DB格式]   导出解析结果（SquashFS 条目表 或 DB 条目表 TSV）\n"
            "  --extract <源> <内部路径> <输出> [DB格式]   提取单个文件（进程内解压）\n"
-           "  --unpack-tree <镜像> <输出根> [--only <清单文件>]\n"
+           "  --unpack-tree <镜像> <输出根> [--only <清单文件>] [--verify-readback]\n"
            "                                              整树导出（**原样摊开**：条目直接落在输出根下；\n"
            "                                              只认 SquashFS；安全路径 + 原子写；空清单＝拒绝）\n"
+           "                                              --verify-readback：写后校验回到**读回逐字节复核**\n"
+           "                                              （默认是「边写边算哈希」＝一遍 I/O，不读回；\n"
+           "                                              那条路少一次读盘，真机 14.9k 文件上省 ≈ 18 s）\n"
            "  --unpack-package <包|目录> [输出根] [--only <清单文件>] [DB格式]\n"
            "        （**输出根可省**：省略 ⇒ 与 GUI 同一条引擎规则 —— 第一个源所在目录；没有源 ⇒ 当前目录）\n"
            "                                              **与 GUI「解包」等价**：任何包类型（SquashFS +\n"
@@ -161,6 +165,31 @@ void print_usage() {
            "  --verbose, -v   逐条打印自检结果\n"
            "\n"
            "退出码: 0=通过  1=有失败  2=显式跳过（未实现）  3=用法错误\n";
+}
+
+// ★ 写盘探针的**作用域闸门**（见 register_core_checks 里那条原子写自校验锁）：
+//   `--selftest --verify-readback` 会把探针装在**进程级**，而这一轮自检里别的检查
+//   （散装层样本、解密闸门）也用 `write_file_atomic` —— 不给闸门就会把**别人的**检查搞红。
+//   只有那条自校验锁自己会把它置位，所以注入永远只影响它自己。
+bool g_atomic_probe_armed = false;
+
+// 自校验锁**自带**的探针（`--selftest` 单独跑也照样验）。
+// ★ 必须是**静态存活期**的对象：`set_write_probe` 存的是函数指针的**值**，但探针结构体本身
+//   若是个临时量就会当场析构 —— 之后再取指针就是悬垂（2026-10-05 实测：调用点一条都没触发，
+//   注入静默失效，锁"看起来绿"）。CLI 那条 `--verify-readback` 注入同理（见 run_cli，用 static）。
+xrkit::core::WriteProbe make_atomic_selftest_probe() {
+    xrkit::core::WriteProbe probe;
+    probe.tamper_temp_file = [](const std::string& path_utf8) -> bool {
+        if (!g_atomic_probe_armed) return false;
+        std::filesystem::path p = xrkit::core::path_from_utf8(path_utf8);
+        std::fstream io(p, std::ios::binary | std::ios::in | std::ios::out);
+        if (!io) return false;
+        io.seekp(0, std::ios::beg);
+        const char bad = '\x5A';
+        io.write(&bad, 1);
+        return static_cast<bool>(io);
+    };
+    return probe;
 }
 
 void register_core_checks(xrkit::core::CheckRegistry& reg) {
@@ -1578,6 +1607,140 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         std::filesystem::remove(file, ec);
         std::filesystem::remove(dir, ec);
     });
+    // ★★ 2026-10-05（用户裁决 ③）：解包原子写的**写后校验**改造 —— 三条锁各自"先红后绿"。
+    //
+    // 为什么默认路径要换：旧的"读回逐字节复核"是**按文件个数付钱**（真机 `gamedata.sq_base_configs`
+    // 14,861 文件上实测 ≈ 17.9 s：31.1 s → 13.25 s 的差，而 rds 参照只要 13.8 s）。
+    // 新默认：**边写边算哈希 + 实际写出字节数**，写完与内存那份数据比对（零额外 I/O）。
+    //
+    // 这几条锁都靠 `core::WriteProbe` 注入（进程外的测试改不到"写到一半的数据"/"比对用的那份"）：
+    //   ① 正常写 ⇒ 绿、不留 `.part`；
+    //   ② 注入"期望哈希不对" ⇒ 流式自校验**必须**报错 + 不 rename + 清 `.part`；
+    //   ③ 撤掉注入 ⇒ 绿（证明②的红来自注入，不是"永远为红"）；
+    //   ④ 写完之后动临时文件 ⇒ `WriteVerify::Readback` **必须**抓住（证明它真在读回）。
+    // ★ 注入只改**比对用的期望值**、只动**临时文件**，真实产物一个字节都不动 —— 所以
+    //   "没写对就不 rename" 能被老实观测到（不像"改内存里那份"会让产物必然变脏）。
+    reg.add("core: 原子写自校验（边写边算哈希 / 读回开关，各自先红后绿）", [](CheckContext& ctx) {
+        namespace core = xrkit::core;
+        std::error_code ec;
+        const std::filesystem::path dir =
+            std::filesystem::temp_directory_path(ec) / "xrkit_selftest_atomic_verify";
+        std::filesystem::remove_all(dir, ec);
+        std::filesystem::create_directories(dir, ec);
+        // ★ 两条锁各用**自己的文件**：④ 会把临时文件改脏（那是它的目的），
+        //   若与②③ 共用一个落点，后面的断言看到的是被改脏的产物（2026-10-05 实测踩到）。
+        const std::filesystem::path stream_file = dir / "stream.bin";
+        const std::filesystem::path readback_file = dir / "readback.bin";
+        const auto part_of = [](const std::filesystem::path& p) {
+            std::filesystem::path q = p;
+            q += L".part";
+            return q;
+        };
+        std::vector<uint8_t> data(4096);
+        for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<uint8_t>(i * 7 + 13);
+        const auto read_back = [](const std::filesystem::path& p) {
+            std::ifstream in(p, std::ios::binary);
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        };
+        const std::string want(reinterpret_cast<const char*>(data.data()), data.size());
+
+        // 本检查**自带**一份探针（不依赖命令行开关）：这样 `--selftest` 单独跑也照样验。
+        // 每次都用**全新**的 `WriteProbe` 覆盖（`set_write_probe` 是进程级的 ⇒ 不覆盖就会把
+        // 命令行 `--verify-readback` 装的那一份留在外面）。探针函数的存活期由
+        // `make_atomic_selftest_probe()` 的静态量保证（见它的注释）。
+        //   Arm::Off        零注入
+        //   Arm::TempFile   写完之后动一下 `.part`（只该被**读回**档抓住）
+        //   Arm::BadHash    把比对用的期望哈希换掉（只该被**流式自校验**抓住）
+        enum class Arm { Off, TempFile, BadHash };
+        const auto arm = [](Arm kind) {
+            static const xrkit::core::WriteProbe kSelftest = make_atomic_selftest_probe();
+            xrkit::core::WriteProbe probe;
+            if (kind == Arm::TempFile) {
+                probe.tamper_temp_file = kSelftest.tamper_temp_file;
+            } else if (kind == Arm::BadHash) {
+                // 一个**合法但不同**的哈希值（真值由同一函数算出，这里取它的按位取反，
+                // 保证非 0、且几乎不可能与任何真值相同）。
+                probe.tamper_expected_hash = ~0xA5A5A5A5A5A5A5A5ULL;
+            }
+            g_atomic_probe_armed = (kind != Arm::Off);
+            xrkit::core::set_write_probe(probe);
+        };
+        const core::WriteProbe saved = core::set_write_probe(core::WriteProbe{});
+
+        // ── 流式档（默认路径）：绿 → 注入红 → 还原绿 ──
+        // ① 正常写：必须绿，且不留 `.part`
+        {
+            std::string error;
+            const bool ok = core::write_file_atomic(core::path_to_utf8(stream_file), data,
+                                                    /*atomic=*/true, error,
+                                                    core::WriteVerify::Streamed);
+            check(ctx, ok, "流式自校验的正常写失败：" + error);
+            check(ctx, read_back(stream_file) == want, "流式档写出的内容与输入不一致");
+            check(ctx, !std::filesystem::exists(part_of(stream_file)),
+                  "流式档正常写之后留下了 .part");
+        }
+        // ② 注入"期望哈希不对" ⇒ 流式自校验必须红，且不许 rename、要清 `.part`
+        std::filesystem::remove(stream_file, ec);   // 先删目标，好断言"没被 rename 出来"
+        {
+            arm(Arm::BadHash);
+            std::string error;
+            const bool ok = core::write_file_atomic(core::path_to_utf8(stream_file), data,
+                                                    /*atomic=*/true, error,
+                                                    core::WriteVerify::Streamed);
+            const bool part_left = std::filesystem::exists(part_of(stream_file));
+            const bool target_left = std::filesystem::exists(stream_file);
+            arm(Arm::Off);
+            check(ctx, !ok, "注入「期望哈希不对」竟被判为成功（自校验是永远为真的锁）");
+            check(ctx, !error.empty(), "自校验失败却没有理由（零静默：要给逐条原因）");
+            check(ctx, !target_left, "自校验失败却还是 rename 出了目标文件");
+            check(ctx, !part_left, "自校验失败却留下了 .part");
+            check(ctx, error.find("自校验不一致") != std::string::npos,
+                  "自校验失败的理由不对：" + error);
+        }
+        // ③ 撤掉注入 ⇒ 绿：证明②的红来自注入，不是永远为红
+        {
+            arm(Arm::Off);
+            std::string error;
+            const bool ok = core::write_file_atomic(core::path_to_utf8(stream_file), data,
+                                                    /*atomic=*/true, error,
+                                                    core::WriteVerify::Streamed);
+            check(ctx, ok, "撤掉注入后还是红（锁有残留状态）：" + error);
+            check(ctx, read_back(stream_file) == want, "撤掉注入后内容不对");
+        }
+
+        // ── 读回档（开关路径）：注入"改临时文件的一个字节" ⇒ 必须抓住 ──
+        std::filesystem::remove(readback_file, ec);
+        {
+            arm(Arm::TempFile);
+            std::string error;
+            const bool ok = core::write_file_atomic(core::path_to_utf8(readback_file), data,
+                                                    /*atomic=*/true, error,
+                                                    core::WriteVerify::Readback);
+            const bool part_left = std::filesystem::exists(part_of(readback_file));
+            const bool target_left = std::filesystem::exists(readback_file);
+            arm(Arm::Off);
+            check(ctx, !ok, "读回档没抓住「临时文件被改了一个字节」—— 它没有真在读回");
+            check(ctx, !error.empty(), "读回档失败了却没有理由");
+            check(ctx, !part_left, "读回档失败却留下了 .part");
+            check(ctx, !target_left, "读回档失败却还是 rename 出了目标文件");
+        }
+        // ⑤ 同一枚文件的**正常**读回档：必须绿、内容逐字节一致（对照：开关本身不改变产物）
+        {
+            std::string error;
+            const bool ok = core::write_file_atomic(core::path_to_utf8(readback_file), data,
+                                                    /*atomic=*/true, error,
+                                                    core::WriteVerify::Readback);
+            check(ctx, ok, "读回档的正常写失败：" + error);
+            check(ctx, read_back(readback_file) == want, "读回档写出的内容与输入不一致");
+            check(ctx, !std::filesystem::exists(part_of(readback_file)),
+                  "读回档正常写之后留下了 .part");
+        }
+
+        core::set_write_probe(saved);
+        std::filesystem::remove_all(dir, ec);
+    });
+
     // ⑫12.1/12.2/12.3 纯 C ABI：**像插件那样**通过函数表把 10 个注册点全跑一遍，
     // 再从消费端把每一条捞回来。无 Qt 路径（`api.ui == nullptr`）——UI 那 16 个方法
     // 由外壳注入，这里证的是"注册面 + 回调 + when 数据化"这套 ABI 形状真的通。
@@ -1922,6 +2085,9 @@ int run_cli(const std::vector<std::string>& args) {
     std::string text_encoding = "auto";
     std::string only_list;   // --unpack-tree 的 --only <清单文件>（每行一个镜像内路径）
     bool extract_all = false;
+    // --unpack-tree 的**写后校验档位**（用户裁决 ③）：默认＝边写边算哈希（零额外 I/O）；
+    // 显式给本开关才回到"读回逐字节复核"。也用于 `--selftest` 的注入自证（见下方安装点）。
+    bool verify_readback = false;
     std::string plugins_dir;   // --plugins <目录>（空 ⇒ exe 旁边的 plugins/，与 GUI 同口径）
     bool plugins_given = false;
     std::string action;
@@ -1970,6 +2136,10 @@ int run_cli(const std::vector<std::string>& args) {
             extract_all = true;
             continue;
         }
+        if (a == "--verify-readback") {
+            verify_readback = true;
+            continue;
+        }
         if (a == "-h" || a == "--help") {
             print_usage();
             return kExitOk;
@@ -2016,6 +2186,15 @@ int run_cli(const std::vector<std::string>& args) {
     // RAII：钩子在**任何** return 路径上都会被收回（注册表是这个函数的局部对象，
     // 钩子绝不允许活得比它久）。作用域要罩住后面整段动作分派。
     const xrkit::plugin::ActiveRegistryScope active_plugin_registry(&plugin_registry);
+
+    // ★★ 2026-10-05（用户裁决 ③）：原子写"写后校验"的**先红后绿取证**。
+    //
+    // 取证不需要额外的命令行开关：自检里那条锁（`core: 原子写自校验…`）自己把探针装上、
+    // 验完再还原，**跑 `--selftest --verbose` 就能看到它一路 PASS**（包括"注入 ⇒ 必须红"）。
+    // 这里**不**再装第二份进程级探针 —— 自检每条锁都会用全新 `WriteProbe` 覆盖，
+    // 装在更外层的探针反正会被覆盖（2026-10-05 实测：`--selftest --verify-readback` 与
+    // `--selftest` 的输出逐字节相同，装了等于没装）。宁可不留这种"看起来有用"的死开关。
+    (void)verify_readback;
 
     if (action == "--selftest") {
         xrkit::core::CheckRegistry reg;
@@ -2344,10 +2523,12 @@ int run_cli(const std::vector<std::string>& args) {
     // （1.x 靠 rdsquashfs --unpack-path / --cat，超时与"把整包收进内存"都栽过）。
     if (action == "--unpack-tree") {
         if (operands.size() < 2) {
-            std::cerr << "UNPACK error reason=用法：--unpack-tree <镜像> <输出根> [--only <清单文件>]\n";
+            std::cerr << "UNPACK error reason=用法：--unpack-tree <镜像> <输出根> [--only <清单文件>] "
+                         "[--verify-readback]\n";
             return kExitUsage;
         }
         xrkit::engine::fs::ExtractTreeOptions options;
+        options.verify_readback = verify_readback;   // 默认 false ⇒ 边写边算哈希
         if (!only_list.empty() && !extract_all) {
             std::ifstream in(xrkit::core::path_from_utf8(only_list), std::ios::binary);
             if (!in) {

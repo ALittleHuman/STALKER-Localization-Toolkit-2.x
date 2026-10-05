@@ -344,12 +344,26 @@ def step_cli_contract(release: bool) -> None:
             else:
                 rc_plain, plain = run([str(CLI_EXE), "--dump", str(pack)])
                 rc_auto, auto = run([str(CLI_EXE), "--dump", str(pack), "auto"])
+
+                def entries_only(text: str) -> str:
+                    """只留**条目表**行，丢掉收尾行 `DUMP ok …`。
+
+                    ★ 2026-10-05（③ 批实测踩到）：旧写法直接比整段输出，而收尾行里有
+                    `ms=`（引擎内耗时，1~2 ms 随系统负载跳）。于是这条"条目表逐值等价"的锁
+                    会因为**一个与本判据无关的计时字段**随机判红（实测 6 次里红 1 次）。
+                    锁的意图是"两种走法算出同一张条目表"—— 那就只比那张表。
+                    """
+                    return "\n".join(
+                        ln for ln in text.splitlines()
+                        if ln.strip() and not ln.startswith("DUMP ")).strip()
+
                 if rc_plain != 0 or rc_auto != 0:
                     fail("auto 等价锁：`--dump` 两种走法都要 exit=0（实得 %d / %d）"
                          % (rc_plain, rc_auto))
-                elif plain != auto:
-                    fail("auto 等价锁：`--dump <包>` 与 `--dump <包> auto` 输出不一致 —— "
-                         "auto 必须**等价于不传格式**（同一条自洽判定）")
+                elif entries_only(plain) != entries_only(auto):
+                    fail("auto 等价锁：`--dump <包>` 与 `--dump <包> auto` 的**条目表**不一致 —— "
+                         "auto 必须**等价于不传格式**（同一条自洽判定）\n"
+                         "  plain=%r\n  auto =%r" % (entries_only(plain)[:300], entries_only(auto)[:300]))
                 else:
                     ok("auto 等价锁（④：`--dump <包>` ≡ `--dump <包> auto`，条目表逐值相同）")
 

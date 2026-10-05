@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -19,6 +20,10 @@ ROOT = HERE.parent
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 MANIFEST = HERE / "golden" / "manifest.json"
 CORPUS = HERE / "golden" / "text_decode.json"
+# 2026-10-05 那一批量化用的真机整镜像（14,147,584 B / 14,861 条目 / 解出 102,074,692 B）。
+# 它不在 manifest 里（它不是"黄金语料基准"，是**性能锁**的样本）⇒ 找不到就 SKIP，不进未覆盖清单。
+# 换机器/换样本：设 `XRKIT_BENCH_UNPACK_IMAGE`。
+NS_OGSR = Path(r"E:\Software\Games\STALKER\Games\NS OGSR\NS OGSR")
 
 # 门禁只守"防数量级回归"的宽松上界（口径文档 §判据）
 # `unpack_ms` 口径：200 条 `--only` 走完整解包路径。
@@ -27,7 +32,94 @@ CORPUS = HERE / "golden" / "text_decode.json"
 #   · 上界 60000 ms 是**两个数量级**的余量：只为拦住量级回归（例如整镜像被重复遍历 N 遍），
 #     不参与"本机快慢"的评判。
 LIMITS = {"dump_ms": 60000, "extract_mbps": 1.0, "text_decode_ms": 20000,
-          "unpack_ms": 60000}
+          "unpack_ms": 60000,
+          # ★★ 2026-10-05（用户裁决 ③）：**整镜像** `--unpack-tree` 的宽松上界。
+          #   口径：真机 `gamedata.sq_base_configs`（14,147,584 B 镜像 / 14,861 条目 /
+          #         解出 102,074,692 B）**一整趟**的墙钟（取 CLI 自报的引擎内耗时）。
+          #   实测（本机，2026-10-05，改动前后在同一台机器上各跑 3 次）：
+          #     · 旧默认（读回逐字节复核，HEAD a8eeadf 的二进制）：47.4 / 48.5 / 47.3 s；
+          #     · 新默认（边写边算哈希）                    ：34.0 / 34.0 / 34.1 s（离散 < 0.3%）；
+          #     · 开 `--verify-readback`（回到读回）         ：34.3 / 34.0 s（**本机**几乎无差 ——
+          #       临时文件刚写完还在页缓存里，"读回"这一步在本机不是瓶颈；旧默认那 47 s 里
+          #       多出来的 ≈ 13.6 s 是**旧实现把临时文件边写边读**的那条路）。
+          #   ⇒ 上界 60 s：本机实测在 **34 ~ 57 s** 之间抖（同一天同一二进制，差在并发/杀软扫描
+          #     —— 一次门禁自己就要新建 4 × 14,861 ≈ 6 万个文件）。所以它是**防数量级回归**的
+          #     上界（≈ 本机中位数 37 s 的 1.6 倍），不是"本机快慢"的评判；数字一律打印出来供人核。
+          #     判红办法（想手验这条锁抓不抓得住）：把 `extract_tree` 的两处调用参数改回
+          #     `WriteVerify::Readback` 当默认 ⇒ 本机 ≈ 47 s（旧 HEAD 的二进制实测 47.4 / 48.5 s）。
+          "unpack_full_ms": 60000,
+          # 同一镜像开 `--verify-readback`：只守"别比默认档差出量级"（它本来就该 ≥ 默认档）。
+          "unpack_readback_ms": 120000}
+
+
+def pick_unpack_image() -> Path | None:
+    """整镜像解包的性能锁用哪枚镜像。
+
+    口径（按顺序找，找不到就 SKIP）：
+      ① `XRKIT_BENCH_UNPACK_IMAGE`（环境变量，便于换样本）；
+      ② `tests/golden/manifest.json` 里**每一枚样本所在目录**下的 `gamedata.sq_base_configs`
+         —— 那是 2026-10-05 那一批量化的**同一枚**样本（14,147,584 B / 14,861 条目 /
+         解出 102,074,692 B），数字与任务里的口径直接可比；
+      ③ 已知真机目录 `NS_OGSR` 下的同名文件；
+      ④ 默认基准镜像同目录下的同名文件。
+    找不到 ⇒ None（本条记 SKIP，不影响其它指标）。
+    """
+    env = os.environ.get("XRKIT_BENCH_UNPACK_IMAGE")
+    if env:
+        p = Path(env)
+        return p if p.exists() else None
+    name = "gamedata.sq_base_configs"
+    dirs: list[Path] = [NS_OGSR]
+    if MANIFEST.exists():
+        try:
+            data = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        items = data if isinstance(data, list) else (data.get("entries") or data.get("items") or [])
+        for item in items:
+            p = Path(item.get("path", ""))
+            if str(p):
+                dirs.append(p.parent)
+    base = pick_image()
+    if base is not None:
+        dirs.append(base.parent)
+    seen: set[Path] = set()
+    for d in dirs:
+        cand = d / name
+        if cand in seen:
+            continue
+        seen.add(cand)
+        if cand.exists():
+            return cand
+    return None
+
+
+def unpack_once(image: Path, outdir: Path, extra: list[str] | None = None) -> tuple[int, int, float, str]:
+    """跑一整趟 `--unpack-tree`（可选 `--verify-readback`）。
+
+    返回 (退出码, 盘上文件数, 毫秒, 收尾行)。`ms` 取 **CLI 自报的 engine 内耗时**（`ms=`）——
+    那才是引擎内部的墙钟；外面再套一层子进程启动/输出收集会引入与本改动无关的噪声。
+    """
+    if outdir.exists():
+        shutil.rmtree(outdir)
+    outdir.mkdir(parents=True)
+    argv = ["--unpack-tree", str(image), str(outdir), *(extra or [])]
+    t0 = time.perf_counter()
+    rc, out = run(argv)
+    wall_ms = (time.perf_counter() - t0) * 1000.0
+    files = sum(1 for p in outdir.rglob("*") if p.is_file()) if outdir.exists() else 0
+    inner = 0.0
+    last = ""
+    for line in out.splitlines():
+        if line.startswith("UNPACK ok"):
+            last = line.strip()
+            for tok in line.split():
+                if tok.startswith("ms="):
+                    try:
+                        inner = float(tok[3:])
+                    except ValueError:
+                        inner = 0.0
+    return rc, files, (inner or wall_ms), last
 
 
 def pick_image() -> Path | None:
@@ -157,6 +249,83 @@ def main() -> int:
                   % (ms_u, len(sel), ms_u / max(1, len(sel)), image.name))
     else:
         print("BENCH skip metric=unpack_ms reason=no-file-entries")
+
+    # ── ★★ 2026-10-05（用户裁决 ③）：**整镜像** `--unpack-tree` 的性能锁 ──────────────
+    #   这一条冲着"原子写默认档换成边写边算哈希"来：
+    #     · 默认（流式自校验，零额外 I/O）连跑 3 次，报**每次 + 中位数 + 离散度**；
+    #     · 再开 `--verify-readback`（必须回到旧的读回逐字节复核）跑 1 次作对照 ——
+    #       两者**产物必须逐字节一致**，但读回那次应当明显更慢（否则"开关"没生效）。
+    #   上界只拦数量级回归（见 LIMITS 的注释）；数字全打印出来，便于人核。
+    unpack_image = pick_unpack_image()
+    if unpack_image is None:
+        print("BENCH skip metric=unpack_full_ms reason=no-unpack-image"
+              "（设 XRKIT_BENCH_UNPACK_IMAGE，或让基准镜像同目录里有 gamedata.sq_base_configs）")
+        print("BENCH skip metric=unpack_readback_ms reason=no-unpack-image")
+    else:
+        import hashlib
+        import statistics
+        import tempfile
+
+        def tree_digest(root: Path) -> str:
+            h = hashlib.sha256()
+            for p in sorted(root.rglob("*")):
+                if not p.is_file():
+                    continue
+                h.update(p.relative_to(root).as_posix().encode("utf-8"))
+                h.update(b"\0")
+                data = p.read_bytes()
+                h.update(str(len(data)).encode("ascii"))
+                h.update(b"\0")
+                h.update(data)
+            return h.hexdigest()
+
+        with tempfile.TemporaryDirectory(prefix="xrkit_bench_full_") as tmp:
+            workdir = Path(tmp)
+            shots: list[float] = []
+            digests: list[str] = []
+            files_seen: list[int] = []
+            for i in range(3):
+                rc, files, ms, last = unpack_once(unpack_image, workdir / ("run%d" % i))
+                if rc != 0:
+                    print("BENCH skip metric=unpack_full_ms reason=rc%d run=%d %s"
+                          % (rc, i + 1, last[:120]))
+                    shots = []
+                    break
+                shots.append(ms)
+                files_seen.append(files)
+                digests.append(tree_digest(workdir / ("run%d" % i)))
+            if shots:
+                med = statistics.median(shots)
+                spread = (max(shots) - min(shots)) / med * 100.0 if med else 0.0
+                metrics["unpack_full_ms"] = med
+                print("BENCH metric=unpack_full_ms value=%.1f runs=%s files=%s median=%.1f "
+                      "spread=%.1f%% image=%s"
+                      % (med, ",".join("%.1f" % v for v in shots),
+                         "/".join(str(f) for f in files_seen), med, spread, unpack_image.name))
+                if len(set(digests)) != 1:
+                    print("BENCH ✗ 同一镜像连跑 3 次产物不逐字节一致（性能锁的前提不成立）")
+                    metrics["unpack_full_ms"] = 1e9   # 直接判红（这条比"快慢"重要）
+                else:
+                    print("     产物逐字节一致（3 次连跑同一 sha256 前缀 %s）" % digests[0][:16])
+
+                # 对照：`--verify-readback`（旧的读回逐字节复核）——产物必须与默认档一致。
+                rc_v, files_v, ms_v, last_v = unpack_once(
+                    unpack_image, workdir / "readback", ["--verify-readback"])
+                if rc_v != 0:
+                    print("BENCH skip metric=unpack_readback_ms reason=rc%d %s"
+                          % (rc_v, last_v[:120]))
+                else:
+                    dig_v = tree_digest(workdir / "readback")
+                    metrics["unpack_readback_ms"] = ms_v
+                    print("BENCH metric=unpack_readback_ms value=%.1f files=%d (对照：默认档 %.1f ms)"
+                          % (ms_v, files_v, med))
+                    if dig_v != digests[0]:
+                        print("BENCH ✗ `--verify-readback` 的产物与默认档不一致"
+                              "（读回开关改变了落盘内容 —— 这是硬缺陷）")
+                        metrics["unpack_readback_ms"] = 1e9
+                    else:
+                        print("     产物与默认档逐字节一致（sha256 前缀 %s）" % dig_v[:16])
+
 
     failures = 0
     for name, limit in LIMITS.items():

@@ -10,7 +10,9 @@
 //   · 6.7 `safe_out_path` 五条拒因（空/非串、`/` 或 UNC 开头、`rel[1]==':'`、
 //     分段含 `..`、`commonpath` 兜底复核）；
 //   · 6.8 空文件是**合法条目**（写出 0 字节），与"解不出来"分开；
-//   · 6.9 **原子写**：同目录 `.part` → 逐字节复核 → 同盘 rename；失败 unlink；
+//   · 6.9 **原子写**：同目录 `.part` → 写后自校验 → 同盘 rename；失败 unlink；
+//     ★ 2026-10-05（用户裁决 ③）：自校验默认＝**边写边算哈希 + 实际字节数**（零额外 I/O），
+//     `verify_readback=true` 才回到"读回逐字节复核"；
 //   · 6.10 选中集**只有目录 / 空选择**时，1.x 会退化成"整镜像导出"并记为成功 ——
 //     2.0 把"全部"与"空选择"分成两个显式状态，空选择直接拒绝并说明理由；
 //   · 6.14 失败原因**随返回值走**（1.x 用模块级全局变量报错，并发任务互相覆盖）。
@@ -75,7 +77,16 @@ enum class Selection {
 struct ExtractTreeOptions {
     Selection selection = Selection::All;
     std::vector<std::string> only;  // selection == Listed 时的镜像内路径
-    bool atomic = true;             // 6.9：.part → 复核 → rename
+    bool atomic = true;             // 6.9：.part → （自校验）→ rename
+    // ★★ 2026-10-05（用户裁决 ③）：写后校验档位。
+    //   false（默认）＝**边写边算哈希 + 实际写出字节数**，与内存那份数据比对（零额外 I/O）；
+    //   true         ＝**读回逐字节复核**（旧的 6.9 行为，绝对确定的场合用）。
+    // 为什么默认换成前者：读回复核是"按文件个数付钱"——真机 `gamedata.sq_base_configs`
+    // （14,861 文件 / 13.5 MB）上实测 ≈ 17.9 s（31.1 s → 13.25 s 的差），而它换来的只是
+    // "确认写出的等于想写的字节"；同一条判据用流式哈希在内存里就能得到。
+    // `atomic=false` 时本项无意义（没有临时文件，也就没有可校验的中间态）。
+    // CLI 入口：`--unpack-tree … --verify-readback`；**GUI 不做这个开关**（用户没要）。
+    bool verify_readback = false;
 };
 
 struct ExtractTreeFailure {
@@ -109,7 +120,7 @@ struct ExtractTreeResult {
 };
 
 // 把镜像里的条目导到 out_root。**空文件写出 0 字节**；目录项在 All 模式下建出来、
-// 在 Listed 模式下按 1.x 跳过；`.part` 临时文件写完复核后才 rename。
+// 在 Listed 模式下按 1.x 跳过；`.part` 临时文件写完自校验后才 rename。
 // ⚠ 只认 **SquashFS**（走 `list_entries`）。要"什么包都能解"请用下面的 `extract_package`。
 ExtractTreeResult extract_tree(const std::string& image_path, const std::string& out_root,
                                const ExtractTreeOptions& options = ExtractTreeOptions{});

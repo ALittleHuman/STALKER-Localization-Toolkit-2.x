@@ -289,7 +289,10 @@ ExtractTreeResult extract_tree(const std::string& image_path, const std::string&
         // 6.8：空文件是**合法条目** —— 写出 0 字节并计入成功。
         //（1.x 的旧代码 `rc == 0 and r.stdout` 把空文件当成"解不出来"，已修。）
         std::string error;
-        if (!xrkit::core::write_file_atomic(target.path, data.data, options.atomic, error)) {
+        // 6.9 原子写：默认"边写边算哈希"自校验；`options.verify_readback` 才走读回逐字节复核。
+        const core::WriteVerify verify = options.verify_readback ? core::WriteVerify::Readback
+                                                                : core::WriteVerify::Streamed;
+        if (!xrkit::core::write_file_atomic(target.path, data.data, options.atomic, error, verify)) {
             result.failures.push_back({entry->path, error});
             continue;
         }
@@ -370,7 +373,10 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
             continue;
         }
         std::string write_error;
-        if (!core::write_file_atomic(safe.path, data.data, options.atomic, write_error)) {
+        // 与 SquashFS 分支同一条纪律（6.9）：默认流式哈希自校验，开关打开才读回。
+        const core::WriteVerify verify = options.verify_readback ? core::WriteVerify::Readback
+                                                                : core::WriteVerify::Streamed;
+        if (!core::write_file_atomic(safe.path, data.data, options.atomic, write_error, verify)) {
             result.failures.push_back({entry.path, write_error});
             continue;
         }
