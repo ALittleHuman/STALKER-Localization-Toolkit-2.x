@@ -641,6 +641,25 @@ def step_text_tables(release: bool) -> None:
         return
     ok("八张表与 codec 完全一致")
 
+    # ★ 2026-10-06：判定链"鲁棒"步的单字节家族统计剖面（`sniff_profiles.inc`）——
+    #   同样**只能由生成器产出**。它是"哪一边更像俄语/西欧"的唯一依据，手改一个权重
+    #   就足以让真俄文被推去 cp1252（或反过来），而这种错**看着像对**。
+    prof_gen = ROOT / "tools" / "gen_sniff_profiles.py"
+    if not require_repo_file(prof_gen, "判定链剖面生成器"):
+        return
+    if not require_repo_file(ROOT / "src" / "engine" / "text" / "sniff_profiles.inc",
+                             "判定链剖面生成物"):
+        return
+    rc, out = run([sys.executable, str(prof_gen), "--check"])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("!!") or s.startswith("GEN-SNIFF-PROFILES"):
+            say("  " + s)
+    if rc != 0:
+        fail("判定链统计剖面与生成器不一致（见上）")
+        return
+    ok("判定链统计剖面与生成器完全一致")
+
     # 表对了还不够：编码转换页用的 `errors="replace"`（有损编解码）**也要逐字节等于
     # Python 同名 codec** —— 替换符个数差一个就是产物错，而它错得"看着像对"。
     lossy = ROOT / "tests" / "golden_lossy_codec.py"
@@ -804,10 +823,14 @@ def step_golden_text_extract(release: bool) -> None:
 def step_golden_text_sniff(release: bool) -> None:
     """黄金语料：文本**判定链**（六步）2.x vs 1.x 的 sniff_encoding + decode_bytes。
 
-    判据分三层（第 5 步统计探测未移植 chardet，必须如实记账，不许放宽）：
+    判据分**四层**（第 5 步统计探测没移植 chardet，必须如实记账，不许放宽）：
       ① 硬判据 = (used, forced, 码位数, 正文 sha256) 一致；
       ② 命名台账 = 允许 (step, 编码名) 不同，但只允许台账里登记过的那些；
-      ③ 差异台账 = 连正文都不同的样本（含 1.x 的 cp1250 误判）逐条冻结。
+      ③ 能力缺口台账 = 连正文都不同的样本（含 1.x 的 cp1250 误判、GBK/Big5/SJIS 家族）；
+      ④ ★ 口径差异台账（2026-10-06）= **有意与 1.x 不同**的那批 —— 用户拍板的单字节家族
+         置信度系统让"谎报 windows-1251 的西欧文件"不再被 1251 吃掉。
+    另有三条**零静默自证**（rc⟺lowconf、lowconf⟹step6、mism⟺enc≠used）与一条**独立于 1.x**
+    的硬判据（用户那份 109 个西语 xml 真语料：不再按 windows-1251 解、不出西里尔乱码）。
     退出码：0=一致，1=不一致，2=样本缺失/变动。
     """
     say("[16] 黄金语料：文本判定链（2.x vs 1.x）")
@@ -823,10 +846,11 @@ def step_golden_text_sniff(release: bool) -> None:
     for line in out.splitlines():
         s = line.strip()
         if s.startswith("GOLDEN-TEXT-SNIFF") or s.startswith("✗") or s.startswith("!!") \
-                or s.startswith("台账") or s.startswith("样本内容变了"):
+                or s.startswith("台账") or s.startswith("样本内容变了") \
+                or s.startswith("西语真语料") or s.startswith("诚实声明") or s.startswith("gunsl_keys"):
             say("  " + s)
     if rc == 0:
-        ok("判定链解码结果与 1.x 一致（差异台账已冻结）")
+        ok("判定链解码结果与 1.x 一致（差异台账已冻结；含 109 个西语真语料硬判据）")
     elif rc == 2:
         prereq("真语料文本样本", "样本缺失或内容变动（见上）", release)
     else:
@@ -1168,6 +1192,41 @@ def step_shell_smoke(release: bool) -> None:
              % "、".join(offenders))
         return
     ok("定案步骤标签只由引擎给（9.7：页面不拼 `多字节(...)` 那类结论）")
+
+    # ★ 2026-10-06 用户口径③「后面的两个才是不确定因素，也就是一般意义上的**置信度系统**」
+    #   + 零静默红线：**低置信/否决声明/判定≠实解**必须在四个面上都留痕 ——
+    #   引擎置位、CLI 上屏、GUI 逐条与汇总、页面状态栏汇总。拆掉任何一处 ⇒ 红。
+    sniff_src = ROOT / "src" / "engine" / "text" / "sniff.cpp"
+    sniff_code = active_code(sniff_src.read_text(encoding="utf-8", errors="replace"))
+    missing = [name for name in ("res.low_confidence = true;", "res.override_decl = true;")
+               if name not in sniff_code]
+    if missing:
+        fail("置信度系统（零静默）：sniff.cpp 里必须置位 %s —— 低置信/否决声明必须能被看见"
+             % "、".join(missing))
+        return
+    cli_src = ROOT / "tools" / "cli" / "main.cpp"
+    cli_code = active_code(cli_src.read_text(encoding="utf-8", errors="replace"))
+    missing = [f for f in ("lowconf=", "overdecl=", "statscore=", "mism=") if f not in cli_code]
+    if missing:
+        fail("置信度系统（零静默）：`--sniff` 的输出行缺少 %s —— CLI 上看不到就等于静默"
+             % "、".join(missing))
+        return
+    batch_src = ROOT / "src" / "engine" / "text" / "batch.cpp"
+    batch_code = active_code(batch_src.read_text(encoding="utf-8", errors="replace"))
+    missing = [t for t in ("低置信判定：", "统计否决声明：", "判定≠实际使用编码：")
+               if t not in batch_code]
+    if missing:
+        fail("置信度系统（零静默）：batch.cpp 里缺少汇总报数 %s —— 逐条留痕还不够，要能报总数"
+             % "、".join(missing))
+        return
+    conv_code = active_code(convert_src.read_text(encoding="utf-8", errors="replace"))
+    missing = [t for t in ("outcome.low_confidence", "outcome.override_decl",
+                           "outcome.used_mismatch") if t not in conv_code]
+    if missing:
+        fail("置信度系统（零静默）：convert_page.cpp 的状态栏缺少 %s —— GUI 上要一眼看到"
+             % "、".join(missing))
+        return
+    ok("置信度系统零静默（引擎置位 + CLI 上屏 + GUI 逐条/汇总 + 状态栏 四处齐全）")
 
     # 对照表 ⑦7.1/7.5：**页面不许自己写拒绝理由**。判据与文案都在 `validate_request`
     #（引擎），页面只把返回值显示出来 —— 两条入口各写一份理由，迟早会不一样。

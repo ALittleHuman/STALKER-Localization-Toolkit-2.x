@@ -55,6 +55,17 @@ struct ConvertOutcome {
     SniffStep step = SniffStep::Default;
     std::string step_label;       // 形如 `多字节(utf-8)` —— **来自判定结果**（⑨9.7）
     std::string source_encoding;  // 判定链/手动指定给出的编码名
+    // ── 置信度系统的"必须可见"部分（2026-10-06 用户口径③"零静默"）──────────
+    // 页面/批处理只**显示**它们，不许自己拼结论（文案只有 sniff.cpp 一份）。
+    std::string flags_label;      // 引擎给的标记串：`低置信` / `否决声明`（可同时有）
+    double confidence = 1.0;
+    bool low_confidence = false;
+    bool override_decl = false;
+    // ★ 判定结论（`source_encoding`）与实际**真正用来解码**的编码分叉 —— 必须报出来。
+    //   转换路径原来在这里有一处**静默回退**：判定编码 `decode_lossy` 失败就悄悄改用
+    //   windows-1251（1.x 也这么做，但 1.x 至少记一条警告）。现在既记 flag 也计数。
+    std::string used_encoding;
+    bool used_mismatch = false;
     uint64_t in_bytes = 0;
     uint64_t out_bytes = 0;
     std::vector<uint8_t> data;  // 要写出的内容（wrote=false 时为空）

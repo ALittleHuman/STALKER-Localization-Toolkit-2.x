@@ -171,6 +171,12 @@ ConvertOutcome convert_bytes(const std::vector<uint8_t>& raw_in, const std::stri
     out.step = sniffed.step;
     out.step_label = sniff_result_label(sniffed);  // ⑨9.7：标签来自判定，不是复算
     out.source_encoding = sniffed.encoding;
+    // 零静默：判定的"不确定部分"（低置信 / 否决声明）必须原样带到界面与日志，
+    // 文案只有 sniff.cpp 一份（页面不许自己拼）。
+    out.flags_label = sniff_flags_label(sniffed);
+    out.confidence = sniffed.confidence;
+    out.low_confidence = sniffed.low_confidence;
+    out.override_decl = sniffed.override_decl;
     if (target.empty()) {
         out.error = "目标编码为空";
         return out;
@@ -188,6 +194,7 @@ ConvertOutcome convert_bytes(const std::vector<uint8_t>& raw_in, const std::stri
     if (sniffed.encoding == target) {
         // ── 源已是目标编码 ──
         out.skipped = true;
+        out.used_encoding = sniffed.encoding;
         if (options.to_output_dir && target != kUtf8) {
             // 输出到新目录且目标不是 utf-8：**原样复制**（1.x 用 shutil.copy2）
             out.data = raw_in;
@@ -219,13 +226,21 @@ ConvertOutcome convert_bytes(const std::vector<uint8_t>& raw_in, const std::stri
     // ── 真实转换：解码（replace）→（xml 时）对齐声明 → 按目标编码写回
     std::string text;
     std::string err;
+    out.used_encoding = sniffed.encoding;
     if (!decode_replace(sniffed.encoding, text, err)) {
         // 1.x 在这里 `except Exception` 后**退回 windows-1251** 继续（只记一条警告），
         // 不是把整个文件判失败。
+        // ★ 零静默：这条回退就是"**判定结论 ≠ 实际使用编码**"，必须报出来 + 计数。
         std::string fallback_err;
         if (!decode_lossy(kWindows1251, raw.data(), raw.size(), text, fallback_err)) {
             out.error = err;
             return out;
+        }
+        out.used_encoding = kWindows1251;
+        out.used_mismatch = (sniffed.encoding != kWindows1251);
+        if (out.used_mismatch) {
+            if (!out.flags_label.empty()) out.flags_label += "、";
+            out.flags_label += "判定≠实解";
         }
     }
     strip_bom_char(text);

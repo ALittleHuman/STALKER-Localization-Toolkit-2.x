@@ -67,6 +67,7 @@ namespace {
 
 constexpr int kExitOk = 0;
 [[maybe_unused]] constexpr int kExitFail = 1;
+// 2 = "没出错，但结论不是正常路径"：`--bench` 未实现；`--sniff` **低置信**（纯猜/无证据）。
 constexpr int kExitSkip = 2;
 constexpr int kExitUsage = 3;
 
@@ -457,12 +458,61 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
               "六编码链把 GBK 字节判成了 " + chained.encoding + "（9.4：gb18030 要在 cp1251 前）");
 
         // 9.3 单字节家族必须**程序化判定**（"能容错解成 256 个字符"），不许维护名单：
-        // 1.x 曾漏掉 cp865 → 整篇乱码。判据落在"末位 latin-1 兜底永远成功且码位齐全"。
+        // 1.x 曾漏掉 cp865 → 整篇乱码。判据落在"末位 latin-1 永远成功且码位齐全"。
+        // ★ 2026-10-06 **按新口径显式改写**这条期望（原因：单字节家族置信度系统上线）：
+        //   旧链：`bytes(range(256))` 落第 6 步默认 windows-1251，候选全失败 ⇒ **兜底**
+        //         latin-1，`forced=1`；
+        //   新链：统计给出决定性西欧（`statscore=-0.314`、证据 128 字节），而 cp1252 含
+        //         未定义字节（81/8D/8F/90/9D）解不开 ⇒ **统计自己选** latin-1，`forced=0`。
+        //   两者正文**逐字节相同**（256 个码位）—— 变的是"是选的还是兜底的"，
+        //   而这正是新口径要如实区分的东西（`forced` 只表示"落到 latin-1 兜底"）。
         std::vector<uint8_t> all_bytes(256);
-        for (int i = 0; i < 256; ++i) all_bytes[static_cast<size_t>(i)] = static_cast<uint8_t>(i);
+        for (int i = 0; i < 256; ++i) all_bytes[static_cast<int>(i)] = static_cast<uint8_t>(i);
         const txt::DecodedBytes fallback = txt::decode_bytes(all_bytes);
-        check(ctx, fallback.ok && fallback.forced && fallback.chars == 256,
-              "任意字节没有落到 latin-1 兜底并解出 256 个码位（9.3）");
+        check(ctx, fallback.ok && fallback.used_encoding == std::string(txt::kLatin1) &&
+                       fallback.chars == 256,
+              "任意字节没有落到 latin-1 并解出 256 个码位（9.3）：实得 used=" +
+                  fallback.used_encoding + " chars=" + std::to_string(fallback.chars));
+        // 零静默：`forced`/`mism` 两个标志必须与"编码名、实际使用"自洽 ——
+        // forced 只表示**兜底**（不是"选了 latin-1"），mism 只表示两者分叉。
+        check(ctx, fallback.forced == false && fallback.used_mismatch == false,
+              "全字节样本的 forced/mism 标志不自洽（9.3/9.9：选中 ≠ 兜底）");
+
+        // ★★ 2026-10-06 用户口径（⑨9.8/9.9）：声明与"鲁棒"一起进**置信度系统**。
+        // ① 谎报 windows-1251 的西语（≥2 个高位字节）⇒ 统计**否决声明**且必须可见
+        {
+            const std::string lie = "<?xml version=\"1.0\" encoding=\"windows-1251\" ?>";
+            std::vector<uint8_t> body(lie.begin(), lie.end());
+            const std::string spa = "El ca\xF1\xF3n apunta lejos \xA1" "cuidado!";
+            body.insert(body.end(), spa.begin(), spa.end());
+            const txt::SniffResult r = txt::sniff_encoding(body);
+            check(ctx, r.step == txt::SniffStep::Statistic && r.override_decl &&
+                           r.encoding == std::string(txt::kWindows1252),
+                  "谎报 windows-1251 的西语没被统计否决（9.8）：step=" +
+                      std::to_string(static_cast<int>(r.step)) + " enc=" + r.encoding);
+        }
+        // ② 反向锁：**诚实**声明 windows-1251 + 真西里尔字节 ⇒ 仍按 1251，不许被统计带偏
+        {
+            const std::string ok_decl = "<?xml version=\"1.0\" encoding=\"windows-1251\" ?>";
+            std::vector<uint8_t> body(ok_decl.begin(), ok_decl.end());
+            const std::string rus =
+                "\xCF\xF0\xE8\xE2\xE5\xF2, \xF1\xF2\xE0\xEB\xEA\xE5\xF0! \xCE\xEF\xE0\xF1\xED\xEE\xF1\xF2\xFC.";
+            body.insert(body.end(), rus.begin(), rus.end());
+            const txt::SniffResult r = txt::sniff_encoding(body);
+            check(ctx, r.step == txt::SniffStep::XmlDeclaration && !r.override_decl &&
+                           r.encoding == std::string(txt::kWindows1251),
+                  "诚实声明 windows-1251 的真俄文被统计带偏了（9.8 反向锁）：enc=" + r.encoding);
+        }
+        // ③ 纯猜必须**可见**：无声明、无证据 ⇒ 第 6 步 + low_confidence（零静默）
+        {
+            const std::vector<uint8_t> guess = {'a', 'b', 'c', 0x01, 0x1B, 'd'};
+            const txt::SniffResult r = txt::sniff_encoding(guess);
+            check(ctx, r.step == txt::SniffStep::Default && r.low_confidence,
+                  "纯猜（第 6 步默认）没有置低置信标记（9.10 零静默）");
+            const std::string flags = txt::sniff_flags_label(r);
+            check(ctx, flags.find("低置信") != std::string::npos,
+                  "低置信的可见标记没给出（9.10）：flags='" + flags + "'");
+        }
 
         // 9.5 XML 声明只看 `raw[:500]`，且**必须被字节证实**
         //（变量别叫 `far`：MSVC 的历史头文件里 `far` 是个空宏，会把 `far.insert(...)`
@@ -3570,10 +3620,25 @@ int run_cli(const std::vector<std::string>& args) {
         }
         out.write(db.text.data(), static_cast<std::streamsize>(db.text.size()));
         out.close();
+        // ★ 2026-10-06 置信度系统上屏（零静默）：
+        //   conf/lowconf/overdecl/statn/statscore = 判定的"不确定那部分"（用户口径③④）
+        //   mism = **判定结论 ≠ 实际使用编码**（旧版在这里静默分叉过）
+        //   rc：0 = 判定完成且不是低置信；2 = 判定完成但**低置信**（纯猜/无证据）——
+        //       退出码如实反映语义，低置信不再与诚实判定同形。
+        char conf_buf[16];
+        char score_buf[16];
+        std::snprintf(conf_buf, sizeof(conf_buf), "%.3f", sr.confidence);
+        std::snprintf(score_buf, sizeof(score_buf), "%+.3f", sr.stat_score);
         std::cout << "SNIFF ok step=" << static_cast<int>(sr.step) << " enc=" << sr.encoding
                   << " used=" << db.used_encoding << " forced=" << (db.forced ? 1 : 0)
-                  << " chars=" << db.chars << " bytes=" << db.text.size() << "\n";
-        return kExitOk;
+                  << " chars=" << db.chars << " bytes=" << db.text.size()
+                  << " conf=" << conf_buf
+                  << " lowconf=" << (sr.low_confidence ? 1 : 0)
+                  << " overdecl=" << (sr.override_decl ? 1 : 0)
+                  << " statn=" << sr.stat_evidence
+                  << " statscore=" << score_buf
+                  << " mism=" << (db.used_mismatch ? 1 : 0) << "\n";
+        return sr.low_confidence ? kExitSkip : kExitOk;
     }
 
     // 文本提取（M1-6）：gameplay / scripts 一个分支。类型**只看源目录自己的名字**，

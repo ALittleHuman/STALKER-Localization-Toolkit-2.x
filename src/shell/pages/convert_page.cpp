@@ -382,19 +382,30 @@ void ConvertPage::record_stats(const etxt::BatchOutcome& outcome, const QString&
     stats_.failed = static_cast<uint64_t>(outcome.failed);
     stats_.duration = outcome.duration;
     stats_ready_ = true;
-    // 零静默：部分失败要**显式收口**（不是只把最后一行日志留成"失败"）
+    // 零静默：部分失败要**显式收口**（不是只把最后一行日志留成"失败"）。
+    // ★ 2026-10-06：判定的"不确定部分"也要收口 —— 低置信（纯猜）与"统计否决声明"
+    //   不是失败，但用户必须一眼看到"这批里有多少条是猜的"。**计数全部来自引擎**，
+    //   页面只负责把数字画出来（文案同样来自引擎的逐条标记）。
+    const QString qualifier = (outcome.low_confidence > 0 || outcome.override_decl > 0)
+                                  ? QStringLiteral("（低置信 %1 / 否决声明 %2 / 判定≠实解 %3）")
+                                        .arg(outcome.low_confidence)
+                                        .arg(outcome.override_decl)
+                                        .arg(outcome.used_mismatch)
+                                  : QString();
     if (outcome.exit_code != 0) {
-        status_->setText(QStringLiteral("完成，但有失败：成功 %1 / 跳过 %2 / 失败 %3")
+        status_->setText(QStringLiteral("完成，但有失败：成功 %1 / 跳过 %2 / 失败 %3%4")
                              .arg(outcome.success)
                              .arg(outcome.skipped)
-                             .arg(outcome.failed));
+                             .arg(outcome.failed)
+                             .arg(qualifier));
     } else if (outcome.cancelled) {
         status_->setText(utf8(outcome.stop_reason));
     } else {
-        status_->setText(QStringLiteral("全部完成：成功 %1 / 跳过 %2 / 失败 %3")
+        status_->setText(QStringLiteral("全部完成：成功 %1 / 跳过 %2 / 失败 %3%4")
                              .arg(outcome.success)
                              .arg(outcome.skipped)
-                             .arg(outcome.failed));
+                             .arg(outcome.failed)
+                             .arg(qualifier));
     }
 }
 

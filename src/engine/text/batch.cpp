@@ -705,7 +705,12 @@ BatchOutcome convert_batch(const BatchOptions& opt, const BatchHooks& hooks) {
         } else {
             ++out.success;
         }
+        // 零静默（2026-10-06 用户口径③）：判定的**不确定部分**逐条上屏。
+        if (r.low_confidence) ++out.low_confidence;
+        if (r.override_decl) ++out.override_decl;
+        if (r.used_mismatch) ++out.used_mismatch;
         std::string line = name + " | " + r.step_label;
+        if (!r.flags_label.empty()) line += " | " + r.flags_label;
         if (r.skipped) line += " | 已是目标编码";
         line += " → " + opt.target_encoding;
         if (!r.ok) line += " | 失败：" + r.error;
@@ -721,6 +726,10 @@ BatchOutcome convert_batch(const BatchOptions& opt, const BatchHooks& hooks) {
     say("成功转换：" + std::to_string(out.success));
     say("跳过文件：" + std::to_string(out.skipped));
     say("失败文件：" + std::to_string(out.failed));
+    // ★ 判定置信度的汇总报数（**不是失败**，但绝不能静默 —— 上方逐条已留痕）。
+    say("低置信判定：" + std::to_string(out.low_confidence) + "（纯猜/无证据，逐条见上方标记）");
+    say("统计否决声明：" + std::to_string(out.override_decl));
+    say("判定≠实际使用编码：" + std::to_string(out.used_mismatch));
     if (opt.output_dir.empty() && opt.backup) {
         say("备份：新增 " + std::to_string(out.backed_up) + " / 已有 " +
             std::to_string(out.backup_existed) + " / 失败 " + std::to_string(out.backup_failed));

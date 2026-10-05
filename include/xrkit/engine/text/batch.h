@@ -191,6 +191,12 @@ struct BatchOutcome {
     int backed_up = 0;
     int backup_existed = 0;
     int backup_failed = 0;
+    // ── 判定置信度的逐条计数（2026-10-06 用户口径③"零静默"）────────────────
+    // 它们**不是失败**（不进 exit_code），但必须逐条留痕 + 汇总报数：
+    // 页面把这些数字放进状态栏，用户点一次转换就能看到"这次有多少条是猜的"。
+    int low_confidence = 0;   // 纯猜/无证据（第 6 步默认）
+    int override_decl = 0;    // 统计否决了 XML 声明
+    int used_mismatch = 0;    // 判定结论 ≠ 实际使用编码（enc/used 分叉）
     bool cancelled = false;
     std::string stop_reason;  // 取消了 ⇒ 说清停在哪（零静默）
     std::string duration;
