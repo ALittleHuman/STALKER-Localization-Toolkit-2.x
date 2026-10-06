@@ -23,6 +23,17 @@ constexpr uint32_t kMagicLE = 0x73717368u;  // "hsqs"
 constexpr uint32_t kMagicBE = 0x68737173u;  // "sqsh"
 constexpr size_t kCacheBlocks = 256;
 
+// ★★ 2026-10-06（H-7 解压炸弹闸；判红锁＝`tests/check_fs_hardening.py`）：
+//   归档头里的尺寸是**不可信输入**（LREG 的 file_size 是 u64、DIR_X 的是 u32），而读取器
+//   曾经照它**直接 `reserve`**（`read_file_data` 的 `out.reserve(ino.size)`、
+//   `meta_read` 的 `out.reserve(len)`）⇒ 伪造镜像能逼出一次 4 GiB 甚至更大的分配（实测：
+//   声明 1 TiB 的 LREG 会让进程 `bad_alloc` 冒到顶、以 0xC0000409 收场 —— 那是**崩溃**，
+//   不是"明确报错"）。
+//   口径与 `db.cpp` 的 `kMaxDecompressBytes`（512 MB）**同一条**：超限**明确报错、不分配**。
+//   `db.cpp` 那边是文件作用域常量，这里同样只在本 translation unit 内用；两边都写 512 MB
+//   是**有意**的（同一个"不可信声明尺寸"上限，值必须能对照）。
+constexpr uint64_t kMaxDecompressBytes = 512ull * 1024 * 1024;
+
 constexpr uint16_t kTypeDir = 1;
 constexpr uint16_t kTypeFile = 2;
 constexpr uint16_t kTypeSlink = 3;
@@ -245,6 +256,13 @@ bool Image::meta_block(uint64_t abs_off, const MetaBlock*& out, std::string& err
 bool Image::meta_read(uint64_t base, uint64_t rel_block, uint32_t off, uint32_t len,
                       std::vector<uint8_t>& out, std::string& err) {
     out.clear();
+    // ★ H-7：长度上限闸**必须在 `reserve` 之前**（`len` 来自 inode 的声明尺寸：
+    //   DIR 目录表字节数 / block_sizes 数组长度，两条都是不可信输入）。
+    if (len > kMaxDecompressBytes) {
+        err = "元数据读取长度超过上限（拒绝分配内存）：len=" + std::to_string(len) +
+              " 上限=" + std::to_string(kMaxDecompressBytes);
+        return false;
+    }
     out.reserve(len);
     uint64_t block_off = base + rel_block;
     uint32_t cur_off = off;
@@ -463,6 +481,14 @@ bool Image::fragment_entry(uint32_t index, uint64_t& start_block, uint32_t& size
 
 bool Image::read_file_data(uint64_t ref, const Inode& ino, std::vector<uint8_t>& out,
                            std::string& err) {
+    // ★ H-7：声明尺寸的第一道闸，**必须在任何 `reserve`/块循环之前**。
+    //   修前这条路上是 `out.reserve(static_cast<size_t>(ino.size))` 直接照声明值分配
+    //   （夹具实测：1 TiB 声明 ⇒ bad_alloc 冒到顶、进程 0xC0000409）。
+    if (ino.size > kMaxDecompressBytes) {
+        err = "文件声明尺寸超过解压上限（拒绝分配内存）：size=" + std::to_string(ino.size) +
+              " 上限=" + std::to_string(kMaxDecompressBytes);
+        return false;
+    }
     const uint64_t bs = sb_.block_size ? sb_.block_size : 131072;
     const bool has_frag = (ino.fragment != kInvalidFrag);
     // 有 fragment 时：整块数 = size / bs，尾部不足一块的进 fragment；

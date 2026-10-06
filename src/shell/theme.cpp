@@ -1,5 +1,7 @@
 #include "theme.h"
 
+#include "screen_scale.h"   // 启动序列要用 apply_screen_ui_scale()（H-1 把它搬进函数）
+
 #include <QApplication>
 #include <QByteArray>
 #include <QColor>
@@ -494,10 +496,39 @@ void apply_ui_size(QApplication& app, double scale) {
     xrkit::core::set_ui_scale(scale);   // 控件尺寸（px() 全部按它算）
     // 字体由 `apply_theme` 统一按 ui_scale 设（见那边的 setPointSizeF）；这里只重套主题。
     Q_UNUSED(base);
-    // 样式表里的尺寸是 px() 生成的 ⇒ 重新套一遍才立刻生效；模式从属性里读（hub 切主题时写的）
-    const QString mode = app.property("xrkit_theme").toString();
-    apply_theme(app, mode == QStringLiteral("light") ? xrkit::core::ThemeMode::Light
-                                                       : xrkit::core::ThemeMode::Dark);
+    // ★★ 2026-10-06（H-2）：模式**从 core 取**，不再读 `app.property("xrkit_theme")`。
+    //   修前：那个属性只在 `Hub::apply_theme_mode()`（用户手动切主题）里写，**启动路径从不写**
+    //   ⇒ 浅色用户第一次点「界面大小」读到空串 ⇒ 走 Dark ⇒ 整界面被拍回暗色
+    //   （用户红线："主题和字体大小要保留继承"）。`apply_theme` 内部会
+    //   `core::set_theme_mode(mode)`，所以 core 这份是**唯一真值**，启动路径也一定写过。
+    //   判红锁：`src/shell/smoke.cpp` 的「④-c」——预置浅色 + 清掉那个属性（如实重现启动态）
+    //   ⇒ 点「界面大小」后必须仍是浅色（改回读属性立刻红）。
+    apply_theme(app, xrkit::core::theme_mode());
+}
+
+// ── 启动序列：把 user.ltx 里的「主题 / 界面大小」铺上（**唯一一份实现**）──────────
+//
+// ★★ 2026-10-06（H-1）：这段原先**内联在 `src/shell/main.cpp` 的 main() 里**，于是
+//   "字体与几何必须同源""界面大小不许翻主题"这两条判据在离屏自检里**没法复现**
+//   （`--smoke` 走的是另一条分支，压根不经过交互式启动那段）。**口径一字不改，只是搬到
+//   能被调用处**，`main.cpp` 与 `smoke.cpp` 调同一个函数 ⇒ 锁钉的就是真实启动路径。
+//
+// 顺序（有意如此，别改）：
+//   ① 先按 user.ltx 的偏好铺一次主题 —— 控件构造之前界面就得有主题；
+//   ② 再让屏幕自适应给出"没有偏好时"的基准（并吃掉 DPI 检测的副作用）；
+//   ③ 有保存档时用它覆盖 ②（用户上次选的「界面大小」压过屏幕自适应）；
+//   ④ ★ **必须再套一次主题**：`apply_theme` 里的字号是 `(基准 + 2.0) * ui_scale()`，
+//      而 ① 那次是按**旧的** ui_scale 算的 ⇒ 少这一刀就是"几何按 1.2、字体按 1.0"
+//      （用户红线："字体大小也要保留继承"）。两次调用幂等：字号基准取自一次性 static，
+//      不会连乘（见 `apply_theme` 里 kBasePt 的说明）。
+xrkit::core::ThemeMode apply_startup_ui(QApplication& app) {
+    const xrkit::core::ThemeMode mode = xrkit::core::load_theme_mode();
+    apply_theme(app, mode);
+    apply_screen_ui_scale();
+    const double saved_scale = xrkit::core::load_ui_scale();
+    if (saved_scale > 0.0) xrkit::core::set_ui_scale(saved_scale);
+    apply_theme(app, mode);
+    return mode;
 }
 
 void apply_theme(QApplication& app, xrkit::core::ThemeMode mode) {

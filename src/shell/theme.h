@@ -34,6 +34,11 @@ QString stylesheet_for(xrkit::core::ThemeMode mode);
 // 应用主题：设置 QPalette + QSS，并刷新已存在控件（原地更新）。
 void apply_theme(QApplication& app, xrkit::core::ThemeMode mode);
 
+// 启动序列（**交互式启动与离屏自检共用的唯一一份**）：读 user.ltx 的偏好 → 铺主题 →
+// 屏幕自适应 → 有保存档时覆盖档位 → **再套一次主题**（字体与几何必须同源，见 .cpp 里的
+// H-1 说明），返回本次生效的主题（调用方要拿它去套深色标题栏等）。
+xrkit::core::ThemeMode apply_startup_ui(QApplication& app);
+
 // Windows 深色标题栏（DWM）。非 Windows 上是空操作。
 void apply_dark_titlebar(QWidget* widget, xrkit::core::ThemeMode mode);
 

@@ -11,9 +11,18 @@
     python tests/golden_sqfs_pack_real.py --id nlc-sqzy-patch
     python tests/golden_sqfs_pack_real.py --sample 150    # 只抽前 150 个文件（省时间）
 
-判据：① 两边产物 sha256 必须相等；② rdsquashfs 能读回且路径/类型与输入树一致；
-③ 抽 12 个文件从**我们的产物**里抽回来与输入逐字节比。
-退出码：0=一致，1=不一致，2=样本缺失（按外部前提处理）。
+判据：① 两边产物 sha256 必须相等（**headline，不许静默降级**）；② rdsquashfs 能读回且
+路径/类型与输入树一致；③ 抽 12 个文件从**我们的产物**里抽回来与输入逐字节比。
+
+★ 2026-10-06（T-H3 修假绿）：参照侧（1.x `sqfs_pack` 是**纯内存**实现）在某些真机样本上
+**自己扛不动**（最大那棵 930 文件 / 3992 MB），这时 ① 的 sha 判据用不了 —— 本脚本会**降级**
+成"内容层判据"（② +③，用第三方 rdsquashfs 读回）。降级**必须可见**：
+  · 计数落 `content_only`，verdict 打 `PARTIAL`，**退码 2**（进"本次未覆盖"；
+    `--release` 档"未覆盖非空即 FAIL" ⇒ 那种样本上这条 headline 判据永远不许悄悄变绿）；
+  · 修前它只进 summary、**不进判据**（退码只看 `skipped`），而且另有一个**死字段** `denied`
+    （声明/打印/算进 verdict，全文件没有一处 append）—— 同一件事两个名字，一个还是空的。
+    现在**只留 `content_only` 一个名字**，并把降级真正接进退码口径。
+退出码：0=全一致，1=不一致，2=样本/参照缺失**或参照侧降级**（按外部前提处理）。
 """
 
 from __future__ import annotations
@@ -118,7 +127,7 @@ def main() -> int:
 
     ids = [args.id] if args.id else REAL_IDS
     failures = 0
-    denied: list[str] = []
+    # ★ T-H3：`content_only` 是**唯一**的"参照降级"计数（原来的 `denied` 是死字段，已删）。
     content_only = 0
     compared = 0
     skipped = 0
@@ -149,16 +158,17 @@ def main() -> int:
         ref = work / "ref.sqfs"
         ref.unlink(missing_ok=True)
         items = [(rel, p.read_bytes(), False) for rel, p, _ in files]
-        # ★ 2026-09-27：1.x 的 `sqfs_pack` 是**纯内存**实现（items 里带着每个文件的 bytes）。
+        # ★ 2026-09-27：1.x 的 `sqfs_pack` 是**纯内存**实现（items 里带着每个文件的 bytes），
         #   在 sqzy_patch 那棵树（930 文件 / 3992.5 MB）上**参照侧自己跑不起来**，而我们的
         #   抽取与封包都没问题。按项目纪律：**环境级限制既不许判红、也不许混进通过**
-        #   ⇒ 记进 denied、最后退 2（进"本次未覆盖"），理由打印出来可核对。
-        # ★ 2026-09-27：1.x 的 `sqfs_pack` 是**纯内存**实现（items 里带着每个文件的 bytes），
-        #   在 sqzy_patch 那棵树（930 文件 / 3992.5 MB）上参照侧自己跑不起来。
-        #   ⇒ **不再判红也不整条跳过**：降级成**内容层判据** —— 我们的产物用**第三方 rdsquashfs**
-        #   读回（条目表 + 抽样文件逐字节比内容）。理由：逐字节 sha 依赖"参照就是被复刻的那条
-        #   链路"（1.x 的 sqfs_pack 恰好同源，换 tar2sqfs 就不再成立 —— 实测超级块 @34 的 root_inode
-        #   布局不同）；而"产物内容对不对"这件事**不依赖参照同源**，rdsquashfs 就能判。
+        #   ⇒ 不再判红、也不整条跳过：降级成**内容层判据**（我们的产物用**第三方
+        #   rdsquashfs** 读回：条目表 + 抽样文件逐字节比内容）。为什么要内容层：逐字节 sha
+        #   依赖"参照就是被复刻的那条链路"（1.x 的 sqfs_pack 恰好同源，换 tar2sqfs 就不再
+        #   成立 —— 实测超级块 @34 的 root_inode 布局不同）；而"产物内容对不对"这件事
+        #   **不依赖参照同源**，rdsquashfs 就能判。
+        #   ★★ T-H3：降级**必须可见** —— 计数落 `content_only`、verdict 打 `PARTIAL`、
+        #   最后**退 2**（进"本次未覆盖"）。修前它只进 summary、不进判据，等于把
+        #   headline（sha256 相等）静默换掉了还报 PASS。
         ref_ok = True
         ref_data = b""
         try:
@@ -170,8 +180,8 @@ def main() -> int:
         if ref_ok:
             ref_data = ref.read_bytes()
         else:
-            print("  !! 参照侧扛不动（1.x sqfs_pack 纯内存）⇒ 本样本改走**内容层判据**"
-                  "（rdsquashfs 读回 + 抽样逐字节），不作为未覆盖")
+            print("  !! 参照侧扛不动（1.x sqfs_pack 纯内存）⇒ 本样本**降级**为内容层判据"
+                  "（记 content_only，进「本次未覆盖」，退码 2）")
             content_only += 1
 
         ours = work / "ours.sqfs"
@@ -262,14 +272,19 @@ def main() -> int:
         compared += 1
 
     print("")
-    verdict = "FAIL" if failures else ("PARTIAL" if (skipped or denied) else "PASS")
-    print("GOLDEN-SQFS-PACK-REAL: %s (compared=%d content_only=%d skipped=%d denied=%d)"
-          % (verdict, compared, content_only, skipped, len(denied)))
-    for item in denied:
-        print("  denied: %s" % item)
+    # ★ T-H3：verdict 与退码**同一口径**（修前 verdict 看 denied、退码只看 skipped —— 两处
+    #   不一致，而 denied 永远是空的 ⇒ 降级既不进 verdict 也不进退码）。
+    #   降级（content_only）与样本缺失（skipped）都算"本次未覆盖" ⇒ PARTIAL / 退 2。
+    uncovered = skipped + content_only
+    verdict = "FAIL" if failures else ("PARTIAL" if uncovered else "PASS")
+    print("GOLDEN-SQFS-PACK-REAL: %s (compared=%d content_only=%d skipped=%d uncovered=%d)"
+          % (verdict, compared, content_only, skipped, uncovered))
+    if content_only:
+        print("  未覆盖：%d 个样本的参照侧扛不动 ⇒ headline（两边 sha256 相等）**未判**，"
+              "本样本只过了内容层判据" % content_only)
     if failures:
         return 1
-    return 2 if skipped else 0
+    return 2 if uncovered else 0
 
 
 if __name__ == "__main__":

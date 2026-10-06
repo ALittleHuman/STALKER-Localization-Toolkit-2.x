@@ -155,22 +155,11 @@ int main(int argc, char** argv) {
         return result.failed == 0 ? 0 : 1;
     }
 
-    const xrkit::core::ThemeMode mode = xrkit::core::load_theme_mode();
-    xrkit::shell::apply_theme(app, mode);
-
-    // ★ 屏幕自适应（用户 2026-09-27："2.5K 屏…做一个自适应，所有屏幕都能正常用"）：
-    //   ① 先按当前屏幕的逻辑 DPI 把全局 ui_scale 设对（**必须在建控件之前**，
-    //      因为字体与几何都在构造时用 px() 换算）；
-    //   ② 再按屏幕可用区给窗口一个合适的默认尺寸（小屏不溢出、大屏不缩成一小块）。
-    xrkit::shell::apply_screen_ui_scale();
-    // ★★ 2026-10-06：**用户上次选的「界面大小」压过屏幕自适应那一步** ——
-    //   用户原话「主题和字体大小目前并没有保留继承的功能（即下次开启又是默认的方案）」。
-    //   顺序有意如此：先让自适应给出"没有偏好时"的基准（并吃掉 DPI 检测的副作用），
-    //   再在有偏好时覆盖它 ⇒ 两者都不会互相污染，且**不许**改动档位取值范围。
-    {
-        const double saved_scale = xrkit::core::load_ui_scale();
-        if (saved_scale > 0.0) xrkit::core::set_ui_scale(saved_scale);
-    }
+    // ★ 屏幕自适应 + 用户偏好（主题 / 界面大小）——**这条序列只有一份实现**
+    //   （`xrkit::shell::apply_startup_ui`，理由见那边的 H-1 说明：这段原先是内联的，
+    //   于是"字体与几何同源""界面大小不许翻主题"两条判据在离屏自检里复现不了）。
+    //   顺序与原先逐条一致：先铺主题 → 屏幕自适应 → 保存档覆盖档位 → **再套一次主题**。
+    const xrkit::core::ThemeMode mode = xrkit::shell::apply_startup_ui(app);
 
     xrkit::shell::Hub hub;
     xrkit::shell::apply_dark_titlebar(&hub, mode);

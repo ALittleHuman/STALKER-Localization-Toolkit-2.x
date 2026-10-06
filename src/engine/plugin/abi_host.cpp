@@ -91,6 +91,12 @@ PluginApiAdapter* PluginApiAdapter::self(stk_host* host) {
 }
 
 const char* PluginApiAdapter::keep(std::string text) {
+    // ★★ 2026-10-06（F1）：这里返回的指针是**跨 ABI 交给插件的长期指针**
+    //   （`on_command` 把它当命令 id 交回给 `register_menu_item`），所以容器必须保证
+    //   "插入不搬家"。`owned_` 是 `std::deque` ⇒ 标准保证两端插入**不使既有元素的
+    //   指针/引用失效** ⇒ `c_str()` 在整个宿主生命周期内有效（选型理由见头文件）。
+    //   判红锁：CLI `--selftest` 里"注册 3 个命令后逐个校验早期 id 仍可读且内容正确"
+    //   （改回 `std::vector` 立刻红 —— 那道锁会先堆上涂抹同尺寸块再读早期指针）。
     owned_.push_back(std::move(text));
     return owned_.back().c_str();
 }

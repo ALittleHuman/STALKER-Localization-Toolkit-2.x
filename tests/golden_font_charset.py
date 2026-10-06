@@ -13,6 +13,15 @@
      GBK / UTF-16(BOM) / 无 BOM cp1251 / 空文件 / 非 XML 文件 / 子目录递归。
 两类都跑 `full_cyrillic=True/False`。
 
+三种结论（**第三态必须是非零退码**）：
+  · 全一致                     ⇒ `PASS`，退 0；
+  · 有非台账差异               ⇒ `FAIL`，退 1；
+  · 差异**全部**来自已知分歧台账 ⇒ `LEDGER`（**不是** PASS），退 2；门禁侧按「差异台账」单独汇总（与 [16] 能力缺口台账同口径），**不当作已通过**。
+★ 2026-10-06（T-H1 修假绿）：这里原来是"`failures -= 1` 把已知分歧抵消掉" ⇒ 当**唯一**
+差异正好是那一条 GBK 判定链缺口时 `failures==0` ⇒ 打印 `PASS`、退 0 —— 判据的第三态
+被减没了。**已知分歧只许进台账**（独立可见 + 进未覆盖 + 非零退码），绝不许改失败计数。
+本文件自带一条回归锁（`selfcheck_no_failure_cancellation`）钉住"用减法抵消"这个写法。
+
     python tests/golden_font_charset.py
 """
 
@@ -20,6 +29,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -122,6 +132,36 @@ def blame_files(fp, corpus_dir: Path, full_cyrillic: bool):
     return blamed
 
 
+def _live_code_lines(src: str):
+    r"""只留**活代码**行（三引号文档串与 `#` 注释都剔掉，**行号保持不变**）。
+
+    为什么要剔文档串：本函数下面那条回归锁的说明里**故意**举了反例（`failures -= 1`），
+    不剔的话锁会把自己的说明书判成违规 —— 那是另一种假红（"锁把文档当代码"）。
+    """
+    def blank(match):
+        return "\n" * match.group(0).count("\n")
+    no_doc = re.sub(r'"""(?:.|\n)*?"""', blank, src)
+    no_doc = re.sub(r"'''(?:.|\n)*?'''", blank, no_doc)
+    for i, line in enumerate(no_doc.splitlines(), 1):
+        yield i, line.split("#", 1)[0]
+
+
+def selfcheck_no_failure_cancellation() -> list:
+    r"""回归锁（T-H1）：本脚本**不许**出现"用减法把失败抵消掉"的写法。
+
+    根因就是原来那行对 `failures` 的 `-= 1`：它让"唯一差异恰好是已知分歧"变成
+    `failures == 0` ⇒ 打印 `PASS`、退 0。语义上"已知分歧"只许进**差异台账**（独立可见 +
+    进未覆盖 + 非零退码），绝不许改失败计数 —— 所以这里静态自查任何对 `failures` 的
+    `-=` / `= failures -` 写法（改回去立刻红）。
+    """
+    src = Path(__file__).read_text(encoding="utf-8")
+    offences = []
+    for i, code in _live_code_lines(src):
+        if re.search(r"failures\s*-=", code) or re.search(r"failures\s*=\s*failures\s*-", code):
+            offences.append("第 %d 行：%s" % (i, code.strip()))
+    return offences
+
+
 def main() -> int:
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -137,6 +177,17 @@ def main() -> int:
         print("GOLDEN-FONT-CHARSET: SKIP (toolkit-1x-missing)")
         return 2
 
+    # 回归锁先跑：注入了"减法抵消"写法就当场红，别等比对结果
+    offences = selfcheck_no_failure_cancellation()
+    if offences:
+        print("  ✗ 回归锁（T-H1）：脚本里出现了**用减法抵消失败**的写法 —— 那会把"
+              "「已知分歧」变回 PASS：")
+        for item in offences:
+            print("      %s" % item)
+        print("")
+        print("GOLDEN-FONT-CHARSET: FAIL (cases=0 failed=%d)" % len(offences))
+        return 1
+
     fp = load_reference()
     WORK.mkdir(parents=True, exist_ok=True)
     synth = WORK / "synth"
@@ -151,6 +202,7 @@ def main() -> int:
 
     failures = 0
     cases = 0
+    ledger = []          # ★ T-H1：已知分歧**独立记账**（不许抵消 failures）
     for name, corpus_dir in corpora:
         for full_cyrillic in (True, False):
             cases += 1
@@ -172,19 +224,24 @@ def main() -> int:
             if ours == want:
                 print("  ✓ %s：%d 个码位完全一致" % (tag, len(want)))
                 continue
-            failures += 1
             only_ours = [c for c in ours if c not in set(want)]
             only_ref = [c for c in want if c not in set(ours)]
 
             # 差异归属：逐个文件比一次，看是不是**台账里**那几条（只有台账内的才算已知）
             blamed = blame_files(fp, corpus_dir, full_cyrillic)
             if blamed is not None and all(name in KNOWN_DIVERGENCES for name in blamed):
-                failures -= 1
-                print("  ! %s：%d 条差异全部来自**已知分歧**（不算通过，也不判红）"
-                      % (tag, len(blamed)))
+                # ★★ T-H1：已知分歧**不进 failures**（它确实没通过），但也**绝不许用减法
+                #   把失败抵消掉**（旧写法 `failures -= 1` 会在"唯一差异恰好是已知分歧"时
+                #   把第三态减成 PASS）。它走**独立的差异台账**：照实记、照实打，
+                #   脚本走第三态、退 2；门禁侧按「差异台账」单独汇总（不当作已通过）。
+                #   失败计数只在这一支**之外**自增 —— 一处真值。
+                ledger.append((tag, sorted(blamed)))
+                print("  ! %s：%d 条差异**全部**来自已知分歧（记入差异台账 ⇒ 脚本第三态、"
+                      "退码 2；**不抵消** failures）" % (tag, len(blamed)))
                 for name in sorted(blamed):
                     print("      %s —— %s" % (name, KNOWN_DIVERGENCES[name]))
                 continue
+            failures += 1     # ★ 只在这一支自增（已知分歧在上面 continue 掉了）
             print("  ✗ %s：我们 %d / 1.x %d" % (tag, len(ours), len(want)))
             print("      只在我们的：%s" % " ".join("U+%04X" % c for c in only_ours[:20]))
             print("      只在 1.x 的：%s" % " ".join("U+%04X" % c for c in only_ref[:20]))
@@ -193,9 +250,22 @@ def main() -> int:
                       % " ".join(n for n in blamed if n not in KNOWN_DIVERGENCES))
 
     print("")
-    print("GOLDEN-FONT-CHARSET: %s (cases=%d failed=%d)"
-          % ("FAIL" if failures else "PASS", cases, failures))
-    return 1 if failures else 0
+    # 三种结论（**第三态必须有非零退码** —— 修前那个 `failures -= 1` 把第三态减成了 PASS）
+    if failures:
+        verdict = "FAIL"
+    elif ledger:
+        verdict = "LEDGER"
+    else:
+        verdict = "PASS"
+    print("GOLDEN-FONT-CHARSET: %s (cases=%d failed=%d ledger=%d)"
+          % (verdict, cases, failures, len(ledger)))
+    if ledger:
+        print("  差异台账（已知分歧：脚本走第三态、退码 2；门禁侧单独汇总，**不当作已通过**）：")
+        for tag, names in ledger:
+            print("    %s：%s" % (tag, "、".join(names)))
+    if failures:
+        return 1
+    return 2 if ledger else 0
 
 
 if __name__ == "__main__":

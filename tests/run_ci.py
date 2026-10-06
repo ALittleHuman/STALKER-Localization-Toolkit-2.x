@@ -42,6 +42,7 @@ NINJA_DIR = VS_ROOT / "Common7" / "IDE" / "CommonExtensions" / "Microsoft" / "CM
 TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
 
 UNCOVERED: list[str] = []
+LEDGERS: list[str] = []
 FAILURES = 0
 _MSVC_ENV: dict[str, str] | None = None
 
@@ -129,6 +130,22 @@ def prereq(what: str, why: str, release: bool) -> bool:
     UNCOVERED.append("%s（%s）" % (what, why))
     say("  SKIP %s —— %s" % (what, why))
     return True
+
+
+def ledger(what: str, why: str) -> None:
+    """**差异台账**（已知分歧 / 能力缺口）：既不是失败，也**不是"未覆盖"**。
+
+    与 `prereq()` 的分工（★ T-H1 定这条口径时想清楚的）：
+      · `prereq` = **外部前提**缺件（参照工具/真机样本不在本机）⇒ release 零容忍；
+      · `ledger` = 我们自己**已知且被冻结**的能力缺口（例如判定链第 5 步没移植 chardet 的
+        GB2312 探针）—— 同一条分歧在门禁 [16] 判定链那边也是"能力缺口台账"，
+        所以这里沿用同一口径，别把两处写成两种性质。
+    台账**必须可见**（逐条打印 + 收尾汇总），且**参与脚本自己的判定**：脚本的第三态是
+    非零退码，分歧一旦消失或换了形状都会红（见 `tests/golden_font_charset.py` 的
+    `KNOWN_DIVERGENCES` 与它的"减法抵消"回归锁）。
+    """
+    LEDGERS.append("%s（%s）" % (what, why))
+    say("  LEDGER %s —— %s" % (what, why))
 
 
 def require_repo_file(path: Path, what: str) -> bool:
@@ -560,6 +577,38 @@ def step_unpack_rules(release: bool) -> None:
         fail("解包落点/报数口径的真机锁不成立（见上）")
 
 
+def step_fs_hardening(release: bool) -> None:
+    """判红锁：文件系统层的两条**不可信输入**边界（F-1 路径逃逸判定 / H-7 解压炸弹闸）。
+
+    夹具是**自造的最小 SquashFS**（`tests/check_fs_hardening.py` 里现造，不依赖真机语料、
+    不碰游戏目录）：条目名里放 `.. ` / `.. .` 这两条"Windows 落盘时会剥掉尾随空格/点"的
+    绕过形态，外加一条尾随点的正常名与一条正常哨兵；另一枚镜像声明 1 TiB 文件尺寸。
+    判据＝"**判定与理由一起**断言 + 域外零文件 + 超限明确报错（不 OOM）+ 正常镜像不变"。
+    为什么单独一步：这两条都是"校验确实在、但边界条件下不成立"，真机语料里没有这种条目，
+    只能现造夹具；而"判定错"本身必须能变红（不许靠"反正写不出去"蒙过）。
+    退出码：0=全绿，1=有断言不成立，2=构建产物缺失（外部前提，按档位判定）。
+    """
+    say("[fs-hardening] 判红锁：`.. ` / `.. .` 路径逃逸判定 + SquashFS 解压炸弹闸")
+    script = ROOT / "tests" / "check_fs_hardening.py"
+    if not require_repo_file(script, "文件系统判红锁脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("[") or s.startswith("✓") or s.startswith("✗") \
+                or s.startswith("FS-HARDEN") or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("路径逃逸判定与解压炸弹闸两组判红锁全绿")
+    elif rc == 2:
+        prereq("构建产物 xrkit_cli.exe", "缺失（见上）", release)
+    else:
+        fail("文件系统判红锁有断言不成立（见上）")
+
+
 def step_golden_sqfs_pack(release: bool) -> None:
     """黄金语料差分：SquashFS **封包**产物（2.x 自写 writer vs 1.x 的 sqfs_pack/tar2sqfs）。
 
@@ -593,6 +642,8 @@ def step_golden_sqfs_pack_real(release: bool) -> None:
     为什么合成夹具之外还要这一条：夹具只覆盖"想得到的组合"。这一轮真机抽验抓到过一个
     合成夹具漏掉的**真缺陷**（去重截断把刚写的 fragment 块删掉），所以它是一等判据。
     耗时口径：local/fast 抽 200 个文件（≈90 s），release 跑整棵树（≈3.5 min）。
+    ★ T-H3：参照侧扛不动时脚本会**降级**成内容层判据（headline sha256 没判）⇒ 那要
+    **可见**：脚本退 2，这一步按"本次未覆盖"记账 —— release 档未覆盖非空即整体 FAIL。
     """
     say("[11] 真机样本：SquashFS 封包逐字节对拍")
     script = ROOT / "tests" / "golden_sqfs_pack_real.py"
@@ -608,12 +659,21 @@ def step_golden_sqfs_pack_real(release: bool) -> None:
     for line in out.splitlines():
         s = line.strip()
         if s.startswith("GOLDEN-SQFS-PACK-REAL") or s.startswith("✗") or s.startswith("!!") \
-                or s.startswith("ok 逐字节一致") or s.startswith("输入树"):
+                or s.startswith("ok 逐字节一致") or s.startswith("输入树") \
+                or s.startswith("未覆盖"):
             say("  " + s)
+    verdict = ""
+    for s in out.splitlines():
+        if s.strip().startswith("GOLDEN-SQFS-PACK-REAL:"):
+            verdict = s.strip()
     if rc == 0:
-        ok("真机样本封包产物逐字节一致")
+        ok("真机样本封包产物逐字节一致（headline 判据真跑到了）")
     elif rc == 2:
-        prereq("真机语料样本 / rdsquashfs", "样本或参照工具缺失（见上）", release)
+        if "PARTIAL" in verdict and "content_only=0" not in verdict:
+            prereq("参照侧扛不动 ⇒ 内容层降级（headline「两边 sha256 相等」本次未判）",
+                   verdict, release)
+        else:
+            prereq("真机语料样本 / rdsquashfs", "样本或参照工具缺失（见上）", release)
     else:
         fail("真机样本封包产物不一致（见上）")
 
@@ -976,8 +1036,12 @@ def step_golden_font_charset(release: bool) -> None:
     字符集错一个字的后果特别隐蔽：引擎对缺失码位不是留空，而是画成同一个重复字形。
     语料 = 真语料（我们提取出来的翻译 XML）+ 合成边界（单根/多根/畸形/实体/CDATA/注释/
     PI/DOCTYPE/GBK/UTF-16/无声明 cp1251/空文件/子目录递归）× full_cyrillic 两档。
-    已知分歧（判定链第 5 步未移植 chardet 探针）**逐条报账**，不算通过也不判红。
-    退出码：0=一致（含仅台账分歧），1=有非台账差异，2=CLI / 1.x 缺失。
+    已知分歧（判定链第 5 步未移植 chardet 探针）**独立进差异台账**：不算通过，**也不许被
+    减法抵消** —— 台账非空时脚本走第三态、**退码非零**，这一步按 `ledger()` 记一条**可见的**
+    差异台账（与 [16] 判定链那边的"能力缺口台账"同一口径：它是已知能力缺口，不是外部前提
+    缺件 ⇒ 不因它判 release FAIL，但必须印在门禁输出里）。
+    退出码：0=全一致，1=有非台账差异（或本脚本的"减法抵消"回归锁被触发），
+    2=差异台账非空 / CLI / 1.x 缺失。
     """
     say("[21] 字符集提取一致性（2.x vs 1.x extract_chars）")
     script = ROOT / "tests" / "golden_font_charset.py"
@@ -991,12 +1055,21 @@ def step_golden_font_charset(release: bool) -> None:
         t = line.strip()
         if t.startswith("✓") or t.startswith("✗") or t.startswith("GOLDEN-FONT-CHARSET") \
                 or t.startswith("!!") or t.startswith("! ") or t.startswith("gbk.xml") \
-                or t.startswith("(跳过"):
+                or t.startswith("(跳过") or t.startswith("差异台账") or t.startswith("第 "):
             say("  " + t)
+    verdict = ""
+    for t in out.splitlines():
+        if t.strip().startswith("GOLDEN-FONT-CHARSET:"):
+            verdict = t.strip()
     if rc == 0:
-        ok("字符集与 1.x 完全一致（台账分歧已逐条列明）")
+        ok("字符集与 1.x 完全一致（差异台账为空）")
     elif rc == 2:
-        prereq("1.x 参照仓库 / 真语料 XML", "缺失（见上）", release)
+        if "LEDGER" in verdict:
+            # ★ T-H1：这是**已知能力缺口**（判定链第 5 步 chardet 探针未移植），
+            #   不是外部前提缺件 ⇒ 记**差异台账**（可见、release 不阻断），不用 prereq()。
+            ledger("字符集差异台账（判定链第 5 步 chardet GB2312 探针未移植）", verdict)
+        else:
+            prereq("1.x 参照仓库 / 真语料 XML", "缺失（见上）", release)
     else:
         fail("字符集与 1.x 不一致（见上）")
 
@@ -1642,6 +1715,7 @@ STEPS = [
     ("db-11xx-dirlock", step_db_11xx_dirlock),
     ("db-name1251-lock", step_db_name_cp1251_lock),
     ("unpack-rules", step_unpack_rules),
+    ("fs-hardening", step_fs_hardening),
     ("golden-sqfs-pack", step_golden_sqfs_pack),
     ("golden-sqfs-pack-real", step_golden_sqfs_pack_real),
     ("text-tables", step_text_tables),
@@ -1696,6 +1770,13 @@ def main() -> int:
             say("  · " + item)
     else:
         say("本次覆盖：全部步骤均已执行")
+    if LEDGERS:
+        # ★ T-H1：差异台账**单独一段** —— 它是"已知且被冻结的能力缺口"，不是未覆盖
+        #   （所以 release 档不因它 FAIL），但**必须看得见**（静默就是原来那条假绿）。
+        say("本次差异台账（已知分歧/能力缺口，%d 项；release 不阻断，但脚本侧第三态退码非零）："
+            % len(LEDGERS))
+        for item in LEDGERS:
+            say("  · " + item)
     say("-" * 66)
 
     if release and UNCOVERED:

@@ -11,6 +11,7 @@
 #include "xrkit/engine/plugin/registry.h"
 #include "xrkit/plugin/abi.h"
 
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -23,8 +24,19 @@ public:
 
     const stk_api& api() const { return api_; }
     const std::string& plugin_name() const { return plugin_name_; }
-    // 注册期返回过的字符串（命令 id 等）—— 保证指针在宿主生命周期内有效
-    const std::vector<std::string>& owned_strings() const { return owned_; }
+    // 注册期返回过的字符串（命令 id 等）—— 保证指针在宿主生命周期内有效。
+    //
+    // ★★ 2026-10-06（F1 命令 id 悬空；判红锁＝CLI `--selftest` 的"命令 id 指针稳定性"）：
+    //   这条承诺**曾经是假的** —— 容器是 `std::vector<std::string>`，注册第 2 个命令就会
+    //   扩容搬走旧元素，而命令 id 形如 `"<插件名>:<动作名>"` 多半落在 MSVC `std::string`
+    //   的 SSO 阈值（15 字节）内 ⇒ 字符数据内联在对象里 ⇒ 早先 `keep()` 返回的 `c_str()`
+    //   指向**已被释放的旧数组**（plugin 若"先注册全部命令、再统一挂 menu item"就踩上）。
+    //   换成 `std::deque` 的理由（三条里选它）：
+    //     ① 标准保证 deque 在**两端插入**时"不使既有元素的指针/引用失效"（vector 没有这条）；
+    //     ② 没有容量前提 —— `reserve(N)` 只是把问题推到第 N+1 个命令，而插件能注册多少
+    //        个命令**宿主不知道**；
+    //     ③ 每串一次堆分配（`unique_ptr<std::string>` 那条路要两次），也不改调用方的用法。
+    const std::deque<std::string>& owned_strings() const { return owned_; }
 
 private:
     static PluginApiAdapter* self(stk_host* host);
@@ -57,7 +69,9 @@ private:
     Registry& registry_;
     std::string plugin_name_;
     const stk_ui* ui_ = nullptr;
-    std::vector<std::string> owned_;
+    // ★ 容器**必须是"两端插入不搬家"的那种**（见 `owned_strings()` 上方）：
+    //   `keep()` 把元素的 `c_str()` 交出去当**跨 ABI 的长期指针**，扩容搬家就等于悬空。
+    std::deque<std::string> owned_;
     stk_api api_{};
 };
 

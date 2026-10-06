@@ -21,7 +21,36 @@ constexpr const char* kRejectEmpty = "条目路径为空（或不是字符串）
 constexpr const char* kRejectAbsolute = "绝对路径 / UNC，拒绝写出";
 constexpr const char* kRejectDrive = "带盘符，拒绝写出";
 constexpr const char* kRejectDotDot = "分段含 ..（试图逃出输出目录）";
+constexpr const char* kRejectEmptySegment = "分段剥掉尾随空格/点后为空（Windows 建不出这种名字）";
+constexpr const char* kRejectColon = "分段含冒号（Windows 数据流 ADS），拒绝写出";
 constexpr const char* kRejectFallback = "复核后仍不在输出目录下（含跨盘）";
+
+// ★★ 2026-10-06（F-1 路径逃逸；判红锁＝`tests/check_fs_hardening.py`）：
+//   Windows 落盘时**剥掉组件末尾的空格与点**（实测：`a. ` 落成 `a`、`.. ` 落成 `..`；
+//   `mkdir "out\a. "` 建出来的就是 `out\a`）。于是"`..` 只做**精确字符串匹配**"这条判定
+//   在 `".. "` / `".. ."` 面前是**假绿**：判定说"仍在输出目录下"，而系统会把它当 `..` 解释。
+//   ★ 同一批实测的**边界**（写在这里免得把结论放大）：剥离**只作用于最后一个组件** ——
+//   中间段 `".. "` 会被原样当目录名（`out\.. \x` 在 CreateFileW 层报"找不到路径"），
+//   所以"真的写到输出目录之外"这一步在本机**复现不出来**。但这不改变"判定错了"这件事：
+//   判定必须按**系统真正会用的名字**比，而不是按字节相等比（见报告【没做到/风险】）。
+//   归一规则（**只归一名字，不猜落点**）：每段先剥掉末尾的空格/点，然后
+//     · 剥完空掉、且原串里**有点**（`..`、`.. `、`.. .`、`...`）⇒ 拒，**理由仍是 `分段含 ..`**
+//       —— 这一族就是"用点的变体绕过 `..`"，Windows 对"只剩点"的组件按上一级目录解释
+//       （实测 `.. ` 落成父目录），所以归到同一条拒因，别让它变成"另一种拒因"而蒙过判据；
+//     · 剥完空掉、原串里没有点（纯空格）⇒ 拒，理由单列 —— 这种段 Windows 建不出来
+//       （实测 `out\...\y` 报"找不到路径"），也不该被悄悄当成 `.` 或空组件（那等于把落点
+//       挪到别处）；
+//     · 其余 ⇒ **用剥完的名字**（`a. ` → `a`，`x..` → `x`）——这样返回的落点就是盘上
+//       真会出现的那条路径，`ArtifactTally` 的"同一落点只算一次"与"报出来的等于盘上真发生的"
+//       才对得上（修前 `a. ` 与 `a` 会被算成两个落点，而盘上只有一份）。
+std::string strip_trailing_dots_spaces(const std::string& seg) {
+    size_t end = seg.size();
+    while (end > 0 && (seg[end - 1] == ' ' || seg[end - 1] == '.')) --end;
+    return seg.substr(0, end);
+}
+
+// 段里有没有点（用来区分"只剩点的变体"与"纯空格"两种空段，见上）
+bool has_dot(const std::string& seg) { return seg.find('.') != std::string::npos; }
 
 bool ascii_iequal(char a, char b) {
     const auto lower = [](char c) { return (c >= 'A' && c <= 'Z') ? char(c - 'A' + 'a') : c; };
@@ -142,13 +171,25 @@ OutPathResult safe_out_path(const std::string& out_dir, const std::string& rel) 
 
     // ④ 拆段时**丢掉空段与 `.`**（1.x 这么做的，所以 `a//b`、`a/./b` 都是合法的
     //    "同一件事"，不能拒；拒的只有真正的 `..`）。
+    //    ★ F-1 起：每段先按 Windows 的有效名归一（剥尾随空格/点）**再判**，`..`/`.` 的
+    //      比较对象是归一后的名字（详见 `strip_trailing_dots_spaces` 上方的说明）。
+    //      `a/../b` 这类仍然拒（两段里第二段就是 `..`）—— 口径与 1.x 一致：**不做**
+    //      "先归约路径再看是否越界"，只要分段里出现 `..` 就拒。
     std::vector<std::string> parts;
-    for (const std::string& seg : split_segments(normalized, '/')) {
-        if (seg.empty() || seg == ".") continue;
+    for (const std::string& raw_seg : split_segments(normalized, '/')) {
+        if (raw_seg.empty() || raw_seg == ".") continue;   // 1.x 口径：空段与 `.` 丢
+        const std::string seg = strip_trailing_dots_spaces(raw_seg);
+        if (seg.empty()) {
+            // 只剩点（`..`/`.. `/`.. .`/`...`）＝同一族绕过，理由保持 `分段含 ..`；
+            // 纯空格才走"建不出这种名字"那条（见 `strip_trailing_dots_spaces` 上方）。
+            result.reason = has_dot(raw_seg) ? kRejectDotDot : kRejectEmptySegment;
+            return result;
+        }
         if (seg == "..") {
             result.reason = kRejectDotDot;
             return result;
         }
+        if (seg == ".") continue;   // 剥完正好是 `.`（`".. "` 之类已在上面被 `..` 拦掉）
         // 段里带**根名/根目录**的（Windows 上是 `D:` 这种盘符相对路径）：
         // 1.x 靠 `os.path.join` 的语义变化 + `commonpath` 的 ValueError 拦下它，
         // 这里显式拦 —— 判据是同一个（"拼完不再位于输出目录下"），只是不再依赖
@@ -156,6 +197,13 @@ OutPathResult safe_out_path(const std::string& out_dir, const std::string& rel) 
         const stdfs::path seg_path = xrkit::core::path_from_utf8(seg);
         if (seg_path.has_root_name() || seg_path.has_root_directory()) {
             result.reason = kRejectFallback;
+            return result;
+        }
+        // ★ F-1 同批：段内冒号＝NTFS **数据流（ADS）**（`ok.txt:evil` 会把内容写进
+        //  `ok.txt` 的隐藏流里，盘面上"看不见这份产物"，而判定说它落在输出目录下）。
+        //  Windows 文件名本来就不许有冒号 ⇒ 显式拒，不留给系统去当数据流解释。
+        if (seg.find(':') != std::string::npos) {
+            result.reason = kRejectColon;
             return result;
         }
         parts.push_back(seg);

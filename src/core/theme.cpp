@@ -1,5 +1,6 @@
 #include "xrkit/core/theme.h"
 
+#include "xrkit/core/atomic_write.h"   // M-shell-2：user.ltx 走原子写
 #include "xrkit/core/path.h"
 
 #include <algorithm>
@@ -278,11 +279,17 @@ bool save_user_values(const std::string& section,
         }
         if (!replaced) bucket.push_back(kv);
     }
-    std::ofstream out(path_from_utf8(user_ltx_path()), std::ios::binary | std::ios::trunc);
-    if (!out) return false;
+    // ★★ 2026-10-06（M-shell-2）：**裸 `ofstream(trunc)` → `core::write_file_atomic`**。
+    //   修前写到一半失败/断电就留下半截 user.ltx，而它是"下次启动继承主题与界面大小"的
+    //   唯一载体（半截文件 ⇒ 偏好静默丢失，而且下次启动读出来是垃圾值）。改走公共原子写：
+    //   同目录 `.part` → 写后自校验 → 同盘 rename；任一环失败先 unlink 并返回 false
+    //   （**零静默**：调用方拿 false 去报错，不留"看起来存在"的坏文件）。
+    //   注：**丢注释/空行是既定口径**（与 1.x 一致，审计里也写明"别改"）——这里只换写法。
     const std::string text = to_windows_newlines(render_ltx(data));
-    out.write(text.data(), static_cast<std::streamsize>(text.size()));
-    return static_cast<bool>(out);
+    const std::vector<uint8_t> bytes(text.begin(), text.end());
+    std::string error;
+    return write_file_atomic(user_ltx_path(), bytes, /*atomic=*/true, error,
+                             WriteVerify::Streamed);
 }
 
 bool save_user_value(const std::string& section, const std::string& key,

@@ -58,6 +58,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QVariant>
 #include <QScrollBar>
 #include <QSet>
 #include <QStackedWidget>
@@ -799,6 +800,84 @@ SmokeResult run_smoke() {
         check(QFileInfo::exists(ltx) == ltx_existed &&
                   (!ltx_existed || QFile(ltx).size() == ltx_before.size()),
               QStringLiteral("④-b 自检把 user.ltx 还原（存在=%1）").arg(ltx_existed ? 1 : 0));
+    }
+
+    // ④-c ★★ 2026-10-06（H-1 / H-2）：**启动序列本身**必须能在自检里复现（判红锁）。
+    //   为什么这一段非有不可：修前那条序列**内联在 `src/shell/main.cpp` 的 main() 里**，
+    //   而 `--smoke` 走的是另一条分支、压根不经过交互式启动 ⇒ 这两条判据在门禁里
+    //   **验不到**，于是两条都真机红：
+    //     · H-1 `apply_theme` 在"保存档覆盖 ui_scale"**之前**调用、之后没重套 ⇒
+    //       控件几何按 1.2、字体按 1.0（用户红线："字体大小也要保留继承"）；
+    //     · H-2 `apply_ui_size` 读 `app.property("xrkit_theme")`，而那个属性**只有**
+    //       `Hub::apply_theme_mode`（手动切主题）才写 ⇒ 浅色用户第一次点「界面大小」
+    //       读到空串 ⇒ 走 Dark ⇒ 整界面被拍回暗色（用户红线："主题……要保留继承"）。
+    //   现在的判据钉在**与 main 共用的那个函数**上（`apply_startup_ui`）：预置
+    //   `[theme] mode=light / scale=1.2` → 调它 → 断言"字体与几何同源"+"点界面大小仍是浅色"。
+    //   ⚠ 会写 user.ltx ⇒ 跑完**原样复原**（发行包会在包目录里跑 `--smoke`）。
+    {
+        const QString ltx = QString::fromStdString(xrkit::core::user_ltx_path());
+        const bool ltx_existed = QFileInfo::exists(ltx);
+        QByteArray ltx_before;
+        if (ltx_existed) {
+            QFile before(ltx);
+            if (before.open(QIODevice::ReadOnly)) ltx_before = before.readAll();
+        }
+        // "同源"那条判据的参照：**别写死字号** —— 先在 ui_scale=1.0 下量一次，
+        // 之后字号必须**恰好**乘 1.2（写成常量就等于把某个 Qt 默认字号钉进判据）。
+        xrkit::core::set_ui_scale(1.0);
+        apply_theme(*qApp, xrkit::core::ThemeMode::Light);
+        const double font_at_1 = qApp->font().pointSizeF();
+        check(xrkit::core::save_user_value("theme", "mode", "light") &&
+                  xrkit::core::save_user_value("theme", "scale", "1.2"),
+              QStringLiteral("④-c 夹具：user.ltx 预置 [theme] mode=light / scale=1.2"));
+
+        const xrkit::core::ThemeMode started = apply_startup_ui(*qApp);
+        const double font_at_12 = qApp->font().pointSizeF();
+        check(started == xrkit::core::ThemeMode::Light &&
+                  xrkit::core::theme_mode() == xrkit::core::ThemeMode::Light,
+              QStringLiteral("④-c H-1/H-2 启动序列读回浅色偏好并把它设成 core 的真值"));
+        check(qAbs(xrkit::core::ui_scale() - 1.2) < 1e-9,
+              QStringLiteral("④-c H-1 保存档压过屏幕自适应（ui_scale 应 1.2，实得 %1）")
+                  .arg(xrkit::core::ui_scale()));
+        check(px(100) == 120,
+              QStringLiteral("④-c H-1 几何按 1.2（px(100) 应 120，实得 %1）").arg(px(100)));
+        check(qAbs(font_at_12 - font_at_1 * 1.2) < 1e-6,
+              QStringLiteral("④-c H-1 **字体与几何同源**：字号也要按 1.2（1.0 时 %1pt / 1.2 时 "
+                             "%2pt，期望 %3pt）")
+                  .arg(font_at_1, 0, 'f', 4)
+                  .arg(font_at_12, 0, 'f', 4)
+                  .arg(font_at_1 * 1.2, 0, 'f', 4));
+
+        // H-2：**如实重现启动态** —— 进程刚起来时 `xrkit_theme` 属性是空的（启动路径只写 core）
+        qApp->setProperty("xrkit_theme", QVariant());
+        QString problem;
+        hub.apply_ui_size(1.1, &problem);   // 用户点「界面大小」= 走 Hub 这条真实路径
+        check(problem.isEmpty(),
+              QStringLiteral("④-c H-2 点「界面大小」没报错（problem=「%1」）").arg(problem));
+        check(xrkit::core::theme_mode() == xrkit::core::ThemeMode::Light,
+              QStringLiteral("④-c H-2 点「界面大小」**不许翻主题**（core 真值应仍是 light，实得 %1）")
+                  .arg(QString::fromUtf8(
+                      xrkit::core::theme_mode_name(xrkit::core::theme_mode()))));
+        check(qApp->palette().color(QPalette::Window).name().compare(
+                  QString::fromUtf8(xrkit::core::theme_color(xrkit::core::ThemeMode::Light, "bg")),
+                  Qt::CaseInsensitive) == 0,
+              QStringLiteral("④-c H-2 点「界面大小」之后 palette 仍是浅色令牌（实得 %1）")
+                  .arg(qApp->palette().color(QPalette::Window).name()));
+
+        // 复位（后面的用例仍按"暗色 + 1.0"跑），并把 user.ltx 原样还原
+        xrkit::core::set_ui_scale(1.0);
+        apply_theme(*qApp, xrkit::core::ThemeMode::Dark);
+        hub.apply_ui_size(1.0, &problem);
+        qApp->setProperty("xrkit_theme", QVariant());
+        if (ltx_existed) {
+            QFile restore(ltx);
+            if (restore.open(QIODevice::WriteOnly | QIODevice::Truncate)) restore.write(ltx_before);
+        } else {
+            QFile::remove(ltx);
+        }
+        check(QFileInfo::exists(ltx) == ltx_existed &&
+                  (!ltx_existed || QFile(ltx).size() == ltx_before.size()),
+              QStringLiteral("④-c 自检把 user.ltx 还原（存在=%1）").arg(ltx_existed ? 1 : 0));
     }
 
     // ⑤ HiDPI：外壳里所有硬编码尺寸都要过 px()

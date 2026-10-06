@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -339,6 +340,82 @@ def run_cli(argv):
     return run([CLI] + [str(a) for a in argv])
 
 
+def _live_code_lines(src: str):
+    r"""只留**活代码**行（三引号文档串与 `#` 注释都剔掉，**行号保持不变**）。
+
+    为什么要剔文档串：下面那条回归锁的说明里**故意**举了反例（那个永真断言的原文），
+    不剔的话锁会把自己的说明书判成违规 —— 那是另一种假红。
+    """
+    def blank(match):
+        return "\n" * match.group(0).count("\n")
+    no_doc = re.sub(r'"""(?:.|\n)*?"""', blank, src)
+    no_doc = re.sub(r"'''(?:.|\n)*?'''", blank, no_doc)
+    for i, line in enumerate(no_doc.splitlines(), 1):
+        yield i, line.split("#", 1)[0]
+
+
+def _norm_expr(text: str) -> str:
+    """把表达式归一成"只有 token"的形式：去掉空白、把三种括号折成同一种。
+
+    折括号是为了让 `len(x) == len([y for y in z])` 与 `x = {y for y in z}` 也能对上 ——
+    语义上那同样是永真（列表/集合推导式的元素个数一样）。
+    """
+    out = []
+    for ch in text:
+        if ch.isspace():
+            continue
+        out.append("(" if ch in "([{" else ")" if ch in ")]}" else ch)
+    return "".join(out)
+
+
+def _len_calls(code: str):
+    """返回 code 里每处 `len(<配平>)` 的 (内文, 右括号下标)。"""
+    out = []
+    for m in re.finditer(r"\blen\(", code):
+        start = m.end()
+        depth, i = 1, start
+        while i < len(code) and depth:
+            if code[i] == "(":
+                depth += 1
+            elif code[i] == ")":
+                depth -= 1
+            i += 1
+        if depth == 0:
+            out.append((code[start:i - 1], i - 1))
+    return out
+
+
+def selfcheck_no_tautology() -> list:
+    r"""回归锁（T-H2）：本脚本**不许**出现"两侧其实同一个表达式"的永真断言。
+
+    根因是那条对目录条目数的断言：`len(dirs_here) == len([同一份列表推导式])` —— 右侧把
+    **紧邻赋值里的 RHS 原样内联**回来，所以恒为真、等于没有锁（而它旁边的 `len > 0` 是真的，
+    这种假绿特别难发现）。
+    ★ 为什么不能用"左右逐字相同"这种粗筛：这条断言的左右**文本并不相同**
+      （左边是别名 `dirs_here`、右边是内联出来的推导式）—— 粗筛会漏掉它（实测漏过）。
+      所以这里做**别名解析**：先把 `名字 = 表达式` 收成一张表（归一化后），再看
+      `len(A) == len(B)` 里 A 的别名表达式是否与 B 等价。宁可漏报也不误报。
+    """
+    src = Path(__file__).read_text(encoding="utf-8")
+    live = list(_live_code_lines(src))
+    aliases = {}
+    for _i, code in live:
+        m = re.match(r"\s*([A-Za-z_]\w*)\s*=\s*(.+?)\s*$", code)
+        if m:
+            aliases[m.group(1)] = _norm_expr(m.group(2))
+    offences = []
+    for i, code in live:
+        calls = _len_calls(code)
+        for (inner_a, end_a), (inner_b, _end_b) in zip(calls, calls[1:]):
+            if not re.match(r"\)\s*==\s*len\(", code[end_a:]):
+                continue
+            na, nb = _norm_expr(inner_a), _norm_expr(inner_b)
+            # `na.isidentifier()` 保证只有"纯别名"那一侧才去查表（别把复杂表达式瞎对）
+            if na == nb or (na.isidentifier() and aliases.get(na) == nb):
+                offences.append("第 %d 行：%s" % (i, code.strip()))
+    return offences
+
+
 def want(cond, label, detail=""):
     if cond:
         print("  \u2713 " + label)
@@ -466,11 +543,21 @@ def check_bytes(pack: Path, src: Path, label: str = "11xx") -> None:
          "HEADER 明文能被逐条走完且不剩尾巴（解码器自证：%d 条）" % len(entries))
     bad = nonzero_dir_entries(entries)
     want(not bad, "%s 目录条目字段全零" % label, "非零：%s" % bad[:4])
-    dirs_here = [n for n, _ in entries if n.endswith("\\")]
-    want(len(dirs_here) == len([n for n, _ in entries if n.endswith("\\")]),
-         "%s 目录条目 %d 条（与字段分开断言，免得条目数为 0 也被算成全零的假绿）"
-         % (label, len(dirs_here)))
-    want(len(dirs_here) > 0, "%s 确实写了目录条目（不是干脆不写那一版）" % label,
+    # ★★ 2026-10-06（T-H2 修假绿）：这条原来是
+    #   `want(len(dirs_here) == len([n for n, _ in entries if n.endswith("\\")]), ...)`
+    #   —— 左右**同一个列表推导式**，永真。标签写着"免得条目数为 0 被算成全零的假绿"，
+    #   结果自己成了最标准的假绿（那附近的 `len>0` 是真的，所以锁没全死）。
+    #   现在改成**真判据**：HEADER 里的目录条目集合必须与**源树独立枚举出来的目录集合**
+    #   逐条一致 —— 少写一条、多写一条、名字写错（含 cp1251 名）都会红；条数不再由自己
+    #   推自己，而是由源树给出。
+    _src_files, src_dirs = source_tree(src)
+    want_dirs = {d.replace("/", "\\") + "\\" for d in src_dirs}
+    got_dirs = {n for n, _ in entries if n.endswith("\\")}
+    want(got_dirs == want_dirs,
+         "%s 目录条目与源树目录**逐条一致**（%d 条：%s）"
+         % (label, len(want_dirs), "、".join(sorted(want_dirs))),
+         "缺 %s / 多 %s" % (sorted(want_dirs - got_dirs)[:4], sorted(got_dirs - want_dirs)[:4]))
+    want(len(got_dirs) > 0, "%s 确实写了目录条目（不是干脆不写那一版）" % label,
          "目录条目 0 条 ⇒ 空目录信息会丢")
     print("    HEADER 明文（%s）：%s" % (label, header))
 
@@ -560,6 +647,13 @@ def main() -> int:
 
     tmp = Path(tempfile.mkdtemp(prefix="xrkit_11xx_dirlock_"))
     try:
+        # 回归锁先跑：注入"永真断言"（左右同一个表达式）就当场红
+        offences = selfcheck_no_tautology()
+        want(not offences,
+             "回归锁（T-H2）：脚本里没有「左右同一个表达式」的永真断言",
+             "；".join(offences))
+        if offences:
+            return 1
         src = tmp / "src"
         build_fixture(src)
         want_tree, want_dirs = source_tree(src)

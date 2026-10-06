@@ -55,6 +55,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -2169,10 +2170,63 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         check(ctx, plug::loaded_count() == 0, "unload_all 没把句柄清掉");
     });
 
+    // ★★ 2026-10-06（F1 命令 id 悬空）：**把 `abi_host.h` 那条承诺落成锁** ——
+    //   `register_command` 返回的 `const char*`（命令 id）必须**在宿主生命周期内一直有效**。
+    //   插件的典型写法就是"先注册全部命令、再统一挂 menu item"（id 要留着后面用），
+    //   而修前 `private: std::vector<std::string> owned_` 会在注册第 2 个命令时扩容搬走
+    //   旧元素；id 形如 `"p:c0"` 落在 MSVC `std::string` 的 SSO 阈值（15 字节）内 ⇒
+    //   字符数据内联在对象里 ⇒ 早先返回的 `c_str()` 指向**已被释放的旧数组**（UAF）。
+    //   判据三条一起才可信：① 3 个 id 逐个仍可读且**内容正确**；② 指针两两不同；
+    //   ③ 中间在堆上**涂抹同尺寸块**（把扩容时释放的那些数组复用掉）——没有 ③，悬空指针
+    //     常常还"恰好"读得出旧内容（SSO 的 move 是 memcpy，旧缓冲里可能还留着原文）。
+    //   ⇒ 改回 `std::vector` 立刻红（先证红后改绿的口径：本轮实测过）。
+    reg.add("plugin: 命令 id 指针在注册第 2/3 个命令后仍然有效（⑫12.2 契约锁）",
+            [](CheckContext& ctx) {
+        namespace plug = xrkit::plugin;
+        plug::Registry reg2;
+        // 插件名**故意取短**：id 是 `p:c0` 这种 SSO 串 —— bug 只在 SSO 串上真会读到脏数据
+        // （长 id 的字符数据在堆上，move 只搬指针 ⇒ 内容看着还对，这也是它一直没被发现的原因）
+        plug::PluginApiAdapter adapter(reg2, "p", /*ui=*/nullptr);
+        const stk_api& api = adapter.api();
+        const auto handler = +[](void*) {};
+        const char* want_ids[3] = {"p:c0", "p:c1", "p:c2"};
+        const char* ids[3] = {nullptr, nullptr, nullptr};
+        for (int i = 0; i < 3; ++i) {
+            ids[i] = api.register_command(api.host, want_ids[i] + 2, "标签", handler, nullptr,
+                                          nullptr);
+        }
+        check(ctx, ids[0] != nullptr && ids[1] != nullptr && ids[2] != nullptr,
+              "注册 3 个命令时有返回值是空的（夹具前提不成立）");
+        {
+            // 堆涂抹：尺寸覆盖 `vector` 扩容时释放过的那几档（1/2/3 个 string ⇒ 32/64/96 B）
+            std::vector<std::unique_ptr<char[]>> noise;
+            const size_t sizes[] = {96, 64, 32, 128, 48, 64, 32};
+            for (int round = 0; round < 24; ++round) {
+                for (size_t n : sizes) {
+                    auto block = std::unique_ptr<char[]>(new char[n]);
+                    std::memset(block.get(), 'X', n);
+                    noise.push_back(std::move(block));
+                }
+            }
+            check(ctx, noise.size() == 24 * 7 && noise.back().get()[0] == 'X',
+                  "堆涂抹夹具本身没问题（哨兵）");
+        }
+        for (int i = 0; i < 3; ++i) {
+            const std::string got = ids[i] != nullptr ? std::string(ids[i]) : std::string("<null>");
+            check(ctx, ids[i] != nullptr && got == want_ids[i],
+                  "命令 id 指针失效：第 " + std::to_string(i) + " 个读到「" + got + "」，期望「" +
+                      want_ids[i] + "」（`owned_` 必须是「插入不搬家」的容器）");
+        }
+        check(ctx, ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2],
+              "3 个命令 id 的指针不该相同");
+        check(ctx, adapter.owned_strings().size() == 3 && adapter.owned_strings().front() == "p:c0",
+              "注册期字符串台账内容/数量不对");
+    });
+
     // ⑥6.7 路径越界判据（safe_out_path）：归档条目名是不可信输入，这条判据挡的是
     // **任意文件写**。1.x 只把理由写在注释里，2.0 把"拒因"带出来 —— 所以这里连
     // **理由**一起断言：改判定顺序、把某一条删掉，都能当场变红。
-    reg.add("fs: 路径越界五条拒因逐条生效（⑥6.7）", [](CheckContext& ctx) {
+    reg.add("fs: 路径越界拒因逐条生效（⑥6.7；含 F-1 的尾随空格/点与段内冒号）", [](CheckContext& ctx) {
         namespace efs = xrkit::engine::fs;
         const std::string root = "C:/xrkit_out_root";
 
@@ -2189,6 +2243,19 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
             {"a/../../x", "深层上级"},
             {"a/b/../../../x", "三段上级"},
             {"a/D:/b", "盘符相对（靠兜底复核拦）"},
+            // ★★ 2026-10-06（F-1 路径逃逸）：`..` 的拦截**不能再按字节精确比** ——
+            //   Windows 落盘时会剥掉组件末尾的空格/点，`".. "` / `".. ."` 会变成 `..`。
+            //   这一组是"先证红再改绿"的那批输入；判红锁另见 tests/check_fs_hardening.py
+            //   （端到端：自造镜像 + 落盘 + 域外零文件）。
+            {".. /x", "尾随空格绕过 `..`"},
+            {".. ./x", "尾随空格+点绕过 `..`"},
+            {"a/.. /b", "中段尾随空格绕过 `..`"},
+            {".. /", "尾随空格的 `..`（末尾空段）"},
+            {".. .", "整条就是带尾随点的 `..`"},
+            {".../x", "剥掉尾随点后为空的分段"},
+            {"   /x", "全空格分段"},
+            {"ok.txt:evil", "段内冒号（NTFS 数据流 ADS）"},
+            {"a/b:c", "中段冒号（NTFS 数据流 ADS）"},
         };
         for (const Reject& r : rejects) {
             const efs::OutPathResult got = efs::safe_out_path(root, r.rel);
@@ -2207,6 +2274,12 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
             {"a/./b.txt", "a/b.txt"},     // `.` 段同上
             {"a\\b.txt", "a/b.txt"},      // 反斜杠先归一
             {"deep/deeper/x.dds", "deep/deeper/x.dds"},
+            // ★ F-1 同批：尾随空格/点**不是** `..` ⇒ 不能拒，但落点必须按 Windows 的
+            //   有效名归一（`a. ` 与 `a` 在盘上是**同一条**路径）—— 否则"报出来的落点"
+            //   与"盘上真发生的"又对不上了（`ArtifactTally` 会把同一处算成两个落点）。
+            {"a. /b.txt", "a/b.txt"},
+            {"a/b.txt.", "a/b.txt"},
+            {"a/b.txt ", "a/b.txt"},
         };
         for (const Accept& a : accepts) {
             const efs::OutPathResult got = efs::safe_out_path(root, a.rel);
