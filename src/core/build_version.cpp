@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "xrkit/core/atomic_write.h"
 #include "xrkit/core/path.h"
 
 namespace xrkit::core {
@@ -186,7 +187,18 @@ private:
             return false;
         }
         out.kind = JVal::Kind::Int;
-        out.num = std::stoll(s_.substr(i_, j - i_));
+        // ★★ 2026-10-06（审计处理批·2-5 / §5.9 / G3）：修前这里裸 `std::stoll`。
+        //   `version.json` 里一个超出 long long 的整数（`99999999999999999999`）会抛
+        //   `std::out_of_range` —— 而这条链的调用方**都没有 try**（`load_version_store` →
+        //   CLI `run_cli` 无顶层 catch → `main`）⇒ 异常穿透 ⇒ `std::terminate`
+        //   （用户看到的是"程序直接没了"；同一文件 `:329` 的**键**解析早就 catch(...) 了）。
+        //   口径：解析不了就**当解析失败**（走既有的"解析失败一个字节都不写"保护），不抛。
+        try {
+            out.num = std::stoll(s_.substr(i_, j - i_));
+        } catch (const std::exception&) {
+            err = "JSON：整数超出可表示范围";
+            return false;
+        }
         i_ = j;
         return true;
     }
@@ -228,20 +240,12 @@ bool read_text(const std::string& path, std::string& out, std::string& error) {
 }
 
 bool write_text(const std::string& path, const std::string& text, std::string& error) {
-    const stdfs::path p = path_from_utf8(path);
-    std::error_code ec;
-    if (p.has_parent_path()) stdfs::create_directories(p.parent_path(), ec);
-    std::ofstream f(p, std::ios::binary | std::ios::trunc);
-    if (!f) {
-        error = "写不了 " + path;
-        return false;
-    }
-    f.write(text.data(), static_cast<std::streamsize>(text.size()));
-    if (!f) {
-        error = "写入失败：" + path;
-        return false;
-    }
-    return true;
+    // ★★ 2026-10-06（审计处理批·2-5 后半 / §5.9）：修前这里是 `ofstream(trunc)` ——
+    //   **非原子**写这份"用户构建史"（与全仓原子写纪律不一致）：写到一半断电/被杀就留下
+    //   半截 JSON，而它是下一次构建要读回的那份文件。改用仓库现成的 `core::write_file_atomic`
+    //   （`theme.cpp` 的 `user.ltx` 写侧同款）。
+    const std::vector<uint8_t> bytes(text.begin(), text.end());
+    return core::write_file_atomic(path, bytes, /*atomic=*/true, error, core::WriteVerify::Streamed);
 }
 
 }  // namespace

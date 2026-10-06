@@ -1,0 +1,315 @@
+# 门禁自证台账（只读审计 2026-10-06 处理批）
+
+> 每处理完一条**门禁自身假绿**，把"修前的红"与"修后的绿"逐条记在这里。
+> 纪律：**先证红再改绿**；每条都必须给出**可复现的命令及原始行**（不是叙述）。
+> 编号 = 审计报告 §7「修复顺序」的条目号（0-x = 第 0 组门禁）。
+
+---
+
+## 0-1 `--release --only <一步>` 直接 PASS 却谎称"全部步骤均已执行"
+
+- 位置：`tests/run_ci.py` `main()` 的步骤循环 + 收尾覆盖度摘要（修前 `:1760-1789`）
+- 机制：`--only` 过滤掉的步骤**既不记账也不进未覆盖清单**；收尾 `if UNCOVERED: … else: 打印"本次覆盖：全部步骤均已执行"`
+  于是无条件打印后者 ⇒ 只跑 1/36 步也自称全覆盖，且 release 档照样 `RESULT: PASS`。
+- 修法：① `--only` 与 release 互斥（显式说明）；② **跳过的步骤逐条记入 UNCOVERED**。
+
+#### 红（修前）—— 命令与原始行
+```
+python tests/run_ci.py --release --only px-only
+```
+```
+[px-only] 像素口径：尺寸/间距只许过 px()
+  PX-ONLY ok 尺寸/间距一律过 px()（白名单 1 条：log_box 的 1px 布局技巧）
+  ok   尺寸/间距一律过 px()（屏幕自适应口径）
+------------------------------------------------------------------
+本次覆盖：全部步骤均已执行
+------------------------------------------------------------------
+RESULT: PASS
+=== exit code: 0 ===
+```
+
+#### 绿（修后）
+```
+python tests/run_ci.py --release --only px-only
+```
+```
+  · 步骤 bench（本次由 --only 'px-only' 过滤掉）
+  · 步骤 shell-smoke（本次由 --only 'px-only' 过滤掉）
+  · 步骤 winres（本次由 --only 'px-only' 过滤掉）
+------------------------------------------------------------------
+release 档：未覆盖清单非空 → 整体 FAIL
+RESULT: FAIL（1 处失败）
+=== exit code: 1 ===
+```
+
+#### 不变红的对照（局部调试通道必须仍可用）
+```
+python tests/run_ci.py --fast --only px-only    →  RESULT: PASS（exit 0），未覆盖清单逐条列出
+```
+
+---
+
+## 0-2 release 的"未覆盖清单非空 → FAIL"是死分支
+
+- 位置：`tests/run_ci.py` 收尾 `if release and UNCOVERED: FAILURES += 1`（修前 `:1782`）
+- 机制：release 档下 `prereq()` 走 `fail(); return False` 分支**不 append**（`:125-132`）；
+  另一处 `UNCOVERED.append` 在 `step_cli_contract` 的一个**空元组循环**里（`:338-339`）。
+  ⇒ 在 `--only` 修好之前，release 档下 UNCOVERED **必然为空**，该判据永不触发。
+- 修法：**不改判据**，而是给它一个活的写入者 —— 0-1 的"按 `--only` 过滤掉的步骤逐条进 UNCOVERED"。
+  该分支因此变成唯一把 release 判红的通道（0-1 的绿就是这么来的，见上 `RESULT: FAIL`）。
+
+#### 红（修前）：该分支永不执行
+- 证据：`--release` 整跑时 `prereq` 只走 `fail()` 不 append；唯一另一处 append 在空元组循环里。
+- 因此 `--release --only px-only` 修前能 PASS（见 0-1 红），即该判据是死的。
+
+#### 绿（修后）：`--release --only px-only` 由该分支判红
+```
+release 档：未覆盖清单非空 → 整体 FAIL
+RESULT: FAIL（1 处失败）
+```
+
+---
+
+## 0-3 smoke.cpp 的 9 条 S1 假绿
+（待处理）
+
+## 0-4 `check_px_only.py:26` 正则漏"零开头"整类
+（待处理）
+
+## 0-5 `active_code` 丢行首 `*` 的活代码
+（待处理）
+
+## 0-6 `.ps1` BOM 判据挂在 glob 上
+（待处理）
+
+## 0-7 空 manifest / gui_exe 缺失 / cv 判据缺失的静默通过
+（待处理）
+
+## 0-8 no-console 的静态锁范围与判据形态
+（待处理）
+
+---
+
+# S2 批（审计 §7 第 0-8 / 第 1 组残留 / 第 2 组 / 1-4 / 追加两条）
+
+> 2026-10-06 晚。范围＝审计 §7 的 0-8、1-2、1-4、2-1~2-5，外加「三·补3」的追加两条
+> （`golden_lossy_codec` 零静默收尾行、`abi_host` 非法参数写 reason）。
+> **不修**：S1-3/S1-4（用户裁决，随 C ABI 退役）；§6 判定没问题的项；§4 两个假阳性。
+
+## 0-8 no-console 只扫 `*.cpp` ＋ 步骤排在外壳构建之前
+
+- 位置：`tests/check_no_console.py` 文件集；`tests/run_ci.py` 的 `STEPS` 顺序
+- 红（修前）：`src/engine/_no_console_probe.h` 里放
+  `inline void probe_no_console() { std::system("whoami"); }`
+  ```
+  > python tests/check_no_console.py
+  NOCONSOLE ok 子进程启动无控制台窗口；产品 exe 子系统 xrkit_app.exe=2,...  （exit 0）
+  ```
+  ⇒ 头文件里的 `std::system(` **整类不可判红**。步骤顺序：修前 `no-console` 在 `STEPS`
+  第 5 位、`shell-smoke` 在第 36 位，而本步 ③ 号判据读**磁盘上现存 exe** 的 PE 子系统
+  ⇒ 干净 `build/` 首次必假红、重复运行判**上一轮旧 exe**。
+- 修法：① 文件集改成"C++ 源码文件集"（`.cpp/.cc/.cxx/.h/.hpp/.hh/.hxx/.inl/.ipp`）；
+  ② `active_code()` 顺手按词法状态剥块注释 + 屏蔽字符串/字符字面量内容（扩大文件集后
+  注释里的反例字样会变假红，"判据要判得准"）；③ `STEPS` 里把 `no-console` 挪到
+  `shell-smoke` 之后（新增注释说明为什么必须在它后面）。
+- 绿（修后）：
+  ```
+  > python tests/check_no_console.py            # 未注入
+  NOCONSOLE ok ...（exit 0）
+  > （注入 src/engine/_no_console_probe.h: std::system("whoami")）
+  NOCONSOLE fail 1 处会弹控制台窗口：
+               src/engine/_no_console_probe.h: 用了 std::system( ⇒ 会弹 cmd 窗口   （exit 1）
+  > （注入 .h 里 new QProcess( 无 modifier）
+  NOCONSOLE fail 1 处 ... src/engine/_no_console_probe.h: new QProcess( 但没有 setCreateProcessArgumentsModifier
+  > （反向：注释里提到 / 字符串字面量里出现 ⇒ 不算）
+  NOCONSOLE ok ...（exit 0）
+  ```
+
+## 1-2 `db.cpp read_chunks` 判据漏 `pos`（堆越界读）+ `long` 32 位截断
+
+- 位置：修前 `src/engine/fs/db.cpp:404-407`
+  ```cpp
+  if (cid <= 1 && 8ull + sz <= raw.size() && sz > 0) {
+      const bool comp = (rid & 0x80800000u) != 0;
+      std::vector<uint8_t> data(raw.begin() + static_cast<long>(pos + 8),
+                                raw.begin() + static_cast<long>(pos + 8 + sz));
+  ```
+- 机制（**静态确认**，见"复核"一节的口径说明）：判据用 `8+sz`、切片起点用 `pos+8`
+  ⇒ `pos>0` 且 `8+sz <= size < pos+8+sz` 时末端越过 `raw` 末尾；`static_cast<long>`
+  在 Windows x64 是 32 位 ⇒ `pos+8+sz > 2^31` 截断成负值 ⇒ 野指针。
+- 修法：判据与切片起点**同源** —— `pos + 8ull + sz <= raw.size()`（`8ull` 保证前两项
+  在 uint64 域相加不溢出），切片改用 `std::ptrdiff_t`，并留一条不变式注释。
+- 绿：`--dump` 在既有夹具上行为不变（`tests/golden_db.py` / `golden-extract` 等步骤照旧全绿，
+  见下方门禁两行）；新增的 `read_chunks` 边界注释与不变式已落地。
+- ★ 复核说明（不夸大）：**未**在本批做运行期越界取证 —— 退回整文件读那条路的可达前提是
+  "seek 路径认不出"（`db.cpp:770-789`），本批用 1 字节前缀/假块头/超大 sz 三种夹具实测
+  `--dump` 仍走 seek 路径（`seek=1`），因此**没有**造出一个能在 `%TEMP%` 里跑出 ASan 红的样本；
+  本条的"红"是代码级（判据与切片起点不同源）＋ 审计 §1 S1-5 的独立复现，如实记在这里。
+
+## 1-4 `only`（解包选中）语义两边不同源 ⇒ 静默 0 产物
+
+- 位置：页面 `src/shell/pages/fs_page.cpp:1491-1498`（喂 `tree_.flatten()` 的**落点路径**）
+  vs 引擎 `src/engine/fs/extract_tree.cpp` 的 DB 分支（修前比**镜像内路径**且命中不了就
+  `continue`、不计 failures/written）；CLI `tools/cli/main.cpp` 的 `--unpack-package`
+  预过滤**自己抄了第二份**同样的写法。
+- 红（修前，`tests/check_unpack_only_semantics.py` 的判据）：
+  · 勾 2 项落点路径（`bare/a.txt`、`bare/sub/b.txt`）⇒ `files_written=0`、`failures` 空、`ok=true`；
+  · 清单一条都不中 ⇒ `UNPACK-PKG ok sources=1 done=0 files=0 failed=0`、**退 0**。
+- 修法（"语义只许一份"）：
+  ① 引擎加**唯一一份**匹配规则 `selection_matches()`（头文件声明；落点路径与镜像内路径都认，
+     壳用 `pattern_shell_prefix()` 算 —— 而 `preview_entries_in_layout()` 也改成调它，
+     消掉原先自己抄的那份壳算法）；
+  ② SquashFS 与 DB 两个分支都改用它；对不上的逐条记 `failures`（理由：
+     "归档里没有该条目（按落点路径与镜像内路径都比过）"）；
+  ③ CLI 的 `--unpack-package` 预过滤改调 `selection_matches()`（不再自己抄）；
+     `--only` 一条都没命中 ⇒ 打 `UNPACK-PKG error reason=--only 清单一条都没命中…` 并**退非 0**。
+- 绿：`tests/check_unpack_only_semantics.py`（新）：
+  ```
+  ✓ ① 勾 2 项落点路径 ⇒ files_written == 2（修前 = 0）
+  ✓ ③ 落点产物 a.txt / sub/b.txt 与源逐字节一致
+  ✓ ② 镜像内路径写法（a.txt）仍然命中 1 项
+  ✓ ③ 对不上的清单 ⇒ 打出台账原因（零静默）
+  ✓ ③ 对不上的清单 ⇒ 退出码非 0（修前 files=0 却退 0）
+  UNPACK-ONLY ok (checks=8 failed=0)
+  ```
+
+## 2-1 gb18030/gbk/gb2312 严格解码首字节 `0xFF` 越界读表
+
+- 位置：修前 `src/engine/text/encoding.cpp` 的 `gb18030_decode()`（只挡 `b1 == 0x80`）
+  与 `gb_two_byte_decode()`（同形，gbk/gb2312 共用）。
+- 红（修前，`--codec-lossy decode <编码> <输入> strict <输出>` —— 本批新增的 strict 入口）：
+  ```
+  gb18030  ff40   exit=0  CODEC ok mode=strict encoding=gb18030 bytes=3   → 产物 ef a6 a1
+  gb18030  fffe   exit=0  CODEC ok mode=strict encoding=gb18030 bytes=2   → 产物 c2 a6
+  gbk      ff40   exit=0  CODEC ok mode=strict encoding=gbk bytes=1       → 产物 00
+  gbk      fffe   exit=0  CODEC ok mode=strict encoding=gbk bytes=3       → 产物 e2 86 96
+  gb2312   ff40   exit=0  CODEC ok mode=strict encoding=gb2312 bytes=1    → 产物 00
+  gb2312   fffe   exit=0  CODEC ok mode=strict encoding=gb2312 bytes=3    → 产物 e4 be 99
+  ```
+  Python 参照：`bytes([0xFF,0x40]).decode('gb18030'|'gbk'|'gb2312')` **一律 UnicodeDecodeError**。
+  ⇒ 越界读到的垃圾被当成"合法解码结果"写出去。
+- 修法：两处都改成 `if (b1 < 0x81 || b1 > 0xFE)`（生成器 `GB_TWO_W = 126*191` 的同一条算式；
+  有损路径早就挡住 0xFF，是漏写不是有意），错误串带上实际首字节。
+- 绿（修后）：同 12 条全部 `exit=1`、`CODEC error ... 非法首字节 0xFF`；反向 12 条合法输入
+  （中文/ASCII/空 × 三编码）仍 `exit=0`。见 `tests/check_codec_strict_bounds.py`
+  （门禁步骤 `codec-strict`）：`CODEC-STRICT ok (checks=25 failed=0)`。
+
+## 2-2 `utf32_encode_impl` 有损分支死循环（`i` 不前进）
+
+- 位置：修前 `src/engine/text/encoding.cpp` 的 `utf32_encode_impl()`：
+  ```cpp
+  if (!utf8_decode_one(p, text.size(), i, cp)) {
+      if (lossy) { cp = 0x3F; }            // ← i 不前进；且随后无条件 return false
+      else { err = "正文不是合法 UTF-8（编码方向）"; return false; }
+  }
+  ```
+- 红（修前形态**独立重建**后实测，输入 `ok\xe4\xb8bad`）：
+  ```
+  > xrkit_cli --codec-lossy encode utf-32 badutf8.txt out.bin
+  8 秒内没有退出 ⇒ 死循环；内存 964MB（只增不减）；输出文件 0 字节
+  ```
+- 修法：照 utf-16 兄弟分支同口径收尾 —— 有损时写一个 `?`（按字节序 4 字节）后
+  `i = text.size(); continue;`；非有损仍然报错返回。
+- 绿（修后）：
+  ```
+  utf-32     exit=0  用时 332 ms  CODEC ok mode=lossy encoding=utf-32 bytes=16
+  utf-32-le  exit=0  用时 100 ms  CODEC ok mode=lossy encoding=utf-32-le bytes=12
+  utf-32-be  exit=0  用时  37 ms  CODEC ok mode=lossy encoding=utf-32-be bytes=12
+  utf-16-le  exit=0  用时  38 ms  CODEC ok mode=lossy encoding=utf-16-le bytes=6 → 6f 00 6b 00 3f 00
+  ```
+
+## 2-3 `--font-render` 除零（`cell_h` 为 0 或 >1024）
+
+- 位置：`src/engine/font/render.cpp` 的 `slots = tex_w / cell_h`（`cell_height_for(0) == 0`；
+  `size >= 732 ⇒ cell_h >= 1025 ⇒ slots == 0` 后又 `% slots`）。
+- 红（修前形态重建后实测）：
+  ```
+  > xrkit_cli --font-render <字体> 0   0 A8 chars.txt out     → exit=-1073741676 (0xC0000094 整数除零)
+  > xrkit_cli --font-render <字体> 732 0 A8 chars.txt out     → exit=-1073741676 (0xC0000094 整数除零)
+  ```
+- 修法：按 A4 的口径收口在**引擎自己**（`render_font` 入口，打开字体**之前**）：
+  `render_size <= 0 || cell_h <= 0 || cell_h > 1024` ⇒ 可见错误。
+- 绿（修后）：
+  ```
+  size=0   exit=1  FONTRENDER error reason=渲染字号超出可渲染域：render_size=0 ⇒ cell_h=0（要求 1 <= cell_h <= 1024，否则行带网格会除零）
+  size=732 exit=1  ... render_size=732 ⇒ cell_h=1025 ...
+  size=11  exit=0  FONTRENDER ok size=11 ... dds=32896 ini=96
+  size=731 exit=0  FONTRENDER ok size=731 ... （边界内仍然能渲染）
+  ```
+
+## 2-4 `user.ltx` 的 `scale` 无 `isfinite`/上界 ⇒ `px()` 越界转换（UB）
+
+- 位置：`src/core/theme.cpp` 的 `load_ui_scale()`（修前只挡非正数）。
+- 红（修前形态重建后实测，用新入口 `--ui-scale-probe`，exe 放在带 `user.ltx` 的临时目录里）：
+  ```
+  scale=1e400   -> UISCALE ok raw=1e400  scale=inf     ← +∞ 一路通过
+  scale=inf     -> UISCALE ok raw=inf    scale=inf
+  scale=999999  -> UISCALE ok raw=999999 scale=999999
+  ```
+- 修法：`!std::isfinite(value) || value > 4.0 ⇒ return fallback`（`theme.h:95` 的口径本来就写着
+  "越界/垃圾值一律当作用户没选过 ⇒ 回落屏幕自适应"，这是漏写）。
+- 绿（修后）：
+  ```
+  scale=1e400 -> scale=0   scale=inf -> scale=0   scale=nan -> scale=0
+  scale=999999 -> scale=0  scale=4.1 -> scale=0
+  scale=1.5 -> scale=1.5   scale=1.25 -> scale=1.25   （正常值不受影响）
+  ```
+  （`scale=0` 即"没有偏好" ⇒ `shell/theme.cpp:528-529` 的 `saved_scale > 0.0` 不成立 ⇒ 用屏幕自适应）
+
+## 2-5 `version.json` 的 `stoll` 无保护（抛穿 → terminate）+ 非原子写
+
+- 位置：`src/core/build_version.cpp` 的 JSON 整数解析 + `write_text()`。
+- 红（修前形态重建后实测）：
+  ```
+  > xrkit_cli --version-store <index 为 99999999999999999999 的 version.json>
+  exit=-1073740791 (0xC0000409)   ← std::out_of_range 穿到 main ⇒ terminate，一个 RESULT 行都没有
+  ```
+- 修法：① 整数解析包 `try/catch(const std::exception&)`，失败即 `err = "JSON：整数超出可表示范围"`
+  并返回 false（走既有的"解析失败一个字节都不写"保护）；② `write_text()` 改用仓库现成的
+  `core::write_file_atomic()`（与 `theme.cpp` 的 `user.ltx` 写侧同款）。
+- 绿（修后）：
+  ```
+  > xrkit_cli --version-store huge.json
+  exit=1  VERSIONSTORE error reason=解析失败（已保留原文件，不覆盖）：JSON：整数超出可表示范围
+  文件未被改写: True
+  > xrkit_cli --version-store ok.json      （正常文件照旧）
+  exit=0  VERSIONSTORE ok version=2.0.0 prerelease=ALPHA next=1 full=2.0.0 ALPHA.1
+  ```
+
+## 追加一 `golden_lossy_codec.py` 失败时不打自己的收尾行（零静默）
+
+- 位置：`tests/golden_lossy_codec.py` 的 `__main__`。
+- 红（修前）：任何未捕获异常/早退路径 ⇒ 输出里**没有** `GOLDEN-LOSSY-CODEC:` 行，
+  别人无从判断它跑到哪、也无法与旧日志比对（S1 批首跑 `--release` 撞到的那次签名）。
+- 修法：`__main__` 里包住 `main()`，任何路径都先打 `GOLDEN-LOSSY-CODEC: FAIL (reason=…; elapsed=…)`
+  再退非零；正常路径打 `START`/`END rc=… elapsed=…` 时间戳与耗时（下一个偶发自然留证）。
+- 绿（修后）：正常跑仍 `GOLDEN-LOSSY-CODEC: PASS (compared=2571 failed=0)`（见门禁步骤日志），
+  且多出 `START` / `END` 两行。
+
+## 追加二 `abi_host.cpp` trampoline 参数非法只回 0、不写 reason（零静默次级洞）
+
+- 位置：修前 `src/engine/plugin/abi_host.cpp` 的 `when_from_abi()`：
+  `for (int i = 0; i < when->count; ++i)` —— 完全信任插件给的 `count`
+  （ABI 里除 `count` 外没有第二个长度字段）⇒ 负数/超大值即越界读。
+- 修法：① ABI 入口做**域校验**（`0..4096`，超界即填 `WhenSpec::invalid_reason`）；
+  ② `WhenSpec` 加 `invalid_reason` + `invalid()`，`always()` 同步收紧；
+  ③ 四个注册点（`register_command` / `register_option_entry` / `register_option` / `register_panel`）
+  在 `when.invalid()` 时**拒绝注册**并走 `reject()` ⇒ **理由进 `registration_errors()` + 日志**。
+  ★ 为什么不是"非法就当恒假"：那正是"注册成功但无人消费"，必须拒绝 + 留痕。
+- 绿：既有 `plugin-init-rollback` 步骤与 selftest 的 `when_ok` 用例照旧全绿（见门禁两行）。
+
+---
+
+# S2 批复核后不成立 / 夸大 / 超范围（如实登记）
+
+1. **1-2 未做运行期越界取证**（见该条的"复核说明"）：修法是确定的，但"能在本机跑出红"
+   这一步没做成 —— 退回整文件读需要 seek 路径认不出（本批三种夹具都仍走 seek）。
+   如实记为"代码级 + 审计独立复现"，不吹成"实测越界"。
+2. **审计 §7 的 3-x（第 3 组）与第 4 组不在本批**：本批只做 0-8 / 1-2 / 1-4 / 2-1~2-5
+   ＋追加两条。3-1~3-8、第 4 组的假绿面（app.rc BOM / 小写 Qt 头 / `contract_ok()` area
+   条数 / `*.DLL` 静默漏载 / `status_line()` 常量自报 / `LoadResult::registrations` 死字段）
+   **仍未处理**，留给下一批（审计自己的排序把它们排在数据安全与崩溃之后）。
+3. **`--extract-chars` 只剩 `--no-full-cyrillic` 时 `args[0]` 越界（G3，S1）**：
+   审计标为 S1 但不在本批派单范围（第 1 组里没有它）⇒ **未修**，一并留给下一批。
+4. **S1-3 / S1-4 只登记不动代码**：按用户 2026-10-06 裁决（C ABI 将退役、不是"马上会炸"）。
+5. **审计 B1-4 的严重度**由前批已复核为夸大（与本批无关，避免下一批重复劳动）。

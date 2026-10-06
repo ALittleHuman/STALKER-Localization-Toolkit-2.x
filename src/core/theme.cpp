@@ -318,6 +318,15 @@ double load_ui_scale(double fallback) {
     const double value = std::strtod(raw.c_str(), &end);
     if (end == nullptr || *end != '\0') return fallback;
     if (!(value > 0.0)) return fallback;
+    // ★★ 2026-10-06（审计处理批·2-4 / §5.8 / A2-9）：修前这里只挡了"非正数"，
+    //   而 `strtod("1e400")` 返回 **+∞** 且 `*end == '\0'` ⇒ 一路通过 ⇒
+    //   `set_ui_scale(∞)` ⇒ `px()` 里 `static_cast<int>(nearbyint(value * ∞))`
+    //   是 **double→int 越界转换（UB）**；`shell/theme.cpp:568` 的 `(基准+2.0)*ui_scale()`
+    //   也把字号算成 ∞。`theme.h:95` 的口径本来就写着"**越界**/垃圾值一律当作用户没选过
+    //   ⇒ 回落屏幕自适应" —— 这是**漏写**，不是有意。
+    //   上界 4.0：正常人不可能的倍率（DPI 档位封顶也在个位数），超过即按垃圾值处理。
+    constexpr double kMaxUiScale = 4.0;
+    if (!std::isfinite(value) || value > kMaxUiScale) return fallback;
     return value;
 }
 

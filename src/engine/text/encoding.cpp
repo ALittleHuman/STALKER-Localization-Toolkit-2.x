@@ -167,9 +167,16 @@ bool gb18030_decode(const uint8_t* data, size_t size, std::string& text, std::st
             ++i;
             continue;
         }
-        if (b1 == 0x80) {
-            // Python 的 gb18030 对 0x80 抛 UnicodeDecodeError，不是欧元符号
-            err = "gb18030：非法首字节 0x80";
+        if (b1 < 0x81 || b1 > 0xFE) {
+            // ★★ 2026-10-06（审计处理批·2-1 / H1-3 / A1-1）：**严格**路径修前只挡了 `0x80`。
+            //   表 `kGb18030TwoByte[24066]` 的合法首字节域是 `0x81..0xFE`（生成器
+            //   `tools/gen_encoding_tables.py:68 GB_TWO_W = 126 * 191` 的同一条算式），
+            //   而 `0xFF` 落下来会算出下标 `(0xFF-0x81)*191 + (b2-0x40)` = 24066..24256
+            //   ⇒ **越界读最多 191 项**；读到 ≠ kUndefined 时还把**非法序列当合法解出**
+            //   （实测修前：`FF 40` → `ef a6 a1`、`FF FE` → `c2 a6`，都不是合法解码结果）。
+            //   有损路径早就挡住了 0xFF（本文件 `:256`、`:650`）⇒ 这是漏写、不是有意。
+            //   gbk/gb2312 走下面同一个 `gb_two_byte_decode`，同一处一并收口。
+            err = "gb18030：非法首字节 " + hex_byte(b1);
             return false;
         }
         if (i + 1 >= size) {
@@ -779,8 +786,12 @@ bool gb_two_byte_decode(const uint16_t* table, const char* name, const uint8_t* 
             ++i;
             continue;
         }
-        if (b1 == 0x80) {
-            err = std::string(name) + "：非法首字节 0x80";
+        if (b1 < 0x81 || b1 > 0xFE) {
+            // ★★ 2026-10-06（审计处理批·2-1 / H1-3）：与 `gb18030_decode` 同一处漏写的收口。
+            //   两张表的 lead 域同样是 `0x81..0xFE`（生成器 `GB_TWO_W = 126 * 191`），
+            //   修前只挡 `0x80` ⇒ `0xFF` 算出的下标直接越过表尾（`gbk` 实测解出 `00`、
+            //   `gb2312` 实测解出 `e4 be 99` —— 越界读到的垃圾被当成合法解码结果写出）。
+            err = std::string(name) + "：非法首字节 " + hex_byte(b1);
             return false;
         }
         if (i + 1 >= size) {
@@ -1234,11 +1245,21 @@ bool utf32_encode_impl(const std::string& encoding, const std::string& text, boo
         uint32_t cp = 0;
         if (!utf8_decode_one(p, text.size(), i, cp)) {
             if (lossy) {
-                cp = 0x3F;
-            } else {
-                err = "正文不是合法 UTF-8（编码方向）";
-                return false;
+                // ★★ 2026-10-06（审计处理批·2-2 / A1-2）：修前这里只 `cp = 0x3F`，
+                //   **`i` 不前进**（`utf8_decode_one` 失败时按契约不推进，见 `encoding.h:87`）
+                //   ⇒ `while (i < text.size())` 恒真、`out` 每轮 +4 字节 ⇒ **死循环 + 无限增长**。
+                //   两个兄弟分支都处理了（utf-16 的下面那段、`encode_lossy` 的兜底）；
+                //   只有 utf-32 有损分支漏了。照 utf-16 同口径收尾：写一个 `?` 就结束
+                //   （1.x 对"正文不是合法 UTF-8"的语义是整串替换，不是逐字节打补丁）。
+                for (int k = 0; k < 4; ++k) {
+                    const int shift = little ? (8 * k) : (8 * (3 - k));
+                    out.push_back(static_cast<uint8_t>((0x3Fu >> shift) & 0xFF));
+                }
+                i = text.size();
+                continue;
             }
+            err = "正文不是合法 UTF-8（编码方向）";
+            return false;
         }
         if ((cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF))) {
             if (!lossy) {

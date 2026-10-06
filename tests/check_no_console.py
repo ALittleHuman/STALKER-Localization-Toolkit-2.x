@@ -26,10 +26,69 @@ ROOT = Path(__file__).resolve().parents[1]
 # 测试夹具：离屏自检里起的 ffmpeg/CLI，用户看不到窗口 ⇒ 允许不带标志
 ALLOW_FILES_NO_FLAG = {"src/shell/smoke.cpp"}
 
+# ★★ 2026-10-06（审计处理批·0-8）：修前这里只收 `*.cpp`。
+#   判据是"**产品代码里不许出现会弹控制台的启动方式**"，而 `std::system(` / `new QProcess(`
+#   写在头文件里一样会被编进产品（本仓大量实现在头里的 inline 就有先例）⇒ 只扫 .cpp
+#   等于判据**整类输入不可判红**（实测：`src/engine/_no_console_probe.h` 里放
+#   `std::system("whoami")` 判据照样 `NOCONSOLE ok`）。
+#   现在按"C++ 源码文件集"收：.cpp/.cc/.cxx/.h/.hpp/.hh/.hxx/.inl/.ipp。
+SOURCE_SUFFIXES = (".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".inl", ".ipp")
+
 
 def active_code(text: str) -> str:
-    """只留活代码：去掉行尾 `//` 注释（与其它静态锁同口径）。"""
-    return "\n".join(line.split("//", 1)[0] for line in text.splitlines())
+    """只留活代码：去掉行尾 `//` 注释（与其它静态锁同口径）。
+
+    ★ 为什么块注释也一并剥掉（0-8 顺手）：文件集扩到头文件以后，头文件里的**文档注释**
+      更容易出现 `std::system(` 这种反例字样（本仓的注释即证据文化），只剥行尾注释会把
+      "注释里提到"判成"代码里用了" —— 判据要判得**准**，不然扩大文件集只会引入假红。
+    """
+    out = []
+    depth = 0
+    for line in text.splitlines():
+        code = line
+        kept = []
+        i = 0
+        while i < len(code):
+            two = code[i:i + 2]
+            if depth > 0:
+                if two == "*/":
+                    depth -= 1
+                    i += 2
+                    continue
+                i += 1
+                continue
+            if two == "/*":
+                depth += 1
+                i += 2
+                continue
+            if two == "//":
+                break
+            # 字符串 / 字符字面量的**内容**屏蔽成空格（分隔符保留）：
+            # 里面的 `/*`／`std::system(` 都不是代码，判据不许拿它当证据。
+            if code[i] in "\"'":
+                quote = code[i]
+                kept.append(quote)
+                i += 1
+                while i < len(code):
+                    if code[i] == "\\":
+                        kept.append(" ")
+                        if i + 1 < len(code):
+                            kept.append(" ")
+                            i += 2
+                            continue
+                        i += 1
+                        continue
+                    if code[i] == quote:
+                        kept.append(quote)
+                        i += 1
+                        break
+                    kept.append(" ")
+                    i += 1
+                continue
+            kept.append(code[i])
+            i += 1
+        out.append("".join(kept))
+    return "\n".join(out)
 
 
 def scan() -> list:
@@ -37,7 +96,7 @@ def scan() -> list:
     roots = [ROOT / "src", ROOT / "tools"]
     files = []
     for r in roots:
-        files += [p for p in r.rglob("*.cpp")]
+        files += [p for p in r.rglob("*") if p.suffix.lower() in SOURCE_SUFFIXES]
     for src in sorted(files):
         rel = str(src.relative_to(ROOT)).replace("\\", "/")
         code = active_code(src.read_text(encoding="utf-8", errors="replace"))

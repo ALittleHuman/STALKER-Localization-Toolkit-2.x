@@ -48,6 +48,18 @@ _MSVC_ENV: dict[str, str] | None = None
 
 
 # ── 基础设施 ────────────────────────────────────────────────────────────
+# ★★ 2026-10-06（审计处理批·追加 / 假绿批的照见 D3）：修前只给**子进程**打了
+#   `PYTHONUTF8/PYTHONIOENCODING`（`run()` 里），**自己**没重编码 stdout ⇒
+#   stdout 是管道 + 本地编码不是 UTF-8 时，打印 `✓/✗` 直接 `UnicodeEncodeError`，
+#   退 1 且**没有 RESULT 行**（看起来"红但不说哪一步"）。口径：脚本要**自己**保证可跑，
+#   不许依赖外部环境变量。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:   # 老 Python / 已重定向的自定义流：退回原行为，不影响判定
+    pass
+
+
 def say(msg: str) -> None:
     print(msg, flush=True)
 
@@ -1955,6 +1967,8 @@ def step_no_console(release: bool) -> None:
     """无控制台窗口（用户 2026-09-27：「不要打开cmd」）：产品代码不许用 std::system(
     （走 cmd.exe /c，GUI 里会闪黑窗），起了 QProcess 就必须置 CREATE_NO_WINDOW。
     独立成步骤，不受其它步骤早退影响（做法同 px-only）。
+    ★ 2026-10-06（0-8）：本步**排在 shell-smoke 之后**（见 STEPS 里的说明）——
+      它的 ③ 号判据读的是**本次构建出来的** exe 的 PE 子系统。
     """
     say("[no-console] 子进程启动：不许弹控制台窗口")
     rc, out = run([sys.executable, str(ROOT / "tests" / "check_no_console.py")], timeout=120)
@@ -1968,12 +1982,60 @@ def step_no_console(release: bool) -> None:
         fail("有子进程启动会弹控制台窗口（见上）")
 
 
+def step_codec_strict(release: bool) -> None:
+    """严格解码/编码的**边界域**（审计 2-1 / 2-2 / H1-3 / A1-1 / A1-2）。
+
+    为什么独立成步：这两条此前**没有任何能判红的入口** —— `--decode-text` 走六编码链
+    （latin-1 兜底、永不失败）、`--codec-lossy` 走 replace 语义 ⇒ 严格路径的越界读表
+    与有损分支死循环谁也判不了。本步用 `--codec-lossy ... strict` 打这两条边界。
+    退出码：0=全绿、1=有判据不成立、2=构建产物缺失（外部前提）。
+    """
+    say("[codec-strict] 严格编解码的边界（0xFF 前导不许越界读表 / utf-32 有损不许挂死）")
+    script = ROOT / "tests" / "check_codec_strict_bounds.py"
+    if not require_repo_file(script, "严格编解码边界判据"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("CODEC-STRICT"):
+            say("  " + s)
+    if rc == 0:
+        ok("严格路径边界全部守住（越界读表 / 有损死循环）")
+    else:
+        fail("严格路径边界有判据不成立（见上）")
+
+
+def step_unpack_only(release: bool) -> None:
+    """`only`（解包选中）语义只许一份 + 命中不了必须可见（审计 1-4 / S1-7 / S1-7 的 CLI 面）。
+
+    独立成步（不塞进 selftest）：被 `--only` 过滤时按假绿批的记账进 UNCOVERED。
+    """
+    say("[unpack-only] 解包选中的路径口径（落点路径 / 镜像内路径）+ 零静默")
+    script = ROOT / "tests" / "check_unpack_only_semantics.py"
+    if not require_repo_file(script, "解包选中口径判据"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("UNPACK-ONLY"):
+            say("  " + s)
+    if rc == 0:
+        ok("勾选项 ↔ 包里条目按同一条规则匹配（两种写法都认）且对不上时可见")
+    else:
+        fail("解包选中口径有判据不成立（见上）")
+
+
 STEPS = [
     ("build", step_build),
     ("no-qt", step_no_qt_lock),
     ("no-qt-injection", step_no_qt_injection),
     ("px-only", step_px_only),
-    ("no-console", step_no_console),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),
@@ -1996,6 +2058,10 @@ STEPS = [
     #   各自独立成步（不塞进 selftest）：被 `--only` 过滤时会按假绿批的记账进 UNCOVERED。
     ("extract-guard", step_extract_guard),
     ("plugin-init-rollback", step_plugin_init_rollback),
+    # ★★ 2026-10-06（S2 批）：2-1/2-2 的边界域、1-4 的解包选中口径。
+    #   各自独立成步（不塞进 selftest）：被 `--only` 过滤时会按假绿批的记账进 UNCOVERED。
+    ("codec-strict", step_codec_strict),
+    ("unpack-only", step_unpack_only),
     ("golden-text-sniff", step_golden_text_sniff),
     ("golden-font-raster", step_golden_font_raster),
     ("golden-font-metrics", step_golden_font_metrics),
@@ -2009,6 +2075,13 @@ STEPS = [
     ("golden-sqfs-metacross", step_golden_sqfs_metacross),
     ("bench", step_bench),
     ("shell-smoke", step_shell_smoke),
+    # ★★ 2026-10-06（审计处理批·0-8 后半）：这一步**必须排在 shell 构建之后**。
+    #   修前它在第 5 步、外壳构建在第 36 步，而它的 ③ 号判据读的是**磁盘上现存的**
+    #   `xrkit_app.exe` / `xrkit_build_gui.exe` 的 PE 子系统 ⇒
+    #     ① 干净 `build/`（从未构建过）上首次运行必然假红（"一个产品 exe 都没找到"）；
+    #     ② 重复运行判的是**上一轮**留下的旧 exe —— 这一轮把 Console 子系统改回去也照样绿。
+    #   现在挪到 `shell-smoke` 之后：这一轮的 exe 刚编出来，判的是**本次**产物。
+    ("no-console", step_no_console),
     # 排在 shell-smoke **之后**：那一步才把 xrkit_app.exe 编出来（这一步要读它的真实资源字节）
     ("winres", step_winres),
 ]

@@ -118,6 +118,13 @@ std::optional<std::string> Registry::register_command(const std::string& plugin,
                                                       const std::string& action_id,
                                                       const std::string& label,
                                                       CommandHandler handler, WhenSpec when) {
+    // ★★ 2026-10-06（审计处理批·追加②）：when 的参数非法 ⇒ **拒绝注册 + 留痕**（零静默）。
+    //   修前 `when_from_abi` 完全信任插件给的 `count`（越界读风险），而且就算发现也只能
+    //   "回 0 不写 reason" ⇒ 插件侧看到的是"注册成功但永不生效"。这条判据把两者都堵上。
+    if (when.invalid()) {
+        reject(plugin, "register_command(" + action_id + ") 的 when 参数非法：" + when.invalid_reason);
+        return std::nullopt;
+    }
     if (!valid_action_id(action_id)) {
         reject(plugin, "register_command 的动作名 " + action_id +
                            " 非法（只允许字母/数字/_.-，1~64 字符）");
@@ -160,6 +167,11 @@ bool Registry::register_option_entry(const std::string& plugin, const std::strin
                                      WhenSpec when) {
     // 1.x 只查 host（`area` 由组件自己解释；没有对应下拉就加不进去）
     if (bad_slot(plugin, "register_option_entry", host)) return false;
+    if (when.invalid()) {
+        reject(plugin, "register_option_entry(" + host + "/" + area + ") 的 when 参数非法：" +
+                           when.invalid_reason);
+        return false;
+    }
     option_entries_.push_back({plugin, host, area, value, std::move(when)});
     return true;
 }
@@ -169,6 +181,10 @@ bool Registry::register_option(const std::string& plugin, const std::string& lab
                                const std::string& host, const std::string& area, WhenSpec when,
                                int order) {
     if (bad_slot(plugin, "register_option", host)) return false;
+    if (when.invalid()) {
+        reject(plugin, "register_option(" + label + ") 的 when 参数非法：" + when.invalid_reason);
+        return false;
+    }
     OptionReg reg;
     reg.plugin = plugin;
     reg.label = label;
@@ -186,6 +202,10 @@ bool Registry::register_panel(const std::string& plugin, const std::string& titl
                               PanelBuilder builder, const std::string& host,
                               const std::string& area, WhenSpec when, int order) {
     if (bad_slot(plugin, "register_panel", host)) return false;
+    if (when.invalid()) {
+        reject(plugin, "register_panel(" + title + ") 的 when 参数非法：" + when.invalid_reason);
+        return false;
+    }
     if (!builder) {
         reject(plugin, "register_panel(" + title + ") 的 builder 不可调用");
         return false;

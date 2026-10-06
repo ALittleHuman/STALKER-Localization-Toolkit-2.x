@@ -389,6 +389,23 @@ bool render_font(const std::string& font_path, const std::vector<uint32_t>& char
         out.error = "未知 DDS 格式：" + fmt;
         return false;
     }
+    // ★★ 2026-10-06（审计处理批·2-3 / A1-3 / A4）：`render_size` 的**入参域**此前没有定义、
+    //   也没有自校验 —— 除零就发生在下面 `slots = tex_w / cell_h`：
+    //     · `render_size == 0` ⇒ `cell_height_for(0)` 走表外兜底 `ceil(0*1.40) == 0`
+    //       ⇒ `1024 / 0` = **整数除零**（x64 上 SIGFPE / 0xC0000094）；
+    //     · `render_size >= 732` ⇒ `cell_h >= 1025 > 1024` ⇒ `slots == 0`
+    //       ⇒ `(chars.size() + slots - 1) % slots` 再次除零。
+    //   可达性：`xrkit_cli --font-render <字体> 0 0 A8 …`（GUI 够不到，CLI/脚本够得到）。
+    //   ★ 按 A4 的口径收口在**引擎自己**（而不是只改调用方）：下一个调用点不会再踩。
+    //   为什么放在打开字体**之前**：这样"参数非法 ⇒ 可见错误"这条判据不需要一枚真字体
+    //   （判据只判参数域，不该依赖外部前提）。
+    const int cell_h_guard = cell_height_for(render_size);
+    if (render_size <= 0 || cell_h_guard <= 0 || cell_h_guard > 1024) {
+        out.error = "渲染字号超出可渲染域：render_size=" + std::to_string(render_size) +
+                    " ⇒ cell_h=" + std::to_string(cell_h_guard) +
+                    "（要求 1 <= cell_h <= 1024，否则行带网格会除零）";
+        return false;
+    }
 
     const std::string native = core::path_to_utf8(core::path_from_utf8(font_path));
     FT_Library lib = nullptr;

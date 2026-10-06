@@ -401,10 +401,21 @@ bool read_chunks(const std::vector<uint8_t>& raw, DbFormat fmt, Chunks& out) {
         const uint32_t rid = rd32(raw, pos);
         const uint32_t sz = rd32(raw, pos + 4);
         const uint32_t cid = rid & 0x7FFFFFFFu;
-        if (cid <= 1 && 8ull + sz <= raw.size() && sz > 0) {
+        // ★★ 2026-10-06（审计处理批·1-2 / S1-5）：修前判据是 `8ull + sz <= raw.size()` ——
+        //   **漏了 `pos`**，而切片起点是 `pos + 8`：
+        //     · `pos > 0`（逐字节回退或前一个块推进过）时，只要 `pos` 处的 4 字节"看起来像
+        //       块头"（`cid <= 1`），且 `8 + sz <= filesize < pos + 8 + sz`，迭代器末端就越过
+        //       `raw` 末尾 ⇒ **vector 按 sz 字节从越界地址 memcpy**（堆越界读）。
+        //   另一重：`static_cast<long>` 在 Windows x64 是 **32 位**，`pos + 8 + sz > 2^31`
+        //   时截断成负数 ⇒ `raw.begin() + 负值` 是野指针。>2 GiB 的包走整文件回退路径时必踩。
+        //   修法：判据与切片起点**同源**（`pos + 8ull + sz <= raw.size()` —— 后面的 `+ 8`
+        //   都在 uint64 域里算，`8ull` 保证前两项不溢出），并去掉 `long` 窄化。
+        if (cid <= 1 && pos + 8ull + sz <= raw.size() && sz > 0) {
             const bool comp = (rid & 0x80800000u) != 0;
-            std::vector<uint8_t> data(raw.begin() + static_cast<long>(pos + 8),
-                                      raw.begin() + static_cast<long>(pos + 8 + sz));
+            const size_t data_begin = pos + 8;
+            const size_t data_end = data_begin + sz;
+            std::vector<uint8_t> data(raw.begin() + static_cast<std::ptrdiff_t>(data_begin),
+                                      raw.begin() + static_cast<std::ptrdiff_t>(data_end));
             if (cid == 0) {
                 if (!out.has_data) {
                     out.has_data = true;

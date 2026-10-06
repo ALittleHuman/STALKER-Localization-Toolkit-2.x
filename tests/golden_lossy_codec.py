@@ -475,4 +475,22 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # ★★ 2026-10-06（审计处理批·追加一 / 三·补3）：**任何失败路径都必须先打自己的收尾行**。
+    #   病根（S1 批首跑 `--release` 撞到的偶发红）：这一步失败时**连 `GOLDEN-LOSSY-CODEC:` 行
+    #   都没有** —— 别人无从判断它跑到哪、无法与旧日志比对（当初那趟总时长只有 8.6 min，
+    #   远小于本步 600 s 超时 ⇒ 不是超时，就是"异常穿透、什么都没打"）。
+    #   现在：未捕获异常/非零退出都在这里兜住，先打带 reason 的收尾行再退非零。
+    #   顺手加**开始/结束时间戳与耗时**（下一个偶发自然留证；平时也不碍事）。
+    import time as _time
+    _t0 = _time.time()
+    print("GOLDEN-LOSSY-CODEC: START %s"
+          % _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime(_t0)), flush=True)
+    try:
+        _rc = main()
+    except BaseException as _exc:   # noqa: BLE001 —— 连 KeyboardInterrupt/SystemExit 都要留证
+        _dt = _time.time() - _t0
+        print("GOLDEN-LOSSY-CODEC: FAIL (reason=%s: %s; elapsed=%.1fs)"
+              % (type(_exc).__name__, _exc, _dt), flush=True)
+        raise SystemExit(1)
+    print("GOLDEN-LOSSY-CODEC: END rc=%d elapsed=%.1fs" % (_rc, _time.time() - _t0), flush=True)
+    sys.exit(_rc)

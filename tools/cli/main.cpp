@@ -136,9 +136,12 @@ void print_usage() {
            "  --decode-text <输入> <输出>                 六编码链解码（把正文写成 UTF-8；对拍用）\n"
            "  --codec-lossy <decode|encode> <编码> <输入> <输出>\n"
            "                                              有损编解码（Python errors=replace；对拍用）\n"
+           "  --codec-lossy <decode|encode> <编码> <输入> strict <输出>\n"
+           "                                              严格语义（decode_strict / encode_strict；判据用）\n"
            "  --codec-encode-table                        big5/shift_jis/euc-kr 反向编码表整表导出（对拍用）\n"
            "  --decl-fix <输入> <目标编码> <输出>          XML 声明规范化（1.x _fix_xml_decl；对拍用）\n"
            "  --sniff <输入> <输出> [--encoding <手动指定>]  判定链（六步）判定 + 解码（对拍用）\n"
+           "  --ui-scale-probe                            读 user.ltx 的 [theme] scale（只读；判据用）\n"
            "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
            "                                              文本提取（gameplay|scripts 一个分支）\n"
            "  --text-plan <源目录> <输出目录>              文本提取的请求守卫（7.1 文件夹名 / 7.5 覆盖源目录）\n"
@@ -2484,6 +2487,20 @@ int run_cli(const std::vector<std::string>& args) {
                   << " fail=" << counts.fail << "\n";
         return rc;
     }
+    // ★★ 2026-10-06（审计处理批·2-4）：`user.ltx` 的 `[theme] scale` 读侧探针。
+    //   为什么要有它：这条链的**唯一**消费点在外壳（`shell/theme.cpp apply_startup_ui`），
+    //   而 CLI 一直没有任何入口能读它 ⇒ "越界/垃圾值回落屏幕自适应"这条口径**判不了红**
+    //   （审计 §5.8 / A2-9：`scale = 1e400` ⇒ `strtod` 给 +∞ ⇒ `px()` 里 double→int 越界转换 UB）。
+    //   本动作只做**读**：把 `load_ui_scale()` 的原始串与解析结果打出来（不改任何文件）。
+    if (action == "--ui-scale-probe") {
+        const std::string raw = xrkit::core::load_user_value(xrkit::core::kPrefSection,
+                                                            xrkit::core::kPrefScaleKey, "");
+        const double scale = xrkit::core::load_ui_scale();
+        std::cout << "UISCALE ok raw=" << (raw.empty() ? "-" : raw) << " scale=" << scale
+                  << " path=" << xrkit::core::user_ltx_path() << "\n";
+        return kExitOk;
+    }
+
     if (action == "--video-plan") {
         // 判据面：把 `tests/probe_video_argv.py` 里那 7 组用例（输入与 1.x 实调时**同一张表**）
         // 交给引擎算 argv，逐行打印，供 `tests/golden_video_argv.py` 与基线对拍。
@@ -2966,9 +2983,18 @@ int run_cli(const std::vector<std::string>& args) {
             //   而写后校验档位此前**只有 `--unpack-tree` 能选** ⇒ 同一个按钮的等价物少一档。
             options.verify_readback = verify_readback;   // 默认 false ⇒ 边写边算哈希
             if (!only_paths.empty()) {
+                // ★★ 2026-10-06（审计处理批·1-4 / S1-7）：修前这里是**自己抄的一份比对** ——
+                //   `std::find(plan_input[i].second, one)` 只比**镜像内路径**，而页面/用户
+                //   手里那份勾选是**落点路径**（带包名壳）⇒ 一条都不中 ⇒ `options.only` 空
+                //   ⇒ 下面 `if (options.only.empty()) continue;` 把整包静默跳过 ⇒
+                //   `UNPACK-PKG ok files=0`、退 0，用户看不到任何理由。
+                //   现在改用引擎的**唯一一份**匹配规则 `selection_matches()`（落点路径与
+                //   镜像内路径都认），与 GUI「解包选中」逐条同源。
+                std::vector<std::string> paths_for_match;
+                paths_for_match.reserve(plan_input[i].second.size());
+                for (const std::string& p : plan_input[i].second) paths_for_match.push_back(p);
                 for (const std::string& one : only_paths) {
-                    if (std::find(plan_input[i].second.begin(), plan_input[i].second.end(), one) !=
-                        plan_input[i].second.end()) {
+                    if (xrkit::engine::fs::selection_matches(plan[i].image, paths_for_match, one)) {
                         options.only.push_back(one);
                     }
                 }
@@ -3002,6 +3028,17 @@ int run_cli(const std::vector<std::string>& args) {
             }
             overwritten += res.overwritten_size();
         }
+        // ★★ 2026-10-06（审计处理批·1-4 的 CLI 侧 / 零静默）：`--only` 清单**一条都没命中
+        //   任何包**时，修前是"逐包 `continue` 掉 ⇒ files=0、failed=0"，输出里只有
+        //   `UNPACK-PKG ok sources=N done=0 files=0` —— 字面看像"成功但什么都没做"。
+        //   这里补一条**明确的原因行**（`tests/check_unpack_rules.py` 的反向锁正是靠
+        //   "一个包都没排上"来做到"只看计划、不落盘"，所以这条**不改退出码**：
+        //   退出码仍由 `failed` 决定，与既有真机反向锁的契约一致）。
+        //   ★ 引擎侧"对不上的逐条记 failures"才是硬判据（见 `check_unpack_only_semantics.py`）。
+        if (!only_paths.empty() && files == 0) {
+            std::cout << "UNPACK-PKG note reason=--only 清单一条都没命中（清单 " << only_paths.size()
+                      << " 条，plan " << plan.size() << " 个包都没排上）—— 本次没有产物写出\n";
+        }
         std::cout << "UNPACK-PKG ok sources=" << plan.size() << " done=" << done << " files=" << files
                   << " dirs=" << dirs << " bytes=" << bytes << " dups=" << dups
                   << " overwritten=" << overwritten
@@ -3011,13 +3048,23 @@ int run_cli(const std::vector<std::string>& args) {
 
     // 有损编解码探针（Python `errors="replace"` 的逐字节对拍用）。
     // 门禁 [12] 用 Python 同名 codec 驱动它：单字节 / UTF-8 截断 / GB 家族边界。
+    // ★★ 2026-10-06（审计处理批·2-1/2-2）：补 `strict` 模式 —— "**严格**解码/编码"这条
+    //   路在此之前**没有任何黑盒入口**：`--decode-text` 走的是六编码链（latin-1 兜底、
+    //   永不失败），`--codec-lossy` 走的是 replace 语义 ⇒ 严格路径的边界（越界读表 /
+    //   有损分支死循环）谁也判不了红。语义与 lossy 一一对应：
+    //     `--codec-lossy decode strict <编码> <输入> <输出>` = `decode_strict`（必抛/必失败）
+    //     `--codec-lossy encode strict <编码> <输入> <输出>` = `encode_strict`（表示不了即失败）
     if (action == "--codec-lossy") {
         if (operands.size() < 4) {
-            std::cerr << "CODEC error reason=用法：--codec-lossy <decode|encode> <编码> <输入> <输出>\n";
+            std::cerr << "CODEC error reason=用法：--codec-lossy <decode|encode> <编码> <输入> <输出>"
+                         "（“严格”语义：加第四个位置参数 strict）\n";
             return kExitUsage;
         }
         const std::string& mode = operands[0];
         const std::string& encoding = operands[1];
+        // 位置与帮助行一一对应：`<decode|encode> <编码> <输入> [strict] <输出>`
+        const bool strict = operands.size() >= 5 && operands[3] == "strict";
+        const size_t out_arg = strict ? 4 : 3;
         std::string body;
         {
             std::ifstream in(xrkit::core::path_from_utf8(operands[2]), std::ios::binary);
@@ -3031,25 +3078,36 @@ int run_cli(const std::vector<std::string>& args) {
         std::string err;
         if (mode == "decode") {
             std::string text;
-            if (!xrkit::engine::text::decode_lossy(
-                    encoding, reinterpret_cast<const uint8_t*>(body.data()), body.size(), text,
-                    err)) {
-                std::cout << "CODEC error reason=" << err << "\n";
+            const bool decoded =
+                strict ? xrkit::engine::text::decode_strict(
+                             encoding, reinterpret_cast<const uint8_t*>(body.data()), body.size(),
+                             text, err)
+                       : xrkit::engine::text::decode_lossy(
+                             encoding, reinterpret_cast<const uint8_t*>(body.data()), body.size(),
+                             text, err);
+            if (!decoded) {
+                std::cout << "CODEC error mode=" << (strict ? "strict" : "lossy")
+                          << " reason=" << err << "\n";
                 return kExitFail;
             }
             out.assign(text.begin(), text.end());
         } else if (mode == "encode") {
-            if (!xrkit::engine::text::encode_lossy(encoding, body, out, err)) {
-                std::cout << "CODEC error reason=" << err << "\n";
+            const bool encoded = strict
+                                     ? xrkit::engine::text::encode_strict(encoding, body, out, err)
+                                     : xrkit::engine::text::encode_lossy(encoding, body, out, err);
+            if (!encoded) {
+                std::cout << "CODEC error mode=" << (strict ? "strict" : "lossy")
+                          << " reason=" << err << "\n";
                 return kExitFail;
             }
         } else {
             std::cerr << "CODEC error reason=未知模式（decode|encode）\n";
             return kExitUsage;
         }
-        std::ofstream file(xrkit::core::path_from_utf8(operands[3]), std::ios::binary | std::ios::trunc);
+        std::ofstream file(xrkit::core::path_from_utf8(operands[out_arg]),
+                           std::ios::binary | std::ios::trunc);
         if (!file) {
-            std::cout << "CODEC error reason=写不到输出：" << operands[3] << "\n";
+            std::cout << "CODEC error reason=写不到输出：" << operands[out_arg] << "\n";
             return kExitFail;
         }
         if (!out.empty()) {
@@ -3057,8 +3115,8 @@ int run_cli(const std::vector<std::string>& args) {
                        static_cast<std::streamsize>(out.size()));
         }
         file.close();
-        std::cout << "CODEC ok mode=" << mode << " encoding=" << encoding << " bytes=" << out.size()
-                  << "\n";
+        std::cout << "CODEC ok mode=" << (strict ? "strict" : "lossy") << " encoding=" << encoding
+                  << " bytes=" << out.size() << "\n";
         return kExitOk;
     }
 

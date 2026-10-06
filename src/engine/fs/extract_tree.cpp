@@ -232,9 +232,41 @@ OutPathResult safe_out_path(const std::string& out_dir, const std::string& rel) 
     return result;
 }
 
+// ── `only` 口径：**语义只许一份**（审计 §1 第 4 条 / S1-7 / 1-4）─────────────
+//
+// 病根：同一条规则写了两份、两边不同源 ——
+//   · 页面（`fs_page.cpp:1493-1496`）把 `tree_.flatten()` 的 `node->path` 塞进 `only`，
+//     而那棵树是 `preview_entries_in_layout()` 的产物 ⇒ 那是**落点相对路径**（带包名壳）；
+//   · 引擎比的是 `listed.entries` 的**镜像内路径** ⇒ 不自带壳的包**一条都命中不了**。
+// 落地纪律（审计"最终收口"第 4 条）：凡是"规则/数据/判据"都要问一句"第二份在哪"。
+// 这里把口径**收到引擎一份**：`only` 既接受落点路径（带壳，页面/CLI 实发的那种），
+// 也接受镜像内路径（1.x `--cat` 与既有 CLI 调用点的写法）—— 两种写法指的**同一条目**，
+// 谁都不会"静默 0 产物"。壳的算法与 `preview_entries_in_layout()` **同源**（同一个
+// `unpack_target_dir` 减哨兵根），不许再抄第二份。
+std::string pattern_shell_prefix(const std::string& image_path,
+                                 const std::vector<std::string>& raw_paths) {
+    const std::string kSentinelRoot = "\x01pattern-root\x02";
+    const std::string target = unpack_target_dir(kSentinelRoot, image_path, raw_paths);
+    if (target.size() <= kSentinelRoot.size() ||
+        target.compare(0, kSentinelRoot.size(), kSentinelRoot) != 0) {
+        return std::string();
+    }
+    std::string prefix = target.substr(kSentinelRoot.size());
+    while (!prefix.empty() && (prefix.front() == '/' || prefix.front() == '\\')) {
+        prefix.erase(prefix.begin());
+    }
+    return prefix;
+}
+
+// `want` 与某条目的**镜像内路径**是否指同一条：先按落点路径（壳 + 路径）比，再按镜像内路径比。
+bool only_matches(const std::string& want, const std::string& shell, const std::string& entry_path) {
+    if (want == entry_path) return true;   // 镜像内路径（1.x --cat 的写法）
+    if (shell.empty()) return false;
+    return want == shell + "/" + entry_path;
+}
+
 std::string ExtractTreeResult::failure_note() const {
-    if (failures.empty()) return std::string();
-    const uint64_t total = files_written + failures.size();
+    if (failures.empty()) return std::string();    const uint64_t total = files_written + failures.size();
     std::string note = std::to_string(failures.size()) + "/" + std::to_string(total) + " 项失败：";
     const size_t shown = std::min<size_t>(3, failures.size());
     for (size_t i = 0; i < shown; ++i) {
@@ -283,20 +315,26 @@ ExtractTreeResult extract_tree(const std::string& image_path, const std::string&
     // 选出本次要处理的条目（保持**清单顺序**：镜像列出的顺序已是路径字节序，
     // Listed 顺序则按调用方给的顺序，便于"谁失败"可复现）。
     std::vector<const Entry*> todo;
+    std::string shell_prefix;
     if (options.selection == Selection::All) {
         todo.reserve(listed.entries.size());
         for (const Entry& e : listed.entries) todo.push_back(&e);
     } else {
+        // `only` 的两套写法都收（见 `only_matches` 的说明）：壳算法与右栏预览同源。
+        std::vector<std::string> raw_paths;
+        raw_paths.reserve(listed.entries.size());
+        for (const Entry& e : listed.entries) raw_paths.push_back(e.path);
+        shell_prefix = pattern_shell_prefix(image_path, raw_paths);
         for (const std::string& want : options.only) {
             const Entry* found = nullptr;
             for (const Entry& e : listed.entries) {
-                if (e.path == want) {
+                if (only_matches(want, shell_prefix, e.path)) {
                     found = &e;
                     break;
                 }
             }
             if (found == nullptr) {
-                result.failures.push_back({want, "归档里没有该条目"});
+                result.failures.push_back({want, "归档里没有该条目（按落点路径与镜像内路径都比过）"});
                 continue;
             }
             todo.push_back(found);
@@ -399,13 +437,49 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
     ArtifactTally tally;   // ★ 产物口径：同一落点只算一次（真机 `maps\*.db` 的重复登记就靠它）
 
     const bool want_all = options.selection == Selection::All;
-    // Listed 模式下按 1.x **跳过目录项**（6.10 的同族口径）
-    for (const DbEntry& entry : listed.entries) {
-        if (!want_all) {
-            const bool wanted =
-                std::find(options.only.begin(), options.only.end(), entry.path) != options.only.end();
-            if (!wanted || entry.is_dir) continue;
+    // ★★ 2026-10-06（审计处理批·1-4 / S1-7 的**另一半**）：修前 Listed 模式在 DB 分支是
+    //   `if (!wanted || entry.is_dir) continue;` —— **静默**：不计 failures、不计 written。
+    //   于是"解包选中"给出的路径若与镜像内路径对不上（页面喂的是**带包名壳的落点路径**、
+    //   引擎比的是**镜像内路径**），每条都 `continue` ⇒ `files_written=0`、`failures` 空、
+    //   `ok=true`，界面显示"解包：0 个文件"、CLI 退 0 —— 用户看不到任何理由。
+    //   SquashFS 分支早就是"先按清单解析、对不上的逐条记 failures"（本文件 `:290-303`），
+    //   这里把 DB 分支**收成同一条口径**（同一条规则只许一份）：
+    //     · 清单里对不上的路径 ⇒ 逐条记 `failures`（可见：`failure_note()` / CLI 台账）；
+    //     · 清单里选的**目录项** ⇒ 照 1.x 跳过，但进 `skipped_dirs` 计数（不是静默）。
+    std::vector<const DbEntry*> todo;
+    std::string shell_prefix;
+    if (want_all) {
+        todo.reserve(listed.entries.size());
+        for (const DbEntry& e : listed.entries) todo.push_back(&e);
+    } else {
+        // ★ 与 SquashFS 分支**逐字同口径**（`only_matches` 的说明）：`only` 既收落点路径
+        //   （带包名壳，页面/CLI 实发形态）也收镜像内路径，对不上的逐条记 failures。
+        std::vector<std::string> raw_paths;
+        raw_paths.reserve(listed.entries.size());
+        for (const DbEntry& e : listed.entries) raw_paths.push_back(e.path);
+        shell_prefix = pattern_shell_prefix(image_path, raw_paths);
+        for (const std::string& want : options.only) {
+            const DbEntry* found = nullptr;
+            for (const DbEntry& e : listed.entries) {
+                if (only_matches(want, shell_prefix, e.path)) {
+                    found = &e;
+                    break;
+                }
+            }
+            if (found == nullptr) {
+                result.failures.push_back({want, "归档里没有该条目（按落点路径与镜像内路径都比过）"});
+                continue;
+            }
+            if (found->is_dir) {
+                ++result.skipped_dirs;   // 选中目录项：照 1.x 跳过（目录由文件的父目录顺带建出）
+                continue;
+            }
+            todo.push_back(found);
         }
+    }
+
+    for (const DbEntry* entry_ptr : todo) {
+        const DbEntry& entry = *entry_ptr;
         const OutPathResult safe = safe_out_path(out_root, entry.path);
         if (!safe.ok) {
             result.failures.push_back({entry.path, safe.reason});
@@ -522,20 +596,10 @@ std::vector<EntryInfo> preview_entries_in_layout(const std::string& package_path
     raw.reserve(entries.size());
     for (const EntryInfo& e : entries) raw.push_back(e.path);
 
-    // 这一段就是**包名壳**（自带壳的包 ⇒ 空串）。它必须与落点规则同源 ⇒ 直接调落点函数，
-    // 拿一个"根"去减 —— 因为 `unpack_target_dir` 的返回值只有 "根" 或 "根/壳" 两种形态
-    //（见它的实现：`return out_root;` 或 `return root + "/" + shell;`），
-    // 所以拿一个**不可能出现在壳里**的哨兵根去减，得到的正好就是壳。
-    const std::string kSentinelRoot = "\x01preview-root\x02";
-    const std::string target = unpack_target_dir(kSentinelRoot, package_path, raw);
-    std::string prefix;
-    if (target.size() > kSentinelRoot.size() &&
-        target.compare(0, kSentinelRoot.size(), kSentinelRoot) == 0) {
-        prefix = target.substr(kSentinelRoot.size());
-        while (!prefix.empty() && (prefix.front() == '/' || prefix.front() == '\\')) {
-            prefix.erase(prefix.begin());
-        }
-    }
+    // 这一段就是**包名壳**（自带壳的包 ⇒ 空串）。算法在 `pattern_shell_prefix()` ——
+    // ★ 2026-10-06（1-4）：原来这里**自己抄了一遍**壳的算法，而"解包选中"的匹配又要用壳
+    //   ⇒ 同一个事实两份实现正是本批要收的口径病根。现在两处都调那一个函数。
+    const std::string prefix = pattern_shell_prefix(package_path, raw);
     if (prefix.empty()) return entries;   // 自带壳 / 算不出壳 ⇒ 条目路径原样（**不叠第二层**）
 
     std::vector<EntryInfo> out;
@@ -570,6 +634,20 @@ std::vector<EntryInfo> preview_entries_in_layout(const std::string& package_path
         out.emplace_back(lead + e.path, e.is_dir, e.size);
     }
     return out;
+}
+
+// ★ 2026-10-06（1-4）：把"勾选项 ↔ 包里条目"的比对**唯一一份**暴露出去 ——
+//   `tools/cli` 的 `--unpack-package` 预过滤此前自己抄了一份"只比镜像内路径"的写法，
+//   于是 CLI 与 GUI 对同一个勾选集合给出两种结论（CLI 把带壳路径过滤成空 ⇒ 静默 0 产物）。
+//   现在 CLI 也调这里（同一条规则只许一份）。
+bool selection_matches(const std::string& package_path,
+                       const std::vector<std::string>& entry_paths,
+                       const std::string& want) {
+    const std::string shell = pattern_shell_prefix(package_path, entry_paths);
+    for (const std::string& p : entry_paths) {
+        if (only_matches(want, shell, p)) return true;
+    }
+    return false;
 }
 
 std::string resolve_output_root(const std::string& front_source_path, const std::string& current_dir) {    // 1.x `_resolve_output`：空则按"第一个包所在目录"推断（界面侧还要把它**回填**到输入框）。

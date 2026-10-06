@@ -230,4 +230,21 @@ std::vector<UnpackTarget> plan_unpack_targets(
 std::vector<EntryInfo> preview_entries_in_layout(const std::string& package_path,
                                                  const std::vector<EntryInfo>& entries);
 
+// ── ★★ 2026-10-06（审计处理批·1-4 / S1-7）：`only` 的**匹配规则**（唯一一份）──────────
+//
+// 病根：同一条"勾选项 ↔ 包里条目"的比对写了两份、两边不同源 ——
+//   · 页面（`fs_page.cpp:1493-1496`）把 `tree_.flatten()` 的 `node->path` 塞进 `only`，
+//     而那棵树是 `preview_entries_in_layout()` 的产物 ⇒ 那是**落点相对路径**（带包名壳）；
+//   · 引擎（与 `tools/cli/main.cpp` 的 `--unpack-package` 预过滤）比的是**镜像内路径**；
+//   ⇒ 不自带壳的包**一条都命中不了**，界面"解包：0 个文件"、CLI 退 0，一个字不说。
+//
+// 现在把规则收到引擎一处，两边**都调它**：
+//   ① `want` 与**落点路径**（`preview_entries_in_layout` 算出来的"包名壳 + 镜像内路径"）
+//      相等 ⇒ 命中；② 与**镜像内路径**（1.x `--cat` 与既有 CLI 调用点的写法）相等 ⇒ 也命中。
+// 壳的算法与 `preview_entries_in_layout()` 同源（同一个 `unpack_target_dir` 减哨兵根）。
+// `package_path` = 包文件路径（只用来算壳，不需要包真的存在）。
+bool selection_matches(const std::string& package_path,
+                       const std::vector<std::string>& entry_paths,
+                       const std::string& want);
+
 }  // namespace xrkit::engine::fs

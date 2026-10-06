@@ -37,8 +37,14 @@ using Context = std::map<std::string, ContextValue>;
 struct WhenSpec {
     std::vector<std::pair<std::string, ContextValue>> match;
     std::function<bool(const Context&)> predicate;
+    // ★★ 2026-10-06（审计处理批·追加②）：非空 ⇒ 这条 when 的**参数非法**（例如 ABI 的
+    //   `count` 是负数/超大值 —— 除 `count` 外 ABI 没有第二个长度字段，宿主只能靠域校验兜住）。
+    //   口径：**不允许**把它当成"恒假/恒真"混过去 —— 注册点必须**拒绝注册并把理由留痕**
+    //   （零静默），否则插件拿到的是"注册成功了但永不生效"。
+    std::string invalid_reason;
 
-    bool always() const { return match.empty() && !predicate; }
+    bool always() const { return match.empty() && !predicate && invalid_reason.empty(); }
+    bool invalid() const { return !invalid_reason.empty(); }
 };
 
 bool when_ok(const WhenSpec& when, const Context& context);

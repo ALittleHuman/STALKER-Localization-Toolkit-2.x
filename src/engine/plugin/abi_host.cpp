@@ -30,6 +30,22 @@ std::array<std::string, 3> split3(const std::string& text) {
 WhenSpec when_from_abi(const stk_when* when) {
     WhenSpec spec;
     if (when == nullptr) return spec;  // 恒真
+    // ★★ 2026-10-06（审计处理批·追加② / S1 批残余登记第 3 条）：修前这里直接
+    //   `for (int i = 0; i < when->count; ++i)` —— **完全信任插件给的 count**（ABI 里除
+    //   `count` 外没有第二个长度字段，宿主无从交叉核对）⇒ 插件写错/恶意给负数或超大值时
+    //   `when->keys[i]` 越界读（`abi_host.cpp` 的 S3 条目）。
+    //   修法（"注册面 ↔ 消费点一一对应"同族）：参数非法就**不注册**（`invalid_reason` 非空
+    //   ⇒ 注册被拒并留痕，见 `registry.cpp` 的 `when.invalid_reason` 分支），
+    //   ★ 零静默：理由必须看得见（`registration_errors()` + 日志）。
+    //   为什么是 4096：ABI 里 `int count` 只作为数组长度出现，任何一个真实插件的 when
+    //   条件都不会有几千条；给一个大而有限的上界既挡住越界，也不误伤正常用法。
+    constexpr int kMaxWhenCount = 4096;
+    if (when->count < 0 || when->count > kMaxWhenCount) {
+        spec.invalid_reason = "when->count 非法（" + std::to_string(when->count) +
+                              "；合法域 0.." + std::to_string(kMaxWhenCount) +
+                              "）—— 越界读风险，拒绝这条注册";
+        return spec;
+    }
     for (int i = 0; i < when->count; ++i) {
         const char* key = (when->keys != nullptr) ? when->keys[i] : nullptr;
         if (key == nullptr) continue;
