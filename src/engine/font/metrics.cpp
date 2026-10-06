@@ -1,5 +1,7 @@
 #include "xrkit/engine/font/metrics.h"
 
+#include "probe_decls.h"
+
 #include "xrkit/core/path.h"
 
 #include <algorithm>
@@ -341,3 +343,12 @@ bool dump_metrics(const std::string& out_path) {
 }
 
 }  // namespace xrkit::engine::font
+
+// ── ★★ 2026-10-06（审计第 4 组）：模块**在编**探针（见 `probe_decls.h`）────────
+// 本模块被摘掉 ⇒ 链接失败，而不是 `status_line()` 里少报一个数字。
+extern "C" const char* xrkit_engine_probe_font_tag() { return "xrkit-engine-module-font"; }
+
+namespace xrkit::engine {
+const char* probe_font() { return xrkit_engine_probe_font_tag(); }
+}  // namespace xrkit::engine
+

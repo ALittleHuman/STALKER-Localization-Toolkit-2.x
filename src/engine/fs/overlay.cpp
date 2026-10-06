@@ -1,5 +1,7 @@
 #include "xrkit/engine/fs/overlay.h"
 
+#include "probe_decls.h"
+
 #include "xrkit/core/path.h"
 #include "xrkit/engine/fs/squashfs.h"
 
@@ -196,6 +198,28 @@ int MergeTree::checked_file_count() const {
     int count = 0;
     collect_checked(root, count);
     return count;
+}
+
+// ★★ 2026-10-06（审计 3-1）：勾选态的**快照/回灌**（页面重建整棵树时不许把它丢掉）。
+// 详见 overlay.h 里的说明：勾选态只活在树里，而 `rebuild_tree()` 是"丢掉整棵 + 重放"。
+std::vector<std::string> MergeTree::checked_paths() const {
+    std::vector<std::string> out;
+    for (const MergeNode* node : flatten()) {
+        if (node->is_dir) continue;         // 计数只看文件（与 `checked_file_count` 同口径）
+        if (node->checked) out.push_back(node->path);
+    }
+    return out;
+}
+
+int MergeTree::apply_checked_paths(const std::vector<std::string>& paths) {
+    int applied = 0;
+    for (const std::string& path : paths) {
+        MergeNode* node = find(path);
+        if (node == nullptr) continue;      // 这一份在新树里没了（源被移除）⇒ 自然落空
+        node->checked = true;
+        ++applied;
+    }
+    return applied;
 }
 
 int MergeTree::toggle_source(int source_index, bool checked) {
@@ -527,3 +551,14 @@ std::vector<EntryInfo> package_entries(const std::string& path,
 }
 
 }  // namespace xrkit::engine::fs
+
+// ── ★★ 2026-10-06（审计第 4 组）：模块**在编**探针 ─────────────────────────────
+// 为什么放在本模块自己的翻译单元里：`probe_fs()` 能链上来，就说明**这一块真的在二进制里**
+// （把本模块摘掉 ⇒ 链接失败，而不是 `status_line()` 里少报一个数字 —— 见 `probe_decls.h`）。
+// 返回的是本文件内的常量（`extern "C"` 那个短名不给别的模块用），不复用别的模块的符号。
+extern "C" const char* xrkit_engine_probe_fs_tag() { return "xrkit-engine-module-fs"; }
+
+namespace xrkit::engine {
+const char* probe_fs() { return xrkit_engine_probe_fs_tag(); }
+}  // namespace xrkit::engine
+

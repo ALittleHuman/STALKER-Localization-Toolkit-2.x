@@ -137,6 +137,13 @@ private:
     };
 
     const engine::xml::XmlModeSpec* mode() const;
+    // ★★ 2026-10-06（审计 3-7）：当前模式的**注册项**（含插件的 `compare`/`detail_builder`
+    //   两个回调）—— 修前页面只认内置声明表，插件注册的回调**一个都不被调用**（登记了没人用）。
+    //   内置模式也在注册表里，但它们的 `compare` 是空的 ⇒ 走内置引擎函数（行为逐字节不变）。
+    const plugin::CompareModeReg* mode_reg() const;
+    // ★★ 2026-10-06（审计 3-5）：比较期间的"模式/筛选控件按需禁用"（只在**工作线程跑**时禁，
+    //   主线程直调的判据路径不禁 —— 自检要在比较前后来回切模式）。
+    void set_compare_controls_enabled(bool on);
     void rebuild_filter_combo();
     void refresh_rows();
     bool row_matches(const Row& row) const;
@@ -187,6 +194,8 @@ private:
     std::vector<QTreeWidgetItem*> row_items_;  // 与 visible_ 一一对应
     int scan_count_ = 0;
     const plugin::Registry* registry_ = nullptr;  // 可空（见 set_registry）
+    // ★★ 2026-10-06（审计 3-5）：起 worker 之前把模式 key 快照在这（worker 不许读控件）
+    QString mode_key_at_task_start_;
 };
 
 }  // namespace xrkit::shell

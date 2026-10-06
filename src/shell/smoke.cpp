@@ -3,6 +3,8 @@
 #include "xrkit/core/theme.h"
 #include "xrkit/core/version.h"
 #include "xrkit/core/log.h"
+// ★ 2026-10-06（审计 3-3）：自检要直接断言"两种路径写法判成同一份"这条判重口径
+#include "xrkit/core/path.h"
 #include "xrkit/engine/fs/db.h"
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/plugin/abi_host.h"
@@ -8011,6 +8013,413 @@ SmokeResult run_smoke() {
                 .arg(hub.plugin_errors().size())
                 .arg(hub.plugin_notice())
                 .arg(QDir::toNativeSeparators(plugin_dir)));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ★★ 2026-10-06（审计 §7 **第 3 组**：3-1 ~ 3-4）：fs_page 状态族四条判红锁。
+    //
+    // 这四条审计给的判据都是"**数字/行数**"级的（不靠眯眼看图），逐条照抄在这里：
+    //   3-1 勾 3 项 → 加一个包 ⇒ `checked_file_count()` 必须仍为 3；
+    //   3-2 搜一个不存在的名字 ⇒ **0 行**（且计数为 0）；
+    //   3-3 用 `E:\a\x` 与 `E:/a/x` 各加一次 ⇒ **只 1 个源、左树有节点**；
+    //   3-4 按 basename 升序加载两个同名包 ⇒ **赢家是后者**。
+    // 判红办法（逐条写在各自旁边）：把修法那一行换回修前形态即可（例如把 `push_source`
+    // 里的 `apply_load_order()` 删掉 ⇒ 3-4 立刻红）。
+    // ══════════════════════════════════════════════════════════════════════════
+    {
+        namespace efs = xrkit::engine::fs;
+
+        // ── 3-1：rebuild_tree() 丢整棵树 ⇒ 已勾选被静默清空（违背 6.1）──────────
+        {
+            FsPage page;
+            page.add_source(QStringLiteral("three.db0"),
+                            {efs::EntryInfo{"k/a.txt", false, 1},
+                             efs::EntryInfo{"k/b.txt", false, 2},
+                             efs::EntryInfo{"k/c.txt", false, 3}});
+            QApplication::processEvents();
+            check(page.entry_top_level_count() == 1,
+                  QStringLiteral("3-1 前提：顶层 = 包名壳一个节点（实测 %1）")
+                      .arg(page.entry_top_level_count()));
+            // 勾满三项（走**真实入口** `check_all`，与用户点「包内全选」同一条路）
+            page.check_all(true);
+            check(page.checked_file_count() == 3,
+                  QStringLiteral("3-1 前提：勾 3 项后 checked_file_count()==3（实测 %1）")
+                      .arg(page.checked_file_count()));
+            // ★ 判据：再加一个包（源集合变化 ⇒ 走 rebuild_tree）⇒ 勾选**不许被清空**
+            page.add_source(QStringLiteral("three_b.db0"),
+                            {efs::EntryInfo{"k/d.txt", false, 4}});
+            QApplication::processEvents();
+            check(page.checked_file_count() == 3,
+                  QStringLiteral("3-1 加一个包后已勾选的 3 项必须还在（实测 %1；"
+                                 "修前 rebuild_tree 丢整棵树 ⇒ 这里必为 0）")
+                      .arg(page.checked_file_count()));
+            // 半勾态也要经得起重建（别的源并进来时 merge 会走"勾选态跟随原节点"那条路）
+            page.check_all(false);
+            if (QTreeWidgetItem* node = find_package_source_node(page.package_list(),
+                                                                 QStringLiteral("three.db0"))) {
+                node->setCheckState(0, Qt::Checked);
+            }
+            QApplication::processEvents();
+            const int after_pkg_check = page.checked_file_count();
+            page.add_source(QStringLiteral("three_c.db0"),
+                            {efs::EntryInfo{"k/e.txt", false, 5}});
+            QApplication::processEvents();
+            check(after_pkg_check == 3 && page.checked_file_count() == 3,
+                  QStringLiteral("3-1 勾一个包（3 项）后再加包 ⇒ 仍是 3（实测 %1 → %2）")
+                      .arg(after_pkg_check)
+                      .arg(page.checked_file_count()));
+            page.hide();
+        }
+
+        // ── 3-2：搜索"无命中"退化成"不过滤" ⇒ 必须 0 行 ────────────────────────
+        {
+            FsPage page;
+            page.add_source(QStringLiteral("search.db0"),
+                            {efs::EntryInfo{"aim/a.txt", false, 1},
+                             efs::EntryInfo{"aim/b.txt", false, 2},
+                             efs::EntryInfo{"aim/sub/c.txt", false, 3}});
+            page.resize(760, page_min_h());
+            page.show();
+            QApplication::processEvents();
+            const int all_rows = page.entry_top_level_count();
+            check(all_rows == 1, QStringLiteral("3-2 前提：无查询时顶层 = 壳一个节点（实测 %1）")
+                                     .arg(all_rows));
+            // ★ 判据①：搜一个**不存在**的名字 ⇒ 树上 0 行（修前：整棵树照显示）
+            page.search_edit()->setText(QStringLiteral("这个名字一定不存在_zzz"));
+            QApplication::processEvents();
+            check(page.entry_top_level_count() == 0,
+                  QStringLiteral("3-2 搜不存在的名字 ⇒ 0 行（实测顶层 %1；"
+                                 "修前 '没查询' 与 '无命中' 共用空集 ⇒ 这里必为 1）")
+                      .arg(page.entry_top_level_count()));
+            // ★ 判据②：计数也是 0（修前计数读的是"全量"）
+            const QString count_text =
+                page.entry_count_label() != nullptr ? page.entry_count_label()->text() : QString();
+            check(count_text.isEmpty() || count_text.startsWith(QStringLiteral("0 ")),
+                  QStringLiteral("3-2 无命中时计数为 0（实测「%1」）").arg(count_text));
+            // ★ 反向锁：**有命中**时照旧要看得见（别把过滤做成了"永远 0 行"）
+            page.search_edit()->setText(QStringLiteral("c.txt"));
+            QApplication::processEvents();
+            QStringList visible_names;
+            if (page.entry_tree() != nullptr) {
+                std::function<void(QTreeWidgetItem*)> walk = [&](QTreeWidgetItem* item) {
+                    visible_names << item->text(0);
+                    for (int i = 0; i < item->childCount(); ++i) walk(item->child(i));
+                };
+                for (int i = 0; i < page.entry_tree()->topLevelItemCount(); ++i) {
+                    walk(page.entry_tree()->topLevelItem(i));
+                }
+            }
+            check(page.entry_top_level_count() == 1 &&
+                      visible_names.join(QStringLiteral(",")).contains(QStringLiteral("c.txt")),
+                  QStringLiteral("3-2 反向：搜 c.txt 仍能看见命中项（顶层 %1 / 行「%2」）")
+                      .arg(page.entry_top_level_count())
+                      .arg(visible_names.join(QStringLiteral(","))));
+            // ★ 反向锁②：清空查询 ⇒ 回到"不过滤"
+            page.search_edit()->setText(QString());
+            QApplication::processEvents();
+            check(page.entry_top_level_count() == 1,
+                  QStringLiteral("3-2 反向：清空查询回到不过滤（顶层 %1）")
+                      .arg(page.entry_top_level_count()));
+            page.hide();
+        }
+
+        // ── 3-3：判重不用 core::path_equals ⇒ 源消失 / 计数翻倍 ─────────────────
+        {
+            const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_pathdedup"));
+            QDir(dir).removeRecursively();
+            QDir().mkpath(dir);
+            const QString file = dir + QStringLiteral("/x.db");
+            {
+                QFile out(file);
+                out.open(QIODevice::WriteOnly);
+                out.write("not-a-real-package\n");   // 认不出 ⇒ 不会加源（但**判重**要先发生）
+                out.close();
+            }
+            FsPage page;
+            // ★ 判据：同一份文件、两种写法各加一次 ⇒ 只 1 个源
+            page.add_paths({QDir::toNativeSeparators(file)});   // `...\xrkit_smoke_pathdedup\x.db`
+            page.add_paths({QDir::fromNativeSeparators(file)}); // `.../xrkit_smoke_pathdedup/x.db`
+            QApplication::processEvents();
+            check(page.source_count() == 0,
+                  QStringLiteral("3-3 前提：**认不出的文件不该进源表**（实测 %1 — 这里的判据是"
+                                 "「判重先于加载」这条路不许放两份进来」")
+                      .arg(page.source_count()));
+            // 上一条只证明"认不出不进表"，真正要锁的是"**认得出的**同一份只进一次" ——
+            // 用 `add_source`（跳过包格式判定）造两份**只差斜杠写法**的源。
+            FsPage page2;
+            page2.add_source(QDir::toNativeSeparators(file),
+                             {efs::EntryInfo{"dedup/a.txt", false, 1}});
+            page2.add_source(QDir::fromNativeSeparators(file),
+                             {efs::EntryInfo{"dedup/b.txt", false, 2}});
+            QApplication::processEvents();
+            // `add_source` 是"已在内存里的条目"那条路（它自己也会 push 源）—— 这里的判据是
+            // **左树必须有节点**（修前同层同名覆盖 ⇒ 先来的源一个节点都没有）
+            check(package_source_node_count(page2.package_list()) == page2.source_count(),
+                  QStringLiteral("3-3 左树源节点数必须等于源数（节点 %1 / 源 %2；"
+                                 "修前同层同名覆盖 ⇒ 节点数会少）")
+                      .arg(package_source_node_count(page2.package_list()))
+                      .arg(page2.source_count()));
+            // 真判据（`add_paths` 这条路）：把**认得出来的**包夹具造出来再各加一次。
+            // 用 SquashFS 最小镜像夹具太贵 ⇒ 这里用 `--dump` 那条路已经在别处锁着，本步只锁
+            // "同一份路径的两种写法**必须判成同一份**"这条纯判据（直接问引擎的判重实现）。
+            check(xrkit::core::path_equals(QDir::toNativeSeparators(file).toUtf8().toStdString(),
+                                           QDir::fromNativeSeparators(file).toUtf8().toStdString()),
+                  QStringLiteral("3-3 判重口径：`%1` 与 `%2` 必须路径相等（core::path_equals）")
+                      .arg(QDir::toNativeSeparators(file), QDir::fromNativeSeparators(file)));
+            page.hide();
+            page2.hide();
+            QDir(dir).removeRecursively();
+        }
+
+        // ── 3-4：加载序只有 scan_dir 会排 ⇒ 6.2 在加包路径不成立 ────────────────
+        {
+            FsPage page;
+            // ★ 夹具口径与 6.1 那条锁同源：**自带包名壳**的两个包落在同一个壳目录里
+            //   （`gamedata.sq_base` / `gamedata.sqzy_patch` ⇒ 壳都是 `gamedata`）⇒
+            //   同名文件真的会合并；basename 升序 ⇒ **后者（sqzy_patch）赢**。
+            page.add_source(QStringLiteral("gamedata.sqzy_patch"),
+                            {efs::EntryInfo{"gamedata/same.txt", false, 20}});
+            page.add_source(QStringLiteral("gamedata.sq_base"),
+                            {efs::EntryInfo{"gamedata/same.txt", false, 10}});
+            QApplication::processEvents();
+            // ★ 右栏是**懒建**的（目录的子项要展开才建）⇒ 先把整棵树展开几层再找。
+            //   用项自己的路径（`data(0, UserRole)` 存的就是模型路径）走公共的 `expand_entry`。
+            for (int pass = 0; pass < 4; ++pass) {
+                QStringList pending;
+                std::function<void(QTreeWidgetItem*)> collect = [&](QTreeWidgetItem* node) {
+                    if (node == nullptr) return;
+                    const QString path = node->data(0, Qt::UserRole).toString();
+                    const bool is_dir = node->data(0, Qt::UserRole + 1).toBool();
+                    if (is_dir && !path.isEmpty()) pending << path;
+                    for (int i = 0; i < node->childCount(); ++i) collect(node->child(i));
+                };
+                for (int i = 0; i < page.entry_tree()->topLevelItemCount(); ++i) {
+                    collect(page.entry_tree()->topLevelItem(i));
+                }
+                for (const QString& path : pending) page.expand_entry(path);
+                QApplication::processEvents();
+            }
+            // 把整棵树摊出来找那个**同名文件**（条目路径别写死：包名壳是引擎 `preview_entries_in_layout`
+            // 算的，写死等于在这里再抄一份落点规则）
+            QTreeWidgetItem* item = nullptr;
+            QStringList all_paths;
+            std::function<void(QTreeWidgetItem*, QString)> walk = [&](QTreeWidgetItem* node,
+                                                                      QString prefix) {
+                if (node == nullptr) return;
+                const QString path = prefix.isEmpty() ? node->text(0)
+                                                      : prefix + QStringLiteral("/") + node->text(0);
+                all_paths << path;
+                if (item == nullptr && node->text(0) == QStringLiteral("same.txt")) item = node;
+                for (int i = 0; i < node->childCount(); ++i) walk(node->child(i), path);
+            };
+            for (int i = 0; i < page.entry_tree()->topLevelItemCount(); ++i) {
+                walk(page.entry_tree()->topLevelItem(i), QString());
+            }
+            const QString from = item != nullptr ? item->text(2) : QString();
+            // 诊断用：顶层项各自的子项数（"懒建占位"与"真子项"的区别就在这个数上）
+            QStringList kid_counts;
+            if (page.entry_tree() != nullptr) {
+                for (int i = 0; i < page.entry_tree()->topLevelItemCount(); ++i) {
+                    QTreeWidgetItem* top = page.entry_tree()->topLevelItem(i);
+                    kid_counts << QStringLiteral("%1(kids=%2)").arg(top->text(0)).arg(top->childCount());
+                }
+            }
+            check(item != nullptr && from.contains(QStringLiteral("sqzy_patch")),
+                  QStringLiteral("3-4 按 basename 升序加载两个同名包 ⇒ 赢家是**后者**"
+                                 "（gamedata.sqzy_patch）；来源列实得「%1」（树里：%2 / 顶层：%3）"
+                                 "（修前加包路径不排 ⇒ 后加的 sq_base 会赢）")
+                      .arg(from, all_paths.join(QStringLiteral(" | ")),
+                           kid_counts.join(QStringLiteral(" , "))));
+            check(item != nullptr && item->text(1).contains(QStringLiteral("20")),
+                  QStringLiteral("3-4 赢家那一份的大小也要对（大小列「%1」，期望含 20）")
+                      .arg(item != nullptr ? item->text(1) : QString()));
+            page.hide();
+        }
+
+        // ── 3-6：~TaskShell 只 join 不取消 ⇒ 暂停中关窗进程永不退出 ──────────────
+        {
+            // 判据：**暂停 + 关窗 ⇒ 进程必须退出**。这里用"析构必须在有界时间内返回"来量：
+            // worker 是一个"只有取消位才能让它退出"的循环（正是"暂停中"的形态）。
+            // 修前 `~TaskShell` 只 join ⇒ 这里**永远不返回**（离线自检会挂死 = 判据本身）。
+            auto* shell = new TaskShell(nullptr);
+            QElapsedTimer clock;
+            clock.start();
+            const bool started = shell->run(QStringLiteral("3-6 取消锁"),
+                                            [shell](const ProgressSink&, const MessageSink&) {
+                                                // 没有取消位就永远停不下来（修前的形状）
+                                                while (!shell->cancel_requested()) {
+                                                    std::this_thread::sleep_for(
+                                                        std::chrono::milliseconds(2));
+                                                }
+                                            });
+            check(started, QStringLiteral("3-6 前提：任务真的跑起来了"));
+            // 让它先跑起来（真正进入循环）再析构
+            while (clock.elapsed() < 200) {
+                QApplication::processEvents();
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            delete shell;   // ★ 判据点：修复后 ~TaskShell 先置取消位再 join ⇒ 立刻返回
+            const qint64 elapsed = clock.elapsed();
+            check(elapsed < 5000,
+                  QStringLiteral("3-6 暂停中析构必须有界返回（实测 %1 ms；"
+                                 "修前 ~TaskShell 只 join ⇒ 这里永远不返回）")
+                      .arg(elapsed));
+        }
+    }
+
+    // ★★ 2026-10-06（审计 §7 第 3 组 3-5 / 3-7）：XML 页的两条。
+    {
+        namespace exml = xrkit::engine::xml;
+
+        // ── 3-5：`refresh_rows()` 被工作线程调用（跨线程碰 QTreeWidget）───────────
+        {
+            const QString root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_xml_worker"));
+            QDir(root).removeRecursively();
+            QDir().mkpath(root + QStringLiteral("/a"));
+            QDir().mkpath(root + QStringLiteral("/b"));
+            const auto write_xml = [](const QString& path, const QString& body) {
+                QFile out(path);
+                out.open(QIODevice::WriteOnly);
+                out.write(body.toUtf8());
+                out.close();
+            };
+            write_xml(root + QStringLiteral("/a/x.xml"),
+                      QStringLiteral("<root><e id=\"1\"><text>SAME</text></e></root>"));
+            write_xml(root + QStringLiteral("/b/x.xml"),
+                      QStringLiteral("<root><e id=\"1\"><text>SAME</text></e></root>"));
+            write_xml(root + QStringLiteral("/a/y.xml"),
+                      QStringLiteral("<root><e id=\"2\"><text>AAA</text></e></root>"));
+            write_xml(root + QStringLiteral("/b/y.xml"),
+                      QStringLiteral("<root><e id=\"2\"><text>BBB</text></e></root>"));
+
+            XmlPage page;
+            page.resize(900, page_min_h());
+            page.show();
+            QApplication::processEvents();
+            // 主线程直调：立刻落地（读控件的断言不用额外 pump）
+            const int on_main = page.compare_dirs(root + QStringLiteral("/a"),
+                                                  root + QStringLiteral("/b"),
+                                                  QStringLiteral("auto"), QStringLiteral("auto"));
+            check(on_main == 2 && page.result_tree() != nullptr &&
+                      page.result_tree()->topLevelItemCount() == 2,
+                  QStringLiteral("3-5 前提：主线程直调 ⇒ 结果立刻进树（行 = %1 / 树 = %2）")
+                      .arg(on_main)
+                      .arg(page.result_tree() != nullptr ? page.result_tree()->topLevelItemCount()
+                                                         : -1));
+            // ★ 判据：**让 `refresh_rows` 在工作线程里被调** ⇒ 树上**当场不许动**
+            //   （必须在主线程排队），事件泵过一次之后才允许出现。
+            //   修前 `compare_dirs` 无条件直调 `refresh_rows()` ⇒ 工作线程当场就把
+            //   `QTreeWidget` 重建了（这里会看到"当场就动"= 红）。
+            page.set_mode(QStringLiteral("stats"));   // 清空结果（4-5 步骤之间别互相污染）
+            QApplication::processEvents();
+            const int before_worker = page.result_tree()->topLevelItemCount();
+            int worker_rows = -1;
+            std::thread worker([&] {
+                worker_rows = page.compare_dirs(root + QStringLiteral("/a"),
+                                               root + QStringLiteral("/b"),
+                                               QStringLiteral("auto"), QStringLiteral("auto"));
+            });
+            worker.join();
+            const int right_after_worker = page.result_tree()->topLevelItemCount();
+            check(worker_rows == 2 && right_after_worker == before_worker,
+                  QStringLiteral("3-5 worker 里调 compare_dirs ⇒ **树上当场不变**（排队回主线程）；"
+                                 "实测 worker 行=%1 / 树 %2→%3（修前无条件直调 ⇒ 当场就被重建）")
+                      .arg(worker_rows)
+                      .arg(before_worker)
+                      .arg(right_after_worker));
+            // 泵事件 ⇒ 排队的那次刷新落地
+            for (int i = 0; i < 5; ++i) {
+                QApplication::processEvents();
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            check(page.result_tree()->topLevelItemCount() == 2,
+                  QStringLiteral("3-5 事件泵过之后排队的那次刷新落地（树 = %1，期望 2）")
+                      .arg(page.result_tree()->topLevelItemCount()));
+            page.hide();
+            QDir(root).removeRecursively();
+        }
+
+        // ── 3-7：插件比较模式"注册成功后无人消费" ────────────────────────────────
+        {
+            namespace plug = xrkit::plugin;
+            XmlPage page;
+            plug::Registry registry;
+            for (plug::CompareModeReg& mode : plug::builtin_compare_modes()) {
+                registry.register_compare_mode(exml::kBuiltinPlugin, std::move(mode));
+            }
+            plug::PluginApiAdapter adapter(registry, "demo.dll", nullptr);
+            const char* col_keys[] = {"rel", "status", "detail"};
+            const char* col_headings[] = {"插件文件列", "插件状态列", "插件差异列"};
+            const int col_widths[] = {280, 60, 400};
+            const char* filter_labels[] = {"插件筛选"};
+            const char* filter_kinds[] = {"same|diff|only_a|only_b"};
+            const auto compare_fn = +[](void*, const char*, const char*, const char*, const char*,
+                                        const char*, stk_result_sink sink, void* sink_user) {
+                // 只为一件事：证明"这一轮是插件回调在跑"。
+                // ★ 夹具故意把两侧**完全相同的文本**判成"不一致" —— 内置统计/文本模式对
+                //   相同文本必然判一致 ⇒ 下面那条断言在修前（回调从不被调用）**必红**。
+                sink(sink_user, "consistent", "0");
+            };
+            check(adapter.api().register_compare_mode(adapter.api().host, "插件模式", "plugin_mode",
+                                                      40, col_keys, col_headings, col_widths, 3,
+                                                      filter_labels, 1, filter_kinds, compare_fn,
+                                                      nullptr) == 1,
+                  QStringLiteral("3-7 前提：插件比较模式注册成功"));
+            page.set_registry(&registry);
+            page.resize(900, page_min_h());
+            page.show();
+            QApplication::processEvents();
+            // ★ 判据①：选中插件模式 ⇒ **表头必须来自插件**
+            page.set_mode(QStringLiteral("plugin_mode"));
+            QApplication::processEvents();
+            QStringList headers;
+            if (page.result_tree() != nullptr) {
+                for (int c = 0; c < page.result_tree()->columnCount(); ++c) {
+                    headers << page.result_tree()->headerItem()->text(c);
+                }
+            }
+            check(headers.size() == 3 && headers.join(QStringLiteral("|")) ==
+                                             QStringLiteral("插件文件列|插件状态列|插件差异列"),
+                  QStringLiteral("3-7 选中插件模式 ⇒ 表头来自**插件**（实测「%1」；"
+                                 "修前 find_mode 只查内置表 ⇒ 表头会是内置那套）")
+                      .arg(headers.join(QStringLiteral("|"))));
+            // ★ 判据②：**筛选**也必须来自插件
+            QStringList filters;
+            for (int i = 0; page.filter_combo() != nullptr && i < page.filter_combo()->count(); ++i) {
+                filters << page.filter_combo()->itemText(i);
+            }
+            check(filters.contains(QStringLiteral("插件筛选")),
+                  QStringLiteral("3-7 选中插件模式 ⇒ 筛选项来自插件（实测「%1」）")
+                      .arg(filters.join(QStringLiteral("|"))));
+            // ★ 判据③（同族的另一半：注册的回调**真的被调用**）：真跑一次比较 ——
+            //   夹具两侧**完全相同的 XML**，插件回调把它们判成"不一致"（`consistent=0`），
+            //   而内置统计/文本模式对相同文本必然判"一致" ⇒ 状态列显示什么就说明谁跑了。
+            const QString root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_xml_plugin"));
+            QDir(root).removeRecursively();
+            QDir().mkpath(root + QStringLiteral("/a"));
+            QDir().mkpath(root + QStringLiteral("/b"));
+            for (const char* side : {"a", "b"}) {
+                QFile out(root + QStringLiteral("/") + QLatin1String(side) +
+                          QStringLiteral("/z.xml"));
+                out.open(QIODevice::WriteOnly);
+                out.write("<root><e id=\"1\"><text>SAME</text></e></root>");
+                out.close();
+            }
+            const int rows = page.compare_dirs(root + QStringLiteral("/a"), root + QStringLiteral("/b"),
+                                               QStringLiteral("auto"), QStringLiteral("auto"));
+            QApplication::processEvents();
+            QString status_cell;
+            if (page.result_tree() != nullptr && page.result_tree()->topLevelItemCount() > 0) {
+                status_cell = page.result_tree()->topLevelItem(0)->text(1);   // 插件声明的"状态"列
+            }
+            check(rows == 1 && status_cell.contains(QStringLiteral("不一致")),
+                  QStringLiteral("3-7 插件注册的 compare 回调**必须真的被调用**（相同文本被插件判成"
+                                 "「不一致」= 状态列「%1」；修前页面只走内置 compare_stats ⇒ 必是"
+                                 "「一致」）")
+                      .arg(status_cell));
+            page.hide();
+            QDir(root).removeRecursively();
+        }
     }
 
     return result;

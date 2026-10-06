@@ -1,5 +1,7 @@
 #include "xrkit/engine/text/encoding.h"
 
+#include "probe_decls.h"
+
 #include "xrkit/core/path.h"
 
 #include <cstring>
@@ -1454,3 +1456,12 @@ DecodeResult read_text_file(const std::string& path) {
 }
 
 }  // namespace xrkit::engine::text
+
+// ── ★★ 2026-10-06（审计第 4 组）：模块**在编**探针（见 `probe_decls.h`）────────
+// 本模块被摘掉 ⇒ 链接失败，而不是 `status_line()` 里少报一个数字。
+extern "C" const char* xrkit_engine_probe_text_tag() { return "xrkit-engine-module-text"; }
+
+namespace xrkit::engine {
+const char* probe_text() { return xrkit_engine_probe_text_tag(); }
+}  // namespace xrkit::engine
+

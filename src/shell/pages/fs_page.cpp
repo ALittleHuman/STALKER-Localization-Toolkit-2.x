@@ -44,6 +44,9 @@ namespace xrkit::shell {
 namespace {
 
 namespace efs = xrkit::engine::fs;
+// ★★ 2026-10-06（审计 3-3）：判重用的是引擎现成的 `core::path_equals`
+//   （lexically_normal + 大小写不敏感 + 正反斜杠归一）—— 别在这里自己抄一份。
+namespace core = xrkit::core;
 
 QString utf8(const std::string& text) { return QString::fromStdString(text); }
 
@@ -845,14 +848,65 @@ void FsPage::add_source(const QString& source_in,
 void FsPage::push_source(const QString& source,
                          const std::vector<efs::EntryInfo>& entries) {
     // 路径侧的闸门已经在调用方过掉（`add_source` / `add_paths`）—— 这里只动模型与界面
+    // ★★ 2026-10-06（审计 3-3）：**判重只此一份**（`core::path_equals`）。理由见
+    //   `add_paths` 里那段：整串比较认不出 `E:\a\x` 与 `E:/a/x` 是同一份 ⇒ 同层同名
+    //   覆盖 ⇒ 先来的那个源在左树里**一个节点都没有**、计数却翻倍。
+    //   ⚠ 这里的判重**不能**用"文件名"（同名的两个包在不同目录是两份源，各有各的 ✕）；
+    //     比的是**整条归一化路径**。命中 ⇒ 用这次的条目刷新那一份（同路径 = 同一份）。
+    for (size_t i = 0; i < sources_.size(); ++i) {
+        if (!core::path_equals(sources_[i].path.toUtf8().toStdString(),
+                               source.toUtf8().toStdString())) {
+            continue;
+        }
+        sources_[i].loaded = true;
+        if (i < entries_.size()) entries_[i] = entries;
+        apply_load_order();
+        rebuild_package_list();
+        rebuild_tree();
+        return;
+    }
     Source record;
     record.path = source;
     record.key = source.toUtf8().toStdString();
     record.loaded = true;      // 「加包/拖放/散装层」进来的就是已加载（1.x 拖入目录=全部加载）
     sources_.push_back(record);
     entries_.push_back(entries);
+    apply_load_order();        // ★★ 见下方（审计 3-4：加包路径也必须按 basename 升序）
     rebuild_package_list();
     rebuild_tree();
+}
+
+// ★★ 2026-10-06（审计 3-4）：**加载序只有一份实现**，而且**每条加源路径都要走它**。
+//
+// 审计原文：「加载序只有 `scan_dir` 会排 ⇒ "6.2 字典序靠后者赢"在加包路径不成立」
+//   （`fs_page.cpp:845-856/1634-1646`）。修前 `sort_sources_by_basename` **只在
+//   `scan_dir` 里调**：`push_source`（加包/拖放/散装层）只 `push_back` ⇒ 后加的那个
+//   永远赢，哪怕它的 basename 字典序在前。两套顺序就是两套行为（同一份包列表，走
+//   "扫描目录"与走"加包"合并出来的赢家不一样）。
+// 反向副作用（审计同时点名的）：调一次 `scan_dir` 会**重排全部已加载源** ⇒ 用户没动
+//   那些包，合并赢家/来源列却变了。修后**每条路径都排** ⇒ 顺序只由 basename 决定，
+//   "用户怎么进来的"不再影响合并结果（`scan_dir` 的重排也就不再是"意外"）。
+//
+// 实现要点：`sources_` 与 `entries_` **必须成对搬运**（下标一一对应，`loaded_order_`
+// 也是按下标记的）；排序返回的是**旧下标的新顺序**。
+void FsPage::apply_load_order() {
+    if (sources_.size() < 2) return;
+    std::vector<std::string> keys;
+    keys.reserve(sources_.size());
+    for (const Source& source : sources_) keys.push_back(source.key);
+    const std::vector<size_t> order = efs::sort_sources_by_basename(keys);
+    if (order.size() != sources_.size()) return;   // 防御：实现不配套就不动（别把表搬歪）
+    std::vector<Source> sorted_sources;
+    std::vector<std::vector<efs::EntryInfo>> sorted_entries;
+    sorted_sources.reserve(sources_.size());
+    sorted_entries.reserve(entries_.size());
+    for (size_t index : order) {
+        if (index >= sources_.size() || index >= entries_.size()) return;
+        sorted_sources.push_back(sources_[index]);
+        sorted_entries.push_back(entries_[index]);
+    }
+    sources_.swap(sorted_sources);
+    entries_.swap(sorted_entries);
 }
 
 int FsPage::add_paths(const QStringList& paths) {
@@ -910,12 +964,21 @@ int FsPage::add_paths(const QStringList& paths) {
         }
         // ② 文件 ⇒ 包（SquashFS 按 magic、DB 按自洽判定，
         //    歧义时用「打包/解包格式」下拉里选的那个，见 package_entries 的说明）
-        // ★ 同一路径不重复加源：判重按**路径**（不按内容哈希 —— 哈希要把整个文件读一遍，而
-        //   "重复拖"本来就是为了早点被拒）。⚠ 判重要先算成标志再跳外层：在内层循环里直接
-        //   `continue` 只跳内层（我踩过，自检那条锁当场抓出来）。
+        // ★★ 2026-10-06（审计 3-3）：判重必须用引擎现成的 `core::path_equals`
+        //   （`core/path.cpp` 做 lexically_normal + 大小写 + 正反斜杠），**不许拿整串比**。
+        //   审计原文：「判重不用 `core::path_equals` ＋ 同层同名覆盖 ⇒ 源消失/计数翻倍」
+        //   —— 修前这里是 `QString::compare(source.path, gated, Qt::CaseInsensitive)`：
+        //   `E:\a\x.db` 与 `E:/a/x.db`（正/反斜杠）以及含 `.`/`..` 段的写法**认不出是同一份**
+        //   ⇒ 重复入源；随后 `pkg_build_nodes` 以"同层同名＝同一节点"把 `it->source_index`
+        //   覆盖成后一个 ⇒ **先来的那个源在左树里没有任何节点**（不能选、没有 ✕），却仍在
+        //   `sources_` 里参与合并与计数（`loaded_entry_count` 翻倍、与 CLI `--dump entries=`
+        //   对不上）。判据（审计给的）：用 `E:\a\x` 与 `E:/a/x` 各加一次 ⇒ **只 1 个源、
+        //   左树有节点**。
         bool already_known = false;
         for (const Source& source : sources_) {
-            if (QString::compare(source.path, gated, Qt::CaseInsensitive) == 0) {
+            if (core::path_equals(source.path.toUtf8().toStdString(),
+                                  gated.toUtf8().toStdString())) {
+                // 命中重复时**保留最初的写法**（用户第一次看到的那一行不变），只拒绝这一次。
                 already_known = true;
                 break;
             }
@@ -985,6 +1048,16 @@ bool FsPage::entry_hint_visible() const {
 void FsPage::rebuild_tree() {
     // 合并树 = **已加载的那些源**按 `sources_` 顺序重放一遍（后者为准）。
     // 「取消加载/移除/清空」都走它 —— 不引入"从树里局部删节点"这种第二套逻辑。
+    // ★★ 2026-10-06（审计 3-1）：**重建整棵树不许把用户勾过的丢了**。
+    //   审计原文：「`rebuild_tree()` 丢整棵树 ⇒ 已勾选被静默清空（违背 6.1）」
+    //   （位置 `fs_page.cpp:988`）。修前这里直接 `tree_ = MergeTree{}` —— 而勾选态
+    //   **只活在树里**（`Source`/`EntryInfo` 都没有这个字段），所以"加载选中/取消加载/
+    //   移除/清空/加包"任何一次源集合变化都会把用户勾过的全部静默清空；`merge()` 里那句
+    //   "6.1 勾选态跟随原节点"只在**增量**合并时成立，而本函数每次都从空树重放 ⇒ 永远
+    //   走不到那条保护。判据（审计给的）：**勾 3 项 → 加一个包 ⇒ `checked_file_count()`
+    //   必须仍为 3**。
+    //   修法：重建**之前**按路径快照，重放**之后**按路径回灌（路径＝"原节点"的身份）。
+    const std::vector<std::string> checked_before = tree_.checked_paths();
     tree_ = efs::MergeTree{};
     loaded_order_.clear();
     for (size_t i = 0; i < sources_.size(); ++i) {
@@ -1014,8 +1087,15 @@ void FsPage::rebuild_tree() {
         }
         loaded_order_.push_back(i);   // 合并树里的第 k 个源 ←→ sources_ 的第 i 个
     }
+    // ★★ 2026-10-06（审计 3-1）：回灌勾选态（`applied` 只作对账，不参与判定）。
+    //   顺序不能反：必须在**全部源重放完**之后回灌（合并期间胜者会换，回灌认的是最终树）。
+    const int applied = tree_.apply_checked_paths(checked_before);
+    (void)applied;
     refresh_counts();
     refresh_rows();
+    // ★ 3-1 的配套：左栏包节点的三态是**从模型读**的（`source_check_state`），
+    //   勾选态刚被回灌 ⇒ 必须跟着刷，否则包行还显示"未勾"（而 `checked_file_count()` 已是 3）。
+    refresh_package_checks();
 }
 
 QString FsPage::source_path_for_index(int source_index) const {
@@ -1052,7 +1132,11 @@ void FsPage::refresh_counts() {
         int files = 0;
         for (const efs::MergeNode* node : tree_.flatten()) {
             if (node->is_dir) continue;
-            if (!filter_keep_.isEmpty() && !filter_keep_.contains(utf8(node->path))) continue;
+            // ★★ 2026-10-06（审计 3-2）：计数与树上"真的显示了几行"同一条判据
+            //   （`entry_visible`）—— 修前这里写 `!filter_keep_.isEmpty() && ...`，
+            //   搜一个不存在的名字时 `filter_keep_` 是空的 ⇒ 计数**全量**（"39374 文件"
+            //   而树上一行都没有的那类自相矛盾）。现在过滤态由 `filter_active_` 说。
+            if (!entry_visible(*node)) continue;
             ++files;
         }
         entry_count_label_->setText(files == 0 ? QString() : QStringLiteral("%1 文件").arg(files));
@@ -1290,15 +1374,24 @@ void FsPage::on_entry_item_changed(QTreeWidgetItem* item) {
 }
 
 bool FsPage::entry_visible(const efs::MergeNode& node) const {
-    // 空集合 = 不过滤；否则只显示「命中项 + 祖先链」（层级才留得住）
-    return filter_keep_.isEmpty() || filter_keep_.contains(utf8(node.path));
+    // ★★ 2026-10-06（审计 3-2）：**"没查询"与"查询无命中"不许编码成同一个空集**。
+    //   审计原文：「搜索"无命中"退化成"不过滤"（把"没查询"与"查询无命中"编码成同一个空集）
+    //   ⇒ 判据：搜一个不存在的名字 ⇒ **0 行**（且计数为 0）」。
+    //   修前这里是 `filter_keep_.isEmpty() || filter_keep_.contains(...)`：查询没命中时
+    //   `filter_keep_` 也是空的 ⇒ 与"没查询"同形 ⇒ **显示整棵树 + 计数全量**（用户搜一个
+    //   不存在的名字，看到的是"什么都没过滤"）。现在两者分开：`filter_active_` 说
+    //   "这一轮到底有没有在过滤"（有查询词就为真），空集合在过滤态下就是"0 行"。
+    if (!filter_active_) return true;   // 真的没查询 ⇒ 不过滤
+    return filter_keep_.contains(utf8(node.path));
 }
 
 void FsPage::rebuild_filter_keep() {
     filter_keep_.clear();
     matched_paths_.clear();
+    filter_active_ = false;
     if (search_edit_ == nullptr) return;
     if (search_edit_->text().trimmed().isEmpty()) return;
+    filter_active_ = true;   // ★ 有查询词 ⇒ 进入过滤态；此时空集合 = 无命中（0 行）
     // ★ 2026-10-01 口径改动（用户：「我不知道搜索字段和结果有什么直接关系。」）：
     //   旧实现拿**整条路径**去 contains（`row_matches`），于是 `ai` 会命中 `.../crouch_down_aim.anm`
     //   这种"只是路径里凑巧有这两个字母"的东西，而**目录名本身永远不参与匹配** —— 结果看起来
@@ -1334,11 +1427,13 @@ void FsPage::refresh_rows() {
     rebuild_dir_states();
     // 搜索过滤：先把「命中项 + 它们的祖先链」算成一个集合，再按它建树（层级因此保留）
     rebuild_filter_keep();
-    if (filter_keep_.isEmpty()) {
+    if (!filter_active_) {
         for (const efs::MergeNode& child : tree_.root.children) {
             entry_tree_->addTopLevelItem(make_entry_item(child));
         }
     } else {
+        // ★★ 2026-10-06（审计 3-2）：过滤态下**空集合就是"0 行"**（不是"不过滤"）——
+        //   `walk` 自然一条都进不来（`entry_visible` 恒假），树因此是空的、计数也是 0。
         std::function<void(const efs::MergeNode&, QTreeWidgetItem*)> walk =
             [&](const efs::MergeNode& node, QTreeWidgetItem* parent) {
                 for (const efs::MergeNode& child : node.children) {
@@ -1619,7 +1714,13 @@ int FsPage::scan_dir(const QString& dir) {
     for (const QString& path : found) {
         bool known = false;
         for (const Source& source : sources_) {
-            if (source.path.compare(path, Qt::CaseInsensitive) == 0) known = true;
+            // ★★ 2026-10-06（审计 3-3）：与 `add_paths` **同一条判重口径**（`core::path_equals`）
+            //   —— 修前这里也是整串 `compare`，于是"扫描目录"这条路径会放进第二份只差斜杠
+            //   写法的源（同层同名覆盖 ⇒ 先来的那个在左树里没有节点、计数却翻倍）。
+            if (core::path_equals(source.path.toUtf8().toStdString(),
+                                  path.toUtf8().toStdString())) {
+                known = true;
+            }
         }
         if (known) continue;
         Source record;
@@ -1631,19 +1732,9 @@ int FsPage::scan_dir(const QString& dir) {
         ++added;
     }
     // 列表按 basename 排序显示（与 6.2 的"后者为准"顺序一致，免得显示顺序与合并顺序打架）
-    std::vector<size_t> order = efs::sort_sources_by_basename([this] {
-        std::vector<std::string> paths;
-        for (const Source& source : sources_) paths.push_back(source.key);
-        return paths;
-    }());
-    std::vector<Source> sorted_sources;
-    std::vector<std::vector<efs::EntryInfo>> sorted_entries;
-    for (size_t index : order) {
-        sorted_sources.push_back(sources_[index]);
-        sorted_entries.push_back(entries_[index]);
-    }
-    sources_.swap(sorted_sources);
-    entries_.swap(sorted_entries);
+    // ★★ 2026-10-06（审计 3-4）：这一段的逻辑**抽成了 `apply_load_order()`** ——
+    //   加包/拖放路径（`push_source`）也要走同一份实现，否则"两条路两套合并赢家"。
+    apply_load_order();
     rebuild_package_list();
     rebuild_tree();
     log_message(QStringLiteral("扫描目录：新增 %1 个包，共 %2 个（未加载）")

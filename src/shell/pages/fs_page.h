@@ -308,6 +308,10 @@ private:
     // 所以"同名条目以后加载的为准"只有一份实现（`rebuild_tree` 里的 MergeTree 合并）。
     void push_source(const QString& source,
                      const std::vector<engine::fs::EntryInfo>& entries);
+    // ★★ 2026-10-06（审计 3-4）：**加载序（6.2）只此一份实现** —— `sources_`/`entries_`
+    //   按 basename 小写升序重排（`engine::fs::sort_sources_by_basename`）。修前只有
+    //   `scan_dir` 走它，加包/拖放路径只 `push_back` ⇒ 两条路径两套合并赢家。
+    void apply_load_order();
     bool row_matches(const std::string& path) const;
     void rebuild_package_list();
     // 合并树里的 `source_index` → 已知包路径（见 `loaded_order_` 的说明）
@@ -355,6 +359,10 @@ private:
     // 每个**目录**在模型里的 (文件数, 已勾数) —— 勾选后按它刷新三态（一次 flatten 建全表）
     QHash<QString, QPair<int, int>> dir_states_;
     QSet<QString> filter_keep_;   // 搜索过滤要显示的路径（命中项 + 祖先链）；空 = 不过滤
+    // ★★ 2026-10-06（审计 3-2）：**"这一轮到底有没有在过滤"** —— 修前用
+    //   `filter_keep_.isEmpty()` 兼作"不过滤"的开关，于是"查询无命中"（集合也是空的）
+    //   退化成"不过滤"（显示整棵树 + 全量计数）。两者分开：有这个标志才是过滤态。
+    bool filter_active_ = false;
     QSet<QString> matched_paths_; // 真正**命中**搜索的路径（界面上加粗的那些）
     bool syncing_tree_ = false;
     const plugin::Registry* registry_ = nullptr;

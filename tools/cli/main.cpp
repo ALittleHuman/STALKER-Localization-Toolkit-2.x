@@ -147,6 +147,9 @@ void print_usage() {
            "  --text-plan <源目录> <输出目录>              文本提取的请求守卫（7.1 文件夹名 / 7.5 覆盖源目录）\n"
            "  --plugin-init-rollback <夹具目录>            插件 init 返回 0 必须回滚注册（S1-2 判据探针；\n"
            "                                              目录里只放坏 init 夹具 DLL，按 owner 逐容器断言零残留）\n"
+           "  --status-line [--module-subset <a,b,c>]    引擎状态行（模块计数**从模块表算出来**，不是常量自报）。\n"
+           "                                              --module-subset 把「当前用到的模块集」收窄（诊断用；\n"
+           "                                              给空串 ⇒ 一块都不生效，判据据此证明那一串会跟着变）\n"
            "  --video-plan                                视频转码 argv + 摘要（PLAN/PLANSUM；与 1.x 对拍）\n"
            "  --video-probe <ffprobe-json 文件>           视频参数解析（与 1.x parse_video_info 对拍）\n"
            "  --video-encoders <ffmpeg -encoders 输出>    可用编码器解析（与 1.x _ensure_encoders 对拍）\n"
@@ -262,9 +265,39 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
               "五个模块（fs/font/text/xml/video）都已实现，ready() 必须为真（M0 的恒 false 占位已过时）");
         const std::string line = xrkit::engine::status_line();
         check(ctx, line.rfind("engine id=", 0) == 0, "status_line 形态不符: " + line);
-        check(ctx, line.find("ready=1") != std::string::npos &&
-                      line.find("modules=5/5") != std::string::npos,
-              "status_line 必须显示 ready=1 modules=5/5，实得: " + line);
+        // ★★ 2026-10-06（审计第 4 组）：**不再**断言字面量 `modules=5/5` —— 那条断言正是
+        //   "常量自报"能长期活着的原因（它把"自报"当成契约钉住了）。现在的口径：
+        //   ① `status_line()` 里的 `modules=<能跑>/<当前用到>` 必须与模块表**算出来的一致**
+        //      （模块表由 `probe_<模块>()` 逐个探针支撑，"在编"这件事有链接期证据）；
+        //   ② 模块**清单**必须与 `src/engine/` 下的模块一一对应（名字对不上即红）；
+        //   ③ `ready` 必须由"全部模块都能跑"推出来（不是也无条件为 1）。
+        const int used = xrkit::engine::module_count();
+        const int on = xrkit::engine::module_ready_count();
+        const int all = xrkit::engine::all_module_count();
+        const std::string want = "modules=" + std::to_string(on) + "/" + std::to_string(used);
+        check(ctx, line.find(want) != std::string::npos,
+              "status_line 的模块计数必须与模块表一致（期望 " + want + "，实得: " + line +
+                  "）—— 修前这里是字面量 modules=5/5，与引擎真实状态无关");
+        check(ctx, line.find(std::string("ready=") + (is_ready ? "1" : "0")) != std::string::npos,
+              "status_line 的 ready 位必须与 ready() 同源，实得: " + line);
+        check(ctx, used == all,
+              "默认路径下『当前用到的模块数』必须等于『编译进来的模块总数』（实得 " +
+                  std::to_string(used) + " / " + std::to_string(all) +
+                  "）—— 不等说明模块表被收窄却没走 set_module_subset");
+        // 清单逐名核对：六个模块名必须与 `src/engine/` 的目录一一对应
+        // （少一个 = 有人加了模块目录却没进模块表；多一个 = 表里写了不存在的模块）。
+        const std::vector<std::string> names = xrkit::engine::module_names();
+        const char* expected[] = {"fs", "font", "text", "xml", "video", "plugin"};
+        for (const char* name : expected) {
+            bool found = false;
+            for (const std::string& got : names) {
+                if (got == name) found = true;
+            }
+            check(ctx, found, std::string("模块表里缺 ") + name + "（src/engine/ 下确实有这个模块）");
+        }
+        check(ctx, names.size() == 6,
+              "模块表条数应为 6（fs/font/text/xml/video/plugin），实测 " +
+                  std::to_string(names.size()));
     });
 
     // ⑥6.1/6.2 合并语义：**后者为准**，且 `source` 要跟着切到"引擎实际会读到的那一份"。
@@ -1268,6 +1301,15 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         }
         check(ctx, area_bad == 0,
               "AREA_* 槽位缺 " + std::to_string(area_bad) + " 个（从 1.x 源码读表）");
+        // ★★ 2026-10-06（审计第 4 组：「`contract_ok()` 不校 `area` 条数」）：上面那条按
+        //   **清单逐名**核对，但它**不校条数** —— 表里多一个 area（或把 `AREA_BOTTOM` 删掉后
+        //   又从别处补一个）它照样绿。条数是 `docs/2.0.0-设计口径.md` 写死的契约：10 个。
+        //   与 `contract_ok()` 里新加的那条**同一口径**（两处都判，互相兜底）。
+        check(ctx, plug::area_count() == 10,
+              "槽位表 AREAS 应有 10 个区（含 AREA_BOTTOM），实测 " +
+                  std::to_string(plug::area_count()));
+        check(ctx, plug::known_area("bottom"),
+              "AREA_BOTTOM=\"bottom\" 是 2.x 相对 1.x 明文列出的唯一新增项，不许被删掉");
 
         // api.ui 的 16 方法：9 造控件 + 7 改控件/取输入（12.3）
         check(ctx, plug::ui_method_count() == 16, "api.ui 契约应有 16 个方法");
@@ -2132,6 +2174,16 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
             plug::PluginApiAdapter adapter(registry, "xrkit_test_plugin.dll", nullptr);
             const plug::LoadResult loaded = plug::load_plugin(dll, adapter);
             check(ctx, loaded.ok && loaded.init_rc == 1, "加载测试插件失败：" + loaded.error);
+            // ★★ 2026-10-06（审计第 4 组：「`LoadResult::registrations` **死字段**」）：
+            //   修前**只有失败分支**写这个字段，成功加载时恒为 0 ⇒ 它名义上是"这次加载
+            //   带来的注册条数"，实际上消费端读到的永远是 0。这里按**同一份来源**
+            //   （`residue_for(owner).registrations()`）核对：成功路径必须如实报出条数。
+            const size_t truth =
+                registry.residue_for("xrkit_test_plugin.dll").registrations();
+            check(ctx, loaded.registrations > 0 && loaded.registrations == truth,
+                  "成功加载时 registrations 必须是**真条数**（实测 " +
+                      std::to_string(loaded.registrations) + "，按 owner 逐容器核对为 " +
+                      std::to_string(truth) + "）—— 修前成功路径恒为 0（死字段）");
             if (loaded.ok) new plug::PluginApiAdapter(std::move(adapter));
         }
         check(ctx, plug::loaded_count() >= 1, "加载成功后句柄没被记账");
@@ -2371,6 +2423,9 @@ int run_cli(const std::vector<std::string>& args) {
     bool verify_readback = false;
     std::string plugins_dir;   // --plugins <目录>（空 ⇒ exe 旁边的 plugins/，与 GUI 同口径）
     bool plugins_given = false;
+    // ★★ 2026-10-06（审计第 4 组）：见 `--module-subset` 的解析处与 `--status-line` 动作。
+    std::string module_subset;
+    bool module_subset_given = false;
     std::string action;
     std::vector<std::string> operands;
 
@@ -2421,6 +2476,21 @@ int run_cli(const std::vector<std::string>& args) {
             verify_readback = true;
             continue;
         }
+        // ★★ 2026-10-06（审计第 4 组：「`engine::status_line()` 的**常量自报**」）：
+        //   诊断开关 —— 把"当前引擎用到的模块集"真的收窄成这一串（逗号分隔；可给空串）。
+        //   为什么必须有它：修前 `status_line()` 返回**字面量** `modules=5/5`，任何判据都
+        //   反驳不了它（改代码不改它、摘模块不改它）。有了这个开关，"模块集变了 ⇒ 那一串
+        //   必须跟着变"就成了**可判红**的判据（见 `--status-line` 与门禁的 `engine-status` 步）。
+        //   它只影响诊断动作，产品路径从不调 `set_module_subset` ⇒ 行为逐字节不变。
+        if (a == "--module-subset" && i + 1 < args.size()) {
+            module_subset = args[++i];
+            module_subset_given = true;
+            continue;
+        }
+        if (a == "--module-subset") {
+            std::cerr << "MODULES error reason=用法：--module-subset <a,b,c>（可给空串 ⇒ 一块都不生效）\n";
+            return kExitUsage;
+        }
         if (a == "-h" || a == "--help") {
             print_usage();
             return kExitOk;
@@ -2440,6 +2510,23 @@ int run_cli(const std::vector<std::string>& args) {
     if (action.empty()) {
         print_usage();
         return kExitUsage;
+    }
+
+    // ★★ 2026-10-06（审计第 4 组）：把诊断用的模块集收窄**落进引擎**（默认路径不调它）。
+    //   只影响 `--status-line` 这类诊断动作读到的数字；产品动作（封包/解包/…）不看模块表。
+    if (module_subset_given) {
+        std::vector<std::string> names;
+        std::string piece;
+        for (char ch : module_subset) {
+            if (ch == ',') {
+                if (!piece.empty()) names.push_back(piece);
+                piece.clear();
+                continue;
+            }
+            piece.push_back(ch);
+        }
+        if (!piece.empty()) names.push_back(piece);
+        xrkit::engine::set_module_subset(names);
     }
 
     // ── ★ 2026-10-04 动作分派前：建**同一个**插件注册表并注入引擎（⑫12.1 的消费端）──
@@ -2641,6 +2728,22 @@ int run_cli(const std::vector<std::string>& args) {
         const std::vector<std::string> names = xrkit::engine::video::parse_encoder_list(text);
         std::cout << "ENCODERS\t" << names.size() << "\n";
         for (const std::string& name : names) std::cout << "ENC\t" << name << "\n";
+        return kExitOk;
+    }
+    if (action == "--status-line") {
+        // ★★ 2026-10-06（审计第 4 组）：「`engine::status_line()` 的常量自报」的判据探针。
+        // 输出**机器可解析**的形态：`STATUSLINE line=<原始行> used=<当前用到> on=<能跑> all=<编译进来的总数>
+        // ready=<0|1> names=<清单>` —— 门禁/自检据此判"模块集被收窄后，那一串有没有跟着变"
+        // （修前它恒等于字面量 `modules=5/5`）。
+        const std::string line = xrkit::engine::status_line();
+        const int on = xrkit::engine::module_ready_count();
+        const int used = xrkit::engine::module_count();
+        const int all = xrkit::engine::all_module_count();
+        std::cout << "STATUSLINE line=" << line << " used=" << used << " on=" << on
+                  << " all=" << all << " ready=" << (xrkit::engine::ready() ? 1 : 0) << " names=";
+        const std::vector<std::string> names = xrkit::engine::module_names();
+        for (size_t i = 0; i < names.size(); ++i) std::cout << (i ? "," : "") << names[i];
+        std::cout << "\n";
         return kExitOk;
     }
     if (action == "--version-store") {

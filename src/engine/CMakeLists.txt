@@ -33,6 +33,10 @@ add_library(xrkit_engine STATIC
 
 target_include_directories(xrkit_engine PUBLIC "${CMAKE_SOURCE_DIR}/include")
 target_include_directories(xrkit_engine PRIVATE
+  # ★★ 2026-10-06（审计第 4 组）：`src/engine` 自己也要在包含路径里 ——
+  #   模块**在编**探针的声明头 `probe_decls.h` 就在这一层（各模块子目录的 .cpp 写的是
+  #   `#include "probe_decls.h"`）。不加这一条，子目录里的相对包含找不到它（实测 C1083）。
+  "${CMAKE_CURRENT_SOURCE_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/text"
   "${CMAKE_CURRENT_SOURCE_DIR}/font"
   "${CMAKE_CURRENT_SOURCE_DIR}/plugin")

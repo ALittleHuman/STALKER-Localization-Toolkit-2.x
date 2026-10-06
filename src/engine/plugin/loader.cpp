@@ -82,6 +82,11 @@ LoadResult load_plugin(const std::string& dll_path, const PluginApiAdapter& adap
         return result;
     }
     result.ok = true;
+    // ★★ 2026-10-06（审计第 4 组）：**成功路径也要填 `registrations`** —— 修前只有失败
+    //   分支（`init` 返回 0 回滚）写它，成功时恒为 0 ⇒ 这个字段对成功加载**是死的**
+    //   （`tools/cli` 的 `--plugin-init-rollback` 探针打出来的 `registrations=` 因此
+    //   永远只在失败那一路有值）。口径与失败分支**同一份实现**：按 owner 逐容器报账。
+    result.registrations = adapter.registry().residue_for(adapter.plugin_name()).registrations();
     loaded().push_back({reinterpret_cast<void*>(handle), dll_path});
     return result;
 #endif

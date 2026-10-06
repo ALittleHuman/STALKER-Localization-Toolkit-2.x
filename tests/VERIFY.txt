@@ -496,3 +496,274 @@ RESULT: FAIL（1 处失败）
 5. **S1-3 / S1-4 按用户裁决不修**（只登记）；**1-2 只做到"代码级红"**（S2 批已如实记，
    本批不重复也不改口径）。
 
+---
+
+# C 批（2026-10-06）：审计 §7 **第 3 组（3-1~3-8）** ＋ **第 4 组余项三条**
+
+> 范围＝用户派单 C：第 3 组 3-1~3-8 全部 + 第 4 组余项三条（`contract_ok` area 条数 /
+> `status_line` 常量自报 / `LoadResult::registrations` 死字段）。
+> 纪律同前批：**先证红再改绿**（原始行贴回）｜不许改基线｜一文件集一写入者｜
+> 夹具一律 `%TEMP%`｜跑完收掉 `xrkit_app`。
+
+## 3-1 `rebuild_tree()` 丢整棵树 ⇒ 已勾选被静默清空（违背 6.1）
+
+- 位置：修前 `src/shell/pages/fs_page.cpp:988`（`tree_ = efs::MergeTree{};`）。
+- 机制（审计原文）：「`rebuild_tree()` 丢整棵树 ⇒ 已勾选被静默清空（违背 6.1）」——
+  勾选态**只活在树里**（`Source`/`EntryInfo` 都没有这个字段），而"加包/移除/取消加载/清空"
+  全都走 `rebuild_tree()`（丢掉整棵 + 重放）⇒ 源集合一变，用户勾过的全没了；
+  `merge()` 里那句"6.1 勾选态跟随原节点"只在**增量**合并时成立，页面每次都从空树重放 ⇒
+  永远走不到那条保护。
+- 修法：`MergeTree` 加**按路径的快照/回灌**（`checked_paths()` / `apply_checked_paths()`，
+  `src/engine/fs/overlay.cpp`）；`rebuild_tree()` 在重放**之前**快照、重放**之后**回灌，
+  并补一次 `refresh_package_checks()`（左栏包节点三态从模型读）。
+- 锁：`src/shell/smoke.cpp` 的 3-1 两条（"勾 3 项 → 加一个包 ⇒ 仍为 3"、
+  "勾一个包 3 项 → 再加包 ⇒ 仍为 3"）。
+- 绿：`SHELL-SMOKE ok checks=730 failed=0`。
+
+## 3-2 搜索"无命中"退化成"不过滤"
+
+- 位置：修前 `fs_page.cpp:1297-1341`（`entry_visible` / `refresh_counts` 都用
+  `filter_keep_.isEmpty()` 兼作"不过滤"的开关）。
+- 机制：「把"没查询"与"查询无命中"编码成同一个空集」⇒ 搜一个不存在的名字，
+  `filter_keep_` 也是空 ⇒ 显示**整棵树 + 全量计数**（用户看到的是"什么都没过滤"）。
+- 修法：新增 `filter_active_`（"这一轮到底有没有在过滤"，由搜索框文案决定）——
+  `entry_visible()` 与 `refresh_counts()` 都改读它；过滤态下空集合就是"0 行"。
+- 锁：3-2 三条（无命中 ⇒ 0 行 + 计数 0；反向"有命中仍看得见"；反向"清空查询回到不过滤"）。
+- 绿：同上（730 项全绿）。
+
+## 3-3 判重不用 `core::path_equals` ＋ 同层同名覆盖
+
+- 位置：修前 `fs_page.cpp:917-922`（`add_paths`）与 `:1620-1623`（`scan_dir`）各写一份
+  `QString::compare(..., Qt::CaseInsensitive)`。
+- 机制：`E:\a\x.db` 与 `E:/a/x.db`（正/反斜杠）、含 `.`/`..` 段的写法**认不出是同一份**
+  ⇒ 重复入源；随后 `pkg_build_nodes` 以"同层同名＝同一节点"把 `it->source_index` 覆盖成
+  后一个 ⇒ **先来的那个源在左树里一个节点都没有**（不能选、没有 ✕），却仍在 `sources_` 里
+  参与合并与计数（`loaded_entry_count` 翻倍、与 CLI `--dump entries=` 对不上）。
+- 修法：三处判重（`add_paths` / `scan_dir` / `push_source`）统一改调 `core::path_equals`；
+  `push_source` 命中重复 ⇒ **用这次的条目刷新那一份**（同路径＝同一份），不再 push 第二份。
+- 锁：3-3 三条（左树源节点数 == 源数；`path_equals` 对两种写法为真；
+  "认不出的文件不进源表"的前提锁）＋ `run_ci.py` 的静态锁（fs_page 必须出现
+  `core::path_equals(`、**不许**再出现 `QString::compare(source.path`）。
+
+## 3-4 加载序只有 `scan_dir` 会排 ⇒ 6.2 在加包路径不成立
+
+- 位置：修前 `fs_page.cpp:845-856`（`push_source` 只 `push_back`）＋ `:1634-1646`
+  （只有 `scan_dir` 调 `sort_sources_by_basename`）。
+- 机制：两条路两套合并赢家 —— 走"扫描目录"按 basename 升序（字典序靠后者赢），
+  走"加包/拖放"按**拖入顺序**（后加者赢）。反向副作用：调一次 `scan_dir` 会**重排全部
+  已加载源** ⇒ 用户没动那些包，合并赢家/来源列却变了。
+- 修法：抽出 `FsPage::apply_load_order()`（**唯一一份**实现），`push_source` 与 `scan_dir`
+  都走它 ⇒ 顺序只由 basename 决定，"用户怎么进来的"不再影响合并结果。
+- 锁：3-4 两条（`gamedata.sqzy_patch` 与 `gamedata.sq_base` 同名文件 ⇒ 赢家是后者
+  ＋ 赢家那一份的大小也对）＋ 静态锁（`apply_load_order()` 出现在每条加源路径）。
+- ★ 说明：夹具用**自带包名壳**的一对包名（与既有 6.1 那条锁同源），因为"包名壳"是引擎
+  `preview_entries_in_layout()` 算的 —— 自检里**不写死**落点路径。
+
+## 3-5 `xml_page.cpp:435` 在工作线程里刷 `QTreeWidget`
+
+- 位置：修前 `xml_page.cpp:435`（无条件 `refresh_rows();`），而紧接着 `:438-442` 的统计标签
+  **有**主线程守卫 ⇒ 守卫不对称。
+- 机制：`compare_dirs` 被 `task_->run()` 的 worker lambda 调用，而 `refresh_rows()` 会
+  `result_tree_->clear()/new QTreeWidgetItem/addTopLevelItem` ⇒ **工作线程里碰 QTreeWidget**；
+  叠加"比较期间模式/筛选控件未禁用"（全文件 `setEnabled` 零命中）⇒ 主线程 `set_mode()`
+  的 `results_.clear()` 与 worker 的 `push_back` **并发写同一个 vector**。
+- 修法：① `refresh_rows()` 与统计标签**同一条口径**（非主线程 ⇒ `Qt::QueuedConnection`
+  排队回主线程，收尾的 `set_compare_controls_enabled(true)` 也在同一个排队 lambda 里）；
+  ② 新增 `set_compare_controls_enabled()`：**只有真在工作线程跑**时才禁用模式/筛选控件
+  （主线程直调的判据路径不禁用 —— 自检要在比较前后来回切模式）；
+  ③ `mode()` 改走**注册表优先**、模式 key 在起 worker **之前**快照（`mode_key_at_task_start_`），
+  worker 不再读控件。
+- 锁：3-5 三条（主线程直调 ⇒ 立刻落地；**worker 里调 ⇒ 树上当场不变**、泵事件后才出现）。
+
+## 3-6 `~TaskShell` 只 `join()` 不 `request_cancel()`
+
+- 位置：修前 `src/shell/task_shell.cpp:58-62`。
+- 机制：worker 等 `cancel_requested_` 才肯停，而这个位只有用户点「取消」或
+  `request_cancel()` 才置；页面/窗口一析构（TaskShell 是页面的 QObject 子对象），
+  worker 永远等不到那个位 ⇒ 主线程**永久阻塞**在 join 上（"关了窗进程还在"）。
+- 修法：析构开头**无条件** `cancel_requested_.store(true)`，再 join。
+  ★ 刻意**不走 `request_cancel()`**：那个函数开头有 `if (!running_) return;` 的闸门
+  （"空闲时点一下不留痕"），而析构路径必须无条件置位。
+- 锁：3-6 一条（worker 是"只有取消位才能退出"的循环；`delete shell` 必须在有界时间内返回；
+  修前这里**永远不返回** = 自检挂死）。
+- ★ 残余（如实登记，本批不扩范围）：**没有取消位的页**（文件系统页 / 汉化包生成页，
+  按用户 2026-10-06 裁决走 `CancelButton::No`）其 worker 内部没有轮询点 ⇒ 置了位也得等它
+  跑完；本批修的是"**有取消位的任务**（编码转换 / 文本提取 / XML 校对）在关窗时真的会停"。
+
+## 3-7 插件比较模式"注册成功后无人消费"
+
+- 位置：修前 `xml_page.cpp:318`（`XmlPage::mode()` 用 `exml::find_mode()`，而
+  `compare.cpp:510-515` 的 `find_mode` **只遍历 `builtin_modes()`**）。
+- 机制：插件模式的 key 永远解析不出来 ⇒ 兜底那句 `spec = &builtin_modes().front()` 把
+  **内置统计模式**当成它的声明（表头/筛选/行取值全用内置那份），而注册的 `compare`
+  回调**从不被调用** ⇒ "注册成功但无人消费"（正是 M3 出口判据要禁的）。
+- 修法：`mode()` 改**注册表优先**（内置模式也在注册表里，owner = `kBuiltinPlugin`）＋
+  新增 `mode_reg()`；`compare_dirs` 三段分流（插件 `compare` 优先 → 内置文本 → 内置统计）；
+  `detail_text` 认插件的 `detail_builder`。
+- 锁：3-7 三条（表头来自插件；筛选项来自插件；**真跑一次比较** —— 夹具两侧文本完全相同，
+  插件回调判"不一致"、内置必判"一致" ⇒ 状态列显示什么就说明谁跑了）。
+
+## 3-8 `SplitPane` 是死代码（规格 §10 的判据挂在产品不用的类上）
+
+- **二选一里选的是"改写规格判据"**，理由逐条写在 `docs/2.0.0-外壳规格.md` §10 末尾的
+  新增小节里（要点：① 用户诉求是"拖动时预览不是一条线"，而产品那条 `QSplitter` 的 sash
+  **已经是主题刷出来的填充色带**（`theme.cpp` 的 `QSplitter::handle`），诉求已满足；
+  ② 让 FS 页改用 `SplitPane` 要重做整页装配与一批几何判据，为已满足的观感付大风险；
+  ③ `SplitPane` 保留为**自检夹具**（它验的是"面板分配算法"），但表里必须如实标成本形状）。
+- 修法：① 删掉 `hub.h` 里那个**没人用**的 `class SplitPane;` 前向声明；
+  ② 规格 §10 那一行改写成"**产品真用的 `QSplitter`**"（动作/判据都对着产品控件）；
+  ③ 新增静态锁（见下）。
+- 锁：`run_ci.py` 的 `shell-smoke` 步：`src/shell` 下除 `split_pane.{h,cpp}` 与 `smoke.cpp`
+  之外**任何文件出现 `SplitPane` 即红**，且 `fs_page.cpp` 必须出现 `new QSplitter(`。
+
+## 第 4 组余项三条（★先写锁、再修代码）
+
+### 余项-1 `contract_ok()` 不校 `area` 条数
+
+- 位置：修前 `src/engine/plugin/contract.cpp:72-101`（只校 HOSTS=6 / LOCATIONS=2 / api.ui=16）。
+- 红（修前形态**实测**）：把生成表里的 `AREA_BOTTOM` 删掉 + `kAreaCount` 改 9 **不重编**、
+  只跑**旧 CLI** ⇒ `SELFTEST pass=466 fail=0`（全绿）。随后重编跑**新 CLI** ⇒
+  `FAIL plugin: 契约表与槽位精确匹配…: 契约表自检失败：` ＋
+  `槽位表 AREAS 应有 10 个区（含 AREA_BOTTOM），实测 9` ＋ `SELFTEST pass=462 fail=4`、`exit=1`。
+- 修法：`contract_ok()` 加"`kAreaCount != 10` ⇒ 报错"＋"area 键逐项非空"；
+  CLI 自检另加"area 条数 == 10"与"`bottom` 必须在"两条（两处互相兜底）。
+- 锁：`tests/check_engine_contract.py`（新）的 ①：静态读生成表 + 基线绿 +
+  **注入 `AREA_BOTTOM` 删除 ⇒ 必须红** + 还原后重新绿。
+- 绿：`ENGINE-CONTRACT ok (checks=19 failed=0)`（门禁步 `engine-contract`）。
+
+### 余项-2 `engine::status_line()` 的常量自报
+
+- 位置：修前 `src/engine/engine.cpp:15-17`：
+  ```cpp
+  std::string status_line() {
+      return std::string("engine id=") + engine_id() + " ready=1 modules=5/5";
+  }
+  ```
+  —— `5/5` 是**字面量**，与"到底编进来几个模块"无关；**实测它早就不对**：
+  `src/engine` 下有 **6** 个模块（fs/font/text/xml/video/plugin），报告里还写着 5/5。
+- 修法：模块表（名字 + **在编探针** `probe_<模块>()`，每个模块在自己的 TU 里定义）＋
+  `module_count()` / `module_ready_count()` / `module_names()` / `set_module_subset()`；
+  `status_line()` 的数字**全部从模块表算出来**；`ready()` 也改成"模块表推出来"。
+  新增 CLI 诊断开关 `--module-subset <a,b,c>` 与 `--status-line` 探针。
+- 红（修前形态 = 常量 ⇒ 与模块集无关）：新探针实测（**同一二进制**）：
+  ```
+  > xrkit_cli --status-line                       → modules=6/6 ready=1 all=6
+  > xrkit_cli --status-line --module-subset fs    → modules=1/1 ready=1 all=6
+  > xrkit_cli --status-line --module-subset ""    → modules=0/0 ready=0 all=6
+  > xrkit_cli --status-line --module-subset nope  → modules=0/0
+  ```
+  ⇒ 模块集变了那一串**必须跟着变**（修前它恒等于字面量，改代码/摘模块都不会变）。
+- 锁：`check_engine_contract.py` 的 ②（5 条）；`--selftest` 里那条也改成"与模块表一致"
+  （**删掉了原来那句 `modules=5/5` 字面量断言** —— 那条正是"常量自报"能长期活着的原因）。
+
+### 余项-3 `LoadResult::registrations` 死字段
+
+- 位置：修前 `src/engine/plugin/loader.cpp` —— `result.registrations` **只在失败分支**
+  （`init` 返回 0 回滚）被赋值；成功路径从不填 ⇒ 恒为 0。
+- 修法：成功路径也按**同一份来源**填：`adapter.registry().residue_for(owner).registrations()`。
+- 锁：`--selftest` 的 "plugin: DLL 加载与注册（⑫12.4）" 里新增一条：
+  成功加载时 `loaded.registrations > 0` 且 **== `residue_for(owner).registrations()`**；
+  `check_engine_contract.py` 的 ③ 也复核这条（把 selftest 的输出当断言面）。
+
+## 门禁（C 批，两份原始结论行）
+
+```
+--release → 日志 build\logs\c_batch_release.out（PYTHONUTF8=1 / PYTHONIOENCODING=utf-8）
+  SHELL-SMOKE ok checks=730 failed=0 mode=dark
+  ENGINE-CONTRACT ok (checks=20 failed=0)
+  BENCH PASS metrics=6 failed=0
+  ------------------------------------------------------------------
+  本次覆盖：全部步骤均已执行
+  ------------------------------------------------------------------
+  RESULT: PASS                                  （exit=0）
+
+--fast    → 日志 build\logs\c_batch_fast.out（同上两个环境变量）
+  SHELL-SMOKE ok checks=730 failed=0 mode=dark
+  ENGINE-CONTRACT ok (checks=20 failed=0)
+  BENCH PASS metrics=6 failed=0
+  ------------------------------------------------------------------
+  本次覆盖：全部步骤均已执行
+  ------------------------------------------------------------------
+  RESULT: PASS                                  （exit=0）
+```
+
+（两趟的**差异台账**都只有既有那一条：`字符集差异台账（判定链第 5 步 chardet GB2312 探针未移植）`
+—— 它是 `LEDGER`，不是本次未覆盖，也不是本批引入；`BENCH metrics=6` ⇒ 本次**没有**
+出现 B 批那次的 `BENCH skip metric=unpack_full_ms reason=rc4294967295`。）
+
+`--only` 记账实测（新步骤要么独立成步、要么在既有步里，**被过滤时都进未覆盖清单**）：
+```
+> python tests/run_ci.py --fast --only shell-smoke
+  ok   SplitPane 只作自检夹具、产品用 QSplitter（3-8：判据不挂死代码）
+  · 步骤 build、…、engine-contract、winres（共 42/43 个未执行，本次由 `--only 'shell-smoke'` 过滤掉）
+  RESULT: PASS
+> python tests/run_ci.py --fast --only engine-contract
+  ENGINE-CONTRACT ok (checks=19 failed=0)      ← 运行当时是 19；后来加了"还原逐字节一致"那条 ⇒ 20
+  · 步骤 …、shell-smoke、no-console、winres（共 42/43 个未执行…）
+  RESULT: PASS
+```
+
+## ★ 先证红（本批 3-1 ~ 3-7 的**原始红行**）
+
+取证方式：把每一处的修法**逐个换回修前形态**（脚本在 `%TEMP%\c_batch_red_proof.py`，
+每处都"找不到原文就报错退出"，绝不静默漏注入），重编外壳，跑 `--smoke`。
+注入点：
+①3-1 去掉 `checked_paths()` 快照 + `apply_checked_paths()` 回灌；
+②3-2 把 `entry_visible` 换回 `filter_keep_.isEmpty() || …`；
+③3-3 把 `push_source` 的 `core::path_equals` 换回 `QString::compare`；
+④3-4 去掉 `push_source` 里的 `apply_load_order()`；
+⑤3-5 把收尾换回"无条件 `refresh_rows()` + 只给统计标签排队"；
+⑥3-7 把 `mode()` 换回"只查内置表 `exml::find_mode`"；⑦3-6 去掉析构里的 `cancel_requested_.store(true)`。
+
+### 红（修前形态，原始行）
+
+```
+  SHELL-SMOKE fail 3-1 加一个包后已勾选的 3 项必须还在（实测 0；修前 rebuild_tree 丢整棵树 ⇒ 这里必为 0）
+  SHELL-SMOKE fail 3-1 勾一个包（3 项）后再加包 ⇒ 仍是 3（实测 3 → 0）
+  SHELL-SMOKE fail 3-2 搜不存在的名字 ⇒ 0 行（实测顶层 1；修前 '没查询' 与 '无命中' 共用空集 ⇒ 这里必为 1）
+  SHELL-SMOKE fail 3-2 无命中时计数为 0（实测「3 文件」）
+  SHELL-SMOKE fail 3-3 左树源节点数必须等于源数（节点 1 / 源 2；修前同层同名覆盖 ⇒ 节点数会少）
+  SHELL-SMOKE fail 3-4 按 basename 升序加载两个同名包 ⇒ 赢家是**后者**（gamedata.sqzy_patch）；
+                    来源列实得「gamedata.sq_base」（树里：gamedata/ | gamedata//same.txt）
+                    （修前加包路径不排 ⇒ 后加的 sq_base 会赢）
+  SHELL-SMOKE fail 3-4 赢家那一份的大小也要对（大小列「10 B」，期望含 20）
+  SHELL-SMOKE fail 3-5 worker 里调 compare_dirs ⇒ **树上当场不变**（排队回主线程）；
+                    实测 worker 行=2 / 树 0→2（修前无条件直调 ⇒ 当场就被重建）
+  SHELL-SMOKE fail 3-7 选中插件模式 ⇒ 表头来自**插件**（实测「文件 (相对路径)|状态|行数 A|行数 B|ID 数 A|ID 数 B|差异详情」；
+                    修前 find_mode 只查内置表 ⇒ 表头会是内置那套）
+  SHELL-SMOKE fail 3-7 选中插件模式 ⇒ 筛选项来自插件（实测「全部|仅不一致|仅一侧存在」）
+  SHELL-SMOKE ok checks=730 failed=10 mode=dark           ← 退出码 1
+```
+
+### 3-6 的红是"**挂死**"（无法打行，如实记原始观测）
+
+只注入 ⑦（去掉析构里的取消位）后重编并跑 `--smoke`：
+```
+> .\xrkit_app.exe --smoke        （离屏）
+（10 分钟以上没有任何新输出、进程一直在）
+> Get-Process xrkit_app
+   Id     StartTime
+   ----   ---------
+   14492  2026/10/6 22:42:22     ← 就是这次自检；只能 Stop-Process -Force 收掉
+```
+⇒ 与审计的判断逐字对上：「**暂停 + 关窗 ⇒ 进程永不退出**」。这也是为什么本批把它做成
+"析构必须在有界时间内返回（<5s）"的判据：修前那条路**根本走不到**自检的收尾行。
+
+### 绿（还原后，同一棵树）
+
+```
+  SHELL-SMOKE ok checks=730 failed=0 mode=dark            ← 退出码 0
+```
+
+### ★ 取证过程中踩到的坑（如实登记，已修）
+
+- `tests/check_engine_contract.py` 第一版用 `Path.write_text()` 写回生成表 —— Windows 上
+  它按 `os.linesep` 把 `\n` 翻成 CRLF，而生成物是 `bytes + LF`
+  （`gen_plugin_contract.py` 里明写"文本模式会把 \n 翻成 \r\n"）⇒ 门禁 [13] 的逐字节比对
+  **假红**（`2550 字节 vs 2491 字节`，只差 59 个 `\r`）。已改成 `read_bytes/write_bytes`，
+  并**加了一条还原判据**：注入段还原后必须与 `git cat-file blob HEAD:…` **逐字节一致**。
+- 同一坑在红取证脚本里也踩过一次（已改 `write_bytes`）。**没有把假红当本批的红交上去**：
+  那一趟 `--release` 的结论是 `RESULT: FAIL（1 处失败）`＝**门禁 [13] FAIL**，与 3-x 无关，
+  本次如实作废重跑（见下面的最终两行）。
+
+

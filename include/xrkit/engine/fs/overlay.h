@@ -148,6 +148,17 @@ struct MergeTree {
     int conflict_count() const { return conflicts_; }
     int checked_file_count() const;
 
+    // ★★ 2026-10-06（审计 3-1）：勾选态的**快照 / 回灌** —— 页面「加一个包」走的是
+    //   `rebuild_tree()`（整棵树丢掉重放，见 `fs_page.cpp` 的同名函数），而勾选态
+    //   **只活在树里**（`EntryInfo`/`Source` 都没有这个字段）⇒ 修前"源集合一变，用户
+    //   勾过的全没了"（违背 6.1 的"勾选态跟随原节点"：那条只在 `merge()` 的**增量**合并
+    //   里成立，而页面每次都从空树重放）。
+    //   口径：**按路径快照、按路径回灌**（路径就是"原节点"的身份）—— 回灌时按
+    //   `find(path)` 逐个置位；新树里没有的路径（那一份源被移除/被别的源顶掉且换了名）
+    //   自然落空。`apply_checked_paths` 返回真正置上的条数（判据/自检可对账）。
+    std::vector<std::string> checked_paths() const;
+    int apply_checked_paths(const std::vector<std::string>& paths);
+
 private:
     int conflicts_ = 0;
 };

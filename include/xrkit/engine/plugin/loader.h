@@ -24,6 +24,10 @@ struct LoadResult {
     std::string plugin_name;  // 文件名（注册前缀）
     int init_rc = 0;          // 插件入口的返回值（0 = 它自己说失败）
     // 这次加载带来的注册条数；**失败时 = 本次已被撤回的注册条数**（零静默：回滚了几条也要看得见）
+    // ★★ 2026-10-06（审计第 4 组：「`LoadResult::registrations` **死字段**」）：修前只有失败
+    //   分支写它，成功加载时**恒为 0**（成功路径从不填）—— 字段名义上是"这次加载带来的注册
+    //   条数"，实际只在失败那一路有值，消费端（CLI 探针）读到的一直是 0。现在两条路都按
+    //   **同一个来源**填：`Registry::residue_for(owner).registrations()`（按 owner 逐容器报账）。
     size_t registrations = 0;
 };
 

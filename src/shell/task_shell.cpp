@@ -56,6 +56,27 @@ TaskShell::TaskShell(QWidget* parent, CancelButton cancel) : QObject(parent) {
 }
 
 TaskShell::~TaskShell() {
+    // ★★ 2026-10-06（审计 3-6）：**先取消，再 join**。
+    //
+    // 审计原文：「`~TaskShell` 只 `join()` 不 `request_cancel()`（`task_shell.cpp:58-62`）
+    // ⇒ **暂停 + 关窗 ⇒ 进程必须退出**」。
+    // 修前这里只有 join：worker 等 `cancel_requested_` 来才肯停，而这个位**只有**用户点
+    // 「取消」或 `request_cancel()` 才会置 ⇒ 页面/窗口一析构（TaskShell 是页面的 QObject
+    // 子对象，`~QObject` 的 deleteChildren 发生在页面派生成员析构**之后**），worker 永远
+    // 等不到那个位，主线程就**永久阻塞**在 join 上（用户看到的是"关了窗进程还在"）。
+    //
+    // 这里刻意**不走 `request_cancel()`**：那个函数开头有 `if (!running_) return;` 的闸门
+    //（"空闲时点一下不留痕"的口径，`run()` 之外不置位）—— 析构路径必须**无条件**把位置上，
+    // 否则"run 已经把 `running_` 置回 false、但 worker 还没走到下一个轮询点"这类时序下
+    // 取消位仍然是空的。这里直接写原子位（与 `request_cancel` 的内部动作同语义：只置位、
+    // 不碰控件 —— 析构期控件可能已经在拆了）。
+    //
+    // ★ 如实登记的残余（本批不扩范围，见 VERIFY.txt）：**没有取消位的页**（文件系统页 /
+    //   汉化包生成页，按用户 2026-10-06 裁决「封包和字库的取消…直接删除即可」走
+    //   `CancelButton::No`）其 worker 内部没有轮询点 ⇒ 置了位也得等它跑完；析构仍然会
+    //   阻塞到那一步为止。本批修的是"**有取消位的任务**（编码转换 / 文本提取 / XML 校对）
+    //   在关窗时真的会停"。
+    cancel_requested_.store(true);
     for (std::thread& t : threads_) {
         if (t.joinable()) t.join();
     }

@@ -1,5 +1,7 @@
 #include "xrkit/engine/video/ffmpeg.h"
 
+#include "probe_decls.h"
+
 #include "xrkit/core/path.h"
 #include "xrkit/core/theme.h"
 
@@ -141,3 +143,12 @@ bool FfmpegLocator::set_manual(const std::string& ffmpeg, const std::string& ffp
 void FfmpegLocator::invalidate() { state_ = ProbeState::NotProbed; }
 
 }  // namespace xrkit::engine::video
+
+// ── ★★ 2026-10-06（审计第 4 组）：模块**在编**探针（见 `probe_decls.h`）────────
+// 本模块被摘掉 ⇒ 链接失败，而不是 `status_line()` 里少报一个数字。
+extern "C" const char* xrkit_engine_probe_video_tag() { return "xrkit-engine-module-video"; }
+
+namespace xrkit::engine {
+const char* probe_video() { return xrkit_engine_probe_video_tag(); }
+}  // namespace xrkit::engine
+

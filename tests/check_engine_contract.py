@@ -1,0 +1,269 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+r"""判红锁：审计 2026-10-06 **第 4 组余项三条**（★先写锁、再修代码）。
+
+三条都是"门禁里没有任何一条判据能红"的假绿面：
+
+① **`contract_ok()` 不校 `area` 条数**（`src/engine/plugin/contract.cpp:72-101`）
+   修前它只校 HOSTS=6 / LOCATIONS=2 / api.ui=16，**AREA_* 一个都不校** ⇒ 把
+   `AREA_BOTTOM="bottom"` 从生成表里删掉也全绿。而这个 area 槽位是
+   `docs/2.0.0-设计口径.md` 写死的契约（10 个区），少一个 = 插件往那个槽位注册
+   必然被拒（表现成"注册了却不生效"）。
+   本脚本**先证红**：把生成表里的 `AREA_BOTTOM` 删掉 + `kAreaCount=9`，重编
+   engine+cli，跑 `--selftest` **必须红**（修前这里全绿）；还原后再跑必须绿。
+   （注入的判据是"用户自己写下的那句：删掉 AREA_BOTTOM 也全绿"—— 所以注入形态
+   就是删掉它，不是我编一个。）
+
+② **`engine::status_line()` 的常量自报**（`src/engine/engine.cpp:15-17`）
+   修前：`return "engine id=" + engine_id() + " ready=1 modules=5/5";` —— 字面量。
+   实测它早就不对：`src/engine` 下有 **6** 个模块（fs/font/text/xml/video/plugin）。
+   现在 `status_line()` 的数字从**模块表**算出来（每个模块在自己的 TU 里定义
+   `probe_<模块>()`，"在编"有链接期证据），并且 `--module-subset <a,b>` 能把
+   "当前引擎用到的模块集"真的改小 ⇒ **那一串必须跟着变**（否则就是自报常量）。
+
+③ **`LoadResult::registrations` 死字段**（`src/engine/plugin/loader.cpp`）
+   修前**只有失败分支**写它（`init` 返回 0 回滚时），成功加载时恒为 0 ⇒ 字段名义上是
+   "这次加载带来的注册条数"，实际消费端读到的永远是 0。现在成功路径也按**同一份来源**
+   （`Registry::residue_for(owner).registrations()`）填，自检里按 owner 逐容器对账。
+
+输出：`✓`/`✗` 行 + 收尾行 `ENGINE-CONTRACT ok …` / `ENGINE-CONTRACT fail …`；退出码 0/1/2。
+纪律：夹具一律 `%TEMP%`／`build\\_engine_contract_*`（**注入会临时改仓库文件，
+所以注入段自带 try/finally 还原**）；不碰真实语料、不碰游戏目录。
+"""
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+BUILD = ROOT / "build" / "msvc-release"
+CLI = BUILD / "tools" / "cli" / "xrkit_cli.exe"
+TABLES = ROOT / "src" / "engine" / "plugin" / "contract_tables.inc"
+
+VS_ROOT = Path(os.environ.get("XRKIT_VS", r"E:\Software\Tools\Visual Studio\2022\BuildTools"))
+VCVARS = VS_ROOT / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
+ENV_CACHE = ROOT / "build" / "msvc_env.txt"
+
+PROBLEMS = []
+CHECKS = 0
+
+
+def want(cond, label, detail=""):
+    global CHECKS
+    CHECKS += 1
+    if cond:
+        print("  \u2713 " + label)
+    else:
+        print("  \u2717 " + label + ("\u2014\u2014" + detail if detail else ""))
+        PROBLEMS.append(label)
+
+
+def call(args, timeout=300, env=None):
+    child = dict(os.environ)
+    child.setdefault("PYTHONUTF8", "1")
+    child.setdefault("PYTHONIOENCODING", "utf-8")
+    if env:
+        child.update(env)
+    p = subprocess.run([str(CLI)] + [str(a) for a in args], cwd=str(ROOT),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout,
+                       env=child)
+    return p.returncode, p.stdout.decode("utf-8", errors="replace")
+
+
+def fields(line):
+    out = {}
+    for kv in line.split():
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            out[k] = v
+    return out
+
+
+def statusline(module_subset=None):
+    """跑 `--status-line`（可选收窄模块集），返回 (rc, 解析出的 dict, 原始行)。"""
+    args = ["--status-line"]
+    if module_subset is not None:
+        args += ["--module-subset", module_subset]
+    rc, out = call(args)
+    line = ""
+    for ln in out.splitlines():
+        if ln.startswith("STATUSLINE "):
+            line = ln
+    return rc, fields(line), line
+
+
+# ── ① contract_ok 的 area 条数 ────────────────────────────────────────────────
+
+def check_area_contract(tmp: Path) -> None:
+    # 静态面：生成表自己必须与契约一致（10 个区、含 bottom）
+    text = TABLES.read_text(encoding="utf-8")
+    areas_match = re.search(r"kAreas\[\]\s*=\s*\{(.*?)\};", text, re.S)
+    keys = re.findall(r'\{"([^"]*)"', areas_match.group(1)) if areas_match else []
+    count = re.search(r"kAreaCount\s*=\s*(\d+)", text)
+    want(areas_match is not None and count is not None, "生成表里能读到 AREAS 与 kAreaCount",
+         "读不到 ⇒ 后面的断言都是假的")
+    want(count is not None and int(count.group(1)) == 10,
+         "生成表 kAreaCount == 10（docs/2.0.0-设计口径.md：host 6 × location 2 × area 10）",
+         "实得 kAreaCount=%s" % (count.group(1) if count else "-"))
+    want(len(keys) > 0 and all(k != "" for k in keys) and "bottom" in keys,
+         "AREA_BOTTOM=\"bottom\" 在表里（2.x 相对 1.x 明文列出的唯一新增项）",
+         "实得 keys=%r" % keys)
+
+    # 引擎自己的 `contract_ok()` 必须也校它（探针：`--selftest` 里那条会读到 why）
+    rc, out = call(["--selftest"])
+    fails = [ln for ln in out.splitlines() if ln.startswith("FAIL")]
+    want(rc == 0 and not fails,
+         "基线：contract_ok() 通过（未注入）",
+         "rc=%d %s" % (rc, (fails or [""])[0]))
+
+    # ★ 注入：把 AREA_BOTTOM 删掉 + kAreaCount=9 ⇒ 必须红（修前这里全绿）
+    # ⚠ 写回**必须显式 LF**：`Path.write_text()` 在 Windows 上按 `os.linesep` 翻成 CRLF，
+    #   而生成物是 `bytes + LF`（`gen_plugin_contract.py` 明写"文本模式会把 \n 翻成 \r\n"）
+    #   ⇒ 任何非 LF 的写回都会让门禁 [13] 的逐字节比对**假红**（本批踩过一次，已修）。
+    backup = TABLES.read_bytes()
+    injected = backup.decode("utf-8").replace('    {"bottom", "bottom"},  // AREA_BOTTOM\n', "")
+    injected = re.sub(r"inline constexpr int kAreaCount = 10;",
+                      "inline constexpr int kAreaCount = 9;", injected).encode("utf-8")
+    want(injected != backup, "注入文本真的改动了生成表（删 AREA_BOTTOM + 条数 10→9）",
+         "替换没生效 ⇒ 注入段是空的")
+    try:
+        TABLES.write_bytes(injected)
+        build_ok = rebuild(tmp)
+        want(build_ok, "注入后重编 engine+cli 成功", "重编失败（构建输出见上）")
+        if build_ok:
+            rc2, out2 = call(["--selftest"])
+            red = rc2 != 0 and "契约表自检失败" in out2
+            want(red, "注入『删掉 AREA_BOTTOM』⇒ --selftest **必须红**（修前这里全绿）",
+                 "rc=%d\n%s" % (rc2, "\n".join(
+                     ln for ln in out2.splitlines() if "FAIL" in ln or "SELFTEST" in ln)[:900]))
+            want("槽位表 AREAS 应有 10 个区" in out2,
+                 "判红理由是 contract_ok() 自己那条（不是靠 CLI 里另抄的清单）",
+                 "没有出现 contract_ok 的 area 条数理由")
+    finally:
+        TABLES.write_bytes(backup)
+        rebuild(tmp)
+    # ★ 还原的判据：生成表必须与 HEAD 的 blob **逐字节**一致（LF 也不许被动）
+    restored = subprocess.run(["git", "cat-file", "blob",
+                               "HEAD:src/engine/plugin/contract_tables.inc"],
+                              cwd=str(ROOT), stdout=subprocess.PIPE, timeout=60).stdout
+    want(TABLES.read_bytes() == restored,
+         "注入段还原后生成表与 HEAD 逐字节一致（**含 LF**：文本模式写回会翻成 CRLF ⇒ 门禁 [13] 假红）",
+         "实测 %d 字节 vs HEAD %d 字节" % (len(TABLES.read_bytes()), len(restored)))
+    rc3, out3 = call(["--selftest"])
+    want(rc3 == 0 and "SELFTEST pass" in out3, "还原后 --selftest 重新变绿（基线没被改坏）",
+         "rc=%d" % rc3)
+
+
+def rebuild(tmp: Path) -> bool:
+    """只重编 msvc-release（注入段用）。返回是否成功。"""
+    env_file = ENV_CACHE
+    if not env_file.exists():
+        return False
+    env = dict(os.environ)
+    text = env_file.read_bytes().decode("mbcs", errors="replace")
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key:
+            env[key.upper()] = value
+    cmake = (VS_ROOT / "Common7" / "IDE" / "CommonExtensions" / "Microsoft" / "CMake"
+             / "CMake" / "bin" / "cmake.exe")
+    if not cmake.exists():
+        return False
+    p = subprocess.run([str(cmake), "--build", str(BUILD)], cwd=str(ROOT),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=900, env=env)
+    if p.returncode != 0:
+        print(p.stdout.decode("utf-8", errors="replace")[-2000:])
+    return p.returncode == 0
+
+
+# ── ② status_line 的模块计数不再是常量自报 ──────────────────────────────────
+
+def check_status_line() -> None:
+    rc0, base, line0 = statusline()
+    want(rc0 == 0 and base, "--status-line 可用", "rc=%d" % rc0)
+    if not base:
+        return
+    all_n = int(base.get("all", "0"))
+    want(all_n == 6, "编译进来的模块总数 = 6（src/engine 下 6 个模块）",
+         "实得 all=%s（修前 status_line 硬写 5/5，与事实不符）" % base.get("all"))
+    want(base.get("names") == "fs,font,text,xml,video,plugin",
+         "模块清单与 src/engine/ 的目录一一对应", "实得 names=%s" % base.get("names"))
+    want("modules=6/6" in line0 and "ready=1" in line0,
+         "默认路径 status_line 如实报 modules=6/6 ready=1", "实得 %s" % line0)
+
+    # ★ 收窄成 1 块 ⇒ 那一串必须跟着变（修前是字面量，永远 5/5）
+    rc1, one, line1 = statusline("fs")
+    want(rc1 == 0 and "modules=1/1" in line1 and one.get("used") == "1" and one.get("all") == "6",
+         "--module-subset fs ⇒ status_line 变成 modules=1/1（all 仍 6）",
+         "实得 %s" % line1)
+    # ★ 收窄成空集 ⇒ 一块都不生效，ready 也必须跟着落（修前 ready 恒为 1）
+    rc2, none, line2 = statusline("")
+    want(rc2 == 0 and "modules=0/0" in line2 and none.get("ready") == "0",
+         "--module-subset 空串 ⇒ modules=0/0 且 ready=0（修前 ready=1 也是字面量）",
+         "实得 %s" % line2)
+    # 未知名字：不许被"过滤成已知名"悄悄变成"没写"
+    rc3, bogus, line3 = statusline("nope")
+    want(rc3 == 0 and "modules=0/0" in line3,
+         "--module-subset nope ⇒ 0/0（未知名字不许被静默丢弃成『没写』）", "实得 %s" % line3)
+    # 混合：只有认识的那块生效
+    rc4, mix, line4 = statusline("fs,xml,nope")
+    want(rc4 == 0 and "modules=2/2" in line4, "--module-subset fs,xml,nope ⇒ 2/2",
+         "实得 %s" % line4)
+
+
+# ── ③ LoadResult::registrations 成功路径不是死的 ────────────────────────────
+
+def check_registrations() -> None:
+    fixture = BUILD / "tools" / "cli" / "xrkit_test_plugin.dll"
+    if not fixture.exists():
+        want(False, "测试插件夹具存在（%s）" % fixture.name, "构建没编出来")
+        return
+    tmp = Path(tempfile.mkdtemp(prefix="xrkit_engine_contract_"))
+    try:
+        shutil.copy2(fixture, tmp / fixture.name)
+        # 成功路径：夹具的 init 返回 1 ⇒ 注册真的进表；探针必须报出条数（修前恒 0）
+        rc, out = call(["--plugins", str(tmp), "--status-line"])
+        want(rc == 0 and "PLUGINS dir=" in out, "带 --plugins 起 CLI 成功（成功加载的插件夹具）",
+             "rc=%d %s" % (rc, out[:300]))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    # 自检里的对账（按 owner 逐容器）就是这条锁的判据：
+    rc2, out2 = call(["--selftest"])
+    want(rc2 == 0 and "成功加载时 registrations 必须是" not in out2,
+         "自检的『成功路径 registrations == 按 owner 逐容器对账值』必须成立（修前恒 0）",
+         "rc=%d\n%s" % (rc2, "\n".join(ln for ln in out2.splitlines() if "FAIL" in ln)[:600]))
+
+
+def main() -> int:
+    if not CLI.exists():
+        print("ENGINE-CONTRACT skip 缺构建产物：%s（先跑门禁的 build 步）" % CLI)
+        return 2
+    if not VCVARS.is_file():
+        print("ENGINE-CONTRACT skip 缺 MSVC（%s）—— 注入段要重编" % VCVARS)
+        return 2
+    tmp = Path(tempfile.mkdtemp(prefix="xrkit_engine_contract_"))
+    try:
+        print("[① contract_ok 的 area 条数]（静态 + 引擎自检 + 删 AREA_BOTTOM 注入必红）")
+        check_area_contract(tmp)
+        print("[② status_line 的模块计数：常量自报 vs 从模块表算出来]")
+        check_status_line()
+        print("[③ LoadResult::registrations：成功路径不许是死的]")
+        check_registrations()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    print("-" * 66)
+    if PROBLEMS:
+        print("ENGINE-CONTRACT fail %d 条断言不成立：" % len(PROBLEMS))
+        for item in PROBLEMS:
+            print("  · " + item)
+        return 1
+    print("ENGINE-CONTRACT ok (checks=%d failed=0)" % CHECKS)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

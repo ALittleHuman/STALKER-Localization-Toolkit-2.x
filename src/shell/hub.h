@@ -24,7 +24,10 @@ namespace xrkit::shell {
 
 class LogBox;
 class PageBase;
-class SplitPane;
+// ★ 2026-10-06（审计 3-8）：这里原来还有一个 `class SplitPane;` 的前向声明，**全文件没人用**
+//   —— 而它正是"`SplitPane` 是死代码"那条静态锁（`tests/run_ci.py` 的 `shell-smoke` 步）
+//   会命中的那处引用。删掉它之后，`src/shell` 里除 `split_pane.{h,cpp}` 与自检夹具
+//   `smoke.cpp` 之外**一个引用都没有**（判据不挂死代码这条因此可被机械验证）。
 
 // 内置页：id 是稳定标识（插件槽位/日志都按它走），title 是界面上的名字。
 struct PageInfo {

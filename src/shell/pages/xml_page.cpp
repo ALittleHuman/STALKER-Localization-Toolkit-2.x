@@ -193,6 +193,10 @@ XmlPage::XmlPage(QWidget* parent)
         }
         const QString enc_a = enc_a_combo_->currentData().toString();
         const QString enc_b = enc_b_combo_->currentData().toString();
+        // ★★ 2026-10-06（审计 3-5）：**worker 不许读控件** —— 模式 key 在起线程**之前**
+        //   快照下来（worker 里 `current_mode_key()` 会读这个快照，不再碰 `mode_combo_`）。
+        //   同时任务跑完（`apply_finish`）再清空，免得下一轮主线程路径读到旧值。
+        mode_key_at_task_start_ = mode_combo_->currentData().toString();
         task_->run(QStringLiteral("XML 校对"), [this, a, b, enc_a, enc_b](
                                                   const ProgressSink& progress,
                                                   const MessageSink& message) {
@@ -312,13 +316,43 @@ void XmlPage::set_registry(const plugin::Registry* registry) {
 }
 
 std::string XmlPage::current_mode_key() const {
+    // ★★ 2026-10-06（审计 3-5）：**工作线程里不许读控件** —— 「开始比较」在起 worker 之前
+    //   把模式 key 快照进 `mode_key_at_task_start_`（见那边的注释与「开始比较」按钮），
+    //   worker 读快照；主线程路径（自检直调 / 切模式）照旧读下拉。
+    if (!mode_key_at_task_start_.isEmpty() &&
+        QThread::currentThread() != QCoreApplication::instance()->thread()) {
+        return mode_key_at_task_start_.toUtf8().toStdString();
+    }
     return mode_combo_->currentData().toString().toUtf8().toStdString();
 }
 
 const exml::XmlModeSpec* XmlPage::mode() const {
-    const exml::XmlModeSpec* spec = exml::find_mode(current_mode_key());
+    // ── ★★ 2026-10-06（审计 3-7）：**插件模式必须走注册表解析** ──────────────────
+    // 审计原文：「插件比较模式"注册成功后**无人消费**"（`xml_page.cpp:318` +
+    // `compare.cpp:510-515` 只遍历 `builtin_modes()`）」。
+    // 修前这里是 `exml::find_mode(current_mode_key())`，而 `find_mode` **只遍历内置表**
+    // ⇒ 插件模式的 key 永远解析不出来 ⇒ 下面那句 `spec = &builtin_modes().front()` 把
+    // **内置统计模式**当成它的声明：表头/筛选/行取值全用内置那份，插件注册的列与筛选
+    // 一个都不生效（下拉里看得见它、选中它却什么都不是）—— 正是工程 M3 出口判据要禁的
+    // "注册成功但无人消费"。
+    // 现在的口径：**注册表优先**（内置模式也在注册表里，owner 是 `kBuiltinPlugin`）——
+    // 页面与引擎读的是**同一张表**（⑫12.1），不存在"下拉来自注册表、声明来自内置"的分叉。
+    const std::string key = current_mode_key();
+    if (registry_ != nullptr) {
+        if (const plugin::CompareModeReg* reg_mode = registry_->compare_mode(key)) {
+            return &reg_mode->spec;
+        }
+    }
+    const exml::XmlModeSpec* spec = exml::find_mode(key);
     if (spec == nullptr && !exml::builtin_modes().empty()) spec = &exml::builtin_modes().front();
     return spec;
+}
+// ★★ 2026-10-06（审计 3-7）：当前模式的**注册项**（插件模式才非空；内置模式返回 nullptr）。
+// 为什么要这一份：`mode()` 只回声明（列/筛选），而"这一行怎么算/怎么拼明细"要看
+// 注册项上的 `compare` / `detail_builder` —— 插件的回调就在那里，不取就等于没人消费。
+const plugin::CompareModeReg* XmlPage::mode_reg() const {
+    if (registry_ == nullptr) return nullptr;
+    return registry_->compare_mode(current_mode_key());
 }
 
 void XmlPage::rebuild_filter_combo() {
@@ -372,6 +406,13 @@ std::string XmlPage::name_b() const {
 int XmlPage::compare_dirs(const QString& dir_a, const QString& dir_b, const QString& enc_a,
                           const QString& enc_b, const std::function<bool()>& should_stop) {
     ++scan_count_;  // 10.4：这个计数只在真扫目录时涨（切模式不许涨）
+    // ★★ 2026-10-06（审计 3-5）：本函数**既在主线程被自检直接调，也在工作线程被
+    //   `task_->run()` 调**（见构造函数里的「开始比较」）。所以：
+    //   ① 它改的是 `results_`（worker 独占写）——主线程那边必须**碰不到**它：比较期间
+    //      模式/筛选控件**按需禁用**（见下面 `set_compare_controls_enabled`，消除并发写）；
+    //   ② 收尾的控件刷新一律**排队回主线程**（绝不在这条调用栈里动窗口）。
+    const bool on_main = QThread::currentThread() == QCoreApplication::instance()->thread();
+    if (!on_main) set_compare_controls_enabled(false);
     // ⑤：这一轮比较的对象（名字快照，统计标签/CSV 都用它）
     compared_a_ = dir_a;
     compared_b_ = dir_b;
@@ -384,6 +425,11 @@ int XmlPage::compare_dirs(const QString& dir_a, const QString& dir_b, const QStr
     last_compare_total_ = static_cast<int>(all.size());
 
     results_.clear();
+    // ★★ 2026-10-06（审计 3-7）：**这一轮的模式声明与注册项在开跑前定死** ——
+    //   工作线程里不许去读控件/注册表（`mode_combo_->currentData()` 是控件访问）。
+    const exml::XmlModeSpec* spec_this_round = mode();
+    const plugin::CompareModeReg* reg_this_round = mode_reg();
+    const bool plugin_mode = reg_this_round != nullptr && static_cast<bool>(reg_this_round->compare);
     const bool text_mode = current_mode_key() == "text";
     for (const std::string& rel : all) {
         // ★ 2026-10-06（①）：**每个文件之前**轮询取消请求 —— 停下时 results_ 里都是
@@ -421,26 +467,64 @@ int XmlPage::compare_dirs(const QString& dir_a, const QString& dir_b, const QStr
             results_.push_back(std::move(row));
             continue;
         }
-        row.result = text_mode
-                         ? exml::compare_text(rel, text_a.text, text_b.text, text_a.used_encoding,
-                                              text_b.used_encoding)
-                         : exml::compare_stats(rel, text_a.text, text_b.text, text_a.used_encoding,
-                                               text_b.used_encoding);
+        // ★★ 2026-10-06（审计 3-7）：**插件注册的那个回调必须真的被调用** —— 修前这一行
+        //   只有内置两支（text/stats），插件模式被解析成内置统计模式 ⇒ 插件回调**永不执行**
+        //   （"注册成功但无人消费"）。现在三段分流：插件回调优先，其次内置文本，最后内置统计。
+        if (plugin_mode) {
+            row.result = reg_this_round->compare(rel, text_a.text, text_b.text,
+                                                 text_a.used_encoding, text_b.used_encoding);
+            row.result.rel = rel;   // sink 没回 rel 也要有（表格第一列靠它；插件不必自己填）
+            if (row.result.mode.empty() || row.result.mode == "stats") {
+                row.result.mode = spec_this_round != nullptr ? spec_this_round->key : "plugin";
+            }
+            row.result.encoding_a = text_a.used_encoding;
+            row.result.encoding_b = text_b.used_encoding;
+        } else {
+            row.result = text_mode
+                             ? exml::compare_text(rel, text_a.text, text_b.text,
+                                                  text_a.used_encoding, text_b.used_encoding)
+                             : exml::compare_stats(rel, text_a.text, text_b.text,
+                                                   text_a.used_encoding, text_b.used_encoding);
+        }
         row.kind = row.result.consistent ? "same"
                                          : (row.result.only_one_side
                                                 ? (row.result.only_side == "a" ? "only_a" : "only_b")
                                                 : "diff");
         results_.push_back(std::move(row));
     }
-    refresh_rows();
-    // ⑤ 统计标签：**只在主线程刷**（本函数也被工作线程调用 ⇒ 那种情况排队回主线程；
-    //   自检/直接调用在主线程 ⇒ 立刻落地，读标签的断言不用额外 pump）。
-    if (QThread::currentThread() == QCoreApplication::instance()->thread()) {
+    // ★★ 2026-10-06（审计 3-5）：`refresh_rows()` 会 `clear()/new QTreeWidgetItem/
+    //   addTopLevelItem` —— **它只能在主线程跑**。修前这里是无条件直调，于是工作线程
+    //   就在自己的调用栈里碰了 QTreeWidget（而紧接着的统计标签却有主线程守卫 ⇒ 守卫
+    //   不对称，正是审计点名的形态）。现在与统计标签**同一条口径**：非主线程一律排队。
+    if (on_main) {
+        refresh_rows();
         refresh_stats_label();
+        set_compare_controls_enabled(true);
     } else {
-        QMetaObject::invokeMethod(this, [this] { refresh_stats_label(); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            this,
+            [this] {
+                refresh_rows();
+                refresh_stats_label();
+                set_compare_controls_enabled(true);
+                // 收尾在**主线程**：模式快照用完就清（下一轮主线程路径不许读到旧值）
+                mode_key_at_task_start_.clear();
+            },
+            Qt::QueuedConnection);
     }
     return static_cast<int>(results_.size());
+}
+
+// ★★ 2026-10-06（审计 3-5）：比较期间的"模式/筛选控件按需禁用"。
+// 为什么要它（审计原文的后半句）：「叠加"比较期间模式/筛选控件未禁用"（全文件
+// `setEnabled` 零命中）⇒ 主线程 `results_.clear()` 与 worker `push_back` **并发**」——
+// worker 正在往 `results_` 里 push 的时候，用户在模式下拉上点一下 ⇒ 主线程 `set_mode()`
+// 直接 `results_.clear()`，两个线程同时改同一个 `std::vector`（UB / 崩）。
+// 口径：**只有真在工作线程跑的时候**才禁用（主线程直调的判据路径不禁用 —— 自检要在
+// 比较前后来回切模式，禁用会把它自己挡住）；收尾在主线程恢复。
+void XmlPage::set_compare_controls_enabled(bool on) {
+    if (mode_combo_ != nullptr) mode_combo_->setEnabled(on);
+    if (filter_combo_ != nullptr) filter_combo_->setEnabled(on);
 }
 
 bool XmlPage::row_matches(const Row& row) const {
@@ -581,9 +665,15 @@ QString XmlPage::detail_text(int index) const {
     if (index < 0 || index >= static_cast<int>(visible_.size())) return QString();
     const Row& row = results_[static_cast<size_t>(visible_[static_cast<size_t>(index)])];
     // 只有"看这一行"的时候才调完整明细（10.3：摘要路径绝不调它）
-    const std::string text = row.result.mode == "text"
-                                 ? exml::full_text_detail(row.result, name_a(), name_b())
-                                 : exml::full_detail(row.result, name_a(), name_b());
+    // ★★ 2026-10-06（审计 3-7）：插件**给了 `detail_builder`** 就用它 —— 修前这一支
+    //   只认内置 text/stats 两条路 ⇒ 插件注册的明细回调同样"注册成功但无人消费"。
+    const plugin::CompareModeReg* reg = mode_reg();
+    const bool plugin_detail = reg != nullptr && static_cast<bool>(reg->detail_builder);
+    const std::string text =
+        plugin_detail ? reg->detail_builder(row.result, name_a(), name_b())
+                      : (row.result.mode == "text"
+                             ? exml::full_text_detail(row.result, name_a(), name_b())
+                             : exml::full_detail(row.result, name_a(), name_b()));
     if (!row.result.warning.empty()) return utf8(row.result.warning + "\n\n" + text);
     return utf8(text);
 }

@@ -1592,6 +1592,61 @@ def step_shell_smoke(release: bool) -> None:
         return
     ok("解包只有一条路（6.11：fs_page.cpp 里 extract_package( 恰好 1 处、无旁路）")
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # ★★ 2026-10-06（审计 §7 第 3 组的**静态面**：3-3 / 3-8）
+    #   动行为那半在 `src/shell/smoke.cpp` 的 3-x 锁里（跑得到、判得红）；
+    #   这里锁的是"**语义只许一份**"这条形式判据 —— 拆掉它就等于又开了第二份实现。
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # 3-3：判重**只许**走 `core::path_equals`。修前 `add_paths`/`scan_dir` 各写一份
+    # `QString::compare(..., Qt::CaseInsensitive)`（认不出 `E:\a\x` 与 `E:/a/x` 是同一份）。
+    fs_src = ROOT / "src" / "shell" / "pages" / "fs_page.cpp"
+    fs_code = active_code(fs_src.read_text(encoding="utf-8", errors="replace"))
+    if "core::path_equals(" not in fs_code:
+        fail("判重口径（3-3）：fs_page.cpp 必须用 `core::path_equals(` 判重 —— "
+             "整串比较认不出正/反斜杠与 `.`/`..` 段，会重复入源")
+        return
+    if "QString::compare(source.path" in fs_code:
+        fail("判重口径（3-3）：fs_page.cpp 里还有整串比较的判重（`QString::compare(source.path…`）"
+             "—— 判重只许 `core::path_equals` 一份")
+        return
+    ok("判重只此一份（3-3：`core::path_equals`，无整串比较）")
+
+    # 3-4：**加载序只此一份实现**，而且每条加源路径都走它（修前只有 `scan_dir` 会排）。
+    if "apply_load_order()" not in fs_code or fs_code.count("apply_load_order()") < 3:
+        fail("加载序（3-4）：fs_page.cpp 的 `apply_load_order()` 必须被**每条加源路径**调用"
+             "（`push_source` / `scan_dir` 都要；实测出现 %d 次）"
+             % fs_code.count("apply_load_order()"))
+        return
+    if "sort_sources_by_basename" not in fs_code:
+        fail("加载序（3-4）：排序必须交给引擎 `sort_sources_by_basename`（页面不许自己排）")
+        return
+    ok("加载序只此一份且每条加源路径都走（3-4：`apply_load_order`）")
+
+    # 3-8：**`SplitPane` 是死代码**（产品路径零实例化）—— 判据不许挂在产品不用的类上。
+    #   口径（本批二选一里选的那条，理由写进 `docs/2.0.0-外壳规格.md` 的 §10 表）：
+    #   产品分栏用 `QSplitter`（外壳规格 §10 的"拖到底/松手重排"那两条判据随之改写）；
+    #   `SplitPane` 只作为**自检夹具**保留（它验的是"面板分配算法"，不是产品控件），
+    #   所以：`src/shell` 下**除 smoke 自身**不许出现 `SplitPane` 的实例化/包含。
+    split_hits = []
+    for src in sorted((ROOT / "src" / "shell").rglob("*")):
+        if src.suffix not in (".cpp", ".h"):
+            continue
+        if src.name in ("split_pane.cpp", "split_pane.h", "smoke.cpp"):
+            continue   # 类自己 + 自检夹具（判据的来源）
+        text = active_code(src.read_text(encoding="utf-8", errors="replace"))
+        if "SplitPane" in text:
+            split_hits.append(str(src.relative_to(ROOT)))
+    if split_hits:
+        fail("死代码（3-8）：`SplitPane` 只许出现在 `split_pane.{h,cpp}` 与 `smoke.cpp`（自检夹具），"
+             "产品路径不许引用它 —— 实测：%s" % "、".join(split_hits))
+        return
+    if "new QSplitter(" not in fs_code:
+        fail("死代码（3-8）：FS 页的分栏必须是 `new QSplitter(`（产品真实用的那个）—— "
+             "判据不许挂在产品不用的 `SplitPane` 上")
+        return
+    ok("SplitPane 只作自检夹具、产品用 QSplitter（3-8：判据不挂死代码）")
+
     # 对照表 ⑨9.7：**页面不许自己拼"定案步骤"标签**。1.x 的事故就是 convert_app 复算了
     # `多字节(...)` / `指定(...)` / `声明(...)` / `统计(...)`，而判定的值来自别处 ⇒
     # 标签与判定自相矛盾。锁的形态取"标签 + 左括号"这一**构造形态**：
@@ -2113,6 +2168,37 @@ def step_unpack_only(release: bool) -> None:
         fail("解包选中口径有判据不成立（见上）")
 
 
+def step_engine_contract(release: bool) -> None:
+    """审计第 4 组余项三条（★先写锁、再修代码）+ 3-3/3-4 的静态面。
+
+    覆盖：
+      · `contract_ok()` 不校 `area` 条数 ⇒ 删掉 `AREA_BOTTOM` 也全绿（本步**注入必红**）；
+      · `engine::status_line()` 的**常量自报** ⇒ `--module-subset` 收窄模块集，那一串必须跟着变；
+      · `LoadResult::registrations` **死字段** ⇒ 成功路径必须报出真条数。
+
+    独立成步（不塞进 selftest）：被 `--only` 过滤时按既有记账进 UNCOVERED。
+    """
+    say("[engine-contract] 第 4 组余项三条（area 条数 / status_line / registrations）")
+    script = ROOT / "tests" / "check_engine_contract.py"
+    if not require_repo_file(script, "引擎契约判据"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=1800)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("[") \
+                or s.startswith("ENGINE-CONTRACT"):
+            say("  " + s)
+    if rc == 0:
+        ok("area 条数/status_line/registrations 三条都判得红且已修绿")
+    elif rc == 2:
+        prereq("引擎契约判据的外部前提", "缺构建产物/工具链", release)
+    else:
+        fail("引擎契约判据有不成立的断言（见上）")
+
+
 STEPS = [
     ("build", step_build),
     ("no-qt", step_no_qt_lock),
@@ -2167,6 +2253,9 @@ STEPS = [
     #     ② 重复运行判的是**上一轮**留下的旧 exe —— 这一轮把 Console 子系统改回去也照样绿。
     #   现在挪到 `shell-smoke` 之后：这一轮的 exe 刚编出来，判的是**本次**产物。
     ("no-console", step_no_console),
+    # ★★ 2026-10-06（本批）：审计第 4 组余项三条（area 条数 / status_line 常量自报 /
+    #   registrations 死字段）。排在 shell-smoke 之后：那一步才把 CLI 与外壳都编出来。
+    ("engine-contract", step_engine_contract),
     # 排在 shell-smoke **之后**：那一步才把 xrkit_app.exe 编出来（这一步要读它的真实资源字节）
     ("winres", step_winres),
 ]
