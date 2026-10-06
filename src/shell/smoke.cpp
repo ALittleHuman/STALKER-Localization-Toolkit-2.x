@@ -193,6 +193,76 @@ QString exe_version_field(const QString& name) {
 }
 #endif
 
+// ★★ 2026-10-06（审计处理批·0-3 之 B1-7）：`user.ltx` 的"备份→改动→复原"三处用例，
+//   修前判据是 `QFile(ltx).size() == ltx_before.size()`，两个漏洞：
+//     ① **读备份失败时** `ltx_before` 是空 ⇒ 判据退化成 `0 == 0` ⇒ 数据被破坏却判"还原成功"；
+//     ② 即便读成功也**只比长度不比内容** ⇒ 同长度写坏（截断/错位）照样绿。
+//   这里按"内容逐字节相等"判，并把"备份到底读到没有"作为**前置**（没读到就明说无从校验）。
+//   返回：{0,1} = 是否还原成原样；false 时 `why` 写明原因（不存在/长度变/内容变/备份缺失）。
+bool user_ltx_restored(const QString& path, bool existed, const QByteArray& before, QString* why) {
+    const bool now_exists = QFileInfo::exists(path);
+    if (now_exists != existed) {
+        if (why != nullptr) *why = QStringLiteral("存在状态变了（原 %1 / 现 %2）")
+                                      .arg(existed ? 1 : 0).arg(now_exists ? 1 : 0);
+        return false;
+    }
+    if (!existed) return true;                      // 原本就没有 ⇒ 也不该被留下
+    if (before.isEmpty()) {
+        if (why != nullptr) *why = QStringLiteral("**备份没读到**（无从校验，不许算还原成功）");
+        return false;
+    }
+    QFile back(path);
+    if (!back.open(QIODevice::ReadOnly)) {
+        if (why != nullptr) *why = QStringLiteral("复原后读不回来（打不开）");
+        return false;
+    }
+    const QByteArray after = back.readAll();
+    if (after != before) {
+        if (why != nullptr) *why = QStringLiteral("内容不一致（原 %1 字节 / 现 %2 字节）")
+                                      .arg(before.size()).arg(after.size());
+        return false;
+    }
+    return true;
+}
+
+// 取样式表里**某条规则**的规则体（`{` 到配对 `}`，`.simplified()`）。
+//   `last` = true ⇒ 取**最后一条**同名规则。★ 这是 QSS 的语义要求：Qt 里后写的规则赢，
+//   所以"生效的那一条"永远是最后一条（`theme.cpp:447-451` 的注释自己写明了这点）。
+//   ★★ 2026-10-06（审计处理批·0-3 之 B1-3/B1-4）：修前 QSS 锁用的是 `indexOf`
+//      （取**第一条**）、表头锁用的是 `lastIndexOf` 之后的 `qss.mid(at)`（取**到文末的整段**），
+//      两个都抓不住"生效的那一条" ⇒ 把生效规则改回缺陷写法/整条删掉，锁仍然绿。
+//   ★ 选择器匹配必须**以规则头为准**（选择器后面只能有空白、然后就是 `{`）：
+//      `QComboBox QAbstractItemView` 是 `QComboBox QAbstractItemView::item { … }` 的**真前缀**，
+//      用纯子串查找会取到错误的那条规则（实测：下拉③ 因此读到 `::item` 的规则体而误判红）。
+QString qss_rule_body(const QString& sheet, const QString& selector, bool last) {
+    int found = -1;
+    for (int at = sheet.indexOf(selector); at >= 0; at = sheet.indexOf(selector, at + 1)) {
+        int k = at + selector.size();
+        while (k < sheet.size() && (sheet.at(k) == QLatin1Char(' ') || sheet.at(k) == QLatin1Char('\n') ||
+                                    sheet.at(k) == QLatin1Char('\t') || sheet.at(k) == QLatin1Char('\r'))) {
+            ++k;
+        }
+        if (k < sheet.size() && sheet.at(k) == QLatin1Char('{')) {
+            found = at;
+            if (!last) break;
+        }
+    }
+    if (found < 0) return QString();
+    const int open = sheet.indexOf(QLatin1Char('{'), found);
+    if (open < 0) return QString();
+    // 括号配平地找闭合符（QSS 规则体里可以是任意声明，别用"第一个 }"糊过去）
+    int depth = 0;
+    for (int i = open; i < sheet.size(); ++i) {
+        if (sheet.at(i) == QLatin1Char('{')) {
+            ++depth;
+        } else if (sheet.at(i) == QLatin1Char('}')) {
+            --depth;
+            if (depth == 0) return sheet.mid(open + 1, i - open - 1).simplified();
+        }
+    }
+    return QString();
+}
+
 }  // namespace
 
 SmokeResult run_smoke() {
@@ -729,9 +799,13 @@ SmokeResult run_smoke() {
         const QString ltx = QString::fromStdString(xrkit::core::user_ltx_path());
         const bool ltx_existed = QFileInfo::exists(ltx);
         QByteArray ltx_before;
+        bool ltx_backed_up = false;                     // ★ 备份到底读到没有（B1-7）
         if (ltx_existed) {
             QFile before(ltx);
-            if (before.open(QIODevice::ReadOnly)) ltx_before = before.readAll();
+            if (before.open(QIODevice::ReadOnly)) {
+                ltx_before = before.readAll();
+                ltx_backed_up = true;
+            }
         }
         // 预置一个**别的**段/键（"只动该动的键"那条判据的哨兵）
         check(xrkit::core::save_user_value("ffmpeg", "path", "E:/sentinel/ffmpeg.exe"),
@@ -797,9 +871,14 @@ SmokeResult run_smoke() {
         } else {
             QFile::remove(ltx);
         }
-        check(QFileInfo::exists(ltx) == ltx_existed &&
-                  (!ltx_existed || QFile(ltx).size() == ltx_before.size()),
-              QStringLiteral("④-b 自检把 user.ltx 还原（存在=%1）").arg(ltx_existed ? 1 : 0));
+        QString ltx_why_4b;
+        const bool ltx_ok_4b = user_ltx_restored(ltx, ltx_existed, ltx_before, &ltx_why_4b);
+        check(!ltx_existed || ltx_backed_up,
+              QStringLiteral("④-b 自检前**真的读到了** user.ltx 的备份（读失败 ⇒ 还原判据改判红）"));
+        check(ltx_ok_4b,
+              QStringLiteral("④-b 自检把 user.ltx **逐字节**还原（存在=%1；%2）")
+                  .arg(ltx_existed ? 1 : 0)
+                  .arg(ltx_ok_4b ? QStringLiteral("一致") : ltx_why_4b));
     }
 
     // ④-c ★★ 2026-10-06（H-1 / H-2）：**启动序列本身**必须能在自检里复现（判红锁）。
@@ -818,9 +897,13 @@ SmokeResult run_smoke() {
         const QString ltx = QString::fromStdString(xrkit::core::user_ltx_path());
         const bool ltx_existed = QFileInfo::exists(ltx);
         QByteArray ltx_before;
+        bool ltx_backed_up = false;                     // ★ 备份到底读到没有（B1-7）
         if (ltx_existed) {
             QFile before(ltx);
-            if (before.open(QIODevice::ReadOnly)) ltx_before = before.readAll();
+            if (before.open(QIODevice::ReadOnly)) {
+                ltx_before = before.readAll();
+                ltx_backed_up = true;
+            }
         }
         // "同源"那条判据的参照：**别写死字号** —— 先在 ui_scale=1.0 下量一次，
         // 之后字号必须**恰好**乘 1.2（写成常量就等于把某个 Qt 默认字号钉进判据）。
@@ -875,9 +958,49 @@ SmokeResult run_smoke() {
         } else {
             QFile::remove(ltx);
         }
-        check(QFileInfo::exists(ltx) == ltx_existed &&
-                  (!ltx_existed || QFile(ltx).size() == ltx_before.size()),
-              QStringLiteral("④-c 自检把 user.ltx 还原（存在=%1）").arg(ltx_existed ? 1 : 0));
+        QString ltx_why;
+        const bool ltx_restore_ok = user_ltx_restored(ltx, ltx_existed, ltx_before, &ltx_why);
+        check(!ltx_existed || ltx_backed_up,
+              QStringLiteral("④-c 自检前**真的读到了** user.ltx 的备份（读失败 ⇒ 下面的还原判据"
+                             "会把 0==0 读成「还原成功」，那是假绿）"));
+        check(ltx_restore_ok,
+              QStringLiteral("④-c 自检把 user.ltx **逐字节**还原（存在=%1；%2）")
+                  .arg(ltx_existed ? 1 : 0)
+                  .arg(ltx_restore_ok ? QStringLiteral("一致") : ltx_why));
+    }
+
+    // ★★ 2026-10-06（审计处理批·0-3 之 B1-7 自证）：上面 ④-b/④-c/D2-字体 三处"还原"判据
+    //   现在都走 `user_ltx_restored()`（逐字节比 + 备份缺失即红）。这里给它**正反两个夹具**，
+    //   证"同长度写坏也会红"这句话不是空话（旧判据只比长度 ⇒ 同长度写坏绿）。
+    //   靶子是临时目录，**不碰**真实 user.ltx。
+    {
+        const QString probe_path =
+            QDir::temp().filePath(QStringLiteral("xrkit_smoke_ltx_restore_probe.txt"));
+        QFile::remove(probe_path);
+        const bool wrote = [&]() {
+            QFile f(probe_path);
+            if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+            return f.write(QByteArray("AAAA")) == 4;
+        }();
+        QString why_ok;
+        QString why_bad;
+        const QByteArray backup("AAAA");
+        const bool same_ok = user_ltx_restored(probe_path, true, backup, &why_ok);   // 应为真
+        // 同长度、内容不同 ⇒ 必须红（旧判据 `size()==size()` 在这里是绿的）
+        QFile mutate(probe_path);
+        const bool mutated = mutate.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                             mutate.write(QByteArray("BBBB")) == 4;
+        mutate.close();
+        const bool same_len_dirty = user_ltx_restored(probe_path, true, backup, &why_bad);  // 应为假
+        // 备份没读到（空 before）⇒ 也必须红，不许把 0==0 读成"还原成功"
+        const bool empty_backup = user_ltx_restored(probe_path, true, QByteArray(), &why_bad);
+        QFile::remove(probe_path);
+        check(wrote && mutated && same_ok && !same_len_dirty && !empty_backup,
+              QStringLiteral("⑭ user.ltx 还原判据自证：一致=%1（应 1）/ 同长度写坏=%2（应 0，"
+                             "旧判据在这里是绿的）/ 备份缺失=%3（应 0）")
+                  .arg(same_ok ? 1 : 0)
+                  .arg(same_len_dirty ? 1 : 0)
+                  .arg(empty_backup ? 1 : 0));
     }
 
     // ⑤ HiDPI：外壳里所有硬编码尺寸都要过 px()
@@ -1548,9 +1671,16 @@ SmokeResult run_smoke() {
               }),
               QStringLiteral("13.1 首次 run 被接受"));
         check(task.running(), QStringLiteral("13.1 running 在**线程启动前**就置位"));
-        check(!task.run(QStringLiteral("第二次"), nullptr) || true, QStringLiteral("13.1 重入被拒"));
+        // ★★ 2026-10-06（审计处理批·0-3 之 B1-1）：修前这一条是
+        //   `check(!task.run(QStringLiteral("第二次"), nullptr) || true, …)`
+        //   —— 两个洞：① `|| true` 让整句**恒真**（无论结果如何都绿）；
+        //   ② 传的是 `nullptr` worker，而 `task_shell.cpp` 在 worker 为空时**直接 return false**、
+        //      根本没走到"重入拒绝"那条分支 ⇒ 名字声称的"重入被拒"一点都没被测到。
+        //   现在喂**真的 worker**，并且把"第二次必须被拒"钉死在返回值上；
+        //   真正的牙齿（`rejected_count()==1`）由下一句保留 —— 两句一起才有意义。
         const bool second = task.run(QStringLiteral("第二次"),
                                      [](const ProgressSink&, const MessageSink&) {});
+        check(!second, QStringLiteral("13.1 重入被拒（第二次 run 必须返回 false）"));
         check(!second && task.rejected_count() == 1,
               QStringLiteral("13.1 重入返回 false（rejected=%1）").arg(task.rejected_count()));
         // 等第一个任务收尾（队列事件要 processEvents 才会到主线程）
@@ -2181,7 +2311,19 @@ SmokeResult run_smoke() {
                   QStringLiteral("① 空状态下**整个条目面板收掉**（解包页空状态＝两行 + 一个列表填满，"
                                  "与封包页同形）"));
             // ①-a1 操作栏按钮**贴右**（`add_action` 里 stretch 在 index 0 ⇒ 必须追加，不许前插）
-            if (empty_page.action_bar() != nullptr && empty_page.unpack_all_button() != nullptr) {
+            //
+            // ★★ 2026-10-06（审计处理批·0-3 之 B1-6）：修前这句是
+            //   `if (action_bar() && unpack_all_button()) { check(贴右) }` ——
+            //   条件不成立时**断言静默消失**：`action_bar()` 变 nullptr（正是"操作栏丢了"这种回归）
+            //   反而一条失败都不记。现在把条件本身也写成判据（缺件即红），几何检查才在块内做。
+            const bool right_ok = empty_page.action_bar() != nullptr &&
+                                  empty_page.unpack_all_button() != nullptr;
+            check(right_ok,
+                  QStringLiteral("① 前提：空状态页的操作栏与「全部解包」按钮都在"
+                                 "（action_bar=%1 button=%2）")
+                      .arg(empty_page.action_bar() != nullptr ? 1 : 0)
+                      .arg(empty_page.unpack_all_button() != nullptr ? 1 : 0));
+            if (right_ok) {
                 QPushButton* last = empty_page.unpack_all_button();
                 const int right_gap =
                     empty_page.action_bar()->width() - (last->x() + last->width());
@@ -3137,8 +3279,21 @@ SmokeResult run_smoke() {
             tab_page.hide();
         }
 
-        check(async_page.task() != nullptr && async_page.task()->panel() != nullptr,
-                  QStringLiteral("③ 解包/封包要挂在任务壳上（有面板才算接上）"));
+        // ★★ 2026-10-06（审计处理批·0-3 之 B1-9）：修前这里只把"任务壳接上了"写成 `check(...)`，
+        //   紧接着就 `unpack_all_button()->click()` / `task()->running()` —— **没判空就解引用**。
+        //   真出接线回归时自检会**段错误**，门禁看到的是崩溃而不是那条红，且此后所有用例不再执行。
+        //   现在把"前提"变成**控制流**：缺件就记红并跳过这一段（先判红，不许先崩）。
+        const bool async_wired =
+            async_page.task() != nullptr && async_page.task()->panel() != nullptr &&
+            async_page.unpack_all_button() != nullptr && async_page.out_edit() != nullptr;
+        check(async_wired,
+              QStringLiteral("③ 解包/封包要挂在任务壳上（有面板/操作按钮/输出框才算接上；"
+                             "task=%1 panel=%2 button=%3 out=%4）")
+                  .arg(async_page.task() != nullptr ? 1 : 0)
+                  .arg(async_page.task() != nullptr && async_page.task()->panel() != nullptr ? 1 : 0)
+                  .arg(async_page.unpack_all_button() != nullptr ? 1 : 0)
+                  .arg(async_page.out_edit() != nullptr ? 1 : 0));
+        if (async_wired) {
             check(async_page.add_paths({db_path}) == 1, QStringLiteral("③ 异步夹具：装一个真包"));
             async_page.out_edit()->setText(async_out);
             async_page.unpack_all_button()->click();
@@ -3166,6 +3321,8 @@ SmokeResult run_smoke() {
                   QStringLiteral("③ 异步解包的产物与同步一致（<输出>/gamedata/a.txt == AA）"));
             async_page.hide();
         }
+        }   // ★ `if (async_wired)` 收尾：把"解包走任务壳"这一段的**控制流守卫**关掉，
+            //   后面 `QDir(dir).removeRecursively(); page.hide();` 仍按原样执行。
         QDir(dir).removeRecursively();
         page.hide();
     }
@@ -4000,13 +4157,24 @@ SmokeResult run_smoke() {
                 // ★ 加一条**有牙**的锁：表头高度不随 QSS 内边距变（padding 只影响内容区），
                 //   所以光比高度抓不住"有人把内边距调回 8px" —— 直接钉住样式表里那一节的
                 //   上下内边距必须是 px(4)（8px 那版实测把 15px 的字压在 9px 内容区里、顶部被切）。
+                //
+                //   ★★ 2026-10-06（审计处理批·0-3 之 B1-4）：修前这里是
+                //   `qss.mid(qss.lastIndexOf("QHeaderView::section {"))` —— 取的是**从那条规则
+                //   一直到样式表末尾**的整段，再 `contains("padding: 4px ")`。样式表里
+                //   `QHeaderView::section {` 有**两条**（基础表 + 尺寸档位段），把**生效的那条**
+                //   （带 `font_content` 高度/内边距、真正防裁字的那条）整条删掉后，
+                //   `lastIndexOf` 落到另一条上，而那句 `padding: 4px ` 在后面的规则里照样能命中 ⇒
+                //   锁保持绿。现在只取**那一条规则的规则体**（括号配平），删掉就红。
                 {
                     const QString qss = xrkit::shell::stylesheet_for(xrkit::core::ThemeMode::Dark);
-                    const int at = qss.lastIndexOf(QStringLiteral("QHeaderView::section {"));
-                    const QString rule = at >= 0 ? qss.mid(at) : QString();
-                    check(rule.contains(QStringLiteral("padding: %1px ").arg(xrkit::core::px(4))),
-                          QStringLiteral("表头 QSS 的上下内边距必须是 px(%1)（回退到 8px 就会裁字）")
-                              .arg(xrkit::core::px(4)));
+                    const QString rule =
+                        qss_rule_body(qss, QStringLiteral("QHeaderView::section"), /*last=*/true);
+                    const QString want = QStringLiteral("padding: %1px ").arg(xrkit::core::px(4));
+                    check(!rule.isEmpty() && rule.contains(want),
+                          QStringLiteral("表头 QSS 的上下内边距必须是 px(%1)（回退到 8px 就会裁字；"
+                                         "生效规则体=「%2」）")
+                              .arg(xrkit::core::px(4))
+                              .arg(rule));
                 }
                 head_page.hide();
             }
@@ -5018,7 +5186,18 @@ SmokeResult run_smoke() {
             const int card_h = skel.card() != nullptr ? skel.card()->height() : -1;
             check(card_h > 0 && card_h >= page_h * 55 / 100,
                   QStringLiteral("骨架③ 内容卡片 >= 页面高 55%%（实测 %1 / %2）").arg(card_h).arg(page_h));
-            if (skel.action_bar() != nullptr && skel.action_bar()->parentWidget() == &skel) {
+            // ★★ 2026-10-06（审计处理批·0-3 之 B1-6）：同 ①-a1 —— 条件不成立时断言静默消失。
+            //   把"操作栏存在且挂在页上"也写成判据（缺件即红）。
+            const bool bar_ok = skel.action_bar() != nullptr &&
+                                skel.action_bar()->parentWidget() == &skel;
+            check(bar_ok,
+                  QStringLiteral("骨架④ 前提：操作栏存在且挂在页上（action_bar=%1 parent=页?%2）")
+                      .arg(skel.action_bar() != nullptr ? 1 : 0)
+                      .arg(skel.action_bar() != nullptr &&
+                                   skel.action_bar()->parentWidget() == &skel
+                               ? 1
+                               : 0));
+            if (bar_ok) {
                 const int bottom_gap = page_h - (skel.action_bar()->y() + skel.action_bar()->height());
                 check(bottom_gap >= 0 && bottom_gap <= xrkit::core::px(10),
                       QStringLiteral("骨架④ 操作栏贴底（底部余量 %1px）").arg(bottom_gap));
@@ -6023,6 +6202,30 @@ SmokeResult run_smoke() {
         check(page.font_state_text(QString()).contains(QStringLiteral("未选择字体")),
               QStringLiteral("⑪11.8 没选字体时不乱下结论"));
 
+        // ★★ 2026-10-06（审计处理批·0-3 之 B1-8）：上面三条锁（11.8 简体/日语、11.9 拒绝生成）
+        //   都包在 `if (exists(…))` 里，而 `msyh` 指向的是**仓库之外**开发机私有路径
+        //   （`…\otherTools\CN_Pack_Generator\msyh.ttf`）⇒ 换台机器三条锁**静默消失**，
+        //   连 `notes` 里都查不到（全文件其余条件跳过都写 note）。现在：
+        //     ① **三个夹具一个都没有** ⇒ 判红（"判据一条都没跑"不是通过）；
+        //     ② 每一个缺件都写进 `result.notes`（可见），缺哪个说哪个。
+        const bool have_msyh = exists(msyh);
+        const bool have_jpan = exists(jpan);
+        const bool have_latin = exists(latin);
+        if (!have_msyh) {
+            result.notes.append(QStringLiteral("⑪11.8 简体字体夹具缺件（%1）⇒ 该条锁**未覆盖**")
+                                    .arg(msyh));
+        }
+        if (!have_jpan) {
+            result.notes.append(QStringLiteral("⑪11.8 日语字体夹具缺件（%1）⇒ 该条锁**未覆盖**")
+                                    .arg(jpan));
+        }
+        if (!have_latin) {
+            result.notes.append(QStringLiteral("⑪11.9 拒绝生成夹具缺件（%1）⇒ 该条锁**未覆盖**")
+                                    .arg(latin));
+        }
+        check(have_msyh || have_jpan || have_latin,
+              QStringLiteral("⑪11.8/11.9 字体夹具**一个都没找到** ⇒ 这一组锁全部没跑（见 notes）"));
+
         // 11.9：缺字形**拒绝式检查、在建目录之前** —— 产物目录不许被建出来
         if (exists(latin)) {
             const QString out = QDir::temp().filePath(QStringLiteral("xrkit_smoke_fontpack_out"));
@@ -6233,7 +6436,12 @@ SmokeResult run_smoke() {
         style_hub.resize(1600, 1000);
         style_hub.show();
         style_hub.set_current_page(5);   // 汉化包生成页（用户截图那一页：三条路径行 + 下拉 + 勾选框）
-        for (int pass = 0; pass < 3; ++pass) {
+        // ★★ 2026-10-06（审计处理批·0-3 之 B1-9）：下面这个 3 轮布局循环**未判空即解引用**
+        //   `style_hub.layout()->activate()` —— 壳的顶层布局真丢了（正是"排版回归"那种情形）
+        //   先崩而不是先判红。判据钉住它，崩之前先给出那条红。
+        check(style_hub.layout() != nullptr,
+              QStringLiteral("⑭ 前提：壳的顶层布局存在（nullptr ⇒ 下面全部像素判据没意义）"));
+        for (int pass = 0; style_hub.layout() != nullptr && pass < 3; ++pass) {
             style_hub.layout()->activate();
             for (QWidget* child : style_hub.findChildren<QWidget*>()) {
                 if (child->layout() != nullptr) child->layout()->activate();
@@ -6244,6 +6452,7 @@ SmokeResult run_smoke() {
         // ① 标签背后的底板：**字段行容器**（`DropZones::attach_row` 统一挂 `field_row` 名字，
         //    六个页面都走这一条）自己不许涂底 —— 涂了就是用户截图里标签背后那块深灰圆角。
         int plate_hits = 0;
+        int plate_rows_scanned = 0;   // ★ 候选样本数（B1-5：没有自证样本 ⇒ 候选集空就恒绿）
         QString plate_detail;
         for (QWidget* container : style_hub.findChildren<QWidget*>()) {
             if (container->objectName() != QStringLiteral("field_row")) continue;
@@ -6256,6 +6465,7 @@ SmokeResult run_smoke() {
             if (edit == nullptr || label == nullptr) continue;   // 只认"标签 + 输入框"这种字段行
             const QSize size = container->size();
             if (size.width() < 8 || size.height() < 8) continue;
+            ++plate_rows_scanned;
             // 判据直接盯"谁涂了底"：把**行容器自己**渲染成图（DrawWindowBackground）
             QImage image(size, QImage::Format_ARGB32_Premultiplied);
             image.fill(QColor(0, 0, 0, 0));
@@ -6278,8 +6488,9 @@ SmokeResult run_smoke() {
                 }
             }
         }
-        check(plate_hits == 0,
-              QStringLiteral("⑭ 标签背后不许有深灰底板（%1 处；%2）")
+        check(plate_rows_scanned > 0 && plate_hits == 0,
+              QStringLiteral("⑭ 标签背后不许有深灰底板（扫到 %1 个可见字段行，%2 处涂底；%3）")
+                  .arg(plate_rows_scanned)
                   .arg(plate_hits)
                   .arg(plate_detail.isEmpty() ? QStringLiteral("无") : plate_detail));
 
@@ -6287,11 +6498,13 @@ SmokeResult run_smoke() {
         //    渲染出来的底必须是**透明的**（底交给卡片），不许自己涂一层 `bg`。
         {
             int panel_hits = 0;
+            int panel_scanned = 0;
             QString detail;
             for (QWidget* panel : style_hub.findChildren<QWidget*>()) {
                 if (panel->objectName() != QStringLiteral("task_panel")) continue;
                 const QSize size = panel->size();
                 if (size.width() < 8 || size.height() < 8) continue;
+                ++panel_scanned;
                 QImage image(size, QImage::Format_ARGB32_Premultiplied);
                 image.fill(QColor(0, 0, 0, 0));
                 panel->render(&image);
@@ -6305,9 +6518,10 @@ SmokeResult run_smoke() {
                     }
                 }
             }
-            check(panel_hits == 0,
-                  QStringLiteral("⑭ 任务面板不许自己涂 %1 底（%2 处；%3）")
+            check(panel_scanned > 0 && panel_hits == 0,
+                  QStringLiteral("⑭ 任务面板不许自己涂 %1 底（扫到 %2 个面板，%3 处涂底；%4）")
                       .arg(bg.name())
+                      .arg(panel_scanned)
                       .arg(panel_hits)
                       .arg(detail.isEmpty() ? QStringLiteral("无") : detail));
         }
@@ -6315,9 +6529,11 @@ SmokeResult run_smoke() {
         // ③ 下拉框：控件矩形内不许有"与面板底色不同的整块填充"
         {
             int offenders = 0;
+            int combos_scanned = 0;   // ★ 候选样本数（B1-5）
             QString detail;
             for (QComboBox* combo : style_hub.findChildren<QComboBox*>()) {
                 if (!combo->isVisible()) continue;
+                ++combos_scanned;
                 QImage image(combo->size(), QImage::Format_ARGB32_Premultiplied);
                 image.fill(QColor(0, 0, 0, 0));
                 combo->render(&image);
@@ -6336,8 +6552,9 @@ SmokeResult run_smoke() {
                     }
                 }
             }
-            check(offenders == 0,
-                  QStringLiteral("⑭ 下拉框自己的底要与输入框同一套令牌（%1 处；%2）")
+            check(combos_scanned > 0 && offenders == 0,
+                  QStringLiteral("⑭ 下拉框自己的底要与输入框同一套令牌（扫到 %1 个可见下拉，%2 处；%3）")
+                      .arg(combos_scanned)
                       .arg(offenders)
                       .arg(detail.isEmpty() ? QStringLiteral("无") : detail));
         }
@@ -6372,6 +6589,16 @@ SmokeResult run_smoke() {
             };
             const int on_hits = mark_pixels(true);
             const int off_hits = mark_pixels(false);
+            // ★★ 2026-10-06（审计处理批·0-3 之 B1-5）：下条判据是"选中态至少 12 个亮像素"，
+            //   修前**没有**"这一笔真的画出来了"的自证 —— 一旦 `PE_IndicatorCheckBox` 不再被
+            //   本项目样式接管（或探针尺寸退化成 0），`on_hits` 与 `off_hits` 会**一起**变成 0，
+            //   而 `off_hits <= 2` 照样绿 ⇒ "没画勾"被读成"未选中态正确"。
+            //   现在先钉住"画出来的东西有内容、且选中态严格多于未选中态"。
+            check(on_hits > 0 && off_hits >= 0 && on_hits > off_hits,
+                  QStringLiteral("⑭ 勾选框探针**真的画出了东西**（选中 %1 / 未选中 %2；两者同为 0 ⇒ "
+                                 "primitive 没被接管，下面那条判据就是空转）")
+                      .arg(on_hits)
+                      .arg(off_hits));
             check(on_hits >= 12,
                   QStringLiteral("⑭ 勾选框选中态要真的画出勾（亮笔画像素 %1 < 12）").arg(on_hits));
             check(off_hits <= 2,
@@ -6775,7 +7002,10 @@ SmokeResult run_smoke() {
                   .arg(page.id_list() == nullptr ? -1 : page.id_list()->topLevelItemCount())
                   .arg(ids.size()));
         // ★ 每行一个「复制id」按钮 ⇒ 点它真的进剪贴板（1.x `:1183`/`_copy_one_id`）
-        if (page.id_list() != nullptr && page.id_list()->topLevelItemCount() > 0) {
+        // ★★ 2026-10-06（审计处理批·0-3 之 B1-9）：修前 `!ids.empty()` 只是**上一句里的断言**、
+        //   不是控制流 ⇒ 夹具真退化（`ids` 为空而列表行数 > 0）时下面 `ids.front()` 是空 vector
+        //   取下标（UB/崩溃）。现在把"ids 非空"也写进控制流条件里。
+        if (page.id_list() != nullptr && page.id_list()->topLevelItemCount() > 0 && !ids.empty()) {
             QTreeWidgetItem* item = page.id_list()->topLevelItem(0);
             auto* button = qobject_cast<QPushButton*>(page.id_list()->itemWidget(item, 0));
             check(button != nullptr && button->text() == QStringLiteral("复制id"),
@@ -6881,6 +7111,21 @@ SmokeResult run_smoke() {
                   .arg(msyh_fonts.size()));
 
         // ★ 默认字体三级优先级（1.x `:129-149`）：上次用过的（存在）→ 系统雅黑 → 仓库根
+        // ★★ 2026-10-06（审计处理批·0-3 之 B1-5 同族）：修前两条锁包在 `if (!msyh_fonts.isEmpty())` 里，
+        //   候选集为空时（本机没装 MSYH ⇒ `font_candidates("MSYH")` 返回空）断言**整条消失**
+        //   且无痕迹 ⇒ 换台机器两条锁静默没了还看着像绿。现在：空集 ⇒ 明确记 note（可见），
+        //   并把"这一组锁到底跑没跑"作为单独一条判据（不许静默）。
+        if (msyh_fonts.isEmpty()) {
+            result.notes.append(QStringLiteral("D2-字体 系统里没有 MSYH 候选字体 ⇒ "
+                                               "「默认字体继承」与「列表标记同一判据」两条锁**未覆盖**"));
+        }
+        // ★ 空集**不算通过**：这条判据钉的是"过滤器真的在按关键词过滤"这件事本身 ——
+        //   候选集为空就等于没过滤过（`all_fonts.size() >= 0` 恒真）。本机确实没装 MSYH 时
+        //   由上面那条 note 明确记"未覆盖"，这里不再用恒真式糊过去。
+        check(!msyh_fonts.isEmpty(),
+              QStringLiteral("D2-字体 子串过滤有命中（MSYH 候选 %1 个；空 ⇒ 过滤器/字体扫描"
+                             "至少一边是坏的，且下面两条锁没跑）")
+                  .arg(msyh_fonts.size()));
         if (!msyh_fonts.isEmpty()) {
             check(page.default_font_path(msyh_fonts.first()) ==
                       QDir::toNativeSeparators(msyh_fonts.first()),
@@ -6955,9 +7200,13 @@ SmokeResult run_smoke() {
                 const QString ltx_path = QString::fromStdString(xrkit::core::user_ltx_path());
                 const bool ltx_existed = QFileInfo::exists(ltx_path);
                 QByteArray ltx_before;
+                bool ltx_backed_up = false;
                 if (ltx_existed) {
                     QFile before(ltx_path);
-                    if (before.open(QIODevice::ReadOnly)) ltx_before = before.readAll();
+                    if (before.open(QIODevice::ReadOnly)) {
+                        ltx_before = before.readAll();
+                        ltx_backed_up = true;
+                    }
                 }
                 if (list != nullptr && list->count() > 0) {
                     QListWidgetItem* item = list->item(0);
@@ -6979,10 +7228,15 @@ SmokeResult run_smoke() {
                 } else {
                     QFile::remove(ltx_path);
                 }
-                check(QFileInfo::exists(ltx_path) == ltx_existed &&
-                          (!ltx_existed || QFile(ltx_path).size() == ltx_before.size()),
-                      QStringLiteral("D2-字体 自检把 user.ltx 还原（存在=%1）")
-                          .arg(ltx_existed ? 1 : 0));
+                QString ltx_why_font;
+                const bool ltx_ok_font =
+                    user_ltx_restored(ltx_path, ltx_existed, ltx_before, &ltx_why_font);
+                check(!ltx_existed || ltx_backed_up,
+                      QStringLiteral("D2-字体 自检前**真的读到了** user.ltx 的备份"));
+                check(ltx_ok_font,
+                      QStringLiteral("D2-字体 自检把 user.ltx **逐字节**还原（存在=%1；%2）")
+                          .arg(ltx_existed ? 1 : 0)
+                          .arg(ltx_ok_font ? QStringLiteral("一致") : ltx_why_font));
                 // ± 缩放按钮真的改状态与标签
                 if (auto* zoom_in =
                         dialog->findChild<QPushButton*>(QStringLiteral("font_picker_zoom_in"))) {
@@ -7084,15 +7338,12 @@ SmokeResult run_smoke() {
     {
         const QString sheet = xrkit::shell::stylesheet_for(xrkit::core::theme_mode());
 
-        // 取出某选择器的那一条规则体（第一个 `{` 到对应的 `}`）；找不到返回空串。
+        // 取出某选择器里**生效的那一条**规则体。★ 必须取**最后一条**：Qt 的 QSS 是
+        // "后写的赢"（`theme.cpp:447-451` 的注释自己写明了），而 `QComboBox, QLineEdit,
+        // QSpinBox` 在样式表里出现**两次**（基础表 + 尺寸档位段）—— 修前这里用 `indexOf`
+        // 取**第一条**，于是"把生效的那条改回缺陷写法"锁仍然绿（审计 B1-3）。
         const auto rule_body = [&sheet](const QString& selector) -> QString {
-            const int at = sheet.indexOf(selector);
-            if (at < 0) return QString();
-            const int open = sheet.indexOf(QLatin1Char('{'), at);
-            if (open < 0) return QString();
-            const int close = sheet.indexOf(QLatin1Char('}'), open);
-            if (close < 0) return QString();
-            return sheet.mid(open + 1, close - open - 1).simplified();
+            return qss_rule_body(sheet, selector, /*last=*/true);
         };
         const auto has_rule = [&sheet](const QString& selector) {
             return sheet.contains(selector);
@@ -7232,7 +7483,7 @@ SmokeResult run_smoke() {
         // ④ `QMenu` 一套：**恰好三条属性**（background=surface2 / relief=flat /
         //    border=1px solid）。★ `relief: flat` 不是装饰：Qt 只从 `QMenu {…}` 认这个 hint。
         //    ★ 三条**全是真值**比：底＝surface2 的解析色、描边＝border 的解析色。
-        const QString menu = rule_body(QStringLiteral("QMenu {"));
+        const QString menu = rule_body(QStringLiteral("QMenu"));
         int menu_props = 0;
         {
             QString tmp = menu;
@@ -7272,7 +7523,13 @@ SmokeResult run_smoke() {
     //   反向：**自带壳**的包（`ai.db` 的条目已经 `ai/…`）**不叠第二层**（仍是 `ai/…`）。
     // ★ 判红办法：把 `rebuild_tree()` 里那句 `efs::preview_entries_in_layout(...)` 换回
     //   `entries_[i]`（＝"原始包内路径"）⇒ 下面两条立刻红。
-    if (std::getenv("XRKIT_SKIP_LOCK2") == nullptr)
+    //
+    // ★★ 2026-10-06（审计处理批·0-3 之 B1-2）：修前这一整组（三条断言）包在
+    //   `if (std::getenv("XRKIT_SKIP_LOCK2") == nullptr) { … }` 里 —— 一个环境变量就能
+    //   **无声**关掉"#2 解包产物预览"的整组断言，而且跳过后**既不写 note 也不计数**，
+    //   自检照样全绿（"门禁可以被静默关掉"正是本轮最重的根因）。
+    //   现在**删掉后门**：这三条断言**无条件执行**（它们只依赖引擎函数与临时夹具，
+    //   在离屏自检里本来就跑得通 —— 后门是历史遗留，不是必要前提）。
     {
         namespace efs = xrkit::engine::fs;
         // ① 同一份落点规则算出来的**相对路径**（不是另写一遍字符串拼接）

@@ -227,11 +227,37 @@ def step_build(release: bool) -> None:
     # README 约定 #1：`.ps1` 必须带 UTF-8 BOM（PowerShell 5.1 会把**无 BOM** 的脚本按 GBK
     # 读，中文注释与字符串直接读坏、脚本语法报错）。这不是洁癖 —— 编辑工具很容易把 BOM
     # 悄悄抹掉（2026-09-24 实测被抹过一次），所以放在门禁里，别只写在文档里。
-    for ps1 in sorted((ROOT / "scripts").glob("*.ps1")):
+    #
+    # ★★ 2026-10-06（审计处理批·0-6）：修前这里是
+    #   `for ps1 in sorted((ROOT/"scripts").glob("*.ps1")): ...` —— 判据**挂在 glob 上**：
+    #   `scripts/` 被删掉、或脚本下沉到子目录，glob 结果为空 ⇒ 循环零次 ⇒
+    #   没有 fail、没有 ok、也没进未覆盖清单，判据**静默消失**、门禁照旧全绿
+    #   （"把判据文件挪走/删掉就没人管"正是门禁最该拦的那类假绿）。
+    #   现在：① 脚本目录本身先校验（缺 = FAIL，不许 SKIP）；
+    #         ② glob 结果**显式断言非空**（空集 = 明确红/明确未覆盖，不是"零次循环"）；
+    #         ③ release 档按档位判定（其它档记未覆盖，降级仍然可见）。
+    scripts_dir = ROOT / "scripts"
+    if not scripts_dir.is_dir():
+        fail("仓库自带目录缺失：%s（.ps1 的 BOM 判据挂在这里，目录没了判据就消失了）"
+             % scripts_dir.relative_to(ROOT))
+        return
+    ps1_files = sorted(scripts_dir.glob("*.ps1"))
+    if not ps1_files:
+        if release:
+            fail(".ps1 的 UTF-8 BOM 判据没被满足：%s 下一个 *.ps1 都没有（release 零容忍）"
+                 % scripts_dir.relative_to(ROOT))
+        else:
+            UNCOVERED.append(".ps1 UTF-8 BOM 判据（%s 下没有 *.ps1，判据未覆盖）"
+                             % scripts_dir.relative_to(ROOT))
+            say("  SKIP .ps1 BOM 判据 —— %s 下没有 *.ps1" % scripts_dir.relative_to(ROOT))
+        return
+    for ps1 in ps1_files:
         if ps1.read_bytes()[:3] != b"\xef\xbb\xbf":
             fail("%s 丢了 UTF-8 BOM（PowerShell 5.1 会按 GBK 读，中文会被读坏）"
                  % ps1.relative_to(ROOT))
             return
+    say("  ok  .ps1 UTF-8 BOM 判据覆盖 %d 个脚本（%s）"
+        % (len(ps1_files), "、".join(p.name for p in ps1_files)))
 
     if configure_and_build(BUILD_DIR, env, shell=False):
         ok("configure + build 通过（含头文件依赖追踪自检）")
@@ -1173,17 +1199,85 @@ def step_golden_font_package(release: bool) -> None:
 
 
 def active_code(text: str) -> str:
-    """只留**活代码**：丢掉整行注释（C++ `//` / `/*` / 块注释续行 `*`）。
+    """只留**活代码**：丢掉注释（C++ `//` 行尾与整行、`/* ... */` 块注释）。
 
     静态锁要拦的是"代码里另造一份"，注释里为了讲清口径写出的调用形态不算违规 ——
     反过来要求注释不许提这个名字，等于把文档从源码里赶出去（这几条锁的出处就是注释）。
+
+    ★★ 2026-10-06（审计处理批·0-5）：修前这里是**按行看首字符**：
+        `if stripped.startswith("//") or stripped.startswith("*") or stripped.startswith("/*"): continue`
+      —— 两个方向都错：
+        ① **行首 `*` 的活代码被当注释丢掉**：`*bar = new QScrollBar(Qt::Vertical);`（解引用赋值、
+           乘法续行）整行消失 ⇒ 步骤 [34] 那批静态锁（裸 `QScrollBar`、页内视口…）
+           可以被这种排版绕过、**判据看不见违规**；
+        ② **块注释正文不缩进成 `*` 时又被当活代码**：`/* 1.x 的反例：\n   new QScrollBar(…)\n*/`
+           中间那行会被判成违规 ⇒ 假红。
+      现在按**词法状态**走：维护 `in_block`（`/* ... */` 的深度），只删真正在注释里的**内容**；
+      行首 `*` 只有在块注释内才当装饰符剥掉，在代码里就是**活代码**：
+        · 块注释内，行首 `*`（可选前置空白）后若紧跟 `/`（即 `*/`）⇒ 那是闭合符，不能误剥；
+        · 代码里以 `*` 开头（`*bar = …` / 乘法续行）⇒ 原样保留。
     """
     kept = []
+    in_block = 0
     for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("//") or stripped.startswith("*") or stripped.startswith("/*"):
-            continue
-        kept.append(line)
+        out = []
+        i = 0
+        n = len(line)
+        # 块注释续行的装饰符：`   * 正文` —— 只在块注释里、且这个 `*` 不是 `*/` 的闭合符时才剥。
+        if in_block > 0:
+            k = 0
+            while k < n and line[k] in " \t":
+                k += 1
+            if k < n and line[k] == "*" and not (k + 1 < n and line[k + 1] == "/"):
+                i = k + 1
+        while i < n:
+            c = line[i]
+            if in_block:
+                if c == "/" and i + 1 < n and line[i + 1] == "*":
+                    in_block += 1
+                    i += 2
+                    continue
+                if c == "*" and i + 1 < n and line[i + 1] == "/":
+                    in_block -= 1
+                    i += 2
+                    continue
+                i += 1
+                continue
+            if c == "/" and i + 1 < n and line[i + 1] == "/":
+                break                                   # 行尾 `//` 注释：本行到此为止
+            if c == "/" and i + 1 < n and line[i + 1] == "*":
+                in_block = 1
+                i += 2
+                continue
+            if c == '"':                                # 字符串字面量整体保留（里面的 // /* 不是注释）
+                j = i + 1
+                while j < n:
+                    if line[j] == "\\":
+                        j += 2
+                        continue
+                    if line[j] == '"':
+                        j += 1
+                        break
+                    j += 1
+                out.append(line[i:j])
+                i = j
+                continue
+            if c == "'":
+                j = i + 1
+                while j < n:
+                    if line[j] == "\\":
+                        j += 2
+                        continue
+                    if line[j] == "'":
+                        j += 1
+                        break
+                    j += 1
+                out.append(line[i:j])
+                i = j
+                continue
+            out.append(c)
+            i += 1
+        kept.append("".join(out))
     return "\n".join(kept)
 
 
@@ -1235,8 +1329,21 @@ def step_shell_smoke(release: bool) -> None:
         return
     # 构建 GUI 的**排版判据**（用户 2026-09-27："两个软件 UI 的排版都有很大问题"）——
     # 不是看截图：跑 `--layout-report`（离屏构建窗口 → 量各区高度 → 按口径给结论）。
+    #
+    # ★★ 2026-10-06（审计处理批·0-7）：修前这里是 `if gui_exe.exists(): ...` —— **没有 else**。
+    #   目标没编出来（改名 / 从 CMake 摘掉）就既不打 FAIL 也不进未覆盖清单 ⇒
+    #   这条**用户拍板**的排版判据可以在"判据根本不存在"的情况下让 release PASS、输出里毫无痕迹。
+    #   现在按档位判定：release 直接 FAIL；其它档记未覆盖 + 明确 SKIP 行（降级必须可见）。
     gui_exe = SHELL_BUILD_DIR / "src" / "shell" / "xrkit_build_gui.exe"
-    if gui_exe.exists():
+    if not gui_exe.exists():
+        if release:
+            fail("构建 GUI 排版判据的目标不存在：%s（判据没跑成，不是通过）"
+                 % gui_exe.relative_to(ROOT))
+        else:
+            UNCOVERED.append("构建 GUI 排版判据（%s 不存在，判据未覆盖）"
+                             % gui_exe.relative_to(ROOT))
+            say("  SKIP 构建 GUI 排版判据 —— %s 不存在" % gui_exe.relative_to(ROOT))
+    else:
         env_gui = dict(env)
         env_gui["QT_QPA_PLATFORM"] = "offscreen"
         rc_gui, out_gui = run([str(gui_exe), "--layout-report"], env=env_gui, timeout=180)
@@ -1384,19 +1491,42 @@ def step_shell_smoke(release: bool) -> None:
     # 锁的自证：上面这些静态锁都靠 `active_code` 区分"注释"与"活代码"。
     # 两头都得对 —— 既能被一句注释绕过（太松），也会把注释当违规（太紧，等于
     # 禁止源码里写口径出处）。所以这里**故意**喂一份正反样本给它。
+    #
+    # ★★ 2026-10-06（审计处理批·0-5）：修前的自证只喂了三种"注释形态"，**没覆盖**审计点名的
+    #   两个方向，于是"行首 `*` 的活代码被丢掉"这条整整没人管。现在把两个方向都补成样本：
+    #     ① 活代码可以以 `*` 开头（解引用赋值 / 乘法续行）—— 修前整行被删 ⇒ 锁漏判；
+    #     ② 块注释正文**不缩进成 `*`** —— 修前那行被当活代码 ⇒ 锁假红（反向错误）。
     probe = active_code(
         "// new ScrollViewport(整行注释)\n"
         "/* px(430) 块注释 */\n"
-        " * px(430) 块注释续行\n"
         "new ScrollViewport(真的) // 行内注释后面的代码要留下\n"
-        "int h = px(430);\n")
-    if "new ScrollViewport(真的)" not in probe or "int h = px(430);" not in probe:
-        fail("静态锁自证失败：active_code 把活代码也滤掉了（锁会漏判）")
+        "int h = px(430);\n"
+        "/* 1.x 的反例：\n"
+        " * px(430) 块注释续行（缩进成星号）\n"
+        "   new ScrollViewport(块注释正文不缩进成星号)\n"
+        "*/\n"
+        "*bar = new ScrollViewport(行首星号的活代码);\n"
+        "int w = px(430) /* 行内块注释 */ + 1;\n")
+    # ① 活代码必须留下（修前 `*bar = …` 与 `int w = …` 都会被删掉）
+    for must in ("new ScrollViewport(真的)", "int h = px(430);",
+                 "*bar = new ScrollViewport(行首星号的活代码);"):
+        if must not in probe:
+            fail("静态锁自证失败：active_code 把活代码滤掉了（锁会漏判）：%s" % must)
+            return
+    if probe.count("new ScrollViewport(") != 2:
+        fail("静态锁自证失败：active_code 留下的 `new ScrollViewport(` 应为 2 处"
+             "（一处在行尾注释前、一处在行首星号的活代码里），实测 %d"
+             % probe.count("new ScrollViewport("))
         return
-    if probe.count("new ScrollViewport(") != 1 or probe.count("px(430)") != 1:
-        fail("静态锁自证失败：active_code 没滤掉整行注释（锁会被一句注释绕过）")
+    # ② 注释必须被滤掉（含**块注释续行**与**不缩进成星号的块注释正文**；行内块注释只删注释本体）
+    if probe.count("px(430)") != 2:
+        fail("静态锁自证失败：active_code 没滤掉注释（锁会被注释绕过），"
+             "`px(430)` 应剩 2 处（活代码里的两处），实测 %d" % probe.count("px(430)"))
         return
-    ok("静态锁自证：注释不算违规、活代码必被拦")
+    if "+ 1;" not in probe:
+        fail("静态锁自证失败：行内块注释把同一行的代码一起删掉了")
+        return
+    ok("静态锁自证：注释（含块注释续行/不缩进正文）不算违规、活代码（含行首 `*`）必被拦")
 
     # ★★ 2026-10-06（D1 ① → 同日 ② 用户拍板后收窄）：**「取消」不是死按钮** —— 三层静态锁。
     #   事实（改动前）：`task_shell.cpp` 里只有三处 `cancel_->setEnabled(...)`、
@@ -1827,11 +1957,32 @@ def main() -> int:
     say("STALKER 工具集 2.x 门禁   档位=%s   仓库=%s" % (mode, ROOT))
     say("=" * 66)
 
+    # ★★ 2026-10-06（审计处理批·0-1/0-2）：`--only` 是**局部调试**通道，与 release 档
+    #   "本次覆盖：全部步骤均已执行"这个结论互斥。此前这里直接 `continue`，跳过的步骤
+    #   **既不记账也不进未覆盖清单** ⇒ `--release --only winres` 只要那一步绿就打印
+    #   `RESULT: PASS` 并谎称"全部步骤均已执行"（任何人都能一键把门禁变绿）。
+    #   现在：`--only` 过滤掉的步骤**逐条记账**（记成"未执行"而不是"未覆盖所需外部前提"，
+    #   两者性质不同），于是收尾那条 `release and UNCOVERED → FAIL` 有了活的写入者。
+    #   注意 `--fast` 档不判红：`--fast --only` 仍可局部调试，但结论行会如实说"本次未覆盖"。
+    ran: set[str] = set()
     for name, fn in STEPS:
         if args.only and args.only not in name:
             continue
         fn(release)
+        ran.add(name)
         say("")
+
+    # 覆盖度只认一件事：**整套步骤里哪些真的执行了**。不按 `--only` 的过滤结果推断，
+    # 也不因为"没红"就假定全覆盖（修前正是这么谎报的）。
+    missing = [name for name, _ in STEPS if name not in ran]
+    if missing:
+        if len(missing) == len(STEPS):
+            UNCOVERED.append("全部 %d 个步骤均未执行（`--only %r` 一个都没匹配上）"
+                             % (len(STEPS), args.only))
+        else:
+            UNCOVERED.append("步骤 %s（共 %d/%d 个未执行%s）"
+                             % ("、".join(missing), len(missing), len(STEPS),
+                                "，本次由 `--only %r` 过滤掉" % args.only if args.only else ""))
 
     say("-" * 66)
     if UNCOVERED:

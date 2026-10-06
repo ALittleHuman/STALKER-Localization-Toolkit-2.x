@@ -128,8 +128,26 @@ def main() -> int:
         print("CORPUS: FAIL 缺少清单 %s（先跑 --write）" % MANIFEST.relative_to(ROOT))
         return 1
 
+    # ★★ 2026-10-06（审计处理批·0-7）：修前这里**只遍历 manifest**、不与 `CORPUS` 对照 ⇒
+    #   `{"entries": []}`（空 manifest）时 `ok=missing=changed=0` → 打出 `CORPUS: PASS` 退 0。
+    #   而 `--write` 在样本全缺的机器上恰好会写出空 manifest（逐条"缺失，跳过写入"）⇒
+    #   一条"可触发但尚未发生"的**永久假绿通道**：空集合上的"0 差异"被读成"完全一致"。
+    #   现在先做**存在性/覆盖性前置断言**（空表、条目 id 对不上 CORPUS、只有样本缺失而没有
+    #   任何一条真的比对过 —— 三种都判红），再逐条比对。
+    entries = load_manifest().get("entries", [])
+    if not entries:
+        print("CORPUS: FAIL manifest 是空表（%s）—— 空集合上的「0 差异」不是「完全一致」，"
+              "先跑 --write 收集样本" % MANIFEST.relative_to(ROOT))
+        return 1
+    corpus_ids = {it["id"] for it in CORPUS}
+    unknown = sorted({e.get("id", "<无 id>") for e in entries} - corpus_ids)
+    if unknown:
+        print("CORPUS: FAIL manifest 里有 %d 条不在 CORPUS 清单里的条目：%s —— "
+              "基准表与语料定义已经不同源" % (len(unknown), "、".join(unknown)))
+        return 1
+
     missing = changed = ok = 0
-    for entry in load_manifest()["entries"]:
+    for entry in entries:
         path = Path(entry["path"])
         if not path.exists():
             print("  --  %-22s 样本缺失：%s" % (entry["id"], path))
@@ -152,6 +170,10 @@ def main() -> int:
     if missing:
         print("CORPUS: PARTIAL（样本缺失按外部前提处理，由门禁按档位判定）")
         return 2
+    # ★ 到这里的 `ok == len(entries) ≥ 1` 是**真的比对过**才成立（前置断言已挡住空表）
+    if ok != len(entries):
+        print("CORPUS: FAIL 计数不自洽（ok=%d，manifest=%d 条）" % (ok, len(entries)))
+        return 1
     print("CORPUS: PASS")
     return 0
 
