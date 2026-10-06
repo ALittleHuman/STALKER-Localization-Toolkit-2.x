@@ -300,6 +300,107 @@ RESULT: FAIL（1 处失败）
 
 ---
 
+# A 批（2026-10-06）：真机封包判据**先验选择**（`equivalent` 是**等价判据**，不是"参照降级"）
+
+## A `tests/golden_sqfs_pack_real.py`：判据"试着跑→跑不动就换成内容层" ⇒ `--release` 不可信
+
+- 位置：`tests/golden_sqfs_pack_real.py`（判据选择）+ `tests/run_ci.py` 的 `[11]` 步（档位判定）。
+- 红（修前，**同一 HEAD、真实样本、无任何注入**）：
+  ```
+  > python tests/golden_sqfs_pack_real.py --id nlc-sqzy-patch
+  [nlc-sqzy-patch] …gamedata.sqzy_patch（2213.2 MB）
+    输入树：930 个文件，3992.5 MB
+    !! 参照侧扛不动（1.x sqfs_pack 纯内存）⇒ 本样本**降级**为内容层判据（记 content_only，进「本次未覆盖」，退码 2）
+    PACK ok items=930 bytes_used=1764628090 file_size=1764630528 inodes=1066 … ms=397413
+    -- 参照不可用 ⇒ 跳过 sha 比对（本样本按内容层判）
+    ok rdsquashfs 读回 1065 条（路径 + 类型）
+    ok 内容抽验 10 个文件逐字节一致
+
+  GOLDEN-SQFS-PACK-REAL: PARTIAL (compared=1 content_only=1 skipped=0 uncovered=1)
+    未覆盖：1 个样本的参照侧扛不动 ⇒ headline（两边 sha256 相等）**未判**，本样本只过了内容层判据
+  EXITCODE=2 elapsed=544.2s
+  ```
+  机制取证（同一次运行的进程视角）：`ref.sqfs` 只写到 **348223308 字节**就停住（21:03:34），
+  参照侧调用方 python 进程 working set **4021 MB**（= 整棵树 `p.read_bytes()` 进内存拼 `items`）。
+  参照实现 `file_system/stalker_fs.py::sqfs_pack` 给 `tar2sqfs` 子进程挂了 **`timeout=120`**，
+  超时被它的 `except Exception: return False` 吞成 `False` ⇒ 同一棵树**忙时超时、闲时跑完**
+  ⇒ 门禁 release 档能红在一件与代码无关的事上。
+  档位链路归档取证：`build\logs\th3_gate_inj.out`（release 档）
+  `FAIL 缺少外部前提（release 档零容忍）：参照侧扛不动 ⇒ 内容层降级…`。
+- 修法（口径由用户拍板，理由写进 `docs/2.0.0-行为口径对照表.md` ⑯）：
+  ① 判据**先验选择**（`choose_criterion(树体积, 可用物理内存, 预算)`）：树 ≤ 1 GiB 且
+     预计常驻（树×2.0）≤ 可用内存×40% ⇒ `compared`；否则 ⇒ `equivalent`；选定那条**必须真跑**；
+  ② `equivalent` = **官方第三方读回**（`rdsquashfs --describe` 条目表 + **类型**、**整树解包**
+     + 逐文件 sha256）—— **等价判据**，不依赖参照同源，独立性高于"1.x 参照"；
+  ③ 三态可见（`compared=` / `equivalent=` / `uncovered=`），**release 档只把 `uncovered` 当失败**；
+     `equivalent` **逐样本打印理由**（树多大 / 内存多少）；
+  ④ 先验说能扛而**实测**没跑完 ⇒ 打 `!! 准入判据失准（记账）` 后按等价判据判（不静默）；
+  ⑤ 顺手补审计 G1-9 的零静默：空输入树一律判红（不许把"逐字节对拍"退化成"对空集比较"）。
+  ★ **没删任何断言**：`compared` 档保留 ①sha256 + ②条目表 + ③抽样；`equivalent` 档把 ② 扩到
+  **类型**、③ 扩到**整树逐文件 sha256**（不然它才真是降级）。
+- 绿（修后，**同一棵树、同一 HEAD**）：
+  ```
+  > python tests/golden_sqfs_pack_real.py --id nlc-sqzy-patch
+    输入树：930 个文件，3992.5 MB
+    判据：equivalent（官方第三方读回，等价判据）
+          理由：输入树 3992.5 MB > 参照侧可信上限 1024.0 MB（…）⇒ 不用 1.x 参照，改用**等价判据**…
+          可用物理内存 17433.0 MB / 参照侧树体积上限 1024.0 MB（参照侧还会把一份未压缩 tar 落 %TEMP%）
+    PACK ok items=930 bytes_used=1764628090 file_size=1764630528 … ms=394426
+    ok rdsquashfs 读回 1065 条（路径 + 类型）
+    ok 内容抽验 10 个文件逐字节一致
+    ok 等价判据：官方第三方 rdsquashfs 整树解包 + 逐文件 sha256 全过（930/930 个文件）
+
+  GOLDEN-SQFS-PACK-REAL: PASS (compared=0 equivalent=1 skipped=0 uncovered=0)
+    equivalent 逐样本理由（等价判据=官方第三方 rdsquashfs 读回，不是降级）：
+      · nlc-sqzy-patch：输入树 3992.5 MB > 参照侧可信上限 1024.0 MB（…）
+  EXITCODE=0 elapsed=493.3s
+  ```
+  （`判据：` 行在**任何**封包输出之前 —— 这条顺序也被自检锁住了。）
+- 锁：新独立步骤 `sqfs-pack-criterion`（`tests/check_sqfs_pack_criterion.py`，15 条）——
+  先验结论（含边界：超预算 / 内存不足 / 取不到内存）、**超预算树 ⇒ `equivalent` 真跑到整树逐文件
+  sha256（17/17）**、小树 ⇒ `compared`（两边 sha256 相等）、工具缺失 ⇒ `uncovered=1` + rc2（活写入者）、
+  空树 ⇒ rc1、`判据：` 顺序锁。被 `--only` 过滤时按既有记账进 UNCOVERED（实测
+  `--release --only sqfs-pack-criterion` → `RESULT: FAIL（1 处失败）`，不会假装覆盖）。
+- 门禁（两份 release + 一份 fast，均为 `RESULT: PASS` + `本次覆盖：全部步骤均已执行`）：
+  ```
+  release #1: 输入树 723 个文件，760.8 MB / 判据：compared / PASS (compared=1 equivalent=0 uncovered=0)
+              SQFS-PACK-CRITERION ok (checks=15 failed=0)   RESULT: PASS   exit=0 elapsed=481.3s
+  release #2: 同上一行（同结论）                                                        elapsed=466.7s
+  fast      : 输入树 200 个文件，290.3 MB / 判据：compared / PASS (compared=1 equivalent=0 uncovered=0)
+              SQFS-PACK-CRITERION ok (checks=15 failed=0)   RESULT: PASS   exit=0 elapsed=400.6s
+  ```
+
+## 7.0 另：`tests/__pycache__/*.pyc` 从跟踪里拿掉
+
+- 位置：`tests/__pycache__/collect_golden.cpython-314.pyc`、`tests/__pycache__/golden_sqfs.cpython-314.pyc`。
+- 事实：`.gitignore` **早就有** `__pycache__/` 与 `*.pyc` 两条（本次**没有**再加规则，避免重复），
+  只是这两个文件在规则之前就被跟踪了 ⇒ 每次跑门禁都被重编译成一个"脏文件"。
+- 修法：`git rm --cached` 两个文件（保留磁盘上的副本，不删工作区文件）。
+- 绿：`git ls-files | findstr .pyc` 为空；跑完门禁后 `git status` 不再出现被跟踪的 .pyc。
+
+# A 批复核后不成立 / 夸大 / 超范围（如实登记）
+
+1. **"S2 批跑 `--release` 打红在 `nlc-sqzy-patch`（930 文件 / 3992.5 MB）"与磁盘证据不符**：
+   门禁 `[11]` 恒以 `--id nlc-sqz-autumn` 调用（`tests/run_ci.py` 的 argv 只传这一个 id），
+   而 `build\logs\gate_*.out` 共 38 份里 `[11]` **全部**是 `compared=1 content_only=0` +
+   `RESULT: PASS`（输入树恒为 723 文件 / 760.8 MB），**没有任何一份跑过 patch 样本**；
+   patch 的 `PARTIAL` 只出现在 standalone 与 T-H3 期的**故障注入**取证（`th3_*.out`）。
+   ⇒ 真正会随运行期资源状态漂移的是 **autumn（760.8 MB）**那条（`tar2sqfs` 的 120 s 硬超时
+   正好卡在这棵树的耗时量级上），patch 树则是**必然**超时（本次实测：120 s 被杀、半成品 348 MB）。
+   "资源状态相关"这个结论成立，但要挂在 autumn 上；patch 是"确定性超预算"那一类。
+2. **"参照侧纯内存"的说法不完整**：真正的成本 = ①整棵树 `read_bytes()` 进内存（≈树体积，
+   实测 4021 MB）+ ②一份**未压缩 tar** 落 `%TEMP%`（磁盘 ≈ 树体积）+ ③`tar2sqfs` 单作业 xz，
+   **决定成败的是 1.x 给它挂的那个 120 s 硬超时**（不是"内存不够"）。预算因此按"树体积 + 内存
+   余量"两者同时判，理由里的数字都是实测/声明值。
+3. **`version.json` 的"回落 56"在工作区里其实被门禁自己改回 57**：`tools/build_gui/main.cpp:391-404`
+   的"自动保存"会调 `--version-store <store> set <版本> <标记>`（该分支会 `save_version_store`）——
+   门禁 `[23]` 的外壳离屏自检一跑，`current.index` 就被写成 `next=57`（`LAYOUT … index_cli=57/57`
+   就是它）。这也解释了交接时看到的"期望 56 / 实际 57"。本次**不**顺手改这条（不在派单范围，
+   另行登记为存量），只是提交源码时不让 version.json 进本次提交。
+4. **`.gitignore` 无需再加一行**：`__pycache__/` 与 `*.pyc` 两条已存在（见上），加了就是重复规则。
+
+---
+
 # S2 批复核后不成立 / 夸大 / 超范围（如实登记）
 
 1. **1-2 未做运行期越界取证**（见该条的"复核说明"）：修法是确定的，但"能在本机跑出红"

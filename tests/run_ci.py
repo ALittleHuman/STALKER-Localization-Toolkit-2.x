@@ -817,11 +817,18 @@ def step_golden_sqfs_pack_real(release: bool) -> None:
 
     为什么合成夹具之外还要这一条：夹具只覆盖"想得到的组合"。这一轮真机抽验抓到过一个
     合成夹具漏掉的**真缺陷**（去重截断把刚写的 fragment 块删掉），所以它是一等判据。
-    耗时口径：local/fast 抽 200 个文件（≈90 s），release 跑整棵树（≈3.5 min）。
-    ★ T-H3：参照侧扛不动时脚本会**降级**成内容层判据（headline sha256 没判）⇒ 那要
-    **可见**：脚本退 2，这一步按"本次未覆盖"记账 —— release 档未覆盖非空即整体 FAIL。
+    耗时口径：local/fast 抽 200 个文件（≈60 s），release 跑整棵树（≈4 min）。
+    ★ A 批（2026-10-06）判据**先验选择**，三态全可见：
+      · `compared=`    与 1.x 参照**逐字节**（两边 sha256 相等，headline）；
+      · `equivalent=`  **等价判据**：官方第三方 `rdsquashfs` 读回（条目表 + **类型**）+
+                       **整树解包逐文件 sha256**。**不是"降级"** —— 它不依赖参照同源，
+                       独立性比"1.x 参照"更高；脚本会**逐样本打印理由**（树多大/内存多少）。
+      · `uncovered=`   连内容层都跑不了 ⇒ 进「本次未覆盖」。
+    ★ `--release` 档**只**把 `uncovered` 当失败：这样门禁不再红在"参照侧这一次有没有扛住"
+    （1.x `sqfs_pack` 把整棵树 read_bytes 进内存 + 给 tar2sqfs 挂了硬 120 s 超时 ⇒
+    同一棵树忙时超时、闲时跑完）。口径与理由见 `docs/2.0.0-行为口径对照表.md` ⑯。
     """
-    say("[11] 真机样本：SquashFS 封包逐字节对拍")
+    say("[11] 真机样本：SquashFS 封包对拍（判据先验选择：compared / equivalent）")
     script = ROOT / "tests" / "golden_sqfs_pack_real.py"
     if not require_repo_file(script, "真机封包脚本"):
         return
@@ -836,22 +843,65 @@ def step_golden_sqfs_pack_real(release: bool) -> None:
         s = line.strip()
         if s.startswith("GOLDEN-SQFS-PACK-REAL") or s.startswith("✗") or s.startswith("!!") \
                 or s.startswith("ok 逐字节一致") or s.startswith("输入树") \
-                or s.startswith("未覆盖"):
+                or s.startswith("未覆盖") or s.startswith("判据：") or s.startswith("理由：") \
+                or s.startswith("ok rdsquashfs") or s.startswith("ok 等价判据") \
+                or s.startswith("· ") or s.startswith("equivalent 逐样本理由"):
             say("  " + s)
     verdict = ""
     for s in out.splitlines():
         if s.strip().startswith("GOLDEN-SQFS-PACK-REAL:"):
             verdict = s.strip()
+
+    def _num(key: str) -> int:
+        marker = key + "="
+        i = verdict.find(marker)
+        if i < 0:
+            return 0
+        j = i + len(marker)
+        k = j
+        while k < len(verdict) and verdict[k].isdigit():
+            k += 1
+        return int(verdict[j:k] or "0")
+
     if rc == 0:
-        ok("真机样本封包产物逐字节一致（headline 判据真跑到了）")
-    elif rc == 2:
-        if "PARTIAL" in verdict and "content_only=0" not in verdict:
-            prereq("参照侧扛不动 ⇒ 内容层降级（headline「两边 sha256 相等」本次未判）",
-                   verdict, release)
+        if _num("equivalent"):
+            ok("真机样本封包产物一致（compared=%d equivalent=%d）：equivalent 走**等价判据**"
+               "（官方第三方 rdsquashfs 整树读回 + 逐文件 sha256），逐样本理由见上"
+               % (_num("compared"), _num("equivalent")))
         else:
-            prereq("真机语料样本 / rdsquashfs", "样本或参照工具缺失（见上）", release)
+            ok("真机样本封包产物逐字节一致（headline 判据真跑到了）")
+    elif rc == 2 and _num("uncovered"):
+        prereq("真机封包：连内容层判据都跑不了（%d 个样本）" % _num("uncovered"),
+               verdict or "见上", release)
     else:
         fail("真机样本封包产物不一致（见上）")
+
+
+def step_sqfs_pack_criterion(release: bool) -> None:
+    """真机封包判据的自检锁（A 批）：先验选择 + 两条判据都真跑 + 三态退码契约。
+
+    为什么独立成步：它锁的是"判据怎么选"这件事本身（`choose_criterion()` 的先验结论、
+    `equivalent` 真跑到整树逐文件 sha256、`uncovered` 有活写入者、`判据：` 行在任何封包
+    输出之前）。塞进 selftest 就没人知道它到底跑没跑；独立成步后，被 `--only` 过滤时
+    按假绿批的记账进 UNCOVERED（`--release` 档于是整体 FAIL，不会假装覆盖了）。
+    """
+    say("[11b] 真机封包判据：先验选择 + 等价判据真跑 + 三态退码")
+    script = ROOT / "tests" / "check_sqfs_pack_criterion.py"
+    if not require_repo_file(script, "封包判据自检脚本"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=3600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("SQFS-PACK-CRITERION") \
+                or s.startswith("[") or s.startswith("fixtures:"):
+            say("  " + s)
+    if rc == 0:
+        ok("判据先验选择 + 等价判据真跑 + 三态退码契约（见上）")
+    elif rc == 2:
+        prereq("封包判据自检的外部前提", "缺 1.x 参照实现（见上）", release)
+    else:
+        fail("封包判据自检不成立（见上）")
+
 
 
 def step_text_tables(release: bool) -> None:
@@ -2049,6 +2099,9 @@ STEPS = [
     ("sqfs-lreg", step_sqfs_lreg_layout),
     ("golden-sqfs-pack", step_golden_sqfs_pack),
     ("golden-sqfs-pack-real", step_golden_sqfs_pack_real),
+    # ★★ A 批（2026-10-06）：判据**先验选择**这件事本身也要有锁（先验结论 / 等价判据真跑 /
+    #   三态退码 / `判据：` 行在任何封包输出之前）。独立成步：被 `--only` 过滤时进 UNCOVERED。
+    ("sqfs-pack-criterion", step_sqfs_pack_criterion),
     ("text-tables", step_text_tables),
     ("font-tables", step_font_tables),
     ("golden-text-decode", step_golden_text_decode),
