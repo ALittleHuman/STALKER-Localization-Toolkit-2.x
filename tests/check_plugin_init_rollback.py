@@ -25,7 +25,9 @@ r"""判红锁：插件 `init` 返回 0 时**必须按 owner 回滚**它这次 in
   ③ 留痕**仍在**（零静默）：失败理由必须看得见 —— `errors_` **不在**"零残留"的范围里
      （本批对判据草案②的复核修正：那条把 `registration_errors()` 也列进"逐项为空"，
      与①/零静默冲突，且 errors_ 只存字符串、不可能悬垂）。
-  ④ 【补充·**弱判据**，本脚本**不**据此判红】"之后调用它曾注册的入口不崩" ——
+  ④【S2-2，B 批】**扩展名大小写不敏感**：同一份夹具改名成 `NLC.DLL` 也必须被认成插件
+     （修前静默漏载：探针自己都打 `PLUGINROLLBACK skip reason=目录里没有 *.dll`、rc=2）。
+  ⑤ 【补充·**弱判据**，本脚本**不**据此判红】"之后调用它曾注册的入口不崩" ——
      `FreeLibrary` 未必立刻 unmap，"不崩 ≠ 干净"。（红取证里单独做过一次：真调用 ⇒ AV。）
 
 输出：`✓` / `✗` 行 + 收尾行 `PLUGIN-INIT-ROLLBACK ok …` / `PLUGIN-INIT-ROLLBACK fail …`；
@@ -135,6 +137,31 @@ def main():
          "实得 errors=%r" % errors)
     want(any(ln.startswith("PLUGINROLLBACK error ") for ln in lines),
          "③ `PLUGINROLLBACK error` 逐条打印出留痕原文", "输出=%r" % text.strip()[:300])
+
+    # ④【S2-2，B 批】扩展名判定必须**大小写不敏感**：`NLC.DLL` 也是插件。
+    #   修前：`load_plugins_from_dir` 判原名的 `.dll`（小写化结果丢弃＝死代码），CLI 探针又抄了
+    #   同样一份大小写敏感判定 ⇒ 同一份夹具改名成 `NLC.DLL` 后**静默漏载**：不报错、不进
+    #   errors、连探针都找不到 owner（实测 `PLUGINROLLBACK skip reason=目录里没有 *.dll`、rc=2）。
+    fx_upper = Path(tempfile.mkdtemp(prefix="xrkit_plugin_upper_"))
+    try:
+        shutil.copy2(FIXTURE, fx_upper / "NLC.DLL")
+        proc_u = subprocess.run([str(CLI), "--plugin-init-rollback", str(fx_upper)],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
+        rc_u = proc_u.returncode
+        text_u = proc_u.stdout.decode("utf-8", "replace")
+    finally:
+        shutil.rmtree(fx_upper, ignore_errors=True)
+    lines_u = [ln.strip() for ln in text_u.splitlines() if ln.startswith("PLUGINROLLBACK")]
+    info_u_lines = [ln for ln in lines_u if ln.startswith("PLUGINROLLBACK info ")]
+    info_u = fields(info_u_lines[-1]) if info_u_lines else {}
+    print("    [大写扩展名] %s" % (lines_u[0] if lines_u else text_u.strip()[:200]))
+    want("PLUGINROLLBACK skip" not in text_u and info_u.get("dll") == "NLC.DLL",
+         "④ 大写扩展名 `NLC.DLL` 被认成插件（不许静默漏载）",
+         "输出=%r" % text_u.strip()[:300])
+    want(any("入口返回 0" in ln for ln in lines_u),
+         "④ 大写扩展名那条也真跑到『入口返回 0』（不是空判据）",
+         "输出=%r" % text_u.strip()[:300])
+    want(rc_u == 0, "④ 大写扩展名那条探针自身退出码 0", "exit=%d" % rc_u)
 
     # 收尾：探针自己必须报 ok（退出码与结论行一起才算过）
     want(rc == 0 and any(ln.startswith("PLUGINROLLBACK ok") for ln in lines),

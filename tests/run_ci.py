@@ -271,6 +271,21 @@ def step_build(release: bool) -> None:
     say("  ok  .ps1 UTF-8 BOM 判据覆盖 %d 个脚本（%s）"
         % (len(ps1_files), "、".join(p.name for p in ps1_files)))
 
+    # ★★ B 批（审计 §5.5）：`.rc` 与 `.ps1` 同族 —— 资源脚本里的**中文注释**只有在带 BOM 时
+    #   才被 cl/rc 按 UTF-8 读。`assets/app.rc` 修前是 UTF-8 **无 BOM**（首 3 字节 `2f 2f 20`），
+    #   却编进 `xrkit_app` 与 `build_gui`；仓库自己在 `tools/gen_winres.py` 里把这条写成**硬断言**
+    #   （"无 BOM ⇒ cl.exe 按 ANSI(936) 解码 ⇒ C2001/C1018"），而 app.rc 只是**字节奇偶的巧合**
+    #   才编得过，门禁不覆盖它。判据用**显式清单**（不挂 glob：0-6 的教训是"文件没了判据就消失"）。
+    for rc_name in ("assets/app.rc", "assets/xrkit_winres.rc"):
+        rc_file = ROOT / rc_name
+        if not require_repo_file(rc_file, "资源脚本（.rc）"):
+            return
+        if rc_file.read_bytes()[:3] != b"\xef\xbb\xbf":
+            fail("%s 丢了 UTF-8 BOM（cl/rc 链会把中文注释按 GBK 解码 ⇒ C2001/C1018；"
+                 "tools/gen_winres.py 已把这条口径写成硬断言）" % rc_name)
+            return
+    say("  ok  .rc UTF-8 BOM 判据覆盖 2 个资源脚本（app.rc、xrkit_winres.rc）")
+
     if configure_and_build(BUILD_DIR, env, shell=False):
         ok("configure + build 通过（含头文件依赖追踪自检）")
 
@@ -295,24 +310,35 @@ def step_no_qt_injection(release: bool) -> None:
     env = load_msvc_env() or dict(os.environ)
 
     rc_before, _ = run([str(CMAKE), "-DXRKIT_ROOT=%s" % ROOT, "-P", str(script)], env=env)
-    try:
-        probe.write_text("#include <QtCore/QString>\n", encoding="utf-8")
-        rc_inject, out_inject = run([str(CMAKE), "-DXRKIT_ROOT=%s" % ROOT, "-P", str(script)], env=env)
-    finally:
-        if probe.exists():
-            probe.unlink()
-    rc_after, _ = run([str(CMAKE), "-DXRKIT_ROOT=%s" % ROOT, "-P", str(script)], env=env)
-
     if rc_before != 0:
         fail("注入前基线就不通过 —— 这条锁现在无论红绿都不可信")
         return
-    if rc_inject == 0:
-        fail("往 core 里塞了 Qt 头却没变红 —— 这是「永远为真的锁」")
-        return
-    if rc_after != 0:
-        fail("删掉注入文件后没恢复绿灯 —— 锁有残留状态")
-        return
-    ok("基线绿 → 注入红 → 还原绿（J5 确实在测东西）")
+    # ★★ 补充 H/§5.7（B 批）：**逐形态**自证，三种都注入一遍 ——
+    #   修前只有前两种能红，`<qstring.h>` 这类**小写私名头整类漏网**
+    #   （实测：注入后照打 "J5 OK：74 个文件均无 Qt 依赖"、rc=0）。
+    #   "注入必红"这条锁自己也有洞：只注入一种形态，就锁不住第二种形态。
+    forms = [
+        ("#include <QtCore/QString>\n", "模块式 <QtCore/QString>"),
+        ("#include <QString>\n", "类式 <QString>"),
+        ("#include <qstring.h>\n", "小写私名式 <qstring.h>（§5.7 修前漏网）"),
+    ]
+    for text, label in forms:
+        try:
+            probe.write_text(text, encoding="utf-8")
+            rc_inject, out_inject = run([str(CMAKE), "-DXRKIT_ROOT=%s" % ROOT, "-P", str(script)],
+                                        env=env)
+        finally:
+            if probe.exists():
+                probe.unlink()
+        rc_after, _ = run([str(CMAKE), "-DXRKIT_ROOT=%s" % ROOT, "-P", str(script)], env=env)
+        if rc_inject == 0:
+            fail("往 core 里塞了 %s 却没变红 —— 这是「永远为真的锁」\n%s"
+                 % (label, tail(out_inject, 5)))
+            return
+        if rc_after != 0:
+            fail("删掉注入文件后没恢复绿灯 —— 锁有残留状态（形态 %s）" % label)
+            return
+        ok("%s：基线绿 → 注入红 → 还原绿" % label)
 
 
 def step_selftest(release: bool) -> None:
@@ -363,6 +389,12 @@ def step_cli_contract(release: bool) -> None:
          "--sniff 缺参数 → 用法错误"),
         (["--glyph-dump"], 3, "GLYPH error",
          "--glyph-dump 缺参数 → 用法错误"),
+        # ★★ 补充 G3【S1】（B 批）：守卫判的是**过滤前**的 `operands`，而真正取下标的是
+        #   过滤掉 `--no-full-cyrillic` 之后的 `args` ⇒ 只剩那个开关时 `args[0]` 空取下标
+        #   （修前实测 exit=0xC0000005 访问违例 ×3/3）。帮助行把 `<xml目录>` 与
+        #   `[--no-full-cyrillic]` 并列展示，很容易这么敲 ⇒ 必须判**用法错误**。
+        (["--extract-chars", "--no-full-cyrillic"], 3, "CHARSET error",
+         "--extract-chars 只剩 --no-full-cyrillic → 用法错误（不许空取下标）"),
     ]
     for argv, want, marker, label in expectations:
         rc, out = run([str(CLI_EXE)] + argv)

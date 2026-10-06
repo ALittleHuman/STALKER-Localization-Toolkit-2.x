@@ -32,6 +32,16 @@ std::string base_name(const std::string& path) {
 
 }  // namespace
 
+bool is_plugin_dll_name(const std::string& filename) {
+    // ★★ S2-2（B 批）：后缀判定**唯一一份**、**大小写不敏感** —— Windows 文件名不分大小写，
+    //   所以 `NLC.DLL` 与 `nlc.dll` 是同一个文件，必须都认（修前只认小写，`NLC.DLL` 静默漏载）。
+    std::string lower = filename;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](char c) {
+        return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    });
+    return lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".dll") == 0;
+}
+
 LoadResult load_plugin(const std::string& dll_path, const PluginApiAdapter& adapter) {
     LoadResult result;
     result.plugin_name = base_name(dll_path);
@@ -92,10 +102,10 @@ std::vector<RegistrationError> load_plugins_from_dir(const std::string& dir, Reg
         if (ec) break;
         if (!it->is_regular_file(ec)) continue;
         std::string name = xrkit::core::path_to_utf8(it->path().filename());
-        if (name.size() > 4 && name.compare(name.size() - 4, 4, ".dll") == 0) {
-            std::transform(name.begin(), name.end(), name.begin(), [](char c) {
-                return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            });
+        // ★★ S2-2（B 批）：后缀判定**只此一份**且**大小写不敏感**（见 loader.h 的说明）。
+        //   修前：这里判原名的 `.dll`（`NLC.DLL` 静默漏载），而给它小写化的
+        //   `std::transform` 结果被丢弃（死代码）。
+        if (is_plugin_dll_name(name)) {
             files.push_back(xrkit::core::path_to_utf8(it->path()));
         }
     }

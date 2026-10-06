@@ -3207,7 +3207,9 @@ int run_cli(const std::vector<std::string>& args) {
                 if (ec) break;
                 if (!it->is_regular_file(ec)) continue;
                 std::string name = xrkit::core::path_to_utf8(it->path().filename());
-                if (name.size() > 4 && name.compare(name.size() - 4, 4, ".dll") == 0) {
+                // ★★ S2-2（B 批）：探针与 `load_plugins_from_dir` **共用同一份**命名判据
+                //   （修前两处各抄一份大小写敏感的 `.dll` 判定 ⇒ `NLC.DLL` 连探针都找不到）。
+                if (xrkit::plugin::is_plugin_dll_name(name)) {
                     names.push_back(name);
                 }
             }
@@ -3709,6 +3711,15 @@ int run_cli(const std::vector<std::string>& args) {
             } else {
                 args.push_back(op);
             }
+        }
+        // ★ 补充 G3【S1】（B 批）：守卫必须判**过滤后**的 `args`，不是过滤前的 `operands` ——
+        //   `operands = {"--no-full-cyrillic"}` 时 `args` 为空，而下面取 `args[0]` ⇒
+        //   空 vector 取下标（实测 exit=0xC0000005 访问违例 ×3/3）。帮助行恰好把两者并列展示，
+        //   很容易这么敲；门禁的 `golden_font_charset` 只用正常形态，抓不到。
+        if (args.empty()) {
+            std::cerr << "CHARSET error reason=用法：--extract-chars <xml目录> [输出文件] "
+                         "[--no-full-cyrillic]\n";
+            return kExitUsage;
         }
         const std::string& xml_dir = args[0];
         xrkit::engine::font::CharsetResult result;

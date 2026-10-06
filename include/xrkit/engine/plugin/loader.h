@@ -45,6 +45,14 @@ LoadResult load_plugin(const std::string& dll_path, const PluginApiAdapter& adap
 std::vector<RegistrationError> load_plugins_from_dir(const std::string& dir, Registry& registry,
                                                      const stk_ui* ui = nullptr);
 
+// ★★ S2-2（B 批，审计 §2）：**插件文件的命名判据只许这一份**。
+//   `*.dll` 的后缀判定必须**大小写不敏感**（Windows 文件名本来就不分大小写：`NLC.DLL` 是同一个
+//   文件）。修前 `load_plugins_from_dir` 判的是**原名**的 `.dll`，而给它做小写化的
+//   `std::transform` 结果此后再未使用（死代码）⇒ `NLC.DLL` 这类**静默漏载**：不报错、不进
+//   `errors`、也不计数，用户只看到"插件好像没生效"。CLI 的 `--plugin-init-rollback` 探针
+//   犯的是同一个错（两处各抄一份判定＝两份语义）。现在两处都调这一个函数。
+bool is_plugin_dll_name(const std::string& filename);
+
 // 释放所有已加载的插件库（只在确定没人再调它们的回调时用）
 void unload_all();
 size_t loaded_count();

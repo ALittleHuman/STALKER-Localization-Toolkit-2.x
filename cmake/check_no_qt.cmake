@@ -33,12 +33,22 @@ foreach(f ${XRKIT_SCAN})
   string(REGEX REPLACE "/\\*([^*]|\\*[^/])*\\*/" "" content "${content}")
   string(REGEX REPLACE "//[^\n]*" "" content "${content}")
 
-  # 两种 Qt 包含形态：模块式 <QtCore/QString>、类式 <QString>
+  # 三种 Qt 包含形态：模块式 <QtCore/QString>、类式 <QString>、**小写私名式 <qstring.h>**。
+  # ★★ 补充 H/§5.7（B 批）：修前只有前两种 —— `#include <qstring.h>` / `<qglobal.h>` 这类
+  #   **小写 Qt 头整类漏网**（实测：塞进 src/core/ 后这里照打 "J5 OK：74 个文件均无 Qt 依赖"、
+  #   rc=0；而 `<QtCore/QString>` 会红）⇒ J5 是红线，锁有洞＝红线可绕。
   string(REGEX MATCHALL "#[ \t]*include[ \t]*[<\"]Qt[0-9A-Za-z_]*[/>\"]" hits_a "${content}")
   string(REGEX MATCHALL "#[ \t]*include[ \t]*[<\"]Q[A-Z][0-9A-Za-z_]*[>\"]" hits_b "${content}")
-  set(hits "${hits_a};${hits_b}")
-  string(STRIP "${hits}" hits)
-  if(NOT hits STREQUAL ";" AND NOT hits STREQUAL "")
+  string(REGEX MATCHALL "#[ \t]*include[ \t]*[<\"]q[a-z0-9_]*\\.h[>\"]" hits_c "${content}")
+  # ★ 拼装改成"只看非空组件"：修前用 `STRIP` 后比 `";"` 当"全空"的哨兵，**三个组件时就变成
+  #   `";;"`** ⇒ 空命中也会被判成违规（改坏基线的正是这个哨兵）。组件式拼装没有这个坑。
+  set(hits "")
+  foreach(part "${hits_a}" "${hits_b}" "${hits_c}")
+    if(NOT part STREQUAL "")
+      set(hits "${hits}${part};")
+    endif()
+  endforeach()
+  if(NOT hits STREQUAL "")
     list(APPEND violations "${f} -> ${hits}")
   endif()
 endforeach()
