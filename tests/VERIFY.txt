@@ -568,12 +568,14 @@ RESULT: FAIL（1 处失败）
   叠加"比较期间模式/筛选控件未禁用"（全文件 `setEnabled` 零命中）⇒ 主线程 `set_mode()`
   的 `results_.clear()` 与 worker 的 `push_back` **并发写同一个 vector**。
 - 修法：① `refresh_rows()` 与统计标签**同一条口径**（非主线程 ⇒ `Qt::QueuedConnection`
-  排队回主线程，收尾的 `set_compare_controls_enabled(true)` 也在同一个排队 lambda 里）；
-  ② 新增 `set_compare_controls_enabled()`：**只有真在工作线程跑**时才禁用模式/筛选控件
-  （主线程直调的判据路径不禁用 —— 自检要在比较前后来回切模式）；
+  排队回主线程；收尾恢复控件那条也在同一个排队 lambda 里 —— **绝不在 worker 栈上改控件**）；
+  ② 新增 `set_compare_controls_enabled()` ＋ 只读探针 `compare_controls_enabled()`：
+  「开始比较」按钮在起 worker **之前**同步禁用模式/筛选控件，worker 收尾时排队恢复
+  ——「比较期间不许切模式/换筛选」因此**只由主线程做**（`QWidget::setEnabled` 不是线程安全的）；
   ③ `mode()` 改走**注册表优先**、模式 key 在起 worker **之前**快照（`mode_key_at_task_start_`），
   worker 不再读控件。
-- 锁：3-5 三条（主线程直调 ⇒ 立刻落地；**worker 里调 ⇒ 树上当场不变**、泵事件后才出现）。
+- 锁：3-5 三条（主线程直调 ⇒ 立刻落地；**worker 里调 ⇒ 树上当场不变**、泵事件后才出现；
+  **点真实入口「开始比较」后主线程当场读到控件已禁用、收尾后恢复**）。
 
 ## 3-6 `~TaskShell` 只 `join()` 不 `request_cancel()`
 
@@ -669,7 +671,7 @@ RESULT: FAIL（1 处失败）
 
 ```
 --release → 日志 build\logs\c_batch_release.out（PYTHONUTF8=1 / PYTHONIOENCODING=utf-8）
-  SHELL-SMOKE ok checks=730 failed=0 mode=dark
+  SHELL-SMOKE ok checks=734 failed=0 mode=dark
   ENGINE-CONTRACT ok (checks=20 failed=0)
   BENCH PASS metrics=6 failed=0
   ------------------------------------------------------------------
@@ -678,7 +680,7 @@ RESULT: FAIL（1 处失败）
   RESULT: PASS                                  （exit=0）
 
 --fast    → 日志 build\logs\c_batch_fast.out（同上两个环境变量）
-  SHELL-SMOKE ok checks=730 failed=0 mode=dark
+  SHELL-SMOKE ok checks=734 failed=0 mode=dark
   ENGINE-CONTRACT ok (checks=20 failed=0)
   BENCH PASS metrics=6 failed=0
   ------------------------------------------------------------------
@@ -717,6 +719,9 @@ RESULT: FAIL（1 处失败）
 
 ### 红（修前形态，原始行）
 
+（以下为最终版取证：`3-5` 的两条锁改成"**点真实入口「开始比较」**后主线程当场读控件状态"，
+所以这一版比第一版多两条；`3-6` 见下。）
+
 ```
   SHELL-SMOKE fail 3-1 加一个包后已勾选的 3 项必须还在（实测 0；修前 rebuild_tree 丢整棵树 ⇒ 这里必为 0）
   SHELL-SMOKE fail 3-1 勾一个包（3 项）后再加包 ⇒ 仍是 3（实测 3 → 0）
@@ -729,11 +734,20 @@ RESULT: FAIL（1 处失败）
   SHELL-SMOKE fail 3-4 赢家那一份的大小也要对（大小列「10 B」，期望含 20）
   SHELL-SMOKE fail 3-5 worker 里调 compare_dirs ⇒ **树上当场不变**（排队回主线程）；
                     实测 worker 行=2 / 树 0→2（修前无条件直调 ⇒ 当场就被重建）
+  SHELL-SMOKE fail 3-5 比较期间模式/筛选控件被禁用（点「开始比较」后当场读：禁用=0 / running=1）
   SHELL-SMOKE fail 3-7 选中插件模式 ⇒ 表头来自**插件**（实测「文件 (相对路径)|状态|行数 A|行数 B|ID 数 A|ID 数 B|差异详情」；
                     修前 find_mode 只查内置表 ⇒ 表头会是内置那套）
   SHELL-SMOKE fail 3-7 选中插件模式 ⇒ 筛选项来自插件（实测「全部|仅不一致|仅一侧存在」）
-  SHELL-SMOKE ok checks=730 failed=10 mode=dark           ← 退出码 1
+  SHELL-SMOKE ok checks=734 failed=11 mode=dark          ← 退出码 1
 ```
+
+★ 3-5 判据②的**口径说明**（为什么不是"在 worker 里读控件"）：`QWidget::setEnabled` **不是**
+线程安全的，所以"比较期间禁用模式/筛选控件"这件事**只能由主线程做** —— 落点是「开始比较」
+按钮 lambda（起 worker **之前**同步禁用）＋ worker 收尾时排队恢复（`Qt::QueuedConnection`，
+`set_compare_controls_enabled(true)` 在排队 lambda 里，**不在 worker 栈上**）。
+判据因此写成"**点真实入口之后**主线程当场读：控件必须是禁用的；收尾后必须恢复"。
+（曾试过"从 worker 里 `BlockingQueuedConnection` 去禁用"——**离屏自检下死锁**
+（主线程若正在轮询而不泵事件就永远等不到），已弃用；这条弯路也记在这里，免得再被走一遍。）
 
 ### 3-6 的红是"**挂死**"（无法打行，如实记原始观测）
 
@@ -752,7 +766,7 @@ RESULT: FAIL（1 处失败）
 ### 绿（还原后，同一棵树）
 
 ```
-  SHELL-SMOKE ok checks=730 failed=0 mode=dark            ← 退出码 0
+  SHELL-SMOKE ok checks=734 failed=0 mode=dark            ← 退出码 0
 ```
 
 ### ★ 取证过程中踩到的坑（如实登记，已修）

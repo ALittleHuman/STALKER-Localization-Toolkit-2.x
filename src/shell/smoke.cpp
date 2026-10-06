@@ -8327,6 +8327,44 @@ SmokeResult run_smoke() {
                       .arg(worker_rows)
                       .arg(before_worker)
                       .arg(right_after_worker));
+            // ★ 判据②（审计那条的后半句：**比较期间模式/筛选控件按需禁用**，消除 results_
+            //   的主/worker 并发写）。这一条走**真实入口**（点「开始比较」那颗按钮 ⇒
+            //   按钮 lambda 在起 worker 之前禁用、worker 收尾时排队恢复）。
+            //   判红办法：把按钮 lambda 里 `set_compare_controls_enabled(false)` 删掉 ⇒ 立刻红。
+            {
+                page.set_mode(QStringLiteral("stats"));
+                QApplication::processEvents();
+                QLineEdit* dir_a = page.findChild<QLineEdit*>(QStringLiteral("xml_dir_a"));
+                QLineEdit* dir_b = page.findChild<QLineEdit*>(QStringLiteral("xml_dir_b"));
+                QPushButton* start_btn = page.findChild<QPushButton*>(QStringLiteral("xml_start"));
+                check(dir_a != nullptr && dir_b != nullptr && start_btn != nullptr,
+                      QStringLiteral("3-5 前提：拿得到真实入口（xml_dir_a / xml_dir_b / xml_start）"));
+                if (dir_a != nullptr) dir_a->setText(root + QStringLiteral("/a"));
+                if (dir_b != nullptr) dir_b->setText(root + QStringLiteral("/b"));
+                QApplication::processEvents();
+                check(page.compare_controls_enabled(),
+                      QStringLiteral("3-5 前提：空闲时模式/筛选控件是可用的"));
+                if (start_btn != nullptr) start_btn->click();
+                // 主线程**同步**判：worker 刚起，控件必须是禁用的
+                const bool off_now = !page.compare_controls_enabled();
+                check(off_now,
+                      QStringLiteral("3-5 比较期间模式/筛选控件被禁用（点「开始比较」后当场读："
+                                     "禁用=%1 / running=%2）")
+                          .arg(off_now ? 1 : 0)
+                          .arg(page.task()->running() ? 1 : 0));
+                // 等 worker 收尾 + 排队恢复落地
+                QElapsedTimer wait_clock;
+                wait_clock.start();
+                while (wait_clock.elapsed() < 30000) {
+                    QApplication::processEvents();
+                    if (!page.task()->running() && page.compare_controls_enabled()) break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                }
+                check(page.compare_controls_enabled(),
+                      QStringLiteral("3-5 比较收尾后控件恢复可用（running=%1 / 启用=%2）")
+                          .arg(page.task()->running() ? 1 : 0)
+                          .arg(page.compare_controls_enabled() ? 1 : 0));
+            }
             // 泵事件 ⇒ 排队的那次刷新落地
             for (int i = 0; i < 5; ++i) {
                 QApplication::processEvents();

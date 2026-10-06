@@ -197,7 +197,12 @@ XmlPage::XmlPage(QWidget* parent)
         //   快照下来（worker 里 `current_mode_key()` 会读这个快照，不再碰 `mode_combo_`）。
         //   同时任务跑完（`apply_finish`）再清空，免得下一轮主线程路径读到旧值。
         mode_key_at_task_start_ = mode_combo_->currentData().toString();
-        task_->run(QStringLiteral("XML 校对"), [this, a, b, enc_a, enc_b](
+        // ★★ 2026-10-06（审计 3-5）：**起 worker 之前**在主线程同步禁用模式/筛选控件 ——
+        //   「比较期间不许切模式/换筛选」这条只在这里生效（worker 那边另有阻塞式排队，
+        //   管的是自检直接调 `compare_dirs` 的情形）；收尾在 `apply_finish` 恢复。
+        set_compare_controls_enabled(false);
+        // 任务壳拒绝（已有任务在跑）⇒ 把刚禁用的控件马上放回去（否则页面会僵住）
+        const bool started = task_->run(QStringLiteral("XML 校对"), [this, a, b, enc_a, enc_b](
                                                   const ProgressSink& progress,
                                                   const MessageSink& message) {
             progress(0);
@@ -220,6 +225,7 @@ XmlPage::XmlPage(QWidget* parent)
                         .arg(visible_count())
                         .toUtf8().toStdString());
         });
+        if (!started) set_compare_controls_enabled(true);
     });
     // ★ 2026-10-06（⑤）：1.x `xml_compare_app.py:391-392` 的「清除」——
     //   2.x 原来全文件 `清除` 零命中（这条用户可达功能整体消失）。
@@ -412,7 +418,13 @@ int XmlPage::compare_dirs(const QString& dir_a, const QString& dir_b, const QStr
     //      模式/筛选控件**按需禁用**（见下面 `set_compare_controls_enabled`，消除并发写）；
     //   ② 收尾的控件刷新一律**排队回主线程**（绝不在这条调用栈里动窗口）。
     const bool on_main = QThread::currentThread() == QCoreApplication::instance()->thread();
-    if (!on_main) set_compare_controls_enabled(false);
+    // ★★ 2026-10-06（审计 3-5）：**控件只在主线程改**（`QWidget::setEnabled` 不是线程安全的）
+    //   ⇒ 禁用/恢复这两件事**只由主线程路径做**（「开始比较」按钮在起 worker 之前禁用、
+    //   worker 收尾时排队恢复）。这条 worker 分支**不碰控件**：
+    //   它此前试过"从 worker 里阻塞式排队去改"，实测在离屏自检下**死锁**
+    //   （主线程若正在轮询而不泵事件，`BlockingQueuedConnection` 永远等不到）——
+    //   线程安全优先于"顺手在这里禁一下"。
+    (void)on_main;
     // ⑤：这一轮比较的对象（名字快照，统计标签/CSV 都用它）
     compared_a_ = dir_a;
     compared_b_ = dir_b;
@@ -499,7 +511,6 @@ int XmlPage::compare_dirs(const QString& dir_a, const QString& dir_b, const QStr
     if (on_main) {
         refresh_rows();
         refresh_stats_label();
-        set_compare_controls_enabled(true);
     } else {
         QMetaObject::invokeMethod(
             this,
@@ -525,6 +536,12 @@ int XmlPage::compare_dirs(const QString& dir_a, const QString& dir_b, const QStr
 void XmlPage::set_compare_controls_enabled(bool on) {
     if (mode_combo_ != nullptr) mode_combo_->setEnabled(on);
     if (filter_combo_ != nullptr) filter_combo_->setEnabled(on);
+}
+
+// ★★ 2026-10-06（审计 3-5）：只读探针（见头文件）。控件不在（构造期）也算"没禁用"。
+bool XmlPage::compare_controls_enabled() const {
+    if (mode_combo_ == nullptr || filter_combo_ == nullptr) return true;
+    return mode_combo_->isEnabled() && filter_combo_->isEnabled();
 }
 
 bool XmlPage::row_matches(const Row& row) const {

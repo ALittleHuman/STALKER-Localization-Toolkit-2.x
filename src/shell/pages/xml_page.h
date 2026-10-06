@@ -114,6 +114,11 @@ public:
 
     QComboBox* mode_combo() const { return mode_combo_; }
     QComboBox* filter_combo() const { return filter_combo_; }
+    // ★★ 2026-10-06（审计 3-5）：比较期间"模式/筛选控件"到底禁用没有 —— 判据要读得到
+    //   （审计那条判据的后半句是"顺带把比较期间模式/筛选控件按需禁用，消除 results_ 的
+    //   主/worker 并发写"）。**只读**：控件不在（构造期）也算"没禁用"。
+    //   ⚠ 定义在 .cpp：`QComboBox` 在本头里只是前向声明，inline 体里调 `isEnabled()` 会 C2027。
+    bool compare_controls_enabled() const;
     // D3 批：编码下拉的**唯一一份**判据是文件里的 `kEncodings`（1.x
     // `xml_compare_app.py:302` 的 `ENCODINGS` 六项）。暴露出来只是为了让自检
     // 能钉住"那一页**故意不含** big5/shift_jis/euc-kr"（见 D3④），不新增第二份表。
