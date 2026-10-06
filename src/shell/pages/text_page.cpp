@@ -226,6 +226,9 @@ void TextPage::run_batch() {
             return;
         }
         if (!stats.ok) {
+            // ★ S1-1（零静默）：失败也**先把台账逐条报出来** —— 产物写不出去时
+            //   "哪些文件没落盘 / 为什么"就是用户唯一能自救的线索，不能只剩一行总结。
+            for (const std::string& skipped : stats.skipped) message("跳过 " + skipped);
             message("提取失败：" + stats.error);
             return;
         }

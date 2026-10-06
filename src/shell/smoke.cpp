@@ -5586,8 +5586,11 @@ SmokeResult run_smoke() {
                 //（GUI 显示的就是这条；"同一条文案"要逐字比，不许各写一份）
                 plug::Registry mirror;
                 plug::PluginApiAdapter adapter(mirror, "xrkit_test_plugin.dll", nullptr);
+                // ★ 本批 S1-2 改了 `load_plugin` 的签名（第二参从裸 `stk_api` 收成**适配器**：
+                //   注册目标与回滚目标必须是同一份东西）—— 这一处是**编译必需**的跟随改动，
+                //   判据/行为一字未动。
                 const plug::LoadResult loaded = plug::load_plugin(plugin_dll.toStdString(),
-                                                                  adapter.api());
+                                                                  adapter);
                 new plug::PluginApiAdapter(std::move(adapter));   // 回调活着要一直有效
                 const plug::DecryptGateResult want =
                     plug::gate_db_path(mirror, enc_db.toStdString(), plug::decrypt_output_dir());

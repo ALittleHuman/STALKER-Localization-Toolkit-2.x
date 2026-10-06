@@ -8,6 +8,9 @@
 //     `unload_all()`（进程退出/重扫前才放）—— 提前 `FreeLibrary` 会让回调变成野指针。
 
 #include "xrkit/engine/plugin/registry.h"
+// ★ S1-2：`load_plugin` 的第二参是 `PluginApiAdapter`（注册目标与回滚目标是同一份东西）
+//   ⇒ 这个头文件需要适配器的**完整声明**（`abi_host.h` 本身就带 `registry.h` + `abi.h`）。
+#include "xrkit/engine/plugin/abi_host.h"
 #include "xrkit/plugin/abi.h"
 
 #include <string>
@@ -20,11 +23,21 @@ struct LoadResult {
     std::string error;
     std::string plugin_name;  // 文件名（注册前缀）
     int init_rc = 0;          // 插件入口的返回值（0 = 它自己说失败）
-    size_t registrations = 0;  // 这次加载带来的注册条数（便于自检/日志）
+    // 这次加载带来的注册条数；**失败时 = 本次已被撤回的注册条数**（零静默：回滚了几条也要看得见）
+    size_t registrations = 0;
 };
 
 // 加载一个 DLL 并调 `stk_plugin_init`。**任何失败都只填 error 返回**（不抛、不崩）。
-LoadResult load_plugin(const std::string& dll_path, const stk_api& api);
+//
+// ★★ S1-2（2026-10-06 审计）：`init` 返回 0 ⇒ **先按 owner 回滚它这次 init 期间的全部注册，
+//   然后才 `FreeLibrary`**。修前只做 `FreeLibrary` ⇒ 表里留着指向**已 unmap 代码段**的裸函数
+//   指针（命令 handler / 菜单项 / 面板 builder / 解密器 / 比较模式 …）⇒ 之后用户点到它注册的
+//   按钮就是 AV（实测 `0xC0000005`；`Registry::invoke` 只 catch C++ 异常，接不住 AV）。
+//   顺序不能反：**先撤表、再放库**（库一放，那些指针就已经悬空了）。
+// ★ 签名收成"调用方必须交出**适配器**"（而不是裸 `stk_api`）：注册目标（registry + owner 名）
+//   就在适配器自己身上 ⇒ 调用方**不可能**把"回调指针的落点"与"回滚的目标"传成两份不同的东西。
+//   （也不给"默认不回滚"的参数 —— 那正是修前的形状。）
+LoadResult load_plugin(const std::string& dll_path, const PluginApiAdapter& adapter);
 
 // 扫目录里的 `*.dll`，逐个加载（顺序：文件名升序 —— 与 1.x 的加载顺序一致，可复现）。
 // `ui` 由外壳提供（Qt 实现的 16 方法）；无 Qt 时传 nullptr。

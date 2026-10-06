@@ -24,6 +24,11 @@ public:
 
     const stk_api& api() const { return api_; }
     const std::string& plugin_name() const { return plugin_name_; }
+    // ★★ S1-2（2026-10-06 审计）：注册目标。`load_plugin` 在"入口返回 0"时必须**按 owner
+    //   回滚本次 init 期间的注册、然后才 FreeLibrary**，而回滚要的就是"这份 api 往哪儿注册"
+    //   —— 让它自己交出来（同一个对象里带着 registry + plugin_name）⇒ 调用方**不可能**
+    //   把"回调指针的落点"和"回滚的目标"传成两份不同的东西。
+    Registry& registry() const { return registry_; }
     // 注册期返回过的字符串（命令 id 等）—— 保证指针在宿主生命周期内有效。
     //
     // ★★ 2026-10-06（F1 命令 id 悬空；判红锁＝CLI `--selftest` 的"命令 id 指针稳定性"）：

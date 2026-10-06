@@ -703,6 +703,76 @@ def step_ltx_replace_lock(release: bool) -> None:
         fail(".ltx 替换判据不成立（见上）")
 
 
+def step_extract_guard(release: bool) -> None:
+    """判红锁：`--extract-text` 必须走 **7.5 守卫**（S1-1）＋ 产物写不出去**不许静默报成功**。
+
+    为什么要有这一步：守卫与文案早就写好了、GUI 页面与 `--text-plan`（干跑）都在调它，
+    **唯独真跑那条路 `extract_dir` 入口不调** ⇒ 输出目录选成源目录的**父目录**（很自然的选择）时：
+      · 不带 `--clean`：改写产物**逐字节覆盖源文件**（原文不可恢复，实测退出码还是 0）；
+      · 带 `--clean`：先 `remove_all` ⇒ **整棵源目录消失**，之后 `files=0` 也退 0。
+    另有一条零静默洞：产物**写不出去**只进 `skipped`、不置 `ok=false` ⇒ 一个文件都没落盘也退 0。
+    判据＝A（拒绝原地覆盖）/ B（拒绝删源，且拒绝发生在 `--clean` 之前）/ C 反向锁
+    （`target == source` **不许**拒 —— 1.x 口径产物落在子目录里）/ D（写失败非静默），
+    每条都断"退出码 + 理由原文 + 源树逐字节未变"。
+    夹具现造在 `%TEMP%`（**不碰真机语料/游戏目录**）。
+    退出码：0=全绿，1=有断言不成立，2=构建产物缺失（外部前提，按档位判定）。
+    """
+    say("[extract-guard] 判红锁：--extract-text 的 7.5 守卫 + 写失败非静默（S1-1）")
+    script = ROOT / "tests" / "check_extract_guard.py"
+    if not require_repo_file(script, "文本提取守卫判红锁脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("[") or s.startswith("✓") or s.startswith("✗") \
+                or s.startswith("EXTRACT-GUARD") or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("7.5 守卫在真跑那条路上生效（拒绝原地覆盖/删源 + 反向锁）＋ 写失败非静默")
+    elif rc == 2:
+        prereq("构建产物 xrkit_cli.exe", "缺失（见上）", release)
+    else:
+        fail("文本提取守卫判红锁有断言不成立（见上）")
+
+
+def step_plugin_init_rollback(release: bool) -> None:
+    """判红锁：插件 `init` 返回 0 ⇒ 必须**按 owner 回滚**它这次 init 期间的注册（S1-2）。
+
+    为什么要有这一步：插件在 init 期间是"成功一条进一条"地写注册表的（官方夹具的写法就是
+    每条失败 `return 0`）；修前宿主拿到 0 只 `FreeLibrary` ⇒ 表里留着**指向已 unmap 代码段**
+    的裸函数指针 ⇒ 用户点到它注册的按钮就是 AV（`Registry::invoke` 只 catch C++ 异常）。
+    夹具＝`xrkit_test_plugin_badinit.dll`（与官方夹具同一份写法，只有最后一句
+    `register_compare_mode` 缺 compare ⇒ 前 6 条注册成功、入口返回 0）。
+    判据＝① 夹具真的触发（宿主如实报"入口返回 0"）② ★主判据：按 **owner 名**逐容器断言
+    表里**零残留** ＋ `registration_count()` 回到 mark ③ 失败留痕仍在（零静默）。
+    ★ "之后调它不崩"**不作判据**（`FreeLibrary` 未必立刻 unmap，"不崩≠干净"）——
+      红取证里单独实测过：真调用 ⇒ `0xC0000005`。
+    退出码：0=全绿，1=有断言不成立，2=构建产物缺失（外部前提，按档位判定）。
+    """
+    say("[plugin-init-rollback] 判红锁：插件 init 返回 0 必须按 owner 回滚注册（S1-2）")
+    script = ROOT / "tests" / "check_plugin_init_rollback.py"
+    if not require_repo_file(script, "插件 init 回滚判红锁脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("[") or s.startswith("✓") or s.startswith("✗") or s.startswith("    ") \
+                or s.startswith("PLUGIN-INIT-ROLLBACK") or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("init 返回 0 的注册按 owner 逐容器回滚干净（留痕仍在）")
+    elif rc == 2:
+        prereq("构建产物 xrkit_cli.exe / xrkit_test_plugin_badinit.dll", "缺失（见上）", release)
+    else:
+        fail("插件 init 回滚判红锁有断言不成立（见上）")
+
+
 def step_golden_sqfs_pack(release: bool) -> None:
     """黄金语料差分：SquashFS **封包**产物（2.x 自写 writer vs 1.x 的 sqfs_pack/tar2sqfs）。
 
@@ -1922,6 +1992,10 @@ STEPS = [
     ("golden-text-decode", step_golden_text_decode),
     ("golden-text-extract", step_golden_text_extract),
     ("ltx-replace", step_ltx_replace_lock),
+    # ★ S1 批两条（2026-10-06）：文本提取守卫在真跑那条路上生效 / 插件 init 失败回滚注册。
+    #   各自独立成步（不塞进 selftest）：被 `--only` 过滤时会按假绿批的记账进 UNCOVERED。
+    ("extract-guard", step_extract_guard),
+    ("plugin-init-rollback", step_plugin_init_rollback),
     ("golden-text-sniff", step_golden_text_sniff),
     ("golden-font-raster", step_golden_font_raster),
     ("golden-font-metrics", step_golden_font_metrics),

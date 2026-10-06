@@ -32,12 +32,12 @@ std::string base_name(const std::string& path) {
 
 }  // namespace
 
-LoadResult load_plugin(const std::string& dll_path, const stk_api& api) {
+LoadResult load_plugin(const std::string& dll_path, const PluginApiAdapter& adapter) {
     LoadResult result;
     result.plugin_name = base_name(dll_path);
+    const stk_api& api = adapter.api();
 #ifndef _WIN32
     result.error = "本平台暂不支持插件 DLL（只有 Windows 构建）";
-    (void)api;
     return result;
 #else
     const std::filesystem::path native = xrkit::core::path_from_utf8(dll_path);
@@ -60,6 +60,14 @@ LoadResult load_plugin(const std::string& dll_path, const stk_api& api) {
     result.init_rc = rc;
     if (rc == 0) {
         result.error = "插件入口返回 0（它自己说初始化失败）：" + dll_path;
+        // ★★ S1-2：**先按 owner 回滚它这次 init 期间的全部注册，然后才 FreeLibrary**。
+        //   顺序反了就没意义：库一放，表里那些裸函数指针就已经指向 unmap 掉的代码段
+        //   （之后 `Registry::invoke` 之外的任何消费都是 AV —— 实测 0xC0000005）。
+        //   owner 名取**适配器自己的**（与它注册时用的前缀是同一个）⇒ 不会撤错别家。
+        result.registrations = adapter.registry().rollback_plugin(adapter.plugin_name());
+        core::log(core::Level::Warn, "插件 init 返回 0，已按 owner 回滚 " +
+                                         std::to_string(result.registrations) + " 条注册：" +
+                                         adapter.plugin_name());
         ::FreeLibrary(handle);
         return result;
     }
@@ -96,17 +104,31 @@ std::vector<RegistrationError> load_plugins_from_dir(const std::string& dir, Reg
     for (const std::string& file : files) {
         const std::string name = base_name(file);
         PluginApiAdapter adapter(registry, name, ui);
+        // ★★ S1-2：这个 mark 是**对账**用的（回滚后条数必须回到加载前），**不是**回滚手段 ——
+        //   回滚走 `Registry::rollback_plugin(owner)`（按 owner 逐容器撤）：`registration_count()`
+        //   是 9 个容器的**总和**（总量 ≠ 归属），撤错了别家的也能让总数对上。
+        //   `errors_` 不计入总数，所以对账时把它单独加上（留痕照旧要写）。
         const size_t before = registry.registration_count() + registry.registration_errors().size();
-        const LoadResult result = load_plugin(file, adapter.api());
+        const LoadResult result = load_plugin(file, adapter);
         if (!result.ok) {
             errors.push_back({name, result.error});
             registry.add_error(name, result.error);
+            // ★ 回滚自检（零静默）：回滚已经在 `load_plugin` 里、FreeLibrary **之前**跑过了。
+            //   这里只按"加载前 + 刚写的那条留痕"对账：不等 ⇒ 回滚没撤干净（或撤多了），
+            //   如实再记一条 —— 绝不静默。
+            const size_t after =
+                registry.registration_count() + registry.registration_errors().size();
+            if (after != before + 1) {
+                registry.add_error(name, "回滚后注册表条数与加载前对不上（加载前 " +
+                                             std::to_string(before) + "，加载后 " +
+                                             std::to_string(after) + "，已回滚 " +
+                                             std::to_string(result.registrations) + " 条）");
+            }
             core::log(core::Level::Warn, "插件加载失败：" + result.error);
             continue;
         }
         // 适配器活到下一次 load（owned_ 里的字符串指针要一直有效）——这里刻意泄漏一份，
         // 与"不卸载正在被引用的模块"同一条纪律：插件回调随时可能被调用。
-        (void)before;
         new PluginApiAdapter(std::move(adapter));
     }
     return errors;

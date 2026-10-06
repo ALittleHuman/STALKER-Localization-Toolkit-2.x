@@ -140,6 +140,47 @@ struct CompareModeReg {
 // 由 `xml::builtin_modes()` 的声明 + xml 模块的比较/明细函数装好。
 std::vector<CompareModeReg> builtin_compare_modes();
 
+// ── ★★ S1-2（2026-10-06 只读审计）：注册表的"**按 owner 记账**"与"按 owner 回滚" ──
+//
+// 缺陷（修前）：`init(&api)` 返回 0 时宿主只 `FreeLibrary`、**不回滚**它这次 init 期间
+// 已经进表的注册 ⇒ 表里留着指向**已 unmap 代码段**的裸函数指针（命令 handler / 菜单项 /
+// 面板 builder / 解密器 / 比较模式 …）⇒ 之后用户点到它注册的按钮就是 AV
+// （`Registry::invoke` 只 catch C++ 异常，**接不住** AV）。
+//
+// 为什么必须**按 owner 逐容器**、不能按一个总数：`registration_count()` 是 9 个容器的
+// **总和**（含 `compare_modes_`），"总量相等"完全可能是"撤错了别家的、留了自己的"
+// （计数是**总量**，不是**归属**）⇒ 判据与回滚都得按 **owner 名**（插件 dll 文件名）做。
+//
+// ★ `errors_` **不在**回滚/零残留的范围里：那是"留痕/诊断"通道，只存字符串（不可能悬垂），
+//   而零静默要求"init 返回 0""哪条注册被拒"这些理由**必须看得见**。
+//   所以 `residue_for` 把它单独列出来（可见），`rollback_plugin` **不碰**它。
+//   （本批对判据草案②的复核修正，见批报告。）
+// ★ `compare_modes_` 里内置模式的 owner 是 `engine::xml::kBuiltinPlugin`（唯一哨兵）⇒
+//   按 owner 过滤**天然**碰不到出厂模式 —— 这正是**不能**复用 `scan_clear()` 的原因
+//   （它刻意不清 `compare_modes_`，那是重扫口径，不是回滚）。
+struct PluginResidue {
+    std::string plugin;  // owner（插件 dll 文件名）
+    size_t decryptors = 0;
+    size_t formats = 0;
+    size_t commands = 0;
+    size_t menu_items = 0;
+    size_t option_entries = 0;
+    size_t options = 0;
+    size_t panels = 0;
+    size_t tools = 0;
+    size_t compare_modes = 0;
+    size_t errors = 0;  // 留痕条数：**不算**注册残留，但必须逐项可见（零静默）
+
+    // 9 个注册容器之和（**不含** errors_）
+    size_t registrations() const {
+        return decryptors + formats + commands + menu_items + option_entries + options + panels +
+               tools + compare_modes;
+    }
+    bool clean() const { return registrations() == 0; }
+    // 逐项 `k=v` 一行报出来（判据脚本/自检直接解析这一行，不去猜哪个容器脏了）
+    std::string describe() const;
+};
+
 // ── 注册表 ───────────────────────────────────────────────────────────
 
 class Registry {
@@ -202,6 +243,12 @@ public:
     // 12.7：`scan()` 清掉插件贡献，但**不动** compare_modes（内置与插件共用一张表）
     void scan_clear(const std::vector<RegistrationError>& carried_errors = {});
 
+    // ★★ S1-2：**按 owner 逐容器**只读报账（判据的唯一一份实现：9 个容器 + errors_ 逐项计数）
+    PluginResidue residue_for(const std::string& plugin) const;
+    // ★★ S1-2：**按 owner 逐容器**撤掉它注册的一切（"全成功才生效"的 abort 面）。
+    //   返回撤掉的**注册**条数（不含 errors_）。刻意不做"按总数回滚"（见 PluginResidue 上方）。
+    size_t rollback_plugin(const std::string& plugin);
+
     size_t command_count() const { return commands_.size(); }
     size_t registration_count() const;
     bool has_command(const std::string& id) const { return commands_.count(id) != 0; }
@@ -240,7 +287,6 @@ DecryptGateResult gate_db_path(const Registry& registry, const std::string& path
                                const std::string& out_dir);
 
 // ── 活动注册表钩子（★ 2026-10-04：把闸门从"只有外壳过"抬到**引擎读入口**）──────
-//
 // 用户口径（原话）：「**GUI 的功能，CLI 肯定要全部拥有啊。哪有 GUI 的细节功能比 CLI 还多的。**」
 // 修前的违例：闸门只在外壳（`FsPage::gate_source`）里，CLI 的动作路径**从不建注册表** ⇒
 // 加密包被 CLI 当普通包读 —— 同一个引擎、两个前端两套行为（前端分叉）。

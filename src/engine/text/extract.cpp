@@ -1,5 +1,6 @@
 #include "xrkit/engine/text/extract.h"
 
+#include "xrkit/core/log.h"
 #include "xrkit/core/path.h"
 #include "xrkit/engine/text/encoding.h"
 
@@ -1011,7 +1012,38 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
         return st;
     }
 
+    // ★★ S1-1（2026-10-06 只读审计）：**入口自己验一次** 7.1/7.5 守卫。
+    //
+    // 修前这条路**不调** `validate_request`：守卫只在 GUI 页面（`TextPage::validate`）与
+    // `--text-plan`（干跑）那两条路上 ⇒ 真跑的 `--extract-text` 直透传（plan 说"会被拒"、
+    // 真跑却不拒 = 口径分叉）。后果（用户点得出来的：输出目录选成源目录的**父目录**）：
+    //   · 不带 `--clean`：`dst` 恰等于源目录 ⇒ 改写产物**逐字节覆盖源文件**（原文不可恢复）；
+    //   · 带 `--clean`：先 `remove_all(dst)` ⇒ **整棵源目录消失**，之后 `files=0` 还退 0。
+    //
+    // 位置：**任何 `remove_all` / 写盘之前**（下面 `options.clean` 那一段之前）。
+    // ★ 语义只有这一份实现 —— 这里不重写比较逻辑，只把参数拼成 `ExtractRequest` 交回
+    //   `validate_request`（GUI 页面 / `--text-plan` 调的也是同一个它）⇒ 三处判定同源。
+    // ★ 输出根取 `xml_out_dir`（契约上就是"out 的根"）：三个前端都是
+    //   `dst == xml_out_dir/(gameplay|scripts)` ⇒ 与它们各自那一次调用是**同一个判据**。
+    // ★ 反向锁：`target == source`（即 `dst == source/(gameplay|scripts)`）**不许**被拒 ——
+    //   1.x 口径下产物落在源目录的**子目录**里、不覆盖源文件（见 `validate_request` 的 7.5 注释）。
+    {
+        ExtractRequest request;
+        request.source_dir = source_dir;
+        request.target_dir = xml_out_dir;
+        request.prefix = options.prefix;
+        const std::string guard = validate_request(request);
+        if (!guard.empty()) {
+            st.error = guard;
+            return st;
+        }
+    }
+
     if (options.clean) {
+        // ★ S1-1（零静默）：`--clean` 是**破坏性**动作，落点必须留痕（修前一声不响就 remove_all）
+        core::log(core::Level::Info, "文本提取 --clean：清理输出落点 " + to_utf8(dst) +
+                                         "（及 " + xml_out_dir + "/" + prefix + "_" + type_dir +
+                                         "_texts.xml）");
         std::filesystem::remove_all(dst, ec);
         // ★ 别再经 `Path::string()` 中转：它按 **CP_ACP** 转窄串，ACP 表示不了的字符会变 `?`
         //   （与 atomic_write 那个【中】同类）。这里直接把 path 交给 remove 的 path 重载。
@@ -1130,12 +1162,17 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
         const std::string out_encoding = gameplay ? dec.encoding : std::string(kUtf8);
         std::vector<uint8_t> encoded;
         if (!encode_strict(out_encoding, to_windows_newlines(body), encoded, err)) {
+            // ★ S1-1（零静默）：产物做不出来也算**失败**，不许只记一条跳过就报成功
             st.skipped.push_back(f.rel + "：" + err);
+            ++st.write_failures;
+            if (st.error.empty()) st.error = "产物写不出去（" + f.rel + "）：" + err;
             continue;
         }
         std::filesystem::path out_path = dst / core::path_from_utf8(f.rel);
         if (!write_bytes(to_utf8(out_path), std::string(encoded.begin(), encoded.end()), err)) {
             st.skipped.push_back(f.rel + "：" + err);
+            ++st.write_failures;
+            if (st.error.empty()) st.error = "产物写不出去（" + f.rel + "）：" + err;
             continue;
         }
         ++st.files;
@@ -1159,7 +1196,9 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
 
     const auto t1 = std::chrono::steady_clock::now();
     st.elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    st.ok = true;
+    // ★ S1-1（零静默）：有**产物写不出去**（encode/write 失败）就**不是**成功 ——
+    //   修前这里无条件 `st.ok = true`，调用方按 ok 判退码 ⇒ "产物缺失却退 0"。
+    st.ok = st.error.empty() && st.write_failures == 0;
     return st;
 }
 

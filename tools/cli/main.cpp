@@ -142,6 +142,8 @@ void print_usage() {
            "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
            "                                              文本提取（gameplay|scripts 一个分支）\n"
            "  --text-plan <源目录> <输出目录>              文本提取的请求守卫（7.1 文件夹名 / 7.5 覆盖源目录）\n"
+           "  --plugin-init-rollback <夹具目录>            插件 init 返回 0 必须回滚注册（S1-2 判据探针；\n"
+           "                                              目录里只放坏 init 夹具 DLL，按 owner 逐容器断言零残留）\n"
            "  --video-plan                                视频转码 argv + 摘要（PLAN/PLANSUM；与 1.x 对拍）\n"
            "  --video-probe <ffprobe-json 文件>           视频参数解析（与 1.x parse_video_info 对拍）\n"
            "  --video-encoders <ffmpeg -encoders 输出>    可用编码器解析（与 1.x _ensure_encoders 对拍）\n"
@@ -2108,7 +2110,7 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         plug::LoadResult broken;
         {
             plug::PluginApiAdapter adapter(registry, "broken.dll", nullptr);
-            broken = plug::load_plugin("no_such_plugin_xyz.dll", adapter.api());
+            broken = plug::load_plugin("no_such_plugin_xyz.dll", adapter);
         }
         check(ctx, !broken.ok && !broken.error.empty(),
               "加载不存在的 DLL 应失败并给出理由（不许崩）");
@@ -2125,7 +2127,7 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         }
         {
             plug::PluginApiAdapter adapter(registry, "xrkit_test_plugin.dll", nullptr);
-            const plug::LoadResult loaded = plug::load_plugin(dll, adapter.api());
+            const plug::LoadResult loaded = plug::load_plugin(dll, adapter);
             check(ctx, loaded.ok && loaded.init_rc == 1, "加载测试插件失败：" + loaded.error);
             if (loaded.ok) new plug::PluginApiAdapter(std::move(adapter));
         }
@@ -3118,6 +3120,94 @@ int run_cli(const std::vector<std::string>& args) {
         return kExitOk;
     }
 
+    // ★★ S1-2（插件 `init` 返回 0 ⇒ 必须**回滚**它 this-init 期间的注册）：判据探针。
+    //
+    // 夹具 = 一枚"前 6 条注册成功、最后一条 `register_compare_mode` 必失败 ⇒ 入口 `return 0`"
+    // 的 DLL（`tools/test_plugin/test_plugin_badinit.c`，由 tools/cli/CMakeLists 编到 exe 旁边）。
+    // 修前宿主只 `FreeLibrary`、不回滚 ⇒ 表里留着指向**已 unmap 代码段**的裸函数指针（点一下 AV）。
+    //
+    // 断言（缺一条不算过）：
+    //   ① 宿主**如实报**失败（理由里写明"入口返回 0"）、`loaded_count()` **不含**它；
+    //   ② ★主判据：按 **owner 名**逐容器**零残留**（9 个注册容器，逐项 `k=v` 打印）
+    //      ＋ `registration_count()` 回到加载前的 mark；
+    //   ③ 留痕仍在（零静默）：失败理由必须看得见 —— `errors_` 不参与"零残留"（见 registry.h）。
+    //   ★ 判据不是"之后调它不崩"：`FreeLibrary` 未必立刻 unmap，"不崩≠干净"（草案已注明）。
+    // 退出码：0=全绿；1=有断言不成立；2=夹具缺失（外部前提，门禁按档位记未覆盖）；3=用法错误。
+    if (action == "--plugin-init-rollback") {
+        if (operands.empty()) {
+            std::cerr << "PLUGINROLLBACK error reason=用法：--plugin-init-rollback <只放夹具的目录>\n";
+            return kExitUsage;
+        }
+        const std::string dir = operands[0];
+        // owner = 目录里**第一个** *.dll（升序 —— 与 `load_plugins_from_dir` 的加载/命名口径同源）
+        std::string owner;
+        {
+            std::error_code ec;
+            std::vector<std::string> names;
+            for (std::filesystem::directory_iterator it(xrkit::core::path_from_utf8(dir), ec), end;
+                 it != end; it.increment(ec)) {
+                if (ec) break;
+                if (!it->is_regular_file(ec)) continue;
+                std::string name = xrkit::core::path_to_utf8(it->path().filename());
+                if (name.size() > 4 && name.compare(name.size() - 4, 4, ".dll") == 0) {
+                    names.push_back(name);
+                }
+            }
+            std::sort(names.begin(), names.end());
+            if (!names.empty()) owner = names.front();
+        }
+        if (owner.empty()) {
+            std::cout << "PLUGINROLLBACK skip reason=目录里没有 *.dll（夹具没准备）：" << dir << "\n";
+            return kExitSkip;
+        }
+        xrkit::plugin::Registry registry;
+        const size_t mark = registry.registration_count();
+        const size_t loaded_before = xrkit::plugin::loaded_count();
+        const std::vector<xrkit::plugin::RegistrationError> load_errors =
+            xrkit::plugin::load_plugins_from_dir(dir, registry, /*ui=*/nullptr);
+        const size_t loaded_after = xrkit::plugin::loaded_count();
+        const xrkit::plugin::PluginResidue residue = registry.residue_for(owner);
+        std::cout << "PLUGINROLLBACK info dir=" << dir << " dll=" << owner << " mark=" << mark
+                  << " count=" << registry.registration_count() << " loaded_before=" << loaded_before
+                  << " loaded_after=" << loaded_after << " errors=" << load_errors.size() << "\n";
+        // 逐项可见：脏在哪个容器一眼看得出（不是只报一句"总数不对"）
+        std::cout << "PLUGINROLLBACK residue " << residue.describe() << "\n";
+        for (const xrkit::plugin::RegistrationError& e : load_errors) {
+            std::cout << "PLUGINROLLBACK load-error plugin=" << e.plugin << " reason=" << e.message
+                      << "\n";
+        }
+        for (const xrkit::plugin::RegistrationError& e : registry.registration_errors()) {
+            if (e.plugin == owner) {
+                std::cout << "PLUGINROLLBACK error plugin=" << e.plugin << " reason=" << e.message
+                          << "\n";
+            }
+        }
+        std::vector<std::string> bad;
+        const auto want = [&bad](bool cond, const std::string& what) {
+            if (!cond) bad.push_back(what);
+        };
+        bool reported = false;
+        for (const xrkit::plugin::RegistrationError& e : load_errors) {
+            if (e.plugin == owner && e.message.find("入口返回 0") != std::string::npos) {
+                reported = true;
+            }
+        }
+        want(reported, "宿主没如实报『入口返回 0』（或 owner 名不是 " + owner + "）");
+        want(loaded_after == loaded_before, "加载失败却把句柄记进了已加载名单");
+        want(residue.clean(), "表里还留着属于它的注册（按 owner 逐容器）");
+        want(residue.compare_modes == 0, "内置/别家的比较模式被算成它的残留（口径错了）");
+        want(registry.registration_count() == mark, "registration_count() 没回到加载前的 mark");
+        want(residue.errors > 0, "失败留痕被一并抹掉了（零静默：理由必须看得见）");
+        if (!bad.empty()) {
+            std::cout << "PLUGINROLLBACK fail count=" << bad.size() << " why=";
+            for (size_t i = 0; i < bad.size(); ++i) std::cout << (i ? "；" : "") << bad[i];
+            std::cout << "\n";
+            return kExitFail;
+        }
+        std::cout << "PLUGINROLLBACK ok owner=" << owner << " rolled_and_clean=1\n";
+        return kExitOk;
+    }
+
     // 文本提取的请求守卫探针（⑦7.1/7.5）：页面与自检共用引擎那一份判据。
     if (action == "--text-plan") {
         if (operands.size() < 2) {
@@ -3910,10 +4000,9 @@ int run_cli(const std::vector<std::string>& args) {
         opt.clean = clean;
         const xrkit::engine::text::ExtractStats st =
             xrkit::engine::text::extract_dir(source, path_to_utf8(target_sub), target, opt);
-        if (!st.ok) {
-            std::cout << "TEXT error reason=" << st.error << "\n";
-            return kExitFail;
-        }
+        // ★★ S1-1（零静默）：**台账先印、结论后判** —— 修前 `!st.ok` 直接 return，
+        //   于是"哪些文件没写出去"这条台账与计数**一起消失**（只剩一行理由）。
+        //   现在失败也照印台账，结论行按实情给 `TEXT ok` / `TEXT fail`。
         for (const std::string& s : st.skipped) {
             std::cout << "TEXT skip " << s << "\n";
         }
@@ -3922,12 +4011,18 @@ int run_cli(const std::vector<std::string>& args) {
         for (const std::string& s : st.repl_skipped) {
             std::cout << "TEXT repl-skip " << s << "\n";
         }
-        std::cout << "TEXT ok kind=" << type_dir << " files=" << st.files
+        std::cout << (st.ok ? "TEXT ok " : "TEXT fail ")
+                  << "kind=" << type_dir << " files=" << st.files
                   << " strings=" << st.strings << " chars=" << st.chars
                   << " skipped=" << st.skipped.size()
                   << " replskip=" << st.repl_skipped.size()
+                  << " writefail=" << st.write_failures
                   << " xml=" << (st.texts_xml_name.empty() ? "-" : st.texts_xml_name)
                   << " ms=" << static_cast<long long>(st.elapsed_ms) << "\n";
+        if (!st.ok) {
+            std::cout << "TEXT error reason=" << st.error << "\n";
+            return kExitFail;
+        }
         return kExitOk;
     }
 

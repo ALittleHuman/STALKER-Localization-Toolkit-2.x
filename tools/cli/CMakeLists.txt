@@ -25,3 +25,21 @@ set_target_properties(xrkit_test_plugin PROPERTIES
   OUTPUT_NAME "xrkit_test_plugin"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
+# ★★ 坏 init 夹具（S1-2）：与上面那枚**同一份写法**，只有**最后一句**注册不同 ——
+#   `register_compare_mode` 的 compare 传 0（"缺 compare" ⇒ 宿主拒绝 ⇒ 插件 `return 0`）。
+#   ⇒ 它提供的是"**前 6 条注册成功、入口却返回 0**"这个触发形态：
+#     宿主此时若只 `FreeLibrary` 而不回滚，表里就留下 6 个指向已 unmap 代码段的裸函数指针。
+#   ★ 为什么不改 `test_plugin.c`：那枚是"加载成功 + 6 条注册都在表里"那条判据的夹具。
+#   ★ 命名**刻意不匹配**打包脚本的 `xrkit_*_plugin.dll` glob（`_badinit` 结尾）——
+#     一枚"注定 init 失败"的插件不该被塞进发行/开发包的 `plugins\` 里。
+#   ★ 输出到与 CLI 同一个目录：门禁/自检按 `app_dir()`（= xrkit_cli.exe 旁边）找它。
+add_library(xrkit_test_plugin_badinit SHARED
+  "${CMAKE_CURRENT_SOURCE_DIR}/../test_plugin/test_plugin_badinit.c")
+target_include_directories(xrkit_test_plugin_badinit PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_link_libraries(xrkit_test_plugin_badinit PRIVATE xrkit_flags)
+set_target_properties(xrkit_test_plugin_badinit PROPERTIES
+  PREFIX ""
+  OUTPUT_NAME "xrkit_test_plugin_badinit"
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+  LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

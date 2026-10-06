@@ -370,6 +370,103 @@ size_t Registry::registration_count() const {
            compare_modes_.size();
 }
 
+std::string PluginResidue::describe() const {
+    // 逐项 `k=v`：门禁/自检按 owner 断言时**一眼能看出**是哪个容器脏了（不是"总数不对"）
+    std::string out = "plugin=" + plugin;
+    const std::pair<const char*, size_t> items[] = {{"decryptors", decryptors},
+                                                    {"formats", formats},
+                                                    {"commands", commands},
+                                                    {"menu_items", menu_items},
+                                                    {"option_entries", option_entries},
+                                                    {"options", options},
+                                                    {"panels", panels},
+                                                    {"tools", tools},
+                                                    {"compare_modes", compare_modes},
+                                                    {"errors", errors}};
+    for (const auto& item : items) {
+        out += " ";
+        out += item.first;
+        out += "=";
+        out += std::to_string(item.second);
+    }
+    out += " registrations=" + std::to_string(registrations());
+    return out;
+}
+
+PluginResidue Registry::residue_for(const std::string& plugin) const {
+    PluginResidue r;
+    r.plugin = plugin;
+    const auto count_vec = [&plugin](const auto& items) {
+        size_t n = 0;
+        for (const auto& item : items) {
+            if (item.plugin == plugin) ++n;
+        }
+        return n;
+    };
+    r.decryptors = count_vec(decryptors_);
+    r.formats = count_vec(formats_);
+    for (const auto& [id, reg] : commands_) {
+        (void)id;
+        if (reg.plugin == plugin) ++r.commands;
+    }
+    r.menu_items = count_vec(menu_items_);
+    r.option_entries = count_vec(option_entries_);
+    r.options = count_vec(options_);
+    r.panels = count_vec(panels_);
+    r.tools = count_vec(tools_);
+    for (const CompareModeReg& mode : compare_modes_) {
+        // 归属在 `spec.plugin`（内置是 kBuiltinPlugin ⇒ 不会误算到插件头上）
+        if (mode.spec.plugin == plugin) ++r.compare_modes;
+    }
+    for (const RegistrationError& e : errors_) {
+        if (e.plugin == plugin) ++r.errors;
+    }
+    return r;
+}
+
+size_t Registry::rollback_plugin(const std::string& plugin) {
+    // 事务的 **abort** 面：把这次 init 期间属于 `plugin` 的注册**逐容器**撤掉。
+    // ★ 刻意**不碰 `errors_`**（留痕/诊断：失败理由必须看得见，见头文件那段）。
+    // ★ `compare_modes_` 按 `spec.plugin` 过滤 ⇒ 内置（`kBuiltinPlugin`）不可能被误撤。
+    // ★ 不按"调用 start 时的总数"截断：`registration_count()` 是总量不是归属
+    //   （期间别家也可能注册 / 总数相等不等于没撤错）。
+    size_t rolled = 0;
+    const auto erase_vec = [&plugin, &rolled](auto& items) {
+        const size_t before = items.size();
+        items.erase(std::remove_if(items.begin(), items.end(),
+                                   [&plugin](const auto& item) { return item.plugin == plugin; }),
+                    items.end());
+        rolled += before - items.size();
+    };
+    erase_vec(decryptors_);
+    erase_vec(formats_);
+    // commands_ 是 map：键是命令 id，归属看 `CommandReg::plugin`
+    for (auto it = commands_.begin(); it != commands_.end();) {
+        if (it->second.plugin == plugin) {
+            it = commands_.erase(it);
+            ++rolled;
+        } else {
+            ++it;
+        }
+    }
+    erase_vec(menu_items_);
+    erase_vec(option_entries_);
+    erase_vec(options_);
+    erase_vec(panels_);
+    erase_vec(tools_);
+    {
+        const size_t before = compare_modes_.size();
+        compare_modes_.erase(
+            std::remove_if(compare_modes_.begin(), compare_modes_.end(),
+                           [&plugin](const CompareModeReg& mode) {
+                               return mode.spec.plugin == plugin;
+                           }),
+            compare_modes_.end());
+        rolled += before - compare_modes_.size();
+    }
+    return rolled;
+}
+
 std::vector<CompareModeReg> builtin_compare_modes() {
     std::vector<CompareModeReg> out;
     for (const engine::xml::XmlModeSpec& spec : engine::xml::builtin_modes()) {
