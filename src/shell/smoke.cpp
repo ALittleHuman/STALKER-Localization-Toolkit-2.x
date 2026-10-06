@@ -1382,6 +1382,11 @@ SmokeResult run_smoke() {
             // 这样"Hub 构造期挂了落盘文件"这条判据就是**在测 Hub 自己**（拆掉 ctor 里那行 ⇒ 红），
             // 而不是被上一个 Hub 顺手挂上的状态兜着。
             xrkit::core::set_log_file(std::string());
+            // ★ 判据要**确定性**：先把目录清空（否则上一轮自检留下的 `log_*.txt` 会让
+            //   "第一次导出"也走自增分支，就测不到"同秒冲突"这条路径了）。清空之后，
+            //   本块里连着两次导出必然落在**同一秒的同一个基名**上 ⇒ 第二次必然自增。
+            QDir(smoke_log_dir).removeRecursively();
+            QDir().mkpath(smoke_log_dir);
             Hub log_hub;
             check(!log_hub.log_file_path().isEmpty() && log_hub.log_file_active() &&
                       QFile::exists(log_hub.log_file_path()),
@@ -1414,6 +1419,75 @@ SmokeResult run_smoke() {
                       body.contains(QStringLiteral("详细日志")),
                   QStringLiteral("③ 导出内容 = 内存日志 + 落盘日志**合并**（含刚写的标记；%1 字节）")
                       .arg(body.size()));
+
+            // ★★ 本批：**同一秒内两次导出不许互相覆盖**（复核确认的真问题）。
+            //   修前的形态：两次 `export_log` 的落点都按 `currentDateTime()` 精确到秒算 ⇒
+            //   同一秒内第二次以 `Truncate` 打同一个名字 ⇒ **第一份被静默丢掉**。
+            //   判据（三条一起才算过）：① 两次落点**不同**且**都还在盘上**；
+            //   ② 两份内容**各自正确**（都含各自的标记 —— 证明不是"空壳文件"）；
+            //   ③ 序号自增这条**可见**（日志栏里有落点行；返回值就是最终落点）。
+            {
+                const QString marker2 =
+                    QStringLiteral("SMOKE-MARKER-SAME-SECOND-EXPORT-%1")
+                        .arg(QDateTime::currentMSecsSinceEpoch());
+                log_hub.log_line(marker2);
+                xrkit::core::log(xrkit::core::Level::Info, marker2.toStdString());
+                QString exported2;
+                QString why2;
+                const bool ok2 = log_hub.export_log(&exported2, &why2);
+                check(ok2 && QFile::exists(exported2),
+                      QStringLiteral("③ 同秒第二次导出成功（%1；理由「%2」）").arg(exported2, why2));
+                check(exported2 != exported,
+                      QStringLiteral("③ 同秒两次导出的落点**不同**（第一份 %1 / 第二份 %2）")
+                          .arg(QFileInfo(exported).fileName(), QFileInfo(exported2).fileName()));
+                check(QFile::exists(exported) && QFile::exists(exported2),
+                      QStringLiteral("③ 同秒两次导出的**两份都在**（覆盖 ⇒ 这里必红）"));
+                QString body2;
+                {
+                    QFile file(exported2);
+                    if (file.open(QIODevice::ReadOnly)) body2 = QString::fromUtf8(file.readAll());
+                }
+                // 第二份必须含**它自己那时候**的标记；第一份必须含第一份的标记。
+                QString body1_again;
+                {
+                    QFile file(exported);
+                    if (file.open(QIODevice::ReadOnly)) body1_again = QString::fromUtf8(file.readAll());
+                }
+                check(body2.contains(marker2) && body1_again.contains(marker),
+                      QStringLiteral("③ 两份导出**内容各自正确**（第 1 份含标记 1=%1；"
+                                     "第 2 份含标记 2=%2）")
+                          .arg(body1_again.contains(marker) ? 1 : 0)
+                          .arg(body2.contains(marker2) ? 1 : 0));
+                // 落点可见：① 点击回调里 `log_line("日志已导出：…")` 打**返回值**（真走点击那条路）；
+                //   ② `export_log` 自己在**自增**时打一行说明（本块直调函数 ⇒ 这条必须出现）。
+                //   两者合一 ⇒ "最终落点 + 为什么自增" 用户都看得见。
+                const QString log_text =
+                    log_hub.log_view() != nullptr ? log_hub.log_view()->toPlainText() : QString();
+                check(log_text.contains(QFileInfo(exported2).fileName()) ||
+                          log_text.contains(QStringLiteral("已存在")),
+                      QStringLiteral("③ 自增后的最终落点**可见**（日志栏里至少有自增说明或落点名；"
+                                     "查 %1 / 「已存在」）")
+                          .arg(QFileInfo(exported2).fileName()));
+
+                // ★★ 本批：**运行日志（构造时定名）也不能同秒互撞**。
+                //   第二个 Hub 在同一秒里构造 ⇒ 修前落点与第一个**同名** ⇒ `set_log_file`
+                //   把第一个的运行日志顶掉（静默丢一份）。修后必须自增。
+                xrkit::core::set_log_file(std::string());
+                Hub log_hub2;
+                check(!log_hub2.log_file_path().isEmpty() &&
+                          log_hub2.log_file_path() != log_hub.log_file_path(),
+                      QStringLiteral("③ 同秒构造两个 Hub 的运行日志落点**不同**"
+                                     "（第 1 个 %1 / 第 2 个 %2）")
+                          .arg(QFileInfo(log_hub.log_file_path()).fileName(),
+                               QFileInfo(log_hub2.log_file_path()).fileName()));
+                check(QFile::exists(log_hub.log_file_path()),
+                      QStringLiteral("③ 第 1 个 Hub 的运行日志**没被顶掉**（%1）")
+                          .arg(QFileInfo(log_hub.log_file_path()).fileName()));
+                QFile::remove(log_hub2.log_file_path());
+
+                QFile::remove(exported2);
+            }
+
             // 写失败必须**明确报**：把落盘目录指到一个**文件**下面（mkpath 必失败）
             const QString blocker =
                 QDir::temp().filePath(QStringLiteral("xrkit_smoke_log_blocker.txt"));

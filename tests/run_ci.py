@@ -609,6 +609,74 @@ def step_fs_hardening(release: bool) -> None:
         fail("文件系统判红锁有断言不成立（见上）")
 
 
+def step_sqfs_lreg_layout(release: bool) -> None:
+    """判红锁：SquashFS **LREG（FILE_X）inode 的字段偏移**必须与权威布局逐字段相等。
+
+    为什么要有这一步：2026-10-06 有一份审计把 `squashfs.cpp:365-366` 报成"LREG 偏移全错"。
+    **复核结论＝误报**（那份报告把权威偏移列对了之后又错标一位：把 fragment/offset 说成
+    40/44），而本工程读侧写的就是权威布局。既然"靠肉眼列偏移"已经误报过一次，就把它**钉成
+    判据**：写侧产物的每个字段必须落在权威偏移上、读侧必须逐字节读回一致 ——
+    任一处改错立刻红（已实测：把读侧 `fragment/offset` 挪到 40/44 ⇒ 本步红 3 条）。
+    夹具＝现造的稀疏/带数据稀疏镜像 + 一枚**手工按权威布局摆的**最小 LREG 镜像
+    （writer 造不出非平凡 fragment/offset 的 LREG，所以那一半只能手工造），
+    全部落在 `%TEMP%`，不碰真机语料。
+    退出码：0=全绿，1=有断言不成立，2=构建产物缺失（外部前提，按档位判定）。
+    """
+    say("[sqfs-lreg] 判红锁：LREG inode 字段偏移 == 权威布局（写侧逐字段 + 读侧逐字节）")
+    script = ROOT / "tests" / "check_sqfs_lreg_layout.py"
+    if not require_repo_file(script, "LREG 偏移判据脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("[") or s.startswith("✓") or s.startswith("✗") \
+                or s.startswith("SQFS-LREG") or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("LREG 字段偏移与权威布局逐字段一致、读侧逐字节读回一致")
+    elif rc == 2:
+        prereq("构建产物 xrkit_cli.exe", "缺失（见上）", release)
+    else:
+        fail("LREG 字段偏移判据不成立（见上）")
+
+
+def step_ltx_replace_lock(release: bool) -> None:
+    """判红锁：.ltx 替换**不许**动注释、不许切碎更长标识符，跳过必须**可见**。
+
+    为什么要有这一步：1.x 的替换是裸 `text.replace`（本工程第一版照抄），实测它会把
+    注释里的目标串一起改写、还会把"更长标识符"（甚至 .ltx 的**键名**）切碎成
+    `game.translate_string("…")_delen` 这种**非法 .ltx**，而且**全静默**。
+    夹具＝现造的一条 .ltx（注释里含目标串、一个把目标串当子串的长标识符、
+    `unknown` 这类非候选键、带引号字面量），断言：
+      · 注释与长标识符**零误伤**；正文（裸值与带引号字面量）**照换**；
+      · `TEXT repl-skip` 逐条打印 + `replskip=N` 计数，且**台账行号真的指在那一行上**。
+    已实测：改回裸 `replace_all` ⇒ 本步红 12 条（注释被改写、键名被切碎、台账 0 条）。
+    退出码：0=全绿，1=有断言不成立，2=构建产物缺失（外部前提，按档位判定）。
+    """
+    say("[ltx-replace] 判红锁：注释/词边界保护 + 跳过台账可见")
+    script = ROOT / "tests" / "check_ltx_replace_lock.py"
+    if not require_repo_file(script, ".ltx 替换判据脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("[") or s.startswith("✓") or s.startswith("✗") \
+                or s.startswith("LTX-REPLACE") or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("注释与长标识符零误伤、正文照换、跳过台账逐条可见")
+    elif rc == 2:
+        prereq("构建产物 xrkit_cli.exe", "缺失（见上）", release)
+    else:
+        fail(".ltx 替换判据不成立（见上）")
+
+
 def step_golden_sqfs_pack(release: bool) -> None:
     """黄金语料差分：SquashFS **封包**产物（2.x 自写 writer vs 1.x 的 sqfs_pack/tar2sqfs）。
 
@@ -1716,12 +1784,14 @@ STEPS = [
     ("db-name1251-lock", step_db_name_cp1251_lock),
     ("unpack-rules", step_unpack_rules),
     ("fs-hardening", step_fs_hardening),
+    ("sqfs-lreg", step_sqfs_lreg_layout),
     ("golden-sqfs-pack", step_golden_sqfs_pack),
     ("golden-sqfs-pack-real", step_golden_sqfs_pack_real),
     ("text-tables", step_text_tables),
     ("font-tables", step_font_tables),
     ("golden-text-decode", step_golden_text_decode),
     ("golden-text-extract", step_golden_text_extract),
+    ("ltx-replace", step_ltx_replace_lock),
     ("golden-text-sniff", step_golden_text_sniff),
     ("golden-font-raster", step_golden_font_raster),
     ("golden-font-metrics", step_golden_font_metrics),

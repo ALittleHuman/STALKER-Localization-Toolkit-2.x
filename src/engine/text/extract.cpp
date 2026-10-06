@@ -827,6 +827,99 @@ bool path_has_segment(const std::string& rel, const std::string& segment_or_pref
     return false;
 }
 
+// ── 本批新增：.ltx 替换的**两重保护**（注释 / 词边界）────────────────────
+//
+// 为什么要有（逐条对照 1.x 实测，别想当然）：
+//   1.x 的替换是 `text.replace(old, new)` 的**裸全局替换**（`_replace_from_text`）。
+//   实测（拿 1.x `_extract_scripts` 跑合成夹具）它会把两处**不该动**的地方一起改：
+//     · 注释：`; Пистолет тут в комментарии` → `; game.translate_string("…") тут …`
+//       —— .ltx 的注释是给编辑器/后续维护看的，改写它只破坏语料、没有任何收益；
+//     · 更长标识符的**子串**：源里 `inv_name = точто` 与 `unknown_key = точто_больше`
+//       两条同时存在时，`точто` 那一次替换会把 key 切成
+//       `game.translate_string("…")_больше = что-то` —— **产物已经不是合法 .ltx**。
+//       （注意这不是"正文永不翻译"：命中的短值本身照样翻译，只是不再切进别人的名字里。）
+//   两件事 1.x 都是**静默**做的。本批按"零静默 + 不切碎语料"处理：**跳过 + 逐条登记**。
+
+// .ltx 里算"标识符字符"的那些：ASCII 字母数字 / '_' / Latin-1 补充区 / UTF-8 续字节。
+// 判据取的是"**不是**标识符字符"当边界 —— 只有前后都是边界才允许替换，
+// 这样任何没预料到的字符（CJK、标点、'^' …）都退化成"更保守"，而不是"更激进"。
+bool looks_like_identifier_char(unsigned char c) {
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return true;
+    if (c == '_') return true;
+    if (c >= 0x80) return true;  // Latin-1 补充 + UTF-8 续字节（保守：一律算）
+    return false;
+}
+
+// `pos` 处是否在**行注释**里：同一行、`pos` 之前出现过 ';'。
+// （.ltx 只有行注释这一种；与 `ltx_candidates` 的 `line.split(";", 1)[0]` 同口径。）
+bool in_ltx_comment(const std::string& text, size_t pos) {
+    if (pos > text.size()) return false;
+    const size_t line_start = (pos == 0) ? std::string::npos : text.rfind('\n', pos - 1);
+    const size_t from = (line_start == std::string::npos) ? 0 : line_start + 1;
+    return text.find(';', from) < pos;
+}
+
+// `text[pos .. pos+len)` 是否**紧贴**标识符字符（即它是某个更长标识符的一部分）。
+// 调用方只对**裸值**用这条：带引号的字面量自带边界（引号本身就不是标识符字符）。
+bool touches_identifier(const std::string& text, size_t pos, size_t len) {
+    const unsigned char before = (pos > 0) ? static_cast<unsigned char>(text[pos - 1]) : 0;
+    const size_t after_i = pos + len;
+    const unsigned char after =
+        (after_i < text.size()) ? static_cast<unsigned char>(text[after_i]) : 0;
+    return looks_like_identifier_char(before) || looks_like_identifier_char(after);
+}
+
+// 该次命中的行号（1 基），台账里给用户定位用。
+size_t line_number_at(const std::string& text, size_t pos) {
+    size_t line = 1;
+    for (size_t i = 0; i < pos && i < text.size(); ++i) {
+        if (text[i] == '\n') ++line;
+    }
+    return line;
+}
+
+// ── 本批新增：.ltx 的**保护性替换** ─────────────────────────────────────
+//
+// 与 `replace_all` 的关系：**同一个替换，但跳过受保护的那些命中**（注释 / 更长标识符内部）。
+// 形状刻意与 `replace_all` 逐处 find → append 保持一致，差别只有"受保护 ⇒ 原样抄过去"。
+// `quoted` = 被替的源片段是带引号的字面量（自带边界，只需要防注释）。
+//
+// ★ 跳过的位置按**当前串**算行号，且行号必须用**替换前**的起点 —— 替换会改变长度，
+//   拿替换后的坐标去算行号会指向错误的那一行（实测：第 3 行的命中被报成第 2 行）。
+std::string replace_all_protected(const std::string& subject, const std::string& needle,
+                                  const std::string& replacement, bool quoted,
+                                  const std::string& line_ref,
+                                  std::vector<std::string>* ledger, const std::string& rel) {
+    if (needle.empty()) return subject;
+    std::string out;
+    size_t from = 0;
+    while (true) {
+        const size_t hit = subject.find(needle, from);
+        if (hit == std::string::npos) {
+            out.append(subject, from, std::string::npos);
+            break;
+        }
+        const char* why = nullptr;
+        if (in_ltx_comment(subject, hit)) {
+            why = "命中在注释里";
+        } else if (!quoted && touches_identifier(subject, hit, needle.size())) {
+            why = "命中在更长标识符内部";
+        }
+        if (why != nullptr) {
+            if (ledger != nullptr) {
+                ledger->push_back(rel + "：" + needle + " → 未替换（" + why + "，行 " +
+                                  std::to_string(line_number_at(line_ref, hit)) + "）");
+            }
+            out.append(subject, from, hit - from + needle.size());  // 原样抄过去
+        } else {
+            out.append(subject, from, hit - from);
+            out += replacement;
+        }
+        from = hit + needle.size();
+    }
+    return out;
+}
+
 }  // namespace
 
 std::string generate_text_xml_body(
@@ -1012,6 +1105,18 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
         });
         std::string body = out_text;
         for (const Repl& r : repls) {
+            // ★ 本批：`.ltx` 不再走裸全局替换 —— 见 `replace_all_protected`：
+            //   注释里的命中、以及落在**更长标识符内部**的命中会被**跳过并逐条登记**
+            //   （零静默）。判据作用在 `body`（已经过前面几轮替换的当前文本）上，
+            //   与裸替换逐轮推进的语义一致。
+            if (is_ltx) {
+                const bool quoted = r.old_text.size() >= 2 && r.old_text.front() == '"' &&
+                                    r.old_text.back() == '"';
+                body = replace_all_protected(body, r.old_text,
+                                             "game.translate_string(\"" + r.id + "\")", quoted,
+                                             out_text, &st.repl_skipped, f.rel);
+                continue;
+            }
             body = replace_all(body, r.old_text,
                                gameplay ? r.id : ("game.translate_string(\"" + r.id + "\")"));
         }

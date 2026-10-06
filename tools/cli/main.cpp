@@ -3917,9 +3917,15 @@ int run_cli(const std::vector<std::string>& args) {
         for (const std::string& s : st.skipped) {
             std::cout << "TEXT skip " << s << "\n";
         }
+        // ★ 本批：**因保护而没替换**的命中逐条可见（零静默）—— 注释里 / 更长标识符内部。
+        //   计数同时进 ASCII 收尾行 `replskip=`，供判据脚本直接判（不用去解析中文正文）。
+        for (const std::string& s : st.repl_skipped) {
+            std::cout << "TEXT repl-skip " << s << "\n";
+        }
         std::cout << "TEXT ok kind=" << type_dir << " files=" << st.files
                   << " strings=" << st.strings << " chars=" << st.chars
                   << " skipped=" << st.skipped.size()
+                  << " replskip=" << st.repl_skipped.size()
                   << " xml=" << (st.texts_xml_name.empty() ? "-" : st.texts_xml_name)
                   << " ms=" << static_cast<long long>(st.elapsed_ms) << "\n";
         return kExitOk;

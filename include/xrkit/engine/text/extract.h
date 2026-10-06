@@ -47,6 +47,16 @@ struct ExtractStats {
     uint64_t strings = 0;
     uint64_t chars = 0;
     std::vector<std::string> skipped;  // 「相对路径：原因」，对应 1.x 的 log_detail
+    // ★★ 2026-10-06（本批）：**因保护而没替换**的命中台账（零静默：跳过了就必须逐条看得见）。
+    //   形态 = 「相对路径：<原串> → <理由>（行 N）」。两类理由：
+    //     · 命中在**注释**里（';' 之后到行尾）—— .ltx 的注释是给编辑器看的，改写它只破坏语料；
+    //     · 命中落在**更长标识符内部**（前后邻接 .ltx 标识符字符）—— 裸值换进去会把
+    //       键名/标识符切碎（例如 `inv_name = a` 的 a 命中 `a_b` 就会写出
+    //       `game.translate_string("...")_b`，那已经不是合法 .ltx 了）。
+    //   **为什么是保护而不是无脑替换**：1.x 是裸 `str.replace`，上面两件事它都做（实测），
+    //   破坏是**静默**的；本批按"零静默 + 不切碎语料"处理 —— 跳过 + 逐条报出来。
+    //   计数进 ASCII 收尾行 `replskip=`（供脚本判红）。
+    std::vector<std::string> repl_skipped;
     std::string texts_xml_name;        // 实际产出的文本 XML 文件名（空=这一类没提到文本）
     double elapsed_ms = 0.0;
     // ★ 2026-10-06：`should_stop()` 在文件边界返回 true ⇒ **已按请求停下**。

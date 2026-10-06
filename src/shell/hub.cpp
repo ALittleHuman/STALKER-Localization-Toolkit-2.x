@@ -94,6 +94,42 @@ QString hub_log_dir() {
 
 void set_hub_log_dir(const QString& dir) { g_log_dir = dir; }
 
+// ── ★ 本批：**落点唯一化**（同秒两次导出/两次启动不再互相覆盖）────────────
+//
+// 现状（本批复核确认的**真问题**）：本次运行的日志名在 Hub **构造时**定
+// （`log_<yyyyMMdd_HHMMSS>.txt`），而「导出日志」的名字在**点击时**另算一遍，
+// 两边都只精确到**秒**。于是
+//   · 同一秒内连点两次「导出日志」⇒ 第二次以 `Truncate` 打开同一个名字 ⇒ **丢掉第一份**；
+//   · 同一秒内起两个进程（或构造两个 Hub）⇒ 后者的 `set_log_file` 覆盖前者的运行日志。
+// 修法（二选一里挑"序号自增"）：文件名口径仍是 1.x 的 `log_YYYYmmdd_HHMMSS.txt`，
+//   落点已存在就**加序号** `_2`、`_3` … 取第一个不存在的。
+//   为什么不用"时间戳细化到毫秒"：那会**改文件名口径**（1.x 与门禁都在看这个名字形状），
+//   而且毫秒同样会撞；序号自增与时钟无关，是**确定性**的（夹具可断言），也不改口径。
+// ★ 覆盖/自增都必须**可见**：`why` 非空 ⇒ 调用方把这句话写进日志栏（零静默）。
+QString unique_log_path(const QString& dir, const QString& stamp, QString* why) {
+    const QString first = QDir(dir).filePath(QStringLiteral("log_%1.txt").arg(stamp));
+    if (!QFile::exists(first)) return first;
+    for (int n = 2; n < 10000; ++n) {
+        const QString cand =
+            QDir(dir).filePath(QStringLiteral("log_%1_%2.txt").arg(stamp).arg(n));
+        if (!QFile::exists(cand)) {
+            if (why != nullptr) {
+                *why = QStringLiteral("log_%1.txt 已存在（同一秒内已落过一份），"
+                                      "本次改用 log_%1_%2.txt，不复用旧文件")
+                           .arg(stamp)
+                           .arg(n);
+            }
+            return cand;
+        }
+    }
+    // 一万个同秒同名都占满了：**不静默**，如实说出来，但仍返回第一个（宁可覆盖也不丢话）。
+    if (why != nullptr) {
+        *why = QStringLiteral("log_%1.txt 及其 9998 个序号副本都已存在，落点无法唯一化")
+                   .arg(stamp);
+    }
+    return first;
+}
+
 int builtin_page_count() { return kBuiltinPageCount; }
 
 const PageInfo& builtin_page(int index) {
@@ -189,10 +225,16 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     {
         const QString log_dir = hub_log_dir();
         QDir().mkpath(log_dir);
-        log_file_path_ = QDir(log_dir).filePath(
-            QStringLiteral("log_%1.txt")
-                .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"))));
+        const QString stamp =
+            QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
+        QString clash;
+        log_file_path_ = unique_log_path(log_dir, stamp, &clash);
+        // ★ 同秒已有同名运行日志 ⇒ 本次换了落点：**说出来**（否则用户会以为在看重名的那一份）
+        if (!clash.isEmpty()) log_line(QStringLiteral("运行日志落点：%1").arg(clash));
         xrkit::core::set_log_file(log_file_path_.toStdString());
+        // ★ 落点**永远**打一条（不只冲突时）：用户与自检都要能看到"这一次的日志写去了哪"
+        log_line(QStringLiteral("本次运行日志落点：%1")
+                     .arg(QDir::toNativeSeparators(log_file_path_)));
         // 1.x A-2：「日志**写不出去**必须让用户看见」——`set_log_file` 自己会静默降级，
         //   所以这里读它的状态位把话说明白（进日志栏，用户至少知道"这次没有文件可查"）。
         if (!log_file_active()) {
@@ -352,9 +394,12 @@ bool Hub::export_log(QString* out_path, QString* error) {
     if (!QDir().mkpath(dir)) {
         return bail(QStringLiteral("日志目录建不出来：%1").arg(QDir::toNativeSeparators(dir)));
     }
-    const QString path = QDir(dir).filePath(
-        QStringLiteral("log_%1.txt")
-            .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"))));
+    const QString stamp =
+        QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
+    QString clash;
+    const QString path = unique_log_path(dir, stamp, &clash);
+    // ★ 本批：同一秒内的第二次导出**不许覆盖第一份**（那会静默丢一份）。落点已自增 ⇒ 说出来。
+    if (!clash.isEmpty()) log_line(QStringLiteral("导出日志落点：%1").arg(clash));
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         return bail(QStringLiteral("日志文件打不开：%1（%2）")
