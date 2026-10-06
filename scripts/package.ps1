@@ -83,6 +83,13 @@ if ($isDev) {
         if (-not (Test-Path $d)) { continue }
         Get-ChildItem -LiteralPath $d -Filter 'xrkit_*_plugin.dll' -File -ErrorAction SilentlyContinue |
             ForEach-Object {
+                # ★★ 2026-10-05（本批）：**同名只算一次** —— 同一枚插件会在**多个**构建目录里
+                #   各有一份（`msvc-release` 与 `msvc-shell` 是同一目标的两种预设），而且
+                #   `Copy-Item -Force` 到同一个落点本来就是"后写覆盖前写"。
+                #   修前不去重 ⇒ `插件 2 个：xrkit_test_plugin.dll, xrkit_test_plugin.dll`，
+                #   而包里其实只有 **1** 个文件 —— 那句数会一路写进 README.txt（用户可见面），
+                #   与"零静默/说明书必须与实际打的包一致"直接冲突。
+                if ($copiedPlugins -contains $_.Name) { return }
                 Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stage 'plugins') -Force
                 $copiedPlugins += $_.Name
             }
