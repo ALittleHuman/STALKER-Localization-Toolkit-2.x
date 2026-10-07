@@ -237,6 +237,87 @@ def check_registrations() -> None:
          "rc=%d\n%s" % (rc2, "\n".join(ln for ln in out2.splitlines() if "FAIL" in ln)[:600]))
 
 
+def _strip_comments(text: str) -> str:
+    """把 C++ 注释去掉（只留活代码）—— 与 run_ci.py 的 `active_code` 同口径的简化版：
+    这条判据要数的**只是调用点**，注释里提到 `apply_load_order()` 不算调用。"""
+    out = []
+    in_block = 0
+    for line in text.splitlines():
+        i = 0
+        kept = []
+        while i < len(line):
+            if in_block:
+                end = line.find("*/", i)
+                if end < 0:
+                    i = len(line)
+                    break
+                in_block = 0
+                i = end + 2
+                continue
+            start = line.find("/*", i)
+            slashes = line.find("//", i)
+            if slashes >= 0 and (start < 0 or slashes < start):
+                kept.append(line[i:slashes])
+                i = len(line)
+                break
+            if start >= 0:
+                kept.append(line[i:start])
+                in_block = 1
+                i = start + 2
+                continue
+            kept.append(line[i:])
+            i = len(line)
+        out.append("".join(kept))
+    return "\n".join(out)
+
+
+def _body_calls(code: str, signature: str) -> int:
+    """`signature` 那个函数体里出现 `apply_load_order();` 的次数。
+
+    ⚠ 第一版写成 `signature(.*?)\\n\\}`（非贪婪到第一个 `\\n}`）—— **量错了**：
+    `push_source` 体内有 `return;` 之后紧跟 `}`，但非贪婪会先在**更早**的
+    `entries_[i] = entries;`... 之后某个 `\\n}` 收口？实测它在 `push_source` 里数出 **2 处**
+    （把后面的 `scan_dir` 也吞进来了）⇒ 门禁当场判红（`实测 2 处`）。
+    现在的口径：从**行首**的函数签名开始，一直取到"下一个行首的顶层函数/命名空间收尾"
+    之前 —— 用 lookahead 划边界，不靠 `}` 的个数。
+    """
+    pattern = (r"^" + re.escape(signature) + r".*?(?=\n\}|\nnamespace |\n[A-Za-z_].*::)"
+               r"|\Z")
+    m = re.search(pattern, code, re.S | re.M)
+    if m is None:
+        return -1
+    return m.group(0).count("apply_load_order();")
+
+
+def check_static_locks() -> None:
+    r"""★★ 2026-10-06（审计 3-4 的**静态面**，本批新增）：加载序**只此一份**、且**每条加源
+    路径都要走它**。
+
+    为什么这条放在**本步**而不是 `shell-smoke` 的静态锁里：`shell-smoke` 步会**先跑
+    `--smoke`**，而"把 `push_source` 里的 `apply_load_order()` 删掉"这件事**同时**会让
+    smoke 的 3-4 行为锁红 ⇒ 那一步在走到静态锁之前就已经 FAIL 了，静态锁的"自己能红"
+    取证不出来（本批实测：注入后只看到 `FAIL 外壳自检未通过`）。
+    放在这里（不跑外壳）⇒ 注入之后**恰好**只红这一条，红得干净。
+
+    ★ 第一版这里数的是"文件里 `apply_load_order();` 的总出现次数 ≥2" —— **那是假判据**：
+    只删 `push_source` 那一处、`scan_dir` 那处还在，总数仍然是 2 ⇒ 照样绿。
+    现在按**函数体**分别数：`push_source` 与 `scan_dir` 各自**必须恰好 1 处**调用。
+    """
+    fs_src = ROOT / "src" / "shell" / "pages" / "fs_page.cpp"
+    code = _strip_comments(fs_src.read_text(encoding="utf-8", errors="replace"))
+    push = _body_calls(code, "void FsPage::push_source(")
+    scan = _body_calls(code, "int FsPage::scan_dir(")
+    want(push == 1,
+         "3-4 加载序：`push_source`（加包/拖放路径）必须**恰好一次** `apply_load_order();`",
+         "实测 %d 处（-1 = 找不着那个函数）" % push)
+    want(scan == 1,
+         "3-4 加载序：`scan_dir`（扫描目录路径）必须**恰好一次** `apply_load_order();`",
+         "实测 %d 处（-1 = 找不着那个函数）" % scan)
+    want("sort_sources_by_basename" in code,
+         "3-4 加载序：排序必须交给引擎 `sort_sources_by_basename`（页面不许自己排）",
+         "fs_page.cpp 里找不到 sort_sources_by_basename")
+
+
 def main() -> int:
     if not CLI.exists():
         print("ENGINE-CONTRACT skip 缺构建产物：%s（先跑门禁的 build 步）" % CLI)
@@ -246,6 +327,8 @@ def main() -> int:
         return 2
     tmp = Path(tempfile.mkdtemp(prefix="xrkit_engine_contract_"))
     try:
+        print("[④ 静态面：3-4 加载序只此一份且每条加源路径都走]")
+        check_static_locks()
         print("[① contract_ok 的 area 条数]（静态 + 引擎自检 + 删 AREA_BOTTOM 注入必红）")
         check_area_contract(tmp)
         print("[② status_line 的模块计数：常量自报 vs 从模块表算出来]")

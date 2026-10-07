@@ -1613,15 +1613,15 @@ def step_shell_smoke(release: bool) -> None:
     ok("判重只此一份（3-3：`core::path_equals`，无整串比较）")
 
     # 3-4：**加载序只此一份实现**，而且每条加源路径都走它（修前只有 `scan_dir` 会排）。
-    if "apply_load_order()" not in fs_code or fs_code.count("apply_load_order()") < 3:
-        fail("加载序（3-4）：fs_page.cpp 的 `apply_load_order()` 必须被**每条加源路径**调用"
-             "（`push_source` / `scan_dir` 都要；实测出现 %d 次）"
-             % fs_code.count("apply_load_order()"))
-        return
+    #   ★ 注意：这条判据放在**独立步 `engine-contract`**（`tests/check_engine_contract.py`）
+    #     里，不放在这里 —— 本步会**先跑 `--smoke`**，而"把 `push_source` 里的
+    #     `apply_load_order()` 删掉"同时会让 smoke 的 3-4 行为锁红 ⇒ 本步在走到静态锁之前
+    #     就已经 FAIL，"这条静态锁自己能红"的取证就出不来（本批实测踩到）。
     if "sort_sources_by_basename" not in fs_code:
         fail("加载序（3-4）：排序必须交给引擎 `sort_sources_by_basename`（页面不许自己排）")
         return
-    ok("加载序只此一份且每条加源路径都走（3-4：`apply_load_order`）")
+    ok("加载序只此一份（3-4：排序只走引擎 `sort_sources_by_basename`；'每条加源路径都调'"
+       "那条在 `engine-contract` 步 —— 这里跑 smoke 会先红，取不出静态锁自己的红）")
 
     # 3-8：**`SplitPane` 是死代码**（产品路径零实例化）—— 判据不许挂在产品不用的类上。
     #   口径（本批二选一里选的那条，理由写进 `docs/2.0.0-外壳规格.md` 的 §10 表）：

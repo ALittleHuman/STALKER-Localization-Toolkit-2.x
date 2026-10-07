@@ -853,6 +853,10 @@ void FsPage::push_source(const QString& source,
     //   覆盖 ⇒ 先来的那个源在左树里**一个节点都没有**、计数却翻倍。
     //   ⚠ 这里的判重**不能**用"文件名"（同名的两个包在不同目录是两份源，各有各的 ✕）；
     //     比的是**整条归一化路径**。命中 ⇒ 用这次的条目刷新那一份（同路径 = 同一份）。
+    // ★ 为什么先算下标、最后只调**一次** `apply_load_order()`：两条分支各写一次调用，
+    //   静态判据就只能数"≥1"（少调一处也照样绿 —— 本批实测踩到过）。收成一次调用之后
+    //   判据可以写成"**恰好一次**"，那才是真的锁。
+    bool replaced = false;
     for (size_t i = 0; i < sources_.size(); ++i) {
         if (!core::path_equals(sources_[i].path.toUtf8().toStdString(),
                                source.toUtf8().toStdString())) {
@@ -860,17 +864,17 @@ void FsPage::push_source(const QString& source,
         }
         sources_[i].loaded = true;
         if (i < entries_.size()) entries_[i] = entries;
-        apply_load_order();
-        rebuild_package_list();
-        rebuild_tree();
-        return;
+        replaced = true;
+        break;
     }
-    Source record;
-    record.path = source;
-    record.key = source.toUtf8().toStdString();
-    record.loaded = true;      // 「加包/拖放/散装层」进来的就是已加载（1.x 拖入目录=全部加载）
-    sources_.push_back(record);
-    entries_.push_back(entries);
+    if (!replaced) {
+        Source record;
+        record.path = source;
+        record.key = source.toUtf8().toStdString();
+        record.loaded = true;  // 「加包/拖放/散装层」进来的就是已加载（1.x 拖入目录=全部加载）
+        sources_.push_back(record);
+        entries_.push_back(entries);
+    }
     apply_load_order();        // ★★ 见下方（审计 3-4：加包路径也必须按 basename 升序）
     rebuild_package_list();
     rebuild_tree();
