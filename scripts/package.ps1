@@ -126,16 +126,6 @@ if ($isDev) {
     }
     Copy-Item -LiteralPath $pyFixture -Destination (Join-Path $stage 'plugins') -Force
     $copiedPlugins += 'hello.py'
-    # ★★ 插件改装 P7c：**产品插件**（`plugins\*.py`）——开发版一起带，包内自检能真验
-    #   "插件页用 `replaces` 顶掉内置页"这条链路；发行版照旧 `plugins\` 为空。
-    $productPlugins = Join-Path $root 'plugins'
-    if (Test-Path $productPlugins) {
-        foreach ($file in Get-ChildItem -LiteralPath $productPlugins -Filter '*.py' -File) {
-            if ($copiedPlugins -contains $file.Name) { continue }
-            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $stage 'plugins') -Force
-            $copiedPlugins += $file.Name
-        }
-    }
     if ($copiedPlugins.Count -gt 0) {
         Write-Host ("  插件 {0} 个：{1}" -f $copiedPlugins.Count, ($copiedPlugins -join ', '))
     } else {
