@@ -27,6 +27,10 @@ add_library(xrkit_engine STATIC
   plugin/py_host.cpp
   # ★★ 插件改装 P3：宿主控件门面（Qt-free 的表 + 进程级状态；实现在外壳 `ui_facade_qt.cpp`）
   plugin/widget_facade.cpp
+  # ★★ P7a：引擎调用门面（插件怎么调引擎；Qt-free 的表 + 进程级状态）
+  plugin/engine_facade.cpp
+  # 默认表（字体那几件只依赖引擎；CLI 与 GUI 两个宿主都用得上）
+  plugin/engine_facade_impl.cpp
   font/charset.cpp
   font/cjk_state.cpp
   font/glyph.cpp

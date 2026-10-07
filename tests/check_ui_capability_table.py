@@ -27,6 +27,7 @@ EXPECT_API = {
     "plugin_file": "插件文件名（owner；也是命令 id 前缀）",
     "plugin_dir": "插件所在目录（夹具据此落标记文件）",
     "ui": "★控件门面（L1/L2 的入口；表外无门）",
+    "engine": "★引擎调用门面（方案 3：表由样板页反向定义；表外无门）",
     "log": "写宿主日志（引擎日志 + 诊断缓冲）",
     "register_command": "注册命令（可被挂载点引用）",
     "register_menu_item": "把命令挂到 (host, location) 槽位",
@@ -97,6 +98,15 @@ EXPECT_UI = {
 }
 # Widget：**故意为空** —— 不透明句柄，插件不能对它做任何事（禁 L4 裸 Qt）
 EXPECT_WIDGET: dict[str, str] = {}
+# ★★ P7a：**引擎调用门面**（`api.engine.*`；用户 2026-10-07 拍板走方案 3）
+#   本批只开样板页 fontpack **真正用到**的那几件（反向定义，不是猜）；
+#   下批随样板页迁移补齐（偏好读写/系统字体目录那些属**宿主服务**，进 UI 门面，不进这里）。
+EXPECT_ENGINE = {
+    "font_check": "字体四态检查（缺字形/日语字体/正常/未知）＋ 缺字清单",
+    "font_pack": "出整棵 gamedata 汉化包（与内置页同一个引擎实现）",
+    "font_state_marks": "四态文案（**从引擎拿**，插件不许自己抄一份中文）",
+    "font_size_slots": "字号槽位表（文件名与 ltx 用的是槽位名）",
+}
 
 
 def run_probe() -> tuple[int, str]:
@@ -127,7 +137,8 @@ def table_of(out: str, cls: str) -> str:
 
 def scan(out: str) -> list[str]:
     offenders: list[str] = []
-    for cls, expected in (("Api", EXPECT_API), ("Ui", EXPECT_UI), ("Widget", EXPECT_WIDGET)):
+    for cls, expected in (("Api", EXPECT_API), ("Ui", EXPECT_UI), ("Widget", EXPECT_WIDGET),
+                          ("Engine", EXPECT_ENGINE)):
         if re.search(r"UIFACADE " + re.escape(cls) + r"=", out) is None:
             offenders.append("探针没打出 `UIFACADE %s=` 那一行（判据没跑成，不是通过）" % cls)
             continue
@@ -165,6 +176,7 @@ _GREEN = "\n".join([
     "UIFACADE Api=" + ",".join(sorted(EXPECT_API)),
     "UIFACADE Ui=" + ",".join(sorted(EXPECT_UI)),
     "UIFACADE Widget=",
+    "UIFACADE Engine=" + ",".join(sorted(EXPECT_ENGINE)),
 ])
 _RED = {
     "多一个能力（泄漏）": _GREEN.replace("UIFACADE Api=", "UIFACADE Api=backdoor,"),

@@ -2294,6 +2294,89 @@ def step_ui_facade(release: bool) -> None:
         fail("控件门面能力表不通过（判据 rc=%d / 探针 rc=%d；见上）" % (rc, rc_probe))
 
 
+def step_engine_facade(release: bool) -> None:
+    """插件改装 P7a：**引擎调用门面**（用户 2026-10-07 拍板走方案 3）。
+
+    判据（走真夹具，不是"接口存在"）：
+      · `api.engine.font_size_slots()` 拿到引擎的槽位表（**个数与首尾都要对**）；
+      · `api.engine.font_state_marks()` 拿到四态文案（**从引擎来**，插件不抄中文）；
+      · `api.engine.font_check(<真字体>)` 拿到四态之一 —— 字体缺失时按**外部前提**记账，
+        绝不当成通过（零静默：夹具里也会留一行 `check_skipped`）；
+      · ★**线程纪律的另一半**：引擎调用能在**工作线程**上跑（与 `api.ui.*` 相反）。
+    """
+    say("[engine-facade] 插件改装 P7a：引擎调用门面（`api.engine.*`，表由样板页反向定义）")
+    fixture = ROOT / "tests" / "python_plugins_engine"
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "缺失（先跑 build 步）", release)
+        return
+    if not fixture.is_dir():
+        prereq("引擎门面夹具目录", "缺失：%s" % fixture.name, release)
+        return
+    marker = fixture / "engine_marker.txt"
+    if marker.exists():
+        marker.unlink()   # ★ 证据必须是**本轮**的（陈旧文件不算）
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    font = ""
+    for candidate in (r"C:\Windows\Fonts\msyh.ttc", r"C:\Windows\Fonts\msyh.ttf",
+                      r"C:\Windows\Fonts\simsun.ttc"):
+        if Path(candidate).is_file():
+            font = candidate
+            break
+    if font:
+        env["XRKIT_ENGINE_FONT"] = font
+    rc, out = run([str(CLI_EXE), "--py-plugins", str(fixture)], env=env, timeout=600)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if s.startswith("PYPLUGINS") and ("error" in s or "files=" in s or "loaded=" in s):
+            say("  " + s[:150])
+    if not marker.is_file():
+        fail("夹具没写出证据文件（`api.engine.*` 没生效？rc=%d）" % rc)
+        return
+    text = marker.read_text(encoding="utf-8")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    def value_of(key: str) -> str:
+        for line in lines:
+            if line.startswith(key + ":"):
+                return line[len(key) + 1:]
+        return ""
+
+    slot_count = value_of("slot_count")
+    slots = value_of("slots")
+    problems = []
+    if slot_count != "10":
+        problems.append("槽位数=%s（应为 10）" % (slot_count or "(缺)"))
+    if not slots.startswith("11,13,15"):
+        problems.append("槽位表开头不对：%s" % (slots or "(缺)"))
+    if not value_of("marks_ok"):
+        problems.append("四态文案（ok）是空的 —— 文案必须从引擎拿")
+    if not value_of("marks_missing"):
+        problems.append("四态文案（missing）是空的")
+    if value_of("thread_slots") != slot_count:
+        problems.append("工作线程里的引擎调用没拿到同样的表（thread_slots=%s）"
+                        % (value_of("thread_slots") or "(缺)"))
+    if value_of("done") != "" and "done" not in lines:
+        problems.append("夹具没跑到结尾")
+    state = value_of("check_state")
+    if font:
+        if state not in ("ok", "japanese", "missing", "unknown"):
+            problems.append("font_check 的状态不是四态之一：%r（字体=%s）" % (state, font))
+    elif value_of("check_skipped") != "no-font":
+        problems.append("没给字体时夹具应当留一行 check_skipped（零静默）")
+    say("  夹具证据：%s" % text.replace("\n", " | ")[:200])
+    if problems:
+        fail("引擎调用门面不成立（%d 处）：%s" % (len(problems), "；".join(problems)))
+        return
+    if font:
+        ok("引擎门面四处都通（槽位 10 档 / 四态文案来自引擎 / font_check=%s / 工作线程可调）"
+           % state)
+    else:
+        say("  · 未覆盖：font_check 的真字体那条（本机没有 msyh/simsun）")
+        ok("引擎门面三处都通（槽位 / 四态文案 / 工作线程可调）；font_check 记为未覆盖")
+
+
 def step_plugin_entry_lock(release: bool) -> None:
     """插件改装的**加载入口唯一性**（P2b）：两个前端都走 `load_all_plugins_from_dir`。
 
@@ -2743,6 +2826,8 @@ STEPS = [
     # ★★ 2026-10-07（插件改装 P3）：控件门面能力表（表外无门）＋ 无 GUI 时的如实降级。
     #   GUI 那条路（真控件 + 回调回 Python）在 shell-smoke 里判（需要 Qt）。
     ("ui-facade", step_ui_facade),
+    # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
+    ("engine-facade", step_engine_facade),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),

@@ -2,6 +2,8 @@
 
 // ★ P3：控件门面（`api.ui.*` 的实现入口）—— 引擎层只持有外壳注入的表
 #include "xrkit/engine/plugin/widget_facade.h"
+// ★ P7a：引擎调用门面（`api.engine.*`；用户拍板的方案 3）
+#include "xrkit/engine/plugin/engine_facade.h"
 
 #include "xrkit/core/log.h"
 // `app_dir()`（exe 所在目录）住在 core/theme.h —— **不是** path.h：
@@ -378,10 +380,100 @@ py::list strings_to_python(const std::vector<std::string>& values) {
     return out;
 }
 
+// ── P7a：引擎调用门面的入参转换（Python 的 dict → 门面的 POD）─────────────────
+FontPackOptions font_options_from_python(const py::object& options) {
+    FontPackOptions out;
+    if (options.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(options);
+    const auto take_string = [&data](const char* key, std::string& target) {
+        if (data.contains(key)) target = py::str(data[key]).cast<std::string>();
+    };
+    take_string("game", out.game);
+    take_string("lang", out.lang);
+    take_string("xml_dir", out.xml_dir);
+    take_string("font_path", out.font_path);
+    take_string("out_dir", out.out_dir);
+    take_string("suffix", out.suffix);
+    if (data.contains("offset")) out.offset = py::cast<int>(data["offset"]);
+    if (data.contains("full_cyrillic")) out.full_cyrillic = py::cast<bool>(data["full_cyrillic"]);
+    if (data.contains("only_sizes")) {
+        for (auto item : py::list(data["only_sizes"])) {
+            out.only_sizes.push_back(py::cast<int>(item));
+        }
+    }
+    return out;
+}
+
+// ── ★★ P7a：引擎调用门面在 Python 侧的形态（`api.engine.*`）──────────────────
+// 口径（用户拍板的方案 3）：
+//   · **值类型 Python 友好**：出入都是 dict / list / str / int，**不漏 C++ 结构体与指针**；
+//   · ★**允许在工作线程上调用**（与 `api.ui.*` 相反）：引擎重活本来就该跑在任务壳的 worker
+//     线程里（六页都是这么干的）⇒ 这里**不做** UI 线程检查；
+//   · 门面没装（CLI/无外壳）⇒ **逐条记账**并返回 None/dict 空壳（零静默）。
+class PyEngine {
+public:
+    explicit PyEngine(std::string owner) : owner_(std::move(owner)) {}
+
+    py::object font_check(const std::string& font_path) const {
+        const EngineFacade* facade = available("font_check");
+        if (facade == nullptr) return py::none();
+        const FontCheckResult result = facade->font_check(font_path);
+        py::dict out;
+        out["state"] = result.state;
+        out["mark"] = result.mark;
+        out["missing"] = strings_to_python(result.missing);
+        return out;
+    }
+    py::object font_pack(py::object options) const {
+        const EngineFacade* facade = available("font_pack");
+        if (facade == nullptr) return py::none();
+        const FontPackResult result = facade->font_pack(font_options_from_python(options));
+        py::dict out;
+        out["ok"] = result.ok;
+        out["error"] = result.error;
+        out["out_gamedata"] = result.out_gamedata;
+        out["fonts_written"] = result.fonts_written;
+        out["xml_written"] = result.xml_written;
+        out["warnings"] = strings_to_python(result.warnings);
+        return out;
+    }
+    py::object font_state_marks() const {
+        const EngineFacade* facade = available("font_state_marks");
+        if (facade == nullptr) return py::none();
+        const FontStateMarks marks = facade->font_state_marks();
+        py::dict out;
+        out["ok"] = marks.ok;
+        out["japanese"] = marks.japanese;
+        out["missing"] = marks.missing;
+        out["unknown"] = marks.unknown;
+        return out;
+    }
+    py::object font_size_slots() const {
+        const EngineFacade* facade = available("font_size_slots");
+        if (facade == nullptr) return py::none();
+        py::list out;
+        for (int size : facade->font_size_slots()) out.append(py::int_(size));
+        return out;
+    }
+
+private:
+    const EngineFacade* available(const std::string& method) const {
+        if (!engine_facade_has(method)) {
+            std::string reason;
+            engine_facade_available(&reason);
+            core::log(core::Level::Warn,
+                      "[" + owner_ + "] 引擎调用门面不可用（engine." + method + "）：" + reason);
+            return nullptr;
+        }
+        return engine_facade();
+    }
+
+    std::string owner_;
+};
+
 class PyUi {
 public:
     explicit PyUi(std::string owner) : owner_(std::move(owner)) {}
-
     py::object label(py::object parent, std::string text, std::string style) const {
         if (const UiFacade* facade = available("label")) {
             return wrap(facade->label(handle_of(parent), text, style));
@@ -997,6 +1089,11 @@ void ensure_api_module() {
     //   （见头文件对 `shutdown_python` 的说明）。
     static bool class_registered = false;
     if (!class_registered) {
+        py::class_<PyEngine>(m, "Engine")
+            .def("font_check", &PyEngine::font_check, py::arg("font_path"))
+            .def("font_pack", &PyEngine::font_pack, py::arg("options"))
+            .def("font_state_marks", &PyEngine::font_state_marks)
+            .def("font_size_slots", &PyEngine::font_size_slots);
         py::class_<PyWidget>(m, "Widget")
             .def("__repr__", [](const PyWidget& widget) {
                 return std::string("xrkit.Widget(") + (widget.valid() ? "valid" : "null") + ")";
@@ -1114,6 +1211,9 @@ void ensure_api_module() {
             .def_property_readonly("api_version", [](const PyPluginApi&) { return kPyHostApiVersion; })
             // ★ P3：控件门面（`api.ui.*`）—— 表外无门，见 py_host.h 与能力表判据
             .def_property_readonly("ui", [](const PyPluginApi& api) { return PyUi(api.owner()); })
+            // ★ P7a：引擎调用门面（`api.engine.*`；方案 3，表由样板页反向定义）
+            .def_property_readonly("engine",
+                                   [](const PyPluginApi& api) { return PyEngine(api.owner()); })
             .def("log", &PyPluginApi::log, py::arg("message"))
             .def("register_command", &PyPluginApi::register_command, py::arg("action_id"),
                  py::arg("label"), py::arg("handler"), py::arg("when") = py::none())
@@ -1524,7 +1624,7 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
         py::gil_scoped_acquire acquire;
         py::module_ module = py::module_::import("xrkit");
         py::object dir_fn = py::module_::import("builtins").attr("dir");
-        for (const char* cls : {"Api", "Ui", "Widget"}) {
+        for (const char* cls : {"Api", "Ui", "Widget", "Engine"}) {
             std::vector<std::string> names;
             for (auto item : py::list(dir_fn(module.attr(cls)))) {
                 const std::string name = py::str(item).cast<std::string>();

@@ -5699,6 +5699,51 @@ SmokeResult run_smoke() {
         QDir(dir).removeRecursively();
     }
 
+    // ★★ 插件改装 P7a（**引擎调用门面**，方案 3）：GUI 宿主这条路上，插件**也能**调引擎。
+    //   判据：插件页在 `build()` 里调 `api.engine.font_size_slots()` / `font_state_marks()`，
+    //   把结果写进标记 —— 值必须来自引擎（10 档槽位 + 引擎给的中文文案），不是插件自己编的。
+    {
+        const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_engine"));
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString marker = QDir(dir).filePath(QStringLiteral("engine_marker.txt"));
+        const QByteArray source =
+            "# -*- coding: utf-8 -*-\n"
+            "import os\n"
+            "def register(api):\n"
+            "    def mark(text):\n"
+            "        with open(os.path.join(api.plugin_dir, 'engine_marker.txt'), 'a', encoding='utf-8') as fh:\n"
+            "            fh.write(text + '\\n')\n"
+            "    def build():\n"
+            "        engine = api.engine\n"
+            "        slots = engine.font_size_slots()\n"
+            "        mark('slots:%d' % len(slots))\n"
+            "        marks = engine.font_state_marks()\n"
+            "        mark('ok_has_text:%d' % int(bool(marks['ok'])))\n"
+            "        api.ui.label(None, '引擎门面夹具')\n"
+            "    api.register_tool('引擎门面夹具页', build, 9)\n";
+        QFile plugin_file(QDir(dir).filePath(QStringLiteral("engine_demo.py")));
+        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                           plugin_file.write(source) == source.size();
+        plugin_file.close();
+        check(wrote, QStringLiteral("P7a 夹具 .py 没写进去"));
+        Hub hub(nullptr, dir);
+        check(hub.page_index(QStringLiteral("引擎门面夹具页")) >= 0,
+              QStringLiteral("P7a 夹具页没进页表（插件问题 %1 条）").arg(hub.plugin_errors().size()));
+        QString text;
+        {
+            QFile file(marker);
+            if (file.open(QIODevice::ReadOnly)) text = QString::fromUtf8(file.readAll());
+        }
+        check(text.contains(QStringLiteral("slots:10")),
+              QStringLiteral("P7a GUI 宿主里槽位表不对（标记=%1）").arg(text.simplified()));
+        check(text.contains(QStringLiteral("ok_has_text:1")),
+              QStringLiteral("P7a GUI 宿主里四态文案是空的（标记=%1）").arg(text.simplified()));
+        check(hub.plugin_errors().empty(),
+              QStringLiteral("P7a 好插件不该产生插件问题（实得 %1 条）").arg(hub.plugin_errors().size()));
+        QDir(dir).removeRecursively();
+    }
+
     // ⑫12.1 四类槽位渲染（用户 2026-09-26"补六类"：panel/tool/option/option_entry）
     {
         namespace plug = xrkit::plugin;
