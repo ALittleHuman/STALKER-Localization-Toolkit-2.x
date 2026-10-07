@@ -27,6 +27,13 @@
     "url": "https://mirrors.aliyun.com/debian/pool/main/p/pcre2/pcre2_10.48.orig.tar.gz",
     "version": "10.48"
   },
+  "pybind11": {
+    "archive": "pybind11-3.1.0.tar.gz",
+    "note": "CPython 绑定（插件宿主；header-only，见 third_party/CMakeLists.txt 的 xrkit_pybind11）",
+    "sha256": "ef712655692a2e9bf7bb7874c022564a45f91d847ddee987e720cd9e28849665",
+    "url": "https://gh-proxy.com/https://github.com/pybind/pybind11/archive/refs/tags/v3.1.0.tar.gz",
+    "version": "3.1.0"
+  },
   "xz": {
     "archive": "xz-5.6.4.tar.xz",
     "note": "SquashFS xz 块（liblzma）",

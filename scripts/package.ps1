@@ -43,6 +43,33 @@ New-Item -ItemType Directory -Force -Path (Join-Path $stage 'plugins') | Out-Nul
 Write-Host "== 复制主程序 =="
 Copy-Item -LiteralPath $exe.FullName -Destination $stage
 
+# ★★ 插件改装 P2（2026-10-07）：**CPython 运行期必须随包**。
+#   引擎现在链接 `python3XX.lib`（插件＝`.py`，宿主在引擎层）⇒ 包里缺 `python3XX.dll`
+#   的结果不是"插件不可用"，而是**主程序根本起不来**。开发态那份 DLL 由 CMake 的
+#   `xrkit_attach_python_runtime()` 拷在 exe 旁边；这里把它搬进包。
+#   ★ 判据化：**拷不到就 throw** —— 宁可打包失败，也不许打出一个双击起不来的包
+#     （包内那趟 `--smoke` 是第二道闸，但它只能证明"跑起来了"，证明不了"为什么没有"）。
+#   ⚠ 尚未随包的：Python **标准库**（`Lib/`）。当前解释器用的是构建期烘焙的
+#     `XRKIT_PYTHON_HOME_DEFAULT`（本机 Python 安装）⇒ 发行到**没有 Python 的机器**上会
+#     `Failed to import encodings module`。随包自带 embeddable Python（`python\`）是下一片，
+#     见批报告「只报告未改」。
+$pyTargets = @()
+$pyNames = @()
+foreach ($d in @((Join-Path $shell 'src\shell'), (Join-Path $shell 'tools\cli'))) {
+    if (-not (Test-Path $d)) { continue }
+    Get-ChildItem -LiteralPath $d -Filter 'python3*.dll' -File -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            if ($pyNames -notcontains $_.Name) { $pyNames += $_.Name; $pyTargets += $_.FullName }
+        }
+}
+if ($pyTargets.Count -eq 0) {
+    throw ("找不到 python3*.dll（引擎已嵌入 CPython）—— 打出来的包会起不来。" +
+           " 先跑 scripts\build.ps1 -Preset msvc-shell，确认 exe 旁边有 python314.dll；" +
+           " 搜过：" + ((Join-Path $shell 'src\shell') + ' ; ' + (Join-Path $shell 'tools\cli')))
+}
+foreach ($f in $pyTargets) { Copy-Item -LiteralPath $f -Destination $stage -Force }
+Write-Host ("  CPython 运行期 {0} 个：{1}" -f $pyTargets.Count, ($pyNames -join ', '))
+
 # ★★ 2026-10-05（本批 #8）：开发版 = 标记 ∈ {ALPHA, BETA}（版本口径仍是 version.json 一处）。
 #   在复制插件**之前**先把这个开关定下来 —— 它决定 `plugins\` 是"带全部插件"还是"空目录"。
 $Prerelease = ''

@@ -2135,6 +2135,44 @@ def step_px_only(release: bool) -> None:
         fail("有尺寸/间距没过 px()（见上；白名单见 tests/check_px_only.py）")
 
 
+def step_python_host(release: bool) -> None:
+    """插件改装 P2（用户 2026-10-07 拍板：**Python 模块接口 + C ABI 退役**）：
+    CPython 插件宿主**真的起来了**（嵌入解释器 + vendored pybind11 都通）。
+
+    判据（三条都能红）：
+      · `--python-host` 必须打出 `PYHOST enabled=1 initialized=1 version=3.…`；
+      · `enabled=0`（构建期没带 Python 支持）⇒ **release 档 FAIL**（不是 SKIP —— 那会变成
+        "把构建开关一关，锁就绿了"的后门；fast 档按外部前提记账）；
+      · 起不来（`initialized=0`）⇒ FAIL，并把解释器给的原话（`reason=`）原样打出来（零静默）。
+
+    独立成步（做法同 px-only / no-console）：判"宿主能不能起来"这一件事，不受其它步骤早退影响。
+    """
+    say("[python-host] 插件改装 P2：CPython 宿主（插件＝.py，与 C ABI 并存期）")
+    if not CLI_EXE.exists():
+        prereq("构建产物 %s" % CLI_EXE.name, "缺失（先跑 build 步）", release)
+        return
+    rc, out = run([str(CLI_EXE), "--python-host"], timeout=180)
+    line = ""
+    for raw in out.splitlines():
+        s = raw.strip()
+        if s.startswith("PYHOST"):
+            say("  " + s)
+            if not line:
+                line = s
+    if not line:
+        fail("--python-host 没打出 PYHOST 行（退出码 %d）" % rc)
+        return
+    enabled = " enabled=1" in line
+    initialized = " initialized=1" in line
+    if not enabled:
+        prereq("CPython 插件宿主（构建期已启用）", "本次构建没带 Python 支持：" + line, release)
+        return
+    if rc == 0 and initialized and " version=3." in line:
+        ok("CPython 宿主起来了（" + line + "）")
+    else:
+        fail("CPython 宿主没起来（退出码 %d）：%s" % (rc, line))
+
+
 def step_page_host_lock(release: bool) -> None:
     """插件改装 P1：**Hub 不许认识具体页**（静态面）。
 
@@ -2451,6 +2489,9 @@ STEPS = [
     # ★★ 2026-10-07（插件改装 P1）：Hub 不许认识具体页（静态锁）。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED（不塞进 shell-smoke，免得被早退带走）。
     ("page-host", step_page_host_lock),
+    # ★★ 2026-10-07（插件改装 P2）：CPython 插件宿主能不能起来（嵌入解释器 + vendored pybind11）。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED；构建期没带 Python ⇒ release FAIL（不是 SKIP）。
+    ("python-host", step_python_host),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),

@@ -12,6 +12,10 @@ target_compile_definitions(xrkit_cli PRIVATE XRKIT_WINRES_CLI)
 #   `VerQueryValueW`）⇒ 必须链 `version.lib`（否则链接期找不到符号）。
 target_link_libraries(xrkit_cli PRIVATE xrkit_engine xrkit_core xrkit_flags version)
 
+# ★★ 插件改装 P2：CLI 也嵌入 CPython（插件＝`.py`，两个前端**同一份**宿主与注册表）
+#   ⇒ 运行期必须把 `python3XX.dll` 拷到 exe 旁边（口径见根 CMakeLists 的同名函数）。
+xrkit_attach_python_runtime(xrkit_cli)
+
 # 测试插件：**故意用 C 编译**（.c + C 编译器）——用来证明这套 ABI 真的是纯 C ABI，
 # 也用来当"M2-7c 加载链路"的夹具（自检会 LoadLibrary 它、跑它的注册、调它的回调）。
 # 输出到与 CLI 同一个目录（`xrkit_test_plugin.dll` 落在 xrkit_cli.exe 旁边），

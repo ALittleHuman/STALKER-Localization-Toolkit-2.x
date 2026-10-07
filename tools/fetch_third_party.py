@@ -101,6 +101,24 @@ SOURCES = [
         "extract_to": "pcre2",
         "note": "正则（文本提取用；std::regex 不支持 lookbehind）",
     },
+    {
+        "name": "pybind11",
+        "version": "3.1.0",
+        # 插件改装 P2（用户 2026-10-07 拍板：Python 模块接口 + C ABI 退役）：
+        # 引擎要用 pybind11 把 C++ 能力暴露给随包自带的 CPython（插件＝`.py`）。
+        # 规格要求 **vendored 进 third_party/**（原本写的是 `SOURCES.md` + `sources.lock.json`
+        # 记来源与许可 —— 就是本脚本 + 本表）。
+        "url": "https://gh-proxy.com/https://github.com/pybind/pybind11/archive/refs/tags/v3.1.0.tar.gz",
+        # 备用源：阿里云 PyPI 镜像的 **sdist**（仓库已在用的镜像，实测 200；
+        # 官方 files.pythonhosted.org / pypi.org 本机全超时，见 SOURCES.md 的说明）。
+        # ⚠ 两个源的 sha256 **不同**（打包方式不同）⇒ 锁记的是实际用上的那一个。
+        "fallbacks": [
+            "https://mirrors.aliyun.com/pypi/packages/76/f3/95b0f40b31df41dbfe6bb0857419c9442c15839cbac4796f1c26ae0b6081/pybind11-3.1.0.tar.gz",
+        ],
+        "archive": "pybind11-3.1.0.tar.gz",
+        "extract_to": "pybind11",
+        "note": "CPython 绑定（插件宿主；header-only，见 third_party/CMakeLists.txt 的 xrkit_pybind11）",
+    },
 ]
 
 MAX_TRIES = 4
@@ -151,8 +169,12 @@ def load_lock() -> dict:
 
 def save_lock(lock: dict) -> None:
     TP.mkdir(parents=True, exist_ok=True)
-    LOCK.write_text(json.dumps(lock, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-                    encoding="utf-8")
+    # ★ 逐字节写 **LF**（`.gitattributes` 规定源码 LF）：`Path.write_text()` 在 Windows 上
+    #   会把 `\n` 翻成 CRLF ⇒ 同一份锁在"刚生成"与"刚检出"两种状态下字节不同
+    #   （本批实测：git status 里 SOURCES.md/sources.lock.json 立刻显示 CRLF 警告）。
+    #   纪律同 `gen_encoding_tables.py`：生成物一律 bytes + LF。
+    text = json.dumps(lock, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+    LOCK.write_bytes(text.encode("utf-8"))
 
 
 def download(url: str, dest: Path) -> None:
@@ -237,6 +259,28 @@ def write_sources_md(lock: dict) -> None:
         lines.append("| %s | %s | `%s` | %s | %s |" % (
             src["name"], src["version"], (entry.get("sha256") or "未拉取")[:16] + "…",
             entry.get("url", src["url"]), src["note"]))
+    # ★★ 2026-10-07（P2 批踩到）：这一段**必须**由生成器写出来 —— 它原先是手工加在
+    #   SOURCES.md 里的，而本脚本每次都会**整文件重写** ⇒ 我跑一次 `--only pybind11`
+    #   就把它整段抹掉了（git diff 里 17 行消失）。生成物里凡是"人写的"部分，
+    #   都得搬进生成器，否则"重跑生成器 = 静默删内容"。
+    lines += [
+        "",
+        "## 另一类\"来源\"：编码表（不入 third_party，随仓库走）",
+        "",
+        "`src/engine/text/*_tables.inc`（cp1251 / cp1252 / gb18030 / gbk / gb2312 / **big5 /",
+        "shift_jis / euc_kr**）**不是**第三方归档，而是由 `tools/gen_encoding_tables.py`",
+        "从**本机 CPython 的同名 codec** 导出（`--check` 是门禁 [12]，表被手改或换 Python 版本即 FAIL）。",
+        "它们的来源与许可是：",
+        "",
+        "- **来源**：CPython 标准库的 `encodings` / `_codecs_*` 各编码实现（`Modules/cjkcodecs/`、",
+        "  `Modules/_codecsmodule` 等），表数据本身派生自 Unicode Consortium / 各标准（KS X 1001、",
+        "  JIS X 0208、Big5）的公开映射。",
+        "- **许可**：CPython 采用 **PSF License Agreement**（Python Software Foundation License，",
+        "  GPL 兼容、允许再分发与派生）。派生成的数据表（`.inc`）按同一许可随本仓库分发。",
+        "- **可复现**：`python tools/gen_encoding_tables.py`（生成）/ `--check`（校验）；",
+        "  生成物一律 **bytes + LF** 写盘（`.gitattributes` 规定源码 LF，Windows 文本模式会翻成 CRLF",
+        "  ⇒ 混着来会让 `--check` 在\"刚生成\"与\"刚检出\"两种状态下结论不同）。",
+    ]
     lines += [
         "",
         "## 为什么不用 vcpkg 之类的包管理",
@@ -252,7 +296,8 @@ def write_sources_md(lock: dict) -> None:
         "  因此脚本按**归档魔数**判真伪，且下载失败会删掉半截文件（否则残留会被当成依赖）。",
         "- 锁只在「下载正确 + 解包成功」之后写入。",
     ]
-    (TP / "SOURCES.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # 同样逐字节写 LF（理由见 `save_lock`）
+    (TP / "SOURCES.md").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
 
 
 def main() -> int:

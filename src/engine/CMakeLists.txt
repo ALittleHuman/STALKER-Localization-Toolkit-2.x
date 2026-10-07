@@ -22,6 +22,9 @@ add_library(xrkit_engine STATIC
   plugin/registry.cpp
   plugin/abi_host.cpp
   plugin/loader.cpp
+  # ★★ 插件改装 P2：CPython 宿主（`XRKIT_WITH_PYTHON` 未定义时编出**降级**实现：
+  #   `enabled=false` + 如实理由 —— 文件本身总是参与编译，避免"少编一个文件"变成静默降级）
+  plugin/py_host.cpp
   font/charset.cpp
   font/cjk_state.cpp
   font/glyph.cpp
@@ -43,6 +46,35 @@ target_include_directories(xrkit_engine PRIVATE
 target_link_libraries(xrkit_engine
   PUBLIC xrkit_core xrkit_flags
   PRIVATE xrkit_third_party)
+
+# ★★ 插件改装 P2：CPython 宿主（口径与降级说明见 include/xrkit/engine/plugin/py_host.h
+#   与根 CMakeLists 的 `XRKIT_WITH_PYTHON` 段）。
+#   `pybind11` 是 **header-only**（third_party/CMakeLists.txt 只给一个 INTERFACE 目标），
+#   `Python3::Python` 提供嵌入解释器所需的 import lib（运行期 DLL 由
+#   `xrkit_attach_python_runtime(<exe 目标>)` 拷到 exe 旁边）。
+if(XRKIT_PYTHON_AVAILABLE)
+  target_compile_definitions(xrkit_engine PRIVATE XRKIT_WITH_PYTHON=1)
+  target_link_libraries(xrkit_engine PRIVATE xrkit_pybind11 Python3::Python)
+  # ★★ **嵌入解释器必须知道自己的 home**（实测踩到，别删）：不设 `PyConfig.home` 时，
+  #   CPython 按**宿主 exe 所在目录**推 prefix ⇒ 去 `build/msvc-release/tools/cli/Lib` 找标准库，
+  #   于是 `Failed to import encodings module` / `Could not find platform independent libraries`
+  #   ⇒ `PYHOST enabled=1 initialized=0`（宿主起不来）。
+  #   开发态把**构建时用的** Python 前缀烘焙进来；发行态由 exe 旁的 `python/`（embeddable）
+  #   **优先**接管（解析顺序见 py_host.cpp 的 `resolve_python_home`）。
+  set(_xrkit_py_prefix "")
+  if(DEFINED Python3_RUNTIME_LIBRARY AND EXISTS "${Python3_RUNTIME_LIBRARY}")
+    get_filename_component(_xrkit_py_prefix "${Python3_RUNTIME_LIBRARY}" DIRECTORY)
+  elseif(DEFINED Python3_INCLUDE_DIRS AND Python3_INCLUDE_DIRS)
+    get_filename_component(_xrkit_py_prefix "${Python3_INCLUDE_DIRS}/.." ABSOLUTE)
+  endif()
+  if(_xrkit_py_prefix)
+    target_compile_definitions(xrkit_engine PRIVATE
+      XRKIT_PYTHON_HOME_DEFAULT="${_xrkit_py_prefix}")
+    message(STATUS "CPython 插件宿主：开发态默认 home = ${_xrkit_py_prefix}")
+  else()
+    message(WARNING "CPython 插件宿主：推不出 Python 前缀（嵌入解释器可能找不到标准库）")
+  endif()
+endif()
 
 # 后续子模块按此挂入（M1）：
 #   fs/    SquashFS 读写 + DB 六格式（zlib/xz/zstd/lz4/lzo）

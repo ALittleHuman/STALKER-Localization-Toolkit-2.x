@@ -69,6 +69,63 @@ endif()
 option(XRKIT_BUILD_SHELL "构建 Qt6 外壳（需要 Qt6 与源文件）" OFF)
 
 # ─────────────────────────────────────────────────────────────────────
+# ★★ 插件改装 P2（用户 2026-10-07 拍板：**Python 模块接口 + C ABI 退役**）
+#
+# 引擎要**嵌入 CPython**（插件＝`.py`，见 include/xrkit/engine/plugin/py_host.h）。
+# 编译期只需要 Python3 的**开发文件**（头 + 运行期 DLL）；运行期开发态用本机 Python、
+# 发行态用包内自带的 embeddable Python（`<exe>/python/`）。
+#
+# 降级口径（零静默）：找不到开发文件 ⇒ 编出"降级宿主"（`PYHOST enabled=0 reason=…`），
+#   **不许**让"没有宿主"看起来像"宿主正常"。门禁 `[python-host]` 步据此判：release 档见
+#   `enabled=0` 即 FAIL（不是 SKIP —— 那会变成"一键关掉锁"的后门）。
+# ─────────────────────────────────────────────────────────────────────
+option(XRKIT_WITH_PYTHON "构建 CPython 插件宿主（需要 Python3 开发文件）" ON)
+set(XRKIT_PYTHON_AVAILABLE OFF)
+if(XRKIT_WITH_PYTHON)
+  find_package(Python3 COMPONENTS Development.Embed QUIET)
+  if(Python3_Development.Embed_FOUND)
+    set(XRKIT_PYTHON_AVAILABLE ON)
+    message(STATUS "CPython 插件宿主：启用（Python3 ${Python3_VERSION}；"
+                   "include=${Python3_INCLUDE_DIRS}；运行期=${Python3_RUNTIME_LIBRARY}）")
+  else()
+    message(STATUS "CPython 插件宿主：**降级**（找不到 Python3 开发文件 —— 宿主会如实报不可用）")
+  endif()
+endif()
+
+# 嵌入 CPython ⇒ 运行期必须找得到 `python3XX.dll`。**不能依赖 PATH**：
+#   本机 python.exe 是安装器的 shim（`…\Python\bin`），真正的 DLL 在 `…\pythoncore-3.14-64\`
+#   而它**不在 PATH 上**（实测：PATH 里没有任一目录含 python314.dll）⇒ 链接了 import lib
+#   的 exe 会在启动时报"找不到 python314.dll"。规则也要求不设持久环境变量 ⇒
+#   把运行期 DLL 拷到 exe 旁边（发行包同理，只是那份来自 embeddable Python）。
+function(xrkit_attach_python_runtime target)
+  if(NOT XRKIT_PYTHON_AVAILABLE)
+    return()
+  endif()
+  set(_xrkit_py_dlls "")
+  # ① CMake 直接告诉我们的那一个（`python3XX.dll`）
+  if(DEFINED Python3_RUNTIME_LIBRARY AND EXISTS "${Python3_RUNTIME_LIBRARY}")
+    list(APPEND _xrkit_py_dlls "${Python3_RUNTIME_LIBRARY}")
+  endif()
+  # ② 同目录下的 `python3.dll`（稳定 ABI 转发层）—— 它不一定被上面的变量提到
+  set(_xrkit_py_dirs ${Python3_RUNTIME_LIBRARY_DIRS})
+  if(NOT _xrkit_py_dirs AND DEFINED Python3_INCLUDE_DIR)
+    get_filename_component(_xrkit_py_dirs "${Python3_INCLUDE_DIR}/.." ABSOLUTE)
+  endif()
+  foreach(_dir ${_xrkit_py_dirs})
+    file(GLOB _hit "${_dir}/python3*.dll")
+    list(APPEND _xrkit_py_dlls ${_hit})
+  endforeach()
+  list(REMOVE_DUPLICATES _xrkit_py_dlls)
+  if(NOT _xrkit_py_dlls)
+    message(WARNING "找不到 python3*.dll（搜过：${_xrkit_py_dirs}）—— 运行期会缺 DLL")
+  endif()
+  foreach(_dll ${_xrkit_py_dlls})
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_dll}" "$<TARGET_FILE_DIR:${target}>")
+  endforeach()
+endfunction()
+
+# ─────────────────────────────────────────────────────────────────────
 # 第三方依赖：vendored 源码（离线可复现），见 third_party/ 与 tools/fetch_third_party.py
 # ─────────────────────────────────────────────────────────────────────
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/CMakeLists.txt")

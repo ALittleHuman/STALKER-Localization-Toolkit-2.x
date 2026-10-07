@@ -27,6 +27,7 @@
 #include "xrkit/engine/plugin/abi_host.h"
 #include "xrkit/engine/plugin/contract.h"
 #include "xrkit/engine/plugin/loader.h"
+#include "xrkit/engine/plugin/py_host.h"
 #include "xrkit/engine/plugin/registry.h"
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/font/charset.h"
@@ -174,6 +175,8 @@ void print_usage() {
            "  --build-package <version.json> <版本> <标记> <序号>\n"
            "                                              构建 + 打包（GUI 的「构建」按钮走的就是本动作；\n"
            "                                              只此一份实现 —— GUI 只是调它，不自己拼参数）\n"
+           "  --python-host   起一次 CPython 插件宿主并打印状态（插件改装 P2；\n"
+           "                  `--python-home <目录>` 可显式指定发行包自带的 python/）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -182,6 +185,9 @@ void print_usage() {
            "                  以前从不建注册表 ⇒ 加密包会被当普通包读）；被闸门拒绝时\n"
            "                  打印与 GUI **同一条**理由并非零退出。目录不存在/加载失败只记错，\n"
            "                  不阻塞动作（与 GUI 的启动口径一致）。\n"
+           "  --python-home <目录>\n"
+           "                  CPython 宿主用哪个 Python home（仅 `--python-host` 用；不给则按\n"
+           "                  exe 旁 python/ → 系统安装 的顺序解析，口径只有一处）\n"
            "  --verbose, -v   逐条打印自检结果\n"
            "\n"
            "退出码: 0=通过  1=有失败  2=显式跳过（未实现）  3=用法错误\n";
@@ -2433,6 +2439,7 @@ int run_cli(const std::vector<std::string>& args) {
     bool verify_readback = false;
     std::string plugins_dir;   // --plugins <目录>（空 ⇒ exe 旁边的 plugins/，与 GUI 同口径）
     bool plugins_given = false;
+    std::string python_home;   // --python-home <目录>（P2：CPython 宿主的 home，仅探针用）
     // ★★ 2026-10-06（审计第 4 组）：见 `--module-subset` 的解析处与 `--status-line` 动作。
     std::string module_subset;
     bool module_subset_given = false;
@@ -2476,6 +2483,16 @@ int run_cli(const std::vector<std::string>& args) {
         }
         if (a == "--plugins") {
             std::cerr << "PLUGINS error reason=用法：--plugins <目录>\n";
+            return kExitUsage;
+        }
+        // ★★ 插件改装 P2：CPython 宿主的 Python home（只给 `--python-host` 用；
+        //   不给 ⇒ `resolve_python_home("")` 按"exe 旁 python/ → 系统安装"解析）。
+        if (a == "--python-home" && i + 1 < args.size()) {
+            python_home = args[++i];
+            continue;
+        }
+        if (a == "--python-home") {
+            std::cerr << "PYHOST error reason=用法：--python-home <目录>\n";
             return kExitUsage;
         }
         if (a == "--all") {
@@ -3438,6 +3455,24 @@ int run_cli(const std::vector<std::string>& args) {
     //   ③ 留痕仍在（零静默）：失败理由必须看得见 —— `errors_` 不参与"零残留"（见 registry.h）。
     //   ★ 判据不是"之后调它不崩"：`FreeLibrary` 未必立刻 unmap，"不崩≠干净"（草案已注明）。
     // 退出码：0=全绿；1=有断言不成立；2=夹具缺失（外部前提，门禁按档位记未覆盖）；3=用法错误。
+    if (action == "--python-host") {
+        // ★★ 插件改装 P2（用户 2026-10-07 拍板：Python 模块接口 + C ABI 退役）：
+        //   起一次 CPython 宿主并打印状态。**零静默**：无论成败都打一行 `PYHOST ...`
+        //   （键值对，门禁 `[python-host]` 步直接解析这一行）。
+        //   退出码口径（与既有契约一致）：
+        //     0 = 宿主起来了（enabled=1 initialized=1）；
+        //     2 = 构建期就没带 Python 支持（enabled=0）—— 这是**显式跳过**，理由在 reason= 里，
+        //         release 档由门禁把它当 FAIL（**不许**让它看起来像通过）；
+        //     1 = 带了支持却起不来（真缺陷，比如 home 指错、DLL 缺）。
+        const xrkit::plugin::PyHostStatus started = xrkit::plugin::init_python(python_home);
+        std::cout << xrkit::plugin::python_host_report() << "\n";
+        const bool enabled = started.enabled;
+        const bool initialized = started.initialized;
+        xrkit::plugin::shutdown_python();
+        if (!enabled) return kExitSkip;
+        return initialized ? kExitOk : kExitFail;
+    }
+
     if (action == "--plugin-init-rollback") {
         if (operands.empty()) {
             std::cerr << "PLUGINROLLBACK error reason=用法：--plugin-init-rollback <只放夹具的目录>\n";

@@ -6,7 +6,7 @@
 
 set(XRKIT_TP "${CMAKE_CURRENT_SOURCE_DIR}")
 
-foreach(dep zlib xz zstd lz4 lzo freetype pcre2)
+foreach(dep zlib xz zstd lz4 lzo freetype pcre2 pybind11)
   if(NOT EXISTS "${XRKIT_TP}/${dep}")
     message(FATAL_ERROR
       "缺少第三方源码 third_party/${dep}\n"
@@ -66,6 +66,15 @@ set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
 set(PCRE2_SUPPORT_JIT ON CACHE BOOL "" FORCE)
 add_subdirectory("${XRKIT_TP}/pcre2" "${CMAKE_BINARY_DIR}/tp/pcre2" EXCLUDE_FROM_ALL)
+
+# ── pybind11 3.1.0（CPython 绑定；插件改装 P2，用户 2026-10-07 拍板
+#    「Python 模块接口 + C ABI 退役」）────────────────────────────────
+# ★ 只要头 + 一个 INTERFACE 目标，**不 add_subdirectory**：
+#   pybind11 自己的 CMake 会找 Python、生成 install/测试目标；我们只需要它的 include 目录，
+#   而 Python 的解释器与开发文件由**根 CMakeLists** 用 `find_package(Python3)` 找
+#   —— "Python 从哪来"只许一份口径（引擎侧同理：`plugin/py_host.cpp` 只认这一份）。
+add_library(xrkit_pybind11 INTERFACE)
+target_include_directories(xrkit_pybind11 INTERFACE "${XRKIT_TP}/pybind11/include")
 
 # ── 聚合出口：引擎只认这一个目标 ────────────────────────────────────
 add_library(xrkit_third_party INTERFACE)

@@ -63,6 +63,10 @@ target_compile_definitions(xrkit_app PRIVATE XRKIT_WINRES_APP)
 
 target_link_libraries(xrkit_app PRIVATE xrkit_shell Qt6::Widgets)
 
+# ★★ 插件改装 P2：GUI 也要嵌入 CPython（插件＝`.py`；宿主在引擎层，两个前端共用）
+#   ⇒ 运行期把 `python3XX.dll` 拷到 exe 旁边（口径见根 CMakeLists 的 `xrkit_attach_python_runtime`）。
+xrkit_attach_python_runtime(xrkit_app)
+
 # ★★ 2026-09-28 用户："软件打开弹出cmd的问题，也一直没修。" —— 查实：**只有构建器**设了
 #   `WIN32_EXECUTABLE TRUE`，主程序从来没设 ⇒ `xrkit_app.exe` 的 PE 子系统是 3（Console）
 #   ⇒ 双击必弹一个黑框；`no-console` 那条锁只管源码里的 `std::system()`/`QProcess`，
@@ -96,3 +100,5 @@ set_target_properties(xrkit_build_gui PROPERTIES
   #   WIN32_EXECUTABLE=TRUE ⇒ 链接 /SUBSYSTEM:WINDOWS（PE 子系统=2）。
   WIN32_EXECUTABLE TRUE
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+# 构建器也链了 xrkit_shell → xrkit_engine → CPython ⇒ 同样要 DLL 在旁（P2）
+xrkit_attach_python_runtime(xrkit_build_gui)

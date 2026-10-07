@@ -13,6 +13,7 @@
 | lzo | 2.10 | `c0f892943208266f…` | https://www.oberhumer.com/opensource/lzo/download/lzo-2.10.tar.gz | SquashFS lzo 块（1.x 的已知缺口，2.0 补齐） |
 | freetype | 2.14.3 | `dc49de6b01a266ee…` | https://gh-proxy.com/https://github.com/freetype/freetype/archive/refs/tags/VER-2-14-3.tar.gz | 字形栅格 —— **对齐 Pillow 12.3.0 捆绑的 2.14.3**（字库产物保持原样的基准） |
 | pcre2 | 10.48 | `ebcc25aadf2a51fa…` | https://mirrors.aliyun.com/debian/pool/main/p/pcre2/pcre2_10.48.orig.tar.gz | 正则（文本提取用；std::regex 不支持 lookbehind） |
+| pybind11 | 3.1.0 | `ef712655692a2e9b…` | https://gh-proxy.com/https://github.com/pybind/pybind11/archive/refs/tags/v3.1.0.tar.gz | CPython 绑定（插件宿主；header-only，见 third_party/CMakeLists.txt 的 xrkit_pybind11） |
 
 ## 另一类"来源"：编码表（不入 third_party，随仓库走）
 
