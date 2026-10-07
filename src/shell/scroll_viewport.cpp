@@ -42,6 +42,17 @@ ScrollViewport::ScrollViewport(QWidget* parent) : QWidget(parent) {
     hbar_->setObjectName(QStringLiteral("viewport_hbar"));
     vbar_->hide();
     hbar_->hide();
+    // ★★ 2026-10-07（P5 批）：**条子一动就挪画布**（拖滑块 / 点箭头 / 点空白槽都算）。
+    //   修前这里没有这两条连接 ⇒ 普通视口只有滚轮能动画面（用户可见缺陷，自检 P5 抓到）。
+    //   自带滚动的画布由 `set_self_scrolling_body` 的 offset delegate 接管，`sync_body_offset()`
+    //   在 `self_scrolling_` 时直接返回 ⇒ 两条路不打架。
+    QObject::connect(vbar_, &QScrollBar::valueChanged, this, [this](int) { sync_body_offset(); });
+    QObject::connect(hbar_, &QScrollBar::valueChanged, this, [this](int) { sync_body_offset(); });
+}
+
+void ScrollViewport::sync_body_offset() {
+    if (self_scrolling_ || body_ == nullptr) return;   // 自带滚动的画布：几何＝视口，偏移它自己体现
+    body_->move(-hbar_->value(), -vbar_->value());
 }
 
 void ScrollViewport::install_wheel_filter(QWidget* widget) {
@@ -331,10 +342,8 @@ bool ScrollViewport::route_wheel(QWidget* target, QWheelEvent* event) {
             return true;   // 事件已被（别人）消费掉，别再往上滚
         }
         if (bar->value() != before) {
-            // 滚动了 ⇒ 同步画布位置
-            if (auto* body = viewport->body()) {
-                body->move(-viewport->offset_horizontal(), -viewport->offset_vertical());
-            }
+            // 滚动了 ⇒ 同步画布位置（**唯一一份**实现：条子 valueChanged 也走它）
+            viewport->sync_body_offset();
         }
         event->accept();
         return true;

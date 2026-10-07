@@ -37,6 +37,11 @@ const char* const kMethodNames[] = {
     "task_panel",  "task_run",           "task_status",       "task_cancel",
     "task_cancel_requested",
     "on_ui_thread",
+    // ★★ P5：重型 L2 第二批（滚动视口 / 可分栏）
+    "viewport",    "viewport_fit_content", "viewport_set_min_body_height", "viewport_sync",
+    "viewport_can_scroll", "viewport_scroll_top",
+    "split",       "split_add_pane",       "split_set_max_size",          "split_set_collapsed",
+    "split_is_collapsed", "split_pane_count", "split_sash_pos",
 };
 
 bool has_impl(const UiFacade& facade, const std::string& name) {
@@ -77,6 +82,21 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "task_cancel") return static_cast<bool>(facade.task_cancel);
     if (name == "task_cancel_requested") return static_cast<bool>(facade.task_cancel_requested);
     if (name == "on_ui_thread") return static_cast<bool>(facade.on_ui_thread);
+    if (name == "viewport") return static_cast<bool>(facade.viewport);
+    if (name == "viewport_fit_content") return static_cast<bool>(facade.viewport_fit_content);
+    if (name == "viewport_set_min_body_height") {
+        return static_cast<bool>(facade.viewport_set_min_body_height);
+    }
+    if (name == "viewport_sync") return static_cast<bool>(facade.viewport_sync);
+    if (name == "viewport_can_scroll") return static_cast<bool>(facade.viewport_can_scroll);
+    if (name == "viewport_scroll_top") return static_cast<bool>(facade.viewport_scroll_top);
+    if (name == "split") return static_cast<bool>(facade.split);
+    if (name == "split_add_pane") return static_cast<bool>(facade.split_add_pane);
+    if (name == "split_set_max_size") return static_cast<bool>(facade.split_set_max_size);
+    if (name == "split_set_collapsed") return static_cast<bool>(facade.split_set_collapsed);
+    if (name == "split_is_collapsed") return static_cast<bool>(facade.split_is_collapsed);
+    if (name == "split_pane_count") return static_cast<bool>(facade.split_pane_count);
+    if (name == "split_sash_pos") return static_cast<bool>(facade.split_sash_pos);
     return false;
 }
 

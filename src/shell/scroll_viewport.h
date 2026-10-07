@@ -117,6 +117,12 @@ protected:
 private:
     void install_wheel_filter(QWidget* widget);
     void apply_fit();
+    // ★★ 2026-10-07（P5 批，自检抓到的**用户可见缺陷**）：条子的值一变就**把画布挪到位**。
+    //   修前：`valueChanged` 只在 `set_self_scrolling_body(true)` 那条路上接过（那是"通知画布
+    //   自己"），**普通视口根本没接** ⇒ 只有滚轮那条路（`route_wheel` 里显式 `body->move`）
+    //   能动画面；**拖条子/点箭头/点空白槽都不动**（用户 2026-09 抱怨的"滚动条一族"同族）。
+    //   现在条子 → 画布只有这一份实现（`route_wheel` 也改调它）。
+    void sync_body_offset();
 
     QWidget* body_ = nullptr;
     QScrollBar* vbar_ = nullptr;

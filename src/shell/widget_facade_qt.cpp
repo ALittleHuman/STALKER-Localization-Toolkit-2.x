@@ -16,6 +16,7 @@
 #include "plugin_ui.h"
 
 #include "drop_filter.h"
+#include "scroll_viewport.h"
 #include "task_shell.h"
 #include "virtual_list.h"
 
@@ -27,6 +28,7 @@
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSplitter>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -65,6 +67,17 @@ std::map<void*, TaskShell*>& task_shells() {
 TaskShell* task_of(plug::UiHandle panel) {
     const auto it = task_shells().find(panel);
     return it == task_shells().end() ? nullptr : it->second;
+}
+
+// ★ P5：画布 → 视口（句柄是画布，视口是它的宿主；单线程访问）
+std::map<void*, ScrollViewport*>& viewports() {
+    static std::map<void*, ScrollViewport*>* instance = new std::map<void*, ScrollViewport*>();
+    return *instance;
+}
+
+ScrollViewport* viewport_of(plug::UiHandle body) {
+    const auto it = viewports().find(body);
+    return it == viewports().end() ? nullptr : it->second;
 }
 
 // 门面是在哪个线程装的，就以那个线程为"UI 线程"（`on_ui_thread` 的判据）
@@ -278,9 +291,19 @@ const plug::UiFacade kQtFacade = {
     [](plug::UiHandle list, int rows) {
         QWidget* container = unwrap(list);
         if (container == nullptr) return;
-        if (auto* view = container->findChild<VirtualList*>()) {
-            view->set_row_count(rows);
-            view->refresh();
+        auto* view = container->findChild<VirtualList*>();
+        if (view == nullptr) return;
+        view->set_row_count(rows);
+        view->refresh();
+        // ★★ P5：列表变长了 ⇒ 把"内容总高"交给**祖先里的宿主视口**（3.3：内容高不许用请求高度顶）。
+        //   这一步让"插件页里放一个长列表"**自动滚得动**，插件一句都不用写。
+        for (QWidget* ancestor = container->parentWidget(); ancestor != nullptr;
+             ancestor = ancestor->parentWidget()) {
+            if (auto* viewport = qobject_cast<ScrollViewport*>(ancestor)) {
+                viewport->set_min_body_height(view->content_height());
+                viewport->sync_layout();
+                break;
+            }
         }
     },
     /* list_set_row_text（★L2.5：宿主只在**可见行**上问插件要文本 —— 10.3 同族） */
@@ -418,6 +441,134 @@ const plug::UiFacade kQtFacade = {
     },
     /* on_ui_thread：门面是在哪个线程装的，就以那个线程为"UI 线程" */
     []() { return std::this_thread::get_id() == ui_thread_id(); },
+    // ── ★★ P5：重型 L2 第二批（滚动视口 / 可分栏）──────────────────────────────
+    /* viewport：宿主造「容器 + ScrollViewport + 画布」，**句柄＝画布**（插件往它里面 pack）。
+       条子只由宿主造（口径 1.6）；`min_body_height` 由调用方给（口径 3.3）。 */
+    [](plug::UiHandle parent, int min_body_height) {
+        QWidget* host = resolve_parent(parent);
+        auto* container = new QWidget;
+        auto* layout = new QVBoxLayout(container);
+        layout->setContentsMargins(0, 0, 0, 0);
+        auto* viewport = new ScrollViewport(container);
+        auto* body = new QWidget;
+        viewport->set_body(body);
+        viewport->set_fit(ScrollViewport::Fit::Content);
+        if (min_body_height > 0) viewport->set_min_body_height(min_body_height);
+        auto* body_layout = new QVBoxLayout(body);
+        body_layout->setContentsMargins(0, 0, 0, 0);
+        body_layout->setSpacing(core::px(6));
+        layout->addWidget(viewport);
+        viewports()[reinterpret_cast<void*>(body)] = viewport;
+        place(host, container);
+        return handle_of(wrap(body));
+    },
+    /* viewport_fit_content：true = Content（静态内容，1.x 3.2） */
+    [](plug::UiHandle body, bool content_fit) {
+        if (ScrollViewport* viewport = viewport_of(body)) {
+            viewport->set_fit(content_fit ? ScrollViewport::Fit::Content
+                                          : ScrollViewport::Fit::Viewport);
+            viewport->sync_layout();
+        }
+    },
+    /* viewport_set_min_body_height */
+    [](plug::UiHandle body, int min_body_height) {
+        if (ScrollViewport* viewport = viewport_of(body)) {
+            viewport->set_min_body_height(min_body_height);
+            viewport->sync_layout();
+        }
+    },
+    /* viewport_sync：任何尺寸/内容变化后调一次（1.8 显式整组重排） */
+    [](plug::UiHandle body) {
+        if (ScrollViewport* viewport = viewport_of(body)) viewport->sync_layout();
+    },
+    /* viewport_can_scroll */
+    [](plug::UiHandle body) {
+        ScrollViewport* viewport = viewport_of(body);
+        return viewport != nullptr && viewport->can_scroll_vertical();
+    },
+    /* viewport_scroll_top */
+    [](plug::UiHandle body) {
+        ScrollViewport* viewport = viewport_of(body);
+        return viewport == nullptr ? 0 : viewport->offset_vertical();
+    },
+    // ── ★★ P5：可分栏：**`QSplitter`（产品真实用的那个）** ──────────────────────
+    // ★ 这一处被门禁 3-8 当场纠正过：我第一版用了 `SplitPane`，而那个类**只作自检夹具**保留
+    //   （门禁锁着：产品路径不许引用它），产品分栏用的是 `QSplitter`（fs 页 `fs_split_list_tree`）。
+    //   口径就此对齐：**门面必须暴"页面在用的那个控件"的能力**，否则"对等性"是假的。
+    //   · `setOpaqueResize(false)` ＝ 用户 2026-09-21 要的"拖动期不实时移动、松手一次重排"；
+    //   · 每格上限/是否可收起/收起态都落在**格容器**上（QSplitter 按子控件的 min/max 分配）。
+    [](plug::UiHandle parent, bool horizontal) {
+        QWidget* host = resolve_parent(parent);
+        auto* split = new QSplitter(horizontal ? Qt::Horizontal : Qt::Vertical);
+        split->setObjectName(QStringLiteral("xrkit_facade_split"));
+        split->setChildrenCollapsible(false);   // 收起要么显式做，要么不做（不许拖成 0）
+        split->setOpaqueResize(false);          // 松手一次重排（拖的时候不实时改几何）
+        place(host, split);
+        return handle_of(wrap(split));
+    },
+    /* split_add_pane：造**新的一格容器**返回给插件（插件往它里面 pack） */
+    [](plug::UiHandle split, int minsize) {
+        auto* splitter = qobject_cast<QSplitter*>(unwrap(split));
+        if (splitter == nullptr) return plug::kNoWidget;
+        auto* cell = new QWidget;
+        auto* layout = new QVBoxLayout(cell);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(core::px(6));
+        if (minsize > 0) {
+            if (splitter->orientation() == Qt::Horizontal) {
+                cell->setMinimumWidth(minsize);
+            } else {
+                cell->setMinimumHeight(minsize);
+            }
+        }
+        splitter->addWidget(cell);
+        return handle_of(wrap(cell));
+    },
+    /* split_set_max_size：每格上限（size<=0 = 不限）——落在格容器的 max 尺寸上 */
+    [](plug::UiHandle split, int index, int max_size) {
+        auto* splitter = qobject_cast<QSplitter*>(unwrap(split));
+        if (splitter == nullptr || index < 0 || index >= splitter->count()) return;
+        QWidget* cell = splitter->widget(index);
+        if (cell == nullptr) return;
+        if (splitter->orientation() == Qt::Horizontal) {
+            cell->setMaximumWidth(max_size > 0 ? max_size : QWIDGETSIZE_MAX);
+        } else {
+            cell->setMaximumHeight(max_size > 0 ? max_size : QWIDGETSIZE_MAX);
+        }
+    },
+    /* split_set_collapsed：完全收起 —— **hide 掉那一格**。这是 QSplitter 的正法：隐藏的子件
+       被当作 0 尺寸、空间全给别的格，`show()` 时它自己还原原来的大小。
+       ★ 别用"把 sizes 压到 0"：那会被 `minimumSizeHint` 顶回去（本批自检第一次就是这么红的：
+       `setSizes` 之后第 3 格仍是 239 px）。 */
+    [](plug::UiHandle split, int index, bool collapsed) {
+        auto* splitter = qobject_cast<QSplitter*>(unwrap(split));
+        if (splitter == nullptr || index < 0 || index >= splitter->count()) return;
+        QWidget* cell = splitter->widget(index);
+        if (cell == nullptr) return;
+        cell->setVisible(!collapsed);
+    },
+    /* split_is_collapsed：显式隐藏（`isHidden()` 与"布局跑没跑"无关 —— 未 show 也能判） */
+    [](plug::UiHandle split, int index) {
+        auto* splitter = qobject_cast<QSplitter*>(unwrap(split));
+        if (splitter == nullptr || index < 0 || index >= splitter->count()) return false;
+        QWidget* cell = splitter->widget(index);
+        return cell != nullptr && cell->isHidden();
+    },
+    /* split_pane_count */
+    [](plug::UiHandle split) {
+        auto* splitter = qobject_cast<QSplitter*>(unwrap(split));
+        return splitter == nullptr ? 0 : splitter->count();
+    },
+    /* split_sash_pos：第 index 条分隔条的位置（-1 = 没有）。用**累计尺寸**算 —— 不依赖
+       "分隔条自己有没有被布局出来"，离屏/未 show 时也能判。 */
+    [](plug::UiHandle split, int index) {
+        auto* splitter = qobject_cast<QSplitter*>(unwrap(split));
+        if (splitter == nullptr || index < 0 || index + 1 >= splitter->count()) return -1;
+        const QList<int> sizes = splitter->sizes();
+        int pos = 0;
+        for (int i = 0; i <= index && i < sizes.size(); ++i) pos += sizes.at(i);
+        return pos;
+    },
 };
 
 plug::UiFacade& mutable_facade() {

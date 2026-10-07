@@ -1308,6 +1308,19 @@ SmokeResult run_smoke() {
                       .arg(tb->height()));
         }
 
+        // ★★ P5（2026-10-07 自检抓到）：**拖条子/点箭头也必须挪画布** —— 修前普通视口没有
+        //   `valueChanged` 连接（只有"自带滚动的画布"那条路接过），所以**只有滚轮能动画面**，
+        //   拖滑块完全没反应。这条锁就是那个用户可见缺陷。
+        {
+            tall_vp->vbar()->setValue(0);
+            const int y_top = tall_body->y();
+            tall_vp->vbar()->setValue(tall_vp->vbar()->maximum());
+            check(tall_body->y() < y_top,
+                  QStringLiteral("条子拖到底 ⇒ 画布上移（修前 y 恒为 %1）").arg(y_top));
+            tall_vp->vbar()->setValue(0);
+            check(tall_body->y() == y_top, QStringLiteral("条子回顶 ⇒ 画布回原位"));
+        }
+
         // ⑦-c 看得见时滚轮真的动，且到底夹住
         check(send_wheel(tall_body, -120), QStringLiteral("能滚时滚轮被本视口消费"));
         check(tall_vp->offset_vertical() > 0, QStringLiteral("滚轮把偏移推大了"));
@@ -5382,6 +5395,148 @@ SmokeResult run_smoke() {
                   .arg(bar == nullptr ? QStringLiteral("无进度条") : QString::number(bar->value())));
         check(hub.plugin_errors().empty(),
               QStringLiteral("P4 好插件不该产生插件问题（实得 %1 条）").arg(hub.plugin_errors().size()));
+        QDir(dir).removeRecursively();
+    }
+
+    // ★★ 插件改装 P5（**重型 L2 第二批**）：滚动视口 / 可分栏 / **插件页自动套宿主视口**。
+    //   判据不是"接口在"，而是"宿主组件真的在替插件干活"：
+    //     ① 插件页被宿主套上了 `ScrollViewport`（与内置六页同形）；
+    //     ② 插件用 `ui.viewport` 造的视口**真的能滚**（缩小视口 ⇒ `can_scroll()` 为真；
+    //        拖条子 ⇒ **画布真的被挪了**，不只是条子值变了）；
+    //     ③ 视口里放长列表 ⇒ 宿主自动把"内容总高"交给视口（`min_body_height >= 行数×行高`）；
+    //     ④ 分栏：三格、格子上限、第 3 格完全收起（4.2/4.3）。
+    {
+        const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_uifacade_l2b"));
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString marker = QDir(dir).filePath(QStringLiteral("l5_marker.txt"));
+        const QByteArray source =
+            "# -*- coding: utf-8 -*-\n"
+            "import os\n"
+            "def register(api):\n"
+            "    def mark(text):\n"
+            "        with open(os.path.join(api.plugin_dir, 'l5_marker.txt'), 'a', encoding='utf-8') as fh:\n"
+            "            fh.write(text + '\\n')\n"
+            "    def build():\n"
+            "        ui = api.ui\n"
+            "        body = ui.viewport(None, 1200)\n"
+            "        for i in range(6):\n"
+            "            ui.label(body, '长内容第 %d 行' % i)\n"
+            "        ui.viewport_sync(body)\n"
+            "        mark('vp_can_scroll:%d' % int(ui.viewport_can_scroll(body)))\n"
+            "        mark('vp_top:%d' % ui.viewport_scroll_top(body))\n"
+            "        body2 = ui.viewport(None, 0)\n"
+            "        rows = ui.list(body2, 18)\n"
+            "        ui.list_set_row_count(rows, 200)\n"
+            "        ui.viewport_sync(body2)\n"
+            "        mark('list_vp_can_scroll:%d' % int(ui.viewport_can_scroll(body2)))\n"
+            "        split = ui.split(None, True)\n"
+            "        for i in range(3):\n"
+            "            cell = ui.split_add_pane(split, 40)\n"
+            "            ui.label(cell, '格 %d' % i)\n"
+            "        mark('panes:%d' % ui.split_pane_count(split))\n"
+            "        ui.split_set_max_size(split, 0, 180)\n"
+            "        ui.split_set_collapsed(split, 2, True)\n"
+            "        mark('collapsed2:%d' % int(ui.split_is_collapsed(split, 2)))\n"
+            "        mark('sash0:%d' % ui.split_sash_pos(split, 0))\n"
+            "    api.register_tool('门面L2b夹具页', build, 7)\n";
+        QFile plugin_file(QDir(dir).filePath(QStringLiteral("l5_demo.py")));
+        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                           plugin_file.write(source) == source.size();
+        plugin_file.close();
+        check(wrote, QStringLiteral("P5 夹具 .py 没写进去"));
+
+        Hub hub(nullptr, dir);
+        const int page = hub.page_index(QStringLiteral("门面L2b夹具页"));
+        check(page >= 0, QStringLiteral("P5 `register_tool` 的页没进页表（插件问题 %1 条）")
+                             .arg(hub.plugin_errors().size()));
+        QWidget* page_widget = page >= 0 ? hub.stack()->widget(page) : nullptr;
+        // ★ 分栏的尺寸/分隔条位置**必须真的布局过**才读得出来 —— 与别处一样把 Hub `show()` 一次
+        //   （离屏平台下 `hub.show()` 是既有做法；不 show 的话 `QSplitter::sizes()` 恒为 [0,0,0]，
+        //   那样判的是"布局没跑"而不是"分栏不对" —— 本批实测踩到过）。
+        hub.show();
+        // ★ 还要**切到这一页**：`QStackedWidget` 只给"当前页"派发布局 ⇒ 不切的话插件页里的
+        //   分栏/视口拿不到几何（实测：`QSplitter::sizes()` 恒为 [0,0,0]）。
+        if (page >= 0) hub.switch_to_page(QStringLiteral("门面L2b夹具页"));
+        for (int i = 0; i < 20; ++i) {
+            QApplication::processEvents();
+            QThread::msleep(5);
+        }
+        // ① 插件页由宿主套上视口
+        check(dynamic_cast<ScrollViewport*>(page_widget) != nullptr,
+              QStringLiteral("P5 插件页没被套上宿主视口（长内容会滚不动）"));
+        // ② 插件自己造的视口：缩小它 ⇒ 能滚；拖条子 ⇒ 画布真的挪了
+        const QList<ScrollViewport*> inner =
+            page_widget != nullptr ? page_widget->findChildren<ScrollViewport*>()
+                                   : QList<ScrollViewport*>();
+        check(inner.size() >= 2, QStringLiteral("P5 插件造的两个视口没找到（实得 %1 个）")
+                                     .arg(inner.size()));
+        if (inner.size() >= 1) {
+            ScrollViewport* viewport = inner.at(0);
+            viewport->resize(300, 120);
+            viewport->sync_layout();
+            check(viewport->can_scroll_vertical(),
+                  QStringLiteral("P5 长内容的视口滚不动（min_body_height=%1 视口高=%2）")
+                      .arg(viewport->min_body_height())
+                      .arg(viewport->height()));
+            const int before = viewport->body() != nullptr ? viewport->body()->y() : 0;
+            if (viewport->vbar() != nullptr) viewport->vbar()->setValue(50);
+            QApplication::processEvents();
+            const int after = viewport->body() != nullptr ? viewport->body()->y() : 0;
+            check(viewport->offset_vertical() > 0 && after < before,
+                  QStringLiteral("P5 拖条子没挪画布（offset=%1 画布 y：%2 → %3）")
+                      .arg(viewport->offset_vertical())
+                      .arg(before)
+                      .arg(after));
+        }
+        // ③ 视口里的长列表：宿主自动把内容总高交给视口
+        if (inner.size() >= 2) {
+            check(inner.at(1)->min_body_height() >= 200 * 18,
+                  QStringLiteral("P5 长列表没把内容总高交给视口（min_body_height=%1，期望 ≥ %2）")
+                      .arg(inner.at(1)->min_body_height())
+                      .arg(200 * 18));
+        }
+        // ④ 分栏（产品用的是 `QSplitter`；`SplitPane` 只作别处的自检夹具 —— 门禁 3-8 锁着）
+        auto* split = page_widget != nullptr
+                          ? page_widget->findChild<QSplitter*>(QStringLiteral("xrkit_facade_split"))
+                          : nullptr;
+        check(split != nullptr && split->count() == 3,
+              QStringLiteral("P5 分栏格数不对（实得 %1）")
+                  .arg(split == nullptr ? -1 : split->count()));
+        if (split != nullptr) {
+            check(split->count() == 3 && split->orientation() == Qt::Horizontal,
+                  QStringLiteral("P5 分栏形态不对（count=%1 orientation=%2）")
+                      .arg(split->count())
+                      .arg(split->orientation() == Qt::Horizontal ? QStringLiteral("横")
+                                                                  : QStringLiteral("纵")));
+            // 分隔条真的落下了（Hub 已 show ⇒ 这一读是有意义的几何，不是"布局没跑"）
+            const QList<int> sizes = split->sizes();
+            QStringList size_text;
+            for (int value : sizes) size_text << QString::number(value);
+            check(!sizes.isEmpty() && sizes.at(0) > 0,
+                  QStringLiteral("P5 分隔条没落下（sizes=[%1]）")
+                      .arg(size_text.join(QStringLiteral(", "))));
+            check(split->widget(2) != nullptr && split->widget(2)->isHidden(),
+                  QStringLiteral("P5 第 3 格没收起（`split_set_collapsed` 没生效）"));
+        }
+        QString text;
+        {
+            QFile file(marker);
+            if (file.open(QIODevice::ReadOnly)) text = QString::fromUtf8(file.readAll());
+        }
+        check(text.contains(QStringLiteral("vp_can_scroll:")),
+              QStringLiteral("P5 `viewport_can_scroll` 没回值（标记=%1）").arg(text.simplified()));
+        check(text.contains(QStringLiteral("panes:3")),
+              QStringLiteral("P5 插件侧读到的格数不是 3（标记=%1）").arg(text.simplified()));
+        // 分隔条位置：**插件侧**读到过（`sash0:` 键在）；真实几何那条在 C++ 侧判（Hub 已 show）。
+        //   为什么不在插件侧判"位置 > 0"：`build()` 跑在布局之前，那时读到的必然是 0 ——
+        //   拿它判红就是"判据没有能失败的输入"的反面（这次是"判据的输入天生为 0"）。
+        check(text.contains(QStringLiteral("sash0:")),
+              QStringLiteral("P5 插件侧取不到分隔条位置（标记=%1）").arg(text.simplified()));
+        check(text.contains(QStringLiteral("collapsed2:1")),
+              QStringLiteral("P5 插件侧读到的收起状态不对（标记=%1）").arg(text.simplified()));
+        check(hub.plugin_errors().empty(),
+              QStringLiteral("P5 好插件不该产生插件问题（实得 %1 条）").arg(hub.plugin_errors().size()));
         QDir(dir).removeRecursively();
     }
 

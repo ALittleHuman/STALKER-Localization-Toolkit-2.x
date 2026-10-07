@@ -2,6 +2,7 @@
 
 #include "log_box.h"
 #include "plugin_ui.h"
+#include "scroll_viewport.h"
 #include "pages/page_base.h"
 #include "pages/page_factory.h"
 
@@ -465,9 +466,18 @@ int Hub::sync_pages() {
             const bool anything_built = built != nullptr || (placed != nullptr && placed->count() > 0);
             if (!anything_built) {
                 widget = make_placeholder(reg->spec);
+                if (widget != container) container->deleteLater();
                 log_line(QStringLiteral("页「%1」（%2）没造出控件，已用占位页顶替")
                              .arg(id)
                              .arg(QString::fromStdString(reg->owner)));
+            } else if (dynamic_cast<PageBase*>(widget) == nullptr) {
+                // ★★ P5：**插件页套宿主视口** —— 与内置六页同形（`PageBase` 自带的那层）。
+                //   没有它，插件页里的长内容/长列表**滚不动**（画布高度被外层布局定死）；
+                //   有了它，条子仍只由宿主造（口径 1.6），插件一句都不用写。
+                auto* viewport = new ScrollViewport;
+                viewport->set_fit(ScrollViewport::Fit::Content);
+                viewport->set_body(widget);
+                widget = viewport;
             }
             // 插件页是**裸 QWidget**（ABI builder 形态）⇒ 沿用修前的可识别名字；
             // `PageBase` 子类自己已经设过 objectName（`page_<id>`），不许覆盖。

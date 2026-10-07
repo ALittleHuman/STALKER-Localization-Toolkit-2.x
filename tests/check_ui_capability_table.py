@@ -63,6 +63,19 @@ EXPECT_UI = {
     "task_status": "L2.4 当前状态文案", "task_cancel": "L2.4 请求取消",
     "task_cancel_requested": "L2.4 worker 轮询取消位（协作式取消）",
     "on_ui_thread": "★线程纪律：门面方法只许在宿主 UI 线程调用（其余一律拒绝并记账）",
+    # ★★ P5：重型 L2 第二批 —— 滚动视口 + 可分栏（六页每一页都要的那两件"框架件"）
+    "viewport": "L2.5 滚动视口：宿主造「容器+视口+画布」，**句柄＝画布**（条子只许宿主造，1.6）",
+    "viewport_fit_content": "L2.5 fit=Content/Viewport（静态内容 vs 自带条子的弹性内容，3.2）",
+    "viewport_set_min_body_height": "L2.5 内容高**不许**用请求高度顶（3.3），由调用方给",
+    "viewport_sync": "L2.5 每次显式整组重排（1.8）",
+    "viewport_can_scroll": "L2.5 现在能不能滚（1.2/1.7：装得下 ⇒ 条子不占位）",
+    "viewport_scroll_top": "L2.5 当前竖向偏移（判据/联动用）",
+    "split": "L2.6 可分栏容器（横向/纵向）",
+    "split_add_pane": "L2.6 加一格，**返回该格容器**（插件往它里面 pack）",
+    "split_set_max_size": "L2.6 每格上限（六页里日志/预览格都靠它别吃满窗口）",
+    "split_set_collapsed": "L2.6 完全收起（4.2/4.3：收起后改窗口尺寸不弹回）",
+    "split_is_collapsed": "L2.6 是否收起", "split_pane_count": "L2.6 格数",
+    "split_sash_pos": "L2.6 第 index 条分隔条位置（-1=没有）",
 }
 # Widget：**故意为空** —— 不透明句柄，插件不能对它做任何事（禁 L4 裸 Qt）
 EXPECT_WIDGET: dict[str, str] = {}

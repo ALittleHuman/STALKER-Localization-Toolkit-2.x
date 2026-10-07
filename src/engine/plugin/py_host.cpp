@@ -669,6 +669,81 @@ public:
         return false;
     }
 
+    // ── ★★ P5：重型 L2 第二批（滚动视口 / 可分栏）──────────────────────────────
+    py::object viewport(py::object parent, int min_body_height) const {
+        if (const UiFacade* facade = available("viewport")) {
+            return wrap(facade->viewport(handle_of(parent), min_body_height));
+        }
+        return py::none();
+    }
+    void viewport_fit_content(py::object body, bool content_fit) const {
+        if (const UiFacade* facade = available("viewport_fit_content")) {
+            facade->viewport_fit_content(handle_of(body), content_fit);
+        }
+    }
+    void viewport_set_min_body_height(py::object body, int min_body_height) const {
+        if (const UiFacade* facade = available("viewport_set_min_body_height")) {
+            facade->viewport_set_min_body_height(handle_of(body), min_body_height);
+        }
+    }
+    void viewport_sync(py::object body) const {
+        if (const UiFacade* facade = available("viewport_sync")) {
+            facade->viewport_sync(handle_of(body));
+        }
+    }
+    bool viewport_can_scroll(py::object body) const {
+        if (const UiFacade* facade = available("viewport_can_scroll")) {
+            return facade->viewport_can_scroll(handle_of(body));
+        }
+        return false;
+    }
+    int viewport_scroll_top(py::object body) const {
+        if (const UiFacade* facade = available("viewport_scroll_top")) {
+            return facade->viewport_scroll_top(handle_of(body));
+        }
+        return 0;
+    }
+    py::object split(py::object parent, bool horizontal) const {
+        if (const UiFacade* facade = available("split")) {
+            return wrap(facade->split(handle_of(parent), horizontal));
+        }
+        return py::none();
+    }
+    py::object split_add_pane(py::object split_widget, int minsize) const {
+        if (const UiFacade* facade = available("split_add_pane")) {
+            return wrap(facade->split_add_pane(handle_of(split_widget), minsize));
+        }
+        return py::none();
+    }
+    void split_set_max_size(py::object split_widget, int index, int max_size) const {
+        if (const UiFacade* facade = available("split_set_max_size")) {
+            facade->split_set_max_size(handle_of(split_widget), index, max_size);
+        }
+    }
+    void split_set_collapsed(py::object split_widget, int index, bool collapsed) const {
+        if (const UiFacade* facade = available("split_set_collapsed")) {
+            facade->split_set_collapsed(handle_of(split_widget), index, collapsed);
+        }
+    }
+    bool split_is_collapsed(py::object split_widget, int index) const {
+        if (const UiFacade* facade = available("split_is_collapsed")) {
+            return facade->split_is_collapsed(handle_of(split_widget), index);
+        }
+        return false;
+    }
+    int split_pane_count(py::object split_widget) const {
+        if (const UiFacade* facade = available("split_pane_count")) {
+            return facade->split_pane_count(handle_of(split_widget));
+        }
+        return 0;
+    }
+    int split_sash_pos(py::object split_widget, int index) const {
+        if (const UiFacade* facade = available("split_sash_pos")) {
+            return facade->split_sash_pos(handle_of(split_widget), index);
+        }
+        return -1;
+    }
+
 private:
     // 门面/方法不可用 ⇒ **逐条记账**并返回"空"（零静默：插件作者能立刻看出为什么什么都没出现）
     const UiFacade* available(const std::string& method) const {
@@ -774,7 +849,29 @@ void ensure_api_module() {
             .def("task_status", &PyUi::task_status, py::arg("panel"))
             .def("task_cancel", &PyUi::task_cancel, py::arg("panel"))
             .def("task_cancel_requested", &PyUi::task_cancel_requested, py::arg("panel"))
-            .def("on_ui_thread", &PyUi::on_ui_thread);
+            .def("on_ui_thread", &PyUi::on_ui_thread)
+            // ★ P5：重型 L2 第二批（滚动视口 / 可分栏）
+            .def("viewport", &PyUi::viewport, py::arg("parent") = py::none(),
+                 py::arg("min_body_height") = 0)
+            .def("viewport_fit_content", &PyUi::viewport_fit_content, py::arg("body"),
+                 py::arg("content_fit") = true)
+            .def("viewport_set_min_body_height", &PyUi::viewport_set_min_body_height,
+                 py::arg("body"), py::arg("min_body_height"))
+            .def("viewport_sync", &PyUi::viewport_sync, py::arg("body"))
+            .def("viewport_can_scroll", &PyUi::viewport_can_scroll, py::arg("body"))
+            .def("viewport_scroll_top", &PyUi::viewport_scroll_top, py::arg("body"))
+            .def("split", &PyUi::split, py::arg("parent") = py::none(),
+                 py::arg("horizontal") = true)
+            .def("split_add_pane", &PyUi::split_add_pane, py::arg("split"),
+                 py::arg("minsize") = 0)
+            .def("split_set_max_size", &PyUi::split_set_max_size, py::arg("split"),
+                 py::arg("index"), py::arg("max_size"))
+            .def("split_set_collapsed", &PyUi::split_set_collapsed, py::arg("split"),
+                 py::arg("index"), py::arg("collapsed"))
+            .def("split_is_collapsed", &PyUi::split_is_collapsed, py::arg("split"),
+                 py::arg("index"))
+            .def("split_pane_count", &PyUi::split_pane_count, py::arg("split"))
+            .def("split_sash_pos", &PyUi::split_sash_pos, py::arg("split"), py::arg("index"));
         py::class_<PyPluginApi>(m, "Api")
             .def_property_readonly("plugin_file", &PyPluginApi::owner)
             .def_property_readonly("plugin_dir", &PyPluginApi::plugin_dir)

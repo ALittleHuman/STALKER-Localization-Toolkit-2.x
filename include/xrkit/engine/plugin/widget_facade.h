@@ -114,6 +114,28 @@ struct UiFacade {
     // 当前调用是否在**宿主 UI 线程**上：造控件/改控件只许在主线程；
     // 不在 ⇒ 一律返回空/0 并由调用方**记账**（零静默，防"工作线程里碰 Qt"那类崩）。
     std::function<bool()> on_ui_thread;
+
+    // ── ★★ L2（重型，第二批）：滚动视口 / 可分栏 ──────────────────────────────
+    // ScrollViewport：口径 1.x 1.6「**不许有裸滚动条：条子只能由本组件造**」——
+    //   所以插件拿到的句柄是**画布**（body），往它里面 `pack` 控件即可；
+    //   条子、滚轮路由、"装得下就不占位"全在宿主。
+    //   `min_body_height`：内容高**不许**用"内容请求高度"当内容高（3.3），由插件/宿主给。
+    std::function<UiHandle(UiHandle parent, int min_body_height)> viewport;
+    std::function<void(UiHandle body, bool content_fit)> viewport_fit_content;
+    std::function<void(UiHandle body, int min_body_height)> viewport_set_min_body_height;
+    std::function<void(UiHandle body)> viewport_sync;
+    std::function<bool(UiHandle body)> viewport_can_scroll;
+    std::function<int(UiHandle body)> viewport_scroll_top;
+
+    // SplitPane：可分栏容器（**拖动期不改几何、松手一次重排**；每格上限；可完全收起）。
+    //   `split_add_pane` 返回**新的一格容器**（句柄），插件往它里面 `pack`。
+    std::function<UiHandle(UiHandle parent, bool horizontal)> split;
+    std::function<UiHandle(UiHandle split, int minsize)> split_add_pane;
+    std::function<void(UiHandle split, int index, int max_size)> split_set_max_size;
+    std::function<void(UiHandle split, int index, bool collapsed)> split_set_collapsed;
+    std::function<bool(UiHandle split, int index)> split_is_collapsed;
+    std::function<int(UiHandle split)> split_pane_count;
+    std::function<int(UiHandle split, int index)> split_sash_pos;
 };
 
 // 外壳注入实现（`src/shell/ui_facade_qt.cpp`）。传 nullptr = 撤销（无 GUI 依赖的进程/用例）。
