@@ -2810,6 +2810,42 @@ int run_cli(const std::vector<std::string>& args) {
             }
             std::cout << "VERSIONSTORE created=" << store_path << "\n";
         }
+        if (operands.size() >= 2 && operands[1] == "write-header") {
+            // ★★ 2026-10-07（H1-2，用户候选 A）：把 tree 里**最后一次成功发包**的
+            //   「标记.序号」写回 `include/xrkit/core/version.h`（真来源＝version.json 的 tree；
+            //   version.h 是派生）。**故意不读 `current.index`** —— 那是"下一个号"，
+            //   门禁与构建 GUI 都会推它（实测 59 → 60）。
+            //   写回之后必须重跑 `python tools/gen_winres.py` 让 `.rc` 同源（本动作不代跑，
+            //   因为它不该替调用方决定生成器怎么跑；`--build-package` 里是代跑的）。
+            std::string last_version;
+            std::string last_prerelease;
+            int last_index = 0;
+            if (!xrkit::core::last_release(store, last_version, last_prerelease, last_index, verr)) {
+                std::cout << "VERSIONSTORE error reason=" << verr << "\n";
+                return kExitFail;
+            }
+            const std::string header = "include/xrkit/core/version.h";
+            const std::string want = last_prerelease.empty()
+                                         ? std::string()
+                                         : last_prerelease + "." + std::to_string(last_index);
+            std::string herr;
+            if (!xrkit::core::save_version_header(header, want, last_index, herr)) {
+                std::cout << "VERSIONSTORE error reason=" << herr << "\n";
+                return kExitFail;
+            }
+            std::string got;
+            int got_index = -1;
+            if (!xrkit::core::load_version_header(header, got, got_index, herr)) {
+                std::cout << "VERSIONSTORE error reason=" << herr << "\n";
+                return kExitFail;
+            }
+            std::cout << "VERSIONSTORE ok wrote-header path=" << header
+                      << " prerelease=" << got << " build=" << got_index
+                      << " release=" << xrkit::core::release_version_string(
+                             last_version, last_prerelease, last_index)
+                      << "（接着必须重跑 python tools/gen_winres.py 让 .rc 同源）\n";
+            return kExitOk;
+        }
         if (operands.size() >= 4 && operands[1] == "set") {
             store.current_version = operands[2];
             store.current_prerelease = operands[3];
@@ -2836,6 +2872,77 @@ int run_cli(const std::vector<std::string>& args) {
 
     if (action == "--build-package") {
         return xrkit_cli::run_build_package(operands);
+    }
+
+    if (action == "--exe-version") {
+        // ★★ 2026-10-07（H1-2，用户候选 A）：直接读 exe 的 VERSIONINFO —— 这是"对外可见的
+        //   版本身份"。打包时用它断言"**包内** xrkit_app.exe 的 ProductVersion == 本次发版串"
+        //   （修前：包说 ALPHA.60、包内 exe 说 ALPHA.0，而门禁只在各自源内自比 ⇒ 全绿）。
+        //   为什么在 C++ 里读：打包链（`--build-package` / `package.ps1`）不该新增 Python 依赖。
+        //   输出：`EXEVERSION product=<...> file=<...> numeric=<a.b.c.d>`（机器可解析）。
+        if (operands.empty()) {
+            std::cerr << "EXEVERSION error reason=用法：--exe-version <exe>\n";
+            return kExitUsage;
+        }
+#ifdef _WIN32
+        const std::filesystem::path exe = xrkit::core::path_from_utf8(operands[0]);
+        DWORD handle = 0;
+        const DWORD size = ::GetFileVersionInfoSizeW(exe.c_str(), &handle);
+        if (size == 0) {
+            std::cout << "EXEVERSION error reason=读不到版本资源（文件不存在 / 没有 VERSIONINFO）："
+                      << operands[0] << "\n";
+            return kExitFail;
+        }
+        std::vector<uint8_t> block(size);
+        if (::GetFileVersionInfoW(exe.c_str(), 0, size, block.data()) == FALSE) {
+            std::cout << "EXEVERSION error reason=GetFileVersionInfoW 失败："
+                      << static_cast<unsigned long>(::GetLastError()) << "\n";
+            return kExitFail;
+        }
+        struct LangAndCodePage {
+            WORD language;
+            WORD code_page;
+        };
+        LangAndCodePage* translation = nullptr;
+        UINT translation_len = 0;
+        if (::VerQueryValueW(block.data(), L"\\VarFileInfo\\Translation",
+                             reinterpret_cast<void**>(&translation), &translation_len) == FALSE ||
+            translation_len < sizeof(LangAndCodePage)) {
+            std::cout << "EXEVERSION error reason=没有 VarFileInfo\\Translation\n";
+            return kExitFail;
+        }
+        const auto string_field = [&](const wchar_t* name) -> std::string {
+            wchar_t sub[128];
+            std::swprintf(sub, 128, L"\\StringFileInfo\\%04x%04x\\%s", translation->language,
+                          translation->code_page, name);
+            wchar_t* value = nullptr;
+            UINT value_len = 0;
+            if (::VerQueryValueW(block.data(), sub, reinterpret_cast<void**>(&value), &value_len) ==
+                    FALSE ||
+                value == nullptr) {
+                return std::string();
+            }
+            return xrkit::core::path_to_utf8(std::filesystem::path(value));
+        };
+        VS_FIXEDFILEINFO* fixed = nullptr;
+        UINT fixed_len = 0;
+        std::string numeric;
+        if (::VerQueryValueW(block.data(), L"\\", reinterpret_cast<void**>(&fixed), &fixed_len) !=
+                FALSE &&
+            fixed != nullptr) {
+            numeric = std::to_string(HIWORD(fixed->dwFileVersionMS)) + "." +
+                      std::to_string(LOWORD(fixed->dwFileVersionMS)) + "." +
+                      std::to_string(HIWORD(fixed->dwFileVersionLS)) + "." +
+                      std::to_string(LOWORD(fixed->dwFileVersionLS));
+        }
+        std::cout << "EXEVERSION product=" << string_field(L"ProductVersion")
+                  << " file=" << string_field(L"FileVersion") << " numeric=" << numeric
+                  << " path=" << operands[0] << "\n";
+        return kExitOk;
+#else
+        std::cout << "EXEVERSION error reason=只在 Windows 上有 VERSIONINFO\n";
+        return kExitSkip;
+#endif
     }
 
     if (action == "--bench") {

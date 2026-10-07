@@ -4,9 +4,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
+#include <vector>
 
 #include "xrkit/core/atomic_write.h"
 #include "xrkit/core/path.h"
@@ -401,6 +404,155 @@ bool restore_version_store(const std::string& backup_path, const std::string& pa
     std::string text;
     if (!read_text(backup_path, text, error)) return false;
     return write_text(path, text, error);
+}
+
+// ── ★★ 2026-10-07（H1-2）：版本号派生写回（见头文件里的口径）──────────────────
+
+namespace {
+
+// 这两行是**唯一的**写回点（形态变了必须在这里改，且 `--check` 会红）。
+constexpr const char* kPrereleaseLine = "inline constexpr const char* kPrerelease = ";
+constexpr const char* kBuildCountLine = "inline constexpr int kBuildCount = ";
+
+bool replace_value_line(std::string& text, const std::string& prefix, const std::string& value,
+                        std::string& error) {
+    const size_t at = text.find(prefix);
+    if (at == std::string::npos) {
+        error = std::string("version.h 里找不到这一行：") + prefix;
+        return false;
+    }
+    const size_t end = text.find(';', at);
+    if (end == std::string::npos) {
+        error = std::string("version.h 里那一行没有分号：") + prefix;
+        return false;
+    }
+    text.replace(at, end - at, prefix + value);
+    return true;
+}
+
+}  // namespace
+
+bool load_version_header(const std::string& path, std::string& prerelease, int& build_count,
+                         std::string& error) {
+    prerelease.clear();
+    build_count = -1;
+    std::string text;
+    if (!read_text(path, text, error)) return false;
+
+    const size_t p = text.find(kPrereleaseLine);
+    if (p == std::string::npos) {
+        error = "version.h 里找不到 kPrerelease 赋值行";
+        return false;
+    }
+    const size_t pq = text.find('"', p);
+    const size_t pq2 = (pq == std::string::npos) ? std::string::npos : text.find('"', pq + 1);
+    if (pq == std::string::npos || pq2 == std::string::npos) {
+        error = "version.h 里 kPrerelease 的值不是引号字符串";
+        return false;
+    }
+    prerelease = text.substr(pq + 1, pq2 - pq - 1);
+
+    const size_t b = text.find(kBuildCountLine);
+    if (b == std::string::npos) {
+        error = "version.h 里找不到 kBuildCount 赋值行";
+        return false;
+    }
+    const size_t bs = text.find(';', b);
+    if (bs == std::string::npos) {
+        error = "version.h 里 kBuildCount 那一行没有分号";
+        return false;
+    }
+    const std::string digits =
+        text.substr(b + std::strlen(kBuildCountLine), bs - (b + std::strlen(kBuildCountLine)));
+    try {
+        size_t used = 0;
+        build_count = std::stoi(digits, &used);
+        if (used != digits.size()) {
+            error = "version.h 里 kBuildCount 不是纯整数：" + digits;
+            return false;
+        }
+    } catch (const std::exception&) {
+        // ★ 审计 2-5 同族：解析失败不许抛穿（旧版 `stoll` 会把 CLI 整个 terminate）
+        error = "version.h 里 kBuildCount 解析失败（不是整数）：" + digits;
+        return false;
+    }
+    return true;
+}
+
+bool save_version_header(const std::string& path, const std::string& prerelease, int build_count,
+                         std::string& error) {
+    error.clear();
+    // ① 先把"要写的东西"算出来（值必须合法：序号 ≥ 0；标记串不许带引号/分号）：
+    if (build_count < 0) {
+        error = "序号不能为负：" + std::to_string(build_count);
+        return false;
+    }
+    for (char c : prerelease) {
+        if (c == '"' || c == ';' || c == '\n' || c == '\r') {
+            error = "标记串里有非法字符（引号/分号/换行）：" + prerelease;
+            return false;
+        }
+    }
+    // ② 读原文（保留其余字节原样）→ 只改两行：
+    std::string text;
+    if (!read_text(path, text, error)) return false;
+    const std::string before = text;
+    if (!replace_value_line(text, kPrereleaseLine, "\"" + prerelease + "\"", error)) return false;
+    if (!replace_value_line(text, kBuildCountLine, std::to_string(build_count), error)) return false;
+    if (text == before) {
+        error = "写回没有改变任何字节（形态对不上？）—— " + path;
+        return false;
+    }
+    // ③ **原子写**（同目录 .part → rename；半写的 version.h 会编出坏版本串）：
+    const std::vector<uint8_t> bytes(text.begin(), text.end());
+    if (!write_file_atomic(path, bytes, /*atomic=*/true, error)) return false;
+    // ④ 写后**读回校验**（不是"我以为我写了"）：
+    std::string got_prerelease;
+    int got_count = -1;
+    std::string check_error;
+    if (!load_version_header(path, got_prerelease, got_count, check_error)) {
+        error = "写回后读不回来：" + check_error;
+        return false;
+    }
+    if (got_prerelease != prerelease || got_count != build_count) {
+        error = "写回后读回的值不一致（期望 " + prerelease + "/" + std::to_string(build_count) +
+                "，实测 " + got_prerelease + "/" + std::to_string(got_count) + "）";
+        return false;
+    }
+    return true;
+}
+
+bool last_release(const VersionStore& store, std::string& version, std::string& prerelease,
+                  int& index, std::string& error) {
+    version.clear();
+    prerelease.clear();
+    index = 0;
+    error.clear();
+    // ★ 遍历 tree 找**最大序号**（不是 `current_index`：那是"下一个号"，
+    //   门禁的构建 GUI 一动就会把它推一格 —— 实测 59 → 60）。
+    for (const auto& per_version : store.tree) {
+        for (const auto& per_marker : per_version.second) {
+            for (const auto& per_index : per_marker.second) {
+                if (per_index.first > index) {
+                    index = per_index.first;
+                    version = per_version.first;
+                    prerelease = per_marker.first;
+                }
+            }
+        }
+    }
+    if (index <= 0) {
+        error = "version.json 的 tree 里还没有任何成功发包的记录";
+        return false;
+    }
+    return true;
+}
+
+std::string release_version_string(const std::string& version, const std::string& prerelease,
+                                  int index) {
+    if (prerelease.empty()) return version;
+    if (index <= 0) return version + " " + prerelease;
+    return version + " " + prerelease + "." + std::to_string(index);
 }
 
 }  // namespace xrkit::core

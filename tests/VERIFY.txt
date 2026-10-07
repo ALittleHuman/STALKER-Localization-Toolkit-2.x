@@ -865,3 +865,57 @@ RESULT: FAIL（1 处失败）
   ② 产物（声明过的包：两份插件在 + 真跑一次）；③ 没有带声明的新包 ⇒ 台账。
   ★ 判红办法：把 `package.ps1` 里拷 `qoffscreen` 那两行删掉（①红），或把 `failed=0` 放宽回
   只 grep `ok`（①红），或删掉包内 `platforms\qoffscreen.dll`（②红）。
+
+
+---
+
+## H1-2 版本号只许一份真来源（用户 2026-10-07 拍板"候选 A"）
+
+- 位置：`include/xrkit/core/version.h:16,19`（`kPrerelease="ALPHA.0"` / `kBuildCount=0`）、
+  `src/core/build_version.{h,cpp}`（写回/回滚）、`tools/cli/build_cmd.cpp`（写回点）、
+  `tools/cli/main.cpp`（`--version-store … write-header`、`--exe-version`）、
+  `scripts/package.ps1`（包内 exe 身份断言）、`tests/check_version_identity.py`（判据）。
+- 机制（修前）：**两个"唯一事实来源"且无任何比对** —— exe 的资源与 `core::version_string()`
+  编自 `version.h` 的常量（那两行**从来没被写回**过），而包目录名 / `version.txt` 来自
+  `version.json`；既有两条锁（`.rc ↔ version.h`、exe 资源 ↔ `core::version_string()`）
+  **都在各自源内自比** ⇒ 全绿。
+- **红（修前，原始行；对**同一个交付物**）**：
+  ```
+  $ xrkit_cli --exe-version dist\2.0.0\ALPHA\60\xrkit_app.exe
+  EXEVERSION product=2.0.0 ALPHA.0 file=2.0.0 numeric=2.0.0.0 path=dist\2.0.0\ALPHA\60\xrkit_app.exe
+  $ type dist\2.0.0\ALPHA\60\version.txt
+  version=2.0.0 ALPHA.60
+  ```
+  把**修前的真实文件**喂给本批的分析器（同一批函数，能判红）：
+  ```
+  ① 修前 version.h  -> ['version.h 的 kPrerelease=「ALPHA.0」≠ tree 现算的「ALPHA.60」',
+                        'version.h 的 kBuildCount=0 ≠ tree 的最后一次发包序号 60']
+  ② 修前 .rc        -> ['.rc 的 ProductVersion=「2.0.0 ALPHA.0」≠ 期望「2.0.0 ALPHA.60」',
+                        '.rc 的 FILEVERSION 第 4 段=0 ≠ 序号 60']
+  ③ 修前包内 exe    -> ['exe 的 ProductVersion=「2.0.0 ALPHA.0」≠ 期望「2.0.0 ALPHA.60」',
+                        'exe 的数值版本=「2.0.0.0」↛ 第 4 段应为 60']
+  ```
+- 口径（用户拍板）：**真来源 = `version.json` 的 tree**（最后一次成功发包）；`version.h` 是
+  **派生**（`kPrerelease="<标记>.<序号>"`、`kBuildCount=<序号>`）。写回点 = `--build-package`
+  写 `version.json` 之后、调 `build.ps1` **之前**（exe 的资源和 `version_string()` 都编自
+  version.h）→ 紧接着重跑 `tools/gen_winres.py` 让 `.rc` 同源；失败路径复用既有
+  `restore_version_store` 并**把 `version.h`/`.rc` 一起回滚**（按原字节写回 + 读回校验）
+  ⇒ **序号不被吃掉**。写回走 `write_file_atomic`（**原子写**）+ 写后读回校验。
+- 判据（新独立步 `[version-identity]` → `tests/check_version_identity.py`）：
+  ① `version.h` ↔ tree（期望值**从 tree 现算**，不写死串；**不读 `current.index`**
+  ——它是"下一个号"，门禁与构建 GUI 都会推它，实测 59→60）；
+  ② `assets/xrkit_winres.rc` ↔ `version.h`（ProductVersion + FILEVERSION 第 4 段）；
+  ③ **包内 exe** ↔ `version.txt`：判据**自己用 ctypes 直读 exe 的 VERSIONINFO**（不信任
+  `version.txt` 的自报），仅对 `version.txt` 里声明了 `exe_identity=` 的序号执行
+  （修前打的旧序号记台账——它们确实对不上）；④ 三条自证（假 version.h / 假读数 / 旧形态 .rc）。
+  ⑤ **打包链自己的判据**：`package.ps1` 从**产物**读 `xrkit_app.exe` 的真实版本资源，
+  与本次发版串逐字比，不一致就 throw（包根本不落地），一致才写 `exe_identity=`。
+- ★ 判红办法：改 `version.h` 的 `kBuildCount`（①红）；手改 `.rc`（②红、且门禁 `.rc --check` 也红）；
+  把包内 `xrkit_app.exe` 换成旧构建的（③红）；把 `--build-package` 里的写回段删掉再发包
+  （③红且 package.ps1 直接 throw）。
+- ★ 踩到的两个坑（如实登记）：① 用 `edit` 工具改 `scripts\package.ps1` 会**抹掉 UTF-8 BOM**
+  ⇒ PowerShell 5.1 按 GBK 读、门禁 `[1]` 的 BOM 判据直接红（本批门禁首跑就是这么红的）；
+  改完必须补回 `\xef\xbb\xbf` 并用 `[System.Management.Automation.Language.Parser]::ParseFile`
+  自证；② ctypes 读 VERSIONINFO 时，串值的 `puLen` 是**字符数**（不是字节数），而
+  `VS_FIXEDFILEINFO` 的 FILEVERSION 在**偏移 8**（前 8 字节是 Signature+StrucVersion）
+  —— 按"字节数 + 偏移 0"读会得到 `2.0.0 A` / `65263.1213.1.0` 这种**看着像真读数**的假数据。

@@ -2384,6 +2384,46 @@ def step_package_platform(release: bool) -> None:
         fail("包内平台插件判据不成立（见上）")
 
 
+def step_version_identity(release: bool) -> None:
+    """审计补充 H1-2（S1，用户 2026-10-07 拍板"候选 A"）：版本号只许**一份**真来源。
+
+    事实（修前）：`version.json` 与 `include/xrkit/core/version.h` 是两个"唯一事实来源"且
+    **无任何比对** —— exe 的资源与 `core::version_string()` 编自 version.h 的常量
+    （恒 `ALPHA.0`），包目录名/`version.txt` 来自 version.json；两条既有锁都在各自源内自比。
+    后果（对外可见，本批实测原始行）：
+      · `xrkit_cli --exe-version dist\\2.0.0\\ALPHA\\60\\xrkit_app.exe`
+        ⇒ `EXEVERSION product=2.0.0 ALPHA.0 file=2.0.0 numeric=2.0.0.0`
+      · 而同一个包 `version.txt` ⇒ `version=2.0.0 ALPHA.60`
+
+    口径（用户拍板）：真来源＝`version.json` 的 tree（最后一次成功发包）；`version.h` 是
+    派生（`kPrerelease="<标记>.<序号>"`、`kBuildCount=<序号>`），写回点在 `--build-package`
+    写 version.json 之后、`build.ps1` 之前（原子写 + 失败回滚 ⇒ 序号不被吃掉）；
+    判据只对 **包内 exe** + `version.h`/`.rc` 断言，**不**对 build 目录的 exe 断言
+    （开发构建用缺省值合法）；期望值从 tree 现算、**不读 `current.index`**。
+
+    独立成步（不塞进 selftest）：被 `--only` 过滤时按既有记账进 UNCOVERED；
+    没有"带身份声明的新包"时 ③ 记**台账**（旧序号是修前打的）。
+    """
+    say("[version-identity] 版本号一份真来源（tree → version.h → .rc → 包内 exe）")
+    script = ROOT / "tests" / "check_version_identity.py"
+    if not require_repo_file(script, "版本身份判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("VERSION-IDENTITY") \
+                or s.startswith("原始读数") or s.startswith("真来源"):
+            say("  " + s)
+    if rc == 0:
+        ok("version.h / .rc / 包内 exe 的版本身份三者与 version.json 的 tree 一致")
+    elif rc == 2:
+        ledger("包内 exe 的版本身份",
+               "本次没有带 `exe_identity=` 声明的新序号包（同一判据写在打包链里："
+               "`--build-package` 写回 + package.ps1 逐字比包内 exe）")
+    else:
+        fail("版本身份有判据不成立（见上）")
+
+
 STEPS = [
     ("build", step_build),
     ("no-qt", step_no_qt_lock),
@@ -2458,6 +2498,8 @@ STEPS = [
     # ★★ 2026-10-07（用户裁决）：包内平台插件（qwindows + qoffscreen）+ 从产物里真跑自检。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED；没有带契约声明的新包时记台账。
     ("pkg-platform", step_package_platform),
+    # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
+    ("version-identity", step_version_identity),
 ]
 
 

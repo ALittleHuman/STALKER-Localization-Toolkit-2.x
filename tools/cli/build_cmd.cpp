@@ -9,8 +9,11 @@
 #include <fstream>
 #include <ctime>
 #include <iostream>
+#include <iterator>
+#include <vector>
 
 #include "xrkit/core/build_version.h"
+#include "xrkit/core/atomic_write.h"
 #include "xrkit/core/version.h"
 
 namespace xrkit_cli {
@@ -127,6 +130,60 @@ int run_build_package(const std::vector<std::string>& operands) {
     }
     const std::string full = store.full_version();
 
+    // ── ★★ 2026-10-07（审计补充 H1-2，用户拍板"候选 A"）：版本号的**派生写回** ──────────
+    //   真来源 = `version.json` 的 tree（最后一次成功发包）；`version.h` 是它的派生。
+    //   写在这里的原因：exe 的资源（`assets/xrkit_winres.rc` ← `gen_winres.py` ← `version.h`）
+    //   与 `core::version_string()` **都编自 version.h** ⇒ 必须在 `build.ps1` **之前**写好，
+    //   否则编出来的包还会说 `ALPHA.0`（修前正是如此：包说 ALPHA.60、exe 说 ALPHA.0）。
+    //   纪律：**原子写**（`save_version_header` 内部走 `write_file_atomic`）+ 失败**回滚**，
+    //   并且把"要写的字节"分成两步（先算后写），任一步失败都回到失败前 ⇒ **序号不被吃掉**。
+    //   注：这是**发版**路径；`version.h` 与 `version.json`（以及 .rc）因此变脏，
+    //       按用户口径"**只有发版提交把这几份一起带上**"。
+    const std::string header_path = "include/xrkit/core/version.h";
+    const std::string rc_path = "assets/xrkit_winres.rc";
+    const std::string want_prerelease_full =
+        want_prerelease.empty() ? std::string() : want_prerelease + "." + std::to_string(want_index);
+    // 留原字节（回滚用）：读不到原文件 ⇒ 明确失败（不去猜）
+    std::string header_before;
+    std::string rc_before;
+    {
+        std::ifstream header_in(header_path, std::ios::binary);
+        std::ifstream rc_in(rc_path, std::ios::binary);
+        if (!header_in || !rc_in) {
+            std::cout << "BUILDPKG error reason=读不到 " << header_path << " 或 " << rc_path
+                      << "（写回与回滚都需要它们）\n";
+            return kFail;
+        }
+        header_before.assign(std::istreambuf_iterator<char>(header_in),
+                             std::istreambuf_iterator<char>());
+        rc_before.assign(std::istreambuf_iterator<char>(rc_in), std::istreambuf_iterator<char>());
+    }
+    if (!xrkit::core::save_version_header(header_path, want_prerelease_full, want_index, err)) {
+        std::cout << "BUILDPKG error reason=写回 version.h 失败：" << err << "\n";
+        return kFail;
+    }
+    std::cout << "BUILDPKG wrote-header prerelease=" << want_prerelease_full
+              << " build=" << want_index << "\n";
+    // `.rc` 必须与 version.h 同源（否则门禁的 `gen_winres.py --check` 会红）⇒ 立刻重生成。
+    {
+        const int gen_rc =
+            run_windowless_utf8("chcp 65001 >nul && python tools\\gen_winres.py >nul 2>&1");
+        if (gen_rc != 0) {
+            // 回滚（version.h + .rc）后失败：不许留一个"版本串一半新一半旧"的树
+            std::string rollback_err;
+            const bool h_ok = xrkit::core::write_file_atomic(
+                header_path, std::vector<uint8_t>(header_before.begin(), header_before.end()), true,
+                rollback_err);
+            const bool rc_ok = xrkit::core::write_file_atomic(
+                rc_path, std::vector<uint8_t>(rc_before.begin(), rc_before.end()), true,
+                rollback_err);
+            std::cout << "BUILDPKG error reason=重生成 " << rc_path << " 失败（退出码 " << gen_rc
+                      << "）—— 已回滚 version.h/.rc（" << (h_ok ? "h=ok" : "h=fail")
+                      << " " << (rc_ok ? "rc=ok" : "rc=fail") << "）\n";
+            return kFail;
+        }
+    }
+
     // ② 真编译 + 打包（日志落 dist\；GUI 侧只是调本动作，不自己拼参数）
     // 构建日志不再散在 dist 根：统一进 dist\logs\（dist 根只留版本树 + FAIL）
     // ★ 用户 2026-09-29：「为什么 dist 里面还是有 build_pkg_13？」⇒ 日志不再放 dist，
@@ -162,6 +219,26 @@ int run_build_package(const std::vector<std::string>& operands) {
         if (!xrkit::core::restore_version_store(backup, store_path, err)) {
             std::cout << "BUILDPKG error reason=回退失败：" << err << "\n";
             return kFail;
+        }
+        // ★★ 2026-10-07（H1-2）：`version.h` / `.rc` 也一起回滚 —— 否则"这次发包失败"
+        //   会把发版序号留在源码里（下次门禁看到 version.h=N 而 tree 还是 N-1 ⇒ 红），
+        //   也就是用户说的"先自增再干活把序号吃掉"。回滚按**原字节**写回并逐字节校验。
+        {
+            std::string rollback_err;
+            const bool h_ok = xrkit::core::write_file_atomic(
+                header_path, std::vector<uint8_t>(header_before.begin(), header_before.end()), true,
+                rollback_err);
+            const bool rc_ok = xrkit::core::write_file_atomic(
+                rc_path, std::vector<uint8_t>(rc_before.begin(), rc_before.end()), true,
+                rollback_err);
+            std::string got_prerelease;
+            int got_index = -1;
+            std::string read_err;
+            const bool match = xrkit::core::load_version_header(header_path, got_prerelease,
+                                                               got_index, read_err);
+            std::cout << "BUILDPKG rollback-header "
+                      << (h_ok && rc_ok && match ? "ok" : "FAIL")
+                      << " prerelease=" << got_prerelease << " build=" << got_index << "\n";
         }
         // ④ 失败流（用户 2026-09-24 口述 spec）：失败件进 dist\FAIL\、**加构建时间戳重命名**；
         //    **没产出任何文件 ⇒ 不建目录**（日志直接放 FAIL\ 下）；日志名与文件夹名一致。

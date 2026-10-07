@@ -197,12 +197,40 @@ $pluginLine
       （`failed=` 必须为 0，退出码必须为 0）。
 "@ | Set-Content -LiteralPath (Join-Path $stage 'README.txt') -Encoding UTF8
 $verLine = if ($VersionString -ne '') { $VersionString } else { '2.0.0' }
+# ── ★★ 2026-10-07（H1-2，用户候选 A）：**包内 exe 的版本身份**必须等于本次发版串 ──────
+#   事实（修前）：exe 的资源与 `core::version_string()` 都编自 `version.h` 的常量
+#   （`kPrerelease="ALPHA.0"` / `kBuildCount=0`，从未被写回），而包目录名与 version.txt 来自
+#   version.json ⇒ 实测**同一个交付物里"包说 ALPHA.60、包内 exe 说 ALPHA.0"**，
+#   而门禁那两条 `WINRES` 判据全绿（只在各自源内自比 —— 这正是审计 H1-2 说的"两个唯一
+#   事实来源、无任何检查比对"）。
+#   现在：从**产物**（`$stage\xrkit_app.exe`）读真实 VERSIONINFO，与本次发版串**逐字比**；
+#   不一致就 throw（包根本不会落地），一致才把结论写进 version.txt 的 `exe_identity=`。
+#   ★ 门禁据此对**声明过的序号**执行独立的"包内 exe ↔ version.txt"判据（自己再读一遍 exe，
+#     不信任这行自报）；修前打的旧序号没有这一行 ⇒ 门禁记台账。
+$shellCli = Join-Path $shell 'tools\cli\xrkit_cli.exe'
+if (-not (Test-Path $shellCli)) {
+    throw "找不到 $shellCli —— 读包内 exe 的版本资源要用它（本次构建没产出 CLI？）"
+}
+$exeVerLine = (& $shellCli --exe-version (Join-Path $stage 'xrkit_app.exe')) | Select-Object -First 1
+if ($LASTEXITCODE -ne 0) {
+    throw "读包内 xrkit_app.exe 的版本资源失败（退出码 $LASTEXITCODE）：$exeVerLine"
+}
+if ($exeVerLine -notmatch 'product=(.+?)\s+file=') {
+    throw "认不出 `--exe-version` 的输出：$exeVerLine"
+}
+$exeIdentity = $Matches[1]
+if ($exeIdentity -ne $verLine) {
+    throw ("包内 exe 的 ProductVersion 与本次发版串不一致：exe=「{0}」/ 期望「{1}」" -f $exeIdentity, $verLine) +
+          "（version.h 没被写回？`--build-package` 的写回段失败？.rc 没重生成？）"
+}
+Write-Host ("  版本身份判据通过：包内 exe ProductVersion=「{0}」" -f $exeIdentity)
 @"
 version=$verLine
 index=$BuildIndex
 commit=$commit
 built=$stamp
 platform_plugins=qwindows,qoffscreen
+exe_identity=$exeIdentity
 "@ | Set-Content -LiteralPath (Join-Path $stage 'version.txt') -Encoding UTF8
 # ★★ 2026-10-07（用户裁决）：`platform_plugins=` 这一行是**包自己的契约声明** ——
 #   门禁（`tests\check_package_platform.py`）看到它才会对**这个序号**执行"platforms\ 里
