@@ -1,11 +1,15 @@
 #include "xrkit/engine/font/xml_bytes.h"
 
+#include "xrkit/core/path.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/sniff.h"
 
 #include <algorithm>
 #include <cctype>
+#include <fstream>
+#include <iterator>
 #include <string>
+#include <vector>
 
 namespace xrkit::engine::font {
 namespace {
@@ -89,6 +93,27 @@ bool encoding_trusted(const std::string& enc, const std::string& declared) {
 bool is_space(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
 
 }  // namespace
+
+bool read_file_bytes(const std::string& path, std::vector<uint8_t>& out, std::string& error) {
+    // ★★ 2026-10-07（审计补充 A1-4，**同类只维护一套**）：修前 charset.cpp 与 package.cpp
+    //   各写了一份"打不开就 return {}"的读文件助手，于是"开不了"与"空文件"不可区分，
+    //   而 `decode_xml_bytes({})` 必然成功 ⇒ 静默写空 XML / 静默丢整份语料。
+    //   这里把两种情况分开：**打不开 = 失败**（带第一手理由），空文件才是合法的空。
+    out.clear();
+    error.clear();
+    std::ifstream in(core::path_from_utf8(path), std::ios::binary);
+    if (!in) {
+        error = "打不开文件（被占用 / 权限不足 / 路径过长？）：" + path;
+        return false;
+    }
+    out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    if (in.bad()) {
+        error = "读文件出错（读到一半失败）：" + path;
+        out.clear();
+        return false;
+    }
+    return true;
+}
 
 bool decode_xml_bytes(const std::vector<uint8_t>& raw, std::string& text, std::string& enc,
                       bool& trusted) {

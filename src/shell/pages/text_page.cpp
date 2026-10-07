@@ -108,8 +108,14 @@ TextPage::TextPage(QWidget* parent)
     task_->set_message_handler([this](const QString& text) { add_row(text); });
     body_layout()->addWidget(task_->panel(), 0);
 
-    status_ = new QLabel(task_->status());
+    // ★★ 2026-10-07（审计补充 F3「孤儿顶层控件」）：修前是
+    //   `status_ = new QLabel(task_->status());` —— `TaskShell::status()` 返回 **QString**，
+    //   于是造出一个**无父**标签（顶层窗口、从不进布局）⇒ 本页的消息（空目录 / 导出成功失败）
+    //   用户看不见，控件也没人拥有。口径：页面级消息标签必须有父、进布局。
+    status_ = new QLabel;
     status_->setObjectName(QStringLiteral("text_status"));
+    status_->setWordWrap(true);
+    body_layout()->addWidget(status_, 0);
 
     auto* start = add_action(QStringLiteral("开始提取"));
     start->setObjectName(QStringLiteral("text_start"));

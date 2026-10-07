@@ -163,8 +163,17 @@ XmlPage::XmlPage(QWidget* parent)
     task_ = new TaskShell(this);
     task_->set_idle_status(QStringLiteral("就绪"));
     body_layout()->addWidget(task_->panel(), 0);
-    status_ = new QLabel(task_->status());
+    // ★★ 2026-10-07（审计补充 F3「孤儿顶层控件」）：修前这一行是
+    //   `status_ = new QLabel(task_->status());` —— `TaskShell::status()` 返回的是
+    //   **QString**（控件访问器叫 `status_label()`），于是 `QLabel(const QString&, QWidget* = nullptr)`
+    //   造出一个**无父**的标签：它是个**顶层窗口**、从不进布局（全仓 `addWidget(status_)`
+    //   零命中）⇒ 本页所有页面级消息（"请先选两个文件夹" / 导出成功失败 / 已复制 id）
+    //   用户**一个字都看不见**，而且没人拥有它（泄漏）。
+    //   口径：页面级消息标签必须**有父、进布局**，自检按 objectName 找得到且可见。
+    status_ = new QLabel;
     status_->setObjectName(QStringLiteral("xml_status"));
+    status_->setWordWrap(true);
+    body_layout()->addWidget(status_, 0);
 
     // 10.4：切模式只重建筛选项 + 清空结果（**不重跑 I/O**）
     QObject::connect(mode_combo_, &QComboBox::currentTextChanged, this,

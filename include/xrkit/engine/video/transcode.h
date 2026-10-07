@@ -47,6 +47,9 @@ struct TranscodeRequest {
     std::string output;
     bool has_reference = false;
     MediaInfo reference;
+    // ★ 2026-10-07（审计补充 F1-3）：参考 OGM 的**磁盘路径**（`MediaInfo` 里没有路径）。
+    //   空 = 调用方没给参考路径 ⇒ `check_output_conflict` 就不判"输出撞参考"这一条。
+    std::string reference_path;
     MediaInfo source;
     std::vector<std::string> available_encoders;  // `ffmpeg -encoders` 扫出来的集合
 };
@@ -74,6 +77,28 @@ struct TranscodePlan {
 std::string pick_video_encoder(const std::string& reference_codec,
                                const std::vector<std::string>& available);
 TranscodePlan plan_transcode(const TranscodeRequest& request);
+
+// ── ★ 2026-10-07（审计补充 F1-2 / F1-3）：输出目标的**起跑前守卫** ──────────────
+//
+// `plan_transcode` 照抄 1.x，argv 里**恒有 `-y`**（`transcode.cpp` 的 `cmd.push_back("-y")`）
+// ⇒ 覆盖是**静默的**：ffmpeg 不问、页面也不问。所以"输出已存在"与"输出就是输入"这两件
+// 必须在**起跑前**由引擎判定出来，调用方再据此**拒绝或明确询问**（零静默）。
+//
+// 判定只做两件事：**规范化路径比较**（`core::path_equals`：大小写 / 正反斜杠 / `.` `..` 段）
+// 与**存在性**（`std::filesystem::exists`）。不读文件内容，也不做别的推断。
+enum class OutputConflict {
+    None,             // 既不是输入、磁盘上也不存在 ⇒ 直接开跑
+    SameAsSource,     // 输出 == `input`（源文件）⇒ 叠上 `-y` 就是**截断/覆盖源文件**
+    SameAsReference,  // 输出 == `reference_path`（参考 OGM）⇒ 它也是输入，同样会毁掉
+    Exists,           // 输出是别的已存在文件 ⇒ 覆盖前必须**经用户明确确认**
+};
+
+// 判定顺序：SameAsSource → SameAsReference → Exists（前两条最危险，优先报）。
+// `output` 为空 ⇒ None（"没填输出"由调用方自己报，不是本函数的事）。
+OutputConflict check_output_conflict(const TranscodeRequest& request);
+
+// 给人看的理由（零静默：非 None 的每一种都必须有一句话能贴到界面上）
+std::string output_conflict_reason(OutputConflict conflict, const TranscodeRequest& request);
 
 // ── ffprobe / ffmpeg 输出的**纯解析段**（1.x `parse_video_info` / `_ensure_encoders`）──
 //

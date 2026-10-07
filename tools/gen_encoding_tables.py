@@ -7,6 +7,7 @@ Python 的 codecs。手抄表一定会错（GB18030 双字节表约 2.4 万项�
 
 生成物：
   src/engine/text/cp1251_tables.inc   cp1251 0x80..0xFF → Unicode（0xFFFF = 未定义）
+  src/engine/fs/cp1251_tables.inc     同上，但未定义映 **U+FFFD**（见下面 ★ H1-1）
   src/engine/text/cp1252_tables.inc   同上
   src/engine/text/gb18030_tables.inc  双字节表（126×191）+ 四字节线性段 + 单字节 0x80
   src/engine/text/gbk_tables.inc      同上双字节形状（gbk 只有两字节形态）
@@ -32,10 +33,24 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "src" / "engine" / "text"
+# ★★ 2026-10-07（审计补充 H1-1）：`src/engine/fs/cp1251_tables.inc` 原来是一份**手写孤儿** ——
+#   生成器只写 text/、门禁只查 text/，而 `src/engine/fs/db.cpp` 用的是**引号 include**
+#   ⇒ 先命中同目录的 fs 版。把 fs 版删掉/改名，db.cpp 会**静默**改用 0xFFFF 那份且编译不报错
+#   （0x98 的语义就此改变），两份同名副本内容还不一样。
+#   两份的语义**确实不同**（fs = `decode(cp1251, replace)` 的 U+FFFD；text = 严格解码必须失败的
+#   0xFFFF），所以不是"合并成一份"，而是：**两份都由本生成器产出**（同一份 codec 数据，只差
+#   "未定义字节怎么映"），并由 `--check` 对**两份都逐字节**校验 ⇒ 谁被手改/删掉/改名立刻红。
+FS_OUT_DIR = ROOT / "src" / "engine" / "fs"
 
 HEADER = ("// 本文件由 tools/gen_encoding_tables.py 从 Python 的 {codec} codec 生成，请勿手改。\n"
           "// 0xFFFF = 该字节/该序列在本编码里未定义 —— **严格解码必须失败**，\n"
           "// 不能当 U+FFFD 放行（放行会让六编码链在这步错误地解成功）。\n\n")
+
+# fs 版的头（**逐字节照抄历史文件**：这份表的用途是 DB 归档文件名，走 replace 语义）
+FS_HEADER = ("// 本文件由 Python 的 cp1251 codec 生成，请勿手改。\n"
+             "// 用途：DB 归档里的文件名字节是 cp1251，转成 UTF-8 必须逐码位准确。\n"
+             "// 未定义字节（如 0x98）映到 U+FFFD —— 与 1.x 的 decode(cp1251, replace) 一致。\n\n")
+FS_TABLE_COMMENT = "// 0x80..0xFF 对应的 Unicode 码点（共 128 项）\n"
 
 # ── 单字节表（0x80..0xFF）─────────────────────────────────────────────
 SINGLE_BYTE = [
@@ -60,6 +75,26 @@ def emit_1byte(codec: str, name: str, values: list[int]) -> str:
     for i in range(0, len(values), 8):
         chunk = ", ".join("0x%04X" % v for v in values[i:i + 8])
         lines.append("    " + chunk + ",\n")
+    lines.append("};\n")
+    return "".join(lines)
+
+
+def table_1byte_replace(codec: str) -> list[int]:
+    """fs 版：未定义字节映 **U+FFFD**（1.x 的 `decode(codec, errors="replace")` 语义）。"""
+    out = []
+    for b in range(0x80, 0x100):
+        try:
+            s = bytes([b]).decode(codec)
+            out.append(ord(s) if len(s) == 1 else 0xFFFD)
+        except UnicodeDecodeError:
+            out.append(0xFFFD)
+    return out
+
+
+def emit_1byte_replace(codec: str, name: str, values: list[int]) -> str:
+    lines = [FS_HEADER, FS_TABLE_COMMENT, "static const uint16_t %s[128] = {\n" % name]
+    for i in range(0, len(values), 8):
+        lines.append("    " + ", ".join("0x%04X" % v for v in values[i:i + 8]) + ",\n")
     lines.append("};\n")
     return "".join(lines)
 
@@ -267,6 +302,10 @@ def build() -> dict[Path, str]:
     files: dict[Path, str] = {}
     for codec, name in SINGLE_BYTE:
         files[OUT_DIR / ("%s_tables.inc" % codec)] = emit_1byte(codec, name, table_1byte(codec))
+    # ★ H1-1：fs 版（DB 归档文件名，replace 语义）——**同一个生成器的产物**，不再手写孤儿。
+    files[FS_OUT_DIR / "cp1251_tables.inc"] = emit_1byte_replace(
+        "cp1251", "kCp1251ToUnicode", table_1byte_replace("cp1251"))
+    print("    fs/cp1251_tables.inc：0x98 → 0xFFFD（replace 语义，DB 文件名专用）")
     two = gb_two_byte("gb18030")
     four = gb_four_byte_ranges()
     files[OUT_DIR / "gb18030_tables.inc"] = emit_gb18030(two, four)
@@ -314,6 +353,7 @@ def main() -> int:
     args = parser.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    FS_OUT_DIR.mkdir(parents=True, exist_ok=True)
     files = build()
 
     if args.check:

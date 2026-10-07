@@ -10,6 +10,16 @@
 
 namespace xrkit::engine::font {
 
+// ★★ 2026-10-07（审计补充 A1-4）：把"**打不开**"与"**空文件**"分开（同类只维护一套）。
+//
+// 事实（修前）：`charset.cpp` 与 `package.cpp` **各写了一份** `read_bytes`，打不开就
+// `return {}`；而 `decode_xml_bytes({})` **必然成功**（`decode_strict` 对 0 字节不进循环
+// 即 `return true`）⇒ 出包侧**写出空 XML 并记成功**、字符集侧**整份语料的字符被静默丢弃**
+// （`files_scanned++` 而 `files_undecodable` 不变）。触发：文件被独占锁 / 权限不足 / 超长路径。
+// 口径：开不了的文件必须让调用方**明确报错并计入失败**，绝不当成"空文件"。
+// 返回 false 时 `error` 里有第一手理由（含系统错误信息）。
+bool read_file_bytes(const std::string& path, std::vector<uint8_t>& out, std::string& error);
+
 // 1.x `_decode_xml_bytes`：XML 字节 → (UTF-8 正文, 编码名, 可信)。
 // 可信=false 表示编码只是猜的（调用方**必须告警**，不许静默）。
 // 走与出包同一条链：`sniff_encoding`（B 链）→ 严格解码 → `decode_bytes` 兜底。

@@ -953,6 +953,12 @@ def step_text_tables(release: bool) -> None:
                 "big5_tables.inc", "shift_jis_tables.inc", "euc_kr_tables.inc"):
         if not require_repo_file(ROOT / "src" / "engine" / "text" / inc, "编码表生成物"):
             return
+    # ★★ 2026-10-07（H1-1）：fs 版 cp1251 表**也必须存在**，而且现在同样是本生成器的产物
+    #   （`--check` 会逐字节校验它）。删掉/改名这份 ⇒ `db.cpp` 会**静默**改用 0xFFFF 那份
+    #   （0x98 的 replace 语义就此改变）而编译不报错 —— 所以缺件必须是 FAIL，不是跳过。
+    if not require_repo_file(ROOT / "src" / "engine" / "fs" / "cp1251_tables.inc",
+                             "fs 版 cp1251 表（DB 归档文件名用）"):
+        return
     rc, out = run([sys.executable, str(script), "--check"])
     if rc != 0:
         fail("编码表与 codec 不一致：\n%s" % tail(out, 10))
@@ -2199,6 +2205,117 @@ def step_engine_contract(release: bool) -> None:
         fail("引擎契约判据有不成立的断言（见上）")
 
 
+def step_page_status_label(release: bool) -> None:
+    """审计补充 F3 第 1 条：**页面级消息标签是"孤儿顶层控件"**（效应等同用户可见缺陷）。
+
+    事实（修前）：`xml_page.cpp:166` / `text_page.cpp:111` / `convert_page.cpp:241` 都写
+    `status_ = new QLabel(task_->status())` —— `TaskShell::status()` 返回的是 **QString**
+    （控件访问器叫 `status_label()`）⇒ 造出一个**无父**标签（顶层窗口、从不进布局）
+    ⇒ 全页消息（空目录 / 导出成功失败 / 复制 id / 还没选源）用户完全看不见，且无人拥有。
+    行为面（真的画出来、真的可见）在 `src/shell/smoke.cpp` 里，随 shell 自检跑。
+
+    独立成步（不塞进 selftest）：被 `--only` 过滤时按既有记账进 UNCOVERED。
+    """
+    say("[page-status] 页面级消息标签必须有父、进布局（F3 孤儿顶层控件）")
+    script = ROOT / "tests" / "check_page_status_labels.py"
+    if not require_repo_file(script, "页面级消息标签判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=120)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("PAGE-STATUS"):
+            say("  " + s)
+    if rc == 0:
+        ok("三页 + 视频页的页面级消息标签都有父、进布局")
+    else:
+        fail("有页面级消息标签是孤儿顶层控件（见上）")
+
+
+def step_orphan_inc(release: bool) -> None:
+    """审计补充 H1-1（S1）的**判据原文**：遍历 `src/**/*.inc`，要求每个都能被某生成器声明产出。
+
+    事实（修前）：`src/engine/fs/cp1251_tables.inc` 是**手写孤儿**（生成器只写 text/、
+    门禁只查 text/），而 `src/engine/fs/db.cpp` 用的是**引号 include** ⇒ 先命中同目录的
+    fs 版；两份同名副本内容还不一样（0x98：fs 版 `0xFFFD` = replace 语义；text 版
+    `0xFFFF` = 严格解码必须失败）。删掉/改名 fs 版 ⇒ 静默改用另一份且编译不报错。
+    现在两份都由 `tools/gen_encoding_tables.py` 产出、`--check` 逐字节校验两份。
+
+    独立成步（不塞进 selftest）：被 `--only` 过滤时按既有记账进 UNCOVERED。
+    """
+    say("[orphan-inc] src/**/*.inc 不许有「没人声明产出」的孤儿（H1-1）")
+    script = ROOT / "tests" / "check_orphan_inc.py"
+    if not require_repo_file(script, "生成物孤儿判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("ORPHAN-INC"):
+            say("  " + s)
+    if rc == 0:
+        ok("每份 .inc 都被生成器声明产出 + 两份 cp1251 只差 0x98 一处")
+    else:
+        fail("有 .inc 是孤儿 / 两份 cp1251 超出有意差异（见上）")
+
+
+def step_font_read_failure(release: bool) -> None:
+    """审计补充 A1-4（数据丢失/零静默）：读文件失败被当成"空文件"。
+
+    事实（修前）：`package.cpp` / `charset.cpp` 各有一份"打不开就 `return {}`"的读文件助手，
+    而 `decode_xml_bytes({})` **必然成功** ⇒ 出包侧写出空 XML 并记成功、字符集侧整份语料的
+    字符被静默丢弃（`files_scanned++` 而 `files_undecodable` 不变）。
+    判据＝开不了的文件必须**明确报错并计入失败**（夹具用 `%TEMP%` + 独占锁）。
+
+    独立成步（不塞进 selftest）：被 `--only` 过滤时按既有记账进 UNCOVERED。
+    """
+    say("[font-read-fail] 读文件失败不许被当成空文件（A1-4）")
+    script = ROOT / "tests" / "check_font_read_failure.py"
+    if not require_repo_file(script, "读文件失败判据"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("FONT-READ-FAIL"):
+            say("  " + s)
+    if rc == 0:
+        ok("打不开的 XML 会被明确报错并计入失败（不再当空文件）")
+    elif rc == 2:
+        prereq("读文件失败判据的外部前提", "缺构建产物", release)
+    else:
+        fail("读文件失败仍被静默当成空文件（见上）")
+
+
+def step_video_overwrite(release: bool) -> None:
+    """审计补充 F1-1/F1-2/F1-3（S1）：`-y` 恒在 argv 里 ⇒ 覆盖是静默的。
+
+    事实（修前）：`video_page.cpp` 起跑前**零存在性检查**，唯一的"防自毁"只作用于默认名、
+    只跟参考比 ⇒ 源本身是 `.ogm` 时默认输出＝源文件，叠上 `-y` 就是**截断输入**；
+    另外取消超时支把 `process_` 置空却不 `disconnect()`（同形三处）。
+
+    独立成步（不塞进 selftest）：被 `--only` 过滤时按既有记账进 UNCOVERED。
+    """
+    say("[video-overwrite] 视频输出目标守卫（-y 不许静默覆盖 / 输出不许等于输入）")
+    script = ROOT / "tests" / "check_video_overwrite_guard.py"
+    if not require_repo_file(script, "视频输出目标守卫判据"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("VIDEO-OVERWRITE"):
+            say("  " + s)
+    if rc == 0:
+        ok("输出=源/参考必须拒、已存在必须先问；进程对象置空前都先 disconnect")
+    elif rc == 2:
+        prereq("视频输出目标守卫的外部前提", "缺构建产物", release)
+    else:
+        fail("视频输出目标守卫有判据不成立（见上）")
+
+
 STEPS = [
     ("build", step_build),
     ("no-qt", step_no_qt_lock),
@@ -2222,6 +2339,9 @@ STEPS = [
     ("sqfs-pack-criterion", step_sqfs_pack_criterion),
     ("text-tables", step_text_tables),
     ("font-tables", step_font_tables),
+    # ★★ 2026-10-07（本批·H1-1）：`.inc` 孤儿检测 + 两份 cp1251 表的"只许一处有意差异"。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED。
+    ("orphan-inc", step_orphan_inc),
     ("golden-text-decode", step_golden_text_decode),
     ("golden-text-extract", step_golden_text_extract),
     ("ltx-replace", step_ltx_replace_lock),
@@ -2233,6 +2353,9 @@ STEPS = [
     #   各自独立成步（不塞进 selftest）：被 `--only` 过滤时会按假绿批的记账进 UNCOVERED。
     ("codec-strict", step_codec_strict),
     ("unpack-only", step_unpack_only),
+    # ★★ 2026-10-07（本批·A1-4）：读文件失败不许当空文件（%TEMP% 夹具 + 独占锁）。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED。
+    ("font-read-fail", step_font_read_failure),
     ("golden-text-sniff", step_golden_text_sniff),
     ("golden-font-raster", step_golden_font_raster),
     ("golden-font-metrics", step_golden_font_metrics),
@@ -2242,6 +2365,9 @@ STEPS = [
     ("golden-font-package", step_golden_font_package),
     ("golden-xml-stats", step_golden_xml_stats),
     ("golden-video-argv", step_golden_video_argv),
+    # ★★ 2026-10-07（本批·F1-1/F1-2/F1-3）：视频输出目标守卫（-y 不许静默覆盖）。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED。
+    ("video-overwrite", step_video_overwrite),
     ("golden-sqfs-compressors", step_golden_sqfs_compressors),
     ("golden-sqfs-metacross", step_golden_sqfs_metacross),
     ("bench", step_bench),
@@ -2256,6 +2382,9 @@ STEPS = [
     # ★★ 2026-10-06（本批）：审计第 4 组余项三条（area 条数 / status_line 常量自报 /
     #   registrations 死字段）。排在 shell-smoke 之后：那一步才把 CLI 与外壳都编出来。
     ("engine-contract", step_engine_contract),
+    # ★★ 2026-10-07（本批·F3）：页面级消息标签不许是"孤儿顶层控件"（静态面；行为面在 smoke）。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED。
+    ("page-status", step_page_status_label),
     # 排在 shell-smoke **之后**：那一步才把 xrkit_app.exe 编出来（这一步要读它的真实资源字节）
     ("winres", step_winres),
 ]

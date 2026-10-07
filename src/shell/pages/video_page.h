@@ -110,6 +110,13 @@ public:
     virtual QString ask_open_file(const QString& title, const QString& filter,
                                   const QString& start_path);
 
+    // ★★ 2026-10-07（审计补充 F1-2）：**输出已存在**时的唯一确认点。
+    //   默认＝`QMessageBox::question`（用户可见、不静默；与 convert_page 的取消确认同款）。
+    //   自检覆盖它 ⇒ 能判"问没问、答否时到底跑没跑"。
+    //   注意：只有 `OutputConflict::Exists` 会走到这里 —— "输出＝源/参考"是**直接拒**，
+    //   那不是"要不要覆盖"的选择题，是把输入毁掉。
+    virtual bool confirm_overwrite(const QString& reason);
+
     // 视频参数面板文本（1.x `_refresh_display` 的字段与"OK/将缩放"标记）
     QString info_panel_text() const;
 
@@ -151,6 +158,10 @@ private:
     void complete_encoder_scan(bool ok, const QString& reason);
     engine::video::TranscodeRequest build_request(const engine::video::FfmpegPaths& paths) const;
     QProcess* make_child_process();
+    // ★★ 2026-10-07（F1-1）：放弃一个子进程对象的**唯一**实现（先置空 → disconnect →
+    //   deleteLater）。析构 / 取消超时 / `waitForStarted` 失败 / 回调收尾全走它 ⇒
+    //   "置空却不 disconnect"这一族缺陷在结构上不可能再出现（静态判据只盯这一个函数）。
+    void discard_process(QProcess*& slot);
 
     engine::video::FfmpegLocator locator_;
     QLineEdit* source_edit_ = nullptr;
@@ -189,6 +200,12 @@ private:
     bool encoders_scanned_ = false;
     std::vector<std::string> available_encoders_;
     QString encoder_note_;                // 编码器扫描失败/降级的可见原因
+
+    // ★ 2026-10-07（审计补充 F3）：`download_ffmpeg.py` 那条自动安装子进程。
+    //   修前它是**局部** `new_child_process(this)`：析构不停（`~VideoPage` 只收
+    //   probe/encoder/transcode 三个）、回调也没有 `shutting_down_` 守卫 ⇒
+    //   关窗后回调仍会碰已析构的 `status_`。现在它是成员、走析构里同一个 `stop()`。
+    QProcess* install_process_ = nullptr;
 
     bool pending_transcode_ = false;
     bool shutting_down_ = false;

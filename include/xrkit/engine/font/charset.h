@@ -25,6 +25,13 @@ struct CharsetResult {
     std::vector<uint32_t> chars;       // 升序去重（顺序即槽位顺序）
     int files_scanned = 0;             // 扫到的 .xml 文件数
     int files_undecodable = 0;         // 完全解不出来的（跳过）
+    // ★★ 2026-10-07（审计补充 A1-4）：**打不开**的文件数 —— 与"空文件"必须分开。
+    //   修前读文件助手打不开就 `return {}`，而空字节解码**必然成功** ⇒ 整份语料的字符
+    //   被静默丢弃而 `files_scanned` 照涨。开不了的文件**必须计入失败**（调用方据此拒绝
+    //   出包/明确报错），不许静默当成空文件。
+    int files_unreadable = 0;
+    // 枚举目录失败这类**硬失败**的第一手理由（配合 extract_chars 返回 false）。
+    std::string error;
     std::vector<std::string> guessed;  // 编码是"猜"的文件名（1.x 会汇总告警）
 };
 

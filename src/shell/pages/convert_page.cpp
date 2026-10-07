@@ -238,8 +238,15 @@ ConvertPage::ConvertPage(QWidget* parent)
     });
     body_layout()->addWidget(task_->panel(), 0);
 
-    status_ = new QLabel(task_->status());
+    // ★★ 2026-10-07（审计补充 F3「孤儿顶层控件」）：修前是
+    //   `status_ = new QLabel(task_->status());` —— `TaskShell::status()` 返回 **QString**，
+    //   于是造出一个**无父**标签（顶层窗口、从不进布局）⇒ 而本页**多处提示只有 `status_`
+    //   这一条通道**（"还没选源" / 备份恢复结论 / 复制 id …）⇒ 用户一个字都看不见。
+    //   口径：页面级消息标签必须有父、进布局。
+    status_ = new QLabel;
     status_->setObjectName(QStringLiteral("convert_status"));
+    status_->setWordWrap(true);
+    body_layout()->addWidget(status_, 0);
 
     start_button_ = add_action(QStringLiteral("开始转换"));
     start_button_->setObjectName(QStringLiteral("convert_start"));

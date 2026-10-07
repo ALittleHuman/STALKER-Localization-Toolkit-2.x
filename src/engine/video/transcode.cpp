@@ -1,8 +1,11 @@
 #include "xrkit/engine/video/transcode.h"
 
+#include "xrkit/core/path.h"
+
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <map>
 #include <string>
 #include <utility>
@@ -53,6 +56,48 @@ std::string pick_video_encoder(const std::string& reference_codec,
         if (contains(available, fallback)) return fallback;
     }
     return "mpeg4";  // 内置编码器总可用；调用方据此告警
+}
+
+// ── ★ 2026-10-07（审计补充 F1-2 / F1-3）：输出目标的起跑前守卫 ────────────────
+namespace {
+
+// 规范化路径比较（`core::path_equals` 做 lexically_normal + 大小写 + 正反斜杠）。
+bool same_path(const std::string& a, const std::string& b) {
+    if (a.empty() || b.empty()) return false;
+    return core::path_equals(a, b);
+}
+
+}  // namespace
+
+OutputConflict check_output_conflict(const TranscodeRequest& request) {
+    if (request.output.empty()) return OutputConflict::None;
+    // ① 输出就是源文件：源本身是 .ogm 时默认输出名恰好落在它身上（审计 F1-3 的现场）。
+    //    手打的输出框同理 —— **不区分**是不是默认名。
+    if (same_path(request.output, request.input)) return OutputConflict::SameAsSource;
+    // ② 输出就是参考 OGM：参考也是**输入**，`-y` 会把它毁掉。
+    if (same_path(request.output, request.reference_path)) return OutputConflict::SameAsReference;
+    // ③ 输出是别的已存在文件：覆盖前必须问一次（原来不问就开始 `-y`）。
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(core::path_from_utf8(request.output), ec);
+    if (exists && !ec) return OutputConflict::Exists;
+    return OutputConflict::None;
+}
+
+std::string output_conflict_reason(OutputConflict conflict, const TranscodeRequest& request) {
+    switch (conflict) {
+        case OutputConflict::SameAsSource:
+            return "输出路径就是**源文件**本身（" + request.output +
+                   "）：命令行里带 `-y`，跑下去会把源文件覆盖/截断，必须先改输出名";
+        case OutputConflict::SameAsReference:
+            return "输出路径就是**参考 OGM** 本身（" + request.output +
+                   "）：它也是这次转换的**输入**，跑下去会把参考文件覆盖/截断，必须先改输出名";
+        case OutputConflict::Exists:
+            return "输出文件已经存在（" + request.output +
+                   "）：命令行里带 `-y`，不问一声就会**静默覆盖**它";
+        case OutputConflict::None:
+            break;
+    }
+    return std::string();
 }
 
 TranscodePlan plan_transcode(const TranscodeRequest& request) {

@@ -11,6 +11,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QProgressBar>
@@ -88,6 +89,25 @@ QStringList media_lines(const QString& path, const engine::video::MediaInfo& inf
 // ═══════════════════════════════════════════════════════════════════════════
 
 
+// ★★ 2026-10-07（审计补充 F1-1）：**放弃一个子进程对象**的**唯一**实现。
+//
+// 事实（修前）：`cancel_transcode` 的取消超时支走 `deleteLater(); process_ = nullptr;`
+// 却**没有断开**，而 `finished` 回调读的是**成员** `process_`（此刻已是 nullptr）⇒
+//   ① 对 nullptr 调 `deleteLater()`；② 取消超时后**立刻再点转换** ⇒ 旧对象的回调把
+//      **新**的进程对象删掉。同形还有 `probe_process_` / `encoder_process_` 的
+//      `waitForStarted` 失败支、以及 python 自动安装的 `install_process_`。
+//
+// 口径（同类只维护一套）：**先把成员置空**（回调里的守卫立刻生效）→ **再 disconnect**
+// （`kill`/`waitForFinished`/`deleteLater` 期间绝不把 `finished` 派回来）→ 最后 `deleteLater()`。
+// 析构、取消超时、起不来、回调自身收尾**全部**走这里 ⇒ 静态判据只需要盯住这一个函数。
+void VideoPage::discard_process(QProcess*& slot) {
+    QProcess* process = slot;
+    slot = nullptr;
+    if (process == nullptr) return;
+    process->disconnect();
+    process->deleteLater();
+}
+
 VideoPage::~VideoPage() {
     shutting_down_ = true;
     const auto stop = [](QProcess* process) {
@@ -100,6 +120,7 @@ VideoPage::~VideoPage() {
     };
     stop(probe_process_);
     stop(encoder_process_);
+    stop(install_process_);
     if (process_ != nullptr) {
         const bool running = process_->state() != QProcess::NotRunning;
         stop(process_);
@@ -111,9 +132,10 @@ VideoPage::~VideoPage() {
             }
         }
     }
-    probe_process_ = nullptr;
-    encoder_process_ = nullptr;
-    process_ = nullptr;
+    discard_process(probe_process_);
+    discard_process(encoder_process_);
+    discard_process(install_process_);
+    discard_process(process_);
 }
 
 bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request, QString* error) {
@@ -148,8 +170,7 @@ bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request, 
     connect(process_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
         if (shutting_down_) return;
         // 先把进程对象收干净（口径：跑完 / 取消 / 失败都不能留孤儿进程）
-        process_->deleteLater();
-        process_ = nullptr;
+        discard_process(process_);
         if (cancel_token_.cancelled()) {
             // 1.x：取消就**删掉半成品**（不留"看着像成功"的输出）；删没删掉都要**说出来**
             QString detail;
@@ -203,8 +224,9 @@ bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request, 
         last_error_ = QStringLiteral("启动失败：%1（程序 %2）")
                           .arg(process_->errorString())
                           .arg(QString::fromStdString(plan.argv.front()));
-        process_->deleteLater();
-        process_ = nullptr;
+        // ★ 2026-10-07（F1-1）：与 cancel_transcode 同一口径 —— **先置空再断开**
+        //   （`waitForStarted` 超时返回 false 时进程仍可能随后真的起来并派 `finished`）。
+        discard_process(process_);
         if (error != nullptr) *error = last_error_;
         if (progress_text_ != nullptr) progress_text_->setText(QStringLiteral("失败：") + last_error_);
         log_to_host(QStringLiteral("视频转换启动失败：") + last_error_);
@@ -228,10 +250,23 @@ void VideoPage::cancel_transcode() {
     process_->kill();
     process_->waitForFinished(5000);  // finished 回调里删半成品、收进程
     if (process_ != nullptr) {
-        // 5 秒没死透 ⇒ 如实报（不假装停了），并把对象收干净
+        // 5 秒没死透 ⇒ 如实报（不假装停了），并把对象收干净。
+        // ★★ 2026-10-07（审计补充 F1-1）：**必须走 `discard_process`**（先置空、再
+        //   `disconnect()`、最后 `deleteLater()`）。修前这一支只 `deleteLater(); process_ = nullptr;`
+        //   而**没有断开** ⇒ 这个对象还在事件循环里排着队、进程也可能随后才退出 ⇒
+        //   `finished` 会派回来，回调读的**成员** `process_` 已是 nullptr：
+        //     ① 对 nullptr 调 `deleteLater()`；② 取消超时后立刻再点转换 ⇒ 旧对象的回调
+        //        把**新**的进程对象删掉。析构里早就有正确写法可对照（`process->disconnect()`）。
+        discard_process(process_);
         last_error_ = QStringLiteral("取消超时：ffmpeg 没在 5 秒内退出（进程已放弃等待）");
-        process_->deleteLater();
-        process_ = nullptr;
+        // ★ 同 F3：超时支不许**留半成品**（正常取消那条路会删，这里原来漏了）——
+        //   否则用户看到的是一个"看着像成功"的输出文件。删没删掉都要说出来。
+        if (!output_path_.isEmpty() && QFileInfo::exists(output_path_)) {
+            last_error_ += QFile::remove(output_path_)
+                               ? QStringLiteral("；已删除半成品文件 %1").arg(output_path_)
+                               : QStringLiteral("；但半成品文件删不掉 %1（请手动删除）")
+                                     .arg(output_path_);
+        }
         if (progress_text_ != nullptr) progress_text_->setText(QStringLiteral("失败：") + last_error_);
         log_to_host(QStringLiteral("视频转换：") + last_error_);
         set_running_ui(false);
@@ -323,8 +358,7 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
         const QString err = QString::fromUtf8(probe_process_->readAllStandardError());
         const QString path = probe_path_;
         const ProbeTarget target = probe_target_;
-        probe_process_->deleteLater();
-        probe_process_ = nullptr;
+        discard_process(probe_process_);
         if (status != QProcess::NormalExit || code != 0) {
             apply_probe_result(path, target, engine::video::MediaInfo(),
                                QStringLiteral("ffprobe 返回码 %1：%2")
@@ -349,8 +383,9 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
                     QStringLiteral("-show_streams"), native(path)});
     if (!probe_process_->waitForStarted(10000)) {
         const QString reason = QStringLiteral("起不了 ffprobe：%1").arg(probe_process_->errorString());
-        probe_process_->deleteLater();
-        probe_process_ = nullptr;
+        // ★ 2026-10-07（F1-1）：**先置空再断开** —— 否则这个对象随后派 `finished` 时，
+        //   回调读的是成员 `probe_process_`（已经是 nullptr）⇒ 对 nullptr 解引用。
+        discard_process(probe_process_);
         apply_probe_result(path, target, engine::video::MediaInfo(), reason);
     }
 }
@@ -369,8 +404,7 @@ void VideoPage::start_encoder_scan() {
         if (shutting_down_) return;
         const QString out = QString::fromUtf8(encoder_process_->readAllStandardOutput());
         const QString err = QString::fromUtf8(encoder_process_->readAllStandardError());
-        encoder_process_->deleteLater();
-        encoder_process_ = nullptr;
+        discard_process(encoder_process_);
         if (status != QProcess::NormalExit || code != 0) {
             complete_encoder_scan(false, QStringLiteral("`ffmpeg -encoders` 返回码 %1：%2")
                                             .arg(code)
@@ -391,8 +425,8 @@ void VideoPage::start_encoder_scan() {
                             QStringList{QStringLiteral("-encoders")});
     if (!encoder_process_->waitForStarted(10000)) {
         const QString reason = QStringLiteral("起不了 ffmpeg：%1").arg(encoder_process_->errorString());
-        encoder_process_->deleteLater();
-        encoder_process_ = nullptr;
+        // ★ 2026-10-07（F1-1）：同 `probe_process_` —— 先置空再断开。
+        discard_process(encoder_process_);
         complete_encoder_scan(false, reason);
     }
 }
@@ -527,6 +561,13 @@ QString VideoPage::ask_save_output(const QString& start_dir, const QString& init
 QString VideoPage::ask_open_file(const QString& title, const QString& filter,
                                  const QString& start_path) {
     return QFileDialog::getOpenFileName(this, title, start_path, filter);
+}
+
+bool VideoPage::confirm_overwrite(const QString& reason) {
+    // ★ 2026-10-07（审计补充 F1-2）：`-y` 恒在 argv 里 ⇒ 覆盖前必须**先说清楚再问**。
+    //   文案里带引擎给的第一手理由（哪个文件、为什么会覆盖）。答否 ⇒ 一个字都不写。
+    return QMessageBox::question(this, QStringLiteral("确认覆盖"),
+                                 reason + QStringLiteral("\n\n要覆盖它吗？")) == QMessageBox::Yes;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -719,9 +760,36 @@ void VideoPage::request_transcode() {
         out += QStringLiteral(".ogm");
         output_edit_->setText(out);
     }
+    // ── ★★ 2026-10-07（审计补充 F1-2 / F1-3）：**起跑前的输出目标守卫** ────────────────
+    //   argv 里恒有 `-y`（1.x 原样）⇒ 覆盖是**静默的**。修前这里零存在性检查，而唯一的
+    //   "防自毁"只作用于**默认名**、且只跟**参考**比 ⇒ 源本身是 `.ogm` 时默认输出＝源文件，
+    //   叠上 `-y` 就是把**输入截断**；手打的输出框同理没有任何校验。
+    //   口径（与"零静默"一致）：
+    //     · 输出 == 源 / == 参考 ⇒ **直接拒**（那是输入，改输出名是唯一出路）；
+    //     · 输出是别的已存在文件 ⇒ **问一次**（答否 ⇒ 不跑，且理由可见）；
+    //     · 其余 ⇒ 照跑。
+    engine::video::TranscodeRequest request = build_request(paths);
+    request.reference_path = reference_path_.toUtf8().toStdString();
+    const engine::video::OutputConflict conflict = engine::video::check_output_conflict(request);
+    if (conflict != engine::video::OutputConflict::None) {
+        const QString reason = utf8(engine::video::output_conflict_reason(conflict, request));
+        if (conflict == engine::video::OutputConflict::Exists && confirm_overwrite(reason)) {
+            log_to_host(QStringLiteral("视频转换：用户确认覆盖 ") + native(out));
+        } else {
+            last_error_ = (conflict == engine::video::OutputConflict::Exists)
+                              ? QStringLiteral("已取消：不覆盖已存在的输出文件 ") + native(out)
+                              : reason;
+            if (progress_text_ != nullptr) {
+                progress_text_->setText(QStringLiteral("失败：") + last_error_);
+            }
+            log_to_host(QStringLiteral("视频转换：") + last_error_);
+            refresh_display();
+            return;
+        }
+    }
     log_to_host(QStringLiteral("视频转换：开始 %1 -> %2").arg(native(source_path_), native(out)));
     QString error;
-    if (!start_transcode(build_request(paths), &error)) {
+    if (!start_transcode(request, &error)) {
         last_error_ = error;
         refresh_display();
     }
@@ -985,7 +1053,12 @@ QString VideoPage::auto_install() {
 }
 
 void VideoPage::run_auto_install() {
-    // 8.4：自动安装**只由这个按钮触发**。三条路都**真做事**、且结论可见。
+    // 8.4：自动安装**只由这个按钮**触发。三条路都**真做事**、且结论可见。
+    if (install_process_ != nullptr) {
+        // ★ 2026-10-07（F3）：上一趟还在跑 ⇒ 不许再起一个（否则成员被覆盖、前一个没人收）。
+        if (status_ != nullptr) status_->setText(QStringLiteral("自动安装已经在跑，等它结束再看结论"));
+        return;
+    }
     const QString message = auto_install();
     last_auto_install_ = message;
     const QString app_dir = utf8(xrkit::core::app_dir());
@@ -1003,13 +1076,20 @@ void VideoPage::run_auto_install() {
     if (QFileInfo::exists(script)) {
         // 真跑脚本（Python 缺失 / 启动失败都如实报）。脚本自己把 exe 下到**它所在目录**
         //（= 程序目录），跑完我们再重新探测一次。
-        auto* downloader = new_child_process(this);
+        // ★ 2026-10-07（审计补充 F3）：它是**成员**（不再是局部对象）⇒ 走 `~VideoPage`
+        //   里同一个 `stop()`（先 disconnect 再 kill/wait），回调也有 `shutting_down_` 守卫
+        //   —— 修前这个子进程析构不停、回调还会碰已经析构的 `status_`。
+        QProcess* downloader = new_child_process(this);
+        install_process_ = downloader;
         if (status_ != nullptr) status_->setText(message + QStringLiteral("（正在下载…）"));
         connect(downloader, &QProcess::finished, this,
                 [this, downloader](int code, QProcess::ExitStatus) {
+                    if (shutting_down_) return;  // 窗口/页面已在收尾：绝不碰控件
                     const QString out = QString::fromUtf8(downloader->readAllStandardOutput());
                     const QString err = QString::fromUtf8(downloader->readAllStandardError());
-                    downloader->deleteLater();
+                    // ★ F1-1：走同一个"放弃对象"实现（先置空再断开再 deleteLater）。
+                    if (install_process_ == downloader) discard_process(install_process_);
+                    else downloader->deleteLater();
                     locator_.invalidate();
                     const bool found = detect();
                     const QString tail = (out + err).trimmed().right(300);
@@ -1025,7 +1105,9 @@ void VideoPage::run_auto_install() {
         downloader->start(QStringLiteral("python"), QStringList{native(script)});
         if (!downloader->waitForStarted(10000)) {
             const QString reason = downloader->errorString();
-            downloader->deleteLater();
+            // 同 F1-1：走同一个"放弃对象"实现（先置空再断开）。
+            if (install_process_ == downloader) discard_process(install_process_);
+            else downloader->deleteLater();
             if (status_ != nullptr) {
                 status_->setText(QStringLiteral("自动安装失败：起不了 python（%1）。可以手动指定 "
                                                 "ffmpeg.exe，或把 ffmpeg.exe 放进程序目录。")

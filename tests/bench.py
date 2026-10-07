@@ -171,13 +171,21 @@ def main() -> int:
         return 2
 
     metrics: dict[str, float] = {}
+    # ★★ 2026-10-07（审计补充 E1）：**正确性信号**与"这次没样本可测"必须分开。
+    #   修前 `got != len(sel)` / `rc != 0` 一律被打成 `BENCH skip`（只打印、不置红），
+    #   随后 `return 0 if metrics else 2` 因为**别的**指标在而返回 0 ⇒ 解包路径坏掉时
+    #   门禁照样 PASS（输出里只留一行 `BENCH skip`）。口径：**样本缺失才是 SKIP；
+    #   产物不对 / 退出码非 0 就是 FAIL**（同一份文件里，产物 sha256 不一致那条早就
+    #   直接判红 —— 两条路两种待遇正是这条审计的现场）。
+    correctness: list[str] = []
 
     t0 = time.perf_counter()
     rc, out = run(["--dump", str(image)])
     ms = (time.perf_counter() - t0) * 1000.0
     entries = sum(1 for line in out.splitlines() if line.startswith(("f\t", "d\t")))
     if rc != 0:
-        print("BENCH skip metric=dump_ms reason=%s" % out.strip()[:120])
+        correctness.append("dump_ms rc=%d" % rc)
+        print("BENCH FAIL metric=dump_ms reason=%s（正确性失败，不是 skip）" % out.strip()[:120])
     else:
         metrics["dump_ms"] = ms
         print("BENCH metric=dump_ms value=%.1f entries=%d image=%s"
@@ -189,6 +197,7 @@ def main() -> int:
     if rels:
         import tempfile
         total = 0
+        failed_extracts = 0
         with tempfile.TemporaryDirectory(prefix="xrkit_bench_") as tmp:
             t0 = time.perf_counter()
             for rel in rels:
@@ -196,10 +205,18 @@ def main() -> int:
                 rc, _ = run(["--extract", str(image), rel, str(dst)])
                 if rc == 0 and dst.exists():
                     total += dst.stat().st_size
+                else:
+                    failed_extracts += 1
             sec = max(1e-6, time.perf_counter() - t0)
         mbps = (total / 1048576.0) / sec
         metrics["extract_mbps"] = mbps
-        print("BENCH metric=extract_mbps value=%.2f files=%d bytes=%d" % (mbps, len(rels), total))
+        # ★ E1：`files=` 报的是"**成功**几条"（原来报的是"打算抽几条"）；一条都没成功
+        #   ⇒ 测到的是失败延迟 ⇒ 这是正确性失败，不是"这次不测了"。
+        print("BENCH metric=extract_mbps value=%.2f files=%d failed=%d bytes=%d"
+              % (mbps, len(rels) - failed_extracts, failed_extracts, total))
+        if failed_extracts >= len(rels):
+            correctness.append("extract_mbps 16 条全失败（测到的是失败延迟）")
+            print("BENCH FAIL metric=extract_mbps reason=all-extracts-failed（不是 skip）")
     else:
         print("BENCH skip metric=extract_mbps reason=no-file-entries")
 
@@ -226,6 +243,12 @@ def main() -> int:
             ms = (time.perf_counter() - t0) * 1000.0
             metrics["text_decode_ms"] = ms
             print("BENCH metric=text_decode_ms value=%.1f files=%d ok=%d" % (ms, len(files), ok))
+            # ★ E1：**"至少解成几个"的前置**。修前这里只打印 `ok` 不判 —— 20 个文件全部解
+            #   失败时测到的是"失败延迟"（子进程立刻退出），数值极小、轻松满足上界 ⇒ 假绿。
+            if ok < len(files):
+                correctness.append("text_decode_ms ok=%d/%d" % (ok, len(files)))
+                print("BENCH FAIL metric=text_decode_ms reason=ok=%d/%d（不是 skip："
+                      "样本都在，解不出来就是缺陷）" % (ok, len(files)))
     if "text_decode_ms" not in metrics:
         print("BENCH skip metric=text_decode_ms reason=no-corpus")
 
@@ -249,7 +272,10 @@ def main() -> int:
             ms_u = (time.perf_counter() - t0) * 1000.0
             got = sum(1 for _ in outdir.rglob("*") if _.is_file()) if outdir.exists() else 0
         if rc_u != 0 or got != len(sel):
-            print("BENCH skip metric=unpack_ms reason=rc%d files=%d/%d %s"
+            # ★ E1：`got != len(sel)`（解出来的文件数不对）**本身就是正确性信号**，
+            #   不许当成"这条指标这次不测了"。
+            correctness.append("unpack_ms rc=%d files=%d/%d" % (rc_u, got, len(sel)))
+            print("BENCH FAIL metric=unpack_ms reason=rc%d files=%d/%d（正确性失败，不是 skip）%s"
                   % (rc_u, got, len(sel), out_u.strip()[:100]))
         else:
             metrics["unpack_ms"] = ms_u
@@ -295,8 +321,11 @@ def main() -> int:
             for i in range(3):
                 rc, files, ms, last = unpack_once(unpack_image, workdir / ("run%d" % i))
                 if rc != 0:
-                    print("BENCH skip metric=unpack_full_ms reason=rc%d run=%d %s"
-                          % (rc, i + 1, last[:120]))
+                    # ★ E1：整镜像退出码非 0 是**正确性失败**，不是 skip（修前 `shots=[]`
+                    #   之后一条都不判，门禁只看退出码 ⇒ 照样 PASS）。
+                    correctness.append("unpack_full_ms run=%d rc=%d" % (i + 1, rc))
+                    print("BENCH FAIL metric=unpack_full_ms reason=rc%d run=%d（正确性失败，"
+                          "不是 skip）%s" % (rc, i + 1, last[:120]))
                     shots = []
                     break
                 shots.append(ms)
@@ -320,8 +349,10 @@ def main() -> int:
                 rc_v, files_v, ms_v, last_v = unpack_once(
                     unpack_image, workdir / "readback", ["--verify-readback"])
                 if rc_v != 0:
-                    print("BENCH skip metric=unpack_readback_ms reason=rc%d %s"
-                          % (rc_v, last_v[:120]))
+                    # ★ E1：同 `unpack_full_ms` —— 对照组跑不起来也是正确性失败。
+                    correctness.append("unpack_readback_ms rc=%d" % rc_v)
+                    print("BENCH FAIL metric=unpack_readback_ms reason=rc%d（正确性失败，"
+                          "不是 skip）%s" % (rc_v, last_v[:120]))
                 else:
                     dig_v = tree_digest(workdir / "readback")
                     metrics["unpack_readback_ms"] = ms_v
@@ -345,6 +376,12 @@ def main() -> int:
         failures += 1 if bad else 0
 
     print("")
+    if correctness:
+        print("BENCH FAIL metrics=%d failed=%d correctness=%d"
+              % (len(metrics), failures, len(correctness)))
+        for item in correctness:
+            print("  正确性失败：%s" % item)
+        return 1
     print("BENCH %s metrics=%d failed=%d" % ("FAIL" if failures else "PASS", len(metrics), failures))
     return 1 if failures else (0 if metrics else 2)
 

@@ -144,12 +144,9 @@ void add_literal(const char* utf8, std::set<uint32_t>& chars) {
     }
 }
 
-std::vector<uint8_t> read_all_bytes(const std::string& path) {
-    std::ifstream in(core::path_from_utf8(path), std::ios::binary);
-    if (!in) return {};
-    return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)),
-                                std::istreambuf_iterator<char>());
-}
+// ★★ 2026-10-07（审计补充 A1-4）：原来这里的本地 `read_all_bytes`（打不开就 `return {}`）
+// 已**删除** —— 读文件只有 `read_file_bytes()` 一份实现（`xml_bytes.h`），且"打不开"必须
+// 计入失败。留着两份就会再次分叉。
 
 bool ends_with_xml(const std::string& name) {
     if (name.size() < 4) return false;
@@ -202,17 +199,34 @@ bool extract_chars(const std::string& xml_dir, bool full_cyrillic, CharsetResult
 
     // ② 递归收集 .xml（升序，确定性）
     std::vector<std::filesystem::path> files;
+    // ★ A1-4 的附带面：枚举出错原来 `break` 掉整轮（**静默截断**语料）⇒ 现在明确报错。
     for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end;
          it.increment(ec)) {
-        if (ec) break;
+        if (ec) {
+            out.error = "枚举 xml 目录失败：" + ec.message();
+            return false;
+        }
         if (!it->is_regular_file(ec)) continue;
         if (ends_with_xml(core::path_to_utf8(it->path().filename()))) files.push_back(it->path());
+    }
+    if (ec) {
+        out.error = "枚举 xml 目录失败：" + ec.message();
+        return false;
     }
     std::sort(files.begin(), files.end());
 
     for (const std::filesystem::path& path : files) {
         ++out.files_scanned;
-        const std::vector<uint8_t> raw = read_all_bytes(core::path_to_utf8(path));
+        std::vector<uint8_t> raw;
+        std::string read_error;
+        // ★★ 2026-10-07（审计补充 A1-4）：**打不开 ≠ 空文件**。原来这里 `return {}`，
+        //   而空字节在解码层必然成功 ⇒ 整份语料的字符被静默丢弃（`files_scanned++` 却
+        //   `files_undecodable` 不变）。现在计入 `files_unreadable`（调用方据此拒绝出包）。
+        if (!read_file_bytes(core::path_to_utf8(path), raw, read_error)) {
+            ++out.files_unreadable;
+            out.guessed.push_back(core::path_to_utf8(path.filename()) + "（读不出：" + read_error + "）");
+            continue;
+        }
         std::string text;
         std::string enc;
         bool trusted = true;

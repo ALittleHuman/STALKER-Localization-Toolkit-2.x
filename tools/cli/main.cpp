@@ -153,6 +153,8 @@ void print_usage() {
            "  --video-plan                                视频转码 argv + 摘要（PLAN/PLANSUM；与 1.x 对拍）\n"
            "  --video-probe <ffprobe-json 文件>           视频参数解析（与 1.x parse_video_info 对拍）\n"
            "  --video-encoders <ffmpeg -encoders 输出>    可用编码器解析（与 1.x _ensure_encoders 对拍）\n"
+           "  --video-output-check <源> <参考OGM|-> <输出>  输出目标守卫（argv 恒带 -y：输出=源/参考\n"
+           "                                              或已存在时必须能判出来，不许静默覆盖）\n"
            "  --glyph-dump <字体> <字号> <输出> [字符集文件]  导出 FreeType 栅格（与 Pillow 对拍）\n"
            "  --font-metrics <输出>                       导出字库几何/宽度表（与 1.x font_pack 对拍）\n"
            "  --font-render <字体> <字号> <x2> <fmt> <字符集文件> <输出前缀>\n"
@@ -2730,6 +2732,33 @@ int run_cli(const std::vector<std::string>& args) {
         for (const std::string& name : names) std::cout << "ENC\t" << name << "\n";
         return kExitOk;
     }
+    if (action == "--video-output-check") {
+        // ★ 2026-10-07（审计补充 F1-2 / F1-3）：`-y` 恒在 argv 里 ⇒ "输出已存在 / 输出就是
+        //   源 / 输出就是参考"这三件必须由**引擎**在起跑前判定。这里只把结论打成机器可解析的
+        //   形态，供 `tests/check_video_overwrite_guard.py` 判红（页面侧另有一条行为锁）。
+        //   用法：--video-output-check <源文件> <参考OGM|-> <输出文件>
+        if (operands.size() < 3) {
+            std::cerr << "VIDEOOUTPUT error reason=用法：--video-output-check <源文件> "
+                         "<参考OGM|-> <输出文件>\n";
+            return kExitUsage;
+        }
+        namespace vid = xrkit::engine::video;
+        vid::TranscodeRequest request;
+        request.input = operands[0];
+        request.reference_path = (operands[1] == "-") ? std::string() : operands[1];
+        request.output = operands[2];
+        const vid::OutputConflict conflict = vid::check_output_conflict(request);
+        const char* name = "none";
+        switch (conflict) {
+            case vid::OutputConflict::SameAsSource: name = "same-as-source"; break;
+            case vid::OutputConflict::SameAsReference: name = "same-as-reference"; break;
+            case vid::OutputConflict::Exists: name = "exists"; break;
+            case vid::OutputConflict::None: name = "none"; break;
+        }
+        std::cout << "VIDEOOUTPUT conflict=" << name << "\n";
+        std::cout << "VIDEOOUTPUT reason=" << vid::output_conflict_reason(conflict, request) << "\n";
+        return kExitOk;
+    }
     if (action == "--status-line") {
         // ★★ 2026-10-06（审计第 4 组）：「`engine::status_line()` 的常量自报」的判据探针。
         // 输出**机器可解析**的形态：`STATUSLINE line=<原始行> used=<当前用到> on=<能跑> all=<编译进来的总数>
@@ -3827,7 +3856,20 @@ int run_cli(const std::vector<std::string>& args) {
         const std::string& xml_dir = args[0];
         xrkit::engine::font::CharsetResult result;
         if (!xrkit::engine::font::extract_chars(xml_dir, full_cyrillic, result)) {
-            std::cout << "CHARSET error reason=目录不存在：" << xml_dir << "\n";
+            std::cout << "CHARSET error reason="
+                      << (result.error.empty() ? ("目录不存在：" + xml_dir) : result.error) << "\n";
+            return kExitFail;
+        }
+        // ★★ 2026-10-07（审计补充 A1-4）：**打不开的文件必须计入失败**（原来被当成空文件，
+        //   整份语料的字符被静默丢弃、退出码照样 0）。
+        if (result.files_unreadable > 0) {
+            std::cout << "CHARSET error reason=有 " << result.files_unreadable
+                      << " 个 XML 读不出来（被占用/权限不足/路径过长）：";
+            for (size_t i = 0; i < result.guessed.size(); ++i) {
+                if (i > 0) std::cout << " | ";
+                std::cout << result.guessed[i];
+            }
+            std::cout << "\n";
             return kExitFail;
         }
         const std::string body = xrkit::engine::font::charset_to_lines(result.chars);
@@ -3848,6 +3890,7 @@ int run_cli(const std::vector<std::string>& args) {
         std::cout << "CHARSET ok dir=" << xml_dir << " chars=" << result.chars.size()
                   << " files=" << result.files_scanned
                   << " undecodable=" << result.files_undecodable
+                  << " unreadable=" << result.files_unreadable
                   << " guessed=" << result.guessed.size()
                   << " full_cyrillic=" << (full_cyrillic ? 1 : 0) << "\n";
         return kExitOk;

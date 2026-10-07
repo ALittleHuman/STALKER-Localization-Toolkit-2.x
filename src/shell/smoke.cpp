@@ -1850,6 +1850,51 @@ SmokeResult run_smoke() {
               QStringLiteral("② 取消：XML 校对页的取消**保留**"));
     }
 
+    // ★★ 2026-10-07（审计补充 F3「孤儿顶层控件」，效应等同用户可见缺陷）
+    //   修前：`xml_page.cpp:166` / `text_page.cpp:111` / `convert_page.cpp:241` 三页都写
+    //   `status_ = new QLabel(task_->status());` —— `TaskShell::status()` 返回的是 **QString**
+    //   （控件访问器叫 `status_label()`），于是 `QLabel(const QString&, QWidget* = nullptr)`
+    //   造出一个**无父**标签 ⇒ 它是个**顶层窗口**、从不进布局（全仓 `addWidget(status_)`
+    //   零命中）⇒ 全页消息（空目录 / 导出成功失败 / 复制 id / 还没选源）用户**一个字都看不见**，
+    //   而且没人拥有它（泄漏）。
+    //   判据＝标签**有父**、在页内（`isAncestorOf`）、不是窗口、页显示后**真的可见且占位**。
+    //   （静态面由门禁 `check_page_status_labels.py` 独立成步，这条是"真画出来没有"的行为面。）
+    {
+        ConvertPage convert;
+        TextPage text;
+        XmlPage xml;
+        struct StatusEntry {
+            QWidget* page;
+            QLabel* label;
+            const char* name;
+        };
+        const StatusEntry entries[] = {
+            {&convert, convert.status(), "编码转换"},
+            {&text, text.status(), "文本提取"},
+            {&xml, xml.status(), "XML 校对"},
+        };
+        for (const StatusEntry& entry : entries) {
+            const QString name = QString::fromUtf8(entry.name);
+            check(entry.label != nullptr,
+                  QStringLiteral("F3 %1：页面级消息标签存在（status()）").arg(name));
+            if (entry.label == nullptr) continue;
+            entry.page->resize(900, page_min_h());
+            entry.page->show();
+            QApplication::processEvents();
+            entry.label->setText(QStringLiteral("F3 可见性判据"));
+            QApplication::processEvents();
+            check(entry.label->parentWidget() != nullptr && entry.page->isAncestorOf(entry.label) &&
+                      !entry.label->isWindow(),
+                  QStringLiteral("F3 %1：消息标签**有父、在页内**（不是孤儿顶层控件）").arg(name));
+            check(entry.label->isVisible() && entry.label->width() > 0 && entry.label->height() > 0,
+                  QStringLiteral("F3 %1：消息标签真的**可见且占位**（可见=%2 %3x%4）")
+                      .arg(name)
+                      .arg(entry.label->isVisible() ? 1 : 0)
+                      .arg(entry.label->width())
+                      .arg(entry.label->height()));
+        }
+    }
+
     // ⑩ 虚拟化列表（M2-5）：对照表 10.2 的范围规则 + 10.3 的同族原则（只对视口内行取文本）。
     {
         // 10.2 规则逐组对拍：first=top//h、last=min(total,(top+view_h)//h+2)
@@ -5748,9 +5793,19 @@ SmokeResult run_smoke() {
         QString open_title, open_filter, open_start, open_pick;
         QString save_start, save_initial, save_pick;
         int open_calls = 0, save_calls = 0;
+        // ★ 2026-10-07（审计补充 F1-2）：覆盖确认的**虚拟缝**（默认是 QMessageBox::question，
+        //   模态框会挂死自检）—— 生产路径与自检走同一份接线，判的是"问没问、答否时跑没跑"。
+        int confirm_calls = 0;
+        QString confirm_reason;
+        bool confirm_answer = false;
 
     protected:
         evid::FfmpegPaths resolve_ffmpeg() override { return paths; }
+        bool confirm_overwrite(const QString& reason) override {
+            ++confirm_calls;
+            confirm_reason = reason;
+            return confirm_answer;
+        }
 
     public:
         QString ask_open_file(const QString& title, const QString& filter,
@@ -6107,6 +6162,84 @@ SmokeResult run_smoke() {
                   page.info_panel_text().contains(QStringLiteral("错误原文")),
               QStringLiteral("视频⑨：失败在状态栏与面板上都可见"));
         qunsetenv("XRKIT_FAKE_FFMPEG_MODE");
+
+        // ⑬ ★ 2026-10-07（审计补充 F1-2 / F1-3）：**起跑前的输出目标守卫**。
+        //   argv 里恒有 `-y` ⇒ 覆盖是静默的。判据全在"拒绝/确认"这两件事上：
+        //     ① 输出＝源 ⇒ 直接拒（连问都不问），**源文件一个字节都不许动**；
+        //     ② 输出＝参考 ⇒ 同样直接拒（参考也是输入）；
+        //     ③ 输出是别的已存在文件 ⇒ 必须**问一次**；答否 ⇒ 不跑、理由可见、既有文件原样；
+        //     ④ 答是 ⇒ 才真起进程（覆盖是有代价的动作，必须先点过头）。
+        {
+            const QString ogm_src = src_dir2 + QStringLiteral("/self.ogm");
+            { std::ofstream out(ogm_src.toStdString(), std::ios::binary); out << "OGMSRC"; }
+            page.apply_probe_result(ogm_src, VideoPage::ProbeTarget::Source, src_info, QString());
+            page.output_edit()->setText(ogm_src);
+            page.confirm_calls = 0;
+            if (page.convert_button() != nullptr) page.convert_button()->click();
+            check(!page.transcode_running() && page.confirm_calls == 0,
+                  QStringLiteral("视频⑬：输出＝源 ⇒ **直接拒**（不跑、也不问要不要覆盖；问了 %1 次）")
+                      .arg(page.confirm_calls));
+            check(page.last_error().contains(QStringLiteral("源文件")),
+                  QStringLiteral("视频⑬：输出＝源的理由要可见（实得 %1）")
+                      .arg(page.last_error().left(90)));
+            check(page.progress_label() != nullptr &&
+                      page.progress_label()->text().contains(QStringLiteral("失败")),
+                  QStringLiteral("视频⑬：拒绝理由在进度文案上也可见"));
+            check(QFileInfo(ogm_src).size() == 6,
+                  QStringLiteral("视频⑬：拒绝之后源文件**原样**（%1 字节）")
+                      .arg(QFileInfo(ogm_src).size()));
+
+            page.apply_probe_result(src_file, VideoPage::ProbeTarget::Source, src_info, QString());
+            page.output_edit()->setText(ref_file);
+            page.confirm_calls = 0;
+            if (page.convert_button() != nullptr) page.convert_button()->click();
+            check(!page.transcode_running() && page.confirm_calls == 0 &&
+                      page.last_error().contains(QStringLiteral("参考")),
+                  QStringLiteral("视频⑬：输出＝参考 ⇒ 直接拒（实得 %1）")
+                      .arg(page.last_error().left(90)));
+
+            const QString exists_out = vt.path() + QStringLiteral("/already.ogm");
+            { std::ofstream out(exists_out.toStdString(), std::ios::binary); out << "KEEP"; }
+            page.output_edit()->setText(exists_out);
+            page.confirm_answer = false;
+            page.confirm_calls = 0;
+            if (page.convert_button() != nullptr) page.convert_button()->click();
+            check(page.confirm_calls == 1 && !page.transcode_running(),
+                  QStringLiteral("视频⑬：输出已存在 ⇒ **问一次**（问了 %1 次、跑了=%2）")
+                      .arg(page.confirm_calls)
+                      .arg(page.transcode_running() ? 1 : 0));
+            check(page.confirm_reason.contains(QFileInfo(exists_out).fileName()),
+                  QStringLiteral("视频⑬：确认文案要带**哪个文件**（实得 %1）")
+                      .arg(page.confirm_reason.left(90)));
+            check(page.last_error().contains(QStringLiteral("已取消")) &&
+                      page.last_error().contains(QStringLiteral("不覆盖")),
+                  QStringLiteral("视频⑬：答否 ⇒ 可见的「不覆盖」结论（实得 %1）")
+                      .arg(page.last_error().left(90)));
+            check(QFileInfo(exists_out).size() == 4,
+                  QStringLiteral("视频⑬：答否之后既有文件**原样**（%1 字节）")
+                      .arg(QFileInfo(exists_out).size()));
+
+            qputenv("XRKIT_FAKE_FFMPEG_MODE", "finish");
+            page.confirm_answer = true;
+            page.confirm_calls = 0;
+            QElapsedTimer guard_clock;
+            guard_clock.start();
+            if (page.convert_button() != nullptr) page.convert_button()->click();
+            while (!page.transcode_running() && guard_clock.elapsed() < 20000) {
+                QCoreApplication::processEvents();
+                QThread::msleep(10);
+            }
+            check(page.confirm_calls == 1 && page.transcode_running(),
+                  QStringLiteral("视频⑬：答是 ⇒ 才真起进程（问了 %1 次、跑了=%2）")
+                      .arg(page.confirm_calls)
+                      .arg(page.transcode_running() ? 1 : 0));
+            while (page.transcode_running() && guard_clock.elapsed() < 60000) {
+                QCoreApplication::processEvents();
+                QThread::msleep(10);
+            }
+            qunsetenv("XRKIT_FAKE_FFMPEG_MODE");
+            page.apply_probe_result(src_file, VideoPage::ProbeTarget::Source, src_info, QString());
+        }
 
         // ⑫ 跳过要**计数 + 逐条原因**（用户红线）
         {

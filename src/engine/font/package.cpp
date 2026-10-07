@@ -30,12 +30,9 @@ bool write_text(const std::string& path, const std::string& text) {
     return write_bytes(path, reinterpret_cast<const uint8_t*>(text.data()), text.size());
 }
 
-std::vector<uint8_t> read_bytes(const std::string& path) {
-    std::ifstream in(core::path_from_utf8(path), std::ios::binary);
-    if (!in) return {};
-    return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)),
-                                std::istreambuf_iterator<char>());
-}
+// ★★ 2026-10-07（审计补充 A1-4）：本文件原来的本地 `read_bytes`（打不开就 `return {}`）
+// 已**删除** —— 读 XML 只有 `read_file_bytes()` 一份实现（`xml_bytes.h`）。修前那条路
+// 把"打不开"当成空文件，而 `decode_xml_bytes({})` 必然成功 ⇒ **写出空 XML 并记成功**。
 
 const GameTemplate* find_game(const std::string& game) {
     for (const GameTemplate& t : kGameTemplates) {
@@ -77,7 +74,16 @@ PackageResult build_package(const PackageOptions& opt) {
     }
     CharsetResult cs;
     if (!extract_chars(opt.xml_dir, opt.full_cyrillic, cs)) {
-        res.error = "xml 目录不存在：" + opt.xml_dir;
+        res.error = cs.error.empty() ? ("xml 目录不存在：" + opt.xml_dir) : cs.error;
+        return res;
+    }
+    // ★★ 2026-10-07（审计补充 A1-4）：**打不开的文件必须计入失败** —— 原来那种文件被当成
+    //   "空文件"，于是它的字符全被静默丢掉、包照样出成功。
+    if (cs.files_unreadable > 0) {
+        res.error = "有 " + std::to_string(cs.files_unreadable) +
+                    " 个 XML 读不出来（被占用/权限不足/路径过长），字符集会缺它们的内容 ⇒ "
+                    "不出包（第一份：" +
+                    (cs.guessed.empty() ? std::string("?") : cs.guessed.front()) + "）";
         return res;
     }
     if (cs.chars.empty()) {
@@ -155,7 +161,12 @@ PackageResult build_package(const PackageOptions& opt) {
     std::vector<std::string> xmls;
     for (std::filesystem::directory_iterator it(core::path_from_utf8(opt.xml_dir), ec), end;
          it != end; it.increment(ec)) {
-        if (ec) break;
+        // ★ A1-4 的附带面：枚举出错原来 `break`（**静默截断** XML 列表）⇒ 现在明确报错。
+        if (ec) {
+            res.error = "枚举 xml 目录失败：" + ec.message();
+            remove_tree(out_gd);
+            return res;
+        }
         if (!it->is_regular_file(ec)) continue;
         std::string name = core::path_to_utf8(it->path().filename());
         if (name.size() < 4) continue;
@@ -163,11 +174,24 @@ PackageResult build_package(const PackageOptions& opt) {
         for (char& c : tail) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         if (tail == ".xml") xmls.push_back(name);
     }
+    if (ec) {
+        res.error = "枚举 xml 目录失败：" + ec.message();
+        remove_tree(out_gd);
+        return res;
+    }
     std::sort(xmls.begin(), xmls.end());
     for (const std::string& name : xmls) {
         const std::string src = join(opt.xml_dir, name);
         const std::string dst = join(text_dir, name);
-        const std::vector<uint8_t> raw = read_bytes(src);
+        std::vector<uint8_t> raw;
+        std::string read_error;
+        // ★★ 2026-10-07（审计补充 A1-4）：**打不开 ≠ 空文件** —— 原来打不开时 `decode_xml_bytes({})`
+        //   必然成功 ⇒ 写出一个**空 XML** 并记成功。现在明确报错并计入失败。
+        if (!read_file_bytes(src, raw, read_error)) {
+            res.error = "读不出 " + src + "：" + read_error;
+            remove_tree(out_gd);
+            return res;
+        }
         std::string text;
         std::string enc;
         bool trusted = false;
