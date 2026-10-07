@@ -29,6 +29,14 @@ const char* const kMethodNames[] = {
     "label",      "button",     "row",       "checkbox",    "entry",     "text",
     "combo",      "drop_box",   "pack",      "text_view",   "set_text",  "get_text",
     "set_enabled", "alive",     "log_append", "ask_yes_no", "ask_open_file", "ask_save_file",
+    // ★★ P4：重型 L2 第一批（虚拟列表 / 日志视图 / 拖放目标 / 任务壳 / 线程判定）
+    "list",        "list_set_row_count", "list_set_row_text", "list_row_text",
+    "list_select_row", "list_selected_row", "list_content_height",
+    "log_view",    "log_view_append",    "log_view_clear",    "log_view_text",
+    "drop_zone",   "drop_zone_on_drop",
+    "task_panel",  "task_run",           "task_status",       "task_cancel",
+    "task_cancel_requested",
+    "on_ui_thread",
 };
 
 bool has_impl(const UiFacade& facade, const std::string& name) {
@@ -50,6 +58,25 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "ask_yes_no") return static_cast<bool>(facade.ask_yes_no);
     if (name == "ask_open_file") return static_cast<bool>(facade.ask_open_file);
     if (name == "ask_save_file") return static_cast<bool>(facade.ask_save_file);
+    if (name == "list") return static_cast<bool>(facade.list);
+    if (name == "list_set_row_count") return static_cast<bool>(facade.list_set_row_count);
+    if (name == "list_set_row_text") return static_cast<bool>(facade.list_set_row_text);
+    if (name == "list_row_text") return static_cast<bool>(facade.list_row_text);
+    if (name == "list_select_row") return static_cast<bool>(facade.list_select_row);
+    if (name == "list_selected_row") return static_cast<bool>(facade.list_selected_row);
+    if (name == "list_content_height") return static_cast<bool>(facade.list_content_height);
+    if (name == "log_view") return static_cast<bool>(facade.log_view);
+    if (name == "log_view_append") return static_cast<bool>(facade.log_view_append);
+    if (name == "log_view_clear") return static_cast<bool>(facade.log_view_clear);
+    if (name == "log_view_text") return static_cast<bool>(facade.log_view_text);
+    if (name == "drop_zone") return static_cast<bool>(facade.drop_zone);
+    if (name == "drop_zone_on_drop") return static_cast<bool>(facade.drop_zone_on_drop);
+    if (name == "task_panel") return static_cast<bool>(facade.task_panel);
+    if (name == "task_run") return static_cast<bool>(facade.task_run);
+    if (name == "task_status") return static_cast<bool>(facade.task_status);
+    if (name == "task_cancel") return static_cast<bool>(facade.task_cancel);
+    if (name == "task_cancel_requested") return static_cast<bool>(facade.task_cancel_requested);
+    if (name == "on_ui_thread") return static_cast<bool>(facade.on_ui_thread);
     return false;
 }
 

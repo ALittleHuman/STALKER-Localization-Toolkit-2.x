@@ -5245,6 +5245,146 @@ SmokeResult run_smoke() {
         QDir(dir).removeRecursively();
     }
 
+    // ★★ 插件改装 P4（**重型 L2 第一批**）：虚拟列表 / 日志视图 / 拖入区域 / 宿主任务壳。
+    //   这一块判的是"**宿主组件真的被用上了**"，不是"接口存在"：
+    //     ① 虚拟列表：provider 只为**可见行**被调（标记里 `provider_calls` 是个小数字、且
+    //        **没有** `row:199`），而按需读第 199 行时它又**真的**能取到（`rowtext199:第 199 行`）；
+    //     ② 日志视图：两行追加读得回、清空真的清掉；
+    //     ③ 拖入区域：自检**造一个真 QDropEvent** 派发给宿主过滤器（离屏环境没有平台拖放，
+    //        所以走 `FileDropFilter::dispatch` —— 过滤逻辑与接线一起被验到），Python 回调收到路径；
+    //     ④ 任务壳：Python worker 在**工作线程**里跑，`progress(100)` 真的到了宿主进度条上；
+    //        ★而且 worker 里调 `ui.label` **必须被拒**（线程纪律，`worker_thread_ui:True`）。
+    {
+        const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_uifacade_l2"));
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString marker = QDir(dir).filePath(QStringLiteral("l2_marker.txt"));
+        const QByteArray source =
+            "# -*- coding: utf-8 -*-\n"
+            "import os, time\n"
+            "def register(api):\n"
+            "    def mark(text):\n"
+            "        with open(os.path.join(api.plugin_dir, 'l2_marker.txt'), 'a', encoding='utf-8') as fh:\n"
+            "            fh.write(text + '\\n')\n"
+            "    def build():\n"
+            "        ui = api.ui\n"
+            "        calls = {'n': 0}\n"
+            "        rows = ui.list(None, 18)\n"
+            "        def provider(row):\n"
+            "            calls['n'] += 1\n"
+            "            mark('row:%d' % row)\n"
+            "            return '第 %d 行' % row\n"
+            "        ui.list_set_row_count(rows, 200)\n"
+            "        ui.list_set_row_text(rows, provider)\n"
+            "        mark('provider_calls:%d' % calls['n'])\n"
+            "        mark('rowtext199:%s' % ui.list_row_text(rows, 199))\n"
+            "        ui.list_select_row(rows, 7)\n"
+            "        mark('selected:%d' % ui.list_selected_row(rows))\n"
+            "        mark('content_height:%d' % ui.list_content_height(rows))\n"
+            "        view = ui.log_view(None, 4)\n"
+            "        ui.log_view_append(view, '第一行')\n"
+            "        ui.log_view_append(view, '第二行')\n"
+            "        mark('viewtext:%s' % ui.log_view_text(view).replace('\\n', '|'))\n"
+            "        ui.log_view_clear(view)\n"
+            "        mark('after_clear:[%s]' % ui.log_view_text(view))\n"
+            "        zone = ui.drop_zone(None, '把目录拖进来')\n"
+            "        ui.drop_zone_on_drop(zone, lambda paths: mark('drop:' + ','.join(sorted(paths))))\n"
+            "        panel = ui.task_panel(None, True)\n"
+            "        def worker(progress, message):\n"
+            "            mark('worker_thread_ui:%s' % (ui.label(None, '不该出现') is None))\n"
+            "            message('开始干活')\n"
+            "            progress(50)\n"
+            "            time.sleep(0.05)\n"
+            "            progress(100)\n"
+            "            mark('worker_done')\n"
+            "        mark('run:%d' % int(ui.task_run(panel, '夹具任务', worker)))\n"
+            "    api.register_tool('门面L2夹具页', build, 6)\n";
+        QFile plugin_file(QDir(dir).filePath(QStringLiteral("l2_demo.py")));
+        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                           plugin_file.write(source) == source.size();
+        plugin_file.close();
+        check(wrote, QStringLiteral("P4 夹具 .py 没写进去"));
+
+        Hub hub(nullptr, dir);
+        const int page = hub.page_index(QStringLiteral("门面L2夹具页"));
+        check(page >= 0, QStringLiteral("P4 `register_tool` 的页没进页表（插件问题 %1 条）")
+                             .arg(hub.plugin_errors().size()));
+        QWidget* page_widget = page >= 0 ? hub.stack()->widget(page) : nullptr;
+        if (page_widget != nullptr) page_widget->resize(600, 400);
+        QApplication::processEvents();
+        const auto read_marker = [&marker]() {
+            QFile file(marker);
+            if (!file.open(QIODevice::ReadOnly)) return QString();
+            return QString::fromUtf8(file.readAll());
+        };
+        // ④ 任务壳：等工作线程收工（顺带把排队信号抽干）
+        for (int i = 0; i < 400 && !read_marker().contains(QStringLiteral("worker_done")); ++i) {
+            QApplication::processEvents();
+            QThread::msleep(10);
+        }
+        // ③ 拖入区域：造一个**真 QDropEvent** 派发给宿主过滤器
+        QWidget* zone = page_widget != nullptr
+                            ? page_widget->findChild<QWidget*>(QStringLiteral("xrkit_facade_drop_zone"))
+                            : nullptr;
+        // ★ `FileDropFilter` 没有 `Q_OBJECT`（它只装事件过滤器、不需要信号）⇒ 不能用
+        //   `findChild<FileDropFilter*>()`（那个模板要求 Q_OBJECT，会 static_assert 编译不过）；
+        //   这里顺着控件树用 `dynamic_cast` 找（同一件事，RTTI 就够）。
+        FileDropFilter* drop_filter = nullptr;
+        if (zone != nullptr) {
+            for (QObject* child : zone->children()) {
+                if (auto* candidate = dynamic_cast<FileDropFilter*>(child)) {
+                    drop_filter = candidate;
+                    break;
+                }
+            }
+        }
+        bool drop_handled = false;
+        if (drop_filter != nullptr && zone != nullptr) {
+            QMimeData mime;
+            mime.setUrls({QUrl::fromLocalFile(QStringLiteral("C:/tmp/a.txt")),
+                          QUrl::fromLocalFile(QStringLiteral("C:/tmp/b.txt"))});
+            QDropEvent drop(QPointF(2, 2), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            drop_handled = drop_filter->dispatch(&drop, zone);
+        }
+        QApplication::processEvents();
+        const QString text = read_marker();
+        const int calls_at = text.indexOf(QStringLiteral("provider_calls:"));
+        const int calls_end = text.indexOf(QLatin1Char('\n'), calls_at);
+        const int calls = calls_at < 0
+                              ? -1
+                              : text.mid(calls_at + 15, calls_end < 0 ? -1 : calls_end - calls_at - 15)
+                                    .trimmed()
+                                    .toInt();
+        check(calls >= 0 && calls <= 8,
+              QStringLiteral("P4 虚拟列表的 provider 被调了 %1 次（应当只为可见行取，远小于 200）")
+                  .arg(calls));
+        check(calls_at >= 0 && !text.left(calls_at).contains(QStringLiteral("row:199")),
+              QStringLiteral("P4 虚拟列表把没显示的行也取了（第 199 行在 provider 阶段就被问了）"));
+        check(text.contains(QStringLiteral("rowtext199:第 199 行")),
+              QStringLiteral("P4 按需读第 199 行取不到（provider 没被按需调）"));
+        check(text.contains(QStringLiteral("selected:7")),
+              QStringLiteral("P4 列表选中行不对（标记里没有 selected:7）"));
+        check(text.contains(QStringLiteral("viewtext:第一行|第二行")),
+              QStringLiteral("P4 日志视图两行读不回（标记里没有 viewtext:第一行|第二行）"));
+        check(text.contains(QStringLiteral("after_clear:[]")),
+              QStringLiteral("P4 `log_view_clear` 没清掉内容"));
+        check(drop_handled && text.contains(QStringLiteral("drop:C:/tmp/a.txt,C:/tmp/b.txt")),
+              QStringLiteral("P4 拖入区域的回调没收到本机路径（handled=%1）").arg(drop_handled));
+        check(text.contains(QStringLiteral("run:1")),
+              QStringLiteral("P4 `task_run` 没被宿主接受"));
+        check(text.contains(QStringLiteral("worker_done")),
+              QStringLiteral("P4 任务壳的 worker 没跑完（标记里没有 worker_done）"));
+        check(text.contains(QStringLiteral("worker_thread_ui:True")),
+              QStringLiteral("P4 **线程纪律失效**：工作线程里调 `ui.label` 没有被拒"));
+        QProgressBar* bar = page_widget != nullptr ? page_widget->findChild<QProgressBar*>() : nullptr;
+        check(bar != nullptr && bar->value() == 100,
+              QStringLiteral("P4 Python worker 的 progress(100) 没到宿主进度条（实得 %1）")
+                  .arg(bar == nullptr ? QStringLiteral("无进度条") : QString::number(bar->value())));
+        check(hub.plugin_errors().empty(),
+              QStringLiteral("P4 好插件不该产生插件问题（实得 %1 条）").arg(hub.plugin_errors().size()));
+        QDir(dir).removeRecursively();
+    }
+
     // ⑫12.1 四类槽位渲染（用户 2026-09-26"补六类"：panel/tool/option/option_entry）
     {
         namespace plug = xrkit::plugin;

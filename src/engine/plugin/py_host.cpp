@@ -488,6 +488,187 @@ public:
         return std::string();
     }
 
+    // ── ★★ P4：重型 L2 第一批（虚拟列表 / 日志视图 / 拖放目标 / 任务壳）──────────
+    // 口径：渲染/滚动/像素/委托全在宿主；插件只给"数据 + 回调"，回调都在**主线程**上被调
+    // （唯一例外：`task_run` 的 worker 在**工作线程**里跑，那两个 sink 是唯一允许的跨线程入口）。
+    py::object list(py::object parent, int row_height) const {
+        if (const UiFacade* facade = available("list")) {
+            return wrap(facade->list(handle_of(parent), row_height));
+        }
+        return py::none();
+    }
+    void list_set_row_count(py::object list_widget, int rows) const {
+        if (const UiFacade* facade = available("list_set_row_count")) {
+            facade->list_set_row_count(handle_of(list_widget), rows);
+        }
+    }
+    // ★L2.5：`provider(row) -> str` 只在**可见行**上被调（虚拟化的承诺）
+    void list_set_row_text(py::object list_widget, py::object provider) const {
+        const UiFacade* facade = available("list_set_row_text");
+        if (facade == nullptr) return;
+        if (provider.is_none() != 0) {
+            facade->list_set_row_text(handle_of(list_widget), nullptr);
+            return;
+        }
+        if (PyCallable_Check(provider.ptr()) == 0) {
+            core::log(core::Level::Warn,
+                      "[" + owner_ + "] ui.list_set_row_text 的 provider 不是可调用对象");
+            return;
+        }
+        py::object kept = provider;
+        keepalive()->push_back(kept);
+        facade->list_set_row_text(handle_of(list_widget), [kept](int row) -> std::string {
+            py::gil_scoped_acquire acquire;
+            try {
+                return py::str(kept(row)).cast<std::string>();
+            } catch (const py::error_already_set& err) {
+                core::log(core::Level::Warn,
+                          std::string("ui.list_set_row_text 的 provider 抛异常：") + err.what());
+                return std::string();
+            }
+        });
+    }
+    std::string list_row_text(py::object list_widget, int row) const {
+        if (const UiFacade* facade = available("list_row_text")) {
+            return facade->list_row_text(handle_of(list_widget), row);
+        }
+        return std::string();
+    }
+    void list_select_row(py::object list_widget, int row) const {
+        if (const UiFacade* facade = available("list_select_row")) {
+            facade->list_select_row(handle_of(list_widget), row);
+        }
+    }
+    int list_selected_row(py::object list_widget) const {
+        if (const UiFacade* facade = available("list_selected_row")) {
+            return facade->list_selected_row(handle_of(list_widget));
+        }
+        return -1;
+    }
+    int list_content_height(py::object list_widget) const {
+        if (const UiFacade* facade = available("list_content_height")) {
+            return facade->list_content_height(handle_of(list_widget));
+        }
+        return 0;
+    }
+    py::object log_view(py::object parent, int height) const {
+        if (const UiFacade* facade = available("log_view")) {
+            return wrap(facade->log_view(handle_of(parent), height));
+        }
+        return py::none();
+    }
+    void log_view_append(py::object view, const std::string& line) const {
+        if (const UiFacade* facade = available("log_view_append")) {
+            facade->log_view_append(handle_of(view), line);
+        }
+    }
+    void log_view_clear(py::object view) const {
+        if (const UiFacade* facade = available("log_view_clear")) {
+            facade->log_view_clear(handle_of(view));
+        }
+    }
+    std::string log_view_text(py::object view) const {
+        if (const UiFacade* facade = available("log_view_text")) {
+            return facade->log_view_text(handle_of(view));
+        }
+        return std::string();
+    }
+    py::object drop_zone(py::object parent, std::string hint) const {
+        if (const UiFacade* facade = available("drop_zone")) {
+            return wrap(facade->drop_zone(handle_of(parent), hint));
+        }
+        return py::none();
+    }
+    void drop_zone_on_drop(py::object zone, py::object on_drop) const {
+        const UiFacade* facade = available("drop_zone_on_drop");
+        if (facade == nullptr) return;
+        if (on_drop.is_none() != 0) {
+            facade->drop_zone_on_drop(handle_of(zone), nullptr);
+            return;
+        }
+        if (PyCallable_Check(on_drop.ptr()) == 0) {
+            core::log(core::Level::Warn,
+                      "[" + owner_ + "] ui.drop_zone_on_drop 的回调不是可调用对象");
+            return;
+        }
+        py::object kept = on_drop;
+        keepalive()->push_back(kept);
+        facade->drop_zone_on_drop(
+            handle_of(zone), [kept](const std::vector<std::string>& paths) {
+                py::gil_scoped_acquire acquire;
+                py::list dropped;
+                for (const std::string& path : paths) dropped.append(py::str(path));
+                try {
+                    kept(dropped);
+                } catch (const py::error_already_set& err) {
+                    core::log(core::Level::Warn,
+                              std::string("ui.drop_zone_on_drop 回调抛异常：") + err.what());
+                }
+            });
+    }
+    py::object task_panel(py::object parent, bool with_cancel) const {
+        if (const UiFacade* facade = available("task_panel")) {
+            return wrap(facade->task_panel(handle_of(parent), with_cancel));
+        }
+        return py::none();
+    }
+    // ★★ 唯一允许**跨线程**的入口：worker 在工作线程里跑，收到 `progress(0~100)` / `message(text)`。
+    //   两个 sink 都自带 GIL 获取（工作线程里没有 GIL）；worker 里**不许碰别的 ui.* 方法** ——
+    //   那由 `on_ui_thread()` 兜住（不在 UI 线程 ⇒ 那些方法返回空 + 记账）。
+    bool task_run(py::object panel, std::string title, py::object worker) const {
+        const UiFacade* facade = available("task_run");
+        if (facade == nullptr) return false;
+        if (worker.is_none() != 0 || PyCallable_Check(worker.ptr()) == 0) {
+            core::log(core::Level::Warn, "[" + owner_ + "] ui.task_run 的 worker 不是可调用对象");
+            return false;
+        }
+        py::object kept = worker;
+        keepalive()->push_back(kept);
+        return facade->task_run(
+            handle_of(panel), title,
+            [kept](UiFacade::TaskProgress progress, UiFacade::TaskMessage message) {
+                py::gil_scoped_acquire acquire;
+                py::object progress_object = py::cpp_function([progress](int percent) {
+                    py::gil_scoped_acquire inner;
+                    progress(percent);
+                });
+                py::object message_object = py::cpp_function([message](const std::string& text) {
+                    py::gil_scoped_acquire inner;
+                    message(text);
+                });
+                try {
+                    kept(progress_object, message_object);
+                } catch (const py::error_already_set& err) {
+                    const std::string what = err.what();
+                    py::gil_scoped_acquire inner;
+                    core::log(core::Level::Error,
+                              std::string("ui.task_run 的 worker 抛异常：") + what);
+                    message(std::string("插件任务抛异常：") + what);   // 零静默：显示在任务壳上
+                }
+            });
+    }
+    std::string task_status(py::object panel) const {
+        if (const UiFacade* facade = available("task_status")) {
+            return facade->task_status(handle_of(panel));
+        }
+        return std::string();
+    }
+    void task_cancel(py::object panel) const {
+        if (const UiFacade* facade = available("task_cancel")) {
+            facade->task_cancel(handle_of(panel));
+        }
+    }
+    bool task_cancel_requested(py::object panel) const {
+        if (const UiFacade* facade = available("task_cancel_requested")) {
+            return facade->task_cancel_requested(handle_of(panel));
+        }
+        return false;
+    }
+    bool on_ui_thread() const {
+        if (const UiFacade* facade = available("on_ui_thread")) return facade->on_ui_thread();
+        return false;
+    }
+
 private:
     // 门面/方法不可用 ⇒ **逐条记账**并返回"空"（零静默：插件作者能立刻看出为什么什么都没出现）
     const UiFacade* available(const std::string& method) const {
@@ -498,7 +679,17 @@ private:
                       "[" + owner_ + "] 控件门面不可用（ui." + method + "）：" + reason);
             return nullptr;
         }
-        return ui_facade();
+        const UiFacade* facade = ui_facade();
+        // ★★ 线程纪律：门面方法**只许在宿主 UI 线程**上调用（`task_run` 的那两个 sink 是唯一
+        //   例外，它们不走这里）。不在 ⇒ 返回空 + 记账 —— "工作线程里碰 Qt"是最容易崩的一类，
+        //   与其让它随机崩，不如让它**每次都失败得看得见**。
+        if (facade != nullptr && facade->on_ui_thread && !facade->on_ui_thread()) {
+            core::log(core::Level::Warn,
+                      "[" + owner_ + "] 控件门面只许在宿主 UI 线程调用（ui." + method +
+                          " 在别的线程被调用，已拒绝）");
+            return nullptr;
+        }
+        return facade;
     }
     static UiHandle handle_of(const py::object& widget_or_none) {
         return handle_of_widget(widget_or_none);
@@ -557,7 +748,33 @@ void ensure_api_module() {
             .def("log", &PyUi::log, py::arg("line"))
             .def("ask_yes_no", &PyUi::ask_yes_no, py::arg("title"), py::arg("message"))
             .def("ask_open_file", &PyUi::ask_open_file, py::arg("title"))
-            .def("ask_save_file", &PyUi::ask_save_file, py::arg("title"));
+            .def("ask_save_file", &PyUi::ask_save_file, py::arg("title"))
+            // ★ P4：重型 L2 第一批（表外无门 —— 能力表判据按这里的名单对账）
+            .def("list", &PyUi::list, py::arg("parent") = py::none(), py::arg("row_height") = 0)
+            .def("list_set_row_count", &PyUi::list_set_row_count, py::arg("list"), py::arg("rows"))
+            .def("list_set_row_text", &PyUi::list_set_row_text, py::arg("list"),
+                 py::arg("provider") = py::none())
+            .def("list_row_text", &PyUi::list_row_text, py::arg("list"), py::arg("row"))
+            .def("list_select_row", &PyUi::list_select_row, py::arg("list"), py::arg("row"))
+            .def("list_selected_row", &PyUi::list_selected_row, py::arg("list"))
+            .def("list_content_height", &PyUi::list_content_height, py::arg("list"))
+            .def("log_view", &PyUi::log_view, py::arg("parent") = py::none(),
+                 py::arg("height") = 0)
+            .def("log_view_append", &PyUi::log_view_append, py::arg("view"), py::arg("line"))
+            .def("log_view_clear", &PyUi::log_view_clear, py::arg("view"))
+            .def("log_view_text", &PyUi::log_view_text, py::arg("view"))
+            .def("drop_zone", &PyUi::drop_zone, py::arg("parent") = py::none(),
+                 py::arg("hint") = "")
+            .def("drop_zone_on_drop", &PyUi::drop_zone_on_drop, py::arg("zone"),
+                 py::arg("on_drop") = py::none())
+            .def("task_panel", &PyUi::task_panel, py::arg("parent") = py::none(),
+                 py::arg("with_cancel") = true)
+            .def("task_run", &PyUi::task_run, py::arg("panel"), py::arg("title"),
+                 py::arg("worker"))
+            .def("task_status", &PyUi::task_status, py::arg("panel"))
+            .def("task_cancel", &PyUi::task_cancel, py::arg("panel"))
+            .def("task_cancel_requested", &PyUi::task_cancel_requested, py::arg("panel"))
+            .def("on_ui_thread", &PyUi::on_ui_thread);
         py::class_<PyPluginApi>(m, "Api")
             .def_property_readonly("plugin_file", &PyPluginApi::owner)
             .def_property_readonly("plugin_dir", &PyPluginApi::plugin_dir)

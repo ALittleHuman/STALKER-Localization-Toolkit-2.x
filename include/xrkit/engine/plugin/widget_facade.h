@@ -71,6 +71,49 @@ struct UiFacade {
     std::function<bool(const std::string& title, const std::string& message)> ask_yes_no;
     std::function<std::string(const std::string& title)> ask_open_file;
     std::function<std::string(const std::string& title)> ask_save_file;
+
+    // ── ★★ L2（重型，第一批）：宿主组件的**表内方法** ──────────────────────────
+    // 口径（规格 §三）：渲染/委托/滚动/像素全在宿主；插件只给"数据 + 回调"。
+    //
+    // VirtualList：**虚拟化**行列表（只为视口内的行取文本 —— 10.3 同族）。
+    //   本批是**单列文本**形态（多列/三态勾选/行尾✕ 随 TreeView 批）。
+    std::function<UiHandle(UiHandle parent, int row_height)> list;
+    std::function<void(UiHandle list, int rows)> list_set_row_count;
+    // ★L2.5：宿主在**可见行**上问插件要文本（`row` 是全局行号）
+    std::function<void(UiHandle list, std::function<std::string(int)> provider)> list_set_row_text;
+    std::function<std::string(UiHandle list, int row)> list_row_text;
+    std::function<void(UiHandle list, int row)> list_select_row;
+    std::function<int(UiHandle list)> list_selected_row;
+    std::function<int(UiHandle list)> list_content_height;
+
+    // LogView：行式日志视图（**插件自己的**日志区；宿主日志栏是 `log_append`）
+    std::function<UiHandle(UiHandle parent, int height)> log_view;
+    std::function<void(UiHandle view, const std::string& line)> log_view_append;
+    std::function<void(UiHandle view)> log_view_clear;
+    std::function<std::string(UiHandle view)> log_view_text;
+
+    // DropZone：拖入目标（宿主负责"本地文件才接、其余给禁止光标"）
+    std::function<UiHandle(UiHandle parent, const std::string& hint)> drop_zone;
+    std::function<void(UiHandle zone, std::function<void(const std::vector<std::string>&)> on_drop)>
+        drop_zone_on_drop;
+
+    // TaskPanel：宿主任务壳（进度/消息/失败/取消/状态栏）—— 插件**不再自己起线程**。
+    //   `task_run(panel, title, worker)`：worker 在**工作线程**里跑，收到两个 sink
+    //   （`progress(0~100)` / `message(text)`）；**工作线程里只许调这两个 sink**，
+    //   其余门面方法一律回主线程再调（`on_ui_thread` 用来判）。
+    using TaskProgress = std::function<void(int)>;
+    using TaskMessage = std::function<void(const std::string&)>;
+    std::function<UiHandle(UiHandle parent, bool with_cancel)> task_panel;
+    std::function<bool(UiHandle panel, const std::string& title,
+                       std::function<void(TaskProgress, TaskMessage)> worker)>
+        task_run;
+    std::function<std::string(UiHandle panel)> task_status;
+    std::function<void(UiHandle panel)> task_cancel;
+    std::function<bool(UiHandle panel)> task_cancel_requested;
+
+    // 当前调用是否在**宿主 UI 线程**上：造控件/改控件只许在主线程；
+    // 不在 ⇒ 一律返回空/0 并由调用方**记账**（零静默，防"工作线程里碰 Qt"那类崩）。
+    std::function<bool()> on_ui_thread;
 };
 
 // 外壳注入实现（`src/shell/ui_facade_qt.cpp`）。传 nullptr = 撤销（无 GUI 依赖的进程/用例）。

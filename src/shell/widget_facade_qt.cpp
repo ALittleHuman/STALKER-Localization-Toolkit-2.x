@@ -15,6 +15,10 @@
 
 #include "plugin_ui.h"
 
+#include "drop_filter.h"
+#include "task_shell.h"
+#include "virtual_list.h"
+
 #include "xrkit/core/theme.h"
 #include "xrkit/engine/plugin/widget_facade.h"
 
@@ -26,8 +30,10 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <map>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace xrkit::shell {
@@ -36,6 +42,36 @@ namespace {
 namespace plug = xrkit::plugin;
 
 const stk_ui* table() { return qt_plugin_ui(); }
+
+// ── P4 的几件宿主侧状态 ───────────────────────────────────────────────────────
+// 拖放目标的回调盒：`FileDropFilter` 的 handler 是**构造时**给的（没有 setter），所以先装一个
+// "转发到盒子里"的 handler，`drop_zone_on_drop` 再往盒子里填真正的回调。
+// ★ 盒与过滤器都**进程级保活**（与控件同寿；同 L1 回调盒的纪律）。
+struct DropBox {
+    std::function<void(const std::vector<std::string>&)> handler;
+    FileDropFilter* filter = nullptr;
+};
+
+std::map<void*, DropBox*>& drop_boxes() {
+    static std::map<void*, DropBox*>* instance = new std::map<void*, DropBox*>();
+    return *instance;
+}
+
+std::map<void*, TaskShell*>& task_shells() {
+    static std::map<void*, TaskShell*>* instance = new std::map<void*, TaskShell*>();
+    return *instance;
+}
+
+TaskShell* task_of(plug::UiHandle panel) {
+    const auto it = task_shells().find(panel);
+    return it == task_shells().end() ? nullptr : it->second;
+}
+
+// 门面是在哪个线程装的，就以那个线程为"UI 线程"（`on_ui_thread` 的判据）
+std::thread::id& ui_thread_id() {
+    static std::thread::id instance;
+    return instance;
+}
 
 stk_widget* wrap(QWidget* widget) { return reinterpret_cast<stk_widget*>(widget); }
 QWidget* unwrap(plug::UiHandle handle) { return reinterpret_cast<QWidget*>(handle); }
@@ -221,6 +257,167 @@ const plug::UiFacade kQtFacade = {
         const char* path = table()->ask_save_file(nullptr, title.c_str());
         return path == nullptr ? std::string() : std::string(path);
     },
+    // ── ★★ P4：重型 L2 第一批（虚拟列表 / 日志视图 / 拖放目标 / 任务壳 / 线程判定）──
+    // 为什么这几件**可以**在门面实现里直接碰 Qt（而 L1 那 18 个不行）：L1 是对既有控件语义的
+    // 转发（唯一实现必须是 `plugin_ui.cpp`）；这里几件是**新能力**（行列表 / 日志视图 / 拖放区 /
+    // 任务壳的表内方法），宿主此前没有对外入口 ⇒ 实现在外壳这一层，且只碰宿主自己的组件。
+    /* list：容器 + `VirtualList` 子件（**单列文本**；多列/三态勾选/行尾✕ 随 TreeView 批）。
+       句柄＝容器本身（`pack` 用得上），列表用 objectName 找回来。 */
+    [](plug::UiHandle parent, int row_height) {
+        QWidget* host = resolve_parent(parent);
+        auto* container = new QWidget;
+        auto* view = new VirtualList(container);
+        if (row_height > 0) view->set_row_height(row_height);
+        auto* layout = new QVBoxLayout(container);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->addWidget(view);
+        place(host, container);
+        return handle_of(wrap(container));
+    },
+    /* list_set_row_count */
+    [](plug::UiHandle list, int rows) {
+        QWidget* container = unwrap(list);
+        if (container == nullptr) return;
+        if (auto* view = container->findChild<VirtualList*>()) {
+            view->set_row_count(rows);
+            view->refresh();
+        }
+    },
+    /* list_set_row_text（★L2.5：宿主只在**可见行**上问插件要文本 —— 10.3 同族） */
+    [](plug::UiHandle list, std::function<std::string(int)> provider) {
+        QWidget* container = unwrap(list);
+        if (container == nullptr) return;
+        auto* view = container->findChild<VirtualList*>();
+        if (view == nullptr) return;
+        if (!provider) {
+            view->set_row_text_provider(nullptr);
+            return;
+        }
+        view->set_row_text_provider(
+            [provider](int row) { return QString::fromStdString(provider(row)); });
+    },
+    /* list_row_text（读回：判据用；不改变池子与选中状态） */
+    [](plug::UiHandle list, int row) {
+        QWidget* container = unwrap(list);
+        if (container == nullptr) return std::string();
+        auto* view = container->findChild<VirtualList*>();
+        return view == nullptr ? std::string() : view->row_text(row).toStdString();
+    },
+    /* list_select_row */
+    [](plug::UiHandle list, int row) {
+        QWidget* container = unwrap(list);
+        if (container != nullptr) {
+            if (auto* view = container->findChild<VirtualList*>()) view->set_selected_row(row);
+        }
+    },
+    /* list_selected_row */
+    [](plug::UiHandle list) {
+        QWidget* container = unwrap(list);
+        if (container == nullptr) return -1;
+        auto* view = container->findChild<VirtualList*>();
+        return view == nullptr ? -1 : view->selected_row();
+    },
+    /* list_content_height：内容总高（＝行数×行高）—— 宿主页/视口据此撑开滚动范围 */
+    [](plug::UiHandle list) {
+        QWidget* container = unwrap(list);
+        if (container == nullptr) return 0;
+        auto* view = container->findChild<VirtualList*>();
+        return view == nullptr ? 0 : view->content_height();
+    },
+    /* log_view：只读多行（复用 `plugin_ui.cpp` 的 text_view），行式追加在下面 */
+    [](plug::UiHandle parent, int height) {
+        QWidget* host = resolve_parent(parent);
+        stk_widget* created = table()->text_view(nullptr, wrap(host), height, 1);
+        if (auto* view = qobject_cast<QPlainTextEdit*>(unwrap(created))) view->setReadOnly(true);
+        place(host, unwrap(created));
+        return handle_of(created);
+    },
+    /* log_view_append：**一次一行**追加（不重写全文 ⇒ 不 O(n²)、不破坏选中/滚动位置） */
+    [](plug::UiHandle view, const std::string& line) {
+        if (auto* edit = qobject_cast<QPlainTextEdit*>(unwrap(view))) {
+            edit->appendPlainText(QString::fromStdString(line));
+        }
+    },
+    /* log_view_clear */
+    [](plug::UiHandle view) {
+        if (auto* edit = qobject_cast<QPlainTextEdit*>(unwrap(view))) edit->clear();
+    },
+    /* log_view_text */
+    [](plug::UiHandle view) {
+        auto* edit = qobject_cast<QPlainTextEdit*>(unwrap(view));
+        return edit == nullptr ? std::string() : edit->toPlainText().toStdString();
+    },
+    /* drop_zone：容器 + 提示行 + 宿主拖放过滤器（**本地文件才接**，其余给禁止光标） */
+    [](plug::UiHandle parent, const std::string& hint) {
+        QWidget* host = resolve_parent(parent);
+        auto* container = new QWidget;
+        container->setObjectName(QStringLiteral("xrkit_facade_drop_zone"));
+        auto* layout = new QVBoxLayout(container);
+        layout->setContentsMargins(0, 0, 0, 0);
+        auto* label = new QLabel(QString::fromStdString(hint), container);
+        label->setWordWrap(true);
+        layout->addWidget(label);
+        auto* box = new DropBox;   // 进程级保活（与控件同寿，见文件头那条纪律）
+        // ★ 过滤器**挂在容器上**（父子关系＝生命周期）：容器没了过滤器就没了，
+        //   自检也能顺着控件树找到它去派发真事件（`findChild<FileDropFilter*>`）。
+        box->filter = new FileDropFilter(
+            [box](const QStringList& paths) {
+                if (box->handler == nullptr) return;
+                std::vector<std::string> out;
+                out.reserve(static_cast<size_t>(paths.size()));
+                for (const QString& path : paths) out.push_back(path.toStdString());
+                box->handler(out);
+            },
+            container);
+        box->filter->attach(container);
+        drop_boxes()[reinterpret_cast<void*>(container)] = box;
+        place(host, container);
+        return handle_of(wrap(container));
+    },
+    /* drop_zone_on_drop */
+    [](plug::UiHandle zone, std::function<void(const std::vector<std::string>&)> on_drop) {
+        auto it = drop_boxes().find(zone);
+        if (it == drop_boxes().end() || it->second == nullptr) return;
+        it->second->handler = std::move(on_drop);
+    },
+    /* task_panel：宿主任务壳（进度 / 消息 / 失败 / 取消 / 状态栏） */
+    [](plug::UiHandle parent, bool with_cancel) {
+        QWidget* host = resolve_parent(parent);
+        auto* shell = new TaskShell(
+            host, with_cancel ? TaskShell::CancelButton::Yes : TaskShell::CancelButton::No);
+        place(host, shell->panel());
+        task_shells()[reinterpret_cast<void*>(shell->panel())] = shell;
+        return handle_of(wrap(shell->panel()));
+    },
+    /* task_run：worker 在**工作线程**里跑，收到两个 sink（progress 0~100 / message） */
+    [](plug::UiHandle panel, const std::string& title,
+       std::function<void(plug::UiFacade::TaskProgress, plug::UiFacade::TaskMessage)> worker) {
+        TaskShell* shell = task_of(panel);
+        if (shell == nullptr || !worker) return false;
+        return shell->run(QString::fromStdString(title),
+                          [worker](const ProgressSink& progress, const MessageSink& message) {
+                              worker([progress](int percent) { progress(percent); },
+                                     [message](const std::string& text) { message(text); });
+                          });
+    },
+    /* task_status */
+    [](plug::UiHandle panel) {
+        TaskShell* shell = task_of(panel);
+        return shell == nullptr ? std::string() : shell->status().toStdString();
+    },
+    /* task_cancel */
+    [](plug::UiHandle panel) {
+        if (TaskShell* shell = task_of(panel)) {
+            shell->request_cancel(QStringLiteral("插件请求取消"));
+        }
+    },
+    /* task_cancel_requested */
+    [](plug::UiHandle panel) {
+        TaskShell* shell = task_of(panel);
+        return shell != nullptr && shell->cancel_requested();
+    },
+    /* on_ui_thread：门面是在哪个线程装的，就以那个线程为"UI 线程" */
+    []() { return std::this_thread::get_id() == ui_thread_id(); },
 };
 
 plug::UiFacade& mutable_facade() {
@@ -233,6 +430,8 @@ plug::UiFacade& mutable_facade() {
 
 // 外壳装配时调一次：装门面，并把"写宿主日志栏"这条接上（`sink` 可空 ⇒ 该条不可用、调用侧记账）
 void install_qt_ui_facade(std::function<void(const std::string&)> log_sink) {
+    // ★ "UI 线程"＝装门面的那个线程（外壳在 GUI 主线程装配；工作线程里的 `api.ui.*` 会被挡住）
+    ui_thread_id() = std::this_thread::get_id();
     mutable_facade().log_append = std::move(log_sink);
     plug::set_ui_facade(&mutable_facade());
 }

@@ -35,7 +35,7 @@ EXPECT_API = {
     "register_panel": "贡献一个面板（控件门面的落点之一）",
     "register_tool": "贡献一个 Hub 页（控件门面的落点之一）",
 }
-# Ui：L1 装配（10）+ L2 操作/服务（8）
+# Ui：L1 装配（10）+ L2 操作/服务（8）+ ★P4 重型 L2 第一批（19）
 EXPECT_UI = {
     "label": "L1 文本", "button": "L1 按钮（回调）", "row": "L1 行容器",
     "checkbox": "L1 勾选框（回调）", "entry": "L1 单行输入", "text": "L1 多行输入",
@@ -45,6 +45,24 @@ EXPECT_UI = {
     "alive": "L2 句柄是否还有效", "log": "L2 宿主日志栏（LogView）",
     "ask_yes_no": "L2 宿主对话框", "ask_open_file": "L2 宿主文件选择",
     "ask_save_file": "L2 宿主保存对话框",
+    # ★★ P4：重型 L2 第一批。加这批名字是**有意为之**（规格 §三 的"表内方法"）——
+    #    判据里"多一个即泄漏"就是拦"顺手加的"；每条写清它替六页里的哪件事。
+    "list": "L2.1 虚拟化行列表（宿主建/渲染/复用；本批是单列文本形态）",
+    "list_set_row_count": "L2.1 行数（宿主据此决定建几行控件）",
+    "list_set_row_text": "★L2.5 行文本 provider：**只在可见行**上被调（10.3 同族）",
+    "list_row_text": "L2.1 读回某行文本（判据用；不动池子与选中）",
+    "list_select_row": "L2.1 选中某行", "list_selected_row": "L2.1 当前选中行",
+    "list_content_height": "L2.1 内容总高（宿主页/视口据此撑开滚动范围）",
+    "log_view": "L2.2 行式日志视图（插件**自己**的日志区）",
+    "log_view_append": "L2.2 追加一行（不重写全文 ⇒ 不 O(n²)）",
+    "log_view_clear": "L2.2 清空", "log_view_text": "L2.2 读回全文（判据用）",
+    "drop_zone": "L2.3 拖入区域（宿主判定「本地文件才接」）",
+    "drop_zone_on_drop": "★L2.5 落下回调（收到本机路径列表）",
+    "task_panel": "L2.4 宿主任务壳（进度/消息/失败/取消/状态栏）",
+    "task_run": "★L2.4 起任务：worker 在**工作线程**里跑，收 progress/message 两个 sink",
+    "task_status": "L2.4 当前状态文案", "task_cancel": "L2.4 请求取消",
+    "task_cancel_requested": "L2.4 worker 轮询取消位（协作式取消）",
+    "on_ui_thread": "★线程纪律：门面方法只许在宿主 UI 线程调用（其余一律拒绝并记账）",
 }
 # Widget：**故意为空** —— 不透明句柄，插件不能对它做任何事（禁 L4 裸 Qt）
 EXPECT_WIDGET: dict[str, str] = {}
