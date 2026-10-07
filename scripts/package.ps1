@@ -43,32 +43,28 @@ New-Item -ItemType Directory -Force -Path (Join-Path $stage 'plugins') | Out-Nul
 Write-Host "== 复制主程序 =="
 Copy-Item -LiteralPath $exe.FullName -Destination $stage
 
-# ★★ 插件改装 P2（2026-10-07）：**CPython 运行期必须随包**。
-#   引擎现在链接 `python3XX.lib`（插件＝`.py`，宿主在引擎层）⇒ 包里缺 `python3XX.dll`
-#   的结果不是"插件不可用"，而是**主程序根本起不来**。开发态那份 DLL 由 CMake 的
-#   `xrkit_attach_python_runtime()` 拷在 exe 旁边；这里把它搬进包。
-#   ★ 判据化：**拷不到就 throw** —— 宁可打包失败，也不许打出一个双击起不来的包
-#     （包内那趟 `--smoke` 是第二道闸，但它只能证明"跑起来了"，证明不了"为什么没有"）。
-#   ⚠ 尚未随包的：Python **标准库**（`Lib/`）。当前解释器用的是构建期烘焙的
-#     `XRKIT_PYTHON_HOME_DEFAULT`（本机 Python 安装）⇒ 发行到**没有 Python 的机器**上会
-#     `Failed to import encodings module`。随包自带 embeddable Python（`python\`）是下一片，
-#     见批报告「只报告未改」。
-$pyTargets = @()
-$pyNames = @()
-foreach ($d in @((Join-Path $shell 'src\shell'), (Join-Path $shell 'tools\cli'))) {
-    if (-not (Test-Path $d)) { continue }
-    Get-ChildItem -LiteralPath $d -Filter 'python3*.dll' -File -ErrorAction SilentlyContinue |
-        ForEach-Object {
-            if ($pyNames -notcontains $_.Name) { $pyNames += $_.Name; $pyTargets += $_.FullName }
-        }
+# ★★ 插件改装 P2a/P2c（2026-10-07）：**CPython 运行期 + 标准库都随包**。
+#   引擎链接了 `python3XX.lib`（插件＝`.py`，宿主在引擎层）：
+#     · 缺 `python3XX.dll` ⇒ **主程序根本起不来**（不是"插件不可用"）；
+#     · 缺 `python3XX.zip`（标准库）⇒ 宿主起不来（`Failed to import encodings module`），
+#       而开发态之所以"看起来能跑"，是因为构建期把**本机 Python 路径**烘焙进了
+#       `XRKIT_PYTHON_HOME_DEFAULT` —— 发行到**没装 Python 的机器**上就露馅。
+#   来源＝vendored 的 **embeddable Python**（`python tools/fetch_third_party.py --only python-embed`），
+#   **扁平铺进包根**：embeddable 包本来就是"解压即用"的扁平布局（DLL/.zip/*.pyd 同层），
+#   解释器按 `resolve_python_home` 的"exe 旁有 `python3XX.zip`"这条认出它（引擎侧判据见 py_host.cpp）。
+#   ★ 判据化：**缺件就 throw** —— 宁可打包失败，也不许打出一个双击起不来的包。
+$pyEmbed = Join-Path $root 'third_party\python-embed'
+$pyZip = @(Get-ChildItem -LiteralPath $pyEmbed -Filter 'python3*.zip' -File -ErrorAction SilentlyContinue)
+if ($pyZip.Count -eq 0) {
+    throw ("找不到随包用的 embeddable Python（$pyEmbed\python3*.zip）。`n" +
+           "  先跑：python tools\fetch_third_party.py --only python-embed`n" +
+           "  （用户口径：**发布随包自带 embeddable Python**，发行到没装 Python 的机器也要能起插件宿主）")
 }
-if ($pyTargets.Count -eq 0) {
-    throw ("找不到 python3*.dll（引擎已嵌入 CPython）—— 打出来的包会起不来。" +
-           " 先跑 scripts\build.ps1 -Preset msvc-shell，确认 exe 旁边有 python314.dll；" +
-           " 搜过：" + ((Join-Path $shell 'src\shell') + ' ; ' + (Join-Path $shell 'tools\cli')))
-}
-foreach ($f in $pyTargets) { Copy-Item -LiteralPath $f -Destination $stage -Force }
-Write-Host ("  CPython 运行期 {0} 个：{1}" -f $pyTargets.Count, ($pyNames -join ', '))
+$pyFiles = @(Get-ChildItem -LiteralPath $pyEmbed -File -Recurse)
+if ($pyFiles.Count -eq 0) { throw "embeddable Python 目录是空的：$pyEmbed" }
+Copy-Item -Path (Join-Path $pyEmbed '*') -Destination $stage -Recurse -Force
+Write-Host ("  CPython 运行期 + 标准库：{0} 个文件（{1:N1} MB，来源 third_party\python-embed）" `
+            -f $pyFiles.Count, (($pyFiles | Measure-Object -Property Length -Sum).Sum / 1MB))
 
 # ★★ 2026-10-05（本批 #8）：开发版 = 标记 ∈ {ALPHA, BETA}（版本口径仍是 version.json 一处）。
 #   在复制插件**之前**先把这个开关定下来 —— 它决定 `plugins\` 是"带全部插件"还是"空目录"。
@@ -121,6 +117,15 @@ if ($isDev) {
                 $copiedPlugins += $_.Name
             }
     }
+    # ★★ 插件改装 P2b/P2c：开发版还带一枚 **Python 插件夹具** —— 这样"包内自检"能真验
+    #   "包内 exe 能加载 `.py`"（否则那一条判据在本机永远只验 DLL 那一路）。
+    #   发行版不带它（与"发行版 plugins\ 为空"同一条口径）。
+    $pyFixture = Join-Path $root 'tests\python_plugins\hello.py'
+    if (-not (Test-Path $pyFixture)) {
+        throw "找不到 Python 插件夹具：$pyFixture（开发版包内自检要真验 `.py` 加载链）"
+    }
+    Copy-Item -LiteralPath $pyFixture -Destination (Join-Path $stage 'plugins') -Force
+    $copiedPlugins += 'hello.py'
     if ($copiedPlugins.Count -gt 0) {
         Write-Host ("  插件 {0} 个：{1}" -f $copiedPlugins.Count, ($copiedPlugins -join ', '))
     } else {
@@ -251,12 +256,22 @@ if ($exeIdentity -ne $verLine) {
           "（version.h 没被写回？`--build-package` 的写回段失败？.rc 没重生成？）"
 }
 Write-Host ("  版本身份判据通过：包内 exe ProductVersion=「{0}」" -f $exeIdentity)
+# ★★ 插件改装 P2c：把"随包带了哪个 CPython 运行期/标准库"写进**包自己的契约声明** ——
+#   门禁（tests\run_ci.py 的 `[python-embed]` 步）看到这一行，才会对**这个序号**执行
+#   "从产物目录跑 `xrkit_app.exe --python-host` 真能起宿主"（口径同 `platform_plugins=`：
+#   一旦声明就必须成立；早期没声明的包只能记台账，不许无条件跑 —— dist\ 是运行期产物）。
+$pyZipName = (Get-ChildItem -LiteralPath $pyEmbed -Filter 'python3*.zip' -File |
+              Select-Object -First 1).Name
+$pyDllName = (Get-ChildItem -LiteralPath $pyEmbed -Filter 'python3*.dll' -File |
+              Select-Object -First 1).Name
+$pyContract = "zip=$pyZipName,dll=$pyDllName"
 @"
 version=$verLine
 index=$BuildIndex
 commit=$commit
 built=$stamp
 platform_plugins=qwindows,qoffscreen
+python_runtime=$pyContract
 exe_identity=$exeIdentity
 "@ | Set-Content -LiteralPath (Join-Path $stage 'version.txt') -Encoding UTF8
 # ★★ 2026-10-07（用户裁决）：`platform_plugins=` 这一行是**包自己的契约声明** ——
@@ -349,6 +364,49 @@ foreach ($plat in @('qwindows.dll', 'qoffscreen.dll')) {
     }
 }
 Write-Host "  平台插件判据通过：包内 platforms\ 同时有 qwindows.dll + qoffscreen.dll"
+
+# ★★ 插件改装 P2a/P2c：**包内 Python 判据** —— 起宿主 + 加载 `.py`，全部在**包目录里**跑
+#   （`xrkit_app.exe` 的同名开关与 CLI 共用引擎层的**唯一一份**实现 `run_python_host_probe`）。
+#   为什么必须在包内跑：开发态的宿主用的是"构建期烘焙的本机 Python 路径"，**只有包内那一份**
+#   才是 `exe 旁 python3XX.zip` ⇒ 只有从包里跑，才真的验了"发行到没装 Python 的机器上也能起插件"。
+$prevEapPy = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $pyLog = Join-Path $stage 'pyhost.log'
+    $pyErr = Join-Path $stage 'pyhost.err.log'
+    $pyProc = Start-Process -FilePath (Join-Path $stage 'xrkit_app.exe') -ArgumentList '--python-host' `
+        -NoNewWindow -Wait -PassThru -RedirectStandardOutput $pyLog -RedirectStandardError $pyErr
+    $pyLine = Select-String -Path $pyLog -Pattern 'PYHOST enabled=1 initialized=1 gil=released' |
+        Select-Object -First 1
+    if (-not $pyLine -or $pyProc.ExitCode -ne 0) {
+        Get-Content -LiteralPath $pyLog -Tail 6 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+        Get-Content -LiteralPath $pyErr -Tail 6 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+        throw ("包内 CPython 宿主没起来（要求 `PYHOST enabled=1 initialized=1 gil=released` 且退出码 0；" +
+               "实得退出码 $($pyProc.ExitCode)）—— 见 include/xrkit/engine/plugin/py_host.h 的口径")
+    }
+    Write-Host "  $($pyLine.Line.Trim())  (exit=$($pyProc.ExitCode))"
+    Remove-Item -Force $pyLog, $pyErr -ErrorAction SilentlyContinue
+
+    if ($isDev) {
+        # 开发版才有 Python 插件夹具（发行版 plugins\ 为空）⇒ 只在开发版验"加载链"
+        $plugLog = Join-Path $stage 'pyplugins.log'
+        $plugErr = Join-Path $stage 'pyplugins.err.log'
+        $plugProc = Start-Process -FilePath (Join-Path $stage 'xrkit_app.exe') `
+            -ArgumentList '--py-plugins', "`"$(Join-Path $stage 'plugins')`"" `
+            -NoNewWindow -Wait -PassThru -RedirectStandardOutput $plugLog -RedirectStandardError $plugErr
+        $plugLine = Select-String -Path $plugLog -Pattern 'PYPLUGINS files=\d+ loaded=[1-9]\d* .*errors=0' |
+            Select-Object -First 1
+        if (-not $plugLine -or $plugProc.ExitCode -ne 0) {
+            Get-Content -LiteralPath $plugLog -Tail 8 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+            throw ("包内 Python 插件加载链没通（要求 `PYPLUGINS … loaded>=1 … errors=0` 且退出码 0；" +
+                   "实得退出码 $($plugProc.ExitCode)）")
+        }
+        Write-Host "  $($plugLine.Line.Trim())  (exit=$($plugProc.ExitCode))"
+        Remove-Item -Force $plugLog, $plugErr -ErrorAction SilentlyContinue
+    }
+} finally {
+    $ErrorActionPreference = $prevEapPy
+}
 
 # ★★ 2026-10-05（本批 #8）：**开发版包内带全部插件** —— 判据落在**包内自检那一行**上。
 #   口径（任务书 #8）：开发版把已构建插件（含测试插件）复制进包 `plugins\`；发行版仍为空

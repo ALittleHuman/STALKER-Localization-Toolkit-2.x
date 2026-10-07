@@ -25,7 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
-from _cpp_source import strip_comments  # noqa: E402
+from _cpp_source import function_body, strip_comments  # noqa: E402
 
 FRONTS = {
     "src/shell/hub.cpp": "Unity",
@@ -35,6 +35,11 @@ UNIFIED = "load_all_plugins_from_dir"
 DLL_ONLY = "load_plugins_from_dir"
 PY_ONLY = "load_python_plugins_from_dir"
 UNIFIED_OWNER = "src/engine/plugin/loader.cpp"
+# 宿主探针的**唯一实现**也在这个集合里（P2c：探针从 CLI 搬进了引擎 —— 因为发行包里只有
+# `xrkit_app.exe`，包内判据必须由 GUI exe 也能跑）。它**本来就该**直接调分路加载器（要计数），
+# 所以它在白名单里、而**前端**不在白名单里（前端只能走统一入口这一条路）。
+PY_OWNER = "src/engine/plugin/py_host.cpp"
+SCANNED = list(FRONTS) + [UNIFIED_OWNER, PY_OWNER]
 
 # `load_plugins_from_dir` 是 `load_all_plugins_from_dir` 的**真前缀** ⇒ 匹配时必须要求
 # 左边不是 `_`（否则把统一入口也算成"绕过"）。
@@ -48,9 +53,22 @@ def _count(text: str, name: str) -> list[int]:
 ALLOW = {
     ("tools/cli/main.cpp", "load_plugins_from_dir"):
         (1, "--plugin-init-rollback 探针：专门验 **DLL 那一路**的 init 失败回滚，故意不经过统一入口"),
-    ("tools/cli/main.cpp", "load_python_plugins_from_dir"):
-        (1, "--py-plugins 探针：要 PyLoadSummary 计数，专门验 **Python 那一路**"),
+    (PY_OWNER, "load_python_plugins_from_dir"):
+        (1, "宿主探针的**唯一实现**（run_python_host_probe）：要 PyLoadSummary 计数，专门验 Python 那一路"),
 }
+
+
+def _call_lines(text: str, name: str, body_of: str = "") -> list[int]:
+    """调用点行号。`body_of` 非空 ⇒ **只在那个函数体里数**（本仓纪律：按函数体计数，
+    否则"函数定义那一行"自己也会命中，白名单就得靠数字凑 —— 实测第一版就是这么红的）。"""
+    pattern = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"\s*\(")
+    if body_of:
+        scope = function_body(text, body_of)
+        if not scope:
+            return []
+        offset = text.find(scope)
+        return [text.count("\n", 0, offset + m.start()) + 1 for m in pattern.finditer(scope)]
+    return [text.count("\n", 0, m.start()) + 1 for m in pattern.finditer(text)]
 
 
 def scan(sources: dict[str, str]) -> list[str]:
@@ -58,27 +76,30 @@ def scan(sources: dict[str, str]) -> list[str]:
     allow_hits: dict[tuple[str, str], int] = {}
     for rel, source in sources.items():
         text = strip_comments(source)
-        if rel in FRONTS and not _count(text, UNIFIED):
+        if rel in FRONTS and not _call_lines(text, UNIFIED):
             offenders.append("%s：没有调用统一入口 %s(...)（两个前端必须走同一条路）"
                              % (rel, UNIFIED))
-        # 逐处报：哪些调用点越过了统一入口（`load_plugins_from_dir` = 只加载 DLL 那条老路）
-        if rel != UNIFIED_OWNER:
-            for name in (DLL_ONLY, PY_ONLY):
-                lines = _count(text, name)
-                if not lines:
-                    continue
-                budget = ALLOW.get((rel, name))
-                if budget is not None and len(lines) == budget[0]:
-                    allow_hits[(rel, name)] = len(lines)
-                    continue
-                for line in lines:
-                    offenders.append("%s:%d 调了 %s(...) —— 它只许被统一入口（%s）调用%s"
-                                     % (rel, line, name, UNIFIED_OWNER,
-                                        "" if budget is None
-                                        else "（白名单登记 %d 处，实得 %d 处）"
-                                             % (budget[0], len(lines))))
-        if rel == UNIFIED_OWNER and not _count(text, UNIFIED):
-            offenders.append("%s 里没有实现统一入口 %s(...)" % (UNIFIED_OWNER, UNIFIED))
+        if rel == UNIFIED_OWNER:
+            # 统一入口**自己**就该调那两条分路加载器 —— 这不是"绕过"
+            if not _call_lines(text, UNIFIED):
+                offenders.append("%s 里没有实现统一入口 %s(...)" % (UNIFIED_OWNER, UNIFIED))
+            continue
+        # 其余被扫文件：任何分路调用都要么在白名单里、要么判红
+        for name in (DLL_ONLY, PY_ONLY):
+            body = "run_python_host_probe" if (rel == PY_OWNER and name == PY_ONLY) else ""
+            lines = _call_lines(text, name, body)
+            if not lines:
+                continue
+            budget = ALLOW.get((rel, name))
+            if budget is not None and len(lines) == budget[0]:
+                allow_hits[(rel, name)] = len(lines)
+                continue
+            for line in lines:
+                offenders.append("%s:%d 调了 %s(...) —— 它只许被统一入口（%s）调用%s"
+                                 % (rel, line, name, UNIFIED_OWNER,
+                                    "" if budget is None
+                                    else "（白名单登记 %d 处，实得 %d 处）"
+                                         % (budget[0], len(lines))))
 
     if UNIFIED_OWNER not in sources:
         offenders.append("缺少统一入口的实现文件 %s（判据没跑成，不是通过）" % UNIFIED_OWNER)
@@ -92,29 +113,34 @@ def scan(sources: dict[str, str]) -> list[str]:
 
 
 _GREEN_FRONT = 'void f() { load_all_plugins_from_dir(dir, registry_, ui); }\n'
-# CLI 里那两条**诊断探针**（白名单登记的就是它们）—— 干净样本必须包含它们，
+# CLI 里那条**DLL 回滚诊断探针**（白名单登记的就是它）—— 干净样本必须包含它，
 # 否则"白名单零命中即红"那条规则会把干净样本误报。
-_PROBES = ('void probe_dll() { load_plugins_from_dir(dir, registry, nullptr); }\n'
-           'void probe_py() { load_python_plugins_from_dir(dir, registry); }\n')
-_GREEN_CLI = _GREEN_FRONT + _PROBES
+_PROBE_CLI = 'void probe_dll() { load_plugins_from_dir(dir, registry, nullptr); }\n'
+_GREEN_CLI = _GREEN_FRONT + _PROBE_CLI
 _GREEN_OWNER = (
     'std::vector<RegistrationError> load_all_plugins_from_dir(...) {\n'
     '    auto a = load_plugins_from_dir(dir, registry, ui);\n'
     '    auto b = load_python_plugins_from_dir(dir, registry);\n'
     '    return a;\n}\n'
 )
+# 探针实现在引擎里（P2c 起）：它直接调 Python 分路加载器是**登记过的例外**
+_GREEN_PY = 'int run_python_host_probe(...) { load_python_plugins_from_dir(dir, registry); }\n'
 _GREEN_SOURCES = {
     "src/shell/hub.cpp": _GREEN_FRONT,
     "tools/cli/main.cpp": _GREEN_CLI,
     UNIFIED_OWNER: _GREEN_OWNER,
+    PY_OWNER: _GREEN_PY,
 }
 _RED = {
     "前端绕过统一入口": dict(_GREEN_SOURCES, **{"src/shell/hub.cpp":
         'void f() { load_plugins_from_dir(dir, registry_, ui); }\n'}),
-    "前端根本没加载插件": dict(_GREEN_SOURCES, **{"tools/cli/main.cpp": _PROBES}),
-    "统一入口缺失": {"src/shell/hub.cpp": _GREEN_FRONT, "tools/cli/main.cpp": _GREEN_CLI},
+    "前端根本没加载插件": dict(_GREEN_SOURCES, **{"tools/cli/main.cpp": _PROBE_CLI}),
+    "统一入口缺失": {"src/shell/hub.cpp": _GREEN_FRONT, "tools/cli/main.cpp": _GREEN_CLI,
+                     PY_OWNER: _GREEN_PY},
     "别处也调 Python 加载": dict(_GREEN_SOURCES, **{"tools/cli/main.cpp":
         _GREEN_CLI + 'void g() { load_python_plugins_from_dir(dir, registry); }\n'}),
+    "白名单零命中（登记过的那条探针没了）": dict(_GREEN_SOURCES, **{
+        "tools/cli/main.cpp": _GREEN_FRONT + 'void g() { load_python_plugins_from_dir(dir, registry); }\n'}),
 }
 
 
@@ -136,7 +162,7 @@ def main() -> int:
             print("           " + item)
         return 1
     sources: dict[str, str] = {}
-    for rel in list(FRONTS) + [UNIFIED_OWNER]:
+    for rel in SCANNED:
         path = ROOT / rel
         if not path.is_file():
             print("PLUGINENTRY fail 找不到 %s（判据没跑成，不是通过）" % rel)

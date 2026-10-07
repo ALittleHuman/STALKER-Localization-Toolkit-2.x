@@ -3460,82 +3460,15 @@ int run_cli(const std::vector<std::string>& args) {
     //   ③ 留痕仍在（零静默）：失败理由必须看得见 —— `errors_` 不参与"零残留"（见 registry.h）。
     //   ★ 判据不是"之后调它不崩"：`FreeLibrary` 未必立刻 unmap，"不崩≠干净"（草案已注明）。
     // 退出码：0=全绿；1=有断言不成立；2=夹具缺失（外部前提，门禁按档位记未覆盖）；3=用法错误。
-    if (action == "--py-plugins") {
-        // ★★ 插件改装 P2b：**Python 插件加载链**的探针 —— 一次走完
-        //   「起宿主 → 扫目录 → import → `register(api)` → 进 Registry → **真的消费一次**
-        //     → 报账」。
-        //   ★ 为什么连"消费"一起做：规格 §四.2「每类注册点 ↔ 消费点一一对应」。只证明
-        //     "注册成功"＝把审计抓过的"注册了却没人读"放进来。
-        const std::string dir = operands.empty() ? (xrkit::core::app_dir() + "/plugins")
-                                                 : operands[0];
-        const xrkit::plugin::PyHostStatus host = xrkit::plugin::init_python(python_home);
-        std::cout << "PYPLUGINS host=" << (host.initialized ? "ok" : (host.enabled ? "failed" : "disabled"))
-                  << " version=" << (host.version.empty() ? "-" : host.version)
-                  << " dir=" << dir << "\n";
-        if (!host.enabled) {
-            std::cout << "PYPLUGINS reason=" << host.reason << "\n";
-            return kExitSkip;
-        }
-        xrkit::plugin::Registry registry;
-        xrkit::plugin::PyLoadSummary summary;
-        const std::vector<xrkit::plugin::RegistrationError> errors =
-            xrkit::plugin::load_python_plugins_from_dir(dir, registry, &summary);
-        // ★ 键值协议**一行一条**：Python 异常带 traceback（多行），直接打会把"plugin=" 之后的
-        //   内容跳行、解析器只能靠猜 ⇒ 这里把换行折成 ` ⏎ `（口径同 `--shot` 的 `LBL` 行）。
-        const auto one_line = [](const std::string& text) {
-            std::string out = text;
-            for (size_t at = out.find('\n'); at != std::string::npos; at = out.find('\n', at)) {
-                out.replace(at, 1, " \xE2\x8F\x8E ");   // ⏎（UTF-8）
-            }
-            return out;
-        };
-        std::cout << "PYPLUGINS files=" << summary.files << " loaded=" << summary.loaded
-                  << " registrations=" << summary.registrations << " errors=" << errors.size()
-                  << "\n";
-        for (const xrkit::plugin::RegistrationError& e : errors) {
-            std::cout << "PYPLUGINS error plugin=" << e.plugin << " reason=" << one_line(e.message)
-                      << "\n";
-            // ★ 回滚判据的可见面：坏插件这次注册进表的东西**必须为 0**（按 owner 逐容器报账）。
-            std::cout << "PYPLUGINS residue plugin=" << e.plugin
-                      << " value=" << registry.residue_for(e.plugin).registrations() << "\n";
-        }
-        // 消费端：fs 页 toolbar 槽里第一条命令（有就真调一次 —— 回调要回到 Python）
-        const std::vector<const xrkit::plugin::CommandReg*> items =
-            registry.menu_items_for("fs", "toolbar", {});
-        if (!items.empty()) {
-            const xrkit::plugin::CommandReg* first = items.front();
-            std::cout << "PYPLUGINS consume plugin=" << first->plugin << " label=" << first->label
-                      << " id=" << first->id << "\n";
-            registry.invoke(first->plugin, first->label, first->handler);
-            // 回滚/残留口径的可见面：这条命令的 owner 现在应有多少条注册
-            std::cout << "PYPLUGINS residue plugin=" << first->plugin
-                      << " value=" << registry.residue_for(first->plugin).registrations() << "\n";
-        } else {
-            std::cout << "PYPLUGINS consume result=none\n";
-        }
-        for (const std::string& line : xrkit::plugin::take_python_log_lines()) {
-            std::cout << "PYPLUGINS log " << line << "\n";
-        }
-        if (!host.initialized) return kExitFail;
-        return (summary.loaded > 0 && errors.empty()) ? kExitOk : kExitFail;
-    }
-
-    if (action == "--python-host") {
-        // ★★ 插件改装 P2（用户 2026-10-07 拍板：Python 模块接口 + C ABI 退役）：
-        //   起一次 CPython 宿主并打印状态。**零静默**：无论成败都打一行 `PYHOST ...`
-        //   （键值对，门禁 `[python-host]` 步直接解析这一行）。
-        //   退出码口径（与既有契约一致）：
-        //     0 = 宿主起来了（enabled=1 initialized=1）；
-        //     2 = 构建期就没带 Python 支持（enabled=0）—— 这是**显式跳过**，理由在 reason= 里，
-        //         release 档由门禁把它当 FAIL（**不许**让它看起来像通过）；
-        //     1 = 带了支持却起不来（真缺陷，比如 home 指错、DLL 缺）。
-        const xrkit::plugin::PyHostStatus started = xrkit::plugin::init_python(python_home);
-        std::cout << xrkit::plugin::python_host_report() << "\n";
-        const bool enabled = started.enabled;
-        const bool initialized = started.initialized;
-        xrkit::plugin::shutdown_python();
-        if (!enabled) return kExitSkip;
-        return initialized ? kExitOk : kExitFail;
+    // ★★ 插件改装 P2b/P2c：宿主与插件加载链的**两个诊断动作**。
+    //   实现在**引擎层唯一一份**（`py_host.cpp::run_python_host_probe`）——
+    //   因为发行包里只有 `xrkit_app.exe`（没有 CLI），"包内 Python 能不能起来、能不能加载 .py"
+    //   必须由 GUI exe 的同名开关也能跑；两处各写一遍必然分叉（本仓最贵的一类返工）。
+    //   退出码：0=通 / 1=有失败 / 2=构建期没带 Python（显式跳过）/ 3=用法错误。
+    if (action == "--python-host" || action == "--py-plugins") {
+        return xrkit::plugin::run_python_host_probe(args, [](const std::string& line) {
+            std::cout << line << "\n";
+        });
     }
 
     if (action == "--plugin-init-rollback") {

@@ -91,6 +91,25 @@ size_t& loaded_python_plugins() {
     return instance;
 }
 
+// 裸 embeddable 布局的判据：`<home>/python3XX.zip` 在**根**（标准库=.zip，扩展模块=.pyd 也在根）。
+// 为什么需要它（P2c）：embeddable 包是**扁平**的，既不认 `Lib/`、也不把 .pyd 放进 `DLLs/`
+// ⇒ 只设 `PyConfig.home` 时解释器按"标准安装"布局推路径，照样 `Failed to import encodings module`。
+std::filesystem::path find_embed_stdlib_zip(const std::string& home) {
+    if (home.empty()) return {};
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(xrkit::core::path_from_utf8(home), ec), end;
+         it != end; it.increment(ec)) {
+        if (ec) break;
+        if (!it->is_regular_file(ec)) continue;
+        const std::string name = xrkit::core::path_to_utf8(it->path().filename());
+        if (name.rfind("python3", 0) == 0 && name.size() > 4 &&
+            name.compare(name.size() - 4, 4, ".zip") == 0) {
+            return it->path();
+        }
+    }
+    return {};
+}
+
 // 取一个 ASCII 键值行要用的值：任何 Python 异常都退化成空串（**不许**因为读状态把宿主弄崩）。
 std::string py_str_or_empty(const char* module_attr) {
     try {
@@ -289,6 +308,11 @@ std::string resolve_python_home(const std::string& explicit_home) {
     if (std::filesystem::is_directory(bundled, ec)) {
         return xrkit::core::path_to_utf8(bundled);
     }
+    // ③ **扁平** embed 形态：`python3XX.zip` 就在 exe 旁边（embeddable 包直接解在包根）。
+    //    这条与 ② 都是"发行包自带"，只是落点不同 —— 两种都认，判据就看 zip 在不在。
+    if (!find_embed_stdlib_zip(xrkit::core::app_dir()).empty()) {
+        return xrkit::core::app_dir();
+    }
 #ifdef XRKIT_PYTHON_HOME_DEFAULT
     // ③ 构建期烘焙的开发态 home（构建时那个 Python 安装）。
     //    为什么必须有它（实测）：嵌入解释器不设 home 时会按**宿主 exe 所在目录**推 prefix，
@@ -330,6 +354,41 @@ PyHostStatus init_python(const std::string& home) {
             status.reason = set_home.err_msg != nullptr ? set_home.err_msg
                                                         : "设置 PyConfig.home 失败（未给理由）";
             return status;
+        }
+    }
+    // ★★ P2c：裸 embeddable 布局（`<home>/python3XX.zip`）必须**显式给模块搜索路径** ——
+    //   扁平包里标准库是 .zip、扩展模块 .pyd 也在根，CPython 按"标准安装"布局推路径找不到
+    //   ⇒ 只设 home 仍然 `Failed to import encodings module`（本片第一版就是这样红的）。
+    std::vector<std::string> embed_paths;
+    if (!wanted_home.empty()) {
+        const std::filesystem::path embed_zip = find_embed_stdlib_zip(wanted_home);
+        if (!embed_zip.empty()) {
+            embed_paths.push_back(xrkit::core::path_to_utf8(embed_zip));   // 标准库
+            embed_paths.push_back(wanted_home);                            // 根上的 .pyd
+            std::error_code dir_ec;
+            for (const char* sub : {"DLLs", "Lib"}) {   // 完整安装形态（有人把 home 指过去）也认
+                const std::filesystem::path dir = xrkit::core::path_from_utf8(wanted_home) / sub;
+                if (std::filesystem::is_directory(dir, dir_ec)) {
+                    embed_paths.push_back(xrkit::core::path_to_utf8(dir));
+                }
+            }
+        }
+    }
+    if (!embed_paths.empty()) {
+        config.module_search_paths_set = 1;
+        for (const std::string& path : embed_paths) {
+            const std::filesystem::path native_path = xrkit::core::path_from_utf8(path);
+            const std::wstring wide_path = native_path.wstring();
+            const PyStatus appended =
+                PyWideStringList_Append(&config.module_search_paths, wide_path.c_str());
+            if (PyStatus_Exception(appended)) {
+                PyConfig_Clear(&config);
+                status.initialized = false;
+                status.reason = appended.err_msg != nullptr
+                                    ? appended.err_msg
+                                    : "追加模块搜索路径失败（未给理由）";
+                return status;
+            }
         }
     }
     const PyStatus started = Py_InitializeFromConfig(&config);
@@ -534,6 +593,108 @@ std::vector<std::string> take_python_log_lines() {
     out.swap(plugin_log_buffer());
 #endif
     return out;
+}
+
+// ── 宿主探针的唯一实现（CLI 与 GUI exe 共用；见头文件）──────────────────────────
+namespace {
+
+// 键值协议**一行一条**：Python 异常的 traceback 是多行的，直接打会把 `plugin=` 之后的内容
+// 跳行、解析器只能猜 ⇒ 折成 ` ⏎ `（口径同 `--shot` 的 `LBL` 行）。
+std::string one_line(const std::string& text) {
+    std::string out = text;
+    for (size_t at = out.find('\n'); at != std::string::npos; at = out.find('\n', at)) {
+        out.replace(at, 1, " \xE2\x8F\x8E ");   // ⏎（UTF-8）
+    }
+    return out;
+}
+
+}  // namespace
+
+int run_python_host_probe(const std::vector<std::string>& args, const LineSink& sink) {
+    const auto emit = [&sink](const std::string& line) {
+        if (sink) sink(line);
+    };
+    bool want_host = false;
+    bool want_plugins = false;
+    std::string home;
+    std::string dir;
+    for (size_t i = 0; i < args.size(); ++i) {
+        const std::string& a = args[i];
+        if (a == "--python-host") {
+            want_host = true;
+            continue;
+        }
+        if (a == "--py-plugins") {
+            want_plugins = true;
+            continue;
+        }
+        if (a == "--python-home" && i + 1 < args.size()) {
+            home = args[++i];
+            continue;
+        }
+        if (a == "--python-home") {
+            emit("PYHOST error reason=用法：--python-home <目录>");
+            return 3;
+        }
+        if (!a.empty() && a[0] == '-') continue;   // 其余开关不由本探针管
+        if (dir.empty()) dir = a;                   // 第一个操作数 = 插件目录
+    }
+    if (!want_host && !want_plugins) {
+        emit("PYHOST error reason=用法：--python-host | --py-plugins [目录]");
+        return 3;
+    }
+
+    if (want_host) {
+        const PyHostStatus started = init_python(home);
+        emit(python_host_report());
+        const bool enabled = started.enabled;
+        const bool initialized = started.initialized;
+        shutdown_python();
+        if (!enabled) return 2;
+        return initialized ? 0 : 1;
+    }
+
+    // `--py-plugins`：起宿主 → 扫目录 → import → register(api) → 进注册表 →
+    // **真消费一次**（fs 工具栏那条命令）→ 报账。退出码 0=通 / 1=有失败 / 2=构建期没带 Python。
+    const std::string plugin_dir = dir.empty() ? (xrkit::core::app_dir() + "/plugins") : dir;
+    const PyHostStatus host = init_python(home);
+    emit(std::string("PYPLUGINS host=") +
+         (host.initialized ? "ok" : (host.enabled ? "failed" : "disabled")) +
+         " version=" + (host.version.empty() ? "-" : host.version) + " dir=" + plugin_dir);
+    if (!host.enabled) {
+        emit("PYPLUGINS reason=" + host.reason);
+        return 2;
+    }
+    Registry registry;
+    PyLoadSummary summary;
+    const std::vector<RegistrationError> errors =
+        load_python_plugins_from_dir(plugin_dir, registry, &summary);
+    emit("PYPLUGINS files=" + std::to_string(summary.files) +
+         " loaded=" + std::to_string(summary.loaded) +
+         " registrations=" + std::to_string(summary.registrations) +
+         " errors=" + std::to_string(errors.size()));
+    for (const RegistrationError& e : errors) {
+        emit("PYPLUGINS error plugin=" + e.plugin + " reason=" + one_line(e.message));
+        // ★ 回滚判据的可见面：坏插件这次注册进表的东西**必须为 0**（按 owner 逐容器报账）。
+        emit("PYPLUGINS residue plugin=" + e.plugin +
+             " value=" + std::to_string(registry.residue_for(e.plugin).registrations()));
+    }
+    const std::vector<const CommandReg*> items = registry.menu_items_for("fs", "toolbar", {});
+    if (!items.empty()) {
+        const CommandReg* first = items.front();
+        emit("PYPLUGINS consume plugin=" + first->plugin + " label=" + first->label +
+             " id=" + first->id);
+        registry.invoke(first->plugin, first->label, first->handler);
+        emit("PYPLUGINS residue plugin=" + first->plugin +
+             " value=" + std::to_string(registry.residue_for(first->plugin).registrations()));
+    } else {
+        emit("PYPLUGINS consume result=none");
+    }
+    for (const std::string& line : take_python_log_lines()) {
+        emit("PYPLUGINS log " + one_line(line));
+    }
+    if (!host.initialized) return 1;
+    return (summary.loaded > 0 && errors.empty()) ? 0 : 1;
 }
 
 }  // namespace xrkit::plugin

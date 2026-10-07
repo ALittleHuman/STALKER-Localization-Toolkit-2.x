@@ -6,6 +6,8 @@
 //     `SHELL-SMOKE ok checks=N failed=M`，退出码 0/1 —— 门禁靠它判外壳（不靠人眼截图）。
 
 #include "xrkit/core/theme.h"
+// ★ P2c：宿主诊断（`--python-host` / `--py-plugins`）走引擎层唯一实现（见下面的分支）
+#include "xrkit/engine/plugin/py_host.h"
 #include "hub.h"
 #include "log_box.h"
 #include "pages/convert_page.h"
@@ -36,10 +38,31 @@
 #include <QThread>
 #include <QTreeWidget>
 #include <functional>
+#include <string>
+#include <vector>
 
 int main(int argc, char** argv) {
     QStringList args;
     for (int i = 1; i < argc; ++i) args << QString::fromUtf8(argv[i]);
+
+    // ★★ 插件改装 P2c：`--python-host` / `--py-plugins [目录]` —— **不建 QApplication**，
+    //   直接跑宿主诊断后退出。为什么 GUI exe 也要开这两个开关：**发行包里只有
+    //   `xrkit_app.exe`**（没有 CLI），而"包内自带的 Python 到底能不能起来、能不能加载 `.py`"
+    //   必须在**包内**判（见 `scripts/package.ps1` 的包内自检）。与 CLI 的同名动作共用
+    //   引擎层**唯一一份**实现 ⇒ 输出行格式逐字相同、不会分叉。
+    if (args.contains(QStringLiteral("--python-host")) ||
+        args.contains(QStringLiteral("--py-plugins"))) {
+        std::vector<std::string> probe_args;
+        probe_args.reserve(static_cast<size_t>(args.size()));
+        for (const QString& arg : args) probe_args.push_back(arg.toStdString());
+        QTextStream probe_out(stdout);
+        const int probe_rc = xrkit::plugin::run_python_host_probe(
+            probe_args, [&probe_out](const std::string& line) {
+                probe_out << QString::fromStdString(line) << "\n";
+                probe_out.flush();
+            });
+        return probe_rc;
+    }
     const bool smoke = args.contains(QStringLiteral("--smoke"));
     // ★ 屏幕自适应诊断：打印「启动时按当前屏幕算出来的缩放与窗口尺寸」然后退出。
     //   为什么要有它：离屏自检只验了纯函数；这条分支验的是**真实启动路径**

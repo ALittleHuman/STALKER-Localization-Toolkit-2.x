@@ -16,9 +16,13 @@
 //   ② **降级不许装成正常**：构建期没有 Python3 开发文件 ⇒ 编出降级实现
 //      （`enabled=false` + 理由），其余功能照常；门禁 `[python-host]` 步在 release 档
 //      见 `enabled=0` 即 **FAIL**（不是 SKIP —— 那会变成"一键关掉锁"的后门）。
-//   ③ **Python home 只有一份解析口径**：显式参数（`--python-home` / `XRKIT_PYTHON_HOME`）
-//      → exe 旁的 `python\`（发行包＝解压出来的 embeddable Python）→ 空串（交给解释器
-//      自己按 PATH/注册表找系统安装＝开发态）。见 `resolve_python_home()`。
+//   ③ **Python home 只有一份解析口径**（`resolve_python_home`）：
+//      显式参数（`--python-home` / `XRKIT_PYTHON_HOME`）
+//      → exe 旁 `python\`（发行包＝子目录形态）
+//      → **exe 旁有 `python3XX.zip`**（发行包＝裸 embeddable 直接解在包根，扁平形态，P2c 新增）
+//      → 构建期烘焙的开发态 home（dev 构建）
+//      → 空串（交给解释器自己按 PATH/注册表找系统安装）。
+//      ★ 发行包的两种形态都认，判据就是"zip 在不在"。
 //
 // ⚠ 线程：插件回调可能从**工作线程**里被调用（六页都在 TaskShell 的 worker 里干活）。
 //   本层提供的入口必须在调用侧先取得 GIL（`PyGILState_Ensure`）—— P2 的加载/注册阶段
@@ -26,6 +30,8 @@
 
 #include <string>
 #include <vector>
+
+#include <functional>
 
 #include "xrkit/engine/plugin/registry.h"
 
@@ -89,5 +95,17 @@ std::vector<std::string> take_python_log_lines();
 // ★ 命名判据**只此一份**（与 `is_plugin_dll_name` 同一条纪律：Windows 文件名不分大小写，
 //   `HELLO.PY` 与 `hello.py` 是同一个文件 ⇒ 必须大小写不敏感，否则静默漏载）。
 bool is_plugin_py_name(const std::string& filename);
+
+// ── 宿主探针的**唯一实现**（CLI 与 GUI exe 的同名开关都调它）────────────────────
+// 为什么收在引擎里、而且收成一个函数：**发行包里只有 `xrkit_app.exe`（没有 CLI）**，
+// 而"包内自带的 Python 到底能不能起来、能不能加载 `.py`"必须在**包内**判（见 `scripts/package.ps1`）
+// ⇒ GUI exe 也要能跑这套诊断；两处各写一遍就是两份会分叉的实现（本仓最贵的一类返工）。
+//
+// 参数：`args` = **去掉 exe 名之后的完整参数表**（本函数自己挑 `--python-host` /
+// `--py-plugins [目录]` / `--python-home <目录>`，其余开关一律忽略）。
+// 输出：逐行交给 `sink`（引擎层**不碰 stdout** —— 谁来打印由前端决定）。
+// 返回：0=通  1=有失败  2=构建期没带 Python（显式跳过）  3=用法错误。
+using LineSink = std::function<void(const std::string&)>;
+int run_python_host_probe(const std::vector<std::string>& args, const LineSink& sink);
 
 }  // namespace xrkit::plugin

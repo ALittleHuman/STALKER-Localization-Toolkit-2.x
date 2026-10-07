@@ -2178,6 +2178,83 @@ def step_python_host(release: bool) -> None:
         fail("CPython 宿主没起来（退出码 %d）：%s" % (rc, line))
 
 
+def step_python_embed(release: bool) -> None:
+    """插件改装 P2c：**随包自带的 embeddable CPython**（用户口径：「发布随包自带 embeddable Python」）。
+
+    判据（每条都能红）：
+      · vendored 树在（`third_party/python-embed`：`python3XX.zip` + `python3XX.dll`）且**版本与构建期
+        一致**（拿门禁自己的 `sys.version_info` 对账 —— FindPython3 找的就是它）；
+      · `--python-host --python-home <embed>` 能起来（`initialized=1` 且 `version=` 对上）——
+        **这一条等价于"发行到没装 Python 的机器上也能起宿主"**，因为 home 指向的是随包那份；
+      · `--py-plugins <tests/python_plugins> --python-home <embed>` ⇒ `loaded=1 errors=0`
+        （随包标准库里 importlib/os/tempfile 都得在，插件导入链才跑得通）；
+      · **包内**判据（★ 只在包自己声明了 `python_runtime=` 时跑，口径同 `[pkg-platform]`）：
+        拿最新那个声明过的包，从**产物目录**跑 `xrkit_app.exe --python-host` ⇒ `initialized=1`。
+        没声明过的早期包记台账（不许无条件跑：dist 目录是运行期产物，干净检出时没有包）。
+    """
+    say("[python-embed] 插件改装 P2c：随包自带 embeddable CPython（标准库 + 运行期）")
+    embed = ROOT / "third_party" / "python-embed"
+    zips = sorted(embed.glob("python3*.zip")) if embed.is_dir() else []
+    dlls = sorted(embed.glob("python3*.dll")) if embed.is_dir() else []
+    if not zips or not dlls:
+        fail("找不到随包用的 embeddable Python（%s：python3*.zip=%d / python3*.dll=%d）—— "
+             "先跑 `python tools/fetch_third_party.py --only python-embed`"
+             % (embed.relative_to(ROOT), len(zips), len(dlls)))
+        return
+    expect = "%d.%d.%d" % sys.version_info[:3]
+    say("  vendored：%s / %s；门禁自身 Python=%s" % (zips[0].name, dlls[0].name, expect))
+
+    def probe(argv: list[str]) -> tuple[int, str]:
+        if not CLI_EXE.exists():
+            return 127, ""
+        return run([str(CLI_EXE), *argv], timeout=300)
+
+    rc, out = probe(["--python-host", "--python-home", str(embed)])
+    line = next((ln.strip() for ln in out.splitlines() if ln.strip().startswith("PYHOST")), "")
+    if rc == 0 and " initialized=1" in line and (" version=%s " % expect) in line:
+        ok("随包 embeddable CPython 能起宿主（" + line + "）")
+    else:
+        fail("随包 embeddable CPython 起不来（rc=%d）：%s" % (rc, line or "(无 PYHOST 行)"))
+
+    rc2, out2 = probe(["--py-plugins", str(ROOT / "tests" / "python_plugins"),
+                       "--python-home", str(embed)])
+    line2 = next((ln.strip() for ln in out2.splitlines()
+                  if ln.strip().startswith("PYPLUGINS files=")), "")
+    if rc2 == 0 and " loaded=1 " in line2 and " errors=0" in line2:
+        ok("随包标准库能跑插件导入链（" + line2 + "）")
+    else:
+        fail("随包标准库跑不了插件导入链（rc=%d）：%s" % (rc2, line2 or "(无 PYPLUGINS 摘要行)"))
+
+    # 包内判据：只看**自己声明过** python_runtime= 的包（最新那个序号）
+    alphas = sorted((ROOT / "dist" / "2.0.0" / "ALPHA").glob("*"),
+                    key=lambda p: int(p.name) if p.name.isdigit() else -1)
+    declared = None
+    for path in reversed(alphas):
+        version_txt = path / "version.txt"
+        if not version_txt.is_file():
+            continue
+        text = version_txt.read_text(encoding="utf-8-sig")
+        if "python_runtime=" in text:
+            declared = path
+            break
+    if declared is None:
+        ledger("包内 Python 宿主判据",
+               "没有声明 `python_runtime=` 的包（早期序号没带 embeddable 标准库）")
+        return
+    exe = declared / "xrkit_app.exe"
+    if not exe.is_file():
+        fail("包 %s 声明了 python_runtime= 但没有 xrkit_app.exe" % declared.name)
+        return
+    proc_env = dict(os.environ)
+    rc3, out3 = run([str(exe), "--python-host"], env=proc_env, timeout=300)
+    line3 = next((ln.strip() for ln in out3.splitlines() if ln.strip().startswith("PYHOST")), "")
+    if rc3 == 0 and " enabled=1 initialized=1" in line3 and (" version=%s " % expect) in line3:
+        ok("包内（%s）Python 宿主起来了，且不再依赖本机 Python（%s）" % (declared.name, line3))
+    else:
+        fail("包内（%s）Python 宿主没起来（rc=%d）：%s —— 包内 python_runtime= 声明不成立"
+             % (declared.name, rc3, line3 or "(无 PYHOST 行)"))
+
+
 def step_plugin_entry_lock(release: bool) -> None:
     """插件改装的**加载入口唯一性**（P2b）：两个前端都走 `load_all_plugins_from_dir`。
 
@@ -2621,6 +2698,9 @@ STEPS = [
     ("python-plugins", step_python_plugins),
     # ★★ 2026-10-07（插件改装 P2b）：加载入口唯一性（静态锁；两边各写一条路的分叉测不出来）。
     ("plugin-entry", step_plugin_entry_lock),
+    # ★★ 2026-10-07（插件改装 P2c）：随包自带 embeddable CPython（标准库 + 运行期）+
+    #   包内 `--python-host` 判据（只在包自己声明 `python_runtime=` 时跑，口径同 pkg-platform）。
+    ("python-embed", step_python_embed),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),

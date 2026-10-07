@@ -29,6 +29,7 @@ import tarfile
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -119,6 +120,23 @@ SOURCES = [
         "extract_to": "pybind11",
         "note": "CPython 绑定（插件宿主；header-only，见 third_party/CMakeLists.txt 的 xrkit_pybind11）",
     },
+    {
+        "name": "python-embed",
+        # ★★ P2c（2026-10-07，用户口径「**发布随包自带 embeddable Python**」）：
+        #   版本必须与**构建期那个 Python 一致**（引擎链的是它的 import lib；当前 3.14.6）——
+        #   门禁 `[python-embed]` 会拿 `sys.version_info` 与它对账。
+        "version": "3.14.6",
+        "url": "https://mirrors.aliyun.com/python-release/windows/python-3.14.6-embed-amd64.zip",
+        # 备用源：华为云 python 镜像（python.org 官方布局的另一个国内镜像）
+        "fallbacks": [
+            "https://mirrors.huaweicloud.com/python/3.14.6/python-3.14.6-embed-amd64.zip",
+        ],
+        "archive": "python-3.14.6-embed-amd64.zip",
+        "extract_to": "python-embed",
+        # embeddable 包是**扁平**的（python314.dll / python314.zip / *.pyd 都在根）⇒ 不许剥顶层
+        "strip_top": False,
+        "note": "随包自带的 CPython 标准库与运行期（发行到没装 Python 的机器也能起插件宿主）",
+    },
 ]
 
 MAX_TRIES = 4
@@ -132,6 +150,7 @@ MAGIC = (
     (b"\x1f\x8b", "gzip"),
     (b"\xfd7zXZ\x00", "xz"),
     (b"BZh", "bzip2"),
+    (b"PK\x03\x04", "zip"),
 )
 
 
@@ -220,20 +239,34 @@ def fetch_archive(src: dict, archive: Path) -> bool:
     return False
 
 
-def extract(archive: Path, dest: Path) -> None:
-    """解包并剥掉顶层目录（两种包都是单顶层目录）。"""
+def extract(archive: Path, dest: Path, strip_top: bool = True) -> None:
+    """解包并按需剥掉顶层目录（源码包都是单顶层目录）。
+
+    ★ 2026-10-07（P2c）：新增 **zip** 支持与 `strip_top=False` —— 随包的 embeddable Python
+      就是**扁平** zip（`python314.dll` / `python314.zip` / `*.pyd` 全在根），没有顶层目录，
+      剥一层就什么都没了。判据靠**归档魔数**（`sniff_archive`），不靠扩展名猜。
+    """
     if dest.exists():
         shutil.rmtree(dest)
     tmp = dest.with_name(dest.name + ".tmp")
     if tmp.exists():
         shutil.rmtree(tmp)
     tmp.mkdir(parents=True)
-    mode = "r:xz" if archive.suffix == ".xz" else "r:gz"
-    with tarfile.open(archive, mode) as tar:
-        members = tar.getmembers()
-        if not members:
-            raise RuntimeError("空包：%s" % archive)
-        tar.extractall(tmp)
+    if archive.suffix.lower() == ".zip":
+        with zipfile.ZipFile(archive) as zf:
+            if not zf.namelist():
+                raise RuntimeError("空包：%s" % archive)
+            zf.extractall(tmp)
+    else:
+        mode = "r:xz" if archive.suffix == ".xz" else "r:gz"
+        with tarfile.open(archive, mode) as tar:
+            members = tar.getmembers()
+            if not members:
+                raise RuntimeError("空包：%s" % archive)
+            tar.extractall(tmp)
+    if not strip_top:
+        tmp.rename(dest)
+        return
     entries = list(tmp.iterdir())
     if len(entries) == 1 and entries[0].is_dir():
         entries[0].rename(dest)
@@ -354,7 +387,7 @@ def main() -> int:
         if need_extract:
             say("      解包中…")
             try:
-                extract(archive, dest)
+                extract(archive, dest, strip_top=src.get("strip_top", True))
             except Exception as exc:  # noqa: BLE001 —— 解包失败必须显式失败，不许当成功
                 say("      !! 解包失败（不记锁、不保留坏包）：%s" % exc)
                 archive.unlink(missing_ok=True)
