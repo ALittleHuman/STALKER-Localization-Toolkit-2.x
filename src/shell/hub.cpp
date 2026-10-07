@@ -9,6 +9,8 @@
 #include "xrkit/core/theme.h"
 #include "xrkit/core/log.h"
 #include "xrkit/engine/plugin/loader.h"
+// ★ P3：控件门面（宿主给插件 builder 的根容器 + `UiPanelScope`）
+#include "xrkit/engine/plugin/widget_facade.h"
 #include "xrkit/engine/xml/compare.h"
 #include "theme.h"
 
@@ -265,6 +267,10 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     sync_pages();
     drain_page_diagnostics();
     if (page_count() > 0) set_current_page(0);
+    // ★★ P3（控件门面）：外壳**装配时**把门面装上 —— 插件的 `api.ui.*` 才有实现；
+    //    `log_append` 接到 Hub 自己的日志栏（引擎层因此不必认识 Hub）。
+    //    没装（CLI/离屏自检不带外壳）时，`api.ui.*` 一律返回空并**逐条记账**（零静默）。
+    install_qt_ui_facade([this](const std::string& line) { log_line(QString::fromStdString(line)); });
     log_line(QStringLiteral("Hub 就绪：%1 个内置页").arg(builtin_page_count()));
     load_plugins(plugin_dir);
 }
@@ -428,9 +434,36 @@ int Hub::sync_pages() {
         const QString id = QString::fromStdString(reg->spec.id);
         const int at = page_index(id);
         if (at < 0) {
-            QWidget* widget = reg->builder(nullptr);
-            if (widget == nullptr) {
-                // 造不出来**不许**变成"注册了却没出现"：占位页 + 一条可见的日志。
+            // ★★ P3（控件门面）：宿主要给插件 builder **一个根容器**，并把它设成"当前面板根"
+            //   （`UiPanelScope`）—— 于是 Python 插件可以只往根里塞控件、连 builder 都能不返回东西：
+            //     · 门面的 `parent=None` 落到这个根上（`place()` 负责按宿主规范排版）；
+            //     · builder 的形参也从 `nullptr` 改成这个根（新建控件自然有父，不会变成顶层窗口）；
+            //     · builder 返回非空控件 ⇒ 嵌进根里（C ABI 的老写法照旧可用）。
+            auto* container = new QWidget;
+            QWidget* built = nullptr;
+            {
+                plugin::UiPanelScope panel_scope(container);
+                built = reg->builder(container);
+            }
+            // ★ 页控件的归属规则（这条很关键，P3 第一版就栽在这）：
+            //   · builder 交回的是 **`PageBase`**（内置六页那种自带框架的页）⇒ **页就是它本人**，
+            //     容器只是"给门面用的落点"，用完就扔（`deleteLater`）—— 否则 `page_at()` 会返回
+            //     nullptr，页面服务（副标题/注册表/日志口）全丢，连别的槽位都渲染不出来。
+            //   · 其余（裸 QWidget / 返回空）⇒ **页是容器**，返回值嵌进容器里。
+            QWidget* widget = built != nullptr ? built : container;
+            if (built != nullptr && built != container && dynamic_cast<PageBase*>(built) == nullptr) {
+                auto* outer = new QVBoxLayout(container);
+                outer->setContentsMargins(0, 0, 0, 0);
+                outer->addWidget(built);
+                widget = container;
+            } else if (container != widget) {
+                container->deleteLater();
+            }
+            // "到底造出东西没有"：builder 交了控件，或者门面往根里落了控件（`place()` 会建布局）。
+            // 两者都没有 ⇒ 仍然是"注册了却没出现"，必须**留痕 + 占位**（P1 起的零静默口径）。
+            QLayout* placed = widget == container ? container->layout() : nullptr;
+            const bool anything_built = built != nullptr || (placed != nullptr && placed->count() > 0);
+            if (!anything_built) {
                 widget = make_placeholder(reg->spec);
                 log_line(QStringLiteral("页「%1」（%2）没造出控件，已用占位页顶替")
                              .arg(id)
@@ -583,8 +616,10 @@ void Hub::render_plugin_slots() {
         spec.band = kPluginPageBand;
         spec.order = tool->order;
         const plugin::PanelBuilder builder = tool->builder;
-        pages_.register_page(tool->plugin, spec, [builder](QWidget* /*parent*/) -> QWidget* {
-            return reinterpret_cast<QWidget*>(builder(nullptr));
+        // ★★ P3：把宿主给的**根容器**透传给插件的 builder（修前这里写死 `builder(nullptr)`）
+        //   —— Python 插件用 `api.ui.*` 造控件时，"当前面板根"就来自这个实参。
+        pages_.register_page(tool->plugin, spec, [builder](QWidget* parent) -> QWidget* {
+            return reinterpret_cast<QWidget*>(builder(parent));
         });
     }
     sync_pages();
@@ -664,9 +699,29 @@ void Hub::render_plugin_slots() {
         }
 
         // ④ 面板（panel）：builder 造出来的控件塞进**页面正文**（body）。
+        //   ★★ P3：与插件页同一套口径 —— 宿主给根容器 + `UiPanelScope`（门面的落点），
+        //   builder 返回的控件（老写法）嵌进根里；一件都没造出来 ⇒ 留痕（零静默）。
         for (const plugin::PanelReg* panel : registry_.panels_for(host)) {
-            auto* widget = reinterpret_cast<QWidget*>(panel->builder(nullptr));
-            if (widget == nullptr) continue;
+            auto* container = new QWidget;
+            QWidget* built = nullptr;
+            {
+                plugin::UiPanelScope panel_scope(container);
+                built = reinterpret_cast<QWidget*>(panel->builder(container));
+            }
+            if (built != nullptr && built != container) {
+                auto* outer = new QVBoxLayout(container);
+                outer->setContentsMargins(0, 0, 0, 0);
+                outer->addWidget(built);
+            }
+            QLayout* placed = container->layout();
+            if (built == nullptr && (placed == nullptr || placed->count() == 0)) {
+                container->deleteLater();
+                log_line(QStringLiteral("插件面板「%1」（%2）没造出控件，已跳过")
+                             .arg(QString::fromStdString(panel->title))
+                             .arg(QString::fromStdString(panel->plugin)));
+                continue;
+            }
+            QWidget* widget = container;
             widget->setObjectName(QStringLiteral("plugin_panel_") +
                                   QString::fromStdString(panel->title));
             if (page->body()->layout() == nullptr) new QVBoxLayout(page->body());

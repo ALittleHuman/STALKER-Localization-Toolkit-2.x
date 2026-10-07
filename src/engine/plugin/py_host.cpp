@@ -1,5 +1,8 @@
 #include "xrkit/engine/plugin/py_host.h"
 
+// ★ P3：控件门面（`api.ui.*` 的实现入口）—— 引擎层只持有外壳注入的表
+#include "xrkit/engine/plugin/widget_facade.h"
+
 #include "xrkit/core/log.h"
 // `app_dir()`（exe 所在目录）住在 core/theme.h —— **不是** path.h：
 // 实测按 path.h 写会报 `"app_dir": 不是 "xrkit::core" 的成员`（本片第一次编译就踩到）。
@@ -189,8 +192,14 @@ CommandHandler wrap_python_handler(py::object callable, const std::string& label
 }
 
 // ── 给插件的 API 对象（第一版 API 表）────────────────────────────────────────
-// 能力面：注册面（command / menu_item / option_entry / option）+ `log` + 只读标识。
+// 能力面：注册面（command / menu_item / option_entry / option / **panel / tool**）+ `log`
+// + 只读标识 + ★**控件门面**（`api.ui.*`，P3）。
 // **控件面不在这里** —— 按规格，控件走宿主门面（L1/L2），那一片在阶段 3。
+//
+// ★ 前置声明：`PyPluginApi` 的 builder 包装要用 `handle_of_widget`，而 `PyWidget` 与它
+//   定义在下面（先声明后定义，同一个匿名命名空间里没问题）。
+UiHandle handle_of_widget(const py::object& widget_or_none);
+
 class PyPluginApi {
 public:
     PyPluginApi(Registry* registry, std::string owner, std::string plugin_dir)
@@ -224,6 +233,21 @@ public:
         return registry_->register_menu_item(owner_, host, location, command_id, order);
     }
 
+    // ★★ P3：插件页 / 面板 —— **控件门面的落点**。
+    //   builder 允许**不返回东西**（插件只往宿主给的根里塞控件）；返回值若是 `Widget`
+    //   就当作"老写法"交给宿主嵌入。宿主（Hub）已经把"当前面板根"设好了。
+    bool register_panel(const std::string& title, py::object builder, const std::string& host,
+                        const std::string& area, int order) const {
+        PanelBuilder wrapped = wrap_python_builder(builder, "register_panel(" + title + ")");
+        if (!wrapped) return false;
+        return registry_->register_panel(owner_, title, std::move(wrapped), host, area, {}, order);
+    }
+    bool register_tool(const std::string& name, py::object builder, int order) const {
+        PanelBuilder wrapped = wrap_python_builder(builder, "register_tool(" + name + ")");
+        if (!wrapped) return false;
+        return registry_->register_tool(owner_, name, std::move(wrapped), order);
+    }
+
     bool register_option_entry(const std::string& host, const std::string& area,
                                const std::string& value, py::object when) const {
         return registry_->register_option_entry(owner_, host, area, value, when_from_python(when));
@@ -245,9 +269,243 @@ public:
     }
 
 private:
+    // 把 Python 的 builder 包成引擎要的 `PanelBuilder`：
+    //   · 套一层 `UiPanelScope` ⇒ 无论谁调，"当前面板根"都成立（宿主已设过，这里嵌套无害）；
+    //   · 返回值允许 `None`（插件只往根里塞控件）；
+    //   · ★**异常不往上抛**：宿主调 builder 的地方（Hub 造页/造面板）没有 catch，抛出去就是崩。
+    //     这里捕获 → **留痕**（`registry_->add_error` + 引擎日志）→ 返回 nullptr
+    //     ⇒ 宿主那边自然走"没造出控件 ⇒ 占位页 + 日志"那条路（零静默，且不崩）。
+    PanelBuilder wrap_python_builder(py::object builder, const std::string& what) const {
+        if (builder.is_none() != 0 || PyCallable_Check(builder.ptr()) == 0) {
+            registry_->add_error(owner_, what + " 的 builder 不是可调用对象");
+            return PanelBuilder{};
+        }
+        py::object kept = builder;
+        keepalive()->push_back(kept);
+        const std::string owner = owner_;
+        Registry* registry = registry_;
+        return [kept, what, owner, registry](void* parent) -> void* {
+            py::gil_scoped_acquire acquire;
+            UiPanelScope scope(parent);
+            try {
+                py::object result = kept();
+                if (result.is_none() != 0) return kNoWidget;
+                return handle_of_widget(result);
+            } catch (const py::error_already_set& err) {
+                const std::string message = what + " 的 builder 抛异常：" + err.what();
+                core::log(core::Level::Error, "[" + owner + "] " + message);
+                registry->add_error(owner, message);
+                return kNoWidget;
+            } catch (const std::exception& err) {
+                const std::string message = what + " 的 builder 抛异常：" + err.what();
+                core::log(core::Level::Error, "[" + owner + "] " + message);
+                registry->add_error(owner, message);
+                return kNoWidget;
+            }
+        };
+    }
+
     Registry* registry_ = nullptr;
     std::string owner_;
     std::string dir_;
+};
+
+// ── 控件门面在 Python 侧的形态（P3）──────────────────────────────────────────
+// 插件**永不接触 Qt**：它拿到的是 `xrkit.Widget`（**只有一个不透明句柄**，没有任何方法能把
+// 它解引用成 Qt 对象）；所有操作都回到 `api.ui.*`。★**表外无门** —— 判据
+// `tests/check_ui_capability_table.py` 把 `dir(xrkit.Api)/dir(xrkit.Ui)/dir(xrkit.Widget)`
+// 与**预期表**逐条对账，多一个方法就红（能力泄漏必须是有意为之）。
+class PyWidget {
+public:
+    explicit PyWidget(UiHandle handle) : handle_(handle) {}
+    UiHandle handle() const { return handle_; }
+    bool valid() const { return handle_ != kNoWidget; }
+
+private:
+    UiHandle handle_ = kNoWidget;
+};
+
+// Python 的 `Widget` ↔ 门面句柄（`PyUi` 与 `PyPluginApi` 都要用 ⇒ 提成自由函数）
+UiHandle handle_of_widget(const py::object& widget_or_none) {
+    if (widget_or_none.is_none() != 0) return kNoWidget;
+    if (py::isinstance<PyWidget>(widget_or_none) == 0) return kNoWidget;
+    auto* typed = widget_or_none.cast<PyWidget*>();
+    return typed == nullptr ? kNoWidget : typed->handle();
+}
+
+class PyUi {
+public:
+    explicit PyUi(std::string owner) : owner_(std::move(owner)) {}
+
+    py::object label(py::object parent, std::string text, std::string style) const {
+        if (const UiFacade* facade = available("label")) {
+            return wrap(facade->label(handle_of(parent), text, style));
+        }
+        return py::none();
+    }
+    py::object button(py::object parent, std::string text, py::object on_click, int width,
+                      std::string style, bool enabled) const {
+        const UiFacade* facade = available("button");
+        if (facade == nullptr) return py::none();
+        std::function<void()> click;
+        if (!on_click.is_none()) {
+            if (PyCallable_Check(on_click.ptr()) == 0) {
+                core::log(core::Level::Warn,
+                          "[" + owner_ + "] ui.button 的 on_click 不是可调用对象");
+            } else {
+                click = wrap_python_handler(on_click, "ui.button");
+            }
+        }
+        return wrap(facade->button(handle_of(parent), text, std::move(click), width, style, enabled));
+    }
+    py::object row(py::object parent, std::string side, std::string fill, bool expand, int padx,
+                   int pady) const {
+        if (const UiFacade* facade = available("row")) {
+            return wrap(facade->row(handle_of(parent), side, fill, expand, padx, pady));
+        }
+        return py::none();
+    }
+    py::object checkbox(py::object parent, std::string text, py::object on_toggle) const {
+        const UiFacade* facade = available("checkbox");
+        if (facade == nullptr) return py::none();
+        std::function<void(bool)> toggle;
+        if (!on_toggle.is_none() && PyCallable_Check(on_toggle.ptr()) != 0) {
+            py::object kept = on_toggle;
+            keepalive()->push_back(kept);
+            toggle = [kept](bool on) {
+                py::gil_scoped_acquire acquire;
+                try {
+                    kept(py::bool_(on));
+                } catch (const py::error_already_set& err) {
+                    core::log(core::Level::Warn,
+                              std::string("ui.checkbox 回调抛异常：") + err.what());
+                }
+            };
+        }
+        return wrap(facade->checkbox(handle_of(parent), text, std::move(toggle)));
+    }
+    py::object entry(py::object parent, std::string initial, int width, bool password) const {
+        if (const UiFacade* facade = available("entry")) {
+            return wrap(facade->entry(handle_of(parent), initial, width, password));
+        }
+        return py::none();
+    }
+    py::object text(py::object parent, int height, int width, std::string wrap_mode) const {
+        if (const UiFacade* facade = available("text")) {
+            return wrap(facade->text(handle_of(parent), height, width, wrap_mode));
+        }
+        return py::none();
+    }
+    py::object combo(py::object parent, std::vector<std::string> values,
+                     py::object on_change) const {
+        const UiFacade* facade = available("combo");
+        if (facade == nullptr) return py::none();
+        std::function<void(const std::string&)> change;
+        if (!on_change.is_none() && PyCallable_Check(on_change.ptr()) != 0) {
+            py::object kept = on_change;
+            keepalive()->push_back(kept);
+            change = [kept](const std::string& value) {
+                py::gil_scoped_acquire acquire;
+                try {
+                    kept(py::str(value));
+                } catch (const py::error_already_set& err) {
+                    core::log(core::Level::Warn, std::string("ui.combo 回调抛异常：") + err.what());
+                }
+            };
+        }
+        return wrap(facade->combo(handle_of(parent), values, std::move(change)));
+    }
+    py::object drop_box(py::object parent, py::object on_file, std::string placeholder) const {
+        const UiFacade* facade = available("drop_box");
+        if (facade == nullptr) return py::none();
+        std::function<void(const std::string&)> file;
+        if (!on_file.is_none() && PyCallable_Check(on_file.ptr()) != 0) {
+            py::object kept = on_file;
+            keepalive()->push_back(kept);
+            file = [kept](const std::string& path) {
+                py::gil_scoped_acquire acquire;
+                try {
+                    kept(py::str(path));
+                } catch (const py::error_already_set& err) {
+                    core::log(core::Level::Warn,
+                              std::string("ui.drop_box 回调抛异常：") + err.what());
+                }
+            };
+        }
+        return wrap(facade->drop_box(handle_of(parent), std::move(file), placeholder));
+    }
+    void pack(py::object parent, py::object child, std::string side, std::string fill, bool expand,
+              int padx, int pady) const {
+        if (const UiFacade* facade = available("pack")) {
+            facade->pack(handle_of(parent), handle_of(child), side, fill, expand, padx, pady);
+        }
+    }
+    py::object text_view(py::object parent, int height, bool mono) const {
+        if (const UiFacade* facade = available("text_view")) {
+            return wrap(facade->text_view(handle_of(parent), height, mono));
+        }
+        return py::none();
+    }
+    void set_text(py::object widget, std::string text) const {
+        if (const UiFacade* facade = available("set_text")) {
+            facade->set_text(handle_of(widget), text);
+        }
+    }
+    std::string get_text(py::object widget) const {
+        if (const UiFacade* facade = available("get_text")) {
+            return facade->get_text(handle_of(widget));
+        }
+        return std::string();
+    }
+    void set_enabled(py::object widget, bool enabled) const {
+        if (const UiFacade* facade = available("set_enabled")) {
+            facade->set_enabled(handle_of(widget), enabled);
+        }
+    }
+    bool alive(py::object widget) const {
+        if (const UiFacade* facade = available("alive")) return facade->alive(handle_of(widget));
+        return false;
+    }
+    void log(const std::string& line) const {
+        if (const UiFacade* facade = available("log_append")) facade->log_append(line);
+    }
+    bool ask_yes_no(std::string title, std::string message) const {
+        if (const UiFacade* facade = available("ask_yes_no")) {
+            return facade->ask_yes_no(title, message);
+        }
+        return false;
+    }
+    std::string ask_open_file(std::string title) const {
+        if (const UiFacade* facade = available("ask_open_file")) {
+            return facade->ask_open_file(title);
+        }
+        return std::string();
+    }
+    std::string ask_save_file(std::string title) const {
+        if (const UiFacade* facade = available("ask_save_file")) {
+            return facade->ask_save_file(title);
+        }
+        return std::string();
+    }
+
+private:
+    // 门面/方法不可用 ⇒ **逐条记账**并返回"空"（零静默：插件作者能立刻看出为什么什么都没出现）
+    const UiFacade* available(const std::string& method) const {
+        if (!ui_facade_has(method)) {
+            std::string reason;
+            ui_facade_available(&reason);
+            core::log(core::Level::Warn,
+                      "[" + owner_ + "] 控件门面不可用（ui." + method + "）：" + reason);
+            return nullptr;
+        }
+        return ui_facade();
+    }
+    static UiHandle handle_of(const py::object& widget_or_none) {
+        return handle_of_widget(widget_or_none);
+    }
+    static py::object wrap(UiHandle handle) { return py::cast(PyWidget(handle)); }
+
+    std::string owner_;
 };
 
 // 让 `import xrkit` 能用。走 `sys.modules` 注册而**不**用 `PyImport_AppendInittab`：
@@ -263,10 +521,49 @@ void ensure_api_module() {
     //   （见头文件对 `shutdown_python` 的说明）。
     static bool class_registered = false;
     if (!class_registered) {
+        py::class_<PyWidget>(m, "Widget")
+            .def("__repr__", [](const PyWidget& widget) {
+                return std::string("xrkit.Widget(") + (widget.valid() ? "valid" : "null") + ")";
+            })
+            .def("__bool__", [](const PyWidget& widget) { return widget.valid(); });
+        py::class_<PyUi>(m, "Ui")
+            .def("label", &PyUi::label, py::arg("parent") = py::none(), py::arg("text") = "",
+                 py::arg("style") = "")
+            .def("button", &PyUi::button, py::arg("parent") = py::none(), py::arg("text") = "",
+                 py::arg("on_click") = py::none(), py::arg("width") = 0, py::arg("style") = "",
+                 py::arg("enabled") = true)
+            .def("row", &PyUi::row, py::arg("parent") = py::none(), py::arg("side") = "top",
+                 py::arg("fill") = "x", py::arg("expand") = false, py::arg("padx") = 0,
+                 py::arg("pady") = 0)
+            .def("checkbox", &PyUi::checkbox, py::arg("parent") = py::none(), py::arg("text") = "",
+                 py::arg("on_toggle") = py::none())
+            .def("entry", &PyUi::entry, py::arg("parent") = py::none(), py::arg("initial") = "",
+                 py::arg("width") = 0, py::arg("password") = false)
+            .def("text", &PyUi::text, py::arg("parent") = py::none(), py::arg("height") = 0,
+                 py::arg("width") = 0, py::arg("wrap") = "word")
+            .def("combo", &PyUi::combo, py::arg("parent") = py::none(), py::arg("values"),
+                 py::arg("on_change") = py::none())
+            .def("drop_box", &PyUi::drop_box, py::arg("parent") = py::none(),
+                 py::arg("on_file") = py::none(), py::arg("placeholder") = "")
+            .def("pack", &PyUi::pack, py::arg("parent") = py::none(), py::arg("child"),
+                 py::arg("side") = "top", py::arg("fill") = "x", py::arg("expand") = false,
+                 py::arg("padx") = 0, py::arg("pady") = 0)
+            .def("text_view", &PyUi::text_view, py::arg("parent") = py::none(),
+                 py::arg("height") = 0, py::arg("mono") = true)
+            .def("set_text", &PyUi::set_text, py::arg("widget"), py::arg("text"))
+            .def("get_text", &PyUi::get_text, py::arg("widget"))
+            .def("set_enabled", &PyUi::set_enabled, py::arg("widget"), py::arg("enabled"))
+            .def("alive", &PyUi::alive, py::arg("widget"))
+            .def("log", &PyUi::log, py::arg("line"))
+            .def("ask_yes_no", &PyUi::ask_yes_no, py::arg("title"), py::arg("message"))
+            .def("ask_open_file", &PyUi::ask_open_file, py::arg("title"))
+            .def("ask_save_file", &PyUi::ask_save_file, py::arg("title"));
         py::class_<PyPluginApi>(m, "Api")
             .def_property_readonly("plugin_file", &PyPluginApi::owner)
             .def_property_readonly("plugin_dir", &PyPluginApi::plugin_dir)
             .def_property_readonly("api_version", [](const PyPluginApi&) { return kPyHostApiVersion; })
+            // ★ P3：控件门面（`api.ui.*`）—— 表外无门，见 py_host.h 与能力表判据
+            .def_property_readonly("ui", [](const PyPluginApi& api) { return PyUi(api.owner()); })
             .def("log", &PyPluginApi::log, py::arg("message"))
             .def("register_command", &PyPluginApi::register_command, py::arg("action_id"),
                  py::arg("label"), py::arg("handler"), py::arg("when") = py::none())
@@ -276,7 +573,13 @@ void ensure_api_module() {
                  py::arg("area"), py::arg("value"), py::arg("when") = py::none())
             .def("register_option", &PyPluginApi::register_option, py::arg("label"),
                  py::arg("choices"), py::arg("callback") = py::none(), py::arg("host") = "fs",
-                 py::arg("area") = "top_bar", py::arg("when") = py::none(), py::arg("order") = 0);
+                 py::arg("area") = "top_bar", py::arg("when") = py::none(), py::arg("order") = 0)
+            // ★ P3：插件页 / 面板（控件门面的落点）
+            .def("register_panel", &PyPluginApi::register_panel, py::arg("title"),
+                 py::arg("builder"), py::arg("host") = "fs", py::arg("area") = "top_bar",
+                 py::arg("order") = 0)
+            .def("register_tool", &PyPluginApi::register_tool, py::arg("name"), py::arg("builder"),
+                 py::arg("order") = 0);
         class_registered = true;
     }
     modules["xrkit"] = m;
@@ -616,6 +919,7 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
     };
     bool want_host = false;
     bool want_plugins = false;
+    bool want_ui = false;
     std::string home;
     std::string dir;
     for (size_t i = 0; i < args.size(); ++i) {
@@ -626,6 +930,10 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
         }
         if (a == "--py-plugins") {
             want_plugins = true;
+            continue;
+        }
+        if (a == "--ui-facade") {
+            want_ui = true;
             continue;
         }
         if (a == "--python-home" && i + 1 < args.size()) {
@@ -639,10 +947,51 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
         if (!a.empty() && a[0] == '-') continue;   // 其余开关不由本探针管
         if (dir.empty()) dir = a;                   // 第一个操作数 = 插件目录
     }
-    if (!want_host && !want_plugins) {
-        emit("PYHOST error reason=用法：--python-host | --py-plugins [目录]");
+    if (!want_host && !want_plugins && !want_ui) {
+        emit("PYHOST error reason=用法：--python-host | --py-plugins [目录] | --ui-facade");
         return 3;
     }
+
+#ifdef XRKIT_WITH_PYTHON
+    if (want_ui) {
+        // ★★ P3 **能力表探针**：把 `xrkit` 模块里**实际暴露**的名字逐条打出来 ——
+        //   判据（`tests/check_ui_capability_table.py`）拿它与**预期表**逐条对账，
+        //   **多一个就红**（规格 §二「能力表：表外无门，静态判红」）。
+        const PyHostStatus host = init_python(home);
+        if (!host.initialized) {
+            emit("UIFACADE host=failed reason=" + one_line(host.reason));
+            return host.enabled ? 1 : 2;
+        }
+        std::string reason;
+        const bool available = ui_facade_available(&reason);
+        std::string methods;
+        for (const std::string& name : ui_facade_method_names()) {
+            if (!methods.empty()) methods += ",";
+            methods += name;
+        }
+        emit(std::string("UIFACADE available=") + (available ? "1" : "0") + " methods=" + methods +
+             " reason=" + one_line(reason));
+        py::gil_scoped_acquire acquire;
+        py::module_ module = py::module_::import("xrkit");
+        py::object dir_fn = py::module_::import("builtins").attr("dir");
+        for (const char* cls : {"Api", "Ui", "Widget"}) {
+            std::vector<std::string> names;
+            for (auto item : py::list(dir_fn(module.attr(cls)))) {
+                const std::string name = py::str(item).cast<std::string>();
+                if (!name.empty() && name[0] == '_') continue;   // 下划线开头（dunder/内部）不算能力
+                names.push_back(name);
+            }
+            std::sort(names.begin(), names.end());
+            std::string joined;
+            for (const std::string& name : names) {
+                if (!joined.empty()) joined += ",";
+                joined += name;
+            }
+            emit(std::string("UIFACADE ") + cls + "=" + joined);
+        }
+        return 0;
+    }
+#endif
 
     if (want_host) {
         const PyHostStatus started = init_python(home);

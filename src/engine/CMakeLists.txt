@@ -25,6 +25,8 @@ add_library(xrkit_engine STATIC
   # ★★ 插件改装 P2：CPython 宿主（`XRKIT_WITH_PYTHON` 未定义时编出**降级**实现：
   #   `enabled=false` + 如实理由 —— 文件本身总是参与编译，避免"少编一个文件"变成静默降级）
   plugin/py_host.cpp
+  # ★★ 插件改装 P3：宿主控件门面（Qt-free 的表 + 进程级状态；实现在外壳 `ui_facade_qt.cpp`）
+  plugin/widget_facade.cpp
   font/charset.cpp
   font/cjk_state.cpp
   font/glyph.cpp

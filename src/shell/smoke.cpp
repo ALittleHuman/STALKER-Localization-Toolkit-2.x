@@ -5139,6 +5139,112 @@ SmokeResult run_smoke() {
         QDir(dir).removeRecursively();
     }
 
+    // ★★ 插件改装 P3（控件门面 L1/L2）：**Python 插件用 `api.ui.*` 造出的页，在真 Hub 里成立吗** ——
+    //   一次量五件事：
+    //     ① 页注册进了页表（`register_tool`）；
+    //     ② L1 造出的控件真的在页里（标签/输入框/下拉/勾选框/只读视图都按"宿主排版"落了位）；
+    //     ③ 点按钮**回到 Python**：`get_text(entry)` 读回的是真控件的文本；
+    //     ④ `set_text` 改得动控件（改完读标签文本）；
+    //     ⑤ `ui.log()` 进得了宿主日志栏（LogView）。
+    //   夹具由自检**现写**进临时目录（不依赖仓库路径）；标记落在插件目录里（临时目录 ⇒ 不污染仓库）。
+    {
+        const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_uifacade"));
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString marker = QDir(dir).filePath(QStringLiteral("ui_marker.txt"));
+        const QByteArray source =
+            "# -*- coding: utf-8 -*-\n"
+            "import os\n"
+            "def register(api):\n"
+            "    def mark(text):\n"
+            "        with open(os.path.join(api.plugin_dir, 'ui_marker.txt'), 'a', encoding='utf-8') as fh:\n"
+            "            fh.write(text + '\\n')\n"
+            "    def build():\n"
+            "        ui = api.ui\n"
+            "        label = ui.label(None, '门面标签')\n"
+            "        entry = ui.entry(None, '初值', 24)\n"
+            "        ui.combo(None, ['甲', '乙'], lambda v: mark('combo:' + v))\n"
+            "        ui.checkbox(None, '勾我', lambda on: mark('check:%d' % int(on)))\n"
+            "        ui.text_view(None, 4, True)\n"
+            "        def on_click():\n"
+            "            mark('click:' + ui.get_text(entry))\n"
+            "            ui.set_text(label, '点过了')\n"
+            "            ui.log('门面夹具：按钮被点了')\n"
+            "        ui.button(None, '夹具按钮', on_click)\n"
+            "        mark('built')\n"
+            "    api.register_tool('门面夹具页', build, 5)\n";
+        QFile plugin_file(QDir(dir).filePath(QStringLiteral("ui_demo.py")));
+        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                           plugin_file.write(source) == source.size();
+        plugin_file.close();
+        check(wrote, QStringLiteral("P3 夹具 .py 没写进 %1").arg(QDir::toNativeSeparators(dir)));
+
+        Hub hub(nullptr, dir);
+        const int facade_page = hub.page_index(QStringLiteral("门面夹具页"));
+        check(facade_page >= 0,
+              QStringLiteral("P3 `register_tool` 的页没进页表（实得 %1，插件问题 %2 条）")
+                  .arg(facade_page)
+                  .arg(hub.plugin_errors().size()));
+        QWidget* page_widget = facade_page >= 0 ? hub.stack()->widget(facade_page) : nullptr;
+        QStringList label_texts;
+        bool has_button = false;
+        bool has_entry = false;
+        bool has_combo = false;
+        bool has_check = false;
+        bool has_view = false;
+        if (page_widget != nullptr) {
+            for (QLabel* item : page_widget->findChildren<QLabel*>()) label_texts << item->text();
+            for (QPushButton* item : page_widget->findChildren<QPushButton*>()) {
+                if (item->text() == QStringLiteral("夹具按钮")) has_button = true;
+            }
+            for (QLineEdit* item : page_widget->findChildren<QLineEdit*>()) {
+                if (item->text() == QStringLiteral("初值")) has_entry = true;
+            }
+            for (QComboBox* item : page_widget->findChildren<QComboBox*>()) {
+                if (item->count() == 2) has_combo = true;
+            }
+            for (QCheckBox* item : page_widget->findChildren<QCheckBox*>()) has_check = true;
+            for (QPlainTextEdit* item : page_widget->findChildren<QPlainTextEdit*>()) {
+                has_view = true;
+            }
+        }
+        check(label_texts.contains(QStringLiteral("门面标签")),
+              QStringLiteral("P3 门面造出的标签没进插件页（实得：%1）")
+                  .arg(label_texts.join(QStringLiteral(" / "))));
+        check(has_button && has_entry && has_combo && has_check && has_view,
+              QStringLiteral("P3 门面控件不齐（按钮=%1 输入=%2 下拉=%3 勾选=%4 只读视图=%5）")
+                  .arg(has_button).arg(has_entry).arg(has_combo).arg(has_check).arg(has_view));
+
+        // ③④⑤：点按钮 → 回 Python（get_text）→ 改控件（set_text）→ 写宿主日志（ui.log）
+        QPushButton* facade_button =
+            page_widget != nullptr ? page_widget->findChild<QPushButton*>() : nullptr;
+        if (facade_button != nullptr) facade_button->click();
+        if (hub.log_box() != nullptr) hub.log_box()->flush();
+        QString marker_text;
+        {
+            QFile marker_file(marker);
+            if (marker_file.open(QIODevice::ReadOnly)) {
+                marker_text = QString::fromUtf8(marker_file.readAll());
+            }
+        }
+        check(marker_text.contains(QStringLiteral("click:初值")),
+              QStringLiteral("P3 按钮没回到 Python 或 get_text 读不到输入框（标记=%1）")
+                  .arg(marker_text.isEmpty() ? QStringLiteral("(空)") : marker_text.simplified()));
+        QStringList labels_after;
+        if (page_widget != nullptr) {
+            for (QLabel* item : page_widget->findChildren<QLabel*>()) labels_after << item->text();
+        }
+        check(labels_after.contains(QStringLiteral("点过了")),
+              QStringLiteral("P3 `set_text` 没改到控件（标签实得：%1）")
+                  .arg(labels_after.join(QStringLiteral(" / "))));
+        const QString hub_log = hub.log_box() != nullptr ? hub.log_box()->toPlainText() : QString();
+        check(hub_log.contains(QStringLiteral("门面夹具：按钮被点了")),
+              QStringLiteral("P3 `ui.log()` 没进宿主日志栏"));
+        check(hub.plugin_errors().empty(),
+              QStringLiteral("P3 好插件不该产生插件问题（实得 %1 条）").arg(hub.plugin_errors().size()));
+        QDir(dir).removeRecursively();
+    }
+
     // ⑫12.1 四类槽位渲染（用户 2026-09-26"补六类"：panel/tool/option/option_entry）
     {
         namespace plug = xrkit::plugin;

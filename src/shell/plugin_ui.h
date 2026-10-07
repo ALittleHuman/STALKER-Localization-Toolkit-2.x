@@ -13,8 +13,24 @@
 
 #include "xrkit/plugin/abi.h"
 
+#include <functional>
+#include <string>
+
 namespace xrkit::shell {
 
 const stk_ui* qt_plugin_ui();
+
+// ★★ 插件改装 P3（控件门面 L1/L2）：装配控件门面 —— **外壳装配时调一次**。
+// `log_sink` 非空时把"写宿主日志栏"这条接上（门面的 `log_append`）；空 ⇒ 该条不可用
+// （`ui_facade_available()` 会如实报"缺方法"，调用侧记账）。
+// 门面实现见 `ui_facade_qt.cpp`：它把 `ui_facade.h` 的 18 个方法**转发**给本文件这张
+// C ABI 表，因此"C ABI 插件"与"Python 插件"用的**是同一套控件语义**（只许一份实现）。
+void install_qt_ui_facade(std::function<void(const std::string&)> log_sink);
+
+// ★★ 插件改装 P3（控件门面 L1/L2）：**取控件当前文本**。
+// 为什么放在这里而不是在门面实现里另写一份：`plugin_ui.cpp` 是"控件语义"的**唯一实现**
+// （C ABI 的 `api.ui` 与 Python 侧的 `api.ui` 都走它）—— 门面只是把它再包一层。
+// 认得的控件：QLabel/QPushButton/QLineEdit/QPlainTextEdit；不认得返回空串。
+std::string qt_plugin_widget_text(stk_widget* widget);
 
 }  // namespace xrkit::shell

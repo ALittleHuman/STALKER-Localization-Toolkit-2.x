@@ -180,6 +180,8 @@ void print_usage() {
            "  --py-plugins [目录]\n"
            "                  Python 插件加载链：起宿主 → 扫 `*.py` → `register(api)` →\n"
            "                  进注册表 → **真消费一次**（调 fs 工具栏那条命令）→ 逐条报账\n"
+           "  --ui-facade     控件门面能力表：打印 `xrkit` 模块**实际暴露**的名字（判据与预期表对账，\n"
+           "                  多一个即红）＋ 门面可用性（无 GUI 进程里 available=0 且给出理由）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -3460,12 +3462,12 @@ int run_cli(const std::vector<std::string>& args) {
     //   ③ 留痕仍在（零静默）：失败理由必须看得见 —— `errors_` 不参与"零残留"（见 registry.h）。
     //   ★ 判据不是"之后调它不崩"：`FreeLibrary` 未必立刻 unmap，"不崩≠干净"（草案已注明）。
     // 退出码：0=全绿；1=有断言不成立；2=夹具缺失（外部前提，门禁按档位记未覆盖）；3=用法错误。
-    // ★★ 插件改装 P2b/P2c：宿主与插件加载链的**两个诊断动作**。
+    // ★★ 插件改装 P2b/P2c/P3：宿主、插件加载链、**控件门面能力表**三个诊断动作。
     //   实现在**引擎层唯一一份**（`py_host.cpp::run_python_host_probe`）——
     //   因为发行包里只有 `xrkit_app.exe`（没有 CLI），"包内 Python 能不能起来、能不能加载 .py"
     //   必须由 GUI exe 的同名开关也能跑；两处各写一遍必然分叉（本仓最贵的一类返工）。
     //   退出码：0=通 / 1=有失败 / 2=构建期没带 Python（显式跳过）/ 3=用法错误。
-    if (action == "--python-host" || action == "--py-plugins") {
+    if (action == "--python-host" || action == "--py-plugins" || action == "--ui-facade") {
         return xrkit::plugin::run_python_host_probe(args, [](const std::string& line) {
             std::cout << line << "\n";
         });

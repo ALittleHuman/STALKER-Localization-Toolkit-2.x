@@ -206,4 +206,16 @@ const stk_ui kQtUi = {
 
 const stk_ui* qt_plugin_ui() { return &kQtUi; }
 
+// ★★ 插件改装 P3：控件文本的**唯一实现**（C ABI 侧没有取文本这一路，Python 门面要它）。
+std::string qt_plugin_widget_text(stk_widget* widget) {
+    QWidget* target = unwrap(widget);
+    if (target == nullptr) return std::string();
+    if (auto* label = qobject_cast<QLabel*>(target)) return label->text().toStdString();
+    if (auto* button = qobject_cast<QPushButton*>(target)) return button->text().toStdString();
+    if (auto* edit = qobject_cast<QLineEdit*>(target)) return edit->text().toStdString();
+    if (auto* view = qobject_cast<QPlainTextEdit*>(target)) return view->toPlainText().toStdString();
+    if (auto* combo = qobject_cast<QComboBox*>(target)) return combo->currentText().toStdString();
+    return std::string();
+}
+
 }  // namespace xrkit::shell

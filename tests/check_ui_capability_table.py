@@ -1,0 +1,168 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""插件改装的**能力表**判据（P3，规格 §二「表外无门，静态判红」）。
+
+口径：插件能看到的**只有**下面这几张表。判据拿 `xrkit_cli --ui-facade` 打出来的
+`dir(xrkit.Api/Ui/Widget)` 与预期表**逐条对账**：
+  · **多一个名字 ⇒ 红**（能力泄漏必须是有意为之：先改本文件、写清它为什么存在，再进代码）；
+  · **少一个名字 ⇒ 红**（门面被削 = 用户下限「控件的操控必须至少支持现有功能与观感」的降级）。
+
+顺带判：**无 GUI 进程里门面必须如实报"不可用 + 理由"**（零静默），而不是静默返回空。
+
+输出：`UICAP ok` / `UICAP fail <详情>`；退出码 0/1。
+"""
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
+
+# ★★ 预期能力表（**唯一事实来源**；每条写清"它为什么存在"）────────────────────
+# Api：插件身份 + 注册面 + 控件门面入口
+EXPECT_API = {
+    "api_version": "契约版本（规格 §五「API 表版本化」）",
+    "plugin_file": "插件文件名（owner；也是命令 id 前缀）",
+    "plugin_dir": "插件所在目录（夹具据此落标记文件）",
+    "ui": "★控件门面（L1/L2 的入口；表外无门）",
+    "log": "写宿主日志（引擎日志 + 诊断缓冲）",
+    "register_command": "注册命令（可被挂载点引用）",
+    "register_menu_item": "把命令挂到 (host, location) 槽位",
+    "register_option_entry": "往组件**已有**下拉里加条目",
+    "register_option": "**新建**一个属于插件的下拉",
+    "register_panel": "贡献一个面板（控件门面的落点之一）",
+    "register_tool": "贡献一个 Hub 页（控件门面的落点之一）",
+}
+# Ui：L1 装配（10）+ L2 操作/服务（8）
+EXPECT_UI = {
+    "label": "L1 文本", "button": "L1 按钮（回调）", "row": "L1 行容器",
+    "checkbox": "L1 勾选框（回调）", "entry": "L1 单行输入", "text": "L1 多行输入",
+    "combo": "L1 下拉（回调）", "drop_box": "L1 拖入目标", "pack": "L1 显式摆放",
+    "text_view": "L1 只读多行视图",
+    "set_text": "L2 改文本", "get_text": "L2 读文本", "set_enabled": "L2 启用/禁用",
+    "alive": "L2 句柄是否还有效", "log": "L2 宿主日志栏（LogView）",
+    "ask_yes_no": "L2 宿主对话框", "ask_open_file": "L2 宿主文件选择",
+    "ask_save_file": "L2 宿主保存对话框",
+}
+# Widget：**故意为空** —— 不透明句柄，插件不能对它做任何事（禁 L4 裸 Qt）
+EXPECT_WIDGET: dict[str, str] = {}
+
+
+def run_probe() -> tuple[int, str]:
+    proc = subprocess.run([str(CLI), "--ui-facade"], cwd=str(ROOT), capture_output=True,
+                          timeout=300)
+    return proc.returncode, (proc.stdout or b"").decode("utf-8", errors="replace")
+
+
+def field(out: str, name: str) -> str:
+    """取 `name=值`（值到空白为止）。★ 不能用"按第一个 `=` 切一行"的朴素解析：
+    第一行是**多个**键值对（`available=0 methods=… reason=…`），朴素解析会把
+    `0 methods=…` 整个当成 available 的值（自证第一版就死在这里）。"""
+    match = re.search(r"(?:^|\s)" + re.escape(name) + r"=(\S*)", out)
+    return match.group(1) if match else ""
+
+
+def reason_of(out: str) -> str:
+    match = re.search(r"reason=(.*)", out)
+    return match.group(1).strip() if match else ""
+
+
+def table_of(out: str, cls: str) -> str:
+    match = re.search(r"UIFACADE " + re.escape(cls) + r"=(.*)", out)
+    if match is None:
+        return ""
+    return match.group(1).strip()
+
+
+def scan(out: str) -> list[str]:
+    offenders: list[str] = []
+    for cls, expected in (("Api", EXPECT_API), ("Ui", EXPECT_UI), ("Widget", EXPECT_WIDGET)):
+        if re.search(r"UIFACADE " + re.escape(cls) + r"=", out) is None:
+            offenders.append("探针没打出 `UIFACADE %s=` 那一行（判据没跑成，不是通过）" % cls)
+            continue
+        offenders += compare(cls, table_of(out, cls), expected)
+    # ★ 无 GUI 进程（CLI）：门面必须如实报不可用 + 给理由（零静默）
+    available = field(out, "available")
+    reason = reason_of(out)
+    if available == "0":
+        if not reason:
+            offenders.append("门面不可用却没给理由（零静默）")
+        elif not re.search(r"没注入|缺方法", reason):
+            offenders.append("门面不可用的理由不像理由：「%s」" % reason)
+    elif available == "1":
+        if not field(out, "methods"):
+            offenders.append("available=1 但 methods= 是空的（装了个空门面？）")
+    elif not available:
+        offenders.append("探针没给出 available=（判据没跑成，不是通过）")
+    return offenders
+
+
+def compare(name: str, got_raw: str, expected: dict[str, str]) -> list[str]:
+    got = [x for x in got_raw.split(",") if x]
+    offenders: list[str] = []
+    for extra in sorted(set(got) - set(expected)):
+        offenders.append("%s 多了一个名字「%s」—— 能力泄漏（要么删掉它，要么先改本判据并写清理由）"
+                         % (name, extra))
+    for missing in sorted(set(expected) - set(got)):
+        offenders.append("%s 少了「%s」（%s）—— 门面被削＝用户下限降级"
+                         % (name, missing, expected[missing]))
+    return offenders
+
+
+_GREEN = "\n".join([
+    "UIFACADE available=0 methods= reason=宿主没注入控件门面（CLI/无 GUI 进程）",
+    "UIFACADE Api=" + ",".join(sorted(EXPECT_API)),
+    "UIFACADE Ui=" + ",".join(sorted(EXPECT_UI)),
+    "UIFACADE Widget=",
+])
+_RED = {
+    "多一个能力（泄漏）": _GREEN.replace("UIFACADE Api=", "UIFACADE Api=backdoor,"),
+    "少一个能力（削门面）": _GREEN.replace(",get_text", ""),
+    "不可用却没理由": _GREEN.replace("reason=宿主没注入控件门面（CLI/无 GUI 进程）", "reason="),
+    "缺一整行": "\n".join(_GREEN.splitlines()[:2]),
+}
+
+
+def selfcheck() -> list[str]:
+    broken: list[str] = []
+    if scan(_GREEN):
+        broken.append("干净样本被误报：%s" % scan(_GREEN))
+    for name, out in _RED.items():
+        if not scan(out):
+            broken.append("反例「%s」没被判红" % name)
+    return broken
+
+
+def main() -> int:
+    broken = selfcheck()
+    if broken:
+        print("UICAP fail 判据自证不过（%d 处）：" % len(broken))
+        for item in broken:
+            print("           UICAP " + item)
+        return 1
+    if not CLI.is_file():
+        print("UICAP fail 找不到 %s（判据没跑成，不是通过）" % CLI.relative_to(ROOT))
+        return 1
+    rc, out = run_probe()
+    for raw in out.splitlines():
+        s = raw.strip()
+        if s.startswith("UIFACADE"):
+            print("           " + s[:160])
+    if rc != 0:
+        print("UICAP fail 探针退出码 %d（要求 0）" % rc)
+        return 1
+    offenders = scan(out)
+    if offenders:
+        print("UICAP fail %d 处：能力表不对" % len(offenders))
+        for item in offenders[:10]:
+            print("           UICAP " + item)
+        return 1
+    print("UICAP ok 能力表 %d+%d 个名字逐条对上（判据自证 %d 红 + 1 绿；Widget 故意为空＝不透明句柄）"
+          % (len(EXPECT_API), len(EXPECT_UI), len(_RED)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

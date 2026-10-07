@@ -2262,6 +2262,38 @@ def step_python_embed(release: bool) -> None:
                                           line3 or "(无 PYHOST 行)"))
 
 
+def step_ui_facade(release: bool) -> None:
+    """插件改装 P3：**控件门面（L1/L2）** —— 能力表 + 无 GUI 时的如实降级。
+
+    判据：
+      · **能力表**（`tests/check_ui_capability_table.py`）：`dir(xrkit.Api/Ui/Widget)` 与
+        **预期表**逐条对账 —— **多一个＝能力泄漏、少一个＝门面被削**，都红（规格 §二「表外无门」）；
+      · **无 GUI 进程**（CLI）里门面要**如实报不可用 + 理由**（零静默），不许静默返回空；
+      · GUI 那条路（真控件上屏 + 回调回 Python + `get_text/set_text` + `ui.log` 进宿主日志栏）
+        在 `shell-smoke` 里判 —— 那需要 Qt，纯命令行环境判不了（这一步只判"表"与"降级"）。
+    """
+    say("[ui-facade] 插件改装 P3：控件门面的**能力表**（表外无门）与降级口径")
+    if not CLI_EXE.exists():
+        prereq("构建产物 %s" % CLI_EXE.name, "缺失（先跑 build 步）", release)
+        return
+    rc_probe, out_probe = run([str(CLI_EXE), "--ui-facade"], timeout=300)
+    for raw in out_probe.splitlines():
+        s = raw.strip()
+        if s.startswith("UIFACADE available=") or s.startswith("UIFACADE Api=") or \
+                s.startswith("UIFACADE Ui=") or s.startswith("UIFACADE Widget="):
+            say("  " + s[:150])
+    rc, out = run([sys.executable, str(ROOT / "tests" / "check_ui_capability_table.py")],
+                  timeout=180)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if s.startswith("UICAP"):
+            say("  " + s[:160])
+    if rc == 0 and rc_probe == 0:
+        ok("能力表逐条对上（多一个即泄漏、少一个即削门面）；无 GUI 时门面如实报不可用 + 理由")
+    else:
+        fail("控件门面能力表不通过（判据 rc=%d / 探针 rc=%d；见上）" % (rc, rc_probe))
+
+
 def step_plugin_entry_lock(release: bool) -> None:
     """插件改装的**加载入口唯一性**（P2b）：两个前端都走 `load_all_plugins_from_dir`。
 
@@ -2708,6 +2740,9 @@ STEPS = [
     # ★★ 2026-10-07（插件改装 P2c）：随包自带 embeddable CPython（标准库 + 运行期）+
     #   包内 `--python-host` 判据（只在包自己声明 `python_runtime=` 时跑，口径同 pkg-platform）。
     ("python-embed", step_python_embed),
+    # ★★ 2026-10-07（插件改装 P3）：控件门面能力表（表外无门）＋ 无 GUI 时的如实降级。
+    #   GUI 那条路（真控件 + 回调回 Python）在 shell-smoke 里判（需要 Qt）。
+    ("ui-facade", step_ui_facade),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),
