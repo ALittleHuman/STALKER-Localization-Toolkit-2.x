@@ -1517,8 +1517,22 @@ bool is_plugin_py_name(const std::string& filename) {
 }
 
 // ── P2b：从目录加载 Python 插件 ──────────────────────────────────────────────
+// ★★ P7d：真正干活的实现 —— 公共入口与 `--py-plugin-call` 探针**共用这一份**。
+//   `modules_out` 非空时把 (owner, module) 交出来：探针要按 owner 找插件的无界面入口，
+//   而加载器**有意不把模块放进 `sys.modules`**（插件之间不许靠 import 互相串）⇒
+//   探针没法靠模块名去 `sys.modules` 里找（实测取证：`modules=` 是空的）。
+std::vector<RegistrationError> load_python_plugins_impl(
+    const std::string& dir, Registry& registry, PyLoadSummary* summary,
+    std::vector<std::pair<std::string, py::object>>* modules_out);
+
 std::vector<RegistrationError> load_python_plugins_from_dir(const std::string& dir, Registry& registry,
                                                             PyLoadSummary* summary) {
+    return load_python_plugins_impl(dir, registry, summary, nullptr);
+}
+
+std::vector<RegistrationError> load_python_plugins_impl(
+    const std::string& dir, Registry& registry, PyLoadSummary* summary,
+    std::vector<std::pair<std::string, py::object>>* modules_out) {
     std::vector<RegistrationError> errors;
     PyLoadSummary local;
     PyLoadSummary& acc = summary != nullptr ? *summary : local;
@@ -1578,6 +1592,7 @@ std::vector<RegistrationError> load_python_plugins_from_dir(const std::string& d
             }
             py::object module = module_from_spec(spec);
             spec.attr("loader").attr("exec_module")(module);
+            if (modules_out != nullptr) modules_out->emplace_back(owner, module);
             // ★★ P7b（上一轮答"插件间兼容性"时承诺的判据）：**插件声明它按哪一版插件 API 写的**。
             //   声明 `PLUGIN_API = <int>`（缺省＝按当前版本）。**比宿主新 ⇒ 拒绝加载**（并留痕）：
             //   那种插件会调用宿主还不认识的能力，"进去之后调一半才炸"比"当场拒绝"难查得多；
@@ -1674,6 +1689,8 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
     bool want_host = false;
     bool want_plugins = false;
     bool want_ui = false;
+    bool want_plugin_call = false;
+    std::string want_plugin_call_json;
     std::string home;
     std::string dir;
     for (size_t i = 0; i < args.size(); ++i) {
@@ -1690,6 +1707,15 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
             want_ui = true;
             continue;
         }
+        if (a == "--py-plugin-call") {
+            want_plugin_call = true;
+            continue;
+        }
+        if (want_plugin_call && want_plugin_call_json.empty() && a.size() > 0 &&
+            a[0] == '{') {
+            want_plugin_call_json = a;
+            continue;
+        }
         if (a == "--python-home" && i + 1 < args.size()) {
             home = args[++i];
             continue;
@@ -1701,8 +1727,9 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
         if (!a.empty() && a[0] == '-') continue;   // 其余开关不由本探针管
         if (dir.empty()) dir = a;                   // 第一个操作数 = 插件目录
     }
-    if (!want_host && !want_plugins && !want_ui) {
-        emit("PYHOST error reason=用法：--python-host | --py-plugins [目录] | --ui-facade");
+    if (!want_host && !want_plugins && !want_ui && !want_plugin_call) {
+        emit("PYHOST error reason=用法：--python-host | --py-plugins [目录] | --ui-facade | "
+             "--py-plugin-call [目录] [JSON]");
         return 3;
     }
 
@@ -1755,6 +1782,99 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
         shutdown_python();
         if (!enabled) return 2;
         return initialized ? 0 : 1;
+    }
+
+    // ★★ P7d：`--py-plugin-call <目录> <json>` —— **无界面调用插件的非 UI 入口**。
+    //   契约：插件导出模块级 `headless(api, args)`（args 是 JSON 解析出来的 dict），
+    //   返回值用 `json.dumps` 打成一行交回来。样板页的"产物逐字节一致"就靠这条通道判
+    //   （门禁里不能开 GUI）。`api.ui.*` 在这条路上不可用（没有界面），`api.engine.*` /
+    //   `api.host.*` 可用。
+    if (want_plugin_call) {
+        const std::string call_dir = dir.empty() ? (xrkit::core::app_dir() + "/plugins") : dir;
+        const PyHostStatus call_host = init_python(home);
+        if (!call_host.enabled) {
+            emit("PYPLUGINCALL reason=" + call_host.reason);
+            return 2;
+        }
+        if (!call_host.initialized) {
+            emit("PYPLUGINCALL error reason=解释器起不来：" + one_line(call_host.reason));
+            return 1;
+        }
+        // ★ 这里**不能**套 `gil_scoped_acquire`：宿主 `init_python()` 用 `PyEval_SaveThread()`
+        //   放开了 GIL，而 `load_python_plugins_from_dir()` 自己会取（与 `--py-plugins` 同口径）。
+        //   外面再套一层 = 两套记账（`PyEval_SaveThread` 与 pybind11 的 `PyGILState_Ensure`）
+        //   叠加 ⇒ 访问违例（本批实测：三个探针插件全崩 0xC0000005）。GIL 在下面**只取一次**。
+        Registry call_registry;
+        PyLoadSummary call_summary;
+        // ★ 用**内部实现**多要一份"导入出来的模块"（加载器有意不放进 sys.modules）
+        std::vector<std::pair<std::string, py::object>> call_modules;
+        const std::vector<RegistrationError> call_errors =
+            load_python_plugins_impl(call_dir, call_registry, &call_summary, &call_modules);
+        emit("PYPLUGINCALL files=" + std::to_string(call_summary.files) +
+             " loaded=" + std::to_string(call_summary.loaded) +
+             " errors=" + std::to_string(call_errors.size()));
+        if (call_summary.loaded == 0) {
+            emit("PYPLUGINCALL error reason=目录里没有可加载的插件（" + one_line(call_dir) + "）");
+            return 1;
+        }
+        // ★ GIL：**只取一次**，且是在加载器返回之后（见上面的注释 —— 嵌套会崩）。
+        py::gil_scoped_acquire call_acquire;
+        // 找**导出 headless 的那个插件**：遍历加载器交出来的模块表（加载序与注册一致）。
+        //   ★ 不去查 `sys.modules`：加载器**有意不把插件模块放进去**（插件之间不许靠 import 互相串）
+        //     —— 本批实测：`sys.modules` 里一个 `xrkit_plugin_*` 都没有。
+        py::object entry;
+        std::string entry_name;
+        for (const auto& loaded : call_modules) {
+            py::object module = loaded.second;
+            if (py::hasattr(module, "headless") == 0) continue;
+            entry = module.attr("headless");
+            entry_name = loaded.first;
+            break;
+        }
+        // ★★ 判"没找到"必须用 `!entry`（**空** pybind11 对象），不能用 `entry.is_none()`：
+        //   后者比的是 `m_ptr == Py_None`，对空指针返回 **false** ⇒ 判据放过 ⇒ 后面
+        //   `entry(api, args)` 调了个空指针 ⇒ 0xC0000005（本批实测：三个探针插件全崩，
+        //   而且崩点看着像在插件里 —— 其实是这一行判据的锅）。
+        if (!entry) {
+            // ★ 报账要**可诊断**：把"加载器交出来的插件"打出来（本批定位这条路径就靠它 ——
+            //   光说一句"没有导出"什么也查不出来）。
+            std::string loaded_names;
+            for (const auto& loaded : call_modules) loaded_names += loaded.first + " ";
+            emit("PYPLUGINCALL error reason=目录里没有插件导出 headless(api, args) loaded=" +
+                 one_line(loaded_names));
+            call_modules.clear();   // ★ 释放 Python 引用**必须在持锁时**（见文件头那条）
+            return 1;
+        }
+        py::object args;
+        try {
+            args = want_plugin_call_json.empty()
+                       ? py::dict()
+                       : py::module_::import("json").attr("loads")(want_plugin_call_json);
+        } catch (const py::error_already_set&) {
+            emit("PYPLUGINCALL error reason=第二个操作数不是合法 JSON");
+            call_modules.clear();
+            return 3;
+        }
+        PyPluginApi* raw = new PyPluginApi(&call_registry, entry_name, call_dir);
+        py::object api = py::cast(raw, py::return_value_policy::take_ownership);
+        try {
+            py::object result = entry(api, args);
+            py::object dumped = py::module_::import("json").attr("dumps")(
+                result, py::arg("ensure_ascii") = false, py::arg("sort_keys") = true);
+            emit("PYPLUGINCALL plugin=" + entry_name +
+                 " result=" + one_line(py::str(dumped).cast<std::string>()));
+        } catch (const py::error_already_set& err) {
+            emit("PYPLUGINCALL plugin=" + entry_name + " error reason=" + one_line(err.what()));
+            call_modules.clear();
+            return 1;
+        }
+        for (const std::string& line : take_python_log_lines()) {
+            emit("PYPLUGINCALL log " + one_line(line));
+        }
+        // ★★ **释放模块引用要在持锁时做**：`call_modules` 里是 `py::object`，若在 GIL 之外析构
+        //   （函数返回时）就是访问违例 —— 本批实测：crash 在"调用成功之后"，看着像巧合。
+        call_modules.clear();
+        return 0;
     }
 
     // `--py-plugins`：起宿主 → 扫目录 → import → register(api) → 进注册表 →

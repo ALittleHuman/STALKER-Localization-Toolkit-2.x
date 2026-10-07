@@ -182,6 +182,10 @@ void print_usage() {
            "                  进注册表 → **真消费一次**（调 fs 工具栏那条命令）→ 逐条报账\n"
            "  --ui-facade     控件门面能力表：打印 `xrkit` 模块**实际暴露**的名字（判据与预期表对账，\n"
            "                  多一个即红）＋ 门面可用性（无 GUI 进程里 available=0 且给出理由）\n"
+           "  --py-plugin-call [目录] [JSON]\n"
+           "                  **无界面**调用插件的非 UI 入口：插件导出 `headless(api, args)`，\n"
+           "                  结果以 `PYPLUGINCALL result=<json>` 一行交回（门禁判「产物逐字节\n"
+           "                  一致」走这条，因为它不需要界面）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -3467,7 +3471,8 @@ int run_cli(const std::vector<std::string>& args) {
     //   因为发行包里只有 `xrkit_app.exe`（没有 CLI），"包内 Python 能不能起来、能不能加载 .py"
     //   必须由 GUI exe 的同名开关也能跑；两处各写一遍必然分叉（本仓最贵的一类返工）。
     //   退出码：0=通 / 1=有失败 / 2=构建期没带 Python（显式跳过）/ 3=用法错误。
-    if (action == "--python-host" || action == "--py-plugins" || action == "--ui-facade") {
+    if (action == "--python-host" || action == "--py-plugins" || action == "--ui-facade" ||
+        action == "--py-plugin-call") {
         return xrkit::plugin::run_python_host_probe(args, [](const std::string& line) {
             std::cout << line << "\n";
         });

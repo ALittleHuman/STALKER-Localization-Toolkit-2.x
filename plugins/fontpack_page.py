@@ -32,6 +32,37 @@ SIZES = [0, 1, 2]
 SUFFIXES = ["", "_chs"]
 
 
+def generate(api, options):
+    """出包（**唯一一份**）—— 界面按钮与无界面入口都走它。
+
+    返回引擎给的那个 dict（`ok/error/out_gamedata/fonts_written/xml_written/warnings`）。
+    ★ 界面那条路在 worker 线程里调它（引擎调用允许工作线程），
+      无界面那条路（`headless`）在主线程里调它 —— 两条路**同一段代码**。
+    """
+    return api.engine.font_pack(options)
+
+
+def headless(api, args):
+    """**无界面入口**（`xrkit_cli --py-plugin-call plugins <json>`）—— 门禁判"产物逐字节一致"用。
+
+    契约：`args` 是 JSON 解析出来的 dict（键同 `api.engine.font_pack` 的 options）；
+    返回 `generate()` 的结果（会被 `json.dumps` 成一行交回）。
+    ★ 这条路上 `api.ui.*` 不可用（没有界面）—— 所以这里**不碰任何控件**。
+    """
+    options = {
+        "game": str(args.get("game", "SoC")),
+        "lang": str(args.get("lang", "chs")),
+        "xml_dir": str(args.get("xml_dir", "")),
+        "font_path": str(args.get("font_path", "")),
+        "out_dir": str(args.get("out_dir", "")),
+        "offset": int(args.get("offset", 0)),
+        "suffix": str(args.get("suffix", "")),
+        "full_cyrillic": bool(args.get("full_cyrillic", True)),
+        "only_sizes": list(args.get("only_sizes", [])),
+    }
+    return generate(api, options)
+
+
 def register(api):
     ui = api.ui
     host = api.host
@@ -130,7 +161,7 @@ def register(api):
 
             def worker(progress, message):
                 progress(0)
-                result = engine.font_pack(options)
+                result = generate(api, options)
                 if not result["ok"]:
                     text = "失败：" + (result["error"] or "(无理由)")
                     ui.log_view_append(log, text)

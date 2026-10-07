@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import hashlib
+import json
 import re
 import shutil
 import subprocess
@@ -2452,6 +2454,88 @@ def step_host_services(release: bool) -> None:
        % (value_of("pref_round_trip"), value_of("font_dir_count")))
 
 
+def step_fontpack_plugin(release: bool) -> None:
+    """插件改装 P7d：**样板页的收口判据** —— 插件产出的汉化包与引擎参照**逐字节一致**。
+
+    这条判据要的是"插件页与内置页**同源**"，所以：
+      ① 参照走 `xrkit_cli --build-font-pack`（**内置 C++ 页用的就是这条引擎路**）；
+      ② 插件走 `--py-plugin-call plugins <json>`（**无界面**调插件导出的 `headless(api, args)`）；
+      ③ 两边都只做**一个字号**（`--only-size 11` / `only_sizes=[11]`）⇒ 秒级，能进 release 档；
+      ④ 比对"文件表 + 每个文件的 sha256"，且**比较数必须 ≥1**（空集不算通过 —— 判据自证三问）。
+    字体缺失按**外部前提**记账（不假装通过）。
+    """
+    say("[fontpack-plugin] 插件改装 P7d：样板页（汉化包生成）产物与引擎参照逐字节一致")
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "缺失（先跑 build 步）", release)
+        return
+    plugin = ROOT / "plugins" / "fontpack_page.py"
+    if not plugin.is_file():
+        prereq("样板页插件 plugins/fontpack_page.py", "缺失", release)
+        return
+    font = ""
+    for candidate in (r"C:\Windows\Fonts\msyh.ttc", r"C:\Windows\Fonts\msyh.ttf",
+                      r"C:\Windows\Fonts\simsun.ttc"):
+        if Path(candidate).is_file():
+            font = candidate
+            break
+    if not font:
+        prereq("源字体（msyh/simsun）", "本机没有可用字体", release)
+        return
+    work = ROOT / "build" / "fontpack_plugin"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    xml_dir = work / "xml_in"
+    xml_dir.mkdir(parents=True)
+    (xml_dir / "a.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
+        '\t<string id="a"><text>合成语料：汉字与西里尔 Привет，标点！？</text></string>\n'
+        '</string_table>\n', encoding="utf-8")
+    (xml_dir / "b.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
+        '\t<string id="b"><text>第二条：换行与标点。？——</text></string>\n'
+        '</string_table>\n', encoding="utf-8")
+    ref_out = work / "ref"
+    plug_out = work / "plug"
+    rc_ref, out_ref = run([str(CLI_EXE), "--build-font-pack", "SoC", "chs", str(xml_dir),
+                           font, str(ref_out), "--only-size", "11"], timeout=900)
+    payload = json.dumps({"game": "SoC", "lang": "chs", "xml_dir": str(xml_dir),
+                          "font_path": font, "out_dir": str(plug_out),
+                          "only_sizes": [11]}, ensure_ascii=False)
+    rc_plug, out_plug = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"), payload],
+                            timeout=900)
+    for raw in out_plug.splitlines():
+        s = raw.strip()
+        if s.startswith("PYPLUGINCALL") and not s.startswith("PYPLUGINCALL result="):
+            say("  " + s[:170])
+
+    def digest(root: Path) -> dict:
+        out = {}
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                out[str(path.relative_to(root)).replace("\\", "/")] = hashlib.sha256(
+                    path.read_bytes()).hexdigest()
+        return out
+
+    ref_tree = digest(ref_out)
+    plug_tree = digest(plug_out)
+    compared = sum(1 for key in ref_tree if key in plug_tree and ref_tree[key] == plug_tree[key])
+    only_ref = sorted(set(ref_tree) - set(plug_tree))
+    only_plug = sorted(set(plug_tree) - set(ref_tree))
+    differing = sorted(k for k in set(ref_tree) & set(plug_tree) if ref_tree[k] != plug_tree[k])
+    say("  参照 %d 个文件 / 插件 %d 个文件 / 逐字节相同 %d 个"
+        % (len(ref_tree), len(plug_tree), compared))
+    if only_ref or only_plug or differing:
+        fail("插件产物与引擎参照不一致：只在参照 %s；只在插件 %s；内容不同 %s"
+             % (only_ref[:4] or "无", only_plug[:4] or "无", differing[:4] or "无"))
+        return
+    if rc_ref != 0 or rc_plug != 0 or not ref_tree or compared < 1:
+        fail("判据没跑成（参照 rc=%d / 插件 rc=%d / 参照文件 %d / 比较数 %d）—— 空集不算通过"
+             % (rc_ref, rc_plug, len(ref_tree), compared))
+        return
+    ok("样板页（插件）产物与引擎参照**逐字节一致**（%d 个文件全等；同一份 `build_package`）"
+       % compared)
+
+
 def step_plugin_entry_lock(release: bool) -> None:
     """插件改装的**加载入口唯一性**（P2b）：两个前端都走 `load_all_plugins_from_dir`。
 
@@ -2929,6 +3013,8 @@ STEPS = [
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。
     ("host-services", step_host_services),
+    # ★★ 2026-10-08（插件改装 P7d）：**样板页收口** —— 插件产物与引擎参照逐字节一致。
+    ("fontpack-plugin", step_fontpack_plugin),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),
