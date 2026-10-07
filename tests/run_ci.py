@@ -2248,11 +2248,18 @@ def step_python_embed(release: bool) -> None:
     proc_env = dict(os.environ)
     rc3, out3 = run([str(exe), "--python-host"], env=proc_env, timeout=300)
     line3 = next((ln.strip() for ln in out3.splitlines() if ln.strip().startswith("PYHOST")), "")
-    if rc3 == 0 and " enabled=1 initialized=1" in line3 and (" version=%s " % expect) in line3:
-        ok("包内（%s）Python 宿主起来了，且不再依赖本机 Python（%s）" % (declared.name, line3))
+    # ★★ 判据必须**认准"用的是包内那份"**：只要求 `initialized=1` 是不够的 —— 本机装着
+    #   Python 时，即使 home 解析漏了包内那份，解释器也会退到构建期烘焙的本机路径而"看起来正常"。
+    #   `prefix=` 落在包目录里才证明"没装 Python 的机器也能起"。
+    want_prefix = "prefix=" + str(declared).replace("\\", "/")
+    line3_norm = line3.replace("\\", "/")
+    if rc3 == 0 and " enabled=1 initialized=1" in line3 and want_prefix in line3_norm and \
+            (" version=%s " % expect) in line3:
+        ok("包内（%s）Python 宿主起来了，且用的确实是包内那份（%s）" % (declared.name, line3))
     else:
-        fail("包内（%s）Python 宿主没起来（rc=%d）：%s —— 包内 python_runtime= 声明不成立"
-             % (declared.name, rc3, line3 or "(无 PYHOST 行)"))
+        fail("包内（%s）Python 宿主没起来 / 没用包内那份（要求 %s；rc=%d）：%s —— 包内 "
+             "python_runtime= 声明不成立" % (declared.name, want_prefix, rc3,
+                                          line3 or "(无 PYHOST 行)"))
 
 
 def step_plugin_entry_lock(release: bool) -> None:
