@@ -5076,6 +5076,69 @@ SmokeResult run_smoke() {
               QStringLiteral("视频：新一轮 start 必须先 reset 取消令牌（1.x：convert 自己不清零）"));
     }
 
+    // ★★ 插件改装 P2b（用户 2026-10-07 拍板：Python 模块接口 + C ABI 退役）：
+    //   **Python 插件在 GUI 这条路**上到底通不通 —— 一次量完四件事：
+    //     ① Hub 起插件目录时真的起解释器、真的 `import` + `register(api)`；
+    //     ② 它注册的命令**出现在 fs 页工具栏**（注册点 ↔ 消费点一一对应，规格 §四.2）；
+    //     ③ **点那颗按钮真的回到 Python**（handler 在插件目录里写一个标记文件）；
+    //     ④ 好插件不产生任何"插件问题"。
+    //   夹具由自检**现写**进临时目录（不依赖仓库路径）：内容里那条 `open(...)` 就是判据本体。
+    {
+        const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_pyplugins"));
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString marker = QDir(dir).filePath(QStringLiteral("clicked.txt"));
+        const QByteArray source =
+            "# -*- coding: utf-8 -*-\n"
+            "import os\n"
+            "PLUGIN_INFO = {'name': '自检夹具'}\n"
+            "def register(api):\n"
+            "    def on_click():\n"
+            "        with open(os.path.join(api.plugin_dir, 'clicked.txt'), 'a', encoding='utf-8') as fh:\n"
+            "            fh.write('clicked\\n')\n"
+            "    cid = api.register_command('smoke_greet', 'Python夹具命令', on_click)\n"
+            "    if cid is None:\n"
+            "        raise RuntimeError('register_command 失败')\n"
+            "    api.register_menu_item('fs', 'toolbar', cid, 0)\n"
+            "    api.log('自检夹具已注册')\n";
+        QFile plugin_file(QDir(dir).filePath(QStringLiteral("smoke_hello.py")));
+        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                           plugin_file.write(source) == source.size();
+        plugin_file.close();
+        check(wrote, QStringLiteral("P2b 夹具 .py 没写进 %1").arg(QDir::toNativeSeparators(dir)));
+
+        Hub hub(nullptr, dir);
+        QPushButton* command_button = nullptr;
+        for (int i = 0; i < hub.page_count(); ++i) {
+            PageBase* page = hub.page_at(i);
+            if (page == nullptr || page->page_id() != QStringLiteral("fs")) continue;
+            for (QPushButton* button : page->action_bar()->findChildren<QPushButton*>()) {
+                if (button->objectName().startsWith(QStringLiteral("plugin_smoke_hello"))) {
+                    command_button = button;
+                }
+            }
+        }
+        check(command_button != nullptr,
+              QStringLiteral("P2b Python 插件注册的命令没出现在 fs 页工具栏（注册了却没人消费）"));
+        if (command_button != nullptr) command_button->click();
+        QString text;
+        {
+            QFile marker_file(marker);   // 读完就关：下面要删整个目录（Windows 上开着删不掉）
+            if (marker_file.open(QIODevice::ReadOnly)) {
+                text = QString::fromUtf8(marker_file.readAll());
+            }
+        }
+        check(text.contains(QStringLiteral("clicked")),
+              QStringLiteral("P2b 点按钮没回到 Python（标记文件「%1」= %2）")
+                  .arg(QDir::toNativeSeparators(marker))
+                  .arg(text.isEmpty() ? QStringLiteral("(空/不存在)") : text.trimmed()));
+        check(hub.plugin_errors().empty(),
+              QStringLiteral("P2b 好插件不该产生插件问题（实得 %1 条：%2）")
+                  .arg(hub.plugin_errors().size())
+                  .arg(hub.plugin_notice()));
+        QDir(dir).removeRecursively();
+    }
+
     // ⑫12.1 四类槽位渲染（用户 2026-09-26"补六类"：panel/tool/option/option_entry）
     {
         namespace plug = xrkit::plugin;

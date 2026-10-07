@@ -177,6 +177,9 @@ void print_usage() {
            "                                              只此一份实现 —— GUI 只是调它，不自己拼参数）\n"
            "  --python-host   起一次 CPython 插件宿主并打印状态（插件改装 P2；\n"
            "                  `--python-home <目录>` 可显式指定发行包自带的 python/）\n"
+           "  --py-plugins [目录]\n"
+           "                  Python 插件加载链：起宿主 → 扫 `*.py` → `register(api)` →\n"
+           "                  进注册表 → **真消费一次**（调 fs 工具栏那条命令）→ 逐条报账\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -2568,8 +2571,10 @@ int run_cli(const std::vector<std::string>& args) {
     xrkit::plugin::Registry plugin_registry;
     {
         const std::string dir = plugins_given ? plugins_dir : (xrkit::core::app_dir() + "/plugins");
+        // ★★ P2b：与 GUI 走**同一个**统一入口（`*.dll` + `*.py`）—— 修前两边各调
+        //   `load_plugins_from_dir`，Python 插件一旦加进来就会出现"GUI 有、CLI 没有"的分叉。
         const std::vector<xrkit::plugin::RegistrationError> plugin_errors =
-            xrkit::plugin::load_plugins_from_dir(dir, plugin_registry, /*ui=*/nullptr);
+            xrkit::plugin::load_all_plugins_from_dir(dir, plugin_registry, /*ui=*/nullptr);
         if (plugins_given) {
             // 显式指定了插件目录才报账（默认路径下保持 CLI 输出与修前逐字节一致）
             std::cout << "PLUGINS dir=" << dir << " errors=" << plugin_errors.size() << "\n";
@@ -3455,6 +3460,66 @@ int run_cli(const std::vector<std::string>& args) {
     //   ③ 留痕仍在（零静默）：失败理由必须看得见 —— `errors_` 不参与"零残留"（见 registry.h）。
     //   ★ 判据不是"之后调它不崩"：`FreeLibrary` 未必立刻 unmap，"不崩≠干净"（草案已注明）。
     // 退出码：0=全绿；1=有断言不成立；2=夹具缺失（外部前提，门禁按档位记未覆盖）；3=用法错误。
+    if (action == "--py-plugins") {
+        // ★★ 插件改装 P2b：**Python 插件加载链**的探针 —— 一次走完
+        //   「起宿主 → 扫目录 → import → `register(api)` → 进 Registry → **真的消费一次**
+        //     → 报账」。
+        //   ★ 为什么连"消费"一起做：规格 §四.2「每类注册点 ↔ 消费点一一对应」。只证明
+        //     "注册成功"＝把审计抓过的"注册了却没人读"放进来。
+        const std::string dir = operands.empty() ? (xrkit::core::app_dir() + "/plugins")
+                                                 : operands[0];
+        const xrkit::plugin::PyHostStatus host = xrkit::plugin::init_python(python_home);
+        std::cout << "PYPLUGINS host=" << (host.initialized ? "ok" : (host.enabled ? "failed" : "disabled"))
+                  << " version=" << (host.version.empty() ? "-" : host.version)
+                  << " dir=" << dir << "\n";
+        if (!host.enabled) {
+            std::cout << "PYPLUGINS reason=" << host.reason << "\n";
+            return kExitSkip;
+        }
+        xrkit::plugin::Registry registry;
+        xrkit::plugin::PyLoadSummary summary;
+        const std::vector<xrkit::plugin::RegistrationError> errors =
+            xrkit::plugin::load_python_plugins_from_dir(dir, registry, &summary);
+        // ★ 键值协议**一行一条**：Python 异常带 traceback（多行），直接打会把"plugin=" 之后的
+        //   内容跳行、解析器只能靠猜 ⇒ 这里把换行折成 ` ⏎ `（口径同 `--shot` 的 `LBL` 行）。
+        const auto one_line = [](const std::string& text) {
+            std::string out = text;
+            for (size_t at = out.find('\n'); at != std::string::npos; at = out.find('\n', at)) {
+                out.replace(at, 1, " \xE2\x8F\x8E ");   // ⏎（UTF-8）
+            }
+            return out;
+        };
+        std::cout << "PYPLUGINS files=" << summary.files << " loaded=" << summary.loaded
+                  << " registrations=" << summary.registrations << " errors=" << errors.size()
+                  << "\n";
+        for (const xrkit::plugin::RegistrationError& e : errors) {
+            std::cout << "PYPLUGINS error plugin=" << e.plugin << " reason=" << one_line(e.message)
+                      << "\n";
+            // ★ 回滚判据的可见面：坏插件这次注册进表的东西**必须为 0**（按 owner 逐容器报账）。
+            std::cout << "PYPLUGINS residue plugin=" << e.plugin
+                      << " value=" << registry.residue_for(e.plugin).registrations() << "\n";
+        }
+        // 消费端：fs 页 toolbar 槽里第一条命令（有就真调一次 —— 回调要回到 Python）
+        const std::vector<const xrkit::plugin::CommandReg*> items =
+            registry.menu_items_for("fs", "toolbar", {});
+        if (!items.empty()) {
+            const xrkit::plugin::CommandReg* first = items.front();
+            std::cout << "PYPLUGINS consume plugin=" << first->plugin << " label=" << first->label
+                      << " id=" << first->id << "\n";
+            registry.invoke(first->plugin, first->label, first->handler);
+            // 回滚/残留口径的可见面：这条命令的 owner 现在应有多少条注册
+            std::cout << "PYPLUGINS residue plugin=" << first->plugin
+                      << " value=" << registry.residue_for(first->plugin).registrations() << "\n";
+        } else {
+            std::cout << "PYPLUGINS consume result=none\n";
+        }
+        for (const std::string& line : xrkit::plugin::take_python_log_lines()) {
+            std::cout << "PYPLUGINS log " << line << "\n";
+        }
+        if (!host.initialized) return kExitFail;
+        return (summary.loaded > 0 && errors.empty()) ? kExitOk : kExitFail;
+    }
+
     if (action == "--python-host") {
         // ★★ 插件改装 P2（用户 2026-10-07 拍板：Python 模块接口 + C ABI 退役）：
         //   起一次 CPython 宿主并打印状态。**零静默**：无论成败都打一行 `PYHOST ...`

@@ -3,6 +3,8 @@
 #include "xrkit/core/log.h"
 #include "xrkit/core/path.h"
 #include "xrkit/engine/plugin/abi_host.h"
+// P2b：统一入口要把 `.py`（新契约）也拉进来 —— 命名判据与加载实现都在 py_host。
+#include "xrkit/engine/plugin/py_host.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -146,6 +148,17 @@ std::vector<RegistrationError> load_plugins_from_dir(const std::string& dir, Reg
         // 与"不卸载正在被引用的模块"同一条纪律：插件回调随时可能被调用。
         new PluginApiAdapter(std::move(adapter));
     }
+    return errors;
+}
+
+std::vector<RegistrationError> load_all_plugins_from_dir(const std::string& dir, Registry& registry,
+                                                         const stk_ui* ui) {
+    // 顺序：DLL（C ABI，退役中）→ `.py`（新契约）。
+    // ★ 两条路都写进**同一份** `registry` 的 `registration_errors()`（零静默），
+    //   返回的是合并后的清单（调用方按同一个顺序显示）。
+    std::vector<RegistrationError> errors = load_plugins_from_dir(dir, registry, ui);
+    const std::vector<RegistrationError> py_errors = load_python_plugins_from_dir(dir, registry);
+    errors.insert(errors.end(), py_errors.begin(), py_errors.end());
     return errors;
 }
 

@@ -49,6 +49,14 @@ LoadResult load_plugin(const std::string& dll_path, const PluginApiAdapter& adap
 std::vector<RegistrationError> load_plugins_from_dir(const std::string& dir, Registry& registry,
                                                      const stk_ui* ui = nullptr);
 
+// ★★ P2b（插件改装，用户 2026-10-07 拍板「Python 模块接口 + C ABI 退役」）：
+//   **两个前端（Hub / CLI）唯一的那一个加载入口** —— 先扫 `*.dll`（C ABI，退役中），
+//   再扫 `*.py`（新契约，见 py_host.h）。收在一个函数里是为了让"两边加载的是同一批东西、
+//   进的是同一份 Registry"变成结构性事实，而不是两条各写一遍的路径。
+//   返回**全部**错误（两条路合并，顺序：DLL 在前、Python 在后）。
+std::vector<RegistrationError> load_all_plugins_from_dir(const std::string& dir, Registry& registry,
+                                                         const stk_ui* ui = nullptr);
+
 // ★★ S2-2（B 批，审计 §2）：**插件文件的命名判据只许这一份**。
 //   `*.dll` 的后缀判定必须**大小写不敏感**（Windows 文件名本来就不分大小写：`NLC.DLL` 是同一个
 //   文件）。修前 `load_plugins_from_dir` 判的是**原名**的 `.dll`，而给它做小写化的

@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -2167,10 +2169,133 @@ def step_python_host(release: bool) -> None:
     if not enabled:
         prereq("CPython 插件宿主（构建期已启用）", "本次构建没带 Python 支持：" + line, release)
         return
-    if rc == 0 and initialized and " version=3." in line:
+    if rc == 0 and initialized and " version=3." in line and " gil=released" in line:
         ok("CPython 宿主起来了（" + line + "）")
+    elif rc == 0 and initialized and " version=3." in line:
+        # ★ GIL 没放开 ⇒ 工作线程里回调进 Python 会死等（六页都在 TaskShell 的 worker 里干活）
+        fail("CPython 宿主起来了但**没放开 GIL**（`gil=held`）：工作线程回调会死等：" + line)
     else:
         fail("CPython 宿主没起来（退出码 %d）：%s" % (rc, line))
+
+
+def step_plugin_entry_lock(release: bool) -> None:
+    """插件改装的**加载入口唯一性**（P2b）：两个前端都走 `load_all_plugins_from_dir`。
+
+    为什么独立成步：这类"两边各写一条加载路径"的分叉**行为测不出来**（各自跑各自的用例都绿），
+    只有"调用点在哪"能判；而且它不受其它步骤早退影响（做法同 px-only / python-host）。
+    """
+    say("[plugin-entry] 插件加载入口唯一性（Hub 与 CLI 走同一条路）")
+    rc, out = run([sys.executable, str(ROOT / "tests" / "check_plugin_entry_lock.py")], timeout=120)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("PLUGINENTRY"):
+            say("  " + s)
+    if rc == 0:
+        ok("两个前端共用同一个插件加载入口（DLL + .py 收在一个函数里）")
+    else:
+        fail("插件加载入口分叉了（见上；判据见 tests/check_plugin_entry_lock.py）")
+
+
+def step_python_plugins(release: bool) -> None:
+    """插件改装 P2b：**Python 插件加载链**（起宿主 → `import` → `register(api)` → 进 Registry
+    → **真的消费一次**）。
+
+    判据（每条都能红）：
+      · 好夹具：`files=1 loaded=1 errors=0 registrations>=4` + `consume` 成功 + 标记文件里
+        既有 `register:hello.py`（注册期跑过）又有 `click`（**回调真的回到了 Python**）；
+      · 坏夹具（语法错 + 注册到一半抛异常）：**进程不崩**、两条都**点名**留痕、
+        且每个坏件的 `residue … value=0`（按 owner 回滚干净）、退出码非 0；
+      · 混装目录：好插件照常加载，坏的只影响它自己（不拖累）。
+    """
+    say("[python-plugins] 插件改装 P2b：Python 插件加载链（import → register(api) → 消费）")
+    if not CLI_EXE.exists():
+        prereq("构建产物 %s" % CLI_EXE.name, "缺失（先跑 build 步）", release)
+        return
+    rc_host, out_host = run([str(CLI_EXE), "--python-host"], timeout=180)
+    host_line = next((ln.strip() for ln in out_host.splitlines()
+                      if ln.strip().startswith("PYHOST")), "")
+    if " enabled=0" in host_line:
+        prereq("CPython 插件宿主（构建期已启用）",
+               "本次构建没带 Python 支持：" + host_line, release)
+        return
+
+    good = ROOT / "tests" / "python_plugins"
+    bad = ROOT / "tests" / "python_plugins_bad"
+    for path in (good, bad):
+        if not path.is_dir():
+            fail("夹具目录不存在：%s（判据没跑成，不是通过）" % path.relative_to(ROOT))
+            return
+
+    def py_env(mark: Path) -> dict:
+        env = dict(os.environ)
+        env["XRKIT_PY_MARK"] = str(mark)
+        return env
+
+    def summary_line(text: str) -> str:
+        return next((ln.strip() for ln in text.splitlines()
+                     if ln.strip().startswith("PYPLUGINS files=")), "")
+
+    # ① 好夹具：加载 + 消费 + 标记文件
+    mark_dir = Path(tempfile.mkdtemp(prefix="xrkit_py_mark_"))
+    mark = mark_dir / "mark.txt"
+    rc, out = run([str(CLI_EXE), "--py-plugins", str(good)], env=py_env(mark), timeout=300)
+    line = summary_line(out)
+    files_ok = " files=1 " in line
+    loaded_ok = " loaded=1 " in line
+    errors_ok = " errors=0" in line
+    regs = 0
+    match = re.search(r"registrations=(\d+)", line)
+    if match:
+        regs = int(match.group(1))
+    consumed = "PYPLUGINS consume plugin=hello.py" in out
+    residue_ok = bool(re.search(r"PYPLUGINS residue plugin=hello\.py value=([1-9]\d*)", out))
+    marker_text = mark.read_text(encoding="utf-8") if mark.exists() else ""
+    logged = "PYPLUGINS log [hello.py]" in out
+    if rc == 0 and files_ok and loaded_ok and errors_ok and regs >= 4 and consumed and \
+            residue_ok and "register:hello.py" in marker_text and "click" in marker_text and logged:
+        ok("Python 插件加载链全通（files=1 loaded=1 registrations=%d；`click` 标记＝回调真回到 "
+           "Python；日志通道通）" % regs)
+    else:
+        fail("Python 插件加载链不通过（rc=%d；%s；consume=%s residue=%s 标记=%r 日志=%s）"
+             % (rc, line or "(无摘要行)", consumed, residue_ok, marker_text[:60], logged))
+    for raw in out.splitlines():
+        s = raw.strip()
+        if s.startswith("PYPLUGINS") and not s.startswith("PYPLUGINS log"):
+            say("  " + s)
+
+    # ② 坏夹具：不崩 + 两条都点名 + 回滚干净 + 退出码非 0
+    rc_bad, out_bad = run([str(CLI_EXE), "--py-plugins", str(bad)], env=py_env(mark), timeout=300)
+    line_bad = summary_line(out_bad)
+    names = {m.group(1) for m in re.finditer(r"PYPLUGINS error plugin=(\S+)", out_bad)}
+    rollback_ok = all(
+        int(m.group(2)) == 0
+        for m in re.finditer(r"PYPLUGINS residue plugin=(\S+) value=(\d+)", out_bad))
+    residue_lines = re.findall(r"PYPLUGINS residue plugin=(\S+) value=(\d+)", out_bad)
+    if rc_bad != 0 and "broken_register.py" in names and "broken_syntax.py" in names and \
+            residue_lines and rollback_ok:
+        ok("坏插件：不崩、两条都点名（%s）、按 owner 回滚干净（%s）"
+           % ("/".join(sorted(names)),
+              ", ".join("%s=%s" % (n, v) for n, v in residue_lines)))
+    else:
+        fail("坏插件那一侧不通过（rc=%d；%s；点名=%s；回滚=%s）"
+             % (rc_bad, line_bad or "(无摘要行)", sorted(names), residue_lines))
+    for raw in out_bad.splitlines():
+        s = raw.strip()
+        if s.startswith("PYPLUGINS") and not s.startswith("PYPLUGINS log"):
+            say("  " + s)
+
+    # ③ 混装：好插件照常加载，坏的只影响它自己
+    mixed = Path(tempfile.mkdtemp(prefix="xrkit_py_plugins_mixed_"))
+    shutil.copyfile(good / "hello.py", mixed / "hello.py")
+    shutil.copyfile(bad / "broken_register.py", mixed / "broken_register.py")
+    rc_mix, out_mix = run([str(CLI_EXE), "--py-plugins", str(mixed)], env=py_env(mark), timeout=300)
+    line_mix = summary_line(out_mix)
+    if " files=2 " in line_mix and " loaded=1 " in line_mix and " errors=1" in line_mix:
+        ok("混装目录：好插件照常加载、坏的只影响它自己（%s）" % line_mix)
+    else:
+        fail("混装目录那一侧不通过（rc=%d；%s）" % (rc_mix, line_mix or "(无摘要行)"))
+    shutil.rmtree(mixed, ignore_errors=True)
+    shutil.rmtree(mark_dir, ignore_errors=True)
 
 
 def step_page_host_lock(release: bool) -> None:
@@ -2492,6 +2617,10 @@ STEPS = [
     # ★★ 2026-10-07（插件改装 P2）：CPython 插件宿主能不能起来（嵌入解释器 + vendored pybind11）。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED；构建期没带 Python ⇒ release FAIL（不是 SKIP）。
     ("python-host", step_python_host),
+    # ★★ 2026-10-07（插件改装 P2b）：Python 插件加载链（import → register(api) → 消费 → 回滚）。
+    ("python-plugins", step_python_plugins),
+    # ★★ 2026-10-07（插件改装 P2b）：加载入口唯一性（静态锁；两边各写一条路的分叉测不出来）。
+    ("plugin-entry", step_plugin_entry_lock),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),

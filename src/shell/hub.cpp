@@ -700,7 +700,10 @@ void Hub::load_plugins(const QString& plugin_dir) {
     // 才真能造出控件；`stk_widget*` 仍是不透明句柄，插件不碰 Qt 类型。
     const stk_ui* ui = qt_plugin_ui();
     plugin_ui_installed_ = ui != nullptr;
-    xrkit::plugin::load_plugins_from_dir(dir.toUtf8().toStdString(), registry_, ui);
+    // ★★ P2b（插件改装）：走**统一入口**（`*.dll` + `*.py`），与 CLI 的 `--plugins` 是
+    //   同一个函数 —— "两个前端加载同一批插件、进**同一份**注册表"由结构保证，
+    //   而不是两边各写一条路径（那正是 1.x 最贵的一类返工）。
+    xrkit::plugin::load_all_plugins_from_dir(dir.toUtf8().toStdString(), registry_, ui);
     plugin_errors_ = registry_.registration_errors();
 
     int loaded = 0;

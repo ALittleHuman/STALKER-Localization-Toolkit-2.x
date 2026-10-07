@@ -25,6 +25,9 @@
 //   全部发生在主线程，回调路径的 GIL 约定随"绑定"那一片一起落地并配判据。
 
 #include <string>
+#include <vector>
+
+#include "xrkit/engine/plugin/registry.h"
 
 namespace xrkit::plugin {
 
@@ -34,6 +37,7 @@ constexpr int kPyHostApiVersion = 1;
 struct PyHostStatus {
     bool enabled = false;       // 构建期是否带 Python 支持（编译开关 + 开发文件）
     bool initialized = false;   // 解释器是否已经起来
+    bool gil_released = false;  // 主线程是否已把 GIL 放开（工作线程才能安全回调进 Python）
     std::string version;        // 解释器版本（"3.14.6"；未起来为空）
     std::string home;           // **请求**的 home（空 = 没指定，让解释器自己找）
     std::string prefix;         // 解释器**实际**的 base_prefix（未起来为空）
@@ -52,7 +56,38 @@ void shutdown_python();
 PyHostStatus python_status();
 
 // 自检/探针用的一行摘要（ASCII 键值，门禁直接解析这一行）：
-//   `PYHOST enabled=1 initialized=1 version=3.14.6 api=1 home= prefix=… reason=`
+//   `PYHOST enabled=1 initialized=1 gil=released version=3.14.6 api=1 home= prefix= reason=`
 std::string python_host_report();
+
+// ── P2b：从目录加载 **Python 插件**（`*.py`）────────────────────────────────────
+// 与 C ABI 的 `load_plugins_from_dir` **共用同一份 `Registry`**（用户红线：能力不许两套表）。
+//
+// 契约（第一版 API 表 = `register(api)`，api 是宿主给的 `xrkit.Api` 实例）：
+//   · 插件 = 目录里的一个 `.py` 文件，**文件名就是它的 owner**（命令 id 形如 `hello.py:greet`）；
+//   · **零静默 + 可回退**：导入失败 / 没有 `register` / `register` 不是可调用 / `register` 抛异常 /
+//     `register` 明确返回 `False` ⇒ 逐条进 `RegistrationError`，并**按 owner 回滚**它注册过的一切
+//     （复用 `Registry::rollback_plugin` ⇒ 不留指向坏插件的回调）；
+//   · 目录不存在 ⇒ 一条留痕（与 DLL 加载器同口径），**不阻塞启动**；
+//   · 宿主没起来（构建期没带 Python / `init_python` 失败）⇒ 只要目录里**有 `.py`** 就留一条**带理由**
+//     的留痕（"插件没生效"不许静默）；目录里没有 `.py` 则一条都不记（不制造噪声）。
+struct PyLoadSummary {
+    size_t files = 0;          // 扫到的 `*.py` 个数
+    size_t loaded = 0;         // `register(api)` 正常跑完的插件数
+    size_t registrations = 0;  // 这些插件合计注册进 `Registry` 的条数
+};
+
+std::vector<RegistrationError> load_python_plugins_from_dir(const std::string& dir, Registry& registry,
+                                                            PyLoadSummary* summary = nullptr);
+// 进程内已成功加载的 Python 插件数（探针用）。
+size_t loaded_python_plugin_count();
+
+// 取走并清空**插件日志缓冲**（`api.log()` 的近期行）。
+// 为什么单独一条通道：插件日志是"每次加载/回调都可能多出来的行"，不是宿主状态；
+// 探针/自检用它证明"插件日志真的通到宿主"（上界面＝阶段 3 的宿主门面）。
+std::vector<std::string> take_python_log_lines();
+
+// ★ 命名判据**只此一份**（与 `is_plugin_dll_name` 同一条纪律：Windows 文件名不分大小写，
+//   `HELLO.PY` 与 `hello.py` 是同一个文件 ⇒ 必须大小写不敏感，否则静默漏载）。
+bool is_plugin_py_name(const std::string& filename);
 
 }  // namespace xrkit::plugin

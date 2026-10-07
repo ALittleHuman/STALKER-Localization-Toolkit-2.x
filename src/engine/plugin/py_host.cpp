@@ -1,19 +1,22 @@
 #include "xrkit/engine/plugin/py_host.h"
 
+#include "xrkit/core/log.h"
 // `app_dir()`（exe 所在目录）住在 core/theme.h —— **不是** path.h：
 // 实测按 path.h 写会报 `"app_dir": 不是 "xrkit::core" 的成员`（本片第一次编译就踩到）。
 #include "xrkit/core/path.h"
 #include "xrkit/core/theme.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <mutex>
+#include <stdexcept>
 
 #ifdef XRKIT_WITH_PYTHON
-// pybind11 只用于**读宿主自己的状态**（`sys.version_info` / `sys.base_prefix`），
-// 证明 vendored 头与运行期都对得上；给插件的 API 表（`xrkit` 模块）随后一片接上。
 #include <pybind11/embed.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <Python.h>
 #endif
@@ -51,8 +54,42 @@ void refresh_reason_if_disabled(PyHostStatus& status) {
 #endif
 }
 
+std::string base_name(const std::string& path) {
+    const size_t slash = path.find_last_of("/\\");
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
 #ifdef XRKIT_WITH_PYTHON
 namespace py = pybind11;
+
+// 主线程的 thread state（`PyEval_SaveThread` 的返回值）：
+// 起来之后**必须把 GIL 放开**（见 `init_python` 末尾）—— 否则主线程一直攥着 GIL，
+// 工作线程里回调进 Python（六页都在 TaskShell 的 worker 里干活）会死等。
+PyThreadState*& main_thread_state() {
+    static PyThreadState* state = nullptr;
+    return state;
+}
+
+// 交给插件的 Python 可调用对象（命令回调 / when 谓词）必须活到进程结束 —— 与 C ABI 那条
+// 「不卸载正在被引用的模块」同一条纪律。
+// ★ 刻意用 `new` 出去、**永不析构**：静态对象会在 `Py_FinalizeEx` 之后才析构，
+//   那时再减引用计数就是踩已死的解释器。
+std::vector<py::object>* keepalive() {
+    static std::vector<py::object>* instance = new std::vector<py::object>();
+    return instance;
+}
+
+// `api.log()` 的近期行（探针/门禁用它证明"插件的日志通道真的通"；**上界面**（Hub 日志栏）
+// 随阶段 3 的宿主门面一起接）。上限 200 行，满了丢最旧的 —— 它是诊断缓冲，不是日志系统。
+std::vector<std::string>& plugin_log_buffer() {
+    static std::vector<std::string> instance;
+    return instance;
+}
+
+size_t& loaded_python_plugins() {
+    static size_t instance = 0;
+    return instance;
+}
 
 // 取一个 ASCII 键值行要用的值：任何 Python 异常都退化成空串（**不许**因为读状态把宿主弄崩）。
 std::string py_str_or_empty(const char* module_attr) {
@@ -73,6 +110,166 @@ std::string version_from_interpreter() {
     } catch (const py::error_already_set&) {
         return std::string();
     }
+}
+
+// `when`：**逐条照 1.x `toolkit_plugins._when_ok`**（行为基准是 1.x）：
+//   falsy（None / {} / False）⇒ 恒真；dict ⇒ 要求 context 对应键相等（期望值 None 时缺键也算命中）；
+//   可调用 ⇒ 调它（抛异常按不满足）；其余真值 ⇒ 恒真。
+WhenSpec when_from_python(const py::object& when) {
+    WhenSpec spec;
+    bool truthy = true;
+    try {
+        truthy = when.cast<bool>();
+    } catch (const py::error_already_set&) {
+        truthy = true;   // 连 truthiness 都求不出来 ⇒ 按 1.x 的兜底"恒真"处理
+    }
+    if (!truthy) return spec;
+    if (py::isinstance<py::dict>(when)) {
+        for (auto item : py::reinterpret_borrow<py::dict>(when)) {
+            const std::string key = py::str(item.first).cast<std::string>();
+            ContextValue value;
+            if (!item.second.is_none()) value = py::str(item.second).cast<std::string>();
+            spec.match.emplace_back(key, value);
+        }
+        return spec;
+    }
+    if (PyCallable_Check(when.ptr()) != 0) {
+        py::object kept = when;
+        keepalive()->push_back(kept);
+        spec.predicate = [kept](const Context& context) -> bool {
+            py::gil_scoped_acquire acquire;   // 谓词可能从工作线程被问到
+            try {
+                py::dict ctx;
+                for (const auto& [key, value] : context) {
+                    ctx[py::str(key)] = value.has_value() ? py::cast(*value) : py::none();
+                }
+                return kept(ctx).cast<bool>();
+            } catch (const py::error_already_set&) {
+                return false;   // 12.6：可调用抛异常 ⇒ False（与 C ABI 同口径）
+            }
+        };
+        return spec;
+    }
+    return spec;   // 其余真值：恒真（1.x 的兜底 `return True`）
+}
+
+// 把 Python 可调用对象包成引擎要的 `CommandHandler`：异常**转成 C++ 异常**，
+// 交给 `Registry::invoke` 记账（零静默），绝不冒到 Qt 事件循环里；
+// 同时保证回调不管从哪个线程来都先拿到 GIL。
+CommandHandler wrap_python_handler(py::object callable, const std::string& label) {
+    py::object kept = callable;
+    keepalive()->push_back(kept);
+    return [kept, label]() {
+        py::gil_scoped_acquire acquire;
+        try {
+            kept();
+        } catch (const py::error_already_set& err) {
+            throw std::runtime_error("Python 回调「" + label + "」抛异常：" + std::string(err.what()));
+        }
+    };
+}
+
+// ── 给插件的 API 对象（第一版 API 表）────────────────────────────────────────
+// 能力面：注册面（command / menu_item / option_entry / option）+ `log` + 只读标识。
+// **控件面不在这里** —— 按规格，控件走宿主门面（L1/L2），那一片在阶段 3。
+class PyPluginApi {
+public:
+    PyPluginApi(Registry* registry, std::string owner, std::string plugin_dir)
+        : registry_(registry), owner_(std::move(owner)), dir_(std::move(plugin_dir)) {}
+
+    const std::string& owner() const { return owner_; }
+    const std::string& plugin_dir() const { return dir_; }
+
+    void log(const std::string& message) const {
+        const std::string line = "[" + owner_ + "] " + message;
+        core::log(core::Level::Info, line);
+        std::vector<std::string>& buffer = plugin_log_buffer();
+        buffer.push_back(line);
+        if (buffer.size() > 200) buffer.erase(buffer.begin());
+    }
+
+    py::object register_command(const std::string& action_id, const std::string& label,
+                               py::object handler, py::object when) const {
+        if (PyCallable_Check(handler.ptr()) == 0) {
+            registry_->add_error(owner_, "register_command(" + action_id + ") 的 handler 不是可调用对象");
+            return py::none();
+        }
+        const std::optional<std::string> id = registry_->register_command(
+            owner_, action_id, label, wrap_python_handler(handler, label), when_from_python(when));
+        if (!id.has_value()) return py::none();
+        return py::str(*id);
+    }
+
+    bool register_menu_item(const std::string& host, const std::string& location,
+                            const std::string& command_id, int order) const {
+        return registry_->register_menu_item(owner_, host, location, command_id, order);
+    }
+
+    bool register_option_entry(const std::string& host, const std::string& area,
+                               const std::string& value, py::object when) const {
+        return registry_->register_option_entry(owner_, host, area, value, when_from_python(when));
+    }
+
+    bool register_option(const std::string& label, const std::vector<std::string>& choices,
+                         py::object callback, const std::string& host, const std::string& area,
+                         py::object when, int order) const {
+        CommandHandler handler;
+        if (!callback.is_none()) {
+            if (PyCallable_Check(callback.ptr()) == 0) {
+                registry_->add_error(owner_, "register_option(" + label + ") 的 callback 不是可调用对象");
+                return false;
+            }
+            handler = wrap_python_handler(callback, label);
+        }
+        return registry_->register_option(owner_, label, choices, handler, host, area,
+                                          when_from_python(when), order);
+    }
+
+private:
+    Registry* registry_ = nullptr;
+    std::string owner_;
+    std::string dir_;
+};
+
+// 让 `import xrkit` 能用。走 `sys.modules` 注册而**不**用 `PyImport_AppendInittab`：
+// 后者与 `PyConfig` 初始化路径的交互随版本变（pybind11 的 `PYBIND11_EMBEDDED_MODULE`
+// 也是那条路），这里走一条**确定性**的路：建一个 module 对象塞进 `sys.modules`，
+// 之后插件里 `import xrkit` 直接命中它。
+void ensure_api_module() {
+    py::dict modules = py::module_::import("sys").attr("modules");
+    if (modules.contains("xrkit")) return;
+    py::module_ m = py::reinterpret_steal<py::module_>(PyModule_New("xrkit"));
+    m.attr("api_version") = kPyHostApiVersion;
+    // ★ 类型注册**一次性**：`shutdown_python()` 之后不再支持重新起解释器
+    //   （见头文件对 `shutdown_python` 的说明）。
+    static bool class_registered = false;
+    if (!class_registered) {
+        py::class_<PyPluginApi>(m, "Api")
+            .def_property_readonly("plugin_file", &PyPluginApi::owner)
+            .def_property_readonly("plugin_dir", &PyPluginApi::plugin_dir)
+            .def_property_readonly("api_version", [](const PyPluginApi&) { return kPyHostApiVersion; })
+            .def("log", &PyPluginApi::log, py::arg("message"))
+            .def("register_command", &PyPluginApi::register_command, py::arg("action_id"),
+                 py::arg("label"), py::arg("handler"), py::arg("when") = py::none())
+            .def("register_menu_item", &PyPluginApi::register_menu_item, py::arg("host"),
+                 py::arg("location"), py::arg("command_id"), py::arg("order") = 0)
+            .def("register_option_entry", &PyPluginApi::register_option_entry, py::arg("host"),
+                 py::arg("area"), py::arg("value"), py::arg("when") = py::none())
+            .def("register_option", &PyPluginApi::register_option, py::arg("label"),
+                 py::arg("choices"), py::arg("callback") = py::none(), py::arg("host") = "fs",
+                 py::arg("area") = "top_bar", py::arg("when") = py::none(), py::arg("order") = 0);
+        class_registered = true;
+    }
+    modules["xrkit"] = m;
+}
+
+std::string sanitize_module_name(const std::string& name) {
+    std::string out;
+    out.reserve(name.size());
+    for (char c : name) {
+        out.push_back(std::isalnum(static_cast<unsigned char>(c)) != 0 ? c : '_');
+    }
+    return out;
 }
 #endif  // XRKIT_WITH_PYTHON
 
@@ -146,7 +343,6 @@ PyHostStatus init_python(const std::string& home) {
         if (status.reason.empty()) status.reason = "Py_InitializeFromConfig 失败（err_msg 为空）";
         return status;
     }
-    // pybind11 的 embedded 模块表在 Py_Initialize 时就位；`xrkit` 模块本身随后一片接上。
     status.initialized = Py_IsInitialized() != 0;
     if (!status.initialized) {
         status.reason = "Py_InitializeFromConfig 没报错，但 Py_IsInitialized() 为假";
@@ -158,6 +354,12 @@ PyHostStatus init_python(const std::string& home) {
         // 读状态失败本身要可见（但宿主仍算起来了：能 import 才是硬判据）
         status.reason = "解释器已起来，但读取 sys.version_info/base_prefix 失败";
     }
+    // 把给插件的 `xrkit` 模块先备好（此时 GIL 还在手上）
+    ensure_api_module();
+    // ★★ 放开 GIL：主线程一直攥着它的话，工作线程里回调进 Python 会死等。
+    //   （`gil=released` 是门禁 `[python-host]` 步的判据之一：改回"不放"即红。）
+    main_thread_state() = PyEval_SaveThread();
+    status.gil_released = main_thread_state() != nullptr;
 #else
     status.reason = "构建期未启用 CPython 宿主（见 python_status().reason 的说明）";
 #endif
@@ -171,6 +373,11 @@ void shutdown_python() {
     if (status.initialized) {
         // 口径：先确保没有存活的 pybind11 对象（调用方责任，见头文件的线程说明），
         // 再关解释器；`Py_FinalizeEx` 的返回值如实反映出来。
+        if (status.gil_released) {
+            PyEval_RestoreThread(main_thread_state());
+            main_thread_state() = nullptr;
+            status.gil_released = false;
+        }
         const int rc = Py_FinalizeEx();
         status.initialized = false;
         status.version.clear();
@@ -179,6 +386,7 @@ void shutdown_python() {
     }
 #endif
     status.initialized = false;
+    status.gil_released = false;
     (void)status;
 }
 
@@ -193,11 +401,139 @@ std::string python_host_report() {
     const PyHostStatus status = python_status();
     return "PYHOST enabled=" + std::to_string(status.enabled ? 1 : 0) +
            " initialized=" + std::to_string(status.initialized ? 1 : 0) +
+           " gil=" + (status.initialized ? (status.gil_released ? "released" : "held") : "-") +
            " version=" + (status.version.empty() ? "-" : status.version) +
            " api=" + std::to_string(status.api_version) +
            " home=" + (status.home.empty() ? "-" : status.home) +
            " prefix=" + (status.prefix.empty() ? "-" : status.prefix) +
            " reason=" + status.reason;
+}
+
+// ── 命名判据：`*.py`（大小写不敏感，唯一一份）────────────────────────────────
+bool is_plugin_py_name(const std::string& filename) {
+    std::string lower = filename;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](char c) {
+        return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    });
+    return lower.size() > 3 && lower.compare(lower.size() - 3, 3, ".py") == 0;
+}
+
+// ── P2b：从目录加载 Python 插件 ──────────────────────────────────────────────
+std::vector<RegistrationError> load_python_plugins_from_dir(const std::string& dir, Registry& registry,
+                                                            PyLoadSummary* summary) {
+    std::vector<RegistrationError> errors;
+    PyLoadSummary local;
+    PyLoadSummary& acc = summary != nullptr ? *summary : local;
+
+    // ① 扫目录：**不依赖 Python**（没有宿主时也要能如实说出"有几个 .py 没被加载"）
+    std::error_code ec;
+    const std::filesystem::path root = xrkit::core::path_from_utf8(dir);
+    if (!std::filesystem::is_directory(root, ec)) {
+        errors.push_back({"<py-host>", "插件目录不存在：" + dir});
+        // 目录不存在**不算启动失败** —— 只记录，宿主照常起来（与 DLL 加载器同口径）
+        return errors;
+    }
+    std::vector<std::string> files;
+    for (std::filesystem::directory_iterator it(root, ec), end; it != end; it.increment(ec)) {
+        if (ec) break;
+        if (!it->is_regular_file(ec)) continue;
+        const std::string name = xrkit::core::path_to_utf8(it->path().filename());
+        // 命名判据只许一份（大小写不敏感）：`HELLO.PY` 与 `hello.py` 是同一个文件
+        if (is_plugin_py_name(name)) files.push_back(xrkit::core::path_to_utf8(it->path()));
+    }
+    std::sort(files.begin(), files.end());
+    acc.files = files.size();
+    if (files.empty()) return errors;   // 目录里没有 .py ⇒ 一条都不记（不制造噪声）
+
+#ifndef XRKIT_WITH_PYTHON
+    const std::string why = python_status().reason;
+    const std::string message = "发现 " + std::to_string(files.size()) +
+                                " 个 .py 插件，但本构建没有 CPython 宿主 ⇒ Python 插件不可用（" +
+                                why + "）";
+    errors.push_back({"<py-host>", message});
+    registry.add_error("<py-host>", message);
+    return errors;
+#else
+    const PyHostStatus status = init_python();
+    if (!status.initialized) {
+        const std::string message = "发现 " + std::to_string(files.size()) +
+                                    " 个 .py 插件，但 CPython 宿主没起来 ⇒ Python 插件不可用（" +
+                                    status.reason + "）";
+        errors.push_back({"<py-host>", message});
+        registry.add_error("<py-host>", message);
+        return errors;
+    }
+
+    py::gil_scoped_acquire acquire;
+    ensure_api_module();
+    py::object spec_from = py::module_::import("importlib.util").attr("spec_from_file_location");
+    py::object module_from_spec = py::module_::import("importlib.util").attr("module_from_spec");
+
+    for (const std::string& file : files) {
+        const std::string owner = base_name(file);
+        const std::string module_name = "xrkit_plugin_" + sanitize_module_name(owner);
+        std::string failure;
+        try {
+            py::object spec = spec_from(module_name, file);
+            if (spec.is_none()) {
+                throw std::runtime_error("spec_from_file_location 返回 None（文件/路径不对？）");
+            }
+            py::object module = module_from_spec(spec);
+            spec.attr("loader").attr("exec_module")(module);
+            if (py::hasattr(module, "register") == 0) {
+                throw std::runtime_error("插件没有导出 register(api)（第一版 API 表要求它）");
+            }
+            py::object register_fn = module.attr("register");
+            if (PyCallable_Check(register_fn.ptr()) == 0) {
+                throw std::runtime_error("register 不是可调用对象");
+            }
+            PyPluginApi* raw = new PyPluginApi(&registry, owner, dir);
+            py::object api = py::cast(raw, py::return_value_policy::take_ownership);
+            py::object result = register_fn(api);
+            if (py::isinstance<py::bool_>(result) != 0 && result.cast<bool>() == false) {
+                throw std::runtime_error("register(api) 明确返回 False（插件自报失败）");
+            }
+        } catch (const py::error_already_set& err) {
+            failure = err.what();
+        } catch (const std::exception& err) {
+            failure = err.what();
+        }
+        if (!failure.empty()) {
+            // ★ 先**按 owner 回滚**再记账：半个插件的注册留在表里＝指向坏插件的回调
+            //   （C ABI 那条 S1-2 的血账，这里同一套口径、同一个实现）。
+            const size_t undone = registry.rollback_plugin(owner);
+            const std::string message =
+                failure + "（已按 owner 回滚 " + std::to_string(undone) + " 条注册）";
+            errors.push_back({owner, message});
+            registry.add_error(owner, message);
+            core::log(core::Level::Warn, "Python 插件加载失败：" + owner + "：" + failure);
+            continue;
+        }
+        ++acc.loaded;
+        acc.registrations += registry.residue_for(owner).registrations();
+        ++loaded_python_plugins();
+        core::log(core::Level::Info, "Python 插件已加载：" + owner);
+    }
+    return errors;
+#endif
+}
+
+size_t loaded_python_plugin_count() {
+#ifdef XRKIT_WITH_PYTHON
+    return loaded_python_plugins();
+#else
+    return 0;
+#endif
+}
+
+// 插件日志缓冲（诊断用；探针/自检读它证明"插件日志通道真的通"）。
+// ★ 不放进 `PyHostStatus`：它不是"宿主状态"，而是**每次加载/回调都可能多出来的行**。
+std::vector<std::string> take_python_log_lines() {
+    std::vector<std::string> out;
+#ifdef XRKIT_WITH_PYTHON
+    out.swap(plugin_log_buffer());
+#endif
+    return out;
 }
 
 }  // namespace xrkit::plugin
