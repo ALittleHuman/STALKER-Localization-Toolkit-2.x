@@ -160,7 +160,9 @@ def run_artifact() -> None:
     version_txt = pkg / "version.txt"
     declared = ""
     if version_txt.is_file():
-        for row in version_txt.read_text(encoding="utf-8", errors="replace").splitlines():
+        # ★ 用 `utf-8-sig`：version.txt 由 PowerShell 5.1 的 `Set-Content -Encoding UTF8` 写
+        #   ⇒ **带 BOM**（不去掉的话第一行的键会变成 "\ufeffversion"；本批实测踩到过）。
+        for row in version_txt.read_text(encoding="utf-8-sig", errors="replace").splitlines():
             if row.strip().startswith("platform_plugins="):
                 declared = row.strip().split("=", 1)[1].strip()
     if "qoffscreen" not in declared:

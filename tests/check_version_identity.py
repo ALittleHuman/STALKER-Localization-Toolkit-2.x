@@ -200,7 +200,10 @@ def read_version_txt(path: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     if not path.is_file():
         return out
-    for row in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    # ★ `version.txt` 是 PowerShell 5.1 的 `Set-Content -Encoding UTF8` 写的 ⇒ **带 BOM**
+    #   ⇒ 用 `utf-8-sig` 读，否则第一行的键会变成 `"\ufeffversion"`（本批实测踩到：
+    #   ③ 报 `version=「」` 而 index/commit 都对 —— 看着像"包里的版本号是空的"）。
+    for row in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
         key, sep, value = row.partition("=")
         if sep:
             out[key.strip()] = value.strip()
