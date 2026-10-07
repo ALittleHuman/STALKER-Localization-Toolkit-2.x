@@ -29,6 +29,7 @@ namespace xrkit::shell {
 
 class TaskShell;
 class VirtualList;
+class ScrollViewport;
 
 class TextPage : public PageBase {
 public:
@@ -59,6 +60,12 @@ public:
     QLineEdit* id_prefix_edit() const { return id_prefix_edit_; }
     QCheckBox* clean_box() const { return clean_box_; }
     VirtualList* rows() const { return rows_; }
+    // ★★ 2026-10-07（审计补充 H2-4）：结果区的**页内视口**（由 `PageBase::make_inner_scroll`
+    //   造）—— 修前本页直接 `addWidget(rows_, 1)` ⇒ 行列表没有自己的条子，一次真实提取
+    //   （gameplay 102 文件 / scripts 446 个 .script）行数远超结果区高度时**永远够不着**。
+    //   判据（smoke）：装得下不占位 / 超高能滚 / 拖动条子改变 `scroll_top()`。
+    ScrollViewport* rows_viewport() const { return rows_viewport_; }
+    void sync_rows_viewport() { sync_inner_scroll(); }
     TaskShell* task() const { return task_; }
     QLabel* status() const { return status_; }
 
@@ -76,6 +83,7 @@ private:
     QLineEdit* id_prefix_edit_ = nullptr;
     QCheckBox* clean_box_ = nullptr;
     VirtualList* rows_ = nullptr;
+    ScrollViewport* rows_viewport_ = nullptr;   // ★ H2-4：结果区的页内视口（见 rows_viewport()）
     TaskShell* task_ = nullptr;
     QLabel* status_ = nullptr;
     QLabel* stats_label_ = nullptr;

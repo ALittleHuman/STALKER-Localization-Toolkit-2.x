@@ -824,3 +824,44 @@ RESULT: FAIL（1 处失败）
   本次如实作废重跑（见下面的最终两行）。
 
 
+
+
+---
+
+## 补充 H1-5 / 用户裁决：包内自检入口曾因缺离屏平台插件**崩 0xC0000409**（留痕）
+
+> 这条是 2026-10-07「不在 §7 分组里」那一批自查出来的**存量**事实；用户当天裁决：
+> **部署舞台必须同时带 `qwindows.dll` 与 `qoffscreen.dll`**，并把判据写进包内 README 与门禁。
+
+- 现象（可复现）：拿**包内**的 `xrkit_app.exe` 跑 `--smoke`（`QT_QPA_PLATFORM=offscreen`）
+  ⇒ 退出码 `0xC0000409`（`-1073740791` / `3221226505`），stdout/stderr **一个字节都没有**。
+  WER 签名：`Application Error` / `BEX64` / 故障模块 **`Qt6Core.dll`** / `P7=0x267a8`。
+- 复现命令（在包目录里，别在 build 目录里）：
+  `set QT_QPA_PLATFORM=offscreen && dist\2.0.0\ALPHA\59\xrkit_app.exe --smoke`
+- 排除过程（全部实测）：
+  1. 包内 `xrkit_app.exe` 与 `build\msvc-shell\src\shell\xrkit_app.exe` **SHA256 完全相同**
+     （`9528367337DB78C346F3361BCCFFE2E4EE915CF9814549BE00B93B4D7E52C25D`）；
+  2. `Qt6Core.dll` / `platforms\qwindows.dll` 与 Qt 6.8.3 官方 bin **逐字节相同**；
+  3. **同一个 exe** 在 `build` 目录、以及把 `build` 目录整体复制到 `%TEMP%` 后再跑，都
+     `SHELL-SMOKE ok checks=753 failed=0`；
+     ⇒ 差别只在**目录内容**，不在二进制。
+  4. 差异定位：`build` 目录的 `platforms\` 有 `qwindows.dll` **与 `qoffscreen.dll`**，
+     而包内**只有 `qwindows.dll`**（`package.ps1` 修前是"跑判据前临时拷、跑完在 `finally`
+     里删掉"，注释自述"保持包精简"）。
+  5. 定性验证：给同一份包布局补上 `qoffscreen.dll` ⇒ `SHELL-SMOKE ok checks=713 failed=0`。
+- 存量性：`ALPHA.57`、`ALPHA.58`、`ALPHA.59` 三个包**同一签名同一崩溃**（`P7=0x267a8`）⇒
+  **不是某一批引入的**，而是"包内自检入口"一直不可用（正常双击使用不受影响）。
+- 修（用户裁决）：`scripts\package.ps1`
+  · 部署舞台**拷入并保留** `platforms\qoffscreen.dll`（109 KB）；
+  · 产物侧断言：`platforms\` 里 `qwindows.dll` + `qoffscreen.dll` **都要在**（`Test-Path`，缺即 throw）；
+  · 结论行判据收窄：从"只 grep `SHELL-SMOKE ok`"改成 **`SHELL-SMOKE ok checks=(\d+) failed=0`**
+    且退出码 0 —— 修前那个写法会把 `SHELL-SMOKE ok checks=741 failed=1` 读成**通过**
+    （本批实测见过这一行，属于同族假判据）；
+  · `version.txt` 增契约声明行 **`platform_plugins=qwindows,qoffscreen`**：门禁据此对
+    **声明过的序号**执行"两份都在 + 从产物目录真跑 `--smoke` 要求 `failed=0`"；
+    修前打的旧序号没有这一行 ⇒ 门禁记**台账**（不阻断），声明了就必须成立。
+- 门禁判据：`tests/run_ci.py` 新步 **`[pkg-platform]`** → `tests/check_package_platform.py`：
+  ① 静态（`package.ps1` 拷/不删/断言/`failed=0`/契约声明，含两条自证"喂反例必红"）；
+  ② 产物（声明过的包：两份插件在 + 真跑一次）；③ 没有带声明的新包 ⇒ 台账。
+  ★ 判红办法：把 `package.ps1` 里拷 `qoffscreen` 那两行删掉（①红），或把 `failed=0` 放宽回
+  只 grep `ok`（①红），或删掉包内 `platforms\qoffscreen.dll`（②红）。

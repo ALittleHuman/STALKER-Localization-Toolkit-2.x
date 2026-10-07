@@ -181,10 +181,17 @@ def main() -> int:
             print("!! 缺生成物 %s" % OUT.relative_to(ROOT))
             print("GEN-SNIFF-PROFILES: FAIL")
             return 1
-        cur = OUT.read_text(encoding="utf-8")
-        if cur != text:
-            print("!! %s 与生成器不一致（漂移了）—— 重跑 python tools/gen_sniff_profiles.py"
-                  % OUT.relative_to(ROOT))
+        # ★★ 2026-10-07（审计补充 H1-4 余条）：原来用 `OUT.read_text(encoding="utf-8")` ——
+        #   `read_text` 走 **universal newlines**，会把盘上的 `\r\n` 读成 `\n`
+        #   ⇒ **CRLF 化的 .inc 照样 PASS**（其余 6 个生成器的 `--check` 都是 `read_bytes`
+        #   逐字节比）。判据必须逐字节：行尾被转换、BOM 被加/删、多一个字节都必须红。
+        #   门禁侧对应一条**注入必红**：把本文件行尾改成 CRLF ⇒ `--check` 必须退非零。
+        cur = OUT.read_bytes()
+        want = text.encode("utf-8")
+        if cur != want:
+            print("!! %s 与生成器不一致（逐字节：盘上 %d 字节 / 期望 %d 字节，盘上 CRLF %d 个）"
+                  "—— 重跑 python tools/gen_sniff_profiles.py"
+                  % (OUT.relative_to(ROOT), len(cur), len(want), cur.count(b"\r\n")))
             print("GEN-SNIFF-PROFILES: FAIL")
             return 1
         print("GEN-SNIFF-PROFILES: PASS")

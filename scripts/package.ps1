@@ -128,12 +128,25 @@ Write-Host "  自带依赖来源: $depSrc"
 Copy-Item -LiteralPath (Join-Path $depSrc 'ffmpeg.exe') -Destination $stage
 Copy-Item -LiteralPath (Join-Path $depSrc 'ffprobe.exe') -Destination $stage
 $ffVersion = (& (Join-Path $stage 'ffmpeg.exe') -version 2>&1 | Select-Object -First 1)
+$ffExit = $LASTEXITCODE
 Write-Host "  $ffVersion"
-if ($ffVersion -match 'ffmpeg version n?(\d+)\.') {
-    if ([int]$Matches[1] -eq 8) {
-        throw "bundled ffmpeg is 8.x - rejected by 8.6 (its theora encoder is buggy for STALKER OGM)"
-    }
+# ★★ 2026-10-07（审计补充 H1-5）：这条守卫原来**可以整段绕过** ——
+#   `-match` 不命中（版本行形状变了 / ffmpeg 起不来）就什么都不做；命中了又只拦 `-eq 8`
+#   ⇒ 9.x / 10.x 照样放行，而 `scripts\download_ffmpeg.py` 那边的口径是"**必须恰好 7.x**"
+#   （8.x 的 libtheora 编码器对 STALKER OGM 有缺陷）。现在：起不来 / 版本行认不出 /
+#   主版本 ≠ 7 ⇒ **明确报错**（零静默；"认不出就放行"与"只拦一个数"都是假判据）。
+if ($ffExit -ne 0) {
+    throw "自带的 ffmpeg 起不来：`ffmpeg -version` 退出码 $ffExit"
 }
+if ($ffVersion -notmatch 'ffmpeg version n?(\d+)\.') {
+    throw "认不出自带 ffmpeg 的版本行（原始行：$ffVersion）—— 不许「认不出就放行」"
+}
+$ffMajor = [int]$Matches[1]
+if ($ffMajor -ne 7) {
+    throw ("自带的 ffmpeg 是 {0}.x —— 只接受 7.x（8.x 的 libtheora 编码器对 STALKER OGM 有缺陷，" -f $ffMajor) +
+          "download_ffmpeg.py 的口径也是恰好 7.x）"
+}
+Write-Host "  版本守卫通过：自带 ffmpeg 是 7.x"
 # 自动安装按钮的真身（程序目录里没有自带件时，页面用得上它）
 Copy-Item -LiteralPath (Join-Path $root 'scripts\download_ffmpeg.py') -Destination $stage
 
@@ -143,7 +156,16 @@ Write-Host "== windeployqt（铺 Qt 运行时；不铺翻译/示例）=="
 if ($LASTEXITCODE -ne 0) { throw "windeployqt 失败（退出码 $LASTEXITCODE）" }
 
 Write-Host "== README / version =="
-$commit = (& git -C $root rev-parse --short HEAD)
+# ★★ 2026-10-07（审计补充 H1-5）：`git rev-parse` 原来**不查 `$LASTEXITCODE`** ——
+#   git 不可用 / 不在仓库里时，`version.txt` 的 `commit=` 会静默写成一个错的值
+#   （证据：`version.json` 里 13/14/15/16/19~23 等条目的 commit 被记成了版本串
+#   `2.0.0 ALPHA.0`）。commit 是"这份包从哪个源码提交出来的"唯一凭据 ⇒ 取不到就**报错**。
+$commitRaw = & git -C $root rev-parse --short HEAD
+$commitExit = $LASTEXITCODE
+$commit = ("$commitRaw").Trim()
+if ($commitExit -ne 0 -or $commit -eq '') {
+    throw "取不到源提交（git -C `"$root`" rev-parse --short HEAD 退出码 $commitExit）—— version.txt 的 commit= 不许写错的/空的值"
+}
 $stamp  = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
 # ★ 2026-10-05（#8）：README 里那句"plugins\ 为空"必须与**实际打出来的包**一致 ——
 #   开发版带插件时还写"为空"就是谎报（零静默红线同源：说明书也是"可见面"的一部分）。
@@ -168,6 +190,11 @@ $pluginLine
       实测可用，不为它做版本守卫）+ download_ffmpeg.py（缺件时重下）。
 不含：NLC 解密插件（发行版）、实验性引擎补丁。
 自检：命令行跑 `xrkit_app.exe --smoke`（离屏，ASCII 输出）可核对包是否完整。
+      本包 `platforms\` **同时**带 `qwindows.dll` 与 `qoffscreen.dll`：`--smoke`/`--layout-report`
+      走离屏，而 `windeployqt` 按 app 的实际调用只铺 qwindows ⇒ 少了后者会直接
+      崩 `0xC0000409`（BEX64 / 故障模块 Qt6Core.dll / P7=0x267a8，ALPHA.57~59 都踩过）。
+      跑法：`set QT_QPA_PLATFORM=offscreen` 再执行；结论行是 `SHELL-SMOKE ok checks=N failed=0`
+      （`failed=` 必须为 0，退出码必须为 0）。
 "@ | Set-Content -LiteralPath (Join-Path $stage 'README.txt') -Encoding UTF8
 $verLine = if ($VersionString -ne '') { $VersionString } else { '2.0.0' }
 @"
@@ -175,19 +202,40 @@ version=$verLine
 index=$BuildIndex
 commit=$commit
 built=$stamp
+platform_plugins=qwindows,qoffscreen
 "@ | Set-Content -LiteralPath (Join-Path $stage 'version.txt') -Encoding UTF8
+# ★★ 2026-10-07（用户裁决）：`platform_plugins=` 这一行是**包自己的契约声明** ——
+#   门禁（`tests\check_package_platform.py`）看到它才会对**这个序号**执行"platforms\ 里
+#   两份都在 + 从产物目录真跑 `--smoke` 要求 failed=0"。修前打的包（ALPHA.57/58/59）
+#   没有这一行 ⇒ 门禁只能记台账（它们确实缺 qoffscreen）；**一旦声明了就必须成立**。
+#   为什么不让门禁无条件跑：`dist\` 是运行期产物、干净检出时没有包，而无条件跑会让
+#   修前留下的旧序号把 release 档判红（与本批无关的红）—— 声明制把这点分清楚了。
 
 Write-Host "== 打包判据：从包目录跑一次离屏自检 =="
-# `windeployqt` 不会铺 offscreen 平台插件（它按 app 的实际调用挑），而我们的自检是离屏的。
-# 处置：**临时**拷进去跑判据，跑完删掉 —— 发行包里仍然不带它（保持包精简）。
+# ★★ 2026-10-07（用户裁决）：**offscreen 平台插件随包携带**（不再"跑完删掉"）。
+#
+# 事实（修前）：`windeployqt` 只会铺 `qwindows.dll`（它按 app 的实际调用挑），而
+# `--smoke` / `--layout-report` 走**离屏**。原来的处置是"跑判据前临时拷进去、跑完删掉
+# （保持包精简）" ⇒ 后果是**产物本身不可自检**：拿包内 exe 直接跑 `--smoke` 会 fail-fast
+# `0xC0000409`（WER: BEX64 / 故障模块 Qt6Core.dll / P7=0x267a8 —— ALPHA.57/58/59 是同一个签名）。
+#
+# 裁决（用户 2026-10-07）：**部署舞台必须同时带 qwindows.dll 与 qoffscreen.dll**。
+# 体积账：qoffscreen.dll 109 KB · qwindows.dll 908 KB ⇒ 用 109 KB 换"判据＝从产物里真跑一次"，划算。
+# 判据（都能判红）：
+#   ① 源侧：Qt 的 `plugins\platforms\qoffscreen.dll` 必须存在（缺 ⇒ 明确报错，不静默降级）；
+#   ② 产物侧：包内 `platforms\` **同时**有 qwindows.dll + qoffscreen.dll；
+#   ③ 真跑：从**包目录**跑 `xrkit_app.exe --smoke`（QT_QPA_PLATFORM=offscreen）⇒
+#      `SHELL-SMOKE ok checks=N failed=0` 且退出码 0。
+#   ★ 判红办法：把下面 copy 那两行删掉（⇒ ①②红）；把 `failed=0` 那段放宽回只 grep "ok"
+#     （⇒ 有失败也绿）。
 $off = Join-Path $qt 'plugins\platforms\qoffscreen.dll'
 $stagePlat = Join-Path $stage 'platforms'
-$copiedOff = $false
-if (Test-Path $off) {
-    New-Item -ItemType Directory -Force -Path $stagePlat | Out-Null
-    Copy-Item -LiteralPath $off -Destination $stagePlat
-    $copiedOff = $true
+if (-not (Test-Path $off)) {
+    throw "找不到 $off —— 包内 `--smoke`/`--layout-report` 走离屏，少了它就是 0xC0000409（用户 2026-10-07 裁决：随包携带）"
 }
+New-Item -ItemType Directory -Force -Path $stagePlat | Out-Null
+Copy-Item -LiteralPath $off -Destination $stagePlat -Force
+$prevQpa = $env:QT_QPA_PLATFORM
 $env:QT_QPA_PLATFORM = 'offscreen'
 $smokeOk = $false
 try {
@@ -203,9 +251,12 @@ try {
         #   ⇒ 抓不到 `SHELL-SMOKE ok`，打包被误判成失败（实测）。
         #   `Start-Process -Wait -PassThru` 对 GUI 程序是等进程结束的，还能拿 ExitCode
         #   （比只 grep 一行更硬：日志里有 ok 但退出码非 0 也要拦住）。
+        #   ★ 2026-10-07：结论行判据收窄成 `... failed=0` —— 修前只 grep `SHELL-SMOKE ok`，
+        #   而 smoke 的收尾行**恒**以 `ok` 开头（`SHELL-SMOKE ok checks=741 failed=1` 也是 "ok"）
+        #   ⇒ 一旦只看那一行，"有 1 条判据不过"就会被读成通过（本次实测见过 failed=1 的那行）。
         $proc = Start-Process -FilePath (Join-Path $stage 'xrkit_app.exe') -ArgumentList '--smoke' `
             -NoNewWindow -Wait -PassThru -RedirectStandardOutput $log -RedirectStandardError $errLog
-        $line = Select-String -Path $log -Pattern 'SHELL-SMOKE ok' | Select-Object -First 1
+        $line = Select-String -Path $log -Pattern 'SHELL-SMOKE ok checks=(\d+) failed=0' | Select-Object -First 1
         # ★★ 2026-10-05（本批 #8）：**包内自检要把插件数与名字打出来** —— 那一行由 smoke 自己发
         #   （`SHELL-SMOKE note #8 包内插件：N 个 dll（<名字>）· 加载器 loaded=M · dir=…`）。
         #   为什么不用"包内 CLI 跑 `--plugins`"：包里**只有 xrkit_app.exe**（发版规格 §1），
@@ -225,12 +276,24 @@ try {
         Remove-Item -Force $log, $errLog -ErrorAction SilentlyContinue
     }
 } finally {
-    $env:QT_QPA_PLATFORM = ''
-    if ($copiedOff) {
-        Remove-Item -Force (Join-Path $stagePlat 'qoffscreen.dll') -ErrorAction SilentlyContinue
+    # ★ 2026-10-07（H1-5 同族）：原来是 `$env:QT_QPA_PLATFORM = ''`（**覆写后不还原**，
+    #   把"未设置"变成一个空字符串的环境变量）⇒ 现在按原值还原（原本没有就删掉）。
+    if ($null -eq $prevQpa) {
+        Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+    } else {
+        $env:QT_QPA_PLATFORM = $prevQpa
     }
 }
-if (-not $smokeOk) { throw "包内 exe 的离屏自检没通过（包可能缺 Qt 运行时）" }
+if (-not $smokeOk) { throw "包内 exe 的离屏自检没通过（结论行要求 `SHELL-SMOKE ok … failed=0` 且退出码 0）" }
+
+# ★★ 2026-10-07（用户裁决后半）：**平台插件必须在产物里**（不是"跑判据时临时有"）。
+#   这条与上面那次"从产物里真跑"合起来才成立：判据本身要能在**用户拿到的那个目录**里重跑。
+foreach ($plat in @('qwindows.dll', 'qoffscreen.dll')) {
+    if (-not (Test-Path (Join-Path $stagePlat $plat))) {
+        throw "包内 platforms\ 缺 $plat —— 用户裁决：部署舞台必须同时带 qwindows.dll 与 qoffscreen.dll"
+    }
+}
+Write-Host "  平台插件判据通过：包内 platforms\ 同时有 qwindows.dll + qoffscreen.dll"
 
 # ★★ 2026-10-05（本批 #8）：**开发版包内带全部插件** —— 判据落在**包内自检那一行**上。
 #   口径（任务书 #8）：开发版把已构建插件（含测试插件）复制进包 `plugins\`；发行版仍为空

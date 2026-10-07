@@ -2,6 +2,7 @@
 
 #include "xrkit/core/theme.h"
 
+#include "../scroll_viewport.h"   // ★ 2026-10-07（H2-4）：结果区的页内视口（`rows_viewport_`）
 #include "../task_shell.h"
 #include "../virtual_list.h"
 
@@ -92,7 +93,21 @@ TextPage::TextPage(QWidget* parent)
         if (index < 0 || index >= static_cast<int>(row_texts_.size())) return QString();
         return row_texts_[static_cast<size_t>(index)];
     });
-    body_layout()->addWidget(rows_, 1);
+    // ★★ 2026-10-07（审计补充 H2-4）：修前这里是 `body_layout()->addWidget(rows_, 1)` ——
+    //   行列表**没有自己的条子**，而 `VirtualList` 不自带滚动条、只按 `visible_range(top_=0,…)`
+    //   画（`virtual_list.h:10`）⇒ 一次真实提取（gameplay 102 文件 / scripts 446 个 .script）
+    //   的行数远超结果区高度时**永远够不着**。`page_base.h` 与自检都明确把"文本提取的行列表"
+    //   写进同一条判据，而修前只对 convert 页做了断言 ⇒ **convert 修了、text 没修**。
+    //   照 convert 页同一姿势：`make_inner_scroll` + **自带滚动的画布** + offset 委托
+    //   （不挪行列表，否则 `top_` 恒为 0 ＝ 虚拟化被关掉）。
+    rows_viewport_ = make_inner_scroll(rows_, QStringLiteral("text_rows_viewport"));
+    body_layout()->addWidget(rows_viewport_, 1);
+    if (rows_viewport_ != nullptr) {
+        rows_viewport_->set_self_scrolling_body(true);
+        rows_viewport_->set_offset_delegate([this](int value) {
+            if (rows_ != nullptr) rows_->set_scroll_top(value);
+        });
+    }
 
     // ★★ 2026-10-06（②）：统计框三行 —— 1.x `text_extract_app.py:647-656` 的
     //   `stat_grid([("gameplay",…),("scripts",…),("总计",…)])`，写值在 `:725-729`。
@@ -189,6 +204,8 @@ void TextPage::note_stats(const etxt::ExtractStats& stats) {
 void TextPage::add_row(const QString& text) {
     row_texts_.push_back(text);
     rows_->set_row_count(static_cast<int>(row_texts_.size()));
+    // ★ H2-4：行数变了 ⇒ 把内容高同步给页内视口（装不下就出条子、能滚）
+    sync_inner_scroll();
 }
 
 void TextPage::run_batch() {

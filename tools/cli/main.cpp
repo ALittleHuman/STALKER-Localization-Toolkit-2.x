@@ -1273,7 +1273,15 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
     reg.add("plugin: 契约表与槽位精确匹配（⑫12.1/12.3/12.4）", [](CheckContext& ctx) {
         namespace plug = xrkit::plugin;
         std::string why;
-        check(ctx, plug::contract_ok(why), "契约表自检失败：" + why);
+        // ★★ 2026-10-07（零静默）：修前这一行是
+        //     `check(ctx, plug::contract_ok(why), "契约表自检失败：" + why);`
+        //   —— C++ **不保证实参求值顺序**（MSVC 实测从右往左）⇒ 那句说明**先于**
+        //   `contract_ok(why)` 拼好 ⇒ `why` 还是空的。后果在 2026-10-07 的 D2 批门禁里
+        //   实测到了：判据确实红了，但行尾是「契约表自检失败：」**后面什么都没有**，
+        //   排障时看不出是哪一条（HOSTS/LOCATIONS/AREAS/api.ui/空键）。
+        //   现在先算结论、再拼说明（判据的**理由**也是判据的一部分）。
+        const bool contract_ok = plug::contract_ok(why);
+        check(ctx, contract_ok, "契约表自检失败：" + why);
 
         check(ctx, plug::host_count() == 6, "槽位表应有 6 个组件（⑫12.1）");
         // 六个组件的键必须与内置页 id 一致（插件槽位就是按页 id 寻址的）

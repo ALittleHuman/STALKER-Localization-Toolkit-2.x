@@ -8058,6 +8058,48 @@ SmokeResult run_smoke() {
         cp.hide();
     }
 
+    // ★★ 2026-10-07（审计补充 H2-4）：**同一判据也必须在文本提取页成立** ——
+    //   修前只对转换页做了断言（"convert 修了、text 没修"），而 `page_base.h:74-83` 与
+    //   本文件都把"**文本提取的行列表**"写进同一条判据。修前形态是 `addWidget(rows_, 1)`
+    //   ⇒ 一次真实提取（gameplay 102 文件 / scripts 446 个 .script）的行数远超结果区高度时
+    //   **永远够不着**。判据与转换页同源：装得下不占位 / 超高能滚 / 拖动改变 offset。
+    //   ★ 判红办法：把 text_page 的 `make_inner_scroll(...)` 换回 `addWidget(rows_, 1)` ⇒ ①②③ 红。
+    {
+        TextPage tp;
+        tp.resize(720, page_min_h());
+        tp.show();
+        QApplication::processEvents();
+        tp.rows()->set_row_count(2);
+        tp.sync_rows_viewport();
+        QApplication::processEvents();
+        check(tp.rows_viewport() != nullptr &&
+                  !ScrollViewport::bar_shown(tp.rows_viewport()->vbar()),
+              QStringLiteral("H2-4 ① 文本提取：装得下 ⇒ 条子**不占位**（视口=%1）")
+                  .arg(tp.rows_viewport() != nullptr ? 1 : 0));
+        for (int i = 0; i < 200; ++i) tp.add_row(QStringLiteral("文本行 %1").arg(i));
+        QApplication::processEvents();
+        QScrollBar* tbar = tp.rows_viewport() != nullptr ? tp.rows_viewport()->vbar() : nullptr;
+        check(tbar != nullptr && tbar->maximum() > 0,
+              QStringLiteral("H2-4 ② 文本提取：内容超高 ⇒ **能滚**（条子=%1 / range 0..%2；"
+                             "修前本页根本没有条子）")
+                  .arg(tbar != nullptr ? 1 : 0)
+                  .arg(tbar != nullptr ? tbar->maximum() : -1));
+        if (tbar != nullptr && tbar->maximum() > 0) {
+            const int target = std::max(1, tbar->maximum() / 2);
+            tbar->setValue(target);
+            QApplication::processEvents();
+            check(tbar->value() == target && tp.rows()->scroll_top() == target,
+                  QStringLiteral("H2-4 ③ 文本提取：拖动条子改变行列表 offset"
+                                 "（期望 %1 / value=%2 / offset=%3）")
+                      .arg(target)
+                      .arg(tbar->value())
+                      .arg(tp.rows()->scroll_top()));
+        } else {
+            check(false, QStringLiteral("H2-4 ③ 文本提取：夹具没做出可滚的条子"));
+        }
+        tp.hide();
+    }
+
     // ★★ 2026-10-05（**落点覆盖必须可见 / 零静默**）—— **GUI 那一面**的锁。
     //   起因（用户报的真事故）：一次默认落点（＝来源所在目录）解包把 **3.9 万个文件**盖在
     //   模组目录上，工具**一个字都没说**。口径：**不改默认落点**（用户口径）、

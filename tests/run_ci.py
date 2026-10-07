@@ -984,6 +984,35 @@ def step_text_tables(release: bool) -> None:
         return
     ok("判定链统计剖面与生成器完全一致")
 
+    # ★★ 2026-10-07（审计补充 H1-4 余条）：上面那条"一致"必须是**逐字节**的 ——
+    #   修前 `gen_sniff_profiles.py --check` 用 `read_text`（universal newlines），
+    #   把盘上的 `\r\n` 读成 `\n` ⇒ **CRLF 化照样 PASS**（其余 6 个生成器都是 `read_bytes`）。
+    #   做法（★ 注入必红，与 J5 注入同一姿势）：把文件行尾改成 CRLF ⇒ `--check` **必须红**；
+    #   再按**注入前的原字节**还原 ⇒ 必须绿，并断言还原后**逐字节相同**
+    #   （来源是本进程读到的原字节，不是"再生成一遍" —— 门禁不许把源码树改坏）。
+    sniff = ROOT / "src" / "engine" / "text" / "sniff_profiles.inc"
+    original = sniff.read_bytes()
+    try:
+        sniff.write_bytes(original.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+        rc_inj, _ = run([sys.executable, str(prof_gen), "--check"])
+    finally:
+        sniff.write_bytes(original)
+    if sniff.read_bytes() != original:
+        fail("注入后还原失败：%s 与注入前**不逐字节相同**（门禁把源码树改坏了）"
+             % sniff.relative_to(ROOT))
+        return
+    if rc_inj == 0:
+        fail("注入必红没红：把 %s 改成 CRLF 之后 `--check` 仍然通过 ⇒ 判据不是逐字节"
+             % sniff.relative_to(ROOT))
+        return
+    say("  ok  注入必红：CRLF 化 %s ⇒ --check 退 %d；还原后逐字节一致"
+        % (sniff.relative_to(ROOT), rc_inj))
+    rc, out = run([sys.executable, str(prof_gen), "--check"])
+    if rc != 0:
+        fail("还原之后 --check 仍不通过（见上）")
+        return
+    ok("判定链统计剖面逐字节一致（含「CRLF 化必红」的注入自证）")
+
     # 表对了还不够：编码转换页用的 `errors="replace"`（有损编解码）**也要逐字节等于
     # Python 同名 codec** —— 替换符个数差一个就是产物错，而它错得"看着像对"。
     lossy = ROOT / "tests" / "golden_lossy_codec.py"
@@ -2316,6 +2345,45 @@ def step_video_overwrite(release: bool) -> None:
         fail("视频输出目标守卫有判据不成立（见上）")
 
 
+def step_package_platform(release: bool) -> None:
+    """用户 2026-10-07 裁决：部署舞台必须**同时**带 `qwindows.dll` 与 `qoffscreen.dll`。
+
+    事实：`windeployqt` 按 app 的实际调用挑，只铺 qwindows；而 `--smoke` / `--layout-report`
+    走离屏。修前 `package.ps1` 的处置是"跑判据前临时拷、跑完删掉（保持包精简）" ⇒
+    **产物本身不可自检**：包内 exe 跑 `--smoke` 直接 `0xC0000409`（BEX64 / Qt6Core / P7=0x267a8），
+    实测 ALPHA.57/58/59 同一签名。裁决改为随包携带（109 KB）。
+    另一条同族假判据：结论行原只 grep `SHELL-SMOKE ok`，而收尾行**恒**以 ok 开头
+    （`SHELL-SMOKE ok checks=N failed=1` 也是 "ok"）⇒ 现在要求 `failed=0`。
+
+    判据分两层：
+      · 静态（任何环境都能判）：`package.ps1` 必须拷 qoffscreen、不许再删它、必须断言产物里
+        两份都在、结论行必须要求 `failed=0`、必须把契约声明 `platform_plugins=` 写进 version.txt；
+      · 产物（有包时）：最新序号里 platforms\\ 两份都在 + **从产物目录真跑一次** `--smoke`
+        （子进程 `QT_QPA_PLATFORM=offscreen`）⇒ 退出码 0 且 `failed=0`。
+        序号没有契约声明（修前打的 ALPHA.57/58/59）⇒ 记**台账**（可见、release 不阻断）；
+        声明了就必须成立。这样"门禁早于打包"这个顺序不会因为旧序号而假红。
+
+    独立成步（不塞进 selftest）：被 `--only` 过滤时按既有记账进 UNCOVERED。
+    """
+    say("[pkg-platform] 包内平台插件（qwindows + qoffscreen）+ 从产物里真跑自检")
+    script = ROOT / "tests" / "check_package_platform.py"
+    if not require_repo_file(script, "包内平台插件判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("PKG-PLATFORM") \
+                or s.startswith("原始行") or s.startswith("产物"):
+            say("  " + s)
+    if rc == 0:
+        ok("包内同时带 qwindows + qoffscreen，且已从产物里真跑一次自检（failed=0）")
+    elif rc == 2:
+        ledger("包内平台插件/从产物里真跑自检",
+               "本次没有带契约声明的新序号包（同一判据写在 package.ps1 里，每次打包都会真跑）")
+    else:
+        fail("包内平台插件判据不成立（见上）")
+
+
 STEPS = [
     ("build", step_build),
     ("no-qt", step_no_qt_lock),
@@ -2387,6 +2455,9 @@ STEPS = [
     ("page-status", step_page_status_label),
     # 排在 shell-smoke **之后**：那一步才把 xrkit_app.exe 编出来（这一步要读它的真实资源字节）
     ("winres", step_winres),
+    # ★★ 2026-10-07（用户裁决）：包内平台插件（qwindows + qoffscreen）+ 从产物里真跑自检。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED；没有带契约声明的新包时记台账。
+    ("pkg-platform", step_package_platform),
 ]
 
 
