@@ -5744,6 +5744,43 @@ SmokeResult run_smoke() {
         QDir(dir).removeRecursively();
     }
 
+    // ★★ 插件改装 P7c（**样板页迁移的机制**）：插件页用 `replaces` **顶掉内置页**。
+    //   判据：① 插件页进页表；② 内置 `fontpack` 页**不再可见**（隐藏、可还原）；③ 可见页数不变；
+    //   ④ 标签仍显示原名（`title` 与 id 可以不同 —— 迁移后 id 必须换新，标题不该变）。
+    {
+        const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_replace"));
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QByteArray source =
+            "# -*- coding: utf-8 -*-\n"
+            "PLUGIN_API = 1\n"
+            "def register(api):\n"
+            "    def build():\n"
+            "        api.ui.label(None, '这是插件版的汉化包生成页')\n"
+            "    api.register_tool('fontpack_py', build, 0, 'fontpack', '插件版', '汉化包生成')\n";
+        QFile plugin_file(QDir(dir).filePath(QStringLiteral("fontpack_py.py")));
+        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                           plugin_file.write(source) == source.size();
+        plugin_file.close();
+        check(wrote, QStringLiteral("P7c 夹具 .py 没写进去"));
+        Hub hub(nullptr, dir);
+        const int replaced = hub.page_index(QStringLiteral("fontpack"));
+        const int fresh = hub.page_index(QStringLiteral("fontpack_py"));
+        check(fresh >= 0, QStringLiteral("P7c 插件页没进页表（插件问题 %1 条）")
+                              .arg(hub.plugin_errors().size()));
+        check(replaced < 0, QStringLiteral("P7c 内置 fontpack 页仍可见（`replaces` 没生效，下标=%1）")
+                                .arg(replaced));
+        // 可见页数不变：内置六页里被顶掉 1 页、插件页补 1 页 ⇒ 总数仍是 6
+        check(hub.page_count() == 6,
+              QStringLiteral("P7c 可见页数应当不变（实得 %1，内置六页）").arg(hub.page_count()));
+        check(fresh >= 0 && hub.stack()->widget(fresh) != nullptr &&
+                  hub.stack()->widget(fresh)->windowTitle() == QStringLiteral("汉化包生成"),
+              QStringLiteral("P7c 迁移后的页标题不是原名（id 与 title 应当可以不同）"));
+        check(hub.plugin_errors().empty(),
+              QStringLiteral("P7c 好插件不该产生插件问题（实得 %1 条）").arg(hub.plugin_errors().size()));
+        QDir(dir).removeRecursively();
+    }
+
     // ⑫12.1 四类槽位渲染（用户 2026-09-26"补六类"：panel/tool/option/option_entry）
     {
         namespace plug = xrkit::plugin;

@@ -246,10 +246,14 @@ public:
         if (!wrapped) return false;
         return registry_->register_panel(owner_, title, std::move(wrapped), host, area, {}, order);
     }
-    bool register_tool(const std::string& name, py::object builder, int order) const {
+    // ★★ P7c：带 `replaces` / `subtitle` 的那一条（样板页迁移用：插件页**顶掉内置页的槽位**）
+    bool register_tool(const std::string& name, py::object builder, int order,
+                       const std::string& replaces, const std::string& subtitle,
+                       const std::string& title) const {
         PanelBuilder wrapped = wrap_python_builder(builder, "register_tool(" + name + ")");
         if (!wrapped) return false;
-        return registry_->register_tool(owner_, name, std::move(wrapped), order);
+        return registry_->register_tool(owner_, name, std::move(wrapped), order, replaces,
+                                       subtitle, title);
     }
 
     bool register_option_entry(const std::string& host, const std::string& area,
@@ -644,6 +648,18 @@ public:
         }
         return std::string();
     }
+    std::string combo_value(py::object widget) const {
+        if (const UiFacade* facade = available("combo_value")) {
+            return facade->combo_value(handle_of(widget));
+        }
+        return std::string();
+    }
+    bool checkbox_state(py::object widget) const {
+        if (const UiFacade* facade = available("checkbox_state")) {
+            return facade->checkbox_state(handle_of(widget));
+        }
+        return false;
+    }
     void set_enabled(py::object widget, bool enabled) const {
         if (const UiFacade* facade = available("set_enabled")) {
             facade->set_enabled(handle_of(widget), enabled);
@@ -671,6 +687,12 @@ public:
     std::string ask_save_file(std::string title) const {
         if (const UiFacade* facade = available("ask_save_file")) {
             return facade->ask_save_file(title);
+        }
+        return std::string();
+    }
+    std::string ask_directory(std::string title) const {
+        if (const UiFacade* facade = available("ask_directory")) {
+            return facade->ask_directory(title);
         }
         return std::string();
     }
@@ -1182,12 +1204,15 @@ void ensure_api_module() {
                  py::arg("height") = 0, py::arg("mono") = true)
             .def("set_text", &PyUi::set_text, py::arg("widget"), py::arg("text"))
             .def("get_text", &PyUi::get_text, py::arg("widget"))
+            .def("combo_value", &PyUi::combo_value, py::arg("widget"))
+            .def("checkbox_state", &PyUi::checkbox_state, py::arg("widget"))
             .def("set_enabled", &PyUi::set_enabled, py::arg("widget"), py::arg("enabled"))
             .def("alive", &PyUi::alive, py::arg("widget"))
             .def("log", &PyUi::log, py::arg("line"))
             .def("ask_yes_no", &PyUi::ask_yes_no, py::arg("title"), py::arg("message"))
             .def("ask_open_file", &PyUi::ask_open_file, py::arg("title"))
             .def("ask_save_file", &PyUi::ask_save_file, py::arg("title"))
+            .def("ask_directory", &PyUi::ask_directory, py::arg("title"))
             // ★ P4：重型 L2 第一批（表外无门 —— 能力表判据按这里的名单对账）
             .def("list", &PyUi::list, py::arg("parent") = py::none(), py::arg("row_height") = 0)
             .def("list_set_row_count", &PyUi::list_set_row_count, py::arg("list"), py::arg("rows"))
@@ -1289,7 +1314,8 @@ void ensure_api_module() {
                  py::arg("builder"), py::arg("host") = "fs", py::arg("area") = "top_bar",
                  py::arg("order") = 0)
             .def("register_tool", &PyPluginApi::register_tool, py::arg("name"), py::arg("builder"),
-                 py::arg("order") = 0);
+                 py::arg("order") = 0, py::arg("replaces") = "", py::arg("subtitle") = "",
+                 py::arg("title") = "");
         class_registered = true;
     }
     modules["xrkit"] = m;

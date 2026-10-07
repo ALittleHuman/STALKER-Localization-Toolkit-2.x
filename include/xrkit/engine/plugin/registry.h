@@ -121,6 +121,14 @@ struct ToolReg {
     std::string name;
     PanelBuilder builder;
     int order = 0;
+    // ★★ P7c（样板页迁移）：规格 §五 的**显式覆盖** —— 新 id + `replaces` 指向被替换的页 id
+    //   （禁静默顶掉；被拒时留痕、内置页照旧在）。空 = 不覆盖任何页。
+    //   同时给页一个副标题（内置页有；插件页此前没有 —— 迁移时要能表达同样的东西）。
+    std::string replaces;
+    std::string subtitle;
+    // ★ P7c：标签上的**显示名**（空 ⇒ 用 id）。迁移后的页 id 与原名不同
+    //   （覆盖要求新 id），但标题仍要显示原名。
+    std::string title;
 };
 
 struct FormatReg {
@@ -213,6 +221,11 @@ public:
                         int order = 0);
     bool register_tool(const std::string& plugin, const std::string& name, PanelBuilder builder,
                        int order = 0);
+    // ★★ P7c：显式覆盖（规格 §五）：`replaces` 指向被替换的页 id（空 = 不覆盖）；
+    //   失败（自替换 / 已被别人覆盖）⇒ 拒绝并留痕，内置页照旧在。
+    bool register_tool(const std::string& plugin, const std::string& name, PanelBuilder builder,
+                       int order, const std::string& replaces, const std::string& subtitle,
+                       const std::string& title = "");
     bool register_compare_mode(const std::string& plugin, CompareModeReg mode);
 
     // ── 消费端（每条注册都必须**真的被看见**，否则就是"注册成功但无人消费"＝FAIL）──

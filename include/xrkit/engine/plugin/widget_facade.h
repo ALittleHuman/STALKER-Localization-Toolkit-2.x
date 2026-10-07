@@ -66,11 +66,18 @@ struct UiFacade {
     std::function<void(UiHandle widget, const std::string& text)> set_text;
     std::function<std::string(UiHandle widget)> get_text;
     std::function<void(UiHandle widget, bool enabled)> set_enabled;
+    // ★★ P7c（样板页反向定义）：**读**当前值 —— 下拉选中的文本、勾选框的勾选态。
+    //   C++ 页直接读控件（`currentData()` / `isChecked()`）；插件没有裸控件 ⇒ 补这两个。
+    std::function<std::string(UiHandle widget)> combo_value;
+    std::function<bool(UiHandle widget)> checkbox_state;
     std::function<bool(UiHandle widget)> alive;
     std::function<void(const std::string& line)> log_append;   // 宿主日志栏（LogView）
     std::function<bool(const std::string& title, const std::string& message)> ask_yes_no;
     std::function<std::string(const std::string& title)> ask_open_file;
     std::function<std::string(const std::string& title)> ask_save_file;
+    // ★★ P7c：**目录选择**（样板页要「浏览 XML 目录 / 输出目录」；C ABI 那张表没有这一项，
+    //   属门面的新能力，实现在外壳）。
+    std::function<std::string(const std::string& title)> ask_directory;
 
     // ── ★★ L2（重型，第一批）：宿主组件的**表内方法** ──────────────────────────
     // 口径（规格 §三）：渲染/委托/滚动/像素全在宿主；插件只给"数据 + 回调"。

@@ -234,6 +234,32 @@ bool Registry::register_tool(const std::string& plugin, const std::string& name,
     return true;
 }
 
+// ★★ P7c：带 `replaces` / `subtitle` 的那一条（样板页迁移要用：插件页要**顶掉**内置页的槽位）。
+bool Registry::register_tool(const std::string& plugin, const std::string& name,
+                             PanelBuilder builder, int order, const std::string& replaces,
+                             const std::string& subtitle, const std::string& title) {
+    if (name.empty() || !builder) {
+        reject(plugin, "register_tool 需要非空 name 与可调用的 builder");
+        return false;
+    }
+    if (!replaces.empty() && replaces == name) {
+        // 自替换＝什么都没换（而且会让"可见页 = 全部 − 被 replaces 命中的"把这一页也摘掉）
+        reject(plugin, "register_tool(" + name + ") 的 replaces 指向了自己");
+        return false;
+    }
+    if (!replaces.empty() && !tools_.empty()) {
+        for (const ToolReg& other : tools_) {
+            if (other.replaces == replaces) {
+                reject(plugin, "页「" + replaces + "」已被 " + other.plugin + " 的页「" +
+                                   other.name + "」覆盖");
+                return false;
+            }
+        }
+    }
+    tools_.push_back({plugin, name, std::move(builder), order, replaces, subtitle, title});
+    return true;
+}
+
 bool Registry::register_compare_mode(const std::string& plugin, CompareModeReg mode) {
     if (mode.spec.name.empty() || mode.spec.key.empty()) {
         reject(plugin, "register_compare_mode 需要非空 name 与内部键");

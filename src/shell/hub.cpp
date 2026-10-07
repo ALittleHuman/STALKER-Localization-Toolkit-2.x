@@ -620,11 +620,17 @@ void Hub::render_plugin_slots() {
     for (const plugin::ToolReg* tool : registry_.tools_sorted()) {
         PageSpec spec;
         spec.id = tool->name;
-        spec.title = QString::fromStdString(tool->name);
+        // ★★ P7c：插件页可以给**显示名**与**副标题**（内置页有；迁移时要能表达同样的东西）
+        //   `title` 空 ⇒ 用 id（老行为不变）。
+        spec.title = QString::fromStdString(tool->title.empty() ? tool->name : tool->title);
+        spec.subtitle = QString::fromStdString(tool->subtitle);
         // 带 = 插件带：1.x「内置六工具固定在前，插件栏目按 order 升序稳定追加」
         //（`stalker_toolkit.py:215-221`）。要插到内置页中间用 `replaces`（占被替换页的槽位）。
         spec.band = kPluginPageBand;
         spec.order = tool->order;
+        // ★★ P7c（规格 §五 的显式覆盖）：`replaces` 指向被替换的页 id
+        //   —— 注册表把被替换页**隐藏**（不删，可回退），插件页占它的位置。
+        spec.replaces = tool->replaces;
         const plugin::PanelBuilder builder = tool->builder;
         // ★★ P3：把宿主给的**根容器**透传给插件的 builder（修前这里写死 `builder(nullptr)`）
         //   —— Python 插件用 `api.ui.*` 造控件时，"当前面板根"就来自这个实参。

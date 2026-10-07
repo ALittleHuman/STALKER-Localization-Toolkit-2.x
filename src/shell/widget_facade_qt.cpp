@@ -24,7 +24,9 @@
 #include "xrkit/core/theme.h"
 #include "xrkit/engine/plugin/widget_facade.h"
 
+#include <QCheckBox>
 #include <QComboBox>
+#include <QFileDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
@@ -252,6 +254,18 @@ const plug::UiFacade kQtFacade = {
     [](plug::UiHandle widget, bool enabled) {
         table()->set_state(nullptr, wrap(unwrap(widget)), enabled ? 1 : 0);
     },
+    /* combo_value：下拉当前文本（读接口，不走"改"那条路） */
+    [](plug::UiHandle widget) {
+        if (auto* combo = qobject_cast<QComboBox*>(unwrap(widget))) {
+            return combo->currentText().toStdString();
+        }
+        return std::string();
+    },
+    /* checkbox_state：勾选框当前勾选态 */
+    [](plug::UiHandle widget) {
+        if (auto* check = qobject_cast<QCheckBox*>(unwrap(widget))) return check->isChecked();
+        return false;
+    },
     /* alive */
     [](plug::UiHandle widget) { return unwrap(widget) != nullptr; },
     /* log_append：宿主日志栏。装配时由外壳接上（`install_qt_ui_facade` 的 log_sink），
@@ -270,6 +284,12 @@ const plug::UiFacade kQtFacade = {
     [](const std::string& title) {
         const char* path = table()->ask_save_file(nullptr, title.c_str());
         return path == nullptr ? std::string() : std::string(path);
+    },
+    /* ask_directory：门面**新能力**（C ABI 那张表没有目录选择）—— 宿主弹自己的目录对话框 */
+    [](const std::string& title) {
+        const QString picked =
+            QFileDialog::getExistingDirectory(nullptr, QString::fromStdString(title));
+        return picked.toStdString();
     },
     // ── ★★ P4：重型 L2 第一批（虚拟列表 / 日志视图 / 拖放目标 / 任务壳 / 线程判定）──
     // 为什么这几件**可以**在门面实现里直接碰 Qt（而 L1 那 18 个不行）：L1 是对既有控件语义的
