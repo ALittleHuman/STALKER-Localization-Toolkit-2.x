@@ -5540,6 +5540,165 @@ SmokeResult run_smoke() {
         QDir(dir).removeRecursively();
     }
 
+    // ★★ 插件改装 P6（**重型 L2 第三批：树**）：多列 / 懒建 / 展开态 / 三态勾选 / 过滤计数 / 激活。
+    //   判据走**用户路径**（C++ 侧直接改 QTreeWidgetItem 的展开与勾选状态 = 用户点出来的那条路），
+    //   再用插件自己的"查状态"按钮把 `api.ui.tree_*` 读到的值写成快照，两边对得上才算通。
+    {
+        const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_uifacade_l6"));
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString marker = QDir(dir).filePath(QStringLiteral("l6_marker.txt"));
+        const QString status = QDir(dir).filePath(QStringLiteral("l6_status.txt"));
+        const QByteArray source =
+            "# -*- coding: utf-8 -*-\n"
+            "import os\n"
+            "def register(api):\n"
+            "    def mark(text):\n"
+            "        with open(os.path.join(api.plugin_dir, 'l6_marker.txt'), 'a', encoding='utf-8') as fh:\n"
+            "            fh.write(text + '\\n')\n"
+            "    def build():\n"
+            "        ui = api.ui\n"
+            "        tree = ui.tree(None, [['名字', 0], ['大小', 80]])\n"
+            "        def status():\n"
+            "            lines = ['rows:%d' % ui.tree_row_count(tree),\n"
+            "                     'keys:%s' % ','.join(ui.tree_keys(tree)),\n"
+            "                     'checked:%s' % ','.join(sorted(ui.tree_checked_keys(tree))),\n"
+            "                     'partial:%s' % ','.join(sorted(ui.tree_partial_keys(tree))),\n"
+            "                     'hits:%d' % ui.tree_filter_hits(tree),\n"
+            "                     'selected:%s' % ui.tree_selected_key(tree),\n"
+            "                     'expanded:%s' % ','.join(sorted(ui.tree_expanded_keys(tree)))]\n"
+            "            with open(os.path.join(api.plugin_dir, 'l6_status.txt'), 'w', encoding='utf-8') as fh:\n"
+            "                fh.write('\\n'.join(lines) + '\\n')\n"
+            "        ui.tree_set_root(tree, [\n"
+            "            {'key': 'A', 'cells': ['A 目录', '-'], 'has_children': True, 'checkable': True},\n"
+            "            {'key': 'B', 'cells': ['B 文件', '10'], 'checkable': True},\n"
+            "        ])\n"
+            "        ui.tree_on_expand(tree, lambda key: (\n"
+            "            mark('expand:' + key),\n"
+            "            ui.tree_set_children(tree, key, [\n"
+            "                {'key': 'a1', 'cells': ['a1.txt', '1'], 'checkable': True},\n"
+            "                {'key': 'a2', 'cells': ['a2.txt', '2'], 'checkable': True},\n"
+            "                {'key': 'a3', 'cells': ['a3.txt', '3'], 'checkable': True},\n"
+            "            ])))\n"
+            "        ui.tree_on_check(tree, lambda key, checked: mark('check:%s:%d' % (key, int(checked))))\n"
+            "        ui.tree_on_activate(tree, lambda key: mark('activate:' + key))\n"
+            "        status()\n"
+            "        btn = ui.button(None, '查状态', status)\n"
+            "        btn2 = ui.button(None, '过滤 a2', lambda: (ui.tree_set_filter(tree, 'a2'), status()))\n"
+            "        btn3 = ui.button(None, '选中 B', lambda: (ui.tree_select(tree, 'B'), status()))\n"
+            "        mark('built')\n"
+            "    api.register_tool('门面树夹具页', build, 8)\n";
+        QFile plugin_file(QDir(dir).filePath(QStringLiteral("l6_demo.py")));
+        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                           plugin_file.write(source) == source.size();
+        plugin_file.close();
+        check(wrote, QStringLiteral("P6 夹具 .py 没写进去"));
+
+        Hub hub(nullptr, dir);
+        const int page = hub.page_index(QStringLiteral("门面树夹具页"));
+        check(page >= 0, QStringLiteral("P6 `register_tool` 的页没进页表（插件问题 %1 条）")
+                             .arg(hub.plugin_errors().size()));
+        QWidget* page_widget = page >= 0 ? hub.stack()->widget(page) : nullptr;
+        hub.show();
+        if (page >= 0) hub.switch_to_page(QStringLiteral("门面树夹具页"));
+        for (int i = 0; i < 20; ++i) {
+            QApplication::processEvents();
+            QThread::msleep(5);
+        }
+        auto* tree = page_widget != nullptr
+                         ? page_widget->findChild<QTreeWidget*>()
+                         : nullptr;
+        check(tree != nullptr && tree->columnCount() == 2,
+              QStringLiteral("P6 树没造出来或列数不对（实得 %1 列）")
+                  .arg(tree == nullptr ? -1 : tree->columnCount()));
+        const auto read_file = [](const QString& path) {
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly)) return QString();
+            return QString::fromUtf8(file.readAll());
+        };
+        const auto click_button = [&page_widget](const QString& text) {
+            if (page_widget == nullptr) return false;
+            for (QPushButton* button : page_widget->findChildren<QPushButton*>()) {
+                if (button->text() == text) {
+                    button->click();
+                    QApplication::processEvents();
+                    return true;
+                }
+            }
+            return false;
+        };
+        const auto item_by_key = [&tree](const QString& key) -> QTreeWidgetItem* {
+            if (tree == nullptr) return nullptr;
+            for (QTreeWidgetItemIterator it(tree); *it != nullptr; ++it) {
+                if ((*it)->data(0, Qt::UserRole).toString() == key) return *it;
+            }
+            return nullptr;
+        };
+        if (tree != nullptr) {
+            // ① 结构：根两行
+            check(click_button(QStringLiteral("查状态")), QStringLiteral("P6 找不到「查状态」按钮"));
+            QString snapshot = read_file(status);
+            check(snapshot.contains(QStringLiteral("rows:2")) &&
+                      snapshot.contains(QStringLiteral("keys:A,B")),
+                  QStringLiteral("P6 初始结构不对（%1）").arg(snapshot.simplified()));
+            // ② 懒建：**用户路径**展开 A ⇒ 才回调 on_expand ⇒ 插件补子
+            if (auto* node_a = item_by_key(QStringLiteral("A"))) node_a->setExpanded(true);
+            QApplication::processEvents();
+            click_button(QStringLiteral("查状态"));
+            snapshot = read_file(status);
+            check(snapshot.contains(QStringLiteral("rows:5")) &&
+                      snapshot.contains(QStringLiteral("keys:A,a1,a2,a3,B")),
+                  QStringLiteral("P6 懒建没生效（%1）").arg(snapshot.simplified()));
+            check(read_file(marker).contains(QStringLiteral("expand:A")),
+                  QStringLiteral("P6 展开回调没回到 Python"));
+            // ③ 三态：勾父 ⇒ 子全跟；再取消一个子 ⇒ 父变半态（**用户路径**改状态）
+            if (auto* node_a = item_by_key(QStringLiteral("A"))) {
+                node_a->setCheckState(0, Qt::Checked);
+            }
+            QApplication::processEvents();
+            click_button(QStringLiteral("查状态"));
+            snapshot = read_file(status);
+            check(snapshot.contains(QStringLiteral("checked:A,a1,a2,a3")),
+                  QStringLiteral("P6 勾父没向下传播（%1）").arg(snapshot.simplified()));
+            check(read_file(marker).contains(QStringLiteral("check:A:1")),
+                  QStringLiteral("P6 勾选回调没回到 Python"));
+            if (auto* node_a1 = item_by_key(QStringLiteral("a1"))) {
+                node_a1->setCheckState(0, Qt::Unchecked);
+            }
+            QApplication::processEvents();
+            click_button(QStringLiteral("查状态"));
+            snapshot = read_file(status);
+            check(snapshot.contains(QStringLiteral("partial:A")) &&
+                      snapshot.contains(QStringLiteral("checked:a2,a3")),
+                  QStringLiteral("P6 三态没向上重算（%1）").arg(snapshot.simplified()));
+            // ④ 选中（**放在过滤之前**：过滤会把别的行藏起来，藏着的行不该被"选中"）
+            check(click_button(QStringLiteral("选中 B")), QStringLiteral("P6 找不到「选中 B」按钮"));
+            snapshot = read_file(status);
+            check(snapshot.contains(QStringLiteral("selected:B")),
+                  QStringLiteral("P6 选中没反映到门面（%1）").arg(snapshot.simplified()));
+            // ⑤ 过滤：命中行 + 它的祖先可见，命中数与界面同源
+            check(click_button(QStringLiteral("过滤 a2")), QStringLiteral("P6 找不到「过滤 a2」按钮"));
+            snapshot = read_file(status);
+            check(snapshot.contains(QStringLiteral("hits:1")) &&
+                      snapshot.contains(QStringLiteral("keys:A,a2")),
+                  QStringLiteral("P6 过滤/命中数不对（%1）").arg(snapshot.simplified()));
+            // ⑥ 激活：**真派发** `itemDoubleClicked`（叶子 ⇒ 回调回 Python）
+            if (auto* node_a3 = item_by_key(QStringLiteral("a3"))) {
+                QMetaObject::invokeMethod(tree, "itemDoubleClicked", Qt::DirectConnection,
+                                          Q_ARG(QTreeWidgetItem*, node_a3), Q_ARG(int, 0));
+            }
+            QApplication::processEvents();
+            check(read_file(marker).contains(QStringLiteral("activate:a3")),
+                  QStringLiteral("P6 双击叶子没触发激活回调（标记=%1）")
+                      .arg(read_file(marker).simplified()));
+            check(snapshot.contains(QStringLiteral("expanded:A")),
+                  QStringLiteral("P6 展开态没被门面读到（%1）").arg(snapshot.simplified()));
+        }
+        check(hub.plugin_errors().empty(),
+              QStringLiteral("P6 好插件不该产生插件问题（实得 %1 条）").arg(hub.plugin_errors().size()));
+        QDir(dir).removeRecursively();
+    }
+
     // ⑫12.1 四类槽位渲染（用户 2026-09-26"补六类"：panel/tool/option/option_entry）
     {
         namespace plug = xrkit::plugin;

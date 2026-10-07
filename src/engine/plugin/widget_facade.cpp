@@ -42,6 +42,12 @@ const char* const kMethodNames[] = {
     "viewport_can_scroll", "viewport_scroll_top",
     "split",       "split_add_pane",       "split_set_max_size",          "split_set_collapsed",
     "split_is_collapsed", "split_pane_count", "split_sash_pos",
+    // ★★ P6：重型 L2 第三批（树）
+    "tree",           "tree_set_root",      "tree_set_children",   "tree_clear",
+    "tree_row_count", "tree_keys",          "tree_set_expanded",   "tree_expanded_keys",
+    "tree_set_checked", "tree_checked",     "tree_checked_keys",   "tree_partial_keys",
+    "tree_set_filter", "tree_filter_hits",  "tree_select",         "tree_selected_key",
+    "tree_on_expand",  "tree_on_check",     "tree_on_activate",
 };
 
 bool has_impl(const UiFacade& facade, const std::string& name) {
@@ -97,6 +103,25 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "split_is_collapsed") return static_cast<bool>(facade.split_is_collapsed);
     if (name == "split_pane_count") return static_cast<bool>(facade.split_pane_count);
     if (name == "split_sash_pos") return static_cast<bool>(facade.split_sash_pos);
+    if (name == "tree") return static_cast<bool>(facade.tree);
+    if (name == "tree_set_root") return static_cast<bool>(facade.tree_set_root);
+    if (name == "tree_set_children") return static_cast<bool>(facade.tree_set_children);
+    if (name == "tree_clear") return static_cast<bool>(facade.tree_clear);
+    if (name == "tree_row_count") return static_cast<bool>(facade.tree_row_count);
+    if (name == "tree_keys") return static_cast<bool>(facade.tree_keys);
+    if (name == "tree_set_expanded") return static_cast<bool>(facade.tree_set_expanded);
+    if (name == "tree_expanded_keys") return static_cast<bool>(facade.tree_expanded_keys);
+    if (name == "tree_set_checked") return static_cast<bool>(facade.tree_set_checked);
+    if (name == "tree_checked") return static_cast<bool>(facade.tree_checked);
+    if (name == "tree_checked_keys") return static_cast<bool>(facade.tree_checked_keys);
+    if (name == "tree_partial_keys") return static_cast<bool>(facade.tree_partial_keys);
+    if (name == "tree_set_filter") return static_cast<bool>(facade.tree_set_filter);
+    if (name == "tree_filter_hits") return static_cast<bool>(facade.tree_filter_hits);
+    if (name == "tree_select") return static_cast<bool>(facade.tree_select);
+    if (name == "tree_selected_key") return static_cast<bool>(facade.tree_selected_key);
+    if (name == "tree_on_expand") return static_cast<bool>(facade.tree_on_expand);
+    if (name == "tree_on_check") return static_cast<bool>(facade.tree_on_check);
+    if (name == "tree_on_activate") return static_cast<bool>(facade.tree_on_activate);
     return false;
 }
 

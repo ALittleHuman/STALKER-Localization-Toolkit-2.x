@@ -76,6 +76,24 @@ EXPECT_UI = {
     "split_set_collapsed": "L2.6 完全收起（4.2/4.3：收起后改窗口尺寸不弹回）",
     "split_is_collapsed": "L2.6 是否收起", "split_pane_count": "L2.6 格数",
     "split_sash_pos": "L2.6 第 index 条分隔条位置（-1=没有）",
+    # ★★ P6：重型 L2 第三批 —— 树（fs 页那棵的用户可见语义）
+    "tree": "L2.7 树（多列；句柄＝树自身）",
+    "tree_set_root": "L2.7 声明根节点（清空重建）",
+    "tree_set_children": "L2.7 填某行的子（**懒建**的落点）",
+    "tree_clear": "L2.7 清空",
+    "tree_row_count": "L2.7 当前**可见**行数（祖先都展开 + 未被过滤）",
+    "tree_keys": "L2.7 当前可见行的 key（树序；判据用）",
+    "tree_set_expanded": "L2.7 展开/收起某行（**展开态保持**）",
+    "tree_expanded_keys": "L2.7 已展开的 key",
+    "tree_set_checked": "L2.7 改勾选（**向下传播 + 向上重算**三态）",
+    "tree_checked": "L2.7 某行是否勾上", "tree_checked_keys": "L2.7 全勾的行",
+    "tree_partial_keys": "L2.7 半态的行（三态）",
+    "tree_set_filter": "L2.7 过滤（宿主匹配任一列；命中行连祖先一起显示）",
+    "tree_filter_hits": "L2.7 命中数（与界面上的计数**同源**）",
+    "tree_select": "L2.7 选中某行", "tree_selected_key": "L2.7 当前选中行",
+    "tree_on_expand": "★L2.5 展开回调（懒建：这时才要子节点）",
+    "tree_on_check": "★L2.5 勾选回调（用户改了哪一行）",
+    "tree_on_activate": "★L2.5 激活回调（双击叶子）",
 }
 # Widget：**故意为空** —— 不透明句柄，插件不能对它做任何事（禁 L4 裸 Qt）
 EXPECT_WIDGET: dict[str, str] = {}

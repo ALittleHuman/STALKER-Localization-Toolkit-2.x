@@ -16,6 +16,7 @@ add_library(xrkit_shell STATIC
 screen_scale.cpp
   plugin_ui.cpp
   widget_facade_qt.cpp
+  facade_tree.cpp
   drop_filter.cpp
   drop_zone.cpp
   pair_tree.cpp

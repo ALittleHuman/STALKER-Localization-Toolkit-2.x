@@ -136,6 +136,52 @@ struct UiFacade {
     std::function<bool(UiHandle split, int index)> split_is_collapsed;
     std::function<int(UiHandle split)> split_pane_count;
     std::function<int(UiHandle split, int index)> split_sash_pos;
+
+    // ── ★★ L2（重型，第三批）：树（多列 / 懒建 / 展开态 / 过滤计数 / 三态勾选）────────
+    // 口径（fs 页那棵树的用户可见语义，逐条搬过来）：
+    //   · **懒建**：`has_children=true` 的行只画"有子"的箭头；用户真展开时才回调
+    //     `on_expand(key)`，插件再 `tree_set_children(key, …)`（六页里的大树都是这么长的）；
+    //   · **三态勾选**：勾/取消**向下传播**到子孙，再**向上重算**祖先（全勾=勾、部分=半），
+    //     用户改勾选时回调 `on_check(key, checked)`；插件也能 `tree_set_checked` 改状态；
+    //   · **过滤**：宿主按"任一列包含子串"匹配，命中行连同它的祖先一起显示，别的隐藏；
+    //     `tree_filter_hits()` 与"命中加粗/计数"同源（六页的搜索框要的就是这个数）。
+    // 本批**不含**：行尾 ✕（那个委托要从 fs 页抽出来共用，随 fs 页迁移一起做）、右键菜单。
+    struct TreeColumn {
+        std::string title;
+        int width = 0;   // 0 = 宿主按规范给（最后一列吃剩余宽度）
+    };
+    struct TreeNodeSpec {
+        std::string key;                  // 插件自己的标识（回调用它；同一棵树里唯一）
+        std::vector<std::string> cells;   // 每列文本（少给 ⇒ 后面的列留空）
+        bool has_children = false;        // 有子 ⇒ 画箭头，展开时才回调
+        bool checkable = false;           // 这一行有没有勾选框
+        bool checked = false;             // 声明时的初始勾选态（宿主会据此重算祖先）
+    };
+    std::function<UiHandle(UiHandle parent, const std::vector<TreeColumn>& columns)> tree;
+    std::function<void(UiHandle tree, const std::vector<TreeNodeSpec>& nodes)> tree_set_root;
+    std::function<void(UiHandle tree, const std::string& parent_key,
+                       const std::vector<TreeNodeSpec>& nodes)>
+        tree_set_children;
+    std::function<void(UiHandle tree)> tree_clear;
+    std::function<int(UiHandle tree)> tree_row_count;                  // 当前**可见**行数
+    std::function<std::vector<std::string>(UiHandle tree)> tree_keys;  // 当前可见行的 key（树序）
+    std::function<void(UiHandle tree, const std::string& key, bool expanded)> tree_set_expanded;
+    std::function<std::vector<std::string>(UiHandle tree)> tree_expanded_keys;
+    std::function<void(UiHandle tree, const std::string& key, bool checked)> tree_set_checked;
+    std::function<bool(UiHandle tree, const std::string& key)> tree_checked;
+    std::function<std::vector<std::string>(UiHandle tree)> tree_checked_keys;
+    std::function<std::vector<std::string>(UiHandle tree)> tree_partial_keys;
+    std::function<void(UiHandle tree, const std::string& text)> tree_set_filter;
+    std::function<int(UiHandle tree)> tree_filter_hits;
+    std::function<void(UiHandle tree, const std::string& key)> tree_select;
+    std::function<std::string(UiHandle tree)> tree_selected_key;
+    // ★L2.5 回调（都在宿主 UI 线程上被调）
+    std::function<void(UiHandle tree, std::function<void(const std::string&)> on_expand)>
+        tree_on_expand;
+    std::function<void(UiHandle tree, std::function<void(const std::string&, bool)> on_check)>
+        tree_on_check;
+    std::function<void(UiHandle tree, std::function<void(const std::string&)> on_activate)>
+        tree_on_activate;
 };
 
 // 外壳注入实现（`src/shell/ui_facade_qt.cpp`）。传 nullptr = 撤销（无 GUI 依赖的进程/用例）。

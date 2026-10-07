@@ -333,6 +333,51 @@ UiHandle handle_of_widget(const py::object& widget_or_none) {
     return typed == nullptr ? kNoWidget : typed->handle();
 }
 
+// ── P6：树的两个入参转换（Python 的 list ↔ 门面的 POD）─────────────────────────
+// 列：`[["列1", 0], ["列2", 200]]`（宽度 0 = 宿主按规范给；末列吃剩余宽度）
+std::vector<UiFacade::TreeColumn> tree_columns_from_python(const py::object& columns) {
+    std::vector<UiFacade::TreeColumn> out;
+    if (columns.is_none() != 0) return out;
+    for (auto item : py::list(columns)) {
+        UiFacade::TreeColumn column;
+        py::sequence pair = py::reinterpret_borrow<py::sequence>(item);
+        if (py::len(pair) > 0) column.title = py::str(pair[0]).cast<std::string>();
+        if (py::len(pair) > 1) column.width = py::cast<int>(pair[1]);
+        out.push_back(std::move(column));
+    }
+    return out;
+}
+
+// 节点：`[{"key": "a", "cells": ["a.txt", "12"], "has_children": False,
+//          "checkable": True, "checked": False}, …]`（缺的字段取默认）
+std::vector<UiFacade::TreeNodeSpec> tree_nodes_from_python(const py::object& nodes) {
+    std::vector<UiFacade::TreeNodeSpec> out;
+    if (nodes.is_none() != 0) return out;
+    for (auto item : py::list(nodes)) {
+        py::dict node = py::reinterpret_borrow<py::dict>(item);
+        UiFacade::TreeNodeSpec spec;
+        if (node.contains("key")) spec.key = py::str(node["key"]).cast<std::string>();
+        if (node.contains("cells")) {
+            for (auto cell : py::list(node["cells"])) {
+                spec.cells.push_back(py::str(cell).cast<std::string>());
+            }
+        }
+        if (node.contains("has_children")) {
+            spec.has_children = py::cast<bool>(node["has_children"]);
+        }
+        if (node.contains("checkable")) spec.checkable = py::cast<bool>(node["checkable"]);
+        if (node.contains("checked")) spec.checked = py::cast<bool>(node["checked"]);
+        out.push_back(std::move(spec));
+    }
+    return out;
+}
+
+py::list strings_to_python(const std::vector<std::string>& values) {
+    py::list out;
+    for (const std::string& value : values) out.append(py::str(value));
+    return out;
+}
+
 class PyUi {
 public:
     explicit PyUi(std::string owner) : owner_(std::move(owner)) {}
@@ -744,6 +789,171 @@ public:
         return -1;
     }
 
+    // ── ★★ P6：树（多列 / 懒建 / 展开态 / 过滤计数 / 三态勾选）──────────────────
+    py::object tree(py::object parent, py::object columns) const {
+        if (const UiFacade* facade = available("tree")) {
+            return wrap(facade->tree(handle_of(parent), tree_columns_from_python(columns)));
+        }
+        return py::none();
+    }
+    void tree_set_root(py::object tree_widget, py::object nodes) const {
+        if (const UiFacade* facade = available("tree_set_root")) {
+            facade->tree_set_root(handle_of(tree_widget), tree_nodes_from_python(nodes));
+        }
+    }
+    void tree_set_children(py::object tree_widget, const std::string& parent_key,
+                           py::object nodes) const {
+        if (const UiFacade* facade = available("tree_set_children")) {
+            facade->tree_set_children(handle_of(tree_widget), parent_key,
+                                      tree_nodes_from_python(nodes));
+        }
+    }
+    void tree_clear(py::object tree_widget) const {
+        if (const UiFacade* facade = available("tree_clear")) {
+            facade->tree_clear(handle_of(tree_widget));
+        }
+    }
+    int tree_row_count(py::object tree_widget) const {
+        if (const UiFacade* facade = available("tree_row_count")) {
+            return facade->tree_row_count(handle_of(tree_widget));
+        }
+        return 0;
+    }
+    py::list tree_keys(py::object tree_widget) const {
+        if (const UiFacade* facade = available("tree_keys")) {
+            return strings_to_python(facade->tree_keys(handle_of(tree_widget)));
+        }
+        return py::list();
+    }
+    void tree_set_expanded(py::object tree_widget, const std::string& key, bool expanded) const {
+        if (const UiFacade* facade = available("tree_set_expanded")) {
+            facade->tree_set_expanded(handle_of(tree_widget), key, expanded);
+        }
+    }
+    py::list tree_expanded_keys(py::object tree_widget) const {
+        if (const UiFacade* facade = available("tree_expanded_keys")) {
+            return strings_to_python(facade->tree_expanded_keys(handle_of(tree_widget)));
+        }
+        return py::list();
+    }
+    void tree_set_checked(py::object tree_widget, const std::string& key, bool checked) const {
+        if (const UiFacade* facade = available("tree_set_checked")) {
+            facade->tree_set_checked(handle_of(tree_widget), key, checked);
+        }
+    }
+    bool tree_checked(py::object tree_widget, const std::string& key) const {
+        if (const UiFacade* facade = available("tree_checked")) {
+            return facade->tree_checked(handle_of(tree_widget), key);
+        }
+        return false;
+    }
+    py::list tree_checked_keys(py::object tree_widget) const {
+        if (const UiFacade* facade = available("tree_checked_keys")) {
+            return strings_to_python(facade->tree_checked_keys(handle_of(tree_widget)));
+        }
+        return py::list();
+    }
+    py::list tree_partial_keys(py::object tree_widget) const {
+        if (const UiFacade* facade = available("tree_partial_keys")) {
+            return strings_to_python(facade->tree_partial_keys(handle_of(tree_widget)));
+        }
+        return py::list();
+    }
+    void tree_set_filter(py::object tree_widget, const std::string& text) const {
+        if (const UiFacade* facade = available("tree_set_filter")) {
+            facade->tree_set_filter(handle_of(tree_widget), text);
+        }
+    }
+    int tree_filter_hits(py::object tree_widget) const {
+        if (const UiFacade* facade = available("tree_filter_hits")) {
+            return facade->tree_filter_hits(handle_of(tree_widget));
+        }
+        return 0;
+    }
+    void tree_select(py::object tree_widget, const std::string& key) const {
+        if (const UiFacade* facade = available("tree_select")) {
+            facade->tree_select(handle_of(tree_widget), key);
+        }
+    }
+    std::string tree_selected_key(py::object tree_widget) const {
+        if (const UiFacade* facade = available("tree_selected_key")) {
+            return facade->tree_selected_key(handle_of(tree_widget));
+        }
+        return std::string();
+    }
+    // ★L2.5 回调：`on_expand(key)`（懒建）、`on_check(key, checked)`、`on_activate(key)`
+    void tree_on_expand(py::object tree_widget, py::object callback) const {
+        const UiFacade* facade = available("tree_on_expand");
+        if (facade == nullptr) return;
+        if (callback.is_none() != 0) {
+            facade->tree_on_expand(handle_of(tree_widget), nullptr);
+            return;
+        }
+        if (PyCallable_Check(callback.ptr()) == 0) {
+            core::log(core::Level::Warn, "[" + owner_ + "] ui.tree_on_expand 的回调不是可调用对象");
+            return;
+        }
+        py::object kept = callback;
+        keepalive()->push_back(kept);
+        facade->tree_on_expand(handle_of(tree_widget), [kept](const std::string& key) {
+            py::gil_scoped_acquire acquire;
+            try {
+                kept(py::str(key));
+            } catch (const py::error_already_set& err) {
+                core::log(core::Level::Warn,
+                          std::string("ui.tree_on_expand 回调抛异常：") + err.what());
+            }
+        });
+    }
+    void tree_on_check(py::object tree_widget, py::object callback) const {
+        const UiFacade* facade = available("tree_on_check");
+        if (facade == nullptr) return;
+        if (callback.is_none() != 0) {
+            facade->tree_on_check(handle_of(tree_widget), nullptr);
+            return;
+        }
+        if (PyCallable_Check(callback.ptr()) == 0) {
+            core::log(core::Level::Warn, "[" + owner_ + "] ui.tree_on_check 的回调不是可调用对象");
+            return;
+        }
+        py::object kept = callback;
+        keepalive()->push_back(kept);
+        facade->tree_on_check(handle_of(tree_widget),
+                              [kept](const std::string& key, bool checked) {
+                                  py::gil_scoped_acquire acquire;
+                                  try {
+                                      kept(py::str(key), py::bool_(checked));
+                                  } catch (const py::error_already_set& err) {
+                                      core::log(core::Level::Warn,
+                                                std::string("ui.tree_on_check 回调抛异常：") +
+                                                    err.what());
+                                  }
+                              });
+    }
+    void tree_on_activate(py::object tree_widget, py::object callback) const {
+        const UiFacade* facade = available("tree_on_activate");
+        if (facade == nullptr) return;
+        if (callback.is_none() != 0) {
+            facade->tree_on_activate(handle_of(tree_widget), nullptr);
+            return;
+        }
+        if (PyCallable_Check(callback.ptr()) == 0) {
+            core::log(core::Level::Warn, "[" + owner_ + "] ui.tree_on_activate 的回调不是可调用对象");
+            return;
+        }
+        py::object kept = callback;
+        keepalive()->push_back(kept);
+        facade->tree_on_activate(handle_of(tree_widget), [kept](const std::string& key) {
+            py::gil_scoped_acquire acquire;
+            try {
+                kept(py::str(key));
+            } catch (const py::error_already_set& err) {
+                core::log(core::Level::Warn,
+                          std::string("ui.tree_on_activate 回调抛异常：") + err.what());
+            }
+        });
+    }
+
 private:
     // 门面/方法不可用 ⇒ **逐条记账**并返回"空"（零静默：插件作者能立刻看出为什么什么都没出现）
     const UiFacade* available(const std::string& method) const {
@@ -871,7 +1081,33 @@ void ensure_api_module() {
             .def("split_is_collapsed", &PyUi::split_is_collapsed, py::arg("split"),
                  py::arg("index"))
             .def("split_pane_count", &PyUi::split_pane_count, py::arg("split"))
-            .def("split_sash_pos", &PyUi::split_sash_pos, py::arg("split"), py::arg("index"));
+            .def("split_sash_pos", &PyUi::split_sash_pos, py::arg("split"), py::arg("index"))
+            // ★ P6：树（多列 / 懒建 / 展开态 / 过滤计数 / 三态勾选）
+            .def("tree", &PyUi::tree, py::arg("parent") = py::none(), py::arg("columns") = py::none())
+            .def("tree_set_root", &PyUi::tree_set_root, py::arg("tree"), py::arg("nodes"))
+            .def("tree_set_children", &PyUi::tree_set_children, py::arg("tree"),
+                 py::arg("parent_key"), py::arg("nodes"))
+            .def("tree_clear", &PyUi::tree_clear, py::arg("tree"))
+            .def("tree_row_count", &PyUi::tree_row_count, py::arg("tree"))
+            .def("tree_keys", &PyUi::tree_keys, py::arg("tree"))
+            .def("tree_set_expanded", &PyUi::tree_set_expanded, py::arg("tree"), py::arg("key"),
+                 py::arg("expanded"))
+            .def("tree_expanded_keys", &PyUi::tree_expanded_keys, py::arg("tree"))
+            .def("tree_set_checked", &PyUi::tree_set_checked, py::arg("tree"), py::arg("key"),
+                 py::arg("checked"))
+            .def("tree_checked", &PyUi::tree_checked, py::arg("tree"), py::arg("key"))
+            .def("tree_checked_keys", &PyUi::tree_checked_keys, py::arg("tree"))
+            .def("tree_partial_keys", &PyUi::tree_partial_keys, py::arg("tree"))
+            .def("tree_set_filter", &PyUi::tree_set_filter, py::arg("tree"), py::arg("text"))
+            .def("tree_filter_hits", &PyUi::tree_filter_hits, py::arg("tree"))
+            .def("tree_select", &PyUi::tree_select, py::arg("tree"), py::arg("key"))
+            .def("tree_selected_key", &PyUi::tree_selected_key, py::arg("tree"))
+            .def("tree_on_expand", &PyUi::tree_on_expand, py::arg("tree"),
+                 py::arg("callback") = py::none())
+            .def("tree_on_check", &PyUi::tree_on_check, py::arg("tree"),
+                 py::arg("callback") = py::none())
+            .def("tree_on_activate", &PyUi::tree_on_activate, py::arg("tree"),
+                 py::arg("callback") = py::none());
         py::class_<PyPluginApi>(m, "Api")
             .def_property_readonly("plugin_file", &PyPluginApi::owner)
             .def_property_readonly("plugin_dir", &PyPluginApi::plugin_dir)
