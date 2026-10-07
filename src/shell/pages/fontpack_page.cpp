@@ -2,6 +2,7 @@
 
 #include "xrkit/core/theme.h"
 #include "xrkit/engine/font/metrics.h"
+#include "xrkit/engine/font/system_dirs.h"
 
 #include "../task_shell.h"
 
@@ -51,24 +52,6 @@ bool font_ext_ok(const QString& name) {
         if (lower.endsWith(QString::fromLatin1(ext))) return true;
     }
     return false;
-}
-
-// 1.x 的 `system_font_dirs()` —— Windows 下取 `%SystemRoot%\Fonts`（**不写死 C:\Windows**）。
-QStringList platform_font_dirs() {
-    QStringList dirs;
-#ifdef Q_OS_WIN
-    QString win = qEnvironmentVariable("SystemRoot");
-    if (win.isEmpty()) win = qEnvironmentVariable("windir");
-    if (win.isEmpty()) win = QStringLiteral("C:\\Windows");   // 最后兜底（环境变量被清掉时）
-    dirs << QDir(win).filePath(QStringLiteral("Fonts"));
-#elif defined(Q_OS_MACOS)
-    dirs << QStringLiteral("/System/Library/Fonts") << QStringLiteral("/Library/Fonts")
-         << QDir::homePath() + QStringLiteral("/Library/Fonts");
-#else
-    dirs << QStringLiteral("/usr/share/fonts") << QStringLiteral("/usr/local/share/fonts")
-         << QDir::homePath() + QStringLiteral("/.fonts");
-#endif
-    return dirs;
 }
 
 }  // namespace
@@ -266,8 +249,10 @@ int FontPackPage::size_offset() const {
 // ── 系统字体（1.x `system_font_dirs` `:222-234` + `_browse_font` 的目录补充）──────
 QStringList FontPackPage::system_font_dirs() const {
     QStringList dirs;
-    for (const QString& dir : platform_font_dirs()) {
-        if (!dirs.contains(dir)) dirs << dir;
+    // ★★ P7b：系统字体目录**从引擎拿**（唯一一份：页面与 `api.host.system_font_dirs()` 共用）
+    for (const std::string& dir : engine::font::system_font_dirs()) {
+        const QString qdir = utf8(dir);
+        if (!dirs.contains(qdir)) dirs << qdir;
     }
     // 1.x `:489-493`：**当前已选字体所在目录**也加进候选（用户自带的字体就在那儿）
     const QString current = font_edit_ != nullptr ? font_edit_->text().trimmed() : QString();

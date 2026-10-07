@@ -4,6 +4,8 @@
 #include "xrkit/engine/plugin/widget_facade.h"
 // ★ P7a：引擎调用门面（`api.engine.*`；用户拍板的方案 3）
 #include "xrkit/engine/plugin/engine_facade.h"
+// ★ P7b：宿主服务门面（`api.host.*`：偏好读写 / exe 目录 / 系统字体目录）
+#include "xrkit/engine/plugin/host_facade.h"
 
 #include "xrkit/core/log.h"
 // `app_dir()`（exe 所在目录）住在 core/theme.h —— **不是** path.h：
@@ -466,6 +468,54 @@ private:
             return nullptr;
         }
         return engine_facade();
+    }
+
+    std::string owner_;
+};
+
+// ── ★★ P7b：宿主服务门面在 Python 侧的形态（`api.host.*`）─────────────────────
+// 样板页 fontpack 真的要用这三件（偏好读写 / exe 目录 / 系统字体目录）⇒ 由它反向定义。
+// 口径：值类型都是 str / list；**不做线程检查**（偏好是几个字节的文件读写；并发写同一条
+// 由插件自己避免 —— 这一条写在 `host_facade.h` 的口径里）。
+class PyHost {
+public:
+    explicit PyHost(std::string owner) : owner_(std::move(owner)) {}
+
+    std::string pref_get(const std::string& section, const std::string& key,
+                         const std::string& fallback) const {
+        if (const HostFacade* facade = available("pref_get")) {
+            return facade->pref_get(section, key, fallback);
+        }
+        return fallback;
+    }
+    bool pref_set(const std::string& section, const std::string& key,
+                  const std::string& value) const {
+        if (const HostFacade* facade = available("pref_set")) {
+            return facade->pref_set(section, key, value);
+        }
+        return false;
+    }
+    std::string app_dir() const {
+        if (const HostFacade* facade = available("app_dir")) return facade->app_dir();
+        return std::string();
+    }
+    py::list system_font_dirs() const {
+        if (const HostFacade* facade = available("system_font_dirs")) {
+            return strings_to_python(facade->system_font_dirs());
+        }
+        return py::list();
+    }
+
+private:
+    const HostFacade* available(const std::string& method) const {
+        if (!host_facade_has(method)) {
+            std::string reason;
+            host_facade_available(&reason);
+            core::log(core::Level::Warn,
+                      "[" + owner_ + "] 宿主服务门面不可用（host." + method + "）：" + reason);
+            return nullptr;
+        }
+        return host_facade();
     }
 
     std::string owner_;
@@ -1089,6 +1139,13 @@ void ensure_api_module() {
     //   （见头文件对 `shutdown_python` 的说明）。
     static bool class_registered = false;
     if (!class_registered) {
+        py::class_<PyHost>(m, "Host")
+            .def("pref_get", &PyHost::pref_get, py::arg("section"), py::arg("key"),
+                 py::arg("fallback") = "")
+            .def("pref_set", &PyHost::pref_set, py::arg("section"), py::arg("key"),
+                 py::arg("value"))
+            .def("app_dir", &PyHost::app_dir)
+            .def("system_font_dirs", &PyHost::system_font_dirs);
         py::class_<PyEngine>(m, "Engine")
             .def("font_check", &PyEngine::font_check, py::arg("font_path"))
             .def("font_pack", &PyEngine::font_pack, py::arg("options"))
@@ -1214,6 +1271,9 @@ void ensure_api_module() {
             // ★ P7a：引擎调用门面（`api.engine.*`；方案 3，表由样板页反向定义）
             .def_property_readonly("engine",
                                    [](const PyPluginApi& api) { return PyEngine(api.owner()); })
+            // ★ P7b：宿主服务门面（`api.host.*`：偏好读写 / exe 目录 / 系统字体目录）
+            .def_property_readonly("host",
+                                   [](const PyPluginApi& api) { return PyHost(api.owner()); })
             .def("log", &PyPluginApi::log, py::arg("message"))
             .def("register_command", &PyPluginApi::register_command, py::arg("action_id"),
                  py::arg("label"), py::arg("handler"), py::arg("when") = py::none())
@@ -1492,6 +1552,24 @@ std::vector<RegistrationError> load_python_plugins_from_dir(const std::string& d
             }
             py::object module = module_from_spec(spec);
             spec.attr("loader").attr("exec_module")(module);
+            // ★★ P7b（上一轮答"插件间兼容性"时承诺的判据）：**插件声明它按哪一版插件 API 写的**。
+            //   声明 `PLUGIN_API = <int>`（缺省＝按当前版本）。**比宿主新 ⇒ 拒绝加载**（并留痕）：
+            //   那种插件会调用宿主还不认识的能力，"进去之后调一半才炸"比"当场拒绝"难查得多；
+            //   比宿主旧 ⇒ 照常加载（宿主契约只增不删，老插件必须还能跑）。
+            //   ★ 检查放在 `register(api)` **之前** ⇒ 拒绝时**一条注册都不会留下**（不需要回滚，
+            //   但下面那条回滚路径照旧兜底）。
+            if (py::hasattr(module, "PLUGIN_API") != 0) {
+                py::object declared = module.attr("PLUGIN_API");
+                if (py::isinstance<py::int_>(declared) == 0) {
+                    throw std::runtime_error("PLUGIN_API 必须是整数（声明插件按哪一版 API 写的）");
+                }
+                const int wanted = declared.cast<int>();
+                if (wanted > kPyHostApiVersion) {
+                    throw std::runtime_error(
+                        "插件要求插件 API v" + std::to_string(wanted) + "，而本宿主只到 v" +
+                        std::to_string(kPyHostApiVersion) + "（拒绝加载：请升级宿主或改用旧接口）");
+                }
+            }
             if (py::hasattr(module, "register") == 0) {
                 throw std::runtime_error("插件没有导出 register(api)（第一版 API 表要求它）");
             }
@@ -1624,7 +1702,7 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
         py::gil_scoped_acquire acquire;
         py::module_ module = py::module_::import("xrkit");
         py::object dir_fn = py::module_::import("builtins").attr("dir");
-        for (const char* cls : {"Api", "Ui", "Widget", "Engine"}) {
+        for (const char* cls : {"Api", "Ui", "Widget", "Engine", "Host"}) {
             std::vector<std::string> names;
             for (auto item : py::list(dir_fn(module.attr(cls)))) {
                 const std::string name = py::str(item).cast<std::string>();

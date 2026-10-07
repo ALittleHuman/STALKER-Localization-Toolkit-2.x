@@ -28,6 +28,7 @@ EXPECT_API = {
     "plugin_dir": "插件所在目录（夹具据此落标记文件）",
     "ui": "★控件门面（L1/L2 的入口；表外无门）",
     "engine": "★引擎调用门面（方案 3：表由样板页反向定义；表外无门）",
+    "host": "★宿主服务门面（偏好/exe 目录/系统字体目录；表外无门）",
     "log": "写宿主日志（引擎日志 + 诊断缓冲）",
     "register_command": "注册命令（可被挂载点引用）",
     "register_menu_item": "把命令挂到 (host, location) 槽位",
@@ -107,6 +108,13 @@ EXPECT_ENGINE = {
     "font_state_marks": "四态文案（**从引擎拿**，插件不许自己抄一份中文）",
     "font_size_slots": "字号槽位表（文件名与 ltx 用的是槽位名）",
 }
+# ★★ P7b：**宿主服务门面**（`api.host.*`）—— 宿主替插件办的杂事（样板页 fontpack 真的要用）
+EXPECT_HOST = {
+    "pref_get": "读用户偏好（`user.ltx` 的 `[section] key`，缺失返回 fallback）",
+    "pref_set": "写用户偏好（**只写点名那一项**，不整块覆盖别的键）",
+    "app_dir": "exe 所在目录（发行版放 ffmpeg/ffprobe、`user.ltx` 的落点）",
+    "system_font_dirs": "系统字体目录（唯一一份：内置页与插件共用）",
+}
 
 
 def run_probe() -> tuple[int, str]:
@@ -138,7 +146,7 @@ def table_of(out: str, cls: str) -> str:
 def scan(out: str) -> list[str]:
     offenders: list[str] = []
     for cls, expected in (("Api", EXPECT_API), ("Ui", EXPECT_UI), ("Widget", EXPECT_WIDGET),
-                          ("Engine", EXPECT_ENGINE)):
+                          ("Engine", EXPECT_ENGINE), ("Host", EXPECT_HOST)):
         if re.search(r"UIFACADE " + re.escape(cls) + r"=", out) is None:
             offenders.append("探针没打出 `UIFACADE %s=` 那一行（判据没跑成，不是通过）" % cls)
             continue
@@ -177,6 +185,7 @@ _GREEN = "\n".join([
     "UIFACADE Ui=" + ",".join(sorted(EXPECT_UI)),
     "UIFACADE Widget=",
     "UIFACADE Engine=" + ",".join(sorted(EXPECT_ENGINE)),
+    "UIFACADE Host=" + ",".join(sorted(EXPECT_HOST)),
 ])
 _RED = {
     "多一个能力（泄漏）": _GREEN.replace("UIFACADE Api=", "UIFACADE Api=backdoor,"),

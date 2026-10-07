@@ -1919,16 +1919,28 @@ def step_shell_smoke(release: bool) -> None:
 
     # ⑤ 汉化包页的字体来源走 `%SystemRoot%`（**不写死 C:\Windows\Fonts**），
     #    并且"记住上次选择"真的落 user.ltx。
+    # ★★ 2026-10-07（P7b）**有意改这条锁**：原来要求 `fontpack_page.cpp` 自己出现
+    #    `SystemRoot`/`qEnvironmentVariable` —— 那时平台目录逻辑就写在页面里。P7b 把它抽成
+    #    **引擎的唯一一份**（`engine::font::system_font_dirs()`，页面与 `api.host.system_font_dirs()`
+    #    共用），页面改成调引擎 ⇒ 那两个 token 搬到了 `src/engine/font/system_dirs.cpp`。
+    #    锁因此**升级成两处都判**（比原来更强：既判"页面确实用了那份实现"，也判"那份实现确实
+    #    按平台取目录、且没写死 C:\Windows"），而不是放宽。
     font_code = active_code((ROOT / "src" / "shell" / "pages" / "fontpack_page.cpp")
                             .read_text(encoding="utf-8", errors="replace"))
-    font_need = ["SystemRoot", "qEnvironmentVariable", "font_candidates(", "default_font_path(",
+    font_need = ["engine::font::system_font_dirs(", "font_candidates(", "default_font_path(",
                  "make_font_picker(", "save_user_value(", "QFontDatabase::addApplicationFont"]
     font_missing = [token for token in font_need if token not in font_code]
-    if font_missing:
-        fail("系统字体选择器（D2⑤）：fontpack_page.cpp 里缺 %s —— 字体要从系统字体目录找、"
-             "并把上次的选择写进 user.ltx" % "、".join(font_missing))
+    dirs_code = active_code((ROOT / "src" / "engine" / "font" / "system_dirs.cpp")
+                            .read_text(encoding="utf-8", errors="replace"))
+    dirs_need = ["SystemRoot", "windir", "Fonts"]
+    dirs_missing = [token for token in dirs_need if token not in dirs_code]
+    if font_missing or dirs_missing:
+        fail("系统字体选择器（D2⑤）：页面缺 %s；引擎实现缺 %s —— 字体要从系统字体目录找、"
+             "并把上次的选择写进 user.ltx" % ("、".join(font_missing) or "(无)",
+                                              "、".join(dirs_missing) or "(无)"))
         return
-    ok("系统字体选择器（D2⑤：%SystemRoot%\\Fonts + 候选过滤 + user.ltx 记住上次选择）")
+    ok("系统字体选择器（D2⑤：页面调引擎那份 system_font_dirs（%SystemRoot%\\Fonts 不写死）"
+       "+ 候选过滤 + user.ltx 记住上次选择）")
 
 
 def step_winres(release: bool) -> None:
@@ -2377,6 +2389,69 @@ def step_engine_facade(release: bool) -> None:
         ok("引擎门面三处都通（槽位 / 四态文案 / 工作线程可调）；font_check 记为未覆盖")
 
 
+def step_host_services(release: bool) -> None:
+    """插件改装 P7b：**宿主服务门面**（`api.host.*`：偏好读写 / exe 目录 / 系统字体目录）。
+
+    判据（走真夹具，不判"接口存在"）：
+      · `pref_set` 之后再 `pref_get` 能读回**刚写的那一项**（走 `user.ltx` 的真实读写）；
+      · 读一个不存在的键 ⇒ 拿到 `fallback`（不是空串、不是异常）；
+      · `app_dir()` 非空且**真的是个目录**；
+      · `system_font_dirs()` 非空（**与内置页同一份实现**：`engine::font::system_font_dirs`）。
+    """
+    say("[host-services] 插件改装 P7b：宿主服务门面（`api.host.*`，由样板页 fontpack 反向定义）")
+    fixture = ROOT / "tests" / "python_plugins_host"
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "缺失（先跑 build 步）", release)
+        return
+    if not fixture.is_dir():
+        prereq("宿主服务夹具目录", "缺失：%s" % fixture.name, release)
+        return
+    marker = fixture / "host_marker.txt"
+    if marker.exists():
+        marker.unlink()   # ★ 证据必须是**本轮**的
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    rc, out = run([str(CLI_EXE), "--py-plugins", str(fixture)], env=env, timeout=600)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if s.startswith("PYPLUGINS") and ("error" in s or "files=" in s):
+            say("  " + s[:150])
+    if not marker.is_file():
+        fail("夹具没写出证据文件（`api.host.*` 没生效？rc=%d）" % rc)
+        return
+    text = marker.read_text(encoding="utf-8")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    say("  夹具证据：%s" % text.replace("\n", " | ")[:200])
+
+    def value_of(key: str) -> str:
+        for line in lines:
+            if line.startswith(key + ":"):
+                return line[len(key) + 1:]
+        return ""
+
+    problems = []
+    if value_of("pref_set") != "1":
+        problems.append("pref_set 没成功（=%s）" % (value_of("pref_set") or "(缺)"))
+    if value_of("pref_round_trip") != "hello-1234":
+        problems.append("写进去的值读不回来（=%s）" % (value_of("pref_round_trip") or "(缺)"))
+    if value_of("pref_fallback") != "fallback-x":
+        problems.append("缺键时没返回 fallback（=%s）" % (value_of("pref_fallback") or "(缺)"))
+    if value_of("app_dir_nonempty") != "1":
+        problems.append("app_dir() 是空的")
+    if value_of("app_dir_is_dir") != "1":
+        problems.append("app_dir() 不是目录：%s" % value_of("app_dir_is_dir"))
+    if not value_of("font_dir_count") or int(value_of("font_dir_count") or "0") < 1:
+        problems.append("system_font_dirs() 是空的（=%s）" % (value_of("font_dir_count") or "(缺)"))
+    if "done" not in lines:
+        problems.append("夹具没跑到结尾")
+    if problems:
+        fail("宿主服务门面不成立（%d 处）：%s" % (len(problems), "；".join(problems)))
+        return
+    ok("宿主服务四处都通（偏好写入→读回=%s / 缺键回落 fallback / app_dir 是目录 / 系统字体目录 %s 个）"
+       % (value_of("pref_round_trip"), value_of("font_dir_count")))
+
+
 def step_plugin_entry_lock(release: bool) -> None:
     """插件改装的**加载入口唯一性**（P2b）：两个前端都走 `load_all_plugins_from_dir`。
 
@@ -2494,6 +2569,30 @@ def step_python_plugins(release: bool) -> None:
     else:
         fail("混装目录那一侧不通过（rc=%d；%s）" % (rc_mix, line_mix or "(无摘要行)"))
     shutil.rmtree(mixed, ignore_errors=True)
+
+    # ④ ★ P7b：**插件声明所需版本** —— 声明得比宿主新 ⇒ 当场拒绝 + 留痕 + **一条注册都不留**
+    requires = ROOT / "tests" / "python_plugins_requires"
+    if not requires.is_dir():
+        fail("版本声明夹具目录不存在：%s（判据没跑成，不是通过）"
+             % requires.relative_to(ROOT))
+    else:
+        rc_req, out_req = run([str(CLI_EXE), "--py-plugins", str(requires)], env=py_env(mark),
+                              timeout=300)
+        line_req = summary_line(out_req)
+        refused = "PYPLUGINS error plugin=too_new.py" in out_req
+        reason_ok = "要求插件 API" in out_req
+        no_residue = bool(re.search(r"PYPLUGINS residue plugin=too_new\.py value=0", out_req))
+        if rc_req != 0 and " files=1 " in line_req and " loaded=0 " in line_req and \
+                " errors=1" in line_req and refused and reason_ok and no_residue:
+            ok("插件声明所需版本：比宿主新的**当场拒绝**并留痕（%s；一条注册都没留）" % line_req)
+        else:
+            fail("「插件声明所需版本」那一侧不通过（rc=%d；%s；点名=%s 理由=%s 零残留=%s）"
+                 % (rc_req, line_req or "(无摘要行)", refused, reason_ok, no_residue))
+        for raw in out_req.splitlines():
+            s = raw.strip()
+            if s.startswith("PYPLUGINS") and not s.startswith("PYPLUGINS log"):
+                say("  " + s)
+
     shutil.rmtree(mark_dir, ignore_errors=True)
 
 
@@ -2828,6 +2927,8 @@ STEPS = [
     ("ui-facade", step_ui_facade),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
+    # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。
+    ("host-services", step_host_services),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),

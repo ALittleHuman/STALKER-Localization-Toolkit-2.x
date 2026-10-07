@@ -31,6 +31,9 @@ add_library(xrkit_engine STATIC
   plugin/engine_facade.cpp
   # 默认表（字体那几件只依赖引擎；CLI 与 GUI 两个宿主都用得上）
   plugin/engine_facade_impl.cpp
+  # ★★ P7b：宿主服务门面（偏好读写 / exe 目录 / 系统字体目录；只依赖引擎）
+  plugin/host_facade.cpp
+  plugin/host_facade_impl.cpp
   font/charset.cpp
   font/cjk_state.cpp
   font/glyph.cpp
@@ -38,6 +41,7 @@ add_library(xrkit_engine STATIC
   font/package.cpp
   font/render.cpp
   font/resample.cpp
+  font/system_dirs.cpp
   font/xml_bytes.cpp)
 
 target_include_directories(xrkit_engine PUBLIC "${CMAKE_SOURCE_DIR}/include")
