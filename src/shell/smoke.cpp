@@ -395,6 +395,138 @@ SmokeResult run_smoke() {
     }
     check(hub.stack()->currentIndex() == 0, QStringLiteral("默认停在第一页"));
 
+    // ★★ 插件改装 P1（Hub 机制层）：**页注册表是"页"的唯一一份状态**。
+    //   修前的事实（这就是本块要锁住的东西）：
+    //     · 内置六页硬编码在 `hub.cpp:kBuiltinPages[]` + `page_factory.cpp:create_page()` 的
+    //       if 链里，插件页另走 `hub.cpp` 的 `plugin_pages_` 列表 ⇒ **同一件事两份实现**；
+    //     · Hub 为了给 fs/xml 注入注册表得 `dynamic_cast<FsPage*>`/`<XmlPage*>` ⇒ "Hub 不含业务"不成立。
+    //   规格 §四.2 的判据：**每类注册点 ↔ 消费点一一对应**（缺一即红）；§五：覆盖必须显式、
+    //   失败可回退。所以本块逐条量：注册→出现、注销→消失、重复→被拒且留痕、
+    //   `replaces`→只隐藏且能一键还原、**追加插件页不许重建已有页**。
+    {
+        const QString empty = QDir::temp().filePath(QStringLiteral("xrkit_smoke_pagehost"));
+        QDir(empty).removeRecursively();
+        QDir().mkpath(empty);
+        Hub host_hub(nullptr, empty);
+        const int builtin_count = host_hub.page_count();
+        check(builtin_count == builtin_page_count(),
+              QStringLiteral("P1 页注册表：内置页数 = 清单条数（%1 / %2）")
+                  .arg(builtin_count)
+                  .arg(builtin_page_count()));
+        // ① 三处计数**同长同序**：标签条 / 页栈 / 页表（修前插件页会打破这个不变量）
+        check(host_hub.page_tabs()->count() == builtin_count &&
+                  host_hub.stack()->count() == builtin_count,
+              QStringLiteral("P1 标签条/页栈/页表三处计数一致（%1 / %2 / %3）")
+                  .arg(host_hub.page_tabs()->count())
+                  .arg(host_hub.stack()->count())
+                  .arg(builtin_count));
+        bool builtin_ok = true;
+        for (int i = 0; i < builtin_count; ++i) {
+            if (host_hub.page_id(i) != QString::fromUtf8(builtin_page(i).id)) builtin_ok = false;
+            if (host_hub.page_owner(i) != QString::fromUtf8(kBuiltinPageOwner)) builtin_ok = false;
+        }
+        check(builtin_ok, QStringLiteral("P1 内置页逐条来自注册表（id/owner 与清单一致）"));
+
+        // ② 注册一页 ⇒ **消费点必须出现**（注册成功但没人渲染 = FAIL）
+        QWidget* const first_page_before = host_hub.stack()->widget(0);
+        PageSpec spec;
+        spec.id = "probe_page";
+        spec.title = QStringLiteral("探针页");
+        spec.order = 7;   // 插件带内顺序（与内置带无关）
+        const bool registered = host_hub.pages().register_page(
+            "probe.dll", spec, [](QWidget*) -> QWidget* { return new QWidget(); });
+        check(registered, QStringLiteral("P1 注册一页失败"));
+        check(host_hub.sync_pages() == 1,
+              QStringLiteral("P1 sync_pages 只新建缺的那一页（返回值应为 1）"));
+        check(host_hub.page_count() == builtin_count + 1 &&
+                  host_hub.page_tabs()->count() == builtin_count + 1 &&
+                  host_hub.stack()->count() == builtin_count + 1,
+              QStringLiteral("P1 注册页没出现在标签条/页栈（%1）").arg(host_hub.page_count()));
+        check(host_hub.page_id(builtin_count) == QStringLiteral("probe_page") &&
+                  host_hub.page_title(builtin_count) == QStringLiteral("探针页") &&
+                  host_hub.page_owner(builtin_count) == QStringLiteral("probe.dll"),
+              QStringLiteral("P1 插件页的 id/标题/owner 不对（实得 %1 / %2 / %3）")
+                  .arg(host_hub.page_id(builtin_count))
+                  .arg(host_hub.page_title(builtin_count))
+                  .arg(host_hub.page_owner(builtin_count)));
+        check(host_hub.stack()->widget(0) == first_page_before,
+              QStringLiteral("P1 ★追加插件页**不许重建**已有页（0 号页对象必须原样）"));
+        check(host_hub.plugin_pages_added() == 1,
+              QStringLiteral("P1 插件页计数 = 1（实得 %1）").arg(host_hub.plugin_pages_added()));
+
+        // ③ 幂等：再同步一次不新建、不重复
+        check(host_hub.sync_pages() == 0 && host_hub.page_count() == builtin_count + 1,
+              QStringLiteral("P1 重同步把页装了两遍（pages=%1）").arg(host_hub.page_count()));
+
+        // ④ 生命周期：注销该 owner ⇒ 消费点跟着消失，计数回到原位
+        check(host_hub.pages().unregister_owner("probe.dll") == 1,
+              QStringLiteral("P1 按 owner 注销没撤到页"));
+        host_hub.sync_pages();
+        check(host_hub.page_count() == builtin_count &&
+                  host_hub.page_tabs()->count() == builtin_count &&
+                  host_hub.stack()->count() == builtin_count &&
+                  host_hub.plugin_pages_added() == 0,
+              QStringLiteral("P1 注销后三处计数没回到原位（%1 / %2 / %3）")
+                  .arg(host_hub.page_count())
+                  .arg(host_hub.page_tabs()->count())
+                  .arg(host_hub.stack()->count()));
+
+        // ⑤ 重复 id **被拒且留痕**（零静默：修前那种"注册了却不生效"不许回来）
+        PageSpec dup;
+        dup.id = "fs";
+        dup.title = QStringLiteral("假的文件系统");
+        check(!host_hub.pages().register_page("probe2.dll", dup,
+                                              [](QWidget*) -> QWidget* { return new QWidget(); }),
+              QStringLiteral("P1 重复 id 必须被拒"));
+        bool dup_diag = false;
+        for (const PageDiag& diag : host_hub.pages().take_diagnostics()) {
+            if (diag.fatal && diag.message.find("重复") != std::string::npos) dup_diag = true;
+        }
+        check(dup_diag, QStringLiteral("P1 拒绝注册的理由必须留痕（fatal 诊断）"));
+
+        // ⑥ `replaces` 显式覆盖：被替换页**只隐藏不删**、替换者**继承它的槽位**、
+        //   撤掉替换者即一键还原；同一目标不许第二个替换者（那会变成"谁后注册谁赢"）。
+        PageSpec repl;
+        repl.id = "fs_v2";
+        repl.title = QStringLiteral("文件系统v2");
+        repl.replaces = "fs";
+        check(host_hub.pages().register_page("probe3.dll", repl,
+                                             [](QWidget*) -> QWidget* { return new QWidget(); }),
+              QStringLiteral("P1 replaces 注册失败"));
+        check(host_hub.pages().replaced().size() == 1 &&
+                  host_hub.pages().replaced()[0]->spec.id == "fs",
+              QStringLiteral("P1 被替换页要能被报出来（只隐藏、没删）"));
+        host_hub.sync_pages();
+        check(host_hub.page_index(QStringLiteral("fs")) < 0 &&
+                  host_hub.page_index(QStringLiteral("fs_v2")) == 0,
+              QStringLiteral("P1 替换没生效或没继承槽位（fs=%1 / fs_v2=%2）")
+                  .arg(host_hub.page_index(QStringLiteral("fs")))
+                  .arg(host_hub.page_index(QStringLiteral("fs_v2"))));
+        PageSpec repl2 = repl;
+        repl2.id = "fs_v3";
+        check(!host_hub.pages().register_page("probe4.dll", repl2,
+                                              [](QWidget*) -> QWidget* { return new QWidget(); }),
+              QStringLiteral("P1 同一目标只允许一个替换者"));
+        host_hub.pages().take_diagnostics();
+        check(host_hub.pages().unregister_id("fs_v2"),
+              QStringLiteral("P1 撤掉替换者失败"));
+        host_hub.sync_pages();
+        check(host_hub.page_index(QStringLiteral("fs")) == 0 &&
+                  host_hub.page_index(QStringLiteral("fs_v2")) < 0 &&
+                  host_hub.page_count() == builtin_count,
+              QStringLiteral("P1 一键还原没回来（fs=%1 / pages=%2）")
+                  .arg(host_hub.page_index(QStringLiteral("fs")))
+                  .arg(host_hub.page_count()));
+
+        // ⑦ 宿主机制：按 id 切页（页/插件拿到的"页面切换"入口）
+        check(host_hub.switch_to_page(QStringLiteral("xml")) &&
+                  host_hub.stack()->currentIndex() == host_hub.page_index(QStringLiteral("xml")),
+              QStringLiteral("P1 switch_to_page 没切到位"));
+        check(!host_hub.switch_to_page(QStringLiteral("nope")),
+              QStringLiteral("P1 切到不存在的页必须返回 false"));
+        QDir(empty).removeRecursively();
+    }
+
     // ★★ 2026-10-04 用户第 1 条（原话）：「**首先，所有目录都需要拖拽，而且是拖拽到相应区域。**」
     //   判据分三层，全部**可判红**：
     //     ① 结构：每一页"要选目录/文件"的输入（QLineEdit）都落在**比它更大**的一个拖放区域里，
@@ -4975,6 +5107,14 @@ SmokeResult run_smoke() {
               QStringLiteral("⑫12.1 插件页没被追加（pages=%1 期望 %2）")
                   .arg(hub.page_count())
                   .arg(builtin + 1));
+        // ★★ P1：插件页必须排在**内置六页之后**（1.x `stalker_toolkit.py:215-221` 的口径：
+        //   内置六工具固定在前，插件栏目按 order 稳定追加）—— 排序的"带"写错就红。
+        check(hub.page_id(builtin) == QStringLiteral("插件页") &&
+                  hub.page_owner(builtin) == QStringLiteral("slots4.dll"),
+              QStringLiteral("P1 插件页没排在内置页之后（第 %1 页 = 「%2」/「%3」）")
+                  .arg(builtin)
+                  .arg(hub.page_id(builtin))
+                  .arg(hub.page_owner(builtin)));
 
         bool combo_ok = false;
         bool entry_ok = false;

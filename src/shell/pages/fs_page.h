@@ -129,6 +129,13 @@ public:
     QString last_gate_error() const { return last_gate_error_; }
     void log_message(const QString& text);
 
+    // ★★ 插件改装 P1：本页要的额外机制就是**注册表**（解密闸门；见上面的 set_registry）。
+    //   Hub 从此只调这一个入口，不再需要 `dynamic_cast<FsPage*>` 才知道该给谁注入注册表。
+    void attach_services(const PageServices& services) override {
+        PageBase::attach_services(services);
+        set_registry(services.registry);
+    }
+
     engine::fs::ExtractTreeResult extract_to(const QString& image_path, const QString& out_root,
                                             engine::fs::Selection selection_kind,
                                             const std::vector<std::string>& only = {});

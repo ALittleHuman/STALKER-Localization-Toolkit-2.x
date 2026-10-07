@@ -330,6 +330,12 @@ void XmlPage::set_registry(const plugin::Registry* registry) {
     rebuild_filter_combo();
 }
 
+// ★★ 插件改装 P1（Hub 机制层）：宿主机制的入口（见 page_base.h）。本页只要注册表。
+void XmlPage::attach_services(const PageServices& services) {
+    PageBase::attach_services(services);
+    set_registry(services.registry);
+}
+
 std::string XmlPage::current_mode_key() const {
     // ★★ 2026-10-06（审计 3-5）：**工作线程里不许读控件** —— 「开始比较」在起 worker 之前
     //   把模式 key 快照进 `mode_key_at_task_start_`（见那边的注释与「开始比较」按钮），

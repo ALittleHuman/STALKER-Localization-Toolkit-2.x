@@ -4,8 +4,6 @@
 #include "plugin_ui.h"
 #include "pages/page_base.h"
 #include "pages/page_factory.h"
-#include "pages/fs_page.h"
-#include "pages/xml_page.h"
 
 #include "xrkit/core/path.h"
 #include "xrkit/core/theme.h"
@@ -40,38 +38,20 @@ namespace xml = xrkit::engine::xml;
 namespace xrkit::shell {
 namespace {
 
-// 六个内置页（**顺序与名字照抄 1.x `BUILTIN_TOOLS`**；id 是我们自己的稳定标识）
-// ★ 副标题（`subtitle`）：用户 2026-09-27「先把我截图的文字全删了」⇒ 他截到的两句
-//   （文件系统 / 汉化包生成）**留空**（`set_subtitle("")` 会让它不占位）。
-// ★★ 2026-10-04：用户**又截了四张图**（编码转换 / 文本提取 / XML校对 / 视频转换）说
-//   「**我截图的文字全部删除。**」⇒ 剩下这四句也一并删掉 —— **六页副标题至此全部为空**。
-//   六条都进 `smoke.cpp` 的禁用字串锁（被点名删掉的文字不许回来，逐字串判红）。
-//   卡片里没有别的说明段（反向后仍成立：那组判据只看 QLabel / 占位符 / 下拉项）。
-constexpr PageInfo kBuiltinPages[] = {
-    {"fs", "文件系统", ""},
-    {"convert", "编码转换", ""},
-    {"text", "文本提取", ""},
-    {"xml", "XML校对", ""},
-    {"video", "视频转换", ""},
-    {"fontpack", "汉化包生成", ""},
-};
-
-constexpr int kBuiltinPageCount =
-    static_cast<int>(sizeof(kBuiltinPages) / sizeof(kBuiltinPages[0]));
-
-// 页面占位：**只在页工厂返回空时兜底**（正常路径走 `create_page`，六页各有框架）。
-// 留着它是因为"页建不出来"必须能被看见，而不是变成空白页。
-QWidget* make_placeholder(const PageInfo& page) {
+// ★★ P1：内置六页的**声明清单搬去了 `pages/page_factory.cpp`**（它属于页模块，不属于 Hub）。
+//   这里只剩"造不出来时的兜底页" —— 留着它是因为"页建不出来"必须能被看见，
+//   而不是变成一片空白（零静默）。
+QWidget* make_placeholder(const PageSpec& spec) {
     auto* widget = new QWidget;
     auto* layout = new QVBoxLayout(widget);
-    auto* title = new QLabel(QString::fromUtf8(page.title));
+    auto* title = new QLabel(spec.title);
     QFont font = title->font();
     font.setPointSizeF(font.pointSizeF() + 3.0);
     font.setBold(true);
     title->setFont(font);
     auto* note = new QLabel(QStringLiteral("页 id: %1 —— 业务内容按 M2-6 逐片接入"
                                            "（外壳已把布局/主题/日志壳就位）")
-                                .arg(QString::fromUtf8(page.id)));
+                                .arg(QString::fromStdString(spec.id)));
     note->setWordWrap(true);
     layout->addWidget(title);
     layout->addWidget(note);
@@ -130,14 +110,6 @@ QString unique_log_path(const QString& dir, const QString& stamp, QString* why) 
     return first;
 }
 
-int builtin_page_count() { return kBuiltinPageCount; }
-
-const PageInfo& builtin_page(int index) {
-    static const PageInfo kFallback{"", ""};
-    if (index < 0 || index >= kBuiltinPageCount) return kFallback;
-    return kBuiltinPages[index];
-}
-
 Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     setWindowTitle(QStringLiteral("STALKER 汉化工具集 2.0"));
     // 默认窗口尺寸过 px()（自适应入口在 main.cpp 用 adaptive_window_size 覆盖；这里只给一个
@@ -151,33 +123,14 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
 
     // ── 方案一（Hana 重排）：顶部标签条 + 内容区。六页照旧，只是导航从左侧列表
     //   改成顶部标签（横向铺开、当前页高亮），把左右宽度都还给内容区。
+    // ★★ P1：**页的装配推迟到构造末尾**（本函数最后一段）—— 那时日志栏/状态栏已经存在，
+    //   `attach_services` 交给页的机制才不是空壳。
     stack_ = new QStackedWidget;
     stack_->setObjectName(QStringLiteral("page_stack"));
     page_tabs_ = new QTabBar;
     page_tabs_->setObjectName(QStringLiteral("page_tabs"));
     page_tabs_->setDrawBase(false);   // 不画标签条底基线，下划线高亮交给 QSS
     page_tabs_->setExpanding(false);  // 标签不拉伸、靠左排列
-    for (int i = 0; i < kBuiltinPageCount; ++i) {
-        page_tabs_->addTab(QString::fromUtf8(kBuiltinPages[i].title));
-        QWidget* page = create_page(i);
-        if (auto* as_page = dynamic_cast<PageBase*>(page)) {
-            as_page->set_subtitle(QString::fromUtf8(kBuiltinPages[i].subtitle));
-            // ★★ 2026-10-06（①）：**每一页**都要拿到注册表 —— `context`（右键菜单）与
-            //   `option_entry`（下拉取值）都是"页面侧的消费端"，只有 fs/xml 拿表的话，
-            //   其余四页的右键槽/下拉条目照样是"注册了却没人读"。
-            as_page->set_plugin_registry(&registry_);
-        }
-        stack_->addWidget(page != nullptr ? page : make_placeholder(kBuiltinPages[i]));
-        if (auto* fs_page = dynamic_cast<FsPage*>(page)) {
-            // ⑫12.1：fs 页加载包之前要问插件解密器（用户 2026-09-26 决策的"必须"项）
-            fs_page->set_registry(&registry_);
-        }
-        if (auto* xml_page = dynamic_cast<XmlPage*>(page)) {
-            // ⑫12.1：插件注册的比较模式要出现在 XML 页的**同一个**下拉里
-            xml_page->set_registry(&registry_);
-        }
-    }
-    page_tabs_->setCurrentIndex(0);
     QObject::connect(page_tabs_, &QTabBar::currentChanged, stack_,
                      &QStackedWidget::setCurrentIndex);
 
@@ -305,11 +258,18 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     QObject::connect(dark, &QAction::triggered, this, [this] { apply_theme_mode(xrkit::core::ThemeMode::Dark); });
     QObject::connect(light, &QAction::triggered, this, [this] { apply_theme_mode(xrkit::core::ThemeMode::Light); });
 
-    log_line(QStringLiteral("Hub 就绪：%1 个内置页").arg(kBuiltinPageCount));
+    // ── ★★ P1：**页装配只此一处**（注册表 → 标签条/页栈）。内置六页也走这条路。
+    //   放在构造末尾的理由：`attach_services` 要给页"日志栏 + 状态栏 + 切页"这些机制，
+    //   而它们（`log_box_` / `status_label_`）刚刚才建好。
+    register_builtin_pages(pages_);
+    sync_pages();
+    drain_page_diagnostics();
+    if (page_count() > 0) set_current_page(0);
+    log_line(QStringLiteral("Hub 就绪：%1 个内置页").arg(builtin_page_count()));
     load_plugins(plugin_dir);
 }
 
-int Hub::page_count() const { return stack_ == nullptr ? 0 : stack_->count(); }
+int Hub::page_count() const { return static_cast<int>(page_ids_.size()); }
 
 void Hub::apply_theme_mode(xrkit::core::ThemeMode mode, QString* problem) {
     if (problem != nullptr) problem->clear();
@@ -362,15 +322,177 @@ QString Hub::page_title(int index) const {
 }
 
 QString Hub::page_id(int index) const {
-    if (index < 0 || index >= kBuiltinPageCount) return QString();
-    return QString::fromUtf8(kBuiltinPages[index].id);
+    if (index < 0 || index >= static_cast<int>(page_ids_.size())) return QString();
+    return page_ids_[static_cast<size_t>(index)];
+}
+
+QString Hub::page_owner(int index) const {
+    if (index < 0 || index >= static_cast<int>(page_owners_.size())) return QString();
+    return page_owners_[static_cast<size_t>(index)];
+}
+
+int Hub::page_index(const QString& id) const {
+    for (size_t i = 0; i < page_ids_.size(); ++i) {
+        if (page_ids_[i] == id) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+bool Hub::switch_to_page(const QString& id) {
+    const int index = page_index(id);
+    if (index < 0) return false;
+    set_current_page(index);
+    return true;
 }
 
 PageBase* Hub::page_at(int index) const {
-    if (stack_ == nullptr || index < 0 || index >= stack_->count()) return nullptr;
+    if (index < 0 || index >= static_cast<int>(page_widgets_.size())) return nullptr;
     // dynamic_cast 而不是 qobject_cast：`PageBase` 刻意不带 Q_OBJECT（本模块不用 moc），
     // 而 qobject_cast 要求 Q_OBJECT。RTTI 在 MSVC 下默认开，够用。
-    return dynamic_cast<PageBase*>(stack_->widget(index));
+    //（插件页可能是**裸 QWidget**（ABI 的 builder 形态）⇒ 这里如实返回 nullptr。）
+    return dynamic_cast<PageBase*>(page_widgets_[static_cast<size_t>(index)]);
+}
+
+// ── ★★ P1：宿主交付机制（**唯一**一处）──────────────────────────────────────────
+// 页从 `attach_services` 拿到"注册表 / 日志栏 / 状态栏 / 切页"；需要额外机制的页自己覆写
+//（fs 取注册表装解密闸门、xml 取注册表填模式下拉）。Hub 因此**不需要认识任何具体页类**
+//（静态锁：`hub.cpp` 里不许出现 FsPage/XmlPage/... ，见 tests/check_page_host_lock.py）。
+void Hub::attach_page_services(PageBase* page) {
+    if (page == nullptr) return;
+    PageServices services;
+    services.registry = &registry_;
+    services.log = [this](const QString& line) { log_line(line); };
+    services.set_status = [this](const QString& text) {
+        if (status_label_ != nullptr) status_label_->setText(text);
+        log_line(text);
+    };
+    services.switch_page = [this](const QString& id) { return switch_to_page(id); };
+    page->attach_services(services);
+}
+
+// 零静默：页注册过程中的**每一次拒绝**与**每一次覆盖声明**都要说出来
+//（修前"注册了却不生效"是静默的；规格 §二 第②道闸）。
+void Hub::drain_page_diagnostics() {
+    for (const PageDiag& diag : pages_.take_diagnostics()) {
+        const QString text =
+            QStringLiteral("页注册%1：%2")
+                .arg(diag.fatal ? QStringLiteral("被拒") : QStringLiteral("变化"))
+                .arg(QString::fromStdString(diag.message));
+        log_line(text);
+        if (diag.fatal && status_label_ != nullptr) status_label_->setText(text);
+    }
+}
+
+// ── ★★ P1：注册表 → 标签条/页栈（**增量**同步，唯一一处装配点）────────────────────
+// 口径（为什么是增量的）：
+//   · 「缺的补、多余的摘、顺序不对的搬」，**已经在栈里且仍然可见的页一律不重建**
+//     —— 页里有用户状态（加载了哪个包、填了什么、勾了哪些行），重建＝静默清空；
+//   · 「多余的摘」＝注销 / 被 `replaces` 顶掉的页：从两处摘掉并 `deleteLater()`；
+//   · 三份数组（page_ids_ / page_owners_ / page_widgets_）与标签条、页栈**同长同序**，
+//     任何一处不一致都会被自检抓到（`shell-smoke` 里交叉核对三个计数）。
+int Hub::sync_pages() {
+    if (stack_ == nullptr || page_tabs_ == nullptr) return 0;
+    const std::vector<const PageReg*> want = pages_.visible_sorted();
+
+    // 当前停在哪个 id 上：重排/删除会动下标，末尾按 id 还原（"切页不因为插件装卸而乱跳"）
+    const QString keep_id = stack_->currentIndex() >= 0 &&
+                                    stack_->currentIndex() < static_cast<int>(page_ids_.size())
+                                ? page_ids_[static_cast<size_t>(stack_->currentIndex())]
+                                : QString();
+
+    int created = 0;
+    // ① 摘：已建但这一轮不再可见的页（注销 / 被替换 / 被别的注册挤掉）
+    for (int i = static_cast<int>(page_ids_.size()) - 1; i >= 0; --i) {
+        bool keep = false;
+        for (const PageReg* reg : want) {
+            if (page_ids_[static_cast<size_t>(i)] == QString::fromStdString(reg->spec.id)) {
+                keep = true;
+                break;
+            }
+        }
+        if (keep) continue;
+        QWidget* widget = page_widgets_[static_cast<size_t>(i)];
+        if (widget != nullptr) {
+            stack_->removeWidget(widget);
+            widget->deleteLater();
+        }
+        page_tabs_->removeTab(i);
+        page_ids_.erase(page_ids_.begin() + i);
+        page_owners_.erase(page_owners_.begin() + i);
+        page_widgets_.erase(page_widgets_.begin() + i);
+    }
+
+    // ② 补 + 排：让下标与 `want` 逐位一致（选择排序：处理到第 k 位时，前面的已经就位）
+    for (int k = 0; k < static_cast<int>(want.size()); ++k) {
+        const PageReg* reg = want[static_cast<size_t>(k)];
+        const QString id = QString::fromStdString(reg->spec.id);
+        const int at = page_index(id);
+        if (at < 0) {
+            QWidget* widget = reg->builder(nullptr);
+            if (widget == nullptr) {
+                // 造不出来**不许**变成"注册了却没出现"：占位页 + 一条可见的日志。
+                widget = make_placeholder(reg->spec);
+                log_line(QStringLiteral("页「%1」（%2）没造出控件，已用占位页顶替")
+                             .arg(id)
+                             .arg(QString::fromStdString(reg->owner)));
+            }
+            // 插件页是**裸 QWidget**（ABI builder 形态）⇒ 沿用修前的可识别名字；
+            // `PageBase` 子类自己已经设过 objectName（`page_<id>`），不许覆盖。
+            if (dynamic_cast<PageBase*>(widget) == nullptr) {
+                widget->setObjectName(QStringLiteral("plugin_page_") + id);
+                widget->setWindowTitle(reg->spec.title);
+            }
+            if (auto* page = dynamic_cast<PageBase*>(widget)) {
+                page->set_subtitle(reg->spec.subtitle);
+                attach_page_services(page);   // ★ 机制交付（唯一入口）
+            }
+            stack_->insertWidget(k, widget);
+            page_tabs_->insertTab(k, reg->spec.title);
+            page_ids_.insert(page_ids_.begin() + k, id);
+            page_owners_.insert(page_owners_.begin() + k, QString::fromStdString(reg->owner));
+            page_widgets_.insert(page_widgets_.begin() + k, widget);
+            ++created;
+            continue;
+        }
+        if (at != k) {
+            // 顺序变了（`order` 改了 / 有页被替换成继承槽位的新页）：搬，不重建。
+            QWidget* widget = page_widgets_[static_cast<size_t>(at)];
+            page_tabs_->moveTab(at, k);
+            stack_->removeWidget(widget);
+            stack_->insertWidget(k, widget);
+            const QString id_moved = page_ids_[static_cast<size_t>(at)];
+            const QString owner_moved = page_owners_[static_cast<size_t>(at)];
+            page_ids_.erase(page_ids_.begin() + at);
+            page_owners_.erase(page_owners_.begin() + at);
+            page_widgets_.erase(page_widgets_.begin() + at);
+            page_ids_.insert(page_ids_.begin() + k, id_moved);
+            page_owners_.insert(page_owners_.begin() + k, owner_moved);
+            page_widgets_.insert(page_widgets_.begin() + k, widget);
+        }
+        // 标题/副标题**以注册表为准**（重扫后文案变了要跟着走；幂等，值没变就不动）
+        if (page_tabs_->tabText(k) != reg->spec.title) page_tabs_->setTabText(k, reg->spec.title);
+        if (auto* page = dynamic_cast<PageBase*>(page_widgets_[static_cast<size_t>(k)])) {
+            if (page->subtitle() != nullptr && page->subtitle()->text() != reg->spec.subtitle) {
+                page->set_subtitle(reg->spec.subtitle);
+            }
+            // 机制可能在上一次同步时还没到位（例：注册表装好前后）⇒ 每次都重新交付一次。
+            attach_page_services(page);
+        }
+    }
+
+    // ③ 计数与"当前页"还原
+    plugin_pages_added_ = 0;
+    for (const QString& owner : page_owners_) {
+        if (owner != QString::fromUtf8(kBuiltinPageOwner)) ++plugin_pages_added_;
+    }
+    const int keep_index = page_index(keep_id);
+    if (keep_index >= 0) {
+        set_current_page(keep_index);
+    } else if (!page_ids_.empty() && !keep_id.isEmpty()) {
+        // 当前页**被摘掉了**（注销 / 被替换）⇒ 回到第一页，不许留在空页上。
+        set_current_page(0);
+    }
+    return created;
 }
 
 void Hub::log_line(const QString& text) {
@@ -437,21 +559,36 @@ void Hub::render_plugin_slots() {
     // ⑫12.1：注册表里的每一类槽位都要**真的出现在界面上**（用户 2026-09-26 决策"补六类"）。
     // 本函数覆盖六类：工具栏菜单项 / 新建下拉 / 下拉条目 / 面板 / Hub 插件页 / **右键菜单
     //（context —— 2026-10-06 ① 补齐；它的渲染端在**页面**里：`PageBase::append_plugin_context_items`
-    //   由各页在弹右键菜单时调用，Hub 只负责把注册表注入下去，见构造函数）**。
+    //   由各页在弹右键菜单时调用，Hub 只负责把注册表注入下去，见 `attach_page_services`）**。
     //（decryptor 走 fs 页闸门，format 六格式仍内置、可选）。
-    // **幂等**：重渲染先把上一轮的插件页摘掉，避免"点两次按钮装两遍"。
-    for (QWidget* widget : plugin_pages_) {
-        stack_->removeWidget(widget);
-        for (int i = 0; i < page_tabs_->count(); ++i) {
-            if (page_tabs_->tabText(i) == widget->windowTitle()) {
-                page_tabs_->removeTab(i);
-                break;
-            }
-        }
-        widget->deleteLater();
+    //
+    // ★★ P1：**插件页不再自己一套**（修前：`plugin_pages_` 列表 + 手工摘标签条 + 按
+    //   `windowTitle` 反查下标 —— 三处状态各自维护）。现在插件页与内置页走**同一张注册表**：
+    //     ① 先按 owner 撤掉上一轮**非内置**的页注册（幂等：重渲染不许装两遍）；
+    //     ② 把 `tools_sorted()` 逐条注册进注册表（owner = 插件名，带 = 插件带）；
+    //     ③ `sync_pages()` 增量同步（已建的内置页**不重建** ⇒ 页内状态不丢）；
+    //     ④ 其余槽位（工具栏 / 下拉 / 面板）照旧只认 `PageBase` 页。
+    // 页 id ＝ 插件给的 `name`（ABI 的 `register_tool` 参数）⇒ 与内置 id 撞名会被注册表
+    // **拒绝并留痕**（修前是"两个标签同名、谁也认不出谁"）。
+    for (const std::string& owner : pages_.owners()) {
+        if (owner == kBuiltinPageOwner) continue;
+        pages_.unregister_owner(owner);
     }
-    plugin_pages_.clear();
-    plugin_pages_added_ = 0;
+    for (const plugin::ToolReg* tool : registry_.tools_sorted()) {
+        PageSpec spec;
+        spec.id = tool->name;
+        spec.title = QString::fromStdString(tool->name);
+        // 带 = 插件带：1.x「内置六工具固定在前，插件栏目按 order 升序稳定追加」
+        //（`stalker_toolkit.py:215-221`）。要插到内置页中间用 `replaces`（占被替换页的槽位）。
+        spec.band = kPluginPageBand;
+        spec.order = tool->order;
+        const plugin::PanelBuilder builder = tool->builder;
+        pages_.register_page(tool->plugin, spec, [builder](QWidget* /*parent*/) -> QWidget* {
+            return reinterpret_cast<QWidget*>(builder(nullptr));
+        });
+    }
+    sync_pages();
+    drain_page_diagnostics();
     plugin_slots_rendered_ = 0;
     for (int i = 0; i < page_count(); ++i) {
         PageBase* page = page_at(i);
@@ -542,24 +679,12 @@ void Hub::render_plugin_slots() {
         }
     }
 
-    // ⑤ Hub 插件页（tool）：按 order 升序 + 注册顺序，追加到页列表末尾（内置六页不动）
-    for (const plugin::ToolReg* tool : registry_.tools_sorted()) {
-        auto* widget = reinterpret_cast<QWidget*>(tool->builder(nullptr));
-        if (widget == nullptr) {
-            widget = new QWidget(stack_);
-            auto* fallback = new QLabel(QStringLiteral("插件页未造出控件"), widget);
-            Q_UNUSED(fallback);
-        }
-        widget->setWindowTitle(QString::fromStdString(tool->name));
-        widget->setObjectName(QStringLiteral("plugin_page_") + QString::fromStdString(tool->name));
-        stack_->addWidget(widget);
-        page_tabs_->addTab(QString::fromStdString(tool->name));
-        plugin_pages_.push_back(widget);
-        ++plugin_pages_added_;
+    // ⑤ Hub 插件页（tool）：**在本函数开头**已经按 owner 注册进同一张页表并 `sync_pages()`
+    //   过了（P1 起与内置页同一条路）—— 这里只把它记进日志，让"注册→消费"在日志里对得上。
+    for (int i = 0; i < page_count(); ++i) {
+        if (page_owner(i) == QString::fromUtf8(kBuiltinPageOwner)) continue;
         ++plugin_slots_rendered_;
-        log_line(QStringLiteral("插件页：%1（%2）")
-                     .arg(QString::fromStdString(tool->name))
-                     .arg(QString::fromStdString(tool->plugin)));
+        log_line(QStringLiteral("插件页：%1（%2）").arg(page_title(i)).arg(page_owner(i)));
     }
 }
 

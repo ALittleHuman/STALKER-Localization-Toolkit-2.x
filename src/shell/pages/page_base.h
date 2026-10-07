@@ -39,6 +39,18 @@ class ScrollViewport;
 // 5.2：页最小高 = `px(430)`。**函数**，不是常量（缩放变了值就得变）。
 int page_min_h();
 
+// ── ★ 插件改装 P1（Hub 机制层）：宿主交给页的**机制**（页只借用、不持有所有权）──────
+// 规格 §一：Hub 要把「页注册 / 日志栏 / 任务壳 / 状态栏 / 页面切换」这些机制**暴露**给插件页。
+// 这就是那份"暴露"的 C++ 形态：**一个入口**，页要什么从这里取；而不是让页各自去认 Hub ——
+// 修前 `page_factory.cpp` 正是 `dynamic_cast<Hub*>(page->window())` 那一路（页与 Hub 互相认识，
+// 且 Hub 为了给 fs/xml 注入注册表还得 `dynamic_cast<FsPage*>`/`<XmlPage*>`：双重耦合）。
+struct PageServices {
+    plugin::Registry* registry = nullptr;             // 插件注册表（context / option_entry / 解密闸门）
+    std::function<void(const QString&)> log;          // 日志栏（Hub::log_line）
+    std::function<void(const QString&)> set_status;   // 状态栏文字
+    std::function<bool(const QString&)> switch_page;  // 按页 id 切页（导航请求）
+};
+
 class PageBase : public QWidget {
 public:
     PageBase(const QString& page_id, const QString& title, QWidget* parent = nullptr);
@@ -63,6 +75,13 @@ public:
     //   ⇒ 改用**回调**：Hub 造页时把它的 log_line 接进来，页面用 log_to_host() 转发。
     void set_log_sink(std::function<void(const QString&)> sink) { log_sink_ = std::move(sink); }
     void log_to_host(const QString& text) const { if (log_sink_) log_sink_(text); }
+
+    // ★★ 插件改装 P1：宿主在**页造好之后**调这一次（`Hub::sync_pages()` 里唯一一处调用点）。
+    //   默认实现只把"注册表 + 日志口"存下来；需要别的机制的页覆写它
+    //   （例：fs / xml 要拿注册表去装解密闸门与比较模式表）。**虚函数 + 唯一入口**
+    //   ⇒ Hub 不需要认识任何具体页类（静态锁见 `tests/check_page_host_lock.py`）。
+    virtual void attach_services(const PageServices& services);
+    const PageServices& services() const { return services_; }
     ScrollViewport* viewport() const { return viewport_; }
     QWidget* body() const { return body_; }
     QVBoxLayout* body_layout() const { return body_layout_; }
@@ -138,6 +157,7 @@ protected:
 
 private:
     std::function<void(const QString&)> log_sink_;   // ★ Hub 接进来的日志口（见 set_log_sink）
+    PageServices services_;                          // ★ P1：宿主交付的机制（见 attach_services）
     // ★★ 2026-10-06（①）：插件槽位在页面侧的两样东西（见上面的说明）
     plugin::Registry* plugin_registry_ = nullptr;          // Hub 注入（借用，不持有）
     QHash<QString, QComboBox*> plugin_option_combos_;      // area → 插件下拉（取值入口）

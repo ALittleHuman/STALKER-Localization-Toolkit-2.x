@@ -61,6 +61,9 @@ public:
     // ⑫12.1：把**注册表**接进来 —— 插件注册的比较模式要出现在同一个下拉里
     //（`nullptr` = 退回只显示内置模式，页面照样能用）
     void set_registry(const plugin::Registry* registry);
+    // ★★ 插件改装 P1：本页要的额外机制就是**注册表**（插件比较模式要进同一个下拉）。
+    //   Hub 从此只调这一个入口，不再需要 `dynamic_cast<XmlPage*>` 才知道该给谁注入注册表。
+    void attach_services(const PageServices& services) override;
     std::string current_mode_key() const;
     // 10.4：切模式 → 重建筛选项 + **清空结果**，不重跑 I/O
     void set_mode(const QString& key);

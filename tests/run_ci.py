@@ -2135,6 +2135,25 @@ def step_px_only(release: bool) -> None:
         fail("有尺寸/间距没过 px()（见上；白名单见 tests/check_px_only.py）")
 
 
+def step_page_host_lock(release: bool) -> None:
+    """插件改装 P1：**Hub 不许认识具体页**（静态面）。
+
+    为什么独立成步：改装目标"Hub ＝ 容器 + 注册表 + 机制提供者，不含业务"很容易被一次
+    "顺手加回去"的 `dynamic_cast<FsPage*>` 抹掉；判据必须是静态的、且**不受别的步骤早退影响**
+    （做法同 px-only）。判据本体见 `tests/check_page_host_lock.py`（含喂反例必红的自证）。
+    """
+    say("[page-host] 插件改装 P1：Hub 只消费页注册表，不认识具体页")
+    rc, out = run([sys.executable, str(ROOT / "tests" / "check_page_host_lock.py")], timeout=120)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("PAGEHOST"):
+            say("  " + s)
+    if rc == 0:
+        ok("Hub 只消费页注册表（静态锁：无具体页类名 / 无具体页头 / 正向锁在位）")
+    else:
+        fail("Hub 又认识具体页了（见上；判据见 tests/check_page_host_lock.py）")
+
+
 def step_no_console(release: bool) -> None:
     """无控制台窗口（用户 2026-09-27：「不要打开cmd」）：产品代码不许用 std::system(
     （走 cmd.exe /c，GUI 里会闪黑窗），起了 QProcess 就必须置 CREATE_NO_WINDOW。
@@ -2429,6 +2448,9 @@ STEPS = [
     ("no-qt", step_no_qt_lock),
     ("no-qt-injection", step_no_qt_injection),
     ("px-only", step_px_only),
+    # ★★ 2026-10-07（插件改装 P1）：Hub 不许认识具体页（静态锁）。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED（不塞进 shell-smoke，免得被早退带走）。
+    ("page-host", step_page_host_lock),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),

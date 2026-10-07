@@ -123,6 +123,16 @@ void PageBase::set_subtitle(const QString& text) {
     subtitle_->setVisible(!text.isEmpty());
 }
 
+// ── ★★ 插件改装 P1（Hub 机制层）：宿主交付机制的唯一入口（见 page_base.h 的说明）──
+// 默认只做两件事：**注册表**（插件槽位在页面侧的消费端要用）与**日志口**（页里的动作要
+// 在日志栏看得见）。其余机制（状态栏 / 切页 / 任务壳）由覆写者按需取 —— 这里不主动替页做事，
+// 免得多出一个"页没要却被改"的隐式行为。
+void PageBase::attach_services(const PageServices& services) {
+    services_ = services;
+    if (services.registry != nullptr) plugin_registry_ = services.registry;
+    if (services.log) log_sink_ = services.log;
+}
+
 // ── ★★ 2026-10-05（用户报告 #6）：页内自足内容区的**第二层视口**（见 page_base.h 的说明）──
 //
 // 为什么第二层视口也由基类造：门禁那条静态锁（"页内视口只能由 PageBase 造"）拦的就是

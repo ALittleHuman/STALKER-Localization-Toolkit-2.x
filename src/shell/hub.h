@@ -9,6 +9,7 @@
 #include <QMainWindow>
 #include <QString>
 
+#include "page_host.h"
 #include "xrkit/core/theme.h"
 #include "xrkit/engine/plugin/registry.h"
 
@@ -29,15 +30,12 @@ class PageBase;
 //   会命中的那处引用。删掉它之后，`src/shell` 里除 `split_pane.{h,cpp}` 与自检夹具
 //   `smoke.cpp` 之外**一个引用都没有**（判据不挂死代码这条因此可被机械验证）。
 
-// 内置页：id 是稳定标识（插件槽位/日志都按它走），title 是界面上的名字。
-struct PageInfo {
-    const char* id;
-    const char* title;
-    const char* subtitle = "";  // 一句话说明本页能干什么（界面重构口径）
-};
-
-int builtin_page_count();
-const PageInfo& builtin_page(int index);
+// ── ★★ 插件改装 P1（Hub 机制层）：页的声明不再住在 Hub 里 ─────────────────────────
+// 修前：`struct PageInfo` 与内置六页清单都在**本文件/本实现**，Hub 还直接
+// `dynamic_cast<FsPage*>` / `<XmlPage*>` 去注入注册表 —— 与规格 §一「Hub ＝ 容器 + 注册表 +
+// 机制提供者，**不含业务**」相反。现在：清单位于 `pages/page_factory.cpp`（页模块），
+// Hub 只消费 `PageRegistry`；给页交机制的唯一入口是 `PageBase::attach_services()`
+//（静态锁：`hub.cpp` 里不许出现任何具体页类名，见 `tests/check_page_host_lock.py`）。
 
 // ── ★ 2026-10-06（③）日志**落盘**目录（1.x `stalker_toolkit.py:355-391`）──────────
 // 事实（改动前）：`hub.cpp` 里 `导出` / `set_log_file` **零命中** ⇒ GUI 的日志
@@ -61,6 +59,18 @@ public:
     int page_count() const;
     QString page_title(int index) const;
     QString page_id(int index) const;
+    QString page_owner(int index) const;
+
+    // ── ★★ 插件改装 P1：Hub ＝ 容器 + 注册表 + 机制提供者（规格 §一）──────────────
+    // 页注册表：**内置六页与插件页走同一条路**（修前是两套：`kBuiltinPages[]` 造内置 +
+    // `plugin_pages_` 列表塞插件页 ⇒ 同一件事两份实现）。
+    PageRegistry& pages() { return pages_; }
+    // 把注册表里**可见的**页同步进标签条/页栈。**增量**：已建页**不重建**
+    //（页内状态不丢：只有"缺的补、多余的摘、顺序不对的搬"）。返回本次**新建**的页数。
+    int sync_pages();
+    // 页 id → 当前下标（没有返回 -1）/ 按 id 切页（宿主给页与插件的"页面切换"机制）
+    int page_index(const QString& id) const;
+    bool switch_to_page(const QString& id);
 
     // 插件：注册表 + 启动时的错误清单（⑫12.4：非法寻址要**在 Hub 启动时可见**）
     xrkit::plugin::Registry& registry() { return registry_; }
@@ -119,6 +129,11 @@ public:
     void apply_ui_size(double scale, QString* problem = nullptr);
 
 private:
+    // 页注册诊断（被拒 / 替换声明）→ 日志栏 + 状态栏（零静默；取走即清空）
+    void drain_page_diagnostics();
+    // 给页交付宿主机制（**唯一**一处：`PageBase::attach_services`）
+    void attach_page_services(PageBase* page);
+
     QTabBar* page_tabs_ = nullptr;
     QStackedWidget* stack_ = nullptr;
     QPlainTextEdit* log_view_ = nullptr;
@@ -136,8 +151,13 @@ private:
     QString plugin_notice_;
     bool plugin_ui_installed_ = false;
     int plugin_slots_rendered_ = 0;
-    int plugin_pages_added_ = 0;
-    QList<QWidget*> plugin_pages_;  // 渲染插件页用（重渲染先清掉，保证幂等）
+    int plugin_pages_added_ = 0;   // 当前**可见**的插件页数（owner != kBuiltinPageOwner）
+    // ★ P1：三份数组**同长同序**（标签条下标 = 页栈下标 = 这里的下标），自检会交叉核对。
+    //   修前是"页栈 + 标签条"两处各自维护，插件页另有一个 `plugin_pages_` 列表 ⇒ 三份状态。
+    PageRegistry pages_;
+    std::vector<QString> page_ids_;
+    std::vector<QString> page_owners_;
+    std::vector<QWidget*> page_widgets_;
 };
 
 }  // namespace xrkit::shell
