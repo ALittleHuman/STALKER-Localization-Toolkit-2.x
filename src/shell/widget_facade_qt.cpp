@@ -219,6 +219,17 @@ const plug::UiFacade kQtFacade = {
         place(host, unwrap(created));
         return handle_of(created);
     },
+    /* entry_on_change：输入变化 ⇒ 回调当前文本（换行不是问题，单行控件） */
+    [](plug::UiHandle widget, std::function<void(const std::string&)> on_change) {
+        auto* edit = qobject_cast<QLineEdit*>(unwrap(widget));
+        if (edit == nullptr) return;
+        // ★ 回调盒与控件同寿（同本文件口径）：`new` 出去不删，靠 Qt 对象树收尾
+        auto* box = new std::function<void(const std::string&)>(std::move(on_change));
+        QObject::connect(edit, &QLineEdit::textChanged, edit,
+                         [box](const QString& text) {
+                             if (box != nullptr && *box) (*box)(text.toStdString());
+                         });
+    },
     /* text */
     [](plug::UiHandle parent, int height, int width, const std::string& wrap_mode) {
         QWidget* host = resolve_parent(parent);
@@ -816,6 +827,11 @@ const plug::UiFacade kQtFacade = {
         auto* facade = qobject_cast<FacadeTree*>(unwrap(tree));
         return facade == nullptr ? std::string() : facade->selected_key();
     },
+    /* tree_selected_keys：当前选中的**一组** key（按树序） */
+    [](plug::UiHandle tree) {
+        auto* facade = qobject_cast<FacadeTree*>(unwrap(tree));
+        return facade == nullptr ? std::vector<std::string>() : facade->selected_keys();
+    },
     /* tree_on_expand */
     [](plug::UiHandle tree, std::function<void(const std::string&)> on_expand) {
         if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) {
@@ -832,6 +848,12 @@ const plug::UiFacade kQtFacade = {
     [](plug::UiHandle tree, std::function<void(const std::string&)> on_activate) {
         if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) {
             facade->set_on_activate(std::move(on_activate));
+        }
+    },
+    /* tree_on_click：点行身体（宿主只报 key） */
+    [](plug::UiHandle tree, std::function<void(const std::string&)> on_click) {
+        if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) {
+            facade->set_on_click(std::move(on_click));
         }
     },
 };

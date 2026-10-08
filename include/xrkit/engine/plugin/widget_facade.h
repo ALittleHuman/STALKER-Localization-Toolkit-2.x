@@ -53,6 +53,10 @@ struct UiFacade {
         checkbox;
     std::function<UiHandle(UiHandle parent, const std::string& initial, int width, bool password)>
         entry;
+    // ★★ P15-0：**输入变化回调**（fs 搜索框「边打边筛」＝`QLineEdit::textChanged`）。
+    //   回调给**当前文本**（与 `get_text` 同一份真值）。
+    std::function<void(UiHandle widget, std::function<void(const std::string&)> on_change)>
+        entry_on_change;
     std::function<UiHandle(UiHandle parent, int height, int width, const std::string& wrap)> text;
     std::function<UiHandle(UiHandle parent, const std::vector<std::string>& values,
                            std::function<void(const std::string&)> on_change)>
@@ -231,6 +235,8 @@ struct UiFacade {
     std::function<int(UiHandle tree)> tree_filter_hits;
     std::function<void(UiHandle tree, const std::string& key)> tree_select;
     std::function<std::string(UiHandle tree)> tree_selected_key;
+    // ★★ P15-0：**多选读取**（按树序；fs 包列表「加载选中/取消加载」要一组）。
+    std::function<std::vector<std::string>(UiHandle tree)> tree_selected_keys;
     // ★L2.5 回调（都在宿主 UI 线程上被调）
     std::function<void(UiHandle tree, std::function<void(const std::string&)> on_expand)>
         tree_on_expand;
@@ -238,6 +244,10 @@ struct UiFacade {
         tree_on_check;
     std::function<void(UiHandle tree, std::function<void(const std::string&)> on_activate)>
         tree_on_activate;
+    // ★★ P15-0：**点行身体**（fs 页那条 `itemClicked`：单击＝展开/折叠或切勾选）。
+    //   宿主只报行 key；展开还是切勾选由**插件**按自己的节点语义决定。
+    std::function<void(UiHandle tree, std::function<void(const std::string&)> on_click)>
+        tree_on_click;
 };
 
 // 外壳注入实现（`src/shell/ui_facade_qt.cpp`）。传 nullptr = 撤销（无 GUI 依赖的进程/用例）。

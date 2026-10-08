@@ -5624,7 +5624,8 @@ SmokeResult run_smoke() {
             "                     'partial:%s' % ','.join(sorted(ui.tree_partial_keys(tree))),\n"
             "                     'hits:%d' % ui.tree_filter_hits(tree),\n"
             "                     'selected:%s' % ui.tree_selected_key(tree),\n"
-            "                     'expanded:%s' % ','.join(sorted(ui.tree_expanded_keys(tree)))]\n"
+            "                     'expanded:%s' % ','.join(sorted(ui.tree_expanded_keys(tree))),\n"
+            "                     'selected_multi:%s' % ','.join(ui.tree_selected_keys(tree))]\n"
             "            with open(os.path.join(api.plugin_dir, 'l6_status.txt'), 'w', encoding='utf-8') as fh:\n"
             "                fh.write('\\n'.join(lines) + '\\n')\n"
             "        ui.tree_set_root(tree, [\n"
@@ -5642,6 +5643,19 @@ SmokeResult run_smoke() {
             "        ui.tree_on_activate(tree, lambda key: mark('activate:' + key))\n"
             "        # ★★ P13-1 第二步：只验注册路径（这棵树的行都没有 has_action）\n"
             "        ui.tree_on_action(tree, '✕', lambda key: mark('rowaction:' + key))\n"
+            "        # ★★ P15-0：点行身体 + 输入变化回调\n"
+            "        import os as _os, tempfile as _tempfile\n"
+            "        click_path = _os.path.join(_tempfile.gettempdir(), 'xrkit_smoke_treeclick.txt')\n"
+            "        def on_tree_click(key):\n"
+            "            with open(click_path, 'a', encoding='utf-8') as handle:\n"
+            "                handle.write(key + chr(10))\n"
+            "        ui.tree_on_click(tree, on_tree_click)\n"
+            "        change_path = _os.path.join(_tempfile.gettempdir(), 'xrkit_smoke_entrychange.txt')\n"
+            "        def on_entry_change(text):\n"
+            "            with open(change_path, 'a', encoding='utf-8') as handle:\n"
+            "                handle.write(text + chr(10))\n"
+            "        probe_entry = ui.entry(None, '初始', 120)\n"
+            "        ui.entry_on_change(probe_entry, on_entry_change)\n"
             "        status()\n"
             "        btn = ui.button(None, '查状态', status)\n"
             "        btn2 = ui.button(None, '过滤 a2', lambda: (ui.tree_set_filter(tree, 'a2'), status()))\n"
@@ -5699,6 +5713,69 @@ SmokeResult run_smoke() {
         check(tree != nullptr && tree->columnCount() == 2,
               QStringLiteral("P6 树没造出来或列数不对（实得 %1 列）")
                   .arg(tree == nullptr ? -1 : tree->columnCount()));
+
+        // ★★ P15-0：① 多选读取（按树序）② 点行身体 ③ 输入变化回调
+        {
+            // ① 选中两行（直接改 `QTreeWidgetItem` 的选中态＝用户点出来的那条路）
+            FacadeTree* multi_tree = qobject_cast<FacadeTree*>(tree);
+            check(multi_tree != nullptr, QStringLiteral("P15-0 门面树句柄转不过去"));
+            if (multi_tree != nullptr) {
+                multi_tree->clearSelection();
+                if (QTreeWidgetItem* row_a = multi_tree->topLevelItem(0)) row_a->setSelected(true);
+                if (QTreeWidgetItem* row_b = multi_tree->topLevelItem(1)) row_b->setSelected(true);
+                QPushButton* status_button = nullptr;
+                for (QPushButton* candidate : page_widget->findChildren<QPushButton*>()) {
+                    if (candidate->text() == QStringLiteral("查状态")) status_button = candidate;
+                }
+                check(status_button != nullptr, QStringLiteral("P15-0 没找到「查状态」按钮"));
+                if (status_button != nullptr) status_button->click();
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
+                QString status_text;
+                QFile status_file(QDir(dir).filePath(QStringLiteral("l6_status.txt")));
+                if (status_file.open(QIODevice::ReadOnly)) {
+                    status_text = QString::fromUtf8(status_file.readAll());
+                }
+                check(status_text.contains(QStringLiteral("selected_multi:A,B")),
+                      QStringLiteral("P15-0 多选读取没按树序给全（l6_status 里没有 "
+                                     "selected_multi:A,B）"));
+
+                // ② 点行身体：合成 itemClicked（＝用户单击那一行）
+                const QString click_path =
+                    QDir::temp().filePath(QStringLiteral("xrkit_smoke_treeclick.txt"));
+                QFile::remove(click_path);
+                if (QTreeWidgetItem* row_b = multi_tree->topLevelItem(1)) {
+                    QMetaObject::invokeMethod(multi_tree, "itemClicked", Qt::DirectConnection,
+                                              Q_ARG(QTreeWidgetItem*, row_b), Q_ARG(int, 0));
+                }
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
+                QString clicked;
+                QFile click_file(click_path);
+                if (click_file.open(QIODevice::ReadOnly)) {
+                    clicked = QString::fromUtf8(click_file.readAll()).trimmed();
+                }
+                check(clicked == QStringLiteral("B"),
+                      QStringLiteral("P15-0 点行身体没把行 key 交给插件（实得 [%1]）").arg(clicked));
+
+                // ③ 输入变化：`setText` 会触发 textChanged
+                const QString change_path =
+                    QDir::temp().filePath(QStringLiteral("xrkit_smoke_entrychange.txt"));
+                QFile::remove(change_path);
+                QLineEdit* probe = nullptr;
+                for (QLineEdit* candidate : page_widget->findChildren<QLineEdit*>()) {
+                    if (candidate->text() == QStringLiteral("初始")) probe = candidate;
+                }
+                check(probe != nullptr, QStringLiteral("P15-0 没找到夹具里的输入框"));
+                if (probe != nullptr) probe->setText(QStringLiteral("abc"));
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
+                QString changed;
+                QFile change_file(change_path);
+                if (change_file.open(QIODevice::ReadOnly)) {
+                    changed = QString::fromUtf8(change_file.readAll()).trimmed();
+                }
+                check(changed == QStringLiteral("abc"),
+                      QStringLiteral("P15-0 输入变化回调没拿到当前文本（实得 [%1]）").arg(changed));
+            }
+        }
 
         // ★★ P13-1a：行尾动作（fs 页的 ✕）—— 合成点击（与 fs 页自检同一手法）
         {

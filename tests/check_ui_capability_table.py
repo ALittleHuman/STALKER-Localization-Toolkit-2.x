@@ -41,6 +41,7 @@ EXPECT_API = {
 EXPECT_UI = {
     "label": "L1 文本", "button": "L1 按钮（回调）", "row": "L1 行容器",
     "checkbox": "L1 勾选框（回调）", "entry": "L1 单行输入", "text": "L1 多行输入",
+    "entry_on_change": "★P15-0 输入变化回调（fs 搜索框边打边筛）",
     "combo": "L1 下拉（回调）", "drop_box": "L1 拖入目标", "pack": "L1 显式摆放",
     "text_view": "L1 只读多行视图",
     "progress": "进度条（video 页转码进度；0–100）",
@@ -109,9 +110,11 @@ EXPECT_UI = {
     "tree_set_filter": "L2.7 过滤（宿主匹配任一列；命中行连祖先一起显示）",
     "tree_filter_hits": "L2.7 命中数（与界面上的计数**同源**）",
     "tree_select": "L2.7 选中某行", "tree_selected_key": "L2.7 当前选中行",
+    "tree_selected_keys": "★P15-0 选中的一组行（按树序）",
     "tree_on_expand": "★L2.5 展开回调（懒建：这时才要子节点）",
     "tree_on_check": "★L2.5 勾选回调（用户改了哪一行）",
     "tree_on_activate": "★L2.5 激活回调（双击叶子）",
+    "tree_on_click": "★P15-0 点行身体（单击；语义在插件侧）",
 }
 # Widget：**故意为空** —— 不透明句柄，插件不能对它做任何事（禁 L4 裸 Qt）
 EXPECT_WIDGET: dict[str, str] = {}

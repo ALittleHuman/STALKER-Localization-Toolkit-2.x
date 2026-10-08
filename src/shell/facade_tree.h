@@ -52,6 +52,8 @@ public:
     void set_expanded(const std::string& key, bool expanded);
     void select_key(const std::string& key);
     std::string selected_key() const;
+    // ★★ P15-0：**多选读取**（fs 包列表「加载选中/取消加载」要一组）—— 按**树序**返回
+    std::vector<std::string> selected_keys() const;
 
     // ── 过滤 ────────────────────────────────────────────────────────────────
     void set_filter(const std::string& text);
@@ -64,6 +66,11 @@ public:
     }
     void set_on_activate(std::function<void(const std::string&)> fn) {
         on_activate_ = std::move(fn);
+    }
+    // ★★ P15-0：**点行身体**（fs 页那条 `itemClicked`：单击＝展开/折叠或切勾选）。
+    //   宿主只报「哪一行被点」；展开还是切勾选由**插件**按自己的节点语义决定。
+    void set_on_click(std::function<void(const std::string&)> fn) {
+        on_click_ = std::move(fn);
     }
     // ★★ P13：行尾动作（fs 页的 ✕）—— 实现见 `row_action_delegate.h`
     void set_on_action(std::function<void(const std::string&)> fn);
@@ -90,6 +97,7 @@ private:
     void install_action_delegate();
     std::function<void(const std::string&, bool)> on_check_;
     std::function<void(const std::string&)> on_activate_;
+    std::function<void(const std::string&)> on_click_;   // ★ P15-0
     QString filter_;
     int hits_ = 0;
     bool updating_ = false;   // 程序化改勾选时挡住 `itemChanged` 的二次传播

@@ -2535,6 +2535,56 @@ public:
         });
     }
 
+    // ── ★★ P15-0：fs 页缺口三条 ───────────────────────────────────────────
+    bool entry_on_change(py::object widget, py::object callback) const {
+        const UiFacade* facade = available("entry_on_change");
+        if (facade == nullptr) return false;
+        if (callback.is_none() != 0 || PyCallable_Check(callback.ptr()) == 0) {
+            core::log(core::Level::Warn, "[" + owner_ + "] ui.entry_on_change 的回调不是可调用对象");
+            return false;
+        }
+        py::object kept = callback;
+        keepalive()->push_back(kept);
+        facade->entry_on_change(handle_of(widget), [kept](const std::string& text) {
+            py::gil_scoped_acquire acquire;
+            try {
+                kept(py::str(text));
+            } catch (const py::error_already_set& err) {
+                core::log(core::Level::Warn,
+                          std::string("ui.entry_on_change 回调抛异常：") + err.what());
+            }
+        });
+        return true;
+    }
+    py::object tree_selected_keys(py::object tree_widget) const {
+        const UiFacade* facade = available("tree_selected_keys");
+        if (facade == nullptr) return py::none();
+        py::list out;
+        for (const std::string& key : facade->tree_selected_keys(handle_of(tree_widget))) {
+            out.append(py::str(key));
+        }
+        return out;
+    }
+    bool tree_on_click(py::object tree_widget, py::object callback) const {
+        const UiFacade* facade = available("tree_on_click");
+        if (facade == nullptr) return false;
+        if (callback.is_none() != 0 || PyCallable_Check(callback.ptr()) == 0) {
+            core::log(core::Level::Warn, "[" + owner_ + "] ui.tree_on_click 的回调不是可调用对象");
+            return false;
+        }
+        py::object kept = callback;
+        keepalive()->push_back(kept);
+        facade->tree_on_click(handle_of(tree_widget), [kept](const std::string& key) {
+            py::gil_scoped_acquire acquire;
+            try {
+                kept(py::str(key));
+            } catch (const py::error_already_set& err) {
+                core::log(core::Level::Warn, std::string("ui.tree_on_click 回调抛异常：") + err.what());
+            }
+        });
+        return true;
+    }
+
 private:
     // 门面/方法不可用 ⇒ **逐条记账**并返回"空"（零静默：插件作者能立刻看出为什么什么都没出现）
     const UiFacade* available(const std::string& method) const {
@@ -2724,6 +2774,9 @@ void ensure_api_module() {
                  py::arg("on_toggle") = py::none())
             .def("entry", &PyUi::entry, py::arg("parent") = py::none(), py::arg("initial") = "",
                  py::arg("width") = 0, py::arg("password") = false)
+            // ★★ P15-0：输入变化回调（fs 搜索框边打边筛）
+            .def("entry_on_change", &PyUi::entry_on_change, py::arg("widget"),
+                 py::arg("callback") = py::none())
             .def("text", &PyUi::text, py::arg("parent") = py::none(), py::arg("height") = 0,
                  py::arg("width") = 0, py::arg("wrap") = "word")
             .def("combo", &PyUi::combo, py::arg("parent") = py::none(), py::arg("values"),
@@ -2834,11 +2887,16 @@ void ensure_api_module() {
             .def("tree_filter_hits", &PyUi::tree_filter_hits, py::arg("tree"))
             .def("tree_select", &PyUi::tree_select, py::arg("tree"), py::arg("key"))
             .def("tree_selected_key", &PyUi::tree_selected_key, py::arg("tree"))
+            // ★★ P15-0：多选读取（按树序）
+            .def("tree_selected_keys", &PyUi::tree_selected_keys, py::arg("tree"))
             .def("tree_on_expand", &PyUi::tree_on_expand, py::arg("tree"),
                  py::arg("callback") = py::none())
             .def("tree_on_check", &PyUi::tree_on_check, py::arg("tree"),
                  py::arg("callback") = py::none())
             .def("tree_on_activate", &PyUi::tree_on_activate, py::arg("tree"),
+                 py::arg("callback") = py::none())
+            // ★★ P15-0：点行身体（宿主只报 key）
+            .def("tree_on_click", &PyUi::tree_on_click, py::arg("tree"),
                  py::arg("callback") = py::none());
         py::class_<PyPluginApi>(m, "Api")
             .def_property_readonly("plugin_file", &PyPluginApi::owner)

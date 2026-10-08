@@ -56,6 +56,13 @@ FacadeTree::FacadeTree(QWidget* parent) : QTreeWidget(parent) {
             }
         }
     });
+    // ★★ P15-0：**点行身体** ⇒ 回调（fs 页那条 `itemClicked`）。
+    //   宿主**不**替他决定展开/折叠/切勾选 —— 只报 key，语义在插件侧。
+    connect(this, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item, int) {
+        if (item == nullptr || on_click_ == nullptr) return;
+        const std::string key = key_of(item);
+        if (!key.empty()) on_click_(key);
+    });
     // 双击**叶子** ⇒ 激活（有子的行双击是"展开"，那是 Qt 的默认，不抢）
     connect(this, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item, int) {
         if (item == nullptr || on_activate_ == nullptr) return;
@@ -183,6 +190,18 @@ void FacadeTree::collect_by_state(QTreeWidgetItem* item, Qt::CheckState state,
     if (item == nullptr) return;
     if (item->checkState(0) == state) out.push_back(key_of(item));
     for (int i = 0; i < item->childCount(); ++i) collect_by_state(item->child(i), state, out);
+}
+
+std::vector<std::string> FacadeTree::selected_keys() const {
+    // ★ 按**树序**收集（`selectedItems()` 的顺序不作保证）；只取可见行之外的也照收
+    std::vector<std::string> out;
+    for (QTreeWidgetItemIterator it(const_cast<FacadeTree*>(this)); *it != nullptr; ++it) {
+        if ((*it)->isSelected()) {
+            const std::string key = key_of(*it);
+            if (!key.empty()) out.push_back(key);
+        }
+    }
+    return out;
 }
 
 std::vector<std::string> FacadeTree::checked_keys() const {

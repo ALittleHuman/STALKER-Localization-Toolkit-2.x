@@ -39,6 +39,7 @@ xrkit::plugin::Registry*& page_registry_storage() {
 // 门面里"哪些字段是实现的"：名字与 `UiFacade` 的字段一一对应（判据按它对账）。
 const char* const kMethodNames[] = {
     "label",      "button",     "row",       "checkbox",    "entry",     "text",
+    "entry_on_change",
     "combo",      "drop_box",   "pack",      "text_view",   "progress",  "set_progress",
     "progress_value", "set_text",  "get_text",
     "set_enabled", "alive",     "log_append", "ask_yes_no", "ask_open_file", "ask_save_file",
@@ -66,7 +67,9 @@ const char* const kMethodNames[] = {
     "tree_row_count", "tree_keys",          "tree_set_expanded",   "tree_expanded_keys",
     "tree_set_checked", "tree_checked",     "tree_checked_keys",   "tree_partial_keys",
     "tree_set_filter", "tree_filter_hits",  "tree_select",         "tree_selected_key",
+    "tree_selected_keys",
     "tree_on_expand",  "tree_on_check",     "tree_on_activate",
+    "tree_on_click",
 };
 
 bool has_impl(const UiFacade& facade, const std::string& name) {
@@ -75,6 +78,7 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "row") return static_cast<bool>(facade.row);
     if (name == "checkbox") return static_cast<bool>(facade.checkbox);
     if (name == "entry") return static_cast<bool>(facade.entry);
+    if (name == "entry_on_change") return static_cast<bool>(facade.entry_on_change);
     if (name == "text") return static_cast<bool>(facade.text);
     if (name == "combo") return static_cast<bool>(facade.combo);
     if (name == "drop_box") return static_cast<bool>(facade.drop_box);
@@ -153,9 +157,11 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "tree_filter_hits") return static_cast<bool>(facade.tree_filter_hits);
     if (name == "tree_select") return static_cast<bool>(facade.tree_select);
     if (name == "tree_selected_key") return static_cast<bool>(facade.tree_selected_key);
+    if (name == "tree_selected_keys") return static_cast<bool>(facade.tree_selected_keys);
     if (name == "tree_on_expand") return static_cast<bool>(facade.tree_on_expand);
     if (name == "tree_on_check") return static_cast<bool>(facade.tree_on_check);
     if (name == "tree_on_activate") return static_cast<bool>(facade.tree_on_activate);
+    if (name == "tree_on_click") return static_cast<bool>(facade.tree_on_click);
     return false;
 }
 
