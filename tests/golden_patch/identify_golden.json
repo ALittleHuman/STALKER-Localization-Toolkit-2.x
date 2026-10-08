@@ -1,0 +1,319 @@
+{
+  "provenance": {
+    "generator": "P16-1b 金标准生成器（工作区一次性引导）",
+    "onex_plugin": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit\\plugins\\engine_utf8_patch.py",
+    "onex_plugin_sha256": "57610160a2fc8ca66c9b0d04d59f4dfda64dfa0aa4c38db2c24ceb7b7922cf50",
+    "sites_count": 14,
+    "note": "金标准只比结构（verdict key / 逐项 state / counts / thunk_intact / cave_all_zero）；changed_bytes 只作参考，不参与判定。"
+  },
+  "samples": [
+    {
+      "name": "orig",
+      "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\bin_x64\\xrEngine.exe",
+      "sha256": "cb1d73421636e0351eb4c9096c527046818b2f3736ccaafb74098fa514c0f790",
+      "size": 21806592,
+      "verdict_key": "orig",
+      "verdict_text": "原版",
+      "verdict_detail": "未发现任何补丁痕迹：每一项都还是原版字节，helper 区仍是全零填充，thunk 完好",
+      "counts": {
+        "orig": 13,
+        "kept": 1
+      },
+      "thunk_intact": true,
+      "cave_all_zero": true,
+      "items": [
+        {
+          "id": "imm.cbMultiByte",
+          "kind": "overwrite",
+          "offset": 7784391,
+          "state": "orig"
+        },
+        {
+          "id": "call.1",
+          "kind": "call",
+          "offset": 7784753,
+          "state": "orig"
+        },
+        {
+          "id": "call.2",
+          "kind": "call",
+          "offset": 7784850,
+          "state": "orig"
+        },
+        {
+          "id": "call.3",
+          "kind": "call",
+          "offset": 7785386,
+          "state": "orig"
+        },
+        {
+          "id": "call.4",
+          "kind": "call",
+          "offset": 1223725,
+          "state": "orig"
+        },
+        {
+          "id": "call.5",
+          "kind": "call",
+          "offset": 1484608,
+          "state": "orig"
+        },
+        {
+          "id": "call.6",
+          "kind": "call",
+          "offset": 1484711,
+          "state": "orig"
+        },
+        {
+          "id": "call.7",
+          "kind": "call",
+          "offset": 1484814,
+          "state": "orig"
+        },
+        {
+          "id": "call.8",
+          "kind": "call",
+          "offset": 1484917,
+          "state": "orig"
+        },
+        {
+          "id": "call.9",
+          "kind": "call",
+          "offset": 1485061,
+          "state": "orig"
+        },
+        {
+          "id": "helper.A",
+          "kind": "helper",
+          "offset": 15554398,
+          "state": "orig"
+        },
+        {
+          "id": "helper.B",
+          "kind": "helper",
+          "offset": 15554407,
+          "state": "orig"
+        },
+        {
+          "id": "helper.C",
+          "kind": "helper",
+          "offset": 15554416,
+          "state": "orig"
+        },
+        {
+          "id": "keep.thunk",
+          "kind": "preserve",
+          "offset": 15554391,
+          "state": "kept"
+        }
+      ],
+      "changed_bytes_reference_only": 0
+    },
+    {
+      "name": "v2_defect",
+      "path": "E:\\Software\\Games\\STALKER\\PATCHES\\NLC-UTF8多字节长度\\bin\\xrEngine_patched.exe",
+      "sha256": "06902d539a8000ab276796b25f873fcd3c0722342acc19ef1caeb79a5ca5936b",
+      "size": 21806592,
+      "verdict_key": "v2",
+      "verdict_text": "v2(有缺陷)",
+      "verdict_detail": "退出崩溃版：helper A/B 落在 0x00ED575C（覆盖 thunk），helper C 与其余 调用点缺失",
+      "counts": {
+        "patched": 1,
+        "other": 5,
+        "orig": 7,
+        "broken": 1
+      },
+      "thunk_intact": false,
+      "cave_all_zero": false,
+      "items": [
+        {
+          "id": "imm.cbMultiByte",
+          "kind": "overwrite",
+          "offset": 7784391,
+          "state": "patched"
+        },
+        {
+          "id": "call.1",
+          "kind": "call",
+          "offset": 7784753,
+          "state": "other"
+        },
+        {
+          "id": "call.2",
+          "kind": "call",
+          "offset": 7784850,
+          "state": "other"
+        },
+        {
+          "id": "call.3",
+          "kind": "call",
+          "offset": 7785386,
+          "state": "other"
+        },
+        {
+          "id": "call.4",
+          "kind": "call",
+          "offset": 1223725,
+          "state": "orig"
+        },
+        {
+          "id": "call.5",
+          "kind": "call",
+          "offset": 1484608,
+          "state": "orig"
+        },
+        {
+          "id": "call.6",
+          "kind": "call",
+          "offset": 1484711,
+          "state": "orig"
+        },
+        {
+          "id": "call.7",
+          "kind": "call",
+          "offset": 1484814,
+          "state": "orig"
+        },
+        {
+          "id": "call.8",
+          "kind": "call",
+          "offset": 1484917,
+          "state": "orig"
+        },
+        {
+          "id": "call.9",
+          "kind": "call",
+          "offset": 1485061,
+          "state": "orig"
+        },
+        {
+          "id": "helper.A",
+          "kind": "helper",
+          "offset": 15554398,
+          "state": "other"
+        },
+        {
+          "id": "helper.B",
+          "kind": "helper",
+          "offset": 15554407,
+          "state": "other"
+        },
+        {
+          "id": "helper.C",
+          "kind": "helper",
+          "offset": 15554416,
+          "state": "orig"
+        },
+        {
+          "id": "keep.thunk",
+          "kind": "preserve",
+          "offset": 15554391,
+          "state": "broken"
+        }
+      ],
+      "changed_bytes_reference_only": 42
+    },
+    {
+      "name": "v4_correct",
+      "path": "E:\\Software\\Tools\\DeepSeek Harness\\STALKER_2x_插件改装_交接\\P16-1b_参照\\xrEngine_v4_ref.exe",
+      "sha256": "67ddf45327f61da22ad94905cb4dcf941eeb61c1011cca585a2f5c4bcc2ebfc0",
+      "size": 21806592,
+      "verdict_key": "v4",
+      "verdict_text": "v4(正确)",
+      "verdict_detail": "目录共 14 项全部到位，helper 落位正确，thunk 逐字节未受影响",
+      "counts": {
+        "patched": 13,
+        "kept": 1
+      },
+      "thunk_intact": true,
+      "cave_all_zero": false,
+      "items": [
+        {
+          "id": "imm.cbMultiByte",
+          "kind": "overwrite",
+          "offset": 7784391,
+          "state": "patched"
+        },
+        {
+          "id": "call.1",
+          "kind": "call",
+          "offset": 7784753,
+          "state": "patched"
+        },
+        {
+          "id": "call.2",
+          "kind": "call",
+          "offset": 7784850,
+          "state": "patched"
+        },
+        {
+          "id": "call.3",
+          "kind": "call",
+          "offset": 7785386,
+          "state": "patched"
+        },
+        {
+          "id": "call.4",
+          "kind": "call",
+          "offset": 1223725,
+          "state": "patched"
+        },
+        {
+          "id": "call.5",
+          "kind": "call",
+          "offset": 1484608,
+          "state": "patched"
+        },
+        {
+          "id": "call.6",
+          "kind": "call",
+          "offset": 1484711,
+          "state": "patched"
+        },
+        {
+          "id": "call.7",
+          "kind": "call",
+          "offset": 1484814,
+          "state": "patched"
+        },
+        {
+          "id": "call.8",
+          "kind": "call",
+          "offset": 1484917,
+          "state": "patched"
+        },
+        {
+          "id": "call.9",
+          "kind": "call",
+          "offset": 1485061,
+          "state": "patched"
+        },
+        {
+          "id": "helper.A",
+          "kind": "helper",
+          "offset": 15554398,
+          "state": "patched"
+        },
+        {
+          "id": "helper.B",
+          "kind": "helper",
+          "offset": 15554407,
+          "state": "patched"
+        },
+        {
+          "id": "helper.C",
+          "kind": "helper",
+          "offset": 15554416,
+          "state": "patched"
+        },
+        {
+          "id": "keep.thunk",
+          "kind": "preserve",
+          "offset": 15554391,
+          "state": "kept"
+        }
+      ],
+      "changed_bytes_reference_only": 88
+    }
+  ]
+}

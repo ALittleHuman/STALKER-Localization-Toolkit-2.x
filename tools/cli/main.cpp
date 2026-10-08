@@ -46,6 +46,7 @@
 #include "xrkit/engine/video/transcode.h"
 #include "xrkit/engine/xml/compare.h"
 #include "xrkit/engine/xml/dirdiff.h"
+#include "xrkit/engine/patch/patch.h"
 
 #include <algorithm>
 #include <array>
@@ -2438,6 +2439,118 @@ void register_dep_checks(xrkit::core::CheckRegistry& reg, DepCounts& counts) {
 
 }  // namespace
 
+// ── P16-1b：站点表的**文本形态**（只有 CLI/判据用；插件侧直接给值类型）──────────
+//   每行一条：`site id=… kind=… offset=0x… expect="41 8B" patched="E8 …" [helper=A]
+//   [tail="…"] [before="…"] [after="…"] [layout_delta=0x…] [layout_section=.text] [note="…"]`
+//   取值可加双引号（含空格时必须加）；`#` 开头是注释。
+namespace {
+
+std::vector<std::string> split_tokens(const std::string& line) {
+    std::vector<std::string> out;
+    std::string cur;
+    bool in_quote = false;
+    for (char c : line) {
+        if (c == '"') { in_quote = !in_quote; cur.push_back(c); continue; }
+        if (!in_quote && (c == ' ' || c == '\t')) {
+            if (!cur.empty()) { out.push_back(cur); cur.clear(); }
+            continue;
+        }
+        cur.push_back(c);
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
+std::string strip_quotes(const std::string& v) {
+    if (v.size() >= 2 && v.front() == '"' && v.back() == '"') return v.substr(1, v.size() - 2);
+    return v;
+}
+
+bool parse_u64(const std::string& text, uint64_t& out) {
+    try {
+        size_t used = 0;
+        out = std::stoull(text, &used, 0);
+        return used == text.size();
+    } catch (...) {
+        return false;
+    }
+}
+
+bool parse_patch_sites(const std::string& text,
+                       std::vector<xrkit::engine::patch::PatchSite>& out, std::string& error) {
+    int line_no = 0;
+    for (const std::string& raw_line : [&] {
+             std::vector<std::string> lines;
+             std::string cur;
+             for (char c : text) {
+                 if (c == '\n') { lines.push_back(cur); cur.clear(); }
+                 else if (c != '\r') cur.push_back(c);
+             }
+             if (!cur.empty()) lines.push_back(cur);
+             return lines;
+         }()) {
+        ++line_no;
+        const std::string line = [&] {
+            std::string t = raw_line;
+            const size_t hash = t.find('#');
+            if (hash != std::string::npos) t = t.substr(0, hash);
+            return t;
+        }();
+        const std::vector<std::string> tokens = split_tokens(line);
+        if (tokens.empty()) continue;
+        if (tokens[0] != "site") {
+            error = "第 " + std::to_string(line_no) + " 行不是 `site` 开头";
+            return false;
+        }
+        xrkit::engine::patch::PatchSite site;
+        for (size_t i = 1; i < tokens.size(); ++i) {
+            const size_t eq = tokens[i].find('=');
+            if (eq == std::string::npos) {
+                error = "第 " + std::to_string(line_no) + " 行的 token 缺 `=`：" + tokens[i];
+                return false;
+            }
+            const std::string key = tokens[i].substr(0, eq);
+            const std::string val = strip_quotes(tokens[i].substr(eq + 1));
+            if (key == "id") site.id = val;
+            else if (key == "kind") site.kind = val;
+            else if (key == "offset") {
+                if (!parse_u64(val, site.offset)) {
+                    error = "第 " + std::to_string(line_no) + " 行 offset 解析不了：" + val;
+                    return false;
+                }
+            } else if (key == "expect") site.expect_hex = val;
+            else if (key == "patched") site.patched_hex = val;
+            else if (key == "helper") site.helper = val;
+            else if (key == "tail") site.tail_hex = val;
+            else if (key == "before") site.before_hex = val;
+            else if (key == "after") site.after_hex = val;
+            else if (key == "layout_delta") {
+                if (!parse_u64(val, site.layout_delta)) {
+                    error = "第 " + std::to_string(line_no) + " 行 layout_delta 解析不了：" + val;
+                    return false;
+                }
+            } else if (key == "layout_section") site.layout_section = val;
+            else if (key == "note") site.note = val;
+            else {
+                error = "第 " + std::to_string(line_no) + " 行有未知键：" + key;
+                return false;
+            }
+        }
+        if (site.id.empty() || site.kind.empty()) {
+            error = "第 " + std::to_string(line_no) + " 行缺 id 或 kind";
+            return false;
+        }
+        out.push_back(site);
+    }
+    if (out.empty()) {
+        error = "一份站点都没解析到（空表不算一份表）";
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
 int run_cli(const std::vector<std::string>& args) {
     bool verbose = false;
     bool pack_dirs = false;
@@ -4386,6 +4499,71 @@ int run_cli(const std::vector<std::string>& args) {
     // 编码**判定链**（B 链，M1-6 尾段）：六步 → (步号, 编码) + 解码结果。
     // 判据：与 1.x 的 (step, enc, used, forced, 正文) 一致；第 5 步只做已对齐的
     // ASCII 分支，其余家族在门禁的差异台账里如实列出。
+    if (action == "--patch-identify") {
+        if (operands.size() < 2) {
+            std::cerr << "PATCH error reason=用法：--patch-identify <exe> <站点表文件>\n";
+            return kExitUsage;
+        }
+        std::ifstream site_in(path_from_utf8(operands[1]), std::ios::binary);
+        if (!site_in) {
+            std::cout << "PATCH error reason=读不到站点表：" << operands[1] << "\n";
+            return kExitFail;
+        }
+        const std::string site_text((std::istreambuf_iterator<char>(site_in)),
+                                    std::istreambuf_iterator<char>());
+        std::vector<xrkit::engine::patch::PatchSite> sites;
+        std::string perr;
+        if (!parse_patch_sites(site_text, sites, perr)) {
+            std::cout << "PATCH error reason=站点表解析失败：" << perr << "\n";
+            return kExitFail;
+        }
+        const xrkit::engine::patch::PatchIdentifyResult r =
+            xrkit::engine::patch::identify_file(operands[0], sites);
+        if (!r.error.empty()) {
+            std::cout << "PATCH error reason=" << r.error << "\n";
+            return kExitFail;
+        }
+        char buf[256];
+        std::snprintf(buf, sizeof(buf), " delta=0x%llX", static_cast<unsigned long long>(r.delta));
+        std::cout << "PATCH layout parsed=" << (r.layout.parsed ? 1 : 0)
+                  << " hard_ok=" << (r.layout.hard_ok ? 1 : 0)
+                  << " inside_text=" << (r.layout.targets_inside_text ? 1 : 0) << buf << "\n";
+        std::cout << "PATCH layout_note " << r.layout.note << "\n";
+        std::cout << "PATCH verdict key=" << r.verdict_key << " text=" << r.verdict_text
+                  << " thunk_intact=" << (r.thunk_intact ? 1 : 0)
+                  << " cave_all_zero=" << (r.cave_all_zero ? 1 : 0)
+                  << " file_size=" << r.file_size
+                  << " diff_bytes=" << r.reference_diff_bytes << "\n";
+        std::cout << "PATCH count orig=" << r.n_orig << " patched=" << r.n_patched
+                  << " kept=" << r.n_kept << " broken=" << r.n_broken
+                  << " other=" << r.n_other << " context=" << r.n_context
+                  << " range=" << r.n_range << "\n";
+        for (const xrkit::engine::patch::PatchItemState& item : r.items) {
+            std::snprintf(buf, sizeof(buf), "0x%08llX", static_cast<unsigned long long>(item.offset));
+            std::cout << "PATCH item id=" << item.id << " kind=" << item.kind
+                      << " offset=" << buf << " state=" << item.state
+                      << " expect=\"" << item.expect_hex << "\""
+                      << " patched=\"" << item.patched_hex << "\""
+                      << " actual=\"" << item.actual_hex << "\"";
+            if (item.call_target >= 0) {
+                std::snprintf(buf, sizeof(buf), " target=0x%08llX",
+                              static_cast<unsigned long long>(item.call_target));
+                std::cout << buf;
+            }
+            if (item.call_target_defect >= 0) {
+                std::snprintf(buf, sizeof(buf), " target_defect=0x%08llX",
+                              static_cast<unsigned long long>(item.call_target_defect));
+                std::cout << buf;
+            }
+            std::cout << "\n";
+            if (!item.context_problem.empty()) {
+                std::cout << "PATCH item_note id=" << item.id << " " << item.context_problem
+                          << "\n";
+            }
+        }
+        std::cout << "PATCH verdict_detail " << r.detail << "\n";
+        return kExitOk;
+    }
     if (action == "--sniff") {
         if (operands.size() < 2) {
             std::cerr << "SNIFF error reason=用法：--sniff <输入文件> <输出文件> "

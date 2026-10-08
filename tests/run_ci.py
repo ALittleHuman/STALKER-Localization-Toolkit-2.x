@@ -3111,6 +3111,38 @@ def step_doc_citations(release: bool) -> None:
         fail("有判据引用了不存在的文档（见上）")
 
 
+def step_patch_identify(release: bool) -> None:
+    """插件改装 P16-1b 判定半：二进制补丁识别与 **1.x 金标准逐条对拍**。
+
+    为什么单开一步：引擎侧的 PE 布局守卫 + 逐项判态 + 指纹状态机是从 1.x
+    `engine_utf8_patch.py` 逐条搬的，"搬对了没有"只能拿 1.x 自己的输出当尺子。
+    1.x 插件住在仓库外 ⇒ 由一次性引导脚本把它的结果导出成**仓库内金标准**
+    （`tests/golden_patch/identify_golden.json`，含 1.x 脚本 sha256 与三份样本 sha256 ⇒ 防漂移）。
+    判据：结论 key / 五个汇总计数 / `thunk_intact` / `cave_all_zero` / **逐项判态**逐条相等；
+    `diff_bytes` 只打印、**不参与判定**（用户红线：v3 与 v4 该数完全相同）。
+    三份样本在仓库外 ⇒ 缺件走 `prereq`。退出码：0=绿、1=判据不成立、2=样本缺件。
+    """
+    say("[patch-identify] P16-1b 判定半：与 1.x 金标准逐条对拍（原件 / v2 缺陷 / v4 正确）")
+    script = ROOT / "tests" / "check_patch_identify.py"
+    if not require_repo_file(script, "二进制补丁识别判据"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script), str(CLI_EXE)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if (s.startswith("PATCH-IDENT") or s.startswith("✓ ") or s.startswith("✗ ")
+                or s.startswith("⚠ ") or s.startswith("参考") or s.startswith("金标准来源")):
+            say("  " + s)
+    if rc == 0 and "PATCH-IDENT ok" in out:
+        ok("三份样本与 1.x 金标准逐条相等（结论 / 逐项判态 / 汇总计数 / thunk / 空闲区）")
+    elif rc == 2:
+        prereq("二进制补丁样本", "样本缺件（外部前提；三份都在仓库外）", release)
+    else:
+        fail("二进制补丁识别与金标准不等（见上）")
+
+
 def step_text_plugin(release: bool) -> None:
     """插件改装 P10b：**第三页（文本提取/改写）的收口判据**。
 
@@ -4118,6 +4150,8 @@ STEPS = [
     ("abi-closure", step_abi_closure),
     # ★★ 2026-10-09（P16-0b）：判据引用的文档必须存在
     ("doc-cite", step_doc_citations),
+    # ★★ 2026-10-09（P16-1b 判定半）：二进制补丁识别与 1.x 金标准逐条对拍
+    ("patch-identify", step_patch_identify),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),

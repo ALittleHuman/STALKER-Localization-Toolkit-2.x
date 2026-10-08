@@ -37,6 +37,8 @@ add_library(xrkit_engine STATIC
   # ★★ P7b：宿主服务门面（偏好读写 / exe 目录 / 系统字体目录；只依赖引擎）
   plugin/host_facade.cpp
   plugin/host_facade_impl.cpp
+  # ★★ P16-1b：二进制补丁的**通用机器**（判定半；表由调用方给，见 include/xrkit/engine/patch/patch.h）
+  patch/patch.cpp
   font/charset.cpp
   font/cjk_state.cpp
   font/glyph.cpp
