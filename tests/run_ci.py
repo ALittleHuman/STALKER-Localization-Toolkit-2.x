@@ -3234,6 +3234,149 @@ def step_video_plugin(release: bool) -> None:
        % (len(cases), len(probe_files)))
 
 
+
+def step_fs_plugin(release: bool) -> None:
+    """插件改装 P15-1b：**第六页（文件系统）的收口判据**。
+
+    判据：
+      ① **解包对拍**：参照 = `xrkit_cli --unpack-package <包> <outA> <格式>`（内置 C++ 页走的
+         就是这条引擎路）；插件 = `--py-plugin-call plugins --plugin fs_page.py`
+         （headless `{"action":"unpack"}`）⇒ **文件表 + 每文件 sha256 全等**且比较数 ≥1；
+      ② **封包往返**（跨实现）：插件 headless `{"action":"pack"}` 封 SquashFS ⇒
+         **CLI 解回来** ⇒ 与源目录逐字节一致；
+      ③ **条目/预览**：插件 `list` 无错误且条数 ≥1；`preview` 条数 ≥ `list` 条数
+         （自带壳的包，预览要补出壳那一层）。
+    """
+    say("[fs-plugin] 插件改装 P15-1b：文件系统页（插件）与 CLI 参照逐字节一致")
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "缺失（先跑 build 步）", release)
+        return
+    plugin = ROOT / "plugins" / "fs_page.py"
+    if not plugin.is_file():
+        prereq("fs 插件 plugins/fs_page.py", "缺失", release)
+        return
+    golden = ROOT / "tests" / "golden" / "db" / "synth_xdb.db"
+    if not golden.is_file():
+        prereq("金样本包 tests/golden/db/synth_xdb.db", "缺失", release)
+        return
+
+    work = ROOT / "build" / "fs_plugin"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    out_ref = work / "ref"
+    out_plug = work / "plug"
+    out_ref.mkdir(parents=True)
+    out_plug.mkdir(parents=True)
+
+    # ── ① 解包对拍 ─────────────────────────────────────────────────────────
+    rc_ref, out_ref_log = run([str(CLI_EXE), "--unpack-package", str(golden), str(out_ref), "xdb"],
+                              timeout=900)
+    payload = json.dumps({"action": "unpack", "packages": [str(golden)],
+                          "out_root": str(out_plug), "format_key": "xdb"},
+                         ensure_ascii=False)
+    rc_plug, out_plug_log = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
+                                 "--plugin", "fs_page.py", payload], timeout=900)
+
+    def digest(root: Path) -> dict:
+        out = {}
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                out[str(path.relative_to(root)).replace("\\", "/")] = hashlib.sha256(
+                    path.read_bytes()).hexdigest()
+        return out
+
+    ref_tree = digest(out_ref)
+    plug_tree = digest(out_plug)
+    compared = sum(1 for key in ref_tree if key in plug_tree and ref_tree[key] == plug_tree[key])
+    only_ref = sorted(set(ref_tree) - set(plug_tree))
+    only_plug = sorted(set(plug_tree) - set(ref_tree))
+    differing = sorted(k for k in set(ref_tree) & set(plug_tree) if ref_tree[k] != plug_tree[k])
+    say("  解包对拍：参照 %d 个文件 / 插件 %d 个文件 ⇒ 逐字节一致 %d 个"
+        % (len(ref_tree), len(plug_tree), compared))
+    problems = []
+    if rc_ref != 0 or rc_plug != 0:
+        problems.append("命令没跑成（参照 rc=%d / 插件 rc=%d）" % (rc_ref, rc_plug))
+    if compared < 1:
+        problems.append("一个文件都没比上（空集不算通过）")
+    if only_ref:
+        problems.append("参照多出的文件：%s" % ", ".join(only_ref[:3]))
+    if only_plug:
+        problems.append("插件多出的文件：%s" % ", ".join(only_plug[:3]))
+    for key in differing[:3]:
+        problems.append("内容不同：%s" % key)
+
+    # ── ② 封包往返（插件封 ⇒ CLI 解）────────────────────────────────────────
+    src = work / "src"
+    (src / "sub").mkdir(parents=True)
+    (src / "a.txt").write_bytes(b"hello")
+    (src / "sub" / "b.bin").write_bytes(bytes(range(256)) * 4)
+    items = [{"path": "a.txt", "is_dir": False, "source_path": str(src / "a.txt")},
+             {"path": "sub/b.bin", "is_dir": False, "source_path": str(src / "sub" / "b.bin")}]
+    packed = work / "packed.sqfs"
+    pack_payload = json.dumps({"action": "pack", "out_path": str(packed), "format_key": "sqfs",
+                               "items": items}, ensure_ascii=False)
+    rc_pack, pack_log = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
+                             "--plugin", "fs_page.py", pack_payload], timeout=900)
+    pack_ok = False
+    for raw in pack_log.splitlines():
+        s = raw.strip()
+        if s.startswith("PYPLUGINCALL plugin=") and " result=" in s:
+            try:
+                pack_ok = bool(json.loads(s.split(" result=", 1)[1]).get("ok"))
+            except ValueError:
+                pack_ok = False
+    out_back = work / "back"
+    out_back.mkdir(parents=True, exist_ok=True)
+    rc_back, back_log = run([str(CLI_EXE), "--unpack-package", str(packed), str(out_back)],
+                            timeout=900)
+    # ★ 落点带**包名壳**（不自带壳的包 ⇒ `unpack_target_dir` 会加一层 `<包名>/`）
+    shell = Path(packed).stem
+    back_tree = {}
+    for key, value in digest(out_back).items():
+        back_tree[key[len(shell) + 1:] if key.startswith(shell + "/") else key] = value
+    want = {"a.txt": hashlib.sha256((src / "a.txt").read_bytes()).hexdigest(),
+            "sub/b.bin": hashlib.sha256((src / "sub" / "b.bin").read_bytes()).hexdigest()}
+    back_hits = sum(1 for key, value in want.items() if back_tree.get(key) == value)
+    say("  封包往返：插件封包 ok=%s / CLI 解回逐字节一致 %d/%d" % (pack_ok, back_hits, len(want)))
+    if not pack_ok or rc_pack != 0:
+        problems.append("插件封包没成功（rc=%d）" % rc_pack)
+    if rc_back != 0:
+        problems.append("CLI 解回失败（rc=%d）" % rc_back)
+    if back_hits != len(want):
+        problems.append("封包往返内容不一致（一致 %d/%d）" % (back_hits, len(want)))
+
+    # ── ③ 条目 / 预览 ───────────────────────────────────────────────────────
+    counts = {}
+    for action in ("list", "preview"):
+        call = json.dumps({"action": action, "path": str(golden), "format_key": "xdb"},
+                          ensure_ascii=False)
+        rc, log = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
+                       "--plugin", "fs_page.py", call], timeout=600)
+        counts[action] = None
+        for raw in log.splitlines():
+            s = raw.strip()
+            if s.startswith("PYPLUGINCALL plugin=") and " result=" in s:
+                try:
+                    payload_out = json.loads(s.split(" result=", 1)[1])
+                    counts[action] = int(payload_out.get("count", -1))
+                    if action == "list" and payload_out.get("error"):
+                        problems.append("list 报错：%s" % payload_out["error"])
+                except (ValueError, TypeError):
+                    pass
+    say("  条目 list=%s / preview=%s" % (counts["list"], counts["preview"]))
+    if not counts["list"] or counts["list"] < 1:
+        problems.append("包内条目一个都没列出来（空集不算通过）")
+    if counts["preview"] is None or counts["preview"] < (counts["list"] or 0):
+        problems.append("预览条数少于条目数（%s < %s）—— 自带壳的包，预览要补出壳那一层"
+                        % (counts["preview"], counts["list"]))
+
+    if problems:
+        fail("fs 插件判据不成立（%d 处）：%s" % (len(problems), "；".join(problems)))
+    else:
+        ok("文件系统页（插件）：解包逐字节一致（%d 个文件）· 封包往返 %d/%d · 条目/预览 %s/%s"
+           % (compared, back_hits, len(want), counts["list"], counts["preview"]))
+
+
 def step_xml_plugin(release: bool) -> None:
     """插件改装 P11b-2：**第四页（XML 对比）的收口判据**。
 
@@ -3817,6 +3960,7 @@ STEPS = [
     ("text-plugin", step_text_plugin),
     # ★★ 2026-10-08（插件改装 P11b-2）：**第四页收口** —— XML 对比插件页。
     ("xml-plugin", step_xml_plugin),
+    ("fs-plugin", step_fs_plugin),
     # ★★ 2026-10-08（插件改装 P12c-3）：**第五页收口** —— 视频转换插件页。
     ("video-plugin", step_video_plugin),
     # ★★ 2026-10-08（P9b）：门面顺序核对（类型相同的相邻字段错了编译器不报）
