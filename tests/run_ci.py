@@ -3143,6 +3143,39 @@ def step_patch_identify(release: bool) -> None:
         fail("二进制补丁识别与金标准不等（见上）")
 
 
+def step_patch_apply(release: bool) -> None:
+    """插件改装 P16-1b 写盘半：产物**逐字节**等于 v4 参照 ＋ 四条拒绝路径。
+
+    判据：① 产物 sha256 == 金标准里 `v4_correct` 样本的 sha256（整文件哈希相等 ⇒ 逐字节相同）
+    且字节数相等；② 跑完所有用例后**输入 sha256 未变**；③ 输出已存在且未 `--force` ⇒ `refused=exists`；
+    ④ 同一条加 `--force` ⇒ 成功；⑤ 输出 == 输入 ⇒ `refused=input`（**哪怕给了 --force**）；
+    ⑥ 归档 v2 缺陷样本当输入 ⇒ 被 `preserve` 守卫拦下并点名 `keep.thunk`，**且不产出任何文件**
+    （零静默 + 不留半成品）；⑦ 已打过的 v4 参照当输入 ⇒ 拦下并点出"已是终态"。
+    ★ 产物只写 `%TEMP%`（绝不在仓库里写产物）；`written_bytes` 只打印、不参与判定。
+    退出码：0=绿、1=判据不成立、2=样本缺件。
+    """
+    say("[patch-apply] P16-1b 写盘半：产物逐字节 == v4 参照 + 拒绝路径 + 输入不可变")
+    script = ROOT / "tests" / "check_patch_apply.py"
+    if not require_repo_file(script, "二进制补丁写出判据"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script), str(CLI_EXE)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if (s.startswith("PATCH-APPLY") or s.startswith("✓ ") or s.startswith("✗ ")
+                or s.startswith("⚠ ")):
+            say("  " + s)
+    if rc == 0 and "PATCH-APPLY ok" in out:
+        ok("产物逐字节等于 v4 参照；输出已存在 / 输出==输入 / 缺陷输入 / 已打过 四条路径都按预期拒绝，"
+           "输入未被改动")
+    elif rc == 2:
+        prereq("二进制补丁样本", "样本缺件（外部前提；原件在仓库外）", release)
+    else:
+        fail("二进制补丁写出有判据不成立（见上）")
+
+
 def step_text_plugin(release: bool) -> None:
     """插件改装 P10b：**第三页（文本提取/改写）的收口判据**。
 
@@ -4152,6 +4185,8 @@ STEPS = [
     ("doc-cite", step_doc_citations),
     # ★★ 2026-10-09（P16-1b 判定半）：二进制补丁识别与 1.x 金标准逐条对拍
     ("patch-identify", step_patch_identify),
+    # ★★ 2026-10-09（P16-1b 写盘半）：产物逐字节 == v4 参照 + 四条拒绝路径
+    ("patch-apply", step_patch_apply),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),

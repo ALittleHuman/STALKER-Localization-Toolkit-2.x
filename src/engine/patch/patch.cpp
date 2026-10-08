@@ -1,9 +1,11 @@
 #include "xrkit/engine/patch/patch.h"
 
+#include "xrkit/core/atomic_write.h"
 #include "xrkit/core/path.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <map>
 
@@ -618,6 +620,425 @@ PatchIdentifyResult identify_file(const std::string& path, const std::vector<Pat
     }
     std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     return identify_buffer(data, sites);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// P16-1b-2：写盘半（守卫链 → 生成 → 后置自检 → 原子写）
+// ══════════════════════════════════════════════════════════════════════════
+namespace {
+
+std::string hex_byte(int value) {
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "0x%02X", value & 0xFF);
+    return buf;
+}
+
+std::string hex_off(uint64_t value) {
+    char buf[24];
+    std::snprintf(buf, sizeof(buf), "0x%08llX", static_cast<unsigned long long>(value));
+    return buf;
+}
+
+// 空闲区守卫的第二步：区间起点是否落在前面某条指令的跨度内。
+// ★ 只看"全零"会把 `48 FF 25 F2 10 00 00` 这条 jmp 的 disp32 尾巴（最后两字节就是 00）
+//   当成空闲填充 —— v1/v2/v3 正是据此认定 0xED575C 空闲，退出时跳进未映射地址。
+struct SpanConflict {
+    bool found = false;
+    uint64_t scan_off = 0;
+    int64_t ins_start = 0;
+    int64_t ins_end = 0;
+    std::string desc;
+    std::string seq_hex;
+};
+
+SpanConflict cave_span_conflict(const std::string& data, uint64_t start, uint64_t end) {
+    SpanConflict out;
+    if (end <= start) return out;
+    static const unsigned char kOp1[] = {0xFF, 0x25};
+    static const unsigned char kOp2[] = {0x48, 0x8D, 0x0D};
+    static const unsigned char kOp3[] = {0xE8};
+    static const unsigned char kOp4[] = {0xE9};
+    struct Op {
+        const unsigned char* seq;
+        size_t seq_len;
+        size_t ins_len;
+        const char* desc;
+    };
+    static const Op kOps[] = {
+        {kOp1, 2, 6, "jmp qword ptr [rip+disp32]"},
+        {kOp2, 3, 7, "lea rcx,[rip+disp32]"},
+        {kOp3, 1, 5, "call rel32"},
+        {kOp4, 1, 5, "jmp rel32"},
+    };
+    const uint64_t kBackwardScan = 8;
+    const uint64_t from = start > kBackwardScan ? start - kBackwardScan : 0;
+    for (uint64_t off = from; off < start; ++off) {
+        for (const Op& op : kOps) {
+            const std::string want(reinterpret_cast<const char*>(op.seq), op.seq_len);
+            if (slice(data, off, op.seq_len) != want) continue;
+            int64_t ins_start = static_cast<int64_t>(off);
+            int64_t ins_end = static_cast<int64_t>(off + op.ins_len - 1);
+            // REX.W 前缀是指令本体的一部分：真正的凶手是 `48 FF 25 …` 这条 7 字节 jmp，
+            // 只认 `FF 25` 会把起点算晚 1 字节，跨度判定就会漏掉边界情况。
+            if (op.seq == kOp1 && off > 0 &&
+                static_cast<unsigned char>(data[static_cast<size_t>(off - 1)]) == 0x48) {
+                ins_start = static_cast<int64_t>(off) - 1;
+            }
+            if (ins_start <= static_cast<int64_t>(start) &&
+                static_cast<int64_t>(start) <= ins_end) {
+                out.found = true;
+                out.scan_off = off;
+                out.ins_start = ins_start;
+                out.ins_end = ins_end;
+                out.desc = op.desc;
+                out.seq_hex = bytes_to_hex(want);
+                return out;
+            }
+        }
+    }
+    return out;
+}
+
+// 首个差异字节（给守卫失败的报告用；返回 base+i、期望字节、实得字节；越界用 -1 表示）
+struct FirstDiff {
+    uint64_t off = 0;
+    int want = -1;
+    int got = -1;
+};
+
+FirstDiff first_diff_byte(const std::string& want, const std::string& got, uint64_t base) {
+    FirstDiff out;
+    const size_t n = std::min(want.size(), got.size());
+    for (size_t i = 0; i < n; ++i) {
+        if (want[i] != got[i]) {
+            out.off = base + i;
+            out.want = static_cast<unsigned char>(want[i]);
+            out.got = static_cast<unsigned char>(got[i]);
+            return out;
+        }
+    }
+    out.off = base + n;
+    if (got.size() < want.size()) {
+        out.want = static_cast<unsigned char>(want[n]);
+        out.got = -1;
+    } else if (want.size() < got.size()) {
+        out.want = -1;
+        out.got = static_cast<unsigned char>(got[n]);
+    }
+    return out;
+}
+
+// 按 `E8 rel32` 算出该 call 项的等长替换字节（rel32 在 RVA 空间里算）
+std::string computed_call_bytes(const PatchSite& site,
+                                const std::map<std::string, const PatchSite*>& helpers,
+                                int64_t delta, bool& ok, std::string& err) {
+    ok = false;
+    const auto it = helpers.find(site.helper);
+    if (it == helpers.end()) {
+        err = "call 项 " + site.id + " 指向的 helper「" + site.helper + "」不在目录里";
+        return std::string();
+    }
+    const int64_t call_rva = static_cast<int64_t>(site.offset) + delta;
+    const int64_t target_rva = static_cast<int64_t>(it->second->offset) + delta;
+    const int64_t rel = target_rva - (call_rva + 5);
+    if (rel < INT32_MIN || rel > INT32_MAX) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "rel32 越界: 0x%llX", static_cast<unsigned long long>(rel));
+        err = buf;
+        return std::string();
+    }
+    const std::string expect = hex_to_bytes(site.expect_hex);
+    const std::string tail = hex_to_bytes(site.tail_hex);
+    std::string body;
+    // ★ 必须 push 一个**字节** 0xE8；写成 `std::string body = "E8"` 会得到两个 ASCII 字符
+    //   `0x45 0x38`（自洽校验当场报"算得 45 38 28 8E…，目录记录的是 E8 28 8E…"）。
+    body.push_back(static_cast<char>(0xE8));
+    body.push_back(static_cast<char>(rel & 0xFF));
+    body.push_back(static_cast<char>((rel >> 8) & 0xFF));
+    body.push_back(static_cast<char>((rel >> 16) & 0xFF));
+    body.push_back(static_cast<char>((rel >> 24) & 0xFF));
+    if (expect.size() < body.size() + tail.size()) {
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "调用点 0x%08llX 放不下 call+tail",
+                      static_cast<unsigned long long>(site.offset));
+        err = buf;
+        return std::string();
+    }
+    const size_t pad = expect.size() - body.size() - tail.size();
+    ok = true;   // ★ 修前漏了这一句：成功路径不进任何 err 分支，`ok` 一直留在开头的 false
+    return body + tail + std::string(pad, '\x90');
+}
+
+}  // namespace
+
+PatchBuildResult build_patched(const std::string& data, const std::vector<PatchSite>& sites) {
+    PatchBuildResult r;
+    if (data.empty()) {
+        r.reason = "输入为空";
+        return r;
+    }
+    if (sites.empty()) {
+        r.reason = "补丁目录为空：没有任何收录项，拒绝生成（fail-closed）";
+        return r;
+    }
+    uint64_t tlo = 0, thi = 0;
+    touch_span(sites, tlo, thi);
+    if (data.size() <= thi) {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "输入太短：只有 %zu 字节，而补丁最后一个目标偏移是 0x%08llX",
+                      data.size(), static_cast<unsigned long long>(thi));
+        r.reason = buf;
+        return r;
+    }
+
+    // 守卫 ①：PE 布局（含"目标偏移都落在 .text 内"）
+    const PatchLayout layout = parse_layout_buffer(data, sites);
+    if (!layout.hard_ok) {
+        r.reason = "PE 布局守卫不通过：" + layout.note;
+        return r;
+    }
+    r.notes.push_back("PE 布局守卫: 通过（" + layout.note + "）");
+    const int64_t delta = static_cast<int64_t>(layout.text_delta);
+
+    // 守卫 ②：preserve 项 —— 不许动的地方，输入里本来就该是完好的
+    const std::vector<const PatchSite*> preserves = sites_of(sites, "preserve");
+    for (const PatchSite* s : preserves) {
+        const std::string expect = hex_to_bytes(s->expect_hex);
+        const std::string got = slice(data, s->offset, expect.size());
+        if (got != expect) {
+            r.reason = "preserve 守卫不通过（" + s->id + " " + hex_off(s->offset) +
+                       "）：这里要求逐字节保持 " + bytes_to_hex(expect) + "，输入的实为 " +
+                       hex_short(got) +
+                       " —— 该输入不是本构建原版（或已被缺陷版 v1/v2/v3 破坏）";
+            return r;
+        }
+    }
+    if (!preserves.empty()) {
+        r.notes.push_back("preserve 守卫: 通过（" + std::to_string(preserves.size()) +
+                          " 项在输入里本来就完好）");
+    }
+
+    // 守卫 ③④：逐项 expect + 周边锚
+    for (const PatchSite& s : sites) {
+        const std::string expect = hex_to_bytes(s.expect_hex);
+        const std::string patched = hex_to_bytes(s.patched_hex);
+        const std::string got = slice(data, s.offset, expect.size());
+        if (got != expect) {
+            const FirstDiff fd = first_diff_byte(expect, got, s.offset);
+            const bool already = (got == patched);
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                          "逐项守卫不通过（%s %s，%s）：期望原字节 %s，实为 %s；"
+                          "首个差异字节在 %s（期望 %s，实为 %s）",
+                          s.id.c_str(), hex_off(s.offset).c_str(), s.kind.c_str(),
+                          hex_short(expect).c_str(), hex_short(got).c_str(),
+                          hex_off(fd.off).c_str(),
+                          fd.want < 0 ? "越界" : hex_byte(fd.want).c_str(),
+                          fd.got < 0 ? "越界" : hex_byte(fd.got).c_str());
+            r.reason = buf;
+            if (already) r.reason += "（该处已是终态：输入不是原版，或已经打过补丁）";
+            return r;
+        }
+        const std::string problem = context_problem(s, data);
+        if (!problem.empty()) {
+            r.reason = "逐项守卫不通过（" + s.id + " " + hex_off(s.offset) + "）：" + problem +
+                       " —— 锚不符说明这份输入在该处不是我们收录的那一段（换了构建，或位置漂了），"
+                       "拒绝生成";
+            return r;
+        }
+    }
+    r.notes.push_back("逐项守卫: 通过（" + std::to_string(sites.size()) +
+                      " 项 expect + context 全部命中）");
+
+    // 守卫 ⑤：helper 占用的空闲区 —— 全零 + 起点不落在前一条指令的跨度内
+    if (!sites_of(sites, "helper").empty()) {
+        uint64_t cs = 0, ce = 0;
+        cave_span(sites, cs, ce);
+        const std::string cave = slice(data, cs, static_cast<size_t>(ce - cs));
+        bool all_zero = (cave.size() == static_cast<size_t>(ce - cs));
+        uint64_t bad = cs;
+        if (all_zero) {
+            for (size_t i = 0; i < cave.size(); ++i) {
+                if (cave[i] != '\0') {
+                    all_zero = false;
+                    bad = cs + i;
+                    break;
+                }
+            }
+        }
+        if (!all_zero) {
+            char buf[192];
+            std::snprintf(buf, sizeof(buf),
+                          "空闲区守卫不通过：0x%08llX..0x%08llX 不是全零（首个非零字节 "
+                          "0x%08llX = 0x%02X）——这里已经被别的东西占用，不能把 helper 放进去",
+                          static_cast<unsigned long long>(cs),
+                          static_cast<unsigned long long>(ce - 1),
+                          static_cast<unsigned long long>(bad),
+                          static_cast<unsigned char>(slice(data, bad, 1)[0]));
+            r.reason = buf;
+            return r;
+        }
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "空闲区守卫(全零): 通过（0x%08llX..0x%08llX 全为 0x00）",
+                      static_cast<unsigned long long>(cs),
+                      static_cast<unsigned long long>(ce - 1));
+        r.notes.push_back(buf);
+        const SpanConflict conflict = cave_span_conflict(data, cs, ce);
+        if (conflict.found) {
+            char buf2[320];
+            std::snprintf(buf2, sizeof(buf2),
+                          "空闲区守卫不通过：目标区间起点 0x%08llX 落在前面一条指令的跨度内 —— "
+                          "0x%08llX 处匹配 `%s`（%s），该指令覆盖 0x%08llX..0x%08llX。"
+                          "区间起点必须恰好落在某条指令之后，否则等长改写会改坏这条指令"
+                          "（v2/v3 退出崩溃即由此而来）",
+                          static_cast<unsigned long long>(cs),
+                          static_cast<unsigned long long>(conflict.scan_off),
+                          conflict.seq_hex.c_str(), conflict.desc.c_str(),
+                          static_cast<unsigned long long>(conflict.ins_start),
+                          static_cast<unsigned long long>(conflict.ins_end));
+            r.reason = buf2;
+            return r;
+        }
+        r.notes.push_back("空闲区守卫(不落在前一条指令跨度内): 通过");
+    }
+
+    // 守卫 ⑥：call 项自洽 —— 按 RVA 现算的字节必须逐字节等于目录记录的 patched
+    const std::map<std::string, const PatchSite*> helpers = helper_map(sites);
+    const std::vector<const PatchSite*> calls = sites_of(sites, "call");
+    for (const PatchSite* s : calls) {
+        bool ok = false;
+        std::string err;
+        const std::string want = computed_call_bytes(*s, helpers, delta, ok, err);
+        if (!ok) {
+            r.reason = "自洽校验失败（" + s->id + "）：" + err;
+            return r;
+        }
+        const std::string recorded = hex_to_bytes(s->patched_hex);
+        if (want != recorded) {
+            r.reason = "自洽校验失败（" + s->id + " " + hex_off(s->offset) + "）：按 RVA 算得 " +
+                       bytes_to_hex(want) + "，目录记录的是 " + bytes_to_hex(recorded) +
+                       " —— 目录或 RVA 假设不可信，拒绝生成";
+            return r;
+        }
+    }
+    r.notes.push_back("自洽校验: 通过（" + std::to_string(calls.size()) +
+                      " 个 call 项按 RVA 算出的字节 == 目录记录）");
+
+    // ── 生成（逐目录项）──
+    std::string out = data;
+    for (const PatchSite& s : sites) {
+        std::string want = hex_to_bytes(s.patched_hex);
+        if (s.kind == "call") {
+            bool ok = false;
+            std::string err;
+            want = computed_call_bytes(s, helpers, delta, ok, err);
+            if (!ok) {
+                r.reason = "生成失败（" + s.id + "）：" + err;
+                return r;
+            }
+        }
+        if (s.offset + want.size() > out.size()) {
+            r.reason = "生成失败（" + s.id + "）：写入范围越界";
+            return r;
+        }
+        out.replace(static_cast<size_t>(s.offset), want.size(), want);
+    }
+
+    // ── 后置自检（写出之前）──
+    for (const PatchSite& s : sites) {
+        const std::string want = hex_to_bytes(s.patched_hex);
+        const std::string got = slice(out, s.offset, want.size());
+        if (got != want) {
+            r.reason = "后置自检失败：" + s.id + "（" + hex_off(s.offset) +
+                       "）的终态不是 patched（期望 " + hex_short(want) + "，实为 " +
+                       hex_short(got) + "）";
+            return r;
+        }
+    }
+    // 实际改动集合 == 目录声明的写入集合（**与字节数无关**的比较）
+    //   · 目录声明的范围内：允许变（变了才计数）；
+    //   · 范围之外：**一个字节都不许变**（有变就是"打错位置/多改"）。
+    std::vector<std::pair<uint64_t, uint64_t>> ranges;
+    ranges.reserve(sites.size());
+    for (const PatchSite& s : sites) {
+        const uint64_t len = hex_to_bytes(s.patched_hex).size();
+        ranges.emplace_back(s.offset, s.offset + len);
+    }
+    std::sort(ranges.begin(), ranges.end());
+    uint64_t changed = 0;
+    size_t ri = 0;
+    for (uint64_t i = 0; i < data.size(); ++i) {
+        while (ri < ranges.size() && ranges[ri].second <= i) ++ri;
+        const bool inside = (ri < ranges.size() && ranges[ri].first <= i &&
+                             i < ranges[ri].second);
+        if (inside) {
+            if (data[static_cast<size_t>(i)] != out[static_cast<size_t>(i)]) ++changed;
+        } else if (data[static_cast<size_t>(i)] != out[static_cast<size_t>(i)]) {
+            r.reason = "后置自检失败：目录声明之外的第 " + hex_off(i) +
+                       " 字节被改动了（实际改动集合 != 目录声明的写入集合）";
+            return r;
+        }
+    }
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+                  "后置自检: 通过（%zu/%zu 项终态逐字节吻合、preserve 项未变、"
+                  "改动集合 == 目录声明；本次写入 %llu 个字节，这个数只是参考，判定不看它）",
+                  sites.size(), sites.size(), static_cast<unsigned long long>(changed));
+    r.notes.push_back(buf);
+    r.ok = true;
+    r.patched = out;
+    r.written_bytes = changed;
+    return r;
+}
+
+PatchBuildResult build_patched_file(const std::string& src, const std::vector<PatchSite>& sites) {
+    std::ifstream in(xrkit::core::path_from_utf8(src), std::ios::binary);
+    if (!in) {
+        PatchBuildResult r;
+        r.reason = "读不到文件：" + src;
+        return r;
+    }
+    const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return build_patched(data, sites);
+}
+
+PatchApplyResult apply_patch(const std::string& src, const std::string& out,
+                             const std::vector<PatchSite>& sites, bool force) {
+    PatchApplyResult r;
+    r.out_path = out;
+    const PatchBuildResult built = build_patched_file(src, sites);
+    r.notes = built.notes;
+    r.written_bytes = built.written_bytes;
+    if (!built.ok) {
+        r.reason = built.reason;
+        return r;
+    }
+    std::error_code ec;
+    const std::filesystem::path src_abs = std::filesystem::absolute(xrkit::core::path_from_utf8(src), ec);
+    const std::filesystem::path out_abs = std::filesystem::absolute(xrkit::core::path_from_utf8(out), ec);
+    r.out_path = xrkit::core::path_to_utf8(out_abs);
+    // 绝不覆盖输入（哪怕调用方显式要求）
+    if (src_abs == out_abs) {
+        r.refused_input_is_output = true;
+        r.reason = "拒绝：输出与输入是同一个文件 —— 本工具永不覆盖输入";
+        return r;
+    }
+    if (std::filesystem::exists(out_abs) && !force) {
+        r.refused_output_exists = true;
+        r.reason = "拒绝：输出文件已存在 " + r.out_path + " —— 需要明确要求覆盖";
+        return r;
+    }
+    // 原子写：复用 `core::write_file_atomic`（同目录 .part → 自校验 → 同盘 rename）
+    // ★ 不另写一份：本仓的纪律是"这条纪律写两份就一定会有一份先腐坏"。
+    std::vector<uint8_t> payload(built.patched.begin(), built.patched.end());
+    std::string err;
+    if (!xrkit::core::write_file_atomic(xrkit::core::path_to_utf8(out_abs), payload, true, err)) {
+        r.reason = "写出失败：" + err;
+        return r;
+    }
+    r.ok = true;
+    return r;
 }
 
 }  // namespace xrkit::engine::patch

@@ -120,4 +120,42 @@ PatchIdentifyResult identify_buffer(const std::string& data, const std::vector<P
 // 从文件读入再识别（读不到/太短 ⇒ ok=false + 可见理由）
 PatchIdentifyResult identify_file(const std::string& path, const std::vector<PatchSite>& sites);
 
+// ── P16-1b-2 写盘半 ─────────────────────────────────────────────────────
+// 「生成」＝ 纯内存跑完**全部写前守卫** → 生成补丁镜像 → 做后置自检。
+// ★ 任何一条守卫不满足都只返回 ok=false + 逐条 reason/notes，**不产生任何副作用**。
+//
+// 守卫链（全部沿目录逐项走 ⇒ 收录一处就自动多守一处）：
+//   ① PE 布局（节表 + 目标偏移都落在 .text 原始数据内 + 目录项显式 layout 声明）
+//   ② preserve 项（不许动的地方）在输入里本来就完好
+//   ③ 每一项的 expect 逐字节命中（"按需打补丁"的前提；已是终态要单独说明）
+//   ④ 每一项声明的周边锚命中（防单字节碰撞 / 防打错位置）
+//   ⑤ helper 占的空闲区全零，**且起点不落在前一条指令的跨度内**（v1/v2/v3 的翻车点）
+//   ⑥ call 项自洽：按 RVA 算出的 `E8 rel32` 必须逐字节等于目录记录的 patched
+// 后置自检（写出之前，**独立于定位方式**，是防"打错位置"的最终兜底）：
+//   ⑦ 逐项终态 == patched 且实际改动集合 == 目录声明的写入集合
+struct PatchBuildResult {
+    bool ok = false;
+    std::string reason;
+    std::vector<std::string> notes;   // 逐条守卫结论（零静默：过了哪几条要看得见）
+    std::string patched;              // 内存产物（只有 ok=true 才有）
+    uint64_t written_bytes = 0;       // 参考值：这次实际改动的字节数（**判定不看它**）
+};
+
+struct PatchApplyResult {
+    bool ok = false;
+    std::string reason;
+    std::string out_path;
+    std::vector<std::string> notes;
+    uint64_t written_bytes = 0;
+    bool refused_input_is_output = false;  // 输出 == 输入 ⇒ 拒绝（本工具永不覆盖输入）
+    bool refused_output_exists = false;    // 输出已存在且未 force ⇒ 拒绝（前端据此问"要覆盖吗"）
+};
+
+PatchBuildResult build_patched(const std::string& data, const std::vector<PatchSite>& sites);
+PatchBuildResult build_patched_file(const std::string& src, const std::vector<PatchSite>& sites);
+// 从**原版**生成补丁副本：绝不覆盖输入；输出已存在且 !force ⇒ 拒绝；
+// 写出走 `core::write_file_atomic`（同目录 .part → 自校验 → 同盘 rename）⇒ 中途失败**不留半成品**。
+PatchApplyResult apply_patch(const std::string& src, const std::string& out,
+                             const std::vector<PatchSite>& sites, bool force);
+
 }  // namespace xrkit::engine::patch

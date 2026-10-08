@@ -4564,6 +4564,47 @@ int run_cli(const std::vector<std::string>& args) {
         std::cout << "PATCH verdict_detail " << r.detail << "\n";
         return kExitOk;
     }
+    if (action == "--patch-apply") {
+        if (operands.size() < 3) {
+            std::cerr << "PATCH-APPLY error reason=用法：--patch-apply <原版exe> <输出exe> "
+                         "<站点表文件> [--force]\n";
+            return kExitUsage;
+        }
+        bool force = false;
+        for (const std::string& a : args) {
+            if (a == "--force") force = true;
+        }
+        std::ifstream site_in(path_from_utf8(operands[2]), std::ios::binary);
+        if (!site_in) {
+            std::cout << "PATCH-APPLY fail refused=none reason=读不到站点表：" << operands[2]
+                      << "\n";
+            return kExitFail;
+        }
+        const std::string site_text((std::istreambuf_iterator<char>(site_in)),
+                                    std::istreambuf_iterator<char>());
+        std::vector<xrkit::engine::patch::PatchSite> sites;
+        std::string perr;
+        if (!parse_patch_sites(site_text, sites, perr)) {
+            std::cout << "PATCH-APPLY fail refused=none reason=站点表解析失败：" << perr << "\n";
+            return kExitFail;
+        }
+        const xrkit::engine::patch::PatchApplyResult r =
+            xrkit::engine::patch::apply_patch(operands[0], operands[1], sites, force);
+        for (const std::string& note : r.notes) {
+            std::cout << "PATCH-APPLY note " << note << "\n";
+        }
+        if (!r.ok) {
+            std::cout << "PATCH-APPLY fail refused="
+                      << (r.refused_input_is_output ? "input"
+                                                    : (r.refused_output_exists ? "exists"
+                                                                               : "none"))
+                      << " reason=" << r.reason << "\n";
+            return kExitFail;
+        }
+        std::cout << "PATCH-APPLY ok out=" << r.out_path
+                  << " written_bytes=" << r.written_bytes << "\n";
+        return kExitOk;
+    }
     if (action == "--sniff") {
         if (operands.size() < 2) {
             std::cerr << "SNIFF error reason=用法：--sniff <输入文件> <输出文件> "
