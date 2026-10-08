@@ -60,7 +60,11 @@ struct HostFacade {
     std::function<std::string()> app_dir;
     // 系统字体目录（唯一一份：内置页与插件共用）
     std::function<std::vector<std::string>()> system_font_dirs;
-    std::function<ProcessRunResult(const ProcessRunOptions&)> host_run_process;
+    // ★★ P16-0：字段名与三处登记名（`kMethodNames` / `has_impl` / pybind 的 `.def("run_process")`
+    //   与 `PyHost::run_process`）**统一成 `run_process`**。修前这里叫 `host_run_process`
+    //   ⇒ 门面自查（`host_facade_has("run_process")`）恒 false，而插件可见的名字正是
+    //   `run_process`：能力"看着在、实际拿不到"。改的是**内部字段名**，插件可见契约一字未变。
+    std::function<ProcessRunResult(const ProcessRunOptions&)> run_process;
 };
 
 void set_host_facade(const HostFacade* facade);

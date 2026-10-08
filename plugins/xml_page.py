@@ -293,8 +293,13 @@ def register(api):
             if not ids:
                 ui.set_text(stats, "这一行没有可复制的 ID（一致的行没有差异 ID）")
                 return
-            ui.copy_text(ids[0])
-            ui.set_text(stats, "已复制 ID：" + ids[0])
+            # ★★ P16-0：**必须看返回值**。修前不看、紧接着显示"已复制 ID：…"——
+            #   而 `copy_text` 那时恒返回 False（门面登记缺口）⇒ 界面对用户**谎报成功**。
+            #   零静默红线：失败要说出来，并且把 ID 原文留给用户手动复制。
+            if ui.copy_text(ids[0]):
+                ui.set_text(stats, "已复制 ID：" + ids[0])
+            else:
+                ui.set_text(stats, "复制失败（宿主没提供该能力）：" + ids[0])
 
         ui.label(None, "文件夹 A / B：")
         ui.button(None, "选择 A…", lambda: pick_dir(dir_a_entry, "A"))

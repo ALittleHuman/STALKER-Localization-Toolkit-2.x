@@ -2985,6 +2985,61 @@ def step_facade_order(release: bool) -> None:
         fail("门面顺序有错位（见上）—— 类型相同的相邻字段对位错了编译器不会报错")
 
 
+def step_facade_registry(release: bool) -> None:
+    """插件改装 P16-0：**门面三份事实必须同名同数**（声明 / kMethodNames / has_impl）。
+
+    为什么单开一步：能力表比的是 `dir(xrkit.Ui)` 的**名字集合**（来自 pybind `.def`），
+    门面顺序比的是"结构体 vs 聚合初始化"的**顺序** —— 两者都管不着"字段声明了、
+    `kMethodNames`/`has_impl` 里却没登记"这一类。实测缺口两处（Ui 的 `copy_text`、
+    Host 的 `run_process` 名字不一致）：两处都让 `*_facade_has()` 恒 false，
+    插件拿到的是"能力看着在、实际恒不可用"，而**没有任何一步会红**。
+    独立成步（静态判据、不依赖任何构建产物）：被 `--only` 过滤时按记账进 UNCOVERED。
+    退出码：0=三点闭环、1=有断言不成立（含仓库自带文件缺失 —— 那是 FAIL，不是 SKIP）。
+    """
+    say("[facade-registry] 插件改装 P16-0：门面三份事实（声明/kMethodNames/has_impl）三点闭环")
+    script = ROOT / "tests" / "check_facade_registry.py"
+    if not require_repo_file(script, "门面登记表核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if (s.startswith("FACADE-REG") or s.startswith("== ") or s.startswith("✗ 字段有")
+                or s.startswith("✗ kMethodNames") or s.startswith("✗ has_impl")
+                or s.startswith("✓ 反例自证")):
+            say("  " + s)
+    if rc == 0 and "FACADE-REG ok" in out:
+        ok("三门面三点闭环（声明 / kMethodNames / has_impl 逐名同数，反例自证 6/6）")
+    else:
+        fail("门面登记表有缺口（见上）—— 字段没进 kMethodNames/has_impl 的能力恒不可用")
+
+
+def step_plugin_facade_returns(release: bool) -> None:
+    """插件改装 P16-0：**插件不许丢弃「成没成」型门面调用的返回值**。
+
+    为什么单开一步：`copy_text` 那条静默链的**第二半**在插件侧 ——
+    `plugins/xml_page.py` 不看返回值、紧接着显示"已复制 ID"（谎报成功）。
+    修法是看返回值走两支；本步保证"不能被写回去"。
+    判据从 `widget_facade.h` 的 `UiFacade` 逐字段取**返回类型**：
+    `void` / `UiHandle`（控件构造句柄）被丢弃是正常的，其余（bool 的成败位、
+    int/string 的取值）被裸丢弃 ⇒ 红。**不设允许丢弃白名单**（白名单会变成橡皮章）。
+    独立成步（静态判据、不依赖构建产物）。退出码：0=绿、1=有断言不成立。
+    """
+    say("[plugin-facade-ret] 插件改装 P16-0：插件不得丢弃「成没成」型门面返回值")
+    script = ROOT / "tests" / "check_plugin_facade_returns.py"
+    if not require_repo_file(script, "插件返回值核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if (s.startswith("PLUGIN-RET") or s.startswith("✓ ")
+                or s.startswith("✗ ") or s.startswith("第 ")):
+            say("  " + s)
+    if rc == 0 and "PLUGIN-RET ok" in out:
+        ok("六个插件丢弃的只有 void/UiHandle（成败位一律看着走两支）")
+    else:
+        fail("有插件丢弃了「成没成」型返回值（见上）—— 失败会静默")
+
+
 def step_text_plugin(release: bool) -> None:
     """插件改装 P10b：**第三页（文本提取/改写）的收口判据**。
 
@@ -3982,6 +4037,10 @@ STEPS = [
     ("video-plugin", step_video_plugin),
     # ★★ 2026-10-08（P9b）：门面顺序核对（类型相同的相邻字段错了编译器不报）
     ("facade-order", step_facade_order),
+    # ★★ 2026-10-08（P16-0）：门面登记表三点闭环（字段 / kMethodNames / has_impl 逐名同数）
+    ("facade-registry", step_facade_registry),
+    # ★★ 2026-10-08（P16-0）：插件侧不许丢弃「成没成」型门面返回值（静默链的第二半）
+    ("plugin-facade-ret", step_plugin_facade_returns),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),

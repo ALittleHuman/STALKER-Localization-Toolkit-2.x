@@ -361,7 +361,9 @@ def register(api):
                 message("编码器表：%d 个" % len(state["encoders"]))
                 message("扫描编码器收工")
 
-            ui.task_run(panel, "扫描编码器", worker)
+            # ★★ P16-0：`task_run` 返回"任务到底有没有被接住" ⇒ 丢掉它就成了静默失败
+            if not ui.task_run(panel, "扫描编码器", worker):
+                ui.log("视频转换：扫描编码器没能启动（宿主没接住任务）")
 
         def pick_source(_text):
             state["source_probed"] = False
@@ -494,7 +496,9 @@ def register(api):
         def open_output():
             out = ui.get_text(output_entry).strip()
             if out:
-                ui.open_path(out)
+                # ★★ P16-0：`open_path` 返回"打开成没成" ⇒ 丢掉它就成了静默失败
+                if not ui.open_path(out):
+                    ui.set_text(progress_text, "打开失败：" + out)
 
         ui.label(None, "源视频 / 参考 OGM / 输出 OGM（每行可拖入）：")
         ui.button(None, "选择源…", browse_source)

@@ -1798,7 +1798,7 @@ public:
         const HostFacade* facade = available("run_process");
         if (facade == nullptr) return py::none();
         const ProcessRunResult result =
-            facade->host_run_process(process_options_from_python(options));
+            facade->run_process(process_options_from_python(options));
         py::dict out;
         out["started"] = result.started;
         out["cancelled"] = result.cancelled;

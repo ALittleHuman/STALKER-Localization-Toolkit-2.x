@@ -33,7 +33,7 @@ const HostFacade kHostFacade = {
     []() { return core::app_dir(); },
     /* system_font_dirs：唯一一份（内置页与插件共用；逐条照 1.x） */
     []() { return efont::system_font_dirs(); },
-    /* host_run_process：**唯一一份**进程语义（CREATE_NO_WINDOW / 真停 / 如实退码 / stderr 尾巴） */
+    /* run_process：**唯一一份**进程语义（CREATE_NO_WINDOW / 真停 / 如实退码 / stderr 尾巴） */
     [](const ProcessRunOptions& options) {
         eprocess::RunOptions native;
         native.program = options.program;
