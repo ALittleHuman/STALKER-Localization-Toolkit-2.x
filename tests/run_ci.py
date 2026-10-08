@@ -2965,6 +2965,174 @@ def step_text_plugin(release: bool) -> None:
        "也对" % compared)
 
 
+def step_video_plugin(release: bool) -> None:
+    """插件改装 P12c-3：**第五页（视频转换）的收口判据**。
+
+    判据：三块（plan / probe / encoders）都与 CLI 的内置路径**逐行一致**；
+    其中 plan 用 CLI `--video-plan` 的 7 组语料（逐字转成请求 JSON，同名），
+    probe/encoders 用 `tests/golden/` 里的**真 ffprobe / 真 ffmpeg -encoders** 字节。
+    """
+    say("[video-plugin] 插件改装 P12c-3：视频页（插件）与引擎参照逐行一致")
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "缺失（先跑 build 步）", release)
+        return
+    plugin = ROOT / "plugins" / "video_page.py"
+    if not plugin.is_file():
+        prereq("视频插件 plugins/video_page.py", "缺失", release)
+        return
+    work = ROOT / "build" / "video_plugin"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+
+    # ── ① plan：CLI 的 7 组语料（逐字转成请求 JSON，名字也一样）──────────────
+    enc_all = ["libtheora", "libxvid", "mpeg4"]
+    enc_no_xvid = ["libtheora", "mpeg4"]
+    enc_only_mpeg4 = ["mpeg4"]
+
+    def media(has_video, codec, width, height, fps, bitrate, has_audio, rate, channels, abitrate):
+        return {"parsed": True, "has_video": has_video, "has_audio": has_audio,
+                "video": {"codec": codec, "width": width, "height": height, "fps": fps,
+                          "bitrate": bitrate},
+                "audio": {"codec": "vorbis", "sample_rate": rate, "channels": channels,
+                          "bitrate": abitrate},
+                "duration": 60.0, "size_mb": 10.0}
+
+    def source(width, height, fps, has_audio, parsed=True):
+        info = media(True, "h264", width, height, fps, 0, has_audio, 44100, 2, 128000)
+        info["parsed"] = parsed
+        info["has_video"] = parsed
+        return info
+
+    cases = [
+        ("theora_ref_bitrate_src_same_audio",
+         media(True, "theora", 640, 480, 25.0, 800000, True, 44100, 2, 128000),
+         source(640, 480, 25.0, True), enc_all),
+        ("theora_ref_no_bitrate_src_diff_noaudio",
+         media(True, "h264", 0, 0, 0.0, 0, False, 0, 0, 0),
+         source(320, 240, 30.0, True), enc_all),
+        ("mpeg4_ref_no_bitrate_src_noaudio",
+         media(True, "mpeg4", 640, 480, 25.0, 0, True, 0, 0, 0),
+         source(640, 480, 25.0, False), enc_all),
+        ("mpeg4_ref_fallback_noxvid",
+         media(True, "mpeg4", 640, 480, 25.0, 0, True, 0, 0, 0),
+         source(640, 480, 25.0, True), enc_no_xvid),
+        ("last_resort_only_mpeg4",
+         media(True, "theora", 640, 480, 25.0, 800000, True, 44100, 2, 128000),
+         source(640, 480, 25.0, True), enc_only_mpeg4),
+        ("ffprobe_failed_keeps_audio",
+         media(True, "theora", 640, 480, 25.0, 800000, True, 44100, 2, 128000),
+         source(0, 0, 0.0, False, parsed=False), enc_all),
+        ("no_reference_at_all", None, source(640, 480, 25.0, True), enc_all),
+    ]
+
+    problems = []
+    for name, reference, src, encoders in cases:
+        request = {"case": name, "input": "IN.avi", "output": "OUT.ogm",
+                   "source": src, "available_encoders": encoders}
+        if reference is not None:
+            request["reference"] = reference
+        request_path = work / ("plan_%s.json" % name)
+        request_path.write_text(json.dumps(request, ensure_ascii=False, indent=1),
+                                encoding="utf-8")
+        payload = json.dumps({"mode": "plan", "request_path": str(request_path)},
+                             ensure_ascii=False)
+        rc_plug, out_plug = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
+                                 "--plugin", "video_page.py", payload], timeout=600)
+        plug_lines = []
+        for raw in out_plug.splitlines():
+            s = raw.strip()
+            if s.startswith("PYPLUGINCALL plugin=") and " result=" in s:
+                try:
+                    plug_lines = json.loads(s.split(" result=", 1)[1]).get("lines", [])
+                except ValueError:
+                    plug_lines = []
+        rc_ref, out_ref = run([str(CLI_EXE), "--video-plan"], timeout=600)
+        ref_lines = [line for line in out_ref.splitlines()
+                     if line.startswith("PLAN\t" + name + "\t")
+                     or line.startswith("PLANSUM\t" + name + "\t")]
+        if rc_plug != 0 or rc_ref != 0:
+            problems.append("%s：命令没跑成（插件 rc=%d / 参照 rc=%d）" % (name, rc_plug, rc_ref))
+            continue
+        if not ref_lines:
+            problems.append("%s：参照侧没打出这组语料（CLI 语料表变了？）" % name)
+            continue
+        if plug_lines != ref_lines:
+            detail = ""
+            for index in range(max(len(plug_lines), len(ref_lines))):
+                left = plug_lines[index] if index < len(plug_lines) else "(缺)"
+                right = ref_lines[index] if index < len(ref_lines) else "(缺)"
+                if left != right:
+                    detail = "第 %d 行：参照「%s」/ 插件「%s」" % (index, right, left)
+                    break
+            problems.append("%s：计划不一致 —— %s" % (name, detail))
+    say("  plan：%d 组语料已对拍" % len(cases))
+
+    # ── ② probe：四份真 ffprobe 输出 ────────────────────────────────────────
+    probe_dir = ROOT / "tests" / "golden" / "video_probe"
+    probe_files = sorted(probe_dir.glob("*.json")) if probe_dir.is_dir() else []
+    if not probe_files:
+        problems.append("probe 夹具缺失（%s 下没有 *.json）" % probe_dir)
+    for probe_file in probe_files:
+        payload = json.dumps({"mode": "probe", "json_path": str(probe_file)},
+                             ensure_ascii=False)
+        rc_plug, out_plug = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
+                                 "--plugin", "video_page.py", payload], timeout=600)
+        plug_lines = []
+        for raw in out_plug.splitlines():
+            s = raw.strip()
+            if s.startswith("PYPLUGINCALL plugin=") and " result=" in s:
+                try:
+                    plug_lines = json.loads(s.split(" result=", 1)[1]).get("lines", [])
+                except ValueError:
+                    plug_lines = []
+        rc_ref, out_ref = run([str(CLI_EXE), "--video-probe", str(probe_file)], timeout=600)
+        ref_lines = [line for line in out_ref.splitlines() if line.startswith("PROBE\t")]
+        if plug_lines != ref_lines:
+            detail = ""
+            for index in range(max(len(plug_lines), len(ref_lines))):
+                left = plug_lines[index] if index < len(plug_lines) else "(缺)"
+                right = ref_lines[index] if index < len(ref_lines) else "(缺)"
+                if left != right:
+                    detail = "第 %d 行：参照「%s」/ 插件「%s」" % (index, right, left)
+                    break
+            problems.append("%s：探测解析不一致 —— %s" % (probe_file.name, detail))
+    say("  probe：%d 份真 ffprobe 输出已对拍" % len(probe_files))
+
+    # ── ③ encoders：真 `ffmpeg -encoders` 输出 ──────────────────────────────
+    # ★ 夹具实际位置：`tests/golden/video_probe/ffmpeg_encoders.txt`
+    enc_file = ROOT / "tests" / "golden" / "video_probe" / "ffmpeg_encoders.txt"
+    if not enc_file.is_file():
+        problems.append("encoders 夹具缺失（%s）" % enc_file)
+    else:
+        payload = json.dumps({"mode": "encoders", "text_path": str(enc_file)},
+                             ensure_ascii=False)
+        rc_plug, out_plug = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
+                                 "--plugin", "video_page.py", payload], timeout=600)
+        plug_lines = []
+        for raw in out_plug.splitlines():
+            s = raw.strip()
+            if s.startswith("PYPLUGINCALL plugin=") and " result=" in s:
+                try:
+                    plug_lines = json.loads(s.split(" result=", 1)[1]).get("lines", [])
+                except ValueError:
+                    plug_lines = []
+        rc_ref, out_ref = run([str(CLI_EXE), "--video-encoders", str(enc_file)], timeout=600)
+        ref_lines = [line for line in out_ref.splitlines()
+                     if line.startswith("ENCODERS\t") or line.startswith("ENC\t")]
+        if plug_lines != ref_lines:
+            problems.append("编码器表不一致（参照 %d 行 / 插件 %d 行）"
+                            % (len(ref_lines), len(plug_lines)))
+        else:
+            say("  encoders：%d 行逐行一致" % len(ref_lines))
+
+    if problems:
+        fail("视频页（插件）与引擎参照不一致：%s" % "；".join(problems[:4]))
+        return
+    ok("视频页（插件）三块判据全部**逐行一致**（plan %d 组语料 / probe %d 份 / encoders 1 份）"
+       % (len(cases), len(probe_files)))
+
+
 def step_xml_plugin(release: bool) -> None:
     """插件改装 P11b-2：**第四页（XML 对比）的收口判据**。
 
@@ -3548,6 +3716,8 @@ STEPS = [
     ("text-plugin", step_text_plugin),
     # ★★ 2026-10-08（插件改装 P11b-2）：**第四页收口** —— XML 对比插件页。
     ("xml-plugin", step_xml_plugin),
+    # ★★ 2026-10-08（插件改装 P12c-3）：**第五页收口** —— 视频转换插件页。
+    ("video-plugin", step_video_plugin),
     # ★★ 2026-10-08（P9b）：门面顺序核对（类型相同的相邻字段错了编译器不报）
     ("facade-order", step_facade_order),
     ("selftest", step_selftest),
