@@ -37,6 +37,10 @@ const char* const kMethodNames[] = {
     "xml_full_text_detail", "xml_render_csv", "xml_write_csv",
     // ★★ P11b：目录对比 + 筛选
     "xml_compare_dirs", "xml_row_matches",
+    // ★★ P12a：video 页那一组（第五页迁移）
+    "video_find_ffmpeg", "video_major_version", "video_version_rejected",
+    "video_plan_transcode", "video_check_output_conflict", "video_parse_ffprobe",
+    "video_parse_encoders", "video_progress_from_line",
 };
 
 bool has_impl(const EngineFacade& facade, const std::string& name) {
@@ -67,6 +71,14 @@ bool has_impl(const EngineFacade& facade, const std::string& name) {
     if (name == "xml_write_csv") return static_cast<bool>(facade.xml_write_csv);
     if (name == "xml_compare_dirs") return static_cast<bool>(facade.xml_compare_dirs);
     if (name == "xml_row_matches") return static_cast<bool>(facade.xml_row_matches);
+    if (name == "video_find_ffmpeg") return static_cast<bool>(facade.video_find_ffmpeg);
+    if (name == "video_major_version") return static_cast<bool>(facade.video_major_version);
+    if (name == "video_version_rejected") return static_cast<bool>(facade.video_version_rejected);
+    if (name == "video_plan_transcode") return static_cast<bool>(facade.video_plan_transcode);
+    if (name == "video_check_output_conflict") return static_cast<bool>(facade.video_check_output_conflict);
+    if (name == "video_parse_ffprobe") return static_cast<bool>(facade.video_parse_ffprobe);
+    if (name == "video_parse_encoders") return static_cast<bool>(facade.video_parse_encoders);
+    if (name == "video_progress_from_line") return static_cast<bool>(facade.video_progress_from_line);
     return false;
 }
 

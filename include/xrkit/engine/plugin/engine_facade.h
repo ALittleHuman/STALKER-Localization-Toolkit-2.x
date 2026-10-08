@@ -305,6 +305,81 @@ struct XmlDirDiffReport {
     bool cancelled = false;
 };
 
+
+// ── ★★ P12a：video 页（第五页迁移）── 转码 ──────────────────────────────────
+//   面板要显示的"视频参数"**全部**来自 `VideoTranscodePlan`（缩放/帧率/码率/声道…），
+//   插件不许自己把阈值再判一遍 —— 那是"面板说 OK、argv 里却插了滤镜"那类分叉的根源。
+
+struct VideoStreamInfo {
+    std::string codec;
+    int width = 0;
+    int height = 0;
+    double fps = 0.0;
+    long long bitrate = 0;
+};
+
+struct AudioStreamInfo {
+    std::string codec;
+    int sample_rate = 0;
+    int channels = 0;
+    long long bitrate = 0;
+};
+
+struct VideoMediaInfo {
+    bool parsed = false;
+    bool has_video = false;
+    bool has_audio = false;
+    VideoStreamInfo video;
+    AudioStreamInfo audio;
+    double duration = 0.0;
+    double size_mb = 0.0;
+};
+
+struct VideoPaths {
+    bool found = false;
+    bool has_probe = false;
+    std::string ffmpeg;
+    std::string ffprobe;
+    bool ffmpeg_from_config = false;
+    bool ffprobe_from_config = false;
+};
+
+struct VideoRequest {
+    std::string ffmpeg = "ffmpeg";
+    std::string input;
+    std::string output;
+    bool has_reference = false;
+    std::string reference_path;   // 空 = 不判"输出撞参考"
+    VideoMediaInfo reference;
+    VideoMediaInfo source;
+    std::vector<std::string> available_encoders;
+};
+
+struct VideoPlan {
+    std::vector<std::string> argv;
+    std::string video_encoder;
+    bool encoder_warning = false;
+    bool audio_kept_on_probe_failure = false;
+    double duration = 0.0;
+    bool scale_applied = false;
+    bool fps_applied = false;
+    long long video_bitrate = 0;
+    long long audio_bitrate = 0;
+    int audio_sample_rate = 0;
+    int audio_channels = 0;
+    bool audio_disabled = false;
+};
+
+struct VideoOutputCheck {
+    std::string conflict;   // "none" / "same_as_source" / "same_as_reference" / "exists"
+    std::string reason;     // 给用户看的那句话（**引擎给的原文**）
+};
+
+struct VideoProgress {
+    bool matched = false;
+    double percent = 0.0;
+};
+
 struct EngineFacade {
     std::function<FontCheckResult(const std::string& font_path)> font_check;
     std::function<FontPackResult(const FontPackOptions& options)> font_pack;
@@ -359,6 +434,18 @@ struct EngineFacade {
     std::function<XmlDirDiffReport(const XmlDirDiffOptions&)> xml_compare_dirs;
     std::function<bool(const XmlFilterSpec&, const std::string&, const XmlCompareResult&)>
         xml_row_matches;
+
+    // ── ★★ P12a：video 页那一组（第五页迁移）─────────────────────────────────
+    std::function<VideoPaths(const std::string& app_dir, const std::string& ffmpeg_path,
+                             const std::string& ffprobe_path)> video_find_ffmpeg;
+    std::function<int(const std::string& version_output)> video_major_version;
+    std::function<bool(const std::string& version_output)> video_version_rejected;
+    std::function<VideoPlan(const VideoRequest&)> video_plan_transcode;
+    std::function<VideoOutputCheck(const VideoRequest&)> video_check_output_conflict;
+    std::function<VideoMediaInfo(const std::string& json)> video_parse_ffprobe;
+    std::function<std::vector<std::string>(const std::string& output)> video_parse_encoders;
+    std::function<VideoProgress(const std::string& line, double duration_sec)>
+        video_progress_from_line;
 };
 
 // 外壳注入实现（`src/shell/engine_facade_impl.cpp`）。传 nullptr = 撤销。

@@ -20,6 +20,8 @@
 #include "xrkit/engine/text/sniff.h"
 #include "xrkit/engine/xml/compare.h"
 #include "xrkit/engine/xml/dirdiff.h"
+#include "xrkit/engine/video/ffmpeg.h"
+#include "xrkit/engine/video/transcode.h"
 
 #include <array>
 #include <string>
@@ -32,6 +34,7 @@ namespace efont = xrkit::engine::font;
 namespace etext = xrkit::engine::text;
 
 namespace exml = xrkit::engine::xml;
+namespace evideo = xrkit::engine::video;
 
 XmlCompareResult to_facade(const exml::XmlCompareResult& native);
 exml::XmlCompareResult from_facade(const XmlCompareResult& facade);
@@ -134,6 +137,72 @@ exml::XmlCsvReport to_native(const XmlCsvReport& facade) {
     native.only_b = facade.only_b;
     native.encodings_used = facade.encodings_used;
     return native;
+}
+
+
+VideoMediaInfo video_media_to_facade(const evideo::MediaInfo& native) {
+    VideoMediaInfo out;
+    out.parsed = native.parsed;
+    out.has_video = native.has_video;
+    out.has_audio = native.has_audio;
+    out.video.codec = native.video.codec;
+    out.video.width = native.video.width;
+    out.video.height = native.video.height;
+    out.video.fps = native.video.fps;
+    out.video.bitrate = native.video.bitrate;
+    out.audio.codec = native.audio.codec;
+    out.audio.sample_rate = native.audio.sample_rate;
+    out.audio.channels = native.audio.channels;
+    out.audio.bitrate = native.audio.bitrate;
+    out.duration = native.duration;
+    out.size_mb = native.size_mb;
+    return out;
+}
+
+evideo::MediaInfo video_media_from_facade(const VideoMediaInfo& facade) {
+    evideo::MediaInfo native;
+    native.parsed = facade.parsed;
+    native.has_video = facade.has_video;
+    native.has_audio = facade.has_audio;
+    native.video.codec = facade.video.codec;
+    native.video.width = facade.video.width;
+    native.video.height = facade.video.height;
+    native.video.fps = facade.video.fps;
+    native.video.bitrate = facade.video.bitrate;
+    native.audio.codec = facade.audio.codec;
+    native.audio.sample_rate = facade.audio.sample_rate;
+    native.audio.channels = facade.audio.channels;
+    native.audio.bitrate = facade.audio.bitrate;
+    native.duration = facade.duration;
+    native.size_mb = facade.size_mb;
+    return native;
+}
+
+evideo::TranscodeRequest video_request_from_facade(const VideoRequest& facade) {
+    evideo::TranscodeRequest native;
+    native.ffmpeg = facade.ffmpeg;
+    native.input = facade.input;
+    native.output = facade.output;
+    native.has_reference = facade.has_reference;
+    native.reference_path = facade.reference_path;
+    native.reference = video_media_from_facade(facade.reference);
+    native.source = video_media_from_facade(facade.source);
+    native.available_encoders = facade.available_encoders;
+    return native;
+}
+
+const char* video_conflict_code(evideo::OutputConflict conflict) {
+    switch (conflict) {
+        case evideo::OutputConflict::SameAsSource:
+            return "same_as_source";
+        case evideo::OutputConflict::SameAsReference:
+            return "same_as_reference";
+        case evideo::OutputConflict::Exists:
+            return "exists";
+        case evideo::OutputConflict::None:
+            break;
+    }
+    return "none";
 }
 
 const EngineFacade kFontFacade = {
@@ -474,6 +543,68 @@ const EngineFacade kFontFacade = {
         native.row_kinds = filter.row_kinds;
         native.differ_types = filter.differ_types;
         return exml::row_matches_filter(native, kind, from_facade(result));
+    },
+    /* video_find_ffmpeg：只认两处（user.ltx 配置 + 程序目录），**不搜 PATH** */
+    [](const std::string& app_dir, const std::string& ffmpeg_path,
+       const std::string& ffprobe_path) {
+        evideo::FfmpegConfig config;
+        config.path = ffmpeg_path;
+        config.probe = ffprobe_path;
+        const evideo::FfmpegPaths native = evideo::find_ffmpeg(app_dir, config);
+        VideoPaths out;
+        out.found = native.found;
+        out.has_probe = native.has_probe;
+        out.ffmpeg = native.ffmpeg;
+        out.ffprobe = native.ffprobe;
+        out.ffmpeg_from_config = native.ffmpeg_from_config;
+        out.ffprobe_from_config = native.ffprobe_from_config;
+        return out;
+    },
+    /* video_major_version：`ffmpeg -version` 输出里的主版本号 */
+    [](const std::string& version_output) { return evideo::major_version(version_output); },
+    /* video_version_rejected：太老/太新都要拒绝（口径在引擎） */
+    [](const std::string& version_output) { return evideo::version_rejected(version_output); },
+    /* video_plan_transcode：构建 argv **与面板要显示的每个值** */
+    [](const VideoRequest& request) {
+        const evideo::TranscodePlan native =
+            evideo::plan_transcode(video_request_from_facade(request));
+        VideoPlan out;
+        out.argv = native.argv;
+        out.video_encoder = native.video_encoder;
+        out.encoder_warning = native.encoder_warning;
+        out.audio_kept_on_probe_failure = native.audio_kept_on_probe_failure;
+        out.duration = native.duration;
+        out.scale_applied = native.scale_applied;
+        out.fps_applied = native.fps_applied;
+        out.video_bitrate = native.video_bitrate;
+        out.audio_bitrate = native.audio_bitrate;
+        out.audio_sample_rate = native.audio_sample_rate;
+        out.audio_channels = native.audio_channels;
+        out.audio_disabled = native.audio_disabled;
+        return out;
+    },
+    /* video_check_output_conflict：判"输出撞谁"并**同一次给出理由**（页面本来就是这样成对用的） */
+    [](const VideoRequest& request) {
+        const evideo::TranscodeRequest native = video_request_from_facade(request);
+        const evideo::OutputConflict conflict = evideo::check_output_conflict(native);
+        VideoOutputCheck out;
+        out.conflict = video_conflict_code(conflict);
+        out.reason = evideo::output_conflict_reason(conflict, native);
+        return out;
+    },
+    /* video_parse_ffprobe：ffprobe JSON → 媒体信息 */
+    [](const std::string& json) {
+        return video_media_to_facade(evideo::parse_ffprobe_json(json));
+    },
+    /* video_parse_encoders：`ffmpeg -encoders` 输出 → 编码器集合 */
+    [](const std::string& output) { return evideo::parse_encoder_list(output); },
+    /* video_progress_from_line：进度行 → 百分比（上限 99.5，口径在引擎） */
+    [](const std::string& line, double duration_sec) {
+        const evideo::ProgressSample sample = evideo::progress_from_line(line, duration_sec);
+        VideoProgress out;
+        out.matched = sample.matched;
+        out.percent = sample.percent;
+        return out;
     },
 };
 

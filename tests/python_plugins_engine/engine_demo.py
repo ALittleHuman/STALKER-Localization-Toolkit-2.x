@@ -310,6 +310,83 @@ def register(api):
     mark("dirs_cancel_flag:%d" % (1 if cancelled["cancelled"] else 0))
     mark("dirs_cancel_rows:%d" % len(cancelled["rows"]))
 
+    # ── ★★ P12a：video 页那一组（第五页迁移用的引擎面）────────────────────────
+    probe_json = ('{"streams":[{"codec_type":"video","codec_name":"h264","width":1280,'
+                  '"height":720,"avg_frame_rate":"25/1","bit_rate":"1500000"},'
+                  '{"codec_type":"audio","codec_name":"vorbis","sample_rate":"44100",'
+                  '"channels":2,"bit_rate":"128000"}],"format":{"duration":"120.5",'
+                  '"size":"10485760"}}')
+    media = engine.video_parse_ffprobe(probe_json)
+    mark("video_parsed:%d" % (1 if media["parsed"] else 0))
+    mark("video_has_video:%d" % (1 if media["has_video"] else 0))
+    mark("video_has_audio:%d" % (1 if media["has_audio"] else 0))
+    mark("video_width:%d" % media["video"]["width"])
+    mark("video_height:%d" % media["video"]["height"])
+    mark("video_fps_positive:%d" % (1 if media["video"]["fps"] > 0 else 0))
+    mark("video_codec:%s" % media["video"]["codec"])
+    mark("video_size_mb_positive:%d" % (1 if media["size_mb"] > 0 else 0))
+
+    encoders_text = ("Encoders:\n"
+                     " V..... libx264              H.264 / AVC (codec h264)\n"
+                     " V..... mpeg4                MPEG-4 part 2\n"
+                     " A..... libvorbis            Vorbis\n")
+    encoders = engine.video_parse_encoders(encoders_text)
+    mark("video_encoders:%s" % ",".join(encoders))
+
+    source = {"parsed": True, "has_video": True, "has_audio": True,
+              "video": {"codec": "h264", "width": 1920, "height": 1080, "fps": 30.0,
+                        "bitrate": 4000000},
+              "audio": {"codec": "vorbis", "sample_rate": 44100, "channels": 2,
+                        "bitrate": 128000},
+              "duration": 60.0, "size_mb": 40.0}
+    reference = {"parsed": True, "has_video": True, "has_audio": True,
+                 "video": {"codec": "mpeg4", "width": 640, "height": 480, "fps": 25.0,
+                           "bitrate": 900000},
+                 "audio": {"codec": "vorbis", "sample_rate": 22050, "channels": 1,
+                           "bitrate": 64000},
+                 "duration": 60.0, "size_mb": 10.0}
+    request = {"ffmpeg": "ffmpeg", "input": "in.avi", "output": "out.ogm",
+               "has_reference": True, "reference_path": "ref.ogm",
+               "reference": reference, "source": source,
+               "available_encoders": encoders}
+    plan = engine.video_plan_transcode(request)
+    mark("video_argv_nonempty:%d" % (1 if plan["argv"] else 0))
+    mark("video_argv_has_input:%d" % (1 if "-i" in plan["argv"] else 0))
+    mark("video_argv_has_output:%d" % (1 if plan["argv"][-1] == "out.ogm" else 0))
+    mark("video_encoder:%s" % plan["video_encoder"])
+    mark("video_scale_applied:%d" % (1 if plan["scale_applied"] else 0))
+    mark("video_fps_applied:%d" % (1 if plan["fps_applied"] else 0))
+    mark("video_audio_fields:%d"
+         % (1 if plan["audio_sample_rate"] > 0 and plan["audio_channels"] > 0 else 0))
+
+    same_as_source = engine.video_check_output_conflict(
+        {"input": "in.avi", "output": "in.avi", "source": source})
+    mark("video_conflict_source:%s" % same_as_source["conflict"])
+    mark("video_conflict_reason_nonempty:%d" % (1 if same_as_source["reason"] else 0))
+    same_as_reference = engine.video_check_output_conflict(
+        {"input": "in.avi", "output": "ref.ogm", "has_reference": True,
+         "reference_path": "ref.ogm", "reference": reference, "source": source})
+    mark("video_conflict_reference:%s" % same_as_reference["conflict"])
+    clean = engine.video_check_output_conflict(
+        {"input": "in.avi", "output": "brand_new.ogm", "source": source})
+    mark("video_conflict_none:%s" % clean["conflict"])
+
+    sample = engine.video_progress_from_line("frame= 100 time=00:00:10.00 bitrate=1k", 100.0)
+    mark("video_progress_matched:%d" % (1 if sample["matched"] else 0))
+    mark("video_progress_percent_10:%d" % (1 if 9.5 <= sample["percent"] <= 10.5 else 0))
+    capped = engine.video_progress_from_line("frame= 1 time=00:00:10.00", 0.2)
+    mark("video_progress_capped:%d" % (1 if capped["percent"] <= 99.5 else 0))
+    missing = engine.video_progress_from_line("no time here", 100.0)
+    mark("video_progress_unmatched:%d" % (1 if not missing["matched"] else 0))
+
+    mark("video_major_version:%d" % engine.video_major_version("ffmpeg version 6.1.1 Copyright"))
+    # 引擎口径（读码得到）：**只**拒 major==8（8.x 的 theora 对 STALKER OGM 有 bug），
+    #   不是"拒太老" —— 我第一版猜错了，夹具 marker 当场把它照出来。
+    mark("video_version_rejected_8:%d"
+         % (1 if engine.video_version_rejected("ffmpeg version 8.0") else 0))
+    mark("video_version_ok_6:%d"
+         % (1 if not engine.video_version_rejected("ffmpeg version 6.1.1") else 0))
+
     mark("done")
     # ★ 夹具自清：`convert_work` 不留痕（插件目录里只该留 marker —— 门禁按行断言它）
     shutil.rmtree(work, ignore_errors=True)

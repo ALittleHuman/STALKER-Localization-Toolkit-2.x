@@ -143,6 +143,15 @@ EXPECT_ENGINE = {
     # ★★ P11b：目录对比（第四页真正跑起来要的那一块）
     "xml_compare_dirs": "目录对比（遍历/配对/逐文件比/给 kind；取消在文件边界）",
     "xml_row_matches": "筛选命中（row_kinds 空=全过；differ_types 要同时命中）",
+    # ★★ P12a：第五页迁移（video 页）用到的引擎面
+    "video_find_ffmpeg": "找 ffmpeg/ffprobe（只认两处：user.ltx + 程序目录；不搜 PATH）",
+    "video_major_version": "ffmpeg -version 的主版本号",
+    "video_version_rejected": "版本闸门（太老/太新都拒）",
+    "video_plan_transcode": "构建转码 argv 与面板要显示的每个值",
+    "video_check_output_conflict": "输出撞车（源/参考/已存在）+ 引擎给的理由",
+    "video_parse_ffprobe": "ffprobe JSON → 媒体信息",
+    "video_parse_encoders": "`ffmpeg -encoders` → 编码器集合",
+    "video_progress_from_line": "进度行 → 百分比（上限 99.5）",
 }
 # ★★ P7b：**宿主服务门面**（`api.host.*`）—— 宿主替插件办的杂事（样板页 fontpack 真的要用）
 EXPECT_HOST = {

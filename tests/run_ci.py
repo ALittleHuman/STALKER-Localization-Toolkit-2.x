@@ -2524,6 +2524,42 @@ def step_engine_facade(release: bool) -> None:
         got = value_of(key)
         if got != want:
             problems.append("xml 目录对比 %s=%s（应为 %s）" % (key, got or "(缺)", want))
+
+    # ── ★★ P12a：video 那一组（第五页迁移用的引擎面）────────────────────────
+    video_expect = {
+        "video_parsed": "1",
+        "video_has_video": "1",
+        "video_has_audio": "1",
+        "video_width": "1280",              # ffprobe JSON 解析口径
+        "video_height": "720",
+        "video_fps_positive": "1",
+        "video_codec": "h264",
+        "video_size_mb_positive": "1",
+        "video_encoders": "libx264,mpeg4,libvorbis",   # `ffmpeg -encoders` 解析
+        "video_argv_nonempty": "1",         # 转码 argv 由引擎构建
+        "video_argv_has_input": "1",
+        "video_argv_has_output": "1",
+        "video_scale_applied": "1",         # 参考 640x480 ⇒ 要缩放
+        "video_fps_applied": "1",           # 参考 25fps ⇒ 要调帧率
+        "video_audio_fields": "1",
+        "video_conflict_source": "same_as_source",
+        "video_conflict_reason_nonempty": "1",
+        "video_conflict_reference": "same_as_reference",
+        "video_conflict_none": "none",
+        "video_progress_matched": "1",
+        "video_progress_percent_10": "1",
+        "video_progress_capped": "1",       # 上限 99.5（永不 100）
+        "video_progress_unmatched": "1",
+        "video_major_version": "6",
+        "video_version_rejected_8": "1",    # **只**拒 major==8（8.x theora 对 STALKER OGM 有 bug）
+        "video_version_ok_6": "1",
+    }
+    for key, want in video_expect.items():
+        got = value_of(key)
+        if got != want:
+            problems.append("video 面 %s=%s（应为 %s）" % (key, got or "(缺)", want))
+    if not value_of("video_encoder"):
+        problems.append("video 面 video_encoder 是空的（面板值必须来自 plan_transcode）")
     say("  夹具证据：%s" % text.replace("\n", " | ")[:260])
     if problems:
         fail("引擎调用门面不成立（%d 处）：%s" % (len(problems), "；".join(problems)))
@@ -2532,7 +2568,9 @@ def step_engine_facade(release: bool) -> None:
         ok("引擎门面七处都通（槽位 10 档 / 四态文案 / font_check=%s / 工作线程可调 / "
            "convert 面：逐字节·备份恢复清空·CSV 带 BOM / text 面：校验·判定·真提取·取消语义 / "
            "xml 面：模式表·两种对比·单侧·引擎明细·CSV 往返一致 / "
-           "**目录对比**：配对·四种 kind·递归·筛选·取消）" % state)
+           "**目录对比**：配对·四种 kind·递归·筛选·取消 / "
+           "video 面：ffprobe 解析·编码器表·argv 与面板值·输出撞车·进度上限 99.5·版本闸门）"
+           % state)
     else:
         say("  · 未覆盖：font_check 的真字体那条（本机没有 msyh/simsun）")
         ok("引擎门面四处都通（槽位 / 四态文案 / 工作线程可调 / convert 面整条链路）；"

@@ -759,6 +759,86 @@ XmlFilterSpec xml_filter_from_python(const py::object& filter) {
     return out;
 }
 
+
+// ── ★★ P12a：video 页那一组的入参/出参转换 ───────────────────────────────────
+VideoMediaInfo video_media_from_python(const py::object& info) {
+    VideoMediaInfo out;
+    if (info.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(info);
+    const auto take_bool = [&data](const char* key, bool& target) {
+        if (data.contains(key)) target = py::cast<bool>(data[key]);
+    };
+    take_bool("parsed", out.parsed);
+    take_bool("has_video", out.has_video);
+    take_bool("has_audio", out.has_audio);
+    const auto take_double = [&data](const char* key, double& target) {
+        if (data.contains(key)) target = py::cast<double>(data[key]);
+    };
+    take_double("duration", out.duration);
+    take_double("size_mb", out.size_mb);
+    if (data.contains("video")) {
+        py::dict video = py::reinterpret_borrow<py::dict>(data["video"]);
+        if (video.contains("codec")) out.video.codec = py::str(video["codec"]).cast<std::string>();
+        if (video.contains("width")) out.video.width = py::cast<int>(video["width"]);
+        if (video.contains("height")) out.video.height = py::cast<int>(video["height"]);
+        if (video.contains("fps")) out.video.fps = py::cast<double>(video["fps"]);
+        if (video.contains("bitrate")) out.video.bitrate = py::cast<long long>(video["bitrate"]);
+    }
+    if (data.contains("audio")) {
+        py::dict audio = py::reinterpret_borrow<py::dict>(data["audio"]);
+        if (audio.contains("codec")) out.audio.codec = py::str(audio["codec"]).cast<std::string>();
+        if (audio.contains("sample_rate")) out.audio.sample_rate = py::cast<int>(audio["sample_rate"]);
+        if (audio.contains("channels")) out.audio.channels = py::cast<int>(audio["channels"]);
+        if (audio.contains("bitrate")) out.audio.bitrate = py::cast<long long>(audio["bitrate"]);
+    }
+    return out;
+}
+
+py::dict video_media_to_python(const VideoMediaInfo& info) {
+    py::dict out;
+    out["parsed"] = info.parsed;
+    out["has_video"] = info.has_video;
+    out["has_audio"] = info.has_audio;
+    out["duration"] = info.duration;
+    out["size_mb"] = info.size_mb;
+    py::dict video;
+    video["codec"] = info.video.codec;
+    video["width"] = info.video.width;
+    video["height"] = info.video.height;
+    video["fps"] = info.video.fps;
+    video["bitrate"] = info.video.bitrate;
+    out["video"] = video;
+    py::dict audio;
+    audio["codec"] = info.audio.codec;
+    audio["sample_rate"] = info.audio.sample_rate;
+    audio["channels"] = info.audio.channels;
+    audio["bitrate"] = info.audio.bitrate;
+    out["audio"] = audio;
+    return out;
+}
+
+VideoRequest video_request_from_python(const py::object& request) {
+    VideoRequest out;
+    if (request.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(request);
+    const auto take_string = [&data](const char* key, std::string& target) {
+        if (data.contains(key)) target = py::str(data[key]).cast<std::string>();
+    };
+    take_string("ffmpeg", out.ffmpeg);
+    take_string("input", out.input);
+    take_string("output", out.output);
+    take_string("reference_path", out.reference_path);
+    if (data.contains("has_reference")) out.has_reference = py::cast<bool>(data["has_reference"]);
+    if (data.contains("reference")) out.reference = video_media_from_python(data["reference"]);
+    if (data.contains("source")) out.source = video_media_from_python(data["source"]);
+    if (data.contains("available_encoders")) {
+        for (auto item : py::list(data["available_encoders"])) {
+            out.available_encoders.push_back(py::str(item).cast<std::string>());
+        }
+    }
+    return out;
+}
+
 // ── ★★ P7a：引擎调用门面在 Python 侧的形态（`api.engine.*`）──────────────────
 // 口径（用户拍板的方案 3）：
 //   · **值类型 Python 友好**：出入都是 dict / list / str / int，**不漏 C++ 结构体与指针**；
@@ -1030,6 +1110,80 @@ public:
         if (facade == nullptr) return true;
         return facade->xml_row_matches(xml_filter_from_python(filter), kind,
                                        xml_result_from_python(result));
+    }
+
+    // ── ★★ P12a：video 页那一组 ─────────────────────────────────────────────
+    py::object video_find_ffmpeg(const std::string& app_dir, const std::string& ffmpeg_path,
+                                 const std::string& ffprobe_path) const {
+        const EngineFacade* facade = available("video_find_ffmpeg");
+        if (facade == nullptr) return py::none();
+        const VideoPaths paths = facade->video_find_ffmpeg(app_dir, ffmpeg_path, ffprobe_path);
+        py::dict out;
+        out["found"] = paths.found;
+        out["has_probe"] = paths.has_probe;
+        out["ffmpeg"] = paths.ffmpeg;
+        out["ffprobe"] = paths.ffprobe;
+        out["ffmpeg_from_config"] = paths.ffmpeg_from_config;
+        out["ffprobe_from_config"] = paths.ffprobe_from_config;
+        return out;
+    }
+    int video_major_version(const std::string& version_output) const {
+        const EngineFacade* facade = available("video_major_version");
+        if (facade == nullptr) return 0;
+        return facade->video_major_version(version_output);
+    }
+    bool video_version_rejected(const std::string& version_output) const {
+        const EngineFacade* facade = available("video_version_rejected");
+        if (facade == nullptr) return false;
+        return facade->video_version_rejected(version_output);
+    }
+    py::object video_plan_transcode(py::object request) const {
+        const EngineFacade* facade = available("video_plan_transcode");
+        if (facade == nullptr) return py::none();
+        const VideoPlan plan = facade->video_plan_transcode(video_request_from_python(request));
+        py::dict out;
+        out["argv"] = strings_to_python(plan.argv);
+        out["video_encoder"] = plan.video_encoder;
+        out["encoder_warning"] = plan.encoder_warning;
+        out["audio_kept_on_probe_failure"] = plan.audio_kept_on_probe_failure;
+        out["duration"] = plan.duration;
+        out["scale_applied"] = plan.scale_applied;
+        out["fps_applied"] = plan.fps_applied;
+        out["video_bitrate"] = plan.video_bitrate;
+        out["audio_bitrate"] = plan.audio_bitrate;
+        out["audio_sample_rate"] = plan.audio_sample_rate;
+        out["audio_channels"] = plan.audio_channels;
+        out["audio_disabled"] = plan.audio_disabled;
+        return out;
+    }
+    py::object video_check_output_conflict(py::object request) const {
+        const EngineFacade* facade = available("video_check_output_conflict");
+        if (facade == nullptr) return py::none();
+        const VideoOutputCheck check =
+            facade->video_check_output_conflict(video_request_from_python(request));
+        py::dict out;
+        out["conflict"] = check.conflict;
+        out["reason"] = check.reason;
+        return out;
+    }
+    py::object video_parse_ffprobe(const std::string& json) const {
+        const EngineFacade* facade = available("video_parse_ffprobe");
+        if (facade == nullptr) return py::none();
+        return video_media_to_python(facade->video_parse_ffprobe(json));
+    }
+    py::object video_parse_encoders(const std::string& output) const {
+        const EngineFacade* facade = available("video_parse_encoders");
+        if (facade == nullptr) return py::none();
+        return strings_to_python(facade->video_parse_encoders(output));
+    }
+    py::object video_progress_from_line(const std::string& line, double duration_sec) const {
+        const EngineFacade* facade = available("video_progress_from_line");
+        if (facade == nullptr) return py::none();
+        const VideoProgress sample = facade->video_progress_from_line(line, duration_sec);
+        py::dict out;
+        out["matched"] = sample.matched;
+        out["percent"] = sample.percent;
+        return out;
     }
 
 private:
@@ -1870,7 +2024,20 @@ void ensure_api_module() {
             // ★★ P11b：目录对比 + 筛选
             .def("xml_compare_dirs", &PyEngine::xml_compare_dirs, py::arg("options"))
             .def("xml_row_matches", &PyEngine::xml_row_matches, py::arg("filter"),
-                 py::arg("kind"), py::arg("result"));
+                 py::arg("kind"), py::arg("result"))
+            // ★★ P12a：video 页那一组（第五页迁移）
+            .def("video_find_ffmpeg", &PyEngine::video_find_ffmpeg, py::arg("app_dir"),
+                 py::arg("ffmpeg_path") = "", py::arg("ffprobe_path") = "")
+            .def("video_major_version", &PyEngine::video_major_version, py::arg("version_output"))
+            .def("video_version_rejected", &PyEngine::video_version_rejected,
+                 py::arg("version_output"))
+            .def("video_plan_transcode", &PyEngine::video_plan_transcode, py::arg("request"))
+            .def("video_check_output_conflict", &PyEngine::video_check_output_conflict,
+                 py::arg("request"))
+            .def("video_parse_ffprobe", &PyEngine::video_parse_ffprobe, py::arg("json"))
+            .def("video_parse_encoders", &PyEngine::video_parse_encoders, py::arg("output"))
+            .def("video_progress_from_line", &PyEngine::video_progress_from_line, py::arg("line"),
+                 py::arg("duration_sec"));
         py::class_<PyWidget>(m, "Widget")
             .def("__repr__", [](const PyWidget& widget) {
                 return std::string("xrkit.Widget(") + (widget.valid() ? "valid" : "null") + ")";
