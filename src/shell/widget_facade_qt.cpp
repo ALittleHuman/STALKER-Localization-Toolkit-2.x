@@ -60,6 +60,11 @@ const stk_ui* table() { return qt_plugin_ui(); }
 // 拖放目标的回调盒：`FileDropFilter` 的 handler 是**构造时**给的（没有 setter），所以先装一个
 // "转发到盒子里"的 handler，`drop_zone_on_drop` 再往盒子里填真正的回调。
 // ★ 盒与过滤器都**进程级保活**（与控件同寿；同 L1 回调盒的纪律）。
+// 任务壳消息回调盒（P12c-2）：与控件同寿（同 L1 回调盒的纪律）
+struct MessageBox {
+    std::function<void(const std::string&)> fn;
+};
+
 struct DropBox {
     std::function<void(const std::vector<std::string>&)> handler;
     FileDropFilter* filter = nullptr;
@@ -525,6 +530,17 @@ const plug::UiFacade kQtFacade = {
     [](plug::UiHandle panel) {
         TaskShell* shell = task_of(panel);
         return shell != nullptr && shell->cancel_requested();
+    },
+    /* task_on_message：**回主线程的消息回调**透给插件。
+       ★ 壳保证：worker 里 `message(...)` 之后**排队回主线程**再调它 ⇒ 回调里可以碰控件。
+       这是插件页"干完活刷新界面"的合法通道（worker 里碰控件违反契约 —— xml 页初版就踩过）。 */
+    [](plug::UiHandle panel, std::function<void(const std::string&)> handler) {
+        TaskShell* shell = task_of(panel);
+        if (shell == nullptr) return;
+        auto* box = keep(std::make_unique<MessageBox>(MessageBox{std::move(handler)}));
+        shell->set_message_handler([box](const QString& text) {
+            if (box->fn) box->fn(text.toStdString());
+        });
     },
     /* on_ui_thread：门面是在哪个线程装的，就以那个线程为"UI 线程" */
     []() { return std::this_thread::get_id() == ui_thread_id(); },

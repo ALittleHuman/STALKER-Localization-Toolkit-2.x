@@ -41,7 +41,7 @@ const char* const kMethodNames[] = {
     "log_view",    "log_view_append",    "log_view_clear",    "log_view_text",
     "drop_zone",   "drop_zone_on_drop",
     "task_panel",  "task_run",           "task_status",       "task_cancel",
-    "task_cancel_requested",
+    "task_cancel_requested", "task_on_message",
     "on_ui_thread",
     // ★★ P5：重型 L2 第二批（滚动视口 / 可分栏）
     "viewport",    "viewport_fit_content", "viewport_set_min_body_height", "viewport_sync",
@@ -104,6 +104,7 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "task_status") return static_cast<bool>(facade.task_status);
     if (name == "task_cancel") return static_cast<bool>(facade.task_cancel);
     if (name == "task_cancel_requested") return static_cast<bool>(facade.task_cancel_requested);
+    if (name == "task_on_message") return static_cast<bool>(facade.task_on_message);
     if (name == "on_ui_thread") return static_cast<bool>(facade.on_ui_thread);
     if (name == "viewport") return static_cast<bool>(facade.viewport);
     if (name == "viewport_fit_content") return static_cast<bool>(facade.viewport_fit_content);

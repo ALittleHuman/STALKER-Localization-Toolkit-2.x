@@ -199,17 +199,17 @@ def register(api):
                 return
 
             def worker(progress, message):
+                # ★★ 线程契约：worker 在**工作线程**里跑 ⇒ **只许**调 progress/message 两个 sink，
+                #   绝不碰控件（碰了就是偶发崩溃；界面刷新交给下面的回主线程回调）。
                 progress(0)
                 args_with_cancel = dict(args)
                 args_with_cancel["cancel"] = ui.task_cancel_requested
                 report = run_compare(api, args_with_cancel)
                 rows_state["rows"] = report["rows"]
-                # 明细由**引擎**渲染（插件只负责摆上界面）
+                # 明细由**引擎**渲染（插件只负责摆上界面；这一步是纯数据，可以在工作线程里做）
                 na, nb = name_a(), name_b()
                 for row in rows_state["rows"]:
                     row["_inline_detail"] = engine.xml_inline_detail(row, na, nb)
-                refresh_table()
-                refresh_stats()
                 if report["cancelled"]:
                     message("已取消：在文件边界停下（已比较 %d 个文件；表里每行都是完整结果）"
                             % len(report["rows"]))
@@ -305,6 +305,14 @@ def register(api):
         ui.button(None, "清除", clear_all)
         ui.button(None, "复制 ID", copy_selected_id)
         ui.button(None, "导出统计", export_csv)
+        # ★★ P12c-2：任务壳的**回主线程**消息回调 —— 界面刷新只在这里做（worker 里不碰控件）
+        def on_task_message(text):
+            if text.startswith("已取消") or text.startswith("对比完成"):
+                refresh_table()
+                refresh_stats()
+            ui.set_text(stats, ui.get_text(stats) + " ｜ " + text)
+
+        ui.task_on_message(panel, on_task_message)
         # ★ 选中一行 ⇒ 明细（**引擎渲染**）；回调要在控件都造好之后挂
         ui.tree_on_activate(tree, on_select)
         refresh_stats()

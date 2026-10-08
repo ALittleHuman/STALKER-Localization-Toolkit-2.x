@@ -136,6 +136,12 @@ struct UiFacade {
     std::function<std::string(UiHandle panel)> task_status;
     std::function<void(UiHandle panel)> task_cancel;
     std::function<bool(UiHandle panel)> task_cancel_requested;
+    // ★★ P12c-2：**任务壳的回主线程通道** —— 外壳自己就有（`TaskShell::set_message_handler`：
+    //   worker 里 `message(...)` 之后排队回主线程再调它，**回调里可以直接碰控件**）。
+    //   有了它，插件页才有一条**合法**的"干完活刷新界面"的路子
+    //   （否则只能像 xml 页初版那样在 worker 里刷控件 —— 那是违反契约的写法）。
+    std::function<void(UiHandle panel, std::function<void(const std::string&)> handler)>
+        task_on_message;
 
     // 当前调用是否在**宿主 UI 线程**上：造控件/改控件只许在主线程；
     // 不在 ⇒ 一律返回空/0 并由调用方**记账**（零静默，防"工作线程里碰 Qt"那类崩）。

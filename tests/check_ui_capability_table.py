@@ -75,6 +75,7 @@ EXPECT_UI = {
     "task_run": "★L2.4 起任务：worker 在**工作线程**里跑，收 progress/message 两个 sink",
     "task_status": "L2.4 当前状态文案", "task_cancel": "L2.4 请求取消",
     "task_cancel_requested": "L2.4 worker 轮询取消位（协作式取消）",
+    "task_on_message": "任务壳回主线程消息回调（**回调里可以碰控件**）",
     "on_ui_thread": "★线程纪律：门面方法只许在宿主 UI 线程调用（其余一律拒绝并记账）",
     # ★★ P5：重型 L2 第二批 —— 滚动视口 + 可分栏（六页每一页都要的那两件"框架件"）
     "viewport": "L2.5 滚动视口：宿主造「容器+视口+画布」，**句柄＝画布**（条子只许宿主造，1.6）",

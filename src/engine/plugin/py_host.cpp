@@ -1781,6 +1781,28 @@ public:
             facade->task_cancel(handle_of(panel));
         }
     }
+    // ★★ P12c-2：任务壳的**回主线程**消息回调（回调里可以碰控件；worker 里不许）
+    bool task_on_message(py::object panel, py::object handler) const {
+        const UiFacade* facade = available("task_on_message");
+        if (facade == nullptr) return false;
+        if (handler.is_none() != 0 || PyCallable_Check(handler.ptr()) == 0) {
+            core::log(core::Level::Warn,
+                      "[" + owner_ + "] ui.task_on_message 的回调不是可调用对象");
+            return false;
+        }
+        py::object kept = handler;
+        keepalive()->push_back(kept);
+        facade->task_on_message(handle_of(panel), [kept](const std::string& text) {
+            py::gil_scoped_acquire acquire;
+            try {
+                kept(py::str(text));
+            } catch (const py::error_already_set& err) {
+                core::log(core::Level::Warn,
+                          std::string("ui.task_on_message 回调抛异常：") + err.what());
+            }
+        });
+        return true;
+    }
     bool task_cancel_requested(py::object panel) const {
         if (const UiFacade* facade = available("task_cancel_requested")) {
             return facade->task_cancel_requested(handle_of(panel));
@@ -2222,6 +2244,8 @@ void ensure_api_module() {
             .def("task_status", &PyUi::task_status, py::arg("panel"))
             .def("task_cancel", &PyUi::task_cancel, py::arg("panel"))
             .def("task_cancel_requested", &PyUi::task_cancel_requested, py::arg("panel"))
+            .def("task_on_message", &PyUi::task_on_message, py::arg("panel"),
+                 py::arg("handler"))
             .def("on_ui_thread", &PyUi::on_ui_thread)
             // ★ P5：重型 L2 第二批（滚动视口 / 可分栏）
             .def("viewport", &PyUi::viewport, py::arg("parent") = py::none(),

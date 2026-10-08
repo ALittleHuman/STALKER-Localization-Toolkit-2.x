@@ -5191,6 +5191,17 @@ SmokeResult run_smoke() {
             "            ui.set_text(label, '点过了')\n"
             "            ui.log('门面夹具：按钮被点了')\n"
             "        ui.button(None, '夹具按钮', on_click)\n"
+            "        panel = ui.task_panel(None, True)\n"
+            "        cb_label = ui.label(None, '（任务回调前）')\n"
+            "        def on_task_msg(msg):\n"
+            "            mark('task_msg_thread:%d' % int(ui.on_ui_thread()))\n"
+            "            ui.set_text(cb_label, '回调改的:' + msg)\n"
+            "            mark('task_msg_text:' + msg)\n"
+            "        ui.task_on_message(panel, on_task_msg)\n"
+            "        def task_worker(progress, message):\n"
+            "            progress(50)\n"
+            "            message('来自工作线程')\n"
+            "        ui.task_run(panel, '夹具任务', task_worker)\n"
             "        mark('built')\n"
             "    api.register_tool('门面夹具页', build, 5)\n";
         QFile plugin_file(QDir(dir).filePath(QStringLiteral("ui_demo.py")));
@@ -5250,6 +5261,37 @@ SmokeResult run_smoke() {
         check(marker_text.contains(QStringLiteral("click:初值")),
               QStringLiteral("P3 按钮没回到 Python 或 get_text 读不到输入框（标记=%1）")
                   .arg(marker_text.isEmpty() ? QStringLiteral("(空)") : marker_text.simplified()));
+        // ★★ P12c-2：任务壳的**回主线程**通道（worker 发的消息必须在 UI 线程上回调，且能碰控件）
+        for (int pump = 0; pump < 40; ++pump) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QFile probe_file(marker);
+            if (probe_file.open(QIODevice::ReadOnly)) {
+                if (QString::fromUtf8(probe_file.readAll())
+                        .contains(QStringLiteral("task_msg_text:"))) {
+                    break;
+                }
+            }
+        }
+        QString marker_after;
+        {
+            QFile marker_file(marker);
+            if (marker_file.open(QIODevice::ReadOnly)) {
+                marker_after = QString::fromUtf8(marker_file.readAll());
+            }
+        }
+        check(marker_after.contains(QStringLiteral("task_msg_thread:1")),
+              QStringLiteral("P12c-2 任务壳消息回调不在 UI 线程上（标记=%1）")
+                  .arg(marker_after.simplified()));
+        check(marker_after.contains(QStringLiteral("task_msg_text:")),
+              QStringLiteral("P12c-2 任务壳消息没回到插件回调（标记=%1）")
+                  .arg(marker_after.simplified()));
+        QStringList labels_cb;
+        if (page_widget != nullptr) {
+            for (QLabel* item : page_widget->findChildren<QLabel*>()) labels_cb << item->text();
+        }
+        check(labels_cb.contains(QStringLiteral("回调改的:来自工作线程")),
+              QStringLiteral("P12c-2 回调里没改到控件（标签实得：%1）")
+                  .arg(labels_cb.join(QStringLiteral(" / "))));
         check(marker_text.contains(QStringLiteral("progress_set:42")),
               QStringLiteral("P12c 进度条设 42 没读回 42（标记=%1）")
                   .arg(marker_text.isEmpty() ? QStringLiteral("(空)") : marker_text.simplified()));
