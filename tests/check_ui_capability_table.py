@@ -137,6 +137,9 @@ EXPECT_ENGINE = {
     "xml_full_text_detail": "文本模式完整明细（**引擎渲染**）",
     "xml_render_csv": "CSV 文本（BOM + \\r\\n，引擎唯一实现）",
     "xml_write_csv": "渲染 + 原子写盘（空串=成功）",
+    # ★★ P11b：目录对比（第四页真正跑起来要的那一块）
+    "xml_compare_dirs": "目录对比（遍历/配对/逐文件比/给 kind；取消在文件边界）",
+    "xml_row_matches": "筛选命中（row_kinds 空=全过；differ_types 要同时命中）",
 }
 # ★★ P7b：**宿主服务门面**（`api.host.*`）—— 宿主替插件办的杂事（样板页 fontpack 真的要用）
 EXPECT_HOST = {

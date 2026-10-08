@@ -35,6 +35,8 @@ const char* const kMethodNames[] = {
     "xml_modes", "xml_find_mode", "text_read_bytes", "xml_compare_stats",
     "xml_compare_text", "xml_only_one_side", "xml_inline_detail", "xml_full_detail",
     "xml_full_text_detail", "xml_render_csv", "xml_write_csv",
+    // ★★ P11b：目录对比 + 筛选
+    "xml_compare_dirs", "xml_row_matches",
 };
 
 bool has_impl(const EngineFacade& facade, const std::string& name) {
@@ -63,6 +65,8 @@ bool has_impl(const EngineFacade& facade, const std::string& name) {
     if (name == "xml_full_text_detail") return static_cast<bool>(facade.xml_full_text_detail);
     if (name == "xml_render_csv") return static_cast<bool>(facade.xml_render_csv);
     if (name == "xml_write_csv") return static_cast<bool>(facade.xml_write_csv);
+    if (name == "xml_compare_dirs") return static_cast<bool>(facade.xml_compare_dirs);
+    if (name == "xml_row_matches") return static_cast<bool>(facade.xml_row_matches);
     return false;
 }
 

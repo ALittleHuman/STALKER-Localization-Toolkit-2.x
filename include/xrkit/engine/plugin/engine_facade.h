@@ -284,6 +284,27 @@ struct XmlCsvReport {
     std::string encodings_used;
 };
 
+// ── ★★ P11b：xml 目录对比（结果表那一整块业务；实现只在引擎）────────────────
+struct XmlDirDiffRow {
+    XmlCompareResult result;
+    std::string kind;      // "same" / "diff" / "only_a" / "only_b"
+};
+
+struct XmlDirDiffOptions {
+    std::string dir_a;
+    std::string dir_b;
+    std::string enc_a = "auto";
+    std::string enc_b = "auto";
+    std::string mode_key = "stats";
+    std::function<bool()> should_stop;   // 每个文件之前轮询
+};
+
+struct XmlDirDiffReport {
+    std::vector<XmlDirDiffRow> rows;
+    int total = 0;
+    bool cancelled = false;
+};
+
 struct EngineFacade {
     std::function<FontCheckResult(const std::string& font_path)> font_check;
     std::function<FontPackResult(const FontPackOptions& options)> font_pack;
@@ -334,6 +355,10 @@ struct EngineFacade {
                               const std::string& name_b)> xml_full_text_detail;
     std::function<std::string(const XmlCsvReport&)> xml_render_csv;
     std::function<std::string(const std::string& path, const XmlCsvReport&)> xml_write_csv;
+    // ★★ P11b：目录对比 + 筛选命中（口径与页面同一份引擎实现）
+    std::function<XmlDirDiffReport(const XmlDirDiffOptions&)> xml_compare_dirs;
+    std::function<bool(const XmlFilterSpec&, const std::string&, const XmlCompareResult&)>
+        xml_row_matches;
 };
 
 // 外壳注入实现（`src/shell/engine_facade_impl.cpp`）。传 nullptr = 撤销。

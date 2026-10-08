@@ -3,6 +3,7 @@
 #include "xrkit/core/theme.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/sniff.h"
+#include "xrkit/engine/xml/dirdiff.h"
 
 #include "../pair_tree.h"
 #include "../task_shell.h"
@@ -44,17 +45,6 @@ const char* kEncodings[] = {etxt::kUtf8,    etxt::kWindows1251, etxt::kWindows12
                             etxt::kGbk,     etxt::kGb2312,      etxt::kLatin1};
 
 // 相对路径 → 绝对路径（'/' 分隔，便于两侧对齐）
-std::map<std::string, QString> list_xml(const QString& root) {
-    std::map<std::string, QString> out;
-    QDirIterator it(root, QStringList() << QStringLiteral("*.xml"), QDir::Files,
-                    QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        const QString path = it.next();
-        out[QDir(root).relativeFilePath(path).toUtf8().toStdString()] = path;
-    }
-    return out;
-}
-
 }  // namespace
 
 XmlPage::XmlPage(QWidget* parent)
@@ -427,102 +417,40 @@ std::string XmlPage::name_b() const {
 int XmlPage::compare_dirs(const QString& dir_a, const QString& dir_b, const QString& enc_a,
                           const QString& enc_b, const std::function<bool()>& should_stop) {
     ++scan_count_;  // 10.4：这个计数只在真扫目录时涨（切模式不许涨）
-    // ★★ 2026-10-06（审计 3-5）：本函数**既在主线程被自检直接调，也在工作线程被
-    //   `task_->run()` 调**（见构造函数里的「开始比较」）。所以：
-    //   ① 它改的是 `results_`（worker 独占写）——主线程那边必须**碰不到**它：比较期间
-    //      模式/筛选控件**按需禁用**（见下面 `set_compare_controls_enabled`，消除并发写）；
-    //   ② 收尾的控件刷新一律**排队回主线程**（绝不在这条调用栈里动窗口）。
-    const bool on_main = QThread::currentThread() == QCoreApplication::instance()->thread();
-    // ★★ 2026-10-06（审计 3-5）：**控件只在主线程改**（`QWidget::setEnabled` 不是线程安全的）
-    //   ⇒ 禁用/恢复这两件事**只由主线程路径做**（「开始比较」按钮在起 worker 之前禁用、
-    //   worker 收尾时排队恢复）。这条 worker 分支**不碰控件**：
-    //   它此前试过"从 worker 里阻塞式排队去改"，实测在离屏自检下**死锁**
-    //   （主线程若正在轮询而不泵事件，`BlockingQueuedConnection` 永远等不到）——
-    //   线程安全优先于"顺手在这里禁一下"。
-    (void)on_main;
-    // ⑤：这一轮比较的对象（名字快照，统计标签/CSV 都用它）
+    // ★★ 2026-10-08（P11b）：**目录遍历/配对/逐文件比**整套下沉到引擎
+    //   （`engine/xml/dirdiff.cpp`）—— 插件页与 CLI 参照都走它，页面只剩界面侧排版。
     compared_a_ = dir_a;
     compared_b_ = dir_b;
     last_compare_cancelled_ = false;
-    const std::map<std::string, QString> a = list_xml(dir_a);
-    const std::map<std::string, QString> b = list_xml(dir_b);
-    std::set<std::string> all;
-    for (const auto& [rel, path] : a) all.insert(rel);
-    for (const auto& [rel, path] : b) all.insert(rel);
-    last_compare_total_ = static_cast<int>(all.size());
 
-    results_.clear();
-    // ★★ 2026-10-06（审计 3-7）：**这一轮的模式声明与注册项在开跑前定死** ——
-    //   工作线程里不许去读控件/注册表（`mode_combo_->currentData()` 是控件访问）。
     const exml::XmlModeSpec* spec_this_round = mode();
     const plugin::CompareModeReg* reg_this_round = mode_reg();
-    const bool plugin_mode = reg_this_round != nullptr && static_cast<bool>(reg_this_round->compare);
-    const bool text_mode = current_mode_key() == "text";
-    for (const std::string& rel : all) {
-        // ★ 2026-10-06（①）：**每个文件之前**轮询取消请求 —— 停下时 results_ 里都是
-        //   已经比完的完整结果（不写半个），行数就是"已比较数"，由前端如实报出。
-        if (should_stop && should_stop()) {
-            last_compare_cancelled_ = true;
-            break;
-        }
-        const auto ita = a.find(rel);
-        const auto itb = b.find(rel);
-        Row row;
-        if (ita == a.end()) {
-            row.result = exml::only_one_side(rel, "b");
-            row.kind = "only_b";
-            results_.push_back(std::move(row));
-            continue;
-        }
-        if (itb == b.end()) {
-            row.result = exml::only_one_side(rel, "a");
-            row.kind = "only_a";
-            results_.push_back(std::move(row));
-            continue;
-        }
-        const etxt::DecodedBytes text_a =
-            etxt::read_text_bytes(ita->second.toUtf8().toStdString(), enc_a.toUtf8().toStdString());
-        const etxt::DecodedBytes text_b =
-            etxt::read_text_bytes(itb->second.toUtf8().toStdString(), enc_b.toUtf8().toStdString());
-        if (!text_a.ok || !text_b.ok) {
-            // 读不出来（编码/权限）：如实记一条"不可信"，绝不静默当成一致
-            row.result = exml::only_one_side(rel, text_a.ok ? "b" : "a");
-            row.result.warning = !text_a.ok ? text_a.error : text_b.error;
-            row.result.untrusted_a = !text_a.ok;
-            row.result.untrusted_b = !text_b.ok;
-            row.kind = text_a.ok ? "only_b" : "only_a";
-            results_.push_back(std::move(row));
-            continue;
-        }
-        // ★★ 2026-10-06（审计 3-7）：**插件注册的那个回调必须真的被调用** —— 修前这一行
-        //   只有内置两支（text/stats），插件模式被解析成内置统计模式 ⇒ 插件回调**永不执行**
-        //   （"注册成功但无人消费"）。现在三段分流：插件回调优先，其次内置文本，最后内置统计。
-        if (plugin_mode) {
-            row.result = reg_this_round->compare(rel, text_a.text, text_b.text,
-                                                 text_a.used_encoding, text_b.used_encoding);
-            row.result.rel = rel;   // sink 没回 rel 也要有（表格第一列靠它；插件不必自己填）
-            if (row.result.mode.empty() || row.result.mode == "stats") {
-                row.result.mode = spec_this_round != nullptr ? spec_this_round->key : "plugin";
-            }
-            row.result.encoding_a = text_a.used_encoding;
-            row.result.encoding_b = text_b.used_encoding;
-        } else {
-            row.result = text_mode
-                             ? exml::compare_text(rel, text_a.text, text_b.text,
-                                                  text_a.used_encoding, text_b.used_encoding)
-                             : exml::compare_stats(rel, text_a.text, text_b.text,
-                                                   text_a.used_encoding, text_b.used_encoding);
-        }
-        row.kind = row.result.consistent ? "same"
-                                         : (row.result.only_one_side
-                                                ? (row.result.only_side == "a" ? "only_a" : "only_b")
-                                                : "diff");
-        results_.push_back(std::move(row));
+    exml::DirDiffOptions options;
+    options.dir_a = dir_a.toUtf8().toStdString();
+    options.dir_b = dir_b.toUtf8().toStdString();
+    options.enc_a = enc_a.toUtf8().toStdString();
+    options.enc_b = enc_b.toUtf8().toStdString();
+    options.mode_key = current_mode_key();
+    options.should_stop = should_stop;
+    if (reg_this_round != nullptr && static_cast<bool>(reg_this_round->compare)) {
+        // 插件注册的回调**真的被调用**（审计 3-7 那条不许回退）
+        options.compare = reg_this_round->compare;
     }
-    // ★★ 2026-10-06（审计 3-5）：`refresh_rows()` 会 `clear()/new QTreeWidgetItem/
-    //   addTopLevelItem` —— **它只能在主线程跑**。修前这里是无条件直调，于是工作线程
-    //   就在自己的调用栈里碰了 QTreeWidget（而紧接着的统计标签却有主线程守卫 ⇒ 守卫
-    //   不对称，正是审计点名的形态）。现在与统计标签**同一条口径**：非主线程一律排队。
+    const exml::DirDiffReport report = exml::compare_dirs(options);
+    last_compare_total_ = report.total;
+    last_compare_cancelled_ = report.cancelled;
+
+    results_.clear();
+    for (const exml::DirDiffRow& row : report.rows) {
+        Row out;
+        out.result = row.result;
+        out.kind = row.kind;
+        results_.push_back(std::move(out));
+    }
+    (void)spec_this_round;
+
+    // 收尾一律**排队回主线程**（工作线程里不碰控件；见审计 3-5 那段血账）
+    const bool on_main = QThread::currentThread() == QCoreApplication::instance()->thread();
     if (on_main) {
         refresh_rows();
         refresh_stats_label();
@@ -533,7 +461,6 @@ int XmlPage::compare_dirs(const QString& dir_a, const QString& dir_b, const QStr
                 refresh_rows();
                 refresh_stats_label();
                 set_compare_controls_enabled(true);
-                // 收尾在**主线程**：模式快照用完就清（下一轮主线程路径不许读到旧值）
                 mode_key_at_task_start_.clear();
             },
             Qt::QueuedConnection);

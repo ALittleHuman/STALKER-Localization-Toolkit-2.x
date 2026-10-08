@@ -1854,14 +1854,24 @@ def step_shell_smoke(release: bool) -> None:
         n = code.count("recursive_directory_iterator")
         if n:
             hits.append((str(src.relative_to(ROOT)).replace("\\", "/"), n))
-    total_iter = sum(n for _, n in hits)
+    # ★★ 2026-10-08（P11b）：**显式清单**（升级，不是放宽）——
+    #   本批把 XML 页"列目录"从页面（原用 Qt 的 `QDirIterator`）下沉到引擎
+    #   `engine/xml/dirdiff.cpp` ⇒ 引擎侧 +1 份；**外壳侧仍是 0 份**，正是这条锁的本意
+    #   （遍历只许住引擎、页面不许自己抄一份）。清单化之后：**未登记的新增照样立刻红**。
+    expected_iter = {
+        "src/engine/font/charset.cpp": 1,
+        "src/engine/fs/overlay.cpp": 2,
+        "src/engine/text/extract.cpp": 1,
+        "src/engine/xml/dirdiff.cpp": 1,   # ← P11b 新登记：目录对比的遍历（下沉自 xml_page）
+    }
     shell_iter = [p for p, _ in hits if p.startswith("src/shell/")]
-    if total_iter != 4 or shell_iter:
-        fail("递归遍历件（D2：同类东西只有一套）：src/ 下 `recursive_directory_iterator` 必须恰好 4 份"
-             "（引擎里既有的那些）、src/shell 下 0 份；实测 %d 份：%s"
-             % (total_iter, "、".join("%s×%d" % (p, n) for p, n in hits)))
+    if dict(hits) != expected_iter or shell_iter:
+        fail("递归遍历件（D2：同类东西只有一套）：实测 %s；应恰好是 %s，且 src/shell 下 0 份"
+             % ("、".join("%s×%d" % (p, n) for p, n in hits) or "(无)",
+                "、".join("%s×%d" % (p, n) for p, n in sorted(expected_iter.items()))))
         return
-    ok("递归遍历件只有 4 份、外壳侧 0 份（D2①：没有第 5 份遍历）")
+    ok("递归遍历件与**登记清单**逐项一致（%d 处、全在引擎层；外壳侧 0 份）"
+       % len(expected_iter))
 
     # ② 编码转换页的批处理**只有一条路**：必须调引擎的 `convert_batch(`，
     #    且不许再出现"只读顶层"的旧实现（`entryList(`）——那正是"子目录被静默漏掉"的根源。
@@ -2494,6 +2504,26 @@ def step_engine_facade(release: bool) -> None:
             problems.append("xml 面 %s=%s（应为 %s）" % (key, got or "(缺)", want))
     if not value_of("xml_find_text_columns") or value_of("xml_find_text_columns") == "0":
         problems.append("xml 面 text 模式的列数是 0（模式表没带列声明）")
+
+    # ── ★★ P11b：xml **目录对比**（第四页真正跑起来要的那一块）───────────────
+    dirs_expect = {
+        "dirs_total": "5",                       # 并集：same/diff/only_a/only_b + 子目录里的同名
+        "dirs_rows": "5",
+        "dirs_kinds": "diff,only_a,only_b,same,same",   # 四种 kind 都要出
+        "dirs_same_kind": "same",
+        "dirs_nested_kind": "same",              # ★递归：子目录里的同名文件也配上了
+        "dirs_diff_count": "1",
+        "dirs_only_a_kind": "only_a",
+        "dirs_only_b_kind": "only_b",
+        "dirs_match_diff": "1",                  # 筛选命中的唯一实现（引擎）
+        "dirs_match_same": "0",
+        "dirs_cancel_flag": "1",                 # 取消在**第一个文件之前**生效
+        "dirs_cancel_rows": "0",
+    }
+    for key, want in dirs_expect.items():
+        got = value_of(key)
+        if got != want:
+            problems.append("xml 目录对比 %s=%s（应为 %s）" % (key, got or "(缺)", want))
     say("  夹具证据：%s" % text.replace("\n", " | ")[:260])
     if problems:
         fail("引擎调用门面不成立（%d 处）：%s" % (len(problems), "；".join(problems)))
@@ -2501,7 +2531,8 @@ def step_engine_facade(release: bool) -> None:
     if font:
         ok("引擎门面七处都通（槽位 10 档 / 四态文案 / font_check=%s / 工作线程可调 / "
            "convert 面：逐字节·备份恢复清空·CSV 带 BOM / text 面：校验·判定·真提取·取消语义 / "
-           "xml 面：模式表·两种对比·单侧·引擎明细·CSV 往返一致）" % state)
+           "xml 面：模式表·两种对比·单侧·引擎明细·CSV 往返一致 / "
+           "**目录对比**：配对·四种 kind·递归·筛选·取消）" % state)
     else:
         say("  · 未覆盖：font_check 的真字体那条（本机没有 msyh/simsun）")
         ok("引擎门面四处都通（槽位 / 四态文案 / 工作线程可调 / convert 面整条链路）；"

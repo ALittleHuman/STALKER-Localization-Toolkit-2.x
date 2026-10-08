@@ -19,6 +19,7 @@
 #include "xrkit/engine/text/extract.h"
 #include "xrkit/engine/text/sniff.h"
 #include "xrkit/engine/xml/compare.h"
+#include "xrkit/engine/xml/dirdiff.h"
 
 #include <array>
 #include <string>
@@ -447,6 +448,32 @@ const EngineFacade kFontFacade = {
         std::string error;
         if (exml::write_csv_file(path, to_native(report), error)) return std::string();
         return error;
+    },
+    /* xml_compare_dirs：目录对比（遍历/配对/逐文件比/给 kind 全在引擎那一份实现里） */
+    [](const XmlDirDiffOptions& options) {
+        exml::DirDiffOptions native;
+        native.dir_a = options.dir_a;
+        native.dir_b = options.dir_b;
+        native.enc_a = options.enc_a;
+        native.enc_b = options.enc_b;
+        native.mode_key = options.mode_key;
+        native.should_stop = options.should_stop;
+        const exml::DirDiffReport report = exml::compare_dirs(native);
+        XmlDirDiffReport out;
+        out.total = report.total;
+        out.cancelled = report.cancelled;
+        for (const exml::DirDiffRow& row : report.rows) {
+            out.rows.push_back({to_facade(row.result), row.kind});
+        }
+        return out;
+    },
+    /* xml_row_matches：筛选命中（`row_kinds` 空=全过；`differ_types` 要同时命中） */
+    [](const XmlFilterSpec& filter, const std::string& kind, const XmlCompareResult& result) {
+        exml::XmlFilter native;
+        native.label = filter.label;
+        native.row_kinds = filter.row_kinds;
+        native.differ_types = filter.differ_types;
+        return exml::row_matches_filter(native, kind, from_facade(result));
     },
 };
 

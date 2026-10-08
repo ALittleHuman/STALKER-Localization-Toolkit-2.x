@@ -45,6 +45,7 @@
 #include "xrkit/engine/video/ffmpeg.h"
 #include "xrkit/engine/video/transcode.h"
 #include "xrkit/engine/xml/compare.h"
+#include "xrkit/engine/xml/dirdiff.h"
 
 #include <algorithm>
 #include <array>
@@ -3619,6 +3620,48 @@ int run_cli(const std::vector<std::string>& args) {
     }
 
     // XML 统计模式的**比较**探针：两侧同相对路径
+    if (action == "--xml-compare-dirs") {
+        if (operands.size() < 2) {
+            std::cerr << "XMLDIRS error reason=用法：--xml-compare-dirs <A 目录> <B 目录> "
+                         "[--mode stats|text] [--enc-a X] [--enc-b Y]\n";
+            return kExitUsage;
+        }
+        xrkit::engine::xml::DirDiffOptions opt;
+        opt.dir_a = operands[0];
+        opt.dir_b = operands[1];
+        for (size_t i = 2; i < operands.size(); ++i) {
+            if (operands[i] == "--mode" && i + 1 < operands.size()) {
+                opt.mode_key = operands[++i];
+            } else if (operands[i] == "--enc-a" && i + 1 < operands.size()) {
+                opt.enc_a = operands[++i];
+            } else if (operands[i] == "--enc-b" && i + 1 < operands.size()) {
+                opt.enc_b = operands[++i];
+            } else {
+                std::cerr << "XMLDIRS error reason=未知参数 " << operands[i] << "\n";
+                return kExitUsage;
+            }
+        }
+        const xrkit::engine::xml::DirDiffReport report =
+            xrkit::engine::xml::compare_dirs(opt);
+        // 逐行输出（**判据对拍用的就是这些行**：rel / kind / 两侧行数 / id 数 / 差异数）
+        for (const xrkit::engine::xml::DirDiffRow& row : report.rows) {
+            std::cout << "XMLDIRS row rel=" << row.result.rel << " kind=" << row.kind
+                      << " lines_a=" << row.result.lines_a << " lines_b=" << row.result.lines_b
+                      << " ids_a=" << row.result.ids_a << " ids_b=" << row.result.ids_b
+                      << " count_diff=" << row.result.count_diff.size()
+                      << " text_diff=" << row.result.text_diff.size()
+                      << " only_a=" << row.result.only_a.size()
+                      << " only_b=" << row.result.only_b.size()
+                      << " consistent=" << (row.result.consistent ? 1 : 0)
+                      << " untrusted="
+                      << ((row.result.untrusted_a || row.result.untrusted_b) ? 1 : 0) << "\n";
+        }
+        std::cout << "XMLDIRS ok total=" << report.total
+                  << " rows=" << report.rows.size()
+                  << " cancelled=" << (report.cancelled ? 1 : 0) << "\n";
+        return kExitOk;
+    }
+
     if (action == "--xml-compare") {
         if (operands.size() < 3) {
             std::cerr << "XMLCMP error reason=用法：--xml-compare <rel> <A 文件> <B 文件>\n";

@@ -255,6 +255,61 @@ def register(api):
             written = handle.read()
     mark("csv_roundtrip:%d" % (1 if written == csv_text.encode("utf-8") else 0))
 
+    # ── ★★ P11b：xml 目录对比（第四页真正跑起来要的那一块）────────────────────
+    dir_a = os.path.join(work, "cmp_a")
+    dir_b = os.path.join(work, "cmp_b")
+    os.makedirs(os.path.join(dir_a, "sub"), exist_ok=True)
+    os.makedirs(os.path.join(dir_b, "sub"), exist_ok=True)
+    same = ('<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
+            '\t<string id="a"><text>same</text></string>\n</string_table>\n')
+    diff_a = ('<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
+              '\t<string id="a"><text>one</text></string>\n'
+              '\t<string id="b"><text>two</text></string>\n</string_table>\n')
+    diff_b = ('<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
+              '\t<string id="a"><text>one</text></string>\n'
+              '\t<string id="a"><text>one again</text></string>\n'
+              '\t<string id="b"><text>two changed</text></string>\n</string_table>\n')
+    for root_dir in (dir_a, dir_b):
+        with open(os.path.join(root_dir, "same.xml"), "w", encoding="utf-8") as handle:
+            handle.write(same)
+        with open(os.path.join(root_dir, "sub", "nested.xml"), "w", encoding="utf-8") as handle:
+            handle.write(same)
+    with open(os.path.join(dir_a, "diff.xml"), "w", encoding="utf-8") as handle:
+        handle.write(diff_a)
+    with open(os.path.join(dir_b, "diff.xml"), "w", encoding="utf-8") as handle:
+        handle.write(diff_b)
+    with open(os.path.join(dir_a, "only_a.xml"), "w", encoding="utf-8") as handle:
+        handle.write(same)
+    with open(os.path.join(dir_b, "only_b.xml"), "w", encoding="utf-8") as handle:
+        handle.write(same)
+
+    report = engine.xml_compare_dirs({"dir_a": dir_a, "dir_b": dir_b, "mode_key": "stats",
+                                      "enc_a": "auto", "enc_b": "auto"})
+    mark("dirs_total:%d" % report["total"])
+    mark("dirs_rows:%d" % len(report["rows"]))
+    kinds = sorted(row["kind"] for row in report["rows"])
+    mark("dirs_kinds:%s" % ",".join(kinds))
+    by_rel = {row["rel"]: row for row in report["rows"]}
+    mark("dirs_same_kind:%s" % by_rel.get("same.xml", {}).get("kind"))
+    mark("dirs_nested_kind:%s" % by_rel.get("sub/nested.xml", {}).get("kind"))
+    mark("dirs_diff_count:%d" % len(by_rel.get("diff.xml", {}).get("count_diff", [])))
+    mark("dirs_only_a_kind:%s" % by_rel.get("only_a.xml", {}).get("kind"))
+    mark("dirs_only_b_kind:%s" % by_rel.get("only_b.xml", {}).get("kind"))
+    diff_row = by_rel.get("diff.xml", {})
+    mark("dirs_match_diff:%d"
+         % (1 if engine.xml_row_matches({"label": "只看不一致", "row_kinds": ["diff"]},
+                                        diff_row.get("kind", ""), diff_row) else 0))
+    same_row = by_rel.get("same.xml", {})
+    mark("dirs_match_same:%d"
+         % (1 if engine.xml_row_matches({"label": "只看不一致", "row_kinds": ["diff"]},
+                                        same_row.get("kind", ""), same_row) else 0))
+
+    # ★ 取消谓词必须是**可调用对象**（传 True 会被静默忽略：那不是回调）
+    cancelled = engine.xml_compare_dirs({"dir_a": dir_a, "dir_b": dir_b, "mode_key": "stats",
+                                         "cancel": (lambda: True)})
+    mark("dirs_cancel_flag:%d" % (1 if cancelled["cancelled"] else 0))
+    mark("dirs_cancel_rows:%d" % len(cancelled["rows"]))
+
     mark("done")
     # ★ 夹具自清：`convert_work` 不留痕（插件目录里只该留 marker —— 门禁按行断言它）
     shutil.rmtree(work, ignore_errors=True)

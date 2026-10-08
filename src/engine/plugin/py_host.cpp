@@ -713,6 +713,52 @@ XmlCsvReport xml_csv_report_from_python(const py::object& report) {
     return out;
 }
 
+
+XmlDirDiffOptions xml_dir_options_from_python(const py::object& options) {
+    XmlDirDiffOptions out;
+    if (options.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(options);
+    const auto take_string = [&data](const char* key, std::string& target) {
+        if (data.contains(key)) target = py::str(data[key]).cast<std::string>();
+    };
+    take_string("dir_a", out.dir_a);
+    take_string("dir_b", out.dir_b);
+    take_string("enc_a", out.enc_a);
+    take_string("enc_b", out.enc_b);
+    take_string("mode_key", out.mode_key);
+    if (data.contains("cancel") && data["cancel"].is_none() == 0) {
+        py::object cancel = data["cancel"];
+        keepalive()->push_back(cancel);
+        out.should_stop = [cancel]() -> bool {
+            py::gil_scoped_acquire acquire;
+            try {
+                return py::cast<bool>(cancel());
+            } catch (const py::error_already_set&) {
+                return false;
+            }
+        };
+    }
+    return out;
+}
+
+XmlFilterSpec xml_filter_from_python(const py::object& filter) {
+    XmlFilterSpec out;
+    if (filter.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(filter);
+    if (data.contains("label")) out.label = py::str(data["label"]).cast<std::string>();
+    if (data.contains("row_kinds")) {
+        for (auto item : py::list(data["row_kinds"])) {
+            out.row_kinds.push_back(py::str(item).cast<std::string>());
+        }
+    }
+    if (data.contains("differ_types")) {
+        for (auto item : py::list(data["differ_types"])) {
+            out.differ_types.push_back(py::str(item).cast<std::string>());
+        }
+    }
+    return out;
+}
+
 // ── ★★ P7a：引擎调用门面在 Python 侧的形态（`api.engine.*`）──────────────────
 // 口径（用户拍板的方案 3）：
 //   · **值类型 Python 友好**：出入都是 dict / list / str / int，**不漏 C++ 结构体与指针**；
@@ -959,6 +1005,31 @@ public:
         out["ok"] = error.empty();
         out["error"] = error;
         return out;
+    }
+
+    // ── ★★ P11b：目录对比 + 筛选命中 ────────────────────────────────────────
+    py::object xml_compare_dirs(py::object options) const {
+        const EngineFacade* facade = available("xml_compare_dirs");
+        if (facade == nullptr) return py::none();
+        const XmlDirDiffReport report =
+            facade->xml_compare_dirs(xml_dir_options_from_python(options));
+        py::dict out;
+        out["total"] = report.total;
+        out["cancelled"] = report.cancelled;
+        py::list rows;
+        for (const XmlDirDiffRow& row : report.rows) {
+            py::dict item = xml_result_to_python(row.result);
+            item["kind"] = row.kind;
+            rows.append(item);
+        }
+        out["rows"] = rows;
+        return out;
+    }
+    bool xml_row_matches(py::object filter, const std::string& kind, py::object result) const {
+        const EngineFacade* facade = available("xml_row_matches");
+        if (facade == nullptr) return true;
+        return facade->xml_row_matches(xml_filter_from_python(filter), kind,
+                                       xml_result_from_python(result));
     }
 
 private:
@@ -1772,7 +1843,11 @@ void ensure_api_module() {
             .def("xml_full_text_detail", &PyEngine::xml_full_text_detail, py::arg("result"),
                  py::arg("name_a"), py::arg("name_b"))
             .def("xml_render_csv", &PyEngine::xml_render_csv, py::arg("report"))
-            .def("xml_write_csv", &PyEngine::xml_write_csv, py::arg("path"), py::arg("report"));
+            .def("xml_write_csv", &PyEngine::xml_write_csv, py::arg("path"), py::arg("report"))
+            // ★★ P11b：目录对比 + 筛选
+            .def("xml_compare_dirs", &PyEngine::xml_compare_dirs, py::arg("options"))
+            .def("xml_row_matches", &PyEngine::xml_row_matches, py::arg("filter"),
+                 py::arg("kind"), py::arg("result"));
         py::class_<PyWidget>(m, "Widget")
             .def("__repr__", [](const PyWidget& widget) {
                 return std::string("xrkit.Widget(") + (widget.valid() ? "valid" : "null") + ")";

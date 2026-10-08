@@ -13,6 +13,9 @@
 //
 // 本文件先落**统计模式**（行数/ID 计数）；文本模式要一个容错 XML 解析器，另开一片。
 
+// ★ 2026-10-08（P11b）：本头用了 `std::array<std::string,3>` 当成员，**必须自己 include <array>**
+//   —— 以前靠"包含它的 TU 恰好先 include 了 <array>"混过去；新 TU（xml/dirdiff.cpp）当场暴露。
+#include <array>
 #include <cstdint>
 #include <map>
 #include <string>
