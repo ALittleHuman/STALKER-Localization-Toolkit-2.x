@@ -5801,6 +5801,37 @@ SmokeResult run_smoke() {
             check(chosen == QStringLiteral("甲"),
                   QStringLiteral("P13-2a 选中项没把标签原文回传插件（实得 [%1]）").arg(chosen));
         }
+
+        // ★★ P13-2a-2：插件页门面菜单的**正向承诺** ——
+        //   注册表只认内置六页那几个 host（`Registry::bad_slot` → `known_host`）⇒
+        //   无 `replaces` 的插件页**本就不该**有别的插件的 context 命令；
+        //   而"无注册即无痕迹"（1.x）意味着**连分隔符都不许加**、菜单里只有插件自己的标签。
+        {
+            QStringList seen_only;
+            QTimer::singleShot(0, [&seen_only]() {
+                auto* popup = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+                if (popup == nullptr) return;
+                for (QAction* act : popup->actions()) seen_only << act->text();
+                popup->close();
+            });
+            FacadeTree* only_tree = nullptr;
+            if (page_widget != nullptr) {
+                for (FacadeTree* candidate : page_widget->findChildren<FacadeTree*>()) {
+                    QTreeWidgetItem* first = candidate->topLevelItem(0);
+                    if (first != nullptr && FacadeTree::key_of(first) == "ra1") {
+                        only_tree = candidate;
+                        break;
+                    }
+                }
+            }
+            if (only_tree != nullptr) {
+                emit only_tree->customContextMenuRequested(QPoint(9, 9));
+            }
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            check(seen_only == QStringList({QStringLiteral("甲"), QStringLiteral("乙")}),
+                  QStringLiteral("P13-2a-2 插件页菜单里混进了别的项（实得 [%1]）")
+                      .arg(seen_only.join(QStringLiteral("/"))));
+        }
         const auto read_file = [](const QString& path) {
             QFile file(path);
             if (!file.open(QIODevice::ReadOnly)) return QString();
@@ -6148,6 +6179,7 @@ SmokeResult run_smoke() {
                       adapter.api().register_menu_item(adapter.api().host, "fs", nullptr, cid2, 1) ==
                           1,
                   QStringLiteral("① context：`location` 留空必须落到 1.x 的默认值 context"));
+
             QMenu defaults(fs);
             const int added_defaults =
                 fs->append_plugin_context_items(&defaults, fs->plugin_context());

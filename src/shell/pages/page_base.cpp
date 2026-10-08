@@ -1,5 +1,7 @@
 #include "page_base.h"
 
+#include "../plugin_context_menu.h"
+
 #include "xrkit/core/theme.h"
 
 #include "../scroll_viewport.h"
@@ -190,29 +192,10 @@ bool PageBase::minsize_ok() const {
 // 放基类就是一份实现，放各页就是六份（那正是 1.x 最贵的一类返工）。
 
 int PageBase::append_plugin_context_items(QMenu* menu, const plugin::Context& context) {
-    if (menu == nullptr || plugin_registry_ == nullptr) return 0;
-    // 12.4：精确匹配 (host, location="context")，`when` 用**当次**的 context 判定
-    const std::vector<const plugin::CommandReg*> items =
-        plugin_registry_->menu_items_for(page_id_.toStdString(), "context", context);
-    if (items.empty()) return 0;   // 1.x「无注册即无痕迹」：连分隔符都不加
-    if (!menu->actions().isEmpty()) menu->addSeparator();
-    int added = 0;
-    for (const plugin::CommandReg* command : items) {
-        if (command == nullptr) continue;
-        const std::string plugin = command->plugin;
-        const std::string label = command->label;
-        const plugin::CommandHandler handler = command->handler;
-        QAction* action = menu->addAction(QString::fromStdString(label));
-        action->setObjectName(QStringLiteral("plugin_ctx_") +
-                              QString::fromStdString(command->id));
-        // 与 toolbar 槽同一条通道：⑫12.9 的 `Registry::invoke`（插件回调抛异常记进
-        // registration_errors，绝不冒到 Qt 事件循环里）。
-        QObject::connect(action, &QAction::triggered, this, [this, plugin, label, handler] {
-            if (plugin_registry_ != nullptr) plugin_registry_->invoke(plugin, label, handler);
-        });
-        ++added;
-    }
-    return added;
+    // ★★ P13-2a-2：实现**搬到了** `src/shell/plugin_context_menu.cpp`（插件页门面的右键菜单
+    //   也要用它）—— 这里只转发。顺序/分隔符/`when`/`invoke` 的口径在那份里，只有一处。
+    return append_registry_context_items(menu, plugin_registry_, page_id_.toStdString(), context,
+                                         this);
 }
 
 void PageBase::set_plugin_option_combo(const QString& area, QComboBox* combo) {

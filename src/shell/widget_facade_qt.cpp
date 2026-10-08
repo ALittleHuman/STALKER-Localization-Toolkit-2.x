@@ -17,6 +17,7 @@
 
 #include "drop_filter.h"
 #include "facade_tree.h"
+#include "plugin_context_menu.h"
 #include "scroll_viewport.h"
 #include "task_shell.h"
 #include "virtual_list.h"
@@ -383,6 +384,13 @@ const plug::UiFacade kQtFacade = {
                                                       if (box->fn) box->fn(label);
                                                   });
                              }
+                             // ★ P13-2a-2：把「其它插件注册的右键命令」追加进来
+                             //   （与内置六页**共用** `append_registry_context_items`；
+                             //    `when` 用**当次**的 context 判定 —— 插件页目前给空 context，
+                             //    因为「页面实时 context」是内置六页才有的东西，如实登记）
+                             append_registry_context_items(
+                                 &menu, plug::current_page_registry(),
+                                 plug::current_page_id(), xrkit::plugin::Context(), target);
                              menu.exec(target->mapToGlobal(pos));   // 点空白关掉 ⇒ 无回调
                          });
     },

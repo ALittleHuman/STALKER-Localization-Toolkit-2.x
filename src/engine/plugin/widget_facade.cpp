@@ -24,6 +24,18 @@ UiHandle& panel_root_storage() {
     return instance;
 }
 
+// ★★ P13-2a-2：当前面板的**页面身份**（页面 id + 注册表）—— 门面菜单用它去取
+//   "其它插件注册的右键命令"。写法与面板根同一套（进程级 + 互斥保护）。
+std::string& page_id_storage() {
+    static std::string instance;
+    return instance;
+}
+
+xrkit::plugin::Registry*& page_registry_storage() {
+    static xrkit::plugin::Registry* instance = nullptr;
+    return instance;
+}
+
 // 门面里"哪些字段是实现的"：名字与 `UiFacade` 的字段一一对应（判据按它对账）。
 const char* const kMethodNames[] = {
     "label",      "button",     "row",       "checkbox",    "entry",     "text",
@@ -207,11 +219,43 @@ UiHandle current_panel_root() {
     return panel_root_storage();
 }
 
+void set_current_page_context(const std::string& page_id, xrkit::plugin::Registry* registry) {
+    std::lock_guard<std::mutex> guard(facade_mutex());
+    page_id_storage() = page_id;
+    page_registry_storage() = registry;
+}
+
+std::string current_page_id() {
+    std::lock_guard<std::mutex> guard(facade_mutex());
+    return page_id_storage();
+}
+
+xrkit::plugin::Registry* current_page_registry() {
+    std::lock_guard<std::mutex> guard(facade_mutex());
+    return page_registry_storage();
+}
+
 UiPanelScope::UiPanelScope(UiHandle root) {
     previous_ = current_panel_root();
     set_current_panel_root(root);
 }
 
-UiPanelScope::~UiPanelScope() { set_current_panel_root(previous_); }
+// ★ P13-2a-2：连页面身份一起设（宿主建插件页/面板时用）
+UiPanelScope::UiPanelScope(UiHandle root, const std::string& page_id,
+                           xrkit::plugin::Registry* registry)
+    : restores_page_context_(true),
+      previous_page_id_(current_page_id()),
+      previous_registry_(current_page_registry()) {
+    previous_ = current_panel_root();
+    set_current_panel_root(root);
+    set_current_page_context(page_id, registry);
+}
+
+UiPanelScope::~UiPanelScope() {
+    set_current_panel_root(previous_);
+    if (restores_page_context_) {
+        set_current_page_context(previous_page_id_, previous_registry_);
+    }
+}
 
 }  // namespace xrkit::plugin

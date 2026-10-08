@@ -33,6 +33,8 @@
 
 namespace xrkit::plugin {
 
+class Registry;   // ★ P13-2a-2：面板上下文（菜单追加注册表项）
+
 // 不透明句柄：对插件而言就是"一个控件"。它只能把它传回门面，不能解引用。
 using UiHandle = void*;
 inline constexpr UiHandle kNoWidget = nullptr;
@@ -249,17 +251,28 @@ std::vector<std::string> ui_facade_method_names();
 
 // ── 当前面板根：宿主在调插件 builder 之前设好（见文件头 ③）──────────────────
 void set_current_panel_root(UiHandle root);
+// ★★ P13-2a-2：**当前面板的页面身份** —— 门面菜单要按它去注册表里取
+//   「其它插件注册的右键命令」（宿主建面板时设、退出时恢复）。
+void set_current_page_context(const std::string& page_id, Registry* registry);
+std::string current_page_id();
+Registry* current_page_registry();
 UiHandle current_panel_root();
 
 // RAII：作用域内"当前面板根"= root，析构时还原成上一个（可嵌套；宿主调 builder 时用）。
 struct UiPanelScope {
     explicit UiPanelScope(UiHandle root);
+    // ★ P13-2a-2：连页面身份一起设（宿主建插件页/面板时用）
+    UiPanelScope(UiHandle root, const std::string& page_id, Registry* registry);
     ~UiPanelScope();
     UiPanelScope(const UiPanelScope&) = delete;
     UiPanelScope& operator=(const UiPanelScope&) = delete;
 
 private:
     UiHandle previous_ = nullptr;
+    // ★ P13-2a-2：只有「连页面身份」那个构造会置位 ⇒ 析构时才知道要不要恢复
+    bool restores_page_context_ = false;
+    std::string previous_page_id_;
+    Registry* previous_registry_ = nullptr;
 };
 
 }  // namespace xrkit::plugin

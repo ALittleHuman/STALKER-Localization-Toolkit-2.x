@@ -443,7 +443,13 @@ int Hub::sync_pages() {
             auto* container = new QWidget;
             QWidget* built = nullptr;
             {
-                plugin::UiPanelScope panel_scope(container);
+                // ★ P13-2a-2：连**页面身份**一起设 ⇒ 插件页的右键菜单里能看到
+                //   其它插件注册的 context 命令（与内置六页同一口径）
+                // ★ 替换内置页的插件页要按**被替换页的 id** 去注册表取 context 命令
+                //   （其它插件是挂在内置 host 上的；不替换 ⇒ 用本页 id，本就取不到，正常）
+                const std::string page_key =
+                    reg->spec.replaces.empty() ? reg->spec.id : reg->spec.replaces;
+                plugin::UiPanelScope panel_scope(container, page_key, &registry_);
                 built = reg->builder(container);
             }
             // ★ 页控件的归属规则（这条很关键，P3 第一版就栽在这）：
@@ -721,7 +727,11 @@ void Hub::render_plugin_slots() {
             auto* container = new QWidget;
             QWidget* built = nullptr;
             {
-                plugin::UiPanelScope panel_scope(container);
+                // ★ P13-2a-2：同上（面板挂在宿主页的正文里 ⇒ 用那个页的身份）
+                plugin::UiPanelScope panel_scope(
+                    container, page != nullptr ? page->page_id().toStdString()
+                                               : std::string(),
+                    &registry_);
                 built = reinterpret_cast<QWidget*>(panel->builder(container));
             }
             if (built != nullptr && built != container) {
