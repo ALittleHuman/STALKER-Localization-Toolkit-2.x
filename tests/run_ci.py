@@ -2744,6 +2744,104 @@ def step_facade_order(release: bool) -> None:
         fail("门面顺序有错位（见上）—— 类型相同的相邻字段对位错了编译器不会报错")
 
 
+def step_text_plugin(release: bool) -> None:
+    """插件改装 P10b：**第三页（文本提取/改写）的收口判据**。
+
+    判据：
+      ① 参照 = `xrkit_cli --extract-text`（内置 C++ 页用的就是这条引擎路）；
+         插件 = `--py-plugin-call plugins --plugin text_page.py`（插件页导出的 `headless`）；
+      ② 两边产物**文件表 + 每文件 sha256 逐字节全等**，且**比较数 ≥2**（空集不算通过）；
+      ③ **取消语义**：JSON 里 `"cancel": true` ⇒ 确定性地"第一次问就说停" ⇒
+         结果必须 `cancelled=True` / `ok=True`（取消不是失败）/ `files=0`（还没写就停）。
+    """
+    say("[text-plugin] 插件改装 P10b：文本提取页（插件）产物与引擎参照逐字节一致")
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "缺失（先跑 build 步）", release)
+        return
+    plugin = ROOT / "plugins" / "text_page.py"
+    if not plugin.is_file():
+        prereq("文本提取插件 plugins/text_page.py", "缺失", release)
+        return
+    work = ROOT / "build" / "text_plugin"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    src = work / "scripts"
+    src.mkdir(parents=True)
+    (src / "a.script").write_text('local s = "Привет, сталкер!"\n', encoding="cp1251")
+    (src / "d.ltx").write_text('[wpn_akm]\ninv_name = "АКМ"\n; inv_name = Не должно попасть\n',
+                               encoding="cp1251")
+    ref_out = work / "ref"
+    plug_out = work / "plug"
+
+    rc_ref, out_ref = run([str(CLI_EXE), "--extract-text", str(src), str(ref_out),
+                           "--prefix", "p10b", "--id-prefix", "sgtat_p10b_gp_0", "--clean"],
+                          timeout=600)
+    payload = json.dumps({"source_dir": str(src), "target_dir": str(plug_out), "prefix": "p10b",
+                          "id_prefix": "sgtat_p10b_gp_0", "clean": True}, ensure_ascii=False)
+    rc_plug, out_plug = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
+                             "--plugin", "text_page.py", payload], timeout=600)
+    for raw in out_plug.splitlines():
+        s = raw.strip()
+        if s.startswith("PYPLUGINCALL") and not s.startswith("PYPLUGINCALL result="):
+            say("  " + s[:170])
+    for raw in out_ref.splitlines():
+        s = raw.strip()
+        if s.startswith("TEXT ok") or s.startswith("TEXT fail"):
+            say("  " + s[:170])
+
+    def digest(root: Path) -> dict:
+        out = {}
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                out[str(path.relative_to(root)).replace("\\", "/")] = hashlib.sha256(
+                    path.read_bytes()).hexdigest()
+        return out
+
+    ref_tree = digest(ref_out)
+    plug_tree = digest(plug_out)
+    compared = sum(1 for key in ref_tree if key in plug_tree and ref_tree[key] == plug_tree[key])
+    only_ref = sorted(set(ref_tree) - set(plug_tree))
+    only_plug = sorted(set(plug_tree) - set(ref_tree))
+    differing = sorted(k for k in set(ref_tree) & set(plug_tree) if ref_tree[k] != plug_tree[k])
+    say("  参照 %d 个文件 / 插件 %d 个文件 / 逐字节相同 %d 个"
+        % (len(ref_tree), len(plug_tree), compared))
+    problems = []
+    if only_ref or only_plug or differing:
+        problems.append("产物不一致（只在参照 %s；只在插件 %s；内容不同 %s）"
+                        % (only_ref[:4] or "无", only_plug[:4] or "无", differing[:4] or "无"))
+    if rc_ref != 0 or rc_plug != 0 or len(ref_tree) < 2 or compared < 2:
+        problems.append("判据没跑成（参照 rc=%d / 插件 rc=%d / 参照文件 %d / 比较数 %d）"
+                        "—— 空集不算通过" % (rc_ref, rc_plug, len(ref_tree), compared))
+
+    # ③ 取消语义（插件 headless；确定性谓词）
+    cancel_payload = json.dumps({"source_dir": str(src), "target_dir": str(work / "cancel_out"),
+                                 "prefix": "p10b", "id_prefix": "sgtat_p10b_gp_0",
+                                 "clean": True, "cancel": True}, ensure_ascii=False)
+    rc_cancel, out_cancel = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
+                                 "--plugin", "text_page.py", cancel_payload], timeout=600)
+    result = {}
+    for raw in out_cancel.splitlines():
+        s = raw.strip()
+        if s.startswith("PYPLUGINCALL plugin=") and " result=" in s:
+            try:
+                result = json.loads(s.split(" result=", 1)[1])
+            except ValueError:
+                result = {}
+    say("  取消：rc=%d cancelled=%s ok=%s files=%s"
+        % (rc_cancel, result.get("cancelled"), result.get("ok"), result.get("files")))
+    if result.get("cancelled") is not True or result.get("ok") is not True:
+        problems.append("取消语义不对（cancelled=%s / ok=%s）—— 取消既要真停，也不能报成失败"
+                        % (result.get("cancelled"), result.get("ok")))
+    if result.get("files") != 0:
+        problems.append("取消在**第一个文件边界**就停 ⇒ files 应为 0（实得 %s）"
+                        % result.get("files"))
+    if problems:
+        fail("文本提取页（插件）不成立：%s" % "；".join(problems))
+        return
+    ok("文本提取页（插件）与引擎参照**逐字节一致**（%d 个文件全等）；取消语义（cancelled+ok+files=0）"
+       "也对" % compared)
+
+
 def step_plugin_entry_lock(release: bool) -> None:
     """插件改装的**加载入口唯一性**（P2b）：两个前端都走 `load_all_plugins_from_dir`。
 
@@ -3225,6 +3323,8 @@ STEPS = [
     ("fontpack-plugin", step_fontpack_plugin),
     # ★★ 2026-10-08（插件改装 P9b）：**第二页收口** —— 编码转换插件页。
     ("convert-plugin", step_convert_plugin),
+    # ★★ 2026-10-08（插件改装 P10b）：**第三页收口** —— 文本提取插件页。
+    ("text-plugin", step_text_plugin),
     # ★★ 2026-10-08（P9b）：门面顺序核对（类型相同的相邻字段错了编译器不报）
     ("facade-order", step_facade_order),
     ("selftest", step_selftest),
