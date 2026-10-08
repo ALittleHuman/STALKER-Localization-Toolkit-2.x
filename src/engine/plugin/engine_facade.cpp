@@ -41,6 +41,11 @@ const char* const kMethodNames[] = {
     "video_find_ffmpeg", "video_major_version", "video_version_rejected",
     "video_plan_transcode", "video_check_output_conflict", "video_parse_ffprobe",
     "video_parse_encoders", "video_progress_from_line",
+    // ★★ P14-0a：fs 面第一批（第六页迁移）
+    "fs_formats", "fs_format_to_db", "fs_format_is_sqfs", "fs_format_is_auto",
+    "fs_is_package_name", "fs_pack_ext_for", "fs_package_folder_name",
+    "fs_resolve_output_root", "fs_unpack_target_dir", "fs_resolve_pack_target",
+    "fs_safe_out_path", "fs_plan_unpack_targets", "fs_preview_layout",
 };
 
 bool has_impl(const EngineFacade& facade, const std::string& name) {
@@ -79,6 +84,19 @@ bool has_impl(const EngineFacade& facade, const std::string& name) {
     if (name == "video_parse_ffprobe") return static_cast<bool>(facade.video_parse_ffprobe);
     if (name == "video_parse_encoders") return static_cast<bool>(facade.video_parse_encoders);
     if (name == "video_progress_from_line") return static_cast<bool>(facade.video_progress_from_line);
+    if (name == "fs_formats") return static_cast<bool>(facade.fs_formats);
+    if (name == "fs_format_to_db") return static_cast<bool>(facade.fs_format_to_db);
+    if (name == "fs_format_is_sqfs") return static_cast<bool>(facade.fs_format_is_sqfs);
+    if (name == "fs_format_is_auto") return static_cast<bool>(facade.fs_format_is_auto);
+    if (name == "fs_is_package_name") return static_cast<bool>(facade.fs_is_package_name);
+    if (name == "fs_pack_ext_for") return static_cast<bool>(facade.fs_pack_ext_for);
+    if (name == "fs_package_folder_name") return static_cast<bool>(facade.fs_package_folder_name);
+    if (name == "fs_resolve_output_root") return static_cast<bool>(facade.fs_resolve_output_root);
+    if (name == "fs_unpack_target_dir") return static_cast<bool>(facade.fs_unpack_target_dir);
+    if (name == "fs_resolve_pack_target") return static_cast<bool>(facade.fs_resolve_pack_target);
+    if (name == "fs_safe_out_path") return static_cast<bool>(facade.fs_safe_out_path);
+    if (name == "fs_plan_unpack_targets") return static_cast<bool>(facade.fs_plan_unpack_targets);
+    if (name == "fs_preview_layout") return static_cast<bool>(facade.fs_preview_layout);
     return false;
 }
 

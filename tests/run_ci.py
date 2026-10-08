@@ -2580,6 +2580,36 @@ def step_engine_facade(release: bool) -> None:
         got = value_of(key)
         if got != want:
             problems.append("跑进程 %s=%s（应为 %s）" % (key, got or "(缺)", want))
+
+    # ── ★★ P14-0a：fs 面第一批（纯函数那组）────────────────────────────────
+    fs_expect = {
+        "fs_formats_count": "8",                 # 实测：内置 8 档（含 auto / sqfs）
+        "fs_has_auto": "1",
+        "fs_has_sqfs": "1",
+        "fs_format_count_positive": "1",
+        "fs_xdb_is_db": "1",
+        "fs_xdb_key": "xdb",
+        "fs_xdb_name_nonempty": "1",
+        "fs_auto_is_db": "0",                    # auto 不是 DB 格式
+        "fs_auto_is_auto": "1",
+        "fs_sqfs_is_sqfs": "1",
+        "fs_is_package_db0": "1",
+        "fs_is_package_txt": "0",
+        "fs_pack_ext_sqfs": ".sqfs",
+        "fs_pack_ext_xdb": ".xdb.db",
+        "fs_preview_rows": "2",                  # 自带壳 ⇒ 原样两条（不叠第二层）
+        "fs_preview_shelled_exact": "1",         # 自带壳 ⇒ 路径原样（不叠第二层）
+        "fs_safe_bad_ok": "0",                   # 越界必须拒
+        "fs_safe_bad_reason": "1",               # 且理由非空
+        "fs_safe_ok_ok": "1",
+        "fs_unpack_self_shell": "1",             # 自带壳 ⇒ 落点就是根
+        "fs_plan_rows": "2",
+        "fs_pack_target_ext": "1",
+    }
+    for key, want in fs_expect.items():
+        got = value_of(key)
+        if got != want:
+            problems.append("fs 面 %s=%s（应为 %s）" % (key, got or "(缺)", want))
     if not value_of("video_encoder"):
         problems.append("video 面 video_encoder 是空的（面板值必须来自 plan_transcode）")
     say("  夹具证据：%s" % text.replace("\n", " | ")[:260])
@@ -2592,7 +2622,9 @@ def step_engine_facade(release: bool) -> None:
            "xml 面：模式表·两种对比·单侧·引擎明细·CSV 往返一致 / "
            "**目录对比**：配对·四种 kind·递归·筛选·取消 / "
            "video 面：ffprobe 解析·编码器表·argv 与面板值·输出撞车·进度上限 99.5·版本闸门 / "
-           "跑进程：逐行回调·退码如实·stderr 尾巴·取消真停且立刻回来·起不来要报）" % state)
+           "跑进程：逐行回调·退码如实·stderr 尾巴·取消真停且立刻回来·起不来要报 / "
+           "fs 面（第一批）：格式表与谓词·包名判定·封包扩展名·落点预览与补目录·越界拒因·"
+           "解包落点·封包落点）" % state)
     else:
         say("  · 未覆盖：font_check 的真字体那条（本机没有 msyh/simsun）")
         ok("引擎门面四处都通（槽位 / 四态文案 / 工作线程可调 / convert 面整条链路）；"

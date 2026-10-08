@@ -910,6 +910,33 @@ VideoRequest video_request_from_python(const py::object& request) {
     return out;
 }
 
+// ── ★★ P14-0a：fs 面第一批的入参/出参转换 ─────────────────────────────────
+py::list fs_entries_to_python(const std::vector<FsEntry>& rows) {
+    py::list out;
+    for (const FsEntry& row : rows) {
+        py::dict item;
+        item["path"] = row.path;
+        item["is_dir"] = row.is_dir;
+        item["size"] = row.size;
+        out.append(item);
+    }
+    return out;
+}
+
+std::vector<FsEntry> fs_entries_from_python(const py::object& rows) {
+    std::vector<FsEntry> out;
+    if (rows.is_none() != 0) return out;
+    for (auto item : py::list(rows)) {
+        py::dict row = py::reinterpret_borrow<py::dict>(item);
+        FsEntry entry;
+        if (row.contains("path")) entry.path = py::str(row["path"]).cast<std::string>();
+        if (row.contains("is_dir")) entry.is_dir = py::cast<bool>(row["is_dir"]);
+        if (row.contains("size")) entry.size = py::cast<uint64_t>(row["size"]);
+        out.push_back(std::move(entry));
+    }
+    return out;
+}
+
 // ── ★★ P7a：引擎调用门面在 Python 侧的形态（`api.engine.*`）──────────────────
 // 口径（用户拍板的方案 3）：
 //   · **值类型 Python 友好**：出入都是 dict / list / str / int，**不漏 C++ 结构体与指针**；
@@ -1255,6 +1282,125 @@ public:
         out["matched"] = sample.matched;
         out["percent"] = sample.percent;
         return out;
+    }
+
+    // ── ★★ P14-0a：fs 面第一批 ─────────────────────────────────────────────
+    py::object fs_formats() const {
+        const EngineFacade* facade = available("fs_formats");
+        if (facade == nullptr) return py::none();
+        py::list out;
+        for (const FsFormatInfo& item : facade->fs_formats()) {
+            py::dict row;
+            row["key"] = item.key;
+            row["label"] = item.label;
+            row["is_sqfs"] = item.is_sqfs;
+            row["is_auto"] = item.is_auto;
+            out.append(row);
+        }
+        return out;
+    }
+    py::object fs_format_to_db(const std::string& key) const {
+        const EngineFacade* facade = available("fs_format_to_db");
+        if (facade == nullptr) return py::none();
+        const FsDbLookup native = facade->fs_format_to_db(key);
+        py::dict out;
+        out["is_db"] = native.is_db;
+        out["db_key"] = native.db_key;
+        out["db_name"] = native.db_name;
+        return out;
+    }
+    bool fs_format_is_sqfs(const std::string& key) const {
+        const EngineFacade* facade = available("fs_format_is_sqfs");
+        return facade != nullptr && facade->fs_format_is_sqfs(key);
+    }
+    bool fs_format_is_auto(const std::string& key) const {
+        const EngineFacade* facade = available("fs_format_is_auto");
+        return facade != nullptr && facade->fs_format_is_auto(key);
+    }
+    bool fs_is_package_name(const std::string& path) const {
+        const EngineFacade* facade = available("fs_is_package_name");
+        return facade != nullptr && facade->fs_is_package_name(path);
+    }
+    std::string fs_pack_ext_for(const std::string& key) const {
+        const EngineFacade* facade = available("fs_pack_ext_for");
+        return facade == nullptr ? std::string() : facade->fs_pack_ext_for(key);
+    }
+    std::string fs_package_folder_name(const std::string& path) const {
+        const EngineFacade* facade = available("fs_package_folder_name");
+        return facade == nullptr ? std::string() : facade->fs_package_folder_name(path);
+    }
+    std::string fs_resolve_output_root(const std::string& front, const std::string& current) const {
+        const EngineFacade* facade = available("fs_resolve_output_root");
+        return facade == nullptr ? std::string() : facade->fs_resolve_output_root(front, current);
+    }
+    std::string fs_unpack_target_dir(py::object out_root, py::object package_path,
+                                     py::object entry_paths) const {
+        const EngineFacade* facade = available("fs_unpack_target_dir");
+        if (facade == nullptr) return std::string();
+        std::vector<std::string> paths;
+        if (entry_paths.is_none() == 0) {
+            for (auto item : py::list(entry_paths)) {
+                paths.push_back(py::str(item).cast<std::string>());
+            }
+        }
+        return facade->fs_unpack_target_dir(py::str(out_root).cast<std::string>(),
+                                            py::str(package_path).cast<std::string>(), paths);
+    }
+    py::object fs_resolve_pack_target(const std::string& typed, const std::string& basename,
+                                      const std::string& key) const {
+        const EngineFacade* facade = available("fs_resolve_pack_target");
+        if (facade == nullptr) return py::none();
+        const FsPackTarget native = facade->fs_resolve_pack_target(typed, basename, key);
+        py::dict out;
+        out["path"] = native.path;
+        out["needs_frontend_dialog"] = native.needs_frontend_dialog;
+        return out;
+    }
+    py::object fs_safe_out_path(const std::string& out_dir, const std::string& rel) const {
+        const EngineFacade* facade = available("fs_safe_out_path");
+        if (facade == nullptr) return py::none();
+        const FsOutPath native = facade->fs_safe_out_path(out_dir, rel);
+        py::dict out;
+        out["ok"] = native.ok;
+        out["reason"] = native.reason;
+        out["path"] = native.path;
+        return out;
+    }
+    py::object fs_plan_unpack_targets(py::object out_root, py::object sources) const {
+        const EngineFacade* facade = available("fs_plan_unpack_targets");
+        if (facade == nullptr) return py::none();
+        std::vector<std::pair<std::string, std::vector<std::string>>> native;
+        if (sources.is_none() == 0) {
+            for (auto item : py::list(sources)) {
+                py::dict row = py::reinterpret_borrow<py::dict>(item);
+                std::string package = row.contains("package")
+                                          ? py::str(row["package"]).cast<std::string>()
+                                          : std::string();
+                std::vector<std::string> entries;
+                if (row.contains("entries")) {
+                    for (auto one : py::list(row["entries"])) {
+                        entries.push_back(py::str(one).cast<std::string>());
+                    }
+                }
+                native.emplace_back(std::move(package), std::move(entries));
+            }
+        }
+        py::list out;
+        for (const FsUnpackTarget& item :
+             facade->fs_plan_unpack_targets(py::str(out_root).cast<std::string>(), native)) {
+            py::dict row;
+            row["image"] = item.image;
+            row["label"] = item.label;
+            row["target"] = item.target;
+            out.append(row);
+        }
+        return out;
+    }
+    py::object fs_preview_layout(const std::string& package_path, py::object entries) const {
+        const EngineFacade* facade = available("fs_preview_layout");
+        if (facade == nullptr) return py::none();
+        return fs_entries_to_python(
+            facade->fs_preview_layout(package_path, fs_entries_from_python(entries)));
     }
 
 private:
@@ -2243,7 +2389,27 @@ void ensure_api_module() {
             .def("video_parse_ffprobe", &PyEngine::video_parse_ffprobe, py::arg("json"))
             .def("video_parse_encoders", &PyEngine::video_parse_encoders, py::arg("output"))
             .def("video_progress_from_line", &PyEngine::video_progress_from_line, py::arg("line"),
-                 py::arg("duration_sec"));
+                 py::arg("duration_sec"))
+            // ★★ P14-0a：fs 面第一批
+            .def("fs_formats", &PyEngine::fs_formats)
+            .def("fs_format_to_db", &PyEngine::fs_format_to_db, py::arg("key"))
+            .def("fs_format_is_sqfs", &PyEngine::fs_format_is_sqfs, py::arg("key"))
+            .def("fs_format_is_auto", &PyEngine::fs_format_is_auto, py::arg("key"))
+            .def("fs_is_package_name", &PyEngine::fs_is_package_name, py::arg("path"))
+            .def("fs_pack_ext_for", &PyEngine::fs_pack_ext_for, py::arg("key"))
+            .def("fs_package_folder_name", &PyEngine::fs_package_folder_name,
+                 py::arg("package_path"))
+            .def("fs_resolve_output_root", &PyEngine::fs_resolve_output_root, py::arg("front"),
+                 py::arg("current"))
+            .def("fs_unpack_target_dir", &PyEngine::fs_unpack_target_dir, py::arg("out_root"),
+                 py::arg("package_path"), py::arg("entry_paths"))
+            .def("fs_resolve_pack_target", &PyEngine::fs_resolve_pack_target, py::arg("typed"),
+                 py::arg("basename"), py::arg("format_key"))
+            .def("fs_safe_out_path", &PyEngine::fs_safe_out_path, py::arg("out_dir"), py::arg("rel"))
+            .def("fs_plan_unpack_targets", &PyEngine::fs_plan_unpack_targets, py::arg("out_root"),
+                 py::arg("sources"))
+            .def("fs_preview_layout", &PyEngine::fs_preview_layout, py::arg("package_path"),
+                 py::arg("entries"));
         py::class_<PyWidget>(m, "Widget")
             .def("__repr__", [](const PyWidget& widget) {
                 return std::string("xrkit.Widget(") + (widget.valid() ? "valid" : "null") + ")";

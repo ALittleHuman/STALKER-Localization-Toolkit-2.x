@@ -22,6 +22,8 @@
 #include "xrkit/engine/xml/dirdiff.h"
 #include "xrkit/engine/video/ffmpeg.h"
 #include "xrkit/engine/video/transcode.h"
+#include "xrkit/engine/fs/extract_tree.h"
+#include "xrkit/engine/fs/overlay.h"
 
 #include <array>
 #include <string>
@@ -35,6 +37,7 @@ namespace etext = xrkit::engine::text;
 
 namespace exml = xrkit::engine::xml;
 namespace evideo = xrkit::engine::video;
+namespace efs = xrkit::engine::fs;
 
 XmlCompareResult to_facade(const exml::XmlCompareResult& native);
 exml::XmlCompareResult from_facade(const XmlCompareResult& facade);
@@ -604,6 +607,82 @@ const EngineFacade kFontFacade = {
         VideoProgress out;
         out.matched = sample.matched;
         out.percent = sample.percent;
+        return out;
+    },
+    /* fs_formats：格式表（下拉的取值 + 可见名 + 两个谓词标记） */
+    []() {
+        std::vector<FsFormatInfo> out;
+        for (const efs::FsFormatItem& item : efs::fs_formats()) {
+            out.push_back({item.key, item.label, item.is_sqfs, item.is_auto});
+        }
+        return out;
+    },
+    /* fs_format_to_db：这个键是不是 DB 格式；是 ⇒ 连键与可见名一起给 */
+    [](const std::string& key) {
+        FsDbLookup out;
+        const std::optional<efs::DbFormat> format = efs::format_key_to_db(key);
+        if (format.has_value()) {
+            out.is_db = true;
+            out.db_key = efs::db_format_key(*format);
+            out.db_name = efs::db_format_name(*format);
+        }
+        return out;
+    },
+    /* fs_format_is_sqfs：这个键是不是 SquashFS */
+    [](const std::string& key) { return efs::format_key_is_sqfs(key); },
+    /* fs_format_is_auto：这个键是不是「auto」（自洽判定；歧义时显式拒绝） */
+    [](const std::string& key) { return efs::format_key_is_auto(key); },
+    /* fs_is_package_name：这个文件名像不像包（1.x `_is_pack_file`） */
+    [](const std::string& path) { return efs::is_package_file_name(path); },
+    /* fs_pack_ext_for：封包产物的扩展名（sqfs ⇒ .sqfs；其余 ⇒ .<内部键>.db） */
+    [](const std::string& key) { return efs::pack_ext_for(key); },
+    /* fs_package_folder_name：包名壳（解包落点那一层目录名） */
+    [](const std::string& package_path) { return efs::package_folder_name(package_path); },
+    /* fs_resolve_output_root：输出根归一（前一个源所在目录 → 当前目录 → 工具目录） */
+    [](const std::string& front, const std::string& current) {
+        return efs::resolve_output_root(front, current);
+    },
+    /* fs_unpack_target_dir：解包落点（自带壳 ⇒ 就是根；否则根/壳） */
+    [](const std::string& out_root, const std::string& package_path,
+       const std::vector<std::string>& entry_paths) {
+        return efs::unpack_target_dir(out_root, package_path, entry_paths);
+    },
+    /* fs_resolve_pack_target：封包落点（要不要前端再弹「保存到」由它说） */
+    [](const std::string& typed, const std::string& basename, const std::string& key) {
+        const efs::PackTarget native = efs::resolve_pack_target(typed, basename, key);
+        FsPackTarget out;
+        out.path = native.path;
+        out.needs_frontend_dialog = native.needs_frontend_dialog;
+        return out;
+    },
+    /* fs_safe_out_path：越界拒因（6.7 六条）；ok=false 时 reason 非空 */
+    [](const std::string& out_dir, const std::string& rel) {
+        const efs::OutPathResult native = efs::safe_out_path(out_dir, rel);
+        FsOutPath out;
+        out.ok = native.ok;
+        out.reason = native.reason;
+        out.path = native.path;
+        return out;
+    },
+    /* fs_plan_unpack_targets：多源落点清单（顺序与入参一致） */
+    [](const std::string& out_root,
+       const std::vector<std::pair<std::string, std::vector<std::string>>>& sources) {
+        std::vector<FsUnpackTarget> out;
+        for (const efs::UnpackTarget& item : efs::plan_unpack_targets(out_root, sources)) {
+            out.push_back({item.image, item.label, item.target});
+        }
+        return out;
+    },
+    /* fs_preview_layout：右栏「解包产物预览」的条目表（与落点规则同源） */
+    [](const std::string& package_path, const std::vector<FsEntry>& entries) {
+        std::vector<efs::EntryInfo> native;
+        for (const FsEntry& item : entries) {
+            native.emplace_back(item.path, item.is_dir, item.size);
+        }
+        std::vector<FsEntry> out;
+        for (const efs::EntryInfo& item : efs::preview_entries_in_layout(package_path, native)) {
+            out.push_back({item.path, item.is_dir, item.size});
+        }
         return out;
     },
 };

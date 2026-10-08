@@ -380,6 +380,46 @@ struct VideoProgress {
     double percent = 0.0;
 };
 
+
+// ── ★★ P14-0a：fs 页（第六页迁移）**第一批** —— 格式表 / 格式谓词 / 路径解析 / 落点预览 ──
+//   全是**纯函数**（不写盘、不起进程）：判据好写，风险低；解包/封包那些"重活"放下一批。
+
+struct FsFormatInfo {
+    std::string key;     // 下拉**取值**（内部键：auto / xdb / sqfs / …）
+    std::string label;   // 用户可见名
+    bool is_sqfs = false;
+    bool is_auto = false;   // "auto" = 不给格式（自洽判定；歧义时显式拒绝）
+};
+
+struct FsDbLookup {
+    bool is_db = false;      // 这个键是不是 DB 格式
+    std::string db_key;      // 是 DB 时：DbFormat 的键（"xdb" / "2947ww" …）
+    std::string db_name;     // 是 DB 时：用户可见名
+};
+
+struct FsEntry {
+    std::string path;
+    bool is_dir = false;
+    uint64_t size = 0;
+};
+
+struct FsOutPath {
+    bool ok = false;
+    std::string reason;   // ok=false 时非空（中文，界面/日志直接用）
+    std::string path;     // ok=true 时：落盘用的本机路径（UTF-8）
+};
+
+struct FsPackTarget {
+    std::string path;
+    bool needs_frontend_dialog = false;   // 需要前端弹「保存到」
+};
+
+struct FsUnpackTarget {
+    std::string image;    // 源包路径
+    std::string label;    // 源包文件名（显示/日志用）
+    std::string target;   // 落点目录
+};
+
 struct EngineFacade {
     std::function<FontCheckResult(const std::string& font_path)> font_check;
     std::function<FontPackResult(const FontPackOptions& options)> font_pack;
@@ -446,6 +486,31 @@ struct EngineFacade {
     std::function<std::vector<std::string>(const std::string& output)> video_parse_encoders;
     std::function<VideoProgress(const std::string& line, double duration_sec)>
         video_progress_from_line;
+
+    // ── ★★ P14-0a：fs 面第一批（第六页迁移）────────────────────────────────
+    std::function<std::vector<FsFormatInfo>()> fs_formats;
+    std::function<FsDbLookup(const std::string& key)> fs_format_to_db;
+    std::function<bool(const std::string& key)> fs_format_is_sqfs;
+    std::function<bool(const std::string& key)> fs_format_is_auto;
+    std::function<bool(const std::string& path)> fs_is_package_name;
+    std::function<std::string(const std::string& key)> fs_pack_ext_for;
+    std::function<std::string(const std::string& package_path)> fs_package_folder_name;
+    std::function<std::string(const std::string& front_source_path, const std::string& current_dir)>
+        fs_resolve_output_root;
+    std::function<std::string(const std::string& out_root, const std::string& package_path,
+                              const std::vector<std::string>& entry_paths)>
+        fs_unpack_target_dir;
+    std::function<FsPackTarget(const std::string& typed, const std::string& output_basename,
+                               const std::string& format_key)>
+        fs_resolve_pack_target;
+    std::function<FsOutPath(const std::string& out_dir, const std::string& rel)> fs_safe_out_path;
+    std::function<std::vector<FsUnpackTarget>(
+        const std::string& out_root,
+        const std::vector<std::pair<std::string, std::vector<std::string>>>& sources)>
+        fs_plan_unpack_targets;
+    std::function<std::vector<FsEntry>(const std::string& package_path,
+                                       const std::vector<FsEntry>& entries)>
+        fs_preview_layout;
 };
 
 // 外壳注入实现（`src/shell/engine_facade_impl.cpp`）。传 nullptr = 撤销。

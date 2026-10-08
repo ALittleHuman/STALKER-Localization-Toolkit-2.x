@@ -431,6 +431,54 @@ def register(api):
     mark("proc_missing_started:%d" % (1 if missing["started"] else 0))
     mark("proc_missing_error:%d" % (1 if missing["error"] else 0))
 
+    # ── ★★ P14-0a：fs 面第一批（纯函数那组）───────────────────────────────────
+    formats = engine.fs_formats()
+    mark("fs_formats_count:%d" % len(formats))
+    keys = [row["key"] for row in formats]
+    mark("fs_has_auto:%d" % (1 if any(row["is_auto"] for row in formats) else 0))
+    mark("fs_has_sqfs:%d" % (1 if any(row["is_sqfs"] for row in formats) else 0))
+    mark("fs_format_count_positive:%d" % (1 if len(formats) > 3 else 0))
+
+    xdb = engine.fs_format_to_db("xdb")
+    mark("fs_xdb_is_db:%d" % (1 if xdb["is_db"] else 0))
+    mark("fs_xdb_key:%s" % xdb["db_key"])
+    mark("fs_xdb_name_nonempty:%d" % (1 if xdb["db_name"] else 0))
+    mark("fs_auto_is_db:%d" % (1 if engine.fs_format_to_db("auto")["is_db"] else 0))
+    mark("fs_auto_is_auto:%d" % (1 if engine.fs_format_is_auto("auto") else 0))
+    mark("fs_sqfs_is_sqfs:%d" % (1 if engine.fs_format_is_sqfs("sqfs") else 0))
+
+    mark("fs_is_package_db0:%d" % (1 if engine.fs_is_package_name("a.db0") else 0))
+    mark("fs_is_package_txt:%d" % (1 if engine.fs_is_package_name("readme.txt") else 0))
+    mark("fs_pack_ext_sqfs:%s" % engine.fs_pack_ext_for("sqfs"))
+    mark("fs_pack_ext_xdb:%s" % engine.fs_pack_ext_for("xdb"))
+
+    shelled = engine.fs_preview_layout("ai.db", [
+        {"path": "ai/1.txt", "is_dir": False, "size": 3},
+        {"path": "ai/sub", "is_dir": True, "size": 0},
+    ])
+    mark("fs_preview_rows:%d" % len(shelled))
+    # 文档明写的保证：**自带壳的包**（条目已经带 `ai/…`）⇒ 路径原样（不叠第二层）
+    shelled_paths = [row["path"] for row in shelled]
+    mark("fs_preview_shelled_exact:%d"
+         % (1 if shelled_paths == ["ai/1.txt", "ai/sub"] else 0))
+
+    safe_bad = engine.fs_safe_out_path("out", "../evil.txt")
+    mark("fs_safe_bad_ok:%d" % (1 if safe_bad["ok"] else 0))
+    mark("fs_safe_bad_reason:%d" % (1 if safe_bad["reason"] else 0))
+    safe_ok = engine.fs_safe_out_path("out", "a/b.txt")
+    mark("fs_safe_ok_ok:%d" % (1 if safe_ok["ok"] else 0))
+
+    target = engine.fs_unpack_target_dir("root", "pkg/ai.db", ["ai/1.txt"])
+    mark("fs_unpack_self_shell:%d" % (1 if target in ("root", "root/") else 0))
+    plan = engine.fs_plan_unpack_targets("root", [
+        {"package": "pkg/ai.db", "entries": ["ai/1.txt"]},
+        {"package": "pkg/plain.db", "entries": ["xr/a.txt"]},
+    ])
+    mark("fs_plan_rows:%d" % len(plan))
+
+    pack = engine.fs_resolve_pack_target("", "base", "sqfs")
+    mark("fs_pack_target_ext:%d" % (1 if pack["path"].lower().endswith(".sqfs") else 0))
+
     mark("done")
     # ★ 夹具自清：`convert_work` 不留痕（插件目录里只该留 marker —— 门禁按行断言它）
     shutil.rmtree(work, ignore_errors=True)

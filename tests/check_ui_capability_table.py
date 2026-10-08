@@ -159,6 +159,20 @@ EXPECT_ENGINE = {
     "video_parse_ffprobe": "ffprobe JSON → 媒体信息",
     "video_parse_encoders": "`ffmpeg -encoders` → 编码器集合",
     "video_progress_from_line": "进度行 → 百分比（上限 99.5）",
+    # ★★ P14-0a：fs 面第一批（第六页迁移用的纯函数那组）
+    "fs_formats": "格式表（下拉取值 + 可见名 + is_sqfs/is_auto）",
+    "fs_format_to_db": "这个键是不是 DB 格式；是就给键与可见名",
+    "fs_format_is_sqfs": "这个键是不是 SquashFS",
+    "fs_format_is_auto": "这个键是不是 auto（自洽判定）",
+    "fs_is_package_name": "这个文件名像不像包",
+    "fs_pack_ext_for": "封包产物扩展名（sqfs ⇒ .sqfs；其余 ⇒ .<键>.db）",
+    "fs_package_folder_name": "包名壳（解包落点那一层）",
+    "fs_resolve_output_root": "输出根归一（前源目录 → 当前 → 工具目录）",
+    "fs_unpack_target_dir": "解包落点（自带壳 ⇒ 根；否则 根/壳）",
+    "fs_resolve_pack_target": "封包落点（要不要前端弹「保存到」）",
+    "fs_safe_out_path": "越界拒因（ok=false 时 reason 非空）",
+    "fs_plan_unpack_targets": "多源落点清单",
+    "fs_preview_layout": "右栏解包产物预览的条目表",
 }
 # ★★ P7b：**宿主服务门面**（`api.host.*`）—— 宿主替插件办的杂事（样板页 fontpack 真的要用）
 EXPECT_HOST = {
