@@ -1,6 +1,7 @@
 #include "convert_page.h"
 
 #include "xrkit/core/theme.h"
+#include "xrkit/engine/text/encodings.h"
 #include "xrkit/engine/text/encoding.h"
 
 #include "../task_shell.h"
@@ -37,34 +38,6 @@ QString utf8(const std::string& text) { return QString::fromStdString(text); }
 // 手动指定时能选的编码：**只列我们对拍过的那些**（严格解码 + 有损替换都有 golden）。
 // 没对拍的编码宁可不给选，也不让人选到一个我们没验证过的行为。
 //
-// ★ 2026-10-06（D2 批）：**源/目标拆成两张表**。理由不是"好看"，是纪律：
-//   · 目标侧多一个 `ascii`（1.x 的目标下拉里有它）。补它对拍时**当场抓到一个真缺陷**：
-//     引擎的 ascii 原来只有解码侧、编码侧一行都没有 ⇒ 连纯 ASCII 正文也被整篇写成 `?`
-//     （见 `encoding.cpp` 的 `encode_strict` 与 `golden_lossy_codec.py`）。要不是"只列
-//     对拍过的编码"这条纪律卡着，用户会静默拿到一整个目录的 `?`。
-//   · 源侧**不放** `ascii`：源是"猜"的，把 ascii 塞进源下拉只会让人以为工具会猜 ascii。
-//
-// ★ 2026-10-05（D3 批）：`big5 / shift_jis / euc-kr` 三项**补进这张共用表**（⇒ 源、目标
-//   两个下拉都出现）。1.x 侧的口径是：源下拉 = `ENCODING_CHOICES`（`toolkit_constants.py:76`
-//   `["auto","utf-8","gbk","gb2312","big5","shift_jis","euc-kr","windows-1251",
-//   "windows-1252","iso-8859-1","ascii","utf-16"]`），目标下拉 =
-//   `convert_app.py:192` 的 `["utf-8","gbk","gb2312","windows-1251","ascii","utf-16","big5"]`。
-//   两边的**交集**里这三个名字都有（big5 两边都在，shift_jis/euc-kr 源侧在）。
-//   三张表已按"双字节 + 编码侧"全量对拍（`tests/golden_lossy_codec.py`），
-//   所以按"只列对拍过的编码"这条纪律，它们可以列了。
-const char* kManualEncodings[] = {etxt::kUtf8,          etxt::kWindows1251, etxt::kWindows1252,
-                                  etxt::kGb18030,       etxt::kGbk,         etxt::kGb2312,
-                                  etxt::kBig5,          etxt::kShiftJis,    etxt::kEucKr,
-                                  etxt::kLatin1,
-                                  // 2026-09-26：utf-16/32 六族的有损编解码已与 Python
-                                  // `errors="replace"` 逐字节对拍（门禁 [12] 的 compared
-                                  // 从 114 涨到 294）⇒ 按"只列对拍过的编码"这条纪律可以列了。
-                                  etxt::kUtf16,     etxt::kUtf16Le, etxt::kUtf16Be,
-                                  etxt::kUtf32,     etxt::kUtf32Le, etxt::kUtf32Be};
-
-// 目标侧多一项：ascii（D2 批补上对拍后才允许出现，见上面的长注释）
-const char* kTargetOnlyEncodings[] = {etxt::kAscii};
-
 // 扫描台账的那一行（**零静默**：递归几层、扫到多少、各自为什么被刷掉）。
 // 页面只负责把它画出来，计数**全部来自引擎**（`CollectReport`），不在这里重算。
 QString scan_line_of(const etxt::BatchOutcome& outcome) {
@@ -299,12 +272,12 @@ ConvertPage::ConvertPage(QWidget* parent)
 
 void ConvertPage::fill_encoding_combos() {
     source_combo_->addItem(QStringLiteral("自动"), QStringLiteral("auto"));
-    for (const char* name : kManualEncodings) {
+    for (const std::string& name : etxt::manual_encodings()) {
         source_combo_->addItem(utf8(name), utf8(name));
         target_combo_->addItem(utf8(name), utf8(name));
     }
     // ★ D2 批：目标侧独有的项（ascii）。**源侧不加** —— 源是猜的，见文件头的长注释。
-    for (const char* name : kTargetOnlyEncodings) {
+    for (const std::string& name : etxt::target_only_encodings()) {
         target_combo_->addItem(utf8(name), utf8(name));
     }
     target_combo_->setCurrentIndex(0);  // utf-8

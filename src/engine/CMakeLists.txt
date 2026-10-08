@@ -14,6 +14,7 @@ add_library(xrkit_engine STATIC
   text/sniff.cpp
   text/convert.cpp
   text/batch.cpp
+  text/encodings.cpp
   text/extract.cpp
   xml/compare.cpp
   video/ffmpeg.cpp

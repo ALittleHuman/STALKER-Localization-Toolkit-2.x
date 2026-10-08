@@ -111,6 +111,13 @@ EXPECT_ENGINE = {
     "font_pack": "出整棵 gamedata 汉化包（与内置页同一个引擎实现）",
     "font_state_marks": "四态文案（**从引擎拿**，插件不许自己抄一份中文）",
     "font_size_slots": "字号槽位表（文件名与 ltx 用的是槽位名）",
+    # ★★ P9a：第二页迁移（convert 页）用到的引擎面 —— 每加一项都要在门禁里有判据
+    "text_encodings": "源/目标两张编码表（唯一一份在 engine/text/encodings.cpp）",
+    "text_convert_batch": "批量转换（扫描台账 / 备份 / 零静默计数）",
+    "text_restore_backups": "把 backup/<rel>.bak 恢复回原位（逐条报账）",
+    "text_clear_backups": "清空备份（删了哪些、失败哪些，逐条报账）",
+    "text_write_stats_csv": "导出统计 CSV（空串=成功；否则是失败原因）",
+    "text_format_duration": "秒数 → 1.x 那种 H:MM:SS（唯一一份在引擎 batch.cpp）",
 }
 # ★★ P7b：**宿主服务门面**（`api.host.*`）—— 宿主替插件办的杂事（样板页 fontpack 真的要用）
 EXPECT_HOST = {

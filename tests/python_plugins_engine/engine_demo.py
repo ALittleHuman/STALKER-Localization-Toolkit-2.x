@@ -13,6 +13,7 @@
 """
 
 import os
+import shutil
 import threading
 
 PLUGIN_INFO = {"name": "引擎门面夹具", "version": "1.0"}
@@ -50,4 +51,77 @@ def register(api):
     thread = threading.Thread(target=worker)
     thread.start()
     thread.join()
+
+    # ── ★★ P9a：convert 页那一组（第二页迁移用的引擎面）──────────────────────
+    encodings = engine.text_encodings()
+    mark("enc_manual_count:%d" % len(encodings["manual"]))
+    mark("enc_manual_head:%s" % ",".join(encodings["manual"][:3]))
+    mark("enc_target_only:%s" % ",".join(encodings["target_only"]))
+    mark("duration_3661:%s" % engine.text_format_duration(3661))
+
+    work = os.path.join(api.plugin_dir, "convert_work")
+    shutil.rmtree(work, ignore_errors=True)
+    os.makedirs(work)
+    original = ('<?xml version="1.0" encoding="windows-1251"?>\n<string_table>\n'
+                '\t<string id="a"><text>Привет мир</text></string>\n</string_table>\n'
+                ).encode("cp1251")
+    source = os.path.join(work, "a.xml")
+    with open(source, "wb") as handle:
+        handle.write(original)
+
+    out_dir = os.path.join(work, "out")
+    messages = []
+    outcome = engine.text_convert_batch(
+        {"source": work, "output_dir": out_dir, "extensions": [".xml"], "recursive": True,
+         "backup": True, "source_encoding": "windows-1251", "target_encoding": "utf-8"},
+        {"message": messages.append})
+    converted = os.path.join(out_dir, "a.xml")
+    converted_bytes = b""
+    if os.path.isfile(converted):
+        with open(converted, "rb") as handle:
+            converted_bytes = handle.read()
+    expected = ('<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
+                '\t<string id="a"><text>Привет мир</text></string>\n</string_table>\n'
+                ).encode("utf-8")
+    mark("convert_selected:%d" % outcome["selected"])
+    mark("convert_success:%d" % outcome["success"])
+    mark("convert_exit:%d" % outcome["exit_code"])
+    mark("convert_exists:%d" % (1 if os.path.isfile(converted) else 0))
+    mark("convert_bytes_ok:%d" % (1 if converted_bytes == expected else 0))
+    mark("convert_messages:%d" % (1 if messages else 0))
+
+    # 备份三件：原地转换（`output_dir=""`）+ 勾了备份 ⇒ 生成 `backup/a.xml.bak`
+    inplace = engine.text_convert_batch(
+        {"source": work, "output_dir": "", "extensions": [".xml"], "recursive": True,
+         "backup": True, "source_encoding": "windows-1251", "target_encoding": "utf-8"})
+    backup = os.path.join(work, "backup", "a.xml.bak")
+    mark("backup_count:%d" % inplace["backed_up"])
+    mark("backup_exists:%d" % (1 if os.path.isfile(backup) else 0))
+    restored = engine.text_restore_backups(
+        {"source_root": work, "recursive": True, "extensions": [".xml"]})
+    mark("restore_ok:%d" % restored["ok"])
+    mark("restore_failed:%d" % restored["failed"])
+    with open(source, "rb") as handle:
+        back = handle.read()
+    mark("restore_bytes_ok:%d" % (1 if back == original else 0))
+    cleared = engine.text_clear_backups(
+        {"source_root": work, "recursive": True, "extensions": [".xml"]})
+    mark("clear_ok:%d" % cleared["ok"])
+    mark("clear_left:%d" % (1 if os.path.isfile(backup) else 0))
+
+    stats_path = os.path.join(work, "stats.csv")
+    wrote = engine.text_write_stats_csv(
+        stats_path, {"generated_at": "2026-10-08 00:00:00", "source": work, "single_file": False,
+                     "output_dir": out_dir, "source_enc": "windows-1251", "target_enc": "utf-8",
+                     "candidates": 1, "processed": 1, "success": 1, "skipped": 0, "failed": 0,
+                     "duration": "0:00:01"})
+    mark("stats_ok:%d" % (1 if wrote["ok"] else 0))
+    head = b""
+    if os.path.isfile(stats_path):
+        with open(stats_path, "rb") as handle:
+            head = handle.read(3)
+    mark("stats_bom:%d" % (1 if head == b"\xef\xbb\xbf" else 0))
+
     mark("done")
+    # ★ 夹具自清：`convert_work` 不留痕（插件目录里只该留 marker —— 门禁按行断言它）
+    shutil.rmtree(work, ignore_errors=True)

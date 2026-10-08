@@ -62,11 +62,123 @@ struct FontPackResult {
     std::vector<std::string> warnings;
 };
 
+
+// ── ★★ P9a：convert 页（第二页迁移）用到的值类型 ─────────────────────────────
+//   口径同上面几条：**门面自己的值类型**（Python 友好），实现在引擎层转成引擎结构；
+//   门面**不写业务逻辑**（阈值/默认值/文案一律从引擎拿）。
+
+struct TextEncodings {
+    std::vector<std::string> manual;        // 源/目标共用那张表
+    std::vector<std::string> target_only;   // 只在目标侧多出来的（ascii）
+};
+
+struct TextBatchOptions {
+    std::string source;                     // 单个文件或目录
+    std::string output_dir;                 // 空 ⇒ 原地（此时才可能备份）
+    std::vector<std::string> extensions;
+    bool recursive = true;
+    bool backup = true;                     // 仅原地转换时生效
+    std::string exclude_patterns;
+    std::string source_encoding = "auto";
+    std::string target_encoding = "utf-8";
+    std::string backup_dirname = "backup";
+    std::string backup_suffix = ".bak";
+};
+
+struct TextBackupOptions {
+    std::string source_root;
+    bool recursive = true;
+    std::vector<std::string> extensions;    // 只认 `<ext><backup_suffix>`
+};
+
+// hooks：取消 / 消息 / 进度 —— 门面只负责转交（引擎在**工作线程**里叫它们）
+struct TextHooks {
+    std::function<bool()> should_stop;
+    std::function<void(const std::string&)> message;
+    std::function<void(int, int)> progress;
+};
+
+struct TextConvertOutcome {
+    // 扫描台账（**零静默**：扫了多少 / 各自为什么被刷掉）
+    int depth = 0;
+    int dirs = 0;
+    int files_seen = 0;
+    int selected = 0;
+    int skipped_ext = 0;
+    int skipped_excluded = 0;
+    int skipped_backup = 0;
+    int skipped_depth = 0;
+    std::vector<std::string> excluded;
+    std::vector<std::string> collect_errors;
+    // 逐条计数
+    bool single_file = false;
+    int candidates = 0;
+    int processed = 0;
+    int success = 0;
+    int skipped = 0;
+    int failed = 0;
+    int backed_up = 0;
+    int backup_existed = 0;
+    int backup_failed = 0;
+    int low_confidence = 0;
+    int override_decl = 0;
+    int used_mismatch = 0;
+    bool cancelled = false;
+    std::string stop_reason;
+    std::string duration;
+    int exit_code = 0;
+};
+
+struct TextBackupItem {
+    std::string bak;
+    std::string target;
+    bool ok = false;
+    std::string error;
+};
+
+struct TextBackupOutcome {
+    bool dir_missing = false;
+    int depth = 0;
+    int total = 0;
+    int ok = 0;
+    int failed = 0;
+    bool cancelled = false;
+    std::string stop_reason;
+    std::vector<std::string> errors;
+    std::vector<TextBackupItem> items;
+};
+
+struct TextStats {
+    std::string generated_at;
+    std::string source;
+    bool single_file = false;
+    std::string output_dir;
+    std::string source_enc;
+    std::string target_enc;
+    uint64_t candidates = 0;
+    uint64_t processed = 0;
+    uint64_t success = 0;
+    uint64_t skipped = 0;
+    uint64_t failed = 0;
+    std::string duration;
+};
+
 struct EngineFacade {
     std::function<FontCheckResult(const std::string& font_path)> font_check;
     std::function<FontPackResult(const FontPackOptions& options)> font_pack;
     std::function<FontStateMarks()> font_state_marks;
     std::function<std::vector<int>()> font_size_slots;
+
+    // ── ★★ P9a：convert 页那一组（全部**转发**引擎唯一实现）────────────────────
+    std::function<TextEncodings()> text_encodings;
+    std::function<TextConvertOutcome(const TextBatchOptions&, const TextHooks&)> text_convert_batch;
+    std::function<TextBackupOutcome(const TextBackupOptions&, const TextHooks&)>
+        text_restore_backups;
+    std::function<TextBackupOutcome(const TextBackupOptions&, const TextHooks&)> text_clear_backups;
+    // 导出统计 CSV：返回**空字符串 = 成功**；否则是失败原因（绝不静默）
+    std::function<std::string(const std::string& path, const TextStats&)> text_write_stats_csv;
+    // 秒数 → 1.x 那种 `H:MM:SS`（唯一一份在引擎 `batch.cpp`）
+    std::function<std::string(double seconds)> text_format_duration;
 };
 
 // 外壳注入实现（`src/shell/engine_facade_impl.cpp`）。传 nullptr = 撤销。

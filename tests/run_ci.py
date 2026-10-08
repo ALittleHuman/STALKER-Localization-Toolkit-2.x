@@ -2407,16 +2407,43 @@ def step_engine_facade(release: bool) -> None:
             problems.append("font_check 的状态不是四态之一：%r（字体=%s）" % (state, font))
     elif value_of("check_skipped") != "no-font":
         problems.append("没给字体时夹具应当留一行 check_skipped（零静默）")
-    say("  夹具证据：%s" % text.replace("\n", " | ")[:200])
+
+    # ── ★★ P9a：convert 那一组（第二页迁移用的引擎面）────────────────────────
+    #   判据全部走**真夹具**（真目录、真字节），不判"接口存在"。
+    convert_expect = {
+        "enc_manual_count": "16",                      # 源/目标共用那张表
+        "enc_manual_head": "utf-8,windows-1251,windows-1252",
+        "enc_target_only": "ascii",                    # 只在目标侧多出来的那一项
+        "duration_3661": "1:01:01",                    # 唯一一份在引擎 `batch.cpp`
+        "convert_selected": "1",
+        "convert_success": "1",
+        "convert_exit": "0",
+        "convert_exists": "1",
+        "convert_bytes_ok": "1",                       # ★逐字节 == 期望的 UTF-8（声明改写 + 无 BOM）
+        "convert_messages": "1",                       # hooks 的 message 真被叫过
+        "backup_exists": "1",                          # 原地转换 ⇒ `backup/<rel>.bak`
+        "restore_failed": "0",
+        "restore_bytes_ok": "1",                       # ★恢复要**逐字节**回到原样
+        "clear_left": "0",                             # 清空之后 .bak 不在了
+        "stats_ok": "1",
+        "stats_bom": "1",                              # 统计 CSV 带 UTF-8 BOM（1.x 口径）
+    }
+    for key, want in convert_expect.items():
+        got = value_of(key)
+        if got != want:
+            problems.append("convert 面 %s=%s（应为 %s）" % (key, got or "(缺)", want))
+    say("  夹具证据：%s" % text.replace("\n", " | ")[:260])
     if problems:
         fail("引擎调用门面不成立（%d 处）：%s" % (len(problems), "；".join(problems)))
         return
     if font:
-        ok("引擎门面四处都通（槽位 10 档 / 四态文案来自引擎 / font_check=%s / 工作线程可调）"
+        ok("引擎门面五处都通（槽位 10 档 / 四态文案来自引擎 / font_check=%s / 工作线程可调 / "
+           "convert 面：编码表 16+1·时长 1:01:01·产物逐字节一致·备份恢复清空·统计 CSV 带 BOM）"
            % state)
     else:
         say("  · 未覆盖：font_check 的真字体那条（本机没有 msyh/simsun）")
-        ok("引擎门面三处都通（槽位 / 四态文案 / 工作线程可调）；font_check 记为未覆盖")
+        ok("引擎门面四处都通（槽位 / 四态文案 / 工作线程可调 / convert 面整条链路）；"
+           "font_check 记为未覆盖")
 
 
 def step_host_services(release: bool) -> None:

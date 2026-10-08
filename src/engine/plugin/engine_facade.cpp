@@ -25,6 +25,9 @@ const char* const kMethodNames[] = {
     "font_pack",
     "font_state_marks",
     "font_size_slots",
+    // ★★ P9a：convert 页那一组（两张编码表 + 批量转换 + 备份两件 + 统计 CSV + 时长格式化）
+    "text_encodings", "text_convert_batch", "text_restore_backups", "text_clear_backups",
+    "text_write_stats_csv", "text_format_duration",
 };
 
 bool has_impl(const EngineFacade& facade, const std::string& name) {
@@ -32,6 +35,12 @@ bool has_impl(const EngineFacade& facade, const std::string& name) {
     if (name == "font_pack") return static_cast<bool>(facade.font_pack);
     if (name == "font_state_marks") return static_cast<bool>(facade.font_state_marks);
     if (name == "font_size_slots") return static_cast<bool>(facade.font_size_slots);
+    if (name == "text_encodings") return static_cast<bool>(facade.text_encodings);
+    if (name == "text_convert_batch") return static_cast<bool>(facade.text_convert_batch);
+    if (name == "text_restore_backups") return static_cast<bool>(facade.text_restore_backups);
+    if (name == "text_clear_backups") return static_cast<bool>(facade.text_clear_backups);
+    if (name == "text_write_stats_csv") return static_cast<bool>(facade.text_write_stats_csv);
+    if (name == "text_format_duration") return static_cast<bool>(facade.text_format_duration);
     return false;
 }
 

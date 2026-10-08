@@ -410,6 +410,116 @@ FontPackOptions font_options_from_python(const py::object& options) {
     return out;
 }
 
+
+// ── ★★ P9a：convert 页那一组的入参转换（dict → 门面 POD）────────────────────
+TextBatchOptions text_batch_options_from_python(const py::object& options) {
+    TextBatchOptions out;
+    if (options.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(options);
+    const auto take_string = [&data](const char* key, std::string& target) {
+        if (data.contains(key)) target = py::str(data[key]).cast<std::string>();
+    };
+    take_string("source", out.source);
+    take_string("output_dir", out.output_dir);
+    take_string("exclude_patterns", out.exclude_patterns);
+    take_string("source_encoding", out.source_encoding);
+    take_string("target_encoding", out.target_encoding);
+    take_string("backup_dirname", out.backup_dirname);
+    take_string("backup_suffix", out.backup_suffix);
+    if (data.contains("recursive")) out.recursive = py::cast<bool>(data["recursive"]);
+    if (data.contains("backup")) out.backup = py::cast<bool>(data["backup"]);
+    if (data.contains("extensions")) {
+        for (auto item : py::list(data["extensions"])) {
+            out.extensions.push_back(py::str(item).cast<std::string>());
+        }
+    }
+    return out;
+}
+
+TextBackupOptions text_backup_options_from_python(const py::object& options) {
+    TextBackupOptions out;
+    if (options.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(options);
+    if (data.contains("source_root")) out.source_root = py::str(data["source_root"]).cast<std::string>();
+    if (data.contains("recursive")) out.recursive = py::cast<bool>(data["recursive"]);
+    if (data.contains("extensions")) {
+        for (auto item : py::list(data["extensions"])) {
+            out.extensions.push_back(py::str(item).cast<std::string>());
+        }
+    }
+    return out;
+}
+
+TextStats text_stats_from_python(const py::object& stats) {
+    TextStats out;
+    if (stats.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(stats);
+    const auto take_string = [&data](const char* key, std::string& target) {
+        if (data.contains(key)) target = py::str(data[key]).cast<std::string>();
+    };
+    take_string("generated_at", out.generated_at);
+    take_string("source", out.source);
+    take_string("output_dir", out.output_dir);
+    take_string("source_enc", out.source_enc);
+    take_string("target_enc", out.target_enc);
+    take_string("duration", out.duration);
+    if (data.contains("single_file")) out.single_file = py::cast<bool>(data["single_file"]);
+    const auto take_u64 = [&data](const char* key, uint64_t& target) {
+        if (data.contains(key)) target = py::cast<uint64_t>(data[key]);
+    };
+    take_u64("candidates", out.candidates);
+    take_u64("processed", out.processed);
+    take_u64("success", out.success);
+    take_u64("skipped", out.skipped);
+    take_u64("failed", out.failed);
+    return out;
+}
+
+// hooks：引擎会从**工作线程**叫它们 ⇒ 保活 + 取 GIL + 不让 Python 异常掀翻宿主
+TextHooks text_hooks_from_python(const py::object& hooks) {
+    TextHooks out;
+    if (hooks.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(hooks);
+    const auto hold = [&data](const char* key) -> py::object {
+        if (!data.contains(key) || data[key].is_none() != 0) return py::none();
+        py::object kept = data[key];
+        keepalive()->push_back(kept);
+        return kept;
+    };
+    py::object stop = hold("cancel");
+    if (stop.is_none() == 0) {
+        out.should_stop = [stop]() -> bool {
+            py::gil_scoped_acquire acquire;
+            try {
+                return py::cast<bool>(stop());
+            } catch (const py::error_already_set&) {
+                return false;
+            }
+        };
+    }
+    py::object message = hold("message");
+    if (message.is_none() == 0) {
+        out.message = [message](const std::string& line) {
+            py::gil_scoped_acquire acquire;
+            try {
+                message(py::str(line));
+            } catch (const py::error_already_set&) {
+            }
+        };
+    }
+    py::object progress = hold("progress");
+    if (progress.is_none() == 0) {
+        out.progress = [progress](int done, int total) {
+            py::gil_scoped_acquire acquire;
+            try {
+                progress(py::int_(done), py::int_(total));
+            } catch (const py::error_already_set&) {
+            }
+        };
+    }
+    return out;
+}
+
 // ── ★★ P7a：引擎调用门面在 Python 侧的形态（`api.engine.*`）──────────────────
 // 口径（用户拍板的方案 3）：
 //   · **值类型 Python 友好**：出入都是 dict / list / str / int，**不漏 C++ 结构体与指针**；
@@ -462,7 +572,104 @@ public:
         return out;
     }
 
+    // ── ★★ P9a：convert 页那一组 ─────────────────────────────────────────────
+    py::object text_encodings() const {
+        const EngineFacade* facade = available("text_encodings");
+        if (facade == nullptr) return py::none();
+        const TextEncodings table = facade->text_encodings();
+        py::dict out;
+        out["manual"] = strings_to_python(table.manual);
+        out["target_only"] = strings_to_python(table.target_only);
+        return out;
+    }
+    py::object text_convert_batch(py::object options, py::object hooks) const {
+        const EngineFacade* facade = available("text_convert_batch");
+        if (facade == nullptr) return py::none();
+        const TextConvertOutcome result =
+            facade->text_convert_batch(text_batch_options_from_python(options),
+                                       text_hooks_from_python(hooks));
+        py::dict out;
+        out["depth"] = result.depth;
+        out["dirs"] = result.dirs;
+        out["files_seen"] = result.files_seen;
+        out["selected"] = result.selected;
+        out["skipped_ext"] = result.skipped_ext;
+        out["skipped_excluded"] = result.skipped_excluded;
+        out["skipped_backup"] = result.skipped_backup;
+        out["skipped_depth"] = result.skipped_depth;
+        out["excluded"] = strings_to_python(result.excluded);
+        out["collect_errors"] = strings_to_python(result.collect_errors);
+        out["single_file"] = result.single_file;
+        out["candidates"] = result.candidates;
+        out["processed"] = result.processed;
+        out["success"] = result.success;
+        out["skipped"] = result.skipped;
+        out["failed"] = result.failed;
+        out["backed_up"] = result.backed_up;
+        out["backup_existed"] = result.backup_existed;
+        out["backup_failed"] = result.backup_failed;
+        out["low_confidence"] = result.low_confidence;
+        out["override_decl"] = result.override_decl;
+        out["used_mismatch"] = result.used_mismatch;
+        out["cancelled"] = result.cancelled;
+        out["stop_reason"] = result.stop_reason;
+        out["duration"] = result.duration;
+        out["exit_code"] = result.exit_code;
+        return out;
+    }
+    py::object text_restore_backups(py::object options, py::object hooks) const {
+        return text_backup_call("text_restore_backups", options, hooks);
+    }
+    py::object text_clear_backups(py::object options, py::object hooks) const {
+        return text_backup_call("text_clear_backups", options, hooks);
+    }
+    py::object text_write_stats_csv(const std::string& path, py::object stats) const {
+        const EngineFacade* facade = available("text_write_stats_csv");
+        if (facade == nullptr) return py::none();
+        const std::string error = facade->text_write_stats_csv(path, text_stats_from_python(stats));
+        py::dict out;
+        out["ok"] = error.empty();
+        out["error"] = error;
+        return out;
+    }
+    py::object text_format_duration(double seconds) const {
+        const EngineFacade* facade = available("text_format_duration");
+        if (facade == nullptr) return py::none();
+        return py::str(facade->text_format_duration(seconds));
+    }
+
 private:
+
+    // 备份两件共用（restore / clear 的门面签名一样）
+    py::object text_backup_call(const char* method, py::object options, py::object hooks) const {
+        const EngineFacade* facade = available(method);
+        if (facade == nullptr) return py::none();
+        const TextBackupOptions native = text_backup_options_from_python(options);
+        const TextBackupOutcome result =
+            std::string(method) == "text_restore_backups"
+                ? facade->text_restore_backups(native, text_hooks_from_python(hooks))
+                : facade->text_clear_backups(native, text_hooks_from_python(hooks));
+        py::dict out;
+        out["dir_missing"] = result.dir_missing;
+        out["depth"] = result.depth;
+        out["total"] = result.total;
+        out["ok"] = result.ok;
+        out["failed"] = result.failed;
+        out["cancelled"] = result.cancelled;
+        out["stop_reason"] = result.stop_reason;
+        out["errors"] = strings_to_python(result.errors);
+        py::list items;
+        for (const TextBackupItem& item : result.items) {
+            py::dict row;
+            row["bak"] = item.bak;
+            row["target"] = item.target;
+            row["ok"] = item.ok;
+            row["error"] = item.error;
+            items.append(row);
+        }
+        out["items"] = items;
+        return out;
+    }
     const EngineFacade* available(const std::string& method) const {
         if (!engine_facade_has(method)) {
             std::string reason;
@@ -1194,7 +1401,18 @@ void ensure_api_module() {
             .def("font_check", &PyEngine::font_check, py::arg("font_path"))
             .def("font_pack", &PyEngine::font_pack, py::arg("options"))
             .def("font_state_marks", &PyEngine::font_state_marks)
-            .def("font_size_slots", &PyEngine::font_size_slots);
+            .def("font_size_slots", &PyEngine::font_size_slots)
+            // ★★ P9a：convert 页那一组（options / hooks 都是 dict；回调进 keepalive）
+            .def("text_encodings", &PyEngine::text_encodings)
+            .def("text_convert_batch", &PyEngine::text_convert_batch, py::arg("options"),
+                 py::arg("hooks") = py::none())
+            .def("text_restore_backups", &PyEngine::text_restore_backups, py::arg("options"),
+                 py::arg("hooks") = py::none())
+            .def("text_clear_backups", &PyEngine::text_clear_backups, py::arg("options"),
+                 py::arg("hooks") = py::none())
+            .def("text_write_stats_csv", &PyEngine::text_write_stats_csv, py::arg("path"),
+                 py::arg("stats"))
+            .def("text_format_duration", &PyEngine::text_format_duration, py::arg("seconds"));
         py::class_<PyWidget>(m, "Widget")
             .def("__repr__", [](const PyWidget& widget) {
                 return std::string("xrkit.Widget(") + (widget.valid() ? "valid" : "null") + ")";
