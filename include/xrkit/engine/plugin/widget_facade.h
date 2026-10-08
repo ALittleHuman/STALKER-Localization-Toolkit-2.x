@@ -70,6 +70,8 @@ struct UiFacade {
     //   C++ 页直接读控件（`currentData()` / `isChecked()`）；插件没有裸控件 ⇒ 补这两个。
     std::function<std::string(UiHandle widget)> combo_value;
     std::function<bool(UiHandle widget)> checkbox_state;
+    // ★★ P9b：**写**勾选态（convert 页：输出目录非空 ⇒ 取消勾选并禁用「备份」）
+    std::function<void(UiHandle widget, bool checked)> set_checked;
     std::function<bool(UiHandle widget)> alive;
     std::function<void(const std::string& line)> log_append;   // 宿主日志栏（LogView）
     std::function<bool(const std::string& title, const std::string& message)> ask_yes_no;
@@ -83,6 +85,8 @@ struct UiFacade {
     //   非模态 ⇒ 用户确认时回调（空字符串＝取消）。
     std::function<void(const std::string& current,
                        std::function<void(const std::string&)> on_picked)> pick_font;
+    // ★★ P9b：在文件管理器里打开一个路径（convert 页的「打开输出」；宿主实现，返回是否成功）
+    std::function<bool(const std::string& path)> open_path;
 
     // ── ★★ L2（重型，第一批）：宿主组件的**表内方法** ──────────────────────────
     // 口径（规格 §三）：渲染/委托/滚动/像素全在宿主；插件只给"数据 + 回调"。

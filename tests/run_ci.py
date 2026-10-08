@@ -2556,8 +2556,10 @@ def step_fontpack_plugin(release: bool) -> None:
     payload = json.dumps({"game": "SoC", "lang": "chs", "xml_dir": str(xml_dir),
                           "font_path": font, "out_dir": str(plug_out),
                           "only_sizes": [11]}, ensure_ascii=False)
-    rc_plug, out_plug = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"), payload],
-                            timeout=900)
+    # ★★ P9b：**必须点名** —— `plugins/` 里不止一枚插件，探针的"第一个导出 headless 的"
+    #   会随插件增删静默换对象（判据串味）；点名之后这条判据永远对着 fontpack 页。
+    rc_plug, out_plug = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
+                             "--plugin", "fontpack_page.py", payload], timeout=900)
     for raw in out_plug.splitlines():
         s = raw.strip()
         if s.startswith("PYPLUGINCALL") and not s.startswith("PYPLUGINCALL result="):
@@ -2589,6 +2591,127 @@ def step_fontpack_plugin(release: bool) -> None:
         return
     ok("样板页（插件）产物与引擎参照**逐字节一致**（%d 个文件全等；同一份 `build_package`）"
        % compared)
+
+
+def step_convert_plugin(release: bool) -> None:
+    """插件改装 P9b：**第二页（编码转换）的收口判据**。
+
+    判据：
+      ① 参照 = `xrkit_cli --convert-batch`（内置 C++ 页用的就是这条引擎路）；
+         插件 = `--py-plugin-call plugins --plugin convert_page.py`（插件页导出的 `headless`）；
+      ② 两边产物**文件表 + 每文件 sha256 逐字节全等**，且**比较数 ≥1**（空集不算通过）；
+      ③ 备份三件**跨实现**验一遍：CLI 造出 `backup/<rel>.bak` ⇒ **插件**的 `clear` 把它清掉
+         （证明插件读得懂同一套备份布局）；恢复同理（`restore` 报告 ok ≥1）。
+    源字体 / 语料都自带（本步自造夹具），字体等外部前提不涉及。
+    """
+    say("[convert-plugin] 插件改装 P9b：编码转换页（插件）产物与引擎参照逐字节一致")
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "缺失（先跑 build 步）", release)
+        return
+    plugin = ROOT / "plugins" / "convert_page.py"
+    if not plugin.is_file():
+        prereq("转换页插件 plugins/convert_page.py", "缺失", release)
+        return
+    work = ROOT / "build" / "convert_plugin"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    src = work / "src"
+    (src / "sub").mkdir(parents=True)
+    body = ('<?xml version="1.0" encoding="windows-1251"?>\n<string_table>\n'
+            '\t<string id="a"><text>Привет мир</text></string>\n</string_table>\n')
+    (src / "a.xml").write_bytes(body.encode("cp1251"))
+    (src / "sub" / "b.xml").write_bytes(body.replace('"a"', '"b"').encode("cp1251"))
+    (src / "readme.txt").write_bytes(b"not an xml\n")
+    ref_out = work / "ref"
+    plug_out = work / "plug"
+
+    rc_ref, out_ref = run([str(CLI_EXE), "--convert-batch", str(src), str(ref_out),
+                           "windows-1251", "utf-8", "--ext", ".xml"], timeout=600)
+    payload = json.dumps({"source": str(src), "output_dir": str(plug_out),
+                          "extensions": [".xml"], "recursive": True, "backup": False,
+                          "source_encoding": "windows-1251", "target_encoding": "utf-8"},
+                         ensure_ascii=False)
+    rc_plug, out_plug = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
+                             "--plugin", "convert_page.py", payload], timeout=600)
+    for raw in out_plug.splitlines():
+        s = raw.strip()
+        if s.startswith("PYPLUGINCALL") and not s.startswith("PYPLUGINCALL result="):
+            say("  " + s[:170])
+    for raw in out_ref.splitlines():
+        s = raw.strip()
+        if s.startswith("CONVERTBATCH"):
+            say("  " + s[:170])
+
+    def digest(root: Path) -> dict:
+        out = {}
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                out[str(path.relative_to(root)).replace("\\", "/")] = hashlib.sha256(
+                    path.read_bytes()).hexdigest()
+        return out
+
+    ref_tree = digest(ref_out)
+    plug_tree = digest(plug_out)
+    compared = sum(1 for key in ref_tree if key in plug_tree and ref_tree[key] == plug_tree[key])
+    only_ref = sorted(set(ref_tree) - set(plug_tree))
+    only_plug = sorted(set(plug_tree) - set(ref_tree))
+    differing = sorted(k for k in set(ref_tree) & set(plug_tree) if ref_tree[k] != plug_tree[k])
+    say("  参照 %d 个文件 / 插件 %d 个文件 / 逐字节相同 %d 个"
+        % (len(ref_tree), len(plug_tree), compared))
+    problems = []
+    if only_ref or only_plug or differing:
+        problems.append("产物不一致（只在参照 %s；只在插件 %s；内容不同 %s）"
+                        % (only_ref[:4] or "无", only_plug[:4] or "无", differing[:4] or "无"))
+    if rc_ref != 0 or rc_plug != 0 or len(ref_tree) < 2 or compared < 2:
+        problems.append("判据没跑成（参照 rc=%d / 插件 rc=%d / 参照文件 %d / 比较数 %d）"
+                        "—— 空集不算通过" % (rc_ref, rc_plug, len(ref_tree), compared))
+
+    # ③ 备份三件：CLI 造备份 ⇒ **插件**清空（跨实现验同一套布局）
+    rc_bak, _ = run([str(CLI_EXE), "--convert-batch", str(src), "", "windows-1251", "utf-8",
+                     "--ext", ".xml", "--backup"], timeout=600)
+    backup = src / "backup" / "a.xml.bak"
+    had_backup = backup.is_file()
+    rc_clear, out_clear = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
+                               "--plugin", "convert_page.py",
+                               json.dumps({"action": "clear", "source_root": str(src),
+                                           "extensions": [".xml"]}, ensure_ascii=False)],
+                              timeout=600)
+    cleared = not backup.is_file()
+    say("  备份三件：CLI 造备份=%s；插件清空后 .bak 还在=%s（rc=%d）"
+        % (had_backup, not cleared, rc_clear))
+    if rc_bak != 0 or not had_backup:
+        problems.append("CLI 原地+备份没造出 backup/<rel>.bak（rc=%d）" % rc_bak)
+    if rc_clear != 0 or not cleared:
+        problems.append("插件的 clear 没能清掉 CLI 造的备份（rc=%d / 还在=%s）"
+                        % (rc_clear, not cleared))
+    if problems:
+        fail("编码转换页（插件）不成立：%s" % "；".join(problems))
+        return
+    ok("编码转换页（插件）与引擎参照**逐字节一致**（%d 个文件全等）；备份三件跨实现可用"
+       % compared)
+
+
+def step_facade_order(release: bool) -> None:
+    """插件改装 P9b：**门面字段顺序 == 聚合初始化顺序**（三个门面逐项对位）。
+
+    为什么单开一步：能力表比的是**名字集合**，顺序它管不着；而相邻字段类型相同时
+    （`ask_open_file` / `ask_save_file` / `ask_directory` 都是 `std::string(const std::string&)`），
+    对位错了**编译器不报错** ⇒ 参数喂给错的能力。本仓已因顺序被编译器拦下三次
+    （都是类型不同才暴露），说明类型相同的那种**必须靠这一步**。
+    """
+    say("[facade-order] 插件改装 P9b：门面字段顺序与聚合初始化逐项对位")
+    script = ROOT / "tests" / "check_facade_order.py"
+    if not require_repo_file(script, "门面顺序核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("==") or s.startswith("✗") or s.startswith("✓") or s.startswith("总判"):
+            say("  " + s)
+    if rc == 0 and "全部对位" in out:
+        ok("三个门面（Ui / Engine / Host）字段顺序与初始化**逐项对位**")
+    else:
+        fail("门面顺序有错位（见上）—— 类型相同的相邻字段对位错了编译器不会报错")
 
 
 def step_plugin_entry_lock(release: bool) -> None:
@@ -3070,6 +3193,10 @@ STEPS = [
     ("host-services", step_host_services),
     # ★★ 2026-10-08（插件改装 P7d）：**样板页收口** —— 插件产物与引擎参照逐字节一致。
     ("fontpack-plugin", step_fontpack_plugin),
+    # ★★ 2026-10-08（插件改装 P9b）：**第二页收口** —— 编码转换插件页。
+    ("convert-plugin", step_convert_plugin),
+    # ★★ 2026-10-08（P9b）：门面顺序核对（类型相同的相邻字段错了编译器不报）
+    ("facade-order", step_facade_order),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),

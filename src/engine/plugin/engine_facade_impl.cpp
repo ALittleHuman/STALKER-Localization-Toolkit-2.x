@@ -114,6 +114,7 @@ const EngineFacade kFontFacade = {
         native.backup_suffix = options.backup_suffix;
         etext::BatchHooks native_hooks;
         native_hooks.should_stop = hooks.should_stop;
+        native_hooks.gate = hooks.gate;   // ★ P9b：暂停闸门（返回 false ⇒ 引擎停下）
         native_hooks.message = hooks.message;
         native_hooks.progress = hooks.progress;
         const etext::BatchOutcome result = etext::convert_batch(native, native_hooks);
@@ -146,7 +147,7 @@ const EngineFacade kFontFacade = {
         out.exit_code = result.exit_code;
         return out;
     },
-    /* text_restore_backups / text_clear_backups：备份三件里的另两件（同一份引擎实现） */
+    /* text_restore_backups */
     [](const TextBackupOptions& options, const TextHooks& hooks) {
         etext::BackupTaskOptions native;
         native.source_root = options.source_root;
@@ -154,6 +155,7 @@ const EngineFacade kFontFacade = {
         native.extensions = options.extensions;
         etext::BatchHooks native_hooks;
         native_hooks.should_stop = hooks.should_stop;
+        native_hooks.gate = hooks.gate;   // ★ P9b：暂停闸门（返回 false ⇒ 引擎停下）
         native_hooks.message = hooks.message;
         native_hooks.progress = hooks.progress;
         const etext::BackupTaskResult result = etext::restore_backups(native, native_hooks);
@@ -171,6 +173,7 @@ const EngineFacade kFontFacade = {
         }
         return out;
     },
+    /* text_clear_backups */
     [](const TextBackupOptions& options, const TextHooks& hooks) {
         etext::BackupTaskOptions native;
         native.source_root = options.source_root;
@@ -178,6 +181,7 @@ const EngineFacade kFontFacade = {
         native.extensions = options.extensions;
         etext::BatchHooks native_hooks;
         native_hooks.should_stop = hooks.should_stop;
+        native_hooks.gate = hooks.gate;   // ★ P9b：暂停闸门（返回 false ⇒ 引擎停下）
         native_hooks.message = hooks.message;
         native_hooks.progress = hooks.progress;
         const etext::BackupTaskResult result = etext::clear_backups(native, native_hooks);

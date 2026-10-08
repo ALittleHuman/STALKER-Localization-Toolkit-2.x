@@ -164,6 +164,9 @@ void print_usage() {
            "                                              Pillow LANCZOS 重采样（与 Pillow 对拍）\n"
            "  --extract-chars <xml目录> [输出文件] [--no-full-cyrillic]\n"
            "                                              字符集提取（每行一个十六进制码位）\n"
+           "  --convert-batch <源> <输出目录> <源编码> <目标编码> [--ext .xml] [--no-recursive]\n"
+           "                  [--backup] [--exclude <模式>]\n"
+           "                  批量编码转换（与内置 convert 页同一个引擎实现；判据对拍用它）\n"
            "  --build-font-pack <SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录>\n"
            "                    [--suffix s] [--offset n] [--no-full-cyrillic]\n"
            "                                              出整棵 gamedata 汉化包（与 1.x 对拍）\n"
@@ -4053,6 +4056,50 @@ int run_cli(const std::vector<std::string>& args) {
 
     // 出包（M1-7 第⑦步）：整棵 `gamedata/` 产物树（10 个字号 + XML 转写 + 两个 ltx）。
     // 判据：与 1.x `build_package` 的产物树**逐字节一致**。
+    if (action == "--convert-batch") {
+        if (operands.size() < 4) {
+            std::cerr << "CONVERTBATCH error reason=用法：--convert-batch <源> <输出目录> "
+                         "<源编码> <目标编码> [--ext .xml] [--no-recursive] [--backup] "
+                         "[--exclude <模式>]\n";
+            return kExitUsage;
+        }
+        xrkit::engine::text::BatchOptions opt;
+        opt.source = operands[0];
+        opt.output_dir = operands[1];
+        opt.source_encoding = operands[2];
+        opt.target_encoding = operands[3];
+        for (size_t i = 4; i < operands.size(); ++i) {
+            if (operands[i] == "--ext" && i + 1 < operands.size()) {
+                opt.extensions.push_back(operands[++i]);
+            } else if (operands[i] == "--no-recursive") {
+                opt.recursive = false;
+            } else if (operands[i] == "--backup") {
+                opt.backup = true;
+            } else if (operands[i] == "--no-backup") {
+                opt.backup = false;
+            } else if (operands[i] == "--exclude" && i + 1 < operands.size()) {
+                opt.exclude_patterns = operands[++i];
+            } else {
+                std::cerr << "CONVERTBATCH error reason=未知参数 " << operands[i] << "\n";
+                return kExitUsage;
+            }
+        }
+        const xrkit::engine::text::BatchOutcome outcome =
+            xrkit::engine::text::convert_batch(opt, {});
+        std::cout << "CONVERTBATCH ok single_file=" << (outcome.single_file ? 1 : 0)
+                  << " depth=" << outcome.collect.depth << " dirs=" << outcome.collect.dirs
+                  << " files_seen=" << outcome.collect.files_seen
+                  << " selected=" << outcome.collect.selected
+                  << " skipped_ext=" << outcome.collect.skipped_ext
+                  << " skipped_excluded=" << outcome.collect.skipped_excluded
+                  << " skipped_backup=" << outcome.collect.skipped_backup
+                  << " candidates=" << outcome.candidates << " processed=" << outcome.processed
+                  << " success=" << outcome.success << " skipped=" << outcome.skipped
+                  << " failed=" << outcome.failed << " backed_up=" << outcome.backed_up
+                  << " exit=" << outcome.exit_code << "\n";
+        return outcome.exit_code == 0 ? kExitOk : 1;
+    }
+
     if (action == "--build-font-pack") {
         if (operands.size() < 5) {
             std::cerr << "FONTPACK error reason=用法：--build-font-pack <SoC|ClS|CoP> <语言> "

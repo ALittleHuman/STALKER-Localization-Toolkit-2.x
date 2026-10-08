@@ -26,7 +26,9 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QFileDialog>
+#include <QUrl>
 
 #include "font_picker.h"
 #include <QLabel>
@@ -268,6 +270,10 @@ const plug::UiFacade kQtFacade = {
         if (auto* check = qobject_cast<QCheckBox*>(unwrap(widget))) return check->isChecked();
         return false;
     },
+    /* set_checked：写勾选态（P9b；convert 页要用"输出目录非空 ⇒ 取消勾选「备份」"） */
+    [](plug::UiHandle widget, bool checked) {
+        if (auto* check = qobject_cast<QCheckBox*>(unwrap(widget))) check->setChecked(checked);
+    },
     /* alive */
     [](plug::UiHandle widget) { return unwrap(widget) != nullptr; },
     /* log_append：宿主日志栏。装配时由外壳接上（`install_qt_ui_facade` 的 log_sink），
@@ -301,6 +307,12 @@ const plug::UiFacade kQtFacade = {
                 if (on_picked) on_picked(path.toStdString());
             });
         if (dialog != nullptr) dialog->show();
+    },
+    /* open_path：在文件管理器里打开一个路径（宿主实现；C++ 页走 QDesktopServices） */
+    [](const std::string& path) {
+        if (path.empty()) return false;
+        return QDesktopServices::openUrl(
+            QUrl::fromLocalFile(QString::fromStdString(path)));
     },
     // ── ★★ P4：重型 L2 第一批（虚拟列表 / 日志视图 / 拖放目标 / 任务壳 / 线程判定）──
     // 为什么这几件**可以**在门面实现里直接碰 Qt（而 L1 那 18 个不行）：L1 是对既有控件语义的
@@ -529,6 +541,7 @@ const plug::UiFacade kQtFacade = {
     //   口径就此对齐：**门面必须暴"页面在用的那个控件"的能力**，否则"对等性"是假的。
     //   · `setOpaqueResize(false)` ＝ 用户 2026-09-21 要的"拖动期不实时移动、松手一次重排"；
     //   · 每格上限/是否可收起/收起态都落在**格容器**上（QSplitter 按子控件的 min/max 分配）。
+    /* split：造一个可分栏（面板）容器 */
     [](plug::UiHandle parent, bool horizontal) {
         QWidget* host = resolve_parent(parent);
         auto* split = new QSplitter(horizontal ? Qt::Horizontal : Qt::Vertical);
@@ -603,6 +616,7 @@ const plug::UiFacade kQtFacade = {
     },
     // ── ★★ P6：树（多列 / 懒建 / 展开态 / 过滤计数 / 三态勾选）────────────────────
     // 语义全在 `facade_tree.{h,cpp}`（宿主唯一的实现），这里只做句柄与参数转换。
+    /* tree */
     [](plug::UiHandle parent, const std::vector<plug::UiFacade::TreeColumn>& columns) {
         QWidget* host = resolve_parent(parent);
         auto* tree = new FacadeTree;
@@ -610,74 +624,92 @@ const plug::UiFacade kQtFacade = {
         place(host, tree);
         return handle_of(wrap(tree));
     },
+    /* tree_set_root */
     [](plug::UiHandle tree, const std::vector<plug::UiFacade::TreeNodeSpec>& nodes) {
         if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) facade->set_root(nodes);
     },
+    /* tree_set_children */
     [](plug::UiHandle tree, const std::string& parent_key,
        const std::vector<plug::UiFacade::TreeNodeSpec>& nodes) {
         if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) {
             facade->set_children(parent_key, nodes);
         }
     },
+    /* tree_clear */
     [](plug::UiHandle tree) {
         if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) facade->clear_all();
     },
+    /* tree_row_count */
     [](plug::UiHandle tree) {
         auto* facade = qobject_cast<FacadeTree*>(unwrap(tree));
         return facade == nullptr ? 0 : facade->visible_row_count();
     },
+    /* tree_keys */
     [](plug::UiHandle tree) {
         auto* facade = qobject_cast<FacadeTree*>(unwrap(tree));
         return facade == nullptr ? std::vector<std::string>() : facade->visible_keys();
     },
+    /* tree_set_expanded */
     [](plug::UiHandle tree, const std::string& key, bool expanded) {
         if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) {
             facade->set_expanded(key, expanded);
         }
     },
+    /* tree_expanded_keys */
     [](plug::UiHandle tree) {
         auto* facade = qobject_cast<FacadeTree*>(unwrap(tree));
         return facade == nullptr ? std::vector<std::string>() : facade->expanded_keys();
     },
+    /* tree_set_checked */
     [](plug::UiHandle tree, const std::string& key, bool checked) {
         if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) facade->set_checked(key, checked);
     },
+    /* tree_checked */
     [](plug::UiHandle tree, const std::string& key) {
         auto* facade = qobject_cast<FacadeTree*>(unwrap(tree));
         return facade != nullptr && facade->checked_of(key);
     },
+    /* tree_checked_keys */
     [](plug::UiHandle tree) {
         auto* facade = qobject_cast<FacadeTree*>(unwrap(tree));
         return facade == nullptr ? std::vector<std::string>() : facade->checked_keys();
     },
+    /* tree_partial_keys */
     [](plug::UiHandle tree) {
         auto* facade = qobject_cast<FacadeTree*>(unwrap(tree));
         return facade == nullptr ? std::vector<std::string>() : facade->partial_keys();
     },
+    /* tree_set_filter */
     [](plug::UiHandle tree, const std::string& text) {
         if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) facade->set_filter(text);
     },
+    /* tree_filter_hits */
     [](plug::UiHandle tree) {
         auto* facade = qobject_cast<FacadeTree*>(unwrap(tree));
         return facade == nullptr ? 0 : facade->filter_hits();
     },
+    /* tree_select */
     [](plug::UiHandle tree, const std::string& key) {
         if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) facade->select_key(key);
     },
+    /* tree_selected_key */
     [](plug::UiHandle tree) {
         auto* facade = qobject_cast<FacadeTree*>(unwrap(tree));
         return facade == nullptr ? std::string() : facade->selected_key();
     },
+    /* tree_on_expand */
     [](plug::UiHandle tree, std::function<void(const std::string&)> on_expand) {
         if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) {
             facade->set_on_expand(std::move(on_expand));
         }
     },
+    /* tree_on_check */
     [](plug::UiHandle tree, std::function<void(const std::string&, bool)> on_check) {
         if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) {
             facade->set_on_check(std::move(on_check));
         }
     },
+    /* tree_on_activate */
     [](plug::UiHandle tree, std::function<void(const std::string&)> on_activate) {
         if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) {
             facade->set_on_activate(std::move(on_activate));

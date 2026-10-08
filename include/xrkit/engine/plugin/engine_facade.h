@@ -91,9 +91,11 @@ struct TextBackupOptions {
     std::vector<std::string> extensions;    // 只认 `<ext><backup_suffix>`
 };
 
-// hooks：取消 / 消息 / 进度 —— 门面只负责转交（引擎在**工作线程**里叫它们）
+// hooks：取消 / **暂停闸门** / 消息 / 进度 —— 门面只负责转交（引擎在**工作线程**里叫它们）
+//   `gate`：返回 false ⇒ 引擎**停下**（页面用它实现「暂停/继续」：暂停时在里面等，恢复后返回 true）。
 struct TextHooks {
     std::function<bool()> should_stop;
+    std::function<bool()> gate;
     std::function<void(const std::string&)> message;
     std::function<void(int, int)> progress;
 };

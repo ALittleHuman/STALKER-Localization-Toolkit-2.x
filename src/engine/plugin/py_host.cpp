@@ -497,6 +497,17 @@ TextHooks text_hooks_from_python(const py::object& hooks) {
             }
         };
     }
+    py::object gate = hold("gate");
+    if (gate.is_none() == 0) {
+        out.gate = [gate]() -> bool {
+            py::gil_scoped_acquire acquire;
+            try {
+                return py::cast<bool>(gate());
+            } catch (const py::error_already_set&) {
+                return true;   // 回调炸了 ⇒ 别把引擎卡死
+            }
+        };
+    }
     py::object message = hold("message");
     if (message.is_none() == 0) {
         out.message = [message](const std::string& line) {
@@ -867,6 +878,13 @@ public:
         }
         return false;
     }
+    bool set_checked(py::object widget, bool checked) const {
+        if (const UiFacade* facade = available("set_checked")) {
+            facade->set_checked(handle_of(widget), checked);
+            return true;
+        }
+        return false;
+    }
     void set_enabled(py::object widget, bool enabled) const {
         if (const UiFacade* facade = available("set_enabled")) {
             facade->set_enabled(handle_of(widget), enabled);
@@ -902,6 +920,12 @@ public:
             return facade->ask_directory(title);
         }
         return std::string();
+    }
+    bool open_path(std::string path) const {
+        if (const UiFacade* facade = available("open_path")) {
+            return facade->open_path(path);
+        }
+        return false;
     }
     // ★★ P8a：字库选择器（宿主唯一一份界面）。回调是**异步**的 ⇒ 把 Python callable
     //   包成 C++ 回调并**进 keepalive**（对话框还活着，回调就可能随时被叫）。
@@ -1446,6 +1470,7 @@ void ensure_api_module() {
             .def("get_text", &PyUi::get_text, py::arg("widget"))
             .def("combo_value", &PyUi::combo_value, py::arg("widget"))
             .def("checkbox_state", &PyUi::checkbox_state, py::arg("widget"))
+            .def("set_checked", &PyUi::set_checked, py::arg("widget"), py::arg("checked"))
             .def("set_enabled", &PyUi::set_enabled, py::arg("widget"), py::arg("enabled"))
             .def("alive", &PyUi::alive, py::arg("widget"))
             .def("log", &PyUi::log, py::arg("line"))
@@ -1453,6 +1478,7 @@ void ensure_api_module() {
             .def("ask_open_file", &PyUi::ask_open_file, py::arg("title"))
             .def("ask_save_file", &PyUi::ask_save_file, py::arg("title"))
             .def("ask_directory", &PyUi::ask_directory, py::arg("title"))
+            .def("open_path", &PyUi::open_path, py::arg("path"))
             .def("pick_font", &PyUi::pick_font, py::arg("current"),
                  py::arg("on_picked") = py::none())
             // ★ P4：重型 L2 第一批（表外无门 —— 能力表判据按这里的名单对账）
@@ -1933,6 +1959,7 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
     bool want_ui = false;
     bool want_plugin_call = false;
     std::string want_plugin_call_json;
+    std::string want_plugin_call_plugin;
     std::string home;
     std::string dir;
     for (size_t i = 0; i < args.size(); ++i) {
@@ -1951,6 +1978,12 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
         }
         if (a == "--py-plugin-call") {
             want_plugin_call = true;
+            continue;
+        }
+        // ★ P9b：显式选插件（`--plugin <文件名>`）—— 插件目录里不止一枚时必须用它，
+        //   否则"第一个导出 headless 的"一改就会静默换掉判据对象。
+        if (want_plugin_call && a == "--plugin" && i + 1 < args.size()) {
+            want_plugin_call_plugin = args[++i];
             continue;
         }
         if (want_plugin_call && want_plugin_call_json.empty() && a.size() > 0 &&
@@ -2067,6 +2100,10 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
         py::object entry;
         std::string entry_name;
         for (const auto& loaded : call_modules) {
+            if (!want_plugin_call_plugin.empty() &&
+                loaded.first != want_plugin_call_plugin) {
+                continue;   // 显式点了名就只认它
+            }
             py::object module = loaded.second;
             if (py::hasattr(module, "headless") == 0) continue;
             entry = module.attr("headless");
@@ -2083,7 +2120,9 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
             std::string loaded_names;
             for (const auto& loaded : call_modules) loaded_names += loaded.first + " ";
             emit("PYPLUGINCALL error reason=目录里没有插件导出 headless(api, args) loaded=" +
-                 one_line(loaded_names));
+                 one_line(loaded_names) +
+                 (want_plugin_call_plugin.empty() ? std::string()
+                                                  : "（点名要：" + want_plugin_call_plugin + "）"));
             call_modules.clear();   // ★ 释放 Python 引用**必须在持锁时**（见文件头那条）
             return 1;
         }
