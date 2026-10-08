@@ -46,6 +46,12 @@ const char* const kMethodNames[] = {
     "fs_is_package_name", "fs_pack_ext_for", "fs_package_folder_name",
     "fs_resolve_output_root", "fs_unpack_target_dir", "fs_resolve_pack_target",
     "fs_safe_out_path", "fs_plan_unpack_targets", "fs_preview_layout",
+    // ★★ P14-0b：fs 面第二批（合并树走句柄）
+    "fs_loose_entries", "fs_sort_sources_by_basename",
+    "fs_tree_build", "fs_tree_free", "fs_tree_sources", "fs_tree_flatten",
+    "fs_tree_toggle_all", "fs_tree_toggle_dir", "fs_tree_toggle_source",
+    "fs_tree_source_state", "fs_tree_checked_paths", "fs_tree_apply_checked_paths",
+    "fs_tree_conflict_count", "fs_tree_checked_file_count", "fs_tree_find",
 };
 
 bool has_impl(const EngineFacade& facade, const std::string& name) {
@@ -97,6 +103,21 @@ bool has_impl(const EngineFacade& facade, const std::string& name) {
     if (name == "fs_safe_out_path") return static_cast<bool>(facade.fs_safe_out_path);
     if (name == "fs_plan_unpack_targets") return static_cast<bool>(facade.fs_plan_unpack_targets);
     if (name == "fs_preview_layout") return static_cast<bool>(facade.fs_preview_layout);
+    if (name == "fs_loose_entries") return static_cast<bool>(facade.fs_loose_entries);
+    if (name == "fs_sort_sources_by_basename") return static_cast<bool>(facade.fs_sort_sources_by_basename);
+    if (name == "fs_tree_build") return static_cast<bool>(facade.fs_tree_build);
+    if (name == "fs_tree_free") return static_cast<bool>(facade.fs_tree_free);
+    if (name == "fs_tree_sources") return static_cast<bool>(facade.fs_tree_sources);
+    if (name == "fs_tree_flatten") return static_cast<bool>(facade.fs_tree_flatten);
+    if (name == "fs_tree_toggle_all") return static_cast<bool>(facade.fs_tree_toggle_all);
+    if (name == "fs_tree_toggle_dir") return static_cast<bool>(facade.fs_tree_toggle_dir);
+    if (name == "fs_tree_toggle_source") return static_cast<bool>(facade.fs_tree_toggle_source);
+    if (name == "fs_tree_source_state") return static_cast<bool>(facade.fs_tree_source_state);
+    if (name == "fs_tree_checked_paths") return static_cast<bool>(facade.fs_tree_checked_paths);
+    if (name == "fs_tree_apply_checked_paths") return static_cast<bool>(facade.fs_tree_apply_checked_paths);
+    if (name == "fs_tree_conflict_count") return static_cast<bool>(facade.fs_tree_conflict_count);
+    if (name == "fs_tree_checked_file_count") return static_cast<bool>(facade.fs_tree_checked_file_count);
+    if (name == "fs_tree_find") return static_cast<bool>(facade.fs_tree_find);
     return false;
 }
 

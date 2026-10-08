@@ -173,6 +173,22 @@ EXPECT_ENGINE = {
     "fs_safe_out_path": "越界拒因（ok=false 时 reason 非空）",
     "fs_plan_unpack_targets": "多源落点清单",
     "fs_preview_layout": "右栏解包产物预览的条目表",
+    # ★★ P14-0b：fs 面第二批（合并树走**句柄**）
+    "fs_loose_entries": "散装目录的条目表（error 非空=没读成）",
+    "fs_sort_sources_by_basename": "按文件名排序后的下标（加载顺序）",
+    "fs_tree_build": "建合并树 ⇒ 句柄（用完 fs_tree_free）",
+    "fs_tree_free": "释放句柄",
+    "fs_tree_sources": "合并顺序（=加载顺序，后者赢）",
+    "fs_tree_flatten": "打平成一列（前序遍历，目录在前）",
+    "fs_tree_toggle_all": "全选/全不选（只改 checked）",
+    "fs_tree_toggle_dir": "某目录整棵打勾/取消",
+    "fs_tree_toggle_source": "整包勾选（返回改动的文件数）",
+    "fs_tree_source_state": "某源（文件数, 已勾数）",
+    "fs_tree_checked_paths": "勾选态路径快照",
+    "fs_tree_apply_checked_paths": "按路径回灌勾选态",
+    "fs_tree_conflict_count": "同路径多源定义次数",
+    "fs_tree_checked_file_count": "全树已勾文件数",
+    "fs_tree_find": "按路径找节点",
 }
 # ★★ P7b：**宿主服务门面**（`api.host.*`）—— 宿主替插件办的杂事（样板页 fontpack 真的要用）
 EXPECT_HOST = {

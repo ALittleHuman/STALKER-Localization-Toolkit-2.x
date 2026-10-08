@@ -420,6 +420,38 @@ struct FsUnpackTarget {
     std::string target;   // 落点目录
 };
 
+
+// ── ★★ P14-0b：fs 面**第二批** —— 条目与合并树 ────────────────────────────────
+//   `MergeTree` 是**有状态的 C++ 对象**（勾选态/冲突数活在它里面），而门面只跨"值"
+//   ⇒ 仿照控件句柄：门面里存一张**句柄表**，插件拿 `int` 句柄操作，用完 `fs_tree_free`。
+
+struct FsTreeSource {
+    std::string source;          // 用户看到的包名/路径
+    std::vector<FsEntry> entries;
+};
+
+struct FsTreeRow {               // `MergeTree::flatten()` 的一行
+    std::string name;
+    std::string path;            // 累计到本节点的镜像内路径（'/' 分隔）
+    bool is_dir = false;
+    bool checked = false;
+    uint64_t size = 0;
+    int source_index = -1;       // "引擎实际会读到的那一份"来自第几个源（-1 = 没来源）
+};
+
+struct FsSourceState {
+    int files = 0;
+    int checked_files = 0;
+};
+
+struct FsTreeLookup {
+    bool found = false;
+    bool is_dir = false;
+    bool checked = false;
+    uint64_t size = 0;
+    int source_index = -1;
+};
+
 struct EngineFacade {
     std::function<FontCheckResult(const std::string& font_path)> font_check;
     std::function<FontPackResult(const FontPackOptions& options)> font_pack;
@@ -511,6 +543,26 @@ struct EngineFacade {
     std::function<std::vector<FsEntry>(const std::string& package_path,
                                        const std::vector<FsEntry>& entries)>
         fs_preview_layout;
+
+    // ── ★★ P14-0b：fs 面第二批（合并树；句柄式）────────────────────────────
+    std::function<std::vector<FsEntry>(const std::string& root, std::string& error)>
+        fs_loose_entries;
+    std::function<std::vector<size_t>(const std::vector<std::string>& paths)>
+        fs_sort_sources_by_basename;
+    std::function<int(const std::vector<FsTreeSource>& sources)> fs_tree_build;
+    std::function<void(int handle)> fs_tree_free;
+    std::function<std::vector<std::string>(int handle)> fs_tree_sources;
+    std::function<std::vector<FsTreeRow>(int handle)> fs_tree_flatten;
+    std::function<void(int handle, bool checked)> fs_tree_toggle_all;
+    std::function<void(int handle, const std::string& path, bool checked)> fs_tree_toggle_dir;
+    std::function<int(int handle, int source_index, bool checked)> fs_tree_toggle_source;
+    std::function<FsSourceState(int handle, int source_index)> fs_tree_source_state;
+    std::function<std::vector<std::string>(int handle)> fs_tree_checked_paths;
+    std::function<int(int handle, const std::vector<std::string>& paths)>
+        fs_tree_apply_checked_paths;
+    std::function<int(int handle)> fs_tree_conflict_count;
+    std::function<int(int handle)> fs_tree_checked_file_count;
+    std::function<FsTreeLookup(int handle, const std::string& path)> fs_tree_find;
 };
 
 // 外壳注入实现（`src/shell/engine_facade_impl.cpp`）。传 nullptr = 撤销。

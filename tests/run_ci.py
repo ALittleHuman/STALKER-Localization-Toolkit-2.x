@@ -2610,6 +2610,34 @@ def step_engine_facade(release: bool) -> None:
         got = value_of(key)
         if got != want:
             problems.append("fs 面 %s=%s（应为 %s）" % (key, got or "(缺)", want))
+
+    # ── ★★ P14-0b：fs 面第二批（条目与合并树）────────────────────────────────
+    tree_expect = {
+        "loose_count": "3",                     # one.txt + sub + sub/two.txt
+        "loose_error_empty": "1",
+        "loose_has_sub": "1",
+        "tree_sort_basename": "1",              # 按 **basename** 升序（文档口径）
+        "tree_handle_positive": "1",
+        "tree_sources": "a.db,b.db",            # 合并顺序 = 入参顺序
+        "tree_has_files": "1",
+        "tree_later_source_wins": "1",          # 6.1：后者为准
+        "tree_conflict_positive": "1",          # 同路径被两个源定义
+        "tree_checked_zero": "1",
+        "tree_toggle_changed_positive": "1",
+        "tree_toggle_raised": "1",
+        "tree_snapshot_nonempty": "1",
+        "tree_cleared": "1",
+        "tree_roundtrip": "1",                  # 快照 → 清空 → 回灌 ⇒ 回到原样
+        "tree_toggle_dir_ok": "1",
+        "tree_source_state_files": "1",
+        "tree_find_found": "1",
+        "tree_find_missing": "1",
+        "tree_freed": "1",                      # 释放后句柄失效（空表）
+    }
+    for key, want in tree_expect.items():
+        got = value_of(key)
+        if got != want:
+            problems.append("fs 树 %s=%s（应为 %s）" % (key, got or "(缺)", want))
     if not value_of("video_encoder"):
         problems.append("video 面 video_encoder 是空的（面板值必须来自 plan_transcode）")
     say("  夹具证据：%s" % text.replace("\n", " | ")[:260])

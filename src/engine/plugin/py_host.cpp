@@ -937,6 +937,28 @@ std::vector<FsEntry> fs_entries_from_python(const py::object& rows) {
     return out;
 }
 
+
+// ── ★★ P14-0b：fs 面第二批（合并树）的转换 ────────────────────────────────
+std::vector<FsTreeSource> fs_tree_sources_from_python(const py::object& sources) {
+    std::vector<FsTreeSource> out;
+    if (sources.is_none() != 0) return out;
+    for (auto item : py::list(sources)) {
+        py::dict row = py::reinterpret_borrow<py::dict>(item);
+        FsTreeSource one;
+        if (row.contains("source")) one.source = py::str(row["source"]).cast<std::string>();
+        if (row.contains("entries")) one.entries = fs_entries_from_python(row["entries"]);
+        out.push_back(std::move(one));
+    }
+    return out;
+}
+
+std::vector<std::string> fs_strings_from_python(const py::object& values) {
+    std::vector<std::string> out;
+    if (values.is_none() != 0) return out;
+    for (auto item : py::list(values)) out.push_back(py::str(item).cast<std::string>());
+    return out;
+}
+
 // ── ★★ P7a：引擎调用门面在 Python 侧的形态（`api.engine.*`）──────────────────
 // 口径（用户拍板的方案 3）：
 //   · **值类型 Python 友好**：出入都是 dict / list / str / int，**不漏 C++ 结构体与指针**；
@@ -1401,6 +1423,108 @@ public:
         if (facade == nullptr) return py::none();
         return fs_entries_to_python(
             facade->fs_preview_layout(package_path, fs_entries_from_python(entries)));
+    }
+
+    // ── ★★ P14-0b：fs 面第二批（合并树；句柄式）────────────────────────────
+    py::object fs_loose_entries(const std::string& root) const {
+        const EngineFacade* facade = available("fs_loose_entries");
+        if (facade == nullptr) return py::none();
+        std::string error;
+        const std::vector<FsEntry> entries = facade->fs_loose_entries(root, error);
+        py::dict out;
+        out["entries"] = fs_entries_to_python(entries);
+        out["error"] = error;
+        return out;
+    }
+    py::object fs_sort_sources_by_basename(py::object paths) const {
+        const EngineFacade* facade = available("fs_sort_sources_by_basename");
+        if (facade == nullptr) return py::none();
+        py::list out;
+        for (size_t index : facade->fs_sort_sources_by_basename(fs_strings_from_python(paths))) {
+            out.append(index);
+        }
+        return out;
+    }
+    int fs_tree_build(py::object sources) const {
+        const EngineFacade* facade = available("fs_tree_build");
+        if (facade == nullptr) return 0;
+        return facade->fs_tree_build(fs_tree_sources_from_python(sources));
+    }
+    void fs_tree_free(int handle) const {
+        const EngineFacade* facade = available("fs_tree_free");
+        if (facade != nullptr) facade->fs_tree_free(handle);
+    }
+    py::object fs_tree_sources(int handle) const {
+        const EngineFacade* facade = available("fs_tree_sources");
+        if (facade == nullptr) return py::none();
+        return strings_to_python(facade->fs_tree_sources(handle));
+    }
+    py::object fs_tree_flatten(int handle) const {
+        const EngineFacade* facade = available("fs_tree_flatten");
+        if (facade == nullptr) return py::none();
+        py::list out;
+        for (const FsTreeRow& row : facade->fs_tree_flatten(handle)) {
+            py::dict item;
+            item["name"] = row.name;
+            item["path"] = row.path;
+            item["is_dir"] = row.is_dir;
+            item["checked"] = row.checked;
+            item["size"] = row.size;
+            item["source_index"] = row.source_index;
+            out.append(item);
+        }
+        return out;
+    }
+    void fs_tree_toggle_all(int handle, bool checked) const {
+        const EngineFacade* facade = available("fs_tree_toggle_all");
+        if (facade != nullptr) facade->fs_tree_toggle_all(handle, checked);
+    }
+    void fs_tree_toggle_dir(int handle, const std::string& path, bool checked) const {
+        const EngineFacade* facade = available("fs_tree_toggle_dir");
+        if (facade != nullptr) facade->fs_tree_toggle_dir(handle, path, checked);
+    }
+    int fs_tree_toggle_source(int handle, int source_index, bool checked) const {
+        const EngineFacade* facade = available("fs_tree_toggle_source");
+        return facade == nullptr ? 0 : facade->fs_tree_toggle_source(handle, source_index, checked);
+    }
+    py::object fs_tree_source_state(int handle, int source_index) const {
+        const EngineFacade* facade = available("fs_tree_source_state");
+        if (facade == nullptr) return py::none();
+        const FsSourceState native = facade->fs_tree_source_state(handle, source_index);
+        py::dict out;
+        out["files"] = native.files;
+        out["checked_files"] = native.checked_files;
+        return out;
+    }
+    py::object fs_tree_checked_paths(int handle) const {
+        const EngineFacade* facade = available("fs_tree_checked_paths");
+        if (facade == nullptr) return py::none();
+        return strings_to_python(facade->fs_tree_checked_paths(handle));
+    }
+    int fs_tree_apply_checked_paths(int handle, py::object paths) const {
+        const EngineFacade* facade = available("fs_tree_apply_checked_paths");
+        if (facade == nullptr) return 0;
+        return facade->fs_tree_apply_checked_paths(handle, fs_strings_from_python(paths));
+    }
+    int fs_tree_conflict_count(int handle) const {
+        const EngineFacade* facade = available("fs_tree_conflict_count");
+        return facade == nullptr ? 0 : facade->fs_tree_conflict_count(handle);
+    }
+    int fs_tree_checked_file_count(int handle) const {
+        const EngineFacade* facade = available("fs_tree_checked_file_count");
+        return facade == nullptr ? 0 : facade->fs_tree_checked_file_count(handle);
+    }
+    py::object fs_tree_find(int handle, const std::string& path) const {
+        const EngineFacade* facade = available("fs_tree_find");
+        if (facade == nullptr) return py::none();
+        const FsTreeLookup native = facade->fs_tree_find(handle, path);
+        py::dict out;
+        out["found"] = native.found;
+        out["is_dir"] = native.is_dir;
+        out["checked"] = native.checked;
+        out["size"] = native.size;
+        out["source_index"] = native.source_index;
+        return out;
     }
 
 private:
@@ -2409,7 +2533,33 @@ void ensure_api_module() {
             .def("fs_plan_unpack_targets", &PyEngine::fs_plan_unpack_targets, py::arg("out_root"),
                  py::arg("sources"))
             .def("fs_preview_layout", &PyEngine::fs_preview_layout, py::arg("package_path"),
-                 py::arg("entries"));
+                 py::arg("entries"))
+            // ★★ P14-0b：fs 面第二批（合并树）
+            .def("fs_loose_entries", &PyEngine::fs_loose_entries, py::arg("root"))
+            .def("fs_sort_sources_by_basename", &PyEngine::fs_sort_sources_by_basename,
+                 py::arg("paths"))
+            .def("fs_tree_build", &PyEngine::fs_tree_build, py::arg("sources"))
+            .def("fs_tree_free", &PyEngine::fs_tree_free, py::arg("handle"))
+            .def("fs_tree_sources", &PyEngine::fs_tree_sources, py::arg("handle"))
+            .def("fs_tree_flatten", &PyEngine::fs_tree_flatten, py::arg("handle"))
+            .def("fs_tree_toggle_all", &PyEngine::fs_tree_toggle_all, py::arg("handle"),
+                 py::arg("checked"))
+            .def("fs_tree_toggle_dir", &PyEngine::fs_tree_toggle_dir, py::arg("handle"),
+                 py::arg("path"), py::arg("checked"))
+            .def("fs_tree_toggle_source", &PyEngine::fs_tree_toggle_source,
+                 py::arg("handle"), py::arg("source_index"), py::arg("checked"))
+            .def("fs_tree_source_state", &PyEngine::fs_tree_source_state,
+                 py::arg("handle"), py::arg("source_index"))
+            .def("fs_tree_checked_paths", &PyEngine::fs_tree_checked_paths,
+                 py::arg("handle"))
+            .def("fs_tree_apply_checked_paths", &PyEngine::fs_tree_apply_checked_paths,
+                 py::arg("handle"), py::arg("paths"))
+            .def("fs_tree_conflict_count", &PyEngine::fs_tree_conflict_count,
+                 py::arg("handle"))
+            .def("fs_tree_checked_file_count", &PyEngine::fs_tree_checked_file_count,
+                 py::arg("handle"))
+            .def("fs_tree_find", &PyEngine::fs_tree_find, py::arg("handle"),
+                 py::arg("path"));
         py::class_<PyWidget>(m, "Widget")
             .def("__repr__", [](const PyWidget& widget) {
                 return std::string("xrkit.Widget(") + (widget.valid() ? "valid" : "null") + ")";

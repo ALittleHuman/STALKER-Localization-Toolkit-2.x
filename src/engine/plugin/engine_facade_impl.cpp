@@ -208,6 +208,24 @@ const char* video_conflict_code(evideo::OutputConflict conflict) {
     return "none";
 }
 
+
+// ── ★★ P14-0b：合并树的**句柄表**（门面只跨值 ⇒ 有状态对象要拿句柄换）──────────
+std::map<int, efs::MergeTree>& tree_handles() {
+    static std::map<int, efs::MergeTree>* instance = new std::map<int, efs::MergeTree>();
+    return *instance;
+}
+
+int next_tree_handle() {
+    static int next = 1;
+    return next++;
+}
+
+efs::MergeTree* tree_of(int handle) {
+    auto& table = tree_handles();
+    const auto found = table.find(handle);
+    return found == table.end() ? nullptr : &found->second;
+}
+
 const EngineFacade kFontFacade = {
     /* font_check */
     [](const std::string& font_path) {
@@ -683,6 +701,116 @@ const EngineFacade kFontFacade = {
         for (const efs::EntryInfo& item : efs::preview_entries_in_layout(package_path, native)) {
             out.push_back({item.path, item.is_dir, item.size});
         }
+        return out;
+    },
+    /* fs_loose_entries：散装目录的条目表（error 非空 = 没读成） */
+    [](const std::string& root, std::string& error) {
+        std::vector<FsEntry> out;
+        for (const efs::EntryInfo& item : efs::loose_entries(root, error)) {
+            out.push_back({item.path, item.is_dir, item.size});
+        }
+        return out;
+    },
+    /* fs_sort_sources_by_basename：按文件名排序后的**下标**（加载顺序用） */
+    [](const std::vector<std::string>& paths) { return efs::sort_sources_by_basename(paths); },
+    /* fs_tree_build：建合并树 ⇒ 返回**句柄**（用完要 fs_tree_free） */
+    [](const std::vector<FsTreeSource>& sources) {
+        // ★ 口径：`build_tree` 只吃**单源**、不做合并 ⇒ 第一个源建树，其余逐个 `merge`
+        //   （`source_index` 就是它们在入参里的下标；后者赢 == 1.x 的加载顺序）
+        efs::MergeTree tree;
+        for (size_t index = 0; index < sources.size(); ++index) {
+            efs::MergeInput input;
+            input.source = sources[index].source;
+            for (const FsEntry& entry : sources[index].entries) {
+                input.entries.emplace_back(entry.path, entry.is_dir, entry.size);
+            }
+            efs::MergeTree one = efs::build_tree(input);
+            if (index == 0) {
+                tree = std::move(one);
+            } else {
+                tree.merge(one, static_cast<int>(index));
+            }
+        }
+        const int handle = next_tree_handle();
+        tree_handles()[handle] = std::move(tree);
+        return handle;
+    },
+    /* fs_tree_free：释放句柄（不释放就是一份常驻内存 —— 插件自己负责） */
+    [](int handle) { tree_handles().erase(handle); },
+    /* fs_tree_sources：合并顺序（= 加载顺序，后者赢） */
+    [](int handle) {
+        const efs::MergeTree* tree = tree_of(handle);
+        return tree == nullptr ? std::vector<std::string>() : tree->sources;
+    },
+    /* fs_tree_flatten：打平成一列（前序遍历，目录在前）—— 界面喂虚拟列表用它 */
+    [](int handle) {
+        std::vector<FsTreeRow> out;
+        const efs::MergeTree* tree = tree_of(handle);
+        if (tree == nullptr) return out;
+        for (const efs::MergeNode* node : tree->flatten()) {
+            if (node == nullptr) continue;
+            out.push_back({node->name, node->path, node->is_dir, node->checked, node->size,
+                           node->source_index});
+        }
+        return out;
+    },
+    /* fs_tree_toggle_all：全选/全不选（只改 checked，不碰 selected） */
+    [](int handle, bool checked) {
+        if (efs::MergeTree* tree = tree_of(handle)) tree->toggle_all(checked);
+    },
+    /* fs_tree_toggle_dir：某个目录整棵打勾/取消 */
+    [](int handle, const std::string& path, bool checked) {
+        if (efs::MergeTree* tree = tree_of(handle)) tree->toggle_dir(path, checked);
+    },
+    /* fs_tree_toggle_source：整包勾选（返回被改动的**文件**条目数） */
+    [](int handle, int source_index, bool checked) {
+        efs::MergeTree* tree = tree_of(handle);
+        return tree == nullptr ? 0 : tree->toggle_source(source_index, checked);
+    },
+    /* fs_tree_source_state：某个源在合并树里还看得见的（文件数, 已勾数） */
+    [](int handle, int source_index) {
+        FsSourceState out;
+        const efs::MergeTree* tree = tree_of(handle);
+        if (tree == nullptr) return out;
+        int files = 0;
+        int checked = 0;
+        tree->source_check_state(source_index, &files, &checked);
+        out.files = files;
+        out.checked_files = checked;
+        return out;
+    },
+    /* fs_tree_checked_paths：勾选态的**路径快照**（重建树之前存它） */
+    [](int handle) {
+        const efs::MergeTree* tree = tree_of(handle);
+        return tree == nullptr ? std::vector<std::string>() : tree->checked_paths();
+    },
+    /* fs_tree_apply_checked_paths：按路径**回灌**勾选态（返回真正置上的条数） */
+    [](int handle, const std::vector<std::string>& paths) {
+        efs::MergeTree* tree = tree_of(handle);
+        return tree == nullptr ? 0 : tree->apply_checked_paths(paths);
+    },
+    /* fs_tree_conflict_count：同路径被多个源定义过的次数 */
+    [](int handle) {
+        const efs::MergeTree* tree = tree_of(handle);
+        return tree == nullptr ? 0 : tree->conflict_count();
+    },
+    /* fs_tree_checked_file_count：全树已勾的**文件**数（目录不计） */
+    [](int handle) {
+        const efs::MergeTree* tree = tree_of(handle);
+        return tree == nullptr ? 0 : tree->checked_file_count();
+    },
+    /* fs_tree_find：按路径找一个节点（找不到 ⇒ found=false） */
+    [](int handle, const std::string& path) {
+        FsTreeLookup out;
+        const efs::MergeTree* tree = tree_of(handle);
+        if (tree == nullptr) return out;
+        const efs::MergeNode* node = tree->find(path);
+        if (node == nullptr) return out;
+        out.found = true;
+        out.is_dir = node->is_dir;
+        out.checked = node->checked;
+        out.size = node->size;
+        out.source_index = node->source_index;
         return out;
     },
 };

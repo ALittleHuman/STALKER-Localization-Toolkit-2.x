@@ -479,6 +479,68 @@ def register(api):
     pack = engine.fs_resolve_pack_target("", "base", "sqfs")
     mark("fs_pack_target_ext:%d" % (1 if pack["path"].lower().endswith(".sqfs") else 0))
 
+    # ── ★★ P14-0b：fs 面第二批（条目与合并树）───────────────────────────────
+    loose_dir = os.path.join(work, "loose")
+    os.makedirs(os.path.join(loose_dir, "sub"), exist_ok=True)
+    with open(os.path.join(loose_dir, "one.txt"), "w", encoding="utf-8") as handle:
+        handle.write("1")
+    with open(os.path.join(loose_dir, "sub", "two.txt"), "w", encoding="utf-8") as handle:
+        handle.write("22")
+    loose = engine.fs_loose_entries(loose_dir)
+    mark("loose_count:%d" % len(loose["entries"]))
+    mark("loose_error_empty:%d" % (1 if not loose["error"] else 0))
+    mark("loose_has_sub:%d" % (1 if any(r["is_dir"] for r in loose["entries"]) else 0))
+
+    # 文档口径：按 **basename** 升序（同名按原顺序，稳定）—— 不是按整路径
+    inputs = ["b/x.db", "a/y.db", "b/a.db"]
+    order = engine.fs_sort_sources_by_basename(inputs)
+    mark("tree_sort_basename:%d"
+         % (1 if [inputs[i] for i in order] == ["b/a.db", "b/x.db", "a/y.db"] else 0))
+
+    sources = [
+        {"source": "a.db", "entries": [
+            {"path": "xr/1.txt", "is_dir": False, "size": 10},
+            {"path": "xr/2.txt", "is_dir": False, "size": 20},
+            {"path": "only_a.txt", "is_dir": False, "size": 1}]},
+        {"source": "b.db", "entries": [
+            {"path": "xr/1.txt", "is_dir": False, "size": 11},
+            {"path": "b_only.txt", "is_dir": False, "size": 2}]},
+    ]
+    handle_id = engine.fs_tree_build(sources)
+    mark("tree_handle_positive:%d" % (1 if handle_id > 0 else 0))
+    mark("tree_sources:%s" % ",".join(engine.fs_tree_sources(handle_id)))
+    rows = engine.fs_tree_flatten(handle_id)
+    by_path = {row["path"]: row for row in rows}
+    mark("tree_has_files:%d" % (1 if all(p in by_path for p in
+                                         ("xr/1.txt", "xr/2.txt", "only_a.txt", "b_only.txt")) else 0))
+    mark("tree_later_source_wins:%d" % (1 if by_path.get("xr/1.txt", {}).get("source_index") == 1
+                                        else 0))
+    mark("tree_conflict_positive:%d" % (1 if engine.fs_tree_conflict_count(handle_id) >= 1 else 0))
+    mark("tree_checked_zero:%d" % (1 if engine.fs_tree_checked_file_count(handle_id) == 0 else 0))
+
+    before = engine.fs_tree_checked_file_count(handle_id)
+    changed = engine.fs_tree_toggle_source(handle_id, 1, True)
+    after = engine.fs_tree_checked_file_count(handle_id)
+    mark("tree_toggle_changed_positive:%d" % (1 if changed > 0 else 0))
+    mark("tree_toggle_raised:%d" % (1 if after > before else 0))
+    snapshot = engine.fs_tree_checked_paths(handle_id)
+    mark("tree_snapshot_nonempty:%d" % (1 if snapshot else 0))
+    engine.fs_tree_toggle_all(handle_id, False)
+    mark("tree_cleared:%d" % (1 if engine.fs_tree_checked_file_count(handle_id) == 0 else 0))
+    applied = engine.fs_tree_apply_checked_paths(handle_id, snapshot)
+    restored = engine.fs_tree_checked_file_count(handle_id)
+    mark("tree_roundtrip:%d" % (1 if applied == len(snapshot) and restored == after else 0))
+    mark("tree_toggle_dir_ok:%d"
+         % (1 if (engine.fs_tree_toggle_dir(handle_id, "xr", False) or True) else 0))
+    state = engine.fs_tree_source_state(handle_id, 1)
+    mark("tree_source_state_files:%d" % (1 if state["files"] > 0 else 0))
+    found = engine.fs_tree_find(handle_id, "xr/1.txt")
+    mark("tree_find_found:%d" % (1 if found["found"] else 0))
+    mark("tree_find_missing:%d" % (1 if not engine.fs_tree_find(handle_id, "nope.txt")["found"]
+                                   else 0))
+    engine.fs_tree_free(handle_id)
+    mark("tree_freed:%d" % (1 if engine.fs_tree_flatten(handle_id) == [] else 0))
+
     mark("done")
     # ★ 夹具自清：`convert_work` 不留痕（插件目录里只该留 marker —— 门禁按行断言它）
     shutil.rmtree(work, ignore_errors=True)
