@@ -452,6 +452,48 @@ struct FsTreeLookup {
     int source_index = -1;
 };
 
+
+// ── ★★ P14-0c：fs 面**第三批** —— 读条目（含解密闸门）/ 收集 / 解包 ──────────────
+//   ★ 口径：**闸门已焊在引擎读入口**（`db.cpp`/`overlay.cpp`/`squashfs.cpp` 都调
+//     `plugin::gate_active_read`）⇒ 门面**不需要**传注册表，`active_registry()` 自己认。
+
+struct FsGateResult {
+    bool ok = false;
+    std::string path;    // ok=true 时：**该读的那个路径**（可能是解密产物）
+    std::string error;   // ok=false 时的原因（界面直接显示）
+};
+
+struct FsPackFile {
+    std::string rel;          // 包内路径（'/' 分隔，相对 base）
+    std::string source_path;  // 本机文件
+};
+
+struct FsPackCollect {
+    std::vector<FsPackFile> items;
+    int skipped_outside_base = 0;
+    int skipped_package_files = 0;
+};
+
+struct FsExtractFailure {
+    std::string path;
+    std::string reason;
+};
+
+struct FsExtractResult {
+    bool ok = false;
+    std::string error;
+    uint64_t files_written = 0;
+    uint64_t dirs_created = 0;
+    uint64_t bytes_written = 0;
+    uint64_t duplicate_records = 0;
+    uint64_t skipped_dirs = 0;
+    std::vector<std::string> overwritten;   // **覆盖必须可见**（逐条）
+    std::vector<std::string> written;
+    std::vector<FsExtractFailure> failures;
+    std::string failure_note;
+    double elapsed_ms = 0.0;
+};
+
 struct EngineFacade {
     std::function<FontCheckResult(const std::string& font_path)> font_check;
     std::function<FontPackResult(const FontPackOptions& options)> font_pack;
@@ -563,6 +605,19 @@ struct EngineFacade {
     std::function<int(int handle)> fs_tree_conflict_count;
     std::function<int(int handle)> fs_tree_checked_file_count;
     std::function<FsTreeLookup(int handle, const std::string& path)> fs_tree_find;
+
+    // ── ★★ P14-0c：fs 面第三批（读条目/闸门/收集/解包）──────────────────────
+    std::function<FsGateResult(const std::string& path)> fs_gate_path;
+    std::function<std::string()> fs_decrypt_output_dir;
+    std::function<std::vector<FsEntry>(const std::string& path, const std::string& db_fallback_key,
+                                       std::string& error)>
+        fs_package_entries;
+    std::function<FsPackCollect(const std::string& base, const std::vector<std::string>& roots)>
+        fs_collect_pack_files;
+    std::function<FsExtractResult(const std::string& image_path, const std::string& out_root,
+                                  const std::string& selection, const std::vector<std::string>& only,
+                                  const std::string& db_fallback_key)>
+        fs_extract_package;
 };
 
 // 外壳注入实现（`src/shell/engine_facade_impl.cpp`）。传 nullptr = 撤销。

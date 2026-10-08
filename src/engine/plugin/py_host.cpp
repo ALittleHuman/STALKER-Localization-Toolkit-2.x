@@ -1527,6 +1527,81 @@ public:
         return out;
     }
 
+    // ── ★★ P14-0c：fs 面第三批 ─────────────────────────────────────────────
+    py::object fs_gate_path(const std::string& path) const {
+        const EngineFacade* facade = available("fs_gate_path");
+        if (facade == nullptr) return py::none();
+        const FsGateResult native = facade->fs_gate_path(path);
+        py::dict out;
+        out["ok"] = native.ok;
+        out["path"] = native.path;
+        out["error"] = native.error;
+        return out;
+    }
+    std::string fs_decrypt_output_dir() const {
+        const EngineFacade* facade = available("fs_decrypt_output_dir");
+        return facade == nullptr ? std::string() : facade->fs_decrypt_output_dir();
+    }
+    py::object fs_package_entries(const std::string& path, const std::string& db_fallback_key) const {
+        const EngineFacade* facade = available("fs_package_entries");
+        if (facade == nullptr) return py::none();
+        std::string error;
+        const std::vector<FsEntry> entries =
+            facade->fs_package_entries(path, db_fallback_key, error);
+        py::dict out;
+        out["entries"] = fs_entries_to_python(entries);
+        out["error"] = error;
+        return out;
+    }
+    py::object fs_collect_pack_files(const std::string& base, py::object roots) const {
+        const EngineFacade* facade = available("fs_collect_pack_files");
+        if (facade == nullptr) return py::none();
+        const FsPackCollect native =
+            facade->fs_collect_pack_files(base, fs_strings_from_python(roots));
+        py::dict out;
+        py::list items;
+        for (const FsPackFile& item : native.items) {
+            py::dict row;
+            row["rel"] = item.rel;
+            row["source_path"] = item.source_path;
+            items.append(row);
+        }
+        out["items"] = items;
+        out["skipped_outside_base"] = native.skipped_outside_base;
+        out["skipped_package_files"] = native.skipped_package_files;
+        return out;
+    }
+    py::object fs_extract_package(const std::string& image_path, const std::string& out_root,
+                                  const std::string& selection, py::object only,
+                                  const std::string& db_fallback_key) const {
+        const EngineFacade* facade = available("fs_extract_package");
+        if (facade == nullptr) return py::none();
+        const FsExtractResult native = facade->fs_extract_package(
+            image_path, out_root, selection, fs_strings_from_python(only), db_fallback_key);
+        py::dict out;
+        out["ok"] = native.ok;
+        out["error"] = native.error;
+        out["files_written"] = native.files_written;
+        out["dirs_created"] = native.dirs_created;
+        out["bytes_written"] = native.bytes_written;
+        out["duplicate_records"] = native.duplicate_records;
+        out["skipped_dirs"] = native.skipped_dirs;
+        out["overwritten_count"] = native.overwritten.size();
+        out["written_count"] = native.written.size();
+        out["failure_count"] = native.failures.size();
+        out["failure_note"] = native.failure_note;
+        out["elapsed_ms"] = native.elapsed_ms;
+        py::list failures;
+        for (const FsExtractFailure& item : native.failures) {
+            py::dict row;
+            row["path"] = item.path;
+            row["reason"] = item.reason;
+            failures.append(row);
+        }
+        out["failures"] = failures;
+        return out;
+    }
+
 private:
 
     // 备份两件共用（restore / clear 的门面签名一样）
@@ -2559,7 +2634,18 @@ void ensure_api_module() {
             .def("fs_tree_checked_file_count", &PyEngine::fs_tree_checked_file_count,
                  py::arg("handle"))
             .def("fs_tree_find", &PyEngine::fs_tree_find, py::arg("handle"),
-                 py::arg("path"));
+                 py::arg("path"))
+            // ★★ P14-0c：fs 面第三批
+            .def("fs_gate_path", &PyEngine::fs_gate_path, py::arg("path"))
+            .def("fs_decrypt_output_dir", &PyEngine::fs_decrypt_output_dir)
+            .def("fs_package_entries", &PyEngine::fs_package_entries, py::arg("path"),
+                 py::arg("db_fallback_key") = "")
+            .def("fs_collect_pack_files", &PyEngine::fs_collect_pack_files, py::arg("base"),
+                 py::arg("roots"))
+            .def("fs_extract_package", &PyEngine::fs_extract_package, py::arg("image_path"),
+                 py::arg("out_root"), py::arg("selection") = "all",
+                 py::arg("only") = py::none(), py::arg("db_fallback_key") = "")
+;
         py::class_<PyWidget>(m, "Widget")
             .def("__repr__", [](const PyWidget& widget) {
                 return std::string("xrkit.Widget(") + (widget.valid() ? "valid" : "null") + ")";

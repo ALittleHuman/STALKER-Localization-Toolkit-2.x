@@ -24,6 +24,7 @@
 #include "xrkit/engine/video/transcode.h"
 #include "xrkit/engine/fs/extract_tree.h"
 #include "xrkit/engine/fs/overlay.h"
+#include "xrkit/engine/plugin/registry.h"
 
 #include <array>
 #include <string>
@@ -811,6 +812,63 @@ const EngineFacade kFontFacade = {
         out.checked = node->checked;
         out.size = node->size;
         out.source_index = node->source_index;
+        return out;
+    },
+    /* fs_gate_path：解密闸门（在**引擎读入口**也跑；这里给界面一个"该读哪个路径"的入口） */
+    [](const std::string& path) {
+        const plugin::DecryptGateResult native = plugin::gate_active_read(path);
+        FsGateResult out;
+        out.ok = native.ok;
+        out.path = native.path;
+        out.error = native.error;
+        return out;
+    },
+    /* fs_decrypt_output_dir：解密产物的落点（两边同源，避免"二次解密"） */
+    []() { return plugin::decrypt_output_dir(); },
+    /* fs_package_entries：包内条目表（96 字节超块判 SquashFS / 否则按 DB 自动判定 + 回退键） */
+    [](const std::string& path, const std::string& db_fallback_key, std::string& error) {
+        std::vector<FsEntry> out;
+        for (const efs::EntryInfo& item :
+             efs::package_entries(path, efs::format_key_to_db(db_fallback_key), error)) {
+            out.push_back({item.path, item.is_dir, item.size});
+        }
+        return out;
+    },
+    /* fs_collect_pack_files：封包要收哪些文件（排除包文件、按 rel 去重排序、越界计数） */
+    [](const std::string& base, const std::vector<std::string>& roots) {
+        const efs::PackCollectResult native = efs::collect_pack_files(base, roots);
+        FsPackCollect out;
+        for (const efs::PackFileItem& item : native.items) {
+            out.items.push_back({item.rel, item.source_path});
+        }
+        out.skipped_outside_base = native.skipped_outside_base;
+        out.skipped_package_files = native.skipped_package_files;
+        return out;
+    },
+    /* fs_extract_package：统一"从包导出"入口（SquashFS / X-Ray DB 内部分派） */
+    [](const std::string& image_path, const std::string& out_root, const std::string& selection,
+       const std::vector<std::string>& only, const std::string& db_fallback_key) {
+        efs::ExtractTreeOptions options;
+        options.selection =
+            selection == "listed" ? efs::Selection::Listed : efs::Selection::All;
+        options.only = only;
+        const efs::ExtractTreeResult native = efs::extract_package(
+            image_path, out_root, options, efs::format_key_to_db(db_fallback_key));
+        FsExtractResult out;
+        out.ok = native.ok;
+        out.error = native.error;
+        out.files_written = native.files_written;
+        out.dirs_created = native.dirs_created;
+        out.bytes_written = native.bytes_written;
+        out.duplicate_records = native.duplicate_records;
+        out.skipped_dirs = native.skipped_dirs;
+        out.overwritten = native.overwritten;
+        out.written = native.written;
+        for (const efs::ExtractTreeFailure& item : native.failures) {
+            out.failures.push_back({item.path, item.reason});
+        }
+        out.failure_note = native.failure_note();
+        out.elapsed_ms = native.elapsed_ms;
         return out;
     },
 };

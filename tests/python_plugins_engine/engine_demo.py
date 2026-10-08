@@ -541,6 +541,39 @@ def register(api):
     engine.fs_tree_free(handle_id)
     mark("tree_freed:%d" % (1 if engine.fs_tree_flatten(handle_id) == [] else 0))
 
+    # ── ★★ P14-0c：fs 面第三批（读条目/闸门/收集/解包）──────────────────────
+    crypto_dir = engine.fs_decrypt_output_dir()
+    mark("gate_dir_nonempty:%d" % (1 if crypto_dir else 0))
+
+    gate_ok = engine.fs_gate_path(os.path.join(work, "loose", "one.txt"))
+    mark("gate_plain_ok:%d" % (1 if gate_ok["ok"] else 0))
+    mark("gate_plain_same_path:%d"
+         % (1 if gate_ok["path"].replace("\\", "/").endswith("loose/one.txt") else 0))
+
+    golden_db = os.path.join("tests", "golden", "db", "synth_xdb.db")
+    listed = engine.fs_package_entries(golden_db, "xdb")
+    mark("pkg_entries_positive:%d" % (1 if len(listed["entries"]) > 0 else 0))
+    mark("pkg_error_empty:%d" % (1 if not listed["error"] else 0))
+    missing = engine.fs_package_entries(os.path.join(work, "nope.db"), "xdb")
+    mark("pkg_missing_error:%d" % (1 if missing["error"] else 0))
+
+    collect = engine.fs_collect_pack_files(os.path.join(work, "loose"),
+                                           [os.path.join(work, "loose")])
+    mark("pack_collect_items:%d" % len(collect["items"]))
+    mark("pack_collect_sorted:%d"
+         % (1 if [row["rel"] for row in collect["items"]]
+              == sorted(row["rel"] for row in collect["items"]) else 0))
+
+    unpack_root = os.path.join(work, "unpacked")
+    extract = engine.fs_extract_package(golden_db, unpack_root, "all", None, "xdb")
+    mark("extract_ok:%d" % (1 if extract["ok"] else 0))
+    mark("extract_files_positive:%d" % (1 if extract["files_written"] > 0 else 0))
+    mark("extract_bytes_positive:%d" % (1 if extract["bytes_written"] > 0 else 0))
+    mark("extract_no_failures:%d" % (1 if extract["failure_count"] == 0 else 0))
+    mark("extract_written_positive:%d" % (1 if extract["written_count"] > 0 else 0))
+    second = engine.fs_extract_package(golden_db, unpack_root, "all", None, "xdb")
+    mark("extract_overwrite_visible:%d" % (1 if second["overwritten_count"] > 0 else 0))
+
     mark("done")
     # ★ 夹具自清：`convert_work` 不留痕（插件目录里只该留 marker —— 门禁按行断言它）
     shutil.rmtree(work, ignore_errors=True)

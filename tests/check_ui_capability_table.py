@@ -189,6 +189,12 @@ EXPECT_ENGINE = {
     "fs_tree_conflict_count": "同路径多源定义次数",
     "fs_tree_checked_file_count": "全树已勾文件数",
     "fs_tree_find": "按路径找节点",
+    # ★★ P14-0c：fs 面第三批（读条目/闸门/收集/解包）
+    "fs_gate_path": "解密闸门：该读哪个路径（引擎读入口也跑它）",
+    "fs_decrypt_output_dir": "解密产物落点（两边同源）",
+    "fs_package_entries": "包内条目表（超块判 sqfs / 否则 DB 自动+回退键）",
+    "fs_collect_pack_files": "封包要收哪些文件（排包文件/去重排序/越界计数）",
+    "fs_extract_package": "统一从包导出（sqfs/DB 内部分派；计数+覆盖可见）",
 }
 # ★★ P7b：**宿主服务门面**（`api.host.*`）—— 宿主替插件办的杂事（样板页 fontpack 真的要用）
 EXPECT_HOST = {

@@ -2638,6 +2638,28 @@ def step_engine_facade(release: bool) -> None:
         got = value_of(key)
         if got != want:
             problems.append("fs 树 %s=%s（应为 %s）" % (key, got or "(缺)", want))
+
+    # ── ★★ P14-0c：fs 面第三批（读条目/闸门/收集/解包）──────────────────────
+    extraction_expect = {
+        "gate_dir_nonempty": "1",
+        "gate_plain_ok": "1",
+        "gate_plain_same_path": "1",
+        "pkg_entries_positive": "1",     # 真金样本包能列出条目
+        "pkg_error_empty": "1",
+        "pkg_missing_error": "1",        # 认不出/读不到要**报错**（不静默当空包）
+        "pack_collect_items": "2",       # one.txt + sub/two.txt（目录不进 items）
+        "pack_collect_sorted": "1",      # 产物确定性：按 rel 排序
+        "extract_ok": "1",
+        "extract_files_positive": "1",
+        "extract_bytes_positive": "1",
+        "extract_no_failures": "1",
+        "extract_written_positive": "1",
+        "extract_overwrite_visible": "1",   # ★ 第二次解到同一处 ⇒ **覆盖必须可见**
+    }
+    for key, want in extraction_expect.items():
+        got = value_of(key)
+        if got != want:
+            problems.append("fs 解包 %s=%s（应为 %s）" % (key, got or "(缺)", want))
     if not value_of("video_encoder"):
         problems.append("video 面 video_encoder 是空的（面板值必须来自 plan_transcode）")
     say("  夹具证据：%s" % text.replace("\n", " | ")[:260])
