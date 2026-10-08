@@ -71,22 +71,10 @@ public:
     TaskShell* task() const { return task_; }
     int refused_count() const { return refused_count_; }
 
-    // ── ★ 2026-10-06 D2 批：系统字体选择器（逐条对 1.x `_browse_font`）────────
-    // 系统字体目录：`%SystemRoot%\Fonts`（**不写死 C:\Windows**）＋ 当前已选字体所在目录，
-    // 去重、存在的排前面（1.x `system_font_dirs` `:222-234`）。
-    QStringList system_font_dirs() const;
-    // 候选字体：白名单后缀（小写比较）＋ 文件名子串过滤 ＋ **完整路径**去重（1.x `:484-511`）。
-    QStringList font_candidates(const QString& keyword) const;
-    // 默认字体（1.x `:129-149` 的三级优先级；`saved` 由调用方从 user.ltx 取，便于自检驱动）。
-    QString default_font_path(const QString& saved) const;
-    // 造"选择字体"对话框（1.x `:290`，**自建**、不是下拉也不是单纯文件框）。**不 exec**。
-    QDialog* make_font_picker(QWidget* parent = nullptr);
-    // 列表标记的缓存判据（1.x `_font_cjk` 缓存 + `cached_status`）：**唯一判据在引擎**。
-    QString cached_mark(const QString& font_path);
-    // 预览缩放：1.x `set_zoom` —— 步进 0.5、夹在 [0.5, 4.0]；像素 = `max(12, int(40*zoom))`。
-    double preview_zoom() const { return preview_zoom_; }
-    void zoom_preview(double delta);
-    int preview_pixel_size() const;
+    // ── ★ 2026-10-08 P8a：字体选择器抽成**宿主唯一一份**（`font_picker.h`）─────
+    //   `make_font_picker`（自建对话框，**不 exec**）/ `font_candidates` / `default_font_path` /
+    //   `font_mark_of`（列表标记缓存，判据在引擎）全在那儿 —— 页面与 `api.ui.pick_font` **共用**。
+    //   页面只留"选中之后怎么办"：
     // 选中一个字体：写输入框 + 刷新状态 + **记住到 user.ltx**（1.x：任何选择路径都要记）。
     // 失败**明确告警、不静默**（返回 false + 理由）。
     bool apply_font_choice(const QString& path, QString* problem);
@@ -109,9 +97,9 @@ private:
     void refresh_state();
     void sync_lang_edit();      // 语言选"自定义"才显示输入框（1.x `_lang_changed`）
     void sync_suffix_edit();    // 后缀选"自定义"才显示输入框（1.x `_suf_changed`）
-    void open_font_picker();
+    // 弹出字库选择器（宿主唯一一份）并返回它 —— 自检要驱动它（双击＝选择）
+    QDialog* open_font_picker();
     // 预览用的两行样本（1.x `:570`）+ 日语字体时按繁体回退替换（用户口径 2026-09-14）
-    QString preview_text_line(const QString& font_path, int which) const;
 
     QLineEdit* xml_edit_ = nullptr;
     QLineEdit* font_edit_ = nullptr;
@@ -129,8 +117,6 @@ private:
     TaskShell* task_ = nullptr;
     int refused_count_ = 0;
     // 字体四态的**缓存**（1.x `self._font_cjk`：跨对话框复用，避免重复解析同一个字体文件）
-    std::map<QString, QString> font_mark_cache_;
-    double preview_zoom_ = 1.0;
 };
 
 }  // namespace xrkit::shell

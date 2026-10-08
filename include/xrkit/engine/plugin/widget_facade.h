@@ -78,6 +78,11 @@ struct UiFacade {
     // ★★ P7c：**目录选择**（样板页要「浏览 XML 目录 / 输出目录」；C ABI 那张表没有这一项，
     //   属门面的新能力，实现在外壳）。
     std::function<std::string(const std::string& title)> ask_directory;
+    // ★★ P8a：**字库选择器**（宿主唯一一份：`src/shell/font_picker.cpp`）——
+    //   系统字体列表 + 四态标记 + 预览 + 缩放 + 「浏览其他目录…」，与内置页**同一个**界面。
+    //   非模态 ⇒ 用户确认时回调（空字符串＝取消）。
+    std::function<void(const std::string& current,
+                       std::function<void(const std::string&)> on_picked)> pick_font;
 
     // ── ★★ L2（重型，第一批）：宿主组件的**表内方法** ──────────────────────────
     // 口径（规格 §三）：渲染/委托/滚动/像素全在宿主；插件只给"数据 + 回调"。

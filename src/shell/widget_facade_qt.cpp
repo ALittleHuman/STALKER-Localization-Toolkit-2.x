@@ -27,6 +27,8 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFileDialog>
+
+#include "font_picker.h"
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
@@ -290,6 +292,15 @@ const plug::UiFacade kQtFacade = {
         const QString picked =
             QFileDialog::getExistingDirectory(nullptr, QString::fromStdString(title));
         return picked.toStdString();
+    },
+    /* pick_font：**字库选择器**（宿主唯一一份 `font_picker.cpp`）—— 非模态 + 回调 */
+    [](const std::string& current, std::function<void(const std::string&)> on_picked) {
+        QDialog* dialog = xrkit::shell::make_font_picker(
+            nullptr, QString::fromStdString(current), nullptr,
+            [on_picked](const QString& path) {
+                if (on_picked) on_picked(path.toStdString());
+            });
+        if (dialog != nullptr) dialog->show();
     },
     // ── ★★ P4：重型 L2 第一批（虚拟列表 / 日志视图 / 拖放目标 / 任务壳 / 线程判定）──
     // 为什么这几件**可以**在门面实现里直接碰 Qt（而 L1 那 18 个不行）：L1 是对既有控件语义的

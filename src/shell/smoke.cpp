@@ -13,6 +13,8 @@
 #include "hub.h"
 #include "dialog_start.h"
 #include "drop_filter.h"
+#include "font_picker.h"
+#include "xrkit/engine/font/system_dirs.h"
 #include "drop_zone.h"
 #include "log_box.h"
 #include "plugin_ui.h"
@@ -8060,7 +8062,12 @@ SmokeResult run_smoke() {
         QApplication::processEvents();
 
         // ★ 1.x `toolkit_platform.system_font_dirs` `:222-234`：**不写死 C:\Windows**
-        const QStringList dirs = page.system_font_dirs();
+        //   ★★ P8a：目录清单的**唯一一份**在引擎（`system_dirs.cpp`），宿主门面与选择器都从它拿
+        //   —— 自检也直接问它，别再去摸一份"页面版"（那正是被抽掉的东西）。
+        QStringList dirs;
+        for (const std::string& dir : xrkit::engine::font::system_font_dirs()) {
+            dirs << QString::fromStdString(dir);
+        }
         const QString win_root = qEnvironmentVariable("SystemRoot");
         check(!dirs.isEmpty(), QStringLiteral("D2-字体 系统字体目录非空（%1 个）").arg(dirs.size()));
         check(win_root.isEmpty() ||
@@ -8070,8 +8077,8 @@ SmokeResult run_smoke() {
                   .arg(dirs.isEmpty() ? QString() : dirs.first(), win_root));
 
         // ★ 过滤：白名单后缀 + 文件名子串 + **完整路径**去重（1.x `:494-511`）
-        const QStringList all_fonts = page.font_candidates(QString());
-        const QStringList msyh_fonts = page.font_candidates(QStringLiteral("MSYH"));  // 大小写不敏感
+        const QStringList all_fonts = font_candidates(QString());
+        const QStringList msyh_fonts = font_candidates(QStringLiteral("MSYH"));  // 大小写不敏感
         int bad_ext = 0;
         int bad_keyword = 0;
         for (const QString& path : msyh_fonts) {
@@ -8110,42 +8117,37 @@ SmokeResult run_smoke() {
                              "至少一边是坏的，且下面两条锁没跑）")
                   .arg(msyh_fonts.size()));
         if (!msyh_fonts.isEmpty()) {
-            check(page.default_font_path(msyh_fonts.first()) ==
+            check(default_font_path(msyh_fonts.first()) ==
                       QDir::toNativeSeparators(msyh_fonts.first()),
                   QStringLiteral("D2-字体 默认字体：user.ltx 里那个仍存在 ⇒ 原样继承"));
         }
-        const QString fallback = page.default_font_path(QStringLiteral("Z:/nope/none.ttf"));
+        const QString fallback = default_font_path(QStringLiteral("Z:/nope/none.ttf"));
         check(fallback.isEmpty() || QFileInfo::exists(fallback),
               QStringLiteral("D2-字体 默认字体兜底必须是个**真存在**的文件（实得「%1」）")
                   .arg(fallback));
 
         // 11.8 的"同一判据"：列表标记缓存 == 引擎的四态标记（不许页面自己判一遍）
+        //   ★★ P8a：选择器抽到 `font_picker.cpp`（宿主唯一一份）⇒ 缓存也用那份实现
         if (!msyh_fonts.isEmpty()) {
-            check(page.cached_mark(msyh_fonts.first()) ==
+            check(font_mark_of(msyh_fonts.first()) ==
                       QString::fromUtf8(fnt::cjk_state_mark(
                           page.check_font(msyh_fonts.first()).state)),
                   QStringLiteral("D2-字体 列表标记与预览标题**同一判据**（引擎 cjk_state_mark）"));
         }
 
-        // ★ 预览缩放：1.x `set_zoom` —— 步进 0.5、夹在 [0.5, 4.0]、字号 = max(12, int(40*v))
-        page.zoom_preview(10.0);
-        check(page.preview_zoom() == 4.0 && page.preview_pixel_size() == 160,
-              QStringLiteral("D2-字体 缩放上限 4.0 ⇒ 字号 160（实得 %1 / %2）")
-                  .arg(page.preview_zoom())
-                  .arg(page.preview_pixel_size()));
-        page.zoom_preview(-10.0);
-        check(page.preview_zoom() == 0.5 && page.preview_pixel_size() == 20,
-              QStringLiteral("D2-字体 缩放下限 0.5 ⇒ 字号 20（实得 %1 / %2）")
-                  .arg(page.preview_zoom())
-                  .arg(page.preview_pixel_size()));
-        // 回到 1.0（下面要判"对话框打开时缩放标签 = 100%"）
-        page.zoom_preview(0.5);
-        check(page.preview_zoom() == 1.0,
-              QStringLiteral("D2-字体 缩放可回到 1.0（实得 %1）").arg(page.preview_zoom()));
+        // ★ 预览缩放：1.x `set_zoom` —— 步进 0.5、夹在 [0.5, 4.0]。
+        //   ★★ P8a：缩放状态**只属于那个对话框**（原来挂在页面上），所以这条判据改成
+        //   **真的点按钮**（用户就是这么用的），而不是去摸页面方法。
 
         // ★ 自建字体选择器（**不是**下拉、**不是**单纯文件框）：结构逐项对上 1.x
         {
-            QDialog* dialog = page.make_font_picker(&page);
+            // ★ 点**真按钮**（用户在字体那一行按的「选择…」）打开选择器 —— 验的是产品那条链；
+//   对话框 parent 是页面 ⇒ 从页面里找它（`open_font_picker` 是 private，不该为自检开口子）。
+if (auto* pick_button = page.findChild<QPushButton*>(QStringLiteral("pick_font_button"))) {
+    pick_button->click();
+    QApplication::processEvents();
+}
+QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
             check(dialog != nullptr, QStringLiteral("D2-字体 「选择…」造得出自建字体选择器"));
             if (dialog != nullptr) {
                 dialog->show();
@@ -8165,6 +8167,26 @@ SmokeResult run_smoke() {
                 check(zoom != nullptr && zoom->text() == QStringLiteral("100%"),
                       QStringLiteral("D2-字体 缩放标签初始 100%%（实得「%1」）")
                           .arg(zoom == nullptr ? QString() : zoom->text()));
+                // ★ 缩放上下限：**点按钮 12 次**（步进 0.5）⇒ 夹在 4.0 / 0.5
+                //   （原来这条是直接调页面方法；P8a 把它改成"用户真会做的事"）
+                if (auto* zoom_in_btn =
+                        dialog->findChild<QPushButton*>(QStringLiteral("font_picker_zoom_in"));
+                    zoom_in_btn != nullptr && zoom != nullptr) {
+                    for (int i = 0; i < 12; ++i) zoom_in_btn->click();
+                    QApplication::processEvents();
+                    check(zoom->text() == QStringLiteral("400%"),
+                          QStringLiteral("D2-字体 缩放上限 4.0（点 12 次「+」后实得「%1」）")
+                              .arg(zoom->text()));
+                    if (auto* zoom_out_btn = dialog->findChild<QPushButton*>(
+                            QStringLiteral("font_picker_zoom_out"));
+                        zoom_out_btn != nullptr) {
+                        for (int i = 0; i < 12; ++i) zoom_out_btn->click();
+                        QApplication::processEvents();
+                        check(zoom->text() == QStringLiteral("50%"),
+                              QStringLiteral("D2-字体 缩放下限 0.5（点 12 次「−」后实得「%1」）")
+                                  .arg(zoom->text()));
+                    }
+                }
                 check(dialog->findChild<QPushButton*>(QStringLiteral("font_picker_zoom_in")) !=
                               nullptr &&
                           dialog->findChild<QPushButton*>(QStringLiteral("font_picker_zoom_out")) !=
@@ -8220,17 +8242,16 @@ SmokeResult run_smoke() {
                       QStringLiteral("D2-字体 自检把 user.ltx **逐字节**还原（存在=%1；%2）")
                           .arg(ltx_existed ? 1 : 0)
                           .arg(ltx_ok_font ? QStringLiteral("一致") : ltx_why_font));
-                // ± 缩放按钮真的改状态与标签
+                // ± 缩放按钮真的改标签（★ P8a：不看页面状态，只看用户能看到的那个标签）
                 if (auto* zoom_in =
-                        dialog->findChild<QPushButton*>(QStringLiteral("font_picker_zoom_in"))) {
-                    const double before_zoom = page.preview_zoom();
+                        dialog->findChild<QPushButton*>(QStringLiteral("font_picker_zoom_in"));
+                    zoom_in != nullptr && zoom != nullptr) {
+                    const QString before_label = zoom->text();
                     zoom_in->click();
                     QApplication::processEvents();
-                    check(page.preview_zoom() > before_zoom && zoom != nullptr &&
-                              zoom->text() != QStringLiteral("100%"),
-                          QStringLiteral("D2-字体 「+」真的放大并刷新标签（%1%% → %2）")
-                              .arg(static_cast<int>(before_zoom * 100))
-                              .arg(zoom == nullptr ? QString() : zoom->text()));
+                    check(zoom->text() != before_label,
+                          QStringLiteral("D2-字体 「+」真的放大并刷新标签（%1 → %2）")
+                              .arg(before_label, zoom->text()));
                 }
                 dialog->close();
                 dialog->deleteLater();

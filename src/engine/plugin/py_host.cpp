@@ -696,6 +696,28 @@ public:
         }
         return std::string();
     }
+    // ★★ P8a：字库选择器（宿主唯一一份界面）。回调是**异步**的 ⇒ 把 Python callable
+    //   包成 C++ 回调并**进 keepalive**（对话框还活着，回调就可能随时被叫）。
+    bool pick_font(std::string current, py::object on_picked) const {
+        const UiFacade* facade = available("pick_font");
+        if (facade == nullptr) return false;   // 宿主没这个能力 ⇒ 调用方自己退路
+        std::function<void(const std::string&)> callback;
+        if (!on_picked.is_none()) {
+            // `keepalive()` 是"保活表"的入口（**没有返回值**）：先把对象收进去，再拿副本进回调
+            py::object held = on_picked;
+            keepalive()->push_back(held);
+            callback = [held](const std::string& path) {
+                py::gil_scoped_acquire acquire;
+                try {
+                    held(py::str(path));
+                } catch (const py::error_already_set&) {
+                    // Python 侧异常不该掀翻宿主（与按钮处理器同口径）
+                }
+            };
+        }
+        facade->pick_font(current, std::move(callback));
+        return true;
+    }
 
     // ── ★★ P4：重型 L2 第一批（虚拟列表 / 日志视图 / 拖放目标 / 任务壳）──────────
     // 口径：渲染/滚动/像素/委托全在宿主；插件只给"数据 + 回调"，回调都在**主线程**上被调
@@ -1213,6 +1235,8 @@ void ensure_api_module() {
             .def("ask_open_file", &PyUi::ask_open_file, py::arg("title"))
             .def("ask_save_file", &PyUi::ask_save_file, py::arg("title"))
             .def("ask_directory", &PyUi::ask_directory, py::arg("title"))
+            .def("pick_font", &PyUi::pick_font, py::arg("current"),
+                 py::arg("on_picked") = py::none())
             // ★ P4：重型 L2 第一批（表外无门 —— 能力表判据按这里的名单对账）
             .def("list", &PyUi::list, py::arg("parent") = py::none(), py::arg("row_height") = 0)
             .def("list_set_row_count", &PyUi::list_set_row_count, py::arg("list"), py::arg("rows"))

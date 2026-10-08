@@ -12,6 +12,7 @@
 #include "log_box.h"
 #include "pages/convert_page.h"
 #include "pages/fs_page.h"
+#include "font_picker.h"
 #include "pages/fontpack_page.h"
 #include "pages/page_base.h"
 #include "pages/video_page.h"
@@ -429,7 +430,13 @@ int main(int argc, char** argv) {
         if (shot_font_picker) {
             if (auto* font_page = dynamic_cast<xrkit::shell::FontPackPage*>(
                     hub.page_at(shot_page >= 0 && shot_page < hub.page_count() ? shot_page : 0))) {
-                if (QDialog* picker = font_page->make_font_picker(&hub)) {
+                // ★★ P8a：选择器是宿主唯一一份（`font_picker.cpp`）
+                const QString current_font =
+                    font_page->font_edit() != nullptr ? font_page->font_edit()->text()
+                                                       : QString();
+                if (QDialog* picker = xrkit::shell::make_font_picker(
+                        &hub, current_font, [font_page] { return font_page->font_dialog_start(); },
+                        nullptr, nullptr)) {
                     picker->show();
                     QApplication::processEvents();
                     const QString picker_path = shot_path + QStringLiteral(".picker.png");

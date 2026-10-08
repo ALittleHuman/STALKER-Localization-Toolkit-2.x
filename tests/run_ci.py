@@ -1927,22 +1927,50 @@ def step_shell_smoke(release: bool) -> None:
     #    共用），页面改成调引擎 ⇒ 那两个 token 搬到了 `src/engine/font/system_dirs.cpp`。
     #    锁因此**升级成两处都判**（比原来更强：既判"页面确实用了那份实现"，也判"那份实现确实
     #    按平台取目录、且没写死 C:\Windows"），而不是放宽。
-    font_code = active_code((ROOT / "src" / "shell" / "pages" / "fontpack_page.cpp")
+    # ★★ 2026-10-08（插件改装 P8a）：字库选择器**抽成宿主唯一一份**（`src/shell/font_picker.cpp`）。
+    #   这条锁因此**升级**成三判（比原来更强，不是放宽）：
+    #     ① 那份实现里确实有：引擎目录 / 候选过滤 / 默认路径 / 四态标记缓存 / Qt 字体解析 / 对话框骨架；
+    #     ② **两个消费者**都在调它：内置页 + 插件门面（= 插件弹出的就是同一个界面）；
+    #     ③ 对话框骨架**只许出现一次**（出现第二处 = 又写了一份界面）。
+    picker_path = ROOT / "src" / "shell" / "font_picker.cpp"
+    if not require_repo_file(picker_path, "字库选择器（宿主唯一一份）"):
+        return
+    picker_code = active_code(picker_path.read_text(encoding="utf-8", errors="replace"))
+    picker_need = ["system_font_dirs(", "font_candidates(", "default_font_path(",
+                   "font_mark_of(", "QFontDatabase::addApplicationFont", "cjk_state_mark(",
+                   "font_picker_list", "font_picker_zoom_in", "font_picker_preview"]
+    picker_missing = [token for token in picker_need if token not in picker_code]
+    page_code = active_code((ROOT / "src" / "shell" / "pages" / "fontpack_page.cpp")
                             .read_text(encoding="utf-8", errors="replace"))
-    font_need = ["engine::font::system_font_dirs(", "font_candidates(", "default_font_path(",
-                 "make_font_picker(", "save_user_value(", "QFontDatabase::addApplicationFont"]
-    font_missing = [token for token in font_need if token not in font_code]
+    facade_code = active_code((ROOT / "src" / "shell" / "widget_facade_qt.cpp")
+                              .read_text(encoding="utf-8", errors="replace"))
+    consumers = {"内置页": "make_font_picker(" in page_code,
+                 "插件门面": "make_font_picker(" in facade_code}
+    dialog_token = 'setObjectName(QStringLiteral("font_picker"))'
+    owners = []
+    for shell_cpp in sorted((ROOT / "src" / "shell").rglob("*.cpp")):
+        if dialog_token in shell_cpp.read_text(encoding="utf-8", errors="replace"):
+            owners.append(shell_cpp.name)
     dirs_code = active_code((ROOT / "src" / "engine" / "font" / "system_dirs.cpp")
                             .read_text(encoding="utf-8", errors="replace"))
     dirs_need = ["SystemRoot", "windir", "Fonts"]
     dirs_missing = [token for token in dirs_need if token not in dirs_code]
-    if font_missing or dirs_missing:
-        fail("系统字体选择器（D2⑤）：页面缺 %s；引擎实现缺 %s —— 字体要从系统字体目录找、"
-             "并把上次的选择写进 user.ltx" % ("、".join(font_missing) or "(无)",
-                                              "、".join(dirs_missing) or "(无)"))
+    problems = []
+    if picker_missing:
+        problems.append("共享件缺 %s" % "、".join(picker_missing))
+    for who, ok_consumer in consumers.items():
+        if not ok_consumer:
+            problems.append("%s没在调共享件" % who)
+    if owners != ["font_picker.cpp"]:
+        problems.append("对话框骨架出现处=%s（只许 font_picker.cpp）" % (owners or "无"))
+    if dirs_missing:
+        problems.append("引擎实现缺 %s" % "、".join(dirs_missing))
+    if problems:
+        fail("系统字体选择器（D2⑤）：%s —— 字体要从系统字体目录找、四态标记判据在引擎、"
+             "界面只许一份" % "；".join(problems))
         return
-    ok("系统字体选择器（D2⑤：页面调引擎那份 system_font_dirs（%SystemRoot%\\Fonts 不写死）"
-       "+ 候选过滤 + user.ltx 记住上次选择）")
+    ok("系统字体选择器（D2⑤：宿主唯一一份 `font_picker.cpp` —— 引擎目录（%SystemRoot%\\Fonts "
+       "不写死）+ 候选过滤 + 四态标记缓存 + 预览/缩放；内置页与插件门面**共用**它，界面骨架只出现一次）")
 
 
 def step_winres(release: bool) -> None:

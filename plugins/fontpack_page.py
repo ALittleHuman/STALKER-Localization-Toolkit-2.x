@@ -16,8 +16,8 @@
     故直接删除即可」）⇒ `task_panel(with_cancel=False)`；
   · 字体四态用引擎的 `font_state_marks()` / `font_check()`（不抄中文）。
 
-本版**没做**（如实登记）：1.x/C++ 页那个"系统字体列表 + 四态标记"的**选字体对话框**
-（插件现在用系统的文件选择框）；等宿主把"字库选择器"做成宿主服务再补。
+本版**没做**（如实登记）：无（P8a 起字库选择器走宿主的 `api.ui.pick_font` —— 与内置页**同一个**
+界面：系统字体列表 + 四态标记 + 预览 + 缩放 + 「浏览其他目录…」）。
 """
 
 import os
@@ -93,11 +93,20 @@ def register(api):
             ui.set_text(state_label, engine.font_check(path)["mark"])
 
         def pick_font():
-            picked = ui.ask_open_file("选择字体（.ttf/.ttc/.otf）")
-            if picked:
-                ui.set_text(font_entry, picked)
-                host.pref_set(SECTION, "path", picked)
+            # ★★ P8a：用**宿主的字库选择器**（系统字体 + 四态标记 + 预览 + 缩放；与内置页**同一个**
+            #   界面）—— 这就是用户那条下限「观感也不许比现状差」；回调是**异步**的（非模态）。
+            def chosen(path):
+                if not path:
+                    return
+                ui.set_text(font_entry, path)
+                host.pref_set(SECTION, "path", path)
                 refresh_font_state()
+
+            if not ui.pick_font(ui.get_text(font_entry).strip(), chosen):
+                # 宿主没这个能力 ⇒ 退回系统文件框（按钮点了不能没反应）
+                picked = ui.ask_open_file("选择字体（.ttf/.ttc/.otf）")
+                if picked:
+                    chosen(picked)
 
         ui.button(None, "选择字体…", pick_font)
         refresh_font_state()

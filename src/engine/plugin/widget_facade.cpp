@@ -31,6 +31,7 @@ const char* const kMethodNames[] = {
     "set_enabled", "alive",     "log_append", "ask_yes_no", "ask_open_file", "ask_save_file",
     // ★ P7c：目录选择（门面新能力；C ABI 那张表没有它）
     "ask_directory",
+    "pick_font",
     // ★ P7c：读控件当前值
     "combo_value", "checkbox_state",
     // ★★ P4：重型 L2 第一批（虚拟列表 / 日志视图 / 拖放目标 / 任务壳 / 线程判定）
@@ -74,6 +75,7 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "ask_open_file") return static_cast<bool>(facade.ask_open_file);
     if (name == "ask_save_file") return static_cast<bool>(facade.ask_save_file);
     if (name == "ask_directory") return static_cast<bool>(facade.ask_directory);
+    if (name == "pick_font") return static_cast<bool>(facade.pick_font);
     if (name == "combo_value") return static_cast<bool>(facade.combo_value);
     if (name == "checkbox_state") return static_cast<bool>(facade.checkbox_state);
     if (name == "list") return static_cast<bool>(facade.list);
