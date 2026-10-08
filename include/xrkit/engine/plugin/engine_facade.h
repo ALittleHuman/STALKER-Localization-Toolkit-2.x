@@ -165,6 +165,45 @@ struct TextStats {
     std::string duration;
 };
 
+
+// ── ★★ P10a：text 页（第三页迁移）── 文本提取/改写 ─────────────────────────
+//   `kind` 一律 **字符串**（"gameplay" / "scripts"）：数字枚举一变序就静默错。
+
+struct TextExtractRequest {
+    std::string source_dir;   // 必须是 gameplay / scripts **文件夹本身**
+    std::string target_dir;   // 必填
+    std::string prefix;       // 文本 XML 文件名前缀
+};
+
+struct TextExtractKindResult {
+    bool ok = false;
+    std::string kind;         // "gameplay" / "scripts"
+    std::string error;
+};
+
+struct TextExtractOptions {
+    std::string prefix;
+    std::string id_prefix;
+    bool clean = false;
+    // 取消谓词（引擎在**文件边界**轮询；返回 true ⇒ 停下，已写出的产物都是完整的）
+    std::function<bool()> should_stop;
+};
+
+struct TextExtractStats {
+    bool ok = false;
+    std::string error;
+    std::string kind;
+    uint64_t files = 0;
+    uint64_t strings = 0;
+    uint64_t chars = 0;
+    std::vector<std::string> skipped;        // 「相对路径：原因」
+    std::vector<std::string> repl_skipped;   // 因保护而没替换的命中（零静默）
+    uint64_t write_failures = 0;
+    std::string texts_xml_name;
+    double elapsed_ms = 0.0;
+    bool cancelled = false;
+};
+
 struct EngineFacade {
     std::function<FontCheckResult(const std::string& font_path)> font_check;
     std::function<FontPackResult(const FontPackOptions& options)> font_pack;
@@ -181,6 +220,18 @@ struct EngineFacade {
     std::function<std::string(const std::string& path, const TextStats&)> text_write_stats_csv;
     // 秒数 → 1.x 那种 `H:MM:SS`（唯一一份在引擎 `batch.cpp`）
     std::function<std::string(double seconds)> text_format_duration;
+
+    // ── ★★ P10a：text 页那一组 ──────────────────────────────────────────────
+    std::function<std::string()> text_default_id_prefix;
+    std::function<std::string(const TextExtractRequest&)> text_validate_extract;
+    std::function<TextExtractKindResult(const std::string&)> text_extract_kind;
+    // `target_dir` = **该类型的目标子目录的完整路径**（例如 <out>/gameplay），
+    // `xml_out_dir` = 文本 XML 的落点（通常就是 <out> 根）—— 与引擎同名同义，
+    // ★ 传相对路径会按**当前工作目录**解析（曾把仓库自己的 scripts\ 清了，血账）。
+    std::function<TextExtractStats(const std::string& source_dir,
+                                   const std::string& target_dir,
+                                   const std::string& xml_out_dir,
+                                   const TextExtractOptions&)> text_extract_dir;
 };
 
 // 外壳注入实现（`src/shell/engine_facade_impl.cpp`）。传 nullptr = 撤销。

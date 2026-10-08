@@ -120,6 +120,11 @@ EXPECT_ENGINE = {
     "text_clear_backups": "清空备份（删了哪些、失败哪些，逐条报账）",
     "text_write_stats_csv": "导出统计 CSV（空串=成功；否则是失败原因）",
     "text_format_duration": "秒数 → 1.x 那种 H:MM:SS（唯一一份在引擎 batch.cpp）",
+    # ★★ P10a：第三页迁移（text 页）用到的引擎面
+    "text_default_id_prefix": "ID 前缀默认值（唯一一份在引擎 extract.cpp）",
+    "text_validate_extract": "提取请求校验（给用户看的那句话来自引擎）",
+    "text_extract_kind": "源目录判定（必须是 gameplay / scripts 本身）",
+    "text_extract_dir": "真提取（含文件边界的取消谓词 / 零静默台账）",
 }
 # ★★ P7b：**宿主服务门面**（`api.host.*`）—— 宿主替插件办的杂事（样板页 fontpack 真的要用）
 EXPECT_HOST = {

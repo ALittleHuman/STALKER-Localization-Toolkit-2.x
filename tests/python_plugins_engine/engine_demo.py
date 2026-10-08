@@ -60,7 +60,7 @@ def register(api):
     mark("duration_3661:%s" % engine.text_format_duration(3661))
 
     work = os.path.join(api.plugin_dir, "convert_work")
-    shutil.rmtree(work, ignore_errors=True)
+    shutil.rmtree(work, ignore_errors=True)   # 开场先清（判据只看本轮产物）
     os.makedirs(work)
     original = ('<?xml version="1.0" encoding="windows-1251"?>\n<string_table>\n'
                 '\t<string id="a"><text>Привет мир</text></string>\n</string_table>\n'
@@ -121,6 +121,72 @@ def register(api):
         with open(stats_path, "rb") as handle:
             head = handle.read(3)
     mark("stats_bom:%d" % (1 if head == b"\xef\xbb\xbf" else 0))
+
+    # ── ★★ P10a：text 页那一组（第三页迁移用的引擎面）────────────────────────
+    mark("id_prefix_default:%s" % engine.text_default_id_prefix())
+    bad_source = os.path.join(work, "not_gameplay")
+    os.makedirs(bad_source, exist_ok=True)
+    mark("validate_bad:%d" % (1 if engine.text_validate_extract(
+        {"source_dir": bad_source, "target_dir": out_dir, "prefix": "x"}) else 0))
+    mark("validate_missing:%d" % (1 if engine.text_validate_extract(
+        {"source_dir": os.path.join(work, "nope"), "target_dir": out_dir, "prefix": "x"}) else 0))
+    kind_bad = engine.text_extract_kind(bad_source)
+    mark("kind_bad_ok:%d" % (1 if kind_bad["ok"] else 0))
+    mark("kind_bad_error:%d" % (1 if kind_bad["error"] else 0))
+
+    scripts_dir = os.path.join(work, "scripts")
+    os.makedirs(scripts_dir, exist_ok=True)
+    with open(os.path.join(scripts_dir, "a.script"), "w", encoding="cp1251") as handle:
+        handle.write('local s = "Привет, сталкер!"\n')
+    with open(os.path.join(scripts_dir, "d.ltx"), "w", encoding="cp1251") as handle:
+        handle.write('[wpn_akm]\ninv_name = "АКМ"\n; inv_name = Не должно попасть\n')
+    kind = engine.text_extract_kind(scripts_dir)
+    mark("kind_ok:%s" % kind["kind"])
+    mark("validate_good:%d" % (1 if not engine.text_validate_extract(
+        {"source_dir": scripts_dir, "target_dir": out_dir, "prefix": "p10a"}) else 0))
+
+    text_out = os.path.join(work, "text_out")
+    sub = "scripts" if kind["kind"] == "scripts" else "gameplay"
+    # ★ 第二个参数是「该类型的目标子目录的**完整路径**」（引擎口径；传相对名会按
+    #   当前工作目录解析 —— 本批实踩：写成 "scripts" 就把仓库自己的 scripts\ 清了）
+    stats = engine.text_extract_dir(
+        scripts_dir, os.path.join(text_out, sub), text_out,
+        {"prefix": "p10a", "id_prefix": "sgtat_p10a_gp_0", "clean": True})
+    mark("extract_ok:%d" % (1 if stats["ok"] else 0))
+    mark("extract_kind:%s" % stats["kind"])
+    mark("extract_files_positive:%d" % (1 if stats["files"] > 0 else 0))
+    mark("extract_strings_positive:%d" % (1 if stats["strings"] > 0 else 0))
+    mark("extract_xml_name:%s" % stats["texts_xml_name"])
+    texts_xml = os.path.join(text_out, stats["texts_xml_name"])
+    mark("extract_xml_exists:%d" % (1 if os.path.isfile(texts_xml) else 0))
+    rewritten = os.path.join(text_out, sub, "a.script")
+    rewritten_text = ""
+    if os.path.isfile(rewritten):
+        with open(rewritten, "rb") as handle:
+            rewritten_text = handle.read().decode("utf-8", "replace")
+    mark("extract_rewrote:%d" % (1 if "translate_string" in rewritten_text else 0))
+    ltx_out = os.path.join(text_out, sub, "d.ltx")
+    ltx_text = ""
+    if os.path.isfile(ltx_out):
+        with open(ltx_out, "rb") as handle:
+            ltx_text = handle.read().decode("utf-8", "replace")
+    # ★ 保护性替换那条纪律：注释行里的命中**不许**被改写
+    mark("extract_comment_kept:%d" % (1 if "Не должно попасть" in ltx_text else 0))
+
+    # 取消谓词：**第一次问就说停** ⇒ cancelled=True 且 ok=True（取消不是失败）
+    cancelled = engine.text_extract_dir(
+        scripts_dir, os.path.join(text_out, sub), text_out,
+        {"prefix": "p10a", "id_prefix": "sgtat_p10a_gp_0", "clean": False,
+         "cancel": lambda: True})
+    mark("extract_cancel_flag:%d" % (1 if cancelled["cancelled"] else 0))
+    mark("extract_cancel_ok:%d" % (1 if cancelled["ok"] else 0))
+
+    tree = []
+    for root_dir, _dirs, files in os.walk(text_out):
+        for name in sorted(files):
+            rel = os.path.relpath(os.path.join(root_dir, name), text_out).replace("\\", "/")
+            tree.append(rel)
+    mark("extract_out_tree:%s" % ",".join(sorted(tree)))
 
     mark("done")
     # ★ 夹具自清：`convert_work` 不留痕（插件目录里只该留 marker —— 门禁按行断言它）

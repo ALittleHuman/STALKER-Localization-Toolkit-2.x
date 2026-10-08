@@ -28,6 +28,9 @@ const char* const kMethodNames[] = {
     // ★★ P9a：convert 页那一组（两张编码表 + 批量转换 + 备份两件 + 统计 CSV + 时长格式化）
     "text_encodings", "text_convert_batch", "text_restore_backups", "text_clear_backups",
     "text_write_stats_csv", "text_format_duration",
+    // ★★ P10a：text 页那一组（第三页迁移）
+    "text_default_id_prefix", "text_validate_extract", "text_extract_kind",
+    "text_extract_dir",
 };
 
 bool has_impl(const EngineFacade& facade, const std::string& name) {
@@ -41,6 +44,10 @@ bool has_impl(const EngineFacade& facade, const std::string& name) {
     if (name == "text_clear_backups") return static_cast<bool>(facade.text_clear_backups);
     if (name == "text_write_stats_csv") return static_cast<bool>(facade.text_write_stats_csv);
     if (name == "text_format_duration") return static_cast<bool>(facade.text_format_duration);
+    if (name == "text_default_id_prefix") return static_cast<bool>(facade.text_default_id_prefix);
+    if (name == "text_validate_extract") return static_cast<bool>(facade.text_validate_extract);
+    if (name == "text_extract_kind") return static_cast<bool>(facade.text_extract_kind);
+    if (name == "text_extract_dir") return static_cast<bool>(facade.text_extract_dir);
     return false;
 }
 

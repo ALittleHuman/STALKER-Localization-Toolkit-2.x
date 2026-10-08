@@ -16,6 +16,7 @@
 #include "xrkit/engine/font/package.h"
 #include "xrkit/engine/text/batch.h"
 #include "xrkit/engine/text/encodings.h"
+#include "xrkit/engine/text/extract.h"
 
 #include <string>
 #include <vector>
@@ -220,6 +221,55 @@ const EngineFacade kFontFacade = {
     },
     /* text_format_duration：唯一一份在引擎 `batch.cpp`（别在这儿抄一份格式化） */
     [](double seconds) { return etext::format_duration(seconds); },
+    /* text_default_id_prefix：默认 ID 前缀（唯一一份在引擎 `extract.cpp`） */
+    []() { return std::string(etext::kDefaultIdPrefix); },
+    /* text_validate_extract：给用户看的那句话（判据只在引擎那一份） */
+    [](const TextExtractRequest& request) {
+        etext::ExtractRequest native;
+        native.source_dir = request.source_dir;
+        native.target_dir = request.target_dir;
+        native.prefix = request.prefix;
+        return etext::validate_request(native);
+    },
+    /* text_extract_kind：源目录必须是 gameplay / scripts 本身 */
+    [](const std::string& dir) {
+        TextExtractKindResult out;
+        etext::ExtractKind kind = etext::ExtractKind::Gameplay;
+        std::string error;
+        if (!etext::kind_from_dir_name(dir, kind, error)) {
+            out.ok = false;
+            out.error = error;
+            return out;
+        }
+        out.ok = true;
+        out.kind = kind == etext::ExtractKind::Gameplay ? "gameplay" : "scripts";
+        return out;
+    },
+    /* text_extract_dir：真提取（含文件边界的取消谓词） */
+    [](const std::string& source_dir, const std::string& target_dir,
+       const std::string& xml_out_dir, const TextExtractOptions& options) {
+        etext::ExtractOptions native;
+        native.prefix = options.prefix;
+        native.id_prefix = options.id_prefix;
+        native.clean = options.clean;
+        native.should_stop = options.should_stop;
+        const etext::ExtractStats stats =
+            etext::extract_dir(source_dir, target_dir, xml_out_dir, native);
+        TextExtractStats out;
+        out.ok = stats.ok;
+        out.error = stats.error;
+        out.kind = stats.kind == etext::ExtractKind::Gameplay ? "gameplay" : "scripts";
+        out.files = stats.files;
+        out.strings = stats.strings;
+        out.chars = stats.chars;
+        out.skipped = stats.skipped;
+        out.repl_skipped = stats.repl_skipped;
+        out.write_failures = stats.write_failures;
+        out.texts_xml_name = stats.texts_xml_name;
+        out.elapsed_ms = stats.elapsed_ms;
+        out.cancelled = stats.cancelled;
+        return out;
+    },
 };
 
 }  // namespace

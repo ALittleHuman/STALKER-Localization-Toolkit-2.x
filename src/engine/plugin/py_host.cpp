@@ -531,6 +531,40 @@ TextHooks text_hooks_from_python(const py::object& hooks) {
     return out;
 }
 
+
+// ── ★★ P10a：text 页那一组的入参转换（dict → 门面 POD）─────────────────────
+TextExtractRequest text_extract_request_from_python(const py::object& request) {
+    TextExtractRequest out;
+    if (request.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(request);
+    if (data.contains("source_dir")) out.source_dir = py::str(data["source_dir"]).cast<std::string>();
+    if (data.contains("target_dir")) out.target_dir = py::str(data["target_dir"]).cast<std::string>();
+    if (data.contains("prefix")) out.prefix = py::str(data["prefix"]).cast<std::string>();
+    return out;
+}
+
+TextExtractOptions text_extract_options_from_python(const py::object& options) {
+    TextExtractOptions out;
+    if (options.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(options);
+    if (data.contains("prefix")) out.prefix = py::str(data["prefix"]).cast<std::string>();
+    if (data.contains("id_prefix")) out.id_prefix = py::str(data["id_prefix"]).cast<std::string>();
+    if (data.contains("clean")) out.clean = py::cast<bool>(data["clean"]);
+    if (data.contains("cancel") && data["cancel"].is_none() == 0) {
+        py::object cancel = data["cancel"];
+        keepalive()->push_back(cancel);
+        out.should_stop = [cancel]() -> bool {
+            py::gil_scoped_acquire acquire;
+            try {
+                return py::cast<bool>(cancel());
+            } catch (const py::error_already_set&) {
+                return false;   // 回调炸了 ⇒ 别把引擎卡在"取消"上
+            }
+        };
+    }
+    return out;
+}
+
 // ── ★★ P7a：引擎调用门面在 Python 侧的形态（`api.engine.*`）──────────────────
 // 口径（用户拍板的方案 3）：
 //   · **值类型 Python 友好**：出入都是 dict / list / str / int，**不漏 C++ 结构体与指针**；
@@ -647,6 +681,51 @@ public:
         const EngineFacade* facade = available("text_format_duration");
         if (facade == nullptr) return py::none();
         return py::str(facade->text_format_duration(seconds));
+    }
+
+    // ── ★★ P10a：text 页那一组（文本提取/改写）──────────────────────────────
+    py::object text_default_id_prefix() const {
+        const EngineFacade* facade = available("text_default_id_prefix");
+        if (facade == nullptr) return py::none();
+        return py::str(facade->text_default_id_prefix());
+    }
+    py::object text_validate_extract(py::object request) const {
+        const EngineFacade* facade = available("text_validate_extract");
+        if (facade == nullptr) return py::none();
+        // 空串 = 通过（引擎口径）；原样交回，页面/插件自己决定怎么显示
+        return py::str(facade->text_validate_extract(
+            text_extract_request_from_python(request)));
+    }
+    py::object text_extract_kind(const std::string& dir) const {
+        const EngineFacade* facade = available("text_extract_kind");
+        if (facade == nullptr) return py::none();
+        const TextExtractKindResult result = facade->text_extract_kind(dir);
+        py::dict out;
+        out["ok"] = result.ok;
+        out["kind"] = result.kind;
+        out["error"] = result.error;
+        return out;
+    }
+    py::object text_extract_dir(const std::string& source_dir, const std::string& target_dir,
+                                const std::string& xml_out_dir, py::object options) const {
+        const EngineFacade* facade = available("text_extract_dir");
+        if (facade == nullptr) return py::none();
+        const TextExtractStats stats = facade->text_extract_dir(
+            source_dir, target_dir, xml_out_dir, text_extract_options_from_python(options));
+        py::dict out;
+        out["ok"] = stats.ok;
+        out["error"] = stats.error;
+        out["kind"] = stats.kind;
+        out["files"] = stats.files;
+        out["strings"] = stats.strings;
+        out["chars"] = stats.chars;
+        out["skipped"] = strings_to_python(stats.skipped);
+        out["repl_skipped"] = strings_to_python(stats.repl_skipped);
+        out["write_failures"] = stats.write_failures;
+        out["texts_xml_name"] = stats.texts_xml_name;
+        out["elapsed_ms"] = stats.elapsed_ms;
+        out["cancelled"] = stats.cancelled;
+        return out;
     }
 
 private:
@@ -1436,7 +1515,13 @@ void ensure_api_module() {
                  py::arg("hooks") = py::none())
             .def("text_write_stats_csv", &PyEngine::text_write_stats_csv, py::arg("path"),
                  py::arg("stats"))
-            .def("text_format_duration", &PyEngine::text_format_duration, py::arg("seconds"));
+            .def("text_format_duration", &PyEngine::text_format_duration, py::arg("seconds"))
+            // ★★ P10a：text 页那一组（第三页迁移）
+            .def("text_default_id_prefix", &PyEngine::text_default_id_prefix)
+            .def("text_validate_extract", &PyEngine::text_validate_extract, py::arg("request"))
+            .def("text_extract_kind", &PyEngine::text_extract_kind, py::arg("dir"))
+            .def("text_extract_dir", &PyEngine::text_extract_dir, py::arg("source_dir"),
+                 py::arg("target_dir"), py::arg("xml_out_dir"), py::arg("options"));
         py::class_<PyWidget>(m, "Widget")
             .def("__repr__", [](const PyWidget& widget) {
                 return std::string("xrkit.Widget(") + (widget.valid() ? "valid" : "null") + ")";

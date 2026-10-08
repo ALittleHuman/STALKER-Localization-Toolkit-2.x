@@ -2432,14 +2432,44 @@ def step_engine_facade(release: bool) -> None:
         got = value_of(key)
         if got != want:
             problems.append("convert 面 %s=%s（应为 %s）" % (key, got or "(缺)", want))
+
+    # ── ★★ P10a：text 那一组（第三页迁移用的引擎面）──────────────────────────
+    #   判据同样走**真目录真文件**：脚本改写 / .ltx 的保护性替换 / 取消谓词语义。
+    text_expect = {
+        "validate_bad": "1",                 # 目录名不是 gameplay/scripts ⇒ 有理由
+        "validate_missing": "1",             # 目录不存在 ⇒ 有理由
+        "kind_bad_ok": "0",                  # 判定必须失败
+        "kind_bad_error": "1",               # 且必须给理由（零静默）
+        "kind_ok": "scripts",
+        "validate_good": "1",                # 好请求 ⇒ 空串（通过）
+        "extract_ok": "1",
+        "extract_kind": "scripts",
+        "extract_files_positive": "1",
+        "extract_strings_positive": "1",
+        "extract_xml_name": "p10a_scripts_texts.xml",
+        "extract_xml_exists": "1",
+        "extract_rewrote": "1",              # 改写后出现 game.translate_string(...)
+        "extract_comment_kept": "1",         # ★.ltx 注释里的命中**不许**被改写（保护性替换）
+        "extract_cancel_flag": "1",          # 取消谓词一说停就停
+        "extract_cancel_ok": "1",            # 但"取消"不是失败（引擎口径）
+    }
+    for key, want in text_expect.items():
+        got = value_of(key)
+        if got != want:
+            problems.append("text 面 %s=%s（应为 %s）" % (key, got or "(缺)", want))
+    if not value_of("id_prefix_default"):
+        problems.append("text 面 id_prefix_default 是空的（默认 ID 前缀必须来自引擎）")
+    tree = value_of("extract_out_tree")
+    if "scripts/a.script" not in tree or "p10a_scripts_texts.xml" not in tree:
+        problems.append("text 面产物树不对：%s" % (tree or "(缺)"))
     say("  夹具证据：%s" % text.replace("\n", " | ")[:260])
     if problems:
         fail("引擎调用门面不成立（%d 处）：%s" % (len(problems), "；".join(problems)))
         return
     if font:
-        ok("引擎门面五处都通（槽位 10 档 / 四态文案来自引擎 / font_check=%s / 工作线程可调 / "
-           "convert 面：编码表 16+1·时长 1:01:01·产物逐字节一致·备份恢复清空·统计 CSV 带 BOM）"
-           % state)
+        ok("引擎门面六处都通（槽位 10 档 / 四态文案来自引擎 / font_check=%s / 工作线程可调 / "
+           "convert 面：编码表 16+1·时长 1:01:01·产物逐字节一致·备份恢复清空·统计 CSV 带 BOM / "
+           "text 面：校验·判定·真提取（脚本改写 + .ltx 保护性替换）·取消语义）" % state)
     else:
         say("  · 未覆盖：font_check 的真字体那条（本机没有 msyh/simsun）")
         ok("引擎门面四处都通（槽位 / 四态文案 / 工作线程可调 / convert 面整条链路）；"
