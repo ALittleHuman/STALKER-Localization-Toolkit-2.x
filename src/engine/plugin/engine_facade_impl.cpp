@@ -17,7 +17,10 @@
 #include "xrkit/engine/text/batch.h"
 #include "xrkit/engine/text/encodings.h"
 #include "xrkit/engine/text/extract.h"
+#include "xrkit/engine/text/sniff.h"
+#include "xrkit/engine/xml/compare.h"
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -26,6 +29,12 @@ namespace {
 
 namespace efont = xrkit::engine::font;
 namespace etext = xrkit::engine::text;
+
+namespace exml = xrkit::engine::xml;
+
+XmlCompareResult to_facade(const exml::XmlCompareResult& native);
+exml::XmlCompareResult from_facade(const XmlCompareResult& facade);
+exml::XmlCsvReport to_native(const XmlCsvReport& facade);
 
 const char* state_name(efont::CjkFontState state) {
     switch (state) {
@@ -39,6 +48,91 @@ const char* state_name(efont::CjkFontState state) {
             break;
     }
     return "unknown";
+}
+
+
+XmlCompareResult to_facade(const exml::XmlCompareResult& native) {
+    XmlCompareResult out;
+    out.rel = native.rel;
+    out.mode = native.mode;
+    out.consistent = native.consistent;
+    out.only_one_side = native.only_one_side;
+    out.only_side = native.only_side;
+    out.lines_a = native.lines_a;
+    out.lines_b = native.lines_b;
+    out.ids_a = native.ids_a;
+    out.ids_b = native.ids_b;
+    out.only_a = native.only_a;
+    out.only_b = native.only_b;
+    for (const auto& row : native.count_diff) {
+        out.count_diff.push_back({row[0], row[1], row[2]});
+    }
+    for (const auto& row : native.text_diff) {
+        out.text_diff.push_back({row[0], row[1], row[2]});
+    }
+    out.untrusted_a = native.untrusted_a;
+    out.untrusted_b = native.untrusted_b;
+    out.warning = native.warning;
+    out.encoding_a = native.encoding_a;
+    out.encoding_b = native.encoding_b;
+    out.error = native.error;
+    // ★ 故意**不转** `id_text_a/id_text_b`：那是"明细里要看原文"的内部表，
+    //   而明细文本由引擎的 inline/full_detail 渲染 ⇒ 插件不需要它
+    //   （传过去只会诱使插件自己拼一份明细，两处口径就会分叉）。
+    return out;
+}
+
+exml::XmlCompareResult from_facade(const XmlCompareResult& facade) {
+    exml::XmlCompareResult native;
+    native.rel = facade.rel;
+    native.mode = facade.mode;
+    native.consistent = facade.consistent;
+    native.only_one_side = facade.only_one_side;
+    native.only_side = facade.only_side;
+    native.lines_a = facade.lines_a;
+    native.lines_b = facade.lines_b;
+    native.ids_a = facade.ids_a;
+    native.ids_b = facade.ids_b;
+    native.only_a = facade.only_a;
+    native.only_b = facade.only_b;
+    for (const auto& row : facade.count_diff) {
+        native.count_diff.push_back({row.size() > 0 ? row[0] : std::string(),
+                                     row.size() > 1 ? row[1] : std::string(),
+                                     row.size() > 2 ? row[2] : std::string()});
+    }
+    for (const auto& row : facade.text_diff) {
+        native.text_diff.push_back({row.size() > 0 ? row[0] : std::string(),
+                                    row.size() > 1 ? row[1] : std::string(),
+                                    row.size() > 2 ? row[2] : std::string()});
+    }
+    native.untrusted_a = facade.untrusted_a;
+    native.untrusted_b = facade.untrusted_b;
+    native.warning = facade.warning;
+    native.encoding_a = facade.encoding_a;
+    native.encoding_b = facade.encoding_b;
+    native.error = facade.error;
+    return native;
+}
+
+exml::XmlCsvReport to_native(const XmlCsvReport& facade) {
+    exml::XmlCsvReport native;
+    native.mode_name = facade.mode_name;
+    native.folder_a = facade.folder_a;
+    native.folder_b = facade.folder_b;
+    native.name_a = facade.name_a;
+    native.name_b = facade.name_b;
+    native.enc_a = facade.enc_a;
+    native.enc_b = facade.enc_b;
+    native.filter_label = facade.filter_label;
+    native.generated_at = facade.generated_at;
+    native.columns = facade.columns;
+    native.rows = facade.rows;
+    native.consistent = facade.consistent;
+    native.inconsistent = facade.inconsistent;
+    native.only_a = facade.only_a;
+    native.only_b = facade.only_b;
+    native.encodings_used = facade.encodings_used;
+    return native;
 }
 
 const EngineFacade kFontFacade = {
@@ -269,6 +363,90 @@ const EngineFacade kFontFacade = {
         out.elapsed_ms = stats.elapsed_ms;
         out.cancelled = stats.cancelled;
         return out;
+    },
+    /* ★★ P11a：xml 页那一组（模式表 / 两套对比 / 引擎渲染的明细 / CSV） */
+    /* xml_modes：内置模式表（下拉与内部键的唯一来源） */
+    []() {
+        std::vector<XmlMode> out;
+        for (const exml::XmlModeSpec& spec : exml::builtin_modes()) {
+            XmlMode mode;
+            mode.name = spec.name;
+            mode.key = spec.key;
+            mode.order = spec.order;
+            mode.plugin = spec.plugin;
+            for (const exml::XmlColumn& column : spec.columns) {
+                mode.columns.push_back({column.key, column.heading, column.width});
+            }
+            for (const exml::XmlFilter& filter : spec.filters) {
+                mode.filters.push_back({filter.label, filter.row_kinds, filter.differ_types});
+            }
+            out.push_back(std::move(mode));
+        }
+        return out;
+    },
+    /* xml_find_mode：按**内部键或显示名**找（找不到 ⇒ found=false，调用方自己退默认） */
+    [](const std::string& key_or_name) {
+        XmlModeLookup out;
+        const exml::XmlModeSpec* spec = exml::find_mode(key_or_name);
+        if (spec == nullptr) return out;
+        out.found = true;
+        out.mode.name = spec->name;
+        out.mode.key = spec->key;
+        out.mode.order = spec->order;
+        out.mode.plugin = spec->plugin;
+        for (const exml::XmlColumn& column : spec->columns) {
+            out.mode.columns.push_back({column.key, column.heading, column.width});
+        }
+        for (const exml::XmlFilter& filter : spec->filters) {
+            out.mode.filters.push_back({filter.label, filter.row_kinds, filter.differ_types});
+        }
+        return out;
+    },
+    /* text_read_bytes：按编码读文本（六步判定链；`auto` = 不手动指定） */
+    [](const std::string& path, const std::string& encoding) {
+        const etext::DecodedBytes decoded = etext::read_text_bytes(path, encoding);
+        XmlTextRead out;
+        out.ok = decoded.ok;
+        out.text = decoded.text;
+        out.used_encoding = decoded.used_encoding;
+        out.error = decoded.error;
+        out.forced = decoded.forced;
+        out.used_mismatch = decoded.used_mismatch;
+        return out;
+    },
+    /* xml_compare_stats：按"行数 / ID 统计"比（引擎唯一实现） */
+    [](const std::string& rel, const std::string& text_a, const std::string& text_b,
+       const std::string& enc_a, const std::string& enc_b) {
+        return to_facade(exml::compare_stats(rel, text_a, text_b, enc_a, enc_b));
+    },
+    /* xml_compare_text：按"ID 文本"比（引擎唯一实现） */
+    [](const std::string& rel, const std::string& text_a, const std::string& text_b,
+       const std::string& enc_a, const std::string& enc_b) {
+        return to_facade(exml::compare_text(rel, text_a, text_b, enc_a, enc_b));
+    },
+    /* xml_only_one_side：只有一侧有该文件 */
+    [](const std::string& rel, const std::string& side) {
+        return to_facade(exml::only_one_side(rel, side));
+    },
+    /* xml_inline_detail：表格里那一格（引擎渲染） */
+    [](const XmlCompareResult& result, const std::string& name_a, const std::string& name_b) {
+        return exml::inline_detail(from_facade(result), name_a, name_b);
+    },
+    /* xml_full_detail：状态栏/对话里的完整明细（引擎渲染） */
+    [](const XmlCompareResult& result, const std::string& name_a, const std::string& name_b) {
+        return exml::full_detail(from_facade(result), name_a, name_b);
+    },
+    /* xml_full_text_detail：文本模式的完整明细（引擎渲染） */
+    [](const XmlCompareResult& result, const std::string& name_a, const std::string& name_b) {
+        return exml::full_text_detail(from_facade(result), name_a, name_b);
+    },
+    /* xml_render_csv：CSV 文本（BOM + \r\n，引擎唯一实现） */
+    [](const XmlCsvReport& report) { return exml::render_csv(to_native(report)); },
+    /* xml_write_csv：渲染 + 原子写盘（空串 = 成功；否则失败原因） */
+    [](const std::string& path, const XmlCsvReport& report) {
+        std::string error;
+        if (exml::write_csv_file(path, to_native(report), error)) return std::string();
+        return error;
     },
 };
 

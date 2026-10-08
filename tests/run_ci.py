@@ -2462,14 +2462,46 @@ def step_engine_facade(release: bool) -> None:
     tree = value_of("extract_out_tree")
     if "scripts/a.script" not in tree or "p10a_scripts_texts.xml" not in tree:
         problems.append("text 面产物树不对：%s" % (tree or "(缺)"))
+
+    # ── ★★ P11a：xml 那一组（第四页迁移用的引擎面）──────────────────────────
+    xml_expect = {
+        "xml_mode_count": "2",
+        "xml_mode_keys": "stats,text",
+        "xml_find_stats": "1",
+        "xml_find_stats_key": "stats",
+        "xml_find_unknown": "0",              # 未知键必须**不命中**（别静默退默认）
+        "read_ok": "1",
+        "read_has_text": "1",                 # cp1251 文件读出来是 UTF-8 且内容对
+        "read_encoding": "windows-1251",
+        "stats_mode": "stats",
+        "stats_consistent": "0",              # 同一 id 次数不同 ⇒ 不一致
+        "stats_count_diff": "1",
+        "text_mode": "text",
+        "text_diff_rows": "2",
+        "one_side_flag": "1",
+        "one_side_side": "b",
+        "inline_detail_nonempty": "1",
+        "full_detail_nonempty": "1",
+        "full_text_detail_nonempty": "1",
+        "csv_bom": "1",                       # Excel 不认无 BOM 的 UTF-8
+        "csv_has_row": "1",
+        "csv_write_ok": "1",
+        "csv_roundtrip": "1",                 # ★落盘字节 == render_csv 的 UTF-8 字节
+    }
+    for key, want in xml_expect.items():
+        got = value_of(key)
+        if got != want:
+            problems.append("xml 面 %s=%s（应为 %s）" % (key, got or "(缺)", want))
+    if not value_of("xml_find_text_columns") or value_of("xml_find_text_columns") == "0":
+        problems.append("xml 面 text 模式的列数是 0（模式表没带列声明）")
     say("  夹具证据：%s" % text.replace("\n", " | ")[:260])
     if problems:
         fail("引擎调用门面不成立（%d 处）：%s" % (len(problems), "；".join(problems)))
         return
     if font:
-        ok("引擎门面六处都通（槽位 10 档 / 四态文案来自引擎 / font_check=%s / 工作线程可调 / "
-           "convert 面：编码表 16+1·时长 1:01:01·产物逐字节一致·备份恢复清空·统计 CSV 带 BOM / "
-           "text 面：校验·判定·真提取（脚本改写 + .ltx 保护性替换）·取消语义）" % state)
+        ok("引擎门面七处都通（槽位 10 档 / 四态文案 / font_check=%s / 工作线程可调 / "
+           "convert 面：逐字节·备份恢复清空·CSV 带 BOM / text 面：校验·判定·真提取·取消语义 / "
+           "xml 面：模式表·两种对比·单侧·引擎明细·CSV 往返一致）" % state)
     else:
         say("  · 未覆盖：font_check 的真字体那条（本机没有 msyh/simsun）")
         ok("引擎门面四处都通（槽位 / 四态文案 / 工作线程可调 / convert 面整条链路）；"

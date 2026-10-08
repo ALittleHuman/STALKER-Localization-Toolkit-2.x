@@ -565,6 +565,154 @@ TextExtractOptions text_extract_options_from_python(const py::object& options) {
     return out;
 }
 
+
+// ── ★★ P11a：xml 页那一组的入参/出参转换 ─────────────────────────────────────
+py::dict xml_mode_to_python(const XmlMode& mode) {
+    py::dict out;
+    out["name"] = mode.name;
+    out["key"] = mode.key;
+    out["order"] = mode.order;
+    out["plugin"] = mode.plugin;
+    py::list columns;
+    for (const XmlColumnSpec& column : mode.columns) {
+        py::dict row;
+        row["key"] = column.key;
+        row["heading"] = column.heading;
+        row["width"] = column.width;
+        columns.append(row);
+    }
+    out["columns"] = columns;
+    py::list filters;
+    for (const XmlFilterSpec& filter : mode.filters) {
+        py::dict row;
+        row["label"] = filter.label;
+        row["row_kinds"] = strings_to_python(filter.row_kinds);
+        row["differ_types"] = strings_to_python(filter.differ_types);
+        filters.append(row);
+    }
+    out["filters"] = filters;
+    return out;
+}
+
+py::dict xml_result_to_python(const XmlCompareResult& result) {
+    py::dict out;
+    out["rel"] = result.rel;
+    out["mode"] = result.mode;
+    out["consistent"] = result.consistent;
+    out["only_one_side"] = result.only_one_side;
+    out["only_side"] = result.only_side;
+    out["lines_a"] = result.lines_a;
+    out["lines_b"] = result.lines_b;
+    out["ids_a"] = result.ids_a;
+    out["ids_b"] = result.ids_b;
+    out["only_a"] = strings_to_python(result.only_a);
+    out["only_b"] = strings_to_python(result.only_b);
+    const auto rows_to_python = [](const std::vector<std::vector<std::string>>& rows) {
+        py::list list;
+        for (const std::vector<std::string>& row : rows) list.append(strings_to_python(row));
+        return list;
+    };
+    out["count_diff"] = rows_to_python(result.count_diff);
+    out["text_diff"] = rows_to_python(result.text_diff);
+    out["untrusted_a"] = result.untrusted_a;
+    out["untrusted_b"] = result.untrusted_b;
+    out["warning"] = result.warning;
+    out["encoding_a"] = result.encoding_a;
+    out["encoding_b"] = result.encoding_b;
+    out["error"] = result.error;
+    return out;
+}
+
+XmlCompareResult xml_result_from_python(const py::object& result) {
+    XmlCompareResult out;
+    if (result.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(result);
+    const auto take_string = [&data](const char* key, std::string& target) {
+        if (data.contains(key)) target = py::str(data[key]).cast<std::string>();
+    };
+    take_string("rel", out.rel);
+    take_string("mode", out.mode);
+    take_string("only_side", out.only_side);
+    take_string("warning", out.warning);
+    take_string("encoding_a", out.encoding_a);
+    take_string("encoding_b", out.encoding_b);
+    take_string("error", out.error);
+    if (data.contains("consistent")) out.consistent = py::cast<bool>(data["consistent"]);
+    if (data.contains("only_one_side")) out.only_one_side = py::cast<bool>(data["only_one_side"]);
+    if (data.contains("untrusted_a")) out.untrusted_a = py::cast<bool>(data["untrusted_a"]);
+    if (data.contains("untrusted_b")) out.untrusted_b = py::cast<bool>(data["untrusted_b"]);
+    if (data.contains("lines_a")) out.lines_a = py::cast<uint64_t>(data["lines_a"]);
+    if (data.contains("lines_b")) out.lines_b = py::cast<uint64_t>(data["lines_b"]);
+    if (data.contains("ids_a")) out.ids_a = py::cast<uint64_t>(data["ids_a"]);
+    if (data.contains("ids_b")) out.ids_b = py::cast<uint64_t>(data["ids_b"]);
+    if (data.contains("only_a")) {
+        for (auto item : py::list(data["only_a"])) {
+            out.only_a.push_back(py::str(item).cast<std::string>());
+        }
+    }
+    if (data.contains("only_b")) {
+        for (auto item : py::list(data["only_b"])) {
+            out.only_b.push_back(py::str(item).cast<std::string>());
+        }
+    }
+    const auto rows_from_python = [&data](const char* key,
+                                          std::vector<std::vector<std::string>>& target) {
+        if (!data.contains(key)) return;
+        for (auto row : py::list(data[key])) {
+            std::vector<std::string> cells;
+            // ★ `row` 是 `py::handle`，得显式借成 list（同文件别处就是这么写的）
+            for (auto cell : py::reinterpret_borrow<py::list>(row)) {
+                cells.push_back(py::str(cell).cast<std::string>());
+            }
+            target.push_back(std::move(cells));
+        }
+    };
+    rows_from_python("count_diff", out.count_diff);
+    rows_from_python("text_diff", out.text_diff);
+    return out;
+}
+
+XmlCsvReport xml_csv_report_from_python(const py::object& report) {
+    XmlCsvReport out;
+    if (report.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(report);
+    const auto take_string = [&data](const char* key, std::string& target) {
+        if (data.contains(key)) target = py::str(data[key]).cast<std::string>();
+    };
+    take_string("mode_name", out.mode_name);
+    take_string("folder_a", out.folder_a);
+    take_string("folder_b", out.folder_b);
+    take_string("name_a", out.name_a);
+    take_string("name_b", out.name_b);
+    take_string("enc_a", out.enc_a);
+    take_string("enc_b", out.enc_b);
+    take_string("filter_label", out.filter_label);
+    take_string("generated_at", out.generated_at);
+    take_string("encodings_used", out.encodings_used);
+    if (data.contains("columns")) {
+        for (auto item : py::list(data["columns"])) {
+            out.columns.push_back(py::str(item).cast<std::string>());
+        }
+    }
+    if (data.contains("rows")) {
+        for (auto row : py::list(data["rows"])) {
+            std::vector<std::string> cells;
+            for (auto cell : py::reinterpret_borrow<py::list>(row)) {
+                cells.push_back(py::str(cell).cast<std::string>());
+            }
+            out.rows.push_back(std::move(cells));
+        }
+    }
+    const auto take_u64 = [&data](const char* key, uint64_t& target) {
+        if (data.contains(key)) target = py::cast<uint64_t>(data[key]);
+    };
+    take_u64("consistent", out.consistent);
+    take_u64("inconsistent", out.inconsistent);
+    take_u64("only_a", out.only_a);
+    take_u64("only_b", out.only_b);
+    return out;
+}
+
 // ── ★★ P7a：引擎调用门面在 Python 侧的形态（`api.engine.*`）──────────────────
 // 口径（用户拍板的方案 3）：
 //   · **值类型 Python 友好**：出入都是 dict / list / str / int，**不漏 C++ 结构体与指针**；
@@ -725,6 +873,91 @@ public:
         out["texts_xml_name"] = stats.texts_xml_name;
         out["elapsed_ms"] = stats.elapsed_ms;
         out["cancelled"] = stats.cancelled;
+        return out;
+    }
+
+    // ── ★★ P11a：xml 页那一组 ───────────────────────────────────────────────
+    py::object xml_modes() const {
+        const EngineFacade* facade = available("xml_modes");
+        if (facade == nullptr) return py::none();
+        py::list out;
+        for (const XmlMode& mode : facade->xml_modes()) out.append(xml_mode_to_python(mode));
+        return out;
+    }
+    py::object xml_find_mode(const std::string& key_or_name) const {
+        const EngineFacade* facade = available("xml_find_mode");
+        if (facade == nullptr) return py::none();
+        const XmlModeLookup lookup = facade->xml_find_mode(key_or_name);
+        py::dict out;
+        out["found"] = lookup.found;
+        out["mode"] = xml_mode_to_python(lookup.mode);
+        return out;
+    }
+    py::object text_read_bytes(const std::string& path, const std::string& encoding) const {
+        const EngineFacade* facade = available("text_read_bytes");
+        if (facade == nullptr) return py::none();
+        const XmlTextRead read = facade->text_read_bytes(path, encoding);
+        py::dict out;
+        out["ok"] = read.ok;
+        out["text"] = read.text;
+        out["used_encoding"] = read.used_encoding;
+        out["error"] = read.error;
+        out["forced"] = read.forced;
+        out["used_mismatch"] = read.used_mismatch;
+        return out;
+    }
+    py::object xml_compare_stats(const std::string& rel, const std::string& text_a,
+                                 const std::string& text_b, const std::string& enc_a,
+                                 const std::string& enc_b) const {
+        const EngineFacade* facade = available("xml_compare_stats");
+        if (facade == nullptr) return py::none();
+        return xml_result_to_python(
+            facade->xml_compare_stats(rel, text_a, text_b, enc_a, enc_b));
+    }
+    py::object xml_compare_text(const std::string& rel, const std::string& text_a,
+                                const std::string& text_b, const std::string& enc_a,
+                                const std::string& enc_b) const {
+        const EngineFacade* facade = available("xml_compare_text");
+        if (facade == nullptr) return py::none();
+        return xml_result_to_python(facade->xml_compare_text(rel, text_a, text_b, enc_a, enc_b));
+    }
+    py::object xml_only_one_side(const std::string& rel, const std::string& side) const {
+        const EngineFacade* facade = available("xml_only_one_side");
+        if (facade == nullptr) return py::none();
+        return xml_result_to_python(facade->xml_only_one_side(rel, side));
+    }
+    py::object xml_inline_detail(py::object result, const std::string& name_a,
+                                 const std::string& name_b) const {
+        const EngineFacade* facade = available("xml_inline_detail");
+        if (facade == nullptr) return py::none();
+        return py::str(facade->xml_inline_detail(xml_result_from_python(result), name_a, name_b));
+    }
+    py::object xml_full_detail(py::object result, const std::string& name_a,
+                               const std::string& name_b) const {
+        const EngineFacade* facade = available("xml_full_detail");
+        if (facade == nullptr) return py::none();
+        return py::str(facade->xml_full_detail(xml_result_from_python(result), name_a, name_b));
+    }
+    py::object xml_full_text_detail(py::object result, const std::string& name_a,
+                                    const std::string& name_b) const {
+        const EngineFacade* facade = available("xml_full_text_detail");
+        if (facade == nullptr) return py::none();
+        return py::str(
+            facade->xml_full_text_detail(xml_result_from_python(result), name_a, name_b));
+    }
+    py::object xml_render_csv(py::object report) const {
+        const EngineFacade* facade = available("xml_render_csv");
+        if (facade == nullptr) return py::none();
+        return py::str(facade->xml_render_csv(xml_csv_report_from_python(report)));
+    }
+    py::object xml_write_csv(const std::string& path, py::object report) const {
+        const EngineFacade* facade = available("xml_write_csv");
+        if (facade == nullptr) return py::none();
+        const std::string error =
+            facade->xml_write_csv(path, xml_csv_report_from_python(report));
+        py::dict out;
+        out["ok"] = error.empty();
+        out["error"] = error;
         return out;
     }
 
@@ -1521,7 +1754,25 @@ void ensure_api_module() {
             .def("text_validate_extract", &PyEngine::text_validate_extract, py::arg("request"))
             .def("text_extract_kind", &PyEngine::text_extract_kind, py::arg("dir"))
             .def("text_extract_dir", &PyEngine::text_extract_dir, py::arg("source_dir"),
-                 py::arg("target_dir"), py::arg("xml_out_dir"), py::arg("options"));
+                 py::arg("target_dir"), py::arg("xml_out_dir"), py::arg("options"))
+            // ★★ P11a：xml 页那一组（第四页迁移）
+            .def("xml_modes", &PyEngine::xml_modes)
+            .def("xml_find_mode", &PyEngine::xml_find_mode, py::arg("key_or_name"))
+            .def("text_read_bytes", &PyEngine::text_read_bytes, py::arg("path"),
+                 py::arg("encoding") = "auto")
+            .def("xml_compare_stats", &PyEngine::xml_compare_stats, py::arg("rel"),
+                 py::arg("text_a"), py::arg("text_b"), py::arg("enc_a"), py::arg("enc_b"))
+            .def("xml_compare_text", &PyEngine::xml_compare_text, py::arg("rel"),
+                 py::arg("text_a"), py::arg("text_b"), py::arg("enc_a"), py::arg("enc_b"))
+            .def("xml_only_one_side", &PyEngine::xml_only_one_side, py::arg("rel"), py::arg("side"))
+            .def("xml_inline_detail", &PyEngine::xml_inline_detail, py::arg("result"),
+                 py::arg("name_a"), py::arg("name_b"))
+            .def("xml_full_detail", &PyEngine::xml_full_detail, py::arg("result"),
+                 py::arg("name_a"), py::arg("name_b"))
+            .def("xml_full_text_detail", &PyEngine::xml_full_text_detail, py::arg("result"),
+                 py::arg("name_a"), py::arg("name_b"))
+            .def("xml_render_csv", &PyEngine::xml_render_csv, py::arg("report"))
+            .def("xml_write_csv", &PyEngine::xml_write_csv, py::arg("path"), py::arg("report"));
         py::class_<PyWidget>(m, "Widget")
             .def("__repr__", [](const PyWidget& widget) {
                 return std::string("xrkit.Widget(") + (widget.valid() ? "valid" : "null") + ")";

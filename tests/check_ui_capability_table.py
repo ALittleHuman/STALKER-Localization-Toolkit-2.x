@@ -125,6 +125,18 @@ EXPECT_ENGINE = {
     "text_validate_extract": "提取请求校验（给用户看的那句话来自引擎）",
     "text_extract_kind": "源目录判定（必须是 gameplay / scripts 本身）",
     "text_extract_dir": "真提取（含文件边界的取消谓词 / 零静默台账）",
+    # ★★ P11a：第四页迁移（xml 页）用到的引擎面
+    "xml_modes": "XML 模式表（下拉与内部键的唯一来源）",
+    "xml_find_mode": "按内部键/显示名找模式（找不到要能看出来）",
+    "text_read_bytes": "按编码读文本（六步判定链；auto=不手动指定）",
+    "xml_compare_stats": "按行数/ID 统计对比",
+    "xml_compare_text": "按 ID 文本对比",
+    "xml_only_one_side": "只有一侧有该文件",
+    "xml_inline_detail": "表格里那一格（**引擎渲染**）",
+    "xml_full_detail": "完整明细（**引擎渲染**）",
+    "xml_full_text_detail": "文本模式完整明细（**引擎渲染**）",
+    "xml_render_csv": "CSV 文本（BOM + \\r\\n，引擎唯一实现）",
+    "xml_write_csv": "渲染 + 原子写盘（空串=成功）",
 }
 # ★★ P7b：**宿主服务门面**（`api.host.*`）—— 宿主替插件办的杂事（样板页 fontpack 真的要用）
 EXPECT_HOST = {

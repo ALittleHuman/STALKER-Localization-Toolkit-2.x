@@ -188,6 +188,73 @@ def register(api):
             tree.append(rel)
     mark("extract_out_tree:%s" % ",".join(sorted(tree)))
 
+    # ── ★★ P11a：xml 页那一组（第四页迁移用的引擎面）────────────────────────
+    modes = engine.xml_modes()
+    mark("xml_mode_count:%d" % len(modes))
+    keys = [mode["key"] for mode in modes]
+    mark("xml_mode_keys:%s" % ",".join(keys))
+    found_stats = engine.xml_find_mode("stats")
+    mark("xml_find_stats:%d" % (1 if found_stats["found"] else 0))
+    mark("xml_find_stats_key:%s" % found_stats["mode"]["key"])
+    mark("xml_find_text_columns:%d" % len(engine.xml_find_mode("text")["mode"]["columns"]))
+    mark("xml_find_unknown:%d" % (1 if engine.xml_find_mode("no-such-mode")["found"] else 0))
+
+    xml_src = os.path.join(work, "xml_in")
+    os.makedirs(xml_src, exist_ok=True)
+    cp1251_path = os.path.join(xml_src, "side1251.xml")
+    with open(cp1251_path, "wb") as handle:
+        handle.write(('<?xml version="1.0" encoding="windows-1251"?>\n<string_table>\n'
+                      '\t<string id="a"><text>Привет мир</text></string>\n'
+                      '</string_table>\n').encode("cp1251"))
+    read_back = engine.text_read_bytes(cp1251_path, "windows-1251")
+    mark("read_ok:%d" % (1 if read_back["ok"] else 0))
+    mark("read_has_text:%d" % (1 if "Привет мир" in read_back["text"] else 0))
+    mark("read_encoding:%s" % read_back["used_encoding"])
+
+    text_a = ('<string_table>\n'
+              '\t<string id="a"><text>one</text></string>\n'
+              '\t<string id="b"><text>two</text></string>\n'
+              '</string_table>\n')
+    text_b = ('<string_table>\n'
+              '\t<string id="a"><text>one</text></string>\n'
+              '\t<string id="a"><text>one again</text></string>\n'
+              '\t<string id="b"><text>two changed</text></string>\n'
+              '</string_table>\n')
+    stats = engine.xml_compare_stats("x.xml", text_a, text_b, "utf-8", "utf-8")
+    mark("stats_mode:%s" % stats["mode"])
+    mark("stats_consistent:%d" % (1 if stats["consistent"] else 0))
+    mark("stats_count_diff:%d" % len(stats["count_diff"]))
+    text_cmp = engine.xml_compare_text("x.xml", text_a, text_b, "utf-8", "utf-8")
+    mark("text_mode:%s" % text_cmp["mode"])
+    mark("text_diff_rows:%d" % len(text_cmp["text_diff"]))
+    side = engine.xml_only_one_side("only_in_b.xml", "b")
+    mark("one_side_flag:%d" % (1 if side["only_one_side"] else 0))
+    mark("one_side_side:%s" % side["only_side"])
+    mark("inline_detail_nonempty:%d"
+         % (1 if engine.xml_inline_detail(text_cmp, "A", "B") else 0))
+    mark("full_detail_nonempty:%d" % (1 if engine.xml_full_detail(stats, "A", "B") else 0))
+    mark("full_text_detail_nonempty:%d"
+         % (1 if engine.xml_full_text_detail(text_cmp, "A", "B") else 0))
+
+    report = {"mode_name": "ID 文本对比", "folder_a": "a", "folder_b": "b",
+              "name_a": "A", "name_b": "B", "enc_a": "utf-8", "enc_b": "utf-8",
+              "filter_label": "全部", "generated_at": "2026-10-08 00:00:00",
+              "columns": ["rel", "status", "detail"],
+              "rows": [["x.xml", "不一致", "a: 次数不同"]],
+              "consistent": 0, "inconsistent": 1, "only_a": 0, "only_b": 0,
+              "encodings_used": "a=utf-8 b=utf-8"}
+    csv_text = engine.xml_render_csv(report)
+    mark("csv_bom:%d" % (1 if csv_text.startswith("\ufeff") else 0))
+    mark("csv_has_row:%d" % (1 if "x.xml" in csv_text else 0))
+    csv_path = os.path.join(work, "report.csv")
+    wrote = engine.xml_write_csv(csv_path, report)
+    mark("csv_write_ok:%d" % (1 if wrote["ok"] else 0))
+    written = b""
+    if os.path.isfile(csv_path):
+        with open(csv_path, "rb") as handle:
+            written = handle.read()
+    mark("csv_roundtrip:%d" % (1 if written == csv_text.encode("utf-8") else 0))
+
     mark("done")
     # ★ 夹具自清：`convert_work` 不留痕（插件目录里只该留 marker —— 门禁按行断言它）
     shutil.rmtree(work, ignore_errors=True)

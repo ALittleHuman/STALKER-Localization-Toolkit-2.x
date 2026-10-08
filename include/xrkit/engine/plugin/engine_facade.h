@@ -204,6 +204,86 @@ struct TextExtractStats {
     bool cancelled = false;
 };
 
+
+// ── ★★ P11a：xml 页（第四页迁移）── XML 对比 ────────────────────────────────
+//   明细与 CSV 都**由引擎渲染**（插件只负责摆到界面上）—— 免得两处口径分叉。
+
+struct XmlColumnSpec {
+    std::string key;       // "rel"/"status"/"detail" 是保留键
+    std::string heading;
+    int width = 0;
+};
+
+struct XmlFilterSpec {
+    std::string label;
+    std::vector<std::string> row_kinds;
+    std::vector<std::string> differ_types;
+};
+
+struct XmlMode {
+    std::string name;      // 显示名（下拉取值）
+    std::string key;       // **内部键**（"stats" / "text"）—— 不许拿显示名当取值
+    int order = 0;
+    std::vector<XmlColumnSpec> columns;
+    std::vector<XmlFilterSpec> filters;
+    std::string plugin;
+};
+
+struct XmlModeLookup {
+    bool found = false;
+    XmlMode mode;
+};
+
+struct XmlCompareResult {
+    std::string rel;
+    std::string mode;
+    bool consistent = false;
+    bool only_one_side = false;
+    std::string only_side;
+    uint64_t lines_a = 0;
+    uint64_t lines_b = 0;
+    uint64_t ids_a = 0;
+    uint64_t ids_b = 0;
+    std::vector<std::string> only_a;
+    std::vector<std::string> only_b;
+    std::vector<std::vector<std::string>> count_diff;   // (id, A 次数, B 次数)
+    std::vector<std::vector<std::string>> text_diff;    // (id, A 文本, B 文本)
+    bool untrusted_a = false;
+    bool untrusted_b = false;
+    std::string warning;
+    std::string encoding_a;
+    std::string encoding_b;
+    std::string error;
+};
+
+struct XmlTextRead {
+    bool ok = false;
+    std::string text;
+    std::string used_encoding;
+    std::string error;
+    bool forced = false;
+    bool used_mismatch = false;
+};
+
+struct XmlCsvReport {
+    std::string mode_name;
+    std::string folder_a;
+    std::string folder_b;
+    std::string name_a;
+    std::string name_b;
+    std::string enc_a = "auto";
+    std::string enc_b = "auto";
+    std::string filter_label;
+    std::string generated_at;
+    std::vector<std::string> columns;
+    std::vector<std::vector<std::string>> rows;
+    uint64_t consistent = 0;
+    uint64_t inconsistent = 0;
+    uint64_t only_a = 0;
+    uint64_t only_b = 0;
+    std::string encodings_used;
+};
+
 struct EngineFacade {
     std::function<FontCheckResult(const std::string& font_path)> font_check;
     std::function<FontPackResult(const FontPackOptions& options)> font_pack;
@@ -232,6 +312,28 @@ struct EngineFacade {
                                    const std::string& target_dir,
                                    const std::string& xml_out_dir,
                                    const TextExtractOptions&)> text_extract_dir;
+
+    // ── ★★ P11a：xml 页那一组（第四页迁移）──────────────────────────────────
+    std::function<std::vector<XmlMode>()> xml_modes;
+    std::function<XmlModeLookup(const std::string&)> xml_find_mode;
+    std::function<XmlTextRead(const std::string& path, const std::string& encoding)>
+        text_read_bytes;
+    std::function<XmlCompareResult(const std::string& rel, const std::string& text_a,
+                                   const std::string& text_b, const std::string& enc_a,
+                                   const std::string& enc_b)> xml_compare_stats;
+    std::function<XmlCompareResult(const std::string& rel, const std::string& text_a,
+                                   const std::string& text_b, const std::string& enc_a,
+                                   const std::string& enc_b)> xml_compare_text;
+    std::function<XmlCompareResult(const std::string& rel, const std::string& side)>
+        xml_only_one_side;
+    std::function<std::string(const XmlCompareResult&, const std::string& name_a,
+                              const std::string& name_b)> xml_inline_detail;
+    std::function<std::string(const XmlCompareResult&, const std::string& name_a,
+                              const std::string& name_b)> xml_full_detail;
+    std::function<std::string(const XmlCompareResult&, const std::string& name_a,
+                              const std::string& name_b)> xml_full_text_detail;
+    std::function<std::string(const XmlCsvReport&)> xml_render_csv;
+    std::function<std::string(const std::string& path, const XmlCsvReport&)> xml_write_csv;
 };
 
 // 外壳注入实现（`src/shell/engine_facade_impl.cpp`）。传 nullptr = 撤销。

@@ -31,6 +31,10 @@ const char* const kMethodNames[] = {
     // ★★ P10a：text 页那一组（第三页迁移）
     "text_default_id_prefix", "text_validate_extract", "text_extract_kind",
     "text_extract_dir",
+    // ★★ P11a：xml 页那一组（第四页迁移）
+    "xml_modes", "xml_find_mode", "text_read_bytes", "xml_compare_stats",
+    "xml_compare_text", "xml_only_one_side", "xml_inline_detail", "xml_full_detail",
+    "xml_full_text_detail", "xml_render_csv", "xml_write_csv",
 };
 
 bool has_impl(const EngineFacade& facade, const std::string& name) {
@@ -48,6 +52,17 @@ bool has_impl(const EngineFacade& facade, const std::string& name) {
     if (name == "text_validate_extract") return static_cast<bool>(facade.text_validate_extract);
     if (name == "text_extract_kind") return static_cast<bool>(facade.text_extract_kind);
     if (name == "text_extract_dir") return static_cast<bool>(facade.text_extract_dir);
+    if (name == "xml_modes") return static_cast<bool>(facade.xml_modes);
+    if (name == "xml_find_mode") return static_cast<bool>(facade.xml_find_mode);
+    if (name == "text_read_bytes") return static_cast<bool>(facade.text_read_bytes);
+    if (name == "xml_compare_stats") return static_cast<bool>(facade.xml_compare_stats);
+    if (name == "xml_compare_text") return static_cast<bool>(facade.xml_compare_text);
+    if (name == "xml_only_one_side") return static_cast<bool>(facade.xml_only_one_side);
+    if (name == "xml_inline_detail") return static_cast<bool>(facade.xml_inline_detail);
+    if (name == "xml_full_detail") return static_cast<bool>(facade.xml_full_detail);
+    if (name == "xml_full_text_detail") return static_cast<bool>(facade.xml_full_text_detail);
+    if (name == "xml_render_csv") return static_cast<bool>(facade.xml_render_csv);
+    if (name == "xml_write_csv") return static_cast<bool>(facade.xml_write_csv);
     return false;
 }
 
