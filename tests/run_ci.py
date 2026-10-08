@@ -3040,6 +3040,77 @@ def step_plugin_facade_returns(release: bool) -> None:
         fail("有插件丢弃了「成没成」型返回值（见上）—— 失败会静默")
 
 
+def step_official_pages(release: bool) -> None:
+    """插件改装 P16-0b：**官方六页"是不是插件"**的三条判据 + 一条棘轮。
+
+    为什么单开一步：`tests/` 全目录搜 `replaces` 原先是 **0 命中** —— 六枚插件确实都传了
+    replaces，但**没有任何判据**锁它：去掉 replaces、或让两枚插件指向同一个内置页，
+    门禁一声不响。棘轮那一条守的是"六页对等"的方向：内置 `pages/` 直连引擎头
+    **逐文件只许减不许增**（今天 22 处）。
+    独立成步（静态判据、不依赖构建产物）。退出码：0=绿、1=有断言不成立。
+    """
+    say("[official-pages] 插件改装 P16-0b：官方页 replaces 契约 + 插件隔离 + 引擎直连棘轮")
+    script = ROOT / "tests" / "check_official_pages_contract.py"
+    if not require_repo_file(script, "官方页契约核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if (s.startswith("OFFICIAL-PAGES") or s.startswith("✓ 反例自证")
+                or s.startswith("✗ ") or s.startswith("棘轮")):
+            say("  " + s)
+    if rc == 0 and "OFFICIAL-PAGES ok" in out:
+        ok("六枚插件逐枚显式 replaces、六个内置页各被覆盖一次；内置页引擎直连 22 处未增")
+    else:
+        fail("官方页契约不成立（见上）—— 插件化「六页对等」那一条没有判据就只是口号")
+
+
+def step_abi_closure(release: bool) -> None:
+    """插件改装 P16-0b：`struct stk_ui` 的 16 方法 ↔ 契约表 `kUiMethods[]` **逐名同序**。
+
+    为什么单开一步：此前全仓只有生成器自报的 `EXPECTED_UI_METHODS = 16`（管契约表**自己的**条数），
+    **没有任何判据**拿契约表与 C ABI 结构体对账 ⇒ 结构体里改名/换序/少一个，
+    第三方照契约写出来的插件会在运行期拿到空指针或喂错参数，而门禁一声不响。
+    独立成步。退出码：0=绿、1=有断言不成立。
+    """
+    say("[abi-closure] 插件改装 P16-0b：struct stk_ui ↔ kUiMethods[] 闭合")
+    script = ROOT / "tests" / "check_plugin_abi_closure.py"
+    if not require_repo_file(script, "ABI 闭合核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("ABI-CLOSURE") or s.startswith("✓ 反例自证") or s.startswith("✗ "):
+            say("  " + s)
+    if rc == 0 and "ABI-CLOSURE ok" in out:
+        ok("16 个契约方法与 C ABI 结构体**逐名同序**（换序/改名/少一个都会红）")
+    else:
+        fail("契约表与 C ABI 结构体不闭合（见上）")
+
+
+def step_doc_citations(release: bool) -> None:
+    """插件改装 P16-0b：判据引用的文档**必须真的存在**。
+
+    为什么单开一步：另一个会话的只读核对发现 `check_page_host_lock.py` 把一份
+    **全仓不存在**的规格文档引为判据来源 ⇒ 后来的人无从核对"这条锁在守哪句话"。
+    本步扫 `tests/` `tools/` `plugins/` 里所有 `docs/*.md` 引用逐个核对存在性。
+    独立成步。退出码：0=绿、1=有断言不成立。
+    """
+    say("[doc-cite] 插件改装 P16-0b：判据引用的 docs/*.md 必须存在")
+    script = ROOT / "tests" / "check_doc_citations.py"
+    if not require_repo_file(script, "文档引用核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("DOC-CITE") or s.startswith("✓ 反例自证") or s.startswith("✗ "):
+            say("  " + s)
+    if rc == 0 and "DOC-CITE ok" in out:
+        ok("判据引用的文档全部存在（引一份不存在的规格 = 判据没有出处）")
+    else:
+        fail("有判据引用了不存在的文档（见上）")
+
+
 def step_text_plugin(release: bool) -> None:
     """插件改装 P10b：**第三页（文本提取/改写）的收口判据**。
 
@@ -4041,6 +4112,12 @@ STEPS = [
     ("facade-registry", step_facade_registry),
     # ★★ 2026-10-08（P16-0）：插件侧不许丢弃「成没成」型门面返回值（静默链的第二半）
     ("plugin-facade-ret", step_plugin_facade_returns),
+    # ★★ 2026-10-09（P16-0b）：官方页 replaces 契约 + 插件隔离 + 内置页引擎直连棘轮
+    ("official-pages", step_official_pages),
+    # ★★ 2026-10-09（P16-0b）：struct stk_ui ↔ kUiMethods[] 逐名同序
+    ("abi-closure", step_abi_closure),
+    # ★★ 2026-10-09（P16-0b）：判据引用的文档必须存在
+    ("doc-cite", step_doc_citations),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),
