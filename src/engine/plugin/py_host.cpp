@@ -1268,6 +1268,15 @@ public:
         }
         return false;
     }
+    // ★★ P11b-2：重建下拉项（第 0 项成为当前项）
+    bool combo_set_items(py::object widget, py::object values) const {
+        const UiFacade* facade = available("combo_set_items");
+        if (facade == nullptr) return false;
+        std::vector<std::string> items;
+        for (auto item : py::list(values)) items.push_back(py::str(item).cast<std::string>());
+        facade->combo_set_items(handle_of(widget), items);
+        return true;
+    }
     void set_enabled(py::object widget, bool enabled) const {
         if (const UiFacade* facade = available("set_enabled")) {
             facade->set_enabled(handle_of(widget), enabled);
@@ -1307,6 +1316,14 @@ public:
     bool open_path(std::string path) const {
         if (const UiFacade* facade = available("open_path")) {
             return facade->open_path(path);
+        }
+        return false;
+    }
+    // ★★ P11b-2：写系统剪贴板（xml 页「复制 ID」）
+    bool copy_text(std::string text) const {
+        if (const UiFacade* facade = available("copy_text")) {
+            facade->copy_text(text);
+            return true;
         }
         return false;
     }
@@ -1596,6 +1613,12 @@ public:
         }
         return py::none();
     }
+    // ★★ P11b-2：换列声明（xml 页切模式要换表头/列宽）
+    void tree_set_columns(py::object tree_widget, py::object columns) const {
+        if (const UiFacade* facade = available("tree_set_columns")) {
+            facade->tree_set_columns(handle_of(tree_widget), tree_columns_from_python(columns));
+        }
+    }
     void tree_set_root(py::object tree_widget, py::object nodes) const {
         if (const UiFacade* facade = available("tree_set_root")) {
             facade->tree_set_root(handle_of(tree_widget), tree_nodes_from_python(nodes));
@@ -1882,6 +1905,8 @@ void ensure_api_module() {
             .def("combo_value", &PyUi::combo_value, py::arg("widget"))
             .def("checkbox_state", &PyUi::checkbox_state, py::arg("widget"))
             .def("set_checked", &PyUi::set_checked, py::arg("widget"), py::arg("checked"))
+            .def("combo_set_items", &PyUi::combo_set_items, py::arg("widget"),
+                 py::arg("values"))
             .def("set_enabled", &PyUi::set_enabled, py::arg("widget"), py::arg("enabled"))
             .def("alive", &PyUi::alive, py::arg("widget"))
             .def("log", &PyUi::log, py::arg("line"))
@@ -1890,6 +1915,7 @@ void ensure_api_module() {
             .def("ask_save_file", &PyUi::ask_save_file, py::arg("title"))
             .def("ask_directory", &PyUi::ask_directory, py::arg("title"))
             .def("open_path", &PyUi::open_path, py::arg("path"))
+            .def("copy_text", &PyUi::copy_text, py::arg("text"))
             .def("pick_font", &PyUi::pick_font, py::arg("current"),
                  py::arg("on_picked") = py::none())
             // ★ P4：重型 L2 第一批（表外无门 —— 能力表判据按这里的名单对账）
@@ -1942,6 +1968,8 @@ void ensure_api_module() {
             .def("split_sash_pos", &PyUi::split_sash_pos, py::arg("split"), py::arg("index"))
             // ★ P6：树（多列 / 懒建 / 展开态 / 过滤计数 / 三态勾选）
             .def("tree", &PyUi::tree, py::arg("parent") = py::none(), py::arg("columns") = py::none())
+            .def("tree_set_columns", &PyUi::tree_set_columns, py::arg("tree"),
+                 py::arg("columns"))
             .def("tree_set_root", &PyUi::tree_set_root, py::arg("tree"), py::arg("nodes"))
             .def("tree_set_children", &PyUi::tree_set_children, py::arg("tree"),
                  py::arg("parent_key"), py::arg("nodes"))

@@ -26,6 +26,8 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QApplication>
+#include <QClipboard>
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QUrl>
@@ -274,6 +276,17 @@ const plug::UiFacade kQtFacade = {
     [](plug::UiHandle widget, bool checked) {
         if (auto* check = qobject_cast<QCheckBox*>(unwrap(widget))) check->setChecked(checked);
     },
+    /* combo_set_items：重建下拉项（第 0 项成为当前项；不触发用户回调） */
+    [](plug::UiHandle widget, const std::vector<std::string>& values) {
+        if (auto* combo = qobject_cast<QComboBox*>(unwrap(widget))) {
+            const QSignalBlocker blocker(combo);   // 换项不是用户操作 ⇒ 不回调
+            combo->clear();
+            for (const std::string& value : values) {
+                combo->addItem(QString::fromStdString(value));
+            }
+            if (combo->count() > 0) combo->setCurrentIndex(0);
+        }
+    },
     /* alive */
     [](plug::UiHandle widget) { return unwrap(widget) != nullptr; },
     /* log_append：宿主日志栏。装配时由外壳接上（`install_qt_ui_facade` 的 log_sink），
@@ -313,6 +326,12 @@ const plug::UiFacade kQtFacade = {
         if (path.empty()) return false;
         return QDesktopServices::openUrl(
             QUrl::fromLocalFile(QString::fromStdString(path)));
+    },
+    /* copy_text：写系统剪贴板（xml 页「复制 ID」；与 C++ 页同一份实现） */
+    [](const std::string& text) {
+        if (QClipboard* board = QApplication::clipboard()) {
+            board->setText(QString::fromStdString(text));
+        }
     },
     // ── ★★ P4：重型 L2 第一批（虚拟列表 / 日志视图 / 拖放目标 / 任务壳 / 线程判定）──
     // 为什么这几件**可以**在门面实现里直接碰 Qt（而 L1 那 18 个不行）：L1 是对既有控件语义的
@@ -623,6 +642,12 @@ const plug::UiFacade kQtFacade = {
         tree->set_columns(columns);
         place(host, tree);
         return handle_of(wrap(tree));
+    },
+    /* tree_set_columns：换列声明（表头 + 列宽）—— 与 `FacadeTree` 同一份列策略 */
+    [](plug::UiHandle tree, const std::vector<plug::UiFacade::TreeColumn>& columns) {
+        if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) {
+            facade->set_columns(columns);
+        }
     },
     /* tree_set_root */
     [](plug::UiHandle tree, const std::vector<plug::UiFacade::TreeNodeSpec>& nodes) {

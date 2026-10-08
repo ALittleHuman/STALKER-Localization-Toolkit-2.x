@@ -72,6 +72,10 @@ struct UiFacade {
     std::function<bool(UiHandle widget)> checkbox_state;
     // ★★ P9b：**写**勾选态（convert 页：输出目录非空 ⇒ 取消勾选并禁用「备份」）
     std::function<void(UiHandle widget, bool checked)> set_checked;
+    // ★★ P11b-2：**重建下拉项**（xml 页切模式要换筛选下拉 —— 对应 `rebuild_filter_combo`）。
+    //   第 0 项成为当前项（与“选第一项”同义）；用户回调**不**因此触发。
+    std::function<void(UiHandle widget, const std::vector<std::string>& values)>
+        combo_set_items;
     std::function<bool(UiHandle widget)> alive;
     std::function<void(const std::string& line)> log_append;   // 宿主日志栏（LogView）
     std::function<bool(const std::string& title, const std::string& message)> ask_yes_no;
@@ -87,6 +91,8 @@ struct UiFacade {
                        std::function<void(const std::string&)> on_picked)> pick_font;
     // ★★ P9b：在文件管理器里打开一个路径（convert 页的「打开输出」；宿主实现，返回是否成功）
     std::function<bool(const std::string& path)> open_path;
+    // ★★ P11b-2：写系统剪贴板（xml 页的「复制 ID」）
+    std::function<void(const std::string& text)> copy_text;
 
     // ── ★★ L2（重型，第一批）：宿主组件的**表内方法** ──────────────────────────
     // 口径（规格 §三）：渲染/委托/滚动/像素全在宿主；插件只给"数据 + 回调"。
@@ -174,6 +180,10 @@ struct UiFacade {
         bool checked = false;             // 声明时的初始勾选态（宿主会据此重算祖先）
     };
     std::function<UiHandle(UiHandle parent, const std::vector<TreeColumn>& columns)> tree;
+    // ★★ P11b-2：**换列声明**（xml 页切模式要换表头/列宽 —— 对应页面的
+    //   `apply_result_columns()`；只在造树时给列是不够用的）。
+    std::function<void(UiHandle tree, const std::vector<TreeColumn>& columns)>
+        tree_set_columns;
     std::function<void(UiHandle tree, const std::vector<TreeNodeSpec>& nodes)> tree_set_root;
     std::function<void(UiHandle tree, const std::string& parent_key,
                        const std::vector<TreeNodeSpec>& nodes)>

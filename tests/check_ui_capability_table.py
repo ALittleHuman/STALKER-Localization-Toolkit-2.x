@@ -47,12 +47,14 @@ EXPECT_UI = {
     "combo_value": "L2 读下拉当前项（样板页要读「选的是哪一档」）",
     "checkbox_state": "L2 读勾选框勾选态（样板页要读「勾没勾」）",
     "set_checked": "L2 写勾选态（convert 页：输出目录非空 ⇒ 取消勾选「备份」）",
+    "combo_set_items": "L2 重建下拉项（xml 页切模式换筛选下拉）",
     "alive": "L2 句柄是否还有效", "log": "L2 宿主日志栏（LogView）",
     "ask_yes_no": "L2 宿主对话框", "ask_open_file": "L2 宿主文件选择",
     "ask_save_file": "L2 宿主保存对话框",
     "ask_directory": "L2 宿主目录选择（样板页的「浏览目录」按钮；C ABI 没有这一项）",
     "pick_font": "L2 字库选择器（宿主唯一一份：系统字体+四态标记+预览+缩放；异步回调）",
     "open_path": "L2 在文件管理器里打开路径（convert 页的「打开输出」）",
+    "copy_text": "L2 写系统剪贴板（xml 页「复制 ID」）",
     # ★★ P4：重型 L2 第一批。加这批名字是**有意为之**（规格 §三 的"表内方法"）——
     #    判据里"多一个即泄漏"就是拦"顺手加的"；每条写清它替六页里的哪件事。
     "list": "L2.1 虚拟化行列表（宿主建/渲染/复用；本批是单列文本形态）",
@@ -86,6 +88,7 @@ EXPECT_UI = {
     "split_sash_pos": "L2.6 第 index 条分隔条位置（-1=没有）",
     # ★★ P6：重型 L2 第三批 —— 树（fs 页那棵的用户可见语义）
     "tree": "L2.7 树（多列；句柄＝树自身）",
+    "tree_set_columns": "L2 换列声明（xml 页切模式换表头/列宽）",
     "tree_set_root": "L2.7 声明根节点（清空重建）",
     "tree_set_children": "L2.7 填某行的子（**懒建**的落点）",
     "tree_clear": "L2.7 清空",

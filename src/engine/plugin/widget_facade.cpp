@@ -33,7 +33,7 @@ const char* const kMethodNames[] = {
     "ask_directory",
     "pick_font", "open_path",
     // ★ P7c：读控件当前值
-    "combo_value", "checkbox_state", "set_checked",
+    "combo_value", "checkbox_state", "set_checked", "combo_set_items",
     // ★★ P4：重型 L2 第一批（虚拟列表 / 日志视图 / 拖放目标 / 任务壳 / 线程判定）
     "list",        "list_set_row_count", "list_set_row_text", "list_row_text",
     "list_select_row", "list_selected_row", "list_content_height",
@@ -48,7 +48,8 @@ const char* const kMethodNames[] = {
     "split",       "split_add_pane",       "split_set_max_size",          "split_set_collapsed",
     "split_is_collapsed", "split_pane_count", "split_sash_pos",
     // ★★ P6：重型 L2 第三批（树）
-    "tree",           "tree_set_root",      "tree_set_children",   "tree_clear",
+    "tree",           "tree_set_columns",   "tree_set_root",       "tree_set_children",
+    "tree_clear",
     "tree_row_count", "tree_keys",          "tree_set_expanded",   "tree_expanded_keys",
     "tree_set_checked", "tree_checked",     "tree_checked_keys",   "tree_partial_keys",
     "tree_set_filter", "tree_filter_hits",  "tree_select",         "tree_selected_key",
@@ -80,6 +81,7 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "combo_value") return static_cast<bool>(facade.combo_value);
     if (name == "checkbox_state") return static_cast<bool>(facade.checkbox_state);
     if (name == "set_checked") return static_cast<bool>(facade.set_checked);
+    if (name == "combo_set_items") return static_cast<bool>(facade.combo_set_items);
     if (name == "list") return static_cast<bool>(facade.list);
     if (name == "list_set_row_count") return static_cast<bool>(facade.list_set_row_count);
     if (name == "list_set_row_text") return static_cast<bool>(facade.list_set_row_text);
@@ -115,6 +117,7 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "split_pane_count") return static_cast<bool>(facade.split_pane_count);
     if (name == "split_sash_pos") return static_cast<bool>(facade.split_sash_pos);
     if (name == "tree") return static_cast<bool>(facade.tree);
+    if (name == "tree_set_columns") return static_cast<bool>(facade.tree_set_columns);
     if (name == "tree_set_root") return static_cast<bool>(facade.tree_set_root);
     if (name == "tree_set_children") return static_cast<bool>(facade.tree_set_children);
     if (name == "tree_clear") return static_cast<bool>(facade.tree_clear);

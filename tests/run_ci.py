@@ -2905,6 +2905,104 @@ def step_text_plugin(release: bool) -> None:
        "也对" % compared)
 
 
+def step_xml_plugin(release: bool) -> None:
+    """插件改装 P11b-2：**第四页（XML 对比）的收口判据**。
+
+    判据：
+      ① 参照 = `xrkit_cli --xml-compare-dirs`（内置 C++ 页用的就是这条引擎路）；
+         插件 = `--py-plugin-call plugins --plugin xml_page.py`（headless 按同一行格式打）；
+      ② 两边 `XMLDIRS …` 行**逐行完全一致**，且 ≥6 行（空集不算通过）；
+      ③ **取消**：插件 headless 带 `"cancel": true` ⇒ `cancelled=1` 且 `rows=0`
+         （取消在**第一个文件之前**生效）。
+    """
+    say("[xml-plugin] 插件改装 P11b-2：XML 对比页（插件）与引擎参照逐行一致")
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "缺失（先跑 build 步）", release)
+        return
+    plugin = ROOT / "plugins" / "xml_page.py"
+    if not plugin.is_file():
+        prereq("XML 插件 plugins/xml_page.py", "缺失", release)
+        return
+    work = ROOT / "build" / "xml_plugin"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    dir_a = work / "a"
+    dir_b = work / "b"
+    (dir_a / "sub").mkdir(parents=True)
+    (dir_b / "sub").mkdir(parents=True)
+    same = ('<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
+            '\t<string id="a"><text>same</text></string>\n</string_table>\n')
+    diff_a = ('<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
+              '\t<string id="a"><text>one</text></string>\n'
+              '\t<string id="b"><text>two</text></string>\n</string_table>\n')
+    diff_b = ('<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
+              '\t<string id="a"><text>one</text></string>\n'
+              '\t<string id="a"><text>one again</text></string>\n'
+              '\t<string id="b"><text>two changed</text></string>\n</string_table>\n')
+    for root in (dir_a, dir_b):
+        (root / "same.xml").write_text(same, encoding="utf-8")
+        (root / "sub" / "nested.xml").write_text(same, encoding="utf-8")
+    (dir_a / "diff.xml").write_text(diff_a, encoding="utf-8")
+    (dir_b / "diff.xml").write_text(diff_b, encoding="utf-8")
+    (dir_a / "only_a.xml").write_text(same, encoding="utf-8")
+    (dir_b / "only_b.xml").write_text(same, encoding="utf-8")
+
+    rc_ref, out_ref = run([str(CLI_EXE), "--xml-compare-dirs", str(dir_a), str(dir_b)],
+                          timeout=600)
+    ref_lines = [line.strip() for line in out_ref.splitlines() if line.strip().startswith("XMLDIRS")]
+    payload = json.dumps({"dir_a": str(dir_a), "dir_b": str(dir_b), "mode_key": "stats"},
+                         ensure_ascii=False)
+    rc_plug, out_plug = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
+                             "--plugin", "xml_page.py", payload], timeout=600)
+    plug_lines = []
+    for raw in out_plug.splitlines():
+        s = raw.strip()
+        if s.startswith("PYPLUGINCALL plugin=") and " result=" in s:
+            try:
+                plug_lines = json.loads(s.split(" result=", 1)[1]).get("lines", [])
+            except ValueError:
+                plug_lines = []
+        elif s.startswith("PYPLUGINCALL") and not s.startswith("PYPLUGINCALL result="):
+            say("  " + s[:170])
+    say("  参照 %d 行 / 插件 %d 行" % (len(ref_lines), len(plug_lines)))
+    problems = []
+    if len(ref_lines) < 6 or len(plug_lines) < 6:
+        problems.append("行数不足（参照 %d / 插件 %d）—— 空集不算通过"
+                        % (len(ref_lines), len(plug_lines)))
+    elif ref_lines != plug_lines:
+        for index, (left, right) in enumerate(zip(ref_lines, plug_lines)):
+            if left != right:
+                problems.append("第 %d 行不同：参照「%s」/ 插件「%s」" % (index, left, right))
+                break
+        if not problems:
+            problems.append("行数相同但内容不同（请人工看）")
+    if rc_ref != 0 or rc_plug != 0:
+        problems.append("命令没跑成（参照 rc=%d / 插件 rc=%d）" % (rc_ref, rc_plug))
+
+    # ③ 取消：插件 headless 侧（确定性谓词由插件自己造）
+    cancel_payload = json.dumps({"dir_a": str(dir_a), "dir_b": str(dir_b), "mode_key": "stats",
+                                 "cancel": True}, ensure_ascii=False)
+    rc_cancel, out_cancel = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
+                                 "--plugin", "xml_page.py", cancel_payload], timeout=600)
+    cancel_lines = []
+    for raw in out_cancel.splitlines():
+        s = raw.strip()
+        if s.startswith("PYPLUGINCALL plugin=") and " result=" in s:
+            try:
+                cancel_lines = json.loads(s.split(" result=", 1)[1]).get("lines", [])
+            except ValueError:
+                cancel_lines = []
+    tail = cancel_lines[-1] if cancel_lines else ""
+    say("  取消：rc=%d 收尾行=%s" % (rc_cancel, tail or "(缺)"))
+    if "cancelled=1" not in tail or "rows=0" not in tail:
+        problems.append("取消语义不对（收尾行「%s」应是 cancelled=1 且 rows=0）" % tail)
+    if problems:
+        fail("XML 对比页（插件）不成立：%s" % "；".join(problems))
+        return
+    ok("XML 对比页（插件）与引擎参照**逐行一致**（%d 行）；取消在第一个文件之前生效"
+       % len(ref_lines))
+
+
 def step_plugin_entry_lock(release: bool) -> None:
     """插件改装的**加载入口唯一性**（P2b）：两个前端都走 `load_all_plugins_from_dir`。
 
@@ -3388,6 +3486,8 @@ STEPS = [
     ("convert-plugin", step_convert_plugin),
     # ★★ 2026-10-08（插件改装 P10b）：**第三页收口** —— 文本提取插件页。
     ("text-plugin", step_text_plugin),
+    # ★★ 2026-10-08（插件改装 P11b-2）：**第四页收口** —— XML 对比插件页。
+    ("xml-plugin", step_xml_plugin),
     # ★★ 2026-10-08（P9b）：门面顺序核对（类型相同的相邻字段错了编译器不报）
     ("facade-order", step_facade_order),
     ("selftest", step_selftest),
