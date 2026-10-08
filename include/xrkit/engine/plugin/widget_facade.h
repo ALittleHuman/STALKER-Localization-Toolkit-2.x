@@ -95,6 +95,11 @@ struct UiFacade {
                        std::function<void(const std::string&)> on_picked)> pick_font;
     // ★★ P9b：在文件管理器里打开一个路径（convert 页的「打开输出」；宿主实现，返回是否成功）
     std::function<bool(const std::string& path)> open_path;
+    // ★★ P13-2a：**右键菜单**（fs 页两个列表各一个；由宿主渲染，插件只给标签 + 收回调）。
+    //   回调给**选中项的标签原文**；空串 = 用户没选就关掉了。
+    std::function<void(UiHandle widget, const std::vector<std::string>& labels,
+                       std::function<void(const std::string&)> on_choose)>
+        context_menu;
     // ★★ P11b-2：写系统剪贴板（xml 页的「复制 ID」）
     std::function<void(const std::string& text)> copy_text;
 

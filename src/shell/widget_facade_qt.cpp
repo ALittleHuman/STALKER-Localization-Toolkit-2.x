@@ -35,6 +35,7 @@
 #include "font_picker.h"
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
@@ -61,6 +62,11 @@ const stk_ui* table() { return qt_plugin_ui(); }
 // "转发到盒子里"的 handler，`drop_zone_on_drop` 再往盒子里填真正的回调。
 // ★ 盒与过滤器都**进程级保活**（与控件同寿；同 L1 回调盒的纪律）。
 // 任务壳消息回调盒（P12c-2）：与控件同寿（同 L1 回调盒的纪律）
+// 右键菜单回调盒（P13-2a）：与控件同寿（同 L1 回调盒的纪律）
+struct MenuBox {
+    std::function<void(const std::string&)> fn;
+};
+
 struct MessageBox {
     std::function<void(const std::string&)> fn;
 };
@@ -355,6 +361,30 @@ const plug::UiFacade kQtFacade = {
         if (path.empty()) return false;
         return QDesktopServices::openUrl(
             QUrl::fromLocalFile(QString::fromStdString(path)));
+    },
+    /* context_menu：宿主渲染右键菜单（自定义菜单策略 + `exec`），选中回调给标签原文 */
+    [](plug::UiHandle widget, const std::vector<std::string>& labels,
+       std::function<void(const std::string&)> on_choose) {
+        QWidget* target = unwrap(widget);
+        if (target == nullptr) return;
+        target->setContextMenuPolicy(Qt::CustomContextMenu);
+        auto* box = keep(std::make_unique<MenuBox>(MenuBox{std::move(on_choose)}));
+        QObject::connect(target, &QWidget::customContextMenuRequested, target,
+                         [target, labels, box](const QPoint& pos) {
+                             QMenu menu(target);
+                             for (const std::string& label : labels) {
+                                 QAction* action = menu.addAction(QString::fromStdString(label));
+                                 // ★ 接 **action 自己的 `triggered`**（不是 `exec()` 的返回值）：
+                                 //   `exec()` 只在"用户点菜单项"那条路径上返回被选项，程序里
+                                 //   `trigger()` 或 `close()` 都会让它返回 nullptr ⇒ 用返回值接回调
+                                 //   会**静默丢事件**（判据现场就是这样空的）。
+                                 QObject::connect(action, &QAction::triggered, target,
+                                                  [box, label] {
+                                                      if (box->fn) box->fn(label);
+                                                  });
+                             }
+                             menu.exec(target->mapToGlobal(pos));   // 点空白关掉 ⇒ 无回调
+                         });
     },
     /* copy_text：写系统剪贴板（xml 页「复制 ID」；与 C++ 页同一份实现） */
     [](const std::string& text) {

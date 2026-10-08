@@ -1577,6 +1577,32 @@ public:
         }
         return std::string();
     }
+    // ★★ P13-2a：右键菜单（宿主渲染；回调给选中项的标签原文）
+    bool context_menu(py::object widget, py::object labels, py::object callback) const {
+        const UiFacade* facade = available("context_menu");
+        if (facade == nullptr) return false;
+        if (callback.is_none() != 0 || PyCallable_Check(callback.ptr()) == 0) {
+            core::log(core::Level::Warn,
+                      "[" + owner_ + "] ui.context_menu 的回调不是可调用对象");
+            return false;
+        }
+        std::vector<std::string> items;
+        for (auto item : py::list(labels)) {
+            items.push_back(py::str(item).cast<std::string>());
+        }
+        py::object kept = callback;
+        keepalive()->push_back(kept);
+        facade->context_menu(handle_of(widget), items, [kept](const std::string& label) {
+            py::gil_scoped_acquire acquire;
+            try {
+                kept(py::str(label));
+            } catch (const py::error_already_set& err) {
+                core::log(core::Level::Warn,
+                          std::string("ui.context_menu 回调抛异常：") + err.what());
+            }
+        });
+        return true;
+    }
     bool open_path(std::string path) const {
         if (const UiFacade* facade = available("open_path")) {
             return facade->open_path(path);
@@ -2243,6 +2269,8 @@ void ensure_api_module() {
             .def("ask_save_file", &PyUi::ask_save_file, py::arg("title"))
             .def("ask_directory", &PyUi::ask_directory, py::arg("title"))
             .def("open_path", &PyUi::open_path, py::arg("path"))
+            .def("context_menu", &PyUi::context_menu, py::arg("widget"),
+                 py::arg("labels"), py::arg("callback"))
             .def("copy_text", &PyUi::copy_text, py::arg("text"))
             .def("pick_font", &PyUi::pick_font, py::arg("current"),
                  py::arg("on_picked") = py::none())

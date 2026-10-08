@@ -5659,6 +5659,11 @@ SmokeResult run_smoke() {
             "            with open(args_path, 'a', encoding='utf-8') as handle:\n"
             "                handle.write(key + chr(10))\n"
             "        ui.tree_on_action(action_tree, '✕', on_row_action)\n"
+            "        ctx_path = _os.path.join(_tempfile.gettempdir(), 'xrkit_smoke_context.txt')\n"
+            "        def on_ctx_choose(label):\n"
+            "            with open(ctx_path, 'a', encoding='utf-8') as handle:\n"
+            "                handle.write(label + chr(10))\n"
+            "        ui.context_menu(action_tree, ['甲', '乙'], on_ctx_choose)\n"
             "        mark('built')\n"
             "    api.register_tool('门面树夹具页', build, 8)\n";
         QFile plugin_file(QDir(dir).filePath(QStringLiteral("l6_demo.py")));
@@ -5751,6 +5756,50 @@ SmokeResult run_smoke() {
             check(!outside_fired && fired_after == fired,
                   QStringLiteral("P13-1a 点在方块外也触发了行尾动作（记录=%1）").arg(fired_after));
             check(!dir_fired, QStringLiteral("P13-1a 没有动作的行也触发了行尾动作"));
+        }
+
+        // ★★ P13-2a：右键菜单（宿主渲染）—— 合成右键 + `activePopupWidget` 抓菜单
+        {
+            const QString ctx_path =
+                QDir::temp().filePath(QStringLiteral("xrkit_smoke_context.txt"));
+            QFile::remove(ctx_path);
+            QStringList seen;
+            QTimer::singleShot(0, [&seen, &ctx_path]() {
+                auto* popup = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+                if (popup == nullptr) return;
+                for (QAction* act : popup->actions()) seen << act->text();
+                for (QAction* act : popup->actions()) {
+                    if (act->text() == QStringLiteral("甲")) act->trigger();
+                }
+                popup->close();   // 退出 `exec()` 的嵌套事件循环
+            });
+            // 自己找一次（上一块的声明在块内，出了块就看不到了）
+            FacadeTree* action_tree = nullptr;
+            if (page_widget != nullptr) {
+                for (FacadeTree* candidate : page_widget->findChildren<FacadeTree*>()) {
+                    QTreeWidgetItem* first = candidate->topLevelItem(0);
+                    if (first != nullptr && FacadeTree::key_of(first) == "ra1") {
+                        action_tree = candidate;
+                        break;
+                    }
+                }
+            }
+            if (action_tree != nullptr) {
+                emit action_tree->customContextMenuRequested(QPoint(6, 6));
+            }
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            QString chosen;
+            {
+                QFile ctx_log(ctx_path);
+                if (ctx_log.open(QIODevice::ReadOnly)) {
+                    chosen = QString::fromUtf8(ctx_log.readAll()).trimmed();
+                }
+            }
+            check(seen.contains(QStringLiteral("甲")) && seen.contains(QStringLiteral("乙")),
+                  QStringLiteral("P13-2a 右键菜单里的标签不对（实得 [%1]）")
+                      .arg(seen.join(QStringLiteral("/"))));
+            check(chosen == QStringLiteral("甲"),
+                  QStringLiteral("P13-2a 选中项没把标签原文回传插件（实得 [%1]）").arg(chosen));
         }
         const auto read_file = [](const QString& path) {
             QFile file(path);
