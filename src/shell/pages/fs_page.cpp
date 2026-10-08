@@ -7,6 +7,7 @@
 
 #include "../drop_filter.h"
 #include "../pair_tree.h"
+#include "../row_action_delegate.h"
 
 
 #include <QComboBox>
@@ -49,81 +50,6 @@ namespace efs = xrkit::engine::fs;
 namespace core = xrkit::core;
 
 QString utf8(const std::string& text) { return QString::fromStdString(text); }
-
-// ★★ 2026-10-01 用户第 5 条：「移除这个按钮也可以优化掉，在包的条目后面增加一个叉叉按钮。」
-//   用**委托**在 col2 画 ✕ 并自己处理点击 —— **不要用 `setItemWidget`**：那会把整行内容换成
-//   自造控件，勾选框/列宽/选择行为全会被搞乱（用户要的只是"行尾一个小按钮"）。
-//   点击走 `editorEvent`（判 MouseButtonRelease + 落点在小方块内）⇒ 回调同一份
-//   `remove_source_at`；右键菜单的「移除选中」也走它 ⇒ 移除逻辑只有一套。
-class PackageRemoveDelegate : public QStyledItemDelegate {
-public:
-    explicit PackageRemoveDelegate(std::function<void(QTreeWidgetItem*, int)> on_remove)
-        : on_remove_(std::move(on_remove)) {}
-
-    // ★ 2026-10-02：源下标**必须从同一行的第 0 列读** —— 数据是用 `setData(0, Qt::UserRole, …)` 存的，
-    //   而委托拿到的 `index` 永远在第 2 列 ⇒ `index.data(Qt::UserRole)` 是**无效值**（`toInt()`=0），
-    //   那样分组节点会被当成源节点、✕ 也会画到分组节点上。用 `sibling(row, 0)` 才是同一项的那一格。
-    static int source_index_of(const QModelIndex& index) {
-        if (!index.isValid()) return -1;
-        return index.sibling(index.row(), 0).data(Qt::UserRole).toInt();
-    }
-
-    void paint(QPainter* painter, const QStyleOptionViewItem& option,
-               const QModelIndex& index) const override {
-        // 只有**源节点**（第 0 列 `UserRole` 存着 `sources_` 下标 ≥0）才画 ✕；
-        // **纯分组节点**（目录、不对应任何源）没有 ✕。
-        if (index.column() != 2 || source_index_of(index) < 0) {
-            QStyledItemDelegate::paint(painter, option, index);
-            return;
-        }
-        painter->save();
-        painter->setPen(option.palette.color(QPalette::Text));
-        QFont font = option.font;
-        font.setPointSizeF(font.pointSizeF() + 1.0);
-        painter->setFont(font);
-        painter->drawText(hit_rect(option), Qt::AlignCenter, QStringLiteral("✕"));
-        painter->restore();
-    }
-
-    bool editorEvent(QEvent* event, QAbstractItemModel*, const QStyleOptionViewItem& option,
-                     const QModelIndex& index) override {
-        if (index.column() != 2 || event == nullptr) return false;
-        const int source_index = source_index_of(index);
-        if (source_index < 0) return false;   // 分组节点：没有 ✕ 可点
-        if (event->type() != QEvent::MouseButtonRelease) return false;
-        auto* mouse = static_cast<QMouseEvent*>(event);
-        if (mouse->button() != Qt::LeftButton) return false;
-        if (!hit_rect(option).contains(mouse->position().toPoint())) return false;
-        // ★ 回调给**节点**（不再是行号）：树化之后行号与 `sources_` 下标已经不是一回事。
-        //   `option.widget` 在**合成事件**（自检里手搓的 `QStyleOptionViewItem`）里是空的 ⇒
-        //   取不到节点时**也要认这次点击**（源下标已经拿到，别让"✕ 点了没反应"）。
-        QTreeWidgetItem* item = nullptr;
-        if (auto* tree = qobject_cast<QTreeWidget*>(const_cast<QWidget*>(option.widget))) {
-            item = tree->itemFromIndex(index);
-        }
-        if (on_remove_ != nullptr) on_remove_(item, source_index);
-        return true;   // 吃掉：别让它变成"点了一下整行"
-    }
-
-    QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override {
-        QSize size = QStyledItemDelegate::sizeHint(option, index);
-        if (index.column() == 2 && source_index_of(index) >= 0) {
-            size.setWidth(xrkit::core::px(30));
-        }
-        return size;
-    }
-
-private:
-    static QRect hit_rect(const QStyleOptionViewItem& option) {
-        const int box = xrkit::core::px(20);
-        const QRect rect = option.rect;
-        // ★★ 2026-10-02：✕ **贴行尾**（右边缘留 px(8) 边距），不再居中 —— 末列是**吃剩余宽度**的那一列
-        //   （见 `apply_pair_tree_spec`），居中的话 ✕ 会飘在那一大块中间；用户要的是"包的条目后面"。
-        //   画与命中都用这一个矩形（`paint` 也调它）⇒ 看到的和点得到的永远一致。
-        return QRect(rect.right() - xrkit::core::px(8) - box, rect.center().y() - box / 2, box, box);
-    }
-    std::function<void(QTreeWidgetItem*, int)> on_remove_;
-};
 
 // ★ 用户第 3 条原话：「并且扫描时有Bug的，选择包模式的时候，是扫不出金球奖的db的。这是个Bug。
 //   不要想着增加后缀的样式（.db0，.db_base等），因为这是遍历不完的。然后点击"所有文件"才能看见那些包。」
@@ -355,15 +281,25 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
                                             true});
     // 行尾 ✕（第 5 条）：委托画 + 自己处理点击 ⇒ 删掉工具行里的「移除」按钮
     //   ★ 2026-10-02 树化之后回调给**节点**，源下标从 `data(0, Qt::UserRole)` 读（分组节点 -1 ⇒ 不画）
+    // ★★ P13-1：换成**共用**的行尾委托（`row_action_delegate.h`；与门面树同一份）。
+    //   两条口径照原样：可见性＝第 0 列 `UserRole` 的源下标 ≥ 0；
+    //   ★ 摘源**必须排队到下一轮**（不能在这条 `editorEvent` 里重建包树 —— 用户报过的崩溃）。
     package_list_->setItemDelegateForColumn(
-        2, new PackageRemoveDelegate([this](QTreeWidgetItem*, int source_index) {
-            if (source_index < 0) return;
-            // ★★ 2026-10-02 用户报「包树崩了」的两条根因之一：**不能在委托的 `editorEvent` 里直接
-            //   重建包树** —— 那时视图正拿着这个 item 派发鼠标事件，`clear()` 把 item 删掉 ⇒
-            //   事件处理继续用悬空指针 ⇒ 崩。⇒ 排队到下一轮事件循环再摘。
-            QMetaObject::invokeMethod(
-                this, [this, source_index] { remove_source_at(source_index); }, Qt::QueuedConnection);
-        }));
+        2, new RowActionDelegate(
+               2, "\u2715",
+               [](const QModelIndex& index) {
+                   if (!index.isValid()) return false;
+                   return index.sibling(index.row(), 0).data(Qt::UserRole).toInt() >= 0;
+               },
+               [this](const QModelIndex& index) {
+                   if (!index.isValid()) return;
+                   const int source_index =
+                       index.sibling(index.row(), 0).data(Qt::UserRole).toInt();
+                   if (source_index < 0) return;
+                   QMetaObject::invokeMethod(
+                       this, [this, source_index] { remove_source_at(source_index); },
+                       Qt::QueuedConnection);
+               }));
     // ★ 与条目树**同一条路**（用户：「包树直接引用树的统一函数就行啊」）：单击节点身体＝展开/折叠。
     QObject::connect(package_list_, &QTreeWidget::itemClicked, this,
                      [this](QTreeWidgetItem* item, int) { on_package_item_clicked(item); });

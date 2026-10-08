@@ -95,6 +95,7 @@ EXPECT_UI = {
     "tree_set_columns": "L2 换列声明（xml 页切模式换表头/列宽）",
     "tree_set_root": "L2.7 声明根节点（清空重建）",
     "tree_set_children": "L2.7 填某行的子（**懒建**的落点）",
+    "tree_on_action": "行尾动作被点（fs 页的 ✕；回调给行 key；只有 has_action 的行）",
     "tree_clear": "L2.7 清空",
     "tree_row_count": "L2.7 当前**可见**行数（祖先都展开 + 未被过滤）",
     "tree_keys": "L2.7 当前可见行的 key（树序；判据用）",

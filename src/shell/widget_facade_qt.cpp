@@ -700,6 +700,14 @@ const plug::UiFacade kQtFacade = {
             facade->set_children(parent_key, nodes);
         }
     },
+    /* tree_on_action：行尾动作（fs 页的 ✕）—— 与 fs 页**共用**一份委托 */
+    [](plug::UiHandle tree, const std::string& mark,
+       std::function<void(const std::string&)> on_action) {
+        if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) {
+            facade->set_action_mark(mark);
+            facade->set_on_action(std::move(on_action));
+        }
+    },
     /* tree_clear */
     [](plug::UiHandle tree) {
         if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) facade->clear_all();

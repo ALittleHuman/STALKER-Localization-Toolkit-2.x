@@ -65,6 +65,9 @@ public:
     void set_on_activate(std::function<void(const std::string&)> fn) {
         on_activate_ = std::move(fn);
     }
+    // ★★ P13：行尾动作（fs 页的 ✕）—— 实现见 `row_action_delegate.h`
+    void set_on_action(std::function<void(const std::string&)> fn);
+    void set_action_mark(const std::string& mark);
 
     // 自检/内部用：key → 项
     QTreeWidgetItem* item_of(const std::string& key) const;
@@ -82,6 +85,9 @@ private:
 
     std::map<std::string, QTreeWidgetItem*> items_;
     std::function<void(const std::string&)> on_expand_;
+    std::function<void(const std::string&)> on_action_;
+    std::string action_mark_;
+    void install_action_delegate();
     std::function<void(const std::string&, bool)> on_check_;
     std::function<void(const std::string&)> on_activate_;
     QString filter_;

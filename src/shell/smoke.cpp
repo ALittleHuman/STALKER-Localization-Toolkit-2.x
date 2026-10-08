@@ -29,6 +29,8 @@
 #include "scroll_viewport.h"
 #include "split_pane.h"
 #include "task_shell.h"
+#include "facade_tree.h"
+#include "row_action_delegate.h"
 #include "theme.h"
 #include "virtual_list.h"
 
@@ -5637,10 +5639,26 @@ SmokeResult run_smoke() {
             "            ])))\n"
             "        ui.tree_on_check(tree, lambda key, checked: mark('check:%s:%d' % (key, int(checked))))\n"
             "        ui.tree_on_activate(tree, lambda key: mark('activate:' + key))\n"
+            "        # ★★ P13-1 第二步：只验注册路径（这棵树的行都没有 has_action）\n"
+            "        ui.tree_on_action(tree, '✕', lambda key: mark('rowaction:' + key))\n"
             "        status()\n"
             "        btn = ui.button(None, '查状态', status)\n"
             "        btn2 = ui.button(None, '过滤 a2', lambda: (ui.tree_set_filter(tree, 'a2'), status()))\n"
             "        btn3 = ui.button(None, '选中 B', lambda: (ui.tree_select(tree, 'B'), status()))\n"
+            "        # ★★ P13-1 第三步：带 has_action 的独立树（先不点它）\n"
+            "        action_tree = ui.tree(None, [['名字', 0], ['大小', 80]])\n"
+            "        ui.tree_set_root(action_tree, [\n"
+            "            {'key': 'ra1', 'cells': ['a1', '1'], 'has_action': True},\n"
+            "            {'key': 'ra2', 'cells': ['a2', '2'], 'has_action': True},\n"
+            "            {'key': 'rdir', 'cells': ['目录', '']},\n"
+            "        ])\n"
+            "        import os as _os, tempfile as _tempfile\n"
+            "        args_path = _os.path.join(_tempfile.gettempdir(), 'xrkit_smoke_rowaction.txt')\n"
+            "        def on_row_action(key):\n"
+            "            # ★ 纯 Python 写文件：**不**再进 C++ 的 mark()（上一版崩点就在这条再入链）\n"
+            "            with open(args_path, 'a', encoding='utf-8') as handle:\n"
+            "                handle.write(key + chr(10))\n"
+            "        ui.tree_on_action(action_tree, '✕', on_row_action)\n"
             "        mark('built')\n"
             "    api.register_tool('门面树夹具页', build, 8)\n";
         QFile plugin_file(QDir(dir).filePath(QStringLiteral("l6_demo.py")));
@@ -5666,6 +5684,74 @@ SmokeResult run_smoke() {
         check(tree != nullptr && tree->columnCount() == 2,
               QStringLiteral("P6 树没造出来或列数不对（实得 %1 列）")
                   .arg(tree == nullptr ? -1 : tree->columnCount()));
+
+        // ★★ P13-1a：行尾动作（fs 页的 ✕）—— 合成点击（与 fs 页自检同一手法）
+        {
+            FacadeTree* action_tree = nullptr;
+            if (page_widget != nullptr) {
+                for (FacadeTree* candidate : page_widget->findChildren<FacadeTree*>()) {
+                    QTreeWidgetItem* first = candidate->topLevelItem(0);
+                    if (first != nullptr && FacadeTree::key_of(first) == "ra1") {
+                        action_tree = candidate;
+                        break;
+                    }
+                }
+            }
+            check(action_tree != nullptr, QStringLiteral("P13-1a 没找到带 ra1 的门面树"));
+            const QString action_log_path =
+                QDir::temp().filePath(QStringLiteral("xrkit_smoke_rowaction.txt"));
+            QFile::remove(action_log_path);
+            QTreeWidgetItem* first_row =
+                action_tree != nullptr ? action_tree->topLevelItem(0) : nullptr;
+            // ★ 手搓一格（不依赖真实布局：树没显示时 `visualItemRect` 是空矩形 ⇒ 命不中）
+            QRect cell(0, 0, 300, 20);
+            QStyleOptionViewItem option;
+            option.rect = cell;
+            auto* row_delegate = dynamic_cast<RowActionDelegate*>(
+                action_tree != nullptr ? action_tree->itemDelegateForColumn(1) : nullptr);
+            check(row_delegate != nullptr, QStringLiteral("P13-1a 末列没装上共用委托"));
+            const QRect box = row_delegate != nullptr ? row_delegate->action_rect(option) : QRect();
+            const QPoint inside = box.center();
+            const QPoint outside(cell.left() + 2, cell.center().y());   // 同一格、但不在方块内
+            QMouseEvent press_inside(QEvent::MouseButtonRelease, inside, inside, inside,
+                                     Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            const bool eaten = row_delegate != nullptr &&
+                row_delegate->editorEvent(&press_inside, action_tree->model(), option,
+                                          action_tree->model()->index(0, 1));
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QString fired;
+            {
+                QFile action_log(action_log_path);
+                if (action_log.open(QIODevice::ReadOnly)) {
+                    fired = QString::fromUtf8(action_log.readAll()).trimmed();
+                }
+            }
+            const bool outside_fired = row_delegate != nullptr &&
+                row_delegate->editorEvent(
+                    new QMouseEvent(QEvent::MouseButtonRelease, outside, outside, outside,
+                                    Qt::LeftButton, Qt::LeftButton, Qt::NoModifier),
+                    action_tree->model(), option, action_tree->model()->index(0, 1));
+            const bool dir_fired = row_delegate != nullptr &&
+                row_delegate->editorEvent(
+                    new QMouseEvent(QEvent::MouseButtonRelease, inside, inside, inside,
+                                    Qt::LeftButton, Qt::LeftButton, Qt::NoModifier),
+                    action_tree->model(), option, action_tree->model()->index(2, 1));
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QString fired_after;
+            {
+                QFile action_log(action_log_path);
+                if (action_log.open(QIODevice::ReadOnly)) {
+                    fired_after = QString::fromUtf8(action_log.readAll()).trimmed();
+                }
+            }
+            check(eaten, QStringLiteral("P13-1a 行尾动作的点击没被委托吃掉（会退化成「点了一下整行」）"));
+            check(fired == QStringLiteral("ra1"),
+                  QStringLiteral("P13-1a 行尾动作没把行 key 交给插件（记录=%1）")
+                      .arg(fired.isEmpty() ? QStringLiteral("(空)") : fired));
+            check(!outside_fired && fired_after == fired,
+                  QStringLiteral("P13-1a 点在方块外也触发了行尾动作（记录=%1）").arg(fired_after));
+            check(!dir_fired, QStringLiteral("P13-1a 没有动作的行也触发了行尾动作"));
+        }
         const auto read_file = [](const QString& path) {
             QFile file(path);
             if (!file.open(QIODevice::ReadOnly)) return QString();

@@ -50,7 +50,7 @@ const char* const kMethodNames[] = {
     "split_is_collapsed", "split_pane_count", "split_sash_pos",
     // ★★ P6：重型 L2 第三批（树）
     "tree",           "tree_set_columns",   "tree_set_root",       "tree_set_children",
-    "tree_clear",
+    "tree_on_action", "tree_clear",
     "tree_row_count", "tree_keys",          "tree_set_expanded",   "tree_expanded_keys",
     "tree_set_checked", "tree_checked",     "tree_checked_keys",   "tree_partial_keys",
     "tree_set_filter", "tree_filter_hits",  "tree_select",         "tree_selected_key",
@@ -125,6 +125,7 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "tree_set_columns") return static_cast<bool>(facade.tree_set_columns);
     if (name == "tree_set_root") return static_cast<bool>(facade.tree_set_root);
     if (name == "tree_set_children") return static_cast<bool>(facade.tree_set_children);
+    if (name == "tree_on_action") return static_cast<bool>(facade.tree_on_action);
     if (name == "tree_clear") return static_cast<bool>(facade.tree_clear);
     if (name == "tree_row_count") return static_cast<bool>(facade.tree_row_count);
     if (name == "tree_keys") return static_cast<bool>(facade.tree_keys);

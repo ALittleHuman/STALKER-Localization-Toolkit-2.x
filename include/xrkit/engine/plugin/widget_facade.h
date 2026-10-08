@@ -188,6 +188,9 @@ struct UiFacade {
         bool has_children = false;        // 有子 ⇒ 画箭头，展开时才回调
         bool checkable = false;           // 这一行有没有勾选框
         bool checked = false;             // 声明时的初始勾选态（宿主会据此重算祖先）
+        // ★★ P13：这一行**有没有行尾动作**（fs 页的 ✕ 那种）。
+        //   fs 的口径是「源节点才有」（分组节点没有）；门面把它**参数化**成显式声明。
+        bool has_action = false;
     };
     std::function<UiHandle(UiHandle parent, const std::vector<TreeColumn>& columns)> tree;
     // ★★ P11b-2：**换列声明**（xml 页切模式要换表头/列宽 —— 对应页面的
@@ -198,6 +201,12 @@ struct UiFacade {
     std::function<void(UiHandle tree, const std::string& parent_key,
                        const std::vector<TreeNodeSpec>& nodes)>
         tree_set_children;
+    // ★★ P13：**行尾动作被点**（fs 页那条「包的条目后面一个叉叉」）。
+    //   回调给的是**行 key**（不是行号 —— 树化之后行号与数据下标不是一回事）；
+    //   `mark` 是画在行尾的字（默认 ✕）；只有 `has_action` 的行会画、能点。
+    std::function<void(UiHandle tree, const std::string& mark,
+                       std::function<void(const std::string&)> on_action)>
+        tree_on_action;
     std::function<void(UiHandle tree)> tree_clear;
     std::function<int(UiHandle tree)> tree_row_count;                  // 当前**可见**行数
     std::function<std::vector<std::string>(UiHandle tree)> tree_keys;  // 当前可见行的 key（树序）

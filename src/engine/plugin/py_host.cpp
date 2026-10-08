@@ -375,6 +375,9 @@ std::vector<UiFacade::TreeNodeSpec> tree_nodes_from_python(const py::object& nod
         }
         if (node.contains("checkable")) spec.checkable = py::cast<bool>(node["checkable"]);
         if (node.contains("checked")) spec.checked = py::cast<bool>(node["checked"]);
+        if (node.contains("has_action")) {
+            spec.has_action = py::cast<bool>(node["has_action"]);
+        }
         out.push_back(std::move(spec));
     }
     return out;
@@ -1902,6 +1905,30 @@ public:
             facade->tree_set_columns(handle_of(tree_widget), tree_columns_from_python(columns));
         }
     }
+    // ★★ P13：行尾动作（fs 页的 ✕）；回调给**行 key**
+    bool tree_on_action(py::object tree_widget, std::string mark, py::object callback) const {
+        const UiFacade* facade = available("tree_on_action");
+        if (facade == nullptr) return false;
+        if (callback.is_none() != 0 || PyCallable_Check(callback.ptr()) == 0) {
+            core::log(core::Level::Warn,
+                      "[" + owner_ + "] ui.tree_on_action 的回调不是可调用对象");
+            return false;
+        }
+        py::object kept = callback;
+        keepalive()->push_back(kept);
+        facade->tree_on_action(handle_of(tree_widget), mark,
+                               [kept](const std::string& key) {
+                                   py::gil_scoped_acquire acquire;
+                                   try {
+                                       kept(py::str(key));
+                                   } catch (const py::error_already_set& err) {
+                                       core::log(core::Level::Warn,
+                                                 std::string("ui.tree_on_action 回调抛异常：") +
+                                                     err.what());
+                                   }
+                               });
+        return true;
+    }
     void tree_set_root(py::object tree_widget, py::object nodes) const {
         if (const UiFacade* facade = available("tree_set_root")) {
             facade->tree_set_root(handle_of(tree_widget), tree_nodes_from_python(nodes));
@@ -2273,6 +2300,8 @@ void ensure_api_module() {
             .def("tree", &PyUi::tree, py::arg("parent") = py::none(), py::arg("columns") = py::none())
             .def("tree_set_columns", &PyUi::tree_set_columns, py::arg("tree"),
                  py::arg("columns"))
+            .def("tree_on_action", &PyUi::tree_on_action, py::arg("tree"),
+                 py::arg("mark"), py::arg("callback"))
             .def("tree_set_root", &PyUi::tree_set_root, py::arg("tree"), py::arg("nodes"))
             .def("tree_set_children", &PyUi::tree_set_children, py::arg("tree"),
                  py::arg("parent_key"), py::arg("nodes"))

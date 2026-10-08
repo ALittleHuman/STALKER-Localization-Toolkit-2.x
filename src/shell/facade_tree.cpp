@@ -1,5 +1,7 @@
 #include "facade_tree.h"
 
+#include "row_action_delegate.h"
+
 #include "pair_tree.h"
 #include "theme.h"
 
@@ -84,6 +86,8 @@ QTreeWidgetItem* FacadeTree::add_node(QTreeWidgetItem* parent,
         item->setText(static_cast<int>(i), QString::fromStdString(node.cells[i]));
     }
     item->setData(0, Qt::UserRole, QString::fromStdString(node.key));
+    // ★ P13：这一行有没有行尾动作（fs 的「源节点才有」在门面里就是显式声明）
+    item->setData(0, Qt::UserRole + 1, node.has_action ? 1 : 0);
     if (node.has_children) {
         // ★ 只给"有箭头"的提示，**不塞占位子项**（塞了就会被算进行数/可见行，判据会跟着错）
         item->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
@@ -301,6 +305,39 @@ void FacadeTree::set_filter(const std::string& text) {
         apply_filter_to(topLevelItem(i), filter_, false);
     }
     if (empty) hits_ = 0;   // 空串 = "不过滤"，命中数记 0（与界面上的"无搜索"一致）
+}
+
+
+// ── ★★ P13：行尾动作（与 fs 页**共用**一份委托；口径见 `row_action_delegate.h`）────────
+void FacadeTree::set_on_action(std::function<void(const std::string&)> fn) {
+    on_action_ = std::move(fn);
+    install_action_delegate();
+}
+
+void FacadeTree::set_action_mark(const std::string& mark) {
+    action_mark_ = mark.empty() ? std::string("\u2715") : mark;
+    install_action_delegate();
+}
+
+void FacadeTree::install_action_delegate() {
+    const int columns = columnCount();
+    if (columns <= 0) return;
+    if (on_action_ == nullptr) return;   // 没登记回调 ⇒ 不画（免得出现「看得见点不着」的 ✕）
+    const int column = columns - 1;      // 末列（吃剩余宽度的那一列 ⇒ ✕ 贴行尾）
+    setItemDelegateForColumn(
+        column,
+        new RowActionDelegate(
+            column, action_mark_,
+            [](const QModelIndex& index) {
+                if (!index.isValid()) return false;
+                const QVariant flag = index.sibling(index.row(), 0).data(Qt::UserRole + 1);
+                return flag.isValid() && flag.toInt() != 0;
+            },
+            [this](const QModelIndex& index) {
+                const QTreeWidgetItem* item = itemFromIndex(index);
+                if (item == nullptr || on_action_ == nullptr) return;
+                on_action_(key_of(item));
+            }));
 }
 
 }  // namespace xrkit::shell
