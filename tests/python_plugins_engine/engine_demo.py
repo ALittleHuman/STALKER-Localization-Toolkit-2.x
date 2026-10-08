@@ -574,6 +574,43 @@ def register(api):
     second = engine.fs_extract_package(golden_db, unpack_root, "all", None, "xdb")
     mark("extract_overwrite_visible:%d" % (1 if second["overwritten_count"] > 0 else 0))
 
+    # ── ★★ P14-0d：fs 面第四批（封包：真打包 + 往返 + 改名台账）────────────────
+    pack_src = os.path.join(work, "pack_src")
+    os.makedirs(pack_src, exist_ok=True)
+    with open(os.path.join(pack_src, "a.txt"), "w", encoding="utf-8") as handle:
+        handle.write("hello")
+    with open(os.path.join(pack_src, "中文.txt"), "w", encoding="utf-8") as handle:
+        handle.write("nihaoo")
+    pack_items = [
+        {"path": "a.txt", "is_dir": False,
+         "source_path": os.path.join(pack_src, "a.txt")},
+        {"path": "中文.txt", "is_dir": False,
+         "source_path": os.path.join(pack_src, "中文.txt")},
+    ]
+
+    sqfs_out = os.path.join(work, "packed.sqfs")
+    sqfs = engine.fs_pack_squashfs(sqfs_out, pack_items)
+    mark("pack_sqfs_ok:%d" % (1 if sqfs["ok"] else 0))
+    mark("pack_sqfs_size_positive:%d" % (1 if sqfs["file_size"] > 0 else 0))
+    mark("pack_sqfs_inodes:%d" % sqfs["inode_count"])
+    sqfs_listed = engine.fs_package_entries(sqfs_out, "")
+    sqfs_paths = set(row["path"] for row in sqfs_listed["entries"])
+    mark("pack_sqfs_roundtrip:%d" % (1 if {"a.txt", "中文.txt"} <= sqfs_paths else 0))
+
+    db_out = os.path.join(work, "packed.db")
+    db = engine.fs_pack_db(db_out, pack_items, "xdb")
+    mark("pack_db_ok:%d" % (1 if db["ok"] else 0))
+    mark("pack_db_size_positive:%d" % (1 if db["file_size"] > 0 else 0))
+    db_listed = engine.fs_package_entries(db_out, "xdb")
+    db_paths = set(row["path"] for row in db_listed["entries"])
+    mark("pack_db_roundtrip:%d" % (1 if "a.txt" in db_paths else 0))
+    mark("pack_db_rewrites_visible:%d" % (1 if len(db["rewrites"]) >= 1 else 0))
+    mark("pack_db_rewrite_written:%d"
+         % (1 if all("?" in row["written"] for row in db["rewrites"]) else 0))
+    bad = engine.fs_pack_db(os.path.join(work, "bad.db"), [], "auto")
+    mark("pack_db_bad_format_rejected:%d" % (1 if not bad["ok"] else 0))
+    mark("pack_db_bad_format_reason:%d" % (1 if bad["error"] else 0))
+
     mark("done")
     # ★ 夹具自清：`convert_work` 不留痕（插件目录里只该留 marker —— 门禁按行断言它）
     shutil.rmtree(work, ignore_errors=True)

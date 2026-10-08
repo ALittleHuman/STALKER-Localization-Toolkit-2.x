@@ -24,9 +24,13 @@
 #include "xrkit/engine/video/transcode.h"
 #include "xrkit/engine/fs/extract_tree.h"
 #include "xrkit/engine/fs/overlay.h"
+#include "xrkit/engine/fs/squashfs.h"
+#include "xrkit/core/path.h"
+#include "xrkit/core/atomic_write.h"
 #include "xrkit/engine/plugin/registry.h"
 
 #include <array>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -39,6 +43,7 @@ namespace etext = xrkit::engine::text;
 namespace exml = xrkit::engine::xml;
 namespace evideo = xrkit::engine::video;
 namespace efs = xrkit::engine::fs;
+namespace core = xrkit::core;
 
 XmlCompareResult to_facade(const exml::XmlCompareResult& native);
 exml::XmlCompareResult from_facade(const XmlCompareResult& facade);
@@ -869,6 +874,72 @@ const EngineFacade kFontFacade = {
         }
         out.failure_note = native.failure_note();
         out.elapsed_ms = native.elapsed_ms;
+        return out;
+    },
+    /* fs_pack_squashfs：封 SquashFS（引擎自己落盘） */
+    [](const std::string& out_path, const std::vector<FsPackItem>& items) {
+        std::vector<efs::PackItem> native;
+        native.reserve(items.size());
+        for (const FsPackItem& item : items) {
+            efs::PackItem one;
+            one.path = item.path;
+            one.is_dir = item.is_dir;
+            one.source_path = item.source_path;
+            native.push_back(std::move(one));
+        }
+        const efs::PackResult result = efs::pack_squashfs(out_path, native);
+        FsPackResult out;
+        out.ok = result.ok;
+        out.error = result.error;
+        out.bytes_used = result.bytes_used;
+        out.file_size = result.file_size;
+        out.inode_count = result.inode_count;
+        out.fragment_count = result.fragment_count;
+        out.data_blocks = result.data_blocks;
+        out.fragment_blocks = result.fragment_blocks;
+        out.dedup_blocks = result.dedup_blocks;
+        out.dedup_fragments = result.dedup_fragments;
+        out.elapsed_ms = result.elapsed_ms;
+        return out;
+    },
+    /* fs_pack_db：封 X-Ray DB（读文件 → 编码 → **原子写盘**；名字改写要逐条报出来） */
+    [](const std::string& out_path, const std::vector<FsPackItem>& items,
+       const std::string& format_key) {
+        FsDbPackResult out;
+        const std::optional<efs::DbFormat> format = efs::format_key_to_db(format_key);
+        if (!format.has_value()) {
+            out.error = "格式键既不是 DB 也不是 SquashFS：" + format_key;
+            return out;
+        }
+        std::vector<efs::DbPackItem> native;
+        native.reserve(items.size());
+        for (const FsPackItem& item : items) {
+            efs::DbPackItem one;
+            one.path = item.path;
+            one.is_dir = item.is_dir;
+            if (!item.is_dir && !item.source_path.empty()) {
+                std::ifstream in(core::path_from_utf8(item.source_path), std::ios::binary);
+                if (!in) {
+                    out.error = "读不出：" + item.source_path;
+                    return out;
+                }
+                one.data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            }
+            native.push_back(std::move(one));
+        }
+        std::vector<efs::DbNameRewrite> rewrites;
+        const std::vector<uint8_t> raw = efs::pack_db(native, *format, &rewrites);
+        std::string write_error;
+        if (!core::write_file_atomic(out_path, raw, true, write_error)) {
+            out.error = "写盘失败：" + write_error;
+            return out;
+        }
+        out.ok = true;
+        out.file_size = raw.size();
+        out.item_count = static_cast<int>(native.size());
+        for (const efs::DbNameRewrite& item : rewrites) {
+            out.rewrites.push_back({item.source, item.written});
+        }
         return out;
     },
 };

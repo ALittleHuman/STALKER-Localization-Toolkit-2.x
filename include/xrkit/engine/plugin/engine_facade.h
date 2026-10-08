@@ -494,6 +494,45 @@ struct FsExtractResult {
     double elapsed_ms = 0.0;
 };
 
+
+// ── ★★ P14-0d：fs 面**第四批** —— 封包 ────────────────────────────────────────
+//   两条：SquashFS（引擎自己落盘）与 X-Ray DB（引擎给它字节，**宿主原子写盘**）。
+//   ★ DB 那条要带**名字改写台账**：cp1251 表示不了的字符会被逐码点顶替成 '?'
+//     —— 用户口径"不需要支持中文名，但**必须看得见**改了哪些"（零静默红线）。
+
+struct FsPackItem {
+    std::string path;         // 镜像内相对路径（'/' 分隔，无前导斜杠）
+    bool is_dir = false;
+    std::string source_path;  // is_dir=false 时：本机文件（内容从它读）
+};
+
+struct FsPackResult {
+    bool ok = false;
+    std::string error;
+    uint64_t bytes_used = 0;
+    uint64_t file_size = 0;
+    uint64_t inode_count = 0;
+    uint64_t fragment_count = 0;
+    uint64_t data_blocks = 0;
+    uint64_t fragment_blocks = 0;
+    uint64_t dedup_blocks = 0;
+    uint64_t dedup_fragments = 0;
+    double elapsed_ms = 0.0;
+};
+
+struct FsNameRewrite {
+    std::string source;    // UTF-8 原名
+    std::string written;   // 实际写进包里的名字
+};
+
+struct FsDbPackResult {
+    bool ok = false;
+    std::string error;
+    uint64_t file_size = 0;
+    int item_count = 0;
+    std::vector<FsNameRewrite> rewrites;   // ★ 零静默：改了哪些、改成了什么
+};
+
 struct EngineFacade {
     std::function<FontCheckResult(const std::string& font_path)> font_check;
     std::function<FontPackResult(const FontPackOptions& options)> font_pack;
@@ -618,6 +657,13 @@ struct EngineFacade {
                                   const std::string& selection, const std::vector<std::string>& only,
                                   const std::string& db_fallback_key)>
         fs_extract_package;
+
+    // ── ★★ P14-0d：fs 面第四批（封包）──────────────────────────────────────
+    std::function<FsPackResult(const std::string& out_path, const std::vector<FsPackItem>& items)>
+        fs_pack_squashfs;
+    std::function<FsDbPackResult(const std::string& out_path, const std::vector<FsPackItem>& items,
+                                 const std::string& format_key)>
+        fs_pack_db;
 };
 
 // 外壳注入实现（`src/shell/engine_facade_impl.cpp`）。传 nullptr = 撤销。

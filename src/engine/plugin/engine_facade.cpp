@@ -55,6 +55,8 @@ const char* const kMethodNames[] = {
     // ★★ P14-0c：fs 面第三批（读条目/闸门/收集/解包）
     "fs_gate_path", "fs_decrypt_output_dir", "fs_package_entries",
     "fs_collect_pack_files", "fs_extract_package",
+    // ★★ P14-0d：fs 面第四批（封包）
+    "fs_pack_squashfs", "fs_pack_db",
 };
 
 bool has_impl(const EngineFacade& facade, const std::string& name) {
@@ -126,6 +128,8 @@ bool has_impl(const EngineFacade& facade, const std::string& name) {
     if (name == "fs_package_entries") return static_cast<bool>(facade.fs_package_entries);
     if (name == "fs_collect_pack_files") return static_cast<bool>(facade.fs_collect_pack_files);
     if (name == "fs_extract_package") return static_cast<bool>(facade.fs_extract_package);
+    if (name == "fs_pack_squashfs") return static_cast<bool>(facade.fs_pack_squashfs);
+    if (name == "fs_pack_db") return static_cast<bool>(facade.fs_pack_db);
     return false;
 }
 

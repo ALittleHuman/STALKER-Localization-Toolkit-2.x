@@ -195,6 +195,9 @@ EXPECT_ENGINE = {
     "fs_package_entries": "包内条目表（超块判 sqfs / 否则 DB 自动+回退键）",
     "fs_collect_pack_files": "封包要收哪些文件（排包文件/去重排序/越界计数）",
     "fs_extract_package": "统一从包导出（sqfs/DB 内部分派；计数+覆盖可见）",
+    # ★★ P14-0d：fs 面第四批（封包）
+    "fs_pack_squashfs": "封 SquashFS（引擎落盘；返回 inode/块/去重计数）",
+    "fs_pack_db": "封 X-Ray DB（读文件→编码→原子写盘；**名字改写台账**）",
 }
 # ★★ P7b：**宿主服务门面**（`api.host.*`）—— 宿主替插件办的杂事（样板页 fontpack 真的要用）
 EXPECT_HOST = {

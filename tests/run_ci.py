@@ -2660,6 +2660,25 @@ def step_engine_facade(release: bool) -> None:
         got = value_of(key)
         if got != want:
             problems.append("fs 解包 %s=%s（应为 %s）" % (key, got or "(缺)", want))
+
+    # ── ★★ P14-0d：fs 面第四批（封包）─────────────────────────────────────────
+    pack_expect = {
+        "pack_sqfs_ok": "1",
+        "pack_sqfs_size_positive": "1",
+        "pack_sqfs_inodes": "3",               # 两个文件 **+ 根目录 inode**
+        "pack_sqfs_roundtrip": "1",            # 打完再列 ⇒ 两个名字都在
+        "pack_db_ok": "1",
+        "pack_db_size_positive": "1",
+        "pack_db_roundtrip": "1",              # 打完再列 ⇒ a.txt 在
+        "pack_db_rewrites_visible": "1",       # ★ 中文名写不出 ⇒ 台账必须可见
+        "pack_db_rewrite_written": "1",        # 改成了 '?' 形态
+        "pack_db_bad_format_rejected": "1",    # auto 不是 DB ⇒ 拒绝
+        "pack_db_bad_format_reason": "1",      # 且理由非空
+    }
+    for key, want in pack_expect.items():
+        got = value_of(key)
+        if got != want:
+            problems.append("fs 封包 %s=%s（应为 %s）" % (key, got or "(缺)", want))
     if not value_of("video_encoder"):
         problems.append("video 面 video_encoder 是空的（面板值必须来自 plan_transcode）")
     say("  夹具证据：%s" % text.replace("\n", " | ")[:260])

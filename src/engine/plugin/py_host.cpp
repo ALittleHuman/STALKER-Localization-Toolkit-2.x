@@ -959,6 +959,23 @@ std::vector<std::string> fs_strings_from_python(const py::object& values) {
     return out;
 }
 
+
+std::vector<FsPackItem> fs_pack_items_from_python(const py::object& items) {
+    std::vector<FsPackItem> out;
+    if (items.is_none() != 0) return out;
+    for (auto item : py::list(items)) {
+        py::dict row = py::reinterpret_borrow<py::dict>(item);
+        FsPackItem one;
+        if (row.contains("path")) one.path = py::str(row["path"]).cast<std::string>();
+        if (row.contains("is_dir")) one.is_dir = py::cast<bool>(row["is_dir"]);
+        if (row.contains("source_path")) {
+            one.source_path = py::str(row["source_path"]).cast<std::string>();
+        }
+        out.push_back(std::move(one));
+    }
+    return out;
+}
+
 // ── ★★ P7a：引擎调用门面在 Python 侧的形态（`api.engine.*`）──────────────────
 // 口径（用户拍板的方案 3）：
 //   · **值类型 Python 友好**：出入都是 dict / list / str / int，**不漏 C++ 结构体与指针**；
@@ -1599,6 +1616,44 @@ public:
             failures.append(row);
         }
         out["failures"] = failures;
+        return out;
+    }
+
+    // ── ★★ P14-0d：fs 面第四批（封包）──────────────────────────────────────
+    py::object fs_pack_squashfs(const std::string& out_path, py::object items) const {
+        const EngineFacade* facade = available("fs_pack_squashfs");
+        if (facade == nullptr) return py::none();
+        const FsPackResult native = facade->fs_pack_squashfs(out_path, fs_pack_items_from_python(items));
+        py::dict out;
+        out["ok"] = native.ok;
+        out["error"] = native.error;
+        out["bytes_used"] = native.bytes_used;
+        out["file_size"] = native.file_size;
+        out["inode_count"] = native.inode_count;
+        out["data_blocks"] = native.data_blocks;
+        out["dedup_blocks"] = native.dedup_blocks;
+        out["elapsed_ms"] = native.elapsed_ms;
+        return out;
+    }
+    py::object fs_pack_db(const std::string& out_path, py::object items,
+                          const std::string& format_key) const {
+        const EngineFacade* facade = available("fs_pack_db");
+        if (facade == nullptr) return py::none();
+        const FsDbPackResult native =
+            facade->fs_pack_db(out_path, fs_pack_items_from_python(items), format_key);
+        py::dict out;
+        out["ok"] = native.ok;
+        out["error"] = native.error;
+        out["file_size"] = native.file_size;
+        out["item_count"] = native.item_count;
+        py::list rewrites;
+        for (const FsNameRewrite& item : native.rewrites) {
+            py::dict row;
+            row["source"] = item.source;
+            row["written"] = item.written;
+            rewrites.append(row);
+        }
+        out["rewrites"] = rewrites;
         return out;
     }
 
@@ -2645,6 +2700,11 @@ void ensure_api_module() {
             .def("fs_extract_package", &PyEngine::fs_extract_package, py::arg("image_path"),
                  py::arg("out_root"), py::arg("selection") = "all",
                  py::arg("only") = py::none(), py::arg("db_fallback_key") = "")
+            // ★★ P14-0d：fs 面第四批（封包）
+            .def("fs_pack_squashfs", &PyEngine::fs_pack_squashfs, py::arg("out_path"),
+                 py::arg("items"))
+            .def("fs_pack_db", &PyEngine::fs_pack_db, py::arg("out_path"), py::arg("items"),
+                 py::arg("format_key"))
 ;
         py::class_<PyWidget>(m, "Widget")
             .def("__repr__", [](const PyWidget& widget) {
