@@ -1691,6 +1691,28 @@ public:
             facade->list_select_row(handle_of(list_widget), row);
         }
     }
+    // ★★ P13-2b：列表激活（双击 / 回车）；回调给**行号**
+    bool list_on_activate(py::object list_widget, py::object callback) const {
+        const UiFacade* facade = available("list_on_activate");
+        if (facade == nullptr) return false;
+        if (callback.is_none() != 0 || PyCallable_Check(callback.ptr()) == 0) {
+            core::log(core::Level::Warn,
+                      "[" + owner_ + "] ui.list_on_activate 的回调不是可调用对象");
+            return false;
+        }
+        py::object kept = callback;
+        keepalive()->push_back(kept);
+        facade->list_on_activate(handle_of(list_widget), [kept](int row) {
+            py::gil_scoped_acquire acquire;
+            try {
+                kept(row);
+            } catch (const py::error_already_set& err) {
+                core::log(core::Level::Warn,
+                          std::string("ui.list_on_activate 回调抛异常：") + err.what());
+            }
+        });
+        return true;
+    }
     int list_selected_row(py::object list_widget) const {
         if (const UiFacade* facade = available("list_selected_row")) {
             return facade->list_selected_row(handle_of(list_widget));
@@ -2282,6 +2304,8 @@ void ensure_api_module() {
             .def("list_row_text", &PyUi::list_row_text, py::arg("list"), py::arg("row"))
             .def("list_select_row", &PyUi::list_select_row, py::arg("list"), py::arg("row"))
             .def("list_selected_row", &PyUi::list_selected_row, py::arg("list"))
+            .def("list_on_activate", &PyUi::list_on_activate, py::arg("list"),
+                 py::arg("callback"))
             .def("list_content_height", &PyUi::list_content_height, py::arg("list"))
             .def("log_view", &PyUi::log_view, py::arg("parent") = py::none(),
                  py::arg("height") = 0)

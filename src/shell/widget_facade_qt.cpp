@@ -470,6 +470,14 @@ const plug::UiFacade kQtFacade = {
         auto* view = container->findChild<VirtualList*>();
         return view == nullptr ? -1 : view->selected_row();
     },
+    /* list_on_activate：列表激活（双击 / 回车）—— fs 页「双击包列表＝加载」 */
+    [](plug::UiHandle list, std::function<void(int)> on_activate) {
+        QWidget* container = unwrap(list);
+        if (container == nullptr) return;
+        if (auto* view = container->findChild<VirtualList*>()) {
+            view->set_on_activate(std::move(on_activate));
+        }
+    },
     /* list_content_height：内容总高（＝行数×行高）—— 宿主页/视口据此撑开滚动范围 */
     [](plug::UiHandle list) {
         QWidget* container = unwrap(list);

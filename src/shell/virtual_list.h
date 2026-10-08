@@ -66,8 +66,15 @@ public:
     int content_height() const { return total_ * row_height_; }
     void refresh();  // 按当前偏移/尺寸重算范围并复用行控件
 
+    // ★★ P13-2b：**激活**（双击 / 回车）—— fs 页「双击包列表＝加载」要的就是它。
+    //   回调给**行号**（与 `selected_row()` 同一坐标系：全体行里的下标，不是视口下标）。
+    void set_on_activate(std::function<void(int)> fn) { on_activate_ = std::move(fn); }
+    int activations() const { return activations_; }   // 判据用：真的回调过几次
+
 protected:
     void resizeEvent(QResizeEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;   // ★ P13-2b
+    void keyPressEvent(QKeyEvent* event) override;             // ★ P13-2b（回车）
 
 private:
     // 把"内容总高"发布成 Qt 动态属性（外层页的 `sync_inner_scroll()` 读它当 min_body_height）
@@ -81,6 +88,8 @@ private:
     int recycle_count_ = 0;
     QPair<int, int> range_ = {0, 0};
     std::function<QString(int)> provider_;
+    std::function<void(int)> on_activate_;
+    int activations_ = 0;
     QVector<QLabel*> widgets_;
 };
 

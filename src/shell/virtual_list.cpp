@@ -2,13 +2,17 @@
 
 #include "theme.h"
 
+#include <QKeyEvent>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QResizeEvent>
 #include <algorithm>
 
 namespace xrkit::shell {
 
 VirtualList::VirtualList(QWidget* parent) : QWidget(parent) {
+    // ★ P13-2b：要收键盘（回车激活）⇒ 必须能拿焦点
+    setFocusPolicy(Qt::StrongFocus);
     setObjectName(QStringLiteral("virtual_list"));
 }
 
@@ -59,6 +63,34 @@ QString VirtualList::row_text(int row) const {
 void VirtualList::set_selected_row(int row) {
     selected_ = row;
     refresh();
+}
+
+
+// ── ★★ P13-2b：激活（双击 / 回车）──────────────────────────────────────────────
+void VirtualList::mouseDoubleClickEvent(QMouseEvent* event) {
+    if (event == nullptr) return;
+    if (row_height_ > 0 && total_ > 0 && on_activate_ != nullptr) {
+        // ★ 行号 = **滚动偏移 + 视口内偏移 / 行高**（带偏移；滚动之后才对得上）
+        // ★ `top_` 是**像素**偏移（见 `visible_range(top, view_h, row_h, total)`
+        //   里的 `first = top // h`）⇒ 先加再除，别把像素当行号。
+        const int row = (top_ + static_cast<int>(event->position().y())) / row_height_;
+        const int clamped = row < 0 ? 0 : (row >= total_ ? total_ - 1 : row);
+        ++activations_;
+        on_activate_(clamped);
+    }
+    QWidget::mouseDoubleClickEvent(event);
+}
+
+void VirtualList::keyPressEvent(QKeyEvent* event) {
+    if (event == nullptr) return;
+    const int key = event->key();
+    if ((key == Qt::Key_Return || key == Qt::Key_Enter) && on_activate_ != nullptr &&
+        selected_ >= 0 && selected_ < total_) {
+        ++activations_;
+        on_activate_(selected_);
+        return;   // 吃掉（别让它再被当成普通按键）
+    }
+    QWidget::keyPressEvent(event);
 }
 
 void VirtualList::resizeEvent(QResizeEvent* event) {

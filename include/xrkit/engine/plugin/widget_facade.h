@@ -117,6 +117,10 @@ struct UiFacade {
     std::function<std::string(UiHandle list, int row)> list_row_text;
     std::function<void(UiHandle list, int row)> list_select_row;
     std::function<int(UiHandle list)> list_selected_row;
+    // ★★ P13-2b：**列表激活**（双击 / 回车）—— fs 页「双击包列表＝加载」。
+    //   回调给**行号**（全体行里的下标，与 `list_selected_row` 同一坐标系）。
+    std::function<void(UiHandle list, std::function<void(int)> on_activate)>
+        list_on_activate;
     std::function<int(UiHandle list)> list_content_height;
 
     // LogView：行式日志视图（**插件自己的**日志区；宿主日志栏是 `log_append`）

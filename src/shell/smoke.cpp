@@ -55,6 +55,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QKeyEvent>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
@@ -5664,6 +5665,15 @@ SmokeResult run_smoke() {
             "            with open(ctx_path, 'a', encoding='utf-8') as handle:\n"
             "                handle.write(label + chr(10))\n"
             "        ui.context_menu(action_tree, ['甲', '乙'], on_ctx_choose)\n"
+            "        # ★★ P13-2b：列表激活（双击/回车）\n"
+            "        act_list = ui.list(None, 18)\n"
+            "        ui.list_set_row_count(act_list, 40)\n"
+            "        ui.list_set_row_text(act_list, lambda row: '行' + str(row))\n"
+            "        act_path = _os.path.join(_tempfile.gettempdir(), 'xrkit_smoke_listact.txt')\n"
+            "        def on_list_activate(row):\n"
+            "            with open(act_path, 'a', encoding='utf-8') as handle:\n"
+            "                handle.write(str(row) + chr(10))\n"
+            "        ui.list_on_activate(act_list, on_list_activate)\n"
             "        mark('built')\n"
             "    api.register_tool('门面树夹具页', build, 8)\n";
         QFile plugin_file(QDir(dir).filePath(QStringLiteral("l6_demo.py")));
@@ -5831,6 +5841,55 @@ SmokeResult run_smoke() {
             check(seen_only == QStringList({QStringLiteral("甲"), QStringLiteral("乙")}),
                   QStringLiteral("P13-2a-2 插件页菜单里混进了别的项（实得 [%1]）")
                       .arg(seen_only.join(QStringLiteral("/"))));
+        }
+
+        // ★★ P13-2b：列表激活（双击 / 回车）—— **带滚动偏移**的合成事件
+        {
+            const QString act_path =
+                QDir::temp().filePath(QStringLiteral("xrkit_smoke_listact.txt"));
+            QFile::remove(act_path);
+            VirtualList* act_view = nullptr;
+            if (page_widget != nullptr) {
+                for (VirtualList* candidate : page_widget->findChildren<VirtualList*>()) {
+                    if (candidate->row_count() == 40) {
+                        act_view = candidate;
+                        break;
+                    }
+                }
+            }
+            check(act_view != nullptr, QStringLiteral("P13-2b 没找到 40 行的门面列表"));
+            if (act_view != nullptr) {
+                // ★ 键盘事件只发给**焦点控件**，而不可见控件拿不到焦点
+                //   ⇒ 先把这一页切到当前（自检里的一次"真导航"）
+                for (int i = 0; i < hub.page_count(); ++i) {
+                    if (hub.stack()->widget(i) == page_widget) {
+                        hub.stack()->setCurrentIndex(i);
+                        break;
+                    }
+                }
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
+                const int row_h = act_view->row_height();
+                // 先滚到第 5 行 ⇒ 双击 y=2×行高 处应当命中 **7**
+                act_view->set_scroll_top(row_h * 5);
+                const QPointF at(6.0, static_cast<qreal>(row_h * 2 + 1));
+                QMouseEvent double_click(QEvent::MouseButtonDblClick, at, at, at,
+                                         Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(act_view, &double_click);
+                // ★ 回车那条**不判**（见文件头/批报告：离屏自检里键盘事件
+                //   送不到目标控件；`QWidget::event` 是 protected，QtTest 没链）
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
+            }
+            QStringList fired;
+            {
+                QFile log(act_path);
+                if (log.open(QIODevice::ReadOnly)) {
+                    const QString all = QString::fromUtf8(log.readAll()).trimmed();
+                    if (!all.isEmpty()) fired = all.split(QChar('\n'));
+                }
+            }
+            check(fired == QStringList({QStringLiteral("7")}),
+                  QStringLiteral("P13-2b 双击激活没拿到正确行号（滚到第 5 行后点视口第 2 行应=7；"
+                                 "实得 [%1]）").arg(fired.join(QStringLiteral("/"))));
         }
         const auto read_file = [](const QString& path) {
             QFile file(path);
