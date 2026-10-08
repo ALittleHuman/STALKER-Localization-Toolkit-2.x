@@ -57,6 +57,8 @@ const char* const kMethodNames[] = {
     "fs_collect_pack_files", "fs_extract_package",
     // ★★ P14-0d：fs 面第四批（封包）
     "fs_pack_squashfs", "fs_pack_db",
+    // ★★ P16-1a：统一产物模型（清单/安装/还原）
+    "pkg_write_manifest", "pkg_install", "pkg_restore",
 };
 
 bool has_impl(const EngineFacade& facade, const std::string& name) {
@@ -130,6 +132,9 @@ bool has_impl(const EngineFacade& facade, const std::string& name) {
     if (name == "fs_extract_package") return static_cast<bool>(facade.fs_extract_package);
     if (name == "fs_pack_squashfs") return static_cast<bool>(facade.fs_pack_squashfs);
     if (name == "fs_pack_db") return static_cast<bool>(facade.fs_pack_db);
+    if (name == "pkg_write_manifest") return static_cast<bool>(facade.pkg_write_manifest);
+    if (name == "pkg_install") return static_cast<bool>(facade.pkg_install);
+    if (name == "pkg_restore") return static_cast<bool>(facade.pkg_restore);
     return false;
 }
 

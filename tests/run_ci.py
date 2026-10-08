@@ -2679,6 +2679,23 @@ def step_engine_facade(release: bool) -> None:
         got = value_of(key)
         if got != want:
             problems.append("fs 封包 %s=%s（应为 %s）" % (key, got or "(缺)", want))
+
+    # ── ★★ P16-1a：统一产物模型（清单/安装/还原）────────────────────────────
+    pkg_expect = {
+        "pkg_manifest_ok": "1",          # 清单原子写 + 写后回读校验
+        "pkg_install_ok": "1",
+        "pkg_install_count": "2",
+        "pkg_overwritten_visible": "1",  # ★ 覆盖必须可见（逐条）
+        "pkg_target_new": "1",           # 真装进去了（目标是新内容）
+        "pkg_restore_ok": "1",
+        "pkg_restore_counts": "1",       # 还原 1 条 + 删掉 1 条（原本不存在的）
+        "pkg_restored_bytes": "1",       # ★ 逐字节回旧
+        "pkg_removed_new": "1",          # ★ 装了新文件要能退回去（删掉）
+    }
+    for key, want in pkg_expect.items():
+        got = value_of(key)
+        if got != want:
+            problems.append("产物模型 %s=%s（应为 %s）" % (key, got or "(缺)", want))
     if not value_of("video_encoder"):
         problems.append("video 面 video_encoder 是空的（面板值必须来自 plan_transcode）")
     say("  夹具证据：%s" % text.replace("\n", " | ")[:260])

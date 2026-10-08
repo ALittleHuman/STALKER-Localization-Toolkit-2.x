@@ -207,6 +207,10 @@ EXPECT_ENGINE = {
     # ★★ P14-0d：fs 面第四批（封包）
     "fs_pack_squashfs": "封 SquashFS（引擎落盘；返回 inode/块/去重计数）",
     "fs_pack_db": "封 X-Ray DB（读文件→编码→原子写盘；**名字改写台账**）",
+    # ★★ P16-1a：统一产物模型（清单/安装/还原）
+    "pkg_write_manifest": "清单原子写 + 写后回读校验",
+    "pkg_install": "装产物：先备份被覆盖的原件 + 逐条台账（覆盖必须可见）",
+    "pkg_restore": "还原：有备份逐字节回；原本不存在 ⇒ 删掉（可回退）",
 }
 # ★★ P7b：**宿主服务门面**（`api.host.*`）—— 宿主替插件办的杂事（样板页 fontpack 真的要用）
 EXPECT_HOST = {

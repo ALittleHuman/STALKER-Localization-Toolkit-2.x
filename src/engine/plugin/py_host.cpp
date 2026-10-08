@@ -976,6 +976,22 @@ std::vector<FsPackItem> fs_pack_items_from_python(const py::object& items) {
     return out;
 }
 
+std::vector<PkgEntry> pkg_entries_from_python(const py::object& entries) {
+    std::vector<PkgEntry> out;
+    if (entries.is_none() != 0) return out;
+    for (auto item : py::list(entries)) {
+        py::dict row = py::reinterpret_borrow<py::dict>(item);
+        PkgEntry one;
+        if (row.contains("rel")) one.rel = py::str(row["rel"]).cast<std::string>();
+        if (row.contains("source_path")) {
+            one.source_path = py::str(row["source_path"]).cast<std::string>();
+        }
+        if (row.contains("sha256")) one.sha256 = py::str(row["sha256"]).cast<std::string>();
+        out.push_back(std::move(one));
+    }
+    return out;
+}
+
 // ── ★★ P7a：引擎调用门面在 Python 侧的形态（`api.engine.*`）──────────────────
 // 口径（用户拍板的方案 3）：
 //   · **值类型 Python 友好**：出入都是 dict / list / str / int，**不漏 C++ 结构体与指针**；
@@ -1654,6 +1670,47 @@ public:
             rewrites.append(row);
         }
         out["rewrites"] = rewrites;
+        return out;
+    }
+    // ── ★★ P16-1a：统一产物模型（清单/安装/还原）──────────────────────────
+    py::object pkg_write_manifest(const std::string& path, py::object entries) const {
+        const EngineFacade* facade = available("pkg_write_manifest");
+        if (facade == nullptr) return py::none();
+        std::string error;
+        const bool ok = facade->pkg_write_manifest(path, pkg_entries_from_python(entries), error);
+        py::dict out;
+        out["ok"] = ok;
+        out["error"] = error;
+        return out;
+    }
+    py::object pkg_install(const std::string& target_root, py::object entries,
+                           const std::string& backup_root) const {
+        const EngineFacade* facade = available("pkg_install");
+        if (facade == nullptr) return py::none();
+        const PkgInstallResult native =
+            facade->pkg_install(target_root, pkg_entries_from_python(entries), backup_root);
+        py::dict out;
+        out["ok"] = native.ok;
+        out["error"] = native.error;
+        out["backup_dir"] = native.backup_dir;
+        out["installed"] = native.installed;
+        out["overwritten"] = native.overwritten;
+        out["failures"] = native.failures;
+        return out;
+    }
+    py::object pkg_restore(const std::string& target_root, const std::string& backup_root,
+                           py::object rels) const {
+        const EngineFacade* facade = available("pkg_restore");
+        if (facade == nullptr) return py::none();
+        const PkgRestoreResult native =
+            facade->pkg_restore(target_root, backup_root, fs_strings_from_python(rels));
+        py::dict out;
+        out["ok"] = native.ok;
+        out["error"] = native.error;
+        out["restored"] = native.restored;
+        out["removed"] = native.removed;
+        out["missing"] = native.missing;
+        out["failures"] = native.failures;
         return out;
     }
 
@@ -2779,6 +2836,13 @@ void ensure_api_module() {
                  py::arg("items"))
             .def("fs_pack_db", &PyEngine::fs_pack_db, py::arg("out_path"), py::arg("items"),
                  py::arg("format_key"))
+            // ★★ P16-1a：统一产物模型（清单/安装/还原）
+            .def("pkg_write_manifest", &PyEngine::pkg_write_manifest, py::arg("path"),
+                 py::arg("entries"))
+            .def("pkg_install", &PyEngine::pkg_install, py::arg("target_root"),
+                 py::arg("entries"), py::arg("backup_root") = "")
+            .def("pkg_restore", &PyEngine::pkg_restore, py::arg("target_root"),
+                 py::arg("backup_root"), py::arg("rels"))
 ;
         py::class_<PyWidget>(m, "Widget")
             .def("__repr__", [](const PyWidget& widget) {

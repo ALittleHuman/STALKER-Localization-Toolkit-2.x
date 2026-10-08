@@ -942,6 +942,115 @@ const EngineFacade kFontFacade = {
         }
         return out;
     },
+    /* pkg_write_manifest：清单**原子写** + 写后回读校验（每行 `rel\tsha256\tsource`） */
+    [](const std::string& path, const std::vector<PkgEntry>& entries, std::string& error) {
+        std::string text = "# xrkit package manifest v1\n";
+        for (const PkgEntry& item : entries) {
+            text += item.rel + "\t" + item.sha256 + "\t" + item.source_path + "\n";
+        }
+        std::vector<uint8_t> raw(text.begin(), text.end());
+        if (!core::write_file_atomic(path, raw, true, error)) return false;
+        std::ifstream back(core::path_from_utf8(path), std::ios::binary);
+        if (!back) {
+            error = "写后回读打不开：" + path;
+            return false;
+        }
+        const std::string read_back((std::istreambuf_iterator<char>(back)),
+                                    std::istreambuf_iterator<char>());
+        if (read_back != text) {
+            error = "写后回读不一致（清单没落对）";
+            return false;
+        }
+        return true;
+    },
+    /* pkg_install：**先备份被覆盖的原件**再逐条落盘；台账逐条（installed/overwritten/failures） */
+    [](const std::string& target_root, const std::vector<PkgEntry>& entries,
+       const std::string& backup_root) {
+        PkgInstallResult out;
+        std::error_code ec;
+        const std::filesystem::path root = core::path_from_utf8(target_root);
+        for (const PkgEntry& item : entries) {
+            if (item.rel.empty()) {
+                out.failures.push_back("(空 rel)：跳过");
+                continue;
+            }
+            const std::filesystem::path target = root / core::path_from_utf8(item.rel);
+            std::ifstream in(core::path_from_utf8(item.source_path), std::ios::binary);
+            if (!in) {
+                out.failures.push_back(item.rel + "：读不出来源文件");
+                continue;
+            }
+            const std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)),
+                                            std::istreambuf_iterator<char>());
+            // ★ 先备份（还原要靠它）；备份路径＝<backup_root>/<rel>
+            if (!backup_root.empty()) {
+                const std::filesystem::path backup =
+                    core::path_from_utf8(backup_root) / core::path_from_utf8(item.rel);
+                std::filesystem::create_directories(backup.parent_path(), ec);
+                if (std::filesystem::exists(target, ec)) {
+                    std::filesystem::copy_file(target, backup,
+                                               std::filesystem::copy_options::overwrite_existing,
+                                               ec);
+                    if (ec) {
+                        out.failures.push_back(item.rel + "：备份原件失败（" + ec.message() + "）");
+                        continue;
+                    }
+                    out.overwritten.push_back(item.rel);   // ★ 覆盖必须可见
+                }
+                out.backup_dir = backup_root;
+            }
+            std::filesystem::create_directories(target.parent_path(), ec);
+            std::string write_error;
+            if (!core::write_file_atomic(core::path_to_utf8(target), data, true, write_error)) {
+                out.failures.push_back(item.rel + "：落盘失败（" + write_error + "）");
+                continue;
+            }
+            out.installed.push_back(item.rel);
+        }
+        out.ok = out.failures.empty();
+        if (!out.ok) out.error = "有 %d 条没装上（见 failures）" + std::to_string(out.failures.size());
+        return out;
+    },
+    /* pkg_restore：有备份 ⇒ 逐字节还原；原本不存在（没备份）⇒ **删掉**（装了新文件要能退回去） */
+    [](const std::string& target_root, const std::string& backup_root,
+       const std::vector<std::string>& rels) {
+        PkgRestoreResult out;
+        std::error_code ec;
+        const std::filesystem::path root = core::path_from_utf8(target_root);
+        for (const std::string& rel : rels) {
+            const std::filesystem::path target = root / core::path_from_utf8(rel);
+            const std::filesystem::path backup =
+                core::path_from_utf8(backup_root) / core::path_from_utf8(rel);
+            if (std::filesystem::exists(backup, ec)) {
+                std::ifstream in(backup, std::ios::binary);
+                if (!in) {
+                    out.failures.push_back(rel + "：备份打不开");
+                    continue;
+                }
+                const std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)),
+                                                std::istreambuf_iterator<char>());
+                std::string write_error;
+                if (!core::write_file_atomic(core::path_to_utf8(target), data, true, write_error)) {
+                    out.failures.push_back(rel + "：还原落盘失败（" + write_error + "）");
+                    continue;
+                }
+                ++out.restored;
+            } else {
+                out.missing.push_back(rel);
+                std::filesystem::remove(target, ec);   // 装了新文件 ⇒ 退回去＝删掉
+                if (ec) {
+                    out.failures.push_back(rel + "：删不掉（" + ec.message() + "）");
+                    continue;
+                }
+                ++out.removed;
+            }
+        }
+        out.ok = out.failures.empty();
+        if (!out.ok) {
+            out.error = "有 " + std::to_string(out.failures.size()) + " 条没还原（见 failures）";
+        }
+        return out;
+    },
 };
 
 }  // namespace

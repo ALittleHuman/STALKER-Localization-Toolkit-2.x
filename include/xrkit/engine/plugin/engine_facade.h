@@ -533,6 +533,33 @@ struct FsDbPackResult {
     std::vector<FsNameRewrite> rewrites;   // ★ 零静默：改了哪些、改成了什么
 };
 
+
+// ── ★★ P16-1a：**统一产物模型**的地基（规格第 50 行：字库+ltx 改写+xml 译文+二进制补丁
+//   +**安装/还原+清单/哈希+台账**；第 16 行③★**可回退**："任何产物可还原，二进制补丁尤甚"）
+struct PkgEntry {
+    std::string rel;          // 目标根之下的相对路径（'/' 分隔）
+    std::string source_path;  // 要装进去的本机文件（UTF-8）
+    std::string sha256;       // 由**插件**算（核心层没有 sha256；门禁也用 hashlib，同一把尺子）
+};
+
+struct PkgInstallResult {
+    bool ok = false;
+    std::string error;
+    std::string backup_dir;               // 备份落在哪（还原要用；空 = 没备份）
+    std::vector<std::string> installed;   // 逐条台账
+    std::vector<std::string> overwritten; // ★ 覆盖必须可见
+    std::vector<std::string> failures;    // 逐条失败（"rel：原因"）
+};
+
+struct PkgRestoreResult {
+    bool ok = false;
+    std::string error;
+    int restored = 0;                     // 从备份还原回来的
+    int removed = 0;                      // 原本不存在 ⇒ 删掉的（装了新文件要能退回去）
+    std::vector<std::string> missing;     // 备份里找不到的（逐条）
+    std::vector<std::string> failures;    // 逐条失败（"rel：原因"）
+};
+
 struct EngineFacade {
     std::function<FontCheckResult(const std::string& font_path)> font_check;
     std::function<FontPackResult(const FontPackOptions& options)> font_pack;
@@ -664,6 +691,19 @@ struct EngineFacade {
     std::function<FsDbPackResult(const std::string& out_path, const std::vector<FsPackItem>& items,
                                  const std::string& format_key)>
         fs_pack_db;
+
+    // ── ★★ P16-1a：统一产物模型（清单 / 安装 / 还原）──────────────────────
+    std::function<bool(const std::string& path, const std::vector<PkgEntry>& entries,
+                       std::string& error)>
+        pkg_write_manifest;
+    std::function<PkgInstallResult(const std::string& target_root,
+                                   const std::vector<PkgEntry>& entries,
+                                   const std::string& backup_root)>
+        pkg_install;
+    std::function<PkgRestoreResult(const std::string& target_root,
+                                   const std::string& backup_root,
+                                   const std::vector<std::string>& rels)>
+        pkg_restore;
 };
 
 // 外壳注入实现（`src/shell/engine_facade_impl.cpp`）。传 nullptr = 撤销。

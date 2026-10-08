@@ -611,6 +611,47 @@ def register(api):
     mark("pack_db_bad_format_rejected:%d" % (1 if not bad["ok"] else 0))
     mark("pack_db_bad_format_reason:%d" % (1 if bad["error"] else 0))
 
+    # ── ★★ P16-1a：统一产物模型（清单 / 安装 / 还原）────────────────────────
+    import hashlib as _hashlib
+    pkg_root = os.path.join(work, "pkg_target")
+    os.makedirs(pkg_root, exist_ok=True)
+    with open(os.path.join(pkg_root, "a.txt"), "w", encoding="utf-8") as handle:
+        handle.write("OLD")
+    pkg_src = os.path.join(work, "pkg_src")
+    os.makedirs(pkg_src, exist_ok=True)
+    with open(os.path.join(pkg_src, "a.txt"), "w", encoding="utf-8") as handle:
+        handle.write("NEW")
+    with open(os.path.join(pkg_src, "b.txt"), "w", encoding="utf-8") as handle:
+        handle.write("BEE")
+
+    def _entry(rel, name):
+        path = os.path.join(pkg_src, name)
+        with open(path, "rb") as handle:
+            digest = _hashlib.sha256(handle.read()).hexdigest()
+        return {"rel": rel, "source_path": path, "sha256": digest}
+
+    entries = [_entry("a.txt", "a.txt"), _entry("sub/b.txt", "b.txt")]
+    backup = os.path.join(work, "pkg_backup")
+    manifest = os.path.join(work, "pkg_manifest.tsv")
+    wrote = engine.pkg_write_manifest(manifest, entries)
+    mark("pkg_manifest_ok:%d" % (1 if wrote["ok"] else 0))
+    installed = engine.pkg_install(pkg_root, entries, backup)
+    mark("pkg_install_ok:%d" % (1 if installed["ok"] else 0))
+    mark("pkg_install_count:%d" % len(installed["installed"]))
+    mark("pkg_overwritten_visible:%d" % (1 if installed["overwritten"] == ["a.txt"] else 0))
+    with open(os.path.join(pkg_root, "a.txt"), encoding="utf-8") as handle:
+        new_text = handle.read()
+    mark("pkg_target_new:%d" % (1 if new_text == "NEW" else 0))
+    restore = engine.pkg_restore(pkg_root, backup, ["a.txt", "sub/b.txt"])
+    mark("pkg_restore_ok:%d" % (1 if restore["ok"] else 0))
+    mark("pkg_restore_counts:%d"
+         % (1 if restore["restored"] == 1 and restore["removed"] == 1 else 0))
+    with open(os.path.join(pkg_root, "a.txt"), encoding="utf-8") as handle:
+        back_text = handle.read()
+    mark("pkg_restored_bytes:%d" % (1 if back_text == "OLD" else 0))
+    mark("pkg_removed_new:%d"
+         % (1 if not os.path.exists(os.path.join(pkg_root, "sub", "b.txt")) else 0))
+
     mark("done")
     # ★ 夹具自清：`convert_work` 不留痕（插件目录里只该留 marker —— 门禁按行断言它）
     shutil.rmtree(work, ignore_errors=True)
