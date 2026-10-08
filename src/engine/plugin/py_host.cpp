@@ -714,6 +714,74 @@ XmlCsvReport xml_csv_report_from_python(const py::object& report) {
 }
 
 
+// ── ★★ P12b：宿主服务「跑进程」的入参转换（dict → 门面 POD）──────────────────
+// ★★ P12b：子进程的字节流跨到 Python 时**一律"带替换地"解 UTF-8** ——
+//   真 ffmpeg 的 stderr 里会出现本地编码的路径，直接 `py::str(std::string)` 会抛
+//   UnicodeDecodeError 把宿主掀翻（判据现场就是这么抓到的）。
+py::str python_text_from_bytes(const std::string& text) {
+    return py::str(PyUnicode_DecodeUTF8(text.data(), static_cast<Py_ssize_t>(text.size()),
+                                        "replace"));
+}
+
+ProcessRunOptions process_options_from_python(const py::object& options) {
+    ProcessRunOptions out;
+    if (options.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(options);
+    if (data.contains("program")) out.program = py::str(data["program"]).cast<std::string>();
+    if (data.contains("working_dir")) {
+        out.working_dir = py::str(data["working_dir"]).cast<std::string>();
+    }
+    if (data.contains("args")) {
+        for (auto item : py::list(data["args"])) {
+            out.args.push_back(py::str(item).cast<std::string>());
+        }
+    }
+    if (data.contains("stderr_tail_bytes")) {
+        out.stderr_tail_bytes = py::cast<std::size_t>(data["stderr_tail_bytes"]);
+    }
+    if (data.contains("cancel_wait_ms")) {
+        out.cancel_wait_ms = py::cast<int>(data["cancel_wait_ms"]);
+    }
+    const auto hold = [&data](const char* key) -> py::object {
+        if (!data.contains(key) || data[key].is_none() != 0) return py::none();
+        py::object kept = data[key];
+        keepalive()->push_back(kept);
+        return kept;
+    };
+    py::object stop = hold("should_stop");
+    if (stop.is_none() == 0) {
+        out.should_stop = [stop]() -> bool {
+            py::gil_scoped_acquire acquire;
+            try {
+                return py::cast<bool>(stop());
+            } catch (const py::error_already_set&) {
+                return false;   // 回调炸了 ⇒ 别把子进程无故杀掉
+            }
+        };
+    }
+    py::object on_stdout = hold("on_stdout");
+    if (on_stdout.is_none() == 0) {
+        out.on_stdout = [on_stdout](const std::string& line) {
+            py::gil_scoped_acquire acquire;
+            try {
+                on_stdout(python_text_from_bytes(line));
+            } catch (const py::error_already_set&) {
+            }
+        };
+    }
+    py::object on_stderr = hold("on_stderr");
+    if (on_stderr.is_none() == 0) {
+        out.on_stderr = [on_stderr](const std::string& line) {
+            py::gil_scoped_acquire acquire;
+            try {
+                on_stderr(python_text_from_bytes(line));
+            } catch (const py::error_already_set&) {
+            }
+        };
+    }
+    return out;
+}
+
 XmlDirDiffOptions xml_dir_options_from_python(const py::object& options) {
     XmlDirDiffOptions out;
     if (options.is_none() != 0) return out;
@@ -1263,6 +1331,25 @@ public:
             return strings_to_python(facade->system_font_dirs());
         }
         return py::list();
+    }
+
+    // ── ★★ P12b：跑外部进程（宿主服务；语义唯一一份在引擎 `process/run.cpp`）────
+    py::object run_process(py::object options) const {
+        const HostFacade* facade = available("run_process");
+        if (facade == nullptr) return py::none();
+        const ProcessRunResult result =
+            facade->host_run_process(process_options_from_python(options));
+        py::dict out;
+        out["started"] = result.started;
+        out["cancelled"] = result.cancelled;
+        out["cancel_timeout"] = result.cancel_timeout;
+        out["normal_exit"] = result.normal_exit;
+        out["exit_code"] = result.exit_code;
+        out["error"] = result.error;
+        out["stderr_tail"] = python_text_from_bytes(result.stderr_tail);
+        out["stdout_lines"] = result.stdout_lines;
+        out["stderr_lines"] = result.stderr_lines;
+        return out;
     }
 
 private:
@@ -1980,7 +2067,9 @@ void ensure_api_module() {
             .def("pref_set", &PyHost::pref_set, py::arg("section"), py::arg("key"),
                  py::arg("value"))
             .def("app_dir", &PyHost::app_dir)
-            .def("system_font_dirs", &PyHost::system_font_dirs);
+            .def("system_font_dirs", &PyHost::system_font_dirs)
+            // ★★ P12b：跑外部进程（宿主服务）
+            .def("run_process", &PyHost::run_process, py::arg("options"));
         py::class_<PyEngine>(m, "Engine")
             .def("font_check", &PyEngine::font_check, py::arg("font_path"))
             .def("font_pack", &PyEngine::font_pack, py::arg("options"))

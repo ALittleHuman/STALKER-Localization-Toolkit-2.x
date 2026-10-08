@@ -4,6 +4,7 @@
 //   不依赖 Qt、也不依赖外壳 ⇒ CLI（`xrkit_cli.exe --py-plugins`）与 GUI 两个宿主都能用。
 //   （同 P7a 的教训：把只依赖引擎的东西放外壳，CLI 那个宿主就用不到。）
 
+#include "xrkit/engine/process/run.h"
 #include "xrkit/engine/plugin/host_facade.h"
 
 #include "xrkit/core/theme.h"
@@ -17,6 +18,7 @@ namespace {
 
 namespace core = xrkit::core;
 namespace efont = xrkit::engine::font;
+namespace eprocess = xrkit::engine::process;
 
 const HostFacade kHostFacade = {
     /* pref_get：读 `user.ltx` 的 `[section] key`（缺失返回 fallback） */
@@ -31,6 +33,30 @@ const HostFacade kHostFacade = {
     []() { return core::app_dir(); },
     /* system_font_dirs：唯一一份（内置页与插件共用；逐条照 1.x） */
     []() { return efont::system_font_dirs(); },
+    /* host_run_process：**唯一一份**进程语义（CREATE_NO_WINDOW / 真停 / 如实退码 / stderr 尾巴） */
+    [](const ProcessRunOptions& options) {
+        eprocess::RunOptions native;
+        native.program = options.program;
+        native.args = options.args;
+        native.working_dir = options.working_dir;
+        native.stderr_tail_bytes = options.stderr_tail_bytes;
+        native.cancel_wait_ms = options.cancel_wait_ms;
+        native.should_stop = options.should_stop;
+        native.on_stdout = options.on_stdout;
+        native.on_stderr = options.on_stderr;
+        const eprocess::RunResult native_result = eprocess::run(native);
+        ProcessRunResult out;
+        out.started = native_result.started;
+        out.cancelled = native_result.cancelled;
+        out.cancel_timeout = native_result.cancel_timeout;
+        out.normal_exit = native_result.normal_exit;
+        out.exit_code = native_result.exit_code;
+        out.error = native_result.error;
+        out.stderr_tail = native_result.stderr_tail;
+        out.stdout_lines = native_result.stdout_lines;
+        out.stderr_lines = native_result.stderr_lines;
+        return out;
+    },
 };
 
 }  // namespace

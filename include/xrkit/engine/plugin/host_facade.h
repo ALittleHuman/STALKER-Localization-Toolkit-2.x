@@ -19,6 +19,35 @@
 
 namespace xrkit::plugin {
 
+
+// ── ★★ P12b：**跑外部进程**（宿主服务；语义唯一一份在 `engine/process/run.cpp`）────
+//   为什么要它：视频页要跑 ffprobe / `ffmpeg -encoders` / ffmpeg 转码，而"取消要真停、
+//   退出码如实报、stderr 尾巴可见、不许弹控制台"是**产品语义** —— 插件侧自己写
+//   `subprocess` 就是第二份实现（那正是本仓门禁反复拦的形态）。
+
+struct ProcessRunOptions {
+    std::string program;
+    std::vector<std::string> args;
+    std::string working_dir;
+    std::size_t stderr_tail_bytes = 8192;
+    int cancel_wait_ms = 5000;
+    std::function<bool()> should_stop;
+    std::function<void(const std::string&)> on_stdout;
+    std::function<void(const std::string&)> on_stderr;
+};
+
+struct ProcessRunResult {
+    bool started = false;
+    bool cancelled = false;
+    bool cancel_timeout = false;
+    bool normal_exit = false;
+    int exit_code = -1;
+    std::string error;
+    std::string stderr_tail;
+    uint64_t stdout_lines = 0;
+    uint64_t stderr_lines = 0;
+};
+
 struct HostFacade {
     // 用户偏好（`user.ltx` 里 `[section] key=value`）：**只读写点名的那一项**，不整块覆盖
     std::function<std::string(const std::string& section, const std::string& key,
@@ -31,6 +60,7 @@ struct HostFacade {
     std::function<std::string()> app_dir;
     // 系统字体目录（唯一一份：内置页与插件共用）
     std::function<std::vector<std::string>()> system_font_dirs;
+    std::function<ProcessRunResult(const ProcessRunOptions&)> host_run_process;
 };
 
 void set_host_facade(const HostFacade* facade);

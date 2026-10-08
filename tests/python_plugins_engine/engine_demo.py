@@ -387,6 +387,50 @@ def register(api):
     mark("video_version_ok_6:%d"
          % (1 if not engine.video_version_rejected("ffmpeg version 6.1.1") else 0))
 
+    # ── ★★ P12b：宿主服务「跑进程」（第五页视频转码要用；语义唯一一份在引擎）────
+    import time as _time
+
+    echo_lines = []
+    echo = api.host.run_process({"program": "cmd", "args": ["/c", "echo hello"],
+                                 "on_stdout": echo_lines.append})
+    mark("proc_echo_started:%d" % (1 if echo["started"] else 0))
+    mark("proc_echo_exit:%d" % echo["exit_code"])
+    mark("proc_echo_line:%d" % (1 if any("hello" in line for line in echo_lines) else 0))
+    mark("proc_echo_normal:%d" % (1 if echo["normal_exit"] else 0))
+
+    failed = api.host.run_process({"program": "cmd", "args": ["/c", "exit 3"]})
+    mark("proc_exit3_code:%d" % failed["exit_code"])
+    mark("proc_exit3_normal:%d" % (1 if failed["normal_exit"] else 0))
+
+    err_lines = []
+    stderr_run = api.host.run_process({"program": "cmd",
+                                       "args": ["/c", "echo problem 1>&2"],
+                                       "on_stderr": err_lines.append})
+    mark("proc_stderr_tail:%d" % (1 if "problem" in stderr_run["stderr_tail"] else 0))
+    mark("proc_stderr_lines:%d" % (1 if stderr_run["stderr_lines"] > 0 else 0))
+
+    # 取消：孙进程要活 20 秒；谓词第一次问就说停 ⇒
+    #   ① 立刻回来；② **整棵树**真停（取消后 `tasklist` 里不该还有 ping.exe）
+    started_at = _time.time()
+    cancelled = api.host.run_process({"program": "cmd",
+                                      "args": ["/c", "ping -n 20 127.0.0.1"],
+                                      "should_stop": (lambda: True)})
+    elapsed = _time.time() - started_at
+    mark("proc_cancel_flag:%d" % (1 if cancelled["cancelled"] else 0))
+    mark("proc_cancel_timeout:%d" % (1 if cancelled["cancel_timeout"] else 0))
+    mark("proc_cancel_fast:%d" % (1 if elapsed < 3.0 else 0))
+
+    listing = []
+    api.host.run_process({"program": "cmd",
+                          "args": ["/c", "tasklist /FI \"IMAGENAME eq ping.exe\" /NH"],
+                          "on_stdout": listing.append})
+    orphan = any("ping.exe" in line for line in listing)
+    mark("proc_cancel_orphan:%d" % (1 if orphan else 0))
+
+    missing = api.host.run_process({"program": "definitely_no_such_program_xyz"})
+    mark("proc_missing_started:%d" % (1 if missing["started"] else 0))
+    mark("proc_missing_error:%d" % (1 if missing["error"] else 0))
+
     mark("done")
     # ★ 夹具自清：`convert_work` 不留痕（插件目录里只该留 marker —— 门禁按行断言它）
     shutil.rmtree(work, ignore_errors=True)

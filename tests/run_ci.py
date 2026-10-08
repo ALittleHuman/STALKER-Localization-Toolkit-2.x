@@ -2558,6 +2558,28 @@ def step_engine_facade(release: bool) -> None:
         got = value_of(key)
         if got != want:
             problems.append("video 面 %s=%s（应为 %s）" % (key, got or "(缺)", want))
+
+    # ── ★★ P12b：宿主服务「跑进程」（第五页视频转码要用；语义唯一一份在引擎）────
+    proc_expect = {
+        "proc_echo_started": "1",
+        "proc_echo_exit": "0",
+        "proc_echo_line": "1",          # on_stdout 真的逐行回调
+        "proc_echo_normal": "1",
+        "proc_exit3_code": "3",         # ★退出码如实（不把"起不来"混进来）
+        "proc_exit3_normal": "1",
+        "proc_stderr_tail": "1",        # ★stderr 尾巴看得见
+        "proc_stderr_lines": "1",
+        "proc_cancel_flag": "1",        # ★取消真停
+        "proc_cancel_timeout": "0",     # 而且是"真死透"，不是等超时
+        "proc_cancel_fast": "1",        # 立刻回来（<3 秒）⇒ 证明是停它而不是等它
+        "proc_cancel_orphan": "0",     # ★整棵树真停（取消后 tasklist 里没有 ping.exe）
+        "proc_missing_started": "0",    # 起不来要如实说
+        "proc_missing_error": "1",
+    }
+    for key, want in proc_expect.items():
+        got = value_of(key)
+        if got != want:
+            problems.append("跑进程 %s=%s（应为 %s）" % (key, got or "(缺)", want))
     if not value_of("video_encoder"):
         problems.append("video 面 video_encoder 是空的（面板值必须来自 plan_transcode）")
     say("  夹具证据：%s" % text.replace("\n", " | ")[:260])
@@ -2569,8 +2591,8 @@ def step_engine_facade(release: bool) -> None:
            "convert 面：逐字节·备份恢复清空·CSV 带 BOM / text 面：校验·判定·真提取·取消语义 / "
            "xml 面：模式表·两种对比·单侧·引擎明细·CSV 往返一致 / "
            "**目录对比**：配对·四种 kind·递归·筛选·取消 / "
-           "video 面：ffprobe 解析·编码器表·argv 与面板值·输出撞车·进度上限 99.5·版本闸门）"
-           % state)
+           "video 面：ffprobe 解析·编码器表·argv 与面板值·输出撞车·进度上限 99.5·版本闸门 / "
+           "跑进程：逐行回调·退码如实·stderr 尾巴·取消真停且立刻回来·起不来要报）" % state)
     else:
         say("  · 未覆盖：font_check 的真字体那条（本机没有 msyh/simsun）")
         ok("引擎门面四处都通（槽位 / 四态文案 / 工作线程可调 / convert 面整条链路）；"

@@ -18,6 +18,7 @@ add_library(xrkit_engine STATIC
   text/extract.cpp
   xml/compare.cpp
   xml/dirdiff.cpp
+  process/run.cpp
   video/ffmpeg.cpp
   video/transcode.cpp
   plugin/contract.cpp
