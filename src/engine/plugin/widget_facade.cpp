@@ -27,7 +27,8 @@ UiHandle& panel_root_storage() {
 // 门面里"哪些字段是实现的"：名字与 `UiFacade` 的字段一一对应（判据按它对账）。
 const char* const kMethodNames[] = {
     "label",      "button",     "row",       "checkbox",    "entry",     "text",
-    "combo",      "drop_box",   "pack",      "text_view",   "set_text",  "get_text",
+    "combo",      "drop_box",   "pack",      "text_view",   "progress",  "set_progress",
+    "progress_value", "set_text",  "get_text",
     "set_enabled", "alive",     "log_append", "ask_yes_no", "ask_open_file", "ask_save_file",
     // ★ P7c：目录选择（门面新能力；C ABI 那张表没有它）
     "ask_directory",
@@ -67,6 +68,9 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "drop_box") return static_cast<bool>(facade.drop_box);
     if (name == "pack") return static_cast<bool>(facade.pack);
     if (name == "text_view") return static_cast<bool>(facade.text_view);
+    if (name == "progress") return static_cast<bool>(facade.progress);
+    if (name == "set_progress") return static_cast<bool>(facade.set_progress);
+    if (name == "progress_value") return static_cast<bool>(facade.progress_value);
     if (name == "set_text") return static_cast<bool>(facade.set_text);
     if (name == "get_text") return static_cast<bool>(facade.get_text);
     if (name == "set_enabled") return static_cast<bool>(facade.set_enabled);

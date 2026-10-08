@@ -1473,6 +1473,26 @@ public:
             facade->pack(handle_of(parent), handle_of(child), side, fill, expand, padx, pady);
         }
     }
+    // ── ★★ P12c：进度条（video 页转码进度）────────────────────────────────────
+    py::object progress(py::object parent) const {
+        if (const UiFacade* facade = available("progress")) {
+            return wrap(facade->progress(handle_of(parent)));
+        }
+        return py::none();
+    }
+    bool set_progress(py::object widget, int percent) const {
+        if (const UiFacade* facade = available("set_progress")) {
+            facade->set_progress(handle_of(widget), percent);
+            return true;
+        }
+        return false;
+    }
+    int progress_value(py::object widget) const {
+        if (const UiFacade* facade = available("progress_value")) {
+            return facade->progress_value(handle_of(widget));
+        }
+        return 0;
+    }
     py::object text_view(py::object parent, int height, bool mono) const {
         if (const UiFacade* facade = available("text_view")) {
             return wrap(facade->text_view(handle_of(parent), height, mono));
@@ -2154,6 +2174,9 @@ void ensure_api_module() {
             .def("pack", &PyUi::pack, py::arg("parent") = py::none(), py::arg("child"),
                  py::arg("side") = "top", py::arg("fill") = "x", py::arg("expand") = false,
                  py::arg("padx") = 0, py::arg("pady") = 0)
+            .def("progress", &PyUi::progress, py::arg("parent") = py::none())
+            .def("set_progress", &PyUi::set_progress, py::arg("widget"), py::arg("percent"))
+            .def("progress_value", &PyUi::progress_value, py::arg("widget"))
             .def("text_view", &PyUi::text_view, py::arg("parent") = py::none(),
                  py::arg("height") = 0, py::arg("mono") = true)
             .def("set_text", &PyUi::set_text, py::arg("widget"), py::arg("text"))

@@ -5181,6 +5181,11 @@ SmokeResult run_smoke() {
             "        ui.combo(None, ['甲', '乙'], lambda v: mark('combo:' + v))\n"
             "        ui.checkbox(None, '勾我', lambda on: mark('check:%d' % int(on)))\n"
             "        ui.text_view(None, 4, True)\n"
+            "        bar = ui.progress(None)\n"
+            "        ui.set_progress(bar, 42)\n"
+            "        mark('progress_set:%d' % ui.progress_value(bar))\n"
+            "        ui.set_progress(bar, 150)\n"
+            "        mark('progress_clamped:%d' % ui.progress_value(bar))\n"
             "        def on_click():\n"
             "            mark('click:' + ui.get_text(entry))\n"
             "            ui.set_text(label, '点过了')\n"
@@ -5244,6 +5249,12 @@ SmokeResult run_smoke() {
         }
         check(marker_text.contains(QStringLiteral("click:初值")),
               QStringLiteral("P3 按钮没回到 Python 或 get_text 读不到输入框（标记=%1）")
+                  .arg(marker_text.isEmpty() ? QStringLiteral("(空)") : marker_text.simplified()));
+        check(marker_text.contains(QStringLiteral("progress_set:42")),
+              QStringLiteral("P12c 进度条设 42 没读回 42（标记=%1）")
+                  .arg(marker_text.isEmpty() ? QStringLiteral("(空)") : marker_text.simplified()));
+        check(marker_text.contains(QStringLiteral("progress_clamped:100")),
+              QStringLiteral("P12c 进度条设 150 没被夹到 100（标记=%1）")
                   .arg(marker_text.isEmpty() ? QStringLiteral("(空)") : marker_text.simplified()));
         QStringList labels_after;
         if (page_widget != nullptr) {

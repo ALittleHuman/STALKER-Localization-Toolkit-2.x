@@ -36,11 +36,13 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSplitter>
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <string>
@@ -249,6 +251,28 @@ const plug::UiFacade kQtFacade = {
         stk_widget* created = table()->text_view(nullptr, wrap(host), height, mono ? 1 : 0);
         place(host, unwrap(created));
         return handle_of(created);
+    },
+    /* progress：进度条（0–100） */
+    [](plug::UiHandle parent) {
+        QWidget* host = resolve_parent(parent);
+        auto* bar = new QProgressBar;
+        bar->setRange(0, 100);
+        bar->setValue(0);
+        place(host, bar);
+        return handle_of(wrap(bar));
+    },
+    /* set_progress：设值 —— ★**门面自己夹到 0–100**。
+       （判据现场：`QProgressBar::setValue` 对越界值**不改也不夹**（留旧值），与
+        `QAbstractSlider` 的行为不同 ⇒ 口径不能"托付给 Qt 版本"，必须我们自己定死。） */
+    [](plug::UiHandle widget, int percent) {
+        if (auto* bar = qobject_cast<QProgressBar*>(unwrap(widget))) {
+            bar->setValue(std::clamp(percent, 0, 100));
+        }
+    },
+    /* progress_value：读回（判据用） */
+    [](plug::UiHandle widget) -> int {
+        if (auto* bar = qobject_cast<QProgressBar*>(unwrap(widget))) return bar->value();
+        return 0;
     },
     /* set_text */
     [](plug::UiHandle widget, const std::string& text) {

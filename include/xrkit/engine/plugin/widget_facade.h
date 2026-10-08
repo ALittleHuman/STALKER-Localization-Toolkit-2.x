@@ -62,6 +62,10 @@ struct UiFacade {
                        const std::string& fill, bool expand, int padx, int pady)>
         pack;
     std::function<UiHandle(UiHandle parent, int height, bool mono)> text_view;
+    // ★★ P12c：**进度条**（video 页转码进度；0–100，设值按 Qt 口径夹紧）
+    std::function<UiHandle(UiHandle parent)> progress;
+    std::function<void(UiHandle widget, int percent)> set_progress;
+    std::function<int(UiHandle widget)> progress_value;
     // ── L2（轻）：改控件 / 取输入 / 宿主服务 ────────────────────────────────
     std::function<void(UiHandle widget, const std::string& text)> set_text;
     std::function<std::string(UiHandle widget)> get_text;
