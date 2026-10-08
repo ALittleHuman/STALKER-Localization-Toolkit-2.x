@@ -184,6 +184,16 @@ struct UiFacade {
     std::function<int(UiHandle split)> split_pane_count;
     std::function<int(UiHandle split, int index)> split_sash_pos;
 
+    // ── ★★ P15-1a：**标签页容器**（fs 页「上面解包 / 下面封包 分两个标签」——
+    //   用户 2026-09-29 拍板：「其实之前的设计可以，但是**上面解包和下面封包分两个标签**
+    //   就没问题了。」）。`split` 是分栏、不是标签 ⇒ 不补就只能改交互口径。
+    std::function<UiHandle(UiHandle parent)> tabs;
+    // 加一页 ⇒ 返回**该页的容器**（插件往它里面 `pack`）；标题是标签上的字
+    std::function<UiHandle(UiHandle tabs, const std::string& title)> tabs_add_page;
+    std::function<int(UiHandle tabs)> tabs_page_count;
+    std::function<void(UiHandle tabs, int index)> tabs_set_current;   // 越界不动
+    std::function<int(UiHandle tabs)> tabs_current_index;             // -1 = 没有
+
     // ── ★★ L2（重型，第三批）：树（多列 / 懒建 / 展开态 / 过滤计数 / 三态勾选）────────
     // 口径（fs 页那棵树的用户可见语义，逐条搬过来）：
     //   · **懒建**：`has_children=true` 的行只画"有子"的箭头；用户真展开时才回调

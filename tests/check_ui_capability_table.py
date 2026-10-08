@@ -93,6 +93,12 @@ EXPECT_UI = {
     "split_set_collapsed": "L2.6 完全收起（4.2/4.3：收起后改窗口尺寸不弹回）",
     "split_is_collapsed": "L2.6 是否收起", "split_pane_count": "L2.6 格数",
     "split_sash_pos": "L2.6 第 index 条分隔条位置（-1=没有）",
+    # ★★ P15-1a：标签页（fs 页「解包 / 封包」两标签）
+    "tabs": "标签页容器（每页一个容器句柄）",
+    "tabs_add_page": "加一页 ⇒ 该页容器（标题是标签上的字）",
+    "tabs_page_count": "页数",
+    "tabs_set_current": "切到第 index 页（越界不动）",
+    "tabs_current_index": "当前页下标（-1=没有）",
     # ★★ P6：重型 L2 第三批 —— 树（fs 页那棵的用户可见语义）
     "tree": "L2.7 树（多列；句柄＝树自身）",
     "tree_set_columns": "L2 换列声明（xml 页切模式换表头/列宽）",

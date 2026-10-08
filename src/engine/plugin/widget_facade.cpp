@@ -61,6 +61,7 @@ const char* const kMethodNames[] = {
     "viewport_can_scroll", "viewport_scroll_top",
     "split",       "split_add_pane",       "split_set_max_size",          "split_set_collapsed",
     "split_is_collapsed", "split_pane_count", "split_sash_pos",
+    "tabs", "tabs_add_page", "tabs_page_count", "tabs_set_current", "tabs_current_index",
     // ★★ P6：重型 L2 第三批（树）
     "tree",           "tree_set_columns",   "tree_set_root",       "tree_set_children",
     "tree_on_action", "tree_clear",
@@ -139,6 +140,11 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "split_is_collapsed") return static_cast<bool>(facade.split_is_collapsed);
     if (name == "split_pane_count") return static_cast<bool>(facade.split_pane_count);
     if (name == "split_sash_pos") return static_cast<bool>(facade.split_sash_pos);
+    if (name == "tabs") return static_cast<bool>(facade.tabs);
+    if (name == "tabs_add_page") return static_cast<bool>(facade.tabs_add_page);
+    if (name == "tabs_page_count") return static_cast<bool>(facade.tabs_page_count);
+    if (name == "tabs_set_current") return static_cast<bool>(facade.tabs_set_current);
+    if (name == "tabs_current_index") return static_cast<bool>(facade.tabs_current_index);
     if (name == "tree") return static_cast<bool>(facade.tree);
     if (name == "tree_set_columns") return static_cast<bool>(facade.tree_set_columns);
     if (name == "tree_set_root") return static_cast<bool>(facade.tree_set_root);

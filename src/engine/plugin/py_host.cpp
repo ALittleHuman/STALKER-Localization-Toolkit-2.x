@@ -2305,6 +2305,30 @@ public:
         }
         return py::none();
     }
+
+    // ── ★★ P15-1a：标签页（fs 页两标签）────────────────────────────────────
+    py::object tabs(py::object parent) const {
+        const UiFacade* facade = available("tabs");
+        if (facade == nullptr) return py::none();
+        return wrap(facade->tabs(handle_of(parent)));
+    }
+    py::object tabs_add_page(py::object tabs_widget, const std::string& title) const {
+        const UiFacade* facade = available("tabs_add_page");
+        if (facade == nullptr) return py::none();
+        return wrap(facade->tabs_add_page(handle_of(tabs_widget), title));
+    }
+    int tabs_page_count(py::object tabs_widget) const {
+        const UiFacade* facade = available("tabs_page_count");
+        return facade == nullptr ? 0 : facade->tabs_page_count(handle_of(tabs_widget));
+    }
+    void tabs_set_current(py::object tabs_widget, int index) const {
+        const UiFacade* facade = available("tabs_set_current");
+        if (facade != nullptr) facade->tabs_set_current(handle_of(tabs_widget), index);
+    }
+    int tabs_current_index(py::object tabs_widget) const {
+        const UiFacade* facade = available("tabs_current_index");
+        return facade == nullptr ? -1 : facade->tabs_current_index(handle_of(tabs_widget));
+    }
     py::object split_add_pane(py::object split_widget, int minsize) const {
         if (const UiFacade* facade = available("split_add_pane")) {
             return wrap(facade->split_add_pane(handle_of(split_widget), minsize));
@@ -2863,6 +2887,14 @@ void ensure_api_module() {
                  py::arg("index"))
             .def("split_pane_count", &PyUi::split_pane_count, py::arg("split"))
             .def("split_sash_pos", &PyUi::split_sash_pos, py::arg("split"), py::arg("index"))
+            // ★★ P15-1a：标签页（fs 页两标签）
+            .def("tabs", &PyUi::tabs, py::arg("parent") = py::none())
+            .def("tabs_add_page", &PyUi::tabs_add_page, py::arg("tabs"),
+                 py::arg("title"))
+            .def("tabs_page_count", &PyUi::tabs_page_count, py::arg("tabs"))
+            .def("tabs_set_current", &PyUi::tabs_set_current, py::arg("tabs"),
+                 py::arg("index"))
+            .def("tabs_current_index", &PyUi::tabs_current_index, py::arg("tabs"))
             // ★ P6：树（多列 / 懒建 / 展开态 / 过滤计数 / 三态勾选）
             .def("tree", &PyUi::tree, py::arg("parent") = py::none(), py::arg("columns") = py::none())
             .def("tree_set_columns", &PyUi::tree_set_columns, py::arg("tree"),

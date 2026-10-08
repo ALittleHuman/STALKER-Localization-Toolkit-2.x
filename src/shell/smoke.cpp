@@ -5616,6 +5616,7 @@ SmokeResult run_smoke() {
             "            fh.write(text + '\\n')\n"
             "    def build():\n"
             "        ui = api.ui\n"
+            "        import os as _os, tempfile as _tempfile\n"
             "        tree = ui.tree(None, [['名字', 0], ['大小', 80]])\n"
             "        def status():\n"
             "            lines = ['rows:%d' % ui.tree_row_count(tree),\n"
@@ -5643,8 +5644,19 @@ SmokeResult run_smoke() {
             "        ui.tree_on_activate(tree, lambda key: mark('activate:' + key))\n"
             "        # ★★ P13-1 第二步：只验注册路径（这棵树的行都没有 has_action）\n"
             "        ui.tree_on_action(tree, '✕', lambda key: mark('rowaction:' + key))\n"
+            "        # ★★ P15-1a：标签页（两标签 + 每页容器 + 切页）\n"
+            "        tabs = ui.tabs(None)\n"
+            "        tab_unpack = ui.tabs_add_page(tabs, '解包')\n"
+            "        tab_pack = ui.tabs_add_page(tabs, '封包')\n"
+            "        ui.label(tab_unpack, '页一标签')\n"
+            "        tabs_path = _os.path.join(_tempfile.gettempdir(), 'xrkit_smoke_tabs.txt')\n"
+            "        def write_tabs_state():\n"
+            "            with open(tabs_path, 'w', encoding='utf-8') as handle:\n"
+            "                handle.write('%d,%d' % (ui.tabs_page_count(tabs), ui.tabs_current_index(tabs)))\n"
+            "        ui.button(tab_pack, '页二按钮', None)\n"
+            "        ui.button(None, '切到第二页', lambda: (ui.tabs_set_current(tabs, 1), write_tabs_state()))\n"
+            "        write_tabs_state()\n"
             "        # ★★ P15-0：点行身体 + 输入变化回调\n"
-            "        import os as _os, tempfile as _tempfile\n"
             "        click_path = _os.path.join(_tempfile.gettempdir(), 'xrkit_smoke_treeclick.txt')\n"
             "        def on_tree_click(key):\n"
             "            with open(click_path, 'a', encoding='utf-8') as handle:\n"
@@ -5667,7 +5679,6 @@ SmokeResult run_smoke() {
             "            {'key': 'ra2', 'cells': ['a2', '2'], 'has_action': True},\n"
             "            {'key': 'rdir', 'cells': ['目录', '']},\n"
             "        ])\n"
-            "        import os as _os, tempfile as _tempfile\n"
             "        args_path = _os.path.join(_tempfile.gettempdir(), 'xrkit_smoke_rowaction.txt')\n"
             "        def on_row_action(key):\n"
             "            # ★ 纯 Python 写文件：**不**再进 C++ 的 mark()（上一版崩点就在这条再入链）\n"
@@ -5715,6 +5726,59 @@ SmokeResult run_smoke() {
                   .arg(tree == nullptr ? -1 : tree->columnCount()));
 
         // ★★ P15-0：① 多选读取（按树序）② 点行身体 ③ 输入变化回调
+        // ★★ P15-1a：标签页（两标签 + 每页容器 + 切页）
+        {
+            QTabWidget* tabs = page_widget != nullptr
+                                   ? page_widget->findChild<QTabWidget*>()
+                                   : nullptr;
+            check(tabs != nullptr && tabs->count() == 2,
+                  QStringLiteral("P15-1a 标签页没造出来或页数不对（实得 %1）")
+                      .arg(tabs == nullptr ? -1 : tabs->count()));
+            if (tabs != nullptr) {
+                check(tabs->tabText(0) == QStringLiteral("解包")
+                          && tabs->tabText(1) == QStringLiteral("封包"),
+                      QStringLiteral("P15-1a 两个标签的字不对（实得 [%1][%2]）")
+                          .arg(tabs->tabText(0), tabs->tabText(1)));
+                // ② 塞进第 2 页的控件**真是那一页的后代**
+                QPushButton* page2_button = nullptr;
+                for (QPushButton* candidate : page_widget->findChildren<QPushButton*>()) {
+                    if (candidate->text() == QStringLiteral("页二按钮")) page2_button = candidate;
+                }
+                check(page2_button != nullptr && tabs->widget(1) != nullptr
+                          && tabs->widget(1)->isAncestorOf(page2_button),
+                      QStringLiteral("P15-1a 塞进第 2 页的控件不在那一页的容器里"));
+                // ③ 夹具首读
+                const QString tabs_path =
+                    QDir::temp().filePath(QStringLiteral("xrkit_smoke_tabs.txt"));
+                QString state;
+                {
+                    QFile file(tabs_path);
+                    if (file.open(QIODevice::ReadOnly)) {
+                        state = QString::fromUtf8(file.readAll()).trimmed();
+                    }
+                }
+                check(state == QStringLiteral("2,0"),
+                      QStringLiteral("P15-1a 初始页数/当前页不对（实得 [%1]，期望 2,0）").arg(state));
+                // ④ 切页：合成点击夹具按钮 ⇒ Qt 侧与 Python 侧都变
+                QPushButton* switch_button = nullptr;
+                for (QPushButton* candidate : page_widget->findChildren<QPushButton*>()) {
+                    if (candidate->text() == QStringLiteral("切到第二页")) switch_button = candidate;
+                }
+                check(switch_button != nullptr, QStringLiteral("P15-1a 没找到「切到第二页」按钮"));
+                if (switch_button != nullptr) switch_button->click();
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
+                QString after;
+                {
+                    QFile file(tabs_path);
+                    if (file.open(QIODevice::ReadOnly)) {
+                        after = QString::fromUtf8(file.readAll()).trimmed();
+                    }
+                }
+                check(tabs->currentIndex() == 1 && after == QStringLiteral("2,1"),
+                      QStringLiteral("P15-1a 切页没生效（Qt=%1 / Python=[%2]，期望 1 / 2,1）")
+                          .arg(tabs->currentIndex()).arg(after));
+            }
+        }
         {
             // ① 选中两行（直接改 `QTreeWidgetItem` 的选中态＝用户点出来的那条路）
             FacadeTree* multi_tree = qobject_cast<FacadeTree*>(tree);

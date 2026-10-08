@@ -38,6 +38,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QPlainTextEdit>
+#include <QTabWidget>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSplitter>
@@ -732,6 +733,42 @@ const plug::UiFacade kQtFacade = {
     },
     // ── ★★ P6：树（多列 / 懒建 / 展开态 / 过滤计数 / 三态勾选）────────────────────
     // 语义全在 `facade_tree.{h,cpp}`（宿主唯一的实现），这里只做句柄与参数转换。
+    /* tabs：标签页容器（fs 页「解包 / 封包」两标签） */
+    [](plug::UiHandle parent) {
+        QWidget* host = resolve_parent(parent);
+        auto* tabs = new QTabWidget;
+        tabs->setObjectName(QStringLiteral("xrkit_facade_tabs"));
+        place(host, tabs);
+        return handle_of(wrap(tabs));
+    },
+    /* tabs_add_page：加一页 ⇒ 返回**该页容器**（插件往它里面 pack） */
+    [](plug::UiHandle tabs, const std::string& title) {
+        auto* widget = qobject_cast<QTabWidget*>(unwrap(tabs));
+        if (widget == nullptr) return plug::kNoWidget;
+        auto* page = new QWidget;
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(core::px(6));
+        widget->addTab(page, QString::fromStdString(title));
+        return handle_of(wrap(page));
+    },
+    /* tabs_page_count */
+    [](plug::UiHandle tabs) {
+        auto* widget = qobject_cast<QTabWidget*>(unwrap(tabs));
+        return widget == nullptr ? 0 : widget->count();
+    },
+    /* tabs_set_current：切到第 index 页（越界不动） */
+    [](plug::UiHandle tabs, int index) {
+        auto* widget = qobject_cast<QTabWidget*>(unwrap(tabs));
+        if (widget != nullptr && index >= 0 && index < widget->count()) {
+            widget->setCurrentIndex(index);
+        }
+    },
+    /* tabs_current_index：当前页下标（-1 = 没有） */
+    [](plug::UiHandle tabs) {
+        auto* widget = qobject_cast<QTabWidget*>(unwrap(tabs));
+        return widget == nullptr ? -1 : widget->currentIndex();
+    },
     /* tree */
     [](plug::UiHandle parent, const std::vector<plug::UiFacade::TreeColumn>& columns) {
         QWidget* host = resolve_parent(parent);
