@@ -517,6 +517,32 @@ const plug::UiFacade kQtFacade = {
         auto* view = container->findChild<VirtualList*>();
         return view == nullptr ? -1 : view->selected_row();
     },
+    /* list_set_multi：开关多选（控件下限 #2 —— 多选不许退化成单选；关掉 ⇒ 纯单选） */
+    [](plug::UiHandle list, bool on) {
+        QWidget* container = unwrap(list);
+        if (container == nullptr) return;
+        if (auto* view = container->findChild<VirtualList*>()) view->set_multi_selection(on);
+    },
+    /* list_selected_rows：选中集合（升序；「移除」与判据都走它） */
+    [](plug::UiHandle list) {
+        std::vector<int> rows;
+        QWidget* container = unwrap(list);
+        if (container == nullptr) return rows;
+        auto* view = container->findChild<VirtualList*>();
+        if (view == nullptr) return rows;
+        for (int row : view->selected_rows()) rows.push_back(row);
+        return rows;
+    },
+    /* list_set_selected_rows：程序化设选中集合（判据/插件都用它；乱序输入按升序收下） */
+    [](plug::UiHandle list, std::vector<int> rows) {
+        QWidget* container = unwrap(list);
+        if (container == nullptr) return;
+        auto* view = container->findChild<VirtualList*>();
+        if (view == nullptr) return;
+        QVector<int> wanted;
+        for (int row : rows) wanted.push_back(row);
+        view->set_selected_rows(wanted);
+    },
     /* list_on_activate：列表激活（双击 / 回车）—— fs 页「双击包列表＝加载」 */
     [](plug::UiHandle list, std::function<void(int)> on_activate) {
         QWidget* container = unwrap(list);

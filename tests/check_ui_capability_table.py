@@ -67,6 +67,10 @@ EXPECT_UI = {
     "list_set_row_text": "★L2.5 行文本 provider：**只在可见行**上被调（10.3 同族）",
     "list_row_text": "L2.1 读回某行文本（判据用；不动池子与选中）",
     "list_select_row": "L2.1 选中某行", "list_selected_row": "L2.1 当前选中行",
+    # ★★ P16-3a：控件下限 #2（多选不许退化成单选）
+    "list_set_multi": "L2.1 开关多选（单击＝单选 / Ctrl+单击＝切换 / Shift+单击＝区间）",
+    "list_selected_rows": "L2.1 选中集合（升序；判据与「移除」都走它）",
+    "list_set_selected_rows": "L2.1 程序化设选中集合",
     "list_on_activate": "L2.1 列表激活（双击/回车；回调给行号）",
     "list_content_height": "L2.1 内容总高（宿主页/视口据此撑开滚动范围）",
     "log_view": "L2.2 行式日志视图（插件**自己**的日志区）",

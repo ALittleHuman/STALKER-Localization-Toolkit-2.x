@@ -505,6 +505,9 @@ def register(api):
         pack_items = []          # [{"path","source_path","is_dir"}]
         pack_count = ui.label(page_pack, "待打包 0")
         pack_list = ui.list(page_pack, 20)
+        # ★★ P16-3a（控件下限 #2）：**待打包列表开多选** —— 与 C++ 页的 `QListWidget` 多选同级
+        #   （单击＝单选 / Ctrl+单击＝切换 / Shift+单击＝区间）；「移除」按**全部选中行**删。
+        ui.list_set_multi(pack_list, True)
 
         def pack_key():
             value = ui.combo_value(pack_combo) or ""
@@ -547,13 +550,14 @@ def register(api):
                 (len(got["items"]), got["skipped_outside_base"], got["skipped_package_files"]))
 
         def remove_pack_selected():
-            row = ui.list_selected_row(pack_list)
-            if row is None or row < 0 or row >= len(pack_items):
-                say(log, status, "请先在待打包列表里点一行")
+            # ★ P16-3a：按**全部选中行**删（倒序删，免得前面的删除把后面的下标挪歪）
+            rows = sorted(ui.list_selected_rows(pack_list) or [], reverse=True)
+            if not rows:
+                say(log, status, "请先在待打包列表里点一行（多选：Ctrl+单击 / Shift+单击）")
                 return
-            removed = pack_items.pop(row)
+            removed = [pack_items.pop(row)["path"] for row in rows]
             refresh_pack_list()
-            say(log, status, "已移除：" + removed["path"])
+            say(log, status, "已移除 %d 项：%s" % (len(removed), "、".join(removed[:3])))
 
         def clear_pack():
             pack_items.clear()

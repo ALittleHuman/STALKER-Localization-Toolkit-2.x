@@ -60,9 +60,100 @@ QString VirtualList::row_text(int row) const {
     return provider_ ? provider_(row) : QString::number(row);
 }
 
+namespace {
+// ★ P16-3a：选中集合**按升序就地插入**（集合很小——用户点几下；也免得为一个 std::sort
+//   再拉 <algorithm> 进来）。重复的不再插第二个。
+void add_sorted(QVector<int>& rows, int row) {
+    int pos = 0;
+    while (pos < rows.size() && rows.at(pos) < row) ++pos;
+    if (pos < rows.size() && rows.at(pos) == row) return;
+    rows.insert(pos, row);
+}
+}  // namespace
+
 void VirtualList::set_selected_row(int row) {
     selected_ = row;
+    // 单击＝单选一行（多选模式下也一样：QListWidget 的语义是"无修饰键＝重选一行"）
+    selection_.clear();
+    if (row >= 0 && row < total_) selection_.append(row);
+    anchor_ = selected_;
     refresh();
+}
+
+void VirtualList::set_multi_selection(bool on) {
+    multi_ = on;
+    if (!on) {
+        // ★ 退回**纯单选**：只留锚点/当前行（旧语义），别把"选中一堆"偷偷留着
+        selection_.clear();
+        if (selected_ >= 0 && selected_ < total_) selection_.append(selected_);
+    }
+    refresh();
+}
+
+QVector<int> VirtualList::selected_rows() const {
+    QVector<int> out;
+    for (int row : selection_) {
+        if (row >= 0 && row < total_) out.append(row);   // 行数变小后越界的自动不算
+    }
+    return out;
+}
+
+void VirtualList::set_selected_rows(const QVector<int>& rows) {
+    selection_.clear();
+    for (int row : rows) {
+        if (row >= 0 && row < total_) add_sorted(selection_, row);   // 越界的不收
+    }
+    selected_ = selection_.isEmpty() ? -1 : selection_.first();
+    anchor_ = selected_;
+    refresh();
+}
+
+void VirtualList::toggle_row(int row) {
+    if (row < 0 || row >= total_) return;
+    if (selection_.contains(row)) {
+        selection_.removeAll(row);
+    } else {
+        add_sorted(selection_, row);
+    }
+    selected_ = row;      // 当前行＝刚点的那一行（旧名在这一支上的语义）
+    anchor_ = row;
+    refresh();
+}
+
+void VirtualList::extend_to_row(int row) {
+    if (row < 0 || row >= total_) return;
+    const int from = anchor_ >= 0 ? anchor_ : selected_;
+    if (from < 0) {
+        set_selected_row(row);
+        return;
+    }
+    const int lo = from < row ? from : row;
+    const int hi = from < row ? row : from;
+    selection_.clear();
+    for (int r = lo; r <= hi; ++r) selection_.append(r);
+    selected_ = row;      // 锚点**不动**（QListWidget 的语义：锚点留在按下修饰键前的起点）
+    refresh();
+}
+
+// ★★ P16-3a：鼠标左键（多选语义）—— 行号＝**滚动偏移 + 视口内偏移 / 行高**（与双击那条同一算法）
+void VirtualList::mousePressEvent(QMouseEvent* event) {
+    if (event == nullptr || row_height_ <= 0 || total_ <= 0) {
+        QWidget::mousePressEvent(event);
+        return;
+    }
+    if (event->button() == Qt::LeftButton) {
+        const int row = (top_ + static_cast<int>(event->position().y())) / row_height_;
+        const int clamped = row < 0 ? 0 : (row >= total_ ? total_ - 1 : row);
+        const Qt::KeyboardModifiers mods = event->modifiers();
+        if (multi_ && (mods & Qt::ControlModifier)) {
+            toggle_row(clamped);
+        } else if (multi_ && (mods & Qt::ShiftModifier)) {
+            extend_to_row(clamped);
+        } else {
+            set_selected_row(clamped);
+        }
+    }
+    QWidget::mousePressEvent(event);
 }
 
 
@@ -120,7 +211,8 @@ void VirtualList::refresh() {
         label->setText(provider_ ? provider_(row) : QString::number(row));
         if (provider_) ++provider_calls_;   // 只为视口内的行取文本（10.3 同族）
         label->setGeometry(0, row * row_height_ - top_, width(), row_height_);
-        const char* role = (row == selected_) ? "selected" : "surface";
+        // ★ P16-3a：**选中集合**里就算选中（多选时可见范围内所有选中行都上"选中"样式）
+        const char* role = selection_.contains(row) ? "selected" : "surface";
         const char* hex = xrkit::core::theme_color_current(role);
         label->setStyleSheet(
             QStringLiteral("background:%1; padding-left:%2px;")

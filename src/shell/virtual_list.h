@@ -55,6 +55,17 @@ public:
     void set_selected_row(int row);
     int selected_row() const { return selected_; }
 
+    // ★★ P16-3a（**控件下限 #2：多选不许退化成单选**）—— 1.x 的参照是 `QListWidget` 的
+    //   `ExtendedSelection`：单击＝单选 / **Ctrl+单击＝切换该行** / **Shift+单击＝与锚点成区间**；
+    //   `set_multi_selection(false)` 退回**纯单选**（此时鼠标上的 Ctrl/Shift 一律不生效）。
+    //   ★ `selected_row()`（旧名）语义**保留**：多选模式下＝锚点/当前行。
+    void set_multi_selection(bool on);
+    bool multi_selection() const { return multi_; }
+    QVector<int> selected_rows() const;                  // 升序；空集＝没选中
+    void set_selected_rows(const QVector<int>& rows);    // 程序化设（乱序输入按升序收下，越界不收）
+    void toggle_row(int row);                            // Ctrl+单击
+    void extend_to_row(int row);                         // Shift+单击（从锚点连到这一行）
+
     // ★★ 2026-10-05（用户报告 #6「编码转换的中间那块区域并没有设计滚动条。」）：
     //   **内容总高**（＝ `总行数 × 行高`）。本来这个类够不到"自己要多大"——它只是个
     //   `QWidget`，高度由所在布局给（于是"装不下"的那部分行**永远没有机会显示**：
@@ -74,6 +85,7 @@ public:
 protected:
     void resizeEvent(QResizeEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;   // ★ P13-2b
+    void mousePressEvent(QMouseEvent* event) override;         // ★ P16-3a（多选：Ctrl/Shift）
     void keyPressEvent(QKeyEvent* event) override;             // ★ P13-2b（回车）
 
 private:
@@ -84,6 +96,10 @@ private:
     int total_ = 0;
     int top_ = 0;
     int selected_ = -1;
+    // ★ P16-3a：**选中集合**（始终升序去重；单选模式下最多 1 项）＋ 区间锚点
+    bool multi_ = false;
+    QVector<int> selection_;
+    int anchor_ = -1;
     int provider_calls_ = 0;
     int recycle_count_ = 0;
     QPair<int, int> range_ = {0, 0};

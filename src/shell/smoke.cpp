@@ -5422,6 +5422,13 @@ SmokeResult run_smoke() {
             "        mark('rowtext199:%s' % ui.list_row_text(rows, 199))\n"
             "        ui.list_select_row(rows, 7)\n"
             "        mark('selected:%d' % ui.list_selected_row(rows))\n"
+            "        mark('single_selected_rows:%s' % ui.list_selected_rows(rows))\n"
+            "        ui.list_set_multi(rows, True)\n"
+            "        ui.list_set_selected_rows(rows, [5, 1, 9, 1])\n"
+            "        mark('multi:%s' % ui.list_selected_rows(rows))\n"
+            "        ui.list_set_multi(rows, False)\n"
+            "        mark('single_after_off:%s' % ui.list_selected_rows(rows))\n"
+            "        mark('selected_after_off:%d' % ui.list_selected_row(rows))\n"
             "        mark('content_height:%d' % ui.list_content_height(rows))\n"
             "        view = ui.log_view(None, 4)\n"
             "        ui.log_view_append(view, '第一行')\n"
@@ -5500,6 +5507,30 @@ SmokeResult run_smoke() {
         check(calls >= 0 && calls <= 8,
               QStringLiteral("P4 虚拟列表的 provider 被调了 %1 次（应当只为可见行取，远小于 200）")
                   .arg(calls));
+        // ★★ P16-3a：**多选**（控件下限 #2「多选不许退化成单选」）—— 从夹具的 mark 里读三件事：
+        //   ① 程序化设 4 个（含乱序与重复）⇒ 读回**升序去重**的 3 个；
+        //   ② 关掉多选 ⇒ **立刻退回纯单选**（选中集合只剩当前行）；
+        //   ③ **不回归**：没开多选时旧路（`list_select_row`）读回也只有一行。
+        //   ★ 判红办法：宿主 `list_selected_rows` 只返回 `selected_` ⇒ ①红；
+        //     忽略 `list_set_multi` 的开关 ⇒ ②红而③仍绿（两处各自可判）。
+        auto marker_value = [&text](const QString& key) {
+            const int at = text.indexOf(key + QLatin1Char(':'));
+            if (at < 0) return QString();
+            const int end = text.indexOf(QLatin1Char('\n'), at);
+            return text.mid(at + key.size() + 1,
+                            end < 0 ? -1 : end - at - key.size() - 1).trimmed();
+        };
+        check(marker_value(QStringLiteral("single_selected_rows")) == QStringLiteral("[7]"),
+              QStringLiteral("P16-3a 不回归：未开多选时旧路读回也只有一行（要 [7]，实得 %1）")
+                  .arg(marker_value(QStringLiteral("single_selected_rows"))));
+        check(marker_value(QStringLiteral("multi")) == QStringLiteral("[1, 5, 9]"),
+              QStringLiteral("P16-3a 多选：设 [5,1,9,1] 要读回**升序去重**的 [1, 5, 9]（实得 %1）")
+                  .arg(marker_value(QStringLiteral("multi"))));
+        check(marker_value(QStringLiteral("single_after_off")) == QStringLiteral("[1]") &&
+                  marker_value(QStringLiteral("selected_after_off")) == QStringLiteral("1"),
+              QStringLiteral("P16-3a 关掉多选要立刻退回纯单选（要 [1] / 当前行 1，实得 %1 / %2）")
+                  .arg(marker_value(QStringLiteral("single_after_off")))
+                  .arg(marker_value(QStringLiteral("selected_after_off"))));
         check(calls_at >= 0 && !text.left(calls_at).contains(QStringLiteral("row:199")),
               QStringLiteral("P4 虚拟列表把没显示的行也取了（第 199 行在 provider 阶段就被问了）"));
         check(text.contains(QStringLiteral("rowtext199:第 199 行")),

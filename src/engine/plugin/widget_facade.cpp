@@ -50,7 +50,8 @@ const char* const kMethodNames[] = {
     "combo_value", "checkbox_state", "set_checked", "combo_set_items",
     // ★★ P4：重型 L2 第一批（虚拟列表 / 日志视图 / 拖放目标 / 任务壳 / 线程判定）
     "list",        "list_set_row_count", "list_set_row_text", "list_row_text",
-    "list_select_row", "list_selected_row", "list_on_activate", "list_content_height",
+    "list_select_row", "list_selected_row", "list_set_multi", "list_selected_rows",
+    "list_set_selected_rows", "list_on_activate", "list_content_height",
     "log_view",    "log_view_append",    "log_view_clear",    "log_view_text",
     "drop_zone",   "drop_zone_on_drop",
     "task_panel",  "task_run",           "task_status",       "task_cancel",
@@ -114,6 +115,9 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "list_row_text") return static_cast<bool>(facade.list_row_text);
     if (name == "list_select_row") return static_cast<bool>(facade.list_select_row);
     if (name == "list_selected_row") return static_cast<bool>(facade.list_selected_row);
+    if (name == "list_set_multi") return static_cast<bool>(facade.list_set_multi);
+    if (name == "list_selected_rows") return static_cast<bool>(facade.list_selected_rows);
+    if (name == "list_set_selected_rows") return static_cast<bool>(facade.list_set_selected_rows);
     if (name == "list_on_activate") return static_cast<bool>(facade.list_on_activate);
     if (name == "list_content_height") return static_cast<bool>(facade.list_content_height);
     if (name == "log_view") return static_cast<bool>(facade.log_view);

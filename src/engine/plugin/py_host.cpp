@@ -2264,6 +2264,28 @@ public:
         }
         return -1;
     }
+    // ── ★★ P16-3a：**多选**（控件下限 #2；1.x 参照 `QListWidget::ExtendedSelection`）────
+    void list_set_multi(py::object list_widget, bool on) const {
+        if (const UiFacade* facade = available("list_set_multi")) {
+            facade->list_set_multi(handle_of(list_widget), on);
+        }
+    }
+    py::object list_selected_rows(py::object list_widget) const {
+        py::list out;
+        const UiFacade* facade = available("list_selected_rows");
+        if (facade == nullptr) return out;
+        for (int row : facade->list_selected_rows(handle_of(list_widget))) out.append(row);
+        return out;
+    }
+    void list_set_selected_rows(py::object list_widget, py::object rows) const {
+        const UiFacade* facade = available("list_set_selected_rows");
+        if (facade == nullptr) return;
+        std::vector<int> wanted;
+        if (rows.is_none() == 0) {
+            for (auto item : py::list(rows)) wanted.push_back(py::cast<int>(item));
+        }
+        facade->list_set_selected_rows(handle_of(list_widget), std::move(wanted));
+    }
     int list_content_height(py::object list_widget) const {
         if (const UiFacade* facade = available("list_content_height")) {
             return facade->list_content_height(handle_of(list_widget));
@@ -2999,6 +3021,11 @@ void ensure_api_module() {
             .def("list_row_text", &PyUi::list_row_text, py::arg("list"), py::arg("row"))
             .def("list_select_row", &PyUi::list_select_row, py::arg("list"), py::arg("row"))
             .def("list_selected_row", &PyUi::list_selected_row, py::arg("list"))
+            // ★★ P16-3a：多选三名（控件下限 #2）
+            .def("list_set_multi", &PyUi::list_set_multi, py::arg("list"), py::arg("on"))
+            .def("list_selected_rows", &PyUi::list_selected_rows, py::arg("list"))
+            .def("list_set_selected_rows", &PyUi::list_set_selected_rows, py::arg("list"),
+                 py::arg("rows") = py::none())
             .def("list_on_activate", &PyUi::list_on_activate, py::arg("list"),
                  py::arg("callback"))
             .def("list_content_height", &PyUi::list_content_height, py::arg("list"))

@@ -121,6 +121,13 @@ struct UiFacade {
     std::function<std::string(UiHandle list, int row)> list_row_text;
     std::function<void(UiHandle list, int row)> list_select_row;
     std::function<int(UiHandle list)> list_selected_row;
+    // ★★ P16-3a（**控件下限 #2：多选不许退化成单选**）—— 1.x 的参照是 `QListWidget`
+    //   的 `ExtendedSelection`：单击＝单选 / Ctrl+单击＝切换该行 / Shift+单击＝与锚点成区间；
+    //   `list_set_multi(false)` 退回**纯单选**（这条要单独锁"不回归"）。
+    //   ★ `list_selected_row()`（旧名）语义**保留**：多选模式下＝锚点/当前行。
+    std::function<void(UiHandle list, bool on)> list_set_multi;
+    std::function<std::vector<int>(UiHandle list)> list_selected_rows;
+    std::function<void(UiHandle list, std::vector<int> rows)> list_set_selected_rows;
     // ★★ P13-2b：**列表激活**（双击 / 回车）—— fs 页「双击包列表＝加载」。
     //   回调给**行号**（全体行里的下标，与 `list_selected_row` 同一坐标系）。
     std::function<void(UiHandle list, std::function<void(int)> on_activate)>
