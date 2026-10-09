@@ -164,6 +164,24 @@ def ledger(what: str, why: str) -> None:
     say("  LEDGER %s —— %s" % (what, why))
 
 
+def package_fact(what: str, why: str, release: bool) -> None:
+    """★ 2026-10-10（P17-2，审计 04 F-05 Medium）：**包内端到端事实不许在 release 档退化为台账**。
+
+    事实（修前）：三条包内端到端判据 —— ①「包内平台插件齐备并**从产物真跑**自检」、
+    ②「包内 exe 的版本身份」、③「自带 CPython 能起宿主」—— 在没有"带契约声明的新序号包"时
+    都走 `ledger()`；而 `LEDGERS` **不进 `UNCOVERED`**、`release` 收尾只判 `UNCOVERED`
+    ⇒ **干净检出**（或 `--only` 组合）跑 `run_ci.py --release` 可以打 `RESULT: PASS`，
+    而这三条**一次都没真跑**。判据本体确实写在打包链里（每次打包会 throw），但
+    "门禁绿"与"这三条成立"之间**没有必然关系** —— 那是又一种假绿。
+    现在：**release 档**按"前提缺失"处理（`prereq` ⇒ release 零容忍、FAIL）；
+    fast/local 档照旧记**可见的**差异台账（本地开发不该因为"这台机器没打过包"就全红）。
+    """
+    if release:
+        prereq(what, why + "（release 档：包内端到端事实不许退化为台账）", True)
+    else:
+        ledger(what, why)
+
+
 def require_repo_file(path: Path, what: str) -> bool:
     """仓库自带的门禁文件缺件 = FAIL，绝不 SKIP。"""
     if path.exists():
@@ -2290,8 +2308,9 @@ def step_python_embed(release: bool) -> None:
             declared = path
             break
     if declared is None:
-        ledger("包内 Python 宿主判据",
-               "没有声明 `python_runtime=` 的包（早期序号没带 embeddable 标准库）")
+        # ★ 2026-10-10（P17-2，审计 04 F-05）：包内端到端事实 —— release 档不许退化为台账。
+        package_fact("包内 Python 宿主判据",
+                     "没有声明 `python_runtime=` 的包（早期序号没带 embeddable 标准库）", release)
         return
     exe = declared / "xrkit_app.exe"
     if not exe.is_file():
@@ -3047,6 +3066,39 @@ def step_thread_contract(release: bool) -> None:
         ok("worker 只碰引擎与两个 sink；取消位读得到（含反例自证）")
     else:
         fail("线程/取消契约有缺口（见上）—— worker 碰 UI 或取消读不到都算红")
+
+
+def step_sqfs_dos(release: bool) -> None:
+    """SquashFS 读侧**三处 DoS**的判红锁（P17-2；审计 01 F-01 / F-02 / F-03，三处都 High）。
+
+    为什么单开一步：这三条都是「**打开一份手工构造的畸形包就挂**」——
+      · `01 F-01` 目录项成环：`Image::list()` 修前无条件压栈、无 visited/深度/条目上限
+        ⇒ 自环时无限展开 `a/a/a/…`（内存耗尽 / 卡死）；
+      · `01 F-02` xz 字典炸弹：`decompress.cpp` 修前把 `memlimit` 置成 `UINT64_MAX`
+        ⇒ 块头声明的 `dict_size`（最大约 1.5 GiB）会被真分配；
+      · `01 F-03` 伪造 `block_size`：`parse_superblock` 修前不校验，而 fragment 解压把超块里的
+        `bs` 直接当输出容量 ⇒ `block_size=0xFFFFFFFF` 时一次性分配约 4 GiB。
+    判据形状（`tests/check_sqfs_dos.py`）：三份**现造**的最小畸形镜像各跑一次 CLI ——
+    必须**在限时内明确报错**（rc≠0 + 理由非空且点名"上限"）、不留半成品；
+    外加"正常镜像不受影响"与"4 字节垃圾文件的拒因不同"两条反向锁，以及反例自证。
+    退出码：0=绿 / 1=有断言不成立 / 2=前提缺失（CLI 不存在等）。
+    """
+    say("[sqfs-dos] P17-2：SquashFS 三处 DoS（目录项成环 / xz 字典炸弹 / 伪造 block_size）")
+    script = ROOT / "tests" / "check_sqfs_dos.py"
+    if not require_repo_file(script, "SquashFS DoS 判据脚本"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if (s.startswith("SQFS-DOS") or s.startswith("== ") or s.startswith("✗")
+                or s.startswith("✓ 反例自证") or s.startswith("夹具")):
+            say("  " + s)
+    if rc == 0 and "SQFS-DOS ok" in out:
+        ok("三处 DoS 都判得红且已修绿（畸形包明确报错 + 正常镜像不受影响）")
+    elif rc == 2:
+        prereq("SquashFS DoS 判据的 CLI 前提", "脚本报前提缺失（见上）", release)
+    else:
+        fail("SquashFS 读侧仍有 DoS 形状（见上）—— 打开畸形包必须明确报错，不是挂死/巨量分配")
 
 
 def step_plugin_facade_returns(release: bool) -> None:
@@ -4186,8 +4238,10 @@ def step_package_platform(release: bool) -> None:
     if rc == 0:
         ok("包内同时带 qwindows + qoffscreen，且已从产物里真跑一次自检（failed=0）")
     elif rc == 2:
-        ledger("包内平台插件/从产物里真跑自检",
-               "本次没有带契约声明的新序号包（同一判据写在 package.ps1 里，每次打包都会真跑）")
+        # ★ 2026-10-10（P17-2，审计 04 F-05）：release 档按前提缺失（FAIL），其余档记台账。
+        package_fact("包内平台插件/从产物里真跑自检",
+                     "本次没有带契约声明的新序号包（同一判据写在 package.ps1 里，每次打包都会真跑）",
+                     release)
     else:
         fail("包内平台插件判据不成立（见上）")
 
@@ -4225,9 +4279,10 @@ def step_version_identity(release: bool) -> None:
     if rc == 0:
         ok("version.h / .rc / 包内 exe 的版本身份三者与 version.json 的 tree 一致")
     elif rc == 2:
-        ledger("包内 exe 的版本身份",
-               "本次没有带 `exe_identity=` 声明的新序号包（同一判据写在打包链里："
-               "`--build-package` 写回 + package.ps1 逐字比包内 exe）")
+        # ★ 2026-10-10（P17-2，审计 04 F-05）：同上 —— 包内 exe 版本身份那一条。
+        package_fact("包内 exe 的版本身份",
+                     "本次没有带 `exe_identity=` 声明的新序号包（同一判据写在打包链里："
+                     "`--build-package` 写回 + package.ps1 逐字比包内 exe）", release)
     else:
         fail("版本身份有判据不成立（见上）")
 
@@ -4301,6 +4356,9 @@ STEPS = [
     ("db-name1251-lock", step_db_name_cp1251_lock),
     ("unpack-rules", step_unpack_rules),
     ("fs-hardening", step_fs_hardening),
+    # ★★ P17-2（2026-10-10）：SquashFS 读侧三处 DoS（01 F-01/F-02/F-03，三处都 High）。
+    #   与 fs-hardening 相邻（同族：畸形包不许把进程带走），独立成步：被 `--only` 过滤时进 UNCOVERED。
+    ("sqfs-dos", step_sqfs_dos),
     ("sqfs-lreg", step_sqfs_lreg_layout),
     ("golden-sqfs-pack", step_golden_sqfs_pack),
     ("golden-sqfs-pack-real", step_golden_sqfs_pack_real),

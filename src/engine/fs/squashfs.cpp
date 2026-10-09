@@ -10,6 +10,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -33,6 +34,29 @@ constexpr size_t kCacheBlocks = 256;
 //   `db.cpp` 那边是文件作用域常量，这里同样只在本 translation unit 内用；两边都写 512 MB
 //   是**有意**的（同一个"不可信声明尺寸"上限，值必须能对照）。
 constexpr uint64_t kMaxDecompressBytes = 512ull * 1024 * 1024;
+
+// ── ★★ 2026-10-10（P17-2）：超块 `block_size` 的合法区间（审计 01 F-03 High）────────
+// 事实（修前）：`parse_superblock` 对 `block_size` **一个字节都不查**，而 fragment 那条路把
+//   超块里的 `bs` **直接**当输出容量交给 `decompress_block`，后者第一句是
+//   `out.assign(out_capacity, 0)` ⇒ `block_size = 0xFFFFFFFF` 时一次性分配约 4 GiB
+//   （数据块那条路因 `want = min(bs, 剩余)` 被 inode 尺寸压住，只有 fragment 用了原始 bs）。
+// 口径与 writer 侧 `squashfs_write.cpp` 同一条：4096..1 MiB 且是 2 的幂。
+constexpr uint32_t kMinBlockSize = 4096;
+constexpr uint32_t kMaxBlockSize = 1u << 20;   // 1 MiB
+
+bool valid_block_size(uint32_t block_size) {
+    if (block_size < kMinBlockSize || block_size > kMaxBlockSize) return false;
+    return (block_size & (block_size - 1)) == 0;   // 2 的幂
+}
+
+// ── ★★ P17-2（审计 01 F-01 High）：目录遍历的**环检测 + 硬上限** ──────────────────
+// 事实（修前）：`Image::list` 无条件 `stack.push_back({child_ref, path})`，既没有"已展开
+//   inode 集合"也没有深度/条目/路径长度上限 ⇒ 目录项指回自己（或祖先）时无限展开
+//   `a/a/a/…`，栈与 out 无限增长 → 内存耗尽 / 卡死（**打开恶意或损坏的包即挂**）。
+// 判据：`tests/check_sqfs_dos.py` 的 `dir_loop.sqfs` 必须**明确报错**，不是挂死。
+constexpr size_t kMaxEntries = 4u * 1024 * 1024;   // 条目数上限（真机语料 1.5 万级，留足余量）
+constexpr size_t kMaxPathLen = 4096;               // 镜像内路径长度上限（UTF-8 字节）
+constexpr uint32_t kMaxDirDepth = 256;             // 目录深度上限
 
 constexpr uint16_t kTypeDir = 1;
 constexpr uint16_t kTypeFile = 2;
@@ -202,6 +226,14 @@ bool parse_superblock(const uint8_t* d, size_t n, SuperBlock& sb, std::string& e
     sb.inode_table_start = rd64(d + 64, be);
     sb.directory_table_start = rd64(d + 72, be);
     sb.fragment_table_start = rd64(d + 80, be);
+    // ★★ P17-2（审计 01 F-03）：`block_size` 是**不可信输入**，在这里就把它挡住。
+    //   理由见文件头 `kMinBlockSize/kMaxBlockSize` 那段；错误文案里必须带「上限」与
+    //   `block_size` 两个关键词（判据 `tests/check_sqfs_dos.py` 按它们判红/绿）。
+    if (!valid_block_size(sb.block_size)) {
+        err = "超块 block_size 非法（必须是 4096..1 MiB 之间的 2 的幂）：block_size=" +
+              std::to_string(sb.block_size) + " 上限=" + std::to_string(kMaxBlockSize);
+        return false;
+    }
     return true;
 }
 
@@ -381,9 +413,15 @@ bool Image::list(std::vector<Entry>& out, std::string& err) {
     struct Pending {
         uint64_t ref;
         std::string prefix;
+        uint32_t depth;
     };
     std::vector<Pending> stack;
-    stack.push_back({sb_.root_inode, std::string()});
+    stack.push_back({sb_.root_inode, std::string(), 0});
+
+    // ★★ P17-2（审计 01 F-01）：**已展开过的目录 inode**（按 child_ref）。
+    //   修前这里什么都没有 ⇒ 自环/回指祖先 ⇒ 无限展开（见文件头那一节）。
+    std::set<uint64_t> visited_dirs;
+    visited_dirs.insert(sb_.root_inode);
 
     while (!stack.empty()) {
         const Pending cur = stack.back();
@@ -429,7 +467,32 @@ bool Image::list(std::vector<Entry>& out, std::string& err) {
                 const std::string path = cur.prefix.empty() ? name : cur.prefix + "/" + name;
                 const uint64_t child_ref = (static_cast<uint64_t>(sblk) << 16) | e_off;
                 if (e_type == kTypeDir || e_type == kTypeDirX) {
-                    stack.push_back({child_ref, path});
+                    // ★★ P17-2（审计 01 F-01）：**成环与上限**在这一支上判 —— 三条闸都是
+                    //   "宁可明确报错，也不无限展开"（零静默：理由里点名是哪一条路径）。
+                    if (!visited_dirs.insert(child_ref).second) {
+                        err = "目录项成环/回指（同一个目录 inode 被重复展开）：条目「" + path +
+                              "」指向 ref=" + std::to_string(child_ref) +
+                              "，已拒绝继续遍历（上限=" + std::to_string(kMaxEntries) + " 条目 / " +
+                              std::to_string(kMaxDirDepth) + " 层）";
+                        return false;
+                    }
+                    if (cur.depth + 1 > kMaxDirDepth) {
+                        err = "目录深度超过上限：" + std::to_string(cur.depth + 1) + " > " +
+                              std::to_string(kMaxDirDepth) + "（条目「" + path + "」）";
+                        return false;
+                    }
+                    if (path.size() > kMaxPathLen) {
+                        err = "目录内路径长度超过上限：" + std::to_string(path.size()) + " > " +
+                              std::to_string(kMaxPathLen) + "（条目「" +
+                              path.substr(0, 64) + "…」）";
+                        return false;
+                    }
+                    if (stack.size() + out.size() + 1 > kMaxEntries) {
+                        err = "目录条目数超过上限：" + std::to_string(stack.size() + out.size() + 1) +
+                              " > " + std::to_string(kMaxEntries) + "（条目「" + path + "」）";
+                        return false;
+                    }
+                    stack.push_back({child_ref, path, cur.depth + 1});
                     out.push_back({path, true, 0, child_ref});
                 } else {
                     Inode child;
@@ -563,6 +626,10 @@ bool Image::read_file_data(uint64_t ref, const Inode& ino, std::vector<uint8_t>&
         if (frag_uncompressed) {
             plain = std::move(rawbuf);
         } else if (!decompress_block(sb_.compression, rawbuf.data(), rawbuf.size(),
+                                     // ★★ P17-2（审计 01 F-03）：这里的容量＝超块 block_size，
+                                     //   而它**已被 `parse_superblock` 校验到 4096..1 MiB**
+                                     //   （修前 0xFFFFFFFF 会在这句之前让 decompress_block 里
+                                     //   `out.assign(4 GiB, 0)` 真分配 ⇒ OOM/bad_alloc 穿透）。
                                      static_cast<size_t>(bs), plain, err)) {
             err = "fragment 解压失败：" + err;
             return false;
