@@ -2231,6 +2231,12 @@ public:
         }
         return std::string();
     }
+    // ★★ P16-3b-2：自带滚动的长列表区（控件下限 #3）
+    py::object list_self_scrolling(py::object parent, int min_body_height) const {
+        const UiFacade* facade = available("list_self_scrolling");
+        if (facade == nullptr) return py::none();
+        return wrap(facade->list_self_scrolling(handle_of(parent), min_body_height));
+    }
     void list_select_row(py::object list_widget, int row) const {
         if (const UiFacade* facade = available("list_select_row")) {
             facade->list_select_row(handle_of(list_widget), row);
@@ -3015,6 +3021,8 @@ void ensure_api_module() {
                  py::arg("on_picked") = py::none())
             // ★ P4：重型 L2 第一批（表外无门 —— 能力表判据按这里的名单对账）
             .def("list", &PyUi::list, py::arg("parent") = py::none(), py::arg("row_height") = 0)
+            .def("list_self_scrolling", &PyUi::list_self_scrolling, py::arg("parent") = py::none(),
+                 py::arg("min_body_height") = 0)
             .def("list_set_row_count", &PyUi::list_set_row_count, py::arg("list"), py::arg("rows"))
             .def("list_set_row_text", &PyUi::list_set_row_text, py::arg("list"),
                  py::arg("provider") = py::none())

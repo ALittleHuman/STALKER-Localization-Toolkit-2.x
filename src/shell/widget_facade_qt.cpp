@@ -464,6 +464,29 @@ const plug::UiFacade kQtFacade = {
         place(host, container);
         return handle_of(wrap(container));
     },
+    /* list_self_scrolling（★P16-3b-2 控件下限 #3）：**内置页同款的「自带滚动的长列表区」**
+       —— 容器 + `ScrollViewport` + **`VirtualList` 当 body**（画布＝列表本人）+
+       `set_self_scrolling_body(true)`（画布几何＝视口，对照表 9.12）+ 条子值自动交回列表。
+       插件一行都不用写；与内置页（转换页/文本页的行列表）**同一条路**。 */
+    [](plug::UiHandle parent, int min_body_height) {
+        QWidget* host = resolve_parent(parent);
+        auto* container = new QWidget;
+        auto* layout = new QVBoxLayout(container);
+        layout->setContentsMargins(0, 0, 0, 0);
+        auto* viewport = new ScrollViewport(container);
+        auto* view = new VirtualList;
+        if (min_body_height > 0) viewport->set_min_body_height(min_body_height);
+        viewport->set_body(view);                       // ★ 画布＝列表本人
+        viewport->set_self_scrolling_body(true);        // ★ 不挪画布；几何＝视口
+        viewport->set_fit(ScrollViewport::Fit::Content);
+        viewport->set_offset_delegate([view](int value) { view->set_scroll_top(value); });
+        layout->addWidget(viewport);
+        // ★ 返回的是**容器**句柄 ⇒ 也要能对它用 `viewport_*` 那批（否则插件拿不到
+        //   `viewport_can_scroll/viewport_scroll_top/viewport_sync`，等于只有「能滚」却「问不到」）。
+        viewports()[reinterpret_cast<void*>(container)] = viewport;
+        place(host, container);
+        return handle_of(wrap(container));
+    },
     /* list_set_row_count */
     [](plug::UiHandle list, int rows) {
         QWidget* container = unwrap(list);
@@ -472,6 +495,13 @@ const plug::UiFacade kQtFacade = {
         if (view == nullptr) return;
         view->set_row_count(rows);
         view->refresh();
+        // ★★ P16-3b-2：**自带滚动那种**（`list_self_scrolling` 造的：视口是**容器的子件**、
+        //   列表是 body）⇒ 直接把内容总高交给它（条子量程）；下面那圈「找祖先」对它无效。
+        if (auto* inner = container->findChild<ScrollViewport*>()) {
+            inner->set_min_body_height(view->content_height());
+            inner->sync_layout();
+            return;
+        }
         // ★★ P5：列表变长了 ⇒ 把"内容总高"交给**祖先里的宿主视口**（3.3：内容高不许用请求高度顶）。
         //   这一步让"插件页里放一个长列表"**自动滚得动**，插件一句都不用写。
         for (QWidget* ancestor = container->parentWidget(); ancestor != nullptr;

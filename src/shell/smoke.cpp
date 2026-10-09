@@ -5429,6 +5429,10 @@ SmokeResult run_smoke() {
             "        ui.list_set_multi(rows, False)\n"
             "        mark('single_after_off:%s' % ui.list_selected_rows(rows))\n"
             "        mark('selected_after_off:%d' % ui.list_selected_row(rows))\n"
+            "        self_list = ui.list_self_scrolling(None, 0)\n"
+            "        ui.list_set_row_count(self_list, 200)\n"
+            "        ui.list_set_row_text(self_list, lambda row: '自滚行 %d' % row)\n"
+            "        mark('selfscroll_can:%d' % int(ui.viewport_can_scroll(self_list)))\n"
             "        mark('content_height:%d' % ui.list_content_height(rows))\n"
             "        view = ui.log_view(None, 4)\n"
             "        ui.log_view_append(view, '第一行')\n"
@@ -5531,6 +5535,50 @@ SmokeResult run_smoke() {
               QStringLiteral("P16-3a 关掉多选要立刻退回纯单选（要 [1] / 当前行 1，实得 %1 / %2）")
                   .arg(marker_value(QStringLiteral("single_after_off")))
                   .arg(marker_value(QStringLiteral("selected_after_off"))));
+        // ★★ P16-3b-2（控件下限 #3）：**自带滚动的长列表区**（`ui.list_self_scrolling`）——
+        //   插件一条调用拿到的就是内置页同款形状。这里从外壳侧验两件**行为**：
+        //     ① 拖条子 ⇒ 列表自己滚（条子值经 `set_offset_delegate` 交回 `set_scroll_top`）；
+        //     ② 画布几何 == 视口（不挪画布，对照表 9.12）。
+        //   判红办法：把宿主那条 `set_offset_delegate` 接线删掉 ⇒ ①红；
+        //            把 `set_self_scrolling_body(true)` 去掉 ⇒ ②红。
+        {
+            ScrollViewport* self_scroll = nullptr;
+            if (page_widget != nullptr) {
+                for (ScrollViewport* candidate : page_widget->findChildren<ScrollViewport*>()) {
+                    if (candidate->self_scrolling_body()) self_scroll = candidate;
+                }
+            }
+            check(self_scroll != nullptr && self_scroll->vbar() != nullptr &&
+                      self_scroll->vbar()->maximum() > 0,
+                  QStringLiteral("P16-3b-2 插件页里没找到「自带滚动的长列表区」"
+                                 "（视口=%1 条子量程=%2）")
+                      .arg(self_scroll != nullptr ? 1 : 0)
+                      .arg(self_scroll != nullptr && self_scroll->vbar() != nullptr
+                               ? self_scroll->vbar()->maximum()
+                               : -1));
+            if (self_scroll != nullptr && self_scroll->vbar() != nullptr &&
+                self_scroll->vbar()->maximum() > 0) {
+                auto* list = dynamic_cast<VirtualList*>(self_scroll->body());
+                const int target = std::max(1, self_scroll->vbar()->maximum() / 2);
+                self_scroll->vbar()->setValue(target);
+                self_scroll->sync_layout();
+                QApplication::processEvents();
+                check(list != nullptr && list->scroll_top() == target,
+                      QStringLiteral("P16-3b-2 拖条子要**真的让列表滚**（条子 %1 / 列表 offset %2）")
+                          .arg(target)
+                          .arg(list != nullptr ? list->scroll_top() : -1));
+                const QRect body_geo = list != nullptr ? list->geometry() : QRect();
+                const QRect view_rect = self_scroll->rect();
+                check(body_geo.x() == 0 && body_geo.y() == 0 &&
+                          body_geo.height() <= view_rect.height() &&
+                          (list == nullptr || body_geo.height() < list->content_height()),
+                      QStringLiteral("P16-3b-2 自带滚动的画布几何必须 == 视口"
+                                     "（body=%1x%2@(%3,%4) 视口=%5x%6）")
+                          .arg(body_geo.width()).arg(body_geo.height())
+                          .arg(body_geo.x()).arg(body_geo.y())
+                          .arg(view_rect.width()).arg(view_rect.height()));
+            }
+        }
         check(calls_at >= 0 && !text.left(calls_at).contains(QStringLiteral("row:199")),
               QStringLiteral("P4 虚拟列表把没显示的行也取了（第 199 行在 provider 阶段就被问了）"));
         check(text.contains(QStringLiteral("rowtext199:第 199 行")),

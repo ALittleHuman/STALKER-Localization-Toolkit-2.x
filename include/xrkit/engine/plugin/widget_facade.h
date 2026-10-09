@@ -115,6 +115,12 @@ struct UiFacade {
     // VirtualList：**虚拟化**行列表（只为视口内的行取文本 —— 10.3 同族）。
     //   本批是**单列文本**形态（多列/三态勾选/行尾✕ 随 TreeView 批）。
     std::function<UiHandle(UiHandle parent, int row_height)> list;
+    // ★★ P16-3b-2（**控件下限 #3：自带滚动的画布 + 像素滚动 + offset 委托**）——
+    //   一次造出**内置页同款的「自带滚动的长列表区」**：容器 + `ScrollViewport` +
+    //   **`VirtualList` 当 body** + 条子值自动交回列表。为什么不是「只加两个 setter」：
+    //   `viewport()` 造的是**普通 QWidget 当画布**，插件没法让自己的列表成为 body ⇒
+    //   加了也用不出来。句柄＝**容器**（与 `list` 一致，`findChild` 能找回列表）。
+    std::function<UiHandle(UiHandle parent, int min_body_height)> list_self_scrolling;
     std::function<void(UiHandle list, int rows)> list_set_row_count;
     // ★L2.5：宿主在**可见行**上问插件要文本（`row` 是全局行号）
     std::function<void(UiHandle list, std::function<std::string(int)> provider)> list_set_row_text;
