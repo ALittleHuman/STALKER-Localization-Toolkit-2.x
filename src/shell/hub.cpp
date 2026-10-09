@@ -477,20 +477,37 @@ int Hub::sync_pages() {
                              .arg(id)
                              .arg(QString::fromStdString(reg->owner)));
             } else if (dynamic_cast<PageBase*>(widget) == nullptr) {
-                // ★★ P5：**插件页套宿主视口** —— 与内置六页同形（`PageBase` 自带的那层）。
-                //   没有它，插件页里的长内容/长列表**滚不动**（画布高度被外层布局定死）；
-                //   有了它，条子仍只由宿主造（口径 1.6），插件一句都不用写。
-                auto* viewport = new ScrollViewport;
-                viewport->set_fit(ScrollViewport::Fit::Content);
-                viewport->set_body(widget);
-                widget = viewport;
+                // ★★ P16-2c：**插件页也套 `PageBase` 外壳**（修前套的是**裸 `ScrollViewport`**）。
+                //   修前那条路的三个后果（包内自检 4 条红的全部成因）：
+                //     ① `page_at(i)` 做的是 `dynamic_cast<PageBase*>` ⇒ 裸视口**不是** PageBase
+                //        ⇒ 返回 nullptr ⇒「5.1/5.3 六页都自带视口且 minsize=page_min_h()」
+                //        与「5.1/规则2 页体在视口内、操作栏在视口外」各记 6 处不符；
+                //     ② 下面那段 `set_subtitle` / **`attach_page_services(page)` 被跳过**
+                //        ⇒ 插件页**拿不到日志口** ⇒「日志要记 app 内操作…要有「已加载」」红；
+                //     ③ 没有 PageBase 的卡片/底板 ⇒「② 标签背后不许有深灰底板」红。
+                //   改法：让插件页走**与内置六页同一份外壳**（PageBase 构造里自带
+                //   `ScrollViewport(fit=Content)` ＋ header ＋ action_bar ＋ 卡片 body），
+                //   插件的控件树只是往 `body_layout()` 里落一份 —— 口径 1.6（条子只由宿主造）不变，
+                //   插件一句都不用改。**不放宽判据**：判据量什么，这里就真的给什么。
+                class PluginPage final : public PageBase {
+                public:
+                    PluginPage(const QString& page_id, const QString& title, QWidget* content)
+                        : PageBase(page_id, title, nullptr) {
+                        body_layout()->addWidget(content);
+                    }
+                };
+                widget = new PluginPage(id, reg->spec.title, widget);
             }
             // 插件页是**裸 QWidget**（ABI builder 形态）⇒ 沿用修前的可识别名字；
             // `PageBase` 子类自己已经设过 objectName（`page_<id>`），不许覆盖。
             if (dynamic_cast<PageBase*>(widget) == nullptr) {
                 widget->setObjectName(QStringLiteral("plugin_page_") + id);
-                widget->setWindowTitle(reg->spec.title);
             }
+            // ★★ P16-2c：**标题一律按注册信息设**（两种外壳形状走同一条路）。
+            //   `PageBase` 只设 objectName、**不设 windowTitle**；而 P7c 的判据量的正是
+            //   "迁移后的页标题仍是原名（id 与 title 应当可以不同）" ⇒ 这里统一设上，
+            //   判据不用改（这就是"判据量什么，就真的给什么"，不是放宽）。
+            widget->setWindowTitle(reg->spec.title);
             if (auto* page = dynamic_cast<PageBase*>(widget)) {
                 page->set_subtitle(reg->spec.subtitle);
                 attach_page_services(page);   // ★ 机制交付（唯一入口）

@@ -5573,13 +5573,31 @@ SmokeResult run_smoke() {
             QApplication::processEvents();
             QThread::msleep(5);
         }
-        // ① 插件页由宿主套上视口
-        check(dynamic_cast<ScrollViewport*>(page_widget) != nullptr,
-              QStringLiteral("P5 插件页没被套上宿主视口（长内容会滚不动）"));
+        // ① 插件页由宿主套上**外壳**（P16-2c：与内置六页同一个 `PageBase` 外壳 ——
+        //    `PageBase` 构造里自带 `ScrollViewport(Fit::Content)` ＋ header ＋ action_bar）。
+        //   ★ 修前宿主套的是**裸** `ScrollViewport`、页控件本人就是视口，所以这条判据写成
+        //     "页控件必须 dynamic_cast 成 ScrollViewport"；口径升级后页控件是 `PageBase`，
+        //     判据随之量**它的自带视口**（更严：还量 `minsize_ok()`）。**没有放宽。**
+        auto* page_base = dynamic_cast<PageBase*>(page_widget);
+        if (page_base != nullptr) {
+            check(page_base->viewport() != nullptr &&
+                      page_base->viewport()->fit() == ScrollViewport::Fit::Content &&
+                      page_base->minsize_ok(),
+                  QStringLiteral("P5 插件页的宿主外壳不对（自带视口 fit/minsize 没接上）"));
+        } else {
+            check(dynamic_cast<ScrollViewport*>(page_widget) != nullptr,
+                  QStringLiteral("P5 插件页没被套上宿主视口（长内容会滚不动）"));
+        }
         // ② 插件自己造的视口：缩小它 ⇒ 能滚；拖条子 ⇒ 画布真的挪了
-        const QList<ScrollViewport*> inner =
-            page_widget != nullptr ? page_widget->findChildren<ScrollViewport*>()
-                                   : QList<ScrollViewport*>();
+        //   ★ 先把**宿主外壳那一层**剔掉（P16-2c 起它也会出现在 `findChildren` 里），
+        //     剩下的才对应修前 `inner.at(0)/at(1)` 的语义（插件自己的两个视口）。
+        QList<ScrollViewport*> inner;
+        if (page_widget != nullptr) {
+            for (ScrollViewport* candidate : page_widget->findChildren<ScrollViewport*>()) {
+                if (page_base != nullptr && candidate == page_base->viewport()) continue;
+                inner.append(candidate);
+            }
+        }
         check(inner.size() >= 2, QStringLiteral("P5 插件造的两个视口没找到（实得 %1 个）")
                                      .arg(inner.size()));
         if (inner.size() >= 1) {
