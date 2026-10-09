@@ -158,13 +158,16 @@ def check_patch_panel(cli: Path, problems: list) -> int:
     return total
 
 
-def check_font_panel(cli: Path, problems: list) -> tuple:
-    """② 面板：分区字体 —— 与 CLI 参照逐字节 + 档位语义 + 清单台账。返回 (项数, 前提缺件?)。"""
-    font = ""
+def find_font() -> str:
     for candidate in FONT_CANDIDATES:
         if Path(candidate).is_file():
-            font = candidate
-            break
+            return candidate
+    return ""
+
+
+def check_font_panel(cli: Path, problems: list) -> tuple:
+    """② 面板：分区字体 —— 与 CLI 参照逐字节 + 档位语义 + 清单台账。返回 (项数, 前提缺件?)。"""
+    font = find_font()
     if not font:
         print("   ⚠ 源字体缺件（msyh/simsun），分区字体面板跳过")
         return (0, True)
@@ -247,6 +250,125 @@ def check_font_panel(cli: Path, problems: list) -> tuple:
     return (total, False)
 
 
+def check_pipeline_panel(cli: Path, problems: list) -> tuple:
+    """③ 面板：自适应出汉化包 —— 与两条 CLI 参照逐字节 + 装/还原**逐字节回原样**。"""
+    font = find_font()
+    if not font:
+        print("   ⚠ 源字体缺件，产线面板跳过")
+        return (0, True)
+
+    total = 0
+    work = ROOT / "build" / "toolchain_pipeline"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    src = work / "scripts"
+    src.mkdir(parents=True)
+    (src / "a.script").write_text('local s = "Привет, сталкер!"\n', encoding="cp1251")
+    (src / "d.ltx").write_text('[wpn_akm]\ninv_name = "АКМ"\n; inv_name = Не должно попасть\n',
+                               encoding="cp1251")
+    ref_out = work / "ref"
+    plug_out = work / "plug"
+
+    # 参照：**同一目录里**先提取、再出包（与产线同形）
+    ref_run = [
+        [str(cli), "--extract-text", str(src), str(ref_out), "--prefix", "p16c",
+         "--id-prefix", "sgtat_p16c_0", "--clean"],
+        [str(cli), "--build-font-pack", "SoC", "chs", str(ref_out), font, str(ref_out),
+         "--only-size", "11"],
+    ]
+    for cmd in ref_run:
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=900)
+        if r.returncode != 0:
+            problems.append("③ CLI 参照没跑成（rc=%d）：%s" % (r.returncode, cmd[1]))
+
+    got, rc, raw = call_plugin(cli, {
+        "action": "pipeline", "source_dir": str(src), "out_dir": str(plug_out),
+        "font_path": font, "prefix": "p16c", "id_prefix": "sgtat_p16c_0", "clean": True,
+        "only_sizes": [11]})
+    if got.get("_no_result") or not got.get("ok"):
+        problems.append("③ 产线没跑成：%s" % str(got)[:200])
+        return (1, False)
+
+    ref_tree = tree(ref_out)
+    plug_tree = tree(plug_out)
+    plug_tree.pop("manifest.json", None)
+    total += 1
+    if not ref_tree or not plug_tree:
+        problems.append("③ 空集：参照 %d / 插件 %d（空集不算通过）"
+                        % (len(ref_tree), len(plug_tree)))
+    for key, digest in sorted(ref_tree.items()):
+        total += 1
+        if plug_tree.get(key) != digest:
+            problems.append("③ 产物不同：%s（参照 %s，插件 %s）"
+                            % (key, digest[:12], str(plug_tree.get(key))[:12]))
+    only_plug = sorted(set(plug_tree) - set(ref_tree))
+    total += 1
+    if only_plug:
+        problems.append("③ 插件多出参照没有的文件：%s" % only_plug[:4])
+
+    # 统一清单必须同时覆盖两类产物（改写的文本树 + 字库）
+    manifest_path = plug_out / "manifest.json"
+    rels = []
+    if manifest_path.is_file():
+        for line in manifest_path.read_text(encoding="utf-8").splitlines():
+            if line.strip() and not line.startswith("#"):
+                rels.append(line.split("\t")[0])
+    total += 1
+    if not any(r.startswith("gamedata/") for r in rels):
+        problems.append("③ 清单里没有字库产物（gamedata/…）")
+    total += 1
+    if not any(not r.startswith("gamedata/") for r in rels):
+        problems.append("③ 清单里没有文本提取产物（非 gamedata/…）")
+
+    # ── 装 → 还原 往返：必须**逐字节回到安装前** ──
+    with tempfile.TemporaryDirectory(prefix="p16c_game_") as game_dir:
+        game = Path(game_dir)
+        overwritten_rel = next((r for r in rels if r.startswith("gamedata/")), "")
+        pre = game / overwritten_rel if overwritten_rel else None
+        old_bytes = b"OLD-CONTENT-FROM-BEFORE-INSTALL"
+        if pre is not None:
+            pre.parent.mkdir(parents=True, exist_ok=True)
+            pre.write_bytes(old_bytes)
+        ins, _, _ = call_plugin(cli, {"action": "install", "out_dir": str(plug_out),
+                                      "target_root": str(game)})
+        total += 1
+        if not ins.get("ok") or not ins.get("installed"):
+            problems.append("③ 安装失败：%s" % str(ins)[:160])
+        else:
+            total += 1
+            if not ins.get("overwritten"):
+                problems.append("③ 覆盖没有记账（overwritten=%s）—— 覆盖必须可见"
+                                % ins.get("overwritten"))
+            if pre is not None:
+                total += 1
+                if pre.read_bytes() != (plug_out / overwritten_rel).read_bytes():
+                    problems.append("③ 装完之后目标文件内容不等于产物")
+            # 新增文件（不在 pre 里的）必须真出现
+            added = [r for r in rels if r != overwritten_rel and (game / r).is_file()]
+            total += 1
+            if not added:
+                problems.append("③ 安装既没覆盖也没新增任何文件")
+
+        res, _, _ = call_plugin(cli, {"action": "restore", "out_dir": str(plug_out),
+                                      "target_root": str(game)})
+        total += 1
+        if not res.get("ok"):
+            problems.append("③ 还原失败：%s" % str(res)[:160])
+        if pre is not None:
+            total += 1
+            if pre.read_bytes() != old_bytes:
+                problems.append("③ 还原后**没有逐字节回到原样**（%s）" % overwritten_rel)
+        left = [r for r in rels if r != overwritten_rel and (game / r).exists()]
+        total += 1
+        if left:
+            problems.append("③ 还原后还留着新装的文件：%s" % left[:4])
+
+    print("   ✓ ③ 产线：参照 %d 文件 / 插件 %d 文件（逐字节）＋ 统一清单两类产物 ＋ 装/还原往返"
+          % (len(ref_tree), len(plug_tree)))
+    return (total, False)
+
+
 def main() -> int:
     cli = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_CLI
     print("== P16-1c：插件页（汉化产线）经 api.engine.* 驱动引擎 ==")
@@ -269,6 +391,9 @@ def main() -> int:
     font_items, font_missing = check_font_panel(cli, problems)
     items += font_items
 
+    pipe_items, pipe_missing = check_pipeline_panel(cli, problems)
+    items += pipe_items
+
     print()
     if items < MIN_ITEMS:
         problems.append("比较项数 %d < 下限 %d（空集/少比不算通过）" % (items, MIN_ITEMS))
@@ -278,11 +403,11 @@ def main() -> int:
         print()
         print("TOOLCHAIN fail %d 项不成立" % len(problems))
         return 1
-    if not samples_present and font_missing:
+    if not samples_present and font_missing and pipe_missing:
         print("TOOLCHAIN skip 样本与字体都缺件（外部前提）")
         return 2
-    print("TOOLCHAIN ok items=%d（面板①：与 1.x 金标准逐条相等＋产物逐字节；"
-          "面板②：与 CLI 参照逐字节＋档位语义＋清单台账）" % items)
+    print("TOOLCHAIN ok items=%d（面板①：1.x 金标准逐条＋产物逐字节；面板②：CLI 参照逐字节＋档位语义＋清单；"
+          "面板③：产线逐字节＋统一清单＋装/还原逐字节回原样）" % items)
     return 0
 
 

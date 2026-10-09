@@ -153,12 +153,13 @@ def font_pack_regions(api, options):
     """
     result = api.engine.font_pack(options)
     out = {"ok": bool(result and result.get("ok")), "result": result, "manifest": None,
-           "files": [], "only_sizes": list(options.get("only_sizes", []))}
+           "files": [], "entries": [], "only_sizes": list(options.get("only_sizes", []))}
     if not out["ok"]:
         return out
     out_dir = options.get("out_dir") or ""
     entries, files = collect_manifest_entries(out_dir)
     out["files"] = files
+    out["entries"] = entries
     if entries:
         out["manifest"] = api.engine.pkg_write_manifest(
             os.path.join(out_dir, "manifest.json"), entries)
@@ -206,11 +207,157 @@ def headless(api, args):
             "only_sizes": [int(x) for x in (args.get("only_sizes") or [])],
         }
         return font_pack_regions(api, options)
+    if action == "pipeline":
+        return run_pipeline(api, {
+            "source_dir": str(args.get("source_dir", "")),
+            "out_dir": str(args.get("out_dir", "")),
+            "font_path": str(args.get("font_path", "")),
+            "game": str(args.get("game", "SoC")),
+            "lang": str(args.get("lang", "chs")),
+            "prefix": str(args.get("prefix", "")),
+            "id_prefix": str(args.get("id_prefix", "")),
+            "clean": bool(args.get("clean", True)),
+            "offset": int(args.get("offset", 0)),
+            "suffix": str(args.get("suffix", "")),
+            "only_sizes": [int(x) for x in (args.get("only_sizes") or [])],
+        })
+    if action in ("install", "restore"):
+        out_dir = str(args.get("out_dir", ""))
+        entries = args.get("entries") or load_entries_from_manifest(
+            os.path.join(out_dir, "manifest.json"))
+        target_root = str(args.get("target_root", ""))
+        backup_root = str(args.get("backup_root", "") or os.path.join(out_dir, "backup"))
+        if action == "install":
+            return install_package(api, entries, target_root, backup_root)
+        return restore_package(api, entries, target_root, backup_root)
     return {"ok": False, "error": "未知动作：" + action}
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 五、界面：一页多标签（本批交付前两个；"自适应出汉化包"下一批）
+# 三点五、面板 ③：自适应出汉化包（扫源 ⇒ 提取 ⇒ 字号自适应出包 ⇒ 统一清单 ⇒ 装/还原）
+# ══════════════════════════════════════════════════════════════════════════
+def kind_sub_dir(kind):
+    """源目录类型 → 落盘子目录（与内置页/文本页**同一口径**：gameplay 之外都归 scripts）。"""
+    return "gameplay" if kind == "gameplay" else "scripts"
+
+
+def run_pipeline(api, options):
+    """跑一遍产线（**唯一一份**：界面按钮与无界面入口都走它）。
+
+    ① `text_extract_kind` 判源目录类型（gameplay / scripts）；
+    ② `text_extract_dir` 把源文本提取/改写成目标树（落 `<out>/<类型>/`，xml 落 `<out>/`）；
+    ③ `font_pack` 出字库（**字号自适应在引擎里**；`offset` / `only_sizes` 由调用方给）；
+    ④ 把 `<out>` 下**全部产物**（改写的文本树 + 字库 + xml）登记成**一份清单**并原子写出 ——
+       这就是规格说的"统一产物模型"（字库 + ltx 改写 + xml 译文 + 清单/哈希），
+       之后 `pkg_install`/`pkg_restore` 直接吃这份清单。
+    """
+    out = {"ok": False, "error": "", "kind": None, "extract": None, "pack": None,
+           "manifest": None, "entries": [], "files": []}
+    source = options.get("source_dir") or ""
+    out_dir = options.get("out_dir") or ""
+    if not source or not out_dir:
+        out["error"] = "源目录与输出目录都必须给"
+        return out
+    kind_result = api.engine.text_extract_kind(source)
+    out["kind"] = kind_result
+    if not kind_result or not kind_result.get("ok"):
+        out["error"] = ("识别源目录类型失败："
+                        + str((kind_result or {}).get("error", "宿主没有 text 能力")))
+        return out
+    target_dir = os.path.join(out_dir, kind_sub_dir(str(kind_result.get("kind", ""))))
+    extract = api.engine.text_extract_dir(source, target_dir, out_dir,
+                                          {"prefix": str(options.get("prefix", "")),
+                                           "id_prefix": str(options.get("id_prefix", "")),
+                                           "clean": bool(options.get("clean", True))})
+    out["extract"] = extract
+    if not extract or not extract.get("ok"):
+        out["error"] = "文本提取失败：" + str((extract or {}).get("error", "宿主没有 text 能力"))
+        return out
+    packed = font_pack_regions(api, {
+        "game": str(options.get("game", "SoC")), "lang": str(options.get("lang", "chs")),
+        "xml_dir": out_dir, "font_path": str(options.get("font_path", "")),
+        "out_dir": out_dir, "offset": int(options.get("offset", 0)),
+        "suffix": str(options.get("suffix", "")), "full_cyrillic": True,
+        "only_sizes": [int(x) for x in (options.get("only_sizes") or [])],
+    })
+    out["pack"] = packed
+    if not packed.get("ok"):
+        out["error"] = "出包失败：" + str((packed.get("result") or {}).get("error", ""))
+        return out
+    out["manifest"] = packed.get("manifest")
+    out["entries"] = packed.get("entries", [])
+    out["files"] = packed.get("files", [])
+    out["ok"] = True
+    return out
+
+
+def install_package(api, entries, target_root, backup_root=""):
+    """装进游戏根（引擎侧**先备份被覆盖的原件** + 逐条台账；覆盖必须可见）。"""
+    if not target_root:
+        return {"ok": False, "error": "没有指定游戏根", "installed": 0, "overwritten": 0,
+                "backup_dir": "", "failures": []}
+    if not entries:
+        return {"ok": False, "error": "没有可装的条目（先跑一遍产线）", "installed": 0,
+                "overwritten": 0, "backup_dir": "", "failures": []}
+    return api.engine.pkg_install(target_root, entries, backup_root)
+
+
+def restore_package(api, entries, target_root, backup_root=""):
+    """还原：有备份 ⇒ 逐字节回；装了新文件 ⇒ 删掉（回退必须真的回到原样）。"""
+    if not target_root:
+        return {"ok": False, "error": "没有指定游戏根", "restored": 0, "removed": 0,
+                "missing": [], "failures": []}
+    rels = [str(item.get("rel", "")) for item in (entries or []) if item.get("rel")]
+    if not rels:
+        return {"ok": False, "error": "没有可还原的条目", "restored": 0, "removed": 0,
+                "missing": [], "failures": []}
+    return api.engine.pkg_restore(target_root, backup_root, rels)
+
+
+def format_pipeline(out):
+    if out is None:
+        return "（宿主没有提供引擎能力）"
+    if not out.get("ok"):
+        return "结果: **没跑成**\n原因: %s" % out.get("error", "")
+    extract = out.get("extract") or {}
+    packed = out.get("pack") or {}
+    result = packed.get("result") or {}
+    manifest = out.get("manifest") or {}
+    return "\n".join([
+        "结果: 已出包 → %s" % result.get("out_gamedata", ""),
+        "提取: 类型 %s · %s 个文件 · %s 条字符串 · %s 个字符"
+        % (extract.get("kind", "?"), extract.get("files", 0), extract.get("strings", 0),
+           extract.get("chars", 0)),
+        "字库: %s 个档位（自适应由引擎负责） / XML 改写 %s 个"
+        % (result.get("fonts_written", 0), result.get("xml_written", 0)),
+        "统一清单: %s 条 → manifest.json（%s）"
+        % (len(out.get("entries", [])), "好" if manifest.get("ok") else "**没写成**"),
+        "产物 %d 个文件" % len(out.get("files", [])),
+    ])
+
+
+def format_install(out):
+    if out is None:
+        return "（宿主没有提供引擎能力）"
+    if not out.get("ok"):
+        return "结果: **没装上**\n原因: %s\n失败 %s 条" % (out.get("error", ""),
+                                                       len(out.get("failures", []) or []))
+    return ("结果: 已装 %s 个（其中**覆盖** %s 个）→ 备份在 %s"
+            % (out.get("installed", 0), out.get("overwritten", 0), out.get("backup_dir", "")))
+
+
+def format_restore(out):
+    if out is None:
+        return "（宿主没有提供引擎能力）"
+    if not out.get("ok"):
+        return "结果: **没还原干净**\n原因: %s\n失败 %s 条" % (out.get("error", ""),
+                                                           len(out.get("failures", []) or []))
+    return ("结果: 逐字节还原 %s 个 / 删掉新装的 %s 个"
+            % (out.get("restored", 0), out.get("removed", 0)))
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 五、界面：一页多标签
 # ══════════════════════════════════════════════════════════════════════════
 def _build_patch_tab(api, host, tab):
     ui = api.ui
@@ -313,6 +460,88 @@ def _build_font_tab(api, host, tab):
     ui.button(tab, "按所选档位出包…", run_pack)
 
 
+def load_entries_from_manifest(path):
+    """从清单里读回条目（TSV：`# …` 注释 + 每行 `rel\tsha256\tsource`）。
+
+    有了它，"装进游戏 / 还原"不必依赖"刚跑过一遍产线"——重启后照样能装能退。
+    """
+    entries = []
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.rstrip("\r\n")
+                if not line.strip() or line.startswith("#"):
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    entries.append({"rel": parts[0], "sha256": parts[1],
+                                    "source_path": parts[2] if len(parts) > 2 else ""})
+    except OSError:
+        return []
+    return entries
+
+
+def _build_pipeline_tab(api, host, tab):
+    ui = api.ui
+    ui.label(tab, "自适应出汉化包：源文本目录 →（类型判定 + 提取）→ 字号自适应出包 → "
+                  "统一清单；可装进游戏（先备份），也能一键还原")
+    src_entry = ui.entry(tab, host.pref_get(SECTION, "source_dir", ""), 60)
+    out_entry = ui.entry(tab, host.pref_get(SECTION, "out_dir2", ""), 60)
+    font_entry = ui.entry(tab, host.pref_get("font", "path", ""), 60)
+    game_entry = ui.entry(tab, host.pref_get(SECTION, "game_root", ""), 60)
+    status = ui.text_view(tab, 16, True)
+    state = {"entries": []}
+
+    def show(text):
+        ui.set_text(status, text)
+
+    def current_entries():
+        """先用手上这份；没有就从输出目录的清单里读回来（重启后也能装/退）。"""
+        if state["entries"]:
+            return state["entries"]
+        return load_entries_from_manifest(
+            os.path.join(ui.get_text(out_entry).strip(), "manifest.json"))
+
+    def backup_root():
+        return os.path.join(ui.get_text(out_entry).strip(), "backup")
+
+    def pick_font():
+        def chosen(path):
+            if path:
+                ui.set_text(font_entry, path)
+                host.pref_set("font", "path", path)
+
+        ui.pick_font(ui.get_text(font_entry).strip(), chosen)
+
+    ui.button(tab, "选字体…", pick_font)
+
+    def run():
+        options = {"source_dir": ui.get_text(src_entry).strip(),
+                   "out_dir": ui.get_text(out_entry).strip(),
+                   "font_path": ui.get_text(font_entry).strip()}
+        host.pref_set(SECTION, "source_dir", options["source_dir"])
+        host.pref_set(SECTION, "out_dir2", options["out_dir"])
+        result = run_pipeline(api, options)
+        state["entries"] = result.get("entries", []) or []
+        show(format_pipeline(result))
+        ui.log("自适应出汉化包：跑一遍 " + options["out_dir"])
+
+    def install():
+        root = ui.get_text(game_entry).strip()
+        host.pref_set(SECTION, "game_root", root)
+        show(format_install(install_package(api, current_entries(), root, backup_root())))
+        ui.log("自适应出汉化包：装进 " + root)
+
+    def restore():
+        root = ui.get_text(game_entry).strip()
+        show(format_restore(restore_package(api, current_entries(), root, backup_root())))
+        ui.log("自适应出汉化包：还原 " + root)
+
+    ui.button(tab, "跑一遍（提取 + 出包 + 清单）", run)
+    ui.button(tab, "装进游戏（先备份）", install)
+    ui.button(tab, "还原", restore)
+
+
 def register(api):
     def build():
         ui = api.ui
@@ -320,8 +549,9 @@ def register(api):
         tabs = ui.tabs(None)
         _build_patch_tab(api, host, ui.tabs_add_page(tabs, "自动二进制补丁"))
         _build_font_tab(api, host, ui.tabs_add_page(tabs, "分区字体"))
+        _build_pipeline_tab(api, host, ui.tabs_add_page(tabs, "自适应出汉化包"))
         return None
 
     # ★ **新增页**（不覆盖内置页）⇒ replaces 留空；三件同页见各自的标签。
     api.register_tool("toolchain_py", build, 6, "", "汉化产线（插件版）", "汉化产线")
-    api.log("汉化产线（插件版）：已注册（新增页；面板：自动二进制补丁 / 分区字体）")
+    api.log("汉化产线（插件版）：已注册（新增页；面板：自动二进制补丁 / 分区字体 / 自适应出汉化包）")
