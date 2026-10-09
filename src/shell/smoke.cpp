@@ -9439,6 +9439,34 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
         } else {
             check(false, QStringLiteral("#6 ③ 拖动：夹具没做出可滚的条子"));
         }
+        // ★★ P16-3b：**自带滚动的画布几何 == 视口几何** —— `docs/2.0.0-行为口径对照表.md`
+        //   第 9.12 行**自己点名**"★目前无锁，建议补"的那条（现有 #6 只锁了条子/偏移）。
+        //   它是"不挪整块画布"那条模型的反面判据：修前的模型把 body 设成
+        //   `(-hbar, -vbar, body_w, body_h)`（画布撑到**内容高**、靠挪它来滚）⇒ 这里必红。
+        //   本夹具内容高（200×20 = 4000）远大于视口 ⇒ body 高只许**等于视口可用高**、
+        //   且 x/y 恒为 0。判红办法：把 `scroll_viewport.cpp` 的自滚分支改回
+        //   `body_->setGeometry(-hbar, -vbar, body_w_, body_h_)` ⇒ 立刻红。
+        if (cp.rows_viewport() != nullptr && cp.rows() != nullptr) {
+            // ★ 先**强制跑一遍布局**再量：③ 拖过条子后不一定触发 `sync_layout()`，
+            //   而旧模型恰恰只在布局那一刻把画布挪成 `(-hbar, -vbar, …)` ——
+            //   不强制布局的话这条锁会被"布局没跑"蒙过去（第一版就是这么假绿的）。
+            cp.rows_viewport()->sync_layout();
+            const QRect body_geo = cp.rows()->geometry();
+            const QRect view_rect = cp.rows_viewport()->rect();
+            const int content_h = cp.rows()->content_height();
+            check(body_geo.x() == 0 && body_geo.y() == 0 &&
+                      body_geo.width() <= view_rect.width() &&
+                      body_geo.height() <= view_rect.height() &&
+                      body_geo.height() < content_h,
+                  QStringLiteral("P16-3b 自带滚动的画布几何必须 == 视口（不许挪画布、不许撑到内容高）："
+                                 "body=%1x%2@(%3,%4) 视口=%5x%6 内容高=%7")
+                      .arg(body_geo.width()).arg(body_geo.height())
+                      .arg(body_geo.x()).arg(body_geo.y())
+                      .arg(view_rect.width()).arg(view_rect.height())
+                      .arg(content_h));
+        } else {
+            check(false, QStringLiteral("P16-3b 夹具没拿到（行列表 / 自带滚动视口）"));
+        }
         // ④ 行为：**滚轮**也改变 value()（走全局路由 —— 由滚动视口自己认领）
         if (bar != nullptr && bar->maximum() > 0) {
             bar->setValue(0);
