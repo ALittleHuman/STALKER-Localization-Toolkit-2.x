@@ -4,6 +4,8 @@
 #include "xrkit/engine/font/metrics.h"
 #include "xrkit/engine/font/resample.h"
 
+#include "bitmap_gray.h"   // ★ P17-3：MONO/GRAY → 8bpp 的**唯一一份**读法
+
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
@@ -127,11 +129,17 @@ void raster_glyph(FT_Face face, FT_UInt index, Raster& out) {
 
     const int pen_x = left - ink_left;
     const int pen_y = ink_top - ink_top_y0;
-    if (bm.pixel_mode == FT_PIXEL_MODE_GRAY && bm.buffer != nullptr) {
+    // ★★ 2026-10-10（P17-3，审计 02 F-01 High）：**MONO 内嵌位图也要认**。
+    //   修前这一支只认 `FT_PIXEL_MODE_GRAY`，而带内嵌位图 strike 的字体（simsun 在 ppem
+    //   12..17）经 `FT_LOAD_DEFAULT` 加载出来就是 1bpp MONO ⇒ 画布全 0 ⇒ 整字被判"缺墨迹"
+    //   ⇒ **ini 里槽位框照写、DDS 上空白**（实测 S=1 的 13/15 档 97.2% 槽位全空）。
+    //   读法只有一份：`bitmap_gray.h`（与 `glyph.cpp` 共用，别再各写各的）。
+    std::vector<uint8_t> tight;
+    if (bitmap_to_gray_tight(bm, width, rows, tight)) {
         for (int r = 0; r < rows; ++r) {
             const int y = pen_y + r;
             if (y < 0 || y >= out.canvas_h) continue;
-            const uint8_t* src = bm.buffer + static_cast<size_t>(r) * static_cast<size_t>(bm.pitch);
+            const uint8_t* src = tight.data() + static_cast<size_t>(r) * static_cast<size_t>(width);
             for (int c = 0; c < width; ++c) {
                 const int x = pen_x + c;
                 if (x < 0 || x >= out.canvas_w) continue;

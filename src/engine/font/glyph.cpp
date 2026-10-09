@@ -3,6 +3,8 @@
 #include "xrkit/core/path.h"
 #include "xrkit/engine/text/encoding.h"
 
+#include "bitmap_gray.h"   // ★ P17-3：MONO/GRAY → 8bpp 的**唯一一份**读法（与 render.cpp 共用）
+
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
@@ -94,24 +96,10 @@ bool dump_glyphs(const std::string& font_path, int pixel_size,
             width = static_cast<int32_t>(bm.width);
             pitch = static_cast<int32_t>(bm.pitch);
             if (bm.buffer != nullptr) {
-                tight.reserve(static_cast<size_t>(width) * static_cast<size_t>(height));
-                if (bm.pixel_mode == FT_PIXEL_MODE_GRAY) {
-                    for (int32_t r = 0; r < height; ++r) {
-                        const uint8_t* row = bm.buffer + static_cast<size_t>(r) * pitch;
-                        tight.insert(tight.end(), row, row + width);
-                    }
-                } else if (bm.pixel_mode == FT_PIXEL_MODE_MONO) {
-                    // 内嵌位图是 1bpp：每行按 (w+7)/8 字节存，**最高位是最左像素**。
-                    // 展开成 8bpp（0/255），下游与 GRAY 走同一条路。
-                    for (int32_t r = 0; r < height; ++r) {
-                        const uint8_t* row = bm.buffer + static_cast<size_t>(r) * pitch;
-                        for (int32_t x = 0; x < width; ++x) {
-                            const uint8_t byte = row[x >> 3];
-                            const bool on = ((byte >> (7 - (x & 7))) & 1u) != 0;
-                            tight.push_back(on ? 255 : 0);
-                        }
-                    }
-                }
+                // ★★ P17-3：读法只有一份 —— `bitmap_gray.h`（GRAY 原样、MONO 按 MSB 最左
+                //   展开；渲染那条路与四态判定那条路共用它，别再各写各的）。
+                //   这一份原本就是对的，缺陷的本质正是"三份拷贝只修了一份"。
+                bitmap_to_gray_tight(bm, width, height, tight);
             }
         }
         const int32_t asc = static_cast<int32_t>(face->size->metrics.ascender);
@@ -170,16 +158,22 @@ bool glyph_mask_info(const std::string& font_path, int pixel_size, uint32_t cp,
     out.width = static_cast<int>(bm.width);
     out.height = static_cast<int>(bm.rows);
     out.ok = true;
-    if (bm.pixel_mode != FT_PIXEL_MODE_GRAY || bm.buffer == nullptr) return true;
+    // ★★ 2026-10-10（P17-3，审计 02 F-06 Medium）：**MONO 也要参与 bbox/has_ink**。
+    //   修前这一句是 `if (bm.pixel_mode != FT_PIXEL_MODE_GRAY || bm.buffer == nullptr) return true;`
+    //   —— 对以 MONO 内嵌位图呈现的字形直接早退成「画得出但没有墨迹」，而本函数是
+    //   `classify_cjk_font` 与四态判定的**唯一判据** ⇒ 会把好字体判成缺字形。
+    //   当前取样字号是固定的 40px（落在 strike 之外）⇒ 这条洞**暂时不可达**；本批一并堵上，
+    //   免得将来把取样字号挪进 strike 窗口时变成活雷。
+    //   其它 pixel_mode（LCD/BGRA）照旧不认（`bitmap_is_readable` 是唯一口径）。
+    if (!bitmap_is_readable(bm)) return true;
 
     int x0 = out.width;
     int y0 = out.height;
     int x1 = -1;
     int y1 = -1;
     for (int r = 0; r < out.height; ++r) {
-        const uint8_t* row = bm.buffer + static_cast<size_t>(r) * bm.pitch;
         for (int c = 0; c < out.width; ++c) {
-            if (row[c] == 0) continue;
+            if (bitmap_pixel_8bpp(bm, c, r) == 0) continue;
             if (c < x0) x0 = c;
             if (c > x1) x1 = c;
             if (r < y0) y0 = r;

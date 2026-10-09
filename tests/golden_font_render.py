@@ -43,6 +43,26 @@ S1_SIZES = (11, 13, 15)
 X2_SIZES = (16, 17, 18)
 REF_LINE = re.compile(r"^(\d{5})=")
 
+# ── ★★ 2026-10-10（P17-3，审计 02 F-01 High）：**带内嵌位图 strike 的字体**必须单独对拍 ────
+#   为什么：命中内嵌位图 strike 的条件是"渲染 ppem 落在 strike 窗口内"（本机 simsun 实测
+#   **12..17**），而 x2 档的 ppem = fitted×2 ≥ 22 ⇒ **恰好躲开它**。所以这一组必须走
+#   **x2=0**，且**必须包含 11**。
+#
+#   修前事实（实测，见交接区批报告）：`render.cpp::raster_glyph` 的拷贝分支只认
+#   `FT_PIXEL_MODE_GRAY`，而 FreeType 的 `FT_LOAD_DEFAULT` 对带 strike 的字体会先试
+#   `FT_LOAD_SBITS_ONLY`（ftobjs.c「try to load embedded bitmaps if available」）⇒ simsun
+#   在 12..17 加载出来是 1bpp **MONO** ⇒ 画布全 0 ⇒ 整字被判"缺墨迹"：
+#   **ini 里槽位框照写、DDS 上空白**（实测 S=1 的 13/15 档 97.2% 槽位全空）。
+#   同一个致盲还让 `fit_render_size` 把 MONO 候选当成缺字形**提前 break** ⇒ 定标也错
+#   （simsun@11：1.x fitted=17 / 我们=11）⇒ 11 必须在内（只锁"空白"锁不住"定标"）。
+#
+#   "存在才跑"（与门禁 [17] `golden_font_raster.py` 的 SYSTEM_FONTS 同款）：缺件逐条打
+#   `!!` note；**一个都不在 ⇒ 退 2**（前提缺失，release 档零容忍），不许静默变成 0 条判据。
+SYSTEM_FONT_CASES = (
+    (Path(r"C:\Windows\Fonts\simsun.ttc"), (11, 12, 13, 15, 16, 17)),
+    (Path(r"C:\Windows\Fonts\simhei.ttf"), (16,)),
+)
+
 
 def load_reference():
     """按文件路径装载 1.x 的 `font_pack`（同名命名空间包会挡住 `import font_pack`）。"""
@@ -126,33 +146,47 @@ def main() -> int:
 
     small = small_charset(fp)
     big = big_charset()
-    cases = []  # (名字, 码位表, 字号, x2, fmt)
+    cases = []  # (名字, 码位表, 字号, x2, fmt, 字体)
     sizes = (args.size,) if args.size else (S1_SIZES + X2_SIZES)
     for size in sizes:
         for fmt in ("8888", "A8"):
-            cases.append(("小字符集", small, size, size in X2_SIZES, fmt))
+            cases.append(("小字符集", small, size, size in X2_SIZES, fmt, font_path))
     if not args.size and big:
-        cases.append(("原版成品字符集", big, 11, False, "8888"))
-        cases.append(("原版成品字符集", big, 16, True, "A8"))
+        cases.append(("原版成品字符集", big, 11, False, "8888", font_path))
+        cases.append(("原版成品字符集", big, 16, True, "A8", font_path))
+
+    # ★★ P17-3：带内嵌位图 strike 的系统字体（**x2=0**，见文件头那一节）
+    strike_ran = 0
+    missing_fonts = []
+    for strike_font, strike_sizes in SYSTEM_FONT_CASES:
+        if not strike_font.is_file():
+            missing_fonts.append(str(strike_font))
+            print("  !! 缺件：%s ⇒ 该字体的内嵌位图 strike 覆盖**未跑**" % strike_font)
+            continue
+        for size in strike_sizes:
+            for fmt in ("8888", "A8"):
+                cases.append(("内嵌位图 strike", small, size, False, fmt, strike_font))
+                strike_ran += 1
 
     failures = 0
-    for name, cps, size, x2, fmt in cases:
-        tag = "%s size=%d x2=%d fmt=%s chars=%d" % (name, size, 1 if x2 else 0, fmt, len(cps))
+    for name, cps, size, x2, fmt, case_font in cases:
+        tag = "%s[%s] size=%d x2=%d fmt=%s chars=%d" % (
+            name, case_font.stem, size, 1 if x2 else 0, fmt, len(cps))
         chars_file = WORK / ("chars_%d.txt" % len(cps))
         write_charset(chars_file, cps)
-        ours_prefix = WORK / ("ours_%d_%s" % (size, fmt))
-        exp_dds = WORK / ("exp_%d_%s.dds" % (size, fmt))
-        exp_ini = WORK / ("exp_%d_%s.ini" % (size, fmt))
+        ours_prefix = WORK / ("ours_%s_%d_%s" % (case_font.stem, size, fmt))
+        exp_dds = WORK / ("exp_%s_%d_%s.dds" % (case_font.stem, size, fmt))
+        exp_ini = WORK / ("exp_%s_%d_%s.ini" % (case_font.stem, size, fmt))
 
         chars_str = "".join(chr(cp) for cp in cps)
         # ── 1.x 基准（调它的真函数，不是重写一遍逻辑）
-        data, ini, w, h, max_y = fp.render_font(chars_str, str(font_path), size, x2, fmt)
+        data, ini, w, h, max_y = fp.render_font(chars_str, str(case_font), size, x2, fmt)
         fp.write_dds(str(exp_dds), w, h, fmt, data)
         with open(exp_ini, "w", encoding="ascii") as f:
             f.write(ini)
 
         # ── 我们
-        proc = subprocess.run([str(CLI), "--font-render", str(font_path), str(size),
+        proc = subprocess.run([str(CLI), "--font-render", str(case_font), str(size),
                                "1" if x2 else "0", fmt, str(chars_file), str(ours_prefix)],
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         out = proc.stdout.decode("utf-8", "replace").strip()
@@ -165,6 +199,24 @@ def main() -> int:
         got_ini = Path(str(ours_prefix) + ".ini").read_bytes()
         want_dds = exp_dds.read_bytes()
         want_ini = exp_ini.read_bytes()
+
+        # ★ P17-3：**定标字号**也要直接对拍（比"DDS 第几个字节不同"精确得多）。
+        #   1.x `fit_render_size(font, size, x2)` 是它的定标真值；我们的 CLI 在 `FONTRENDER ok`
+        #   那行里自报 `fitted=`。这条能单独抓住"MONO 候选被当成缺字形 ⇒ 提前 break"那个症状
+        #   （simsun@11 修前 11 vs 1.x 的 17，而 DDS 只是"不空但对不上"）。
+        want_fitted = fp.fit_render_size(str(case_font), size, x2)
+        m_fitted = re.search(r"\bfitted=(\d+)", out)
+        if m_fitted is None:
+            failures += 1
+            print("  ✗ %s：CLI 没自报 `fitted=`（拿不到定标字号，无法对拍）—— %s"
+                  % (tag, out[:160]))
+            continue
+        got_fitted = int(m_fitted.group(1))
+        if got_fitted != want_fitted:
+            failures += 1
+            print("  ✗ %s：定标字号不一致（1.x fit_render_size=%d / 我们 fitted=%d）"
+                  % (tag, want_fitted, got_fitted))
+            continue
 
         if got_dds == want_dds and got_ini == want_ini:
             print("  ✓ %s：DDS %d B / ini %d B 与 1.x 逐字节一致（tex %dx%d, max_y %d, sha %s）"
@@ -187,8 +239,14 @@ def main() -> int:
         print("      CLI: %s" % out[:200])
 
     print("")
-    print("GOLDEN-FONT-RENDER: %s (cases=%d failed=%d)"
-          % ("FAIL" if failures else "PASS", len(cases), failures))
+    print("GOLDEN-FONT-RENDER: %s (cases=%d failed=%d strike_cases=%d)"
+          % ("FAIL" if failures else "PASS", len(cases), failures, strike_ran))
+    if missing_fonts:
+        print("  !! 未覆盖的内嵌位图 strike 夹具（缺件）：%s" % "、".join(missing_fonts))
+    if strike_ran == 0:
+        # ★ P17-3：一个 strike 夹具都没有 ⇒ **不许当通过**（否则这条锁会静默变成 0 条判据）
+        print("  !! 带内嵌位图 strike 的系统字体一个都没找到 ⇒ 本组判据未覆盖")
+        return 2
     return 1 if failures else 0
 
 
