@@ -203,14 +203,14 @@ def register(api):
         right = ui.split_add_pane(split, 360)
 
         package_count = ui.label(left, "包 0")
-        package_tree = ui.tree(left, [{"title": "包", "width": 0},
-                                      {"title": "大小", "width": 90},
-                                      {"title": "", "width": 48}])
+        # ★ P16-2a：列声明是**序列的序列**（`[["列名", 宽], …]`，见 py_host 的
+        #   `tree_columns_from_python`）—— 修前这里传的是 dict 列表，
+        #   而六页插件的 `build()` 在**包内自检**里第一次真跑 ⇒ pybind 报
+        #   「TypeError: dict is not a sequence」⇒ 包内自检 13 条红。
+        package_tree = ui.tree(left, [["包", 0], ["大小", 90], ["", 48]])
         entry_count = ui.label(right, "条目 0")
         search = ui.entry(right, "", 30)
-        entry_tree = ui.tree(right, [{"title": "包内条目", "width": 0},
-                                     {"title": "大小", "width": 110},
-                                     {"title": "来源", "width": 220}])
+        entry_tree = ui.tree(right, [["包内条目", 0], ["大小", 110], ["来源", 220]])
 
         # ── 左右两棵树的数据刷新 ────────────────────────────────────────────
         def refresh_entry_tree():
