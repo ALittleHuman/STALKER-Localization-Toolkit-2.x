@@ -3210,6 +3210,33 @@ def step_toolchain_plugin(release: bool) -> None:
         fail("汉化产线插件页有判据不成立（见上）")
 
 
+def step_package_plugin_list(release: bool) -> None:
+    """插件改装 P16-2a：**随包插件清单 + 包内自检口径**的静态锁（切打包口径）。
+
+    为什么静态锁也单开一步：端到端打包要几分钟、进不了门禁，而"切打包口径"最容易
+    悄悄退回去 —— 修前 `package.ps1` 只拷一枚 `hello.py` 夹具、`smoke.cpp` 的 #8 note
+    **只数 `*.dll`**、判据只按 `插件：(\\d+) 个 dll` 解析 ⇒ 这段口径**根本没有判据**：
+    把 `.py` 那一段删掉、或把 note 改回只报 dll，门禁一声不响。
+    本步锁三件事：① 随包 `.py` 是**显式清单**且与 `plugins/*_page.py` **逐名一致**；
+    ② `package.ps1` 的解析要求**新格式**（同一处同时含 `个文件`/`个 dll`/`个 py`）；
+    ③ `smoke.cpp` 的 `#8 包内插件：` 那一行**同时**报出两组计数。脚本自带**反例自证**。
+    """
+    say("[package-plugin-list] P16-2a：随包插件清单与包内自检口径（静态锁 + 反例自证）")
+    script = ROOT / "tests" / "check_package_plugin_list.py"
+    if not require_repo_file(script, "随包插件清单静态锁"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=180)
+    for line in out.splitlines():
+        s = line.strip()
+        if (s.startswith("PKG-PLUGINS") or s.startswith("✓ ") or s.startswith("✗ ")
+                or s.startswith("--") or s.startswith("plugins/")):
+            say("  " + s)
+    if rc == 0 and "PKG-PLUGINS ok" in out:
+        ok("随包插件清单显式（六页插件版 + 三插件同页）＋ 包内自检同时报 dll 与 py")
+    else:
+        fail("随包插件清单/包内自检口径有断言不成立（见上）")
+
+
 def step_text_plugin(release: bool) -> None:
     """插件改装 P10b：**第三页（文本提取/改写）的收口判据**。
 
@@ -4223,6 +4250,8 @@ STEPS = [
     ("patch-apply", step_patch_apply),
     # ★★ 2026-10-09（P16-1c）：插件页（汉化产线）经 api.engine.* 驱动引擎（两面板）
     ("toolchain-plugin", step_toolchain_plugin),
+    # ★★ 2026-10-09（P16-2a）：随包插件清单 + 包内自检口径（切打包口径的静态锁）
+    ("package-plugin-list", step_package_plugin_list),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),

@@ -117,8 +117,27 @@ if ($isDev) {
                 $copiedPlugins += $_.Name
             }
     }
-    # ★★ 插件改装 P2b/P2c：开发版还带一枚 **Python 插件夹具** —— 这样"包内自检"能真验
-    #   "包内 exe 能加载 `.py`"（否则那一条判据在本机永远只验 DLL 那一路）。
+    # ★★ P16-2a（切打包口径）：开发版带**随包的全部 Python 插件** ——
+    #   六页插件版（fs/convert/text/xml/video/fontpack）＋ **三插件同页**（`toolchain_page.py`）。
+    #   ★ 这里是**显式清单**（不放宽）：这 7 枚必须都在源里、也都必须进包；少一枚立刻 throw。
+    #     修前只带一枚 `hello.py` 夹具 ⇒ "六页 + 三插件进包"这件事在包里**根本没发生**，
+    #     而包内自检又只看 dll ⇒ 谁把这一段删掉都不会红（切打包口径要修的就是这个）。
+    $expectedPages = @(
+        'fs_page.py', 'convert_page.py', 'text_page.py',
+        'xml_page.py', 'video_page.py', 'fontpack_page.py',
+        'toolchain_page.py'
+    )
+    $srcPlugins = Join-Path $root 'plugins'
+    foreach ($name in $expectedPages) {
+        $srcPlugin = Join-Path $srcPlugins $name
+        if (-not (Test-Path $srcPlugin)) {
+            throw "随包插件缺失：$srcPlugin（开发版包内必须带齐六页插件版 + 三插件同页）"
+        }
+        Copy-Item -LiteralPath $srcPlugin -Destination (Join-Path $stage 'plugins') -Force
+        $copiedPlugins += $name
+    }
+    # ★★ 插件改装 P2b/P2c：另外仍带一枚 **最小 Python 夹具** —— 它验的是"包内 exe 能不能
+    #   加载 `.py`"这一条最短路（与上面 7 枚真实插件互补）。
     #   发行版不带它（与"发行版 plugins\ 为空"同一条口径）。
     $pyFixture = Join-Path $root 'tests\python_plugins\hello.py'
     if (-not (Test-Path $pyFixture)) {
@@ -421,27 +440,49 @@ if ($null -eq $pluginNote) {
     throw "包内自检没有打出「#8 包内插件：…」那一行（插件数与名字必须可见）"
 }
 $pluginText = $pluginNote.Line.Trim()
-$pluginCount = if ($pluginText -match '插件：(\d+)\s*个\s*dll') { [int]$Matches[1] } else { -1 }
+# 新格式（P16-2a）：`#8 包内插件：N 个文件（D 个 dll / P 个 py）（名字…）· Hub 启动装载 errors=E · …`
+$pluginTotal = if ($pluginText -match '插件：(\d+)\s*个文件') { [int]$Matches[1] } else { -1 }
+$pluginDlls = if ($pluginText -match '（(\d+)\s*个 dll') { [int]$Matches[1] } else { -1 }
+$pluginPys = if ($pluginText -match '(\d+)\s*个 py）') { [int]$Matches[1] } else { -1 }
+# 兼容旧格式（只有 dll）——**只为报错更清楚**，判据本身要求新格式（下面会 throw）
+if ($pluginDlls -lt 0 -and $pluginText -match '插件：(\d+)\s*个\s*dll') { $pluginDlls = [int]$Matches[1] }
 $pluginLoaded = if ($pluginText -match 'errors=(\d+)') { [int]$Matches[1] } else { -1 }
 $stagePlugins = @(Get-ChildItem -LiteralPath (Join-Path $stage 'plugins') -Filter '*.dll' -File `
                     -ErrorAction SilentlyContinue)
-Write-Host ("  包内 plugins\：{0} 个 dll：{1}" -f $stagePlugins.Count,
-    $(if ($stagePlugins.Count -gt 0) { ($stagePlugins | ForEach-Object { $_.Name }) -join ', ' }
-      else { '(空)' }))
+$stagePages = @(Get-ChildItem -LiteralPath (Join-Path $stage 'plugins') -Filter '*.py' -File `
+                    -ErrorAction SilentlyContinue)
+Write-Host ("  包内 plugins\：{0} 个 dll + {1} 个 py：{2}" -f $stagePlugins.Count, $stagePages.Count,
+    $(if ($stagePlugins.Count + $stagePages.Count -gt 0) {
+        (($stagePlugins + $stagePages) | ForEach-Object { $_.Name }) -join ', ' } else { '(空)' }))
 Write-Host ("  包内自检那一行：{0}" -f $pluginText)
 if ($isDev) {
-    if ($pluginCount -lt 1 -or $stagePlugins.Count -lt 1) {
-        throw ("开发版的 plugins\ 是空的（自检报 {0} 个 / 目录 {1} 个）—— 用户约定：开发版包内带全部插件（#8）" -f `
-            $pluginCount, $stagePlugins.Count)
+    # ★ P16-2a：新格式必须解析得出两组计数（旧格式在这里就红 —— 判据跟着口径一起升级）
+    if ($pluginTotal -lt 0 -or $pluginPys -lt 0) {
+        throw ("包内自检的插件行不是新格式（要同时报 dll 与 py）—— 实测：{0}" -f $pluginText)
+    }
+    if ($pluginTotal -lt 1 -or $stagePlugins.Count -lt 1 -or $stagePages.Count -lt 1) {
+        throw ("开发版的 plugins\ 不完整（自检 {0} 个文件 / 目录 {1} dll + {2} py）—— 用户约定：开发版包内带全部插件（#8）" -f `
+            $pluginTotal, $stagePlugins.Count, $stagePages.Count)
+    }
+    # ★ 显式清单：六页插件版 + 三插件同页，**逐名点名**（少一枚立刻红）
+    foreach ($name in $expectedPages) {
+        if (-not (Test-Path (Join-Path $stage ('plugins\' + $name)))) {
+            throw ("开发版包内缺随包插件：{0}（六页插件版 + 三插件同页必须齐）" -f $name)
+        }
+    }
+    if ($pluginDlls -ne $stagePlugins.Count -or $pluginPys -ne $stagePages.Count) {
+        throw ("包内自检报的计数与包内目录**不一致**（自检 {0} dll / {1} py；目录 {2} / {3}）" -f `
+            $pluginDlls, $pluginPys, $stagePlugins.Count, $stagePages.Count)
     }
     if ($pluginLoaded -ne 0) {
         throw ("开发版包内插件**装载有失败**（Hub 启动装载 errors={0}）—— 见包内自检的日志" -f $pluginLoaded)
     }
-    Write-Host ("  插件自检通过：{0} 个 dll（自检与目录一致）、Hub 启动装载 errors=0" -f $pluginCount)
+    Write-Host ("  插件自检通过：{0} dll + {1} py（自检与目录一致；六页插件版 + 三插件同页齐）、Hub 启动装载 errors=0" -f `
+        $pluginDlls, $pluginPys)
 } else {
-    if ($pluginCount -ne 0 -or $stagePlugins.Count -ne 0) {
-        throw ("发行版的 plugins\ 必须为空（既定策略：NLC 解密插件不随包发布），实测自检 {0} / 目录 {1}" -f `
-            $pluginCount, $stagePlugins.Count)
+    if ($pluginTotal -ne 0 -or $stagePlugins.Count -ne 0 -or $stagePages.Count -ne 0) {
+        throw ("发行版的 plugins\ 必须为空（既定策略：NLC 解密插件不随包发布），实测自检 {0} / 目录 {1} dll + {2} py" -f `
+            $pluginTotal, $stagePlugins.Count, $stagePages.Count)
     }
     Write-Host "  插件自检通过：发行版 plugins\ 为空（既定策略）"
 }

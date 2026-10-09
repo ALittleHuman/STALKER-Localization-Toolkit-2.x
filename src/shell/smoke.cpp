@@ -9462,15 +9462,25 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
     //     一堆测试插件夹具 ⇒ 分不清"包里的插件"与"自检自己的夹具"（本批实测：构建目录里
     //     `plugins\` 是空的，末尾问出来却是 1）。
     //   ★ `package.ps1` 按这一行判：开发版要 `N ≥ 1 且 errors == 0`；发行版要 `N == 0`。
+    //   ★★ P16-2a（切打包口径）：**同时报 dll 与 py**。修前只数 `*.dll` ⇒
+    //      "六页 + 三插件（那 7 枚 `.py`）进包"这件事在包内自检里**根本看不见**
+    //      （`package.ps1` 的判据也照旧只认 dll ⇒ 谁把 .py 那一段删掉都不会红）。
     {
         const QString plugin_dir =
             QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("plugins"));
         const QStringList dlls =
             QDir(plugin_dir).entryList({QStringLiteral("*.dll")}, QDir::Files, QDir::Name);
+        const QStringList pys =
+            QDir(plugin_dir).entryList({QStringLiteral("*.py")}, QDir::Files, QDir::Name);
+        QStringList names = dlls;
+        names += pys;
         result.notes.append(
-            QStringLiteral("#8 包内插件：%1 个 dll（%2）· Hub 启动装载 errors=%3 · %4 · dir=%5")
+            QStringLiteral("#8 包内插件：%1 个文件（%2 个 dll / %3 个 py）（%4）· "
+                           "Hub 启动装载 errors=%5 · %6 · dir=%7")
+                .arg(dlls.size() + pys.size())
                 .arg(dlls.size())
-                .arg(dlls.isEmpty() ? QStringLiteral("(空)") : dlls.join(QStringLiteral(", ")))
+                .arg(pys.size())
+                .arg(names.isEmpty() ? QStringLiteral("(空)") : names.join(QStringLiteral(", ")))
                 .arg(hub.plugin_errors().size())
                 .arg(hub.plugin_notice())
                 .arg(QDir::toNativeSeparators(plugin_dir)));
