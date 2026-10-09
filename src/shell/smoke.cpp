@@ -389,14 +389,67 @@ SmokeResult run_smoke() {
     }
 
     // ② Hub 真的按这份清单建了控件（列表项 = 页栈页数 = 清单条数）
+    //   ★★ P16-2a/P16-2b（**切打包口径**）：同一页槽位有**两种合法实现** ——
+    //      开发态（插件未随目录/未随包）＝**内置页**；开发版包里随包装载＝**插件版页**
+    //      （`replaces` 把内置页顶替掉、只隐藏）。所以这里**逐槽位显式列出两种 id 与两种标题**，
+    //      第三种一律红 —— 不许用通配/前缀/“有个 id 就算”的放宽写法。
+    //      这就是设计笔记预告的 P7c「半迁移 vs 内置六页判据」冲突的**一次面对**。
+    struct SlotExpect {
+        const char* builtin_id;
+        const char* builtin_title;
+        const char* plugin_id;
+        const char* plugin_title;
+    };
+    static const SlotExpect kSlots[] = {
+        {"fs", "文件系统", "fs_py", "文件系统"},
+        {"convert", "编码转换", "convert_py", "编码转换"},
+        {"text", "文本提取", "text_py", "文本提取"},
+        // ★ 这一槽位两版标题**不同**：内置是「XML校对」（无空格），插件版是「XML 校对」（有空格）。
+        //   如实登记两版，不许谁去"顺手统一"—— 两版都要能在各自形态下判绿。
+        {"xml", "XML校对", "xml_py", "XML 校对"},
+        {"video", "视频转换", "video_py", "视频转换"},
+        {"fontpack", "汉化包生成", "fontpack_py", "汉化包生成"},
+    };
+    // 额外插件页（`replaces` 留空的**新增页**）——同样显式点名（它只在插件随包时出现）
+    static const SlotExpect kExtraPages[] = {
+        {"", "", "toolchain_py", "汉化产线"},
+    };
     Hub hub;
-    check(hub.page_count() == builtin_page_count(), QStringLiteral("页栈页数 = 内置页数"));
-    check(hub.page_tabs()->count() == builtin_page_count(), QStringLiteral("标签项数 = 内置页数"));
-    for (int i = 0; i < builtin_page_count(); ++i) {
-        check(hub.page_title(i) == QString::fromUtf8(builtin_page(i).title),
-              QStringLiteral("列表第 %1 项标题与清单一致").arg(i));
-        check(hub.page_id(i) == QString::fromUtf8(builtin_page(i).id),
-              QStringLiteral("第 %1 页 id 可查").arg(i));
+    const int slot_count = static_cast<int>(sizeof(kSlots) / sizeof(kSlots[0]));
+    const int extra_count = static_cast<int>(sizeof(kExtraPages) / sizeof(kExtraPages[0]));
+    check(slot_count == builtin_page_count(),
+          QStringLiteral("显式清单覆盖全部内置页槽位（%1 vs %2）")
+              .arg(slot_count).arg(builtin_page_count()));
+    const bool extra_loaded = hub.page_count() > slot_count;
+    const int want_pages = slot_count + (extra_loaded ? extra_count : 0);
+    check(hub.page_count() == want_pages,
+          QStringLiteral("页栈页数 = 六槽位%1").arg(extra_loaded ? QStringLiteral(" + 新增页") : QString()));
+    check(hub.page_tabs()->count() == want_pages,
+          QStringLiteral("标签项数 = 六槽位%1").arg(extra_loaded ? QStringLiteral(" + 新增页") : QString()));
+    for (int i = 0; i < slot_count; ++i) {
+        const SlotExpect& slot = kSlots[i];
+        const QString id = hub.page_id(i);
+        const bool is_plugin = (id == QString::fromUtf8(slot.plugin_id));
+        const bool is_builtin = (id == QString::fromUtf8(slot.builtin_id));
+        check(is_builtin || is_plugin,
+              QStringLiteral("第 %1 页 id 必须是显式清单里的两种之一（内置 %2 / 插件 %3），实得 %4")
+                  .arg(i).arg(slot.builtin_id, slot.plugin_id, id));
+        const QString want_title = QString::fromUtf8(is_plugin ? slot.plugin_title
+                                                               : slot.builtin_title);
+        check(hub.page_title(i) == want_title,
+              QStringLiteral("列表第 %1 项标题要跟它那一版的清单一致（要 %2，实得 %3）")
+                  .arg(i).arg(want_title, hub.page_title(i)));
+    }
+    if (extra_loaded) {
+        for (int k = 0; k < extra_count; ++k) {
+            const int i = slot_count + k;
+            check(hub.page_id(i) == QString::fromUtf8(kExtraPages[k].plugin_id),
+                  QStringLiteral("新增页第 %1 项的 id 要按显式清单（要 %2，实得 %3）")
+                      .arg(k).arg(kExtraPages[k].plugin_id, hub.page_id(i)));
+            check(hub.page_title(i) == QString::fromUtf8(kExtraPages[k].plugin_title),
+                  QStringLiteral("新增页第 %1 项的标题要按显式清单（要 %2，实得 %3）")
+                      .arg(k).arg(kExtraPages[k].plugin_title, hub.page_title(i)));
+        }
     }
     check(hub.stack()->currentIndex() == 0, QStringLiteral("默认停在第一页"));
 
