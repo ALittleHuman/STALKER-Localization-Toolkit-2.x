@@ -13,10 +13,10 @@ inline constexpr int kVersionMinor = 0;
 inline constexpr int kVersionPatch = 0;
 
 // 预发布标记："" = 正式版；非空形如 ALPHA.3 / BETA.1 / RC.2
-inline constexpr const char* kPrerelease = "ALPHA.104";
+inline constexpr const char* kPrerelease = "ALPHA.105";
 
 // 构建计数：由 build 脚本自增并写回本行（M0 尚为 0）
-inline constexpr int kBuildCount = 104;
+inline constexpr int kBuildCount = 105;
 
 // "2.0.0 ALPHA.0"（无预发布时为 "2.0.0"）
 std::string version_string();
