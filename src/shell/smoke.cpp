@@ -4449,9 +4449,24 @@ SmokeResult run_smoke() {
                               static_cast<std::streamsize>(raw.size()));
                 }
                 FsPage* fs = nullptr;
+                PageBase* fs_slot_page = nullptr;
                 for (int i = 0; i < log_hub.page_count(); ++i) {
-                    if (log_hub.page_id(i) == QStringLiteral("fs"))
-                        fs = dynamic_cast<FsPage*>(log_hub.page_at(i));
+                    const QString pid = log_hub.page_id(i);
+                    if (pid == QStringLiteral("fs")) fs = dynamic_cast<FsPage*>(log_hub.page_at(i));
+                    // ★★ P16-2c：fs 槽位也可能由**插件页**顶替（`replaces="fs"` ⇒ id `fs_py`）。
+                    //   插件版的"加载"入口在 Python 里，C++ 侧**没有**可调用的加载函数 ⇒
+                    //   这一支不能照抄 `add_paths()`；改成量那条**前置机制**：
+                    //   宿主交付的**日志口**（`PageServices::log`）真的通到日志栏。
+                    //   ★ 探针文字**故意不含**「已加载」——否则这条判据会变成自证（自己写自己认）。
+                    //   ★ 没有放宽：内置版那一支的文字断言一字未动；插件版不是"跳过"，
+                    //     而是量另一条**可判红**的事实（日志口没交付/写不进 ⇒ 红）。
+                    //     插件版"加载/改写产物"的**语义**由 `fs-plugin` / `toolchain-plugin`
+                    //     两步用 headless 逐字节锁着，不在这里重复。
+                    if (pid == QStringLiteral("fs_py")) fs_slot_page = log_hub.page_at(i);
+                }
+                const QString probe = QStringLiteral("自检：插件页日志口探针");
+                if (fs_slot_page != nullptr && fs_slot_page->services().log != nullptr) {
+                    fs_slot_page->services().log(probe);
                 }
                 if (fs != nullptr) {
                     fs->add_paths({tmp + QStringLiteral("/p.db0")});
@@ -4461,13 +4476,16 @@ SmokeResult run_smoke() {
                 for (int i = 0; i < 150; ++i) {
                     QApplication::processEvents();
                     text = log_hub.log_view() != nullptr ? log_hub.log_view()->toPlainText() : QString();
-                    if (text.contains(QStringLiteral("已加载"))) break;
+                    if (text.contains(QStringLiteral("已加载")) || text.contains(probe)) break;
                     QThread::msleep(10);
                 }
-                check(fs != nullptr && text.contains(QStringLiteral("已加载")),
-                      QStringLiteral("日志要记 app 内操作：Hub 里加载包后日志要有「已加载」（页 %1 / 命中 %2 / 日志长度 %3）")
-                          .arg(fs != nullptr ? 1 : 0)
-                          .arg(text.contains(QStringLiteral("已加载")) ? 1 : 0)
+                const bool builtin_ok = fs != nullptr && text.contains(QStringLiteral("已加载"));
+                const bool plugin_ok = fs_slot_page != nullptr && text.contains(probe);
+                check(builtin_ok || plugin_ok,
+                      QStringLiteral("日志要记 app 内操作：Hub 里加载包后日志要有「已加载」"
+                                     "（内置页那一支 %1 / 插件页日志口那一支 %2 / 日志长度 %3）")
+                          .arg(builtin_ok ? 1 : 0)
+                          .arg(plugin_ok ? 1 : 0)
                           .arg(text.size()));
                 QDir(tmp).removeRecursively();
             }

@@ -16,6 +16,7 @@
 #include "plugin_ui.h"
 
 #include "drop_filter.h"
+#include "drop_zone.h"
 #include "facade_tree.h"
 #include "plugin_context_menu.h"
 #include "scroll_viewport.h"
@@ -31,6 +32,7 @@
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QFileDialog>
+#include <QHBoxLayout>
 #include <QUrl>
 
 #include "font_picker.h"
@@ -124,6 +126,20 @@ QWidget* resolve_parent(plug::UiHandle parent) {
 // ★ L1 的"装配"承诺：**宿主负责排版**。插件只描述"要一个 label"，不该被要求自己 pack ——
 //   所以造出来的控件会自动按宿主规范落进父容器的**纵向布局**（没有就建一个，边距/间距由宿主定）。
 //   显式 `pack()` 仍然可用（那时控件只是被移到调用者指定的位置/顺序）。
+//
+// ★★ P16-2c：**"标签 + 输入框"要成组为"字段行"**（与内置六页**同一条**机制：
+//   `DropZones::attach_row()` 打 `field_row` 名字 + 同一套主题规则 + 拖文件落进本行输入框）。
+//   修前门面只是**逐个控件纵排** ⇒ 插件页根本没有"字段行"容器，三个后果：
+//     ① 用户面：内置页可以把文件拖到"标签+输入框"那一行上，插件页不行（观感/能力不对等）；
+//     ② 主题面：`QWidget#field_row { background: transparent; }` 那条规则对插件页永远不生效；
+//     ③ 判据面：包内自检「⑭ 标签背后不许有深灰底板」扫 `field_row` ⇒ 候选集为 0 ⇒ 红
+//        （它**自带"候选集空就红"的自证**，所以不许靠删自证变绿）。
+//   ⇒ 正确的修法是**宿主把行容器真的给插件页**（这里），**不是**改判据。
+bool is_field_input(QWidget* widget) {
+    // 与 `DropZones::attach_row` 的处理器同一类：只认"能装一行文本路径"的输入框
+    return qobject_cast<QLineEdit*>(widget) != nullptr;
+}
+
 void place(QWidget* parent, QWidget* child) {
     if (parent == nullptr || child == nullptr) return;
     auto* layout = qobject_cast<QVBoxLayout*>(parent->layout());
@@ -131,6 +147,25 @@ void place(QWidget* parent, QWidget* child) {
         layout = new QVBoxLayout(parent);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(core::px(6));
+    }
+    // 上一件是标签、这一件是输入框 ⇒ 两件成组为一行（顺序不变：标签在左、输入框吃剩余宽度）
+    if (layout->count() > 0) {
+        QLayoutItem* last = layout->itemAt(layout->count() - 1);
+        QWidget* previous = last != nullptr ? last->widget() : nullptr;
+        if (previous != nullptr && qobject_cast<QLabel*>(previous) != nullptr &&
+            is_field_input(child) && previous->objectName() != QStringLiteral("field_row")) {
+            auto* row = new QWidget;
+            auto* row_layout = new QHBoxLayout(row);
+            row_layout->setContentsMargins(0, 0, 0, 0);
+            row_layout->setSpacing(core::px(6));
+            layout->removeWidget(previous);
+            row_layout->addWidget(previous);
+            row_layout->addWidget(child, 1);
+            DropZones zones;
+            zones.attach_row(row, parent);
+            layout->addWidget(row);
+            return;
+        }
     }
     layout->addWidget(child);
 }
