@@ -1539,7 +1539,7 @@ std::vector<FsPage::UnpackJob> FsPage::plan_unpack(bool checked_only, QString* o
 }
 
 QString FsPage::run_unpack_jobs(const std::vector<UnpackJob>& jobs, const ProgressSink& progress,
-                                const MessageSink& message) {
+                                const MessageSink& message, int* written_out) {
     // **纯执行**：不读任何控件、不写任何界面（任务壳的 worker 与自检共用这一条）
     // ★★ 2026-10-06（② 用户拍板）：**解包不再有取消** —— 用户原话「封包和字库的取消，
     //   在这里本质是完全没有的，故直接删除即可。」修前这里在**包边界**轮询取消位并提前
@@ -1587,8 +1587,13 @@ QString FsPage::run_unpack_jobs(const std::vector<UnpackJob>& jobs, const Progre
         }
     }
     if (per_package.isEmpty()) {
+        if (written_out != nullptr) *written_out = 0;
         return QStringLiteral("没有可解的内容（先「加包」/「扫描目录」并勾选，或先加载包）");
     }
+    // ★★ P17-4（审计 03 F-03）：计数在这里**带出去** —— 调用方（`unpack_selected/unpack_all`）
+    //   修前是"再跑一遍 extract_job 自己数"，那等于整批写盘两遍（见 fs_page.h 的说明与
+    //   run_ci 里那条静态锁）。
+    if (written_out != nullptr) *written_out = written;
     return QStringLiteral("解包：%1 个文件、覆盖 %2、失败 %3\n  %4")
         .arg(written)
         .arg(overwritten)
@@ -1616,26 +1621,25 @@ void FsPage::start_unpack(bool checked_only) {
 int FsPage::unpack_selected(QString* summary) {
     QString root;
     const std::vector<UnpackJob> jobs = plan_unpack(true, &root);
-    const QString text = run_unpack_jobs(jobs, nullptr, nullptr);
-    if (summary != nullptr) *summary = text;
+    // ★★ P17-4（审计 03 F-03 High）：**同一批只解一遍**。
+    //   修前：`run_unpack_jobs`（它内部已逐 job `extract_job` 并报日志/进度）之后**又**对同一个
+    //   jobs 逐条 `extract_job` ⇒ 整批写盘两遍（第二遍覆盖第一遍产物、对只读/被占用文件凭空
+    //   多出一轮失败、日志多出一串「覆盖：…」、耗时翻倍）。界面按钮走 `start_unpack`（不双跑）
+    //   ⇒ 只有这两个 public 入口行为不一致 —— 判据：`run_ci` 的 shell-smoke 步里那条静态锁
+    //   （这两个函数体内不许再出现 `extract_job(`）。
     int written = 0;
-    for (const UnpackJob& job : jobs) {
-        const efs::ExtractTreeResult result = extract_job(job);
-        written += static_cast<int>(result.files_written);
-    }
+    const QString text = run_unpack_jobs(jobs, nullptr, nullptr, &written);
+    if (summary != nullptr) *summary = text;
     return written;
 }
 
 int FsPage::unpack_all(QString* summary) {
     QString root;
     const std::vector<UnpackJob> jobs = plan_unpack(false, &root);
-    const QString text = run_unpack_jobs(jobs, nullptr, nullptr);
-    if (summary != nullptr) *summary = text;
+    // ★★ P17-4：同 `unpack_selected` —— 执行只许走 `run_unpack_jobs` 一条路。
     int written = 0;
-    for (const UnpackJob& job : jobs) {
-        const efs::ExtractTreeResult result = extract_job(job);
-        written += static_cast<int>(result.files_written);
-    }
+    const QString text = run_unpack_jobs(jobs, nullptr, nullptr, &written);
+    if (summary != nullptr) *summary = text;
     return written;
 }
 

@@ -1649,6 +1649,30 @@ def step_shell_smoke(release: bool) -> None:
         return
     ok("解包只有一条路（6.11：fs_page.cpp 里 extract_package( 恰好 1 处、无旁路）")
 
+    # ── ★★ P17-4（2026-10-10，审计 03 F-03 High）：**同一批只许解一遍** ────────────────
+    #   事实（修前）：`FsPage::unpack_selected` / `unpack_all` 先调 `run_unpack_jobs`
+    #   —— 它内部**已经**逐 job `extract_job` 并报日志/进度 —— 随后**又**对同一个 jobs 逐条
+    #   `extract_job` ⇒ 整批**写盘两遍**（第二遍覆盖第一遍产物、对被占用/只读文件凭空多出一轮
+    #   失败、日志里多出一串「覆盖：…」、耗时翻倍）。界面按钮走 `start_unpack`（不双跑）
+    #   ⇒ 只有这两个 public 入口（自检与任何内部调用者）与界面行为不一致 ——
+    #   "同一件事两套实现"正是本仓红线。
+    #   锁的形态：这两个函数体内**不许再出现 `extract_job(`** —— 执行只许走
+    #   `run_unpack_jobs` 那一条路（它把计数经出参带回来）。
+    for fn in ("unpack_selected", "unpack_all"):
+        at = page_code.find("FsPage::%s(" % fn)
+        if at < 0:
+            fail("同批只解一遍（03 F-03）：fs_page.cpp 里找不到 `FsPage::%s(`" % fn)
+            return
+        body = page_code[at:]
+        end = body.find("\n}\n")
+        if end >= 0:
+            body = body[:end]
+        if "extract_job(" in body:
+            fail("同批解包两遍（03 F-03）：`%s` 体内又出现了 `extract_job(` —— "
+                 "执行只许走 run_unpack_jobs 一条路（这条会让整批写盘两遍）" % fn)
+            return
+    ok("同一批解包只跑一遍（03 F-03：unpack_selected/unpack_all 不再直接调 extract_job）")
+
     # ══════════════════════════════════════════════════════════════════════════
     # ★★ 2026-10-06（审计 §7 第 3 组的**静态面**：3-3 / 3-8）
     #   动行为那半在 `src/shell/smoke.cpp` 的 3-x 锁里（跑得到、判得红）；

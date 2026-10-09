@@ -1935,6 +1935,31 @@ SmokeResult run_smoke() {
         result.notes.append(QStringLiteral("13.3 事件序列 = %1（p=进度 m=消息 e=错误 f=结束）")
                                 .arg(order));
 
+        // ★★ 2026-10-10（P17-4，审计 03 F-08 Low）：**线程表不许只增不减**。
+        //   修前事实：`TaskShell::run` 每次 `threads_.emplace_back(...)`，已结束的线程保持
+        //   joinable 直到析构（长会话 = 同一页反复跑任务 ⇒ 线程对象无界增长、栈/句柄长期占着）。
+        //   修法：每次 run 之前回收**已完成**的（join + 摘除），"跑完了"由 worker 自己置的原子位判。
+        //   判据：顺序跑 5 轮、每轮等它收工 ⇒ 槽位数不许长到 5（修前就是 5 ⇒ 红）。
+        {
+            // ★★ 变量名避开 Qt 的 `slots` 宏！上一版叫 `slots` 直接 C2059/C4091
+            //   （Qt 把 `slots` 定义成空宏 ⇒ 声明被吃掉）—— 当场记在这里。
+            TaskShell seq_shell;
+            for (int round = 0; round < 5; ++round) {
+                const bool ok = seq_shell.run(QStringLiteral("槽位 %1").arg(round),
+                                              [](const ProgressSink& progress, const MessageSink&) {
+                                                  progress(100);
+                                              });
+                check(ok, QStringLiteral("P17-4 前提：第 %1 轮任务起得来").arg(round));
+                for (int i = 0; i < 100 && seq_shell.running(); ++i) {
+                    QThread::msleep(5);
+                    QApplication::processEvents();
+                }
+            }
+            check(seq_shell.worker_slots() <= 1,
+                  QStringLiteral("P17-4 03 F-08：顺序跑 5 轮后线程槽位 %1 个（修前＝只增不减 ⇒ 5 个）")
+                      .arg(seq_shell.worker_slots()));
+        }
+
         // ★★ 2026-10-06（①）取消：**真停 + 留痕 + 理由可见**
         //   事实（改动前）：`task_shell.cpp` 里 `cancel_->setEnabled(...)` 三处、
         //   **一处 `connect` 都没有** ⇒ 六页那颗「取消」是一颗**死按钮**。

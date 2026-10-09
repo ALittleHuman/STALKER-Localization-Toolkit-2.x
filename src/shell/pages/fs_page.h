@@ -229,8 +229,12 @@ public:
     //   用户原话：「**封包和字库的取消，在这里本质是完全没有的，故直接删除即可。**」
     //   ⇒ 执行入口**不再收"该停了吗"谓词**（封包是一次原子写、硬停会留半个包；解包也不再
     //     在包边界停）；本页的任务壳按 `TaskShell::CancelButton::No` 造 ⇒ **连取消按钮都没有**。
+    // ★★ P17-4（审计 03 F-03 High）：**执行只有这一条路**，计数经 `written_out` 带回来 ——
+    //   修前 `unpack_selected/unpack_all` 在调完本函数之后**又**对同一批 jobs 逐条
+    //   `extract_job`（整批写盘两遍）。参数顺带说明：`written_out` 可空（界面路径不关心计数）。
     static QString run_unpack_jobs(const std::vector<UnpackJob>& jobs,
-                                   const ProgressSink& progress, const MessageSink& message);
+                                   const ProgressSink& progress, const MessageSink& message,
+                                   int* written_out = nullptr);
     PackJob plan_pack(bool* ok, QString* why);
     static QString run_pack_job(const PackJob& job, const ProgressSink& progress,
                                 const MessageSink& message);

@@ -80,13 +80,30 @@ TaskShell::~TaskShell() {
     stop_and_wait();
 }
 
+// ★★ P17-4（审计 03 F-08 Low）：**回收已完成的 worker**（join + 摘除）。
+//   为什么必须有：修前 `threads_` 只增不减 —— 每次 `run()` 都追加一个线程对象，已结束的线程
+//   保持 joinable 直到 `TaskShell` 析构 ⇒ 长会话（同一页反复跑任务）下无界增长，
+//   已结束线程的栈/句柄被长期占着。
+//   只在主线程调（`run()` 开头）：「已完成」由 worker 自己置的原子位判定，join 一个刚置位的
+//   线程最多等它几微秒的收尾（不是等整轮任务）。
+void TaskShell::reap_finished_workers() {
+    for (auto it = workers_.begin(); it != workers_.end();) {
+        if (it->done != nullptr && it->done->load()) {
+            if (it->thread.joinable()) it->thread.join();
+            it = workers_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 // ★★ P17-1：主动收工（见 task_shell.h）。幂等：析构里再调一次只是空转。
 void TaskShell::stop_and_wait() {
     cancel_requested_.store(true);
-    for (std::thread& t : threads_) {
-        if (t.joinable()) t.join();
+    for (Worker& worker : workers_) {
+        if (worker.thread.joinable()) worker.thread.join();
     }
-    threads_.clear();
+    workers_.clear();
 }
 
 bool TaskShell::run(const QString& title, const WorkerFn& worker) {
@@ -97,6 +114,9 @@ bool TaskShell::run(const QString& title, const WorkerFn& worker) {
         return false;
     }
     running_ = true;
+    // ★★ P17-4（审计 03 F-08）：先把**已经跑完**的 worker 回收掉（join + 摘除）——
+    //   修前线程表只增不减（长会话下无界增长）。放在重入闸门之后（此时确定这一轮要起线程）。
+    reap_finished_workers();
     prev_status_ = status_text_;
     run_line_ = title;
     error_text_.clear();
@@ -127,7 +147,8 @@ bool TaskShell::run(const QString& title, const WorkerFn& worker) {
             Qt::QueuedConnection);
     };
 
-    threads_.emplace_back([this, worker, progress, message] {
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    workers_.push_back({std::thread([this, worker, progress, message, done] {
         try {
             worker(progress, message);
         } catch (const std::exception& exc) {
@@ -140,7 +161,9 @@ bool TaskShell::run(const QString& title, const WorkerFn& worker) {
                 this, [this] { apply_error(QStringLiteral("未知错误")); }, Qt::QueuedConnection);
         }
         QMetaObject::invokeMethod(this, [this] { apply_finish(QString()); }, Qt::QueuedConnection);
-    });
+        // ★★ P17-4（03 F-08）：「这一格跑完了」——**最后一句**才置位（回收方据此 join）。
+        done->store(true);
+    }), done});
     return true;
 }
 

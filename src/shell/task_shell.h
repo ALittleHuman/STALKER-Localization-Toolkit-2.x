@@ -15,6 +15,7 @@
 #include <QVector>
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -76,6 +77,10 @@ public:
     bool run(const QString& title, const WorkerFn& worker);
     bool running() const { return running_; }
     int rejected_count() const { return rejected_; }
+    // ★★ P17-4（审计 03 F-08 Low）：**线程槽位**（自检用）。修前 `threads_` 只增不减 ——
+    //   每次 run 都 push_back 一个线程对象、已结束的线程保持 joinable 直到析构 ⇒
+    //   长会话下无界增长、已结束线程的栈/句柄长期占着。现在每次 run 之前**回收**已完成的。
+    int worker_slots() const { return static_cast<int>(workers_.size()); }
 
     // ── ★★ 2026-10-10（P17-1「线程与取消契约」）──────────────────────────────────
     // **确定性收工**（主线程）：无条件置取消位 ⇒ join 全部 worker ⇒ 清空线程表。
@@ -128,6 +133,9 @@ private:
     void apply_message(QString text);
     void apply_error(QString text);
     void apply_finish(QString final_status);
+    // ★★ P17-4（审计 03 F-08）：回收**已完成**的 worker（join + 摘除）。只在主线程调
+    //   （`run()` 开头与析构/`stop_and_wait` 前）。判据：smoke「顺序跑多次 ⇒ 槽位不增」。
+    void reap_finished_workers();
 
     QWidget* panel_ = nullptr;
     QProgressBar* bar_ = nullptr;
@@ -145,7 +153,13 @@ private:
 
     std::mutex mutex_;
     QVector<Event> events_;
-    std::vector<std::thread> threads_;
+    // ★★ P17-4（审计 03 F-08）：一个槽位＝一个 worker 线程 + 它的"跑完了"标志。
+    //   修前是裸 `std::vector<std::thread>`：只能追加、无法知道谁跑完了 ⇒ 只能等析构。
+    struct Worker {
+        std::thread thread;
+        std::shared_ptr<std::atomic<bool>> done;
+    };
+    std::vector<Worker> workers_;
     std::function<void(const QString&)> message_handler_;
     std::function<void()> finish_handler_;   // ★ P17-1：主线程收尾（见 set_finish_handler）
 
