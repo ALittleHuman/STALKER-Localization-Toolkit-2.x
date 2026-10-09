@@ -121,6 +121,12 @@ struct UiFacade {
     //   `viewport()` 造的是**普通 QWidget 当画布**，插件没法让自己的列表成为 body ⇒
     //   加了也用不出来。句柄＝**容器**（与 `list` 一致，`findChild` 能找回列表）。
     std::function<UiHandle(UiHandle parent, int min_body_height)> list_self_scrolling;
+    // ★★ P16-3c（控件下限 #1「**一个按钮两模式**」）：**按钮的左键动作菜单** ——
+    //   语义＝1.x 的「动作」：点这个按钮，列出它能做的事（内置 FS 页「加包」＝包／文件夹
+    //   二选一，`pages/fs_page.cpp:589-592` 用左键 `QMenu`）。回调给**选中项的下标**。
+    //   ★ 与 `context_menu`（**右键**）**不是一件事**：这条是「左键点这个按钮」。
+    std::function<bool(UiHandle button, const std::vector<std::string>& items,
+                       std::function<void(int)> on_choice)> button_on_menu;
     std::function<void(UiHandle list, int rows)> list_set_row_count;
     // ★L2.5：宿主在**可见行**上问插件要文本（`row` 是全局行号）
     std::function<void(UiHandle list, std::function<std::string(int)> provider)> list_set_row_text;

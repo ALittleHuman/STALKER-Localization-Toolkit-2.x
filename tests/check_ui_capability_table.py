@@ -69,6 +69,8 @@ EXPECT_UI = {
     "list_select_row": "L2.1 选中某行", "list_selected_row": "L2.1 当前选中行",
     # ★★ P16-3b-2：控件下限 #3（自带滚动的长列表区；画布＝列表本人，对照表 9.12）
     "list_self_scrolling": "L2.1 自带滚动的长列表区（视口+列表当画布+offset 自动交回）",
+    # ★★ P16-3c：控件下限 #1（按钮左键动作菜单 = 1.x 的「一个按钮两模式」）
+    "button_on_menu": "L1 按钮的**左键**动作菜单（回调给下标；与右键 context_menu 不同）",
     # ★★ P16-3a：控件下限 #2（多选不许退化成单选）
     "list_set_multi": "L2.1 开关多选（单击＝单选 / Ctrl+单击＝切换 / Shift+单击＝区间）",
     "list_selected_rows": "L2.1 选中集合（升序；判据与「移除」都走它）",

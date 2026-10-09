@@ -25,9 +25,11 @@
   · 解密闸门：`fs_gate_path`（该读哪个路径）+ `fs_decrypt_output_dir`（落点两边同源）。
 
 如实登记的**形态差异**（功能等价、形态不同，不假装一致）：
-  ① 「加包」的两种模式走**右键菜单**（门面没有"左键弹菜单"的能力）⇒ 左键不弹菜单；
+  ① 「加包」的两种模式走 **`button_on_menu`（左键动作菜单）** —— 与内置页同形态
+     （P16-3c 补的门面能力；修前门面只有右键 `context_menu`，插件只能拿右键代偿）；
   ② 页级行与两个工具行的**拖放**由 `drop_zone` 容器接住（C++ 页是把过滤器挂在既有控件上）；
-  ③ 封包待打包列表用 `ui.list`（**单选**；C++ 页是 `QListWidget` 多选）⇒「移除」按当前行；
+  ③ 封包待打包列表用 `ui.list` **多选**（P16-3a 起门面有 `list_set_multi`；
+     「移除」按 `ui.list_selected_rows()` 全删）—— 与 C++ 页的 `QListWidget` 多选**同级**；
   ④ 「解包选中/批量解包」放在页内一行（C++ 页在贴底操作栏）。
 
 注册：**新 id `fs_py` + 显式 `replaces="fs"`**，标签仍显示原名「文件系统」。
@@ -374,10 +376,14 @@ def register(api):
             refresh_entry_tree()
             say(log, status, "已清空")
 
-        def add_menu():
-            # 形态差异①：门面没有"左键弹菜单" ⇒ 走右键菜单（两模式）
-            ui.context_menu(package_tree, ["选包文件…", "选文件夹…"],
-                            lambda label: pick_for_add(label))
+        def add_menu(index):
+            # ★ P16-3c：**「加包」按钮的左键动作菜单**（`button_on_menu` 回调给**下标**）——
+            #   与内置 FS 页同形态（`pages/fs_page.cpp:586-597`：左键弹 QMenu 二选一）。
+            pick_for_add("选文件夹…" if index == 1 else "选包文件…")
+
+        # 列表上的右键入口**保留**（挂 label 版 lambda；别挂吃下标的 `add_menu`）
+        ui.context_menu(package_tree, ["选包文件…", "选文件夹…"],
+                        lambda label: pick_for_add(label))
 
         def pick_for_add(label):
             if label == "选文件夹…":
@@ -389,7 +395,11 @@ def register(api):
             if picked:
                 load_paths([picked])
 
-        add_button = ui.button(left, "加包（右键选模式）", add_menu)
+        add_button = ui.button(left, "加包", None)
+        # ★ P16-3c：返回值**不许丢**（门禁 `plugin-facade-ret`：这类「成没成」型的返回值
+        #   丢弃就是「失败静默」）⇒ 没装上要当场说出来。
+        if not ui.button_on_menu(add_button, ["选包文件…", "选文件夹…"], add_menu):
+            say(log, status, '「加包」的左键菜单没装上（门面缺 button_on_menu？）')
         ui.button(left, "全选", select_all)
         ui.button(left, "加载选中", load_selected)
         ui.button(left, "取消加载", unload_selected)

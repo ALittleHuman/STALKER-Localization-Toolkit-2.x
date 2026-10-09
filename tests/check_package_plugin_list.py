@@ -58,6 +58,20 @@ def audit_package(source: str, expected: list) -> list:
     return problems
 
 
+def audit_fs_page(source: str) -> list:
+    """★ P16-3c：**「加包」必须是按钮左键动作菜单**（控件下限 #1「一个按钮两模式」）。
+
+    内置 FS 页是左键 `QMenu` 二选一（`src/shell/pages/fs_page.cpp:586-597`）；
+    插件页必须用 `ui.button_on_menu` 挂同一件事 —— **不许**再靠右键代偿。
+    """
+    problems = []
+    if "button_on_menu" not in source:
+        problems.append("fs_page.py：「加包」必须用 ui.button_on_menu（按钮左键动作菜单）")
+    if "加包（右键选模式）" in source:
+        problems.append("fs_page.py：按钮文案仍是「加包（右键选模式）」——左键动作菜单已具备，别再代偿")
+    return problems
+
+
 def audit_smoke(source: str) -> list:
     problems = []
     if "#8 包内插件：" not in source:
@@ -121,6 +135,9 @@ def main() -> int:
     print("   plugins/ 里的页文件（%d 枚）：%s" % (len(actual_pages), ", ".join(actual_pages)))
     problems = audit_package(PACKAGE.read_text(encoding="utf-8-sig"), actual_pages)
     problems += audit_smoke(SMOKE.read_text(encoding="utf-8", errors="replace"))
+    fs_page = PLUGINS / "fs_page.py"
+    if fs_page.is_file():
+        problems += audit_fs_page(fs_page.read_text(encoding="utf-8"))
     print()
     if problems:
         for p in problems:

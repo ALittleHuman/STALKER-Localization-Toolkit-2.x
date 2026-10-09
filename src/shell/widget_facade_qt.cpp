@@ -487,6 +487,24 @@ const plug::UiFacade kQtFacade = {
         place(host, container);
         return handle_of(wrap(container));
     },
+    /* button_on_menu（★P16-3c 控件下限 #1）：**按钮的左键动作菜单** ——
+       语义＝1.x 的「动作」；用 `QPushButton::setMenu`（Qt 原生行为＝**左键点按钮即弹**）。
+       与 `context_menu`（右键）是两条不同的路：这条挂在**按钮**上、回调给**下标**。 */
+    [](plug::UiHandle button, const std::vector<std::string>& items,
+       std::function<void(int)> on_choice) {
+        auto* widget = qobject_cast<QPushButton*>(unwrap(button));
+        if (widget == nullptr || items.empty()) return false;
+        auto* menu = new QMenu(widget);
+        for (size_t i = 0; i < items.size(); ++i) {
+            QAction* action = menu->addAction(QString::fromStdString(items[i]));
+            const int index = static_cast<int>(i);
+            QObject::connect(action, &QAction::triggered, widget, [on_choice, index]() {
+                if (on_choice) on_choice(index);
+            });
+        }
+        widget->setMenu(menu);
+        return true;
+    },
     /* list_set_row_count */
     [](plug::UiHandle list, int rows) {
         QWidget* container = unwrap(list);

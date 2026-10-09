@@ -2237,6 +2237,31 @@ public:
         if (facade == nullptr) return py::none();
         return wrap(facade->list_self_scrolling(handle_of(parent), min_body_height));
     }
+    // ── ★★ P16-3c：**按钮左键动作菜单**（控件下限 #1）──────────────────────────
+    bool button_on_menu(py::object button, py::object items, py::object callback) const {
+        const UiFacade* facade = available("button_on_menu");
+        if (facade == nullptr) return false;
+        if (callback.is_none() != 0 || PyCallable_Check(callback.ptr()) == 0) {
+            core::log(core::Level::Warn,
+                      "[" + owner_ + "] ui.button_on_menu 的回调不是可调用对象");
+            return false;
+        }
+        std::vector<std::string> labels;
+        if (items.is_none() == 0) {
+            for (auto item : py::list(items)) labels.push_back(py::str(item).cast<std::string>());
+        }
+        py::object kept = callback;
+        keepalive()->push_back(kept);
+        return facade->button_on_menu(handle_of(button), labels, [kept](int index) {
+            py::gil_scoped_acquire acquire;
+            try {
+                kept(index);
+            } catch (const py::error_already_set& err) {
+                core::log(core::Level::Warn,
+                          std::string("ui.button_on_menu 回调抛异常：") + err.what());
+            }
+        });
+    }
     void list_select_row(py::object list_widget, int row) const {
         if (const UiFacade* facade = available("list_select_row")) {
             facade->list_select_row(handle_of(list_widget), row);
@@ -3023,6 +3048,9 @@ void ensure_api_module() {
             .def("list", &PyUi::list, py::arg("parent") = py::none(), py::arg("row_height") = 0)
             .def("list_self_scrolling", &PyUi::list_self_scrolling, py::arg("parent") = py::none(),
                  py::arg("min_body_height") = 0)
+            // ★★ P16-3c：按钮左键动作菜单（控件下限 #1）
+            .def("button_on_menu", &PyUi::button_on_menu, py::arg("button"), py::arg("items"),
+                 py::arg("callback"))
             .def("list_set_row_count", &PyUi::list_set_row_count, py::arg("list"), py::arg("rows"))
             .def("list_set_row_text", &PyUi::list_set_row_text, py::arg("list"),
                  py::arg("provider") = py::none())

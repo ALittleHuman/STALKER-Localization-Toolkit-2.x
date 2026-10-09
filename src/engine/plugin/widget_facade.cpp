@@ -49,7 +49,8 @@ const char* const kMethodNames[] = {
     // ★ P7c：读控件当前值
     "combo_value", "checkbox_state", "set_checked", "combo_set_items",
     // ★★ P4：重型 L2 第一批（虚拟列表 / 日志视图 / 拖放目标 / 任务壳 / 线程判定）
-    "list",        "list_self_scrolling", "list_set_row_count", "list_set_row_text",
+    "list",        "list_self_scrolling", "button_on_menu", "list_set_row_count",
+    "list_set_row_text",
     "list_row_text",
     "list_select_row", "list_selected_row", "list_set_multi", "list_selected_rows",
     "list_set_selected_rows", "list_on_activate", "list_content_height",
@@ -112,6 +113,7 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "combo_set_items") return static_cast<bool>(facade.combo_set_items);
     if (name == "list") return static_cast<bool>(facade.list);
     if (name == "list_self_scrolling") return static_cast<bool>(facade.list_self_scrolling);
+    if (name == "button_on_menu") return static_cast<bool>(facade.button_on_menu);
     if (name == "list_set_row_count") return static_cast<bool>(facade.list_set_row_count);
     if (name == "list_set_row_text") return static_cast<bool>(facade.list_set_row_text);
     if (name == "list_row_text") return static_cast<bool>(facade.list_row_text);

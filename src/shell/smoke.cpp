@@ -5433,7 +5433,11 @@ SmokeResult run_smoke() {
             "        ui.list_set_row_count(self_list, 200)\n"
             "        ui.list_set_row_text(self_list, lambda row: '自滚行 %d' % row)\n"
             "        mark('selfscroll_can:%d' % int(ui.viewport_can_scroll(self_list)))\n"
-            "        mark('content_height:%d' % ui.list_content_height(rows))\n"
+            "        mbtn = ui.button(None, '两模式', None)\n"
+            "        def on_pick(i):\n"
+            "            mark('menu_pick:%d' % i)\n"
+            "        mark('menu_ok:%d' % int(ui.button_on_menu(\n"
+            "            mbtn, ['选包文件…', '选文件夹…'], on_pick)))\n"            "        mark('content_height:%d' % ui.list_content_height(rows))\n"
             "        view = ui.log_view(None, 4)\n"
             "        ui.log_view_append(view, '第一行')\n"
             "        ui.log_view_append(view, '第二行')\n"
@@ -5577,6 +5581,41 @@ SmokeResult run_smoke() {
                           .arg(body_geo.width()).arg(body_geo.height())
                           .arg(body_geo.x()).arg(body_geo.y())
                           .arg(view_rect.width()).arg(view_rect.height()));
+            }
+        }
+        // ★★ P16-3c（控件下限 #1「一个按钮两模式」）：**按钮左键动作菜单** ——
+        //   内置 FS 页「加包」是左键弹 QMenu 二选一（`pages/fs_page.cpp:586-597`）；
+        //   修前门面只有右键 ⇒ 插件做不出（插件自认在 `plugins/fs_page.py`）。
+        //   验三件：`button_on_menu` 返回真、按钮上**真挂了菜单且两项**、触发第 2 项**回调进 mark**。
+        {
+            QPushButton* two_mode = nullptr;
+            if (page_widget != nullptr) {
+                for (QPushButton* candidate : page_widget->findChildren<QPushButton*>()) {
+                    if (candidate->text() == QStringLiteral("两模式")) two_mode = candidate;
+                }
+            }
+            check(marker_value(QStringLiteral("menu_ok")) == QStringLiteral("1") &&
+                      two_mode != nullptr && two_mode->menu() != nullptr &&
+                      two_mode->menu()->actions().size() == 2,
+                  QStringLiteral("P16-3c 按钮要挂上左键动作菜单、且两项（返回 %1 / 菜单 %2 / 项数 %3）")
+                      .arg(marker_value(QStringLiteral("menu_ok")))
+                      .arg(two_mode != nullptr && two_mode->menu() != nullptr ? 1 : 0)
+                      .arg(two_mode != nullptr && two_mode->menu() != nullptr
+                               ? two_mode->menu()->actions().size()
+                               : -1));
+            if (two_mode != nullptr && two_mode->menu() != nullptr &&
+                two_mode->menu()->actions().size() == 2) {
+                two_mode->menu()->actions().at(1)->trigger();
+                QApplication::processEvents();
+                // ★ 触发后必须**重读** mark 文件（上面的 `text` 是早先快照 ⇒ 恒空）
+                const QString after_menu = read_marker();
+                const int pick_at = after_menu.indexOf(QStringLiteral("menu_pick:"));
+                const QString pick =
+                    pick_at < 0 ? QString()
+                                : after_menu.mid(pick_at + 10).split(QLatin1Char('\n')).first().trimmed();
+                check(pick == QStringLiteral("1"),
+                      QStringLiteral("P16-3c 选中第 2 项要回调到插件（期望 menu_pick:1，实得 %1）")
+                          .arg(pick.isEmpty() ? QStringLiteral("(空)") : pick));
             }
         }
         check(calls_at >= 0 && !text.left(calls_at).contains(QStringLiteral("row:199")),
