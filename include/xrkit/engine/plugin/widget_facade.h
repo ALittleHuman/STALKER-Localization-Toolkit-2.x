@@ -292,6 +292,25 @@ bool ui_facade_has(const std::string& name);
 // 门面里**已实现**的方法名（顺序稳定）——判据拿它和预期表对账。
 std::vector<std::string> ui_facade_method_names();
 
+// ── ★★ 2026-10-10（P17-1「线程与取消契约」，审计 05 PLG-01 High）────────────────
+// **跨线程只读白名单**（唯一一份口径，两个前端共用）。
+//
+// 契约：门面方法**只许在宿主 UI 线程**调用（碰 Qt 控件是单线程的）。唯一的结构性例外是
+// `task_run` 的那两个 sink（它们自己排队回主线程）—— 以及**取消谓词**：插件 worker 在
+// **自己的工作线程**里同步轮询"用户点了取消吗"，宿主引擎的 `should_stop`/`cancel` hook
+// 也都在调用线程被调 ⇒ `task_cancel_requested` 必须允许从工作线程读。
+//
+// 修前事实（PLG-01）：闸门一刀切 ⇒ worker 里读取消位**恒为 false** ⇒ 用户在编码转换/
+// 文本提取/XML 校对/视频转换四页点「取消」关不掉，任务照跑到结束，状态栏还谎报"已取消"。
+//
+// 判定标准（**只读、不碰控件**的方法才准进这张表）：实现侧必须保证线程安全
+// （`task_cancel_requested` 只读 `TaskShell` 的原子取消位；`on_ui_thread` 只比线程 id）。
+// 名单在 `src/engine/plugin/widget_facade.cpp`（与 `kMethodNames[]` 同一处，便于对账）。
+bool ui_method_worker_safe(const char* method);
+bool ui_method_worker_safe(const std::string& method);
+// 白名单里的方法名（顺序稳定）——门禁拿它逐名断言"是门面里真有的方法"。
+std::vector<std::string> ui_worker_safe_method_names();
+
 // ── 当前面板根：宿主在调插件 builder 之前设好（见文件头 ③）──────────────────
 void set_current_panel_root(UiHandle root);
 // ★★ P13-2a-2：**当前面板的页面身份** —— 门面菜单要按它去注册表里取

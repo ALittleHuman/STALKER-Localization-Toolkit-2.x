@@ -3,6 +3,7 @@
 #include "../plugin_context_menu.h"
 
 #include "xrkit/core/theme.h"
+#include "xrkit/core/log.h"
 
 #include "../scroll_viewport.h"
 
@@ -13,9 +14,13 @@
 #include <QLabel>
 #include <QAction>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QMenu>
 #include <QPushButton>
+#include <QThread>
 #include <QVBoxLayout>
+
+#include <mutex>
 
 namespace xrkit::shell {
 
@@ -23,6 +28,48 @@ namespace xrkit::shell {
 // `px()` 依赖当前缩放（`core::set_ui_scale()` / 启动时的 DPI 探测）——
 // 常量会让 150% 屏上仍然返回 430。
 int page_min_h() { return xrkit::core::px(430); }
+
+// ── ★★ 2026-10-10（P17-1）：UI 线程守卫（声明与理由见 page_base.h）────────────────
+// 只记账、只拒绝，**不代替**调用者做决定：守卫返回 false 时调用者必须当场返回，
+// 不许"拒了还接着改控件"（那正是修前那条 UAF 的形状）。
+namespace {
+std::mutex g_ui_guard_mutex;
+QString g_ui_guard_last;
+int g_ui_guard_count = 0;
+}  // namespace
+
+bool ui_thread_guard(const char* what) {
+    QCoreApplication* app = QCoreApplication::instance();
+    // 没有 QCoreApplication（纯引擎自检）⇒ 不存在"UI 线程"这回事，按放行处理。
+    if (app == nullptr || QThread::currentThread() == app->thread()) return true;
+    const QString entry = QString::fromLatin1(what == nullptr ? "(未命名)" : what);
+    {
+        std::lock_guard<std::mutex> lock(g_ui_guard_mutex);
+        g_ui_guard_last = entry;
+        ++g_ui_guard_count;
+    }
+    // 零静默：拒绝这件事必须看得见（宿主日志栏 + 自检可断言）。
+    xrkit::core::log(xrkit::core::Level::Warn,
+                     "13.2 线程纪律：在工作线程里调用「" + entry.toStdString() +
+                         "」（会碰控件的那条路）—— 已拒绝并记账");
+    return false;
+}
+
+int ui_thread_violation_count() {
+    std::lock_guard<std::mutex> lock(g_ui_guard_mutex);
+    return g_ui_guard_count;
+}
+
+QString ui_thread_last_violation() {
+    std::lock_guard<std::mutex> lock(g_ui_guard_mutex);
+    return g_ui_guard_last;
+}
+
+void reset_ui_thread_violations() {
+    std::lock_guard<std::mutex> lock(g_ui_guard_mutex);
+    g_ui_guard_count = 0;
+    g_ui_guard_last.clear();
+}
 
 PageBase::PageBase(const QString& page_id, const QString& title, QWidget* parent)
     : QWidget(parent), page_id_(page_id), title_(title) {

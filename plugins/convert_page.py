@@ -122,6 +122,18 @@ def register(api):
             ui.set_text(status, text)
             ui.log_view_append(log, text)
 
+        # ★★ P17-1（线程与取消契约，审计 03 F-01 / 05 PLG-01）：**worker 不许碰控件**。
+        #   界面的两处落点（状态标签 / 日志视图）一律在**回主线程的回调**里改：
+        #   worker 只调两个 sink（`progress`/`message`）＋跨线程只读白名单
+        #   （`ui.task_cancel_requested` —— 引擎的 cancel hook 在 worker 线程里被同步轮询）。
+        #   修前 worker 直接 `ui.set_text(status, …)` / `ui.log_view_append(log, …)`，
+        #   而门面的线程闸门把它们**静默**变成 no-op ⇒ worker 阶段的状态与日志永远是空的。
+        def on_task_message(text):
+            ui.log_view_append(log, text)
+            ui.set_text(status, text)
+
+        ui.task_on_message(panel, on_task_message)
+
         def sync_backup_enabled():
             in_place = not ui.get_text(output_entry).strip()
             ui.set_enabled(backup_box, in_place)
@@ -184,7 +196,6 @@ def register(api):
 
                 def on_message(text):
                     message(text)
-                    ui.log_view_append(log, text)
 
                 outcome = engine.text_convert_batch(
                     batch_options(options),
@@ -193,10 +204,12 @@ def register(api):
                      "message": on_message,
                      "progress": lambda done, total: progress(100 if total <= 0 else int(done * 100 / total))})
                 last_outcome[0] = outcome
-                ui.set_text(status, scan_line(outcome))
-                ui.log_view_append(log, scan_line(outcome))
+                # ★ P17-1：状态与日志一律经 `message`（主线程回调落控件）—— worker 不碰控件。
+                #   收尾文案的顺序照旧：扫描台账 → 停止理由 → 结论（`message` 与壳同队列、保序），
+                #   于是状态栏最终仍是 `result_line(outcome)`（与 C++ 页同一口径）。
+                message(scan_line(outcome))
                 if outcome["stop_reason"]:
-                    ui.log_view_append(log, outcome["stop_reason"])
+                    message(outcome["stop_reason"])
                 message(result_line(outcome))
                 progress(100)
 
@@ -228,7 +241,8 @@ def register(api):
                                                               result["failed"], result["total"]))
                 for line in result["errors"]:
                     message("[恢复] " + line)
-                ui.set_text(status, "恢复完成：成功 %d / 候选 %d" % (result["ok"], result["total"]))
+                # ★ P17-1：收尾文案经 `message` 落状态栏（worker 不碰控件）；顺序照旧放最后
+                message("恢复完成：成功 %d / 候选 %d" % (result["ok"], result["total"]))
                 progress(100)
 
             if not ui.task_run(panel, "恢复备份", worker):
@@ -252,7 +266,8 @@ def register(api):
                                                              result["failed"], result["total"]))
                 for line in result["errors"]:
                     message("[清空] " + line)
-                ui.set_text(status, "清空完成：删除 %d / 候选 %d" % (result["ok"], result["total"]))
+                # ★ P17-1：同上 —— 收尾文案经 `message`（worker 不碰控件）
+                message("清空完成：删除 %d / 候选 %d" % (result["ok"], result["total"]))
                 progress(100)
 
             if not ui.task_run(panel, "清空备份", worker):

@@ -32,7 +32,10 @@
 #include <QString>
 #include <QStringList>
 
+#include <atomic>
 #include <map>
+#include <memory>
+#include <mutex>
 
 class QCheckBox;
 class QComboBox;
@@ -49,13 +52,42 @@ class TaskShell;
 class FontPackPage : public PageBase {
 public:
     explicit FontPackPage(QWidget* parent = nullptr);
+    // ★★ P17-1（03 F-01）：析构函数体里先 `task_->stop_and_wait()`（见 .cpp 的理由）
+    ~FontPackPage() override;
 
     // 11.8：字体状态（**唯一判据**在引擎里；页面只是显示）
     engine::font::CjkFontCheck check_font(const QString& font_path) const;
     QString font_state_text(const QString& font_path) const;
     // 11.9：先判后建 —— 缺字形直接拒绝（返回 false + 理由），**不建目录**
+    //
+    // ★★ 2026-10-10（P17-1，审计 03 F-01 Critical）：本方法是**主线程专用**的便捷路径
+    //   （＝ `prepare` + `run_build` + `apply_result`），自检与单线程调用走它。
+    //   worker 里**不许**调它（它读控件、写控件）—— 守卫会拒绝并记账（见 page_base.h）。
     bool build(const QString& xml_dir, const QString& font_path, const QString& out_dir,
                QString* reason);
+
+    // ── ★★ P17-1：把"碰控件的那份"与"给 worker 的那份"**分开**（03 F-01 的修法）────
+    //   · `prepare()`（**主线程**）：读控件 ⇒ 冻结成 `PackageOptions` 值；
+    //   · `run_build()`（**worker 可调，纯引擎**）：一个字都不碰控件，结果用出参回传；
+    //   · `apply_result()`（**主线程**）：把结果画到 `result_label_`/`state_label_`。
+    //   为什么必须分成三步：修前 worker 直接调 `build()` ⇒ 跨线程读下拉框、写 QLabel；
+    //   页析构时控件先被删、worker 还在写 ⇒ 访问违例（UAF）。
+    struct BuildOutcome {
+        bool refused = false;                 // 11.9：缺字形/检测失败 ⇒ 拒绝（没建任何目录）
+        bool ok = false;                      // 引擎出包成功
+        bool fallback_used = false;           // 走了繁体回退（界面要加一句"已按繁体回退生成"）
+        engine::font::CjkFontCheck check;
+        engine::font::PackageResult result;
+        QString reason;                       // 拒绝/失败的理由（原样来自引擎与状态标记）
+    };
+    engine::font::PackageOptions prepare(const QString& xml_dir, const QString& font_path,
+                                         const QString& out_dir) const;
+    BuildOutcome run_build(const engine::font::PackageOptions& options) const;
+    void apply_result(const BuildOutcome& outcome);
+
+    // worker 里算完的结果 ⇒ 交给主线程收尾回调（见 TaskShell::set_finish_handler）
+    void publish_outcome(std::shared_ptr<const BuildOutcome> outcome);
+    std::shared_ptr<const BuildOutcome> take_pending_outcome();
 
     QLineEdit* xml_edit() const { return xml_edit_; }
     QLineEdit* font_edit() const { return font_edit_; }
@@ -69,7 +101,7 @@ public:
     QLabel* state_label() const { return state_label_; }
     QLabel* result_label() const { return result_label_; }
     TaskShell* task() const { return task_; }
-    int refused_count() const { return refused_count_; }
+    int refused_count() const { return refused_count_.load(); }
 
     // ── ★ 2026-10-08 P8a：字体选择器抽成**宿主唯一一份**（`font_picker.h`）─────
     //   `make_font_picker`（自建对话框，**不 exec**）/ `font_candidates` / `default_font_path` /
@@ -115,7 +147,13 @@ private:
     QLabel* state_label_ = nullptr;
     QLabel* result_label_ = nullptr;
     TaskShell* task_ = nullptr;
-    int refused_count_ = 0;
+    // ★★ P17-1：拒绝计数**由 worker 递增**（`run_build` 在 worker 里跑）⇒ 必须是原子量
+    //   （修前是裸 `int`，跨线程 `++` 就是数据竞争 —— 审计 03 F-01 的同一条）。
+    //   `mutable`：`run_build` 是 const 成员（它只读页面、只动这个计数器）。
+    mutable std::atomic<int> refused_count_{0};
+    // worker 算完的结果 ⇒ 主线程收尾回调取走（互斥保护；只在 worker 与主线程各一处访问）
+    mutable std::mutex outcome_mutex_;
+    std::shared_ptr<const BuildOutcome> pending_outcome_;
     // 字体四态的**缓存**（1.x `self._font_cjk`：跨对话框复用，避免重复解析同一个字体文件）
 };
 

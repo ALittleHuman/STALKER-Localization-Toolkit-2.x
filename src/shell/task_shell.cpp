@@ -77,9 +77,16 @@ TaskShell::~TaskShell() {
     //   阻塞到那一步为止。本批修的是"**有取消位的任务**（编码转换 / 文本提取 / XML 校对）
     //   在关窗时真的会停"。
     cancel_requested_.store(true);
+    stop_and_wait();
+}
+
+// ★★ P17-1：主动收工（见 task_shell.h）。幂等：析构里再调一次只是空转。
+void TaskShell::stop_and_wait() {
+    cancel_requested_.store(true);
     for (std::thread& t : threads_) {
         if (t.joinable()) t.join();
     }
+    threads_.clear();
 }
 
 bool TaskShell::run(const QString& title, const WorkerFn& worker) {
@@ -179,6 +186,11 @@ void TaskShell::set_message_handler(std::function<void(const QString&)> handler)
     message_handler_ = std::move(handler);
 }
 
+// ★★ P17-1：主线程收尾回调（设置时必须在主线程 —— 与其余控件动作同一纪律）
+void TaskShell::set_finish_handler(std::function<void()> handler) {
+    finish_handler_ = std::move(handler);
+}
+
 void TaskShell::apply_message(QString text) {
     const bool on_main = QThread::currentThread() == QCoreApplication::instance()->thread();
     {
@@ -227,8 +239,13 @@ void TaskShell::apply_finish(QString final_status) {
     status_text_ = next;
     status_->setText(next);
     const bool on_main = QThread::currentThread() == QCoreApplication::instance()->thread();
-    std::lock_guard<std::mutex> lock(mutex_);
-    events_.push_back({'f', 0, on_main});
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        events_.push_back({'f', 0, on_main});
+    }
+    // ★★ P17-1：**主线程收尾回调**放在最后 —— 此时状态栏已定稿，页面可以安全地把
+    //   worker 算出来的结果画到控件上（见 task_shell.h 对 set_finish_handler 的说明）。
+    if (finish_handler_) finish_handler_();
 }
 
 QVector<TaskShell::Event> TaskShell::take_events() {

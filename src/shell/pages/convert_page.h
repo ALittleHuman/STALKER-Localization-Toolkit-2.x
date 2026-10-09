@@ -56,6 +56,7 @@ public:
     bool paused() const { return paused_.load(); }
     void toggle_pause();
     // 只在"暂停中"返回 false（并记一次拦截）。自检用非阻塞模式验证语义。
+    // ★★ P17-1（03 F-02）：取消位也能打断它（见 .cpp）—— 这是"暂停态关窗进程退不出"的修法。
     bool wait_if_paused(bool block);
 
     void add_row(const QString& text);
@@ -74,7 +75,7 @@ public:
     void sync_rows_viewport() { sync_inner_scroll(); }
     TaskShell* task() const { return task_; }
     QLabel* status() const { return status_; }
-    int pause_gate_hits() const { return pause_gate_hits_; }
+    int pause_gate_hits() const { return pause_gate_hits_.load(); }
 
     // ── ★ 2026-10-06 D2 批的新控件（自检逐条断言；`--shot` 也按对象名量几何）──
     QLineEdit* ext_edit() const { return ext_edit_; }
@@ -144,7 +145,8 @@ private:
     QLabel* status_ = nullptr;
     std::vector<QString> row_texts_;
     std::atomic<bool> paused_{false};
-    int pause_gate_hits_ = 0;
+    // ★★ P17-1：拦截计数**由 worker 递增**（gate 在工作线程里跑）⇒ 原子量（自检在主线程读）
+    std::atomic<int> pause_gate_hits_{0};
     QString last_scan_text_;
     engine::text::BatchOutcome last_outcome_;
     // 产生`last_outcome_`那一次的**参数快照**（1.x 的 `_stats_snap` 口径：导出统计不读实时界面值）

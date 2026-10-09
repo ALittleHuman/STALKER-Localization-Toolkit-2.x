@@ -184,6 +184,13 @@ FontPackPage::FontPackPage(QWidget* parent)
     //   停止"就是在如实说明这件事）⇒ 这颗按钮在本页"本质是完全没有的"。
     task_ = new TaskShell(this, TaskShell::CancelButton::No);
     task_->set_idle_status(QStringLiteral("就绪"));
+    // ★★ P17-1（03 F-01）：worker 算完的结果由**主线程收尾回调**画到控件上。
+    //   这条回调在 `TaskShell::apply_finish` 的最后、于主线程执行 ⇒ 可以碰控件。
+    task_->set_finish_handler([this] {
+        if (std::shared_ptr<const BuildOutcome> outcome = take_pending_outcome()) {
+            apply_result(*outcome);
+        }
+    });
     body_layout()->addWidget(task_->panel(), 0);
 
     auto* detect = add_action(QStringLiteral("检测字体"));
@@ -206,23 +213,40 @@ FontPackPage::FontPackPage(QWidget* parent)
             result_label_->setText(QStringLiteral("请把三个路径都填上"));
             return;
         }
-        task_->run(QStringLiteral("生成汉化包"), [this, xml_dir, font, out](
-                                                     const ProgressSink& progress,
-                                                     const MessageSink& message) {
+        // ★★ 2026-10-10（P17-1，审计 03 F-01 Critical）：**主线程先把控件读成值**
+        //   （`prepare`），worker 只拿这份冻结值与引擎打交道；算完由**主线程收尾回调**
+        //   画到控件上（`apply_result`）。修前 worker 直接调 `build()` ⇒ 跨线程读下拉框、
+        //   写 `result_label_`/`state_label_`、裸 `++refused_count_`（数据竞争），
+        //   并且页析构时 `result_label_` 先于 `task_` 被删 ⇒ 访问违例。
+        const engine::font::PackageOptions options = prepare(xml_dir, font, out);
+        auto outcome = std::make_shared<BuildOutcome>();
+        const bool started = task_->run(QStringLiteral("生成汉化包"),
+                                        [this, options, outcome, out](const ProgressSink& progress,
+                                                                      const MessageSink& message) {
             progress(0);
-            // ★★ 2026-10-06（② 用户拍板）：**本页不再有取消** —— 修前这里有两处轮询
-            //   （"开始之前"的空转取消 + "生成中收到请求 ⇒ 如实说明不可中断"），
-            //   连同任务壳的取消按钮一起整块删掉了（用户：「本质是完全没有的，故直接删除即可」）。
-            QString reason;
-            if (!build(xml_dir, font, out, &reason)) {
+            // ★ worker 里**只调引擎**：`run_build` 不碰任何控件（碰了会被 UI 线程守卫拒）。
+            *outcome = run_build(options);
+            if (outcome->refused) {
                 // 11.9：拒绝式检查 —— 这里**没有**任何目录被建出来
-                message(reason.toUtf8().toStdString());
+                message(outcome->reason.toUtf8().toStdString());
                 progress(100);
+                publish_outcome(outcome);
+                return;
+            }
+            if (!outcome->ok) {
+                message(outcome->reason.toUtf8().toStdString());
+                progress(100);
+                publish_outcome(outcome);
                 return;
             }
             message(QStringLiteral("产物写到 %1/gamedata").arg(out).toUtf8().toStdString());
             progress(100);
+            publish_outcome(outcome);
         });
+        if (!started) {
+            // 13.1 重入闸门拒绝（已有任务在跑）：什么都不许改（结果也还没算）
+            result_label_->setText(QStringLiteral("已有任务在跑，请等它结束"));
+        }
     });
 
     // ★ D2 批：默认字体（1.x `:129-149` 的三级优先级）—— 上次用过的 → 系统雅黑 → 仓库根。
@@ -230,6 +254,16 @@ FontPackPage::FontPackPage(QWidget* parent)
     const QString initial = default_font_path(saved);
     if (!initial.isEmpty()) font_edit_->setText(initial);
     refresh_state();
+}
+
+// ★★ P17-1（03 F-01）：**先把 worker 收干净，再让子控件被删**。
+//   `result_label_`/`state_label_` 是页的子控件，Qt 按登记顺序删 ⇒ 它们**先于** `task_`
+//   被删除（`task_` 是后造的）；`~TaskShell` 的 join 发生在 `task_` 被删的那一刻 ——
+//   修前 worker 还在往那些已经被删的 QLabel 上 setText（访问违例）。现在 worker 一个字
+//   都不碰控件（见 prepare/run_build/apply_result 三步），这里再把"析构期还有线程在跑"
+//   这个窗口也关掉：析构函数体里就置取消位 + join。
+FontPackPage::~FontPackPage() {
+    if (task_ != nullptr) task_->stop_and_wait();
 }
 
 void FontPackPage::sync_lang_edit() {
@@ -341,6 +375,8 @@ void FontPackPage::refresh_state() {
 engine::font::PackageOptions FontPackPage::options_for(const QString& xml_dir,
                                                        const QString& font_path,
                                                        const QString& out_dir) const {
+    // ★★ P17-1：这是"读控件"的一条路 ⇒ 必须过 UI 线程守卫（worker 里调 = 拒绝 + 记账）。
+    if (!ui_thread_guard("FontPackPage::options_for")) return engine::font::PackageOptions{};
     engine::font::PackageOptions options;
     options.game = game_combo_->currentData().toString().toUtf8().toStdString();
     // 语言：选"自定义"时用输入框里的值（1.x `_generate` `:667-672` 的口径）
@@ -364,42 +400,90 @@ engine::font::PackageOptions FontPackPage::options_for(const QString& xml_dir,
     return options;
 }
 
-bool FontPackPage::build(const QString& xml_dir, const QString& font_path, const QString& out_dir,
-                         QString* reason) {
+// ★★ P17-1（03 F-01）：主线程冻结控件值 —— worker 只拿这一份（见 fontpack_page.h）。
+engine::font::PackageOptions FontPackPage::prepare(const QString& xml_dir, const QString& font_path,
+                                                   const QString& out_dir) const {
+    return options_for(xml_dir, font_path, out_dir);
+}
+
+// ★★ P17-1：**worker 可调**的那一步 —— 只做引擎的事（判字形 + 出包），一个字都不碰控件。
+//   因此它可以在工作线程里跑（重活就该在这儿跑），而"画到控件上"留给主线程的 apply_result。
+FontPackPage::BuildOutcome FontPackPage::run_build(
+    const engine::font::PackageOptions& options) const {
+    BuildOutcome outcome;
     // 11.9：**先判后建** —— 缺字形/检测失败直接拒绝，且**不建任何目录**。
     // （`font_unrenderable` 只告警不拒绝：那条路在引擎的 build_package 里以 warning 体现。）
-    const engine::font::CjkFontCheck check = check_font(font_path);
-    if (check.state == engine::font::CjkFontState::Missing ||
-        check.state == engine::font::CjkFontState::Unknown) {
-        ++refused_count_;
-        if (reason != nullptr) {
-            *reason = QStringLiteral("拒绝生成：%1（缺字形或字体不可用；没有创建任何目录）")
-                          .arg(utf8(engine::font::cjk_state_mark(check.state)));
-        }
-        if (result_label_ != nullptr) result_label_->setText(reason != nullptr ? *reason : QString());
-        return false;
+    // 判据**只有** `check_font` 那一份（引擎的 `classify_cjk_font`），页面不自己再判一遍。
+    outcome.check = check_font(utf8(options.font_path));
+    if (outcome.check.state == engine::font::CjkFontState::Missing ||
+        outcome.check.state == engine::font::CjkFontState::Unknown) {
+        outcome.refused = true;
+        // 原子量：worker 里递增（修前是裸 `int` ⇒ 数据竞争）
+        refused_count_.fetch_add(1);
+        outcome.reason = QStringLiteral("拒绝生成：%1（缺字形或字体不可用；没有创建任何目录）")
+                             .arg(utf8(engine::font::cjk_state_mark(outcome.check.state)));
+        return outcome;
     }
-    const engine::font::PackageResult result = engine::font::build_package(
-        options_for(xml_dir, font_path, out_dir));
+    outcome.result = engine::font::build_package(options);
+    outcome.ok = outcome.result.ok;
+    if (!outcome.ok) {
+        outcome.reason = utf8(outcome.result.error);
+        return outcome;
+    }
+    outcome.fallback_used = !outcome.check.fallbacks.empty();
+    return outcome;
+}
+
+// ★★ P17-1：**主线程**把结果画到控件上（守卫保证它不在 worker 里被调）。
+void FontPackPage::apply_result(const BuildOutcome& outcome) {
+    if (!ui_thread_guard("FontPackPage::apply_result")) return;
+    if (outcome.refused) {
+        if (result_label_ != nullptr) result_label_->setText(outcome.reason);
+        return;
+    }
     if (result_label_ != nullptr) {
         result_label_->setText(
-            result.ok ? QStringLiteral("完成：字体 %1 个、XML %2 个%3")
-                            .arg(result.fonts_written)
-                            .arg(result.xml_written)
-                            .arg(result.warnings.empty()
-                                     ? QString()
-                                     : QStringLiteral("（%1 条告警）").arg(result.warnings.size()))
-                      : QStringLiteral("失败：") + utf8(result.error));
+            outcome.result.ok
+                ? QStringLiteral("完成：字体 %1 个、XML %2 个%3")
+                      .arg(outcome.result.fonts_written)
+                      .arg(outcome.result.xml_written)
+                      .arg(outcome.result.warnings.empty()
+                               ? QString()
+                               : QStringLiteral("（%1 条告警）").arg(outcome.result.warnings.size()))
+                : QStringLiteral("失败：") + utf8(outcome.result.error));
     }
-    if (!result.ok) {
-        if (reason != nullptr) *reason = utf8(result.error);
+    if (outcome.fallback_used && state_label_ != nullptr) {
+        state_label_->setText(state_label_->text() + QStringLiteral("（已按繁体回退生成）"));
+    }
+}
+
+// ★★ P17-1：worker 算完 ⇒ 交给主线程收尾（`TaskShell::set_finish_handler`，见构造函数）。
+void FontPackPage::publish_outcome(std::shared_ptr<const BuildOutcome> outcome) {
+    std::lock_guard<std::mutex> lock(outcome_mutex_);
+    pending_outcome_ = std::move(outcome);
+}
+
+std::shared_ptr<const FontPackPage::BuildOutcome> FontPackPage::take_pending_outcome() {
+    std::lock_guard<std::mutex> lock(outcome_mutex_);
+    std::shared_ptr<const BuildOutcome> outcome = pending_outcome_;
+    pending_outcome_.reset();
+    return outcome;
+}
+
+bool FontPackPage::build(const QString& xml_dir, const QString& font_path, const QString& out_dir,
+                         QString* reason) {
+    // ★★ P17-1：本方法＝三步合一，**主线程专用**（自检与单线程调用走它）。
+    //   worker 里调它 ⇒ 守卫在第一句就拒绝并记账，控件一个字都不许变（smoke 有这条判据）。
+    if (!ui_thread_guard("FontPackPage::build")) {
+        if (reason != nullptr) {
+            *reason = QStringLiteral("线程纪律：本方法只许在主线程调用");
+        }
         return false;
     }
-    if (!check.fallbacks.empty() && state_label_ != nullptr) {
-        state_label_->setText(state_label_->text() +
-                              QStringLiteral("（已按繁体回退生成）"));
-    }
-    return true;
+    const BuildOutcome outcome = run_build(prepare(xml_dir, font_path, out_dir));
+    apply_result(outcome);
+    if (reason != nullptr) *reason = outcome.reason;
+    return outcome.ok;
 }
 
 // ★ 2026-10-04 用户第 2 条（"目录定向"）：这三个函数是各"选择"调用点的判据唯一实现 ——

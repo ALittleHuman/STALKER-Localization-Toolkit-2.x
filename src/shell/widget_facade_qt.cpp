@@ -50,6 +50,7 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -90,7 +91,17 @@ std::map<void*, TaskShell*>& task_shells() {
     return *instance;
 }
 
+// ★★ 2026-10-10（P17-1，审计 05 PLG-01）：任务壳登记表**会被工作线程读**。
+//   `ui.task_cancel_requested` 是跨线程只读白名单里的一员（插件 worker 要轮询取消位），
+//   它第一步就是拿 panel 句柄来这里查 TaskShell ⇒ 主线程插入（`task_panel` 建壳）与
+//   worker 查找会在同一张 std::map 上并发 ⇒ 必须加锁（修前是裸 map，靠"恰好没人并发"）。
+std::mutex& task_shells_mutex() {
+    static std::mutex* instance = new std::mutex();
+    return *instance;
+}
+
 TaskShell* task_of(plug::UiHandle panel) {
+    std::lock_guard<std::mutex> lock(task_shells_mutex());
     const auto it = task_shells().find(panel);
     return it == task_shells().end() ? nullptr : it->second;
 }
@@ -668,7 +679,10 @@ const plug::UiFacade kQtFacade = {
         auto* shell = new TaskShell(
             host, with_cancel ? TaskShell::CancelButton::Yes : TaskShell::CancelButton::No);
         place(host, shell->panel());
-        task_shells()[reinterpret_cast<void*>(shell->panel())] = shell;
+        {
+            std::lock_guard<std::mutex> lock(task_shells_mutex());
+            task_shells()[reinterpret_cast<void*>(shell->panel())] = shell;
+        }
         return handle_of(wrap(shell->panel()));
     },
     /* task_run：worker 在**工作线程**里跑，收到两个 sink（progress 0~100 / message） */

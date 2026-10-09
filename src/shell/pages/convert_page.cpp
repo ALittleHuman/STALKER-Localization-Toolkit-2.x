@@ -348,7 +348,16 @@ void ConvertPage::toggle_pause() { set_paused(!paused()); }
 bool ConvertPage::wait_if_paused(bool block) {
     if (!paused_.load()) return true;
     ++pause_gate_hits_;
+    // ★★ 2026-10-10（P17-1，审计 03 F-02 High）：**暂停等待必须能被取消位打断**。
+    //
+    // 修前事实：循环条件只看 `paused_`，而 `~TaskShell()` 只置取消位、**完全不碰 `paused_`**
+    // （`paused_` 只有主线程 `set_paused(false)` 能清）⇒ 用户点「暂停」后关窗：worker 卡在
+    // `while (block && paused_.load())` 里永远不出来，主线程 join 永久阻塞 ⇒ 进程关不掉。
+    //
+    // 修法：把取消位并进循环 —— 一旦收到取消，**返回 false**（＝让引擎按"取消"收工，与
+    // gate 的语义一致：false ⇒ 引擎停下、把停在哪儿报出来）。任何阻塞等待都必须能被取消打断。
     while (block && paused_.load()) {
+        if (task_ != nullptr && task_->cancel_requested()) return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     return !paused_.load();

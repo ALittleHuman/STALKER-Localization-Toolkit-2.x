@@ -39,6 +39,27 @@ class ScrollViewport;
 // 5.2：页最小高 = `px(430)`。**函数**，不是常量（缩放变了值就得变）。
 int page_min_h();
 
+// ── ★★ 2026-10-10（P17-1「线程与取消契约」，审计 §一·1 / 03 F-01）────────────────
+// **UI 线程守卫（13.2 的可判形态）**。契约原文（1.x `TaskRunner` 13.2）：
+//   「工作线程里不许碰任何控件 —— 数据在主线程读好传进去，工作线程只 emit 进度/消息」。
+//
+// 为什么要有它（修前事实）：汉化包页点「生成汉化包」后，`task_->run(...)` 的 worker **直接**
+// 调 `FontPackPage::build()`；而 `build()` 里 `options_for()` 读下拉框/勾选框、又对
+// `result_label_`/`state_label_` 写文本 ⇒ 跨线程碰 QWidget（未定义行为）；页析构时
+// `result_label_`（页的子控件，先于 `task_` 被删）与 worker 的写操作撞上就是访问违例
+// （审计 03 F-01，Critical）。而且这条在自检里**不可见**：smoke 只在主线程直调 `build()`。
+//
+// 可判形态不是"文件里写没写遵守"，而是「**碰控件的那条路自己会拒绝**」：
+//   · 在 UI 线程 ⇒ 返回 true（照旧干活）；
+//   · 不在 UI 线程 ⇒ **记账 + 返回 false**（调用者必须当场放弃，不许静默改控件）。
+// 判据：`tests/check_thread_contract.py`（静态：worker 体不许落到碰控件的成员函数上）+
+//       smoke（运行期：工作线程里调 `FontPackPage::build/options_for` ⇒ 守卫计数 +1、
+//       控件的文本**一个字都不许变**）。
+bool ui_thread_guard(const char* what);
+int ui_thread_violation_count();
+QString ui_thread_last_violation();
+void reset_ui_thread_violations();
+
 // ── ★ 插件改装 P1（Hub 机制层）：宿主交给页的**机制**（页只借用、不持有所有权）──────
 // 规格 §一：Hub 要把「页注册 / 日志栏 / 任务壳 / 状态栏 / 页面切换」这些机制**暴露**给插件页。
 // 这就是那份"暴露"的 C++ 形态：**一个入口**，页要什么从这里取；而不是让页各自去认 Hub ——

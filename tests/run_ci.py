@@ -3013,6 +3013,42 @@ def step_facade_registry(release: bool) -> None:
         fail("门面登记表有缺口（见上）—— 字段没进 kMethodNames/has_impl 的能力恒不可用")
 
 
+def step_thread_contract(release: bool) -> None:
+    """**线程与取消契约**的静态判据（P17-1；审计 §一·1 / 03 F-01 / 03 F-02 / 05 PLG-01 / 05 PLG-07）。
+
+    一条判据覆盖两条契约、三条缺陷：
+      ① **worker 不许碰 UI**（1.x `TaskRunner` 13.2）—— `03 F-01`（Critical，汉化包页 worker
+         读下拉框 + 写 QLabel + 裸 `++refused_count_`）与五个插件页的 worker 里那些
+         `ui.set_text` / `ui.log_view_append` / `ui.get_text`（被线程闸门**静默**变成 no-op）；
+      ② **取消要真能读到并停**（用户红线）—— `05 PLG-01`（`ui.task_cancel_requested` 在
+         worker 里被一刀切拒掉 ⇒ 四页「取消」关不掉、还谎报"已取消"）。
+
+    为什么单开一步：修前**全仓没有一条**门禁量管这两件事（Hana 05 PLG-07 原话：「门禁全绿，
+    但『取消关不掉 / worker 刷控件』这类红线级问题没有任何判据兜住」）。判据形状：
+      · C++ 内置页：抽出 `task_->run(...)` 的 worker 体（剥掉"排队回主线程"那一段之后剩下的
+        才是真在 worker 里跑的代码）⇒ 不许直接碰控件成员，也不许调"会碰控件的成员函数"
+        （除非那条路自己带 `ui_thread_guard` 可判接缝）；
+      · `.py` 插件：AST 找 `ui.task_run(..., worker)` 的 worker，worker 体内（含嵌套函数/
+        lambda）只许调两个 sink 与**跨线程只读白名单**（名单从 C++ 读，不手抄）。
+    独立成步（静态判据、不依赖任何构建产物）：被 `--only` 过滤时按记账进 UNCOVERED。
+    退出码：0=两条契约成立、1=有断言不成立（含仓库自带文件缺失 —— 那是 FAIL，不是 SKIP）。
+    """
+    say("[thread-contract] P17-1：线程与取消契约（worker 不许碰 UI / 取消要读得到）")
+    script = ROOT / "tests" / "check_thread_contract.py"
+    if not require_repo_file(script, "线程与取消契约核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if (s.startswith("THREAD-CONTRACT") or s.startswith("== ") or s.startswith("✗")
+                or s.startswith("✓ 反例自证") or s.startswith("跨线程只读白名单")):
+            say("  " + s)
+    if rc == 0 and "THREAD-CONTRACT ok" in out:
+        ok("worker 只碰引擎与两个 sink；取消位读得到（含反例自证）")
+    else:
+        fail("线程/取消契约有缺口（见上）—— worker 碰 UI 或取消读不到都算红")
+
+
 def step_plugin_facade_returns(release: bool) -> None:
     """插件改装 P16-0：**插件不许丢弃「成没成」型门面调用的返回值**。
 
@@ -4234,6 +4270,9 @@ STEPS = [
     ("video-plugin", step_video_plugin),
     # ★★ 2026-10-08（P9b）：门面顺序核对（类型相同的相邻字段错了编译器不报）
     ("facade-order", step_facade_order),
+    # ★★ P17-1（2026-10-10）：**线程与取消契约**的静态锁（worker 不许碰 UI / 取消要读得到）。
+    #   放在 facade-* 旁边：它同样要读门面的"跨线程只读白名单"（唯一一份口径在 C++ 侧）。
+    ("thread-contract", step_thread_contract),
     # ★★ 2026-10-08（P16-0）：门面登记表三点闭环（字段 / kMethodNames / has_impl 逐名同数）
     ("facade-registry", step_facade_registry),
     # ★★ 2026-10-08（P16-0）：插件侧不许丢弃「成没成」型门面返回值（静默链的第二半）

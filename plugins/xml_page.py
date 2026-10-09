@@ -198,16 +198,22 @@ def register(api):
                 ui.set_text(stats, "请先选两个文件夹")
                 return
 
+            # ★★ P17-1：明细标题用的两个名字在**主线程冻结成值**（worker 里 `name_a()` 是
+            #   `ui.get_text(...)` ⇒ 跨线程读控件，被闸门静默拒 ⇒ 明细标题退化成默认 "A"/"B"）。
+            frozen_names = (name_a(), name_b())
+
             def worker(progress, message):
                 # ★★ 线程契约：worker 在**工作线程**里跑 ⇒ **只许**调 progress/message 两个 sink，
                 #   绝不碰控件（碰了就是偶发崩溃；界面刷新交给下面的回主线程回调）。
                 progress(0)
                 args_with_cancel = dict(args)
-                args_with_cancel["cancel"] = ui.task_cancel_requested
+                # ★ P17-1：`ui.task_cancel_requested` 要**带 panel** 调（修前传的是裸绑定方法，
+                #   调用时少一个实参 ⇒ 每次都抛 TypeError，取消永远读不到）。
+                args_with_cancel["cancel"] = lambda: ui.task_cancel_requested(panel)
                 report = run_compare(api, args_with_cancel)
                 rows_state["rows"] = report["rows"]
                 # 明细由**引擎**渲染（插件只负责摆上界面；这一步是纯数据，可以在工作线程里做）
-                na, nb = name_a(), name_b()
+                na, nb = frozen_names
                 for row in rows_state["rows"]:
                     row["_inline_detail"] = engine.xml_inline_detail(row, na, nb)
                 if report["cancelled"]:

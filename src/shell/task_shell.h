@@ -61,10 +61,29 @@ public:
     // **可以直接碰控件**，而工作线程那边永远碰不到。
     void set_message_handler(std::function<void(const QString&)> handler);
 
+    // ── ★★ 2026-10-10（P17-1「线程与取消契约」，审计 03 F-01）────────────────────
+    // **收尾回调（主线程）**：worker 里算出来的结果要画到控件上时走这条。
+    // 壳保证两件事：① 在**主线程**上跑（⇒ 回调里可以碰控件）；② 与 worker 里的
+    // `message`/`progress` **同一个排队队列、同序**，且在 worker 返回之后才入队
+    // （⇒ 回调里读 worker 写过的值一定看得见；worker 自己绝不许碰控件）。
+    //
+    // 为什么需要它：修前汉化包页的 worker 直接调 `build()`（里面读下拉框、写 QLabel）
+    // ⇒ 跨线程碰 QWidget；页析构时 `result_label_` 先于 `task_` 被删 ⇒ 访问违例。
+    // 有了这条回调，"重活算完 ⇒ 回主线程画"才是结构约束，而不是口口相传的纪律。
+    void set_finish_handler(std::function<void()> handler);
+
     // 13.1：重入闸门在**主线程同步置位**，然后才启动工作线程。重入返回 false（拒绝）。
     bool run(const QString& title, const WorkerFn& worker);
     bool running() const { return running_; }
     int rejected_count() const { return rejected_; }
+
+    // ── ★★ 2026-10-10（P17-1「线程与取消契约」）──────────────────────────────────
+    // **确定性收工**（主线程）：无条件置取消位 ⇒ join 全部 worker ⇒ 清空线程表。
+    // 为什么需要它：析构本来也做这件事，但析构发生在**页面子控件被删之后** —— 页面想在
+    // "自己的析构函数体里、控件还在"时就把 worker 收干净，得有一个能主动调的入口
+    // （审计 03 F-01 的时序面：`result_label_` 先于 `task_` 被删）。
+    // 幂等：析构里会再调一次（线程表已空 ⇒ 什么都不做）。
+    void stop_and_wait();
 
     // 13.7：**只发一个 0~100 值**，壳里不做任何归一化
     void report_progress(int percent_0_100);
@@ -128,6 +147,7 @@ private:
     QVector<Event> events_;
     std::vector<std::thread> threads_;
     std::function<void(const QString&)> message_handler_;
+    std::function<void()> finish_handler_;   // ★ P17-1：主线程收尾（见 set_finish_handler）
 
     // ★ 取消位：**工作线程要读** ⇒ 必须是原子的；理由只在主线程读写。
     std::atomic<bool> cancel_requested_{false};

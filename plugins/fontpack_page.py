@@ -168,22 +168,25 @@ def register(api):
                 "full_cyrillic": ui.checkbox_state(cyrillic),
             }
 
+            # ★★ P17-1（线程与取消契约，审计 03 F-01 / 05 PLG-01）：**worker 不许碰控件**。
+            #   日志视图只在**回主线程的回调**里追加；worker 只调两个 sink（`progress`/`message`）。
+            #   修前 worker 直接 `ui.log_view_append(log, …)` —— 被线程闸门静默拒掉 ⇒
+            #   worker 阶段日志栏永远空白（只有 `message` 那一行到得了状态栏）。
+            ui.task_on_message(panel, lambda text: ui.log_view_append(log, text))
+
             def worker(progress, message):
                 progress(0)
                 result = generate(api, options)
                 if not result["ok"]:
-                    text = "失败：" + (result["error"] or "(无理由)")
-                    ui.log_view_append(log, text)
-                    message(text)
+                    message("失败：" + (result["error"] or "(无理由)"))
                     progress(100)
                     return
                 for warning in result["warnings"]:
-                    ui.log_view_append(log, "告警：" + warning)
+                    message("告警：" + warning)
                 text = "完成：字体 %d 个、XML %d 个" % (result["fonts_written"],
                                                      result["xml_written"])
                 if result["warnings"]:
                     text += "（%d 条告警）" % len(result["warnings"])
-                ui.log_view_append(log, text)
                 message(text)
                 progress(100)
 

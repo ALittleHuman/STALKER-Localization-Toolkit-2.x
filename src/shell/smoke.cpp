@@ -4759,6 +4759,95 @@ SmokeResult run_smoke() {
         page.set_paused(false);
         check(page.wait_if_paused(false), QStringLiteral("13.6 继续后循环放行"));
 
+        // ★★ 2026-10-10（P17-1，审计 03 F-02 High）：**暂停等待必须能被取消位打断**。
+        //
+        // 修前事实：`wait_if_paused` 的循环只看 `paused_`，而 `~TaskShell()` 只置取消位、
+        // **完全不碰 `paused_`**（`paused_` 只有主线程 `set_paused(false)` 能清）⇒ 用户点
+        // 「暂停」后关窗：worker 在 gate 里自旋不出来、主线程 `join()` 永久阻塞（进程关不掉）。
+        // 两条判据：
+        //   ① **干净判红形态**：暂停中、收到取消 ⇒ `wait_if_paused(true)` 必须**立刻返回 false**
+        //      （≤2s 就算过；超时**不算通过**，自检自己解开暂停，别把门禁挂死）；
+        //   ② **端到端**：暂停态收工（`stop_and_wait()` ＝ `~TaskShell()` 走的那条路：置取消 +
+        //      join）必须返回 —— 这就是"暂停态关窗"那条。
+        {
+            TaskShell* gate_shell = page.task();
+            check(gate_shell != nullptr, QStringLiteral("P17-1 前提：编码转换页有任务壳"));
+            const auto wait_flag = [](const std::atomic<bool>& flag, int ms) {
+                const auto deadline =
+                    std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+                while (!flag.load() && std::chrono::steady_clock::now() < deadline) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                return flag.load();
+            };
+
+            std::atomic<bool> entered{false};
+            std::atomic<bool> done{false};
+            std::atomic<bool> gate_value{true};
+            page.set_paused(true);
+            const bool started = gate_shell->run(
+                QStringLiteral("P17-1 暂停/取消"), [&](const ProgressSink&, const MessageSink&) {
+                    entered.store(true);
+                    gate_value.store(page.wait_if_paused(true));
+                    done.store(true);
+                });
+            check(started, QStringLiteral("P17-1 前提：暂停态任务能启动（没被 13.1 闸门拒）"));
+            check(wait_flag(entered, 2000), QStringLiteral("P17-1 前提：worker 进了 gate"));
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
+            const bool blocked = !done.load();
+            gate_shell->request_cancel(QStringLiteral("P17-1 自检：暂停态取消"));
+            const bool interrupted = wait_flag(done, 2000);
+            check(blocked,
+                  QStringLiteral("P17-1 前提：暂停时 gate 真把 worker 卡住（不是立刻就放行）"));
+            check(interrupted && !gate_value.load(),
+                  QStringLiteral("P17-1 03 F-02：暂停态收到取消 ⇒ gate **立刻返回 false**"
+                                 "（修前永久自旋 ⇒ ~TaskShell 的 join 阻塞、进程关不掉；"
+                                 "实测 gate 返回=%1，是否退出=%2）")
+                      .arg(gate_value.load() ? QStringLiteral("true") : QStringLiteral("false"))
+                      .arg(interrupted ? QStringLiteral("是") : QStringLiteral("否")));
+            page.set_paused(false);
+            if (!done.load()) (void)wait_flag(done, 2000);   // 判红兜底：别让自检自己挂死
+            QApplication::processEvents();                   // 让 apply_finish（排队）回主线程
+
+            // ② 端到端：**暂停态收工**（＝关窗时 `~TaskShell` 走的那条路）必须返回
+            std::atomic<bool> second_entered{false};
+            std::atomic<bool> second_done{false};
+            std::atomic<bool> stop_returned{false};
+            page.set_paused(true);
+            gate_shell->run(QStringLiteral("P17-1 暂停态关窗"),
+                            [&](const ProgressSink&, const MessageSink&) {
+                                second_entered.store(true);
+                                (void)page.wait_if_paused(true);
+                                second_done.store(true);
+                            });
+            check(wait_flag(second_entered, 2000),
+                  QStringLiteral("P17-1 前提：第二个 worker 进了 gate"));
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            QElapsedTimer stop_timer;
+            stop_timer.start();
+            // ★ 看门狗：`stop_and_wait()` 放到**旁路线程**里等 —— 修前它永远不返回（worker 卡在
+            //   gate 自旋里），若在主线程直调，自检自己就挂死了。判红时下面把暂停解开收尾；
+            //   **真机没有这个逃生口**：关窗就是关窗（这正是"进程关不掉"那条）。
+            std::thread stopper([&] {
+                gate_shell->stop_and_wait();
+                stop_returned.store(true);
+            });
+            const bool stopped_in_time = wait_flag(stop_returned, 2000);
+            const qint64 stop_ms = stop_timer.elapsed();
+            if (!stopped_in_time) page.set_paused(false);   // 判红兜底
+            stopper.join();
+            page.set_paused(false);
+            check(stopped_in_time && second_done.load() && stop_ms < 2000,
+                  QStringLiteral("P17-1 03 F-02 端到端：暂停态收工（置取消 + join，等价于关窗）"
+                                 "在 %1 ms 内返回（已返回=%2 / worker 退出=%3）")
+                      .arg(stop_ms)
+                      .arg(stopped_in_time ? QStringLiteral("是") : QStringLiteral("否"))
+                      .arg(second_done.load() ? QStringLiteral("是") : QStringLiteral("否")));
+            QApplication::processEvents();
+            check(!gate_shell->running(),
+                  QStringLiteral("P17-1 收工后任务壳回到空闲（apply_finish 已回主线程）"));
+        }
+
         // 13.5：空闲文案非空；下拉的取值是内部键（不是显示名）
         TaskShell* task = page.task();
         check(task != nullptr && !task->idle_status().isEmpty(),
@@ -5642,6 +5731,168 @@ SmokeResult run_smoke() {
                   .arg(bar == nullptr ? QStringLiteral("无进度条") : QString::number(bar->value())));
         check(hub.plugin_errors().empty(),
               QStringLiteral("P4 好插件不该产生插件问题（实得 %1 条）").arg(hub.plugin_errors().size()));
+        QDir(dir).removeRecursively();
+    }
+
+    // ★★ 2026-10-10（P17-1，审计 05 PLG-01 **High**）：**插件页的「取消」要真能读到、真能停**。
+    //
+    // 修前事实：`PyUi::available()` 把"非 UI 线程调 ui.*"一刀切拒掉，而**取消谓词是插件 worker
+    // 在自己的工作线程里同步轮询的**（引擎的 `should_stop`/`cancel` hook 都在调用线程被调）
+    // ⇒ `ui.task_cancel_requested` 恒 False ⇒ 编码转换/文本提取/XML 校对/视频转换四页的
+    // 「取消」关不掉、任务照跑到结束，状态栏还谎报"已取消"。
+    //
+    // 判据（四条一起量，缺一条都不算过）：
+    //   ① worker 里**读得到**取消位（不再被线程闸门拒），且**没点取消时是 False**；
+    //   ② 点宿主那颗**真「取消」按钮**之后，worker 里的同一个读**变成 True**、循环当场退出；
+    //   ③ worker 里碰**会改控件**的 `ui.*`（`set_text`）**仍然被拒**（白名单没把纪律冲掉）；
+    //   ④ 取消**真的让任务停下来**（循环次数远小于上限 —— 不是"跑满 600 次刚好退出"）。
+    {
+        const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_cancel_probe"));
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QByteArray source =
+            "# -*- coding: utf-8 -*-\n"
+            "import os\n"
+            "import time\n"
+            "\n"
+            "\n"
+            "def register(api):\n"
+            "    ui = api.ui\n"
+            "\n"
+            "    def mark(text):\n"
+            "        with open(os.path.join(api.plugin_dir, 'cancel_marker.txt'), 'a',\n"
+            "                  encoding='utf-8') as fh:\n"
+            "            fh.write(text + '\\n')\n"
+            "\n"
+            "    def build():\n"
+            "        status = ui.label(None, '就绪')\n"
+            "        panel = ui.task_panel(None, True)\n"
+            "\n"
+            "        def on_message(text):\n"
+            "            ui.set_text(status, text)\n"
+            "\n"
+            "        ui.task_on_message(panel, on_message)\n"
+            "\n"
+            "        def worker(progress, message):\n"
+            "            progress(0)\n"
+            "            ui.set_text(status, 'worker-must-not-write')\n"
+            "            mark('cancel_read:%d' % int(bool(ui.task_cancel_requested(panel))))\n"
+            "            loops = 0\n"
+            "            while loops < 2000:\n"
+            "                loops += 1\n"
+            "                if ui.task_cancel_requested(panel):\n"
+            "                    break\n"
+            "                time.sleep(0.01)\n"
+            "            mark('cancel_after:%d' % int(bool(ui.task_cancel_requested(panel))))\n"
+            "            mark('loops:%d' % loops)\n"
+            "            message('loops:%d' % loops)\n"
+            "            progress(100)\n"
+            "\n"
+            "        def start():\n"
+            "            ui.task_run(panel, '取消探针', worker)\n"
+            "\n"
+            "        ui.button(None, '起任务', start)\n"
+            "\n"
+            "    api.register_tool('取消探针页', build, 6)\n";
+        QFile plugin_file(QDir(dir).filePath(QStringLiteral("cancel_probe.py")));
+        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                           plugin_file.write(source) == source.size();
+        plugin_file.close();
+        check(wrote, QStringLiteral("P17-1 取消探针夹具没写进 %1").arg(QDir::toNativeSeparators(dir)));
+
+        Hub hub(nullptr, dir);
+        const int probe_page = hub.page_index(QStringLiteral("取消探针页"));
+        check(probe_page >= 0,
+              QStringLiteral("P17-1 前提：取消探针页进页表（实得 %1，插件问题 %2 条）")
+                  .arg(probe_page)
+                  .arg(hub.plugin_errors().size()));
+        QWidget* page_widget = probe_page >= 0 ? hub.stack()->widget(probe_page) : nullptr;
+
+        const QString marker = QDir(dir).filePath(QStringLiteral("cancel_marker.txt"));
+        const auto read_marker = [&marker]() {
+            QFile file(marker);
+            if (!file.open(QIODevice::ReadOnly)) return QString();
+            const QString text = QString::fromUtf8(file.readAll());
+            file.close();
+            return text;
+        };
+        const auto marker_value = [](const QString& text, const QString& key) {
+            const int at = text.indexOf(key + QStringLiteral(":"));
+            if (at < 0) return QString();
+            return text.mid(at + key.size() + 1).split(QLatin1Char('\n')).first().trimmed();
+        };
+        const auto wait_for_marker = [&](const QString& key, int ms) {
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+            while (std::chrono::steady_clock::now() < deadline) {
+                QApplication::processEvents();
+                const QString text = read_marker();
+                if (text.contains(key + QStringLiteral(":"))) return text;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            return read_marker();
+        };
+
+        QPushButton* start_button = nullptr;
+        if (page_widget != nullptr) {
+            for (QPushButton* candidate : page_widget->findChildren<QPushButton*>()) {
+                if (candidate->text() == QStringLiteral("起任务")) start_button = candidate;
+            }
+        }
+        check(start_button != nullptr,
+              QStringLiteral("P17-1 前提：找得到取消探针页的「起任务」按钮"));
+        if (start_button != nullptr) start_button->click();
+
+        // ① 等 worker 真跑起来（marker 里出现 cancel_read: ⇒ 它已经读过一次取消位）
+        QString text = wait_for_marker(QStringLiteral("cancel_read"), 5000);
+        const QString cancel_read = marker_value(text, QStringLiteral("cancel_read"));
+        check(cancel_read == QStringLiteral("0"),
+              QStringLiteral("P17-1 ① worker 里 `ui.task_cancel_requested` **读得到**且未取消时为 False"
+                             "（实得 %1；修前被线程闸门拒 ⇒ None/恒假）")
+                  .arg(cancel_read.isEmpty() ? QStringLiteral("(没读到)") : cancel_read));
+
+        // ② 点宿主那颗**真「取消」按钮**（整条链：按钮 ⇒ 取消位 ⇒ worker 读得到）
+        QPushButton* cancel_button =
+            page_widget != nullptr
+                ? page_widget->findChild<QPushButton*>(QStringLiteral("task_cancel"))
+                : nullptr;
+        check(cancel_button != nullptr && cancel_button->isEnabled(),
+              QStringLiteral("P17-1 ② 前提：插件任务壳上有可点的「取消」按钮"));
+        if (cancel_button != nullptr) cancel_button->click();
+
+        text = wait_for_marker(QStringLiteral("cancel_after"), 5000);
+        const QString cancel_after = marker_value(text, QStringLiteral("cancel_after"));
+        const QString loops = marker_value(text, QStringLiteral("loops"));
+        check(cancel_after == QStringLiteral("1"),
+              QStringLiteral("P17-1 ② 点「取消」后 worker 里读到 True（实得 %1；"
+                             "修前恒 None ⇒ 取消关不掉、任务照跑到结束还谎报\"已取消\"）")
+                  .arg(cancel_after.isEmpty() ? QStringLiteral("(没读到)") : cancel_after));
+        check(!loops.isEmpty() && loops.toInt() >= 1 && loops.toInt() < 2000,
+              QStringLiteral("P17-1 ④ 取消**真的让任务停下**（轮询上限 2000 次 ⇒ 实得 %1 次；"
+                             "跑满上限＝取消没被读到，任务跑到自己结束）")
+                  .arg(loops.isEmpty() ? QStringLiteral("(没读到)") : loops));
+
+        // ③ 纪律抽查：worker 里改控件必须被拒（主线程回调写的最后一句话才是控件上的值）
+        QLabel* worker_label = nullptr;
+        if (page_widget != nullptr) {
+            for (QLabel* candidate : page_widget->findChildren<QLabel*>()) {
+                if (candidate->text().startsWith(QStringLiteral("loops:"))) worker_label = candidate;
+            }
+        }
+        check(worker_label != nullptr &&
+                  worker_label->text() != QStringLiteral("worker-must-not-write"),
+              QStringLiteral("P17-1 ③ worker 里调 `ui.set_text`（会改控件）**仍然被拒**"
+                             "（标签实得 %1）")
+                  .arg(page_widget != nullptr
+                           ? [&] {
+                                 for (QLabel* candidate : page_widget->findChildren<QLabel*>()) {
+                                     if (candidate->text() == QStringLiteral("worker-must-not-write")) {
+                                         return QStringLiteral("worker-must-not-write");
+                                     }
+                                 }
+                                 return QStringLiteral("未被改写");
+                             }()
+                           : QStringLiteral("(没有页)")));
         QDir(dir).removeRecursively();
     }
 
@@ -7849,6 +8100,77 @@ SmokeResult run_smoke() {
                   QStringLiteral("⑪11.9 缺字形被拒（%1）").arg(reason));
             check(!QDir(out).exists() && page.refused_count() >= 1,
                   QStringLiteral("⑪11.9 拒绝时**没有**创建输出目录"));
+            QDir(out).removeRecursively();
+        }
+
+        // ★★ 2026-10-10（P17-1，审计 03 F-01 **Critical**）：**worker 不许碰控件**的可判形态。
+        //
+        // 修前事实：点「生成汉化包」⇒ `task_->run` 的 worker **直接**调 `FontPackPage::build()`；
+        // 而 `build()` 里 `options_for()` 读下拉框/勾选框、又对 `result_label_`/`state_label_`
+        // 写文本、还裸 `++refused_count_` ⇒ 跨线程碰 QWidget ＋ 数据竞争；页析构时
+        // `result_label_`（页的子控件，**先于** `task_` 被删）正好撞上 worker 的写 ⇒ 访问违例。
+        //
+        // 判据（四条一起量）：工作线程里调那两个入口 ⇒
+        //   ① UI 线程守卫**逐条记账**（计数 +2，最近一条是 `options_for`）；
+        //   ② 控件文本与拒绝计数**一个字都不许变**；
+        //   ③ 读控件那条路在 worker 里**读不到**值（主线程读得到同一个值 —— 一正一反）；
+        //   ④ 拒绝理由可见（含「线程纪律」），且**没有**目录被建出来。
+        {
+            check(page.result_label() != nullptr && page.game_combo() != nullptr,
+                  QStringLiteral("P17-1 前提：拿得到 fontpack 页的结果标签与游戏下拉"));
+            const int violations_before = ui_thread_violation_count();
+            const QString label_before =
+                page.result_label() != nullptr ? page.result_label()->text() : QString();
+            const int refused_before = page.refused_count();
+            const QString out = QDir::temp().filePath(QStringLiteral("xrkit_smoke_fontpack_uithread"));
+            QDir(out).removeRecursively();
+            // 主线程先把游戏下拉拨到下标 2（"CoP"）—— 下面用它做"读得到 / 读不到"的对拍
+            if (page.game_combo() != nullptr) page.game_combo()->setCurrentIndex(2);
+            const std::string game_on_main =
+                page.options_for(QStringLiteral("x"), QStringLiteral("y"), QStringLiteral("z")).game;
+            check(game_on_main == "CoP",
+                  QStringLiteral("P17-1 前提：主线程读控件读得到当前下拉值（实得 %1）")
+                      .arg(QString::fromStdString(game_on_main)));
+
+            bool worker_built = true;
+            QString reason;
+            std::string worker_game;
+            std::thread worker([&] {
+                reason.clear();
+                worker_built = page.build(QStringLiteral("(none)"),
+                                          QStringLiteral("C:/nonexistent-font.ttf"), out, &reason);
+                worker_game = page.options_for(QStringLiteral("x"), QStringLiteral("y"),
+                                               QStringLiteral("z"))
+                                  .game;
+            });
+            worker.join();
+
+            check(!worker_built && reason.contains(QStringLiteral("线程纪律")),
+                  QStringLiteral("P17-1 03 F-01：worker 里调 `FontPackPage::build` ⇒ 被守卫拒绝"
+                                 "（理由含「线程纪律」；实得 built=%1 / reason=%2）")
+                      .arg(worker_built ? QStringLiteral("true") : QStringLiteral("false"))
+                      .arg(reason));
+            check(worker_game != "CoP",
+                  QStringLiteral("P17-1 03 F-01：worker 里调 `options_for` **读不到**控件值"
+                                 "（实得 %1；修前它会读到 CoP ⇒ 跨线程读 QWidget）")
+                      .arg(QString::fromStdString(worker_game)));
+            check(page.result_label() != nullptr && page.result_label()->text() == label_before &&
+                      page.refused_count() == refused_before && !QDir(out).exists(),
+                  QStringLiteral("P17-1 03 F-01：被拒之后控件文本 / 拒绝计数 / 落盘目录**都没变**"
+                                 "（标签 %1；拒绝计数 %2→%3）")
+                      .arg(label_before == (page.result_label() != nullptr
+                                                ? page.result_label()->text()
+                                                : QString())
+                               ? QStringLiteral("未变")
+                               : QStringLiteral("被改了"))
+                      .arg(refused_before)
+                      .arg(page.refused_count()));
+            check(ui_thread_violation_count() == violations_before + 2 &&
+                      ui_thread_last_violation() == QStringLiteral("FontPackPage::options_for"),
+                  QStringLiteral("P17-1 03 F-01：UI 线程守卫逐条记账（%1→%2，最近一条=%3）")
+                      .arg(violations_before)
+                      .arg(ui_thread_violation_count())
+                      .arg(ui_thread_last_violation()));
             QDir(out).removeRecursively();
         }
     }

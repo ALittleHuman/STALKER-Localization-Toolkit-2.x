@@ -234,6 +234,36 @@ std::vector<std::string> ui_facade_method_names() {
     return out;
 }
 
+// ── ★★ P17-1：跨线程只读白名单（声明与理由见 widget_facade.h）────────────────────
+// 与 `kMethodNames[]` 放在同一处（**唯一一份口径**）：评审时两张名单一眼能对着看。
+// 进表的两个条件缺一不可：① 只读（不碰控件）；② 实现侧线程安全。
+namespace {
+const char* const kWorkerSafeMethods[] = {
+    // 只读 `TaskShell` 的**原子取消位**（`task_shell.h` 的 `cancel_requested_`）——
+    // 这是插件 worker 轮询取消的唯一入口（引擎的 should_stop/cancel hook 都在调用线程）。
+    "task_cancel_requested",
+    // 只比线程 id（`widget_facade_qt.cpp` 的 `ui_thread_id()`）—— 自检/插件都可能问。
+    "on_ui_thread",
+};
+}  // namespace
+
+bool ui_method_worker_safe(const std::string& method) {
+    for (const char* name : kWorkerSafeMethods) {
+        if (method == name) return true;
+    }
+    return false;
+}
+
+bool ui_method_worker_safe(const char* method) {
+    return method != nullptr && ui_method_worker_safe(std::string(method));
+}
+
+std::vector<std::string> ui_worker_safe_method_names() {
+    std::vector<std::string> out;
+    for (const char* name : kWorkerSafeMethods) out.emplace_back(name);
+    return out;
+}
+
 void set_current_panel_root(UiHandle root) {
     std::lock_guard<std::mutex> lock(facade_mutex());
     panel_root_storage() = root;

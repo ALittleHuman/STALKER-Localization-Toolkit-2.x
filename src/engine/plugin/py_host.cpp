@@ -2822,6 +2822,12 @@ private:
         //   例外，它们不走这里）。不在 ⇒ 返回空 + 记账 —— "工作线程里碰 Qt"是最容易崩的一类，
         //   与其让它随机崩，不如让它**每次都失败得看得见**。
         if (facade != nullptr && facade->on_ui_thread && !facade->on_ui_thread()) {
+            // ★★ 2026-10-10（P17-1，审计 05 PLG-01 High）：**跨线程只读白名单**。
+            //   取消谓词是在插件 worker 线程里被同步轮询的（引擎的 `should_stop`/`cancel`
+            //   hook 都在调用线程被调），而修前这里一刀切 ⇒ worker 里读取消位**恒为 false**
+            //   ⇒「取消」关不掉、任务照跑到结束、状态栏还谎报"已取消"。
+            //   白名单口径在 widget_facade.cpp（只读、不碰控件的方法才准进），两个前端共用。
+            if (ui_method_worker_safe(method)) return facade;
             core::log(core::Level::Warn,
                       "[" + owner_ + "] 控件门面只许在宿主 UI 线程调用（ui." + method +
                           " 在别的线程被调用，已拒绝）");

@@ -322,7 +322,6 @@ def register(api):
                         state["source_path"] = ""
                         state["source_error"] = note
                     message("%s 参数解析失败 —— %s" % (what, note))
-                    ui.log("视频转换：%s 参数解析失败 —— %s" % (what, note))
                 else:
                     message("参数解析完成")
                 if not state["encoders_scanned"]:
@@ -450,7 +449,9 @@ def register(api):
                     "program": paths["ffmpeg"],
                     "args": argv[1:],
                     "on_stderr": on_stderr_line,
-                    "should_stop": ui.task_cancel_requested,
+                    # ★ P17-1：`task_cancel_requested` 在跨线程只读白名单里，但**必须带 panel**
+                    #   调（修前传的是裸绑定方法 ⇒ 少一个实参、每次抛 TypeError ⇒ 取消读不到）。
+                    "should_stop": lambda: ui.task_cancel_requested(panel),
                 })
                 if result.get("cancelled"):
                     message("已取消（进程真停；半成品请自行检查）")

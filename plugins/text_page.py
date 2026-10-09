@@ -44,9 +44,13 @@ def extract(api, args):
 
     options = {"prefix": args.get("prefix", ""), "id_prefix": args.get("id_prefix", ""),
                "clean": bool(args.get("clean", True))}
-    if args.get("cancel"):
-        # 无界面判据要能验"取消语义"：JSON 带不了回调 ⇒ 用一个**确定性**的谓词（第一次问就说停）
-        options["cancel"] = lambda: True
+    cancel = args.get("cancel")
+    if cancel is not None:
+        # ★★ P17-1：两条入口的语义**分开**（修前这一行把 GUI 的真回调也换成了"第一次问就说停"，
+        #   ⇒ GUI 的取消谓词恒为 True，提取在第一个文件边界就停）。
+        #   · 无界面判据（JSON）带不了回调 ⇒ 传进来的是真值标记 ⇒ 用**确定性**谓词验取消语义；
+        #   · GUI worker 传的是真回调 ⇒ **原样透给引擎**（它自己会在工作线程里轮询取消位）。
+        options["cancel"] = cancel if callable(cancel) else (lambda: True)
     out_dir = args.get("target_dir", "")
     return engine.text_extract_dir(source, out_dir.rstrip("/\\") + "/" +
                                    kind_sub_dir(kind_result["kind"]),
@@ -82,6 +86,18 @@ def register(api):
             ui.set_text(status, text)
             ui.log_view_append(log, text)
 
+        # ★★ P17-1（线程与取消契约，审计 03 F-01 / 05 PLG-01）：**worker 不许碰控件**。
+        #   统计标签与日志视图一律在**回主线程的回调**里改；worker 只调两个 sink ＋
+        #   跨线程只读白名单（`ui.task_cancel_requested`）。
+        #   修前 worker 直接 `ui.set_text(stats_label, …)` —— 被线程闸门静默拒掉 ⇒ 统计栏
+        #   在 worker 阶段永远不动（用户看到的是"提取完了统计还是旧的"）。
+        #   数字仍然只来自引擎：`last` 由 worker 写、回调只做排版（`stats_text`）。
+        def on_task_message(text):
+            ui.log_view_append(log, text)
+            ui.set_text(stats_label, stats_text(last["gameplay"], last["scripts"]))
+
+        ui.task_on_message(panel, on_task_message)
+
         def pick_source():
             picked = ui.ask_directory("选择 gameplay / scripts 文件夹")
             if picked:
@@ -110,11 +126,12 @@ def register(api):
             def worker(progress, message):
                 progress(0)
                 args_with_cancel = dict(args)
-                args_with_cancel["cancel"] = ui.task_cancel_requested
+                # ★ P17-1：`task_cancel_requested` 在跨线程只读白名单里（取消谓词在
+                #   worker 线程里被引擎同步轮询）—— 修前它在 worker 里恒为 None ⇒ 取消关不掉。
+                args_with_cancel["cancel"] = lambda: ui.task_cancel_requested(panel)
                 result = extract(api, args_with_cancel)
                 if result["kind"]:
                     last[result["kind"]] = result
-                    ui.set_text(stats_label, stats_text(last["gameplay"], last["scripts"]))
                 progress(100)
                 if result["cancelled"]:
                     # ①零静默：取消必须**说清停在哪、已产出多少**（绝不报成"完成"）
