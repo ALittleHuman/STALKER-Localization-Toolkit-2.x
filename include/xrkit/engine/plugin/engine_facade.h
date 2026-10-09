@@ -25,6 +25,8 @@
 #include <string>
 #include <vector>
 
+#include "xrkit/engine/patch/patch.h"
+
 namespace xrkit::plugin {
 
 // ── 值类型（Python 侧对应 dict / list）──────────────────────────────────────
@@ -704,6 +706,22 @@ struct EngineFacade {
                                    const std::string& backup_root,
                                    const std::vector<std::string>& rels)>
         pkg_restore;
+
+    // ── ★★ P16-1c：**二进制补丁**（判定半 / 写盘半）────────────────────────────
+    //   口径（用户 2026-10-09 过目的设计笔记 §二，方案 (b)）：
+    //     · 引擎＝**通用机器**（PE 布局守卫 / 逐项判态 / 指纹状态机 / 守卫链 / 原子写）；
+    //     · **站点表由调用方作为数据传入**（`engine::patch::PatchSite`，二进制字段是 hex 文本）
+    //       —— 表是"单一构建的特化数据"，按本仓红线不焊进内核；加一处不用重编引擎。
+    //   ★ 判定纪律：结论只来自逐项字节内容，**绝不看"差了多少字节"**
+    //     （`reference_diff_bytes` 只是报告参考值）。
+    std::function<engine::patch::PatchIdentifyResult(const std::string& path,
+                                                     const std::vector<engine::patch::PatchSite>&
+                                                         sites)>
+        patch_identify;
+    std::function<engine::patch::PatchApplyResult(const std::string& src, const std::string& out,
+                                                  const std::vector<engine::patch::PatchSite>& sites,
+                                                  bool force)>
+        patch_apply;
 };
 
 // 外壳注入实现（`src/shell/engine_facade_impl.cpp`）。传 nullptr = 撤销。

@@ -1051,6 +1051,15 @@ const EngineFacade kFontFacade = {
         }
         return out;
     },
+    /* patch_identify：二进制补丁**识别**（判定半）—— 表由调用方传入，引擎只做通用机器 */
+    [](const std::string& path, const std::vector<engine::patch::PatchSite>& sites) {
+        return engine::patch::identify_file(path, sites);
+    },
+    /* patch_apply：二进制补丁**生成**（写盘半）—— 写前全守卫 + 原子写；不匹配不许写 */
+    [](const std::string& src, const std::string& out,
+       const std::vector<engine::patch::PatchSite>& sites, bool force) {
+        return engine::patch::apply_patch(src, out, sites, force);
+    },
 };
 
 }  // namespace

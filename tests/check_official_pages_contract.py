@@ -85,15 +85,23 @@ def audit_pages(plugin_sources: dict, builtins: list[str]):
         return problems
 
     covered: dict[str, list[str]] = {}
+    # ★ 「官方页」＝文件名就是 `<内置页>_page.py` 的那六枚 —— 只有它们**必须**覆盖内置页。
+    #   新增页（例如 P16-1c 的 `patch_page.py`）不属于"六页对等"，不要求 replaces；
+    #   但它若要 replaces，仍必须指向真实内置页（下面的检查一视同仁）。
+    official = {b + "_page.py": b for b in builtins}
     for name, source in sorted(plugin_sources.items()):
         regs = plugin_registrations(source)
         if not regs:
-            problems.append("%s：没有 `api.register_tool(...)`（官方页必须是插件）" % name)
+            problems.append("%s：没有 `api.register_tool(...)`（插件页都要注册；新增页也一样）"
+                            % name)
+            continue
+        want = official.get(name)
         for page_id, replaces in regs:
             if not replaces:
-                problems.append("%s：`register_tool(\"%s\", …)` **没给 replaces** —— "
-                                "官方页覆盖内置页必须有显式声明（禁止静默顶掉）"
-                                % (name, page_id))
+                if want is not None:
+                    problems.append("%s：官方页 `register_tool(\"%s\", …)` **没给 replaces** —— "
+                                    "官方页覆盖内置页必须有显式声明（禁止静默顶掉）"
+                                    % (name, page_id))
                 continue
             if replaces not in builtins:
                 problems.append("%s：replaces=\"%s\" 不是内置页 id（合法：%s）"

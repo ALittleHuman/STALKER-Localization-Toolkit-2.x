@@ -59,6 +59,8 @@ const char* const kMethodNames[] = {
     "fs_pack_squashfs", "fs_pack_db",
     // ★★ P16-1a：统一产物模型（清单/安装/还原）
     "pkg_write_manifest", "pkg_install", "pkg_restore",
+    // ★★ P16-1c：二进制补丁（判定半 / 写盘半；站点表由调用方传入）
+    "patch_identify", "patch_apply",
 };
 
 bool has_impl(const EngineFacade& facade, const std::string& name) {
@@ -135,6 +137,8 @@ bool has_impl(const EngineFacade& facade, const std::string& name) {
     if (name == "pkg_write_manifest") return static_cast<bool>(facade.pkg_write_manifest);
     if (name == "pkg_install") return static_cast<bool>(facade.pkg_install);
     if (name == "pkg_restore") return static_cast<bool>(facade.pkg_restore);
+    if (name == "patch_identify") return static_cast<bool>(facade.patch_identify);
+    if (name == "patch_apply") return static_cast<bool>(facade.patch_apply);
     return false;
 }
 

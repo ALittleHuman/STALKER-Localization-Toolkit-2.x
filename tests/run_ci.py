@@ -3176,6 +3176,39 @@ def step_patch_apply(release: bool) -> None:
         fail("二进制补丁写出有判据不成立（见上）")
 
 
+def step_patch_plugin(release: bool) -> None:
+    """插件改装 P16-1c：**插件页**经 `api.engine.patch_*` 驱动引擎（与 1.x 金标准逐条对拍）。
+
+    为什么单开一步：P16-1b 那两步走的是 **CLI 动作**（`--patch-identify`/`--patch-apply`）；
+    本步走**插件那条路**（`--py-plugin-call … --plugin patch_page.py <json>`）——
+    证明「门面（`api.engine.patch_identify/patch_apply`）＋ 站点表（插件持有）＋
+    `py_host` 的 dict↔结构体转换」**整条链**都对得上金标准，而不是只有 CLI 那条路对。
+    判据：三样本的 verdict / 五个汇总计数 / thunk / 空闲区 / 逐项判态逐条相等；
+    产物 sha256 == 金标准里 v4 参照的 sha256（逐字节相同）；输入未变；
+    输出已存在 ⇒ `refused_output_exists`；缺陷输入 ⇒ 被 `preserve` 守卫拦下。
+    样本在仓库外 ⇒ 缺件 `prereq`。退出码：0=绿、1=判据不成立、2=样本缺件。
+    """
+    say("[patch-plugin] P16-1c：插件页 → api.engine.patch_* → 引擎（与金标准逐条对拍）")
+    script = ROOT / "tests" / "check_patch_plugin.py"
+    if not require_repo_file(script, "二进制补丁插件页判据"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script), str(CLI_EXE)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if (s.startswith("PATCH-PLUGIN") or s.startswith("✓ ") or s.startswith("✗ ")
+                or s.startswith("⚠ ")):
+            say("  " + s)
+    if rc == 0 and "PATCH-PLUGIN ok" in out:
+        ok("插件页经门面驱动引擎：三样本与金标准逐条相等；产物逐字节 == v4 参照")
+    elif rc == 2:
+        prereq("二进制补丁样本", "样本缺件（外部前提；原件在仓库外）", release)
+    else:
+        fail("二进制补丁插件页有判据不成立（见上）")
+
+
 def step_text_plugin(release: bool) -> None:
     """插件改装 P10b：**第三页（文本提取/改写）的收口判据**。
 
@@ -4187,6 +4220,8 @@ STEPS = [
     ("patch-identify", step_patch_identify),
     # ★★ 2026-10-09（P16-1b 写盘半）：产物逐字节 == v4 参照 + 四条拒绝路径
     ("patch-apply", step_patch_apply),
+    # ★★ 2026-10-09（P16-1c）：插件页经 api.engine.patch_* 驱动引擎（整条链对拍）
+    ("patch-plugin", step_patch_plugin),
     ("selftest", step_selftest),
     ("cli", step_cli_contract),
     ("corpus", step_corpus),

@@ -992,6 +992,35 @@ std::vector<PkgEntry> pkg_entries_from_python(const py::object& entries) {
     return out;
 }
 
+// ── ★★ P16-1c：二进制补丁的**站点表**（Python list[dict] → C++ 值类型）──────────
+//   口径（方案 (b)）：表由插件给，引擎只做通用机器。二进制字段一律 **hex 文本**
+//   （pybind 的 `std::string` 走 UTF-8，直接传裸字节会被改坏）。
+std::vector<xrkit::engine::patch::PatchSite> patch_sites_from_python(const py::object& sites) {
+    std::vector<xrkit::engine::patch::PatchSite> out;
+    if (sites.is_none() != 0) return out;
+    for (auto item : py::list(sites)) {
+        py::dict row = py::reinterpret_borrow<py::dict>(item);
+        xrkit::engine::patch::PatchSite one;
+        auto take = [&](const char* key, std::string& dst) {
+            if (row.contains(key)) dst = py::str(row[key]).cast<std::string>();
+        };
+        take("id", one.id);
+        take("kind", one.kind);
+        if (row.contains("offset")) one.offset = row["offset"].cast<uint64_t>();
+        take("expect_hex", one.expect_hex);
+        take("patched_hex", one.patched_hex);
+        take("before_hex", one.before_hex);
+        take("after_hex", one.after_hex);
+        take("helper", one.helper);
+        take("tail_hex", one.tail_hex);
+        take("note", one.note);
+        if (row.contains("layout_delta")) one.layout_delta = row["layout_delta"].cast<uint64_t>();
+        take("layout_section", one.layout_section);
+        out.push_back(std::move(one));
+    }
+    return out;
+}
+
 // ── ★★ P7a：引擎调用门面在 Python 侧的形态（`api.engine.*`）──────────────────
 // 口径（用户拍板的方案 3）：
 //   · **值类型 Python 友好**：出入都是 dict / list / str / int，**不漏 C++ 结构体与指针**；
@@ -1711,6 +1740,65 @@ public:
         out["removed"] = native.removed;
         out["missing"] = native.missing;
         out["failures"] = native.failures;
+        return out;
+    }
+
+    // ── ★★ P16-1c：二进制补丁（判定半 / 写盘半）──────────────────────────────
+    py::object patch_identify(const std::string& path, py::object sites) const {
+        const EngineFacade* facade = available("patch_identify");
+        if (facade == nullptr) return py::none();
+        const xrkit::engine::patch::PatchIdentifyResult native =
+            facade->patch_identify(path, patch_sites_from_python(sites));
+        py::dict out;
+        out["ok"] = native.ok;
+        out["error"] = native.error;
+        out["verdict_key"] = native.verdict_key;
+        out["verdict_text"] = native.verdict_text;
+        out["detail"] = native.detail;
+        out["thunk_intact"] = native.thunk_intact;
+        out["cave_all_zero"] = native.cave_all_zero;
+        out["file_size"] = native.file_size;
+        out["reference_diff_bytes"] = native.reference_diff_bytes;
+        py::dict counts;
+        counts["orig"] = native.n_orig;
+        counts["patched"] = native.n_patched;
+        counts["kept"] = native.n_kept;
+        counts["broken"] = native.n_broken;
+        counts["other"] = native.n_other;
+        counts["context"] = native.n_context;
+        counts["range"] = native.n_range;
+        out["counts"] = counts;
+        py::list items;
+        for (const xrkit::engine::patch::PatchItemState& item : native.items) {
+            py::dict row;
+            row["id"] = item.id;
+            row["kind"] = item.kind;
+            row["offset"] = item.offset;
+            row["state"] = item.state;
+            row["expect_hex"] = item.expect_hex;
+            row["patched_hex"] = item.patched_hex;
+            row["actual_hex"] = item.actual_hex;
+            row["context_problem"] = item.context_problem;
+            row["call_target"] = item.call_target;
+            items.append(row);
+        }
+        out["items"] = items;
+        return out;
+    }
+    py::object patch_apply(const std::string& src, const std::string& out_path, py::object sites,
+                           bool force) const {
+        const EngineFacade* facade = available("patch_apply");
+        if (facade == nullptr) return py::none();
+        const xrkit::engine::patch::PatchApplyResult native =
+            facade->patch_apply(src, out_path, patch_sites_from_python(sites), force);
+        py::dict out;
+        out["ok"] = native.ok;
+        out["reason"] = native.reason;
+        out["out_path"] = native.out_path;
+        out["notes"] = native.notes;
+        out["written_bytes"] = native.written_bytes;
+        out["refused_input_is_output"] = native.refused_input_is_output;
+        out["refused_output_exists"] = native.refused_output_exists;
         return out;
     }
 
@@ -2843,6 +2931,10 @@ void ensure_api_module() {
                  py::arg("entries"), py::arg("backup_root") = "")
             .def("pkg_restore", &PyEngine::pkg_restore, py::arg("target_root"),
                  py::arg("backup_root"), py::arg("rels"))
+            // ★★ P16-1c：二进制补丁（表由插件给；二进制字段走 hex 文本）
+            .def("patch_identify", &PyEngine::patch_identify, py::arg("path"), py::arg("sites"))
+            .def("patch_apply", &PyEngine::patch_apply, py::arg("src"), py::arg("out"),
+                 py::arg("sites"), py::arg("force") = false)
 ;
         py::class_<PyWidget>(m, "Widget")
             .def("__repr__", [](const PyWidget& widget) {
