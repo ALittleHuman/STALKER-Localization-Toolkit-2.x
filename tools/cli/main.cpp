@@ -4007,7 +4007,16 @@ int run_cli(const std::vector<std::string>& args) {
         //   封包侧接住 `utf8_to_cp1251` 的返回值（语义＝"这次编码有没有发生顶替"），
         //   把**逐条改写清单 + 计数**打出来。**不阻塞、不加 --strict-names**：包照常产出。
         std::vector<xrkit::engine::fs::DbNameRewrite> rewrites;
-        const std::vector<uint8_t> bytes = xrkit::engine::fs::pack_db(items, *fmt, &rewrites);
+        // ★★ 2026-10-10（P17-65，审计 01 F-13）：CLI 这条**接上出错理由** —— 给了 `&packdb_err`
+        //   即启用"4 GiB 窄化"两条检查（单条目 / 累计偏移）；命中就**不往下走、不写盘**，
+        //   并且**放在写盘守卫之前**（先算内容；算不出来就别落盘）。
+        std::string packdb_err;
+        const std::vector<uint8_t> bytes =
+            xrkit::engine::fs::pack_db(items, *fmt, &rewrites, &packdb_err);
+        if (!packdb_err.empty()) {
+            std::cerr << "PACKDB error reason=" << packdb_err << "\n";
+            return kExitFail;
+        }
         // ★★ 2026-10-04（用户红线「GUI 的功能，CLI 肯定要全部拥有」）：输出 operand **可以是目录、
         //   也可以没有扩展名** ⇒ 与 GUI 走同一条引擎规则补落点与扩展名（`xdb→.xdb.db`、`sqfs→.sqfs`）。
         //   给了带扩展名的完整路径 ⇒ 原样不动（不破坏既有用法）。

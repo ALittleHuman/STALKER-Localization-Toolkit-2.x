@@ -868,10 +868,30 @@ void append_entry_null(std::vector<uint8_t>& h, const std::string& name,
 }
 
 std::vector<uint8_t> build_header(const std::vector<DbPackItem>& items, DbFormat fmt,
-                                 std::vector<DbNameRewrite>* log) {
+                                 std::vector<DbNameRewrite>* log, std::string* error) {
     std::vector<uint8_t> h;
     uint32_t off = 8;  // file-absolute offset（在 DATA chunk 头之后）
     for (const DbPackItem& it : items) {
+        // ★★ 2026-10-10（P17-65，审计 01 F-13）：**两条 4 GiB 窄化检查（opt-in）**。
+        //   ① 单条目：`it.data.size()` 是 `size_t`，下面那句 `static_cast<uint32_t>` 在单条目
+        //      ≥ 4 GiB 时**静默回绕**；
+        //   ② 累计偏移：`off` 是 `uint32_t` 且只增不减，文件总长越过 4 GiB 时**静默回绕**。
+        //   命中任一条都会产出"能打开、但条目大小/偏移全错"的 DB（比崩掉更难查）。
+        //   ★ 只有调用方给了 `error` 出参才检测 ⇒ **未接线的调用点行为逐字节不变**（见 pack_db）。
+        if (error != nullptr) {
+            if (!it.is_dir && it.data.size() > 0xFFFFFFFFull) {
+                *error = "单条目超过 4 GiB（DB 头字段是 uint32）：" + it.path + " = " +
+                         std::to_string(it.data.size()) + " 字节";
+                return {};
+            }
+            const uint64_t end = static_cast<uint64_t>(off) +
+                                 static_cast<uint64_t>(it.is_dir ? 0 : it.data.size());
+            if (end > 0xFFFFFFFFull) {
+                *error = "DB 总长越过 4 GiB（文件内偏移是 uint32）：处理到 " + it.path +
+                         " 时累计 " + std::to_string(end) + " 字节";
+                return {};
+            }
+        }
         const uint32_t sz = static_cast<uint32_t>(it.data.size());
         if (it.is_dir) {
             if (fmt == DbFormat::Xdb || fmt == DbFormat::Ru2947 || fmt == DbFormat::Ww2947) {
@@ -911,7 +931,8 @@ std::vector<uint8_t> build_header(const std::vector<DbPackItem>& items, DbFormat
 }  // namespace
 
 std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& in_items, DbFormat fmt,
-                             std::vector<DbNameRewrite>* rewrites) {
+                             std::vector<DbNameRewrite>* rewrites, std::string* error) {
+    if (error != nullptr) error->clear();
     std::vector<DbPackItem> items;
     items.reserve(in_items.size());
     for (const DbPackItem& it : in_items) {
@@ -923,7 +944,11 @@ std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& in_items, DbFormat f
     }
 
     if (rewrites != nullptr) rewrites->clear();
-    std::vector<uint8_t> header = build_header(items, fmt, rewrites);
+    std::vector<uint8_t> header = build_header(items, fmt, rewrites, error);
+    // ★★ 2026-10-10（P17-65，审计 01 F-13）：**检测是 opt-in 的** —— 调用方给了 `error`
+    //   出参时才会被置位；这时我们**不再往下走**（不压缩、不拼数据），直接返回空。
+    //   未给 `error` 的调用方（今天还有三处）**行为逐字节不变**，留待各自单独接线。
+    if (error != nullptr && !error->empty()) return {};
     std::vector<uint8_t> compressed = lzhuf_encode(header.data(), header.size());
     if (const Scrambler* sc = scrambler_for(fmt)) compressed = sc->encrypt(compressed);
 

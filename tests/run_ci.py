@@ -929,6 +929,29 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("解压器内存预算一个口径（01 F-20：xz 与 zstd 共用 decode_mem_limit；超限都明确报错）")
 
+    # ── ★★ P17-65（审计 01 F-13）：`pack_db` 的 4 GiB 窄化检测**必须是 opt-in** ──
+    #   事实（修前）：`build_header` 里 `static_cast<uint32_t>(it.data.size())` 单条目 ≥4 GiB 静默回绕；
+    #   `uint32_t off` 累计越过 4 GiB 静默回绕 ⇒ 产物"能打开但条目大小/偏移全错"。
+    #   本批：给 `pack_db` 加**默认 nullptr** 的 `std::string* error` 出参 ⇒ 只有给了它才检测；
+    #   命中返回空 vector ＋ 置 error；CLI（`--pack-db`）已接上（非空即 `PACKDB error reason=` ＋ 非零退码、
+    #   **且不写盘**）。★ 判据三条，其中 ② 是**守住 opt-in 语义**（默认必须是 nullptr，
+    #   否则未接线的三处（fs 页 / 门面 / py_host）会被动变成"空包落盘"）。
+    dbh = (ROOT / "include" / "xrkit" / "engine" / "fs" / "db.h").read_text(
+        encoding="utf-8", errors="replace")
+    dbc = active_code((ROOT / "src" / "engine" / "fs" / "db.cpp").read_text(
+        encoding="utf-8", errors="replace"))
+    mnc = active_code((ROOT / "tools" / "cli" / "main.cpp").read_text(
+        encoding="utf-8", errors="replace"))
+    if "0xFFFFFFFFull" not in dbc or dbc.count("0xFFFFFFFFull") < 2:
+        fail("pack_db 缺 4 GiB 窄化检查（01 F-13）：单条目与累计偏移两条都要有")
+    elif not re.search(r"std::string\*\s*error\s*=\s*nullptr", dbh):
+        fail("pack_db 的 error 出参默认值不是 nullptr（01 F-13）：opt-in 语义被破坏 ⇒ "
+             "未接线的调用点会变成空包落盘")
+    elif "&packdb_err" not in mnc:
+        fail("CLI 没接上 pack_db 的出错理由（01 F-13）：--pack-db 该先算内容、算不出来就不落盘")
+    else:
+        ok("pack_db 会拒绝 4 GiB 窄化（01 F-13：两条检查 ＋ opt-in 出参 ＋ CLI 接线并明确报错）")
+
     # ── ★★ P17-48（04 F-06 第二波）：`--pack-db` 同款写盘守卫 ──────────────────────
     #   ★ 判的是**引擎解析后的真实落点**（`resolve_pack_target` 会补扩展名）——判 operands[0] 会判错对象。
     #   受影响步骤：`golden-db`（在同一 ours.<key>.db 上逐格式反复写）已连带补 `--force`。

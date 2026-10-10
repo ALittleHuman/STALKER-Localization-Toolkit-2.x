@@ -72,7 +72,12 @@ struct DbNameRewrite {
 // `rewrites` 非空 ⇒ 填**逐条**改写台账（返回后为空 vector = 一个名字都没被改写）。
 // 默认 `nullptr` ⇒ 行为与旧版**逐字节相同**（不给台账的调用点不用改）。
 std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& items, DbFormat fmt,
-                             std::vector<DbNameRewrite>* rewrites = nullptr);
+                             std::vector<DbNameRewrite>* rewrites = nullptr,
+                             // ★★ 2026-10-10（P17-65，审计 01 F-13）：**可选**的出错理由。
+                             //   给了它（非 `nullptr`）才启用"4 GiB 窄化"两条检查（单条目 / 累计偏移）；
+                             //   命中时返回**空 vector** 并置 error ⇒ 调用方**不许写盘**。
+                             //   不给（默认 `nullptr`）＝保持旧语义（未接线的调用点行为不变）。
+                             std::string* error = nullptr);
 
 // ── seek 式读盘（大包的唯一可行路径）─────────────────────────────────
 // X-Ray DB 的布局是 `[DATA 块头 + 数据][HEADER 块头 + 条目表]` ⇒ **条目表在文件尾部**。
