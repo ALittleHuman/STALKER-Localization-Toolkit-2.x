@@ -229,7 +229,9 @@ def check_baselines() -> int:
             print("[synth/%s]" % key)
             case_bad = 0
             build_synth_dir(root)
-            rc, out = run_cli(["--pack-db", str(outdb), key, str(root)])
+            # ★★ 2026-10-10（P17-48，04 F-06 第二波）：本脚本在**同一个 ours.<key>.db** 上逐格式反复写
+            #   （修前静默截断，现在是"存在即拒"）⇒ 必须显式声明"我知道要覆盖"。
+            rc, out = run_cli(["--pack-db", str(outdb), key, str(root), "--force"])
             if rc != 0:
                 print("  ✗ pack 失败：%s" % out.strip())
                 failures += 1

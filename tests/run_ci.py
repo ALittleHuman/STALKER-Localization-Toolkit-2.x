@@ -802,6 +802,28 @@ def step_cli_contract(release: bool) -> None:
             else:
                 ok("stk_api 声明与赋值对账（零碎批：%d 个注册点全部在宿主里赋值）" % len(members))
 
+    # ── ★★ P17-48（04 F-06 第二波）：`--pack-db` 同款写盘守卫 ──────────────────────
+    #   ★ 判的是**引擎解析后的真实落点**（`resolve_pack_target` 会补扩展名）——判 operands[0] 会判错对象。
+    #   受影响步骤：`golden-db`（在同一 ours.<key>.db 上逐格式反复写）已连带补 `--force`。
+    pd_dir = guard_dir / "packdb_src"
+    pd_dir.mkdir(parents=True, exist_ok=True)
+    (pd_dir / "a.txt").write_text("hello", encoding="ascii")
+    pd_out = guard_dir / "packdb_out.db"
+    p1, po1 = run([str(CLI_EXE), "--pack-db", str(pd_out), "xdb", str(pd_dir)])
+    p2, po2 = run([str(CLI_EXE), "--pack-db", str(pd_out), "xdb", str(pd_dir)])
+    p3, po3 = run([str(CLI_EXE), "--pack-db", str(pd_out), "xdb", str(pd_dir), "--force"])
+    if p1 != 0:
+        fail("写盘守卫的**前提**不成立（04 F-06 / --pack-db）：首次写期望 rc=0，实际 rc=%d %r"
+             % (p1, po1.strip()[:100]))
+    elif p2 != 3 or "--force" not in po2:
+        fail("写盘动作静默截断（04 F-06 / --pack-db）：同路径再写期望 rc=3 ＋ 理由含 `--force`，"
+             "实际 rc=%d %r" % (p2, po2.strip()[:120]))
+    elif p3 != 0:
+        fail("`--force` 没能覆盖（04 F-06 / --pack-db）：期望 rc=0，实际 rc=%d %r"
+             % (p3, po3.strip()[:120]))
+    else:
+        ok("写盘动作不静默截断（04 F-06 第二波 `--pack-db`：按解析后落点判；已存在⇒rc=3；`--force`⇒覆盖）")
+
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
     #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /

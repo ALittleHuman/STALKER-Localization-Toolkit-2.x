@@ -134,7 +134,7 @@ void print_usage() {
            "                                              DB 六格式）或一个目录（递归找包）；落点＝包名去扩\n"
            "                                              展名、磁盘父目录不进产物、包内已自带同名壳不叠一层\n"
            "                                              （与 GUI 共用同一份落点实现）\n"
-           "  --pack-db <输出> <格式> <输入目录>          按目录打包 DB（逐字节对拍用）\n"
+           "  --pack-db <输出> <格式> <输入目录>          按目录打包 DB（逐字节对拍用；输出已存在时拒绝，加 [--force] 覆盖）\n"
            "  --pack-sqfs <输出> <输入目录> [--pack-dirs]  自写 SquashFS 封包（xz 块，逐字节对拍用）\n"
            "  --decode-text <输入> <输出> [--force]      六编码链解码（把正文写成 UTF-8；对拍用）。\n"
            "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
@@ -4001,6 +4001,19 @@ int run_cli(const std::vector<std::string>& args) {
         const xrkit::engine::fs::PackTarget tgt = xrkit::engine::fs::resolve_pack_target(
             operands[0], xrkit::core::path_to_utf8(root.filename()), operands[1]);
         std::cout << "PACKDB target=" << tgt.path << "\n";
+        // ★★ 2026-10-10（P17-48，审计 04 F-06 第二波）：**输出已存在即拒，除非 `--force`**。
+        //   与 `--lzhuf`/`--decl-fix`/`--resample-dump`/`--font-render`/`--sniff`/`--decode-text`/
+        //   `--codec-lossy`/`--extract-chars` 同款。★ 这里判的是**引擎解析后的真实落点** `tgt.path`
+        //   （`resolve_pack_target` 会补扩展名 —— 判 operands[0] 会判错对象）。
+        bool packdb_force = false;
+        for (const std::string& op : operands) {
+            if (op == "--force") packdb_force = true;
+        }
+        if (!packdb_force && std::filesystem::exists(path_from_utf8(tgt.path))) {
+            std::cerr << "PACKDB error reason=输出已存在：" << tgt.path
+                      << "（拒绝静默截断；确认要覆盖请加 --force）\n";
+            return kExitUsage;
+        }
         std::ofstream out(path_from_utf8(tgt.path), std::ios::binary | std::ios::trunc);
         if (!out) {
             std::cout << "PACKDB error reason=无法写输出文件\n";
