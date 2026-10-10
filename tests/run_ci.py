@@ -584,6 +584,28 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("写盘动作不静默截断（04 F-06 第二波 `--sniff`：已存在⇒rc=3；`--force`⇒覆盖）")
 
+    # ── ★★ P17-32（04 F-06 第二波）：`--decode-text` 同款守卫 ───────────────────────────
+    #   ★ 它的写盘点与 `--sniff` **文本完全相同** ⇒ 改件/判据都带动作名（DECODE/SNIFF）锚定。
+    #   受影响的门禁步骤：`golden-text-decode`（在同一 `decoded.txt` 上反复写）已连带补 `--force`；
+    #   `codec-strict` 与 `bench` 实测**不受影响**（各自用不同输出路径）。
+    de_in = guard_dir / "decode_in.bin"
+    de_out = guard_dir / "decode_out.txt"
+    de_in.write_bytes("привет".encode("cp1251"))
+    e1, eo1 = run([str(CLI_EXE), "--decode-text", str(de_in), str(de_out)])
+    e2, eo2 = run([str(CLI_EXE), "--decode-text", str(de_in), str(de_out)])
+    e3, eo3 = run([str(CLI_EXE), "--decode-text", str(de_in), str(de_out), "--force"])
+    if e1 != 0:
+        fail("写盘守卫的**前提**不成立（04 F-06 / --decode-text）：首次写期望 rc=0，实际 rc=%d %r"
+             % (e1, eo1.strip()[:100]))
+    elif e2 != 3 or "--force" not in eo2:
+        fail("写盘动作静默截断（04 F-06 / --decode-text）：同路径再写期望 rc=3 ＋ 理由含 `--force`，"
+             "实际 rc=%d %r" % (e2, eo2.strip()[:120]))
+    elif e3 != 0:
+        fail("`--force` 没能覆盖（04 F-06 / --decode-text）：期望 rc=0，实际 rc=%d %r"
+             % (e3, eo3.strip()[:120]))
+    else:
+        ok("写盘动作不静默截断（04 F-06 第二波 `--decode-text`：已存在⇒rc=3；`--force`⇒覆盖）")
+
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
     #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /

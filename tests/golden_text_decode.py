@@ -113,7 +113,7 @@ def baseline_1x(path: Path) -> tuple[str, int, str]:
 
 
 def candidate_2x(path: Path, out_file: Path) -> tuple[str, int, str, str]:
-    proc = subprocess.run([str(CLI), "--decode-text", str(path), str(out_file)],
+    proc = subprocess.run([str(CLI), "--decode-text", str(path), str(out_file), "--force"],
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     text = proc.stdout.decode("utf-8", errors="replace").strip()
     if proc.returncode != 0:

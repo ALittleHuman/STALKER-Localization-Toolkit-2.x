@@ -136,7 +136,8 @@ void print_usage() {
            "                                              （与 GUI 共用同一份落点实现）\n"
            "  --pack-db <输出> <格式> <输入目录>          按目录打包 DB（逐字节对拍用）\n"
            "  --pack-sqfs <输出> <输入目录> [--pack-dirs]  自写 SquashFS 封包（xz 块，逐字节对拍用）\n"
-           "  --decode-text <输入> <输出>                 六编码链解码（把正文写成 UTF-8；对拍用）\n"
+           "  --decode-text <输入> <输出> [--force]      六编码链解码（把正文写成 UTF-8；对拍用）。\n"
+           "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
            "  --codec-lossy <decode|encode> <编码> <输入> <输出>\n"
            "                                              有损编解码（Python errors=replace；对拍用）\n"
            "  --codec-lossy <decode|encode> <编码> <输入> strict <输出>\n"
@@ -4823,6 +4824,19 @@ int run_cli(const std::vector<std::string>& args) {
         if (!r.ok) {
             std::cout << "DECODE error reason=" << r.error << "\n";
             return kExitFail;
+        }
+        // ★★ 2026-10-10（P17-32，审计 04 F-06 第二波）：**输出已存在即拒绝，除非 `--force`**。
+        //   与 `--lzhuf`/`--decl-fix`/`--resample-dump`/`--font-render`/`--sniff` 同款。
+        //   ★ 锚点提示：本处与 `--sniff` 的写盘点**文本完全相同**（都是 `operands[1]` 截断打开），
+        //     改件与判据都要带动作名（DECODE/SNIFF）锚定，别只按那一行匹配 —— P17-31 踩过。
+        bool decode_force = false;
+        for (const std::string& op : operands) {
+            if (op == "--force") decode_force = true;
+        }
+        if (!decode_force && std::filesystem::exists(path_from_utf8(operands[1]))) {
+            std::cerr << "DECODE error reason=输出已存在：" << operands[1]
+                      << "（拒绝静默截断；确认要覆盖请加 --force）\n";
+            return kExitUsage;
         }
         std::ofstream out(path_from_utf8(operands[1]), std::ios::binary | std::ios::trunc);
         if (!out) {
