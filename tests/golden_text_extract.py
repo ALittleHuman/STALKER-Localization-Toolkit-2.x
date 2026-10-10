@@ -101,6 +101,13 @@ def synth_gameplay(root: Path) -> None:
     # 再来一个恰 2000 码位的（跨两个整块，确认只有**末尾**那一段不许是空串）
     (root / "l_exact2000.xml").write_text("<config><text>%s</text></config>\n" % exact2000,
                                           encoding="cp1251")
+    # ★★ 2026-10-10（P17-44，审计 01 F-10 Low）：**大小写折叠的次序判据**（ASCII 折 vs Unicode 折**次序不同**）。
+    #   这两个文件名是精心挑的：`Б.xml`（西里尔大写 Б = D0 91）与 `а.xml`（西里尔小写 а = D0 B0）。
+    #     · **只看 ASCII** 折（只折 A-Z）⇒ 键还是 D0 91 与 D0 B0 ⇒ **Б 在前**；
+    #     · **Unicode** 折（Python `str.lower()` / LCMapStringEx）⇒ б(D0 B1) 与 а(D0 B0) ⇒ **а 在前**。
+    #   1.x 的排序键是 `str(path).lower()` ⇒ 真次序是"а 在前"。夹具把这一点**钉进基线**（基线由 1.x 真跑生成）。
+    (root / "Б.xml").write_text("<config><text>Заглавная Бэ</text></config>\n", encoding="cp1251")
+    (root / "а.xml").write_text("<config><text>Строчная а</text></config>\n", encoding="cp1251")
     # 需要转义的字符
     (root / "h.xml").write_text(
         '<config><text>Кавычки "двойные" и \'одинарные\' &amp; амперсанд</text></config>\n',

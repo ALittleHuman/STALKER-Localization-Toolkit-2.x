@@ -723,9 +723,9 @@
    "kind": "gameplay",
    "source": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_extract\\synth\\gameplay",
    "stats": {
-    "files": 10,
-    "strings": 14,
-    "chars": 6181
+    "files": 12,
+    "strings": 16,
+    "chars": 6203
    },
    "tree": {
     "gameplay/a.xml": {
@@ -768,9 +768,17 @@
      "size": 59,
      "sha256": "d960cb68c88a91ba6c4f342f8b32d1b19fad5914bc019a6e7917816e1a0050b9"
     },
+    "gameplay/а.xml": {
+     "size": 59,
+     "sha256": "43b5d51e2cd9c448800ecdc5797c5c343b12abf20f39daebc3454c55db9afdf8"
+    },
+    "gameplay/Б.xml": {
+     "size": 59,
+     "sha256": "25ca376183f30fe9b9c407a17d960ee689c8a8c2ea509538d2af5edeea1adce4"
+    },
     "gstest_gameplay_texts.xml": {
-     "size": 12276,
-     "sha256": "a6cc92778469f6f6c7d0ac50e6369ee45fffbb719ea9715488d9763e8bb6482b"
+     "size": 12468,
+     "sha256": "36be6e2391f7a3b43f363adef48391ecee98db061b2047a409712986540b61ac"
     }
    }
   },

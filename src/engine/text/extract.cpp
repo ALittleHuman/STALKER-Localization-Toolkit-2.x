@@ -9,6 +9,9 @@
 #include <pcre2.h>
 
 #include <algorithm>
+#if defined(_WIN32)
+#include <windows.h>   // ★ P17-44（01 F-10）：路径排序的 Unicode 小写折叠用 LCMapStringEx
+#endif
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -360,6 +363,29 @@ std::string ascii_lower(const std::string& s) {
         if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
     }
     return out;
+}
+
+// ★★ 2026-10-10（P17-44，审计 01 F-10 Low）：**路径排序的大小写折叠要走 Unicode，不是只看 ASCII**。
+//   事实：1.x 的排序键是 `str(path).lower()`（Python 的 Unicode 小写映射），而这里原来用
+//   `ascii_lower` —— 只折 A-Z。含**西里尔大写**的路径（STALKER 语料里很常见，如 `А.xml` / `а.xml`）
+//   在两条实现下**相对次序会不同** ⇒ 抽取顺序（进而生成的 ID 编号）与 1.x 不一致。
+//   实现：Windows 上用 `LCMapStringEx` 的 locale-invariant 小写（与 Python 的 simple lowercase
+//   对西里尔/拉丁/希腊这几族一致，正是路径里会出现的那几族）；非 Windows 或 API 失败时退回 ASCII 折叠。
+std::string path_lower(const std::string& s) {
+#if defined(_WIN32)
+    if (!s.empty()) {
+        const std::wstring wide = core::path_from_utf8(s).wstring();
+        std::wstring low(wide.size() + 8, L'\0');
+        const int n = LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE, wide.c_str(),
+                                    static_cast<int>(wide.size()), low.data(),
+                                    static_cast<int>(low.size()), nullptr, nullptr, 0);
+        if (n > 0) {
+            low.resize(static_cast<size_t>(n));
+            return core::path_to_utf8(std::filesystem::path(low));
+        }
+    }
+#endif
+    return ascii_lower(s);
 }
 
 // ── 候选判定（1.x 同名函数）──────────────────────────────────────────
@@ -832,8 +858,8 @@ std::vector<Found> collect(const std::filesystem::path& root, const std::vector<
         out.push_back(Found{rel_utf8, it->path()});
     }
     std::sort(out.begin(), out.end(), [](const Found& a, const Found& b) {
-        const std::string la = ascii_lower(a.rel);
-        const std::string lb = ascii_lower(b.rel);
+        const std::string la = path_lower(a.rel);
+        const std::string lb = path_lower(b.rel);
         if (la != lb) return la < lb;
         return a.rel < b.rel;
     });
