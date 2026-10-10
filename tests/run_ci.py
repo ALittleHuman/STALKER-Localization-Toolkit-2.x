@@ -682,6 +682,21 @@ def step_cli_contract(release: bool) -> None:
         ok("原地改写无备份会被点名（04 F-06 口径件 `--convert-batch`：--no-backup⇒warn；"
            "默认有备份⇒不吵）")
 
+    # ── ★★ P17-36（2026-10-10，审计 04 F-12 Info）：**注释里不许写死构建计数的当前值** ──
+    #   事实：`version.h` 的注释曾写「（M0 尚为 0）」，而 `kBuildCount` 早就是三位数 ⇒
+    #   「写死当前值」的注释必然过期。判据两半：① 不许再出现那种写死；
+    #   ② 必须留下「由打包器就地改写」与「历史断号（17/107）别补」这两层信息（防后人乱补号）。
+    vk_src = (ROOT / "include" / "xrkit" / "core" / "version.h").read_text(
+        encoding="utf-8", errors="replace")
+    if "尚为 0" in vk_src:
+        fail("version.h 注释又把构建计数的当前值写死了（04 F-12）：这种注释必然过期 ⇒ "
+             "改成「由打包器就地改写」的说法，别写数字")
+    elif "就地改写" not in vk_src or "历史断号" not in vk_src:
+        fail("version.h 注释缺关键信息（04 F-12）：要同时说明「由打包器就地改写」与「历史断号」"
+             "（后者防后人去补 17/107 两个号）")
+    else:
+        ok("构建计数注释不写死当前值（04 F-12：改说「由打包器就地改写」，并注明 17/107 是历史断号别补）")
+
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
     #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /
