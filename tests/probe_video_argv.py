@@ -122,6 +122,17 @@ def cases():
     allenc = {"libtheora", "libxvid", "mpeg4"}
     noxvid = {"libtheora", "mpeg4"}
     onlympeg = {"mpeg4"}
+    # ★★ 2026-10-10（P17-9，审计 02 F-03 Medium）：**非整数参考帧率**（影视化片头的 23.976/29.97）。
+    #   1.x 是 `vf_parts.append(f"fps={ref_fps}")`（`video_ogm_app.py:302`）＝ Python 的
+    #   `repr(float)`（**最短往返**表示）⇒ `23.976023976023978`；我们修前用 `%.6g` 只给
+    #   `23.976` ⇒ `-vf fps=` 数值与参考 argv **不等**，而且帧率滤镜数值不同会改产物的时基。
+    #   基准由 `--write` 真调 1.x 的规划器生成，所以这两条是"1.x 真行为"而不是手算值。
+    ref_fps_23976 = VideoInfo(video=Stream(codec="theora", width=640, height=480,
+                                           fps=24000.0 / 1001.0, bitrate=800000),
+                              audio=Stream(sample_rate=44100, channels=2, bitrate=128000))
+    ref_fps_2997 = VideoInfo(video=Stream(codec="theora", width=640, height=480,
+                                          fps=30000.0 / 1001.0, bitrate=800000),
+                             audio=Stream(sample_rate=44100, channels=2, bitrate=128000))
     return [
         ("theora_ref_bitrate_src_same_audio", ref_theora, src_same, allenc),
         ("theora_ref_no_bitrate_src_diff_noaudio", ref_other, src_diff, allenc),
@@ -130,6 +141,8 @@ def cases():
         ("last_resort_only_mpeg4", ref_theora, src_same, onlympeg),
         ("ffprobe_failed_keeps_audio", ref_theora, None, allenc),
         ("no_reference_at_all", None, src_same, allenc),
+        ("ref_fps_24000_1001_src_same", ref_fps_23976, src_same, allenc),
+        ("ref_fps_30000_1001_src_same", ref_fps_2997, src_same, allenc),
     ]
 
 

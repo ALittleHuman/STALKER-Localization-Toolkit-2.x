@@ -652,6 +652,18 @@ std::vector<std::string> split_text_at_length(const std::string& text, size_t n)
     for (size_t k = 0; k < full; ++k) {
         out.push_back(text.substr(offsets[k * n], offsets[(k + 1) * n] - offsets[k * n]));
     }
+    // ★★ 2026-10-10（P17-9 **先查结论**：审计 02 F-04 是**误判**，这里**不许**"修"）────────
+    //   审计原文：本函数在 `full = chars / n` 之后无条件再推一段 `text.substr(offsets[full*n])`，
+    //   整倍时是空串 ⇒ 与 1.x（"`text[i:i+1000]` 分块，边界整倍时不产生空尾块"）**不一致**。
+    //   实测取证（`build/logs/probe_f04_decisive.py` ＋ 1.x 源码 `apps/text_extract_app.py:173`）：
+    //     · 1.x 的真实现是
+    //       `return [text[i*n:(i+1)*n] for i in range(len(text)//n)] + [text[(len(text)//n)*n:]]`
+    //       —— **尾段也是无条件追加**，整倍时同样得到空串；
+    //     · 同一份"正文恰 1000 码位"的夹具喂两边：1.x 产物 `<text>` 内层 **1002 字节、
+    //       段数 2（含行尾空段）**，我们（现状）**逐字节相同**；照审计建议"修掉空尾段"之后
+    //       我们变成 **1000 字节、段数 1** ⇒ `GOLDEN-TEXT-EXTRACT` 立刻判红（与 1.x 不再一致）。
+    //   ⇒ 结论：**现状是对的**（与 1.x 一致），"修掉空尾段"会**打破**"产物与 1.x 逐字节一致"
+    //     这条红线。本行保留"无条件推"是**有意**的。
     out.push_back(text.substr(offsets[full * n]));
     return out;
 }

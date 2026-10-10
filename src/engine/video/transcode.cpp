@@ -3,6 +3,7 @@
 #include "xrkit/core/path.h"
 
 #include <cctype>
+#include <charconv>   // ★ P17-9（02 F-03）：to_chars = 最短往返表示（与 Python repr 同语义）
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -34,11 +35,26 @@ bool contains(const std::vector<std::string>& values, const std::string& needle)
 
 std::string number(long long value) { return std::to_string(value); }
 
-// 1.x 用 f"{ref_fps}" 拼字符串：整数帧率写成 "25.0"（Python float 的 repr），别写成 "25"
+// 1.x 用 f"{ref_fps}" 拼字符串（`video_ogm_app.py:302` 的 `vf_parts.append(f"fps={ref_fps}")`）：
+// Python 的 f-string 对 float 走的是 **repr**（最短但能往返的十进制表示）——
+//   · 整数帧率写成 "25.0"（不是 "25"）；
+//   · 非整数比写成 24000/1001 = "23.976023976023978"、30000/1001 = "29.97002997002997"。
+// ★★ 2026-10-10（P17-9，审计 02 F-03 Medium）：修前这里用 `%.6g` ——
+//   对 23.976023976023978 只给 "23.976" ⇒ `-vf fps=` 与参考 argv **不等**（门禁 [26] 的
+//   "逐项相等"在非整数帧率样本上必红），产物的时基也跟着变。
+//   现在改用 `std::to_chars`（**最短往返**表示，与 Python repr 同语义）；
+//   尾部再补 ".0" 的老逻辑保持不变（to_chars 对 25.0 给 "25"，Python repr 给 "25.0"）。
 std::string fps_text(double fps) {
     char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), "%.6g", fps);
-    std::string text(buffer);
+    const auto converted = std::to_chars(buffer, buffer + sizeof(buffer) - 1, fps);
+    std::string text;
+    if (converted.ec == std::errc()) {
+        text.assign(buffer, converted.ptr);
+    } else {
+        // 兜底：to_chars 失败（理论不可达）仍给一个能看的十进制表示，别返回空串。
+        std::snprintf(buffer, sizeof(buffer), "%.17g", fps);
+        text.assign(buffer);
+    }
     if (text.find('.') == std::string::npos && text.find('e') == std::string::npos &&
         text.find("inf") == std::string::npos && text.find("nan") == std::string::npos) {
         text += ".0";

@@ -2800,6 +2800,15 @@ int run_cli(const std::vector<std::string>& args) {
              2, 128000, false, false, 0, 0, 0.0, false, 0},
             {"no_reference_at_all", false, false, "", 0, 0, 0.0, 0, false, 0, 0, 0, true, true, 640,
              480, 25.0, true, 0},
+            // ★★ P17-9（审计 02 F-03）：**非整数参考帧率**（23.976 / 29.97）。
+            //   1.x 是 `vf_parts.append(f"fps={ref_fps}")` ⇒ Python 的 repr ⇒
+            //   `23.976023976023978`；我们修前 `%.6g` 只给 `23.976` ⇒ `-vf fps=` 与参考 argv
+            //   不等（门禁 [26] 的"逐项相等"在这两条上必红）。基准由
+            //   `tests/probe_video_argv.py --write` 真调 1.x 规划器生成。
+            {"ref_fps_24000_1001_src_same", true, true, "theora", 640, 480, 24000.0 / 1001.0, 800000,
+             true, 44100, 2, 128000, true, true, 640, 480, 25.0, true, 0},
+            {"ref_fps_30000_1001_src_same", true, true, "theora", 640, 480, 30000.0 / 1001.0, 800000,
+             true, 44100, 2, 128000, true, true, 640, 480, 25.0, true, 0},
         };
         for (const Case& item : cases) {
             vid::TranscodeRequest request;

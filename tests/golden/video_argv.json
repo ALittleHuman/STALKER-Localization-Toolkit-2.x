@@ -230,6 +230,76 @@
         "OUT.ogm"
       ],
       "message": "输出文件不存在或为空"
+    },
+    {
+      "case": "ref_fps_24000_1001_src_same",
+      "encoders": [
+        "libtheora",
+        "libxvid",
+        "mpeg4"
+      ],
+      "ok": false,
+      "argv": [
+        "FFMPEG",
+        "-y",
+        "-i",
+        "IN.avi",
+        "-c:v",
+        "libtheora",
+        "-b:v",
+        "800000",
+        "-pix_fmt",
+        "yuv420p",
+        "-vf",
+        "fps=23.976023976023978",
+        "-c:a",
+        "libvorbis",
+        "-b:a",
+        "128000",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-f",
+        "ogg",
+        "OUT.ogm"
+      ],
+      "message": "输出文件不存在或为空"
+    },
+    {
+      "case": "ref_fps_30000_1001_src_same",
+      "encoders": [
+        "libtheora",
+        "libxvid",
+        "mpeg4"
+      ],
+      "ok": false,
+      "argv": [
+        "FFMPEG",
+        "-y",
+        "-i",
+        "IN.avi",
+        "-c:v",
+        "libtheora",
+        "-b:v",
+        "800000",
+        "-pix_fmt",
+        "yuv420p",
+        "-vf",
+        "fps=29.97002997002997",
+        "-c:a",
+        "libvorbis",
+        "-b:a",
+        "128000",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-f",
+        "ogg",
+        "OUT.ogm"
+      ],
+      "message": "输出文件不存在或为空"
     }
   ]
 }
