@@ -9,6 +9,8 @@
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/plugin/abi_host.h"
 #include "xrkit/engine/plugin/loader.h"
+// ★ P17-14（01 F-15）：保留设备名判定与写盘拦阻要看真实现
+#include "xrkit/core/atomic_write.h"
 #include "xrkit/engine/process/run.h"   // ★ P17-11（01 F-04）：命令行引号判据要 `run()` / 拼命令行
 #include "xrkit/engine/text/encoding.h"
 #include "hub.h"
@@ -355,6 +357,66 @@ SmokeResult run_smoke() {
                              "（exit=%1 err=%2）")
                   .arg(echoed.exit_code)
                   .arg(QString::fromStdString(echoed.error)));
+    }
+
+    // ★★ 2026-10-10（P17-14，审计 01 F-15 Low）：**Windows 保留设备名不许当文件名**。
+    //   事实（修前）：`write_file_atomic` 直接往目标写 ⇒ 名字是 `CON`/`NUL`/`COM1` 这类
+    //   **设备**时，写入**不报错而是被设备吃掉**（`NUL` 直接吞、`CON` 打到控制台），
+    //   调用方还会以为产物落盘了 —— 一条静默数据丢失路径。
+    //   判据两半：① 名字判定表（`console.txt`/`COM0`/`CON_X` 合法，`CON`/`con.txt`/`Com1.log` 非法）；
+    //             ② `write_file_atomic` 真调一次 ⇒ 必须返回 false 且理由里带"保留设备名"，
+    //                并且**不许**把文件/设备产物留在磁盘上。
+    //   判红办法：把 `write_file_atomic` 里那道拦删掉 ⇒ ②立刻红（那条写入会返回 true）。
+    {
+        struct NameCase {
+            const char* name;
+            bool reserved;
+        };
+        const NameCase name_cases[] = {
+            {"CON", true},       {"con", true},      {"CON.txt", true},
+            {"Com1.log", true},  {"LPT9", true},     {"NUL", true},
+            {"console.txt", false}, {"COM0", false}, {"CON_X", false},
+            {"COM10", false},    {"normal.xml", false}, {"", false},
+        };
+        int bad_names = 0;
+        QString bad_detail;
+        for (const NameCase& item : name_cases) {
+            const bool got = xrkit::core::is_windows_reserved_name(item.name);
+            if (got != item.reserved) {
+                ++bad_names;
+                if (bad_detail.isEmpty()) {
+                    bad_detail = QStringLiteral("%1 判成 %2（期望 %3）")
+                                     .arg(QString::fromUtf8(item.name))
+                                     .arg(got ? 1 : 0)
+                                     .arg(item.reserved ? 1 : 0);
+                }
+            }
+        }
+        check(bad_names == 0,
+              QStringLiteral("P17-14 01 F-15：保留设备名判定表（12 条里 %1 条不符%2）")
+                  .arg(bad_names)
+                  .arg(bad_detail.isEmpty() ? QString() : QStringLiteral("；首条：") + bad_detail));
+
+        const QString guard_dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_reserved"));
+        QDir(guard_dir).removeRecursively();
+        QDir().mkpath(guard_dir);
+        std::string guard_error;
+        const std::vector<uint8_t> guard_data{1, 2, 3};
+        const bool wrote = xrkit::core::write_file_atomic(
+            (guard_dir + QStringLiteral("/CON.txt")).toStdString(), guard_data, true, guard_error);
+        check(!wrote && guard_error.find("保留设备名") != std::string::npos,
+              QStringLiteral("P17-14 01 F-15：写 `CON.txt` 必须被拒且给出理由（wrote=%1 err=%2）")
+                  .arg(wrote ? 1 : 0)
+                  .arg(QString::fromStdString(guard_error)));
+        const std::vector<uint8_t> control_data{4, 5, 6};
+        std::string control_error;
+        const bool control_ok = xrkit::core::write_file_atomic(
+            (guard_dir + QStringLiteral("/normal.txt")).toStdString(), control_data, true,
+            control_error);
+        check(control_ok, QStringLiteral("P17-14 01 F-15 对照：普通名字仍要能写（ok=%1 err=%2）")
+                              .arg(control_ok ? 1 : 0)
+                              .arg(QString::fromStdString(control_error)));
+        QDir(guard_dir).removeRecursively();
     }
 
     // ① 真实清单 vs 契约（少一页/改个名字都要红）

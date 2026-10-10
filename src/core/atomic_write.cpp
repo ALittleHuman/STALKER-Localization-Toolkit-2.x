@@ -80,10 +80,46 @@ WriteProbe set_write_probe(const WriteProbe& probe) {
     return old;
 }
 
+bool is_windows_reserved_name(const std::string& utf8_name) {
+    // ★★ P17-14（01 F-15）：只认**主名**（最后一个 `.` 之前那一段），大小写不敏感。
+    //   `CON.txt` / `con` / `Com1.log` 非法；`console.txt` / `CON_X` / `COM0` 合法。
+    std::string stem = utf8_name;
+    const size_t dot = stem.find('.');
+    if (dot != std::string::npos) stem = stem.substr(0, dot);
+    // 去掉可能存在的尾随空格（Windows 会把 `CON ` 也当设备名）
+    while (!stem.empty() && (stem.back() == ' ' || stem.back() == '\t')) stem.pop_back();
+    if (stem.empty()) return false;
+    std::string upper;
+    upper.reserve(stem.size());
+    for (char ch : stem) {
+        upper.push_back(static_cast<char>(::toupper(static_cast<unsigned char>(ch))));
+    }
+    if (upper == "CON" || upper == "PRN" || upper == "AUX" || upper == "NUL" ||
+        upper == "CONIN$" || upper == "CONOUT$") {
+        return true;
+    }
+    if (upper.size() == 4 && (upper.compare(0, 3, "COM") == 0 || upper.compare(0, 3, "LPT") == 0)) {
+        return upper[3] >= '1' && upper[3] <= '9';
+    }
+    return false;
+}
+
 bool write_file_atomic(const std::string& path, const std::vector<uint8_t>& data, bool atomic,
                        std::string& error, WriteVerify verify) {
     error.clear();
     const stdfs::path target = path_from_utf8(path);
+    // ★★ P17-14（01 F-15）：**保留设备名先拦**（零静默：说清是哪个名字、为什么不行）。
+    //   不拦的后果不是"写失败"，而是写进设备后**静默丢失**（NUL 直接吞掉、CON 打到控制台），
+    //   调用方还会以为产物落盘了。
+    {
+        const std::filesystem::path leaf_path = target.filename();
+        const std::string leaf = leaf_path.empty() ? std::string() : path_to_utf8(leaf_path);
+        if (is_windows_reserved_name(leaf)) {
+            error = "Windows 保留设备名，不能作为文件名：" + leaf +
+                    "（写入会被设备吞掉、内容静默丢失；请改名，例如前面加下划线）";
+            return false;
+        }
+    }
     std::error_code ec;
     const stdfs::path dir = target.parent_path();
     if (!dir.empty()) {

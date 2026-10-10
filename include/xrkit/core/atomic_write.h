@@ -68,9 +68,18 @@ struct WriteProbe {
 // 永远是"显式设置"才生效：默认（未设置）三条路都零注入。
 WriteProbe set_write_probe(const WriteProbe& probe);
 
+// ★★ 2026-10-10（P17-14，审计 01 F-15 Low）：**Windows 保留设备名不许当文件名**。
+//   `CON` / `PRN` / `AUX` / `NUL` / `COM1..9` / `LPT1..9`（含带扩展名的 `CON.txt`、大小写任意）
+//   在 Windows 上是**设备**：对它写入不是报错而是**被设备吃掉**（内容静默丢失，或写到控制台），
+//   对它判存在/删除也都是"成功"（假象）。整棵 gamedata 里有玩家自制文件名时这就是一条
+//   静默数据丢失路径。判据只认**主名**（`console.txt` 合法；`CON.txt` 非法）。
+//   `utf8_name` 传**单个路径分量**（文件名或目录名）；返回 true ⇔ 该分量命中保留名。
+bool is_windows_reserved_name(const std::string& utf8_name);
+
 // 把 data 写到 path。`atomic=false` 时直接写目标（仅用于明确不要临时文件的场合）。
 // `verify` 只在 `atomic=true` 时有意义（`atomic=false` 没有临时文件，也就没有可校验的中间态）。
 // 成功返回 true；失败返回 false 并把原因写进 error（调用方负责上报，**不留全局变量**）。
+// ★ P17-14：命中 Windows 保留设备名时**直接拒绝**并把理由写进 error（不再往设备里写）。
 bool write_file_atomic(const std::string& path, const std::vector<uint8_t>& data, bool atomic,
                        std::string& error, WriteVerify verify = WriteVerify::Streamed);
 
