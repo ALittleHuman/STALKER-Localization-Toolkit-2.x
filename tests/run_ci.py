@@ -5100,10 +5100,30 @@ def main() -> int:
     #   两者性质不同），于是收尾那条 `release and UNCOVERED → FAIL` 有了活的写入者。
     #   注意 `--fast` 档不判红：`--fast --only` 仍可局部调试，但结论行会如实说"本次未覆盖"。
     ran: set[str] = set()
+    # ★★ 2026-10-10（P17-53，来自 P17-51/52 的实测发现）：**"真机样本/打包产物"这一族会飘**。
+    #   证据：`golden-sqfs-pack-real` 在 P17-51 那轮全量 --fast 判红（`FAIL 真机样本封包产物不一致`），
+    #   同一族代码在 P17-52 那轮全量 --fast **PASS**；此前 `pkg-platform` 也有过"首跑红、连跑三次绿"。
+    #   机制推断：这类步骤要读真机样本目录 / 跑包内产物，对**机器负载与样本目录状态**敏感，
+    #   ⇒ **单次红不等于回归**。处置（本批落地）：这一族**首次判红就自动复跑一次**，
+    #   复跑绿 ⇒ 按「飘」登记（撤销首次那一次失败计数 + 打一行可见提示），
+    #   复跑仍红 ⇒ 照旧判红。★ 只对这**两个**步骤生效，且**必须留下可见痕迹**（零静默）。
+    FLAKY_RETRY = {"golden-sqfs-pack-real", "pkg-platform"}
+    flaky_seen: list[str] = []
     for name, fn in STEPS:
         if args.only and args.only not in name:
             continue
+        before = FAILURES
         fn(release)
+        if FAILURES > before and name in FLAKY_RETRY:
+            say("  ↻ %s 首次判红 —— 按「飘」口径**复跑一次**再定性（P17-51/52 批报告）" % name)
+            retry_before = FAILURES
+            fn(release)
+            if FAILURES == retry_before:
+                flaky_seen.append(name)
+                FAILURES = before  # 复跑绿：撤销首次那一次失败计数
+                say("  ≈ %s：首次红、复跑绿 ⇒ 登记为「飘」（不改代码、不判红）" % name)
+            else:
+                say("  ✗ %s：复跑仍红 ⇒ 按真失败处置" % name)
         ran.add(name)
         say("")
 
