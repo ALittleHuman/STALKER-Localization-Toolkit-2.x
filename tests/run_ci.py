@@ -1762,6 +1762,43 @@ def step_shell_smoke(release: bool) -> None:
             return
     ok("同一批解包只跑一遍（03 F-03：unpack_selected/unpack_all 不再直接调 extract_job）")
 
+    # ── ★★ P17-13（2026-10-10，审计 01 F-08 Medium）：**不可信声明尺寸上限只许有一处定义** ──
+    #   事实（修前）：同一语义的常量分散在两个 TU 且取值不同 —— `lzhuf.cpp` 内联
+    #   `256 * 1024 * 1024`、`db.cpp` 的 `kMaxDecompressBytes = 512ull * 1024 * 1024`，
+    #   注释还自称"值必须能对照"（谁改一处另一处不会跟着变）。审计另点名的
+    #   `lzhuf_ref.c:360` 那处硬编码**先查后确认已不存在**（给的是旧版本行号）。
+    #   判据：① 两处都不许再出现裸字面量；② 两处都必须包含共享头
+    #   `xrkit/engine/fs/untrusted_limits.h`；③ 该头必须同时定义两个名字
+    #   （取值**刻意不强行改成一样**：改小 db 那条会改真实大包行为，属口径变更要先取证）。
+    limits_h = ROOT / "include" / "xrkit" / "engine" / "fs" / "untrusted_limits.h"
+    lzhuf_src = (ROOT / "src" / "engine" / "fs" / "lzhuf.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    db_src = (ROOT / "src" / "engine" / "fs" / "db.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    limits_txt = limits_h.read_text(encoding="utf-8", errors="replace") if limits_h.exists() else ""
+    raw_literals = []
+    if re.search(r">\s*256\s*\*\s*1024\s*\*\s*1024", active_code(lzhuf_src)):
+        raw_literals.append("lzhuf.cpp 的 256*1024*1024")
+    if re.search(r"=\s*512ull\s*\*\s*1024\s*\*\s*1024", active_code(db_src)):
+        raw_literals.append("db.cpp 的 512ull*1024*1024")
+    if raw_literals:
+        fail("不可信尺寸上限又写死了（01 F-08）：%s —— 必须走 untrusted_limits.h 里的具名常量"
+             % "、".join(raw_literals))
+    elif ("untrusted_limits.h" not in lzhuf_src or "untrusted_limits.h" not in db_src
+          or "XRKIT_LZHUF_MAX_DECLARED_BYTES" not in lzhuf_src
+          or "XRKIT_DB_MAX_ENTRY_DECOMPRESS_BYTES" not in db_src
+          or "XRKIT_LZHUF_MAX_DECLARED_BYTES" not in limits_txt
+          or "XRKIT_DB_MAX_ENTRY_DECOMPRESS_BYTES" not in limits_txt):
+        fail("不可信尺寸上限没收敛到一处（01 F-08）：两处都要 include untrusted_limits.h 并用"
+             "具名常量（LZHUF→XRKIT_LZHUF_MAX_DECLARED_BYTES / DB→XRKIT_DB_MAX_ENTRY_DECOMPRESS_BYTES）")
+    else:
+        ok("不可信尺寸上限一处定义（01 F-08：LZHUF 256 MiB / DB 512 MiB 都来自 "
+           "untrusted_limits.h，含大小关系 static_assert；取值刻意不强行统一）")
+    #   事实（修前）：`tail_len = static_cast<uint32_t>(nblocks) * 4u` —— 窄化 ×4 不溢出**完全依赖**
+    #   上游 `ino.size ≤ 512 MiB` 那条闸（保证 nblocks ≤ 2^29），安全性是"跨两处的隐式耦合"：
+    #   谁放宽 block_size 校验或调大那条闸，就会退化成 tail 分配过小而循环按 nblocks 越界读。
+    #   判据：这一处必须**自证**（先按 64 位算、超限即判错），不许再出现裸的
+    #   `static_cast<uint32_t>(nblocks) * 4`。
     # ── ★★ P17-12（2026-10-10，审计 01 F-18 Info）：**block_sizes 数组长度不许靠上游闸门隐性兜** ──
     #   事实（修前）：`tail_len = static_cast<uint32_t>(nblocks) * 4u` —— 窄化 ×4 不溢出**完全依赖**
     #   上游 `ino.size ≤ 512 MiB` 那条闸（保证 nblocks ≤ 2^29），安全性是"跨两处的隐式耦合"：

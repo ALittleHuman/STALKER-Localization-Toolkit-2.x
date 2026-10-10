@@ -1,4 +1,6 @@
 #include "xrkit/engine/fs/lzhuf.h"
+#include "xrkit/engine/fs/untrusted_limits.h"   // ★ P17-13（01 F-08）：不可信尺寸上限的唯一定义
+
 
 #include <algorithm>
 #include <mutex>
@@ -37,7 +39,9 @@ bool lzhuf_decode(const uint8_t* src, size_t size, std::vector<uint8_t>& out, st
         return false;
     }
     const int declared = lzhuf_decode_size(src, static_cast<int>(size));
-    if (declared <= 0 || declared > 256 * 1024 * 1024) {
+    // ★ P17-13（01 F-08）：上限取值收拢到 untrusted_limits.h（一处定义，两处一起变）
+    if (declared <= 0 ||
+        static_cast<uint64_t>(declared) > XRKIT_LZHUF_MAX_DECLARED_BYTES) {
         err = "LZHUF 声明长度非法（" + std::to_string(declared) + "）";
         return false;
     }

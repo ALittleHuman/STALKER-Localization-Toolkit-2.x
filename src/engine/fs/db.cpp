@@ -1,4 +1,5 @@
 #include "xrkit/engine/fs/db.h"
+#include "xrkit/engine/fs/untrusted_limits.h"   // ★ P17-13（01 F-08）
 
 #include <algorithm>
 #include <array>
@@ -21,7 +22,8 @@ namespace {
 #include "cp1251_tables.inc"
 
 constexpr uint32_t kScramblerMul = 0x8088405u;
-constexpr uint64_t kMaxDecompressBytes = 512ull * 1024 * 1024;
+// ★ P17-13（01 F-08）：取值来自唯一一处定义（untrusted_limits.h），不再各自写死
+constexpr uint64_t kMaxDecompressBytes = XRKIT_DB_MAX_ENTRY_DECOMPRESS_BYTES;
 constexpr uint64_t kMaxLzoRatio = 1024;
 
 // ── cp1251 ↔ UTF-8（DB 里的文件名是 cp1251）──────────────────────────
@@ -464,7 +466,7 @@ uint32_t le32_at(const uint8_t* p) {
 
 // HEADER 表的合理上界：真档案的条目表是 MB 级；超过这个数说明要么不是标准块结构、
 // 要么是坏值 ⇒ 退回整文件读（绝不为一个 4 GB 的假 sz 分配内存）。
-constexpr uint64_t kMaxSeekHeaderBytes = 512ull * 1024 * 1024;
+constexpr uint64_t kMaxSeekHeaderBytes = XRKIT_DB_MAX_SEEK_HEADER_BYTES;   // ★ P17-13（01 F-08）
 // "找块链起点"的探测窗口与次数上限（**有界**，绝不退化成扫全文件）
 constexpr uint64_t kStartProbeBytes = 4ull * 1024 * 1024;
 constexpr int kMaxStartProbes = 64;
