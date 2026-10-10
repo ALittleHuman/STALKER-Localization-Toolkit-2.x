@@ -172,6 +172,11 @@ public:
     //   ⇒ 每重渲染一次就多留一套控件（线性累积、布局越排越长）。
     //   现在：摘布局 → `deleteLater()` → 清表（实现见 .cpp）。
     void clear_plugin_option_combos();
+    // ★★ 2026-10-10（P17-42，审计 03 F-05 第二条累积路径）：Hub 重渲染前**真销毁**上一轮的插件按钮。
+    //   修前 Hub 每次渲染都 `page->add_action(label)` **新增**一个按钮（objectName 前缀 `plugin_`），
+    //   却没人清上一轮的 ⇒ 重渲染一次就多一排按钮（与下拉那条同型的累积）。
+    //   判据只认 objectName 前缀 `plugin_` 的那些 —— **内置动作绝不碰**（见 .cpp 实现）。
+    void clear_plugin_action_buttons();
 
     // ② 点页面空白 ⇒ 把输入框焦点收回页面（用户真机："点空白并不能取消，还是一闪一闪"）
     bool eventFilter(QObject* watched, QEvent* event) override;

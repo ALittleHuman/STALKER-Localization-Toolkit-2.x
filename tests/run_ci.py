@@ -744,7 +744,27 @@ def step_cli_contract(release: bool) -> None:
             fail("重渲染只摘登记不删控件（03 F-05）：clear_plugin_option_combos 里缺 removeWidget/deleteLater"
                  " ⇒ 每渲染一次就多留一套下拉")
         else:
-            ok("插件下拉重渲染真销毁（03 F-05：摘布局 + deleteLater + 清表，不再线性累积控件）")
+            # ★★ P17-42（03 F-05 第二条累积路径）：**按钮**那条也要真销毁（且只动 plugin_ 前缀的）。
+            ab_at = pb_cpp.find("void PageBase::clear_plugin_action_buttons()")
+            hub_src = (ROOT / "src" / "shell" / "hub.cpp").read_text(encoding="utf-8",
+                                                                   errors="replace")
+            if ab_at < 0:
+                fail("缺少 clear_plugin_action_buttons（03 F-05 第二条）：Hub 重渲染前必须先销毁"
+                     "上一轮的插件按钮")
+            else:
+                ab_body = pb_cpp[ab_at:pb_cpp.find(chr(10) + "}", ab_at)]
+                if "removeWidget(" not in ab_body or "deleteLater()" not in ab_body:
+                    fail("插件按钮重渲染只加不清（03 F-05 第二条）：clear_plugin_action_buttons "
+                         "里缺 removeWidget/deleteLater")
+                elif "plugin_" not in ab_body:
+                    fail("插件按钮清理必须以 objectName 前缀 plugin_ 为界（03 F-05 第二条）："
+                         "不许连内置动作一起删")
+                elif "clear_plugin_action_buttons()" not in hub_src:
+                    fail("Hub 重渲染前没调 clear_plugin_action_buttons（03 F-05 第二条）："
+                         "按钮会一轮轮累积")
+                else:
+                    ok("插件槽位重渲染两条都不累积（03 F-05：下拉与按钮都在重渲染前真销毁，"
+                       "且只动 plugin_ 前缀的那些）")
 
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——

@@ -260,6 +260,22 @@ void PageBase::clear_plugin_option_combos() {
     plugin_option_combos_.clear();
 }
 
+// ★★ 2026-10-10（P17-42，审计 03 F-05 第二条累积路径）：**真销毁**上一轮的插件按钮。
+//   只认 objectName 前缀 `plugin_`（Hub 在 hub.cpp 里就是这么命名的）⇒ **内置动作一个都不碰**；
+//   顺序同下拉那条：先 removeWidget + setParent(nullptr)，再 deleteLater（延后到事件循环）。
+void PageBase::clear_plugin_action_buttons() {
+    QWidget* bar = action_bar();
+    if (bar == nullptr) return;
+    const QList<QPushButton*> buttons = bar->findChildren<QPushButton*>();
+    for (QPushButton* button : buttons) {
+        if (button == nullptr) continue;
+        if (!button->objectName().startsWith(QStringLiteral("plugin_"))) continue;
+        if (QLayout* lay = bar->layout()) lay->removeWidget(button);
+        button->setParent(nullptr);
+        button->deleteLater();
+    }
+}
+
 void PageBase::set_plugin_option_combo(const QString& area, QComboBox* combo) {
     plugin_option_combos_.insert(area, combo);
 }

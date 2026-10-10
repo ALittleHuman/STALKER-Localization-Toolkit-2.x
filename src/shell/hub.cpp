@@ -668,6 +668,10 @@ void Hub::render_plugin_slots() {
         PageBase* page = page_at(i);
         if (page == nullptr) continue;
         const std::string host = page->page_id().toStdString();
+        // ★★ 2026-10-10（P17-42，审计 03 F-05 第二条累积路径）：**重渲染前先销毁上一轮的插件按钮**。
+        //   修前这里是直接 `page->add_action(...)` 新增（objectName 前缀 `plugin_`），没人清上一轮的
+        //   ⇒ 每重渲染一次就多一排按钮（与下拉那条同型的控件累积）。只清前缀 `plugin_` 的，内置动作不碰。
+        page->clear_plugin_action_buttons();
         for (const plugin::CommandReg* command :
              registry_.menu_items_for(host, "toolbar")) {
             auto* button = page->add_action(QString::fromStdString(command->label));
