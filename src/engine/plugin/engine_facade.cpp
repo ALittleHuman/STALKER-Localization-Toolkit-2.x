@@ -162,6 +162,11 @@ const EngineFacade* engine_facade() {
     return facade_or_default();
 }
 
+// ★★ 2026-10-10（P17-39，审计 05 PLG-09 ④）：**两个 available* 不是一回事** ——
+//   · `engine_facade_available(reason)`（本函数）＝**整体**可用性：门面在不在、能不能用；
+//   · `EngineFacade::available(method)` ＝**单个方法**在不在（per-method，内部用 `has(...)`）。
+//   同名不同义：判「门面整体可用」用前者，判「这个方法能不能调」用后者。
+//   插件 UI 能力表（`tests/check_ui_capability_table.py` 的 EXPECT_*）走的是 per-method 那一侧。
 bool engine_facade_available(std::string* reason) {
     std::lock_guard<std::mutex> lock(facade_mutex());
     const EngineFacade* facade = facade_or_default();

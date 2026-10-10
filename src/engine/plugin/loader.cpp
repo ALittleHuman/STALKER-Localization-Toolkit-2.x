@@ -168,6 +168,10 @@ std::vector<RegistrationError> load_all_plugins_from_dir(const std::string& dir,
     return errors;
 }
 
+// ★★ 2026-10-10（P17-39，审计 05 PLG-09 ③）：**`unload_all()` 只 `FreeLibrary`、不清注册表** —— 这是**有意**的。
+//   误用会造成**回调悬垂**：卸载后注册表里仍留着指向已卸载模块的函数指针。
+//   纪律：**只在确定没人再调那些回调时**才调它；正常退出走「逐条反注册 → 再卸载」那条
+//   （不清表就再来一轮加载会重复注册）。头文件早写了这句话，这里补上**为什么**。
 void unload_all() {
 #ifdef _WIN32
     for (const Loaded& item : loaded()) {

@@ -715,6 +715,20 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("插件扫描不因 stat 失败停扫（05 PLG-09 ②：stat 用独立 stat_ec，迭代器的 ec 只反映迭代本身）")
 
+    # ── ★★ P17-39（2026-10-10，审计 05 PLG-09 ③④）：两处纪律/概念区分必须在源码现场 ──
+    #   ③ `unload_all()` 只 FreeLibrary、不清注册表 ⇒ 误用会回调悬垂；
+    #   ④ `*_facade_available()`（整体）与 `available(method)`（per-method）同名不同义。
+    ldr2 = (ROOT / "src" / "engine" / "plugin" / "loader.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    efc = (ROOT / "src" / "engine" / "plugin" / "engine_facade.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    if '回调悬垂' not in ldr2:
+        fail("unload_all 的纪律说明没了（05 PLG-09 ③）：必须写清只 FreeLibrary、不清注册表与误用会回调悬垂")
+    elif '两个 available* 不是一回事' not in efc:
+        fail("两个 available* 概念的区分说明没了（05 PLG-09 ④）：整体可用性 vs per-method 必须写清")
+    else:
+        ok("插件纪律与概念区分都在现场（05 PLG-09 ③④：unload_all 的回调悬垂风险 + 两个 available* 的取舍）")
+
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
     #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /
