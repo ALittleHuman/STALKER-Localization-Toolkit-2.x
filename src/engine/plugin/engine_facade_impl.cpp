@@ -930,7 +930,16 @@ const EngineFacade kFontFacade = {
             native.push_back(std::move(one));
         }
         std::vector<efs::DbNameRewrite> rewrites;
-        const std::vector<uint8_t> raw = efs::pack_db(native, *format, &rewrites);
+        // ★★ 2026-10-10（P17-67，审计 01 F-13 的**门面接线**）：这一处**同时覆盖两条调用链** ——
+        //   门面自己的 `fs_pack_db` 与 `py_host.cpp:1694` 的 Python 绑定（后者是**经门面**走的）。
+        //   给了 `&pack_err` ⇒ 启用"4 GiB 窄化"两条检查；命中就**先把 error 塞进既有的 `out.error`
+        //   通道直接返回**（`out.ok` 保持 false），绝不 `write_file_atomic` ⇒ 不落空包。
+        std::string pack_err;
+        const std::vector<uint8_t> raw = efs::pack_db(native, *format, &rewrites, &pack_err);
+        if (!pack_err.empty()) {
+            out.error = pack_err;
+            return out;
+        }
         std::string write_error;
         if (!core::write_file_atomic(out_path, raw, true, write_error)) {
             out.error = "写盘失败：" + write_error;

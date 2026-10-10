@@ -959,6 +959,14 @@ def step_cli_contract(release: bool) -> None:
             fail("官方页仍会把空包写出去（01 F-13 接线）：fs_page 的 pack_db 调用没接出错理由")
         else:
             ok("官方页封包不写空包（01 F-13 接线：fs_page 拿到 pack 出错理由即报错返回，不落盘）")
+        # ★★ P17-67（01 F-13 接线③④）：**门面那一处同时覆盖两条链**（门面自己 + py_host 的绑定）。
+        #   命中窄化就把理由塞进既有的 out.error 通道直接返回 ⇒ 不 write_file_atomic。
+        efi = active_code((ROOT / "src" / "engine" / "plugin" / "engine_facade_impl.cpp").read_text(
+            encoding="utf-8", errors="replace"))
+        if "&pack_err" not in efi or "out.error = pack_err;" not in efi:
+            fail("门面仍会把空包写出去（01 F-13 接线）：engine_facade_impl 的 pack_db 调用没接理由")
+        else:
+            ok("门面封包不写空包（01 F-13 接线：engine_facade_impl 命中窄化即填 out.error 返回，覆盖 py_host）")
 
     # ── ★★ P17-48（04 F-06 第二波）：`--pack-db` 同款写盘守卫 ──────────────────────
     #   ★ 判的是**引擎解析后的真实落点**（`resolve_pack_target` 会补扩展名）——判 operands[0] 会判错对象。
