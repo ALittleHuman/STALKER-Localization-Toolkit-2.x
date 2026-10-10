@@ -991,6 +991,22 @@ def step_cli_contract(release: bool) -> None:
         else:
             ok("CLI 露出整包读理由（01 F-09 消费点：--dump 在有理由时打 note=整包读 reason=…）")
 
+    # ── ★★ P17-73（01 F-09 的**反向夹具**，两半齐全）：回退整包读**必须报**、正常包**不许报** ──
+    #   夹具（实测所得）：**11xx 格式的小包 + 显式指定格式** ⇒ 歧义（hits>1）走回退，
+    #   而显式格式能子裁决成功 ⇒ `DUMP ok … seek=0` ＋ `DUMP note=整包读 reason=…`。
+    #   对照：同一个小包打成 `xdb` ⇒ `seek=1` 且**没有** note 行（P17-71 已实测）。
+    f09_dir = guard_dir / "f09_amb"
+    f09_dir.mkdir(parents=True, exist_ok=True)
+    (f09_dir / "a.txt").write_text("hello", encoding="ascii")
+    f09_11 = guard_dir / "f09_11xx.db"
+    run([str(CLI_EXE), "--pack-db", str(f09_11), "11xx", str(f09_dir), "--force"])
+    _, f09_out = run([str(CLI_EXE), "--dump", str(f09_11), "11xx"])
+    if "note=整包读" not in f09_out or "seek=0" not in f09_out:
+        fail("回退整包读没报出来（01 F-09 反向夹具）：期望 seek=0 ＋ note=整包读，实际 %r"
+             % f09_out.strip()[:160])
+    else:
+        ok("回退整包读必须报（01 F-09 反向夹具：11xx 小包走回退 ⇒ seek=0 ＋ note=整包读 + 理由）")
+
     # ── ★★ P17-48（04 F-06 第二波）：`--pack-db` 同款写盘守卫 ──────────────────────
     #   ★ 判的是**引擎解析后的真实落点**（`resolve_pack_target` 会补扩展名）——判 operands[0] 会判错对象。
     #   受影响步骤：`golden-db`（在同一 ours.<key>.db 上逐格式反复写）已连带补 `--force`。
