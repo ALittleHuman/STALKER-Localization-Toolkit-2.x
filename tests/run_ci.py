@@ -868,6 +868,34 @@ def step_cli_contract(release: bool) -> None:
             ok("插件侧只许走 api（接口契约批：%d 个插件文件、%d 处 api.* 用法，无 PageServices/引擎头交叉）"
                % (len(plugin_pys), api_uses))
 
+    # ── ★★ P17-57（接口契约批）：`TreeNodeSpec` 必须带上 `tooltip` 与 `matched` ──
+    #   口径（用户 2026-10-09）：**接口归地基、呈现归表层** —— 字段先运到（工具提示、命中标记），
+    #   "命中怎么画（加粗等）"留给 UI 批。三处都要在：结构体声明 / Python 绑定 / 宿主落 item。
+    wf = (ROOT / "include" / "xrkit" / "engine" / "plugin" / "widget_facade.h").read_text(
+        encoding="utf-8", errors="replace")
+    ph = (ROOT / "src" / "engine" / "plugin" / "py_host.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    ft = (ROOT / "src" / "shell" / "facade_tree.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    ts_at = wf.find("struct TreeNodeSpec {")
+    ts_body = active_code(wf[ts_at:wf.find("};", ts_at)]) if ts_at >= 0 else ""
+    # ★ 查**声明形状**（`std::string tooltip;` / `bool matched = ...;`），不是查词 ——
+    #   光查 "matched" 会被说明注释里的那个词骗过（本判据第一版就是这么假绿的，红证当场拆穿）。
+    tn_missing = []
+    if not re.search(r"std::string\s+tooltip\b", ts_body):
+        tn_missing.append("tooltip")
+    if not re.search(r"bool\s+matched\b", ts_body):
+        tn_missing.append("matched")
+    if tn_missing:
+        fail("TreeNodeSpec 缺字段（接口契约批）：%s —— 接口要先运到，呈现留给 UI 批"
+             % "、".join(tn_missing))
+    elif 'node["tooltip"]' not in ph or 'node["matched"]' not in ph:
+        fail("Python 侧给不了 tooltip/matched（接口契约批）：tree_nodes_from_python 没读这两个键")
+    elif "setToolTip" not in ft or "Qt::UserRole + 2" not in ft:
+        fail("宿主没把 tooltip/matched 落到 item（接口契约批）：facade_tree 缺 setToolTip / UserRole+2")
+    else:
+        ok("TreeNodeSpec 带上 tooltip 与 matched（接口契约批：声明＋Python 绑定＋宿主落 item 三处齐全）")
+
     # ── ★★ P17-48（04 F-06 第二波）：`--pack-db` 同款写盘守卫 ──────────────────────
     #   ★ 判的是**引擎解析后的真实落点**（`resolve_pack_target` 会补扩展名）——判 operands[0] 会判错对象。
     #   受影响步骤：`golden-db`（在同一 ours.<key>.db 上逐格式反复写）已连带补 `--force`。

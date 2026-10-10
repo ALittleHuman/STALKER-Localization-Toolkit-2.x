@@ -235,6 +235,12 @@ struct UiFacade {
         // ★★ P13：这一行**有没有行尾动作**（fs 页的 ✕ 那种）。
         //   fs 的口径是「源节点才有」（分组节点没有）；门面把它**参数化**成显式声明。
         bool has_action = false;
+        // ★★ 2026-10-10（P17-57，接口契约批 `TreeNodeSpec{+tooltip,+matched}`）：**接口先带上这两个字段**。
+        //   `tooltip`：这一行的悬停提示（页面/插件都能给；空串＝不设）。
+        //   `matched`：这一行**命中了当前筛选/搜索**（页面按它决定要不要加粗 ——
+        //   "加粗怎么画"属**呈现**，归 UI 批；**接口先把它运到**，免得将来改排版又动契约）。
+        std::string tooltip;
+        bool matched = false;
     };
     std::function<UiHandle(UiHandle parent, const std::vector<TreeColumn>& columns)> tree;
     // ★★ P11b-2：**换列声明**（xml 页切模式要换表头/列宽 —— 对应页面的

@@ -95,6 +95,16 @@ QTreeWidgetItem* FacadeTree::add_node(QTreeWidgetItem* parent,
     item->setData(0, Qt::UserRole, QString::fromStdString(node.key));
     // ★ P13：这一行有没有行尾动作（fs 的「源节点才有」在门面里就是显式声明）
     item->setData(0, Qt::UserRole + 1, node.has_action ? 1 : 0);
+    // ★★ 2026-10-10（P17-57，接口契约批 `TreeNodeSpec{+tooltip,+matched}`）：
+    //   · `tooltip` ⇒ 逐列设悬停提示（空串不设，保持现状）；
+    //   · `matched` ⇒ **记进 item**（UserRole+2），让"怎么画加粗"由**呈现层**决定 ——
+    //     接口先把事实运到，UI 批再决定视觉（用户 2026-10-09 的"接口归地基、呈现归表层"）。
+    if (!node.tooltip.empty()) {
+        const QString tip = QString::fromStdString(node.tooltip);
+        const int cols = std::max<int>(1, static_cast<int>(node.cells.size()));
+        for (int c = 0; c < cols; ++c) item->setToolTip(c, tip);
+    }
+    item->setData(0, Qt::UserRole + 2, node.matched ? 1 : 0);
     if (node.has_children) {
         // ★ 只给"有箭头"的提示，**不塞占位子项**（塞了就会被算进行数/可见行，判据会跟着错）
         item->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);

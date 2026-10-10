@@ -378,6 +378,10 @@ std::vector<UiFacade::TreeNodeSpec> tree_nodes_from_python(const py::object& nod
         if (node.contains("has_action")) {
             spec.has_action = py::cast<bool>(node["has_action"]);
         }
+        // ★★ 2026-10-10（P17-57，接口契约批）：Python 侧也能给 `tooltip` / `matched`
+        //   （树节点 dict 的两个新键；缺省＝不设/未命中）。
+        if (node.contains("tooltip")) spec.tooltip = py::str(node["tooltip"]).cast<std::string>();
+        if (node.contains("matched")) spec.matched = py::cast<bool>(node["matched"]);
         out.push_back(std::move(spec));
     }
     return out;
