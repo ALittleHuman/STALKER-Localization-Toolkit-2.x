@@ -18,7 +18,17 @@ endif()
 file(GLOB_RECURSE XRKIT_SCAN
   "${XRKIT_ROOT}/src/core/*.cpp"   "${XRKIT_ROOT}/src/core/*.h"   "${XRKIT_ROOT}/src/core/*.hpp"
   "${XRKIT_ROOT}/src/engine/*.cpp" "${XRKIT_ROOT}/src/engine/*.h" "${XRKIT_ROOT}/src/engine/*.hpp"
-  "${XRKIT_ROOT}/include/xrkit/*.h" "${XRKIT_ROOT}/include/xrkit/*.hpp")
+  "${XRKIT_ROOT}/include/xrkit/*.h" "${XRKIT_ROOT}/include/xrkit/*.hpp"
+  # ★★ 2026-10-10（P17-46，零碎批）：**补 `tools/cli`** —— 修前这里只扫 core/engine/公共头，
+  #   于是"往 `tools/cli/main.cpp` 里塞一个 `#include <QString>`"**完全静默**（实测：仍打
+  #   `J5 OK：96 个 …`）。而 CLI 被定位成"引擎的黑盒驱动器"（必须能脱离 Qt 单独编译/运行），
+  #   它一旦沾 Qt，那条定位就没了 ⇒ CLI 必须一起扫。
+  #   ★ **只扫 `tools/cli`，不扫整个 `tools/`**：`tools/build_gui/main.cpp` 是**GUI 工具**，
+  #     它本来就 include `<QComboBox>` 等（实测：把整个 tools/ 加进来会立刻红在那一个文件上）——
+  #     与 `src/shell/` 的处置同理：**GUI 侧不受这条红线约束，被 CLI 黑盒驱动的那些才受**。
+  #   ★ 同一批的实测更正：审计说"GLOB 漏 `include/xrkit/plugin/abi.h`"——**实测不成立**：
+  #     `GLOB_RECURSE` 连子目录一起扫，往 `abi.h` 里注入 Qt 会**立刻红**（96 个文件里含它）。
+  "${XRKIT_ROOT}/tools/cli/*.cpp" "${XRKIT_ROOT}/tools/cli/*.h" "${XRKIT_ROOT}/tools/cli/*.hpp")
 
 list(LENGTH XRKIT_SCAN XRKIT_SCAN_COUNT)
 if(XRKIT_SCAN_COUNT EQUAL 0)
