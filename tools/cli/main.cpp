@@ -3187,6 +3187,13 @@ int run_cli(const std::vector<std::string>& args) {
                   << " seek=" << (res.used_seek ? 1 : 0)
                   << " header_bytes=" << res.header_bytes
                   << " file_bytes=" << res.file_size << "\n";
+        // ★★ 2026-10-10（P17-71，审计 01 F-09 C 步 · **CLI 消费点**）：退回整包读时**把理由也打出来**。
+        //   零静默口径：字节数说"读了多少"，理由说"为什么"——两个都露出来，用户才知道是
+        //   块头坏了 / 不是 DB / 还是格式认不出（修前只有字节数，属半静默）。
+        //   ★ 只在**真的退回**时打这一行（正常包不许报，见同批判据）。
+        if (!res.whole_file_reason.empty()) {
+            std::cout << "DUMP note=整包读 reason=" << res.whole_file_reason << "\n";
+        }
         return kExitOk;
     }
 

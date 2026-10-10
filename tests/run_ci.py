@@ -984,6 +984,12 @@ def step_cli_contract(release: bool) -> None:
             fail("退回整包读的地方没写理由（01 F-09）：db.cpp 的退回点必须置 whole_file_reason")
         else:
             ok("整包读带理由（01 F-09：DbListing 有 whole_file_reason，退回点写清为什么）")
+        # ★★ P17-71（01 F-09 消费点 · CLI）：`--dump` 必须把理由**打出来**（且只在真有理由时）。
+        #   口径：字节数说"读了多少"，理由说"为什么" —— 两个都露出来才算可观测（零静默）。
+        if "DUMP note=整包读 reason=" not in mnc:
+            fail("CLI 没把整包读的理由露出来（01 F-09 消费点）：--dump 该打 DUMP note=整包读 reason=…")
+        else:
+            ok("CLI 露出整包读理由（01 F-09 消费点：--dump 在有理由时打 note=整包读 reason=…）")
 
     # ── ★★ P17-48（04 F-06 第二波）：`--pack-db` 同款写盘守卫 ──────────────────────
     #   ★ 判的是**引擎解析后的真实落点**（`resolve_pack_target` 会补扩展名）——判 operands[0] 会判错对象。
