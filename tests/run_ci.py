@@ -637,6 +637,28 @@ def step_cli_contract(release: bool) -> None:
         ok("写盘动作不静默截断（04 F-06 第二波 `--codec-lossy`：已存在⇒rc=3（含 strict 的动态下标）；"
            "`--force`⇒覆盖）")
 
+    # ── ★★ P17-34（04 F-06 第二波）：`--extract-chars` 同款守卫 ────────────────────────
+    #   ★ 本动作的写盘点用的是 `args[1]`（`args` 与 `operands` 的过滤规则不同，别混）。
+    #   受影响的步骤 `golden-font-charset`（在固定前缀 `ours_*.txt` 上反复写）已连带补 `--force`（2 处）。
+    ec_dir = guard_dir / "chars_dir"
+    ec_dir.mkdir(parents=True, exist_ok=True)
+    (ec_dir / "a.xml").write_text("<config><text>Привет</text></config>\n", encoding="cp1251")
+    ec_out = guard_dir / "chars_out.txt"
+    x1, xo1 = run([str(CLI_EXE), "--extract-chars", str(ec_dir), str(ec_out)])
+    x2, xo2 = run([str(CLI_EXE), "--extract-chars", str(ec_dir), str(ec_out)])
+    x3, xo3 = run([str(CLI_EXE), "--extract-chars", str(ec_dir), str(ec_out), "--force"])
+    if x1 != 0:
+        fail("写盘守卫的**前提**不成立（04 F-06 / --extract-chars）：首次写期望 rc=0，实际 rc=%d %r"
+             % (x1, xo1.strip()[:100]))
+    elif x2 != 3 or "--force" not in xo2:
+        fail("写盘动作静默截断（04 F-06 / --extract-chars）：同路径再写期望 rc=3 ＋ 理由含 `--force`，"
+             "实际 rc=%d %r" % (x2, xo2.strip()[:120]))
+    elif x3 != 0:
+        fail("`--force` 没能覆盖（04 F-06 / --extract-chars）：期望 rc=0，实际 rc=%d %r"
+             % (x3, xo3.strip()[:120]))
+    else:
+        ok("写盘动作不静默截断（04 F-06 第二波 `--extract-chars`：已存在⇒rc=3；`--force`⇒覆盖）")
+
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
     #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /

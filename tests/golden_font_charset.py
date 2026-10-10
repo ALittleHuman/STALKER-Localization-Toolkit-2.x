@@ -119,7 +119,7 @@ def blame_files(fp, corpus_dir: Path, full_cyrillic: bool):
             one = Path(tmp)
             shutil.copy2(path, one / path.name)
             out = one / "out.txt"
-            proc = subprocess.run([str(CLI), "--extract-chars", str(one), str(out)]
+            proc = subprocess.run([str(CLI), "--extract-chars", str(one), str(out), "--force"]
                                   + ([] if full_cyrillic else ["--no-full-cyrillic"]),
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if proc.returncode != 0:
@@ -209,7 +209,7 @@ def main() -> int:
             tag = "%s full_cyrillic=%d" % (name, 1 if full_cyrillic else 0)
             out_file = WORK / ("ours_%d_%s.txt" % (1 if full_cyrillic else 0,
                                                    corpus_dir.name))
-            cmd = [str(CLI), "--extract-chars", str(corpus_dir), str(out_file)]
+            cmd = [str(CLI), "--extract-chars", str(corpus_dir), str(out_file), "--force"]
             if not full_cyrillic:
                 cmd.append("--no-full-cyrillic")
             proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

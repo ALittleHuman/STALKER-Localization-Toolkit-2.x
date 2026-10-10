@@ -173,7 +173,8 @@ void print_usage() {
            "  --resample-dump <输入raw> <源宽> <源高> <目标宽> <目标高> <输出raw> [--force]\n"
            "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
            "                                              Pillow LANCZOS 重采样（与 Pillow 对拍）\n"
-           "  --extract-chars <xml目录> [输出文件] [--no-full-cyrillic]\n"
+           "  --extract-chars <xml目录> [输出文件] [--no-full-cyrillic] [--force]\n"
+           "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
            "                                              字符集提取（每行一个十六进制码位）\n"
            "  --convert-batch <源> <输出目录> <源编码> <目标编码> [--ext .xml] [--no-recursive]\n"
            "                  [--backup] [--exclude <模式>]\n"
@@ -4282,7 +4283,20 @@ int run_cli(const std::vector<std::string>& args) {
         }
         const std::string body = xrkit::engine::font::charset_to_lines(result.chars);
         if (args.size() >= 2) {
-            std::ofstream f(path_from_utf8(args[1]), std::ios::binary | std::ios::trunc);
+            // ★★ 2026-10-10（P17-34，审计 04 F-06 第二波）：**输出已存在即拒绝，除非 `--force`**。
+        //   与 `--lzhuf`/`--decl-fix`/`--resample-dump`/`--font-render`/`--sniff`/`--decode-text`/
+        //   `--codec-lossy` 同款。本动作的第二操作数是输出（`args[1]`，注意它用的是 `args` 而不是
+        //   `operands` —— 两者的过滤规则不同，别混）。
+        bool extractchars_force = false;
+        for (const std::string& op : operands) {
+            if (op == "--force") extractchars_force = true;
+        }
+        if (!extractchars_force && std::filesystem::exists(path_from_utf8(args[1]))) {
+            std::cerr << "CHARSET error reason=输出已存在：" << args[1]
+                      << "（拒绝静默截断；确认要覆盖请加 --force）\n";
+            return kExitUsage;
+        }
+        std::ofstream f(path_from_utf8(args[1]), std::ios::binary | std::ios::trunc);
             if (!f) {
                 std::cout << "CHARSET error reason=写不出 " << args[1] << "\n";
                 return kExitFail;
