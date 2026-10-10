@@ -780,6 +780,13 @@ DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallb
         return res;
     }
     res.header_bytes = raw.size();
+    // ★★ 2026-10-10（P17-70，审计 01 F-09 C 步的引擎半）：**把"为什么走了整包读"写下来**。
+    //   这一段就是 seek 不可用时的退回点（`:774` 之前已经把整个文件读进 `raw`）——
+    //   修前只记了 `header_bytes`（"读了多少"），**没记原因**（"为什么不得不整包读"），
+    //   于是界面/CLI 即便把字节数露出来，用户也不知道是"块头坏了""不是 DB"还是"格式认不出"。
+    //   零静默：理由必须跟着字节数一起可读出去（消费点见 P17-69 先查补充）。
+    res.whole_file_reason = "seek 式读取不可用，已退回整包读（读入 " +
+                            std::to_string(raw.size()) + " 字节）";
     std::optional<DbFormat> fmt = auto_detect(raw);
     if (!fmt.has_value() && db_fallback.has_value()) fmt = db_fallback;
     if (!fmt.has_value()) {

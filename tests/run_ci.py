@@ -972,6 +972,18 @@ def step_cli_contract(release: bool) -> None:
             fail("门面仍会把空包写出去（01 F-13 接线）：engine_facade_impl 的 pack_db 调用没接理由")
         else:
             ok("门面封包不写空包（01 F-13 接线：engine_facade_impl 命中窄化即填 out.error 返回，覆盖 py_host）")
+        # ★★ P17-70（01 F-09 C 步的引擎半）：**退回整包读必须带理由**（字节数 + 为什么）。
+        #   零静默：只报"读了多少"不够，还得说清"为什么不得不整包读"，否则用户无法判断。
+        dbh2 = (ROOT / "include" / "xrkit" / "engine" / "fs" / "db.h").read_text(
+            encoding="utf-8", errors="replace")
+        dbc2 = active_code((ROOT / "src" / "engine" / "fs" / "db.cpp").read_text(
+            encoding="utf-8", errors="replace"))
+        if "whole_file_reason" not in dbh2:
+            fail("DbListing 缺 whole_file_reason（01 F-09）：整包读只报字节数、不说原因 = 半静默")
+        elif "res.whole_file_reason" not in dbc2:
+            fail("退回整包读的地方没写理由（01 F-09）：db.cpp 的退回点必须置 whole_file_reason")
+        else:
+            ok("整包读带理由（01 F-09：DbListing 有 whole_file_reason，退回点写清为什么）")
 
     # ── ★★ P17-48（04 F-06 第二波）：`--pack-db` 同款写盘守卫 ──────────────────────
     #   ★ 判的是**引擎解析后的真实落点**（`resolve_pack_target` 会补扩展名）——判 operands[0] 会判错对象。

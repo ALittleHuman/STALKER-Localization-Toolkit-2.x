@@ -96,6 +96,10 @@ struct DbListing {
     double elapsed_ms = 0.0;
     uint64_t header_bytes = 0;   // 实际读进来的字节数（判据：必须远小于 file_size）
     bool used_seek = false;      // true = 只读了块头与尾部表；false = 退回整文件读
+    // ★★ 2026-10-10（P17-70，审计 01 F-09 C 步）：**退回整包读的"理由"**（空 = 没退回）。
+    //   口径：字节数（`header_bytes`）说"读了多少"，这个字段说"**为什么**不得不整包读"
+    //   —— 两个一起露给用户才算可观测（零静默）。
+    std::string whole_file_reason;
     bool ambiguous = false;      // 唯一自洽判定出多个候选（此时走旧路径裁决）
 };
 
