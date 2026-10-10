@@ -346,9 +346,20 @@ static void DeleteNode(int p) {
 
 /* ═══ Public API ═══ */
 
+/* ★★ 2026-10-10（P17-59，审计 01 F-19 Info）：**消除非对齐与端序读取依赖**。
+ *   修前这里（与 lzhuf_decode 里那处）写的是 `*(unsigned*)src` —— `src` 指向
+ *   `std::vector<uint8_t>::data()`，**不保证 4 字节对齐**；x86/x64 容忍非对齐访问，
+ *   但换架构就是未定义行为，而且这条读法把**端序**也一起依赖掉了（大端机上读出来是反的）。
+ *   现在按字节显式组装 **小端 32 位**（1.x 的容器就是这个端序），不碰对齐、不碰端序。
+ */
+static unsigned lzhuf_read_u32_le(const unsigned char *p) {
+    return (unsigned)p[0] | ((unsigned)p[1] << 8) | ((unsigned)p[2] << 16) |
+           ((unsigned)p[3] << 24);
+}
+
 EXPORT int lzhuf_decode_size(const unsigned char *src, int src_len) {
     if (src_len < 4) return -1;
-    return (int)(*(unsigned*)src);
+    return (int)lzhuf_read_u32_le(src);
 }
 
 EXPORT int lzhuf_decode(const unsigned char *src, int src_len, unsigned char *dest, int dest_cap) {
@@ -356,7 +367,7 @@ EXPORT int lzhuf_decode(const unsigned char *src, int src_len, unsigned char *de
     unsigned count;
     int textsize;
 
-    textsize = (int)(*(unsigned*)src);
+    textsize = (int)lzhuf_read_u32_le(src);
     if (textsize <= 0 || textsize > dest_cap || textsize > 256*1024*1024) return -1;
 
     src_data = src; src_pos = 4; src_limit = src_len;
@@ -396,7 +407,12 @@ EXPORT int lzhuf_encode(const unsigned char *src, int src_len, unsigned char *de
 
     src_data = src; src_pos = 0; src_limit = src_len;
     dest_data = dest; dest_pos = 4; dest_limit = dest_cap;
-    *(unsigned*)dest = (unsigned)textsize;
+    /* ★★ 2026-10-10（P17-59，审计 01 F-19 的**写侧**同款）：这里原来也是 `*(unsigned*)dest = …`
+     *   —— 非对齐写 + 端序依赖。改成逐字节写**小端 32 位**，与读侧 `lzhuf_read_u32_le` 对称。 */
+    dest[0] = (unsigned char)(textsize & 0xFF);
+    dest[1] = (unsigned char)((textsize >> 8) & 0xFF);
+    dest[2] = (unsigned char)((textsize >> 16) & 0xFF);
+    dest[3] = (unsigned char)((textsize >> 24) & 0xFF);
 
     putbuf = 0; putlen = 0;
 

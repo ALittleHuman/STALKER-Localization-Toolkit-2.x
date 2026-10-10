@@ -896,6 +896,23 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("TreeNodeSpec 带上 tooltip 与 matched（接口契约批：声明＋Python 绑定＋宿主落 item 三处齐全）")
 
+    # ── ★★ P17-59（审计 01 F-19 Info）：`lzhuf_ref.c` 不许再依赖**非对齐/端序**读写 ──
+    #   修前：`*(unsigned*)src`（读侧两处）与 `*(unsigned*)dest = …`（写侧一处）——
+    #   `src`/`dest` 指向 `std::vector<uint8_t>::data()`，**不保证 4 字节对齐**；x86 容忍，
+    #   换架构即未定义行为，而且把**端序**也一起依赖掉了。
+    #   现在按字节显式组装/拆分**小端 32 位**（读 `lzhuf_read_u32_le`、写侧逐字节）。
+    #   ★ 查代码前先 `active_code()` 剥注释 —— 说明注释里正引用了那段旧写法（会假红）。
+    lz_code = active_code((ROOT / "src" / "engine" / "fs" / "lzhuf_ref.c").read_text(
+        encoding="utf-8", errors="replace"))
+    lz_cast = re.findall(r"\*\(\s*(?:unsigned|uint32_t|int|uint16_t|short)\s*\*\s*\)", lz_code)
+    if lz_cast:
+        fail("lzhuf_ref.c 又出现非对齐/端序读写（01 F-19）：%d 处指针强转（如 %s）"
+             % (len(lz_cast), lz_cast[0]))
+    elif "lzhuf_read_u32_le" not in lz_code:
+        fail("lzhuf_ref.c 缺小端读助手（01 F-19）：判据与实现脱节，先修判据本身")
+    else:
+        ok("lzhuf 不依赖非对齐/端序（01 F-19：读写两侧都按字节显式组小端 32 位）")
+
     # ── ★★ P17-48（04 F-06 第二波）：`--pack-db` 同款写盘守卫 ──────────────────────
     #   ★ 判的是**引擎解析后的真实落点**（`resolve_pack_target` 会补扩展名）——判 operands[0] 会判错对象。
     #   受影响步骤：`golden-db`（在同一 ours.<key>.db 上逐格式反复写）已连带补 `--force`。
