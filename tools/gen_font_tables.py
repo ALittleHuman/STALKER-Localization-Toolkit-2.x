@@ -27,6 +27,7 @@ r"""生成 xrkit::engine::font 的三张数据表（.inc）—— 与编码表�
 
 from __future__ import annotations
 
+import os
 import argparse
 import hashlib
 import json
@@ -39,7 +40,10 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "src" / "engine" / "font"
 
 # 1.x 参照实现的仓库根（本工程的门禁脚本也用同一路径口径）
-TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+# ★★ 2026-10-10（P17-23，审计 04 F-08）：**不要写死本机的 1.x 路径** ——
+#   优先读环境变量 `XRKIT_TOOLKIT_1X`（换机器/换检出位置不用改源码），没有才回落到本机既有位置。
+TOOLKIT_1X = Path(os.environ.get("XRKIT_TOOLKIT_1X")
+                  or r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
 # 原版工具"汉化包生成工具2024"的成品（第三方交叉核对；缺了就报 SKIP，不算失败）
 REFERENCE_UI = Path(r"E:\Software\Games\STALKER\Localization\Tools\Tool\汉化包生成工具2024"
                     r"\gamedata\textures\ui")

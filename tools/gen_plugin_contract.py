@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import os
 import argparse
 import ast
 import sys
@@ -21,7 +22,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+# ★★ 2026-10-10（P17-23，审计 04 F-08）：**不要写死本机的 1.x 路径** ——
+#   优先读环境变量 `XRKIT_TOOLKIT_1X`（换机器/换检出位置不用改源码），没有才回落到本机既有位置。
+TOOLKIT_1X = Path(os.environ.get("XRKIT_TOOLKIT_1X")
+                  or r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
 PLUGINS_PY = TOOLKIT_1X / "toolkit_plugins.py"
 PLUGIN_UI_PY = TOOLKIT_1X / "toolkit_plugin_ui.py"
 OUT = ROOT / "src" / "engine" / "plugin" / "contract_tables.inc"

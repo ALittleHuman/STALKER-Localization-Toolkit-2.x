@@ -1859,6 +1859,24 @@ def step_shell_smoke(release: bool) -> None:
              "与收尾的 `std::filesystem::rename(part_path, out_path, ...)`")
     else:
         ok("封包产物原子写（01 F-16：写 `<out>.part` → 关闭句柄 → rename；失败清 .part、目标不动）")
+
+    # ── ★★ P17-23（2026-10-10，审计 04 F-08 Low）：**生成器不许硬编码 1.x 路径** ────────────
+    #   事实（修前）：`tools/gen_plugin_contract.py` / `gen_font_templates.py` / `gen_font_tables.py`
+    #   都在**模块层**写死本机的 1.x 绝对路径（`E:\\Software\\Games\\...\\STALKER_Toolkit`）
+    #   ⇒ 换机器/换检出位置就得改源码。现在三个都改成**环境变量 `XRKIT_TOOLKIT_1X` 优先**，
+    #   没有才回落到本机既有位置（`gen_font_tables.py` 另保留 `--toolkit-1x`，命令行优先级最高）。
+    #   判据：三个生成器都必须引用 `XRKIT_TOOLKIT_1X`；且不许再出现"裸的、无环境变量开关的"赋值。
+    gen_missing = []
+    for gen_name in ("gen_plugin_contract.py", "gen_font_templates.py", "gen_font_tables.py"):
+        gen_src = (ROOT / "tools" / gen_name).read_text(encoding="utf-8", errors="replace")
+        if "XRKIT_TOOLKIT_1X" not in gen_src:
+            gen_missing.append(gen_name)
+    if gen_missing:
+        fail("生成器还硬编码着 1.x 路径（04 F-08）：%s 里没有 `XRKIT_TOOLKIT_1X`（环境变量）开关 ⇒ "
+             "换机器就得改源码" % "、".join(gen_missing))
+    else:
+        ok("生成器不写死 1.x 路径（04 F-08：三个生成器都认 `XRKIT_TOOLKIT_1X`，"
+           "命令行 `--toolkit-1x` 优先级更高）")
     #   事实（修前）：`tail_len = static_cast<uint32_t>(nblocks) * 4u` —— 窄化 ×4 不溢出**完全依赖**
     #   上游 `ino.size ≤ 512 MiB` 那条闸（保证 nblocks ≤ 2^29），安全性是"跨两处的隐式耦合"：
     #   谁放宽 block_size 校验或调大那条闸，就会退化成 tail 分配过小而循环按 nblocks 越界读。
