@@ -83,8 +83,10 @@ def main() -> int:
         src = WORK / "src.raw"
         dst = WORK / "dst.raw"
         src.write_bytes(px)
+        # ★ P17-29（04 F-06）：本步在同一路径上**循环复用** dst.raw ⇒ 必须显式 `--force`
+        #   （守卫口径：输出已存在即拒，除非 --force；这一处语义本来就是"要覆盖"）。
         proc = subprocess.run([str(CLI), "--resample-dump", str(src), str(sw), str(sh),
-                               str(dw), str(dh), str(dst)],
+                               str(dw), str(dh), str(dst), "--force"],
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         if proc.returncode != 0:
             failures += 1

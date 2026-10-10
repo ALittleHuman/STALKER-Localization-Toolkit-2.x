@@ -164,7 +164,8 @@ void print_usage() {
            "  --font-metrics <输出>                       导出字库几何/宽度表（与 1.x font_pack 对拍）\n"
            "  --font-render <字体> <字号> <x2> <fmt> <字符集文件> <输出前缀>\n"
            "                                              渲染一个字号的 DDS + ini（与 1.x 逐字节对拍）\n"
-           "  --resample-dump <输入raw> <源宽> <源高> <目标宽> <目标高> <输出raw>\n"
+           "  --resample-dump <输入raw> <源宽> <源高> <目标宽> <目标高> <输出raw> [--force]\n"
+           "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
            "                                              Pillow LANCZOS 重采样（与 Pillow 对拍）\n"
            "  --extract-chars <xml目录> [输出文件] [--no-full-cyrillic]\n"
            "                                              字符集提取（每行一个十六进制码位）\n"
@@ -4536,6 +4537,20 @@ int run_cli(const std::vector<std::string>& args) {
         }
         std::vector<uint8_t> dst(static_cast<size_t>(dw) * static_cast<size_t>(dh), 0);
         xrkit::engine::font::resample_lanczos_8bpc(src.data(), sw, sh, dst.data(), dw, dh);
+        // ★★ 2026-10-10（P17-29，审计 04 F-06 第二波第一个动作）：**输出已存在即拒绝，除非 `--force`**。
+        //   与 `--lzhuf`/`--decl-fix` 同款（口径、退码、理由措辞一致）。
+        //   ★ 连带改动：`tests/golden_font_resample.py` 在同一路径上**循环复用** `WORK/"dst.raw"`，
+        //     所以那一处必须补 `--force`（它本来就是"要覆盖"的语义）—— 这就是 P17-28 说的
+        //     "第二波动作都有门禁在用，加守卫必须连带改测试"的实例。
+        bool resample_force = false;
+        for (const std::string& op : operands) {
+            if (op == "--force") resample_force = true;
+        }
+        if (!resample_force && std::filesystem::exists(path_from_utf8(operands[5]))) {
+            std::cerr << "RESAMPLE error reason=输出已存在：" << operands[5]
+                      << "（拒绝静默截断；确认要覆盖请加 --force）\n";
+            return kExitUsage;
+        }
         std::ofstream f(path_from_utf8(operands[5]), std::ios::binary | std::ios::trunc);
         if (!f) {
             std::cout << "RESAMPLE error reason=写不出 " << operands[5] << "\n";
