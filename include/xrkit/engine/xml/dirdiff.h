@@ -43,10 +43,22 @@ struct DirDiffReport {
     std::vector<DirDiffRow> rows;
     int total = 0;            // 配对后的文件数（含取消时没比到的）
     bool cancelled = false;
+    // ★★ 2026-10-10（P17-10，审计 02 F-05 Medium）：**遍历出错必须带出来**。
+    //   事实（修前）：`list_xml_files` 里 `if (ec) break;` —— 某侧目录遍历中途出错
+    //   （权限/被独占/路径过长）就静默截断 ⇒ 那一侧后续文件全缺 ⇒ 它们会被判成
+    //   "只在一侧存在"或干脆消失 ⇒ 结果表给出**虚假的"一致/缺失"结论**，而页面/CSV
+    //   一个告警都没有。校对工具的价值就在"不漏"，静默漏文件属实质缺陷。
+    //   现在：每侧的第一条出错理由（含目录与 `ec.message()`）落这里；**非空即"本次结论不可信"**，
+    //   调用方（CLI 退码 / 页面状态栏 / CSV）必须把它显示出来。
+    std::vector<std::string> errors;
+    bool listings_ok() const { return errors.empty(); }
 };
 
 // 递归列出 `*.xml`：返回**相对路径**（'/' 分隔）按字节序升序（确定性）。
-std::vector<std::string> list_xml_files(const std::string& root);
+// ★ P17-10（02 F-05）：`errors` 非空 ⇒ 遍历中途出过错（**保留了已经列到的部分**，
+//   但调用方必须把"结论不可信"这件事报出去；别把部分列表当完整列表用）。
+std::vector<std::string> list_xml_files(const std::string& root,
+                                        std::vector<std::string>* errors = nullptr);
 
 // 比两个目录（`total` = 两侧相对路径的并集大小）。
 DirDiffReport compare_dirs(const DirDiffOptions& options);

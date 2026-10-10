@@ -305,6 +305,9 @@ struct XmlDirDiffReport {
     std::vector<XmlDirDiffRow> rows;
     int total = 0;
     bool cancelled = false;
+    // ★★ P17-10（02 F-05）：目录遍历出错理由（引擎 `DirDiffReport::errors` 透上来）——
+    //   非空即"本次比较结论不可信"，插件页与 headless 都要把它报出去。
+    std::vector<std::string> errors;
 };
 
 

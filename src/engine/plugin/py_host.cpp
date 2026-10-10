@@ -1278,6 +1278,13 @@ public:
         py::dict out;
         out["total"] = report.total;
         out["cancelled"] = report.cancelled;
+        // ★★ P17-10（02 F-05）：**遍历错误也要交给插件**（`DirDiffReport::errors`）——
+        //   插件页的"结论不可信"告警与 headless 的 `errors=N` 收尾行都读它；
+        //   修前这里只透 total/cancelled/rows ⇒ 插件侧永远看不到"某侧目录没读全"。
+        py::list errors;
+        for (const std::string& e : report.errors) errors.append(py::str(e));
+        out["errors"] = errors;
+        out["listings_ok"] = report.errors.empty();
         py::list rows;
         for (const XmlDirDiffRow& row : report.rows) {
             py::dict item = xml_result_to_python(row.result);

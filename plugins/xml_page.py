@@ -88,8 +88,14 @@ def headless(api, args):
                         row["ids_b"], len(row["count_diff"]), len(row["text_diff"]),
                         len(row["only_a"]), len(row["only_b"]), 1 if row["consistent"] else 0,
                         1 if (row["untrusted_a"] or row["untrusted_b"]) else 0))
-    lines.append("XMLDIRS ok total=%d rows=%d cancelled=%d"
-                 % (report["total"], len(report["rows"]), 1 if report["cancelled"] else 0))
+    # ★★ P17-10（审计 02 F-05）：收尾行与 CLI **逐字同形**（含 `errors=N`）——
+    #   引擎把 `DirDiffReport::errors` 透了上来，这里只排版；两侧必须同形，门禁逐行对拍。
+    errors = list(report.get("errors") or [])
+    lines.append("XMLDIRS ok total=%d rows=%d cancelled=%d errors=%d"
+                 % (report["total"], len(report["rows"]), 1 if report["cancelled"] else 0,
+                    len(errors)))
+    for one in errors:
+        lines.append("XMLDIRS error reason=%s" % one)
     return {"lines": lines, "report": report}
 
 
@@ -120,7 +126,7 @@ def register(api):
         stats = ui.label(None, "就绪")
         log = ui.log_view(None, 4)
         panel = ui.task_panel(None, True)
-        rows_state = {"rows": []}
+        rows_state = {"rows": [], "errors": []}
 
         def name_a():
             text = ui.get_text(dir_a_entry).strip().rstrip("/\\")
@@ -161,9 +167,16 @@ def register(api):
             diff = sum(1 for row in rows_state["rows"] if row["kind"] == "diff")
             untrusted = sum(1 for row in rows_state["rows"]
                             if row.get("untrusted_a") or row.get("untrusted_b"))
-            ui.set_text(stats, "共 %d 个文件：一致 %d / 不一致 %d / 仅 %s %d / 仅 %s %d"
-                        "%s" % (total, same, diff, name_a(), only_a, name_b(), only_b,
-                                "（其中不可信 %d）" % untrusted if untrusted else ""))
+            text = ("共 %d 个文件：一致 %d / 不一致 %d / 仅 %s %d / 仅 %s %d"
+                    "%s" % (total, same, diff, name_a(), only_a, name_b(), only_b,
+                            "（其中不可信 %d）" % untrusted if untrusted else ""))
+            # ★★ P17-10（审计 02 F-05）：**目录遍历出错必须在插件页上也可见** ——
+            #   修前引擎把遍历中断 `break` 吞掉，页面看到的可能就是"虚假的一致/缺失"；
+            #   现在引擎把 `report["errors"]` 透了上来，这里贴到统计行（零静默 + 明说结论不可信）。
+            errs = list(rows_state.get("errors") or [])
+            if errs:
+                text += "\n⚠ 目录遍历出错 %d 处 ⇒ **本次比较结论不可信**：%s" % (len(errs), errs[0])
+            ui.set_text(stats, text)
 
         def on_mode_change(_text):
             mode = mode_by_name.get(ui.combo_value(mode_combo))
@@ -212,6 +225,8 @@ def register(api):
                 args_with_cancel["cancel"] = lambda: ui.task_cancel_requested(panel)
                 report = run_compare(api, args_with_cancel)
                 rows_state["rows"] = report["rows"]
+                # ★★ P17-10（02 F-05）：遍历错误随报告带回来（`refresh_stats` 负责显示）
+                rows_state["errors"] = list(report.get("errors") or [])
                 # 明细由**引擎**渲染（插件只负责摆上界面；这一步是纯数据，可以在工作线程里做）
                 na, nb = frozen_names
                 for row in rows_state["rows"]:

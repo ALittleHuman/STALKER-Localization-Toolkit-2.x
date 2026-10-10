@@ -10481,6 +10481,29 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
                       QStringLiteral("3-5 比较收尾后控件恢复可用（running=%1 / 启用=%2）")
                           .arg(page.task()->running() ? 1 : 0)
                           .arg(page.compare_controls_enabled() ? 1 : 0));
+                // ★★ 2026-10-10（P17-10，审计 02 F-05 Medium）：**遍历出错必须在页面上可见**。
+                //   修前：某侧目录遍历中途出错被引擎 `break` 吞掉 ⇒ 结果表可能是"虚假的一致/缺失"，
+                //   页面上一个字都没有。判据：拿**不存在的目录**比一次 ⇒ 统计行必须写明
+                //   "结论不可信"；对照组（两个真目录）不许出现那句话。
+                //   判红办法：把 `refresh_stats_label` 里贴 `last_scan_errors_` 那一段删掉 ⇒ 立刻红。
+                {
+                    const QString before_errors =
+                        page.stats_label() != nullptr ? page.stats_label()->text() : QString();
+                    check(!before_errors.contains(QStringLiteral("结论不可信")),
+                          QStringLiteral("P17-10 前提：正常比较之后统计行不该有'结论不可信'"));
+                    page.compare_dirs(root + QStringLiteral("/__not_exist__"),
+                                      root + QStringLiteral("/b"), QStringLiteral("auto"),
+                                      QStringLiteral("auto"));
+                    QApplication::processEvents();
+                    const QString after_errors =
+                        page.stats_label() != nullptr ? page.stats_label()->text() : QString();
+                    check(after_errors.contains(QStringLiteral("目录遍历出错")) &&
+                              after_errors.contains(QStringLiteral("结论不可信")),
+                          QStringLiteral("P17-10 02 F-05：一侧目录不存在 ⇒ 统计行必须明说"
+                                         "'目录遍历出错…结论不可信'（实得「%1」）")
+                              .arg(after_errors.right(120).replace(QLatin1Char('\n'),
+                                                                   QLatin1Char(' '))));
+                }
             }
             // 泵事件 ⇒ 排队的那次刷新落地
             for (int i = 0; i < 5; ++i) {

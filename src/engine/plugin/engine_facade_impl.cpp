@@ -558,6 +558,8 @@ const EngineFacade kFontFacade = {
         XmlDirDiffReport out;
         out.total = report.total;
         out.cancelled = report.cancelled;
+        // ★★ P17-10（02 F-05）：遍历错误必须跟着透出去（插件页 / headless 都读它）
+        out.errors = report.errors;
         for (const exml::DirDiffRow& row : report.rows) {
             out.rows.push_back({to_facade(row.result), row.kind});
         }

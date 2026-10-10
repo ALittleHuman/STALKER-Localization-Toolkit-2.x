@@ -275,7 +275,18 @@ QString XmlPage::stats_text() const {
 }
 
 void XmlPage::refresh_stats_label() {
-    if (stats_label_ != nullptr) stats_label_->setText(stats_text());
+    if (stats_label_ == nullptr) return;
+    QString text = stats_text();
+    // ★★ 2026-10-10（P17-10，审计 02 F-05 Medium）：**目录遍历出错必须在页面上可见**。
+    //   修前：某侧目录遍历中途出错被引擎 `break` 吞掉 ⇒ 结果表可能给出"虚假的一致/缺失"，
+    //   页面上一个字都没有。现在把引擎带回来的 `report.errors` 贴在统计行下面
+    //   （零静默：说清是哪一侧、什么错，并明确"结论不可信"）。
+    if (!last_scan_errors_.isEmpty()) {
+        text += QStringLiteral("\n⚠ 目录遍历出错 %1 处 ⇒ **本次比较结论不可信**：%2")
+                    .arg(last_scan_errors_.size())
+                    .arg(last_scan_errors_.first());
+    }
+    stats_label_->setText(text);
 }
 
 // 四个计数只有这一份实现（标签与 CSV 读同一份 ⇒ 不可能分叉）
@@ -440,6 +451,11 @@ int XmlPage::compare_dirs(const QString& dir_a, const QString& dir_b, const QStr
     const exml::DirDiffReport report = exml::compare_dirs(options);
     last_compare_total_ = report.total;
     last_compare_cancelled_ = report.cancelled;
+    // ★★ P17-10（02 F-05）：遍历错误带到界面（`refresh_stats_label` 在主线程把它们显示出来）
+    last_scan_errors_.clear();
+    for (const std::string& e : report.errors) {
+        last_scan_errors_ << QString::fromStdString(e);
+    }
 
     results_.clear();
     for (const exml::DirDiffRow& row : report.rows) {

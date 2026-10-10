@@ -790,12 +790,27 @@ struct Found {
 // 1.x：`sorted(sp.rglob(pattern))`；PurePath 在 Windows 上按 **str(path).lower()** 比较。
 // 我们按 (ASCII 小写 rel, rel 字节) 排序 —— 与 1.x 一致的前提是"路径里没有大小写折叠
 // 会改变相对次序的字符"，黄金语料在测试里显式校验这一点。
-std::vector<Found> collect(const std::filesystem::path& root, const std::vector<std::string>& exts) {
+// ★★ 2026-10-10（P17-10，审计 02 F-02 Medium）：**遍历出错必须上报，不许静默 break**。
+//   事实（修前）：`for (...; it.increment(ec)) { if (ec) break; ... }` —— 遍历中途出错
+//   （权限/被独占/路径过长/符号链接环）就**直接跳出**：不计数、不报错、`st.ok` 仍为 true，
+//   调用方按 `ok` 报"完成"，而候选文件已被静默截断（`files/strings/chars` 偏小、
+//   `skipped` 也不记）。这与本仓在 `charset.cpp`、`package.cpp` 已确立的
+//   「枚举出错必须报错返 false」纪律自相矛盾（同工程两套口径）。
+//   现在：`error` 出参带出**第一条**出错理由（含出错路径），并**整体失败**（返回空集）——
+//   宁可报"这批没做"，也不给一份"看着完成、其实少了一半"的台账。
+std::vector<Found> collect(const std::filesystem::path& root, const std::vector<std::string>& exts,
+                           std::string* error = nullptr) {
     std::vector<Found> out;
     std::error_code ec;
     for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end;
          it.increment(ec)) {
-        if (ec) break;
+        if (ec) {
+            if (error != nullptr) {
+                *error = "目录遍历出错（拒绝边跑边猜：这一批不再继续）：" + ec.message() +
+                         "（错误码 " + std::to_string(ec.value()) + "）";
+            }
+            return {};
+        }
         std::error_code ec2;
         if (!it->is_regular_file(ec2)) continue;
         std::string ext = to_utf8(it->path().extension());
@@ -1064,9 +1079,17 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
                                 ec);
     }
 
+    // ★★ P17-10（02 F-02）：遍历出错 ⇒ 明确失败（理由经 `st.error` 带回调用方/CLI/页面）
+    std::string scan_error;
     const std::vector<Found> files =
         collect(src, gameplay ? std::vector<std::string>{".xml"}
-                              : std::vector<std::string>{".script", ".ltx"});
+                              : std::vector<std::string>{".script", ".ltx"},
+                &scan_error);
+    if (!scan_error.empty()) {
+        st.ok = false;
+        st.error = scan_error;
+        return st;
+    }
     std::vector<std::pair<std::string, std::string>> extracted;  // (id, 原文) 保序
     uint64_t counter = 0;
 

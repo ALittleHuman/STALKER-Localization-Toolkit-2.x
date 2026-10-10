@@ -191,6 +191,9 @@ private:
     TaskShell* task_ = nullptr;
     QLabel* status_ = nullptr;
     QLabel* stats_label_ = nullptr;
+    // ★★ P17-10（审计 02 F-05）：最近一次比较里"目录遍历出错"的理由（引擎 `DirDiffReport::errors`）。
+    //   统计标签会把它们显示出来并明确"结论不可信"（零静默）。
+    QStringList last_scan_errors_;
     QPushButton* clear_button_ = nullptr;
     QPushButton* export_button_ = nullptr;   // ★ P17-6：比较期间要一起禁用（见 compare_controls_enabled）
     bool last_compare_cancelled_ = false;

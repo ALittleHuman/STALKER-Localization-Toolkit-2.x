@@ -488,6 +488,43 @@ def step_cli_contract(release: bool) -> None:
             else:
                 ok("--help 列全 %d 个已实现动作（无漏列、无幽灵动作）" % len(dispatched))
 
+    # ── ★★ P17-10（2026-10-10，审计 02 F-02 / F-05 Medium）：**遍历出错不许静默** ──────────
+    #   事实（修前）：`extract.cpp::collect` 与 `xml/dirdiff.cpp::list_xml_files` 里都是
+    #   `if (ec) break;` —— 遍历中途出错就静默跳出：不计数、不上报，调用方按 `ok` 报"完成"，
+    #   而候选文件已被截断（校对工具最不能忍的"漏"）。两半判据：
+    #     ① **静态**：这两处不许再出现**裸** `if (ec) break;`；`collect` 必须带错误出参；
+    #        `DirDiffReport` 必须有 `errors` 字段。
+    #     ② **运行期（CLI）**：`--xml-compare-dirs <不存在的目录> <真目录>` ⇒
+    #        收尾行 `errors=1` ＋ 一条 `XMLDIRS error reason=` 到 stderr ＋ **非零退出**
+    #        （修前：静默当作"该侧一个文件都没有"，rc=0）。
+    ext_src = (ROOT / "src" / "engine" / "text" / "extract.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    diff_src = (ROOT / "src" / "engine" / "xml" / "dirdiff.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    dirdiff_h = (ROOT / "include" / "xrkit" / "engine" / "xml" / "dirdiff.h").read_text(
+        encoding="utf-8", errors="replace")
+    silent = []
+    if re.search(r"if\s*\(\s*ec\s*\)\s*break\s*;", active_code(ext_src)):
+        silent.append("text/extract.cpp 的 collect")
+    if re.search(r"if\s*\(\s*ec\s*\)\s*break\s*;", active_code(diff_src)):
+        silent.append("xml/dirdiff.cpp 的 list_xml_files")
+    if silent:
+        fail("遍历出错静默 break（02 F-02/F-05）：%s 里还有裸 `if (ec) break;`" % "、".join(silent))
+    elif "std::string* error" not in ext_src or "std::vector<std::string> errors" not in dirdiff_h:
+        fail("遍历出错静默 break（02 F-02/F-05）：错误通道缺失 —— `collect` 要有 error 出参、"
+             "`DirDiffReport` 要有 errors 字段")
+    else:
+        ok("遍历出错有通道（02 F-02/F-05：无裸 `if (ec) break;`；collect 带 error、"
+           "DirDiffReport 带 errors）")
+        rc_x, out_x = run([str(CLI_EXE), "--xml-compare-dirs", "__not_exist_dir__", "."])
+        if (rc_x == 0 or "errors=1" not in out_x or "XMLDIRS error reason=" not in out_x
+                or "目录不可用" not in out_x):
+            fail("遍历出错要判红（02 F-05）：`--xml-compare-dirs <不存在> <真目录>` 期望 rc≠0 ＋ "
+                 "`errors=1` ＋ `XMLDIRS error reason=目录不可用…`，实际 rc=%d 输出=%r"
+                 % (rc_x, out_x.strip()[-160:]))
+        else:
+            ok("A 侧目录不存在 ⇒ 明确报错并非零退出（02 F-05 运行期那一半）")
+
     # ★★ 2026-10-06（④）：FS 的「auto」= **不给格式** —— CLI 侧两种走法必须**逐值等价**
     #   （同一枚包：`--dump <包>` vs `--dump <包> auto`，条目表逐字节相同）。
     #   为什么在门禁里造夹具：这条判据要"同一枚包两种走法"，而仓库自带语料里没有

@@ -3800,7 +3800,18 @@ int run_cli(const std::vector<std::string>& args) {
         }
         std::cout << "XMLDIRS ok total=" << report.total
                   << " rows=" << report.rows.size()
-                  << " cancelled=" << (report.cancelled ? 1 : 0) << "\n";
+                  << " cancelled=" << (report.cancelled ? 1 : 0)
+                  // ★★ P17-10（02 F-05）：把遍历错误计数放进收尾行（脚本判据据此判红）
+                  << " errors=" << report.errors.size() << "\n";
+        // ★★ P17-10：**遍历出错 ⇒ 逐条打出来 + 非零退出**（零静默）
+        //   修前：某侧目录遍历中途出错被 `break` 吞掉 ⇒ 结果表可能是"虚假的一致/缺失"
+        //   而退出码仍是 0；校对工具的价值就在"不漏"。
+        if (!report.errors.empty()) {
+            for (const std::string& e : report.errors) {
+                std::cerr << "XMLDIRS error reason=" << e << "\n";
+            }
+            return kExitFail;
+        }
         return kExitOk;
     }
 

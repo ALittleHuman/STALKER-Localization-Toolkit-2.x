@@ -32,14 +32,33 @@ bool is_xml_name(const std::string& name) {
 
 }  // namespace
 
-std::vector<std::string> list_xml_files(const std::string& root) {
+std::vector<std::string> list_xml_files(const std::string& root,
+                                        std::vector<std::string>* errors) {
     std::vector<std::string> out;
     std::error_code ec;
     const std::filesystem::path base = core::path_from_utf8(root);
-    if (!std::filesystem::is_directory(base, ec)) return out;
+    if (!std::filesystem::is_directory(base, ec)) {
+        // ★★ P17-10（02 F-05）：**目录读不了也要说**（修前这里直接 `return out` ⇒
+        //   调用方看到的是"这一侧一个 xml 都没有"，随后给出"全都只在另一侧"的假结论）。
+        if (errors != nullptr && ec) {
+            errors->push_back("目录不可用：" + root + "：" + ec.message() + "（错误码 " +
+                              std::to_string(ec.value()) + "）");
+        }
+        return out;
+    }
     std::filesystem::recursive_directory_iterator it(base, ec), end;
     for (; it != end; it.increment(ec)) {
-        if (ec) break;
+        if (ec) {
+            // ★★ P17-10（02 F-05）：修前这里 `break` —— 不计数、不上报，那一侧后续文件
+            //   全缺 ⇒ 结果表可能给出**虚假的"一致/缺失"**。现在：记一条出错理由，
+            //   并让调用方知道"这份列表不完整"（保留已列到的部分，列表本身仍可用来看进度）。
+            if (errors != nullptr) {
+                errors->push_back("目录遍历中断：" + root + "：" + ec.message() + "（错误码 " +
+                                  std::to_string(ec.value()) + "）—— 该侧列表**不完整**，"
+                                  "本次比较结论不可信");
+            }
+            break;
+        }
         if (!it->is_regular_file(ec)) continue;
         const std::string name = core::path_to_utf8(it->path().filename());
         if (!is_xml_name(name)) continue;
@@ -61,12 +80,17 @@ DirDiffReport compare_dirs(const DirDiffOptions& options) {
     std::map<std::string, std::string> b;
     const std::filesystem::path base_a = core::path_from_utf8(options.dir_a);
     const std::filesystem::path base_b = core::path_from_utf8(options.dir_b);
-    for (const std::string& rel : list_xml_files(options.dir_a)) {
+    // ★★ P17-10（02 F-05）：两侧的遍历错误都带进报告（带侧标，别让调用方猜是哪一侧）
+    std::vector<std::string> err_a;
+    std::vector<std::string> err_b;
+    for (const std::string& rel : list_xml_files(options.dir_a, &err_a)) {
         a[rel] = core::path_to_utf8(base_a / core::path_from_utf8(rel));
     }
-    for (const std::string& rel : list_xml_files(options.dir_b)) {
+    for (const std::string& rel : list_xml_files(options.dir_b, &err_b)) {
         b[rel] = core::path_to_utf8(base_b / core::path_from_utf8(rel));
     }
+    for (const std::string& e : err_a) report.errors.push_back("A 侧：" + e);
+    for (const std::string& e : err_b) report.errors.push_back("B 侧：" + e);
     std::set<std::string> all;
     for (const auto& [rel, path] : a) all.insert(rel);
     for (const auto& [rel, path] : b) all.insert(rel);
