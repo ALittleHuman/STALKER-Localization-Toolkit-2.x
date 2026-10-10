@@ -560,7 +560,21 @@ bool Image::read_file_data(uint64_t ref, const Inode& ino, std::vector<uint8_t>&
 
     // block_sizes 数组紧跟在 inode 头之后（REG 从 32 起、LREG 从 56 起）
     std::vector<uint8_t> tail;
-    const uint32_t tail_len = static_cast<uint32_t>(nblocks) * 4u;
+    // ★★ 2026-10-10（P17-12，审计 01 F-18 Info）：**别再把"窄化 ×4"隐式系在上游闸门上**。
+    //   事实（修前）：`tail_len = static_cast<uint32_t>(nblocks) * 4u` —— 它不溢出**完全依赖**
+    //   上游 `ino.size ≤ kMaxDecompressBytes`（512 MiB ⇒ nblocks ≤ 2^29）这条闸；安全性是
+    //   "跨两处的隐式耦合"。谁放宽 block_size 校验或调大那条闸，就会退化成 `tail` 分配过小、
+    //   而下面按 `nblocks` 循环越界读 `tail.data() + i*4`（堆越界读，静默）。
+    //   现在把这一处**自证**：先按 64 位算长度，超过数组能表示的范围就直接判错（不静默）。
+    constexpr uint64_t kMaxBlockArrayBytes = 64ull * 1024ull * 1024ull;   // 16M 块 × 4B，远大于任何合法 inode
+    const uint64_t tail_len64 = nblocks * 4ull;
+    if (tail_len64 > kMaxBlockArrayBytes) {
+        err = "block_sizes 数组过大（声明 " + std::to_string(nblocks) + " 块 = " +
+              std::to_string(tail_len64) + " 字节，上限 " + std::to_string(kMaxBlockArrayBytes) +
+              "）—— 声明的块数与块大小不自洽";
+        return false;
+    }
+    const uint32_t tail_len = static_cast<uint32_t>(tail_len64);
     if (tail_len > 0) {
         if (!meta_read(sb_.inode_table_start, ref >> 16,
                        static_cast<uint32_t>(ref & 0xFFFFu) + ino.block_array_off, tail_len, tail,

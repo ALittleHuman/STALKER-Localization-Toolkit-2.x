@@ -1762,6 +1762,23 @@ def step_shell_smoke(release: bool) -> None:
             return
     ok("同一批解包只跑一遍（03 F-03：unpack_selected/unpack_all 不再直接调 extract_job）")
 
+    # ── ★★ P17-12（2026-10-10，审计 01 F-18 Info）：**block_sizes 数组长度不许靠上游闸门隐性兜** ──
+    #   事实（修前）：`tail_len = static_cast<uint32_t>(nblocks) * 4u` —— 窄化 ×4 不溢出**完全依赖**
+    #   上游 `ino.size ≤ 512 MiB` 那条闸（保证 nblocks ≤ 2^29），安全性是"跨两处的隐式耦合"：
+    #   谁放宽 block_size 校验或调大那条闸，就会退化成 tail 分配过小而循环按 nblocks 越界读。
+    #   判据：这一处必须**自证**（先按 64 位算、超限即判错），不许再出现裸的
+    #   `static_cast<uint32_t>(nblocks) * 4`。
+    sqfs_src = (ROOT / "src" / "engine" / "fs" / "squashfs.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    sqfs_code = active_code(sqfs_src)
+    if re.search(r"static_cast<uint32_t>\(\s*nblocks\s*\)\s*\*\s*4", sqfs_code):
+        fail("block_sizes 长度仍是窄化乘（01 F-18）：`static_cast<uint32_t>(nblocks) * 4` 还在 —— "
+             "必须改成先按 64 位算长度、超限即判错")
+    elif "kMaxBlockArrayBytes" not in sqfs_code or "tail_len64" not in sqfs_code:
+        fail("block_sizes 长度自证缺失（01 F-18）：必须有 `tail_len64` 与 `kMaxBlockArrayBytes` 上限判")
+    else:
+        ok("block_sizes 长度自证（01 F-18：64 位先算 + 超限即报错，不再靠上游闸门隐性兜底）")
+
     # ── ★★ P17-7（2026-10-10，审计 03 F-06 Medium）：**起进程不许把主线程焊死** ──────────
     #   事实（修前）：视频页四个调用点都是 `waitForStarted(10000)`，且都跑在**主线程**路径上
     #   （按钮回调 / `apply_file` / `request_transcode`）⇒ 进程启动慢（exe 缺依赖、杀软拦截、
