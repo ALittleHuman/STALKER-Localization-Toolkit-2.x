@@ -40,6 +40,7 @@ struct JVal {
 class JParser {
 public:
     explicit JParser(const std::string& text) : s_(text) {}
+    int depth_ = 0;   // ★ P17-15（01 F-11）：递归深度（`value()` 里判上限）
 
     bool parse(JVal& out, std::string& err) {
         skip_ws();
@@ -131,6 +132,24 @@ private:
             err = "JSON：意外结束";
             return false;
         }
+        // ★★ 2026-10-10（P17-15，审计 01 F-11 Low）：**递归深度上限**。
+        //   事实（修前）：`value()` 对 `{` / `[` **递归**下降，深度只受输入长度限制 ——
+        //   一份 `[[[[…` 的 100 万层嵌套（几十 KB 文本）就能把这台机器上 1 MB 的线程栈打穿
+        //   （`--version-store` / 界面读 `version.json` 都是不可信输入路径）⇒ 崩而不是报错。
+        //   现在：进一层就 +1，超上限即**带理由返回 false**（调用方已有的 `error` 通道照用）。
+        //   version.json 的真实形状只有 3–4 层；64 层足够宽，又远小于栈能承受的深度。
+        //   判据：`xrkit_app --smoke` 里的"8000 层嵌套必须报错而不是崩"那条。
+        constexpr int kMaxJsonDepth = 64;
+        if (++depth_ > kMaxJsonDepth) {
+            --depth_;
+            err = "JSON：嵌套层数超过上限 " + std::to_string(kMaxJsonDepth) +
+                  "（拒绝深层嵌套，避免递归打穿线程栈）";
+            return false;
+        }
+        struct DepthGuard {
+            int* d;
+            ~DepthGuard() { --*d; }
+        } depth_guard{&depth_};
         const char c = s_[i_];
         if (c == '{') {
             ++i_;

@@ -11,6 +11,7 @@
 #include "xrkit/engine/plugin/loader.h"
 // ★ P17-14（01 F-15）：保留设备名判定与写盘拦阻要看真实现
 #include "xrkit/core/atomic_write.h"
+#include "xrkit/core/build_version.h"   // ★ P17-15（01 F-11）：JSON 深度上限判据
 #include "xrkit/engine/process/run.h"   // ★ P17-11（01 F-04）：命令行引号判据要 `run()` / 拼命令行
 #include "xrkit/engine/text/encoding.h"
 #include "hub.h"
@@ -417,6 +418,57 @@ SmokeResult run_smoke() {
                               .arg(control_ok ? 1 : 0)
                               .arg(QString::fromStdString(control_error)));
         QDir(guard_dir).removeRecursively();
+    }
+
+    // ★★ 2026-10-10（P17-15，审计 01 F-11 Low）：**JSON 递归深度必须有上限**。
+    //   事实（修前）：`JParser::value()` 对 `{`/`[` 递归下降，深度只受输入长度限制 ⇒
+    //   一份 `[[[[…` 的深层嵌套（几十 KB 文本）就能把 1 MB 线程栈打穿 ⇒ **崩而不是报错**
+    //   （`version.json` 是"用户/第三方放到程序目录"的不可信输入）。
+    //   判据两半：① 8000 层嵌套 ⇒ 必须**返回 false 并给出理由**（而不是崩）；
+    //             ② 对照：仓库里真实的 `version.json` 仍要能正常读进来（防"一刀切拒掉"）。
+    {
+        const QString deep_dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_json_depth"));
+        QDir(deep_dir).removeRecursively();
+        QDir().mkpath(deep_dir);
+        const QString deep_path = deep_dir + QStringLiteral("/deep.json");
+        std::string deep_text(8000, '[');
+        deep_text.append(8000, ']');
+        std::string write_error;
+        const bool deep_written = xrkit::core::write_file_atomic(
+            deep_path.toStdString(),
+            std::vector<uint8_t>(deep_text.begin(), deep_text.end()), true, write_error);
+        xrkit::core::VersionStore deep_store;
+        std::string deep_error;
+        const bool deep_loaded =
+            deep_written && xrkit::core::load_version_store(deep_path.toStdString(), deep_store,
+                                                            deep_error);
+        check(!deep_loaded && deep_error.find("嵌套层数超过上限") != std::string::npos,
+              QStringLiteral("P17-15 01 F-11：8000 层嵌套 JSON 必须报错而不是崩"
+                             "（loaded=%1 err=%2）")
+                  .arg(deep_loaded ? 1 : 0)
+                  .arg(QString::fromStdString(deep_error)));
+        xrkit::core::VersionStore real_store;
+        std::string real_error;
+        // 对照（防"一刀切拒掉"）：**上限之内**的嵌套（60 层 < 64）不许报深度错
+        // —— 它可能因为"形状不是 version.json"而以别的理由失败，那是**另一条**判据的事，
+        //    这里只要求"不是因为深度"。
+        const QString shallow_path = deep_dir + QStringLiteral("/shallow.json");
+        std::string shallow_text(60, '[');
+        shallow_text.append(60, ']');
+        std::string shallow_write_error;
+        const bool shallow_written = xrkit::core::write_file_atomic(
+            shallow_path.toStdString(),
+            std::vector<uint8_t>(shallow_text.begin(), shallow_text.end()), true,
+            shallow_write_error);
+        const bool shallow_loaded =
+            shallow_written && xrkit::core::load_version_store(shallow_path.toStdString(),
+                                                               real_store, real_error);
+        check(shallow_written && real_error.find("嵌套层数超过上限") == std::string::npos,
+              QStringLiteral("P17-15 01 F-11 对照：上限之内的嵌套不许被判成「超深」"
+                             "（60 层 loaded=%1 err=%2）")
+                  .arg(shallow_loaded ? 1 : 0)
+                  .arg(QString::fromStdString(real_error)));
+        QDir(deep_dir).removeRecursively();
     }
 
     // ① 真实清单 vs 契约（少一页/改个名字都要红）
