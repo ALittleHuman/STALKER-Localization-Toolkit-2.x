@@ -192,6 +192,26 @@ void print_usage() {
            "                  结果以 `PYPLUGINCALL result=<json>` 一行交回（门禁判「产物逐字节\n"
            "                  一致」走这条，因为它不需要界面）\n"
            "  --version       打印版本\n"
+           // ★★ 2026-10-10（P17-8，审计 04 F-09 Low）：**帮助的动作表补齐"已实现的动作"**。
+           //   事实（修前）：下面 10 个动作**早就实现了**（`run_cli()` 里有分派），
+           //   但 `print_usage()` 里一条都没有 ⇒ 按 `--help` 盘点能力会漏掉二进制补丁、XML 对比、
+           //   LZHUF、版本号读写等一整族入口。本项目自己的注释就写着「能力清单里漏一条就是
+           //   '这功能好像没有'」（见上面 `--build-package` 那段）。判据（run_ci 的 cli 步）：
+           //   `--help` 的输出里必须出现**每一个** `action == "--xxx"` 的动作名（两半都对账）。
+           "  --version-store [--set] [--list] ...\n"
+           "                  版本号存储（读/写/列举；只读模式不带 --set）\n"
+           "  --exe-version [文件]                        现读 exe 的 VERSIONINFO（判据用）\n"
+           "  --lzhuf <decode|encode> <输入> <输出>        LZHUF 编解码（1.x 的可逆域；对拍用）\n"
+           "  --xml-stats <目录> [--mode m]                XML 统计模式（行数/ID；与 Python 口径对拍）\n"
+           "  --xml-compare <a.xml> <b.xml> [--mode m]     XML 单文件对比（与 1.x 口径对拍）\n"
+           "  --xml-compare-dirs <目录A> <目录B> [--mode m]  XML 目录对比（逐行/CSV/详情）\n"
+           "  --xml-text <输入> <输出>                     XML 文本规范化（判据用）\n"
+           "  --xml-csv-probe <输入> <输出>                 XML CSV 渲染探针（对拍用）\n"
+           "  --patch-identify <exe>                       二进制补丁**判定半**（与 1.x 金标准逐条对拍）\n"
+           "  --patch-apply <输入exe> <补丁> <输出exe> [--force]\n"
+           "                                              二进制补丁**写盘半**（产物逐字节 == 参照；\n"
+           "                                              输出=输入/已存在未 --force 一律拒绝）\n"
+           "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
            "  --plugins <目录> 插件目录（默认 exe 旁边的 plugins/，与 GUI 同一份口径）。\n"

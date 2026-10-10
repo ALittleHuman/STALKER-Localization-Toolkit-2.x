@@ -436,6 +436,58 @@ def step_cli_contract(release: bool) -> None:
             UNCOVERED.append("%s（尚未实现，CLI 显式 SKIP）" % label)
             ok("%s → exit=2（已记入未覆盖）" % label)
 
+    # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
+    #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
+    #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /
+    #   `--xml-compare` / `--xml-text` / `--xml-csv-probe` / `--patch-identify` / `--patch-apply`
+    #   ⇒ 按 `--help` 盘点能力会漏掉二进制补丁、XML 对比、LZHUF、版本号读写一整族入口。
+    #   口径出处：`main.cpp` 自己在 `--build-package` 那段写着「能力清单里漏一条就是
+    #   '这功能好像没有'」（CLI 被定位成"能力全集"）。
+    #   判据两半（**都从源码对账，再拿 --help 的实际输出验**）：
+    #     ① 每一个 `action == "--xxx"` 的动作名都必须出现在 `--help` 的输出里；
+    #     ② `--help` 里列出的动作名也必须在 `main.cpp` 里有对应字符串（不许写不存在的动作）。
+    #   判红办法：把 `print_usage()` 里任一动作行删掉 ⇒ ① 立刻红。
+    main_src = (ROOT / "tools" / "cli" / "main.cpp").read_text(encoding="utf-8", errors="replace")
+    # ★ 先剥注释再解析：本判据自己的说明里就写着 `action == "--xxx"` 这种占位串，
+    #   不剥注释会把占位符当成"实现了但没列"的动作（实测踩过一次）。
+    # ★ 分派有两种写法：主分派用 `action == "--xxx"`，前面那层选项/短动作用的是 `a == "--xxx"`
+    #   （实测 `--version`/`--only`/`--pack-dirs` 走的是后者）⇒ 两种都要收。
+    # ★ `option_only` 是"只作选项/说明、不是独立动作"的短名（两个方向都豁免它）。
+    option_only = {"--help", "--module-subset", "--plugins", "--python-home", "--verbose",
+                   "--verify-readback", "--set", "--list", "--force", "--encoding",
+                   "--prefix", "--id-prefix", "--clean", "--ext", "--no-recursive",
+                   "--backup", "--exclude", "--mode", "--suffix", "--offset",
+                   "--no-full-cyrillic", "--only", "--pack-dirs"}
+    dispatched_all = set(re.findall(r'(?:action|a)\s*==\s*"(--[a-z0-9-]+)"', active_code(main_src)))
+    # ★ 正向（"漏列"）只认**主分派**（`action == "--xxx"`）—— 那才是"动作表"的成员；
+    #   `a == "--xxx"` 那一族是某个动作内部的**子选项**（实测 `--all`/`--only`/`--pack-dirs`），
+    #   它们本来就不该在动作表里单列。反向（"幽灵动作"）用 `dispatched_all` 宽容判。
+    dispatched_main = set(re.findall(r'action\s*==\s*"(--[a-z0-9-]+)"', active_code(main_src)))
+    dispatched = {name for name in dispatched_main if name not in option_only}
+    if not dispatched_all:
+        fail("--help 动作表判据（04 F-09）：从 main.cpp 里一个 `action == \"--xxx\"` 都没解析到"
+             "（解析器与源码脱节 ⇒ 本判据会永不生效）")
+    else:
+        rc_help, out_help = run([str(CLI_EXE), "--help"])
+        # 只认**行首**的动作表条目（正文里提到的 `[--pack-dirs]` 之类不算"列了一条动作"）。
+        listing = set(re.findall(r"(?m)^\s+(--[a-z0-9-]+)", out_help))
+        missing = sorted(dispatched - listing)
+        if rc_help != 0:
+            fail("`--help` 期望 exit=0，实际 %d" % rc_help)
+        elif missing:
+            fail("--help 漏列已实现的动作（04 F-09）：%s —— 能力清单里漏一条就是"
+                 "'这功能好像没有'（共解析到 %d 个动作）" % ("、".join(missing), len(dispatched)))
+        else:
+            # 反向锁：动作表里出现、但 main.cpp 里没有对应分派的名字 ——
+            # 防止"帮助里写了一堆做不到的事"。
+            phantom = sorted(name for name in listing
+                             if name not in dispatched_all and name not in option_only)
+            if phantom:
+                fail("--help 列了 main.cpp 里没有分派动作的名字（04 F-09 反向锁）：%s"
+                     % "、".join(phantom))
+            else:
+                ok("--help 列全 %d 个已实现动作（无漏列、无幽灵动作）" % len(dispatched))
+
     # ★★ 2026-10-06（④）：FS 的「auto」= **不给格式** —— CLI 侧两种走法必须**逐值等价**
     #   （同一枚包：`--dump <包>` vs `--dump <包> auto`，条目表逐字节相同）。
     #   为什么在门禁里造夹具：这条判据要"同一枚包两种走法"，而仓库自带语料里没有
