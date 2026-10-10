@@ -657,8 +657,24 @@ void Hub::render_plugin_slots() {
         const plugin::PanelBuilder builder = tool->builder;
         // ★★ P3：把宿主给的**根容器**透传给插件的 builder（修前这里写死 `builder(nullptr)`）
         //   —— Python 插件用 `api.ui.*` 造控件时，"当前面板根"就来自这个实参。
-        pages_.register_page(tool->plugin, spec, [builder](QWidget* parent) -> QWidget* {
-            return reinterpret_cast<QWidget*>(builder(parent));
+        pages_.register_page(tool->plugin, spec, [this, tool, builder](QWidget* parent) -> QWidget* {
+            // ★★ 2026-10-10（P17-45，零碎批「hub.cpp 全文无 try/catch」）：**原生 builder 的异常不许穿进 UI**。
+            //   事实（修前）：这里直接 `return builder(parent);` —— C++ 插件页的 builder 一抛异常，
+            //   异常就穿过 Qt 的页面构造路径往上冒（Qt 不接异常 ⇒ 轻则半成品页面、重则进程终止）。
+            //   改法：就地兜住，**如实记账并放弃这一页**（零静默：日志点名插件 + 异常原文），
+            //   其余页面照常构建（一页坏掉不拖垮整个 Hub）。
+            try {
+                return reinterpret_cast<QWidget*>(builder(parent));
+            } catch (const std::exception& exc) {
+                log_line(QStringLiteral("插件页构建异常：%1（%2）—— 该页跳过")
+                             .arg(QString::fromStdString(tool->plugin))
+                             .arg(QString::fromUtf8(exc.what())));
+                return nullptr;
+            } catch (...) {
+                log_line(QStringLiteral("插件页构建异常：%1（未知异常）—— 该页跳过")
+                             .arg(QString::fromStdString(tool->plugin)));
+                return nullptr;
+            }
         });
     }
     sync_pages();

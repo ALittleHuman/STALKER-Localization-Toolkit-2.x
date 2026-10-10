@@ -766,6 +766,18 @@ def step_cli_contract(release: bool) -> None:
                     ok("插件槽位重渲染两条都不累积（03 F-05：下拉与按钮都在重渲染前真销毁，"
                        "且只动 plugin_ 前缀的那些）")
 
+    # ── ★★ P17-45（2026-10-10，零碎批）：hub.cpp 的插件页 builder 必须被 try/catch 兜住 ──
+    #   事实（修前）：hub.cpp **全文无 try/catch** —— 原生 builder 一抛异常就穿过 Qt 的页面构造
+    #   路径往上冒（Qt 不接异常 ⇒ 半成品页面甚至进程终止）。判据：builder 那一调必须在 try 里。
+    hub_src2 = (ROOT / "src" / "shell" / "hub.cpp").read_text(encoding="utf-8", errors="replace")
+    mk = hub_src2.find("return reinterpret_cast<QWidget*>(builder(parent));")
+    if mk < 0:
+        fail("找不到插件页 builder 的调用点（零碎批）：判据失效，先修判据本身")
+    elif hub_src2.rfind("try {", 0, mk) < 0 or hub_src2.rfind("catch", 0, mk) < 0:
+        fail("插件页 builder 的异常会穿进 UI（零碎批）：那一调前面没有 try/catch")
+    else:
+        ok("插件页 builder 异常被兜住（零碎批：hub.cpp 的 builder 调用在 try 里，异常只记账、不穿进 UI）")
+
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
     #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /
