@@ -90,6 +90,10 @@ PluginApiAdapter::PluginApiAdapter(Registry& registry, std::string plugin_name, 
     api_.abi_version = STK_ABI_VERSION;
     api_.host = reinterpret_cast<stk_host*>(this);
     api_.ui = ui_;  // nullptr = 无 Qt（自检路径）
+// ★★ 2026-10-10（P17-38，审计 05 PLG-09 ①）：**所有权约定** ——
+    //   宿主把插件分配的 `*out_data` **复制**进自己的 `std::string` 之后，
+    //   **宿主不释放它**（ABI 未定义所有权）：那块钱由**插件自己**管。
+    //   这里只读、只拷，绝不 delete/free 插件给的指针；插件也不要指望宿主替你释放。
     api_.register_decryptor = &PluginApiAdapter::on_decryptor;
     api_.register_format = &PluginApiAdapter::on_format;
     api_.register_command = &PluginApiAdapter::on_command;

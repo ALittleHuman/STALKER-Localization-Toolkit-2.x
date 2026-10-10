@@ -107,7 +107,13 @@ std::vector<RegistrationError> load_plugins_from_dir(const std::string& dir, Reg
     std::vector<std::string> files;
     for (std::filesystem::directory_iterator it(root, ec), end; it != end; it.increment(ec)) {
         if (ec) break;
-        if (!it->is_regular_file(ec)) continue;
+        // ★★ 2026-10-10（P17-38，审计 05 PLG-09 ②）：**stat 失败不许污染迭代器的 `ec`**。
+        //   修前写的是 `is_regular_file(ec)` —— 它失败时会把 `ec` 置位，`continue` 之后循环头先
+        //   `it.increment(ec)`、紧接着 `if (ec) break;` 就**提前结束整次扫描** ⇒ 后续插件文件
+        //   **静默漏载**（一次 stat 失败 = 后面全不扫）。现在用独立的 `stat_ec`，迭代器的 `ec`
+        //   只反映"迭代本身"的错误。
+        std::error_code stat_ec;
+        if (!it->is_regular_file(stat_ec)) continue;
         std::string name = xrkit::core::path_to_utf8(it->path().filename());
         // ★★ S2-2（B 批）：后缀判定**只此一份**且**大小写不敏感**（见 loader.h 的说明）。
         //   修前：这里判原名的 `.dll`（`NLC.DLL` 静默漏载），而给它小写化的

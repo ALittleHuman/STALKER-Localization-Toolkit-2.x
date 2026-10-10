@@ -697,6 +697,24 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("构建计数注释不写死当前值（04 F-12：改说「由打包器就地改写」，并注明 17/107 是历史断号别补）")
 
+    # ── ★★ P17-38（2026-10-10，审计 05 PLG-09 ②） ──
+    #   事实（修前）：`loader.cpp` 的目录扫描里写的是 `if (!it->is_regular_file(ec)) continue;`
+    #   —— stat 失败会把 `ec` 置位，`continue` 之后循环头先 `it.increment(ec)`、紧接着
+    #   `if (ec) break;` 就**提前结束整次扫描** ⇒ 后续插件文件**静默漏载**（一次 stat 失败＝后面全不扫）。
+    #   判据：该扫描必须用**独立的 stat_ec**，不许把迭代器的 `ec` 交给 `is_regular_file`。
+    loader_src = (ROOT / "src" / "engine" / "plugin" / "loader.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    # ★ 先剥注释再查：本判据自己的说明里就引用了那段旧代码（`is_regular_file(ec)`），
+    #   不剥注释会把注释里的引用当成"代码还在"（P17-8 的 --help 锁踩过同款）。
+    loader_code = active_code(loader_src)
+    if "is_regular_file(ec)" in loader_code:
+        fail("插件目录扫描会因一次 stat 失败就静默停扫（05 PLG-09 ②）：还在把迭代器的 ec "
+             "交给 is_regular_file ⇒ 必须换成独立的 stat_ec")
+    elif "stat_ec" not in loader_code:
+        fail("插件目录扫描缺独立的 stat_ec（05 PLG-09 ②）")
+    else:
+        ok("插件扫描不因 stat 失败停扫（05 PLG-09 ②：stat 用独立 stat_ec，迭代器的 ec 只反映迭代本身）")
+
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
     #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /
