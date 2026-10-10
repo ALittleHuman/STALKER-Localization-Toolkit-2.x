@@ -16,6 +16,7 @@
 #include <QProcess>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QTimer>   // ★ P17-7（03 F-06）：取消改成**定时器兜底**（不再 waitForFinished 阻塞主线程）
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -220,7 +221,20 @@ bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request, 
         refresh_display();  // 失败原文 / 产物那一屏都要在面板上可见（不静默）
     });
     process_->start();
-    if (!process_->waitForStarted(10000)) {
+    // ★★ 2026-10-10（P17-7，审计 03 F-06 Medium）：**主线程不再等 10 秒**（见
+    //   `wait_for_start_probed` 的说明）。同步只判"确定起不来"，晚一拍的失败由下面的
+    //   `errorOccurred` 兜底（两半缺一不可：只缩短等待会把失败变成静默）。
+    connect(process_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError err) {
+        if (shutting_down_ || err != QProcess::FailedToStart) return;
+        last_error_ = QStringLiteral("启动失败：%1（进程随后才报）")
+                          .arg(process_ != nullptr ? process_->errorString() : QString());
+        discard_process(process_);
+        if (progress_text_ != nullptr) progress_text_->setText(QStringLiteral("失败：") + last_error_);
+        log_to_host(QStringLiteral("视频转换启动失败：") + last_error_);
+        set_running_ui(false);
+        refresh_display();
+    });
+    if (!wait_for_start_probed(process_)) {
         last_error_ = QStringLiteral("启动失败：%1（程序 %2）")
                           .arg(process_->errorString())
                           .arg(QString::fromStdString(plan.argv.front()));
@@ -248,8 +262,15 @@ void VideoPage::cancel_transcode() {
     }
     log_to_host(QStringLiteral("视频转换：用户取消"));
     process_->kill();
-    process_->waitForFinished(5000);  // finished 回调里删半成品、收进程
-    if (process_ != nullptr) {
+    // ★★ 2026-10-10（P17-7，审计 03 F-06 Medium）：**取消不再在主线程上等 5 秒**。
+    //   事实（修前）：`kill()` 之后紧跟 `waitForFinished(5000)` —— 它跑在按钮回调这条
+    //   **主线程**路径上，ffmpeg 不响应 kill 时界面就冻结 5 秒（Windows 上还会标"无响应"）。
+    //   改法：改成**定时器兜底**（`QTimer::singleShot`，非阻塞）—— 到点还没收干净才走
+    //   "取消超时"那一支；正常情况下 `finished` 回调会先把 `process_` 置空 ⇒ 定时器空转。
+    //   判据：run_ci 的 shell-smoke 静态锁要求 `waitForFinished` 不再出现在取消路径上
+    //   （只允许析构里那个 2 秒的收尾等待）。
+    QTimer::singleShot(5000, this, [this] {
+        if (process_ == nullptr) return;   // `finished` 已经收干净（正常取消）
         // 5 秒没死透 ⇒ 如实报（不假装停了），并把对象收干净。
         // ★★ 2026-10-07（审计补充 F1-1）：**必须走 `discard_process`**（先置空、再
         //   `disconnect()`、最后 `deleteLater()`）。修前这一支只 `deleteLater(); process_ = nullptr;`
@@ -270,7 +291,25 @@ void VideoPage::cancel_transcode() {
         if (progress_text_ != nullptr) progress_text_->setText(QStringLiteral("失败：") + last_error_);
         log_to_host(QStringLiteral("视频转换：") + last_error_);
         set_running_ui(false);
-    }
+    });
+}
+
+// ★★ 2026-10-10（P17-7，审计 03 F-06 Medium）：**起进程时的"短窗口探测"（唯一一份）**。
+//   修前四个调用点都是 `waitForStarted(10000)` —— 跑在按钮回调 / `apply_file` /
+//   `request_transcode` 这条**主线程**路径上，进程启动慢（exe 缺依赖、杀软拦截、
+//   网络盘上的 python）时界面冻结，Windows 上被标成"无响应"。审计原文：
+//   「对 10s 的 `waitForStarted` 尤其代价高」。
+//   语义（**保住既有同步契约，同时不再长阻塞**）：
+//     · 返回 true  ⇔ "这一刻没有确凿的启动失败"（可能仍在 Starting）—— 调用方照常往下走；
+//     · 返回 false ⇔ 进程**已经确定没起来**（`NotRunning`，Windows 上 exe 不存在/无权执行
+//       几乎立刻就是这一态）—— 调用方走既有的"失败 + 给理由"那一支。
+//   剩下的"晚一拍才失败"由各调用点接的 `&QProcess::errorOccurred` 兜底（**零静默**：
+//   失败理由一样要写到状态标签 + 宿主日志里）。两半缺一不可 —— 只缩短等待会让失败变静默。
+bool VideoPage::wait_for_start_probed(QProcess* process) {
+    static constexpr int kStartProbeMs = 500;   // 修前 10 000
+    if (process == nullptr) return false;
+    if (process->waitForStarted(kStartProbeMs)) return true;
+    return process->state() != QProcess::NotRunning;
 }
 
 void VideoPage::handle_stderr_text(const QString& text) {
@@ -381,7 +420,17 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
         QStringList{QStringLiteral("-v"), QStringLiteral("quiet"), QStringLiteral("-print_format"),
                     QStringLiteral("json"), QStringLiteral("-show_format"),
                     QStringLiteral("-show_streams"), native(path)});
-    if (!probe_process_->waitForStarted(10000)) {
+    // ★★ P17-7（03 F-06）：晚一拍的启动失败也要有理由（见 `wait_for_start_probed`）
+    connect(probe_process_, &QProcess::errorOccurred, this,
+            [this, path, target](QProcess::ProcessError err) {
+                if (shutting_down_ || err != QProcess::FailedToStart) return;
+                const QString reason =
+                    QStringLiteral("起不了 ffprobe（随后才报）：%1")
+                        .arg(probe_process_ != nullptr ? probe_process_->errorString() : QString());
+                discard_process(probe_process_);
+                apply_probe_result(path, target, engine::video::MediaInfo(), reason);
+            });
+    if (!wait_for_start_probed(probe_process_)) {
         const QString reason = QStringLiteral("起不了 ffprobe：%1").arg(probe_process_->errorString());
         // ★ 2026-10-07（F1-1）：**先置空再断开** —— 否则这个对象随后派 `finished` 时，
         //   回调读的是成员 `probe_process_`（已经是 nullptr）⇒ 对 nullptr 解引用。
@@ -423,7 +472,16 @@ void VideoPage::start_encoder_scan() {
     });
     encoder_process_->start(QString::fromStdString(paths.ffmpeg),
                             QStringList{QStringLiteral("-encoders")});
-    if (!encoder_process_->waitForStarted(10000)) {
+    // ★★ P17-7（03 F-06）：晚一拍的启动失败也要有理由（见 `wait_for_start_probed`）
+    connect(encoder_process_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError err) {
+        if (shutting_down_ || err != QProcess::FailedToStart) return;
+        const QString reason = QStringLiteral("起不了 ffmpeg（随后才报）：%1")
+                                   .arg(encoder_process_ != nullptr ? encoder_process_->errorString()
+                                                                    : QString());
+        discard_process(encoder_process_);
+        complete_encoder_scan(false, reason);
+    });
+    if (!wait_for_start_probed(encoder_process_)) {
         const QString reason = QStringLiteral("起不了 ffmpeg：%1").arg(encoder_process_->errorString());
         // ★ 2026-10-07（F1-1）：同 `probe_process_` —— 先置空再断开。
         discard_process(encoder_process_);
@@ -1103,7 +1161,22 @@ void VideoPage::run_auto_install() {
                     log_to_host(QStringLiteral("视频转换：自动安装结束 —— 退出码 %1").arg(code));
                 });
         downloader->start(QStringLiteral("python"), QStringList{native(script)});
-        if (!downloader->waitForStarted(10000)) {
+        // ★★ P17-7（03 F-06）：晚一拍的启动失败也要有理由（见 `wait_for_start_probed`）
+        connect(downloader, &QProcess::errorOccurred, this,
+                [this, downloader](QProcess::ProcessError err) {
+                    if (shutting_down_ || err != QProcess::FailedToStart) return;
+                    const QString reason = downloader->errorString();
+                    if (install_process_ == downloader) discard_process(install_process_);
+                    else downloader->deleteLater();
+                    if (status_ != nullptr) {
+                        status_->setText(
+                            QStringLiteral("自动安装失败：起不了 python（%1）。可以手动指定 "
+                                           "ffmpeg.exe，或把 ffmpeg.exe 放进程序目录。")
+                                .arg(reason));
+                    }
+                    log_to_host(QStringLiteral("视频转换：自动安装失败 —— ") + reason);
+                });
+        if (!wait_for_start_probed(downloader)) {
             const QString reason = downloader->errorString();
             // 同 F1-1：走同一个"放弃对象"实现（先置空再断开）。
             if (install_process_ == downloader) discard_process(install_process_);

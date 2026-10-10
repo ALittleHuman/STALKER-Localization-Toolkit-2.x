@@ -162,6 +162,13 @@ private:
     //   deleteLater）。析构 / 取消超时 / `waitForStarted` 失败 / 回调收尾全走它 ⇒
     //   "置空却不 disconnect"这一族缺陷在结构上不可能再出现（静态判据只盯这一个函数）。
     void discard_process(QProcess*& slot);
+    // ★★ 2026-10-10（P17-7，审计 03 F-06 Medium）：**起进程不许把主线程焊死**。
+    //   修前四个调用点都是 `waitForStarted(10000)`（跑在按钮回调 / `apply_file` /
+    //   `request_transcode` 这条主线程路径上）⇒ 启动慢时界面冻结、Windows 标"无响应"。
+    //   现在只等一个**短窗口**（500 ms）判"确定起不来"；晚一拍的失败由各调用点接的
+    //   `&QProcess::errorOccurred` 兜底报出（**零静默**）。
+    //   ⇒ 「缩短等待」与「信号兜底」必须成对存在，静态锁（shell-smoke 步）两半都锁。
+    bool wait_for_start_probed(QProcess* process);
 
     engine::video::FfmpegLocator locator_;
     QLineEdit* source_edit_ = nullptr;

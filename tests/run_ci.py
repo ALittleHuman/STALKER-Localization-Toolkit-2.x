@@ -1673,6 +1673,34 @@ def step_shell_smoke(release: bool) -> None:
             return
     ok("同一批解包只跑一遍（03 F-03：unpack_selected/unpack_all 不再直接调 extract_job）")
 
+    # ── ★★ P17-7（2026-10-10，审计 03 F-06 Medium）：**起进程不许把主线程焊死** ──────────
+    #   事实（修前）：视频页四个调用点都是 `waitForStarted(10000)`，且都跑在**主线程**路径上
+    #   （按钮回调 / `apply_file` / `request_transcode`）⇒ 进程启动慢（exe 缺依赖、杀软拦截、
+    #   网络盘上的 python）时界面冻结数秒，Windows 上还会被标成"无响应"；
+    #   `cancel_transcode` 里还有一句 `waitForFinished(5000)`（ffmpeg 不响应 kill 时同样冻结）。
+    #   锁两半（**缺一不可** —— 只缩短等待会让"起不来"变成静默失败）：
+    #     ① 长等待必须消失：`video_page.cpp` 里不许出现 `waitForStarted(` 且参数 > 1000 ms，
+    #        也不许出现 `waitForFinished(` 的取消路径长等待（析构里那个 2 秒收尾不算）；
+    #     ② 信号兜底必须在位：文件里必须出现 `&QProcess::errorOccurred` 接线
+    #        （晚一拍的 FailedToStart 要有理由、要收干净），且必须走共用的
+    #        `wait_for_start_probed(`（唯一一份探测）。
+    video_src = ROOT / "src" / "shell" / "pages" / "video_page.cpp"
+    video_code = active_code(video_src.read_text(encoding="utf-8", errors="replace"))
+    long_waits = [m for m in re.findall(r"waitForStarted\s*\(\s*(\d+)\s*\)", video_code)
+                  if int(m) > 1000]
+    long_finish = [m for m in re.findall(r"waitForFinished\s*\(\s*(\d+)\s*\)", video_code)
+                   if int(m) > 2000]
+    if long_waits or long_finish:
+        fail("主线程长等待（03 F-06）：video_page.cpp 里还有 waitForStarted(>1000ms)=%s / "
+             "waitForFinished(>2000ms)=%s —— 起进程/取消都不许把主线程焊死"
+             % (long_waits or "无", long_finish or "无"))
+        return
+    if "&QProcess::errorOccurred" not in video_code or "wait_for_start_probed(" not in video_code:
+        fail("启动失败兜底缺失（03 F-06）：video_page.cpp 必须有 `&QProcess::errorOccurred` 接线 "
+             "与共用的 `wait_for_start_probed(` —— 只缩短等待会把'起不来'变成静默失败")
+        return
+    ok("起进程不焊主线程（03 F-06：waitForStarted ≤1s + errorOccurred 兜底 + 取消改定时器兜底）")
+
     # ══════════════════════════════════════════════════════════════════════════
     # ★★ 2026-10-06（审计 §7 第 3 组的**静态面**：3-3 / 3-8）
     #   动行为那半在 `src/shell/smoke.cpp` 的 3-x 锁里（跑得到、判得红）；
