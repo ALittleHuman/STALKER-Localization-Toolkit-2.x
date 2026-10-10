@@ -815,6 +815,32 @@ def step_cli_contract(release: bool) -> None:
         else:
             ok("插件标签能换行（接口契约批：ui_label 设了 setWordWrap(true)，与 hub 的提示标签一致）")
 
+    # ── ★★ P17-55（04 F-06 第二波·收官）：`--extract` 同款写盘守卫 ────────────────
+    #   受影响的 6 步已逐个处理（golden-extract / golden-db / db-11xx-dirlock /
+    #   golden-sqfs-pack / golden-sqfs-pack-real / sqfs-pack-criterion ⇒ 逐处精确补了 --force）。
+    #   ★ 教训：这 6 步**不能**靠通配批量脚本乱补（P17-50 试过、5 步仍红）——
+    #     必须按**真实调用文本**逐处替换（本批这么做，一次全绿）。
+    ex_src = guard_dir / "ex_src"
+    ex_src.mkdir(parents=True, exist_ok=True)
+    (ex_src / "a.txt").write_text("hello", encoding="ascii")
+    ex_pack = guard_dir / "ex_pack.db"
+    run([str(CLI_EXE), "--pack-db", str(ex_pack), "xdb", str(ex_src), "--force"])
+    ex_out = guard_dir / "ex_out.bin"
+    e1, eo1 = run([str(CLI_EXE), "--extract", str(ex_pack), "a.txt", str(ex_out), "xdb", "--force"])
+    e2, eo2 = run([str(CLI_EXE), "--extract", str(ex_pack), "a.txt", str(ex_out), "xdb"])
+    e3, eo3 = run([str(CLI_EXE), "--extract", str(ex_pack), "a.txt", str(ex_out), "xdb", "--force"])
+    if e1 != 0:
+        fail("写盘守卫的**前提**不成立（04 F-06 / --extract）：首次写期望 rc=0，实际 rc=%d %r"
+             % (e1, eo1.strip()[:100]))
+    elif e2 != 3 or "--force" not in eo2:
+        fail("写盘动作静默截断（04 F-06 / --extract）：同路径再写期望 rc=3 ＋ 理由含 `--force`，"
+             "实际 rc=%d %r" % (e2, eo2.strip()[:120]))
+    elif e3 != 0:
+        fail("`--force` 没能覆盖（04 F-06 / --extract）：期望 rc=0，实际 rc=%d %r"
+             % (e3, eo3.strip()[:120]))
+    else:
+        ok("写盘动作不静默截断（04 F-06 第二波 `--extract`：已存在⇒rc=3；`--force`⇒覆盖）")
+
     # ── ★★ P17-48（04 F-06 第二波）：`--pack-db` 同款写盘守卫 ──────────────────────
     #   ★ 判的是**引擎解析后的真实落点**（`resolve_pack_target` 会补扩展名）——判 operands[0] 会判错对象。
     #   受影响步骤：`golden-db`（在同一 ours.<key>.db 上逐格式反复写）已连带补 `--force`。

@@ -624,7 +624,7 @@ def check_reverse(tmp: Path, src: Path, want_tree, want_dirs) -> None:
         outbin = tmp / ("ext_%s.bin" % fmt)
         bad = []
         for rel, data in sorted(want_tree.items()):
-            rc2, text2 = run_cli(["--extract", pack, rel, outbin, fmt])
+            rc2, text2 = run_cli(["--extract", pack, rel, outbin, fmt, "--force"])
             if rc2 != 0:
                 bad.append("%s: 提取失败 %s" % (rel, text2.strip()[:60]))
                 continue

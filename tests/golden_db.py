@@ -253,7 +253,7 @@ def check_baselines() -> int:
             failures += compare_entries(rec["entries"], got_rows, "条目表")
 
             for item in rec["extract"]:
-                rc, out = run_cli(["--extract", str(base_path), item["path"], str(outbin), key])
+                rc, out = run_cli(["--extract", str(base_path), item["path"], str(outbin), key, "--force"])
                 if rc != 0:
                     print("  ✗ 提取 %s 失败：%s" % (item["path"], out.strip()))
                     failures += 1
@@ -295,7 +295,7 @@ def check_baselines() -> int:
             ok = 0
             bad = 0
             for item in rec["extract"]:
-                rc, out = run_cli(["--extract", str(image), item["path"], str(outbin), key])
+                rc, out = run_cli(["--extract", str(image), item["path"], str(outbin), key, "--force"])
                 if rc != 0:
                     print("  ✗ 提取 %s 失败：%s" % (item["path"], out.strip()))
                     failures += 1

@@ -121,7 +121,7 @@ void print_usage() {
            "  --bench         跑性能基线（未实现时输出 BENCH skip ... 并返回 2）\n"
            "  --themecheck    检查主题令牌（两套模式 × 颜色/字体/px/user.ltx 语义；ASCII 收尾行）\n"
            "  --dump <文件> [DB格式]   导出解析结果（SquashFS 条目表 或 DB 条目表 TSV）\n"
-           "  --extract <源> <内部路径> <输出> [DB格式]   提取单个文件（进程内解压）\n"
+           "  --extract <源> <内部路径> <输出> [DB格式]   提取单个文件（进程内解压）；输出已存在时拒绝，加 [--force] 覆盖\n"
            "  --unpack-tree <镜像> <输出根> [--only <清单文件>] [--verify-readback]\n"
            "                                              整树导出（**原样摊开**：条目直接落在输出根下；\n"
            "                                              只认 SquashFS；安全路径 + 原子写；空清单＝拒绝）\n"
@@ -3235,7 +3235,20 @@ int run_cli(const std::vector<std::string>& args) {
             data = r.data;
         }
 
-        std::ofstream out(operands[2], std::ios::binary | std::ios::trunc);
+// ★★ 2026-10-10（P17-49，审计 04 F-06 第二波 · 收官）：**输出已存在即拒，除非 `--force`**。
+        //   与 `--lzhuf`/`--decl-fix`/`--resample-dump`/`--font-render`/`--sniff`/`--decode-text`/
+        //   `--codec-lossy`/`--extract-chars`/`--pack-db` 同款。本动作是**单产物**（`operands[2]`），
+        //   故按该路径判。
+        bool extract_force = false;
+        for (const std::string& op : operands) {
+            if (op == "--force") extract_force = true;
+        }
+        if (!extract_force && std::filesystem::exists(path_from_utf8(operands[2]))) {
+            std::cerr << "EXTRACT error reason=输出已存在：" << operands[2]
+                      << "（拒绝静默截断；确认要覆盖请加 --force）\n";
+            return kExitUsage;
+        }
+                std::ofstream out(operands[2], std::ios::binary | std::ios::trunc);
         if (!out) {
             std::cout << "EXTRACT error reason=无法写输出文件：" << operands[2] << "\n";
             return kExitFail;

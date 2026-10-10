@@ -190,7 +190,7 @@ def extract_tree(image: Path, tree: Path, sample: int) -> list[tuple[str, Path, 
     for rel, size in files:
         target = tree / Path(*rel.split("/"))
         target.parent.mkdir(parents=True, exist_ok=True)
-        r = cli("--extract", str(image), rel, str(target))
+        r = cli("--extract", str(image), rel, str(target), "--force")
         if r.returncode != 0 or target.stat().st_size != size:
             raise RuntimeError("提取失败 %s：%s"
                                % (rel, r.stdout.decode("utf-8", "replace").strip()[:160]))
@@ -482,7 +482,7 @@ def main() -> int:
         bad = []
         for rel, src, _ in pick:
             out_file = work / "sample.bin"
-            rr = cli("--extract", str(ours), rel, str(out_file))
+            rr = cli("--extract", str(ours), rel, str(out_file), "--force")
             if rr.returncode != 0:
                 bad.append("%s：%s" % (rel, rr.stdout.decode("utf-8", "replace")[:120]))
             elif out_file.read_bytes() != src.read_bytes():

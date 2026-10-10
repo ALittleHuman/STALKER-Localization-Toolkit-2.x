@@ -255,7 +255,7 @@ def expected_entries(root: Path, with_dirs: bool) -> dict[str, tuple[str, int]]:
 
 
 def extract_from_image(image: Path, rel: str, out_file: Path) -> bytes:
-    proc = subprocess.run([str(CLI), "--extract", str(image), rel, str(out_file)],
+    proc = subprocess.run([str(CLI), "--extract", str(image), rel, str(out_file), "--force"],
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if proc.returncode != 0:
         raise RuntimeError("提取失败 %s：%s"

@@ -99,7 +99,7 @@ def baseline_1x(image: Path, rel: str, workdir: Path) -> tuple[str, int]:
 
 
 def candidate_2x_extract(image: Path, rel: str, out_file: Path) -> tuple[str, int]:
-    proc = subprocess.run([str(CLI), "--extract", str(image), rel, str(out_file)],
+    proc = subprocess.run([str(CLI), "--extract", str(image), rel, str(out_file), "--force"],
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     text = proc.stdout.decode("utf-8", errors="replace").strip()
     if proc.returncode != 0:
