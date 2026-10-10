@@ -142,7 +142,9 @@ void print_usage() {
            "  --codec-lossy <decode|encode> <编码> <输入> strict <输出>\n"
            "                                              严格语义（decode_strict / encode_strict；判据用）\n"
            "  --codec-encode-table                        big5/shift_jis/euc-kr 反向编码表整表导出（对拍用）\n"
-           "  --decl-fix <输入> <目标编码> <输出>          XML 声明规范化（1.x _fix_xml_decl；对拍用）\n"
+           "  --decl-fix <输入> <目标编码> <输出> [--force]\n"
+           "                                              XML 声明规范化（1.x _fix_xml_decl；对拍用）。\n"
+           "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
            "  --sniff <输入> <输出> [--encoding <手动指定>]  判定链（六步）判定 + 解码（对拍用）\n"
            "  --ui-scale-probe                            读 user.ltx 的 [theme] scale（只读；判据用）\n"
            "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
@@ -3590,6 +3592,18 @@ int run_cli(const std::vector<std::string>& args) {
         const std::string body((std::istreambuf_iterator<char>(in)),
                                std::istreambuf_iterator<char>());
         const std::string fixed = xrkit::engine::text::fix_xml_decl(body, operands[1]);
+        // ★★ 2026-10-10（P17-27，审计 04 F-06 第一波收尾）：**输出已存在即拒绝，除非 `--force`**。
+        //   与 `--lzhuf` 同款（口径、退码、理由措辞都一致）。选它做第一波收尾的原因同 P17-26：
+        //   "动作 → 写盘点"映射显示 `--decl-fix` 是**第二个没被任何门禁步骤使用**的动作 ⇒ 零自检风险。
+        bool declfix_force = false;
+        for (const std::string& op : operands) {
+            if (op == "--force") declfix_force = true;
+        }
+        if (!declfix_force && std::filesystem::exists(path_from_utf8(operands[2]))) {
+            std::cerr << "DECLFIX error reason=输出已存在：" << operands[2]
+                      << "（拒绝静默截断；确认要覆盖请加 --force）\n";
+            return kExitUsage;
+        }
         std::ofstream file(xrkit::core::path_from_utf8(operands[2]), std::ios::binary | std::ios::trunc);
         if (!file) {
             std::cout << "DECLFIX error reason=写不到输出：" << operands[2] << "\n";
