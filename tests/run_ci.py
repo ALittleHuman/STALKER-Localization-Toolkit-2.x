@@ -841,6 +841,33 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("写盘动作不静默截断（04 F-06 第二波 `--extract`：已存在⇒rc=3；`--force`⇒覆盖）")
 
+    # ── ★★ P17-56（接口契约批·签名交叉禁令）：**插件侧只许走 `api.*`**（反向那一半）──
+    #   已有：`check_official_pages_contract.py` 管**官方页 → 引擎头**方向的棘轮。
+    #   本锁补**反向**：`plugins/**/*.py` 不许出现 `PageServices` / `xrkit/engine` / `import xrkit`
+    #   （插件只能经宿主给的 `api.*` 表；一旦直连引擎头，C ABI 表就形同虚设）。
+    #   ★ 数量下限自检：扫到的插件文件数 < 3 或 `api.` 用法 < 20 也判红 ——
+    #     否则插件目录一改名/清空，这条锁就变成「永远绿」的摆设。
+    plugin_pys = sorted((ROOT / "plugins").rglob("*.py"))
+    if len(plugin_pys) < 3:
+        fail("插件侧交叉禁令锁的前提不成立（接口契约批）：只扫到 %d 个 plugins/**/*.py"
+             % len(plugin_pys))
+    else:
+        bad = []
+        api_uses = 0
+        for py in plugin_pys:
+            src = py.read_text(encoding="utf-8", errors="replace")
+            api_uses += src.count("api.")
+            for needle in ("PageServices", "xrkit/engine", "import xrkit", "from xrkit"):
+                if needle in src:
+                    bad.append("%s → %s" % (py.name, needle))
+        if bad:
+            fail("插件侧出现跨用（接口契约批）：%s —— 插件只许走 api.* 表" % "；".join(bad))
+        elif api_uses < 20:
+            fail("插件侧 api.* 用法只数到 %d（< 20）⇒ 判据与现状脱节，先修判据本身" % api_uses)
+        else:
+            ok("插件侧只许走 api（接口契约批：%d 个插件文件、%d 处 api.* 用法，无 PageServices/引擎头交叉）"
+               % (len(plugin_pys), api_uses))
+
     # ── ★★ P17-48（04 F-06 第二波）：`--pack-db` 同款写盘守卫 ──────────────────────
     #   ★ 判的是**引擎解析后的真实落点**（`resolve_pack_target` 会补扩展名）——判 operands[0] 会判错对象。
     #   受影响步骤：`golden-db`（在同一 ours.<key>.db 上逐格式反复写）已连带补 `--force`。
