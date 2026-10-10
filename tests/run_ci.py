@@ -382,8 +382,17 @@ def step_selftest(release: bool) -> None:
 def step_cli_contract(release: bool) -> None:
     """退出码本身就是判据：0=通过 2=显式跳过 3=用法错误。
 
-    `--bench` 的**能力**在测试侧（[28] bench.py，口径见 docs/2.0.0-bench口径.md）；
-    CLI 里**不再保留**那个只会 SKIP 的占位动作（它会把 release 档的"未覆盖"清单顶住 ⇒ 发版永远过不了）。
+    `--bench` 的**能力**在测试侧（[28] bench.py，口径见 docs/2.0.0-bench口径.md）。
+    ★★ 2026-10-10（P17-19，审计 04 F-10 Low）：**这段说法以前是假的** —— 原文写
+    "CLI 里**不再保留**那个只会 SKIP 的占位动作"，而 `tools/cli/main.cpp` 里
+    `action == "--bench"` **仍在**（打印 `BENCH skip reason=engine-not-implemented` 后返回 2），
+    `--help` 也照实写着"未实现时输出 BENCH skip ... 并返回 2"。现状与原文矛盾，属"文档比代码响"。
+    现在的口径（三件事分清，别再混）：
+      · CLI 的 `--bench` = **显式 SKIP 占位**（rc=2，理由可见）—— 保留它是**有意的**：CLI 是能力全集，
+        占位能让"没这个能力"这件事**说出来**而不是静默少一条；
+      · 但**绝不许**把它塞进 `UNCOVERED`（那会把 release 档顶住 ⇒ 发版永远过不了，
+        这正是原文想防的事）——下面那条判据就是钉这个；
+      · bench 的**真实能力**判据在 [28] bench.py（真跑三条 I/O 路径计时）。
     绝不允许把"没实现"混成 0。
     """
     say("[5] CLI 退出码契约")
@@ -435,6 +444,24 @@ def step_cli_contract(release: bool) -> None:
         else:
             UNCOVERED.append("%s（尚未实现，CLI 显式 SKIP）" % label)
             ok("%s → exit=2（已记入未覆盖）" % label)
+
+    # ── ★★ P17-19（2026-10-10，审计 04 F-10 Low）：**占位动作不许顶住 release** ──────────
+    #   事实：CLI 至今保留 `--bench` 占位（rc=2 + `BENCH skip`），而这段文档原来说它"已移除"。
+    #   保留占位是**有意**的（CLI 是能力全集，"没这个能力"要说出来）；真正要防的是
+    #   "把占位动作塞进 UNCOVERED" —— 那会让 release 档永远过不了（本轮之前的注释记的正是这个坑）。
+    #   判据两半：① `--bench` 必须仍然**如实**给出 skip（rc=2 ＋ `BENCH skip` 行，不是 0、不是崩）；
+    #             ② 它**不许**出现在 UNCOVERED 里（占位动作不是"未覆盖的能力"——
+    #                能力判据在 [28] bench.py）。判红办法：在收尾处 `UNCOVERED.append("bench …")` ⇒ 立刻红。
+    rc_bench, out_bench = run([str(CLI_EXE), "--bench"])
+    bench_in_uncovered = [u for u in UNCOVERED if "bench" in u.lower()]
+    if rc_bench != 2 or "BENCH skip" not in out_bench:
+        fail("`--bench` 占位必须如实 SKIP（04 F-10）：期望 rc=2 ＋ `BENCH skip`，实际 rc=%d 输出=%r"
+             % (rc_bench, out_bench.strip()[:120]))
+    elif bench_in_uncovered:
+        fail("占位动作顶住了未覆盖清单（04 F-10）：UNCOVERED 里出现 %r —— 那会让 release 永远过不了；"
+             "bench 的能力判据在 [28] bench.py" % bench_in_uncovered)
+    else:
+        ok("`--bench` 占位如实 SKIP（rc=2）且**不**进未覆盖清单（04 F-10：能力判据在 [28] bench.py）")
 
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
