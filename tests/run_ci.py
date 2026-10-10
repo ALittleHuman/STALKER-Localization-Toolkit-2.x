@@ -463,6 +463,39 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("`--bench` 占位如实 SKIP（rc=2）且**不**进未覆盖清单（04 F-10：能力判据在 [28] bench.py）")
 
+    # ── ★★ P17-26（2026-10-10，审计 04 F-06 Low-Medium）：**写盘动作不许静默截断已有文件** ──
+    #   口径：输出已存在 ⇒ **拒绝 + 可读理由 + 退出码 3（用法错误）**；确认要覆盖请加 `--force`
+    #   （与 `--patch-apply` 同款语义）。
+    #   为什么第一波只做 `--lzhuf`：P17-25/P26 的"动作 → 写盘点"映射显示，**只有 `--lzhuf` 与
+    #   `--decl-fix` 没有被任何门禁步骤使用** ⇒ 先在这两处落口径，不会打到自检；其余动作
+    #   （--extract/--pack-db/--font-render/--extract-chars/--resample-dump/--sniff/--decode-text/
+    #   --codec-lossy）都有门禁在用，要连带改测试，下一波逐个来。
+    #   判据三段：① 首次写 ⇒ rc=0；② 同路径再写 ⇒ **rc=3** 且理由含 `--force`；③ 带 `--force` ⇒ rc=0。
+    guard_dir = ROOT / "build" / "logs" / "cli_overwrite_guard"
+    if guard_dir.exists():
+        shutil.rmtree(guard_dir)
+    guard_dir.mkdir(parents=True, exist_ok=True)
+    g_in = guard_dir / "in.bin"
+    g_out = guard_dir / "out.lzh"
+    g_in.write_bytes(b"hello-guard")
+    rc1, out1 = run([str(CLI_EXE), "--lzhuf", "encode", str(g_in), str(g_out)])
+    rc2, out2 = run([str(CLI_EXE), "--lzhuf", "encode", str(g_in), str(g_out)])
+    rc3, out3 = run([str(CLI_EXE), "--lzhuf", "encode", str(g_in), str(g_out), "--force"])
+    _, help_text = run([str(CLI_EXE), "--help"])
+    if rc1 != 0 or "LZHUF ok" not in out1:
+        fail("写盘守卫的**前提**不成立（04 F-06）：首次写 --lzhuf 期望 rc=0 ＋ `LZHUF ok`，实际 rc=%d %r"
+             % (rc1, out1.strip()[:100]))
+    elif rc2 != 3 or "--force" not in out2:
+        fail("写盘动作静默截断（04 F-06）：同路径再写期望 rc=3 ＋ 理由含 `--force`，实际 rc=%d %r"
+             % (rc2, out2.strip()[:120]))
+    elif rc3 != 0:
+        fail("`--force` 没能覆盖（04 F-06）：期望 rc=0，实际 rc=%d %r" % (rc3, out3.strip()[:120]))
+    elif "--force" not in help_text.split("--lzhuf", 1)[-1].split("\n")[0:4].__str__():
+        fail("`--force` 没写进 `--help`（04 F-06）：受影响动作的帮助行必须提到它（否则用户只知道被拒、"
+             "不知道怎么办）")
+    else:
+        ok("写盘动作不静默截断（04 F-06 第一波 `--lzhuf`：已存在⇒rc=3；`--force`⇒覆盖；帮助行也写了）")
+
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
     #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /

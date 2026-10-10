@@ -201,7 +201,9 @@ void print_usage() {
            "  --version-store [--set] [--list] ...\n"
            "                  版本号存储（读/写/列举；只读模式不带 --set）\n"
            "  --exe-version [文件]                        现读 exe 的 VERSIONINFO（判据用）\n"
-           "  --lzhuf <decode|encode> <输入> <输出>        LZHUF 编解码（1.x 的可逆域；对拍用）\n"
+           "  --lzhuf <decode|encode> <输入> <输出> [--force]\n"
+           "                                              LZHUF 编解码（1.x 的可逆域；对拍用）。\n"
+           "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
            "  --xml-stats <目录> [--mode m]                XML 统计模式（行数/ID；与 Python 口径对拍）\n"
            "  --xml-compare <a.xml> <b.xml> [--mode m]     XML 单文件对比（与 1.x 口径对拍）\n"
            "  --xml-compare-dirs <目录A> <目录B> [--mode m]  XML 目录对比（逐行/CSV/详情）\n"
@@ -4792,6 +4794,22 @@ int run_cli(const std::vector<std::string>& args) {
             }
         } else {
             std::cerr << "LZHUF error reason=未知子命令: " << operands[0] << "\n";
+            return kExitUsage;
+        }
+        // ★★ 2026-10-10（P17-26，审计 04 F-06 Low-Medium）：**输出已存在即拒绝，除非 `--force`**。
+        //   事实（修前）：这里直接以 `trunc` 打开 `operands[2]` —— 敲错/碰撞的输出路径会**静默截断**
+        //   已有文件，没有任何确认。口径与 `--patch-apply` 同款（那里早就有"输出==输入 / 已存在未
+        //   `--force`"守卫，`--force` 开关也在同一处解析，抄的就是它）：**拒绝 + 可读理由 + 用法错误(3)**。
+        //   ★ 为什么先做 `--lzhuf`：P17-25/P26 的动作→写盘点映射显示，**只有 `--lzhuf` 与 `--decl-fix`
+        //     没有被任何门禁步骤使用** ⇒ 先在这两处落口径，不会打到自检；其余动作都有门禁在用，
+        //     要连带改测试（下一波逐个来）。
+        bool lzhuf_force = false;   // ★ 本动作块自己的作用域（`--patch-apply` 那个 force 在它自己的块里）
+        for (const std::string& op : operands) {
+            if (op == "--force") lzhuf_force = true;
+        }
+        if (!lzhuf_force && std::filesystem::exists(path_from_utf8(operands[2]))) {
+            std::cerr << "LZHUF error reason=输出已存在：" << operands[2]
+                      << "（拒绝静默截断；确认要覆盖请加 --force）\n";
             return kExitUsage;
         }
         std::ofstream out_file(operands[2], std::ios::binary | std::ios::trunc);
