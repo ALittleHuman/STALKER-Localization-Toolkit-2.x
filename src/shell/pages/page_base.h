@@ -166,8 +166,12 @@ public:
     QComboBox* plugin_option_combo(const QString& area) const;
     // 该 area 插件下拉的**当前值**（空串 = 这页没有该 area 的插件下拉）
     QString plugin_option_value(const QString& area) const;
-    // Hub 重渲染前清登记（重渲染要幂等：上一轮的控件已不可达，登记不许留着）
-    void clear_plugin_option_combos() { plugin_option_combos_.clear(); }
+    // ★★ 2026-10-10（P17-41，审计 03 F-05）：Hub 重渲染前**真销毁**上一轮的插件下拉。
+    //   修前这里只是 `plugin_option_combos_.clear();` —— **只摘登记、不删控件**；
+    //   而 Hub 的重渲染在「该 area 没有下拉」时会新建一个并 `addWidget` 到同一布局
+    //   ⇒ 每重渲染一次就多留一套控件（线性累积、布局越排越长）。
+    //   现在：摘布局 → `deleteLater()` → 清表（实现见 .cpp）。
+    void clear_plugin_option_combos();
 
     // ② 点页面空白 ⇒ 把输入框焦点收回页面（用户真机："点空白并不能取消，还是一闪一闪"）
     bool eventFilter(QObject* watched, QEvent* event) override;

@@ -729,6 +729,23 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("插件纪律与概念区分都在现场（05 PLG-09 ③④：unload_all 的回调悬垂风险 + 两个 available* 的取舍）")
 
+    # ── ★★ P17-41（2026-10-10，审计 03 F-05）：插件槽位重渲染必须**真销毁**上一轮的下拉 ──
+    #   事实（修前）：`PageBase::clear_plugin_option_combos()` 只有一行 `plugin_option_combos_.clear();`
+    #   —— **只摘登记、不删控件**；而 Hub 重渲染在「该 area 没有下拉」时会新建并 addWidget 到同一布局
+    #   ⇒ 每重渲染一次多留一套控件（线性累积）。判据：该函数体里必须有 `removeWidget(` 与 `deleteLater()`。
+    pb_cpp = (ROOT / "src" / "shell" / "pages" / "page_base.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    fn_at = pb_cpp.find("void PageBase::clear_plugin_option_combos()")
+    if fn_at < 0:
+        fail("找不到 clear_plugin_option_combos 的定义（03 F-05）：判据失效，先修判据本身")
+    else:
+        fn_body = pb_cpp[fn_at:pb_cpp.find(chr(10) + "}", fn_at)]
+        if "removeWidget(" not in fn_body or "deleteLater()" not in fn_body:
+            fail("重渲染只摘登记不删控件（03 F-05）：clear_plugin_option_combos 里缺 removeWidget/deleteLater"
+                 " ⇒ 每渲染一次就多留一套下拉")
+        else:
+            ok("插件下拉重渲染真销毁（03 F-05：摘布局 + deleteLater + 清表，不再线性累积控件）")
+
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
     #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /

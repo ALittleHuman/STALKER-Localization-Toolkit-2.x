@@ -245,6 +245,21 @@ int PageBase::append_plugin_context_items(QMenu* menu, const plugin::Context& co
                                          this);
 }
 
+// ★★ 2026-10-10（P17-41，审计 03 F-05）：**真销毁**上一轮建的插件下拉（摘布局 → deleteLater → 清表）。
+//   顺序必须是「先摘后删」：先 removeWidget + setParent(nullptr)，再 deleteLater（延后到事件循环，
+//   避免在遍历 QHash 时把正在用的对象删掉）。
+void PageBase::clear_plugin_option_combos() {
+    for (QComboBox* combo : plugin_option_combos_) {
+        if (combo == nullptr) continue;
+        if (QWidget* parent = combo->parentWidget()) {
+            if (QLayout* lay = parent->layout()) lay->removeWidget(combo);
+        }
+        combo->setParent(nullptr);
+        combo->deleteLater();
+    }
+    plugin_option_combos_.clear();
+}
+
 void PageBase::set_plugin_option_combo(const QString& area, QComboBox* combo) {
     plugin_option_combos_.insert(area, combo);
 }
