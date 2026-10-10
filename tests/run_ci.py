@@ -778,6 +778,30 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("插件页 builder 异常被兜住（零碎批：hub.cpp 的 builder 调用在 try 里，异常只记账、不穿进 UI）")
 
+    # ── ★★ P17-47（零碎批）：`stk_api` 的「声明 ↔ 赋值」对账（审计：10 个注册点无表对账）──
+    #   做法：从 abi.h 的 stk_api 结构体抽 `(*name)` 成员，逐个查宿主里有没有赋值；
+    #   抽到的数量 < 8 也判红（解析器与源码脱节 = 这条锁变成永远绿的摆设）。解析前先剥注释。
+    abi_txt = (ROOT / "include" / "xrkit" / "plugin" / "abi.h").read_text(
+        encoding="utf-8", errors="replace")
+    api_at = abi_txt.find("typedef struct stk_api {")
+    if api_at < 0:
+        fail("abi.h 里找不到 stk_api 定义（零碎批）：判据失效，先修判据本身")
+    else:
+        api_body = active_code(abi_txt[api_at:abi_txt.find("} stk_api;", api_at)])
+        members = re.findall(r"\(\*(\w+)\)\s*\(", api_body)
+        hosts = ""
+        for rel in ("src/engine/plugin/abi_host.cpp", "src/engine/plugin/loader.cpp",
+                    "tools/cli/main.cpp"):
+            hosts += (ROOT / rel).read_text(encoding="utf-8", errors="replace")
+        if len(members) < 8:
+            fail("stk_api 只解析出 %d 个注册点（零碎批）：与预期（≥8）不符" % len(members))
+        else:
+            missing = [m for m in members if not re.search(r"\.\s*" + re.escape(m) + r"\s*=", hosts)]
+            if missing:
+                fail("stk_api 有声明却没人赋值（零碎批）：%s" % "、".join(missing))
+            else:
+                ok("stk_api 声明与赋值对账（零碎批：%d 个注册点全部在宿主里赋值）" % len(members))
+
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
     #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /
