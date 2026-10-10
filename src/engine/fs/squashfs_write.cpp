@@ -1146,30 +1146,60 @@ PackResult pack_squashfs(const std::string& out_path, const std::vector<PackItem
         return res;
     }
 
-    OutFile file;
-    std::string err;
-    if (!file.open(out_path, err)) {
-        res.error = err;
-        return res;
-    }
-
-    // ★ 先占住超块那 96 字节：数据区从**偏移 96** 开始（参照实现是 init 时就把超块
-    //   写在盘头、finish 时再覆盖一次）。少了这一步，整条数据区会前移 96 字节，
-    //   inode 里的 blocks_start 全错 —— 实测就是这么被逐字节对拍抓住的。
+    // ★★ 2026-10-10（P17-18，审计 01 F-16 Info）：**封包产物改原子写**。
+    //   事实（修前）：`OutFile file; file.open(out_path)` 直接**流式写目标文件** ——
+    //   中途失败（读盘错、压缩错、进程被杀、断电）会在目标路径留下一个**半截包**，
+    //   而它看起来就是个正常的 .sqfs（用户拿去用才发现读不开）。本仓别处（原子写、
+    //   逐字节对拍的产物）早有 `write_file_atomic` 的规矩，封包这条却是例外。
+    //   改法：先写同目录的 `<out>.part`，成功且文件**已关闭**之后再 rename 到目标
+    //   （同目录 ⇒ 同卷 ⇒ rename 是原子的）；失败则把 .part 删掉，目标路径**一个字节都不动**。
+    const std::string part_path = out_path + ".part";
+    bool packed_ok = false;
     {
-        std::vector<uint8_t> head(96, 0);
-        if (!file.write(head.data(), head.size(), err)) {
+        // ★ 全部落在**这一个作用域**里：`OutFile` 析构时才关句柄，rename 必须在它之后
+        OutFile file;
+        std::string err;
+        if (!file.open(part_path, err)) {
             res.error = err;
             return res;
         }
-    }
 
-    Packer packer(file, options);
-    const bool ok = packer.run(items, res);
+        // ★ 先占住超块那 96 字节：数据区从**偏移 96** 开始（参照实现是 init 时就把超块
+        //   写在盘头、finish 时再覆盖一次）。少了这一步，整条数据区会前移 96 字节，
+        //   inode 里的 blocks_start 全错 —— 实测就是这么被逐字节对拍抓住的。
+        {
+            std::vector<uint8_t> head(96, 0);
+            if (!file.write(head.data(), head.size(), err)) {
+                res.error = err;
+                return res;
+            }
+        }
+
+        Packer packer(file, options);
+        packed_ok = packer.run(items, res);
+    }   // ← `OutFile` 析构：句柄在这里关闭（它没有公开的 close()，只能靠作用域）
 
     const auto t1 = std::chrono::steady_clock::now();
     res.elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    if (!ok && res.error.empty()) res.error = "封包失败";
+
+    if (!packed_ok) {
+        // ★ 失败：把半截 `.part` 清掉（清不掉也要说出来），目标路径保持原样
+        std::error_code rm_ec;
+        std::filesystem::remove(part_path, rm_ec);
+        if (res.error.empty()) res.error = "封包失败";
+        if (rm_ec) res.error += "；临时文件清不掉（" + part_path + "）：" + rm_ec.message();
+        res.ok = false;
+        return res;
+    }
+
+    std::error_code ren_ec;
+    std::filesystem::rename(part_path, out_path, ren_ec);
+    if (ren_ec) {
+        res.ok = false;
+        res.error = "封包产物改名失败（" + part_path + " → " + out_path + "）：" + ren_ec.message();
+        return res;
+    }
+    res.ok = true;
     return res;
 }
 

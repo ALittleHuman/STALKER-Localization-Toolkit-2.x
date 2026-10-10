@@ -1814,6 +1814,24 @@ def step_shell_smoke(release: bool) -> None:
         fail("exe 目录没有翻倍重试（01 F-12）：必须用 `n < size` 判完整路径、截断时 `size *= 2` 重来")
     else:
         ok("exe 目录翻倍重试取路径（01 F-12：不再用固定 MAX_PATH 缓冲，截断即翻倍重来）")
+
+    # ── ★★ P17-18（2026-10-10，审计 01 F-16 Info）：**封包产物必须原子写** ──────────────────
+    #   事实（修前）：`pack_squashfs` 直接 `file.open(out_path)` **流式写目标** —— 中途失败
+    #   （读盘错/压缩错/进程被杀/断电）会在目标路径留下一个"看起来正常"的**半截包**
+    #   （本仓别处的产物早就走 `write_file_atomic`，封包这条是例外）。
+    #   判据：不许再直接打开 `out_path`；且必须出现"写 `<out>.part` + 收尾 rename"两步。
+    #   ★ 踩坑登记：第一版把 `OutFile` 声明在外层作用域 ⇒ 析构在函数出口才关句柄，
+    #     rename 报"文件被另一个进程占用"（实测），所以锁的是"**同一作用域内**写完再改"的形态。
+    psw_src = (ROOT / "src" / "engine" / "fs" / "squashfs_write.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    if "file.open(out_path, err)" in psw_src:
+        fail("封包产物还是直接写目标（01 F-16）：中途失败会留下半截包 ⇒ 必须先写 `<out>.part`、"
+             "成功关闭后再 rename")
+    elif 'out_path + ".part"' not in psw_src or "std::filesystem::rename(part_path, out_path" not in psw_src:
+        fail("封包产物原子写没到位（01 F-16）：必须有 `part_path`（`out_path + \".part\"`）"
+             "与收尾的 `std::filesystem::rename(part_path, out_path, ...)`")
+    else:
+        ok("封包产物原子写（01 F-16：写 `<out>.part` → 关闭句柄 → rename；失败清 .part、目标不动）")
     #   事实（修前）：`tail_len = static_cast<uint32_t>(nblocks) * 4u` —— 窄化 ×4 不溢出**完全依赖**
     #   上游 `ino.size ≤ 512 MiB` 那条闸（保证 nblocks ≤ 2^29），安全性是"跨两处的隐式耦合"：
     #   谁放宽 block_size 校验或调大那条闸，就会退化成 tail 分配过小而循环按 nblocks 越界读。
