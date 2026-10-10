@@ -2,7 +2,8 @@
 
 > 本文件由 `tools/fetch_third_party.py` 生成；改动请改脚本后重跑，不要手改。
 > 源码不入库（体积），锁文件 `sources.lock.json` 是复现依据：
-> `python tools/fetch_third_party.py --check` 会逐个校验 sha256。
+> `python tools/fetch_third_party.py --check` 会逐个校验**归档 tarball** 的 sha256，并断言解包目录存在且非空。
+> ★ 2026-10-10（P17-24，审计 04 F-07）：**措辞已收紧** —— 原文写「逐个校验 sha256」容易被读成「连解包后的源码树一起校验」，实际**不比对** `third_party/<dep>` 树的内容；另：锁里若**没有** sha256，`--check` 现在会明说「本次无法校验」并**非零退出**（修前是跳过比对还报 ok）。
 
 | 依赖 | 版本 | sha256 | 源 | 用途 |
 |---|---|---|---|---|

@@ -363,11 +363,31 @@ def main() -> int:
                 failures += 1
                 continue
             actual = sha256_of(archive)
-            if recorded and actual != recorded:
+            if not recorded:
+                # ★★ 2026-10-10（P17-24，审计 04 F-07 Low）：**锁里没有 sha 时不许报 ok**。
+                #   事实（修前）：`if recorded and actual != recorded` ⇒ `recorded` 为空时
+                #   **跳过比对**，随后照样打 `ok tarball…` 并以 0 退出 ⇒ "校验过了"是假的
+                #   （`SOURCES.md` 还写着"`--check` 会逐个校验 sha256"）。现在：明说"锁里没有 sha、
+                #   本次**无法校验**"并计一次失败（**非零退出**，理由可见）—— 要么锁里补 sha，
+                #   要么这条就是"没校验过"，不许当通过。
+                say("      !! 锁里没有 sha256 ⇒ **本次无法校验**（不是 ok）；"
+                    "要么往锁里补 sha，要么先跑一次拉取生成")
+                failures += 1
+                continue
+            if actual != recorded:
                 say("      !! sha256 不符：锁 %s / 实际 %s" % (recorded[:16], actual[:16]))
                 failures += 1
                 continue
-            say("      ok tarball（%s…） 已解包=%s" % (actual[:16], dest.exists()))
+            # ★★ P17-24（04 F-07）：**tarball 对了，还要看解包树在不在** ——
+            #   修前这里只打一行 `已解包=True/False` 就算过：`--check` 对"解包目录被清掉 /
+            #   内容与归档不一致"完全无感。现在至少断言"解包目标存在且非空"（归档内容级比对
+            #   需要逐文件解包再比，属另一笔；本条先把"存在性"这一档钉住，并把 SOURCES.md 的
+            #   措辞限定为"校验归档 tarball 的 sha256"）。
+            if not dest.exists() or not any(dest.iterdir()):
+                say("      !! tarball 对，但解包目录不存在或是空的：%s（重跑一次拉取解包）" % dest)
+                failures += 1
+                continue
+            say("      ok tarball（%s…）＋ 解包目录在（%s）" % (actual[:16], dest.name))
             continue
 
         if not fetch_archive(src, archive):
