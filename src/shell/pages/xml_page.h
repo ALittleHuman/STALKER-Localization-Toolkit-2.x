@@ -121,6 +121,9 @@ public:
     //   （审计那条判据的后半句是"顺带把比较期间模式/筛选控件按需禁用，消除 results_ 的
     //   主/worker 并发写"）。**只读**：控件不在（构造期）也算"没禁用"。
     //   ⚠ 定义在 .cpp：`QComboBox` 在本头里只是前向声明，inline 体里调 `isEnabled()` 会 C2027。
+    //   ★★ P17-6（审计 03 F-04）：这四个一起判 —— 其中「导出 CSV」是真竞态
+    //   （`export_csv` 遍历 `results_`/`visible_` + `count_kinds()`，而 worker 正在改 `results_`）；
+    //   「清除」只清输入框（不碰 `results_`），一并禁是按审计口径，防收尾统计对着空名字。
     bool compare_controls_enabled() const;
     // D3 批：编码下拉的**唯一一份**判据是文件里的 `kEncodings`（1.x
     // `xml_compare_app.py:302` 的 `ENCODINGS` 六项）。暴露出来只是为了让自检
@@ -132,6 +135,8 @@ public:
     QLabel* status() const { return status_; }
     QLabel* stats_label() const { return stats_label_; }
     QPushButton* clear_button() const { return clear_button_; }
+    // ★★ P17-6（审计 03 F-04）：导出按钮也要能被判据读到（比较期间必须与模式/筛选/清除一起禁用）
+    QPushButton* export_button() const { return export_button_; }
 
     // ★ 2026-10-04（用户第 1/2 条）：拖放区域清单 + 两个"选择"调用点的起点判据
     //   （B ← A；A 是这一页的第一输入 ⇒ 空/多元时落到工具目录）
@@ -187,6 +192,7 @@ private:
     QLabel* status_ = nullptr;
     QLabel* stats_label_ = nullptr;
     QPushButton* clear_button_ = nullptr;
+    QPushButton* export_button_ = nullptr;   // ★ P17-6：比较期间要一起禁用（见 compare_controls_enabled）
     bool last_compare_cancelled_ = false;
     int last_compare_total_ = 0;
     int selected_visible_ = -1;

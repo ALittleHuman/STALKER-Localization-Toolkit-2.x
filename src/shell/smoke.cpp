@@ -10440,6 +10440,35 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
                                      "禁用=%1 / running=%2）")
                           .arg(off_now ? 1 : 0)
                           .arg(page.task()->running() ? 1 : 0));
+                // ★★ 2026-10-10（P17-6，审计 03 F-04 Medium）：**「导出 CSV」与「清除」也要一起禁**。
+                //   事实（修前）：比较期间只禁了模式/筛选。其中**导出是真竞态** ——
+                //   `export_csv` 遍历 `results_`/`visible_` + `count_kinds()`，而 worker 正在
+                //   `results_.clear()+push_back()` ⇒ 同一个 std::vector 的主/worker 并发读写（UB/崩）；
+                //   「清除」只清输入框（不碰 `results_`），一并禁是按审计口径、防收尾统计对着空名字。
+                //   判红办法：把 `set_compare_controls_enabled` 里那两行删掉 ⇒ 下面两条立刻红。
+                QPushButton* export_btn = page.findChild<QPushButton*>(QStringLiteral("xml_export"));
+                check(export_btn != nullptr && page.export_button() == export_btn,
+                      QStringLiteral("P17-6 前提：拿得到「导出 CSV」按钮（xml_export）"));
+                const bool export_off = export_btn != nullptr && !export_btn->isEnabled();
+                const bool clear_off =
+                    page.clear_button() != nullptr && !page.clear_button()->isEnabled();
+                check(export_off && clear_off,
+                      QStringLiteral("P17-6 03 F-04：比较期间「导出 CSV」「清除」也被禁用"
+                                     "（导出禁用=%1 / 清除禁用=%2 / running=%3）")
+                          .arg(export_off ? 1 : 0)
+                          .arg(clear_off ? 1 : 0)
+                          .arg(page.task()->running() ? 1 : 0));
+                // ★ 第二道闸：**绕过按钮直调**也必须被拒（零静默：状态栏要说清为什么）。
+                const QString csv_path =
+                    QDir::temp().filePath(QStringLiteral("xrkit_smoke_xml_busy_export.csv"));
+                QFile::remove(csv_path);
+                const bool exported_while_running = page.export_csv_auto(csv_path);
+                check(!exported_while_running && !QFileInfo::exists(csv_path),
+                      QStringLiteral("P17-6 03 F-04：比较进行中直调 `export_csv` 被拒且不留文件"
+                                     "（返回=%1 / 文件在=%2）")
+                          .arg(exported_while_running ? 1 : 0)
+                          .arg(QFileInfo::exists(csv_path) ? 1 : 0));
+                QFile::remove(csv_path);
                 // 等 worker 收尾 + 排队恢复落地
                 QElapsedTimer wait_clock;
                 wait_clock.start();

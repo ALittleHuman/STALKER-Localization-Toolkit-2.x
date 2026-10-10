@@ -232,6 +232,7 @@ XmlPage::XmlPage(QWidget* parent)
     clear_button_->setObjectName(QStringLiteral("xml_clear"));
     QObject::connect(clear_button_, &QPushButton::clicked, this, [this] { clear_dirs(); });
     auto* export_button = add_action(QStringLiteral("导出 CSV"));
+    export_button_ = export_button;   // ★ P17-6：成员化 —— 比较期间要跟模式/筛选/清除一起禁用
     export_button->setObjectName(QStringLiteral("xml_export"));
     QObject::connect(export_button, &QPushButton::clicked, this, [this] {
         const QString path = QFileDialog::getSaveFileName(
@@ -478,11 +479,25 @@ int XmlPage::compare_dirs(const QString& dir_a, const QString& dir_b, const QStr
 void XmlPage::set_compare_controls_enabled(bool on) {
     if (mode_combo_ != nullptr) mode_combo_->setEnabled(on);
     if (filter_combo_ != nullptr) filter_combo_->setEnabled(on);
+    // ★★ 2026-10-10（P17-6，审计 03 F-04 Medium）：**「导出 CSV」与「清除」也要一起禁**。
+    //   事实（修前）：这里只禁了模式/筛选。两条按钮的**实际**风险不一样，如实分开写：
+    //     · **导出 CSV ＝ 真竞态**：`export_csv()` 遍历 `visible_`/`results_` 并 `count_kinds()`
+    //       （见下面那段），而比较 worker 正在 `results_.clear()` + `push_back()`
+    //       ⇒ 同一个 `std::vector` 的主/worker 并发读写（UB / 崩）。这是审计点的那一条。
+    //     · **清除 ＝ 口径不一致（不是竞态）**：`clear_dirs()` 只清两个**输入框**（1.x 的
+    //       「清除」语义就是如此），不碰 `results_`；但比较收尾的统计/文件夹名是**按输入框**
+    //       算的 ⇒ 比较中清掉输入框，收尾会出现"统计对着一组空名字"。
+    //   两条一起禁是审计口径；`export_csv` 自己还有一道"比较中拒绝"的闸（挡住绕过按钮直调）。
+    if (export_button_ != nullptr) export_button_->setEnabled(on);
+    if (clear_button_ != nullptr) clear_button_->setEnabled(on);
 }
 
 // ★★ 2026-10-06（审计 3-5）：只读探针（见头文件）。控件不在（构造期）也算"没禁用"。
+//   ★ P17-6：判据覆盖四个控件（模式/筛选/导出/清除）—— 少一个就等于那条竞态还开着。
 bool XmlPage::compare_controls_enabled() const {
     if (mode_combo_ == nullptr || filter_combo_ == nullptr) return true;
+    if (export_button_ != nullptr && !export_button_->isEnabled()) return false;
+    if (clear_button_ != nullptr && !clear_button_->isEnabled()) return false;
     return mode_combo_->isEnabled() && filter_combo_->isEnabled();
 }
 
@@ -772,6 +787,17 @@ QDialog* XmlPage::make_detail_dialog(int index, QWidget* parent) {
 }
 
 bool XmlPage::export_csv(const QString& path, const QString& generated_at) {
+    // ★★ 2026-10-10（P17-6，审计 03 F-04 Medium）：**比较进行中拒绝导出**。
+    //   按钮那一侧已经禁用了（`set_compare_controls_enabled(false)`），这条挡住**绕过按钮
+    //   直调**的调用者（自检、将来的内部调用者、插件页）：那时 worker 正在
+    //   `results_.clear()+push_back()`，而本函数会遍历 `results_`/`visible_` 并 `count_kinds()`
+    //   ⇒ 同一个 `std::vector` 的主/worker 并发读写（UB）。
+    //   零静默：拒绝要留痕（调用方与用户都看得见"为什么没导出"）。
+    if (task_ != nullptr && task_->running()) {
+        status_->setText(QStringLiteral("比较进行中：导出已拒绝（等它结束或先取消）"));
+        log_to_host(QStringLiteral("导出 CSV 被拒：比较任务正在跑（worker 正在改结果表）"));
+        return false;
+    }
     const exml::XmlModeSpec* spec = mode();
     exml::XmlCsvReport report;
     report.mode_name = spec != nullptr ? spec->name : "";
