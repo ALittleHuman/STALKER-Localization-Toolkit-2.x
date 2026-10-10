@@ -208,7 +208,9 @@ def ref_side(path: Path, override: str) -> dict:
 
 
 def our_side(cli: Path, path: Path, override: str, out_file: Path) -> dict:
-    argv = [str(cli), "--sniff", str(path), str(out_file)]
+    # ★ P17-31（04 F-06）：本步在**同一 out_file** 上反复写（各用例复用）⇒ 必须显式 `--force`
+    #   （守卫口径：输出已存在即拒，除非 --force；这里语义本来就是"要覆盖"）。
+    argv = [str(cli), "--sniff", str(path), str(out_file), "--force"]
     if override and override != "auto":
         argv += ["--encoding", override]
     proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

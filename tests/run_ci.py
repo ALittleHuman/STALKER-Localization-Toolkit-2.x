@@ -563,6 +563,27 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("写盘动作不静默截断（04 F-06 第二波 `--font-render`：DDS+ini 两份都判；`--force`⇒覆盖）")
 
+    # ── ★★ P17-31（04 F-06 第二波）：`--sniff` 同款守卫 ──────────────────────────────────
+    #   ★ 改件提示：本动作与 `--decode-text` 的写盘点**文本完全相同**（都从 `operands[1]` 截断打开），
+    #     所以改件/判据都要带动作名做锚点（第一版脚本就是在这里被断言拦下的）。
+    sn_in = guard_dir / "sniff_in.bin"
+    sn_out = guard_dir / "sniff_out.bin"
+    sn_in.write_bytes("привет".encode("cp1251"))
+    s1, so1 = run([str(CLI_EXE), "--sniff", str(sn_in), str(sn_out)])
+    s2, so2 = run([str(CLI_EXE), "--sniff", str(sn_in), str(sn_out)])
+    s3, so3 = run([str(CLI_EXE), "--sniff", str(sn_in), str(sn_out), "--force"])
+    if s1 != 0:
+        fail("写盘守卫的**前提**不成立（04 F-06 / --sniff）：首次写期望 rc=0，实际 rc=%d %r"
+             % (s1, so1.strip()[:100]))
+    elif s2 != 3 or "--force" not in so2:
+        fail("写盘动作静默截断（04 F-06 / --sniff）：同路径再写期望 rc=3 ＋ 理由含 `--force`，"
+             "实际 rc=%d %r" % (s2, so2.strip()[:120]))
+    elif s3 != 0:
+        fail("`--force` 没能覆盖（04 F-06 / --sniff）：期望 rc=0，实际 rc=%d %r"
+             % (s3, so3.strip()[:120]))
+    else:
+        ok("写盘动作不静默截断（04 F-06 第二波 `--sniff`：已存在⇒rc=3；`--force`⇒覆盖）")
+
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
     #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /

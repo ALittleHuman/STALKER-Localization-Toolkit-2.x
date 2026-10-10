@@ -145,7 +145,9 @@ void print_usage() {
            "  --decl-fix <输入> <目标编码> <输出> [--force]\n"
            "                                              XML 声明规范化（1.x _fix_xml_decl；对拍用）。\n"
            "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
-           "  --sniff <输入> <输出> [--encoding <手动指定>]  判定链（六步）判定 + 解码（对拍用）\n"
+           "  --sniff <输入> <输出> [--encoding <手动指定>] [--force]\n"
+           "                                              判定链（六步）判定 + 解码（对拍用）；\n"
+           "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
            "  --ui-scale-probe                            读 user.ltx 的 [theme] scale（只读；判据用）\n"
            "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
            "                                              文本提取（gameplay|scripts 一个分支）\n"
@@ -4714,6 +4716,19 @@ int run_cli(const std::vector<std::string>& args) {
         if (!db.ok) {
             std::cout << "SNIFF error reason=" << db.error << "\n";
             return kExitFail;
+        }
+        // ★★ 2026-10-10（P17-31，审计 04 F-06 第二波）：**输出已存在即拒绝，除非 `--force`**。
+        //   与 `--lzhuf`/`--decl-fix`/`--resample-dump`/`--font-render` 同款。
+        //   ★ 锚点提示：本文件里 `std::ofstream out(path_from_utf8(operands[1])…)` 有**两处**
+        //     （本处与 `--decode-text`），所以判据/改件必须带动作名做锚点，别只按那一行匹配。
+        bool sniff_force = false;
+        for (const std::string& op : operands) {
+            if (op == "--force") sniff_force = true;
+        }
+        if (!sniff_force && std::filesystem::exists(path_from_utf8(operands[1]))) {
+            std::cerr << "SNIFF error reason=输出已存在：" << operands[1]
+                      << "（拒绝静默截断；确认要覆盖请加 --force）\n";
+            return kExitUsage;
         }
         std::ofstream out(path_from_utf8(operands[1]), std::ios::binary | std::ios::trunc);
         if (!out) {
