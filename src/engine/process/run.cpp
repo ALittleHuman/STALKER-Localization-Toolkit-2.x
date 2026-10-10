@@ -49,15 +49,44 @@ std::wstring widen(const std::string& text) {
     return out;
 }
 
-// 命令行引号规则照 Windows 的规矩（`CommandLineToArgvW` 的反函数）：带空格/引号的参数要包起来。
+// 命令行引号规则照 Windows 的规矩（`CommandLineToArgvW` 的反函数）。
+// ★★ 2026-10-10（P17-11，审计 01 F-04 Medium）：**修前漏了"反斜杠翻倍"** ——
+//   旧实现只把 `"` 转义成 `\"`，反斜杠原样输出 ⇒ 参数**以反斜杠结尾**时（`C:\dir with space\`）
+//   得到 `"C:\dir with space\"`：那个收尾反斜杠把**收尾引号**吃掉了 ⇒ `CommandLineToArgvW`
+//   把后面的参数全并进这一个参数（实测口径见下），命令直接跑歪或跑不起来。
+//   Windows 的真规则（也是 Python `subprocess.list2cmdline` 的规则 —— 1.x 就是用它拼命令行的）：
+//     · 需要外层引号 ⇔ 参数**为空**或含**空格/制表符**（只含 `"` 的不需要）；
+//     · 连续 N 个反斜杠后面跟一个 `"` ⇒ 那 N 个要写成 2N 个，再写 `\"`；
+//     · 参数**以 N 个反斜杠结尾且要加外层引号** ⇒ 那 N 个要写成 2N 个，否则收尾引号被吃掉。
+//   判据：`xrkit_app --smoke` 里的引号表（期望值由 `subprocess.list2cmdline` 逐条生成；
+//   另在 4000 条随机串上做过逐字节对拍，见批报告）。
 std::string quote_arg(const std::string& arg) {
-    if (!arg.empty() && arg.find_first_of(" \t\"") == std::string::npos) return arg;
-    std::string out = "\"";
+    const bool need_quotes = arg.empty() || arg.find_first_of(" \t") != std::string::npos;
+    std::string out;
+    size_t pending_backslashes = 0;
     for (char ch : arg) {
-        if (ch == '"') out += "\\\"";
-        else out += ch;
+        if (ch == '\\') {
+            ++pending_backslashes;
+            continue;
+        }
+        if (ch == '"') {
+            // 2N 个反斜杠 + 转义引号（N 是紧邻它前面那一串反斜杠的个数）
+            out.append(pending_backslashes * 2 + 1, '\\');
+            out += '"';
+            pending_backslashes = 0;
+            continue;
+        }
+        out.append(pending_backslashes, '\\');
+        pending_backslashes = 0;
+        out += ch;
     }
-    out += "\"";
+    if (need_quotes) {
+        out.insert(out.begin(), '"');
+        out.append(pending_backslashes * 2, '\\');
+        out += '"';
+    } else {
+        out.append(pending_backslashes, '\\');
+    }
     return out;
 }
 
@@ -103,6 +132,17 @@ void drain_pipe(HANDLE pipe, std::string& pending, std::size_t tail_limit,
 
 }  // namespace
 
+// ★★ P17-11（01 F-04）：命令行拼装的**唯一一份实现**（`run()` 与自检都走它）。
+//   与 Python `subprocess.list2cmdline` 逐字节同规则 ⇒ 1.x 拼出来的命令行与我们一致。
+std::string build_command_line(const std::string& program, const std::vector<std::string>& args) {
+    std::string command = quote_arg(program);
+    for (const std::string& arg : args) {
+        command += " ";
+        command += quote_arg(arg);
+    }
+    return command;
+}
+
 RunResult run(const RunOptions& options) {
     RunResult result;
     if (options.program.empty()) {
@@ -110,11 +150,7 @@ RunResult run(const RunOptions& options) {
         return result;
     }
 
-    std::string command = quote_arg(options.program);
-    for (const std::string& arg : options.args) {
-        command += " ";
-        command += quote_arg(arg);
-    }
+    const std::string command = build_command_line(options.program, options.args);
 
     SECURITY_ATTRIBUTES attributes{};
     attributes.nLength = sizeof(attributes);

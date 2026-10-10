@@ -51,4 +51,11 @@ struct RunResult {
 // 同步跑：**调用方在工作线程里用**（界面那条路是任务壳的 worker）。
 RunResult run(const RunOptions& options);
 
+// ★★ 2026-10-10（P17-11，审计 01 F-04 Medium）：把「参数表 → Windows 命令行」这一步**暴露出来**，
+//   好让自检能在不真起进程的情况下逐字节判它（修前这一手只藏在匿名命名空间里，
+//   于是"参数以反斜杠结尾时收尾引号被吃掉"这条缺陷没有任何判据盯得住）。
+//   规则与 Python `subprocess.list2cmdline` 逐字节一致（1.x 拼命令行用的就是它）；
+//   `run()` 内部走的就是这一个实现（唯一一份，不许分叉）。
+std::string build_command_line(const std::string& program, const std::vector<std::string>& args);
+
 }  // namespace xrkit::engine::process

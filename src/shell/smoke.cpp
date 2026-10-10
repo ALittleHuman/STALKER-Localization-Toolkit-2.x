@@ -9,6 +9,7 @@
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/plugin/abi_host.h"
 #include "xrkit/engine/plugin/loader.h"
+#include "xrkit/engine/process/run.h"   // ★ P17-11（01 F-04）：命令行引号判据要 `run()` / 拼命令行
 #include "xrkit/engine/text/encoding.h"
 #include "hub.h"
 #include "dialog_start.h"
@@ -291,6 +292,70 @@ SmokeResult run_smoke() {
               .arg(hub_log_dir()));
     QDir(smoke_log_dir).removeRecursively();
     set_hub_log_dir(smoke_log_dir);
+
+    // ★★ 2026-10-10（P17-11，审计 01 F-04 Medium）：**命令行引号必须按 Windows 规矩翻倍反斜杠**。
+    //   事实（修前）：`quote_arg` 只把 `"` 转义成 `\"`，反斜杠原样输出 ⇒ 参数**以反斜杠结尾**时
+    //   （`C:\dir with space\`）得到 `"C:\dir with space\"` —— 收尾那个反斜杠把**收尾引号**吃掉，
+    //   `CommandLineToArgvW` 会把后面的参数全并进这一个参数（命令跑歪）。
+    //   期望值**不是手写的**：逐条由 Python 的 `subprocess.list2cmdline` 生成
+    //   （1.x 拼命令行用的就是它 ⇒ 这是"与 1.x 同口径"的机器口径），
+    //   并且另外在 4000 条随机串（字母集 `a b 空格 反斜杠 引号 制表符`）上做过逐字节对拍：
+    //   0 条不一致（见批报告 P17-11）。判红办法：把反斜杠翻倍那两处删掉 ⇒ 立刻红。
+    {
+        struct QuoteCase {
+            const char* arg;
+            const char* want;
+        };
+        const QuoteCase quote_cases[] = {
+            {"C:\\plain", "C:\\plain"},
+            {"C:\\a b\\", "\"C:\\a b\\\\\""},
+            {"E:\\dir with space\\", "\"E:\\dir with space\\\\\""},
+            {"tail\\", "tail\\"},
+            {"sp ace\\", "\"sp ace\\\\\""},
+            {"end with 3\\\\\\", "\"end with 3\\\\\\\\\\\\\""},
+            {"a b\\\\\"c", "\"a b\\\\\\\\\\\"c\""},
+            {"x\"y", "x\\\"y"},
+            {"quote\"and\\", "quote\\\"and\\"},
+            {"", "\"\""},
+            {"has space", "\"has space\""},
+            {"tab\there", "\"tab\there\""},
+        };
+        int bad_quotes = 0;
+        QString first_bad;
+        for (const QuoteCase& item : quote_cases) {
+            const std::string got =
+                xrkit::engine::process::build_command_line("", {std::string(item.arg)});
+            // `build_command_line("")` 会先拼一个空程序名（`""`）再加一个空格 ⇒ 取空格之后那一段
+            const std::string actual = got.size() > 3 ? got.substr(3) : got;
+            if (actual != item.want) {
+                ++bad_quotes;
+                if (first_bad.isEmpty()) {
+                    first_bad = QStringLiteral("arg=%1 实得=%2 期望=%3")
+                                    .arg(QString::fromUtf8(item.arg),
+                                         QString::fromStdString(actual),
+                                         QString::fromUtf8(item.want));
+                }
+            }
+        }
+        check(bad_quotes == 0,
+              QStringLiteral("P17-11 01 F-04：命令行引号与 `subprocess.list2cmdline` 逐字节一致"
+                             "（%1 条里 %2 条不符%3）")
+                  .arg(static_cast<int>(sizeof(quote_cases) / sizeof(quote_cases[0])))
+                  .arg(bad_quotes)
+                  .arg(first_bad.isEmpty() ? QString() : QStringLiteral("；首条：") + first_bad));
+        // 端到端那一半：真起一个进程，把"以反斜杠结尾 + 含空格"的参数原样交回
+        // （`cmd.exe /c echo` 的解析规则与 CRT 不同，所以用**我们自己**的 exe 当子进程不现实；
+        //   这里用 `cmd /c` 只是为了证明"命令拼出来能被系统接受"，argv 精度由上面那张表负责）。
+        xrkit::engine::process::RunOptions echo;
+        echo.program = "cmd.exe";
+        echo.args = {"/c", "echo", "C:\\dir with space\\"};
+        const xrkit::engine::process::RunResult echoed = xrkit::engine::process::run(echo);
+        check(echoed.exit_code == 0,
+              QStringLiteral("P17-11 01 F-04 端到端：以反斜杠结尾且含空格的参数能让子进程正常起来"
+                             "（exit=%1 err=%2）")
+                  .arg(echoed.exit_code)
+                  .arg(QString::fromStdString(echoed.error)));
+    }
 
     // ① 真实清单 vs 契约（少一页/改个名字都要红）
     {
