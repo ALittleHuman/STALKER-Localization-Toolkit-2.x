@@ -204,11 +204,14 @@ ALLOW_FILES = {"src/shell/smoke.cpp"}
 #   这批的判据口径是**只修门禁假绿、不改产品逻辑**（见任务纪律），所以存量违规如实登记、
 #   不顺手改产品代码；`plugin_ui.cpp` 那两处该由 "全部尺寸/间距调用过 px()" 那一批一起收口。
 KNOWN_BARE = {
-    ("src/shell/plugin_ui.cpp", 77, "setMinimumHeight(core::px(height) * 16)"):
+    # ★ 2026-10-10（P17-51）：行号 +5 —— `ui_label` 上方补了「必须能换行」的说明与 `setWordWrap(true)`
+    #   （接口契约批「标签换行」），本文件的两处存量违规整体下移。豁免许可必须精确对上，
+    #   所以**行号要跟着走**（这两处仍按原计划留给「全部尺寸/间距调用过 px()」那一批收口）。
+    ("src/shell/plugin_ui.cpp", 81, "setMinimumHeight(core::px(height) * 16)"):
         # `ui_text()`：16 行文本高度是**设计稿像素乘数**（16 逻辑像素/行），恒不随界面缩放 ⇒
         # 高 DPI 下这块多行框会明显偏矮。待改为 `core::px(height * 16)`（或 `core::px(16) * height`）。
         (1, "16 逻辑像素/行的行高乘数没过 px() —— 高 DPI 下多行框偏矮；待那一批收口"),
-    ("src/shell/plugin_ui.cpp", 160, "setMinimumHeight(core::px(height) * 16)"):
+    ("src/shell/plugin_ui.cpp", 164, "setMinimumHeight(core::px(height) * 16)"):
         # `ui_text_view()`：同一形状的第二处（只读多行视图）。
         (1, "同上的只读多行视图（同一形状的第二处）"),
 }

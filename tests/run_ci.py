@@ -802,6 +802,19 @@ def step_cli_contract(release: bool) -> None:
             else:
                 ok("stk_api 声明与赋值对账（零碎批：%d 个注册点全部在宿主里赋值）" % len(members))
 
+    # ── ★★ P17-51（接口契约批「标签换行」）：插件 `ui_label` 必须能换行 ──
+    #   修前没有 setWordWrap ⇒ 长文案被截断成一行（1.x 的 TkUiFactory.label 按宽度折行）。
+    pui = (ROOT / "src" / "shell" / "plugin_ui.cpp").read_text(encoding="utf-8", errors="replace")
+    lab_at = pui.find("stk_widget* ui_label(")
+    if lab_at < 0:
+        fail("找不到 ui_label 的实现（接口契约批）：判据失效，先修判据本身")
+    else:
+        lab_body = pui[lab_at:pui.find(chr(10) + "}", lab_at)]
+        if "setWordWrap(true)" not in lab_body:
+            fail("插件标签不会换行（接口契约批）：ui_label 里缺 setWordWrap(true) ⇒ 长文案被截断成一行")
+        else:
+            ok("插件标签能换行（接口契约批：ui_label 设了 setWordWrap(true)，与 hub 的提示标签一致）")
+
     # ── ★★ P17-48（04 F-06 第二波）：`--pack-db` 同款写盘守卫 ──────────────────────
     #   ★ 判的是**引擎解析后的真实落点**（`resolve_pack_target` 会补扩展名）——判 operands[0] 会判错对象。
     #   受影响步骤：`golden-db`（在同一 ours.<key>.db 上逐格式反复写）已连带补 `--force`。

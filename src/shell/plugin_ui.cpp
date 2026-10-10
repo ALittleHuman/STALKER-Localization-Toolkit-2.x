@@ -29,6 +29,10 @@ QString from_utf8(const char* text) {
 // 12.2：九种"造控件"的 Qt 实现。参数名与 1.x `TkUiFactory` 一致（就是第三方契约）。
 stk_widget* ui_label(stk_host*, stk_widget* parent, const char* text, const char* style) {
     auto* widget = new QLabel(from_utf8(text), unwrap(parent));
+    // ★★ 2026-10-10（P17-51，接口契约批「标签换行」）：**插件标签必须能换行**。
+    //   修前没有 `setWordWrap` ⇒ 长文案被**截断成一行**（1.x 的 `TkUiFactory.label` 是按宽度折行的），
+    //   插件页里稍长的一句说明就看不全。`hub.cpp:58` 的提示标签早就这么做了，这里补齐同款。
+    widget->setWordWrap(true);
     if (style != nullptr && *style != '\0') widget->setProperty("xrkit_style", from_utf8(style));
     return wrap(widget);
 }
