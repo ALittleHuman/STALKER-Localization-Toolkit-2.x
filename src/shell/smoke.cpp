@@ -6,6 +6,8 @@
 // ★ 2026-10-06（审计 3-3）：自检要直接断言"两种路径写法判成同一份"这条判重口径
 #include "xrkit/core/path.h"
 #include "xrkit/engine/fs/db.h"
+#include "xrkit/engine/fs/lzhuf.h"   // ★ P17-17（01 F-14）：编码上限判据
+#include "xrkit/engine/fs/untrusted_limits.h"   // ★ P17-17：那三个上限的具名常量
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/plugin/abi_host.h"
 #include "xrkit/engine/plugin/loader.h"
@@ -469,6 +471,34 @@ SmokeResult run_smoke() {
                   .arg(shallow_loaded ? 1 : 0)
                   .arg(QString::fromStdString(real_error)));
         QDir(deep_dir).removeRecursively();
+    }
+
+    // ★★ 2026-10-10（P17-17，审计 01 F-14 Low）：**lzhuf 编码缓冲尺寸必须先判上限**。
+    //   事实（修前）：`out(size * 2 + 64)` 直接按输入长度×2 分配（`size * 2` 可能回绕），
+    //   且 `static_cast<int>(size)`/`static_cast<int>(out.size())` 是窄化 ⇒ 荒谬入参会带着
+    //   错尺寸进 LZHUF 内部写（越界写的典型形状），而不是当场被拒。
+    //   判据：① 超上限 / 空指针 ⇒ **当场返回空**（故意用 `nullptr` + 超大 size 调，能安全地
+    //   证明"先判后碰"：真去碰了就会在这里崩）；② 对照：正常输入仍要能编码-解码往返。
+    {
+        const std::vector<uint8_t> too_big = xrkit::engine::fs::lzhuf_encode(
+            nullptr, static_cast<size_t>(XRKIT_LZHUF_MAX_DECLARED_BYTES) + 1);
+        check(too_big.empty(),
+              QStringLiteral("P17-17 01 F-14：超上限入参必须当场返回空（实得 %1 字节，"
+                             "真去碰了 nullptr 这里就崩了）")
+                  .arg(too_big.size()));
+        const std::vector<uint8_t> payload{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+        const std::vector<uint8_t> encoded =
+            xrkit::engine::fs::lzhuf_encode(payload.data(), payload.size());
+        std::vector<uint8_t> decoded;
+        std::string dec_error;
+        const bool dec_ok = !encoded.empty() &&
+                            xrkit::engine::fs::lzhuf_decode(encoded.data(), encoded.size(), decoded,
+                                                            dec_error);
+        check(dec_ok && decoded == payload,
+              QStringLiteral("P17-17 01 F-14 对照：正常输入仍要能往返（encoded=%1 dec_ok=%2 err=%3）")
+                  .arg(encoded.size())
+                  .arg(dec_ok ? 1 : 0)
+                  .arg(QString::fromStdString(dec_error)));
     }
 
     // ① 真实清单 vs 契约（少一页/改个名字都要红）

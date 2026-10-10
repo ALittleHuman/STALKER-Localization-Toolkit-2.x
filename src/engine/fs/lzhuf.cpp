@@ -22,6 +22,15 @@ std::mutex g_lzhuf_mutex;
 }  // namespace
 
 std::vector<uint8_t> lzhuf_encode(const uint8_t* data, size_t size) {
+    // ★★ 2026-10-10（P17-17，审计 01 F-14 Low）：**编码缓冲尺寸必须先判上限**。
+    //   事实（修前）：`std::vector<uint8_t> out(size * 2 + 64)` —— 直接按**输入长度**×2 分配，
+    //   而 `size * 2` 本身可能**回绕**（`size > SIZE_MAX/2` 时表达式截断），于是 out 变得极小；
+    //   紧接着 `static_cast<int>(size)` 与 `static_cast<int>(out.size())` 又是**窄化**：
+    //   一个荒谬的入参（上游 bug / 超大条目）不会当场被拒，而是拿着错尺寸进 LZHUF 内部去写
+    //   —— 这是"越界写"的典型形状。判据（`xrkit_app --smoke`）：超上限或空指针必须**当场返回空**
+    //   并且**一个字节都不碰**（判据故意用 `nullptr` + 超大 size 调，能安全证明"先判后碰"）。
+    constexpr size_t kMaxEncodeInputBytes = XRKIT_LZHUF_MAX_DECLARED_BYTES;
+    if (data == nullptr || size == 0 || size > kMaxEncodeInputBytes) return {};
     std::lock_guard<std::mutex> lock(g_lzhuf_mutex);
     // 上限按 1.x 的做法留足余量（最坏情况下 LZHUF 会略微膨胀）
     std::vector<uint8_t> out(size * 2 + 64);
