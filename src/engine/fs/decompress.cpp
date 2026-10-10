@@ -108,9 +108,29 @@ bool decompress_block(Compression comp, const uint8_t* src, size_t src_len, size
             return true;
         }
         case Compression::Zstd: {
-            const size_t rc = ZSTD_decompress(out.data(), out_capacity, src, src_len);
+            // ★★ 2026-10-10（P17-60，审计 01 F-20 Info）：**与 xz 同一个内存预算口径**。
+            //   修前直接 `ZSTD_decompress(...)` ⇒ 吃 zstd 的默认窗口上限
+            //   （`ZSTD_WINDOWLOG_LIMIT_DEFAULT` = 27 ⇒ **128 MiB**），比我们给 xz 的闸还松一档，
+            //   而"解压器内存预算"这件事在全文件里就有**两种口径**。
+            //   现在：用同一个 `decode_mem_limit(out_capacity)` 反推 `windowLogMax`，
+            //   再走显式 `ZSTD_DCtx` 解压 ⇒ 窗口声明超过预算即**报错**（零静默），
+            //   与 xz 的 `LZMA_MEMLIMIT_ERROR` 那条路对称。
+            //   · 元数据块（8 KiB）⇒ 预算抬到下限 8 MiB ⇒ windowLogMax = 23；
+            //   · 数据块（≤ 1 MiB）⇒ 预算 64 MiB ⇒ windowLogMax = 26（仍比默认 27 紧一档）。
+            const uint64_t budget = decode_mem_limit(out_capacity);
+            unsigned window_log_max = 10;
+            while (window_log_max < 31 && ((1ull << window_log_max) < budget)) ++window_log_max;
+            ZSTD_DCtx* dctx = ZSTD_createDCtx();
+            if (dctx == nullptr) {
+                err = "zstd 上下文分配失败（内存不足？）";
+                return false;
+            }
+            ZSTD_DCtx_setParameter(dctx, ZSTD_d_windowLogMax, static_cast<int>(window_log_max));
+            const size_t rc = ZSTD_decompressDCtx(dctx, out.data(), out_capacity, src, src_len);
+            ZSTD_freeDCtx(dctx);
             if (ZSTD_isError(rc)) {
-                err = std::string("zstd 解压失败：") + ZSTD_getErrorName(rc);
+                err = std::string("zstd 解压失败：") + ZSTD_getErrorName(rc) +
+                      "（窗口上限 2^" + std::to_string(window_log_max) + " 字节）";
                 return false;
             }
             out.resize(rc);

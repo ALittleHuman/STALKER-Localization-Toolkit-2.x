@@ -913,6 +913,22 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("lzhuf 不依赖非对齐/端序（01 F-19：读写两侧都按字节显式组小端 32 位）")
 
+    # ── ★★ P17-60（审计 01 F-20 Info）：解压器内存预算**只许一个口径** ──
+    #   事实（修前）：xz 走 `decode_mem_limit(out_capacity)`（P17-2 的闸），
+    #   而 zstd 直接 `ZSTD_decompress(...)` ⇒ 吃默认窗口上限 27（**128 MiB**），比 xz 的闸还松
+    #   ⇒ 同一个文件里两种预算口径。本批要求：zstd 分支也必须**用同一个 decode_mem_limit**
+    #   反推 `windowLogMax` 并走显式 DCtx（超限即报错，零静默）。
+    dec_src = active_code((ROOT / "src" / "engine" / "fs" / "decompress.cpp").read_text(
+        encoding="utf-8", errors="replace"))
+    if "ZSTD_decompress(" in dec_src:
+        fail("zstd 分支又走了默认窗口（01 F-20）：必须用 decode_mem_limit 反推 windowLogMax")
+    elif "ZSTD_d_windowLogMax" not in dec_src or "decode_mem_limit(out_capacity)" not in dec_src:
+        fail("zstd 的内存预算没跟 xz 对齐（01 F-20）：缺 ZSTD_d_windowLogMax 或没用 decode_mem_limit")
+    elif "LZMA_MEMLIMIT_ERROR" not in dec_src:
+        fail("xz 的内存闸不见了（01 F-20/01 F-02 回归）：LZMA_MEMLIMIT_ERROR 那条明确报错没了")
+    else:
+        ok("解压器内存预算一个口径（01 F-20：xz 与 zstd 共用 decode_mem_limit；超限都明确报错）")
+
     # ── ★★ P17-48（04 F-06 第二波）：`--pack-db` 同款写盘守卫 ──────────────────────
     #   ★ 判的是**引擎解析后的真实落点**（`resolve_pack_target` 会补扩展名）——判 operands[0] 会判错对象。
     #   受影响步骤：`golden-db`（在同一 ours.<key>.db 上逐格式反复写）已连带补 `--force`。
