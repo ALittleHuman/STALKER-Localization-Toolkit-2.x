@@ -1,5 +1,5 @@
 {
-  "current": { "version": "2.0.0", "prerelease": "ALPHA", "index": 128 },
+  "current": { "version": "2.0.0", "prerelease": "ALPHA", "index": 129 },
   "tree": {
     "2.0.0": {
       "ALPHA": {
@@ -128,7 +128,8 @@
         "125": { "built": "2026-10-10 10:41:08", "commit": "98ce9de", "artifacts": ["build\\logs\\build_pkg_125.log", "dist\\2.0.0\\ALPHA\\125"] },
         "126": { "built": "2026-10-10 10:54:25", "commit": "f092081", "artifacts": ["build\\logs\\build_pkg_126.log", "dist\\2.0.0\\ALPHA\\126"] },
         "127": { "built": "2026-10-10 11:09:56", "commit": "45ebd01", "artifacts": ["build\\logs\\build_pkg_127.log", "dist\\2.0.0\\ALPHA\\127"] },
-        "128": { "built": "2026-10-10 11:23:18", "commit": "bda6c3d", "artifacts": ["build\\logs\\build_pkg_128.log", "dist\\2.0.0\\ALPHA\\128"] }
+        "128": { "built": "2026-10-10 11:23:18", "commit": "bda6c3d", "artifacts": ["build\\logs\\build_pkg_128.log", "dist\\2.0.0\\ALPHA\\128"] },
+        "129": { "built": "2026-10-10 11:36:26", "commit": "e641b5f", "artifacts": ["build\\logs\\build_pkg_129.log", "dist\\2.0.0\\ALPHA\\129"] }
       },
       "BETA": {
         "1": { "built": "2026-09-26 23:59:22", "commit": "2.0.0 ALPHA.0", "artifacts": ["dist\\build_pkg_1.log"] },
