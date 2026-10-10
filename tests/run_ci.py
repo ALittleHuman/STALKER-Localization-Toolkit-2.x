@@ -659,6 +659,29 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("写盘动作不静默截断（04 F-06 第二波 `--extract-chars`：已存在⇒rc=3；`--force`⇒覆盖）")
 
+    # ── ★★ P17-35（04 F-06 口径件）：`--convert-batch` **原地改写没开 `--backup` 要吵一句** ──
+    #   本动作**不套**"输出已存在即拒"（它就是批量写产物/原地转换，一刀切会把功能打死）；
+    #   `--backup` 才是它的保护手段（默认 on，且**只在原地转换时生效** —— 见 batch.h:175）。
+    #   判据两半：① 原地 + `--no-backup` ⇒ 必须打 warn；② 原地 + 默认(`--backup`) ⇒ 不许打。
+    #   ★ 口径说明与两种更硬的候选（要求显式 `--force` / 直接拒绝）见
+    #     `P17-35先查_convert-batch口径_20261010.md`，等拍板再动。
+    cb_dir = guard_dir / "cb_dir"
+    cb_dir.mkdir(parents=True, exist_ok=True)
+    (cb_dir / "a.txt").write_text("hello", encoding="ascii")
+    cb1, cbo1 = run([str(CLI_EXE), "--convert-batch", str(cb_dir), str(cb_dir),
+                       "utf-8", "utf-8", "--ext", ".txt", "--no-backup"])
+    _, cbo2 = run([str(CLI_EXE), "--convert-batch", str(cb_dir), str(cb_dir),
+                      "utf-8", "utf-8", "--ext", ".txt"])
+    if "CONVERTBATCH warn=原地改写且未开 --backup" not in cbo1:
+        fail("原地改写没开 `--backup` 必须吵一句（04 F-06 / --convert-batch）：没看到 warn 行；"
+             "实际输出 %r" % cbo1.strip()[:140])
+    elif "CONVERTBATCH warn=" in cbo2:
+        fail("默认（`--backup` 开）时不该吵（04 F-06 / --convert-batch）：实际 %r"
+             % cbo2.strip()[:140])
+    else:
+        ok("原地改写无备份会被点名（04 F-06 口径件 `--convert-batch`：--no-backup⇒warn；"
+           "默认有备份⇒不吵）")
+
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
     #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /

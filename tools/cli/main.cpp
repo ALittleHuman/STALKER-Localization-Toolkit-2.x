@@ -4348,6 +4348,24 @@ int run_cli(const std::vector<std::string>& args) {
                 return kExitUsage;
             }
         }
+        // ★★ 2026-10-10（P17-35，审计 04 F-06）：**原地改写且没开 `--backup` ⇒ 必须吵一句**。
+        //   口径说明：本动作**不套**"输出已存在即拒"（那会把它的用途打死 —— 它就是批量写产物/
+        //   原地转换；`--backup` 才是它的保护手段）。这里只做**零行为变更的可观测**：
+        //   源目录与输出目录指向同一处、且用户没要求备份时，明确告诉他"源文件会被覆盖"。
+        //   两种更硬的候选口径（要求显式 `--force` / 直接拒绝）已写进
+        //   `P17-35先查_convert-batch口径_*.md`，等拍板再动。
+        const auto normalize_path = [](const std::string& s) {
+            std::string t = xrkit::core::path_to_utf8(
+                std::filesystem::absolute(xrkit::core::path_from_utf8(s)).lexically_normal());
+            for (char& ch : t) {
+                ch = static_cast<char>(::tolower(static_cast<unsigned char>(ch)));
+            }
+            return t;
+        };
+        if (!opt.backup && normalize_path(opt.source) == normalize_path(opt.output_dir)) {
+            std::cout << "CONVERTBATCH warn=原地改写且未开 --backup：源文件会被覆盖"
+                         "（强烈建议加 --backup，或把输出指到另一个目录）\n";
+        }
         const xrkit::engine::text::BatchOutcome outcome =
             xrkit::engine::text::convert_batch(opt, {});
         std::cout << "CONVERTBATCH ok single_file=" << (outcome.single_file ? 1 : 0)
