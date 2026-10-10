@@ -951,6 +951,14 @@ def step_cli_contract(release: bool) -> None:
         fail("CLI 没接上 pack_db 的出错理由（01 F-13）：--pack-db 该先算内容、算不出来就不落盘")
     else:
         ok("pack_db 会拒绝 4 GiB 窄化（01 F-13：两条检查 ＋ opt-in 出参 ＋ CLI 接线并明确报错）")
+        # ★★ P17-66（01 F-13 继续接线）：**官方页那条也不许把空包写出去** ——
+        #   拿到 pack 的出错理由就报错返回、绝不写盘（P17-62 先查件点名的"更糟那条路"）。
+        fsp = active_code((ROOT / "src" / "shell" / "pages" / "fs_page.cpp").read_text(
+            encoding="utf-8", errors="replace"))
+        if "&pack_err" not in fsp or "封包失败（%1）" not in fsp:
+            fail("官方页仍会把空包写出去（01 F-13 接线）：fs_page 的 pack_db 调用没接出错理由")
+        else:
+            ok("官方页封包不写空包（01 F-13 接线：fs_page 拿到 pack 出错理由即报错返回，不落盘）")
 
     # ── ★★ P17-48（04 F-06 第二波）：`--pack-db` 同款写盘守卫 ──────────────────────
     #   ★ 判的是**引擎解析后的真实落点**（`resolve_pack_target` 会补扩展名）——判 operands[0] 会判错对象。

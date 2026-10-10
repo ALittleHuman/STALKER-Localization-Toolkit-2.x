@@ -2262,7 +2262,14 @@ QString FsPage::run_pack_job(const PackJob& job, const ProgressSink& progress,
     //   会被逐码点顶替成 `?`（引擎不认中文名），用户**必须看得见**改了哪些、改成了什么。
     //   **不阻塞**：包照样写出来（用户口径：不需要支持中文名，但不能静默）。
     std::vector<efs::DbNameRewrite> rewrites;
-    const std::vector<uint8_t> raw = efs::pack_db(items, *fmt, &rewrites);
+    // ★★ 2026-10-10（P17-66，审计 01 F-13 的**官方页接线**）：这条原来会把空包/错包写出去。
+    //   给了 `&pack_err` ⇒ 启用"4 GiB 窄化"两条检查（单条目 / 累计偏移）；
+    //   命中就**直接报错返回、绝不写盘**（P17-62 先查件点名的"比静默截断更糟"那条路）。
+    std::string pack_err;
+    const std::vector<uint8_t> raw = efs::pack_db(items, *fmt, &rewrites, &pack_err);
+    if (!pack_err.empty()) {
+        return QStringLiteral("封包失败（%1）").arg(utf8(pack_err));
+    }
     if (progress) progress(70);
     std::string write_error;
     if (!core::write_file_atomic(job.out, raw, true, write_error)) {
