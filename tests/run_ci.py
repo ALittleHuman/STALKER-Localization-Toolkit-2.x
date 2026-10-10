@@ -1794,6 +1794,26 @@ def step_shell_smoke(release: bool) -> None:
     else:
         ok("不可信尺寸上限一处定义（01 F-08：LZHUF 256 MiB / DB 512 MiB 都来自 "
            "untrusted_limits.h，含大小关系 static_assert；取值刻意不强行统一）")
+
+    # ── ★★ P17-16（2026-10-10，审计 01 F-12 Low）：**exe 目录不许用固定 MAX_PATH 缓冲** ────
+    #   事实（修前）：`wchar_t buffer[MAX_PATH]` + 一次 `GetModuleFileNameW(..., MAX_PATH)`，
+    #   再用 `n < MAX_PATH` 判成功 —— 路径长于 260 时该函数**静默截断**并返回**缓冲大小**，
+    #   判断不成立 ⇒ 直接 `return "."`（app 目录变成当前工作目录：日志/user.ltx/插件目录全找错，
+    #   且没有任何提示）。判据：不许再把 `MAX_PATH` 当 nSize 传进去；且必须存在"翻倍重试"的形态
+    #   （`n < size` 判完整 + 循环里 `size *= 2`）。
+    #   ★ 本轮实测教训：第一次改成 `GetModuleFileNameW(nullptr, nullptr, 0)` 问长度**在这台机器上
+    #     返回 0** ⇒ app_dir() 直接退化成 "."，被 `--smoke` 的两条既有判据当场抓住（默认落盘目录 /
+    #     user.ltx 同目录）—— 所以判据锁的是"翻倍重试"，不是某一种两步法写法。
+    theme_src = (ROOT / "src" / "core" / "theme.cpp").read_text(encoding="utf-8", errors="replace")
+    theme_code = active_code(theme_src)
+    if "GetModuleFileNameW(nullptr, buffer.data(), MAX_PATH" in theme_code or \
+            "GetModuleFileNameW(nullptr, buffer, MAX_PATH)" in theme_code:
+        fail("exe 目录还在把 MAX_PATH 当缓冲大小传给 GetModuleFileNameW（01 F-12）："
+             "路径超长会被静默截断 ⇒ app_dir() 悄悄退化成 \".\"")
+    elif "n < size" not in theme_code or "size *= 2" not in theme_code:
+        fail("exe 目录没有翻倍重试（01 F-12）：必须用 `n < size` 判完整路径、截断时 `size *= 2` 重来")
+    else:
+        ok("exe 目录翻倍重试取路径（01 F-12：不再用固定 MAX_PATH 缓冲，截断即翻倍重来）")
     #   事实（修前）：`tail_len = static_cast<uint32_t>(nblocks) * 4u` —— 窄化 ×4 不溢出**完全依赖**
     #   上游 `ino.size ≤ 512 MiB` 那条闸（保证 nblocks ≤ 2^29），安全性是"跨两处的隐式耦合"：
     #   谁放宽 block_size 校验或调大那条闸，就会退化成 tail 分配过小而循环按 nblocks 越界读。

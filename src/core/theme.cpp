@@ -220,11 +220,26 @@ std::string render_ltx(const LtxData& data) {
 
 std::string app_dir() {
 #if defined(_WIN32)
-    wchar_t buffer[MAX_PATH] = {};
-    const DWORD n = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
-    if (n > 0 && n < MAX_PATH) {
-        std::filesystem::path exe(buffer);
-        return path_to_utf8(exe.parent_path());
+    // ★★ 2026-10-10（P17-16，审计 01 F-12 Low）：**两步法**取 exe 路径。
+    //   事实（修前）：`wchar_t buffer[MAX_PATH]` + 一次 `GetModuleFileNameW(nullptr, buffer, MAX_PATH)`，
+    //   后面用 `n < MAX_PATH` 判成功 —— 路径长于 260 时该函数**静默截断**并返回**缓冲大小**
+    //   （不是失败码）⇒ 那个判断不成立 ⇒ 直接 `return "."`：**app 目录变成当前工作目录**
+    //   （日志/`user.ltx`/插件目录全找错地方，而且没有任何提示）。这正是审计说的"用两步法"。
+    //   ★ 第一次改法（`GetModuleFileNameW(nullptr, nullptr, 0)` 问所需长度）**在这台机器上返回 0**
+    //     ⇒ 直接掉进 `return "."`，被 `--smoke` 当场抓住（"默认落盘目录 … 实得 ./logs"、
+    //     "user.ltx 与 exe 同目录"两条同时红）。所以改成**逐次翻倍重试**：
+    //     返回 0、或"返回长度 == 缓冲大小"都当作"可能被截断"⇒ 缓冲翻倍再来；
+    //     上限 32768 字符（够任何现实路径，不会无限翻）。`n < size` 才算拿到完整路径。
+    DWORD size = MAX_PATH;
+    while (size <= 32768) {
+        std::wstring buffer(static_cast<size_t>(size), L'\0');
+        const DWORD n = GetModuleFileNameW(nullptr, buffer.data(), size);
+        if (n > 0 && n < size) {
+            buffer.resize(static_cast<size_t>(n));
+            std::filesystem::path exe(buffer);
+            return path_to_utf8(exe.parent_path());
+        }
+        size *= 2;
     }
 #endif
     return ".";
