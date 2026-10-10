@@ -91,6 +91,12 @@ public:
     void stop_and_wait();
 
     // 13.7：**只发一个 0~100 值**，壳里不做任何归一化
+    // ── ★★ 2026-10-10（P17-5，审计 03 F-07 Medium）：**这四个是"从任何线程调都安全"的入口** ──
+    //   修前它们直接改控件（`bar_->setValue` / `status_->setText`）⇒ 从 worker 调就是跨线程
+    //   碰控件（偶发崩溃），而同一族的 `run()` sink 却是排队回主线程的安全路径 ⇒
+    //   调用者极易误用（分册原话：「公开 API 的地雷」）。
+    //   现在：主线程调用直落、其它线程**一律排队**（`QueuedConnection`）⇒ 语义只剩
+    //   "报告进度/消息/错误/收工"，不再隐含"必须在主线程"这个暗坑。
     void report_progress(int percent_0_100);
     void report_message(const std::string& text);
     void report_error(const std::string& text);

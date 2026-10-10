@@ -167,12 +167,38 @@ bool TaskShell::run(const QString& title, const WorkerFn& worker) {
     return true;
 }
 
-void TaskShell::report_progress(int percent_0_100) { apply_progress(percent_0_100); }
-void TaskShell::report_message(const std::string& text) {
-    apply_message(QString::fromStdString(text));
+// ★★ 2026-10-10（P17-5，审计 03 F-07 Medium）：`report_*` 是**公开 API**，修前它们直接
+//   `apply_*` ⇒ 等于"只能在主线程用"：从 worker 调就是跨线程碰控件（`bar_->setValue` /
+//   `status_->setText`）、偶发崩溃。而同一族的 `run()` 里那两个 sink 是**排队回主线程**的
+//   安全路径 ⇒ 调用者极易误以为它们也能在 worker 里用（分册原话：「公开 API 的地雷」）。
+//   现在四个入口一律**排队**：主线程调用直落（省一次事件循环往返），其它线程一律
+//   `QMetaObject::invokeMethod(..., QueuedConnection)` ⇒ **从任何线程调都安全**，
+//   而"最终在主线程执行"这件事仍由 `apply_*` 自己的线程位记账（零静默）。
+namespace {
+void on_main_or_queue(TaskShell* shell, std::function<void()> fn) {
+    QCoreApplication* app = QCoreApplication::instance();
+    if (app == nullptr || QThread::currentThread() == app->thread()) {
+        fn();
+        return;
+    }
+    QMetaObject::invokeMethod(shell, std::move(fn), Qt::QueuedConnection);
 }
-void TaskShell::report_error(const std::string& text) { apply_error(QString::fromStdString(text)); }
-void TaskShell::finish(const QString& final_status) { apply_finish(final_status); }
+}  // namespace
+
+void TaskShell::report_progress(int percent_0_100) {
+    on_main_or_queue(this, [this, percent_0_100] { apply_progress(percent_0_100); });
+}
+void TaskShell::report_message(const std::string& text) {
+    const QString qtext = QString::fromStdString(text);
+    on_main_or_queue(this, [this, qtext] { apply_message(qtext); });
+}
+void TaskShell::report_error(const std::string& text) {
+    const QString qtext = QString::fromStdString(text);
+    on_main_or_queue(this, [this, qtext] { apply_error(qtext); });
+}
+void TaskShell::finish(const QString& final_status) {
+    on_main_or_queue(this, [this, final_status] { apply_finish(final_status); });
+}
 
 QString TaskShell::cancel_reason() const { return cancel_reason_; }
 

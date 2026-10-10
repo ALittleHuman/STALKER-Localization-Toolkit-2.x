@@ -1960,6 +1960,41 @@ SmokeResult run_smoke() {
                       .arg(seq_shell.worker_slots()));
         }
 
+        // ★★ 2026-10-10（P17-5，审计 03 F-07 Medium）：**`report_*` 从 worker 调必须安全**。
+        //   修前：这四个公开入口直接 `apply_*`（`bar_->setValue` / `status_->setText`）⇒
+        //   从工作线程调就是跨线程碰控件（偶发崩溃）。判据两条：
+        //     ① worker 里调完**当场不许改控件**（说明它排队了，不是直落）；
+        //     ② 事件泵一次之后控件必须被改，**且那条事件记的线程位是"在主线程"**。
+        //   判红办法：把 `report_message` 换回直调 `apply_message` ⇒ ① 立刻红。
+        {
+            TaskShell report_shell;
+            const QString before_text = report_shell.status_label()->text();
+            std::thread reporter([&report_shell] {
+                report_shell.report_message("来自 worker 的 report_message");
+                report_shell.report_progress(66);
+            });
+            reporter.join();
+            const QString right_after = report_shell.status_label()->text();
+            check(right_after == before_text,
+                  QStringLiteral("P17-5 03 F-07：worker 里调 `report_message` **不当场**改控件"
+                                 "（修前直落 ⇒ 当场就变）—— 实得 %1")
+                      .arg(right_after == before_text ? QStringLiteral("未变")
+                                                      : QStringLiteral("当场变了")));
+            QApplication::processEvents();
+            check(report_shell.status_label()->text().contains(QStringLiteral("来自 worker")),
+                  QStringLiteral("P17-5 03 F-07：排队之后控件被改（实得「%1」）")
+                      .arg(report_shell.status_label()->text().left(40)));
+            check(report_shell.progress_bar()->value() == 66,
+                  QStringLiteral("P17-5 03 F-07：worker 里的 `report_progress` 排队落地（实得 %1）")
+                      .arg(report_shell.progress_bar()->value()));
+            bool saw_main_message = false;
+            for (const TaskShell::Event& e : report_shell.take_events()) {
+                if (e.kind == 'm' && e.on_main_thread) saw_main_message = true;
+            }
+            check(saw_main_message,
+                  QStringLiteral("P17-5 03 F-07：那条消息事件确实**在主线程**执行（线程位自证）"));
+        }
+
         // ★★ 2026-10-06（①）取消：**真停 + 留痕 + 理由可见**
         //   事实（改动前）：`task_shell.cpp` 里 `cancel_->setEnabled(...)` 三处、
         //   **一处 `connect` 都没有** ⇒ 六页那颗「取消」是一颗**死按钮**。
