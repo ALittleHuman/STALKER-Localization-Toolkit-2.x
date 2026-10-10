@@ -162,7 +162,9 @@ void print_usage() {
            "                                              或已存在时必须能判出来，不许静默覆盖）\n"
            "  --glyph-dump <字体> <字号> <输出> [字符集文件]  导出 FreeType 栅格（与 Pillow 对拍）\n"
            "  --font-metrics <输出>                       导出字库几何/宽度表（与 1.x font_pack 对拍）\n"
-           "  --font-render <字体> <字号> <x2> <fmt> <字符集文件> <输出前缀>\n"
+           "  --font-render <字体> <字号> <x2> <fmt> <字符集文件> <输出前缀> [--force]\n"
+           "                                              DDS+ini 两个产物已存在时**拒绝覆盖**，\n"
+           "                                              确认要覆盖请加 --force\n"
            "                                              渲染一个字号的 DDS + ini（与 1.x 逐字节对拍）\n"
            "  --resample-dump <输入raw> <源宽> <源高> <目标宽> <目标高> <输出raw> [--force]\n"
            "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
@@ -4160,7 +4162,25 @@ int run_cli(const std::vector<std::string>& args) {
         const std::string dds_path = operands[5] + ".dds";
         const std::string ini_path = operands[5] + ".ini";
         {
-            std::ofstream f(path_from_utf8(dds_path), std::ios::binary | std::ios::trunc);
+            // ★★ 2026-10-10（P17-30，审计 04 F-06 第二波）：**两个产物都已存在即拒绝，除非 `--force`**。
+        //   本动作一次写 **DDS + ini 两份**（`dds_path` / `ini_path`）⇒ 两份都要判，否则
+        //   "DDS 拒了、ini 却被静默截断"这种半覆盖状态还是会出现。
+        //   ★ 连带改动：`tests/golden_font_render.py:189` 是唯一调用点，已补 `--force`
+        //     （它本来就是要写产物；与本动作的"存在即拒"口径配套）。
+        bool fontrender_force = false;
+        for (const std::string& op : operands) {
+            if (op == "--force") fontrender_force = true;
+        }
+        if (!fontrender_force) {
+            for (const std::string* probe : {&dds_path, &ini_path}) {
+                if (std::filesystem::exists(path_from_utf8(*probe))) {
+                    std::cerr << "FONTRENDER error reason=输出已存在：" << *probe
+                              << "（拒绝静默截断；确认要覆盖请加 --force）\n";
+                    return kExitUsage;
+                }
+            }
+        }
+        std::ofstream f(path_from_utf8(dds_path), std::ios::binary | std::ios::trunc);
             if (!f) {
                 std::cout << "FONTRENDER error reason=写不出 " << dds_path << "\n";
                 return kExitFail;

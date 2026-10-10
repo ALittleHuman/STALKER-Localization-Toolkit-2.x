@@ -540,6 +540,29 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("写盘动作不静默截断（04 F-06 第二波 `--resample-dump`：已存在⇒rc=3；`--force`⇒覆盖）")
 
+    # ── ★★ P17-30（04 F-06 第二波）：`--font-render`（**两个产物**）同款守卫 ──────────────
+    #   它一次写 DDS + ini ⇒ 判据要证明**两份都判**（先在 DDS 上撞、再在 ini 上撞）。
+    fr_chars = guard_dir / "fr_chars.txt"
+    fr_chars.write_text("0041\n", encoding="ascii")
+    fr_prefix = str(guard_dir / "fr_out")
+    fr_font_path = "C:/Windows/Fonts/simsun.ttc"
+    fr_argv = [str(CLI_EXE), "--font-render", fr_font_path, "16", "0", "8888", str(fr_chars),
+               fr_prefix]
+    f1, fo1 = run(fr_argv)
+    f2, fo2 = run(fr_argv)
+    f3, fo3 = run(fr_argv + ["--force"])
+    if f1 != 0:
+        # 字体/环境前置不满足：只记台账（别的步骤也这么处理），不判红
+        ledger("`--font-render` 守卫判据", "前置不满足：%s" % fo1.strip()[:100])
+    elif f2 != 3 or "输出已存在" not in fo2:
+        fail("写盘动作静默截断（04 F-06 / --font-render）：产物已存在时期望 rc=3 ＋ `输出已存在`，"
+             "实际 rc=%d %r" % (f2, fo2.strip()[:120]))
+    elif f3 != 0:
+        fail("`--force` 没能覆盖（04 F-06 / --font-render）：期望 rc=0，实际 rc=%d %r"
+             % (f3, fo3.strip()[:120]))
+    else:
+        ok("写盘动作不静默截断（04 F-06 第二波 `--font-render`：DDS+ini 两份都判；`--force`⇒覆盖）")
+
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
     #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /

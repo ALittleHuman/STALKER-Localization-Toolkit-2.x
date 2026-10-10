@@ -186,8 +186,10 @@ def main() -> int:
             f.write(ini)
 
         # ── 我们
+        # ★ P17-30（04 F-06）：两个产物都已存在即拒 ⇒ 本步显式 `--force`（语义就是"要写产物"）
         proc = subprocess.run([str(CLI), "--font-render", str(case_font), str(size),
-                               "1" if x2 else "0", fmt, str(chars_file), str(ours_prefix)],
+                               "1" if x2 else "0", fmt, str(chars_file), str(ours_prefix),
+                               "--force"],
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         out = proc.stdout.decode("utf-8", "replace").strip()
         if proc.returncode != 0:
