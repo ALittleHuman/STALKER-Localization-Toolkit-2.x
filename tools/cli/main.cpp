@@ -138,7 +138,8 @@ void print_usage() {
            "  --pack-sqfs <输出> <输入目录> [--pack-dirs]  自写 SquashFS 封包（xz 块，逐字节对拍用）\n"
            "  --decode-text <输入> <输出> [--force]      六编码链解码（把正文写成 UTF-8；对拍用）。\n"
            "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
-           "  --codec-lossy <decode|encode> <编码> <输入> <输出>\n"
+           "  --codec-lossy <decode|encode> <编码> <输入> <输出> [--force]\n"
+           "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
            "                                              有损编解码（Python errors=replace；对拍用）\n"
            "  --codec-lossy <decode|encode> <编码> <输入> strict <输出>\n"
            "                                              严格语义（decode_strict / encode_strict；判据用）\n"
@@ -3533,6 +3534,19 @@ int run_cli(const std::vector<std::string>& args) {
             }
         } else {
             std::cerr << "CODEC error reason=未知模式（decode|encode）\n";
+            return kExitUsage;
+        }
+        // ★★ 2026-10-10（P17-33，审计 04 F-06 第二波）：**输出已存在即拒绝，除非 `--force`**。
+        //   与 `--lzhuf`/`--decl-fix`/`--resample-dump`/`--font-render`/`--sniff`/`--decode-text` 同款。
+        //   ★ 本动作的输出位置是**动态**的（`strict` 时是第 5 个操作数、否则第 4 个）⇒ 守卫必须用
+        //     同一个 `out_arg` 下标，别写死 3 或 4。
+        bool codec_force = false;
+        for (const std::string& op : operands) {
+            if (op == "--force") codec_force = true;
+        }
+        if (!codec_force && std::filesystem::exists(path_from_utf8(operands[out_arg]))) {
+            std::cerr << "CODEC error reason=输出已存在：" << operands[out_arg]
+                      << "（拒绝静默截断；确认要覆盖请加 --force）\n";
             return kExitUsage;
         }
         std::ofstream file(xrkit::core::path_from_utf8(operands[out_arg]),

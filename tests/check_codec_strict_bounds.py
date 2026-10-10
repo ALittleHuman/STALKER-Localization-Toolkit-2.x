@@ -74,7 +74,7 @@ def main() -> int:
                 src = work / ("%s_%s.bin" % (codec, name))
                 src.write_bytes(data)
                 rc, out = call(["--codec-lossy", "decode", codec, str(src), "strict",
-                                str(out_file)], timeout=60)
+                                str(out_file), "--force"], timeout=60)
                 want(rc != 0 and "CODEC error" in out,
                      "\u2460 strictly %s %s 必须失败（Python 同名 codec 必抛）" % (codec, name),
                      "exit=%d out=%s" % (rc, out.strip()[:160]))
@@ -90,7 +90,7 @@ def main() -> int:
                 src = work / ("good_%s_%s.bin" % (codec, name))
                 src.write_bytes(data)
                 rc, out = call(["--codec-lossy", "decode", codec, str(src), "strict",
-                                str(out_file)], timeout=60)
+                                str(out_file), "--force"], timeout=60)
                 want(rc == 0 and "CODEC ok" in out,
                      "\u2461 strictly %s 的合法输入 %s 必须成功" % (codec, name),
                      "exit=%d out=%s" % (rc, out.strip()[:160]))
@@ -99,14 +99,14 @@ def main() -> int:
         bad_utf8 = work / "bad_utf8.txt"
         bad_utf8.write_bytes(b"ok\xe4\xb8bad")
         for codec in ("utf-32", "utf-32-le", "utf-32-be"):
-            rc, out = call(["--codec-lossy", "encode", codec, str(bad_utf8), str(out_file)],
+            rc, out = call(["--codec-lossy", "encode", codec, str(bad_utf8), str(out_file), "--force"],
                            timeout=20)
             want(rc == 0 and "CODEC ok" in out,
                  "\u2462 utf-32 家族有损编码非法 UTF-8 必须返回（修前：死循环 + 无限增长）"
                  " [%s]" % codec,
                  "exit=%d out=%s" % (rc, out.strip()[:200]))
         # 产物形态与 utf-16 兄弟分支同口径：有效前缀 "ok" + 一个 `?`，然后收尾
-        rc, _ = call(["--codec-lossy", "encode", "utf-16-le", str(bad_utf8), str(out_file)],
+        rc, _ = call(["--codec-lossy", "encode", "utf-16-le", str(bad_utf8), str(out_file), "--force"],
                      timeout=20)
         if rc == 0:
             want(out_file.read_bytes() == b"o\x00k\x00?\x00",

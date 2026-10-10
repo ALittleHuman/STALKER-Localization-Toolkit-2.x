@@ -606,6 +606,37 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("写盘动作不静默截断（04 F-06 第二波 `--decode-text`：已存在⇒rc=3；`--force`⇒覆盖）")
 
+    # ── ★★ P17-33（04 F-06 第二波）：`--codec-lossy` 同款守卫（输出下标是**动态**的）────────
+    #   `--codec-lossy <decode|encode> <编码> <输入> [strict] <输出>`：`strict` 时输出是第 5 个操作数、
+    #   否则第 4 个 ⇒ 守卫用同一个 `out_arg` 下标（别写死）。受影响的门禁步骤 `codec-strict`
+    #   （在同一个 out.bin 上反复写各用例）已连带补 `--force`（4 处调用）。
+    cl_in = guard_dir / "codec_in.bin"
+    cl_out = guard_dir / "codec_out.bin"
+    cl_in.write_bytes("привет".encode("cp1251"))
+    c1, co1 = run([str(CLI_EXE), "--codec-lossy", "decode", "windows-1251", str(cl_in),
+                   str(cl_out)])
+    c2, co2 = run([str(CLI_EXE), "--codec-lossy", "decode", "windows-1251", str(cl_in),
+                   str(cl_out)])
+    c3, co3 = run([str(CLI_EXE), "--codec-lossy", "decode", "windows-1251", str(cl_in),
+                   str(cl_out), "--force"])
+    c4, co4 = run([str(CLI_EXE), "--codec-lossy", "decode", "windows-1251", str(cl_in), "strict",
+                   str(cl_out)])
+    if c1 != 0:
+        fail("写盘守卫的**前提**不成立（04 F-06 / --codec-lossy）：首次写期望 rc=0，实际 rc=%d %r"
+             % (c1, co1.strip()[:100]))
+    elif c2 != 3 or "--force" not in co2:
+        fail("写盘动作静默截断（04 F-06 / --codec-lossy）：同路径再写期望 rc=3 ＋ 理由含 `--force`，"
+             "实际 rc=%d %r" % (c2, co2.strip()[:120]))
+    elif c3 != 0:
+        fail("`--force` 没能覆盖（04 F-06 / --codec-lossy）：期望 rc=0，实际 rc=%d %r"
+             % (c3, co3.strip()[:120]))
+    elif c4 != 3:
+        fail("`--codec-lossy` 的**动态下标**没判对（04 F-06）：带 `strict` 时输出是第 5 个操作数、"
+             "那份已存在 ⇒ 期望 rc=3，实际 rc=%d %r" % (c4, co4.strip()[:120]))
+    else:
+        ok("写盘动作不静默截断（04 F-06 第二波 `--codec-lossy`：已存在⇒rc=3（含 strict 的动态下标）；"
+           "`--force`⇒覆盖）")
+
     # ── ★★ P17-8（2026-10-10，审计 04 F-09 Low）：**`--help` 必须列全"已实现的动作"** ──────
     #   事实（修前）：`print_usage()` 漏列 10 个**确实实现了**（`run_cli()` 里有分派）的动作 ——
     #   `--version-store` / `--exe-version` / `--lzhuf` / `--xml-stats` / `--xml-compare-dirs` /
