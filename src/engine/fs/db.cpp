@@ -877,18 +877,25 @@ std::vector<uint8_t> build_header(const std::vector<DbPackItem>& items, DbFormat
         //      ≥ 4 GiB 时**静默回绕**；
         //   ② 累计偏移：`off` 是 `uint32_t` 且只增不减，文件总长越过 4 GiB 时**静默回绕**。
         //   命中任一条都会产出"能打开、但条目大小/偏移全错"的 DB（比崩掉更难查）。
-        //   ★ 只有调用方给了 `error` 出参才检测 ⇒ **未接线的调用点行为逐字节不变**（见 pack_db）。
-        if (error != nullptr) {
+        //   ★★ 2026-10-10（P17-68，01 F-13 收官）：**检查已改成无条件** ——
+        //   四处调用点（CLI / 官方 fs 页 / 门面 / py_host）都接上了出错理由（P17-65/66/67），
+        //   所以不再需要"给了 error 才检测"的 opt-in 保护；现在**任何**调用方都不可能拿到
+        //   一个静默窄化的包头（拿不到内容就不会落盘）。`error` 出参只用于**报理由**。
+        {
             if (!it.is_dir && it.data.size() > 0xFFFFFFFFull) {
-                *error = "单条目超过 4 GiB（DB 头字段是 uint32）：" + it.path + " = " +
-                         std::to_string(it.data.size()) + " 字节";
+                if (error != nullptr) {
+                    *error = "单条目超过 4 GiB（DB 头字段是 uint32）：" + it.path + " = " +
+                             std::to_string(it.data.size()) + " 字节";
+                }
                 return {};
             }
             const uint64_t end = static_cast<uint64_t>(off) +
                                  static_cast<uint64_t>(it.is_dir ? 0 : it.data.size());
             if (end > 0xFFFFFFFFull) {
-                *error = "DB 总长越过 4 GiB（文件内偏移是 uint32）：处理到 " + it.path +
-                         " 时累计 " + std::to_string(end) + " 字节";
+                if (error != nullptr) {
+                    *error = "DB 总长越过 4 GiB（文件内偏移是 uint32）：处理到 " + it.path +
+                             " 时累计 " + std::to_string(end) + " 字节";
+                }
                 return {};
             }
         }

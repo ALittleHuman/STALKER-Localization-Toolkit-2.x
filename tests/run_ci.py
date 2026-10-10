@@ -944,9 +944,14 @@ def step_cli_contract(release: bool) -> None:
         encoding="utf-8", errors="replace"))
     if "0xFFFFFFFFull" not in dbc or dbc.count("0xFFFFFFFFull") < 2:
         fail("pack_db 缺 4 GiB 窄化检查（01 F-13）：单条目与累计偏移两条都要有")
+    elif (dbc.find("if (error != nullptr)") >= 0 and
+          dbc.find("if (error != nullptr)") < dbc.find("0xFFFFFFFFull")):
+        # ★★ P17-68（01 F-13 收官）：检查**不许再被 opt-in 门控** —— 判法是**看位置**：
+        #   `0xFFFFFFFFull`（检查）必须出现在任何 `if (error != nullptr)`（门控/报理由）**之前**。
+        #   修前的写法正是"先 `if (error != nullptr) {` 再把两条检查包进去" ⇒ 命中本判据。
+        fail("4 GiB 检查又被 opt-in 门控了（01 F-13）：四处调用点都已接线 ⇒ 检查必须无条件")
     elif not re.search(r"std::string\*\s*error\s*=\s*nullptr", dbh):
-        fail("pack_db 的 error 出参默认值不是 nullptr（01 F-13）：opt-in 语义被破坏 ⇒ "
-             "未接线的调用点会变成空包落盘")
+        fail("pack_db 的 error 出参默认值不是 nullptr（01 F-13）：会破坏既有调用方的源码兼容")
     elif "&packdb_err" not in mnc:
         fail("CLI 没接上 pack_db 的出错理由（01 F-13）：--pack-db 该先算内容、算不出来就不落盘")
     else:
