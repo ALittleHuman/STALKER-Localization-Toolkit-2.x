@@ -924,6 +924,31 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("TreeNodeSpec 带上 tooltip 与 matched（接口契约批：声明＋Python 绑定＋宿主落 item 三处齐全）")
 
+    # ── ★★ P17-89（审计 `01 F-10`）：**过滤语义差异必须被记为差异**，不许悄悄漂成"两边一样" ──
+    #   事实（审计 01 F-10）：同一查询串在内置页与插件页上**命中集合不同** ——
+    #     · 门面（`facade_tree.cpp`）逐列比 `item->text(column)`（列里**看得见的那段文本**）；
+    #     · 内置 fs 页（`fs_page.cpp`）比**节点路径**（`node->path` → `matched_paths_`）。
+    #   定性（P17-89）：两边都是"对若干字符串做大小写不敏感的 contains"，**唯一区别是比哪些字符串**；
+    #   内置页比的是**页自己知道、门面拿不到**的那样东西 ⇒ **不是门面表达力不足**，
+    #   而是**页侧决定拿什么去匹配**（门面替插件猜"哪一列是路径"＝让字段藏语义，那才是错）。
+    #   ⇒ 处置＝**记为有意差异**（写进 `docs/2.0.0-设计口径.md` §4.4），**不合成一条**。
+    #   ★ 判据作用（"记为差异"要有牙）：**两行字都必须在**（两条路的匹配依据各一行）——
+    #     少一行 ⇒ 说明有人只改了一边却没说清；文档整个丢了 ⇒ 这条差异会漂回"没人知道"的状态。
+    doc_design = (ROOT / "docs" / "2.0.0-设计口径.md")
+    if not doc_design.is_file():
+        fail("过滤语义差异没有落成文字（01 F-10）：`docs/2.0.0-设计口径.md` 不在")
+    else:
+        dt = doc_design.read_text(encoding="utf-8", errors="replace")
+        ft_code = active_code(ft)   # ★ 查**实现**里的匹配依据时先剥注释（本仓踩过两次）
+        if "item->text(column)" not in ft_code:
+            fail("门面的匹配依据变了（01 F-10）：`facade_tree.cpp` 里找不到 `item->text(column)` "
+                 "—— 若是有意改成别的依据，请连同 `docs/2.0.0-设计口径.md` §4.4 一起改")
+        elif "item->text(column)" not in dt or "matched_paths_" not in dt:
+            fail("过滤语义差异没有如实记账（01 F-10）：`docs/2.0.0-设计口径.md` 必须同时写出"
+                 "「门面＝`item->text(column)`」与「内置页＝`matched_paths_`」两条依据（少一条即红）")
+        else:
+            ok("过滤语义差异记为有意差异（01 F-10：门面比列文本 / 内置页比节点路径，两条依据都记在 §4.4）")
+
     # ── ★★ P17-59（审计 01 F-19 Info）：`lzhuf_ref.c` 不许再依赖**非对齐/端序**读写 ──
     #   修前：`*(unsigned*)src`（读侧两处）与 `*(unsigned*)dest = …`（写侧一处）——
     #   `src`/`dest` 指向 `std::vector<uint8_t>::data()`，**不保证 4 字节对齐**；x86 容忍，
