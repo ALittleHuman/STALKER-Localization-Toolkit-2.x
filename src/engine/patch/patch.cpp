@@ -1019,7 +1019,25 @@ PatchApplyResult apply_patch(const std::string& src, const std::string& out,
     const std::filesystem::path out_abs = std::filesystem::absolute(xrkit::core::path_from_utf8(out), ec);
     r.out_path = xrkit::core::path_to_utf8(out_abs);
     // 绝不覆盖输入（哪怕调用方显式要求）
-    if (src_abs == out_abs) {
+    // ★★ P17-95（审计 `01 F-05`）：**先按真实文件系统判"是不是同一个文件"**，再退回词法比较。
+    //   事实（修前）：这里只有 `absolute(...) == absolute(...)` —— 那是**词法**比较：
+    //     · MSVC 的 `path::operator==` **大小写敏感** ⇒ `C:\…\xrEngine.exe` 与 `C:\…\XRENGINE.EXE`
+    //       在 Windows 上**是同一个文件**却判"不同" ⇒ 会去覆盖输入（"永不覆盖输入"被绕过）；
+    //     · 硬链接 / 8.3 短名 / `..` 之类也判不出来。
+    //   改法：两个路径**都存在**时用 `std::filesystem::equivalent`（查真实文件身份）；
+    //   只要有一边不存在（新建输出）就**没有**"同一个文件"可言 ⇒ 退回原来的词法比较
+    //   （`equivalent` 对不存在的路径只会给 error_code，不能因此把正常写盘判成拒绝）。
+    const auto same_file = [&]() -> bool {
+        std::error_code eq_ec;
+        const bool both_exist = std::filesystem::exists(src_abs, eq_ec) &&
+                                std::filesystem::exists(out_abs, eq_ec);
+        if (both_exist) {
+            std::error_code cmp_ec;
+            if (std::filesystem::equivalent(src_abs, out_abs, cmp_ec) && !cmp_ec) return true;
+        }
+        return src_abs == out_abs;
+    };
+    if (same_file()) {
         r.refused_input_is_output = true;
         r.reason = "拒绝：输出与输入是同一个文件 —— 本工具永不覆盖输入";
         return r;

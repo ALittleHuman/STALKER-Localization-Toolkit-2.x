@@ -148,6 +148,31 @@ def main() -> int:
         if sha256_file(orig) != orig_hash:
             problems.append("⑤ 跑了「输出==输入」之后输入被改动了！")
 
+        # ⑤-b ★★ P17-95（审计 `01 F-05`）：「同一个文件」必须按**真实文件系统**判，不是按**字面**比。
+        #   修前 `patch.cpp` 只做 `absolute(src) == absolute(out)` —— MSVC 的 `path::operator==`
+        #   **大小写敏感**，于是"同一路径只换大小写"会被判成两个不同文件 ⇒ **真的写盘**（覆盖掉输入）。
+        #   判据：把输入路径的**文件名**换成大写（Windows 同一文件）当输出 ⇒ 必须 `refused=input`，
+        #   且**输入字节不变**。★ 非 Windows（大小写敏感）上这个探针无意义 ⇒ 先探一下跳不跳。
+        probe_lower = tmp / "p1795_probe"
+        probe_lower.write_bytes(b"x")
+        case_sensitive = not (tmp / "P1795_PROBE").exists()
+        probe_lower.unlink()
+        if case_sensitive:
+            print("   ⚠ ⑤-b 跳过：本文件系统**大小写敏感**，构造不出「同一文件、两种写法」的探针")
+        elif orig.name.upper() == orig.name:
+            print("   ⚠ ⑤-b 跳过：样本文件名本身就是全大写，换不了大小写")
+        else:
+            alt = orig.with_name(orig.name.upper())
+            rc, ok, refused, reason, text = run_apply(cli, orig, alt, force=True)
+            cases += 1
+            if ok or refused != "input" or "永不覆盖输入" not in reason:
+                problems.append("⑤-b 只换**大小写**的同一文件未被拒（词法比较漏判）："
+                                "ok=%s refused=%s reason=%s" % (ok, refused, reason[:120]))
+            elif sha256_file(orig) != orig_hash:
+                problems.append("⑤-b 「同一文件换大小写」的探针**真的写盘了** —— 输入被覆盖！")
+            else:
+                print("   ✓ ⑤-b 同一文件换大小写 ⇒ refused=input（按真实文件系统判）")
+
         # ⑥ 缺陷输入必须被 preserve 守卫拦下，且不产出文件
         if v2.exists():
             out2 = tmp / "from_v2.exe"

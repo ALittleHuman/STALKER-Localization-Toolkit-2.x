@@ -19,10 +19,12 @@ std::string env_value(const char* name, const char* fallback_name = nullptr) {
     return std::string();
 }
 
+// ★★ P17-95（审计 `02 F-12`）：一律用 `/` 拼（与 `font/package.cpp:45-49` 那份同口径）——
+//   两个消费点（Qt 的字体目录扫描 / FreeType 的 face 加载）都吃 `/`，而 `\\` 只有 Windows 认。
 std::string join(const std::string& base, const char* leaf) {
     if (base.empty()) return std::string();
     if (base.back() == '/' || base.back() == '\\') return base + leaf;
-    return base + "\\" + leaf;
+    return base + "/" + leaf;
 }
 
 }  // namespace

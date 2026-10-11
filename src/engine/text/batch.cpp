@@ -93,14 +93,16 @@ std::vector<std::string> split_patterns(const std::string& text) {
     return out;
 }
 
+// ★★ P17-95（审计 `02 F-12`）：路径拼接**一律用 `/`** —— 与 `font/package.cpp:45-49` 那份已改好的
+//   join 同口径（`/` 在 Windows 上同样合法，也不会把"分隔符"硬编成一种平台的写法）。
 std::string join_path(const std::string& dir, const std::string& rel) {
     if (dir.empty()) return rel;
     std::string out = dir;
     const char last = out.back();
-    if (last != '/' && last != '\\') out.push_back('\\');
+    if (last != '/' && last != '\\') out.push_back('/');
     std::string tail = rel;
     for (char& c : tail) {
-        if (c == '/') c = '\\';
+        if (c == '\\') c = '/';
     }
     return out + tail;
 }
