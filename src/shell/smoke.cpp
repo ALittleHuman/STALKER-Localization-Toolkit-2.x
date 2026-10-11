@@ -5869,6 +5869,8 @@ SmokeResult run_smoke() {
             "        #   修前绑定叫 `initial`/`password` ⇒ 契约写法直接 TypeError（假缺口真存在）。\n"
             "        kw_entry = ui.entry(None, textvariable='契约写法初值', width=20, show=False)\n"
             "        mark('entry_kwargs:' + ui.get_text(kw_entry))\n"
+            "        # ★★ P17-91（收账）：`drop_box` 的 `width` 照契约传下去（修前门面硬写 0 ⇒ 静默丢）\n"
+            "        ui.drop_box(None, None, '契约宽度框', 137)\n"
             "        label = ui.label(None, '门面标签')\n"
             "        entry = ui.entry(None, '初值', 24)\n"
             "        ui.combo(None, ['甲', '乙'], lambda v: mark('combo:' + v))\n"
@@ -5972,6 +5974,29 @@ SmokeResult run_smoke() {
                   QStringLiteral("P17-90 契约写法的 entry 关键字参数没生效（控件在=%1 标记对=%2）")
                       .arg(kw_ok ? 1 : 0)
                       .arg(kw_typed ? 1 : 0));
+        }
+
+        // ★★ P17-91（接口契约批 · 收账）：**`drop_box` 的 `width` 真的走到控件上了吗** ——
+        //   契约写 `drop_box(parent, on_file, placeholder, width)`；C ABI 第 8 条**有** width 槽位、
+        //   `plugin_ui.cpp` 里 `width > 0 ⇒ setMaximumWidth(px(width))` 早就实现好了，
+        //   唯独门面**硬写 0** ⇒ 第三方按契约传的宽度**静默丢掉**。本批把这条接线接通。
+        //   判据（要有牙）：按契约传 `width=137` ⇒ 造出来的那个只读框 `maximumWidth()` 必须 == `core::px(137)`。
+        //   ★ 红证：把门面那第三个实参改回 `0` ⇒ 立刻红（能报出实得值）。
+        {
+            QLineEdit* contract_box = nullptr;
+            for (QLineEdit* item : page_widget != nullptr
+                                        ? page_widget->findChildren<QLineEdit*>()
+                                        : QList<QLineEdit*>()) {
+                if (item->placeholderText() == QStringLiteral("契约宽度框")) contract_box = item;
+            }
+            const int want_width = xrkit::core::px(137);
+            check(contract_box != nullptr,
+                  QStringLiteral("P17-91 契约写法的 `ui.drop_box(..., 137)` 没造出控件"
+                                 "（找的是占位文本「契约宽度框」）"));
+            check(contract_box != nullptr && contract_box->maximumWidth() == want_width,
+                  QStringLiteral("P17-91 `drop_box` 的 width 没走到控件（期望 maximumWidth=%1，实得 %2）")
+                      .arg(want_width)
+                      .arg(contract_box != nullptr ? contract_box->maximumWidth() : -1));
         }
 
         // ③④⑤：点按钮 → 回 Python（get_text）→ 改控件（set_text）→ 写宿主日志（ui.log）

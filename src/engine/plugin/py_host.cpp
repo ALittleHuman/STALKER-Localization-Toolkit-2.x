@@ -2018,7 +2018,10 @@ public:
         }
         return wrap(facade->combo(handle_of(parent), values, std::move(change)));
     }
-    py::object drop_box(py::object parent, py::object on_file, std::string placeholder) const {
+    // ★★ P17-91（接口契约批 · 收账）：参数名与**个数**都照契约表
+    //   `drop_box(parent, on_file, placeholder, width)` —— 修前少了 `width`（第三方传的宽度静默丢）。
+    py::object drop_box(py::object parent, py::object on_file, std::string placeholder,
+                        int width) const {
         const UiFacade* facade = available("drop_box");
         if (facade == nullptr) return py::none();
         std::function<void(const std::string&)> file;
@@ -2035,7 +2038,7 @@ public:
                 }
             };
         }
-        return wrap(facade->drop_box(handle_of(parent), std::move(file), placeholder));
+        return wrap(facade->drop_box(handle_of(parent), std::move(file), placeholder, width));
     }
     void pack(py::object parent, py::object child, std::string side, std::string fill, bool expand,
               int padx, int pady) const {
@@ -3127,7 +3130,8 @@ void ensure_api_module() {
             .def("combo", &PyUi::combo, py::arg("parent") = py::none(), py::arg("values"),
                  py::arg("on_change") = py::none())
             .def("drop_box", &PyUi::drop_box, py::arg("parent") = py::none(),
-                 py::arg("on_file") = py::none(), py::arg("placeholder") = "")
+                 py::arg("on_file") = py::none(), py::arg("placeholder") = "",
+                 py::arg("width") = 0)
             .def("pack", &PyUi::pack, py::arg("parent") = py::none(), py::arg("child"),
                  py::arg("side") = "top", py::arg("fill") = "x", py::arg("expand") = false,
                  py::arg("padx") = 0, py::arg("pady") = 0)

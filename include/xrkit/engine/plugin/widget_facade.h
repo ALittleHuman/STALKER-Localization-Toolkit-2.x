@@ -61,8 +61,12 @@ struct UiFacade {
     std::function<UiHandle(UiHandle parent, const std::vector<std::string>& values,
                            std::function<void(const std::string&)> on_change)>
         combo;
+    // ★★ P17-91（接口契约批 · 参数名对账的收账）：**补上 `width`** —— 契约表写的是
+    //   `drop_box(parent, on_file, placeholder, width)`，C ABI 第 8 条**也有** width 槽位
+    //   （`plugin_ui.cpp` 里 `width > 0 ⇒ setMaximumWidth(px(width))` 早就实现好了），
+    //   唯独门面**硬写了 0** ⇒ 第三方按契约传的宽度**静默丢掉**。这是"能补且不动 ABI"的一条。
     std::function<UiHandle(UiHandle parent, std::function<void(const std::string&)> on_file,
-                           const std::string& placeholder)>
+                           const std::string& placeholder, int width)>
         drop_box;
     std::function<void(UiHandle parent, UiHandle child, const std::string& side,
                        const std::string& fill, bool expand, int padx, int pady)>

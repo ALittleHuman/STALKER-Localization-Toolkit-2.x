@@ -78,8 +78,8 @@ DEFERRED = {
     "combo": {"variable": "同上（`variable` 与 `on_change` 是两种风格）",
               "width": "C ABI 的 `combo` 槽位里**没有 width**（见 `abi.h` 第 7 条）"
                        "⇒ 要补得动 ABI（用户口径：能不动就不动）"},
-    "drop_box": {"width": "★ **可补**：C ABI 的 `drop_box` **有** width 槽位（`abi.h` 第 8 条），"
-                          "只是门面硬写了 0 ⇒ 下一批把 width 从绑定串到门面即收（本批未做，如实记账）"},
+    # ★★ P17-91 **已销账**：`drop_box.width` 原来记在这里（"可补、门面硬写 0"），
+    #   本批把宽度从绑定 → 门面 → C ABI 槽位串通 ⇒ 这条欠账**从账本里删掉**（账实要相符）。
     "pack": {"widget": "契约写 `widget`；绑定/门面/C ABI 都叫 `parent`（同一件事两个名字）"
                        "⇒ 改名会牵动 C ABI 与 Qt 门面，**随着下次门面改动一起做**",
              "anchor": "契约写 `anchor`；C ABI 的 `pack` 只有 7 个形参、**没有 anchor**（`abi.h` 第 9 条）"

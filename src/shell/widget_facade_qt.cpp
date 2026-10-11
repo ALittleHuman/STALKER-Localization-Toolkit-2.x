@@ -390,11 +390,14 @@ const plug::UiFacade kQtFacade = {
     },
     /* drop_box */
     [](plug::UiHandle parent, std::function<void(const std::string&)> on_file,
-       const std::string& placeholder) {
+       const std::string& placeholder, int width) {
         QWidget* host = resolve_parent(parent);
         auto* box = keep(std::make_unique<ChangeBox>(ChangeBox{std::move(on_file)}));
+        // ★★ P17-91：width **照契约如实传下去**（修前硬写 0 ⇒ 第三方传的宽度静默丢掉）。
+        //   C ABI 第 8 条本来就有这个槽位，`plugin_ui.cpp` 里 `width > 0 ⇒ setMaximumWidth(px(width))`
+        //   也早就实现好了 —— 缺的只是这条接线。
         stk_widget* created = table()->drop_box(nullptr, wrap(host), on_file_trampoline, box,
-                                                placeholder.c_str(), 0);
+                                                placeholder.c_str(), width);
         place(host, unwrap(created));
         return handle_of(created);
     },
