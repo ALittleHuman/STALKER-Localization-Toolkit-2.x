@@ -35,6 +35,21 @@ class PageBase;
 // 内置页的 owner 哨兵（"内置"只许一份：与比较模式的 `<builtin>` 同字面量、同语义）。
 inline constexpr const char* kBuiltinPageOwner = "<builtin>";
 
+// ★★ P17-88（待办总表 §四·8② 的"**运行期那一半**"，用户 2026-10-09 拍板）：
+//   **`owner` / `kind` 是权限边界** —— 原先"这一页是谁的"只靠一个**哨兵字符串**
+//   （拿 `<builtin>` 与插件名比字符串），而**注册入口不检查** ⇒ 任何调用方只要把 owner 传成
+//   `kBuiltinPageOwner`，就能把一页注册成"内置页"（暗号冒充＝静默夺权）。
+//   现在**宣告式**：注册入口必须显式声明 `kind`，且 `kind` 与 `owner` 必须自洽，
+//   不自洽就**当场拒绝并留痕**（`take_diagnostics()`）—— 这就是那条"运行期当场拒绝"。
+//
+//   ★ 为什么是"声明"而不是"由宿主按 owner 推断"：用户口径是"把现在靠哨兵分叉的暗号**提明白**"。
+//     由宿主推断＝把暗号换个地方藏起来，冒充者照样过得去。
+enum class PageKind {
+    Builtin,  // 内置页：owner **必须**是 `kBuiltinPageOwner`
+    Plugin,   // 插件贡献的页：owner **必须不是** `kBuiltinPageOwner`
+    Fixture,  // 夹具页（非产品）：owner 两种写法都允许 —— 自检要能造两边的反例
+};
+
 // ★ 排序"带"（band）：1.x `stalker_toolkit.py:215-221` 的口径是
 //   「**内置六工具固定在前**，插件栏目按 order 升序稳定追加」。
 //   2.x 把两者放进**同一张表** ⇒ 用带表达同一件事：`order` 只在**本带内**生效。
@@ -59,6 +74,7 @@ using PageBuilder = std::function<QWidget*(QWidget* parent)>;
 
 struct PageReg {
     std::string owner;  // 谁注册的（内置 = kBuiltinPageOwner；插件 = 插件名/dll 名）
+    PageKind kind = PageKind::Plugin;  // ★★ P17-88：这一页**自报的身份**（注册时与 owner 校验）
     PageSpec spec;
     PageBuilder builder;
     size_t seq = 0;     // 注册序（稳定排序的第二关键字；0 起）
@@ -75,9 +91,18 @@ struct PageDiag {
 
 class PageRegistry {
 public:
-    // 注册一页。被拒（id/title 为空、id 重复、同一目标已被别人 `replaces`、自替换）⇒
-    // 返回 false 且理由进 `take_diagnostics()`（**绝不静默**）。
-    bool register_page(const std::string& owner, PageSpec spec, PageBuilder builder);
+    // 注册一页。被拒（id/title 为空、id 重复、同一目标已被别人 `replaces`、自替换、
+    // ★★ P17-88：**`kind` 与 `owner` 不自洽**）⇒ 返回 false 且理由进 `take_diagnostics()`
+    //（**绝不静默**）。
+    // `kind` 是**显式宣告**（不是从 owner 推断）：`Builtin` 要求 owner == `kBuiltinPageOwner`，
+    // `Plugin` 要求 owner != 它；不自洽＝"跨用"⇒ 当场拒。默认 `Plugin`（保守：谁都别想默认当内置页）。
+    bool register_page(const std::string& owner, PageKind kind, PageSpec spec, PageBuilder builder);
+    // 便利重载：等价于 `kind = Plugin`（既有调用点一行不用改；**内置页那条路必须走显式版**）。
+    bool register_page(const std::string& owner, PageSpec spec, PageBuilder builder) {
+        return register_page(owner, PageKind::Plugin, std::move(spec), std::move(builder));
+    }
+    // ★★ P17-88：这一页自报的身份（判据/宿主据此区分"官方内置 vs 第三方"，不再靠哨兵字符串）
+    PageKind page_kind(const std::string& id) const;
     // 按 owner 撤掉它注册的全部页（"插件卸载/重扫"的唯一入口）。返回撤掉的条数。
     size_t unregister_owner(const std::string& owner);
     // 按 id 撤掉一页。返回是否真撤掉（"一键还原被替换页"就是撤掉替换者）。

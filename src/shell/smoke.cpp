@@ -751,6 +751,69 @@ SmokeResult run_smoke() {
         }
         check(dup_diag, QStringLiteral("P1 拒绝注册的理由必须留痕（fatal 诊断）"));
 
+        // ★★ P17-88（待办总表 §四·8② 的**运行期那一半**）：`owner`/`kind` 是**权限边界** ——
+        //   注册入口对"跨用"**当场拒绝并留痕**。原状：只靠哨兵字符串比字符串、入口不检查
+        //   ⇒ 任何调用方把 owner 传成 `<builtin>` 就能把一页注册成"内置页"（暗号冒充）。
+        //   判据两半（**都要有牙**）：
+        //     ① 冒充内置页（`kind=Builtin` 而 owner 是插件名）⇒ **必须拒 + 留痕**；
+        //     ② 反方向（`kind=Plugin` 而 owner 是内置哨兵）⇒ **也必须拒 + 留痕**；
+        //     ③ 自洽的两边都要照常成功（否则"边界"会变成"谁都不许注册"）；
+        //     ④ `page_kind()` 如实回报（判据/宿主据此区分，不再比哨兵字符串）。
+        {
+            PageSpec fake_builtin;
+            fake_builtin.id = "p1788_fake_builtin";
+            fake_builtin.title = QStringLiteral("假内置页");
+            fake_builtin.band = kBuiltinPageBand;
+            check(!host_hub.pages().register_page(kBuiltinPageOwner, PageKind::Plugin, fake_builtin,
+                                                  [](QWidget*) -> QWidget* { return new QWidget(); }),
+                  QStringLiteral("P17-88 kind=Plugin ＋ owner=<builtin> 必须被拒（不许把插件页挂到内置身份）"));
+            PageSpec claim_builtin;
+            claim_builtin.id = "p1788_claim_builtin";
+            claim_builtin.title = QStringLiteral("冒充内置页");
+            claim_builtin.band = kBuiltinPageBand;
+            check(!host_hub.pages().register_page("probe5.dll", PageKind::Builtin, claim_builtin,
+                                                  [](QWidget*) -> QWidget* { return new QWidget(); }),
+                  QStringLiteral("P17-88 kind=Builtin ＋ owner=插件名 必须被拒（不许冒充内置页）"));
+            bool border_diag = false;
+            for (const PageDiag& diag : host_hub.pages().take_diagnostics()) {
+                if (diag.fatal && (diag.message.find("冒") != std::string::npos ||
+                                   diag.message.find("内置哨兵") != std::string::npos)) {
+                    border_diag = true;
+                }
+            }
+            check(border_diag, QStringLiteral("P17-88 跨用被拒的理由必须留痕（fatal 诊断）"));
+            // ③ 自洽的两边照常成功
+            PageSpec ok_builtin;
+            ok_builtin.id = "p1788_ok_builtin";
+            ok_builtin.title = QStringLiteral("正常内置页");
+            check(host_hub.pages().register_page(kBuiltinPageOwner, PageKind::Builtin, ok_builtin,
+                                                 [](QWidget*) -> QWidget* { return new QWidget(); }),
+                  QStringLiteral("P17-88 kind=Builtin ＋ owner=<builtin> 必须照常成功"));
+            // ④ 身份如实回报（先按**注册表里真实存在的页**核对，别假设某个 id 一定在）
+            {
+                std::string kinds;
+                int builtin_kind = 0;
+                int builtin_owner = 0;
+                for (const PageReg* reg : host_hub.pages().all_sorted()) {
+                    kinds += reg->spec.id + "=" +
+                             (reg->kind == PageKind::Builtin ? "B" : "P") + " ";
+                    if (reg->kind == PageKind::Builtin) ++builtin_kind;
+                    if (reg->owner == kBuiltinPageOwner) ++builtin_owner;
+                }
+                check(host_hub.pages().page_kind("p1788_ok_builtin") == PageKind::Builtin &&
+                          host_hub.pages().page_kind("不存在") == PageKind::Plugin &&
+                          builtin_kind == builtin_owner && builtin_kind > 0,
+                      QStringLiteral("P17-88 `page_kind` 必须如实回报（内置=Builtin / 未知=Plugin；"
+                                     "实得：%1｜kind=Builtin 的 %2 个 / owner=<builtin> 的 %3 个）")
+                          .arg(QString::fromStdString(kinds))
+                          .arg(builtin_kind)
+                          .arg(builtin_owner));
+            }
+            // 收尾：把这一页撤掉，别影响后面的判据
+            host_hub.pages().unregister_id("p1788_ok_builtin");
+            host_hub.pages().take_diagnostics();
+        }
+
         // ⑥ `replaces` 显式覆盖：被替换页**只隐藏不删**、替换者**继承它的槽位**、
         //   撤掉替换者即一键还原；同一目标不许第二个替换者（那会变成"谁后注册谁赢"）。
         PageSpec repl;

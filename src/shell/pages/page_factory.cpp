@@ -69,7 +69,10 @@ void register_builtin_pages(PageRegistry& pages) {
         spec.band = kBuiltinPageBand;  // 内置带（见 page_host.h）
         const QString id = QString::fromUtf8(info.id);
         const QString title = QString::fromUtf8(info.title);
-        pages.register_page(kBuiltinPageOwner, spec,
+        // ★★ P17-88（§四·8② 运行期那一半）：内置页那条路**必须显式声明** `PageKind::Builtin`
+        //   —— 新口径是"kind 与 owner 必须自洽，不自洽当场拒"。这正是"把现在靠哨兵分叉的暗号
+        //   **提明白**"；便利重载默认 `Plugin`，所以内置页要是忘了声明，**它自己就会被挡在门外**（有牙）。
+        pages.register_page(kBuiltinPageOwner, PageKind::Builtin, spec,
                             [id, title](QWidget* parent) { return build_builtin(id, title, parent); });
     }
 }

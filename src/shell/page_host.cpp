@@ -30,7 +30,24 @@ void PageRegistry::note(const std::string& owner, const std::string& message) {
     diags_.push_back(PageDiag{false, owner, message});
 }
 
-bool PageRegistry::register_page(const std::string& owner, PageSpec spec, PageBuilder builder) {
+bool PageRegistry::register_page(const std::string& owner, PageKind kind, PageSpec spec,
+                                PageBuilder builder) {
+    // ★★ P17-88（§四·8② 的**运行期那一半**）：**注册入口对"跨用"当场拒绝** —— 先于其它判据，
+    //   因为"这一页是谁的"是**权限**问题（冒充内置页＝静默夺权），不是格式问题。
+    //   口径（用户 2026-10-09）：「`owner`/`kind` 是权限边界……注册入口对跨用**当场拒绝**」。
+    {
+        const bool owner_is_builtin = (owner == kBuiltinPageOwner);
+        if (kind == PageKind::Builtin && !owner_is_builtin) {
+            reject(owner, "页「" + spec.id + "」自报 kind=Builtin，但 owner 不是内置哨兵「" +
+                              kBuiltinPageOwner + "」⇒ 拒绝（不许冒充内置页）");
+            return false;
+        }
+        if (kind == PageKind::Plugin && owner_is_builtin) {
+            reject(owner, "页「" + spec.id + "」自报 kind=Plugin，但 owner 是内置哨兵「" +
+                              kBuiltinPageOwner + "」⇒ 拒绝（不许把插件页挂到内置身份上）");
+            return false;
+        }
+    }
     if (spec.id.empty()) {
         reject(owner, "页 id 不能为空（它是插件槽位 host / 日志 / 替换的唯一锚点）");
         return false;
@@ -66,6 +83,7 @@ bool PageRegistry::register_page(const std::string& owner, PageSpec spec, PageBu
 
     PageReg reg;
     reg.owner = owner;
+    reg.kind = kind;   // ★★ P17-88：身份**随注册一起记下**（判据/宿主读它，不再靠哨兵字符串推断）
     reg.spec = std::move(spec);
     reg.builder = std::move(builder);
     reg.seq = next_seq_++;
@@ -84,8 +102,7 @@ bool PageRegistry::register_page(const std::string& owner, PageSpec spec, PageBu
     return true;
 }
 
-size_t PageRegistry::unregister_owner(const std::string& owner) {
-    const size_t before = regs_.size();
+size_t PageRegistry::unregister_owner(const std::string& owner) {    const size_t before = regs_.size();
     regs_.erase(std::remove_if(regs_.begin(), regs_.end(),
                                [&owner](const PageReg& reg) { return reg.owner == owner; }),
                 regs_.end());
@@ -107,6 +124,12 @@ const PageReg* PageRegistry::find(const std::string& id) const {
         if (reg.spec.id == id) return &reg;
     }
     return nullptr;
+}
+
+// ★★ P17-88：这一页自报的身份。**找不到** ⇒ 按 `Plugin` 返回（保守：未知的东西**不许**算内置页）。
+PageKind PageRegistry::page_kind(const std::string& id) const {
+    const PageReg* reg = find(id);
+    return reg == nullptr ? PageKind::Plugin : reg->kind;
 }
 
 std::vector<std::string> PageRegistry::owners() const {
