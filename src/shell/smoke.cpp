@@ -1588,6 +1588,24 @@ SmokeResult run_smoke() {
                 check(qss.contains(QStringLiteral("QTreeWidget, QTreeView, QListView { font-size")) ||
                           qss.contains(QStringLiteral("font-size: @{font_content}")),
                       QStringLiteral("内容区字号要单独放大（样式表里要有 font_content 规则）"));
+                // ★★ P17-96（审计 `03 F-13`）：等宽字体族**必须来自主题表 `font_mono`**，
+                //   不许在 QSS 模板里硬编。判据两头：① 解析后的样式表里出现
+                //   **主题表里那个 family**（不是硬编的某个名字）；② 模板里不再有硬编的字体名。
+                //   ★ 有牙：把 `theme_tables.inc` 的 `font_mono` 家族改掉 ⇒ ① 立刻红（QSS 会跟着变）。
+                {
+                    std::string mono_family;
+                    for (int i = 0; i < xrkit::core::theme_font_count(); ++i) {
+                        const xrkit::core::ThemeFontSpec& spec = xrkit::core::theme_font(i);
+                        if (spec.role != nullptr && std::strcmp(spec.role, "font_mono") == 0) {
+                            mono_family = spec.family != nullptr ? spec.family : "";
+                        }
+                    }
+                    check(!mono_family.empty() &&
+                              qss.contains(QStringLiteral("font-family: ") +
+                                           QString::fromStdString(mono_family)),
+                          QStringLiteral("P17-96 等宽字体族没走主题表 `font_mono`（期望样式表里出现「%1」）")
+                              .arg(QString::fromStdString(mono_family)));
+                }
             }
             check(std::abs(xrkit::core::ui_scale() - 1.0) < 0.001,
                   QStringLiteral("界面大小缩放：调回 1.0 要复原（实测 %1）")

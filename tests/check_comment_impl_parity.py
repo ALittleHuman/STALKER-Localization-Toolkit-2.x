@@ -42,6 +42,8 @@ THEME_H = ROOT / "src" / "shell" / "theme.h"
 THEME_CPP = ROOT / "src" / "shell" / "theme.cpp"
 HUB_H = ROOT / "src" / "shell" / "hub.h"
 SCREEN_SCALE_H = ROOT / "src" / "shell" / "screen_scale.h"
+SNIFF_CPP = ROOT / "src" / "engine" / "text" / "sniff.cpp"
+TEXT_SPEC = ROOT / "docs" / "2.0.0-文本模块规格.md"
 
 
 def audit_big5_cols(text: str) -> list:
@@ -104,6 +106,33 @@ def audit_screen_scale(header: str) -> list:
     return problems
 
 
+def audit_sniff_thresholds(sniff_cpp: str, spec: str) -> list:
+    """⑤ ★★ P17-96（审计 `02 F-13`）：**sniff 的门槛常量与规格必须同值**。
+
+    事实（审计原文）：门槛「只靠注释互指」—— `sniff.cpp` 里 `kStatMinEvidence = 2` / `kStatMargin = 0.15`，
+    规格 `docs/2.0.0-文本模块规格.md` §5 写 `决定性 = 证据 >= 2 且 |score| >= 0.15`。
+    ⇒ **改任一边都不会红**（门禁只锁零静默标记，不锁这两个数）—— 本判据把两处**对起来**：
+    源码里那两个常量的值 == 规格里那两个数；任一边改了而另一边没跟上 ⇒ 红。
+    """
+    problems = []
+    m_ev = re.search(r"kStatMinEvidence\s*=\s*(\d+)", sniff_cpp)
+    m_mg = re.search(r"kStatMargin\s*=\s*([0-9.]+)", sniff_cpp)
+    if m_ev is None or m_mg is None:
+        return ["sniff.cpp：找不到 `kStatMinEvidence` / `kStatMargin` 两个常量（判据与源码脱节？）"]
+    ev, mg = int(m_ev.group(1)), m_mg.group(1)
+    m_spec = re.search(r"证据[^\n]{0,20}>=\s*(\d+)[^\n]{0,30}\|\s*score\s*\|\s*>=\s*([0-9.]+)", spec)
+    if m_spec is None:
+        return ["规格里找不到「证据 >= N 且 |score| >= M」那一行（判据与文档脱节？）"]
+    spec_ev, spec_mg = m_spec.group(1), m_spec.group(2)
+    if str(ev) != spec_ev:
+        problems.append("sniff.cpp 的 `kStatMinEvidence=%d` 与规格的 `>= %s` **不同值**（02 F-13）"
+                        % (ev, spec_ev))
+    if mg.rstrip("0").rstrip(".") != spec_mg.rstrip("0").rstrip("."):
+        problems.append("sniff.cpp 的 `kStatMargin=%s` 与规格的 `>= %s` **不同值**（02 F-13）"
+                        % (mg, spec_mg))
+    return problems
+
+
 def selfcheck() -> tuple:
     good_enc = "constexpr uint16_t kBig5Cols = 0xFE - 0x40 + 1;      // 191\n"
     good_theme_h = "//   scale: 见 `ui_size_choices()`（当前是 0.9 小 / 1.0 默认）\nstruct UiSizeChoice {"
@@ -127,6 +156,15 @@ def selfcheck() -> tuple:
          audit_screen_scale("//   ② 用 **逻辑 DPI**（QScreen::logicalDotsPerInch()）\nnamespace xrkit::shell {")),
         ("screen_scale 的否定句不算违规", 0,
          audit_screen_scale("//   ② 不要宣称用逻辑 DPI —— 实测它恒为 96\nnamespace xrkit::shell {")),
+        ("sniff 门槛与规格同值", 0,
+         audit_sniff_thresholds("constexpr size_t kStatMinEvidence = 2;\nconstexpr double kStatMargin = 0.15;\n",
+                                "决定性 = 证据(高位字节数) >= 2  且  |score| >= 0.15")),
+        ("门槛常量被改而规格没跟上", 1,
+         audit_sniff_thresholds("constexpr size_t kStatMinEvidence = 3;\nconstexpr double kStatMargin = 0.15;\n",
+                                "决定性 = 证据(高位字节数) >= 2  且  |score| >= 0.15")),
+        ("规格被改而常量没跟上", 1,
+         audit_sniff_thresholds("constexpr size_t kStatMinEvidence = 2;\nconstexpr double kStatMargin = 0.20;\n",
+                                "决定性 = 证据(高位字节数) >= 2  且  |score| >= 0.15")),
     ]
     results, ok = [], True
     for label, want, problems in cases:
@@ -154,7 +192,7 @@ def main() -> int:
     print("   ✓ 反例自证 %d/%d" % (len(results), len(results)))
     print()
 
-    for path in (ENCODING, THEME_H, THEME_CPP, HUB_H, SCREEN_SCALE_H):
+    for path in (ENCODING, THEME_H, THEME_CPP, HUB_H, SCREEN_SCALE_H, SNIFF_CPP, TEXT_SPEC):
         if not path.is_file():
             print("COMMENT-PARITY fail 仓库自带文件缺失：%s" % path)
             return 1
@@ -163,12 +201,15 @@ def main() -> int:
     tc = THEME_CPP.read_text(encoding="utf-8", errors="replace")
     hh = HUB_H.read_text(encoding="utf-8", errors="replace")
     ss = SCREEN_SCALE_H.read_text(encoding="utf-8", errors="replace")
+    sn = SNIFF_CPP.read_text(encoding="utf-8", errors="replace")
+    spec = TEXT_SPEC.read_text(encoding="utf-8", errors="replace")
 
     groups = [
         ("① `kBig5Cols` 注释值 == 算出来的值（02 F-10）", audit_big5_cols(enc)),
         ("② 档位值只许有一处（指向 `ui_size_choices()`）（03 F-10）", audit_theme_scale(th, tc)),
         ("③ `log_line` 不带空标 `Q_INVOKABLE` ＋ 留下回调口径（03 F-11）", audit_hub_invokable(hh)),
         ("④ `screen_scale.h` 文件头不再宣称「用逻辑 DPI」（03 F-09）", audit_screen_scale(ss)),
+        ("⑤ sniff 门槛常量 == 规格里那两个数（02 F-13）", audit_sniff_thresholds(sn, spec)),
     ]
     print("-- 实测 --")
     problems = []
@@ -181,7 +222,7 @@ def main() -> int:
     if problems:
         print("COMMENT-PARITY fail %d 项不成立" % len(problems))
         return 1
-    print("COMMENT-PARITY ok 四处注释/标注都与实现同源（本批修掉的那四条已被判据钉住）")
+    print("COMMENT-PARITY ok 五处「字据 ↔ 实现」都同源（02 F-10 / 03 F-09 / 03 F-10 / 03 F-11 / 02 F-13 已被判据钉住）")
     return 0
 
 

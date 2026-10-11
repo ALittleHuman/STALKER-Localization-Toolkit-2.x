@@ -17,6 +17,7 @@
 #include <QWidget>
 
 #include <algorithm>
+#include <cstring>
 #include <utility>
 #include <vector>
 
@@ -227,6 +228,25 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
         tokens.emplace_back(QStringLiteral("@{") + QString::fromUtf8(name) + QStringLiteral("}"),
                             QString::number(px(value)) + QStringLiteral("px"));
     };
+    // ★★ P17-96（审计 `03 F-13`）：**字体族也走令牌** —— 修前 QSS 里硬编 `font-family: Consolas;`，
+    //   而主题表里本来就有 `font_mono` 角色（`src/core/theme_tables.inc`）⇒ 同一件事两处写死，
+    //   改主题不会改到 QSS（"等宽策略"在 `video_page.cpp` 那边又是第三种写法）。
+    //   现在从**唯一事实来源**取：`core::theme_font(i)` 里 `role == "font_mono"` 的 `family`。
+    const auto font_family = [&tokens](const char* token_name, const char* role) {
+        for (int i = 0; i < xrkit::core::theme_font_count(); ++i) {
+            const xrkit::core::ThemeFontSpec& spec = xrkit::core::theme_font(i);
+            if (spec.role != nullptr && role != nullptr && std::strcmp(spec.role, role) == 0) {
+                tokens.emplace_back(QStringLiteral("@{") + QString::fromUtf8(token_name) +
+                                        QStringLiteral("}"),
+                                    QString::fromUtf8(spec.family != nullptr ? spec.family : ""));
+                return;
+            }
+        }
+        // 找不到角色 ⇒ **不许静默**：留一个**必然判红**的令牌（生成样式表里会出现未替换的 `@{`）
+        tokens.emplace_back(QStringLiteral("@{") + QString::fromUtf8(token_name) + QStringLiteral("}"),
+                            QStringLiteral("@{missing-role:") + QString::fromUtf8(role) +
+                                QStringLiteral("}"));
+    };
     color("bg");
     color("surface");
     color("surface2");
@@ -258,6 +278,8 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
     //   1.x `TStyle` 里的 `arrowcolor=text_dim`、`background=surface2`（toolkit_theme.py:311-322）
     //   ⇒ 2.0.0 的对应物就是一条 `QComboBox::down-arrow` 规则；`arrow12` 是那块箭头的槽宽。
     size("arrow12", 12);
+    // ★★ P17-96（审计 `03 F-13`）：等宽字体族令牌 —— 值取自主题表 `font_mono`（唯一事实来源）
+    font_family("font_mono", "font_mono");
     xrkit::core::set_theme_mode(saved);
 
     // ★ 配色口径（用户 2026-09-27：「配色里为什么这么多蓝色」⇒ 与
@@ -330,7 +352,7 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                "  border-bottom: 1px solid @{border}; padding: @{pad4} @{pad8}; }"
                // 日志/文本区
                "QPlainTextEdit, QTextEdit { background: @{entry_bg}; color: @{text}; border: 1px solid @{border};"
-               "  border-radius: @{r3}; font-family: Consolas; }"
+               "  border-radius: @{r3}; font-family: @{font_mono}; }"
                // 按钮：三态 + 主按钮（objectName=primary）用 accent 实心 —— accent 的三处之一
                "QPushButton { background: @{surface2}; color: @{text}; border: 1px solid @{border};"
                "  border-radius: @{r3}; padding: @{pad4} @{pad8}; }"
