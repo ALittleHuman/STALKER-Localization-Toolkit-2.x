@@ -832,12 +832,25 @@ const EngineFacade kFontFacade = {
     },
     /* fs_decrypt_output_dir：解密产物的落点（两边同源，避免"二次解密"） */
     []() { return plugin::decrypt_output_dir(); },
-    /* fs_package_entries：包内条目表（96 字节超块判 SquashFS / 否则按 DB 自动判定 + 回退键） */
-    [](const std::string& path, const std::string& db_fallback_key, std::string& error) {
+    /* fs_package_entries：包内条目表（96 字节超块判 SquashFS / 否则按 DB 自动判定 + 回退键）。
+       ★★ P17-85（01 F-09 收尾）：`info` 非空 ⇒ 把"这次是怎么读的"抄给调用方
+       （读了多少字节 / 走没走 seek / 为什么不得不整包读）—— 界面与 Python 靠它做可观测。 */
+    [](const std::string& path, const std::string& db_fallback_key, std::string& error,
+       FsPackageInfo* info = nullptr) {
         std::vector<FsEntry> out;
-        for (const efs::EntryInfo& item :
-             efs::package_entries(path, efs::format_key_to_db(db_fallback_key), error)) {
+        efs::DbReadInfo read_info;
+        for (const efs::EntryInfo& item : efs::package_entries(
+                 path, efs::format_key_to_db(db_fallback_key), error,
+                 // ★ 参数注释**不要**写成块注释（哪怕只是在行注释里引用它的字面量也不行）——
+                 //   `check_facade_order.py` 的标签正则会把它当成一个聚合初始化项
+                 //   （本批实测踩到两次：多出一项 `registry` ⇒ 整张门面表从那一项起全部错位）。
+                 nullptr, &read_info)) {
             out.push_back({item.path, item.is_dir, item.size});
+        }
+        if (info != nullptr) {
+            info->header_bytes = read_info.header_bytes;
+            info->used_seek = read_info.used_seek;
+            info->whole_file_reason = read_info.whole_file_reason;
         }
         return out;
     },

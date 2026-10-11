@@ -71,6 +71,11 @@ public:
     // 上一次 `add_paths` 里**每一份认不出的路径 + 理由**（自检要断言"可见失败"；
     // 界面侧同一句话也会进日志栏 —— 不留全局变量，随调用返回值走）
     QStringList load_errors() const { return load_errors_; }
+    // ★★ P17-85（01 F-09 收尾）：把"这次列条目是怎么读的"如实说一句（**只在真的整包读时打**）。
+    //   口径：`used_seek == true` ⇒ 一个字都不打（"没退回就不许报理由"）；整包读 ⇒
+    //   「整包读 N 字节（读入 <KB/MB>）：<理由>」进日志栏。返回是否打了（自检要断言"正常包不许打"）。
+    bool note_package_read(const QString& tail, uint64_t header_bytes, bool used_seek,
+                           const std::string& whole_file_reason, const QString& display_path);
     // 自检用：拖放过滤器到底装在哪些控件上（判据是**接线**，见 drop_filter.h）
     FileDropFilter* drop_filter() const { return drop_filter_; }
     // ★ 2026-10-04（用户第 1 条"拖拽到相应区域"）：这一页新增的**行级**拖放区域

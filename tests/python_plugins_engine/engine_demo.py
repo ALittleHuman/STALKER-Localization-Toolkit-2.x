@@ -554,6 +554,14 @@ def register(api):
     listed = engine.fs_package_entries(golden_db, "xdb")
     mark("pkg_entries_positive:%d" % (1 if len(listed["entries"]) > 0 else 0))
     mark("pkg_error_empty:%d" % (1 if not listed["error"] else 0))
+    # ★★ P17-85（01 F-09 收尾）：字典里**多了三件事**（这次是怎么读的）——
+    #   修前只有 entries/error ⇒ 插件页看不到"整包读 N 字节 + 理由"那种**既非成功也非报错**的中间状态。
+    #   目录：`used_seek` / `header_bytes` / `whole_file_reason`（口径：seek 成功 ⇒ 理由必须空）。
+    mark("pkg_readinfo_keys:%d"
+         % (1 if all(k in listed for k in ("used_seek", "header_bytes", "whole_file_reason")) else 0))
+    mark("pkg_readinfo_quiet:%d"
+         % (1 if (listed["used_seek"] and not listed["whole_file_reason"]
+                  and listed["header_bytes"] > 0) else 0))
     missing = engine.fs_package_entries(os.path.join(work, "nope.db"), "xdb")
     mark("pkg_missing_error:%d" % (1 if missing["error"] else 0))
 

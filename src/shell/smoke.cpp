@@ -3039,7 +3039,84 @@ SmokeResult run_smoke() {
                       .arg(seek.file_size)
                       .arg(seek.used_seek ? 1 : 0));
 
-            const auto entry_row = [](const efs::DbEntry& e) {
+            // ★★ P17-85（01 F-09 收尾）：**出参那条链真的接通了**（引擎 → 门面 → 消费点）。
+        //   验两件，正好是 F-09 的一对正反面：
+        //     ① **正常包**（xdb，能 seek）⇒ `used_seek==true` 且**理由为空**（"没退回就不许报理由"）；
+        //     ② **回退包**（`11xx` ＋ 显式格式 ⇒ 自洽判定有歧义 ⇒ 必经整包读回退）⇒
+        //        `used_seek==false` 且 `whole_file_reason` **非空**、`header_bytes` == 整包大小。
+        //   判红办法：把 `overlay.cpp` 里"抄诊断进出参"那三行删掉 ⇒ ②的 `used_seek` 会静默留 false、
+        //   同时①的理由仍为空 ⇒ ①照旧绿、**②那条 `reason` 空 ⇒ 红**（正是"加了出参没人填"的形状）。
+        {
+            const auto entries_dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_f09_readinfo"));
+            QDir(entries_dir).removeRecursively();
+            QDir().mkpath(entries_dir);
+            std::vector<efs::DbPackItem> one;
+            efs::DbPackItem item;
+            item.path = "a.txt";
+            item.data = {1, 2, 3, 4};
+            one.push_back(item);
+            std::string reason;   // ★ 名字别叫 `QString reason`：那个会**遮蔽**（并改变类型）传给 pack_db 的出参
+            // ① 正常包：不带格式 ⇒ 唯一自洽（xdb）⇒ seek 成功
+            const std::vector<uint8_t> normal = efs::pack_db(one, efs::DbFormat::Xdb, nullptr, &reason);
+            check(!normal.empty() && reason.empty(),
+                  QStringLiteral("P17-85 前提：xdb 夹具包打得出来（reason=%1）")
+                      .arg(QString::fromStdString(reason)));
+            const QString normal_path = entries_dir + QStringLiteral("/normal.db");
+            {
+                QFile file(normal_path);
+                if (file.open(QIODevice::WriteOnly)) {
+                    file.write(reinterpret_cast<const char*>(normal.data()),
+                               static_cast<qint64>(normal.size()));
+                    file.close();
+                }
+            }
+            std::string list_error;
+            efs::DbReadInfo normal_info;
+            const std::vector<efs::EntryInfo> normal_entries = efs::package_entries(
+                normal_path.toStdString(), std::nullopt, list_error, nullptr, &normal_info);
+            check(list_error.empty() && !normal_entries.empty(),
+                  QStringLiteral("P17-85 前提：正常包列得出条目（err=%1，实得 %2 条）")
+                      .arg(QString::fromStdString(list_error))
+                      .arg(static_cast<int>(normal_entries.size())));
+            check(normal_info.used_seek && normal_info.whole_file_reason.empty() &&
+                      normal_info.header_bytes > 0,
+                  QStringLiteral("P17-85 正常包不许报「整包读」（used_seek=%1 理由=「%2」读入=%3 B）")
+                      .arg(normal_info.used_seek ? 1 : 0)
+                      .arg(QString::fromStdString(normal_info.whole_file_reason))
+                      .arg(normal_info.header_bytes));
+            // ② 回退包：11xx ＋ 显式格式 ⇒ 歧义 ⇒ 整包读（P17-73 找到的那条）
+            const std::vector<uint8_t> amb = efs::pack_db(one, efs::DbFormat::F11xx, nullptr, &reason);
+            check(!amb.empty() && reason.empty(),
+                  QStringLiteral("P17-85 前提：11xx 夹具包打得出来（reason=%1）")
+                      .arg(QString::fromStdString(reason)));
+            const QString amb_path = entries_dir + QStringLiteral("/amb.db");
+            {
+                QFile file(amb_path);
+                if (file.open(QIODevice::WriteOnly)) {
+                    file.write(reinterpret_cast<const char*>(amb.data()),
+                               static_cast<qint64>(amb.size()));
+                    file.close();
+                }
+            }
+            std::string amb_error;
+            efs::DbReadInfo amb_info;
+            const std::vector<efs::EntryInfo> amb_entries = efs::package_entries(
+                amb_path.toStdString(), efs::DbFormat::F11xx, amb_error, nullptr, &amb_info);
+            check(amb_error.empty() && !amb_entries.empty(),
+                  QStringLiteral("P17-85 前提：11xx 包 ＋ 显式格式 ⇒ 子裁决成功（err=%1，实得 %2 条）")
+                      .arg(QString::fromStdString(amb_error))
+                      .arg(static_cast<int>(amb_entries.size())));
+            check(!amb_info.used_seek && !amb_info.whole_file_reason.empty() &&
+                      amb_info.header_bytes == static_cast<uint64_t>(amb.size()),
+                  QStringLiteral("P17-85 回退整包读必须报（used_seek=%1 理由=「%2」读入=%3 / 整包=%4）")
+                      .arg(amb_info.used_seek ? 1 : 0)
+                      .arg(QString::fromStdString(amb_info.whole_file_reason))
+                      .arg(amb_info.header_bytes)
+                      .arg(static_cast<qulonglong>(amb.size())));
+            QDir(entries_dir).removeRecursively();
+        }
+
+        const auto entry_row = [](const efs::DbEntry& e) {
                 return QStringLiteral("%1|%2|%3|%4|%5|%6")
                     .arg(e.is_dir ? 1 : 0)
                     .arg(QString::fromStdString(e.path))

@@ -931,9 +931,11 @@ int FsPage::add_paths(const QStringList& paths) {
         }
         std::string error;
         std::vector<efs::EntryInfo> entries;
+        // ★★ P17-85（01 F-09 收尾）：把"这次是怎么读的"接出来（`read_info` 出参）
+        efs::DbReadInfo read_info;
         entries = efs::package_entries(gated.toUtf8().toStdString(),
                                        efs::format_key_to_db(current_format_key()), error,
-                                       registry_);
+                                       registry_, &read_info);
         if (!error.empty()) {
             // ③ **可见失败**：认不出/解不开都要说清是哪一份、为什么（绝不静默加空包）
             const QString why = QStringLiteral("加载失败：%1 —— %2").arg(raw, utf8(error));
@@ -946,8 +948,32 @@ int FsPage::add_paths(const QStringList& paths) {
         log_message(QStringLiteral("已加载：%1（%2 项）")
                         .arg(raw)
                         .arg(static_cast<int>(entries.size())));
+        // ★ 整包读才打（正常包一个字都不打）—— 这是"读得多但结果正确"那种中间状态的唯一出口
+        note_package_read(QStringLiteral("列条目"), read_info.header_bytes, read_info.used_seek,
+                          read_info.whole_file_reason, raw);
     }
     return loaded;
+}
+
+bool FsPage::note_package_read(const QString& tail, uint64_t header_bytes, bool used_seek,
+                               const std::string& whole_file_reason,
+                               const QString& display_path) {
+    // ★★ P17-85（01 F-09 收尾）：可观测的**唯一出口**在页面这一层 —— 口径写在这里，别处不要各写一份。
+    //   `used_seek == true`（只读了块头与尾部表）⇒ **一个字都不打**：没退回就不许报理由，
+    //   否则"整包读"这句话会变成人人都在喊的噪音（那等于没有观测）。
+    if (used_seek) return false;
+    const double mb = static_cast<double>(header_bytes) / (1024.0 * 1024.0);
+    const QString size_text = mb >= 1.0 ? QStringLiteral("%1 MB").arg(mb, 0, 'f', 1)
+                                        : QStringLiteral("%1 KB")
+                                              .arg(static_cast<double>(header_bytes) / 1024.0, 0,
+                                                   'f', 1);
+    const QString why = whole_file_reason.empty()
+                            ? QStringLiteral("（没有给出理由 —— 这本身就该修：见 db.cpp 的退回点）")
+                            : utf8(whole_file_reason);
+    log_message(QStringLiteral("%1：%2 —— 整包读 %3 字节（%4）：%5")
+                    .arg(tail, display_path)
+                    .arg(QString::number(header_bytes), size_text, why));
+    return true;
 }
 
 QString FsPage::source_at(int index) const {
@@ -1844,6 +1870,8 @@ bool FsPage::load_one_source(int source_index, QString* error_out) {
     }
     std::string error;
     std::vector<efs::EntryInfo> entries;
+    // ★★ P17-85（01 F-09 收尾）：同上（`load_one_source` 那一处）
+    efs::DbReadInfo read_info;
     // ★ 2026-10-03：`isDir` 这一支**现在走不到了**（目录不再成为源 —— 见 `add_paths`）；
     //   留着是为了"万一有历史/外部构造的目录型源"仍能加载，不至于静默失败。
     if (QFileInfo(gated).isDir()) {
@@ -1851,7 +1879,7 @@ bool FsPage::load_one_source(int source_index, QString* error_out) {
     } else {
         entries = efs::package_entries(gated.toUtf8().toStdString(),
                                        efs::format_key_to_db(current_format_key()), error,
-                                       registry_);
+                                       registry_, &read_info);
     }
     if (!error.empty()) {
         const QString why = QStringLiteral("加载失败：%1 —— %2").arg(source.path, utf8(error));
@@ -1864,6 +1892,8 @@ bool FsPage::load_one_source(int source_index, QString* error_out) {
     source.key = gated.toUtf8().toStdString();
     source.loaded = true;
     entries_[static_cast<size_t>(source_index)] = std::move(entries);
+    note_package_read(QStringLiteral("列条目"), read_info.header_bytes, read_info.used_seek,
+                      read_info.whole_file_reason, gated);
     return true;
 }
 
@@ -1987,13 +2017,15 @@ int FsPage::load_selected() {
         }
         std::string error;
         std::vector<efs::EntryInfo> entries;
+        // ★★ P17-85（01 F-09 收尾）："加载选中"这条批量路也要能报整包读
+        efs::DbReadInfo read_info;
         // ★ 2026-10-03：同 `load_one_source` —— 目录型源已不再产生，这一支走不到（留着以防万一）。
         if (QFileInfo(gated).isDir()) {
             entries = efs::loose_entries(gated.toUtf8().toStdString(), error);
         } else {
             entries = efs::package_entries(gated.toUtf8().toStdString(),
                                            efs::format_key_to_db(current_format_key()), error,
-                                           registry_);
+                                           registry_, &read_info);
         }
         if (!error.empty()) {
             const QString why = QStringLiteral("加载失败：%1 —— %2")
@@ -2007,6 +2039,8 @@ int FsPage::load_selected() {
         sources_[static_cast<size_t>(row)].loaded = true;
         entries_[static_cast<size_t>(row)] = std::move(entries);
         ++loaded;
+        note_package_read(QStringLiteral("列条目"), read_info.header_bytes, read_info.used_seek,
+                          read_info.whole_file_reason, gated);
     }
     rebuild_package_list();
     rebuild_tree();

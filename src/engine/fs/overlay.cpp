@@ -503,9 +503,12 @@ std::vector<EntryInfo> loose_entries(const std::string& root, std::string& error
 std::vector<EntryInfo> package_entries(const std::string& path,
                                        std::optional<DbFormat> db_fallback,
                                        std::string& error,
-                                       const plugin::Registry* registry) {
+                                       const plugin::Registry* registry,
+                                       DbReadInfo* read_info) {
     error.clear();
     std::vector<EntryInfo> out;
+    // ★★ P17-85（01 F-09 收尾）：出参先**清零**（调用方可以复用一个变量；"没填"＝没发生整包读）。
+    if (read_info != nullptr) *read_info = DbReadInfo{};
 
     // ★ 2026-10-04 解密闸门（⑫12.1 消费端）：CLI 与 GUI **共用这一枚**（见 overlay.h 的说明）。
     //   没有活动注册表 ⇒ 下面这段一个字节都不改行为（`source` 就是 `path`）。
@@ -539,6 +542,15 @@ std::vector<EntryInfo> package_entries(const std::string& path,
     //      实测 1900 MB 的包光读盘就要 8,063 ms（耗时只与文件大小成正比、与条目数无关）。
     //      `list_db_seek` 的判定/错误文案与旧路径**逐值一致**（对不上就退回整文件读）。
     const DbListing listed = list_db_seek(source, db_fallback, registry);
+    // ★★ P17-85（01 F-09 收尾）：**诊断就在这里被丢掉过**（修前只搬 `entries`）——
+    //   现在按"给了出参才填"的纪律抄出去：`header_bytes`（读了多少）＋ `used_seek`
+    //   （走没走 seek）＋ `whole_file_reason`（为什么不得不整包读）三件一起，才叫可观测。
+    if (read_info != nullptr) {
+        read_info->header_bytes = listed.header_bytes;
+        read_info->used_seek = listed.used_seek;
+        read_info->whole_file_reason = listed.whole_file_reason;
+        read_info->ambiguous = listed.ambiguous;
+    }
     if (!listed.ok) {
         error = listed.error;
         return out;

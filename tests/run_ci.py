@@ -3249,6 +3249,41 @@ def step_ask_dialog_params(release: bool) -> None:
         fail("`ask_*` 的参数缺口没闭合（见上）—— 插件照 1.x 写的参数会被静默丢掉")
 
 
+def step_f09_readinfo(release: bool) -> None:
+    """★★ P17-85（审计 `01 F-09` C 步收尾）：**"这次列条目是怎么读的"要一路接到消费点**。
+
+    事实：`01 F-09` 要的是"大 DB 整文件读口径**可观测**"——既要知道读了多少、也要知道为什么。
+    引擎半（`db.h` 的 `header_bytes`/`used_seek`/`whole_file_reason` ＋ 退回点写理由）P17-70 已落、
+    CLI 半 P17-71 已落、反向夹具 P17-73 已找到；**断在半路的是** `overlay.cpp::package_entries()`
+    拿到 `DbListing` 之后**只搬 entries**，三个诊断当场丢掉 ⇒ 界面与 Python 两条消费点看不到
+    "整包读 N 字节 + 理由"这种**既非成功也非报错**的中间状态。本批把出参（默认 `nullptr`
+    ⇒ 既有调用点行为逐字节不变）一路接出来。
+
+    本步是**接线判据**（`tests/check_f09_readinfo_chain.py`）：这类改动最容易的失败形状不是编译错误，
+    而是"加了出参没人填""填了但消费点没用""官方页三处只改一处" —— 三组静态判据逐条盯住，
+    外加 Python 夹具两条新标记（`pkg_readinfo_keys`/`pkg_readinfo_quiet`）与 `engine-facade` 步的
+    预期表**成对**检查（标记打了却没人判 = 假绿）。核对器自带 6 个反例自证。
+    独立成步（静态判据、不依赖构建产物）。退出码：0=绿、1=有断言不成立。
+    """
+    say("[f09-readinfo] P17-85：`01 F-09` 可观测链（引擎诊断 → 门面出参 → 官方页/插件页）")
+    script = ROOT / "tests" / "check_f09_readinfo_chain.py"
+    if not require_repo_file(script, "F-09 可观测链核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=180)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("F09-READINFO") or s.startswith("✓ 反例自证")
+                or s.startswith("✗ ") or s.startswith("overlay.cpp")
+                or s.startswith("engine_facade_impl.cpp") or s.startswith("py_host.cpp")
+                or s.startswith("fs_page.cpp") or s.startswith("engine_demo.py")):
+            say("  " + s[:170])
+    if rc == 0 and "F09-READINFO ok" in out:
+        ok("`01 F-09` 三处消费点全通：引擎诊断 → 门面出参（默认 nullptr）→ 官方页三处调用都报 / "
+           "Python dict 三键（反例自证 6/6）")
+    else:
+        fail("`01 F-09` 的可观测链断在某处（见上）—— 「读得多但结果正确」那种中间状态又没人看见")
+
+
 def step_engine_facade(release: bool) -> None:
     """插件改装 P7a：**引擎调用门面**（用户 2026-10-07 拍板走方案 3）。
 
@@ -3549,6 +3584,10 @@ def step_engine_facade(release: bool) -> None:
         "gate_plain_same_path": "1",
         "pkg_entries_positive": "1",     # 真金样本包能列出条目
         "pkg_error_empty": "1",
+        # ★★ P17-85（01 F-09 收尾）：Python 侧那三个键在，且**口径**成立
+        #   （seek 成功 ⇒ `whole_file_reason` 必须为空；`header_bytes` > 0）
+        "pkg_readinfo_keys": "1",
+        "pkg_readinfo_quiet": "1",
         "pkg_missing_error": "1",        # 认不出/读不到要**报错**（不静默当空包）
         "pack_collect_items": "2",       # one.txt + sub/two.txt（目录不进 items）
         "pack_collect_sorted": "1",      # 产物确定性：按 rel 排序
@@ -5241,6 +5280,9 @@ STEPS = [
     # ★★ P17-83（接口契约批）：`ask_*` 的参数缺口（filetypes/initialdir/initialfile）。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据 —— 真对话框在离屏无人值守里发不得。
     ("ask-dialog-params", step_ask_dialog_params),
+    # ★★ P17-85（`01 F-09` 收尾）：可观测链的**接线判据**（引擎诊断 → 门面出参 → 三处消费点）。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED。
+    ("f09-readinfo", step_f09_readinfo),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。

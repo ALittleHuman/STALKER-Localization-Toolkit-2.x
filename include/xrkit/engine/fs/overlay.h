@@ -109,7 +109,14 @@ PackCollectResult collect_pack_files(const std::string& base,
 std::vector<EntryInfo> package_entries(const std::string& path,
                                        std::optional<DbFormat> db_fallback,
                                        std::string& error,
-                                       const plugin::Registry* registry = nullptr);
+                                       const plugin::Registry* registry = nullptr,
+                                       // ★★ P17-85（01 F-09 收尾）：**可选**带回"这次是怎么读的"
+                                       //   （`header_bytes` / `used_seek` / `whole_file_reason`）。
+                                       //   默认 `nullptr` ⇒ 既有调用点**行为逐字节不变**
+                                       //   （与 `pack_db` 的 `error` 出参同一条纪律）。
+                                       //   ★ SquashFS 分支**不填**：它只读 96 字节超块判 magic，
+                                       //     本来就没有"整包读"这件事（如实留空，不编理由）。
+                                       DbReadInfo* read_info = nullptr);
 // ★ 2026-10-04（用户口径：「GUI 的功能，CLI 肯定要全部拥有啊。哪有 GUI 的细节功能比
 //   CLI 还多的。」）：**读入口过解密闸门**。闸门原来只在外壳的 `FsPage::gate_source` 里
 //   ⇒ CLI 直接调引擎，加密包被当普通包读（前端分叉）。现在这里先过

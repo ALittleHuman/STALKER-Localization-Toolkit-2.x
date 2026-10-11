@@ -408,6 +408,18 @@ struct FsEntry {
     uint64_t size = 0;
 };
 
+// ★★ 2026-10-11（P17-85，审计 01 F-09 C 步收尾）：**"这次列条目是怎么读的"** 的跨门面载体。
+//   为什么必须有它：`package_entries()` 内部**本来就知道**这次读了整包还是只读块头＋尾表
+//   （`DbReadInfo`），但门面只回 `std::vector<FsEntry>` ⇒ 界面/Python 那两条消费点**看不到**
+//   "读得多、但结果正确"这种**既非成功也非报错**的中间状态（那正是 F-09 要补的零静默缺口）。
+//   口径：`used_seek == true` ⇒ `whole_file_reason` **必须为空**（"没退回就不许报理由"）；
+//   SquashFS 包三项全空/假（它只读 96 字节超块判 magic，本来不整包读）。
+struct FsPackageInfo {
+    uint64_t header_bytes = 0;
+    bool used_seek = false;
+    std::string whole_file_reason;
+};
+
 struct FsOutPath {
     bool ok = false;
     std::string reason;   // ok=false 时非空（中文，界面/日志直接用）
@@ -681,7 +693,12 @@ struct EngineFacade {
     std::function<FsGateResult(const std::string& path)> fs_gate_path;
     std::function<std::string()> fs_decrypt_output_dir;
     std::function<std::vector<FsEntry>(const std::string& path, const std::string& db_fallback_key,
-                                       std::string& error)>
+                                       std::string& error,
+                                       // ★★ P17-85（01 F-09 收尾）：带上"这次是怎么读的"。
+                                       //   ★ 这里是**类型声明**（`std::function<...>`）⇒ **不许写默认参数**
+                                       //     （MSVC：`error C2383: 此符号中不允许有默认参数`）；
+                                       //     默认值写在**实现那个 lambda** 上。
+                                       FsPackageInfo* info)>
         fs_package_entries;
     std::function<FsPackCollect(const std::string& base, const std::vector<std::string>& roots)>
         fs_collect_pack_files;

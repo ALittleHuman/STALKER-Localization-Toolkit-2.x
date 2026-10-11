@@ -103,6 +103,21 @@ struct DbListing {
     bool ambiguous = false;      // 唯一自洽判定出多个候选（此时走旧路径裁决）
 };
 
+// ★★ 2026-10-11（P17-85，审计 01 F-09 C 步的**最后一处**）：把"这次是怎么读的"三个事实
+//   **独立成一个可跨层携带的小结构**。
+//
+//   为什么需要它（修前的形状）：`package_entries()`（`overlay.cpp:541`）拿到 `DbListing` 之后
+//   **只把 `entries` 搬出去**，`header_bytes` / `used_seek` / `whole_file_reason` 当场丢掉
+//   ⇒ 界面与 Python 那两条消费点**根本看不到**"这次读了整包、为什么"。
+//   口径：**空/假 = 没有发生"整包读"这件事**（SquashFS 分支就不该报 —— 它本来不整包读；
+//   "如实留空"比编一个理由好）。
+struct DbReadInfo {
+    uint64_t header_bytes = 0;        // 实际读进来的字节数
+    bool used_seek = false;           // true = 只读块头与尾部表；false = 退回整文件读
+    std::string whole_file_reason;    // 空 = 没退回；非空 = **为什么**不得不整包读
+    bool ambiguous = false;           // 自洽判定出多个候选（回退时通常为真）
+};
+
 // 列条目（`package_entries` 与 CLI `--dump` 用）。`db_fallback` 语义与原来完全一致：
 // 先唯一自洽判定，判不出来才用它。
 //

@@ -1619,11 +1619,17 @@ public:
         const EngineFacade* facade = available("fs_package_entries");
         if (facade == nullptr) return py::none();
         std::string error;
+        // ★★ P17-85（01 F-09 收尾）：把"这次是怎么读的"一并露给插件页
+        //   （修前只有 entries/error ⇒ 插件页看不到"整包读 N 字节 + 理由"这种中间状态）。
+        FsPackageInfo info;
         const std::vector<FsEntry> entries =
-            facade->fs_package_entries(path, db_fallback_key, error);
+            facade->fs_package_entries(path, db_fallback_key, error, &info);
         py::dict out;
         out["entries"] = fs_entries_to_python(entries);
         out["error"] = error;
+        out["used_seek"] = info.used_seek;
+        out["header_bytes"] = info.header_bytes;
+        out["whole_file_reason"] = info.whole_file_reason;
         return out;
     }
     py::object fs_collect_pack_files(const std::string& base, py::object roots) const {
