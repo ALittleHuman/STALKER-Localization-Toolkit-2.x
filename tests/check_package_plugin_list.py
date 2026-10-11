@@ -13,8 +13,18 @@ r"""P16-2a 静态锁：**随包插件清单**必须是显式的，且包内自�
   ② `package.ps1` 的解析必须要求**新格式**（同一行里同时出现 `个文件`、`个 dll`、`个 py`）；
   ③ `src/shell/smoke.cpp` 的 `#8 包内插件：` 那一行必须**同时**报出 dll 与 py 两组计数。
 
+★★ P17-81（甲：产品＝C++ 内置六页；`plugins/*_page.py` 是**夹具**）追加 ④：
+  这 7 枚的**落点必须是 `plugins\_fixtures\` 子目录**（加载器只扫顶层、非递归 ⇒ "随包携带、
+  默认不加载"）。判据钉的是**赋值行**（`<变量> = Join-Path <舞台> 'plugins\_fixtures'`）
+  ＋ 拷贝目标用的是那个**变量** —— 谁把落点改回顶层，这一条立刻红（P17-78 的"验收物 ≠ 交付物"
+  就是这样长出来的）。
+  ★ 实测校正（P17-80）：核对器**不读**拷贝落点 ⇒ 单改落点**不会**让旧版这一条红；
+  红会出现在**包内自检的计数**上（顶层 `.py` 变 0）—— 那条由 P17-81 的"显式抬一次"接手
+  （`package.ps1` 的包内自检断言"顶层 0 个 + 可见页＝六个内置页"，
+  用户要求的"插件页生效"由门禁 `package-pages` 步在同一次运行里断言）。
+
 输出：`PKG-PLUGINS ok …` / `fail …`；退出码 0=绿 / 1=有断言不成立。
-自带反例自证：合成"缺一枚 py / note 只报 dll"两种样本，必须都报红。
+自带反例自证：合成"缺一枚 py / note 只报 dll / 落点改回顶层"三种样本，必须都报红。
 """
 
 import re
@@ -41,6 +51,15 @@ def quoted_names(source: str) -> set:
     return set(re.findall(r"'([A-Za-z0-9_]+\.py)'", source))
 
 
+# ★★ P17-81：夹具落点必须是 `plugins\_fixtures\`。两种写法都认（PowerShell 里反斜杠不转义）：
+#   ① 直接写在拷贝目标上：`-Destination (Join-Path $stage 'plugins\_fixtures')`；
+#   ② 收口到一个变量（当前写法）：`$pluginDrop = Join-Path $stage 'plugins\_fixtures'`。
+#   ★ 判据只认**赋值行的形状**，不认某一行行号 —— 行号会随注释漂（P17-52 的教训）。
+FIXTURE_DROP_RE = re.compile(
+    r"^\s*\$([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Join-Path\s+\$stage\s+'plugins\\_fixtures'\s*$",
+    re.MULTILINE)
+
+
 def audit_package(source: str, expected: list) -> list:
     problems = []
     if ".py" not in source:
@@ -55,6 +74,17 @@ def audit_package(source: str, expected: list) -> list:
     for token in ("个文件", "个 dll", "个 py"):
         if token not in source:
             problems.append("package.ps1 的解析里看不到 `%s` —— 还在按旧格式（只数 dll）判？" % token)
+    # ④（P17-81）随包夹具的落点必须是子目录 `plugins\_fixtures\`
+    drop = FIXTURE_DROP_RE.search(source)
+    if drop is None:
+        problems.append("package.ps1 里没有把随包夹具收口到 `plugins\\_fixtures\\` 的赋值行"
+                        "（形如 `$pluginDrop = Join-Path $stage 'plugins\\_fixtures'`）—— "
+                        "夹具落回顶层就会被加载器扫到（P17-78：验收物 ≠ 交付物）")
+    else:
+        target = "-Destination $%s" % drop.group(1)
+        if target not in source:
+            problems.append("package.ps1 的拷贝目标没有用那个夹具落点变量（找不到 `%s`）—— "
+                            "落点变量没人用＝夹具还在往别处拷" % target)
     return problems
 
 
@@ -88,8 +118,8 @@ def audit_smoke(source: str) -> list:
 
 def selfcheck():
     good_pkg = ("$stage = Join-Path $root 'build\\package_stage'\n"
-                "$dst = Join-Path $stage 'plugins\\'\n"
-                "Copy-Item -LiteralPath $srcPlugin -Destination $dst\n"
+                "$pluginDrop = Join-Path $stage 'plugins\\_fixtures'\n"
+                "Copy-Item -LiteralPath $srcPlugin -Destination $pluginDrop\n"
                 + "".join("'%s'\n" % n for n in EXPECTED_PAGES)
                 + "if ($pluginText -match 'plugins：(\\d+)\\s*个文件') {}\n"
                 + "'（(\\d+)\\s*个 dll'\n'(\\d+)\\s*个 py）'\n")
@@ -99,6 +129,14 @@ def selfcheck():
         ("缺一枚 py", good_pkg.replace("'toolchain_page.py'\n", ""), good_smoke, 1),
         ("只报 dll", good_pkg, "#8 包内插件：%1 个 dll（%2）", 1),
         ("没有那行 note", good_pkg, "别的 note", 1),
+        # ★★ P17-81：落点退回顶层（＝夹具会被加载器扫到）必须报红
+        ("落点退回顶层",
+         good_pkg.replace("plugins\\_fixtures", "plugins"),
+         good_smoke, 1),
+        # ★★ P17-81：落点变量没人用（拷贝还在往别处拷）必须报红
+        ("落点变量没被使用",
+         good_pkg.replace("-Destination $pluginDrop", "-Destination (Join-Path $stage 'plugins')"),
+         good_smoke, 1),
     ]
     results, ok = [], True
     for label, pkg, smoke, want_min in cases:
@@ -145,7 +183,8 @@ def main() -> int:
         print()
         print("PKG-PLUGINS fail %d 项不成立" % len(problems))
         return 1
-    print("PKG-PLUGINS ok 随包页清单显式（%d 枚）＋ 包内自检同时报 dll 与 py" % len(actual_pages))
+    print("PKG-PLUGINS ok 随包页清单显式（%d 枚，落 `plugins\\_fixtures\\`）＋ 包内自检同时报 dll 与 py"
+          % len(actual_pages))
     return 0
 
 

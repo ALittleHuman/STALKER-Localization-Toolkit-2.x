@@ -8,7 +8,7 @@
   或让两枚插件指向同一个内置页，门禁一声不响。
 · 插件模块**有意不进 `sys.modules`**（`py_host.cpp:3227-3230`）⇒ 插件间不许靠 import 互串。
 · 内置六页仍在 `src/shell/pages/` 里直连引擎头（`.h` 14 处 + `.cpp` 8 处 = **22 处**），
-  目标是"六页只用 API 表"，但**今天做不到** ⇒ 做成**棘轮**：逐文件计数**只许减不许增**。
+  当初的目标是"六页只用 API 表"，做不到 ⇒ 那时做成**棘轮**：只许减不许增。
 
 判据
 ----
@@ -17,11 +17,24 @@
 ② 插件页 id 与它要覆盖的内置页 id **不许相同**（覆盖要新 id；`hub.cpp:620-628` 运行时会拒，
    这里做静态锁，免得跑起来才发现）；
 ③ `plugins/*.py` 不许 `import` 以 `xrkit` 开头的模块、也不许 import 别的插件文件名；
-④ **棘轮**：`src/shell/pages/*.{h,cpp}` 里 `#include "xrkit/engine/...` 的**逐文件计数**
-   必须等于基线表；**增一处即红**（六页对等的方向）；**减了要同步下调基线**（升级锁，不放宽）。
+④ **「内置页直连引擎头」的那张计数表**：**只观测、不判红**（见下）。
+
+★★ P17-81：④ 的**语义重写**（用户 2026-10-10 票：选 2 ＝ 转信息性计数）
+--------------------------------------------------------------------
+★ 为什么改：用户拍板 **甲** ——「**产品实现 = C++ 内置六页**；`plugins/*_page.py` 降级为
+**夹具**（非产品）」。甲之后内置页**就是产品**，产品直连自家引擎头**天经地义**；
+插件侧那条"夹具不许直连"另有反向锁（P17-56：`plugins/**/*.py` 禁 `PageServices`/`xrkit/engine`）。
+⇒ 原棘轮服务的目标（"官方页最终迁移成插件"）**不存在了**；留着"只许减不许增"
+等于**把正确当违规压**（反向执法）。
+★ 现语义：**"产品与引擎内部耦合面有多大"的观测值**，供将来重估甲/乙、或做页面重构时用。
+  打印形态照 P17-79 §九·2 的三条约束：**打增量（N/基线 M/Δ）**、**不设阈值**、
+  语义写进文档并**指回甲这条决策**（`STALKER_2x_插件改装_交接/P17-79复核与丙实施契约_20261010.md`
+  §九）。一旦加阈值，它又变回判据、然后烂成格言 —— 这正是要躲的。
+★ 仍然**判红**的只剩一种形状：**基线表记了、源码里却完全找不到那个文件** ——
+  那不是"耦合面变小"，是"这张表与源码脱节"（判据自己烂掉）。文件还在就永远不判红。
 
 输出：`OFFICIAL-PAGES ok …` / `OFFICIAL-PAGES fail …`；退出码 0=绿 / 1=有断言不成立。
-自带反例自证（`selfcheck()`）：四条判据各自喂一个反例必须报红，一份干净样本必须报绿。
+自带反例自证（`selfcheck()`）：①②③ 三条判据各自喂一个反例必须报红，一份干净样本必须报绿。
 """
 
 import re
@@ -36,7 +49,10 @@ for _stream in (sys.stdout, sys.stderr):
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# ④ 棘轮基线：内置六页直连引擎头的**逐文件计数**（2026-10-09 实测，合计 22）
+# ④ **观测基线**（不再是棘轮）：内置六页直连引擎头的逐文件计数（2026-10-09 实测，合计 22）。
+#   ★★ P17-81：语义已随「甲」作废 —— 现在只用来**打印增量**（N/基线 M/Δ），**不判红**。
+#   保留这张表的价值：它是"产品与引擎内部耦合面"的一把现成的尺（重估甲/乙或做页面重构时有用）。
+#   唯一仍然判红的形状：表里记了、源码里却**找不到那个文件**（表与源码脱节 ⇒ 判据自己烂掉）。
 ENGINE_INCLUDE_BASELINE = {
     "page_base.h": 1,
     "fs_page.h": 3,
@@ -138,23 +154,22 @@ def audit_pages(plugin_sources: dict, builtins: list[str]):
 
 
 def audit_ratchet(pages_dir: Path):
-    """④ 棘轮。返回 (问题清单, 实测计数)。"""
+    """④ **观测（不判红）**。返回 (问题清单, 实测计数)。
+
+    ★★ P17-81：这里**不再**对"增/减"判红（甲之后内置页＝产品，直连自家引擎头合法；
+    棘轮的目标"官方页迁移成插件"不存在了 —— 详见文件头那段）。
+    唯一判红的形状：基线表里的文件在源码里**找不到**（表脱节）。文件还在 ⇒ 只有观测。
+    计数取**最后一个写它的文件**（`.h` 与 `.cpp` 若同名会是同一个 key，基线表按 key 记账）。
+    """
     problems = []
     counts = {}
     for path in sorted(list(pages_dir.glob("*.h")) + list(pages_dir.glob("*.cpp"))):
         hits = _INCLUDE_RE.findall(path.read_text(encoding="utf-8"))
         counts[path.name] = len(hits)
     for name, want in sorted(ENGINE_INCLUDE_BASELINE.items()):
-        got = counts.get(name, 0)
-        if got > want:
-            problems.append("%s：直连引擎头 %d 处 > 基线 %d 处 —— **六页对等方向只许减不许增**"
-                            % (name, got, want))
-        elif got < want:
-            problems.append("%s：直连引擎头 %d 处 < 基线 %d 处 —— 干得好，但**必须同步下调基线**"
-                            "（改锁要升级，不许留在旧数上）" % (name, got, want))
-    for name, got in sorted(counts.items()):
-        if name not in ENGINE_INCLUDE_BASELINE and got > 0:
-            problems.append("%s：新增文件直连引擎头 %d 处（基线表里没有它）" % (name, got))
+        if not (pages_dir / name).is_file():
+            problems.append("%s：观测基线表里记着它，但源码目录里**没有这个文件** —— "
+                            "表与源码脱节（不是耦合面变小）" % name)
     return problems, counts
 
 
@@ -235,11 +250,18 @@ def main() -> int:
     print("-- 实测 --")
     print("   内置页 id（%d 个）：%s" % (len(builtins), ", ".join(builtins)))
     print("   插件页（%d 枚）：%s" % (len(plugin_sources), ", ".join(sorted(plugin_sources))))
+    # ★★ P17-81：④ 转**信息性计数** —— 打印逐文件 N 与基线 M、以及 Δ，**不判红、无阈值**。
+    baseline_total = sum(ENGINE_INCLUDE_BASELINE.values())
+    info_lines = []
     for name, got in sorted(counts.items()):
         want = ENGINE_INCLUDE_BASELINE.get(name, 0)
-        mark = "=" if got == want else ("↑" if got > want else "↓")
-        print("   棘轮 %-22s %d %s 基线 %d" % (name, got, mark, want))
-    print("   棘轮合计 %d（基线 %d）" % (sum(counts.values()), sum(ENGINE_INCLUDE_BASELINE.values())))
+        info_lines.append("   观测 %-22s %d（基线 %d，Δ=%+d）" % (name, got, want, got - want))
+    for line in info_lines:
+        print(line)
+    live_total = sum(counts.get(name, 0) for name in ENGINE_INCLUDE_BASELINE)
+    print("   INFO 直连引擎头 %d 处（基线 %d，Δ=%+d）—— **信息项：不判红、无阈值**；"
+          "棘轮语义随「甲（产品＝内置六页）」作废，现语义＝产品与引擎内部耦合面的大小"
+          % (live_total, baseline_total, live_total - baseline_total))
     print()
     if problems:
         for p in problems:
@@ -247,7 +269,9 @@ def main() -> int:
         print()
         print("OFFICIAL-PAGES fail %d 项不成立" % len(problems))
         return 1
-    print("OFFICIAL-PAGES ok 六枚插件逐枚显式 replaces 覆盖六个内置页；棘轮 22 处未增")
+    print("OFFICIAL-PAGES ok 六枚插件逐枚显式 replaces 覆盖六个内置页；"
+          "引擎直连 %d 处（基线 %d，Δ=%+d）为**信息项**（棘轮随甲作废）"
+          % (live_total, baseline_total, live_total - baseline_total))
     return 0
 
 

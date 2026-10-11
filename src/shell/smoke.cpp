@@ -10310,6 +10310,49 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
                 .arg(hub.plugin_errors().size())
                 .arg(hub.plugin_notice())
                 .arg(QDir::toNativeSeparators(plugin_dir)));
+
+        // ★★ P17-81（甲：产品实现＝C++ 内置六页；`plugins\*_page.py` 降级为**夹具**）：
+        //   **逐页点出"当前可见页集合"**，供门禁/打包链断言 —— 这是"同一份实现"那件事唯一的
+        //   可判红出口。修前的事实：包内只报"插件 N 个文件"，而**可见页到底是内置页还是
+        //   插件页**在判据里根本看不见 ⇒ 夹具一旦不再自动加载，"插件页生效"就没人验了
+        //   （P17-78/79 的"验收物 ≠ 交付物"）。
+        //   两种形态都必须判绿，所以这里**不判红、只如实列**（真正的断言在消费侧）：
+        //     · 默认（夹具在 `plugins\_fixtures\`、不在扫描路径）⇒ builtin=六、plugin_py=0；
+        //     · 门禁把夹具**显式抬上来**跑一次 ⇒ plugin_py=六＋新增页、builtin=0。
+        //   判据口径：`结束` 之前逐页 `<序号>=<id>`（等号那一边＝这一页**来自内置注册表**，
+        //   依据是 `page_owner(i) == kBuiltinPageOwner`；序号从 1 起，与 `Hub::page_count()`
+        //   同源 —— 列出的页数必须等于它）。
+        QStringList page_names;
+        int page_builtin = 0;
+        int page_plugin_py = 0;
+        bool owner_matches_id = true;
+        for (int i = 0; i < hub.page_count(); ++i) {
+            const QString id = hub.page_id(i);
+            // 内置页的 owner 是 `kBuiltinPageOwner`（`<builtin>`，见 page_host.h:36）；其余＝插件页。
+            const bool is_builtin =
+                (hub.page_owner(i) == QString::fromUtf8(kBuiltinPageOwner));
+            if (is_builtin) {
+                ++page_builtin;
+            } else if (id.endsWith(QStringLiteral("_py"))) {
+                ++page_plugin_py;
+            }
+            // 不变量：内置页 id 不带 `_py` 后缀，插件页带（`replaces` 的六枚 + toolchain 那一枚）。
+            if (is_builtin == id.endsWith(QStringLiteral("_py"))) owner_matches_id = false;
+            page_names << QStringLiteral("%1=%2%3")
+                              .arg(i + 1)
+                              .arg(id)
+                              .arg(is_builtin ? QStringLiteral("=") : QString());
+        }
+        result.notes.append(
+            QStringLiteral("PLUGIN-PAGES 可见页集合=%1 页（内置=%2 / 插件py=%3）[%4] 结束 · "
+                           "dir=%5 · 内置标记与 id 后缀一致=%6")
+                .arg(hub.page_count())
+                .arg(page_builtin)
+                .arg(page_plugin_py)
+                .arg(page_names.isEmpty() ? QStringLiteral("(空)")
+                                          : page_names.join(QStringLiteral(" ")))
+                .arg(QDir::toNativeSeparators(plugin_dir))
+                .arg(owner_matches_id ? QStringLiteral("1") : QStringLiteral("0")));
     }
 
     // ══════════════════════════════════════════════════════════════════════════

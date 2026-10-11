@@ -3980,15 +3980,19 @@ def step_plugin_facade_returns(release: bool) -> None:
 
 
 def step_official_pages(release: bool) -> None:
-    """插件改装 P16-0b：**官方六页"是不是插件"**的三条判据 + 一条棘轮。
+    """插件改装 P16-0b：**官方六页"是不是插件"**的三条判据 ＋ 一条**信息项**。
 
     为什么单开一步：`tests/` 全目录搜 `replaces` 原先是 **0 命中** —— 六枚插件确实都传了
     replaces，但**没有任何判据**锁它：去掉 replaces、或让两枚插件指向同一个内置页，
-    门禁一声不响。棘轮那一条守的是"六页对等"的方向：内置 `pages/` 直连引擎头
-    **逐文件只许减不许增**（今天 22 处）。
+    门禁一声不响。棘轮那条（内置 `pages/` 直连引擎头逐文件计数）**★★ P17-81 已转信息性**：
+    用户拍板甲（产品＝C++ 内置六页）之后，"官方页迁移成插件"那个目标不存在了，
+    "只许减不许增"会**把正确当违规压**（反向执法）。现语义＝**产品与引擎内部耦合面的大小**，
+    照 P17-79 §九·2 打印增量（N/基线 M/Δ）、**不设阈值**、语义写进 `check_official_pages_contract.py`
+    的文件头并指回甲那条决策。★ 唯一仍判红的形状：观测基线表里的文件在源码里**找不到**
+    （表脱节，不是耦合面变小）。
     独立成步（静态判据、不依赖构建产物）。退出码：0=绿、1=有断言不成立。
     """
-    say("[official-pages] 插件改装 P16-0b：官方页 replaces 契约 + 插件隔离 + 引擎直连棘轮")
+    say("[official-pages] 插件改装 P16-0b：官方页 replaces 契约 + 插件隔离 + 引擎直连**观测**")
     script = ROOT / "tests" / "check_official_pages_contract.py"
     if not require_repo_file(script, "官方页契约核对器"):
         return
@@ -3996,10 +4000,12 @@ def step_official_pages(release: bool) -> None:
     for line in out.splitlines():
         s = line.strip()
         if (s.startswith("OFFICIAL-PAGES") or s.startswith("✓ 反例自证")
-                or s.startswith("✗ ") or s.startswith("棘轮")):
+                or s.startswith("✗ ") or s.startswith("棘轮") or s.startswith("INFO ")):
             say("  " + s)
     if rc == 0 and "OFFICIAL-PAGES ok" in out:
-        ok("六枚插件逐枚显式 replaces、六个内置页各被覆盖一次；内置页引擎直连 22 处未增")
+        info = [l.strip() for l in out.splitlines() if l.strip().startswith("INFO ")]
+        ok("六枚插件逐枚显式 replaces、六个内置页各被覆盖一次；" +
+           (info[0][5:] if info else "引擎直连观测（信息项）"))
     else:
         fail("官方页契约不成立（见上）—— 插件化「六页对等」那一条没有判据就只是口号")
 
@@ -5097,6 +5103,46 @@ def step_package_platform(release: bool) -> None:
         fail("包内平台插件判据不成立（见上）")
 
 
+def step_package_fixture_pages(release: bool) -> None:
+    """★★ P17-81（甲）：**夹具定性（非产品）＋ 默认可见页＝六个内置页 ＋ 抬 `_fixtures\\` 才验插件页**。
+
+    为什么单开一步：P17-78 的致命项是"**验收物 ≠ 交付物**"—— 同一个 exe，目录里有没有
+    `plugins\\*.py` 决定它跑哪一份实现；而以前打的包（ALPHA）**全都带插件** ⇒ 门禁端到端验的
+    是**插件页**（夹具）、用户拿到的发行包跑的是**内置页**（产品），后者**从没被端到端跑过**。
+    用户 2026-10-10 拍板甲：**产品＝C++ 内置六页**，`.py` 页降级为夹具；夹具落
+    `plugins\\_fixtures\\`（加载器非递归 ⇒ 随包携带、默认不加载）。
+
+    本步把甲落成机器判据（`tests/check_package_fixture_pages.py`）：
+      ① 8 枚夹具带固定标记串 `NON-PRODUCT-FIXTURE`（"非产品"要能被查，不是文档里的口号）；
+      ② 发行口径包（RC/FINAL）`plugins\\` 顶层与 `_fixtures\\` 都不含夹具；
+      ③ 在**产物副本**里跑 `--smoke` ⇒ 默认**可见页＝六个内置页**（逐名同序）；
+      ④ **显式把 `_fixtures\\` 抬到顶层再跑一次** ⇒ 同一次运行里既取包内插件计数、
+         又断**插件页真的生效**（七个插件页逐名；内置页全被顶掉）。原产物**一个字节都不动**
+         （只动临时副本）—— 这也是"抬一次"与"交付物形态"不再打架的原因（P17-79 §四·补）。
+      退出码：0=绿、1=判据不成立、2=本次没有包可跑（同 `pkg-platform`，release 档按前提缺失 FAIL）。
+    """
+    say("[package-pages] P17-81：夹具定性 + 默认可见页＝六个内置页 + 抬 `_fixtures\\` 验插件页")
+    script = ROOT / "tests" / "check_package_fixture_pages.py"
+    if not require_repo_file(script, "夹具页判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=1800)
+    for line in out.splitlines():
+        s = line.strip()
+        if (s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("PKG-PAGES")
+                or s.startswith("默认形态实测") or s.startswith("抬夹具形态实测")
+                or s.startswith("产物") or s.startswith("LEDGER") or s.startswith("④ 显式抬起")):
+            say("  " + s)
+    if rc == 0:
+        ok("夹具带 NON-PRODUCT-FIXTURE 且不进发行包；默认可见页＝六个内置页；"
+           "抬 `_fixtures\\` 后七个插件页逐名生效（验收物与交付物同一份实现）")
+    elif rc == 2:
+        package_fact("夹具页判据（默认可见页＝六个内置页 / 抬 `_fixtures\\` 验插件页）",
+                     "本次没有 dist 产物可跑（同一条断言已写进 package.ps1 的包内自检："
+                     "每次打包都会真跑）", release)
+    else:
+        fail("夹具页判据不成立（见上）")
+
+
 def step_version_identity(release: bool) -> None:
     """审计补充 H1-2（S1，用户 2026-10-07 拍板"候选 A"）：版本号只许**一份**真来源。
 
@@ -5269,6 +5315,10 @@ STEPS = [
     # ★★ 2026-10-07（用户裁决）：包内平台插件（qwindows + qoffscreen）+ 从产物里真跑自检。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED；没有带契约声明的新包时记台账。
     ("pkg-platform", step_package_platform),
+    # ★★ P17-81（甲）：夹具定性（非产品）＋ 默认可见页＝六个内置页 ＋ **抬 `_fixtures\` 跑一次**
+    #   才断"插件页生效"。排在 pkg-platform 之后：它也要在**产物副本**里真跑自检。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED；没有 dist 产物时记台账（release 档 FAIL）。
+    ("package-pages", step_package_fixture_pages),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
     ("version-identity", step_version_identity),
 ]
