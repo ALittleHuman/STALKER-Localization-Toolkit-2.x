@@ -338,6 +338,14 @@ QString Hub::page_owner(int index) const {
     return page_owners_[static_cast<size_t>(index)];
 }
 
+// ★★ P17-88：**身份判断的唯一入口**（走注册表里显式宣告的 kind）。修前这里是三处
+//   `page_owner(i) == kBuiltinPageOwner` 的字符串比较 —— 那正是"靠哨兵分叉的暗号"。
+PageKind Hub::page_kind(int index) const {
+    const QString id = page_id(index);
+    if (id.isEmpty()) return PageKind::Plugin;   // 保守：未知的不许算内置页
+    return pages_.page_kind(id.toStdString());
+}
+
 int Hub::page_index(const QString& id) const {
     for (size_t i = 0; i < page_ids_.size(); ++i) {
         if (page_ids_[i] == id) return static_cast<int>(i);
@@ -547,9 +555,12 @@ int Hub::sync_pages() {
     }
 
     // ③ 计数与"当前页"还原
+    // ★★ P17-88：这里原来拿 `owner != kBuiltinPageOwner` **比字符串**数插件页 ——
+    //   现在走**显式宣告的身份**（`page_kind()`）。口径差别是实质的：字符串比法里，
+    //   一页只要把 owner 写成哨兵就会被算成"内置页"（暗号冒充）；身份是注册时校验过的。
     plugin_pages_added_ = 0;
-    for (const QString& owner : page_owners_) {
-        if (owner != QString::fromUtf8(kBuiltinPageOwner)) ++plugin_pages_added_;
+    for (int i = 0; i < page_count(); ++i) {
+        if (page_kind(i) != PageKind::Builtin) ++plugin_pages_added_;
     }
     const int keep_index = page_index(keep_id);
     if (keep_index >= 0) {
@@ -800,7 +811,9 @@ void Hub::render_plugin_slots() {
     // ⑤ Hub 插件页（tool）：**在本函数开头**已经按 owner 注册进同一张页表并 `sync_pages()`
     //   过了（P1 起与内置页同一条路）—— 这里只把它记进日志，让"注册→消费"在日志里对得上。
     for (int i = 0; i < page_count(); ++i) {
-        if (page_owner(i) == QString::fromUtf8(kBuiltinPageOwner)) continue;
+        // ★★ P17-88：判"是不是内置页"走**显式身份**（`page_kind`），不再比哨兵字符串。
+        //   `page_owner(i)` 仍然只当"给人看的字"用（下面那行的括号里）。
+        if (page_kind(i) == PageKind::Builtin) continue;
         ++plugin_slots_rendered_;
         log_line(QStringLiteral("插件页：%1（%2）").arg(page_title(i)).arg(page_owner(i)));
     }

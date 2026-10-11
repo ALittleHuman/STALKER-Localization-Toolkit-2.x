@@ -60,6 +60,10 @@ public:
     QString page_title(int index) const;
     QString page_id(int index) const;
     QString page_owner(int index) const;
+    // ★★ P17-88（§四·8② 运行期那一半）：这一页的**身份** —— 走注册表里**显式宣告**的 `kind`，
+    //   **不再拿 `<builtin>` 与 owner 比字符串**（那是"暗号"，冒充者只要写对字符串就过）。
+    //   口径：`page_owner()` 仍是"谁注册的"（给人看的字），**判断"是不是内置页"一律用本函数**。
+    PageKind page_kind(int index) const;
 
     // ── ★★ 插件改装 P1：Hub ＝ 容器 + 注册表 + 机制提供者（规格 §一）──────────────
     // 页注册表：**内置六页与插件页走同一条路**（修前是两套：`kBuiltinPages[]` 造内置 +

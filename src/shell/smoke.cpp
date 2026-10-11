@@ -751,6 +751,25 @@ SmokeResult run_smoke() {
         }
         check(dup_diag, QStringLiteral("P1 拒绝注册的理由必须留痕（fatal 诊断）"));
 
+        // ★★ P17-88（§四·8② 运行期那一半）：**"身份"与"暗号"必须一致** ——
+        //   `Hub::page_kind(i)`（走注册表里显式宣告的 kind）数出来的内置页，
+        //   必须与 `page_owner(i) == <builtin>`（那条老哨兵字符串比法）**完全对上**。
+        //   这条把"暗号提明白"钉成可判的事实：两边一旦分叉，就说明有人绕过了注册入口的权限判据。
+        {
+            int kind_builtin = 0;
+            int owner_builtin = 0;
+            for (int i = 0; i < host_hub.page_count(); ++i) {
+                if (host_hub.page_kind(i) == PageKind::Builtin) ++kind_builtin;
+                if (host_hub.page_owner(i) == QString::fromUtf8(kBuiltinPageOwner)) ++owner_builtin;
+            }
+            check(kind_builtin == owner_builtin && kind_builtin == builtin_count,
+                  QStringLiteral("P17-88 身份与暗号必须一致（kind=Builtin %1 / owner=<builtin> %2 / "
+                                 "内置六页 %3）")
+                      .arg(kind_builtin)
+                      .arg(owner_builtin)
+                      .arg(builtin_count));
+        }
+
         // ★★ P17-88（待办总表 §四·8② 的**运行期那一半**）：`owner`/`kind` 是**权限边界** ——
         //   注册入口对"跨用"**当场拒绝并留痕**。原状：只靠哨兵字符串比字符串、入口不检查
         //   ⇒ 任何调用方把 owner 传成 `<builtin>` 就能把一页注册成"内置页"（暗号冒充）。
