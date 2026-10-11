@@ -216,7 +216,17 @@ int PluginApiAdapter::on_panel(stk_host* host, const char* title, stk_builder_fn
     if (self_ptr == nullptr || title == nullptr || builder == nullptr || host_name == nullptr) {
         return 0;
     }
-    PanelBuilder wrapped = [builder, user](void* parent) -> void* { return builder(user, nullptr); };
+    // ★★ P17-93（审计 `05 PLG-02`）：**把宿主给的 parent 透传给插件的 builder**。
+    //   修前这里写死 `builder(user, nullptr)` —— 形参 `parent` **收下就丢**，
+    //   `C ABI` 插件永远拿不到根容器（而宿主侧 `hub.cpp:678/783` 明明已经把它传下来了）。
+    //   「收下参数却不用」＝静默丢弃，正是零静默要防的形状。
+    PanelBuilder wrapped = [builder, user](void* parent) -> void* {
+        // `void* parent` 与 `stk_widget*` 是**同一个指针的两个名字**：宿主侧传的是 Qt 控件指针
+        // （`hub.cpp:678/783` 用 `reinterpret_cast<QWidget*>(builder(parent))` 反向转），
+        // 外壳的 `wrap()` 也是 `reinterpret_cast<stk_widget*>(QWidget*)`（见 `plugin_ui.cpp:22`）
+        // ⇒ 这里原样转回去，插件拿到的句柄与其他 UI 工厂给的**是同一套**。
+        return builder(user, reinterpret_cast<stk_widget*>(parent));
+    };
     return self_ptr->registry_.register_panel(self_ptr->plugin_name_, title, std::move(wrapped),
                                               host_name, area != nullptr ? area : "",
                                               when_from_abi(when), order)
@@ -228,7 +238,10 @@ int PluginApiAdapter::on_tool(stk_host* host, const char* name, stk_builder_fn b
                               int order) {
     PluginApiAdapter* self_ptr = self(host);
     if (self_ptr == nullptr || name == nullptr || builder == nullptr) return 0;
-    PanelBuilder wrapped = [builder, user](void* parent) -> void* { return builder(user, nullptr); };
+    // ★★ P17-93（审计 `05 PLG-02`）：同上 —— **parent 必须透传**（修前恒传 `nullptr`）。
+    PanelBuilder wrapped = [builder, user](void* parent) -> void* {
+        return builder(user, reinterpret_cast<stk_widget*>(parent));   // 同上：同一个指针的两个名字
+    };
     return self_ptr->registry_.register_tool(self_ptr->plugin_name_, name, std::move(wrapped), order)
                ? 1
                : 0;

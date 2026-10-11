@@ -42,6 +42,7 @@ for _stream in (sys.stdout, sys.stderr):
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACT = ROOT / "src" / "engine" / "plugin" / "contract_tables.inc"
 PY_HOST = ROOT / "src" / "engine" / "plugin" / "py_host.cpp"
+ABI_HOST = ROOT / "src" / "engine" / "plugin" / "abi_host.cpp"
 
 # ── ② 绑定**多给**的参数（契约没点名）；2.x 富余项，必须写清为什么 ──────────────
 #     形状：方法名 → {参数名: 理由}
@@ -92,6 +93,12 @@ DEFERRED = {
     "ask_open_file": {"parent": "同上"},
     "ask_save_file": {"parent": "同上"},
 }
+
+
+def strip_comments(text: str) -> str:
+    """查**代码**时先剥注释（本仓踩过：判据说明里引用旧代码 ⇒ 在自己身上假绿）。"""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    return re.sub(r"//[^\n]*", "", text)
 
 
 def parse_contract(text: str) -> list:
@@ -146,6 +153,27 @@ def audit(contract: list, bindings: dict, extra: dict, deferred: dict) -> list:
     return problems
 
 
+def audit_abi_parent(abi_text: str) -> list:
+    """★★ P17-93（审计 `05 PLG-02`）：**C ABI 的 builder 必须收到宿主给的 parent**。
+
+    修前形状：`abi_host.cpp` 里两个适配 lambda 写死 `builder(user, nullptr)` —— 形参 `parent`
+    **收下就丢**，C ABI 插件永远拿不到根容器（而宿主侧 `hub.cpp:678/783` 早把它传下来了）。
+    这条**属于本判据的主题**（"契约点名的参数/位置，实现必须真的用起来"），所以并进这里。
+    判据：两条适配（`on_panel` / `on_tool`）里都**不许**出现 `builder(user, nullptr)`，
+    且都出现 `builder(user, reinterpret_cast<stk_widget*>(parent))`（原样透传）。
+    """
+    problems = []
+    code = strip_comments(abi_text)
+    if "builder(user, nullptr)" in code:
+        problems.append("abi_host.cpp：C ABI 的 builder 又被写死 `builder(user, nullptr)` "
+                        "⇒ 插件拿不到宿主 parent（05 PLG-02 复发）")
+    got = code.count("builder(user, reinterpret_cast<stk_widget*>(parent))")
+    if got != 2:
+        problems.append("abi_host.cpp：`builder(user, …(parent))` 只找到 %d 处（`on_panel` 与 "
+                        "`on_tool` 两条都要透传）" % got)
+    return problems
+
+
 def selfcheck() -> tuple:
     good_contract = [("entry", ["parent", "textvariable", "width", "show"]),
                      ("label", ["parent", "text", "style"])]
@@ -167,6 +195,14 @@ def selfcheck() -> tuple:
         ("记账之后照旧绿", 0,
          audit(good_contract, {"entry": ["parent", "width"], "label": ["parent", "text", "style"]},
                {}, {"entry": {"textvariable": "欠账", "show": "欠账"}})),
+        ("C ABI parent 透传（好形状）", 0, audit_abi_parent(
+            "PanelBuilder wrapped = [builder, user](void* parent) -> void* {\n"
+            "    return builder(user, reinterpret_cast<stk_widget*>(parent));\n};\n"
+            "PanelBuilder wrapped2 = [builder, user](void* parent) -> void* {\n"
+            "    return builder(user, reinterpret_cast<stk_widget*>(parent));\n};\n")),
+        ("C ABI parent 被丢掉（修前形状）", 1, audit_abi_parent(
+            "PanelBuilder wrapped = [builder, user](void* parent) -> void* {\n"
+            "    return builder(user, nullptr);\n};\n")),
     ]
     results, ok = [], True
     for label, want, problems in cases:
@@ -194,13 +230,22 @@ def main() -> int:
     print("   ✓ 反例自证 %d/%d" % (len(results), len(results)))
     print()
 
-    for path in (CONTRACT, PY_HOST):
+    for path in (CONTRACT, PY_HOST, ABI_HOST):
         if not path.is_file():
             print("UI-CONTRACT fail 仓库自带文件缺失：%s" % path)
             return 1
     contract = parse_contract(CONTRACT.read_text(encoding="utf-8", errors="replace"))
     bindings = parse_bindings(PY_HOST.read_text(encoding="utf-8", errors="replace"))
     problems = audit(contract, bindings, EXTRA, DEFERRED)
+    abi_problems = audit_abi_parent(ABI_HOST.read_text(encoding="utf-8", errors="replace"))
+    if abi_problems:
+        print("-- C ABI 的 parent 透传（P17-93 / 审计 `05 PLG-02`）--")
+        for item in abi_problems:
+            print("   ✗ %s" % item)
+    else:
+        print("-- C ABI 的 parent 透传（P17-93 / 审计 `05 PLG-02`）--")
+        print("   ✓ `on_panel` / `on_tool` 两条适配都把宿主 parent 原样交给插件 builder")
+    problems += abi_problems
 
     print("-- 实测（契约 %d 条方法）--" % len(contract))
     for name, params in contract:

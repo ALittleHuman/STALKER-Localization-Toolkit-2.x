@@ -7387,6 +7387,36 @@ SmokeResult run_smoke() {
               QStringLiteral("⑫12.1 插件页没被追加（pages=%1 期望 %2）")
                   .arg(hub.page_count())
                   .arg(builtin + 1));
+
+        // ★★ P17-93（审计 `05 PLG-02`）：**C ABI 插件的 builder 必须收到宿主给的 parent** ——
+        //   修前 `abi_host.cpp` 的适配 lambda 写死 `builder(user, nullptr)`：形参收下就丢，
+        //   C ABI 插件**永远拿不到根容器**（而宿主侧早在 `hub.cpp:678/783` 就把它传下来了）。
+        //   判据（要有牙）：注册一个**记录收到什么 parent** 的 builder ⇒ 渲染后必须**非空**。
+        //   红证：把适配 lambda 改回 `builder(user, nullptr)` ⇒ 这里立刻红（能报出实得 nullptr）。
+        //   ★ 用**独立的 Hub**（不碰上面那个已渲染过的）—— 同一个 Hub 二次 `render_plugin_slots()`
+        //     会把插件页装两遍（那条判据在下面，不该被这条探针弄脏）。
+        {
+            const QString probe_dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_p1793"));
+            QDir(probe_dir).removeRecursively();
+            QDir().mkpath(probe_dir);
+            Hub probe_hub(nullptr, probe_dir);
+            plug::PluginApiAdapter probe_adapter(probe_hub.registry(), "p1793.dll", nullptr);
+            static void* p1793_seen_parent = nullptr;
+            p1793_seen_parent = nullptr;
+            const auto probing_builder = +[](void*, stk_widget* parent) -> stk_widget* {
+                p1793_seen_parent = reinterpret_cast<void*>(parent);
+                return reinterpret_cast<stk_widget*>(new QWidget());
+            };
+            check(probe_adapter.api().register_tool(probe_adapter.api().host, "parent 探针页",
+                                                    probing_builder, nullptr, 9) == 1,
+                  QStringLiteral("P17-93 探针页注册失败"));
+            probe_hub.render_plugin_slots();
+            check(p1793_seen_parent != nullptr,
+                  QStringLiteral("P17-93 C ABI 插件的 builder 没收到宿主 parent（实得 %1）")
+                      .arg(p1793_seen_parent == nullptr ? QStringLiteral("nullptr")
+                                                        : QStringLiteral("非空")));
+            QDir(probe_dir).removeRecursively();
+        }
         // ★★ P1：插件页必须排在**内置六页之后**（1.x `stalker_toolkit.py:215-221` 的口径：
         //   内置六工具固定在前，插件栏目按 order 稳定追加）—— 排序的"带"写错就红。
         check(hub.page_id(builtin) == QStringLiteral("插件页") &&
