@@ -917,6 +917,11 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
             bo.output_dir = out_dir.string();
             bo.extensions = {".xml"};
             bo.target_encoding = "utf-8";
+            // ★★ P17-87（待办总表 §四·9，用户 2026-10-10 拍板「编码判定一律要问」）：
+            //   这一条**必须是显式源编码** —— 自检里没有窗口可弹，`auto` 会（正确地）停在
+            //   `needs_confirm`（退码 3），那不是"端到端全绿"。**auto 那条另有一条判据**（见下面）。
+            //   两份夹具分别是 windows-1251 / gbk 的 XML 声明。
+            bo.source_encoding = "windows-1251";
             bo.backup = false;
             int messages = 0;
             etxt::BatchHooks bh;
@@ -930,6 +935,32 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
             check(ctx, fsys::exists(out_dir / "sub" / "b.xml"),
                   "输出目录没有保留相对结构（sub/b.xml 不在）");
             check(ctx, messages >= 5, "批处理没有逐条留痕（零静默）");
+
+            // ★★ P17-87（§四·9）**反向锁**：`auto` ＋ **没有窗口可弹** ⇒ 必须**停下**、
+            //   退码 **3**、**一个文件都不转**，并把问句与诊断原样交出去。
+            //   判红办法：把 `batch.cpp` 里那条 `needs_confirm` 分支删掉（＝退回"默认值继续"）
+            //   ⇒ 下面四条立刻红（那正是"谁让你这么喜欢用自动模式的"要防的退化）。
+            {
+                etxt::BatchOptions auto_bo = bo;
+                auto_bo.source_encoding = "auto";   // 判定链 ⇒ 必须问
+                auto_bo.output_dir = (root / "e2e_auto_out").string();
+                const etxt::BatchOutcome ask = etxt::convert_batch(auto_bo, bh);
+                check(ctx, ask.needs_confirm && ask.exit_code == 3 && ask.success == 0 &&
+                              ask.skipped == 0 && ask.failed == 0 && ask.processed == 0,
+                      "auto 判定没有停下等确认（needs_confirm=" +
+                          std::to_string(ask.needs_confirm ? 1 : 0) + " 退码=" +
+                          std::to_string(ask.exit_code) + " 成功=" + std::to_string(ask.success) +
+                          " 已处理=" + std::to_string(ask.processed) + "）");
+                check(ctx, !ask.confirm_question.empty() &&
+                              ask.confirm_question.find("判定：") != std::string::npos &&
+                              ask.confirm_question.find("置信度：") != std::string::npos,
+                      "停下时没有把**问句**（含判定与置信度）交出去（零静默）");
+                check(ctx, ask.confirm_diagnostics.find("step=") != std::string::npos &&
+                              ask.confirm_diagnostics.find("confidence=") != std::string::npos,
+                      "停下时没有把**诊断原文**交出去（CLI 报出要原样）");
+                check(ctx, !fsys::exists(fsys::path(auto_bo.output_dir) / "a.xml"),
+                      "需要确认时**不许**写任何产物（不替用户选）");
+            }
 
             // 反面：源路径不存在 ⇒ 退出码 2 + 报错（不许静默成功）
             bo.source = (root / "e2e_missing").string();
@@ -4408,6 +4439,21 @@ int run_cli(const std::vector<std::string>& args) {
         }
         const xrkit::engine::text::BatchOutcome outcome =
             xrkit::engine::text::convert_batch(opt, {});
+        // ★★ P17-87（待办总表 §四·9）：**没有窗口可弹 ⇒ 不许猜** —— 把问句与判定诊断
+        //   **原样报出**（问句文案来自 `sniff.cpp`，CLI 不自己拼），并**非零退出**（退码 3）。
+        //   口径：这一步**一个文件都没转**（`success/skipped/failed` 全 0），由调用方显式决定后重跑。
+        if (outcome.needs_confirm) {
+            std::cout << "CONVERTBATCH needs-confirm path=" << outcome.confirm_path << "\n";
+            std::cout << "CONVERTBATCH question:\n" << outcome.confirm_question << "\n";
+            std::cout << "CONVERTBATCH diagnostics " << outcome.confirm_diagnostics << "\n";
+            std::cout << "CONVERTBATCH stopped processed=" << outcome.processed
+                      << " success=" << outcome.success << " skipped=" << outcome.skipped
+                      << " failed=" << outcome.failed << " exit=" << outcome.exit_code
+                      << " reason=" << outcome.stop_reason << "\n";
+            std::cout << "CONVERTBATCH hint=没有任何文件被转换；请显式指定源编码"
+                         "（把 <源编码> 从 auto 改成具体编码）后重跑\n";
+            return 3;
+        }
         std::cout << "CONVERTBATCH ok single_file=" << (outcome.single_file ? 1 : 0)
                   << " depth=" << outcome.collect.depth << " dirs=" << outcome.collect.dirs
                   << " files_seen=" << outcome.collect.files_seen

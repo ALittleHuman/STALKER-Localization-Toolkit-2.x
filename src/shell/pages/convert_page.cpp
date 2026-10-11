@@ -20,6 +20,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QMetaObject>
+#include <QThread>
 #include <QPushButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -76,10 +77,55 @@ struct BatchResultBox {
     QString target_enc;
 };
 
+// ★★ P17-87（待办总表 §四·9，用户 2026-10-10 拍板「全部上模态对话框」）：
+//   **宿主注入"问一句"的确认器** —— 引擎侧只认数据（不许碰 Qt），问句文案来自 `sniff.cpp`
+//   （唯一一份），这里只负责"怎么给人看、怎么收回答"。
+//
+//   ★ 线程形状：批处理跑在 `task_run` 的**工作线程**里，而 Qt 控件只许主线程碰 ⇒
+//     用 `BlockingQueuedConnection` 把询问**投递回本页（主线程）**，工作线程阻塞等回答
+//     （Qt 官方的跨线程同步调用形状，不引入任何新机制）。
+//   ★ 取消/关掉对话框 ⇒ `Cancelled`（**这一份不转**，不是"静默按 auto 继续"）。
+void install_encoding_confirm_modal(QWidget* owner) {
+    // ★★ 两条"不抢装"的判据（都是本批踩出来的，务必保留）：
+    //   ① **已经有确认器**（自检/测试装的替身）⇒ 不抢：否则自检会在离屏环境里弹真模态、**永久卡住**；
+    //   ② **`BlockingQueuedConnection` 在同一个线程上自投递会死锁**（主线程自己排队、自己等自己）
+    //      ⇒ 按"现在是不是安装时那个线程"分两支：同一线程**直接调**，工作线程才投递回主线程。
+    if (etxt::has_encoding_confirm()) return;
+    QThread* const ui_thread = QThread::currentThread();
+    etxt::set_encoding_confirm([owner, ui_thread](const etxt::EncodingConfirmRequest& request,
+                                                  std::string* chosen) {
+        (void)chosen;   // 「改成别的编码」留到下一批（要一个带编码下拉的对话框）；本批只问"按不按判定"
+        const auto ask = [owner, &request]() {
+            QMessageBox box(owner);
+            box.setWindowTitle(QStringLiteral("编码判定确认"));
+            // 问句文案来自引擎（`sniff.cpp` 的唯一一份）—— 页面**不重拼**（⑨9.7 同一条纪律）
+            box.setText(QString::fromStdString(request.question));
+            box.setInformativeText(QStringLiteral("「取消」＝这一份不转换（不会替您选择）。"));
+            box.setIcon(QMessageBox::Question);
+            box.setStandardButtons(QMessageBox::Ok | QMessageBox::Cancel);
+            box.setDefaultButton(QMessageBox::Ok);
+            box.button(QMessageBox::Ok)->setText(QStringLiteral("按此转换"));
+            box.button(QMessageBox::Cancel)->setText(QStringLiteral("取消（不转）"));
+            return box.exec() == QMessageBox::Ok ? etxt::EncodingConfirmOutcome::Confirmed
+                                                 : etxt::EncodingConfirmOutcome::Cancelled;
+        };
+        if (QThread::currentThread() == ui_thread) return ask();   // 已经在主线程 ⇒ 直接弹
+        etxt::EncodingConfirmOutcome answer = etxt::EncodingConfirmOutcome::Cancelled;
+        const bool invoked = QMetaObject::invokeMethod(
+            owner, [&ask, &answer]() { answer = ask(); }, Qt::BlockingQueuedConnection);
+        // 投递失败（owner 已销毁 / 没有事件循环）⇒ 保守地按**取消**处理（不替用户选）
+        if (!invoked) return etxt::EncodingConfirmOutcome::Cancelled;
+        return answer;
+    });
+}
+
 }  // namespace
 
 ConvertPage::ConvertPage(QWidget* parent)
     : PageBase(QStringLiteral("convert"), QStringLiteral("编码转换"), parent) {
+    // ★★ P17-87（§四·9）：装配期就注入"问一句"的确认器（口径见上面那个函数的注释）——
+    //   引擎只认数据、页面只负责给人看；**没注入时**（CLI/headless）由引擎返回 `needs_confirm`。
+    install_encoding_confirm_modal(this);
     // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内那一段说明文字**整段删掉**
     //   （六页统一；用户对"满屏解释"的口径与词汇口径同源：「不用带括号。一般人又看不懂。」）
     source_edit_ = new QLineEdit;
@@ -269,6 +315,11 @@ ConvertPage::ConvertPage(QWidget* parent)
 
     refresh_rows();
 }
+
+// ★★ P17-87（§四·9）：撤掉构造期注入的那个**模态确认器** —— 它捕获了 `this`，
+//   页面一走就必须撤，否则进程级留着一个指向死窗口的回调（下一次转换会
+//   `invokeMethod` 一个已析构的对象；本批实测症状：自检卡在模态上不动）。
+ConvertPage::~ConvertPage() { etxt::set_encoding_confirm(nullptr); }
 
 void ConvertPage::fill_encoding_combos() {
     source_combo_->addItem(QStringLiteral("自动"), QStringLiteral("auto"));

@@ -698,6 +698,19 @@ BatchOutcome convert_batch(const BatchOptions& opt, const BatchHooks& hooks) {
         co.target_encoding = opt.target_encoding;
         co.to_output_dir = !opt.output_dir.empty();
         const ConvertOutcome r = convert_file(file.full, target, co);
+        if (r.needs_confirm) {
+            // ★★ P17-87（§四·9）：**没有窗口可弹 ⇒ 不许猜** —— 当场停下，把问句与诊断
+            //   原样交出去（调用方负责报出 + 非零退出）。**这一份与后面的都不转**（不替用户选）。
+            //   ★ 不把它算进 `failed`：它不是"转换失败"，是"需要用户先决定"（退码 3）。
+            out.needs_confirm = true;
+            out.confirm_path = file.full;
+            out.confirm_question = r.confirm_question;
+            out.confirm_diagnostics = r.confirm_diagnostics;
+            say("[需要确认] " + name + " | " + r.step_label +
+                "（没有窗口可弹 ⇒ 已停下，未转换任何文件）");
+            out.stop_reason = "需要用户确认编码：" + name;
+            break;
+        }
         if (!r.ok) {
             ++out.failed;
         } else if (r.skipped) {
@@ -737,9 +750,11 @@ BatchOutcome convert_batch(const BatchOptions& opt, const BatchHooks& hooks) {
     say("总耗时：" + out.duration);
 
     // 零静默的收口：**部分失败 ⇒ 退出码非 0**（遍历错误、备份失败同样算失败）。
+    // ★★ P17-87（§四·9）：**需要用户确认**单列一档退码 **3**（既不是成功、也不是失败 ——
+    //   "没决定"这件事必须与"做坏了"区分得开，否则调用方会把它当成错误重试）。
     const bool bad = out.failed > 0 || out.backup_failed > 0 || !out.collect.errors.empty();
-    out.exit_code = bad ? 1 : 0;
-    if (!bad && !out.cancelled) say("全部完成");
+    out.exit_code = out.needs_confirm ? 3 : (bad ? 1 : 0);
+    if (!bad && !out.cancelled && !out.needs_confirm) say("全部完成");
     return out;
 }
 

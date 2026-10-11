@@ -199,6 +199,13 @@ struct BatchOutcome {
     int used_mismatch = 0;    // 判定结论 ≠ 实际使用编码（enc/used 分叉）
     bool cancelled = false;
     std::string stop_reason;  // 取消了 ⇒ 说清停在哪（零静默）
+    // ★★ P17-87（待办总表 §四·9）：**"需要用户确认编码"而没有窗口可弹** ——
+    //   既非成功也非"转换失败"：批处理**当场停下**（不猜、不替用户选），把问句与诊断原样交出去；
+    //   退出码 **3**（与既有 0/1/2 区分开：0=全成、1=有失败、2=输入不可用、**3=需要用户确认**）。
+    bool needs_confirm = false;
+    std::string confirm_path;         // 问的是哪一份
+    std::string confirm_question;     // 问句原文（来自 `sniff.cpp`，唯一一份文案）
+    std::string confirm_diagnostics;  // 诊断原文（step/encoding/reason/flags/confidence）
     std::string duration;
     // 0 = 全部成功；1 = 有失败/有遍历错误（**部分失败也是失败**）；2 = 输入不可用
     int exit_code = 0;

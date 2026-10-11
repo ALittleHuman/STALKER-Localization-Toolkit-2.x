@@ -5046,8 +5046,40 @@ SmokeResult run_smoke() {
 
     // ⑨/⑬ 编码转换页（M2-6c2）：判定步骤来自引擎（9.7）、暂停归 App（13.6）、
     // 空闲文案非空（13.5）、进度只发一个 0~100 值（13.7）。
+    //
+    // ★★ P17-87（待办总表 §四·9，用户 2026-10-10 拍板「全部上模态对话框」）：
+    //   引擎现在**每一次 auto 判定都要问**。自检＝宿主，但**自检不能弹窗**（离屏无人值守会卡死）
+    //   ⇒ 从这一行起装一个**记录用的替身确认器**，管到函数结束（RAII）。
+    //   ★ 它必须在**任何** `ConvertPage` 构造**之前**装上：页面构造时会问
+    //     `has_encoding_confirm()`（有替身就不抢着装真模态）—— 这条口径见 `install_encoding_confirm_modal`。
+    namespace etxt = xrkit::engine::text;
+    struct ConfirmScope {
+        int asked = 0;
+        int cancelled = 0;
+        std::string last_question;
+        std::string last_path;
+        explicit ConfirmScope(etxt::EncodingConfirmOutcome outcome)
+            : result(outcome) {
+            install();
+        }
+        void install() {
+            etxt::set_encoding_confirm(
+                [this](const etxt::EncodingConfirmRequest& request, std::string*) {
+                    ++asked;
+                    last_question = request.question;
+                    last_path = request.path;
+                    if (result == etxt::EncodingConfirmOutcome::Cancelled) ++cancelled;
+                    return result;
+                });
+        }
+        ~ConfirmScope() { etxt::set_encoding_confirm(nullptr); }
+        etxt::EncodingConfirmOutcome result;
+    };
+    // ★ 替身管到函数结束：后面的（D2 批 / 其它块）**都在同一个替身下跑** ——
+    //   这样"某个页面块忘了装替身"就再也不会变成"自检卡在真模态上"（本批踩了三次）。
+    ConfirmScope smoke_confirm(etxt::EncodingConfirmOutcome::Confirmed);
     {
-        namespace etxt = xrkit::engine::text;
+        ConfirmScope confirm(etxt::EncodingConfirmOutcome::Confirmed);
         ConvertPage page;
         page.resize(720, page_min_h());
         page.show();
@@ -5080,6 +5112,71 @@ SmokeResult run_smoke() {
                   sniffed.step == etxt::SniffStep::XmlDeclaration,
               QStringLiteral("⑨9.7 步骤标签与判定步号一致（%1）")
                   .arg(QString::fromStdString(outcome.step_label)));
+
+        // ★★ P17-87（§四·9）四条判据（**都要有牙**）：
+        //   ① `auto` ⇒ **问过**（`asked` 增），且**问句里带着诊断**（判定/理由/标记/置信度四件）；
+        //   ② 用户**取消** ⇒ **不转**（`!ok && !wrote`）且**一个字节都没写**（`data` 空）；
+        //   ③ **手动指定源编码 ⇒ 不许问**（用户已经决定过，再问就把"选择"变成噪音）；
+        //   ④ 没有确认器时（CLI/headless）⇒ `needs_confirm`（既非成功也非报错，调用方必须报出＋非零退出）。
+        check(confirm.asked >= 1,
+              QStringLiteral("P17-87 auto 判定必须**问**（实测问过 %1 次）").arg(confirm.asked));
+        check(confirm.last_question.find("判定：") != std::string::npos &&
+                  confirm.last_question.find("理由：") != std::string::npos &&
+                  confirm.last_question.find("标记：") != std::string::npos &&
+                  confirm.last_question.find("置信度：") != std::string::npos &&
+                  confirm.last_question.find(file_name) != std::string::npos,
+              QStringLiteral("P17-87 问句必须带**四件诊断 + 文件名**（实得：%1）")
+                  .arg(QString::fromStdString(confirm.last_question)
+                           .replace(QLatin1Char('\n'), QLatin1Char('|'))));
+        {
+            // ② 取消 ⇒ 不转、不落盘
+            ConfirmScope cancel_scope(etxt::EncodingConfirmOutcome::Cancelled);
+            const QString cancel_out = QDir(dir).filePath(QStringLiteral("cancelled"));
+            QDir().mkpath(cancel_out);
+            const etxt::ConvertOutcome cancelled = page.convert_one(
+                source_path, cancel_out, QStringLiteral("auto"), QStringLiteral("utf-8"));
+            const QString cancelled_target = QDir(cancel_out).filePath(
+                QString::fromStdString(file_name));
+            check(!cancelled.ok && !cancelled.wrote && cancelled.data.empty() &&
+                      !QFile::exists(cancelled_target),
+                  QStringLiteral("P17-87 用户取消 ⇒ 这一份**不转**（ok=%1 wrote=%2 data=%3 落盘=%4）")
+                      .arg(cancelled.ok ? 1 : 0)
+                      .arg(cancelled.wrote ? 1 : 0)
+                      .arg(cancelled.data.size())
+                      .arg(QFile::exists(cancelled_target) ? 1 : 0));
+        }
+        {
+            // ③ 手动指定源编码 ⇒ 不问（并且照旧产出）
+            ConfirmScope explicit_scope(etxt::EncodingConfirmOutcome::Cancelled);
+            const QString manual_out = QDir(dir).filePath(QStringLiteral("manual"));
+            QDir().mkpath(manual_out);
+            const etxt::ConvertOutcome manual = page.convert_one(
+                source_path, manual_out, QStringLiteral("windows-1251"), QStringLiteral("utf-8"));
+            check(explicit_scope.asked == 0 && manual.ok,
+                  QStringLiteral("P17-87 手动指定源编码不许问（问过 %1 次、转换 ok=%2）")
+                      .arg(explicit_scope.asked)
+                      .arg(manual.ok ? 1 : 0));
+        }
+        {
+            // ④ 没有确认器（CLI/headless）⇒ `needs_confirm`：既非成功也非报错，**不写盘**、
+            //    且把问句与诊断原样交出去（调用方负责报出＋非零退出）。
+            etxt::set_encoding_confirm(nullptr);
+            etxt::ConvertOptions no_confirm_options;
+            no_confirm_options.source_encoding = "auto";
+            no_confirm_options.target_encoding = "utf-8";
+            const etxt::ConvertOutcome ask =
+                etxt::convert_bytes(cp1251, file_name, no_confirm_options);
+            check(ask.needs_confirm && !ask.ok && !ask.wrote && ask.data.empty() &&
+                      !ask.confirm_question.empty() &&
+                      ask.confirm_diagnostics.find("step=") != std::string::npos &&
+                      ask.confirm_diagnostics.find("confidence=") != std::string::npos,
+                  QStringLiteral("P17-87 没有窗口可弹 ⇒ needs_confirm（ok=%1 落盘=%2 问句=%3 诊断=%4）")
+                      .arg(ask.ok ? 1 : 0)
+                      .arg(ask.wrote ? 1 : 0)
+                      .arg(ask.confirm_question.empty() ? 0 : 1)
+                      .arg(ask.confirm_diagnostics.empty() ? 0 : 1));
+            // 把外层那个"确认器"重新装回来（这一块是显式撤的，不是 RAII 撤的）
+        }
 
         // 产物按目标编码写出，且**不再带 BOM/换行翻译**
         {
@@ -9017,9 +9114,34 @@ SmokeResult run_smoke() {
     //     字体判据在 `engine::font`、起点判据在 `dialog_start.h` —— 页面里**不许**再抄一份。
     // ═══════════════════════════════════════════════════════════════════════
 
-    // ── （D2-①）编码转换页：1.x 那 9 处"不必要阉割"逐条回接 ─────────────────
+    // ★★ P17-87（§四·9）：**真 GUI 那条路**（`install_encoding_confirm_modal`）也验一下。
+    //   上面那批用的是自检自己的**替身**确认器（验"引擎真的会问"）；这里验"宿主真的把
+    //   **模态确认装上了**"。做法刻意**不弹真窗口**（那会在离屏无人值守里阻塞）：
+    //   ① 撤掉替身 ⇒ `has_encoding_confirm()` 必须为假（＝"没有窗口可弹"那个状态）；
+    //   ② 真建一个 `ConvertPage`（构造期注入）⇒ 必须变真 —— 这条就是"页面把模态接上了"的接线判据，
+    //      **有牙**：把 `ConvertPage` 构造里那句 `install_encoding_confirm_modal(this);` 删掉 ⇒ 立刻红。
     {
-        namespace etxt = xrkit::engine::text;
+        etxt::set_encoding_confirm(nullptr);
+        check(!etxt::has_encoding_confirm(),
+              QStringLiteral("P17-87 没有宿主注入时必须是「没有窗口可弹」（has_encoding_confirm=%1）")
+                  .arg(etxt::has_encoding_confirm() ? 1 : 0));
+        // ★ 页面**立刻销毁**（作用域）—— 它那个确认器捕获了 `this`，页面一走就必须撤
+        //   （现在由 `~ConvertPage` 负责；否则进程级留着指向死窗口的回调 ⇒ 自检会卡在真模态上）。
+        {
+            ConvertPage modal_page;
+            check(etxt::has_encoding_confirm(),
+                  QStringLiteral("P17-87 编码转换页构造时必须**注入模态确认器**（真 GUI 那条路）"));
+        }
+        check(!etxt::has_encoding_confirm(),
+              QStringLiteral("P17-87 页面销毁后不许留下指向死窗口的确认器（析构必须撤）"));
+        // 把替身装回来（后面的块还要用）
+        smoke_confirm.install();
+    }
+
+    // ── （D2-①）编码转换页：1.x 那 9 处"不必要阉割"逐条回接 ─────────────────
+    // ★★ P17-87（§四·9）：这一批里的转换/批处理判据都是 auto ⇒ 靠上面那个**管到函数结束**的
+    //   替身确认器（`smoke_confirm`）挡住真模态；这里不再重复装（重复装＝互相撤，反而出错）。
+    {
         ConvertPage page;
         page.resize(900, page_min_h());
         page.show();

@@ -5,10 +5,27 @@
 #include "xrkit/engine/text/encoding.h"
 
 #include <cctype>
+#include <cstdio>
 #include <fstream>
+#include <mutex>
 
 namespace xrkit::engine::text {
 namespace {
+
+// ★★ P17-87（待办总表 §四·9）：**确认钩子**的进程级存储（唯一一份；见 convert.h 的口径说明）。
+//   · 宿主（GUI）注入"弹模态"那个；CLI/headless **不注入** ⇒ `has_encoding_confirm()` 为假 ⇒
+//     引擎返回 `needs_confirm`，由调用方把问句与诊断**原样报出并非零退出**；
+//   · 加锁：页面那条转换跑在**工作线程**（`task_run`），而注入发生在装配期（主线程）
+//     ⇒ 读侧要拿锁（与 `task_shells_mutex` 同族的纪律）。
+std::mutex& confirm_mutex() {
+    static std::mutex* instance = new std::mutex();
+    return *instance;
+}
+
+EncodingConfirmFn& confirm_storage() {
+    static EncodingConfirmFn* instance = new EncodingConfirmFn();
+    return *instance;
+}
 
 std::string lower_ascii(std::string text) {
     for (char& c : text) {
@@ -107,6 +124,17 @@ std::string read_binary(const std::string& path, bool& ok) {
 
 }  // namespace
 
+// ── ★★ P17-87：确认钩子的注入/查询（口径见 convert.h）───────────────────────────
+void set_encoding_confirm(EncodingConfirmFn fn) {
+    std::lock_guard<std::mutex> lock(confirm_mutex());
+    confirm_storage() = std::move(fn);
+}
+
+bool has_encoding_confirm() {
+    std::lock_guard<std::mutex> lock(confirm_mutex());
+    return static_cast<bool>(confirm_storage());
+}
+
 std::string fix_xml_decl(const std::string& content, const std::string& target_enc) {
     size_t start = 0;
     size_t end = 0;
@@ -180,6 +208,65 @@ ConvertOutcome convert_bytes(const std::vector<uint8_t>& raw_in, const std::stri
     if (target.empty()) {
         out.error = "目标编码为空";
         return out;
+    }
+
+    // ── ★★ P17-87（待办总表 §四·9）：**编码判定一律要由用户显式确认** ────────────────
+    //   口径（用户 2026-10-10 拍板）：「全部上模态对话框」——
+    //     · 只对 **auto**（判定链）触发：手动指定了源编码＝用户已经决定过，不再问；
+    //     · 判定发生在**这里**（sniff 之后、任何解码/写盘之前）⇒ 取消时**一个字节都不会写**；
+    //     · **没有注入确认器**（CLI/headless）⇒ 返回 `needs_confirm`（既非成功也非报错），
+    //       由调用方把 `confirm_question` 与诊断**原样报出并非零退出** —— **不许猜、不许继续**。
+    if (lower_ascii(strip(options.source_encoding)) == "auto" || options.source_encoding.empty()) {
+        EncodingConfirmRequest request;
+        request.path = rel_path;
+        request.encoding = sniffed.encoding;
+        request.step_label = out.step_label;
+        request.flags_label = out.flags_label;
+        request.confidence = sniffed.confidence;
+        request.question = sniff_confirm_question(sniffed, rel_path);
+        // 诊断原文（四件：判定 / 理由 / 标记 / 置信度）—— CLI 报出时原样打，页面弹窗也用它
+        char conf_buf[32];
+        std::snprintf(conf_buf, sizeof(conf_buf), "%.2f", sniffed.confidence);
+        out.confirm_diagnostics = "step=" + out.step_label + " encoding=" + sniffed.encoding +
+                                 " reason=" + sniffed.reason +
+                                 " flags=" + (out.flags_label.empty() ? std::string("-")
+                                                                     : out.flags_label) +
+                                 " confidence=" + conf_buf;
+        EncodingConfirmFn confirm;
+        {
+            std::lock_guard<std::mutex> lock(confirm_mutex());
+            confirm = confirm_storage();
+        }
+        if (!confirm) {
+            out.needs_confirm = true;
+            out.confirm_question = request.question;
+            return out;   // data 为空 ⇒ 调用方写不出任何东西
+        }
+        std::string chosen;
+        const EncodingConfirmOutcome outcome = confirm(request, &chosen);
+        if (outcome == EncodingConfirmOutcome::Cancelled) {
+            out.confirm_question = request.question;
+            out.error = "用户取消了编码确认（这一份未转换）";
+            return out;
+        }
+        if (outcome == EncodingConfirmOutcome::Overridden && !chosen.empty()) {
+            // 用户显式改成了别的源编码 ⇒ **重跑判定**（把用户的选择当 override 用），
+            // 这样后面的解码/写盘与"手动指定源编码"那条路**逐字节同一条**（只有一份实现）。
+            const SniffResult again = sniff_encoding(raw, chosen);
+            out.step = again.step;
+            out.step_label = sniff_result_label(again);
+            out.source_encoding = again.encoding;
+            out.flags_label = sniff_flags_label(again);
+            out.confidence = again.confidence;
+            out.low_confidence = again.low_confidence;
+            out.override_decl = again.override_decl;
+            return convert_bytes(raw_in, rel_path,
+                                 [&options, &chosen] {
+                                     ConvertOptions copy = options;
+                                     copy.source_encoding = chosen;
+                                     return copy;
+                                 }());
+        }
     }
 
     const bool is_xml = ends_with_ci(rel_path, ".xml");
@@ -267,6 +354,13 @@ ConvertOutcome convert_file(const std::string& path, const std::string& out_path
     const std::vector<uint8_t> raw(body.begin(), body.end());
     const std::string rel = out_path.empty() ? path : out_path;
     out = convert_bytes(raw, rel, options);
+    // ★★ P17-87（§四·9）：`convert_bytes` 拿到的 `rel_path` 在"输出到新目录"时是**输出路径**
+    //   （它只用它判 `.xml`）—— 而**问句必须指向用户看得见的那一份（源文件）**，
+    //   否则用户会在对话框里看到 `out\a.xml` 而以为在问输出（本批实测踩到：CLI 报出的 question 里
+    //   写的是输出路径）。问句原文由 `sniff.cpp` 拼，这里**只换路径**、不重拼文案。
+    if (out.needs_confirm && !path.empty()) {
+        out.confirm_question = sniff_confirm_question(sniff_encoding(raw, options.source_encoding), path);
+    }
     out.in_bytes = raw.size();
 
     if (!out.ok || !out.wrote) {

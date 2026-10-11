@@ -17,6 +17,7 @@
 #include "xrkit/engine/text/sniff.h"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -48,10 +49,54 @@ struct ConvertOptions {
     bool to_output_dir = false;            // 输出到新目录 ⇒ **必须产出文件**
 };
 
+// ★★ P17-87（待办总表 §四·9，用户 2026-10-10 拍板）：**编码判定一律要问，不许自动模式**。
+//
+// 口径（用户原话「全部上模态对话框。谁让你这么喜欢用自动模式的？」）：
+//   · **GUI（有窗口宿主）**：每一次编码判定都上**模态对话框**、由用户显式确认；
+//     **不设**"页内建议／自动通过／静默按 auto 继续"；用户**取消或关掉＝不继续**；
+//   · **CLI / headless**：没有窗口可弹 ⇒ **不许猜** —— 把问句与诊断**原样报出**并**非零退出**；
+//   · **只对 `auto` 触发**：手动指定了源编码（`ConvertOptions::source_encoding != "auto"`）
+//     ＝用户已经显式决定过，**不再问**（否则"选择"这件事本身就没意义了）。
+//
+// ★ 为什么钩子放在**引擎**而不是页面里（P17-86 先查件的结论）：引擎不许碰 Qt
+//   （门禁 `no-qt` 步 + `check_no_qt.cmake` 锁着），而**页面那条路不覆盖批处理/CLI**
+//   ⇒ 只有"宿主注入一个回调"这一种形状能同时满足两侧。
+//   钩子**不注入**（默认）＝"没有窗口可弹"⇒ 引擎返回 `needs_confirm` 让调用方报出＋非零退出。
+enum class EncodingConfirmOutcome {
+    Confirmed,    // 用户确认按判定的编码继续
+    Overridden,   // 用户显式改成了别的源编码（`chosen_encoding` 非空）
+    Cancelled,    // 用户取消/关掉对话框 ⇒ **这一份不转**（不是"静默继续"）
+};
+
+struct EncodingConfirmRequest {
+    std::string path;            // 这一份是哪来的（批量时逐文件；用户要看得见"在问哪一份"）
+    std::string encoding;        // 判定胜出的编码名
+    std::string step_label;      // 形如 `多字节(utf-8)`（文案来自 sniff.cpp，页面不许拼）
+    std::string flags_label;     // `低置信` / `否决声明`（同上）
+    double confidence = 1.0;
+    std::string question;        // **问句原文** —— 由 `sniff.cpp` 拼（唯一一份文案）
+};
+
+// 返回 `Confirmed`/`Cancelled`；`Overridden` 时把用户选的编码写进 `chosen_encoding`。
+using EncodingConfirmFn =
+    std::function<EncodingConfirmOutcome(const EncodingConfirmRequest&, std::string* chosen_encoding)>;
+
+// 宿主注入确认器（GUI 装配时注入"弹模态"那个；CLI/headless **不注入**）。
+// 传 `nullptr` = 撤销（回到"没有窗口可弹"）。
+void set_encoding_confirm(EncodingConfirmFn fn);
+// 当前有没有注入（判据与 CLI 用它决定"能不能问"）
+bool has_encoding_confirm();
+
 struct ConvertOutcome {
     bool ok = false;
     bool skipped = false;  // 源已是目标编码；可能仍写了盘（对齐声明/BOM）
     bool wrote = false;
+    // ★★ P17-87：**"需要用户确认才能继续"** —— 这一支既不是成功也不是报错：
+    //   没有窗口可弹时（CLI/headless）调用方必须把 `confirm_question` 与诊断**原样报出**
+    //   并**非零退出**；`data` 为空（**一个字节都没写**）。
+    bool needs_confirm = false;
+    std::string confirm_question;   // 问句原文（`needs_confirm` 时非空）
+    std::string confirm_diagnostics;// 诊断原文（step / 理由 / 标记 / 置信度，逐行）
     SniffStep step = SniffStep::Default;
     std::string step_label;       // 形如 `多字节(utf-8)` —— **来自判定结果**（⑨9.7）
     std::string source_encoding;  // 判定链/手动指定给出的编码名

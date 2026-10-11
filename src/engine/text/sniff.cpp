@@ -245,6 +245,23 @@ std::string sniff_flags_label(const SniffResult& result) {
     return out;
 }
 
+// ★★ P17-87（待办总表 §四·9）：**问句原文**（唯一一份；GUI 弹窗与 CLI 报出都用它）。
+//   口径（用户 2026-10-10 拍板）：每一次编码判定都要由用户**显式确认**；
+//   用户要看得到"在问哪一份、判定是什么、依据是什么、有多确定" —— 四件缺一不可。
+//   ★ 文案只此一份：`sniff.cpp` 之外（页面 / CLI / 插件）**不许自己拼**（⑨9.7 同一条纪律）。
+std::string sniff_confirm_question(const SniffResult& result, const std::string& path) {
+    std::string out = "按判定结果转换这一份吗？";
+    if (!path.empty()) out += "\n文件：" + path;
+    out += "\n判定：" + sniff_result_label(result);
+    if (!result.reason.empty()) out += "\n理由：" + result.reason;
+    const std::string flags = sniff_flags_label(result);
+    out += "\n标记：" + (flags.empty() ? std::string("（无）") : flags);
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.2f", result.confidence);
+    out += "\n置信度：" + std::string(buf);
+    return out;
+}
+
 // 置信度打分（0..1）—— 只由"不确定的那两项"决定（用户口径③）。
 //   · 统计决定性 ⇒ 0.6 + 0.4 × min(1, |得分|/0.90)（实测决定性区间 |得分| ∈ [0.21, 0.91]）
 //   · 只有声明   ⇒ 0.5（"大多数声明是正确的"，但没证据就不敢满）

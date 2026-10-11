@@ -44,6 +44,10 @@ class ScrollViewport;
 class ConvertPage : public PageBase {
 public:
     explicit ConvertPage(QWidget* parent = nullptr);
+    // ★★ P17-87（§四·9）：构造期注入了"问一句"的**模态确认器**（引擎侧只认数据、不碰 Qt），
+    //   而那个确认器捕获了 `this` ⇒ **页面销毁必须把它撤掉**：否则进程级还留着指向死窗口的
+    //   回调，下一次转换会去 `invokeMethod` 一个已析构的对象（本批实测：自检直接卡在模态上）。
+    ~ConvertPage() override;
 
     // 同步转换一个文件（界面与自检共用同一条入口）。
     // `out_dir` 为空 ⇒ 原地（此时只有 `needs_rewrite` 为真才写盘）。

@@ -667,27 +667,48 @@ def step_cli_contract(release: bool) -> None:
     cb_dir2.mkdir(parents=True, exist_ok=True)
     (cb_dir2 / "a.txt").write_text("hello", encoding="ascii")
     cb_out = guard_dir / "cb_outdir"
-    a1, ao1 = run([str(CLI_EXE), "--convert-batch", str(cb_dir2), str(cb_out), "auto", "utf-8",
+    # ★★ P17-87（§四·9，用户 2026-10-10 拍板「编码判定一律要问」）：**`auto` 已不再畅通无阻** ——
+    #   没有窗口可弹时必须停下 + 非零退出（下面单列一条判据验它）。所以这三条"提示不阻塞"的判据
+    #   改用**显式源编码**（＝用户已经决定过，不问）—— 口径变更，不是放松：
+    #   本条仍然验"手动/无警告"，而 `auto` 的新行为由紧接着的那条判据验。
+    a1, ao1 = run([str(CLI_EXE), "--convert-batch", str(cb_dir2), str(cb_out), "utf-8", "utf-8",
                    "--ext", ".txt"])
-    a2, ao2 = run([str(CLI_EXE), "--convert-batch", str(cb_dir2), str(cb_dir2), "auto", "utf-8",
+    a2, ao2 = run([str(CLI_EXE), "--convert-batch", str(cb_dir2), str(cb_dir2), "utf-8", "utf-8",
                    "--ext", ".txt", "--no-backup"])
     a3, ao3 = run([str(CLI_EXE), "--convert-batch", str(cb_dir2), str(cb_dir2), "utf-8", "utf-8",
                    "--ext", ".txt", "--no-backup"])
     W1 = "CONVERTBATCH warn=自动识别可能无法应对复杂情况而不建议使用。"
     W2 = W1 + "如使用建议开启备份。"
     if a1 != 0 or a2 != 0 or a3 != 0:
-        fail("自动识别的提示不能阻塞（P17-75 口径）：三次调用都应 rc=0，实际 %d/%d/%d"
+        fail("显式源编码的批处理不该被拦（P17-75/P17-87）：三次调用都应 rc=0，实际 %d/%d/%d"
              % (a1, a2, a3))
-    elif W1 not in ao1:
-        fail("自动识别（有备份）没打文案①（P17-75）：实际 %r"
-             % ao1.strip()[:140])
-    elif W2 not in ao2:
-        fail("自动识别（无备份）没打文案②（P17-75）：实际 %r"
-             % ao2.strip()[:140])
+    elif "CONVERTBATCH warn=" in ao1 or "CONVERTBATCH warn=" in ao2:
+        fail("手动选择源编码不该有任何 warn（P17-75）：实际 %r / %r"
+             % (ao1.strip()[:140], ao2.strip()[:140]))
     elif "CONVERTBATCH warn=" in ao3:
         fail("手动选择不该有任何 warn（P17-75）：实际 %r" % ao3.strip()[:140])
     else:
-        ok("自动识别才提示且不阻塞（P17-75：自动⇒文案①/②＋rc=0；手动⇒无 warn）")
+        ok("显式源编码不阻塞、不警告（P17-75 的『手动⇒一句都不打』＋ P17-87 的『手动不再问』）")
+
+    # ── ★★ P17-87（§四·9）：**auto ＋ 没有窗口可弹 ⇒ 必须停下、报出、非零退出** ──
+    #   口径（用户 2026-10-10）：「没有窗口可弹 ⇒ 不许猜 —— 把问句与判定诊断原样报出并**非零退出**」。
+    #   判红办法：把 `batch.cpp` 里那条 `needs_confirm` 分支删掉（＝退回"默认值继续"）⇒ 本条红；
+    #   把 `main.cpp` 里那段报出删掉 ⇒ 问句/诊断断言红。
+    a4, ao4 = run([str(CLI_EXE), "--convert-batch", str(cb_dir2), str(cb_out), "auto", "utf-8",
+                   "--ext", ".txt"])
+    if a4 != 3:
+        fail("auto 判定必须停下等确认（P17-87）：期望 rc=3，实际 rc=%d %r"
+             % (a4, ao4.strip()[:160]))
+    elif "CONVERTBATCH needs-confirm" not in ao4 or "CONVERTBATCH question:" not in ao4:
+        fail("auto 停下时必须把**问句与路径**原样报出（P17-87）：实际 %r" % ao4.strip()[:200])
+    elif "判定：" not in ao4 or "置信度：" not in ao4:
+        fail("问句里必须有判定与置信度（P17-87）：实际 %r" % ao4.strip()[:200])
+    elif "CONVERTBATCH diagnostics step=" not in ao4 or "confidence=" not in ao4:
+        fail("停下时必须给出诊断原文（P17-87）：实际 %r" % ao4.strip()[:200])
+    elif "processed=0" not in ao4:
+        fail("需要确认时**不许**转任何文件（P17-87）：实际 %r" % ao4.strip()[:200])
+    else:
+        ok("auto 判定停下等确认（P17-87：rc=3 ＋ 问句与诊断原样报出 ＋ 一个文件都没转）")
 
     # ── ★★ P17-36（2026-10-10，审计 04 F-12 Info）：**注释里不许写死构建计数的当前值** ──
     #   事实：`version.h` 的注释曾写「（M0 尚为 0）」，而 `kBuildCount` 早就是三位数 ⇒

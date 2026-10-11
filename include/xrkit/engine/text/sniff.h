@@ -80,6 +80,11 @@ std::string sniff_result_label(const SniffResult& result);
 // ★ 文案**只此一份**：CLI 与 GUI 都调它，页面不许自己拼（⑨9.7 的同一条纪律）。
 std::string sniff_flags_label(const SniffResult& result);
 
+// ★★ P17-87（待办总表 §四·9）：**问句原文**（唯一一份；GUI 弹窗与 CLI 报出都用它）。
+//   内容＝"要不要按这个判定转 ＋ 文件 ＋ 判定标签 ＋ 理由 ＋ 标记 ＋ 置信度"（四件缺一不可）。
+//   ★ 文案只此一份：`sniff.cpp` 之外不许自己拼（与 `sniff_flags_label` 同一条纪律）。
+std::string sniff_confirm_question(const SniffResult& result, const std::string& path);
+
 struct DecodedBytes {
     bool ok = false;
     std::string text;           // UTF-8（与 1.x decode_bytes 的 str 对应）
