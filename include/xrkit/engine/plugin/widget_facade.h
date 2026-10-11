@@ -89,8 +89,23 @@ struct UiFacade {
     std::function<bool(UiHandle widget)> alive;
     std::function<void(const std::string& line)> log_append;   // 宿主日志栏（LogView）
     std::function<bool(const std::string& title, const std::string& message)> ask_yes_no;
-    std::function<std::string(const std::string& title)> ask_open_file;
-    std::function<std::string(const std::string& title)> ask_save_file;
+    // ★★ P17-83（接口契约批「`ask_*` 参数缺口」）：**签名回到 1.x 契约**（`toolkit_plugin_ui.py`）——
+    //   `ask_open_file(parent, title, filetypes=None, initialdir="")`
+    //   `ask_save_file(parent, title, initialdir="", initialfile="", filetypes=None)`
+    //   2.x 原先只收 `title`，插件的 `filetypes`/`initialdir`/`initialfile` 被**静默丢掉**
+    //   （用户要的"对话框起点记忆"就是这条缺口）。`parent` 不进签名：1.x 那侧只是给 Tk 找顶层窗口，
+    //   2.x 的宿主对话框本来就挂在应用窗口上（无父子语义差异）。
+    //   `filetypes` 的**形状**＝已拼好的 Qt 过滤串（`<说明>|<模式>…`，多条用 `\n` 分隔）——
+    //   拼装（含 1.x 的"说明 + 模式"两元组形态）归调用侧，宿主只做"发给 Qt 对话框"。
+    //   ★ 为什么动的是门面签名而**不动 C ABI**：`stk_ui` 的 15/16 只有 `title` 是**既定契约**
+    //     （`abi-closure` 逐名钉着它），改它要动 `STK_ABI_VERSION`＋"六件事同步"；而这条缺口
+    //     是**插件门面侧**的（`.py` 插件照 1.x 写，C ABI 那条路只服务退役中的 C 插件）。
+    std::function<std::string(const std::string& title, const std::string& filetypes,
+                              const std::string& initialdir)>
+        ask_open_file;
+    std::function<std::string(const std::string& title, const std::string& filetypes,
+                              const std::string& initialdir, const std::string& initialfile)>
+        ask_save_file;
     // ★★ P7c：**目录选择**（样板页要「浏览 XML 目录 / 输出目录」；C ABI 那张表没有这一项，
     //   属门面的新能力，实现在外壳）。
     std::function<std::string(const std::string& title)> ask_directory;

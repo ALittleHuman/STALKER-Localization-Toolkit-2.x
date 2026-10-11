@@ -2115,15 +2115,44 @@ public:
         }
         return false;
     }
-    std::string ask_open_file(std::string title) const {
+    // ★★ P17-83（接口契约批「`ask_*` 参数缺口」）：签名**回到 1.x 契约**
+    //   （`toolkit_plugin_ui.py:327/:336`）—— 1.x 的 `filetypes` / `initialdir` / `initialfile`
+    //   在 2.x 被**静默丢掉**（插件的这些参数收不到、对话框永远从默认目录开）。
+    //   `filetypes` 的接受形状＝1.x 那种**两元组列表**（tkinter 口径：`("说明", "*.ext *.ext2")`），
+    //   在这里拼成门面认的过滤串（`<说明>|<模式>…`，多条用 `\n` 分隔）。
+    //   `parent` 刻意**不进签名**：1.x 那侧只用它找 Tk 顶层窗口；2.x 的宿主对话框天然挂在应用窗口上。
+    static std::string filetypes_to_qt(py::object filetypes) {
+        if (filetypes.is_none() != 0) return std::string();
+        std::string out;
+        for (py::handle item : filetypes) {   // 逐条两元组；不认的形状**跳过**（不猜）
+            py::tuple pair;
+            try {
+                pair = py::cast<py::tuple>(item);
+            } catch (const py::cast_error&) {
+                continue;
+            }
+            if (pair.size() != 2) continue;
+            const std::string label = py::cast<std::string>(pair[0]);
+            const std::string patterns = py::cast<std::string>(pair[1]);
+            if (patterns.empty()) continue;
+            if (!out.empty()) out += '\n';
+            out += label + "|" + patterns;
+        }
+        return out;
+    }
+    std::string ask_open_file(std::string title, py::object filetypes,
+                              const std::string& initialdir) const {
         if (const UiFacade* facade = available("ask_open_file")) {
-            return facade->ask_open_file(title);
+            return facade->ask_open_file(title, filetypes_to_qt(std::move(filetypes)), initialdir);
         }
         return std::string();
     }
-    std::string ask_save_file(std::string title) const {
+    std::string ask_save_file(std::string title, py::object filetypes,
+                              const std::string& initialdir,
+                              const std::string& initialfile) const {
         if (const UiFacade* facade = available("ask_save_file")) {
-            return facade->ask_save_file(title);
+            return facade->ask_save_file(title, filetypes_to_qt(std::move(filetypes)), initialdir,
+                                         initialfile);
         }
         return std::string();
     }
@@ -3107,8 +3136,11 @@ void ensure_api_module() {
             .def("alive", &PyUi::alive, py::arg("widget"))
             .def("log", &PyUi::log, py::arg("line"))
             .def("ask_yes_no", &PyUi::ask_yes_no, py::arg("title"), py::arg("message"))
-            .def("ask_open_file", &PyUi::ask_open_file, py::arg("title"))
-            .def("ask_save_file", &PyUi::ask_save_file, py::arg("title"))
+            .def("ask_open_file", &PyUi::ask_open_file, py::arg("title"),
+                 py::arg("filetypes") = py::none(), py::arg("initialdir") = std::string())
+            .def("ask_save_file", &PyUi::ask_save_file, py::arg("title"),
+                 py::arg("filetypes") = py::none(), py::arg("initialdir") = std::string(),
+                 py::arg("initialfile") = std::string())
             .def("ask_directory", &PyUi::ask_directory, py::arg("title"))
             .def("open_path", &PyUi::open_path, py::arg("path"))
             .def("context_menu", &PyUi::context_menu, py::arg("widget"),

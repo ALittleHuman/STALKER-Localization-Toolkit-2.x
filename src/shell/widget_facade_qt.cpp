@@ -31,7 +31,9 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDesktopServices>
+#include <QDir>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QUrl>
 
@@ -55,10 +57,59 @@
 #include <thread>
 #include <vector>
 
+// ★ 本文件所有符号都是**内部实现**（只有 `install_qt_ui_facade` 需要对外）⇒ 整个文件裹在
+//   匿名命名空间里（"内部"与"外壳命名空间"两层都保留）。
 namespace xrkit::shell {
 namespace {
 
-namespace plug = xrkit::plugin;
+// ★★ P17-83（接口契约批「`ask_*` 参数缺口」）：宿主侧**对话框参数的纯转换** —— 刻意做成
+//   **带名字的自由函数**（不是 lambda），就是为了让判据能**直接调**它们：参数映射
+//   （1.x `filetypes`/`initialdir` → Qt 过滤串 / 起点目录）是这条链上唯一有分支逻辑的部分，
+//   把它做成"发对话框才验得了"就等于没人验（自检不走阻塞路径）。
+//
+//   来源（1.x 契约，`toolkit_plugin_ui.py`）：
+//     `ask_open_file(parent, title, filetypes=None, initialdir="")`
+//     `ask_save_file(parent, title, initialdir="", initialfile="", filetypes=None)`
+//   `filetypes` 的形状是 tkinter 的 `[(说明, "*.ext *.ext2"), …]`（见 `filedialog` 文档）。
+QStringList qt_name_filters(const std::string& filetypes) {
+    QStringList out;
+    if (filetypes.empty()) return out;
+    // 逐条按 `\n` 切；每条形如 `<说明>|<模式1> <模式2>`（多模式用空格分隔，Qt 用空格分隔）。
+    const QStringList rows = QString::fromStdString(filetypes).split(QLatin1Char('\n'),
+                                                                     Qt::SkipEmptyParts);
+    for (const QString& row : rows) {
+        const int bar = row.indexOf(QLatin1Char('|'));
+        if (bar < 0) continue;   // 不成形的行**跳过**（不猜：猜出来的过滤串比没有更坏）
+        const QString label = row.left(bar).trimmed();
+        const QString patterns = row.mid(bar + 1).trimmed();
+        if (patterns.isEmpty()) continue;
+        out << QStringLiteral("%1 (%2)").arg(label, patterns);
+    }
+    return out;
+}
+
+// 宿主记住的"上次选过的目录"（进程级；两个对话框共用一条）。空 ⇒ 交给 Qt 的默认起点。
+QString& last_dialog_dir() {
+    static QString* instance = new QString();
+    return *instance;
+}
+
+void widget_facade_remember_dir(const QString& dir) {
+    if (!dir.isEmpty()) last_dialog_dir() = dir;
+}
+
+// 起点目录：显式给了就用它（且必须存在，否则 Qt 会落到别处、用户看到的与插件要的不一致）；
+// 没给就用宿主记住的上次目录；两者都没有 ⇒ 空串（Qt 默认起点）。
+QString qt_start_dir(const std::string& initialdir) {
+    const QString wanted = QString::fromStdString(initialdir).trimmed();
+    if (!wanted.isEmpty()) {
+        if (QFileInfo(wanted).isDir()) return wanted;
+        return QFileInfo(wanted).absolutePath();   // 给的是文件 ⇒ 取它所在目录（1.x 同义）
+    }
+    return last_dialog_dir();
+}
+
+}  // namespace（`qt_*` 那批纯转换函数）
 
 const stk_ui* table() { return qt_plugin_ui(); }
 
@@ -428,15 +479,42 @@ const plug::UiFacade kQtFacade = {
     [](const std::string& title, const std::string& message) {
         return table()->ask_yes_no(nullptr, title.c_str(), message.c_str()) != 0;
     },
-    /* ask_open_file */
-    [](const std::string& title) {
-        const char* path = table()->ask_open_file(nullptr, title.c_str());
-        return path == nullptr ? std::string() : std::string(path);
+    /* ask_open_file：`ask_open_file(title, filetypes, initialdir)`。
+       ★★ P17-83（接口契约批「`ask_*` 参数缺口」）—— 1.x 的契约是
+       `ask_open_file(parent, title, filetypes=None, initialdir="")`（`toolkit_plugin_ui.py:327`），
+       2.x 原先只收 `title` ⇒ 插件的三个参数**静默丢掉**。现在收下并按 1.x 语义用起来：
+       `filetypes` 转成 Qt 过滤串、`initialdir` 当起点（空 ⇒ 用宿主记住的上次目录）。 */
+    [](const std::string& title, const std::string& filetypes, const std::string& initialdir) {
+        QFileDialog dialog(nullptr, QString::fromStdString(title));
+        dialog.setFileMode(QFileDialog::ExistingFile);
+        dialog.setAcceptMode(QFileDialog::AcceptOpen);
+        dialog.setNameFilters(qt_name_filters(filetypes));
+        dialog.setDirectory(qt_start_dir(initialdir));
+        if (dialog.exec() != QDialog::Accepted) return std::string();
+        const QStringList picked = dialog.selectedFiles();
+        if (picked.isEmpty()) return std::string();
+        widget_facade_remember_dir(QFileInfo(picked.front()).absolutePath());
+        return picked.front().toStdString();
     },
-    /* ask_save_file */
-    [](const std::string& title) {
-        const char* path = table()->ask_save_file(nullptr, title.c_str());
-        return path == nullptr ? std::string() : std::string(path);
+    /* ask_save_file：`ask_save_file(title, filetypes, initialdir, initialfile)`（1.x `:336` 同参）。
+       ★ 起点与默认文件名的取法：`initialdir` 空 ⇒ 宿主记住的上次目录；`initialfile` 非空 ⇒
+       预填文件名（`selectFile` 用**绝对路径**，Qt 才会同时把目录与名字都摆好）。 */
+    [](const std::string& title, const std::string& filetypes, const std::string& initialdir,
+       const std::string& initialfile) {
+        QFileDialog dialog(nullptr, QString::fromStdString(title));
+        dialog.setFileMode(QFileDialog::AnyFile);
+        dialog.setAcceptMode(QFileDialog::AcceptSave);
+        dialog.setNameFilters(qt_name_filters(filetypes));
+        const QString start = qt_start_dir(initialdir);
+        dialog.setDirectory(start);
+        if (!initialfile.empty()) {
+            dialog.selectFile(QDir(start).filePath(QString::fromStdString(initialfile)));
+        }
+        if (dialog.exec() != QDialog::Accepted) return std::string();
+        const QStringList picked = dialog.selectedFiles();
+        if (picked.isEmpty()) return std::string();
+        widget_facade_remember_dir(QFileInfo(picked.front()).absolutePath());
+        return picked.front().toStdString();
     },
     /* ask_directory：门面**新能力**（C ABI 那张表没有目录选择）—— 宿主弹自己的目录对话框 */
     [](const std::string& title) {
@@ -1081,8 +1159,6 @@ plug::UiFacade& mutable_facade() {
     static plug::UiFacade instance = kQtFacade;
     return instance;
 }
-
-}  // namespace
 
 // 外壳装配时调一次：装门面，并把"写宿主日志栏"这条接上（`sink` 可空 ⇒ 该条不可用、调用侧记账）
 void install_qt_ui_facade(std::function<void(const std::string&)> log_sink) {

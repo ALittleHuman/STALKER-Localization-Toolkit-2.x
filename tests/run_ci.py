@@ -3216,6 +3216,39 @@ def step_ui_facade(release: bool) -> None:
         fail("控件门面能力表不通过（判据 rc=%d / 探针 rc=%d；见上）" % (rc, rc_probe))
 
 
+def step_ask_dialog_params(release: bool) -> None:
+    """★★ P17-83（接口契约批「`ask_*` 参数缺口」）：1.x 的三个对话框参数收得下、也用得起来。
+
+    事实：1.x 的契约是 `ask_open_file(parent, title, filetypes=None, initialdir="")` /
+    `ask_save_file(parent, title, initialdir="", initialfile="", filetypes=None)`
+    （`toolkit_plugin_ui.py:327/:336`），而 2.x 只收 `title` ⇒ 插件的三个参数**静默丢掉**：
+    对话框永远从默认目录开、也不带过滤类型（用户要的"对话框起点记忆"就是这条）。
+
+    ★ 为什么这条链**只能**静态判（本批实测的结论）：真实宿主实现会**发真对话框**，而 `--smoke`
+    是离屏无人值守 —— 真发会阻塞、且"过滤串/起点目录"在无人环境里观察不到；插件侧猴补
+    `QFileDialog` 也走不通（宿主是 C++ 直链 Qt，Python 侧**没有 PySide6**，实测
+    `sys.modules['PySide6.QtWidgets']` 不存在）。⇒ 静态四组：门面签名 / pybind 关键字 /
+    宿主把 `setNameFilters`＋`setDirectory`＋`selectFile`＋起点记忆都接上 / 过滤串转换函数在。
+    核对器自带 5 个反例自证（含"收下参数却不用"这种静默丢弃形状）。
+    独立成步（静态判据、不依赖构建产物）。退出码：0=绿、1=有断言不成立。
+    """
+    say("[ask-dialog-params] P17-83：`ask_*` 的 filetypes/initialdir/initialfile（1.x 契约）")
+    script = ROOT / "tests" / "check_ask_dialog_params.py"
+    if not require_repo_file(script, "ask_* 参数核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=180)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("ASK-DIALOG") or s.startswith("✓ 反例自证")
+                or s.startswith("✗ ") or s.startswith("门面：") or s.startswith("宿主：")):
+            say("  " + s[:170])
+    if rc == 0 and "ASK-DIALOG ok" in out:
+        ok("`ask_*` 收下 1.x 的三个参数（pybind 关键字）＋ 宿主把过滤串/起点/默认文件名/起点记忆"
+           "四处都接上了（反例自证 5/5）")
+    else:
+        fail("`ask_*` 的参数缺口没闭合（见上）—— 插件照 1.x 写的参数会被静默丢掉")
+
+
 def step_engine_facade(release: bool) -> None:
     """插件改装 P7a：**引擎调用门面**（用户 2026-10-07 拍板走方案 3）。
 
@@ -5205,6 +5238,9 @@ STEPS = [
     # ★★ 2026-10-07（插件改装 P3）：控件门面能力表（表外无门）＋ 无 GUI 时的如实降级。
     #   GUI 那条路（真控件 + 回调回 Python）在 shell-smoke 里判（需要 Qt）。
     ("ui-facade", step_ui_facade),
+    # ★★ P17-83（接口契约批）：`ask_*` 的参数缺口（filetypes/initialdir/initialfile）。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据 —— 真对话框在离屏无人值守里发不得。
+    ("ask-dialog-params", step_ask_dialog_params),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。

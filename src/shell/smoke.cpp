@@ -5800,6 +5800,13 @@ SmokeResult run_smoke() {
             "        tree = ui.tree(None, ['列'])\n"
             "        ui.tree_set_root(tree, [{'key': 'r1', 'cells': ['甲']}])\n"
             "        ui.tree_on_drop(tree, lambda paths: mark('tree_drop:' + ','.join(sorted(paths))))\n"
+            // ★★ P17-83（接口契约批「`ask_*` 参数缺口」）：1.x 的 `filetypes` / `initialdir` /
+            //   `initialfile` 在 2.x 被静默丢掉。**这里不调它们** —— 真实宿主实现会**发真对话框**，
+            //   而 `--smoke` 是离屏无人值守（真发会阻塞；且这条链"发不发、发成什么样"在无人环境里
+            //   根本观察不到）。⇒ 归**静态判据**：门禁新步 `ask-dialog-params`
+            //   （`tests/check_ask_dialog_params.py`）逐项核对
+            //   （pybind 收得下三个参数 ＋ 宿主把 `nameFilters`/`directory`/`selectFile` 都真的接上了），
+            //   并自带反例自证。这里只留一句说明，免得后人以为"没验过"。
             "        self_list = ui.list_self_scrolling(None, 0)\n"
             "        ui.list_set_row_count(self_list, 200)\n"
             "        ui.list_set_row_text(self_list, lambda row: '自滚行 %d' % row)\n"
@@ -5991,6 +5998,10 @@ SmokeResult run_smoke() {
                   QStringLiteral("P17-82 落到插件 tree 上 ⇒ 回调收到**全部**路径（要 "
                                  "C:/tmp/b.txt,C:/tmp/c.txt，实得 %1）")
                       .arg(drop_value(QStringLiteral("tree_drop"))));
+            // ★★ P17-83（接口契约批「`ask_*` 参数缺口」）：**这一条刻意不在这里验** —— 见上面
+            //   夹具里那段说明（真对话框在离屏无人值守环境里发不得、也观察不到）；参数映射
+            //   （过滤串 / 起点目录 / 起点记忆）与 pybind 的签名由门禁 `ask-dialog-params` 步
+            //   静态核对（`tests/check_ask_dialog_params.py`，自带反例自证）。
         }
         // ★★ P16-3b-2（控件下限 #3）：**自带滚动的长列表区**（`ui.list_self_scrolling`）——
         //   插件一条调用拿到的就是内置页同款形状。这里从外壳侧验两件**行为**：
