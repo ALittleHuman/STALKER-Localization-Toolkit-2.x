@@ -1982,9 +1982,14 @@ public:
         }
         return wrap(facade->checkbox(handle_of(parent), text, std::move(toggle)));
     }
-    py::object entry(py::object parent, std::string initial, int width, bool password) const {
+    // ★★ P17-90（接口契约批 · 参数名对账）：**参数名照契约表**（`contract_tables.inc` 的
+    //   `kUiMethods[]` 写着 `entry(parent, textvariable, width, show)`，那是"第三方照这两样写"的
+    //   契约面）。修前这里叫 `initial` / `password` —— 功能一样、名字对不上 ⇒ 按 1.x 写法
+    //   `api.ui.entry(parent, textvariable='…', show=True)` 会 `TypeError`（假缺口真存在）。
+    //   ★ 位置参数与既有调用点**完全不变**（仓里 8 处 entry 全是位置传参）。
+    py::object entry(py::object parent, std::string textvariable, int width, bool show) const {
         if (const UiFacade* facade = available("entry")) {
-            return wrap(facade->entry(handle_of(parent), initial, width, password));
+            return wrap(facade->entry(handle_of(parent), textvariable, width, show));
         }
         return py::none();
     }
@@ -3112,8 +3117,8 @@ void ensure_api_module() {
                  py::arg("pady") = 0)
             .def("checkbox", &PyUi::checkbox, py::arg("parent") = py::none(), py::arg("text") = "",
                  py::arg("on_toggle") = py::none())
-            .def("entry", &PyUi::entry, py::arg("parent") = py::none(), py::arg("initial") = "",
-                 py::arg("width") = 0, py::arg("password") = false)
+            .def("entry", &PyUi::entry, py::arg("parent") = py::none(), py::arg("textvariable") = "",
+                 py::arg("width") = 0, py::arg("show") = false)
             // ★★ P15-0：输入变化回调（fs 搜索框边打边筛）
             .def("entry_on_change", &PyUi::entry_on_change, py::arg("widget"),
                  py::arg("callback") = py::none())

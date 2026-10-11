@@ -5864,6 +5864,11 @@ SmokeResult run_smoke() {
             "            fh.write(text + '\\n')\n"
             "    def build():\n"
             "        ui = api.ui\n"
+            "        # ★★ P17-90（接口契约批 · 参数名）：`entry` 的**关键字参数名照契约表**\n"
+            "        #   （`kUiMethods[]` 写的是 `parent, textvariable, width, show`）。\n"
+            "        #   修前绑定叫 `initial`/`password` ⇒ 契约写法直接 TypeError（假缺口真存在）。\n"
+            "        kw_entry = ui.entry(None, textvariable='契约写法初值', width=20, show=False)\n"
+            "        mark('entry_kwargs:' + ui.get_text(kw_entry))\n"
             "        label = ui.label(None, '门面标签')\n"
             "        entry = ui.entry(None, '初值', 24)\n"
             "        ui.combo(None, ['甲', '乙'], lambda v: mark('combo:' + v))\n"
@@ -5933,6 +5938,41 @@ SmokeResult run_smoke() {
         check(has_button && has_entry && has_combo && has_check && has_view,
               QStringLiteral("P3 门面控件不齐（按钮=%1 输入=%2 下拉=%3 勾选=%4 只读视图=%5）")
                   .arg(has_button).arg(has_entry).arg(has_combo).arg(has_check).arg(has_view));
+
+        // ★★ P17-90（契约参数名）：**按契约写法的关键字调用**必须真的成立、且值真的进了控件 ——
+        //   修前 `api.ui.entry(..., textvariable=…)` 直接 `TypeError`（契约说"第三方照这两样写"）。
+        //   有牙：把绑定那两行 `py::arg("textvariable")`/`py::arg("show")` 改回旧名 ⇒ 这里立刻红
+        //   （而且 Python 侧会抛异常，标记里读到的是 `TypeError` 原文）。
+        {
+            bool kw_ok = false;
+            bool kw_typed = true;
+            for (QLineEdit* item : page_widget != nullptr
+                                        ? page_widget->findChildren<QLineEdit*>()
+                                        : QList<QLineEdit*>()) {
+                if (item->text() == QStringLiteral("契约写法初值")) kw_ok = true;
+            }
+            {
+                QFile marker_file(marker);
+                QString all;
+                if (marker_file.open(QIODevice::ReadOnly)) {
+                    all = QString::fromUtf8(marker_file.readAll());
+                }
+                kw_typed = all.contains(QStringLiteral("entry_kwargs:契约写法初值"));
+                if (!kw_typed) {
+                    // 让失败信息里带上 Python 抛的原文（零静默：别只说"不成立"）
+                    const int at = all.indexOf(QStringLiteral("entry_kwargs:"));
+                    check(false,
+                          QStringLiteral("P17-90 按契约写的 `ui.entry(..., textvariable=…, show=…)` "
+                                         "没成功（标记原文：%1）")
+                              .arg(at >= 0 ? all.mid(at, 160).trimmed()
+                                           : QStringLiteral("标记里没有 entry_kwargs 那行")));
+                }
+            }
+            check(kw_ok && kw_typed,
+                  QStringLiteral("P17-90 契约写法的 entry 关键字参数没生效（控件在=%1 标记对=%2）")
+                      .arg(kw_ok ? 1 : 0)
+                      .arg(kw_typed ? 1 : 0));
+        }
 
         // ③④⑤：点按钮 → 回 Python（get_text）→ 改控件（set_text）→ 写宿主日志（ui.log）
         QPushButton* facade_button =

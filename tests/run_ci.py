@@ -3262,6 +3262,39 @@ def step_ui_facade(release: bool) -> None:
         fail("控件门面能力表不通过（判据 rc=%d / 探针 rc=%d；见上）" % (rc, rc_probe))
 
 
+def step_ui_contract_params(release: bool) -> None:
+    """★★ P17-90（接口契约批 · 参数名对账）：`api.ui.*` 的参数名必须与契约表对得上。
+
+    背景：`src/engine/plugin/contract_tables.inc` 的 `kUiMethods[]` 注释写着
+    「`api.ui` 的契约：名字 + **参数名**（**第三方就是照这两样写的**）」——
+    而修前实测 16 条里 **10 条**的 Python 绑定参数名与契约对不上（例：契约
+    `entry(parent, textvariable, width, show)` ／ 绑定 `entry(parent, initial, width, password)`）。
+    功能多数等价，但**按契约写的第三方插件会直接 `TypeError`** —— 这是"假缺口真存在"。
+    已有的 `abi-closure` 只比**方法名与条数**，参数名**一个都没对过账**，所以漂了这么久没人发现。
+
+    判据三组：① 契约点名的参数绑定必须**逐字**收（硬红线；本批把 `entry` 的两条补齐）；
+    ② 绑定多给的参数必须进 `EXTRA` 表并写明理由（防悄悄加参数）；③ 契约点名而绑定没收的，
+    必须进 `DEFERRED` 账本并写明"为什么还没收"，且**账实相符**（补上了要销账、删了要红）。
+    ⇒ 欠账可以被看见、被点数，但**不许消失**（用户 2026-10-09：「字段/契约先运到，判据跟着一起落」）。
+    核对器自带 6 个反例自证。独立成步（静态判据、不依赖构建产物）。退出码：0=绿、1=有断言不成立。
+    """
+    say("[ui-contract-params] P17-90：`api.ui.*` 参数名 ↔ 契约表（`kUiMethods[]`）对账")
+    script = ROOT / "tests" / "check_ui_contract_params.py"
+    if not require_repo_file(script, "ui 契约参数名核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=180)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("UI-CONTRACT") or s.startswith("✓ 反例自证")
+                or s.startswith("✗ ") or s.startswith("✓ ")):
+            say("  " + s[:170])
+    if rc == 0 and "UI-CONTRACT ok" in out:
+        ok("`api.ui.*` 参数名与契约表对账通过：契约点名的**绑定都收**；多给/欠账**逐条记账**"
+           "（本批补齐 `entry` 的 `textvariable`/`show`；其余欠账在 `DEFERRED` 账本里可见）")
+    else:
+        fail("`api.ui.*` 参数名与契约表对不上（见上）—— 按契约写的第三方插件会 TypeError")
+
+
 def step_ask_dialog_params(release: bool) -> None:
     """★★ P17-83（接口契约批「`ask_*` 参数缺口」）：1.x 的三个对话框参数收得下、也用得起来。
 
@@ -5329,6 +5362,9 @@ STEPS = [
     # ★★ P17-85（`01 F-09` 收尾）：可观测链的**接线判据**（引擎诊断 → 门面出参 → 三处消费点）。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED。
     ("f09-readinfo", step_f09_readinfo),
+    # ★★ P17-90（接口契约批 · 参数名）：`api.ui.*` 参数名 ↔ `contract_tables.inc` 的 `kUiMethods[]`。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据 —— 参数名对账不需要起宿主。
+    ("ui-contract-params", step_ui_contract_params),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。
