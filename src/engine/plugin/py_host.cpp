@@ -154,7 +154,16 @@ WhenSpec when_from_python(const py::object& when) {
         for (auto item : py::reinterpret_borrow<py::dict>(when)) {
             const std::string key = py::str(item.first).cast<std::string>();
             ContextValue value;
-            if (!item.second.is_none()) value = py::str(item.second).cast<std::string>();
+            // ★★ P17-97（审计 `05 PLG-06`）：**用 `repr` 而不是 `str` 做"值 → 字"的转换**。
+            //   事实（修前）：值被 `str` 化 ⇒ `1`、`True`、`"1"` **全都映射成 `"1"`**
+            //   ⇒ `when={"n": 1}` 与 `when={"n": "1"}` 在宿主侧**不可区分**（类型信息在比较前就没了），
+            //   于是 `when={"n": 1}` 会被宿主喂进来的字符串 `"1"` **命中** —— 那不是插件写的意图。
+            //   改法：`repr` 把**类型也写进那串字**（`1`→`"1"`、`"1"`→`"'1'"`、`True`→`"True"`）
+            //   ⇒ 类型不再互相冒充。
+            //   ★ 口径（写进 `registry.h`，与宿主侧一致）：`when` 的值仍按**字符串**比较
+            //     （`ContextValue = optional<string>`），宿主喂进 context 的值**本来就是字符串**
+            //     （例：`fs_page.cpp` 的 `context["loaded"] = "1"/"0"`）⇒ 插件要匹配它就该写 `"1"`。
+            if (!item.second.is_none()) value = py::repr(item.second).cast<std::string>();
             spec.match.emplace_back(key, value);
         }
         return spec;

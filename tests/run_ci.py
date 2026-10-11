@@ -3262,6 +3262,34 @@ def step_ui_facade(release: bool) -> None:
         fail("控件门面能力表不通过（判据 rc=%d / 探针 rc=%d；见上）" % (rc, rc_probe))
 
 
+def step_when_value(release: bool) -> None:
+    """★★ P17-97（审计 `05 PLG-06`）：**`when` 的值不许让类型互相冒充**。
+
+    事实：`when={"键": 值}` 的值在 Python 侧被 `str()` 成字 ⇒ `1`／`True`／`"1"` **全都变成 `"1"`**，
+    于是 `when={"n": 1}` 会被宿主喂进来的**字符串** `"1"` 命中（类型信息在比较前就丢了）。
+    改法：值走 `py::repr`（`1`→`"1"`、`"1"`→`"'1'"`、`True`→`"True"`），类型写进那串字；
+    比较口径（值按字符串比／宿主喂进 context 的本就是字符串／`None` 表示键不存在）**写进 `registry.h`**。
+
+    判据两组：① `when_from_python` 里非 None 的值必须走 `py::repr`、不许再用 `str` 转值（键仍用 `str`）；
+    ② `registry.h` 的 `ContextValue` 附近必须留下那三条口径（否则后人只能靠猜）。
+    核对器 `tests/check_when_value_types.py` 自带 4 个反例自证。独立成步、静态、不依赖构建产物。
+    """
+    say("[when-value] P17-97：`when` 的值不许让类型互相冒充（审计 `05 PLG-06`）")
+    script = ROOT / "tests" / "check_when_value_types.py"
+    if not require_repo_file(script, "`when` 值类型核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=180)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("WHEN-VALUE") or s.startswith("✓ 反例自证")
+                or s.startswith("✗ ") or s.startswith("✓ `when`") or s.startswith("✓ 口径")):
+            say("  " + s[:170])
+    if rc == 0 and "WHEN-VALUE ok" in out:
+        ok("`when` 的值走 `repr`（类型不互相冒充）＋ 比较口径落在 `registry.h` 字据上")
+    else:
+        fail("`when` 的值类型还在冒充（见上）—— 插件写的意图不许被宿主喂的字符串顶替")
+
+
 def step_comment_parity(release: bool) -> None:
     """★★ P17-94（审计 `02 F-10` / `03 F-09` / `03 F-10` / `03 F-11`）：**注释/标注必须与实现同源**。
 
@@ -5401,6 +5429,9 @@ STEPS = [
     # ★★ P17-94（审计四条「注释漂了」）：注释/标注必须与实现同源。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
     ("comment-parity", step_comment_parity),
+    # ★★ P17-97（审计 `05 PLG-06`）：`when` 的值类型不许互相冒充 ＋ 比较口径要有字据。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
+    ("when-value", step_when_value),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。

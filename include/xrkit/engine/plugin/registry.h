@@ -34,6 +34,15 @@ namespace xrkit::plugin {
 using ContextValue = std::optional<std::string>;
 using Context = std::map<std::string, ContextValue>;
 
+// ★★ P17-97（审计 `05 PLG-06`）：**`when` 的值按"字符串"比较，类型不参与** —— 这条口径写在这里，
+//   免得下一个人再从 Python 侧猜一遍。
+//   · 修前 Python 侧用 `str()` 把值转字 ⇒ `1`／`True`／`"1"` **全变成 `"1"`**，
+//     类型互相冒充（`when={"n": 1}` 会被宿主喂的 `"1"` 命中）；现在用 `repr()`，
+//     类型写进了那串字（`"1"` / `"'1'"` / `"True"`），**不再互相冒充**；
+//   · 宿主喂进 context 的值**本来就是字符串**（例：`fs_page.cpp` 的 `context["loaded"] = "1"/"0"`）
+//     ⇒ 插件要匹配它就写 `"1"`（写 `1` 现在**不会**命中 —— 那正是"类型别冒充"的意思）；
+//   · `None` 仍是"期望这个键不存在"（`ctx.get(k) == None` 的 1.x 语义，见 `when_ok`）。
+
 struct WhenSpec {
     std::vector<std::pair<std::string, ContextValue>> match;
     std::function<bool(const Context&)> predicate;
