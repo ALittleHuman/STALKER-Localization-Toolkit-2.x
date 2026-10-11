@@ -54,6 +54,8 @@ const char* const kMethodNames[] = {
     "list_row_text",
     "list_select_row", "list_selected_row", "list_set_multi", "list_selected_rows",
     "list_set_selected_rows", "list_on_activate", "list_content_height",
+    // ★★ P17-82：拖放到插件造的 tree/list（**本体拖入**；用户 2026-10-09 已拍板要补）
+    "list_on_drop", "tree_on_drop",
     "log_view",    "log_view_append",    "log_view_clear",    "log_view_text",
     "drop_zone",   "drop_zone_on_drop",
     "task_panel",  "task_run",           "task_status",       "task_cancel",
@@ -123,6 +125,9 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "list_selected_rows") return static_cast<bool>(facade.list_selected_rows);
     if (name == "list_set_selected_rows") return static_cast<bool>(facade.list_set_selected_rows);
     if (name == "list_on_activate") return static_cast<bool>(facade.list_on_activate);
+    // ★★ P17-82：按结构体字段顺序排（`check_facade_order` 会逐项对位：
+    //   结构体里 `list_on_drop` 紧跟 `list_on_activate`、`tree_on_drop` 在 `tree_on_click` 之后）
+    if (name == "list_on_drop") return static_cast<bool>(facade.list_on_drop);
     if (name == "list_content_height") return static_cast<bool>(facade.list_content_height);
     if (name == "log_view") return static_cast<bool>(facade.log_view);
     if (name == "log_view_append") return static_cast<bool>(facade.log_view_append);
@@ -180,6 +185,7 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "tree_on_check") return static_cast<bool>(facade.tree_on_check);
     if (name == "tree_on_activate") return static_cast<bool>(facade.tree_on_activate);
     if (name == "tree_on_click") return static_cast<bool>(facade.tree_on_click);
+    if (name == "tree_on_drop") return static_cast<bool>(facade.tree_on_drop);
     return false;
 }
 

@@ -86,6 +86,44 @@ std::map<void*, DropBox*>& drop_boxes() {
     return *instance;
 }
 
+// ★★ P17-82（接口契约批「本体拖入」，用户 2026-10-09 已拍板）：**插件造的 tree/list 上的拖放**。
+//   与 `DropBox` 是同一件事的两处落点，但分开登记 —— 语义不同（`drop_zone_on_drop` 只对
+//   `drop_zone` 造的容器有效），合表会让"给 tree 调 drop_zone_on_drop"变成静默无用。
+//   盒与过滤器都**进程级保活**（与控件同寿；同 L1 回调盒的纪律）。
+std::map<void*, DropBox*>& drag_boxes() {
+    static std::map<void*, DropBox*>* instance = new std::map<void*, DropBox*>();
+    return *instance;
+}
+
+// 给"插件造的 tree/list 句柄"登记落下回调（`nullptr` = 撤销，过滤器仍在、落下什么都不做）
+void set_drag_handler(plug::UiHandle handle, std::function<void(const std::vector<std::string>&)> on_drop) {
+    if (handle == nullptr) return;
+    auto it = drag_boxes().find(handle);
+    if (it == drag_boxes().end() || it->second == nullptr) return;
+    it->second->handler = std::move(on_drop);
+}
+
+// 给树/列表**自动**装宿主那份拖放过滤器（唯一实现在 `drop_filter.h`）：
+//   · 落点选择：**树挂在树控件自己身上、列表挂在容器的子件 `VirtualList` 上** ——
+//     两件都是"Qt 会先派发给控件自己"的那种（QWidget 的拖放先走控件自己的
+//     `dragEnterEvent`/`dropEvent`，没 accept 才冒给父件）⇒ 挂在容器上收不到；
+//   · 容器与列表都在同一个句柄下 ⇒ 自检能顺着控件树找到过滤器并派发真事件（与 `drop_zone` 同款）。
+void attach_drag_drop(QWidget* target, plug::UiHandle handle) {
+    if (target == nullptr || handle == nullptr) return;
+    auto* box = new DropBox;   // 进程级保活
+    box->filter = new FileDropFilter(
+        [box](const QStringList& paths) {
+            if (box->handler == nullptr) return;
+            std::vector<std::string> out;
+            out.reserve(static_cast<size_t>(paths.size()));
+            for (const QString& path : paths) out.push_back(path.toStdString());
+            box->handler(out);
+        },
+        target);
+    box->filter->attach(target);
+    drag_boxes()[handle] = box;
+}
+
 std::map<void*, TaskShell*>& task_shells() {
     static std::map<void*, TaskShell*>* instance = new std::map<void*, TaskShell*>();
     return *instance;
@@ -472,8 +510,12 @@ const plug::UiFacade kQtFacade = {
         auto* layout = new QVBoxLayout(container);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->addWidget(view);
+        // ★★ P17-82：列表**造出来就自动接拖放**（句柄＝容器；过滤器挂在列表本人身上 ——
+        //   列表没 accept 的拖放**不会**冒给父件的过滤器，挂在容器上收不到）。
+        plug::UiHandle handle = handle_of(wrap(container));
+        attach_drag_drop(view, handle);
         place(host, container);
-        return handle_of(wrap(container));
+        return handle;
     },
     /* list_self_scrolling（★P16-3b-2 控件下限 #3）：**内置页同款的「自带滚动的长列表区」**
        —— 容器 + `ScrollViewport` + **`VirtualList` 当 body**（画布＝列表本人）+
@@ -495,8 +537,11 @@ const plug::UiFacade kQtFacade = {
         // ★ 返回的是**容器**句柄 ⇒ 也要能对它用 `viewport_*` 那批（否则插件拿不到
         //   `viewport_can_scroll/viewport_scroll_top/viewport_sync`，等于只有「能滚」却「问不到」）。
         viewports()[reinterpret_cast<void*>(container)] = viewport;
+        // ★★ P17-82：自带滚动那种也一样（过滤器挂在**列表本人**身上）
+        plug::UiHandle handle = handle_of(wrap(container));
+        attach_drag_drop(view, handle);
         place(host, container);
-        return handle_of(wrap(container));
+        return handle;
     },
     /* button_on_menu（★P16-3c 控件下限 #1）：**按钮的左键动作菜单** ——
        语义＝1.x 的「动作」；用 `QPushButton::setMenu`（Qt 原生行为＝**左键点按钮即弹**）。
@@ -609,6 +654,11 @@ const plug::UiFacade kQtFacade = {
         if (auto* view = container->findChild<VirtualList*>()) {
             view->set_on_activate(std::move(on_activate));
         }
+    },
+    /* list_on_drop（★★ P17-82「本体拖入」）：本机文件/目录落到这个列表上 ⇒ 回调收路径列表
+       （过滤器是造列表时就装好的那一份；这里只填"收到之后干什么"） */
+    [](plug::UiHandle list, std::function<void(const std::vector<std::string>&)> on_drop) {
+        set_drag_handler(list, std::move(on_drop));
     },
     /* list_content_height：内容总高（＝行数×行高）—— 宿主页/视口据此撑开滚动范围 */
     [](plug::UiHandle list) {
@@ -897,8 +947,11 @@ const plug::UiFacade kQtFacade = {
         QWidget* host = resolve_parent(parent);
         auto* tree = new FacadeTree;
         tree->set_columns(columns);
+        // ★★ P17-82：树也**造出来就自动接拖放**（挂树控件本人；理由同列表那一处）
+        plug::UiHandle handle = handle_of(wrap(tree));
+        attach_drag_drop(tree, handle);
         place(host, tree);
-        return handle_of(wrap(tree));
+        return handle;
     },
     /* tree_set_columns：换列声明（表头 + 列宽）—— 与 `FacadeTree` 同一份列策略 */
     [](plug::UiHandle tree, const std::vector<plug::UiFacade::TreeColumn>& columns) {
@@ -1015,6 +1068,11 @@ const plug::UiFacade kQtFacade = {
         if (auto* facade = qobject_cast<FacadeTree*>(unwrap(tree))) {
             facade->set_on_click(std::move(on_click));
         }
+    },
+    /* tree_on_drop（★★ P17-82「本体拖入」）：本机文件/目录落到这棵树上 ⇒ 回调收路径列表
+       （与 `list_on_drop` **同一个机制、同一份过滤器实现**） */
+    [](plug::UiHandle tree, std::function<void(const std::vector<std::string>&)> on_drop) {
+        set_drag_handler(tree, std::move(on_drop));
     },
 };
 

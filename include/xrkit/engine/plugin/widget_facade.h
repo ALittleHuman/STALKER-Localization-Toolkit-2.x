@@ -140,10 +140,20 @@ struct UiFacade {
     std::function<void(UiHandle list, bool on)> list_set_multi;
     std::function<std::vector<int>(UiHandle list)> list_selected_rows;
     std::function<void(UiHandle list, std::vector<int> rows)> list_set_selected_rows;
-    // ★★ P13-2b：**列表激活**（双击 / 回车）—— fs 页「双击包列表＝加载」。
+    // ★★ P15-0：**列表激活**（双击 / 回车）—— fs 页「双击包列表＝加载」。
     //   回调给**行号**（全体行里的下标，与 `list_selected_row` 同一坐标系）。
     std::function<void(UiHandle list, std::function<void(int)> on_activate)>
         list_on_activate;
+    // ★★ P17-82（接口契约批「本体拖入」，用户 2026-10-09 已拍板要补）：**把本机文件/目录拖到这一件上**。
+    //   口径（1.x 明文、2.0 沿用）：**没有"drop_zone 控件"** —— 拖放注册在**既有控件**上
+    //   （见 `src/shell/drop_filter.h` 的文件头）；所以插件不造新控件，宿主对**自己造的**
+    //   `tree` / `list` **自动装同一个 `FileDropFilter`**（"本地文件才接、其余给禁止光标"、
+    //   只把本机路径交给回调），插件只登记"收到路径之后干什么"。
+    //   ★ 为什么不必动 ABI：C ABI 的 16 方法表里本来就有一条 `drop_box(parent, on_file, …)`
+    //     （1.x 同款）—— 本批补的是**插件门面这一侧**的对应物，`kUiMethods[]`/`abi-closure` 不受影响。
+    //   `callback == nullptr` ⇒ 撤销（过滤器还在，只是落下时什么都不做）。
+    std::function<void(UiHandle list, std::function<void(const std::vector<std::string>&)> on_drop)>
+        list_on_drop;
     std::function<int(UiHandle list)> list_content_height;
 
     // LogView：行式日志视图（**插件自己的**日志区；宿主日志栏是 `log_append`）
@@ -283,6 +293,10 @@ struct UiFacade {
     //   宿主只报行 key；展开还是切勾选由**插件**按自己的节点语义决定。
     std::function<void(UiHandle tree, std::function<void(const std::string&)> on_click)>
         tree_on_click;
+    // ★★ P17-82：**把本机文件/目录拖到这棵树上**（与 `list_on_drop` 同一机制、同一过滤器的唯一实现；
+    //   理由见那边与 `src/shell/drop_filter.h`）。落点＝树控件本身，回调收本机路径列表。
+    std::function<void(UiHandle tree, std::function<void(const std::vector<std::string>&)> on_drop)>
+        tree_on_drop;
 };
 
 // 外壳注入实现（`src/shell/ui_facade_qt.cpp`）。传 nullptr = 撤销（无 GUI 依赖的进程/用例）。

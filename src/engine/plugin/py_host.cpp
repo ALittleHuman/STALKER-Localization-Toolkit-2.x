@@ -2306,6 +2306,34 @@ public:
         }
         return -1;
     }
+    // ★★ P17-82（接口契约批「本体拖入」，用户 2026-10-09 已拍板）：**本机文件/目录拖到列表上**。
+    //   回调收**本机路径列表**（`list[str]`；与 `drop_zone_on_drop` 同形，便于插件两边共用一段代码）。
+    bool list_on_drop(py::object list_widget, py::object callback) const {
+        const UiFacade* facade = available("list_on_drop");
+        if (facade == nullptr) return false;
+        if (callback.is_none() != 0) {   // None ⇒ 撤销（过滤器仍在，落下什么都不做）
+            facade->list_on_drop(handle_of(list_widget), nullptr);
+            return true;
+        }
+        if (PyCallable_Check(callback.ptr()) == 0) {
+            core::log(core::Level::Warn, "[" + owner_ + "] ui.list_on_drop 的回调不是可调用对象");
+            return false;
+        }
+        py::object kept = callback;
+        keepalive()->push_back(kept);
+        facade->list_on_drop(handle_of(list_widget),
+                             [kept](const std::vector<std::string>& paths) {
+                                 py::gil_scoped_acquire acquire;
+                                 try {
+                                     kept(strings_to_python(paths));
+                                 } catch (const py::error_already_set& err) {
+                                     core::log(core::Level::Warn,
+                                               std::string("ui.list_on_drop 回调抛异常：") +
+                                                   err.what());
+                                 }
+                             });
+        return true;
+    }
     // ── ★★ P16-3a：**多选**（控件下限 #2；1.x 参照 `QListWidget::ExtendedSelection`）────
     void list_set_multi(py::object list_widget, bool on) const {
         if (const UiFacade* facade = available("list_set_multi")) {
@@ -2817,6 +2845,33 @@ public:
         });
         return true;
     }
+    // ★★ P17-82：**本机文件/目录拖到这棵树上**（与 `list_on_drop` 同一机制、同一份过滤器实现）
+    bool tree_on_drop(py::object tree_widget, py::object callback) const {
+        const UiFacade* facade = available("tree_on_drop");
+        if (facade == nullptr) return false;
+        if (callback.is_none() != 0) {   // None ⇒ 撤销
+            facade->tree_on_drop(handle_of(tree_widget), nullptr);
+            return true;
+        }
+        if (PyCallable_Check(callback.ptr()) == 0) {
+            core::log(core::Level::Warn, "[" + owner_ + "] ui.tree_on_drop 的回调不是可调用对象");
+            return false;
+        }
+        py::object kept = callback;
+        keepalive()->push_back(kept);
+        facade->tree_on_drop(handle_of(tree_widget),
+                             [kept](const std::vector<std::string>& paths) {
+                                 py::gil_scoped_acquire acquire;
+                                 try {
+                                     kept(strings_to_python(paths));
+                                 } catch (const py::error_already_set& err) {
+                                     core::log(core::Level::Warn,
+                                               std::string("ui.tree_on_drop 回调抛异常：") +
+                                                   err.what());
+                                 }
+                             });
+        return true;
+    }
 
 private:
     // 门面/方法不可用 ⇒ **逐条记账**并返回"空"（零静默：插件作者能立刻看出为什么什么都没出现）
@@ -3081,6 +3136,9 @@ void ensure_api_module() {
                  py::arg("rows") = py::none())
             .def("list_on_activate", &PyUi::list_on_activate, py::arg("list"),
                  py::arg("callback"))
+            // ★★ P17-82：本机文件/目录拖到插件造的 tree/list 上（「本体拖入」）
+            .def("list_on_drop", &PyUi::list_on_drop, py::arg("list"),
+                 py::arg("callback") = py::none())
             .def("list_content_height", &PyUi::list_content_height, py::arg("list"))
             .def("log_view", &PyUi::log_view, py::arg("parent") = py::none(),
                  py::arg("height") = 0)
@@ -3165,6 +3223,9 @@ void ensure_api_module() {
                  py::arg("callback") = py::none())
             // ★★ P15-0：点行身体（宿主只报 key）
             .def("tree_on_click", &PyUi::tree_on_click, py::arg("tree"),
+                 py::arg("callback") = py::none())
+            // ★★ P17-82：本机文件/目录拖到这棵树上（与 list_on_drop 同一机制）
+            .def("tree_on_drop", &PyUi::tree_on_drop, py::arg("tree"),
                  py::arg("callback") = py::none());
         py::class_<PyPluginApi>(m, "Api")
             .def_property_readonly("plugin_file", &PyPluginApi::owner)

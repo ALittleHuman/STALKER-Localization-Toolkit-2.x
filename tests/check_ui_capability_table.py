@@ -76,6 +76,8 @@ EXPECT_UI = {
     "list_selected_rows": "L2.1 选中集合（升序；判据与「移除」都走它）",
     "list_set_selected_rows": "L2.1 程序化设选中集合",
     "list_on_activate": "L2.1 列表激活（双击/回车；回调给行号）",
+    # ★★ P17-82（接口契约批「本体拖入」，用户 2026-10-09 已拍板要补）
+    "list_on_drop": "★L2.1 本机文件/目录拖到这个列表上（宿主自动装同一个拖放过滤器；回调收路径列表）",
     "list_content_height": "L2.1 内容总高（宿主页/视口据此撑开滚动范围）",
     "log_view": "L2.2 行式日志视图（插件**自己**的日志区）",
     "log_view_append": "L2.2 追加一行（不重写全文 ⇒ 不 O(n²)）",
@@ -129,6 +131,8 @@ EXPECT_UI = {
     "tree_on_check": "★L2.5 勾选回调（用户改了哪一行）",
     "tree_on_activate": "★L2.5 激活回调（双击叶子）",
     "tree_on_click": "★P15-0 点行身体（单击；语义在插件侧）",
+    # ★★ P17-82：本体拖入（与 list_on_drop 同一个机制、同一份 drop_filter 实现）
+    "tree_on_drop": "★L2.7 本机文件/目录拖到这棵树上（回调收路径列表；「本体拖入」）",
 }
 # Widget：**故意为空** —— 不透明句柄，插件不能对它做任何事（禁 L4 裸 Qt）
 EXPECT_WIDGET: dict[str, str] = {}

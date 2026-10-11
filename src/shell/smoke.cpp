@@ -5787,6 +5787,19 @@ SmokeResult run_smoke() {
             "        ui.list_set_multi(rows, False)\n"
             "        mark('single_after_off:%s' % ui.list_selected_rows(rows))\n"
             "        mark('selected_after_off:%d' % ui.list_selected_row(rows))\n"
+            // ★★ P17-82（接口契约批「本体拖入」，用户 2026-10-09 已拍板要补）：
+            //   夹具顺手把"**插件造的 list / tree 收到本机路径**"这条链挂上 ——
+            //   宿主在造这两件时就自动装了那份拖放过滤器（`drop_filter.h` 的唯一实现），
+            //   这里只登记"收到路径之后干什么"。
+            //   ★★ 注意（本批实测踩到、白烧一轮编译）：这一段是**夹具的 Python 源码**
+            //     （C++ 字符串字面量逐条拼接），所以**注释也必须写在字符串里面** ——
+            //     在字面量之间插一行 C++ 的 `//` 注释会把拼接链**打断**（`source` 只剩前半段），
+            //     生成的 `l2_demo.py` 于是语法错、插件加载失败，而 C++ 这边照样编得过。
+            "        # 锚着插件造的列表/树：宿主自动装了拖放过滤器，这里登记落下之后干什么\n"
+            "        ui.list_on_drop(rows, lambda paths: mark('list_drop:' + ','.join(sorted(paths))))\n"
+            "        tree = ui.tree(None, ['列'])\n"
+            "        ui.tree_set_root(tree, [{'key': 'r1', 'cells': ['甲']}])\n"
+            "        ui.tree_on_drop(tree, lambda paths: mark('tree_drop:' + ','.join(sorted(paths))))\n"
             "        self_list = ui.list_self_scrolling(None, 0)\n"
             "        ui.list_set_row_count(self_list, 200)\n"
             "        ui.list_set_row_text(self_list, lambda row: '自滚行 %d' % row)\n"
@@ -5815,6 +5828,9 @@ SmokeResult run_smoke() {
             "        mark('run:%d' % int(ui.task_run(panel, '夹具任务', worker)))\n"
             "    api.register_tool('门面L2夹具页', build, 6)\n";
         QFile plugin_file(QDir(dir).filePath(QStringLiteral("l2_demo.py")));
+        check(hub.plugin_errors().empty(),
+              QStringLiteral("P17-82 调试：L2 夹具不该有插件问题（实得 %1 条）")
+                  .arg(hub.plugin_errors().size()));
         const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
                            plugin_file.write(source) == source.size();
         plugin_file.close();
@@ -5897,6 +5913,85 @@ SmokeResult run_smoke() {
               QStringLiteral("P16-3a 关掉多选要立刻退回纯单选（要 [1] / 当前行 1，实得 %1 / %2）")
                   .arg(marker_value(QStringLiteral("single_after_off")))
                   .arg(marker_value(QStringLiteral("selected_after_off"))));
+        // ★★ P17-82（接口契约批「本体拖入」，用户 2026-10-09 已拍板要补）：**插件造的
+        //   list / tree 也要收得到本机文件** —— 宿主在造这两件时**自动**装上那份唯一的拖放过滤器
+        //   （`src/shell/drop_filter.h`；口径与 `drop_zone` 完全一样："本地文件才接、其余给禁止光标"）。
+        //   判据（**接线 ＋ 行为**两半，和 drop_zone 那条同型）：
+        //     ① 从**插件页**里找回两件控件 ⇒ 它们各自能找到一个 `FileDropFilter`
+        //        （`attach()` 会给控件 `setAcceptDrops(true)`，缺了它 Qt 根本不派发拖放）；
+        //     ② 造一个**真 `QDropEvent`** 派发给那个过滤器（离屏环境没有平台拖放 ⇒ 与
+        //        `drop_zone` 那条一样走 `dispatch`）⇒ **Python 回调收到本机路径**（落进标记文件）。
+        //   ★ 判红办法：把 `widget_facade_qt.cpp` 里 `attach_drag_drop(...)` 那两处调用删掉 ⇒ ①红；
+        //     把 `list_on_drop`/`tree_on_drop` 的登记（`set_drag_handler`）删掉 ⇒ ②红（mark 不落）。
+        {
+            auto* list_view = page_widget != nullptr
+                                  ? page_widget->findChild<VirtualList*>()
+                                  : nullptr;
+            auto* tree_view = page_widget != nullptr
+                                  ? page_widget->findChild<FacadeTree*>()
+                                  : nullptr;
+            // ★ `FileDropFilter` 没有 `Q_OBJECT` ⇒ 不能用 `findChild<FileDropFilter*>()`
+            //   （那个模板要求 Q_OBJECT，会 static_assert 编译不过）；顺着控件树 `dynamic_cast` 找。
+            const auto filter_of = [](QWidget* widget) -> FileDropFilter* {
+                if (widget == nullptr) return nullptr;
+                for (QObject* child : widget->children()) {
+                    if (auto* candidate = dynamic_cast<FileDropFilter*>(child)) return candidate;
+                }
+                // 列表那一条：过滤器挂在**容器**上（句柄＝容器，列表是它的子件）
+                for (QWidget* parent = widget->parentWidget(); parent != nullptr;
+                     parent = parent->parentWidget()) {
+                    for (QObject* child : parent->children()) {
+                        if (auto* candidate = dynamic_cast<FileDropFilter*>(child)) return candidate;
+                    }
+                }
+                return nullptr;
+            };
+            FileDropFilter* list_filter = filter_of(list_view);
+            FileDropFilter* tree_filter = filter_of(tree_view);
+            check(list_view != nullptr && list_filter != nullptr &&
+                      list_filter->is_attached_to(list_view),
+                  QStringLiteral("P17-82 插件造的 list **自动**装了宿主拖放过滤器（列表=%1 过滤器=%2）")
+                      .arg(list_view != nullptr ? 1 : 0)
+                      .arg(list_filter != nullptr ? 1 : 0));
+            check(tree_view != nullptr && tree_filter != nullptr &&
+                      tree_filter->is_attached_to(tree_view),
+                  QStringLiteral("P17-82 插件造的 tree **自动**装了宿主拖放过滤器（树=%1 过滤器=%2）")
+                      .arg(tree_view != nullptr ? 1 : 0)
+                      .arg(tree_filter != nullptr ? 1 : 0));
+            if (list_filter != nullptr && list_view != nullptr) {
+                QMimeData mime;
+                mime.setUrls({QUrl::fromLocalFile(QStringLiteral("C:/tmp/a.txt"))});
+                QDropEvent drop(QPointF(2, 2), Qt::CopyAction, &mime, Qt::LeftButton,
+                                Qt::NoModifier);
+                list_filter->dispatch(&drop, list_view);
+            }
+            if (tree_filter != nullptr && tree_view != nullptr) {
+                QMimeData mime;
+                mime.setUrls({QUrl::fromLocalFile(QStringLiteral("C:/tmp/c.txt")),
+                              QUrl::fromLocalFile(QStringLiteral("C:/tmp/b.txt"))});
+                QDropEvent drop(QPointF(2, 2), Qt::CopyAction, &mime, Qt::LeftButton,
+                                Qt::NoModifier);
+                tree_filter->dispatch(&drop, tree_view);
+            }
+            QApplication::processEvents();
+            const QString after_drop = read_marker();
+            const auto drop_value = [&after_drop](const QString& key) {
+                const int at = after_drop.indexOf(key + QLatin1Char(':'));
+                if (at < 0) return QString();
+                const int end = after_drop.indexOf(QLatin1Char('\n'), at);
+                return after_drop.mid(at + key.size() + 1,
+                                      end < 0 ? -1 : end - at - key.size() - 1).trimmed();
+            };
+            check(drop_value(QStringLiteral("list_drop")) ==
+                      QStringLiteral("C:/tmp/a.txt"),
+                  QStringLiteral("P17-82 落到插件 list 上 ⇒ Python 回调收到本机路径（要 C:/tmp/a.txt，实得 %1）")
+                      .arg(drop_value(QStringLiteral("list_drop"))));
+            check(drop_value(QStringLiteral("tree_drop")) ==
+                      QStringLiteral("C:/tmp/b.txt,C:/tmp/c.txt"),
+                  QStringLiteral("P17-82 落到插件 tree 上 ⇒ 回调收到**全部**路径（要 "
+                                 "C:/tmp/b.txt,C:/tmp/c.txt，实得 %1）")
+                      .arg(drop_value(QStringLiteral("tree_drop"))));
+        }
         // ★★ P16-3b-2（控件下限 #3）：**自带滚动的长列表区**（`ui.list_self_scrolling`）——
         //   插件一条调用拿到的就是内置页同款形状。这里从外壳侧验两件**行为**：
         //     ① 拖条子 ⇒ 列表自己滚（条子值经 `set_offset_delegate` 交回 `set_scroll_top`）；
