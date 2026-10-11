@@ -5,8 +5,9 @@
 // 口径（与 `docs/2.0.0-外壳规格.md` 配套）：
 //   ① **缩放的唯一真值仍是 core**（`core::set_ui_scale()` / `core::px()`）；这里只负责
 //      "启动时按当前屏幕把它设对"。设计稿像素一律按 96 DPI 定，几何一律过 `px()`。
-//   ② 用 **逻辑 DPI**（`QScreen::logicalDotsPerInch()`）—— Qt6 已经把 OS 缩放算进逻辑像素，
-//      所以**不额外设 `QT_SCALE_FACTOR`**，避免双重缩放。
+//   ② ★★ P17-94（审计 `03 F-09`）：**不要再宣称"用逻辑 DPI"** —— 真机实测（见下面那条
+//      `★ 口径更正`）证明 `logicalDotsPerInch()` 在 Windows/Qt6 下**恒为 96**，正确规则是
+//      "看 `devicePixelRatio` ＋ 物理 DPI"。**不额外设 `QT_SCALE_FACTOR`**（避免双重缩放）这半句仍然成立。
 //   ③ 缩放因子**吸附到常用档位**并 clamp 到 [1.0, 2.0]：避免 1.33/1.42 这类怪值把
 //      像素取整搞出 1px 抖动。
 //   ④ 窗口尺寸跟着屏幕走：默认约可用区 70%，介于"最小尺寸"与"可用区 90%（且不超过
@@ -30,7 +31,7 @@ QSize adaptive_window_size(const QSize& available, const QSize& min_size);
 // 主窗口的最小尺寸（设计稿像素，内部过 px()）——集中在一处，别在 main 里写死
 QSize app_min_window_size();
 
-// 按当前屏幕（primaryScreen 的逻辑 DPI）设全局 ui_scale；返回实际生效的缩放因子。
+// 按当前屏幕设全局 ui_scale（**规则见上面那条 `★ 口径更正`**：dpr ＋ 物理 DPI，不是逻辑 DPI）；返回实际生效的缩放因子。
 // **只应在交互式启动路径调用**：离屏自检/`--layout-report` 要保持确定性，不调它。
 double apply_screen_ui_scale();
 

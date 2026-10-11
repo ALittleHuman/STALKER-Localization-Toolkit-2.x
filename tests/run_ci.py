@@ -3262,6 +3262,39 @@ def step_ui_facade(release: bool) -> None:
         fail("控件门面能力表不通过（判据 rc=%d / 探针 rc=%d；见上）" % (rc, rc_probe))
 
 
+def step_comment_parity(release: bool) -> None:
+    """★★ P17-94（审计 `02 F-10` / `03 F-09` / `03 F-10` / `03 F-11`）：**注释/标注必须与实现同源**。
+
+    事实（本批修的这四条，全是"改实现时忘了改旁边那句字"的产物，而且**此前没有任何判据读它们**）：
+    * `encoding.cpp` 的 `kBig5Cols = 0xFE - 0x40 + 1;  // 190` —— **算出来是 191**；
+    * `theme.h` 写 "scale: 0.85/1.0/1.25/1.5"，而 `theme.cpp` 的 `kChoices` 是 **0.9/1.0/1.1/1.2**；
+    * `hub.h` 的 `Q_INVOKABLE void log_line(...)` —— 本类**不用 `Q_OBJECT`** ⇒ **空标**
+      （`invokeMethod` 只会静默 false；功能坑早已用**回调**绕开）；
+    * `screen_scale.h` 注释宣称"用**逻辑 DPI**"，实现却用 `devicePixelRatio()` ＋ `physicalDotsPerInch()`
+      （真机实测 `logicalDotsPerInch()` 恒 96）。
+
+    判据四组（都**现场算/现场读**，不信注释也不信我）：① 注释值 == 表达式算出来的值；
+    ② 头文件里**不许再抄**档位数值、必须指向 `ui_size_choices()`；③ `log_line` 不许带 `Q_INVOKABLE`
+    且要留下"改用回调"的口径；④ `screen_scale.h` 文件头不许再宣称"用逻辑 DPI"（**否定句**允许）。
+    核对器自带 7 个反例自证。独立成步（静态判据、不依赖构建产物）。退出码：0=绿、1=有断言不成立。
+    """
+    say("[comment-parity] P17-94：注释/标注 ↔ 实现 同源核对（审计 02 F-10 / 03 F-09 / 03 F-10 / 03 F-11）")
+    script = ROOT / "tests" / "check_comment_impl_parity.py"
+    if not require_repo_file(script, "注释↔实现 同源核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=180)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("COMMENT-PARITY") or s.startswith("✓ 反例自证")
+                or s.startswith("✗ ") or s.startswith("① ") or s.startswith("② ")
+                or s.startswith("③ ") or s.startswith("④ ") or s.startswith("· ")):
+            say("  " + s[:170])
+    if rc == 0 and "COMMENT-PARITY ok" in out:
+        ok("注释/标注与实现同源（审计 02 F-10 / 03 F-09 / 03 F-10 / 03 F-11 四条已修并上锁）")
+    else:
+        fail("注释/标注与实现不同源（见上）—— 「改实现忘了改旁边那句字」这一类不许再漂")
+
+
 def step_ui_contract_params(release: bool) -> None:
     """★★ P17-90（接口契约批 · 参数名对账）：`api.ui.*` 的参数名必须与契约表对得上。
 
@@ -5365,6 +5398,9 @@ STEPS = [
     # ★★ P17-90（接口契约批 · 参数名）：`api.ui.*` 参数名 ↔ `contract_tables.inc` 的 `kUiMethods[]`。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据 —— 参数名对账不需要起宿主。
     ("ui-contract-params", step_ui_contract_params),
+    # ★★ P17-94（审计四条「注释漂了」）：注释/标注必须与实现同源。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
+    ("comment-parity", step_comment_parity),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。

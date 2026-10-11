@@ -351,7 +351,9 @@ const ByteRange kEucKrTrail[] = {{0xA1, 0xFE}};
 // ★ `rows` 只用来给"建反向表"的循环定上界，必须是**表的真实行数**：写成 188
 //   （= 0xFC-0x40）会让循环读出表尾之后的内存，凭空造出 `FD44 → U+FF61` 这种
 //   假映射（实测踩到：`shift_jis` 编码侧把 `｡` 写成 `fd44` 而不是 `a1`）。
-constexpr uint16_t kBig5Cols = 0xFE - 0x40 + 1;      // 190
+// ★★ P17-94（审计 `02 F-10`）：这行的注释值曾写 `// 190`，而**算出来就是 191**
+//   （`0xFE - 0x40 + 1`）；`big5_tables.inc` 里 `kBig5TwoByte[16999] = 89 × 191` 也证实现值是 191。
+constexpr uint16_t kBig5Cols = 0xFE - 0x40 + 1;      // 191
 constexpr uint16_t kShiftJisCols = 0xFC - 0x40 + 1;  // 189
 constexpr uint16_t kEucKrCols = 0xFE - 0xA1 + 1;     // 94
 constexpr uint16_t kBig5Rows = 0xF9 - 0xA1 + 1;      // 89

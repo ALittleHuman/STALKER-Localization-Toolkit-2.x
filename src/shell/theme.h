@@ -22,7 +22,10 @@ int px(int value);
 
 // 生成当前模式的 QSS（角色 → Qt 控件）。
 // ★ 用户 2026-09-30：主题旁要一个「调整 UI 控件大小（包括里面的字体）」的下拉。
-//   scale: 0.85 小 / 1.0 默认 / 1.25 大 / 1.5 特大；**立即生效**（控件尺寸 + 字体 + 重套样式表）。
+//   scale: 见 `ui_size_choices()`（当前是 0.9 小 / 1.0 默认 / 1.1 大 / 1.2 特大）；
+//   ★★ P17-94（审计 `03 F-10`）：这里原来**把档位值抄了一遍**，抄的还是另一组数（与实现不符）
+//   ⇒ 改成**指向唯一事实来源**，别再抄（抄了就必然过期）。门禁 `comment-parity` 步锁这条。
+//   **立即生效**（控件尺寸 + 字体 + 重套样式表）。
 void apply_ui_size(class QApplication& app, double scale);
 // 「界面大小」的档位（label, scale）。自检要能真读到这些值（不是只看菜单文案）。
 struct UiSizeChoice { const char* label; double scale; };
