@@ -659,28 +659,35 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("写盘动作不静默截断（04 F-06 第二波 `--extract-chars`：已存在⇒rc=3；`--force`⇒覆盖）")
 
-    # ── ★★ P17-35（04 F-06 口径件）：`--convert-batch` **原地改写没开 `--backup` 要吵一句** ──
-    #   本动作**不套**"输出已存在即拒"（它就是批量写产物/原地转换，一刀切会把功能打死）；
-    #   `--backup` 才是它的保护手段（默认 on，且**只在原地转换时生效** —— 见 batch.h:175）。
-    #   判据两半：① 原地 + `--no-backup` ⇒ 必须打 warn；② 原地 + 默认(`--backup`) ⇒ 不许打。
-    #   ★ 口径说明与两种更硬的候选（要求显式 `--force` / 直接拒绝）见
-    #     `P17-35先查_convert-batch口径_20261010.md`，等拍板再动。
-    cb_dir = guard_dir / "cb_dir"
-    cb_dir.mkdir(parents=True, exist_ok=True)
-    (cb_dir / "a.txt").write_text("hello", encoding="ascii")
-    cb1, cbo1 = run([str(CLI_EXE), "--convert-batch", str(cb_dir), str(cb_dir),
-                       "utf-8", "utf-8", "--ext", ".txt", "--no-backup"])
-    _, cbo2 = run([str(CLI_EXE), "--convert-batch", str(cb_dir), str(cb_dir),
-                      "utf-8", "utf-8", "--ext", ".txt"])
-    if "CONVERTBATCH warn=原地改写且未开 --backup" not in cbo1:
-        fail("原地改写没开 `--backup` 必须吵一句（04 F-06 / --convert-batch）：没看到 warn 行；"
-             "实际输出 %r" % cbo1.strip()[:140])
-    elif "CONVERTBATCH warn=" in cbo2:
-        fail("默认（`--backup` 开）时不该吵（04 F-06 / --convert-batch）：实际 %r"
-             % cbo2.strip()[:140])
+    # ── ★★ P17-76（用户口径 P17-75）：提示只在「自动识别」这一处，且不阻塞 ──
+    #   口径（用户 2026-10-10 定）：自动识别（有备份）⇒ 文案①；自动识别（无备份）⇒ 文案②；
+    #   手动 ⇒ 一句都不打；「原地 + 无备份」也不再打（P17-35 那行已按口径删除）。
+    #   ★「畅通无阻」：打了这行警告也不改退出码、不拦执行 ⇒ 三次调用都必须 rc=0。
+    cb_dir2 = guard_dir / "cb_auto"
+    cb_dir2.mkdir(parents=True, exist_ok=True)
+    (cb_dir2 / "a.txt").write_text("hello", encoding="ascii")
+    cb_out = guard_dir / "cb_outdir"
+    a1, ao1 = run([str(CLI_EXE), "--convert-batch", str(cb_dir2), str(cb_out), "auto", "utf-8",
+                   "--ext", ".txt"])
+    a2, ao2 = run([str(CLI_EXE), "--convert-batch", str(cb_dir2), str(cb_dir2), "auto", "utf-8",
+                   "--ext", ".txt", "--no-backup"])
+    a3, ao3 = run([str(CLI_EXE), "--convert-batch", str(cb_dir2), str(cb_dir2), "utf-8", "utf-8",
+                   "--ext", ".txt", "--no-backup"])
+    W1 = "CONVERTBATCH warn=自动识别可能无法应对复杂情况而不建议使用。"
+    W2 = W1 + "如使用建议开启备份。"
+    if a1 != 0 or a2 != 0 or a3 != 0:
+        fail("自动识别的提示不能阻塞（P17-75 口径）：三次调用都应 rc=0，实际 %d/%d/%d"
+             % (a1, a2, a3))
+    elif W1 not in ao1:
+        fail("自动识别（有备份）没打文案①（P17-75）：实际 %r"
+             % ao1.strip()[:140])
+    elif W2 not in ao2:
+        fail("自动识别（无备份）没打文案②（P17-75）：实际 %r"
+             % ao2.strip()[:140])
+    elif "CONVERTBATCH warn=" in ao3:
+        fail("手动选择不该有任何 warn（P17-75）：实际 %r" % ao3.strip()[:140])
     else:
-        ok("原地改写无备份会被点名（04 F-06 口径件 `--convert-batch`：--no-backup⇒warn；"
-           "默认有备份⇒不吵）")
+        ok("自动识别才提示且不阻塞（P17-75：自动⇒文案①/②＋rc=0；手动⇒无 warn）")
 
     # ── ★★ P17-36（2026-10-10，审计 04 F-12 Info）：**注释里不许写死构建计数的当前值** ──
     #   事实：`version.h` 的注释曾写「（M0 尚为 0）」，而 `kBuildCount` 早就是三位数 ⇒

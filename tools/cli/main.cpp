@@ -4396,17 +4396,15 @@ int run_cli(const std::vector<std::string>& args) {
         //   源目录与输出目录指向同一处、且用户没要求备份时，明确告诉他"源文件会被覆盖"。
         //   两种更硬的候选口径（要求显式 `--force` / 直接拒绝）已写进
         //   `P17-35先查_convert-batch口径_*.md`，等拍板再动。
-        const auto normalize_path = [](const std::string& s) {
-            std::string t = xrkit::core::path_to_utf8(
-                std::filesystem::absolute(xrkit::core::path_from_utf8(s)).lexically_normal());
-            for (char& ch : t) {
-                ch = static_cast<char>(::tolower(static_cast<unsigned char>(ch)));
+        // ★★ 2026-10-10（P17-76，用户口径 P17-75）：**"原地 + 无备份"不再提示**（按口径三·补四删掉），
+        //   改在**"自动识别"**这一处提示 —— 与 GUI 同文案、**但不阻塞**（畅通无阻：不改退出码、不拦执行）。
+        //   口径：自动识别（有备份）⇒ 文案①；自动识别（无备份）⇒ 文案②；手动 ⇒ 一句都不打。
+        if (opt.source_encoding == "auto") {
+            std::cout << "CONVERTBATCH warn=自动识别可能无法应对复杂情况而不建议使用。";
+            if (!opt.backup) {
+                std::cout << "如使用建议开启备份。";
             }
-            return t;
-        };
-        if (!opt.backup && normalize_path(opt.source) == normalize_path(opt.output_dir)) {
-            std::cout << "CONVERTBATCH warn=原地改写且未开 --backup：源文件会被覆盖"
-                         "（强烈建议加 --backup，或把输出指到另一个目录）\n";
+            std::cout << "\n";
         }
         const xrkit::engine::text::BatchOutcome outcome =
             xrkit::engine::text::convert_batch(opt, {});
