@@ -2,6 +2,7 @@
 
 #include "xrkit/core/log.h"
 #include "xrkit/core/path.h"
+#include "xrkit/engine/fs/overlay.h"   // ★ P17-102（02 F-14）：遍历转调 fs::collect_tree()
 #include "xrkit/engine/text/encoding.h"
 
 // ★ PCRE2 要求先定义代码单元宽度（我们只用 8-bit），否则 pcre2.h 直接 #error
@@ -809,8 +810,11 @@ std::string to_utf8(const std::filesystem::path& p) {
 }
 
 struct Found {
-    std::string rel;   // UTF-8，'/' 分隔
-    std::filesystem::path full;
+    std::string rel;         // UTF-8，'/' 分隔（相对 root）
+    std::string source_utf8; // ★★ P17-102：**本机路径的 UTF-8 原样**（来自 `TreeItem::source_path`）
+                             //   —— 非 ASCII 路径**只许转换一次**，所以这里存的就是"那一次"的结果，
+                             //   下游**不许**再用 `path_to_utf8(path_from_utf8(...))` 绕一圈
+                             //   （那对非 ASCII 不是恒等，见 `collect` 里那段路标注释）。
 };
 
 // 1.x：`sorted(sp.rglob(pattern))`；PurePath 在 Windows 上按 **str(path).lower()** 比较。
@@ -819,27 +823,38 @@ struct Found {
 // ★★ 2026-10-10（P17-10，审计 02 F-02 Medium）：**遍历出错必须上报，不许静默 break**。
 //   事实（修前）：`for (...; it.increment(ec)) { if (ec) break; ... }` —— 遍历中途出错
 //   （权限/被独占/路径过长/符号链接环）就**直接跳出**：不计数、不报错、`st.ok` 仍为 true，
-//   调用方按 `ok` 报"完成"，而候选文件已被静默截断（`files/strings/chars` 偏小、
-//   `skipped` 也不记）。这与本仓在 `charset.cpp`、`package.cpp` 已确立的
-//   「枚举出错必须报错返 false」纪律自相矛盾（同工程两套口径）。
+//   调用方按 `ok` 报"完成"，而候选文件已被静默截断（`files/strings/chars` 偏小、`skipped` 也不记）。
+//   这与本仓在 `charset.cpp`、`package.cpp` 已确立的「枚举出错必须报错返 false」纪律自相矛盾。
 //   现在：`error` 出参带出**第一条**出错理由（含出错路径），并**整体失败**（返回空集）——
 //   宁可报"这批没做"，也不给一份"看着完成、其实少了一半"的台账。
+//
+// ★★ P17-102（审计 `02 F-14`）：**不再自己造第三份遍历** —— 转调
+//   `engine::fs::collect_tree()`（那份自带 `WalkReport` 台账，`text/batch.cpp` 已经这么做）。
+//   为什么必须收口（不只是"少写几行"）：
+//     · 本文件原来**又**写了一遍 `recursive_directory_iterator`（审计原话说这是"第 5 份"）；
+//     · 两份实现的**出错语义**会各自漂 —— `batch.cpp` 转调之后，编码转换那条路按台账报错，
+//       而本文件这条**自己那一套**：同一个"扫不动"在不同页面上给出不同形状的说法；
+//     · 排序也各自实现（这里是"ASCII 小写 rel + rel 字节"，`collect_tree` 是"相对路径 UTF-8 字节序"）
+//       ⇒ 候选顺序能在两条路上不一致，而"候选顺序"直接决定 `files/strings/chars/skipped` 的台账。
+//   现在：**遍历与排序都只有一份**；本文件只保留"后缀白名单"这一层自己的语义。
 std::vector<Found> collect(const std::filesystem::path& root, const std::vector<std::string>& exts,
                            std::string* error = nullptr) {
     std::vector<Found> out;
-    std::error_code ec;
-    for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end;
-         it.increment(ec)) {
-        if (ec) {
-            if (error != nullptr) {
-                *error = "目录遍历出错（拒绝边跑边猜：这一批不再继续）：" + ec.message() +
-                         "（错误码 " + std::to_string(ec.value()) + "）";
-            }
-            return {};
+    xrkit::engine::fs::WalkReport walk;
+    const std::vector<xrkit::engine::fs::TreeItem> items =
+        xrkit::engine::fs::collect_tree(to_utf8(root), &walk);
+    if (!walk.errors.empty()) {
+        // 台账里每条是"路径 | 原因" —— 直接把它当出错理由（含出错路径，排障时要的就是这个）
+        if (error != nullptr) {
+            *error = "目录遍历出错（拒绝边跑边猜：这一批不再继续）：" + walk.errors.front() +
+                     "（共 " + std::to_string(walk.errors.size()) + " 条）";
         }
-        std::error_code ec2;
-        if (!it->is_regular_file(ec2)) continue;
-        std::string ext = to_utf8(it->path().extension());
+        return {};
+    }
+    for (const xrkit::engine::fs::TreeItem& item : items) {
+        if (item.is_dir) continue;                       // 只要文件（与原来 `is_regular_file` 同）
+        const size_t dot = item.path.find_last_of('.');
+        std::string ext = (dot == std::string::npos) ? std::string() : item.path.substr(dot);
         std::transform(ext.begin(), ext.end(), ext.begin(),
                        [](unsigned char c) { return static_cast<char>(::tolower(c)); });
         bool wanted = false;
@@ -850,13 +865,19 @@ std::vector<Found> collect(const std::filesystem::path& root, const std::vector<
             }
         }
         if (!wanted) continue;
-        std::error_code ec3;
-        const std::filesystem::path rel = std::filesystem::relative(it->path(), root, ec3);
-        if (ec3) continue;
-        std::string rel_utf8 = to_utf8(rel);
-        std::replace(rel_utf8.begin(), rel_utf8.end(), '\\', '/');
-        out.push_back(Found{rel_utf8, it->path()});
+        Found found;
+        found.rel = item.path;          // 已经是相对 root、'/' 分隔
+        // ★ `collect_tree` 对**文件**条目总会给本机路径（`TreeItem::source_path` 只有目录为空）
+        //   ⇒ 直接把它**原样**存下（它就是"那一次" UTF-8 转换的结果）。
+        //   ★ 这里**不许**自己 `root / rel` 拼一遍（`rel` 是相对路径 ⇒ 会拼出"根套根"的假路径）。
+        found.source_utf8 = item.source_path;
+        out.push_back(std::move(found));
     }
+    // ★★ **顺序仍要按本页的口径排**（P17-102 一度把这段删了 ⇒ 黄金语料立刻抓到）：
+    //   `collect_tree` 的顺序是"相对路径 UTF-8 字节序"，而本页（P17-44，审计 01 F-10）的口径是
+    //   **Unicode 小写折叠**后比较（1.x 的 `str(path).lower()`）—— 两者在 `Б.xml`(D0 91) 与
+    //   `а.xml`(D0 B0) 上**次序不同**（字节序：Б 在前；Unicode 折：а 在前）。
+    //   候选顺序决定 `files/strings/chars/skipped` 台账与 XML 里的条目次序 ⇒ 不能少这一排。
     std::sort(out.begin(), out.end(), [](const Found& a, const Found& b) {
         const std::string la = path_lower(a.rel);
         const std::string lb = path_lower(b.rel);
@@ -1134,7 +1155,14 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
             continue;
         }
 
-        const std::string src_path = to_utf8(f.full);
+        // ★★ P17-102（审计 `02 F-14`）踩到的坑（**留下当路标**）：
+        //   `TreeItem::source_path` 是 `path_to_utf8(it->path())` 的**结果**；若再把它
+        //   转回 `path` 又经 `path_to_utf8` 转出去（**多转两次**），对非 ASCII 文件名**不是恒等**
+        //   —— 黄金语料的 `Б.xml`/`а.xml` 会变成 `袘.xml`/`邪.xml` ⇒ 打不开 ⇒ 每个文件都被
+        //   记成 `skipped`（实测 hex：`E8 A2 98` / `E9 82 AA`）。
+        //   ⇒ 非 ASCII 路径**只许转换一次**：直接用 `Found::rel_utf8`（下面那个字段），
+        //     或直接用 `item.source_path`，**不再经过任何 `path_to_utf8`**。
+        const std::string src_path = f.source_utf8;
         const DecodeResult dec = read_text_file(src_path);
         if (!dec.ok) {
             st.skipped.push_back(f.rel + "：" + dec.error);
@@ -1148,7 +1176,7 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
             cands = config_xml_candidates(whole);
             out_text = whole;
         } else {
-            const bool file_is_ltx = ascii_lower(to_utf8(f.full.extension())) == ".ltx";
+            const bool file_is_ltx = ascii_lower(f.rel.substr(f.rel.find_last_of('.'))) == ".ltx";
             cands = file_is_ltx ? ltx_candidates(dec.text) : script_candidates(dec.text);
             out_text = dec.text;
         }
@@ -1160,7 +1188,7 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
             size_t order;
         };
         std::vector<Repl> repls;
-        const bool is_ltx = !gameplay && ascii_lower(to_utf8(f.full.extension())) == ".ltx";
+        const bool is_ltx = !gameplay && ascii_lower(f.rel.substr(f.rel.find_last_of('.'))) == ".ltx";
         for (const std::string& raw : cands) {
             // ★ 三分支的"内层文本"各不相同（1.x 原文）：
             //   gameplay：候选即内容；script：候选是**带引号字面量**，判定/入库/计数都用去引号后的；

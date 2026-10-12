@@ -2761,7 +2761,7 @@ def step_shell_smoke(release: bool) -> None:
     #   · 汉化包页要"从系统字体里找" ⇒ 写死 `C:\Windows\Fonts` 就丢了 `%SystemRoot%`。
     # 这五条锁各自**都能判红**（删掉共用件、把实现抄回页面、把路径写死，立刻红）。
     #
-    # ① 递归遍历件**全仓库恰好那 4 份**（都是引擎里既有的：charset / overlay×2 / extract）——
+    # ① 递归遍历件**全仓库恰好那几份**（都是**登记过、且各自能说出"为什么不能复用"**的）——
     #    多出第 5 份就红。判据只认**活代码**（注释里为了讲清口径提到这个名字不算违规）。
     hits = []
     for src in sorted((ROOT / "src").rglob("*.cpp")):
@@ -2773,10 +2773,15 @@ def step_shell_smoke(release: bool) -> None:
     #   本批把 XML 页"列目录"从页面（原用 Qt 的 `QDirIterator`）下沉到引擎
     #   `engine/xml/dirdiff.cpp` ⇒ 引擎侧 +1 份；**外壳侧仍是 0 份**，正是这条锁的本意
     #   （遍历只许住引擎、页面不许自己抄一份）。清单化之后：**未登记的新增照样立刻红**。
+    # ★★ P17-102（审计 `02 F-14`）：`src/engine/text/extract.cpp` **从这份清单里删掉**了 ——
+    #   它已转调 `fs::collect_tree()`（候选收集那一类**只剩一份**；判据在门禁步 `walk-one`）。
+    #   剩下的每一份都**不是**"收集候选文件"那一类，各自有理由（登记在 `walk-one` 的 ALLOWED 表里）：
+    #     · charset：要"按文件名升序的 .xml"（`collect_tree` 是相对路径字节序，会改语料次序）；
+    #     · overlay×2：`collect_tree` 本体 ＋ 封包收集 `collect_pack_files`（另一件事）；
+    #     · dirdiff：目录对比要**两侧各自的错误集合**（出错后继续收集，不是"整批不做"）。
     expected_iter = {
         "src/engine/font/charset.cpp": 1,
         "src/engine/fs/overlay.cpp": 2,
-        "src/engine/text/extract.cpp": 1,
         "src/engine/xml/dirdiff.cpp": 1,   # ← P11b 新登记：目录对比的遍历（下沉自 xml_page）
     }
     shell_iter = [p for p, _ in hits if p.startswith("src/shell/")]
@@ -5441,6 +5446,36 @@ def step_version_identity(release: bool) -> None:
         fail("版本身份有判据不成立（见上）")
 
 
+def step_walk_one(release: bool) -> None:
+    """★★ P17-102（审计 `02 F-14`）：**候选收集的目录遍历必须转调 `fs::collect_tree`**。
+
+    事实（修前）：`src/engine/text/extract.cpp` 自己又写了一份 `recursive_directory_iterator`
+    （审计记成"第 5 份"），而 `src/engine/text/batch.cpp` 早已转调 `fs::collect_tree(root, &walk)`。
+    为什么必须收口（不只是少写几行）：两套遍历的**出错语义**会各自漂 —— 一边按 `WalkReport`
+    逐条记账、一边自己拼 `ec.message()` ⇒ 同一个"扫不动"在两个页面上说法不同；排序也各自实现。
+
+    判据 `tests/check_walk_single_source.py`（**8 个反例自证**）：
+    ① `extract.cpp` / `batch.cpp` 必须用 `collect_tree` ＋ `WalkReport`；
+    ② `extract.cpp` 的出错路径必须把 `walk.errors` 带出去（零静默）；
+    ③ **新**自己写遍历的文件必须在登记清单里（checked-in 的 `ALLOWED`，含"为什么不能复用"）。
+    独立成步、静态、不依赖构建产物。
+    """
+    say("[walk-one] P17-102：目录遍历只许有一份实现（审计 `02 F-14`）")
+    script = ROOT / "tests" / "check_walk_single_source.py"
+    if not require_repo_file(script, "目录遍历收口核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("WALK-ONE") or s.startswith("✓ 反例自证") or s.startswith("✗ ")
+                or s.startswith("✓ 出现遍历") or s.startswith("✓ `text/")):
+            say("  " + s[:170])
+    if rc == 0 and "WALK-ONE ok" in out:
+        ok("候选收集的遍历都转调 `collect_tree`（新写一份会红：登记清单外不许自建遍历）")
+    else:
+        fail("目录遍历又分家了（见上）—— 出错语义与排序会各自漂")
+
+
 def step_sqfs_superblock(release: bool) -> None:
     """★★ P17-100（审计 `01 F-17`）：SquashFS **超块版本/块对数**与**元数据块长度**必须有校验。
 
@@ -5517,6 +5552,9 @@ STEPS = [
     # ★★ P17-100（审计 `01 F-17`）：SquashFS 超块版本/块对数 ＋ 元数据块长度的读侧校验。
     #   需要 CLI 产物；自带夹具（现打镜像）。被 `--only` 过滤时进 UNCOVERED。
     ("sqfs-superblock", step_sqfs_superblock),
+    # ★★ P17-102（审计 `02 F-14`）：候选收集的目录遍历必须转调 `fs::collect_tree`。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
+    ("walk-one", step_walk_one),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。
