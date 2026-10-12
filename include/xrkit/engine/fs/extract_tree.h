@@ -53,6 +53,14 @@ struct OutPathResult {
 //      跨盘/盘符相对路径在这一步被拦）
 OutPathResult safe_out_path(const std::string& out_dir, const std::string& rel);
 
+// ★★ P17-103（审计 `01 F-06`）：落盘前的**真实文件系统**复核（反对软链接跟随）。
+// `safe_out_path` 只看**名字**（`..`／盘符／冒号/ADS 那些靠上面的 ⑤ 拦）；
+// 这一条看**盘**：从输出根到落点父目录逐段查，任何一段是软链接/重解析点、或不是目录，
+// 就返回**非空理由**（调用方把它记进 `failures` —— 零静默）；返回空串表示可以写。
+// ★ 落点**自己**是软链接时也拒绝（跟写＝写到根外；原子重命名＝替换那个链接、另一种静默）。
+// ★ 判据：`tests/check_extract_symlink_guard.py`（门禁步 `extract-symlink`，真造 junction 试）。
+std::string refuse_if_link_traversed(const std::string& out_root, const std::string& target_utf8);
+
 // ── 前端共用的**纯路径逻辑**（★ 架构红线：GUI 的功能 CLI 必须全有 ⇒ 这类逻辑只许一份）──
 //
 // 用户 2026-10-04 原话：「GUI 的功能，CLI 肯定要全部拥有啊。哪有 GUI 的细节功能比 CLI 还多的。」

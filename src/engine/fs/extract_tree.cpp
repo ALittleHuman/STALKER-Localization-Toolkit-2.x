@@ -11,11 +11,43 @@
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <string>
+#include <vector>
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 namespace xrkit::engine::fs {
 namespace {
 
 namespace stdfs = std::filesystem;
+
+// ★★ P17-103（审计 `01 F-06`）：**这是不是"会跟出去"的那种链接**。
+//   `std::filesystem::is_symlink()` 在 Windows 上**看不见 junction**（目录联接的重解析点）——
+//   实测：`mklink /J` 造出来的目录，`symlink_status()` 报的是 `directory`。
+//   ⇒ 在 Windows 上用 **`FindFirstFileW`**：它一次调用就同时给出属性与**重解析标签**
+//     （`dwReserved0`），并排除 Data Dedup / OneDrive / WIM 那类"不是链接的重解析点"
+//     （它们不改变落点位置，误判会把正常目录当链接拒掉）。
+//     ★ 走 `GetFileAttributesW` + `CreateFileW`/`GetFileInformationByHandleEx` 那一版
+//       在本机**实测判不出来**（junction 被判成 0，见 P17-103 的探针记录）；
+//       而且**尾巴上的分隔符**会让 `FindFirstFileW` 失败 ⇒ 先剥掉。
+bool is_link_or_junction(const stdfs::path& p) {
+#if defined(_WIN32)
+    std::wstring w = p.wstring();
+    while (!w.empty() && (w.back() == L'\\' || w.back() == L'/')) w.pop_back();
+    if (w.empty()) return false;
+    WIN32_FIND_DATAW data{};
+    HANDLE h = ::FindFirstFileW(w.c_str(), &data);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    ::FindClose(h);
+    if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return false;
+    return data.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT ||
+           data.dwReserved0 == IO_REPARSE_TAG_SYMLINK;
+#else
+    return stdfs::is_symlink(stdfs::symlink_status(p));
+#endif
+}
 
 constexpr const char* kRejectEmpty = "条目路径为空（或不是字符串）";
 constexpr const char* kRejectAbsolute = "绝对路径 / UNC，拒绝写出";
@@ -148,6 +180,69 @@ bool is_within(const stdfs::path& root, const stdfs::path& joined) {
 }
 
 }  // namespace
+
+// ── ★★ P17-103（审计 `01 F-06`）：落盘前的**真实文件系统**复核（反对软链接跟随）──────────
+// `safe_out_path` 的 `is_within` 是**词法**判断 —— 它拦得住名字里的逃逸（`..`／盘符／冒号／ADS），
+// 但拦不住**盘上已经存在的软链接/重解析点**：把 `<输出根>/<某段>` 预先做成指向别处的
+// junction/symlink，词法复核照样通过，而写入会**跟着链接落到根外**（静默覆盖无关文件）。
+//
+// 口径（与 `safe_out_path` 的"兜底复核"是同一件事的两半：**一个看名字、一个看盘**）：
+// 从**输出根**到**落点的父目录**逐段复核，任何一段是软链接/重解析点、或不是目录，
+// 就拒写这一条并把理由交回去（调用方记进 `failures` —— **零静默**，不许"跳过当成功"）。
+//
+// ★ 只用 `lexically_relative` ＋ 单段 `symlink_status()`：**不**做 `weakly_canonical()` 那种
+//   逐段真实化解析（那是 O(深度²) 的 syscall，且对**不存在**的段行为有坑）。
+// ★ 落点**自己**已经存在且是软链接时也拒 —— 两种处置都不完美（跟着写＝写到根外；
+//   原子重命名＝**替换**那个链接、变成另一种静默），所以选"明确拒绝"。
+std::string refuse_if_link_traversed(const std::string& out_root, const std::string& target_utf8) {
+    std::error_code ec;
+    const stdfs::path root =
+        stdfs::absolute(xrkit::core::path_from_utf8(out_root), ec).lexically_normal();
+    const stdfs::path target =
+        stdfs::absolute(xrkit::core::path_from_utf8(target_utf8), ec).lexically_normal();
+    const stdfs::path rel = target.parent_path().lexically_relative(root);
+    if (rel.empty() && target.parent_path() != root) {
+        return "落盘前复核：落点父目录不在输出根下（词法复核没拦住，这里再拦一次）";
+    }
+    // ★ **输出根本身**也要查：用户完全可能把输出目录做成一个 junction/symlink
+    //   （本判据的 ② 就是这一格 —— 我第一版漏了这一步，探针当场把文件写到根外）。
+    {
+        std::error_code root_ec;
+        const stdfs::file_status root_status = stdfs::symlink_status(root, root_ec);
+        if (is_link_or_junction(root)) {
+            return "拒绝落盘：**输出根**本身是软链接/重解析点（" +
+                   xrkit::core::path_to_utf8(root) + "）—— 会写到根外，本工具不跟";
+        }
+    }
+    // 逐段拼（**不用** `operator/`：Windows 上 rhs 带根名会替换整条路径 —— 与 `safe_out_path` 同理）
+    stdfs::path cur = root;
+    for (const stdfs::path& part : rel) {
+        const std::string name = part.generic_string();
+        if (name.empty() || name == ".") continue;
+        if (name == "..") {
+            return "落盘前复核：落点父目录相对输出根发生了上跳（`..`）";
+        }
+        cur /= part;
+        std::error_code seg_ec;
+        const stdfs::file_status status = stdfs::symlink_status(cur, seg_ec);
+        if (is_link_or_junction(cur)) {
+            return "拒绝落盘：输出目录里有**软链接/重解析点**（" +
+                   xrkit::core::path_to_utf8(cur) + "）—— 会写到根外，本工具不跟";
+        }
+        // ★ 只在"这段确实存在"时才要求它是目录：**不存在**的段是"等会儿要建的普通目录"，
+        //   不能因为没有它就把正常落盘判成拒绝（那是把守卫变成误伤）。
+        if (!seg_ec && stdfs::exists(status) && !stdfs::is_directory(status)) {
+            return "拒绝落盘：输出路径上有一段不是目录（" + xrkit::core::path_to_utf8(cur) + "）";
+        }
+    }
+    std::error_code leaf_ec;
+    const stdfs::file_status leaf = stdfs::symlink_status(target, leaf_ec);
+    if (is_link_or_junction(target)) {
+        return "拒绝落盘：落点本身是**软链接/重解析点**（" +
+               xrkit::core::path_to_utf8(target) + "）—— 本工具不跟";
+    }
+    return {};
+}
 
 OutPathResult safe_out_path(const std::string& out_dir, const std::string& rel) {
     OutPathResult result;
@@ -375,6 +470,19 @@ ExtractTreeResult extract_tree(const std::string& image_path, const std::string&
         // 6.8：空文件是**合法条目** —— 写出 0 字节并计入成功。
         //（1.x 的旧代码 `rc == 0 and r.stdout` 把空文件当成"解不出来"，已修。）
         std::string error;
+        // ★★ P17-103（审计 `01 F-06`）：**落盘前复核"真实文件系统"** —— `safe_out_path` 的
+        //   `is_within` 是**词法**判断（`lexically_normal` ＋ 逐段比），它拦得住 `..`／盘符／
+        //   冒号那些**名字里**的逃逸，但拦不住**盘上已经存在的软链接/重解析点**：
+        //   把 `<输出根>/<某段>` 预先做成指向别处的 junction/symlink，词法复核照样通过，
+        //   而 `write_file_atomic` 会**跟着链接写到根外**（静默覆盖无关文件）。
+        //   口径（与 `safe_out_path` 那句"兜底复核"是同一件事的两半：一个看名字、一个看盘）：
+        //   写到某个落点之前，从**输出根**到**落点的父目录**逐段查 —— 任何一段是软链接/重解析点
+        //   就**拒写这一条**并把理由记进 `failures`（**零静默**：不许"跳过就当成功"）。
+        if (const std::string link_reason = refuse_if_link_traversed(out_root, target.path);
+            !link_reason.empty()) {
+            result.failures.push_back({entry->path, link_reason});
+            continue;
+        }
         // 6.9 原子写：默认"边写边算哈希"自校验；`options.verify_readback` 才走读回逐字节复核。
         const core::WriteVerify verify = options.verify_readback ? core::WriteVerify::Readback
                                                                 : core::WriteVerify::Streamed;
@@ -501,6 +609,15 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
             continue;
         }
         std::string write_error;
+        // ★★ P17-103（审计 `01 F-06`）：**这一条分支也要有**（DbEntry 批量解包那条路）。
+        //   ★ 探针第一次跑"输出根是 junction"时**判定仍绿** —— 就是因为我只加在了上面
+        //     SquashFS 那条分支，而 `--unpack-package` 走的是**这一条**。
+        //     ⇒ 两个分支必须逐条同口径（本仓已有多次"漏一个分支等于锁形同虚设"的教训）。
+        if (const std::string link_reason = refuse_if_link_traversed(out_root, safe.path);
+            !link_reason.empty()) {
+            result.failures.push_back({entry.path, link_reason});
+            continue;
+        }
         // 与 SquashFS 分支同一条纪律（6.9）：默认流式哈希自校验，开关打开才读回。
         const core::WriteVerify verify = options.verify_readback ? core::WriteVerify::Readback
                                                                 : core::WriteVerify::Streamed;
