@@ -477,13 +477,19 @@ def _run_off_ui_thread(api, panel, title, show, heavy):
     if panel is None:
         # 没有任务壳（**无界面进程**）⇒ 如实退回同步执行，**不假装**跑了 worker。
         #   （这条路径由 `--py-plugin-call` 的无界面调用走到；判据只对"有壳"那条下结论。）
+        # ★★ 2026-10-12 复审计抓到的 [High]：这两处原来写的是 `show_holder["fn"]` —— 那是
+        #   **上一版实现残留的变量名**，本函数签名里只有 `show`；我上一轮用脚本化替换改这个
+        #   分支时**只改了 `_on_message` 里的那处、漏了这里两处**
+        #   ⇒ 无界面进程里点长任务按钮会 `NameError` 崩。
+        #   ★ 教训（已写进判据）：**静态判据必须做名字解析**（`compile()` / 符号表），
+        #     光查"某串在不在"抓不到这种"名字根本不存在"的错 —— 这条正是从那里过去的。
         text = heavy(lambda _t: None)
-        if show_holder["fn"] is not None and text is not None:
-            show_holder["fn"](str(text))
+        if show is not None and text is not None:
+            show(str(text))
         return False
     if not api.ui.task_run(panel, title, worker):
-        if show_holder["fn"] is not None:
-            show_holder["fn"]("已有任务在跑，请等它结束或先取消")
+        if show is not None:
+            show("已有任务在跑，请等它结束或先取消")
         return False
     return True
 

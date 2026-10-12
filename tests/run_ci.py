@@ -5480,6 +5480,67 @@ def step_python_restart(release: bool) -> None:
         fail("宿主重启没有被明确拒绝（见上）—— 半死宿主又回来了")
 
 
+def step_generated_drift(release: bool) -> None:
+    """★★ P17-109（复审计 [Medium]）：**生成物必须与生成器逐字节一致**。
+
+    事实：P17-24（`04 F-07`）把收紧后的措辞**手改进生成物** `third_party/SOURCES.md`，
+    **忘了改生成器**（`tools/fetch_third_party.py:285` 还是旧句）⇒ 谁重跑一次生成器就把更正
+    **静默抹掉**（实测：生成器给 46 行、库里 47 行，首差在第 5 行）。
+    ★ 本批修它时**我自己又踩了一次**（先跑生成器、后改生成器）⇒ 靠"记得"不行，必须有锁。
+
+    判据 `tests/check_generated_drift.py`：**真调一次生成器**（只用本地锁、不联网）把
+    `SOURCES.md` 重写一遍，与库里那份**逐字节比**；**无论结果都恢复工作区**。
+    独立成步。退出码：0=一致 / 1=漂了 / 2=缺前提。
+    """
+    say("[gen-drift] P17-109：生成物必须与生成器逐字节一致（复审计 [Medium]，`04 F-07` 漂移）")
+    script = ROOT / "tests" / "check_generated_drift.py"
+    if not require_repo_file(script, "生成物漂移核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("GEN-DRIFT") or s.startswith("✓ 反例自证") or s.startswith("✗ ")
+                or s.startswith("库里") or s.startswith("（已恢复")):
+            say("  " + s[:180])
+    if rc == 0 and "GEN-DRIFT ok" in out:
+        ok("`third_party/SOURCES.md` 与生成器逐字节一致（手改生成物这条路过不去了）")
+    elif rc == 2:
+        say("  ⚠ 缺生成器/锁/生成物 —— 本步记为 skip")
+        ok("生成物漂移判据在本环境不适用（已如实 skip）")
+    else:
+        fail("生成物与生成器漂了（见上）—— 改生成器后重跑，别手改生成物")
+
+
+def step_python_names(release: bool) -> None:
+    """★★ P17-108（复审计 [Medium] #5）：**夹scripts/夹具页的 Python 名字必须先解析得住**。
+
+    来源（复审计）：判据不看 Python 名字解析 ⇒ `plugins/toolchain_page.py` 的
+    `_run_off_ui_thread` 用了**没定义的** `show_holder`（签名里只有 `show`）**一直没被发现**，
+    直到重复点长任务按钮才 `NameError` 崩（[High]）。我自己的 `check_toolchain_worker.py`
+    只查"`task_run` 这串在不在"—— 那种判据**抓不到"名字根本不存在"**。
+
+    判据 `tests/check_python_names.py`（**5 个反例自证**，其中一个就是那条 [High] 的最小复现）：
+    ① `compile()` 过语法；② `symtable` 里"被当全局用却没有定义"的名字 ⇒ 红；
+    ③ 未绑定的自由变量 ⇒ 红（**正常闭包引用不算**，靠"祖先作用域是否绑过"判）。
+    ★ 边界如实打印：动态 `setattr/getattr`、`eval`、跨文件注入的名字**扫不到**。
+    独立成步、静态（除 `compile`/`symtable` 外不依赖构建产物）。
+    """
+    say("[py-names] P17-108：夹具页/判据脚本的 Python 名字必须解析得住（复审计 [Medium] #5）")
+    script = ROOT / "tests" / "check_python_names.py"
+    if not require_repo_file(script, "Python 名字解析核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("PY-NAMES") or s.startswith("✓ 反例自证") or s.startswith("✗ ")
+                or s.startswith("✓ 85") or s.startswith("✓ 8") or s.startswith("★ 边界")):
+            say("  " + s[:180])
+    if rc == 0 and "PY-NAMES ok" in out:
+        ok("85 个脚本的名字引用都解析得住（写错变量名这一类不再漏过去）")
+    else:
+        fail("有脚本存在「名字不存在」的引用（见上）")
+
+
 def step_toolchain_worker(release: bool) -> None:
     """★★ P17-107（审计 `05 PLG-05`，★ 用户 2026-10-12 拍板**口径 A**）：
     `toolchain_page.py` 的六段引擎重活必须经任务壳 worker（**产品代码零改动**）。
@@ -5710,6 +5771,12 @@ STEPS = [
     # ★★ P17-107（审计 `05 PLG-05`，口径 A）：夹具页六段引擎重活必须经任务壳 worker。
     #   需要 CLI 产物（跑 thread_probe）；被 `--only` 过滤时进 UNCOVERED。
     ("toolchain-worker", step_toolchain_worker),
+    # ★★ P17-108（复审计 [Medium] #5）：夹具页/判据脚本的 **Python 名字解析**必须过。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
+    ("py-names", step_python_names),
+    # ★★ P17-109（复审计 [Medium]）：生成物必须与生成器逐字节一致（`04 F-07` 的漂移）。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED。会真跑一次生成器（不联网）再恢复工作区。
+    ("gen-drift", step_generated_drift),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。

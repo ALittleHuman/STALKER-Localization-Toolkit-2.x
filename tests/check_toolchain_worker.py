@@ -149,9 +149,29 @@ def main() -> int:
         want(True, "界面侧恰好 6 处调用（六段重活各一处）")
         want(True, "`HEAVY_STEPS` 六段齐全")
 
+    # ★★ 2026-10-12 复审计 [High] 的**回归锁**：无任务壳那条同步路**真跑一遍**。
+    #   修前那里写着上一版残留的 `show_holder` ⇒ 一点长任务按钮就 `NameError`；
+    #   而"AST 查某串在不在"**抓不到"名字根本不存在"** ⇒ 这条必须**真执行**。
+    print("-- ①-b 无任务壳那条同步路（真跑；复审计 [High] 的回归锁）--")
+    sync_script = ROOT / "tests" / "check_toolchain_sync_path.py"
+    if not sync_script.is_file():
+        want(False, "缺同步路回归锁脚本", str(sync_script))
+    else:
+        p = subprocess.run([sys.executable, str(sync_script)], capture_output=True, timeout=300)
+        text = ((p.stdout or b"") + (p.stderr or b"")).decode("utf-8", "replace")
+        line = [l for l in text.splitlines() if l.startswith("SYNC-PATH")]
+        want(p.returncode == 0 and line and "ok" in line[-1],
+             "无任务壳那条路不再 NameError（结果如实落回调）",
+             (line[-1][:120] if line else text.strip().splitlines()[-1][:120] if text.strip() else "无输出"))
+        for l in text.splitlines():
+            if "NameError" in l:
+                print("     " + l.strip()[:150])
+
     print("-- ② 引擎可调用性（真跑 thread_probe）--")
     if not cli.is_file():
-        print("   ⚠ 缺构建产物 %s ⇒ 跳过这一半（外部前提）" % cli)
+        # ★★ 2026-10-12 复审计 [Medium]：这里原来只"跳过这一半"就**当绿** —— 而那一步的名字里
+        #   写着"（真跑）" ⇒ **假绿形状**（缺产物看着像通过）。改成：缺产物 ⇒ **红**。
+        want(False, "缺构建产物 ⇒ 这一半**没跑**（不许当绿）", str(cli))
     else:
         rc, text, lines = runtime_probe(cli)
         if rc != 0 or not lines:
