@@ -5446,6 +5446,45 @@ def step_version_identity(release: bool) -> None:
         fail("版本身份有判据不成立（见上）")
 
 
+def step_extract_symlink(release: bool) -> None:
+    """★★ P17-103（审计 `01 F-06`）：解包落盘**不许跟着软链接/重解析点走**。
+
+    修前：落点安全性只有 `safe_out_path()` 的**词法**复核（`lexically_normal` ⇒ `is_within`），
+    写盘前**没有**软链接/重解析点复核 ⇒ 把输出树里的一段做成指向别处的 junction，
+    写入会**跟着链接落到根外**（静默覆盖无关文件）。
+
+    判据 `tests/check_extract_symlink_guard.py`（**真造 junction 试**，不是只读源码）：
+    ① 基线：普通输出目录 ⇒ 解包成功、产物在输出目录里；
+    ② 把**落点父目录链上的那一段**（名字＝包壳名，即镜像文件名去扩展名）做成 junction ⇒
+       必须**拒写**（rc≠0 ＋ `fail …`/`failed=1` ＋ 理由里点名软链接/重解析点）
+       且**外部目录一个字节都不许多**；
+    ③ 已知边界如实记录（链接在**用户给的路径**上时 `out_root` 已在其内 ⇒ 看不到，
+       要闭合得改 `extract_tree` 出参口径＝接口变更，先拍板）。
+    非 Windows / 造不出 junction ⇒ **skip（rc=2）**，不假装判过。需要 CLI 产物。
+    """
+    say("[extract-symlink] P17-103：解包落盘不许跟着软链接/重解析点走（审计 `01 F-06`）")
+    script = ROOT / "tests" / "check_extract_symlink_guard.py"
+    if not require_repo_file(script, "解包软链接守卫判据"):
+        return
+    cli = CLI_EXE
+    if not cli.is_file():
+        fail("缺构建产物 %s（先跑 build 步）" % cli)
+        return
+    rc, out = run([sys.executable, str(script), str(cli)], timeout=1800)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if s.startswith("EXTRACT-SYMLINK") or s.startswith("✓ ") or s.startswith("✗ ") \
+                or s.startswith("   ✓") or s.startswith("   ✗") or s.startswith("   ·"):
+            say(("  " + s)[:180])
+    if rc == 0 and "EXTRACT-SYMLINK ok" in out:
+        ok("链接段上的落盘被拒（rc≠0 ＋ 台账有理由）且外部目录零变化")
+    elif rc == 2:
+        say("  ⚠ 缺外部前提（非 Windows / 造不出 junction）—— 本步记为 skip")
+        ok("解包软链接判据在本环境不适用（已如实 skip）")
+    else:
+        fail("解包落盘还在跟着软链接走（见上）")
+
+
 def step_walk_one(release: bool) -> None:
     """★★ P17-102（审计 `02 F-14`）：**候选收集的目录遍历必须转调 `fs::collect_tree`**。
 
@@ -5555,6 +5594,9 @@ STEPS = [
     # ★★ P17-102（审计 `02 F-14`）：候选收集的目录遍历必须转调 `fs::collect_tree`。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
     ("walk-one", step_walk_one),
+    # ★★ P17-103（审计 `01 F-06`）：解包落盘不许跟着软链接/重解析点走。
+    #   需要 CLI 产物；自带夹具（真造 junction）。被 `--only` 过滤时进 UNCOVERED。
+    ("extract-symlink", step_extract_symlink),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。

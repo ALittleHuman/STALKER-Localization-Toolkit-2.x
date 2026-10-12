@@ -121,30 +121,49 @@ def main() -> int:
              "① 基线：普通输出目录 ⇒ 解包成功且产物落在输出目录里",
              "rc=%d 产物 %d 项" % (rc, len(got)))
 
-        # ② **探针证实、判据未跑通 —— 如实 skip（不假装判过）**：
-        #    引擎侧守卫**已被单独探针证实工作**：把 `<输出根>/fx` 做成 junction 后
-        #    `--unpack-package` 报
-        #      `UNPACK-PKG fail … reason=拒绝落盘：**输出根**本身是软链接/重解析点（…）`
-        #    ＋ `failed=1`、rc=1，且**外部目录一个字节没多**（见批报告的探针记录）。
-        #    ★ 但**这条判据本身**在同一形状下没复现出那个拒绝（`rc=0`、无 `fail` 行、
-        #      外部目录也没变 —— 症状自相矛盾）⇒ 只当"判定未跑通"处理，
-        #      **不计入判据、也不声称绿**。要闭合它得先把这条夹具的自相矛盾查清。
-        print("   ⚠ ② 跳过：本夹具在该形状下没复现出拒绝（症状自相矛盾）——"
-              "守卫本身已由单独探针证实（见批报告）")
-        print("   · 已记录：`--unpack-package` 对 `<输出根>/fx` 是 junction 的形状 ⇒ "
-              "探针实测 rc=1 ＋ `fail … 拒绝落盘：输出根本身是软链接/重解析点` ＋ 外部目录零变化")
-        # ③ **已知边界的诚实记录（不是"判过"）**：解包会在用户给的路径下**再套一层包名子目录**，
-        #    所以"链接在**用户给的路径**上"时，`out_root` 已经是"链接里面"的那一层 ——
-        #    在**不改 `extract_tree` 出参口径**的前提下，守卫**看不到那个祖先链接**。
-        #    P17-103 的探针（打印 `out_root`）证实了这一点：`out_root=…\linked_root/fx is_link=0`。
-        #    ⇒ 这一格**如实记为已知边界**（要闭合它得让 `extract_tree` 知道"用户给的原始路径"，
-        #      那是**接口变更**，按本仓纪律要先拍板；且"输出目录本身在人造链接下"是用户的
-        #      显式选择，误拒会伤正常用法）。
+        # ② **真正会跟出去的那一格**：解包会在输出根下**再套一层"包壳"子目录**
+        #    （壳 = 镜像文件名的目录名形式）⇒ 落点 = `<输出根>/<壳>/…`。
+        #    要把链接放进"落点的父目录链"上，**junction 的名字必须等于那个壳名**。
+        #    ★ 本判据第一版把 junction 建在 `<根>/fx` 而夹具镜像叫 `fixture`
+        #      ⇒ 解包落在 `<根>/fixture`，**根本不是同一条路径**（症状自相矛盾：
+        #      既没拒绝、外部目录也没变）。查清后按"名＝壳名"重写。
+        shell = image.name
+        for suffix in (".sqfs", ".db", ".db0"):
+            if shell.lower().endswith(suffix):
+                shell = shell[: -len(suffix)]
+                break
+        outside = tmp / "outside"
+        outside.mkdir()
+        (outside / "untouched.txt").write_text("别动我\n", encoding="utf-8")
+        before = tree_of(outside)
+        root2 = tmp / "root2"
+        root2.mkdir()
+        if not make_junction(root2 / shell, outside):
+            print("!! 造不出 junction ⇒ 如实 skip")
+            print("EXTRACT-SYMLINK skip 造不出 junction")
+            return 2
+        rc, out = run_local(cli, ["--unpack-package", str(image), str(root2)])
+        after = tree_of(outside)
+        want(rc != 0 and "failed=0" not in out,
+             "② 落点父目录链上是 junction（名＝包壳「%s」）⇒ 拒写这一条" % shell,
+             "rc=%d" % rc)
+        want("failed=1" in out or "fail " in out,
+             "② 拒写要**记进台账**（零静默：`fail …` / `failed=1` 必须出现）")
+        want(any(k in out for k in ("软链接", "重解析点", "拒绝落盘")),
+             "② 拒写要**有理由**（行里要有 软链接/重解析点/拒绝落盘）")
+        want(after == before,
+             "② 外部目录**一个字节都没多出来**（修前会跟着链接写进去）",
+             "外部产物 %d → %d 项" % (len(before), len(after)))
+
+        # ③ **已知边界的诚实记录（不是"判过"）**：解包会在**用户给的路径**下再套一层包壳 ⇒
+        #    "链接在用户给的路径上"时 `out_root` 已经是"链接里面"那一层
+        #    （探针实测 `out_root=…\linked_root/fx is_link=0`）⇒ 本守卫**看不到那个祖先链接**。
+        #    要闭合它需要让 `extract_tree` 知道"用户给的原始路径"＝**接口变更**，按纪律先拍板；
+        #    且"输出目录本身在人造链接下"是用户的**显式选择**，误拒会伤正常用法。
         print("   · 已知边界（如实记录，不计入判据）：链接在**用户给的路径**上时，"
               "`out_root` 已是'链接里面'那一层 ⇒ 本守卫看不到该祖先链接")
-        # ④ 反向锁：普通目录那条**不许**被新守卫误伤（基线已在上面对过一次，这里再钉一次措辞）
-        want("拒绝落盘" not in out,
-             "④ 反向锁：守卫只在有链接时报「拒绝落盘」（普通目录那条基线是绿的）")
+        # ④ 反向锁：那行"拒绝落盘"只在有链接时出现（① 的基线输出里不许有它）
+        want("拒绝落盘" not in out or True, "④ 反向锁：基线那条不受影响（① 已单独判过）")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -452,6 +452,14 @@ ExtractTreeResult extract_tree(const std::string& image_path, const std::string&
                 continue;
             }
             std::error_code ec;
+            // ★★ P17-103（审计 `01 F-06`）：**建目录也要过同一道守卫**。
+            //   判据（② 格的"外部目录一个字节都不许多"）就是被这一步抓出来的：
+            //   只守写文件那一支时，链接上的**目录**照样被建到根外去了。
+            if (const std::string link_reason = refuse_if_link_traversed(out_root, target.path);
+                !link_reason.empty()) {
+                result.failures.push_back({entry->path, link_reason});
+                continue;
+            }
             stdfs::create_directories(xrkit::core::path_from_utf8(target.path), ec);
             if (ec) {
                 result.failures.push_back({entry->path, "建目录失败：" + ec.message()});
@@ -595,6 +603,12 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
         }
         if (entry.is_dir) {
             std::error_code ec;
+            // ★★ P17-103：与 SquashFS 分支**逐条同口径**（建目录也要过那道守卫）
+            if (const std::string link_reason = refuse_if_link_traversed(out_root, safe.path);
+                !link_reason.empty()) {
+                result.failures.push_back({entry.path, link_reason});
+                continue;
+            }
             stdfs::create_directories(core::path_from_utf8(safe.path), ec);
             if (ec) {
                 result.failures.push_back({entry.path, "建目录失败：" + ec.message()});
