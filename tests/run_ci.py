@@ -5429,6 +5429,40 @@ def step_version_identity(release: bool) -> None:
         fail("版本身份有判据不成立（见上）")
 
 
+def step_sqfs_superblock(release: bool) -> None:
+    """★★ P17-100（审计 `01 F-17`）：SquashFS **超块版本/块对数**与**元数据块长度**必须有校验。
+
+    修前 `src/engine/fs/squashfs.cpp` 只有 magic 与 `block_size` 两处校验：
+    `s_major`/`s_minor` **读出来就再没被比较过**（坏版本会被当 4.x 解析下去，报的是下游症状）、
+    `block_log` 读了不校（它与 `block_size` 是同一件事的两种写法）、
+    **未压缩**元数据块那一支**直接采信** `comp_size`（15 位掩码，而未压缩块的解压后上限是 8192）。
+
+    判据 `tests/check_sqfs_superblock.py`（**自带夹具**：用 `--pack-sqfs` 现打镜像，不碰外部样本）：
+    基线 ＋ `s_major=99` 必须拒绝且理由点名「版本」＋ `block_log` 矛盾必须拒绝且理由同时点名两者
+    ＋ 未压缩元数据块声明超上限必须拒绝且理由点名「未压缩元数据块」＋ 反向锁。
+    需要构建产物（`--pack-sqfs` / `--dump`）⇒ 归"要 CLI"的那一档。
+    """
+    say("[sqfs-superblock] P17-100：超块版本/块对数 ＋ 元数据块长度校验（审计 `01 F-17`）")
+    script = ROOT / "tests" / "check_sqfs_superblock.py"
+    if not require_repo_file(script, "SquashFS 超块校验判据"):
+        return
+    cli = CLI_EXE
+    if not cli.is_file():
+        fail("缺构建产物 %s（先跑 build 步）" % cli)
+        return
+    rc, out = run([sys.executable, str(script), str(cli)], timeout=1200)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if s.startswith("SQFS-SB") or s.startswith("✓ ") or s.startswith("✗ ") or s.startswith("   ✓"):
+            say(("  " + s)[:180])
+    if rc == 0 and "SQFS-SB ok" in out:
+        ok("超块版本/块对数 ＋ 元数据块长度三类坏镜像都被明确拒绝（理由点名根因）")
+    elif rc == 2:
+        fail("SquashFS 超块判据缺外部前提（见上）")
+    else:
+        fail("SquashFS 超块/元数据块校验不成立（见上）")
+
+
 STEPS = [
     ("build", step_build),
     ("no-qt", step_no_qt_lock),
@@ -5468,6 +5502,9 @@ STEPS = [
     # ★★ P17-98/P17-99（审计 `05 PLG-08` / `05 PLG-04`）：插件日志缓冲的锁 ＋ 注册表线程约定字据
     #   ＋ C ABI sink 零静默。独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
     ("plugin-contract", step_plugin_contract),
+    # ★★ P17-100（审计 `01 F-17`）：SquashFS 超块版本/块对数 ＋ 元数据块长度的读侧校验。
+    #   需要 CLI 产物；自带夹具（现打镜像）。被 `--only` 过滤时进 UNCOVERED。
+    ("sqfs-superblock", step_sqfs_superblock),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。

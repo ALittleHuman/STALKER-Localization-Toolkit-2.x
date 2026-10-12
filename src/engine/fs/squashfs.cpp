@@ -234,6 +234,28 @@ bool parse_superblock(const uint8_t* d, size_t n, SuperBlock& sb, std::string& e
               std::to_string(sb.block_size) + " 上限=" + std::to_string(kMaxBlockSize);
         return false;
     }
+    // ★★ P17-100（审计 `01 F-17`）：**超块版本号原来"读出来就再没被比较过"**。
+    //   事实（修前）：`s_major = rd16(d + 28)` / `s_minor` 只被赋值，没有任何校验 ⇒
+    //     一个 `s_major=99` 的坏镜像会一路被当成 SquashFS 4.0 解析，报出来的错是下游
+    //     "某个表读不动"，而不是**"这不是我认识的版本"**（排障时最贵的就是这种错位）。
+    //   口径：本实现按 **4.0** 写（见文件头的写侧布局常量）⇒ 读侧只认 **major == 4**；
+    //     `minor` **不卡死为 0**（同一 major 内的小版本改动不改变既有字段偏移，卡死反而会
+    //     拒掉合法镜像）—— 但它必须**被读到**并在错误文案里点名。
+    //   ★ 两处都要有"版本"这个词：判据按错误文案认（免得文案漂了没人发现）。
+    if (sb.s_major != 4) {
+        err = "超块版本不支持：s_major=" + std::to_string(sb.s_major) + " s_minor=" +
+              std::to_string(sb.s_minor) + "（本实现按 4.x 读，只认 major == 4）";
+        return false;
+    }
+    // ★ `block_log` 与 `block_size` 是**同一件事的两种写法**：`block_size == 1 << block_log`。
+    //   修前 `block_log` 也读了不校 ⇒ 两者矛盾时（例如 block_size=4096 而 block_log=17）
+    //   下面所有"按 log 算"的路径都会算到别处去。≥32 的移位是 UB，必须一并挡掉。
+    if (sb.block_log >= 32 ||
+        (1u << sb.block_log) != sb.block_size) {
+        err = "超块 block_log 与 block_size 矛盾：block_log=" + std::to_string(sb.block_log) +
+              " block_size=" + std::to_string(sb.block_size) + "（应满足 block_size == 1 << block_log）";
+        return false;
+    }
     return true;
 }
 
@@ -259,6 +281,21 @@ bool Image::meta_block(uint64_t abs_off, const MetaBlock*& out, std::string& err
     const uint16_t h = rd16(hdr, sb_.big_endian);
     const uint32_t comp_size = static_cast<uint32_t>(h & 0x7FFFu);
     const bool stored = (h & 0x8000u) != 0;
+
+    // ★★ P17-100（审计 `01 F-17`）：**元数据块的长度也要校验**，而且**必须先于"读它"**。
+    //   事实（修前）：`stored`（bit15＝未压缩）那一支**直接采信** `comp_size` —— 而 `comp_size`
+    //   只有 15 位掩码：一个**未压缩**的元数据块最大就是解压后大小 `kMetaBlockSize`（8192），
+    //   声明得比它还大只能是坏镜像。★ 判据最初撞到的正是"顺序"问题：把这条放在 `read_at`
+    //   之后时，坏镜像先报的是"读取越界"（下游症状）而不是"这个块声明得就不对"（真正的原因）——
+    //   **先判声明、再去读**，报出来的才是根因。
+    //   ★ 压缩块**不受**这条约束（压出来比 8192 大是可能的，真正的炸弹由 `decompress_block`
+    //     的**解压上限**兜住 —— 见 K-7 那组判据）。
+    if (stored && comp_size > kMetaBlockSize) {
+        err = "未压缩元数据块声明长度超过上限 @" + std::to_string(abs_off) +
+              "：comp_size=" + std::to_string(comp_size) +
+              " 上限=" + std::to_string(kMetaBlockSize);
+        return false;
+    }
 
     MetaBlock mb;
     // ★ 前进必须用 2 + comp_size：8192 只是**解压后**大小（1.x 踩过这个坑）
