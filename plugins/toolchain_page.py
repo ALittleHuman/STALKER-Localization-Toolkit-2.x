@@ -231,7 +231,73 @@ def headless(api, args):
         if action == "install":
             return install_package(api, entries, target_root, backup_root)
         return restore_package(api, entries, target_root, backup_root)
+    if action == "thread_probe":
+        # ★★ P17-107（审计 `05 PLG-05`）：**"重活能不能搬进 worker"的取证入口**。
+        #   它把六段重活各在**主线程**与**任务壳 worker**里跑一次，报告两边的
+        #   `ui.on_ui_thread()` 取值与引擎调用成败 ⇒ "能不能搬"是**量出来的**，不是猜的。
+        #   （无界面进程里没有任务壳 ⇒ 这条会如实报 unavailable，不假装。）
+        return _thread_probe(api)
     return {"ok": False, "error": "未知动作：" + action}
+
+
+# 六段重活（口径 A 的"能不能搬"清单；名字与界面按钮一一对应）
+HEAVY_STEPS = (
+    ("identify", lambda api: identify(api, "")),
+    ("apply", lambda api: apply(api, "", "")),
+    ("font_pack", lambda api: font_pack_regions(api, {"game": "SoC", "lang": "chs"})),
+    ("pipeline", lambda api: run_pipeline(api, {"source_dir": "", "out_dir": ""})),
+    ("install", lambda api: install_package(api, [], "")),
+    ("restore", lambda api: restore_package(api, [], "")),
+)
+
+
+def _thread_probe(api):
+    """逐段重活：先在主线程跑一次（看 `on_ui_thread`），再进 worker 跑一次。
+
+    ★ 这里**故意用空参数**调引擎：目的不是"跑出正确结果"，而是**量出
+    "这段引擎调用在哪个线程上执行、以及它能不能离开主线程"**（结果正确性由各自的
+    `check_*` 判据管，不归这条管）。空参数只会让引擎很快返回一个错误 ——
+    **"能不能被调用"这件事照样被证明**。
+    """
+    lines = []
+    main_thread = bool(api.ui.on_ui_thread())
+    lines.append("THREADPROBE main on_ui_thread=%s" % main_thread)
+    for name, fn in HEAVY_STEPS:
+        try:
+            fn(api)
+            called = "ok"
+        except Exception as exc:                      # noqa: BLE001
+            called = "raised:" + type(exc).__name__
+        lines.append("THREADPROBE step=%s where=main called=%s" % (name, called))
+
+    panel = api.ui.task_panel(None, True)
+    if panel is None:
+        lines.append("THREADPROBE worker=unavailable reason=无任务壳（无界面进程）")
+        return {"ok": True, "lines": lines, "worker_available": False}
+
+    seen = {}
+
+    def on_message(text):
+        lines.append("THREADPROBE worker-message=" + str(text).replace("\n", " | "))
+
+    api.ui.task_on_message(panel, on_message)
+
+    def worker_fn(progress, message):
+        on_ui = bool(api.ui.on_ui_thread())
+        seen["on_ui"] = on_ui
+        message("worker on_ui_thread=%s" % on_ui)
+        for name, fn in HEAVY_STEPS:
+            try:
+                fn(api)
+                called = "ok"
+            except Exception as exc:                  # noqa: BLE001
+                called = "raised:" + type(exc).__name__
+            message("worker step=%s called=%s" % (name, called))
+        return True
+
+    accepted = bool(api.ui.task_run(panel, "线程取证", worker_fn))
+    lines.append("THREADPROBE worker=accepted accepts=%s" % accepted)
+    return {"ok": True, "lines": lines, "worker_available": True}
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -360,11 +426,75 @@ def format_restore(out):
 # ══════════════════════════════════════════════════════════════════════════
 # 五、界面：一页多标签
 # ══════════════════════════════════════════════════════════════════════════
+def _run_off_ui_thread(api, panel, title, show, heavy):
+    """把**引擎重活**丢到任务壳的 worker 线程上（审计 `05 PLG-05`，★ 用户 2026-10-12 拍板口径 A）。
+
+    为什么（修前的事实）：本页三块面板的按钮回调**直接在主线程**调 `api.engine.*`
+    （`patch_identify` / `patch_apply` / `font_pack` / `text_extract_dir` / `pkg_install` /
+    `pkg_restore`）—— 那些是**长任务**：跑起来界面就死住（拖不动、日志不刷、取消点不动）。
+
+    通道（**现有通道就够用，产品零改动**）—— 与 `plugins/convert_page.py` **同一套写法**：
+      · `api.ui.task_run(panel, title, worker)`：worker 在**工作线程**里跑，拿
+        `progress(0~100)` / `message(text)` 两个 sink；
+      · ⚠ **worker 里不许碰任何 `api.ui.*` 控件方法**（宿主用 `on_ui_thread()` 挡掉，
+        静默变 no-op —— `convert_page.py` 就踩过这个坑，见那边的注释）；
+      · ⇒ `gather()` **在主线程**把控件值取好交进来；worker 只做**引擎调用 + 纯拼串**，
+        结果经 `message(...)` 回主线程，由 `_on_message` 落控件。
+
+    ★ 口径 A 的边界（**哪些搬不进去**，如实记在批报告里）：
+      · 控件构造 / 取值 / `set_text` / `ask_*` 对话框 / 拖入回调 / `pick_font` 的回调 ——
+        **必须**留在主线程（它们本身就是"和界面交互"）；
+      · 只有"**引擎执行段**"进 worker。
+    """
+    def _on_message(text):
+        # 回主线程（壳保证排队）⇒ 这里可以碰控件
+        if show is not None:
+            show(str(text))
+
+    if panel is not None:
+        api.ui.task_on_message(panel, _on_message)
+
+    def worker(progress, message):
+        # ★ 这里在**工作线程**上：不许碰 ui 控件（取值已经在主线程 gather 过了）
+        # ★★ 判据用的**取证位**（P17-107，审计 `05 PLG-05`）：把"这段真的在 worker 上跑"
+        #   记下来 —— 只写"非 UI 线程"时的那一行，所以 marker 里**出现**它就等于
+        #   "重活确实离开了主线程"（不是靠读代码猜）。marker 路径由 `XRKIT_TOOLCHAIN_MARKER`
+        #   环境变量给（不设 ⇒ 不写文件、行为不变）。
+        marker = os.environ.get("XRKIT_TOOLCHAIN_MARKER", "")
+        if marker:
+            try:
+                with open(marker, "a", encoding="utf-8") as handle:
+                    handle.write("heavy title=%s on_ui_thread=%s\n"
+                                 % (title, str(bool(api.ui.on_ui_thread()))))
+            except OSError:
+                pass
+        progress(5)
+        text = heavy(message)
+        progress(100)
+        if text is not None:
+            message(str(text))
+
+    if panel is None:
+        # 没有任务壳（**无界面进程**）⇒ 如实退回同步执行，**不假装**跑了 worker。
+        #   （这条路径由 `--py-plugin-call` 的无界面调用走到；判据只对"有壳"那条下结论。）
+        text = heavy(lambda _t: None)
+        if show_holder["fn"] is not None and text is not None:
+            show_holder["fn"](str(text))
+        return False
+    if not api.ui.task_run(panel, title, worker):
+        if show_holder["fn"] is not None:
+            show_holder["fn"]("已有任务在跑，请等它结束或先取消")
+        return False
+    return True
+
+
 def _build_patch_tab(api, host, tab):
     ui = api.ui
     ui.label(tab, "引擎 exe（识别＝看它是什么形态；生成＝从原版出一份补丁副本）")
     target_entry = ui.entry(tab, host.pref_get(SECTION, "target", ""), 60)
     result_view = ui.text_view(tab, 18, True)
+    # ★ 任务壳（口径 A）：本页三块面板各有自己的壳，长活一律经它进 worker 线程
+    panel = ui.task_panel(tab, True)
 
     def show(text):
         ui.set_text(result_view, text)
@@ -381,7 +511,11 @@ def _build_patch_tab(api, host, tab):
             target = picked
         ui.set_text(target_entry, target)
         host.pref_set(SECTION, "target", target)
-        show(format_identify(identify(api, target)))
+        # ★ 口径 A：识别是长任务（要读整个 exe）⇒ 进 worker；控件取值在主线程先取好
+        def heavy(_message):
+            return format_identify(identify(api, target))
+
+        _run_off_ui_thread(api, panel, "二进制补丁：识别", show, heavy)
         ui.log("二进制补丁：识别 " + target)
 
     def do_apply():
@@ -401,7 +535,11 @@ def _build_patch_tab(api, host, tab):
         out = ui.ask_save_file("补丁副本保存到…")
         if not out:
             return
-        show(format_apply(apply(api, target, out)))
+        # 对话框与路径都在主线程取好；**真正写盘那一段**（长活）进 worker
+        def heavy(_message):
+            return format_apply(apply(api, target, out))
+
+        _run_off_ui_thread(api, panel, "二进制补丁：生成", show, heavy)
         ui.log("二进制补丁：生成 " + out)
 
     ui.button(tab, "识别", do_identify)
@@ -419,6 +557,7 @@ def _build_patch_tab(api, host, tab):
 
 def _build_font_tab(api, host, tab):
     ui = api.ui
+    panel = ui.task_panel(tab, True)   # ★ 口径 A：任务壳（长活进 worker）
     slots = api.engine.font_size_slots() or []
     ui.label(tab, "分区字体：勾选要生成的**字号档位**（一个都不勾＝全部 %d 档）" % len(slots))
     boxes = []
@@ -455,7 +594,11 @@ def _build_font_tab(api, host, tab):
         }
         host.pref_set("font", "xml_dir", options["xml_dir"])
         host.pref_set(SECTION, "out_dir", options["out_dir"])
-        ui.set_text(status, format_regions(font_pack_regions(api, options)))
+        # ★ 口径 A：出包是长活（扫 xml + 逐档做字库）⇒ 进 worker
+        def heavy(_message):
+            return format_regions(font_pack_regions(api, options))
+
+        _run_off_ui_thread(api, panel, "分区字体：出包", lambda t: ui.set_text(status, t), heavy)
         ui.log("分区字体：出包 " + options["out_dir"])
 
     ui.button(tab, "按所选档位出包…", run_pack)
@@ -484,6 +627,7 @@ def load_entries_from_manifest(path):
 
 def _build_pipeline_tab(api, host, tab):
     ui = api.ui
+    panel = ui.task_panel(tab, True)   # ★ 口径 A：任务壳（长活进 worker）
     ui.label(tab, "自适应出汉化包：源文本目录 →（类型判定 + 提取）→ 字号自适应出包 → "
                   "统一清单；可装进游戏（先备份），也能一键还原")
     src_entry = ui.entry(tab, host.pref_get(SECTION, "source_dir", ""), 60)
@@ -522,20 +666,35 @@ def _build_pipeline_tab(api, host, tab):
                    "font_path": ui.get_text(font_entry).strip()}
         host.pref_set(SECTION, "source_dir", options["source_dir"])
         host.pref_set(SECTION, "out_dir2", options["out_dir"])
-        result = run_pipeline(api, options)
-        state["entries"] = result.get("entries", []) or []
-        show(format_pipeline(result))
+        # ★ 口径 A：整条产线（提取 + 出包 + 清单）是最长的那一段 ⇒ 进 worker
+        def heavy(_message):
+            result = run_pipeline(api, options)
+            state["entries"] = result.get("entries", []) or []
+            return format_pipeline(result)
+
+        _run_off_ui_thread(api, panel, "自适应出汉化包：跑一遍", show, heavy)
         ui.log("自适应出汉化包：跑一遍 " + options["out_dir"])
 
     def install():
         root = ui.get_text(game_entry).strip()
         host.pref_set(SECTION, "game_root", root)
-        show(format_install(install_package(api, current_entries(), root, backup_root())))
+        entries = current_entries()
+        backup = backup_root()
+        # ★ 口径 A：装包要逐条写盘 + 备份 ⇒ 进 worker（控件取值已在主线程取好）
+        def heavy(_message):
+            return format_install(install_package(api, entries, root, backup))
+
+        _run_off_ui_thread(api, panel, "自适应出汉化包：装进游戏", show, heavy)
         ui.log("自适应出汉化包：装进 " + root)
 
     def restore():
         root = ui.get_text(game_entry).strip()
-        show(format_restore(restore_package(api, current_entries(), root, backup_root())))
+        entries = current_entries()
+        backup = backup_root()
+        def heavy(_message):
+            return format_restore(restore_package(api, entries, root, backup))
+
+        _run_off_ui_thread(api, panel, "自适应出汉化包：还原", show, heavy)
         ui.log("自适应出汉化包：还原 " + root)
 
     ui.button(tab, "跑一遍（提取 + 出包 + 清单）", run)

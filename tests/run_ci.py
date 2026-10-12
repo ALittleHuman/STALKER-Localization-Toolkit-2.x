@@ -5480,6 +5480,47 @@ def step_python_restart(release: bool) -> None:
         fail("宿主重启没有被明确拒绝（见上）—— 半死宿主又回来了")
 
 
+def step_toolchain_worker(release: bool) -> None:
+    """★★ P17-107（审计 `05 PLG-05`，★ 用户 2026-10-12 拍板**口径 A**）：
+    `toolchain_page.py` 的六段引擎重活必须经任务壳 worker（**产品代码零改动**）。
+
+    修前：三块面板的按钮回调**直接在主线程**调 `api.engine.*`
+    （`patch_identify` / `patch_apply` / `font_pack` / `text_extract_dir` / `pkg_install` / `pkg_restore`）
+    ⇒ 长任务跑起来界面死住（拖不动、日志不刷、取消点不动）。
+
+    判据 `tests/check_toolchain_worker.py`：
+    ① **静态接线（AST）**：`_run_off_ui_thread` 里有 `api.ui.task_run(` ＋ `on_ui_thread()` 取证位；
+       界面侧**恰好 6 处**调用；`HEAVY_STEPS` 六段齐。
+    ② **引擎可调用性（真跑）**：无界面跑 `headless(action="thread_probe")`，六段逐条报
+       "在哪个线程、能不能被调"。
+    ★★ **判据自曝的边界**：无界面进程**没有任务壳** ⇒「真的跑在非 UI 线程」这条运行期证据
+      **本判据拿不到**；`_run_off_ui_thread` 已内置 marker 取证位
+      （设 `XRKIT_TOOLCHAIN_MARKER=<文件>` 后点一次按钮，marker 出现 `on_ui_thread=False`）。
+      ⇒ 本步只声称"接线对 ＋ 六段调得动"，**不**声称"跑过 worker"。
+    """
+    say("[toolchain-worker] P17-107：六段引擎重活经任务壳 worker（审计 `05 PLG-05`，口径 A）")
+    script = ROOT / "tests" / "check_toolchain_worker.py"
+    if not require_repo_file(script, "把夹具页重活收进 worker 的核对器"):
+        return
+    args = [sys.executable, str(script)]
+    if CLI_EXE.is_file():
+        args.append(str(CLI_EXE))
+    rc, out = run(args, timeout=1200)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("TOOLCHAIN-WORKER") or s.startswith("THREADPROBE")
+                or s.startswith("✓ ") or s.startswith("✗ ") or s.startswith("⚠")
+                or s.startswith("     THREADPROBE") or s.startswith("（")):
+            say("  " + s[:180])
+    if rc == 0 and "TOOLCHAIN-WORKER ok" in out:
+        ok("六段重活接线到任务壳 worker（静态）＋ 六段引擎调用都调得动（真跑）")
+    elif rc == 2:
+        say("  ⚠ 缺夹具页/产物 —— 本步记为 skip")
+        ok("夹具页重活判据在本环境不适用（已如实 skip）")
+    else:
+        fail("夹具页重活没接到 worker 上（见上）")
+
+
 def step_dated_doc(release: bool) -> None:
     """★★ P17-105（审计 `03 F-12`）：**带日期的"当时快照"文档必须自认是快照** ＋ 已更正的断言必须与实现一致。
 
@@ -5666,6 +5707,9 @@ STEPS = [
     # ★★ P17-106（审计 `05 PLG-03`，口径 A）：宿主 shutdown 之后再 init 必须明确拒绝。
     #   需要 CLI 产物；进程级探针（单独一条命令）。被 `--only` 过滤时进 UNCOVERED。
     ("python-restart", step_python_restart),
+    # ★★ P17-107（审计 `05 PLG-05`，口径 A）：夹具页六段引擎重活必须经任务壳 worker。
+    #   需要 CLI 产物（跑 thread_probe）；被 `--only` 过滤时进 UNCOVERED。
+    ("toolchain-worker", step_toolchain_worker),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。
