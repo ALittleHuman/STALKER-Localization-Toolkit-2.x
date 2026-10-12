@@ -33,7 +33,9 @@
         "ogg",
         "OUT.ogm"
       ],
-      "message": "输出文件不存在或为空"
+      "message": "输出文件不存在或为空",
+      "src_parsed": true,
+      "has_ref": true
     },
     {
       "case": "theora_ref_no_bitrate_src_diff_noaudio",
@@ -68,7 +70,9 @@
         "ogg",
         "OUT.ogm"
       ],
-      "message": "输出文件不存在或为空"
+      "message": "输出文件不存在或为空",
+      "src_parsed": true,
+      "has_ref": true
     },
     {
       "case": "mpeg4_ref_no_bitrate_src_noaudio",
@@ -94,7 +98,9 @@
         "ogg",
         "OUT.ogm"
       ],
-      "message": "输出文件不存在或为空"
+      "message": "输出文件不存在或为空",
+      "src_parsed": true,
+      "has_ref": true
     },
     {
       "case": "mpeg4_ref_fallback_noxvid",
@@ -128,7 +134,9 @@
         "ogg",
         "OUT.ogm"
       ],
-      "message": "输出文件不存在或为空"
+      "message": "输出文件不存在或为空",
+      "src_parsed": true,
+      "has_ref": true
     },
     {
       "case": "last_resort_only_mpeg4",
@@ -159,7 +167,9 @@
         "ogg",
         "OUT.ogm"
       ],
-      "message": "输出文件不存在或为空"
+      "message": "输出文件不存在或为空",
+      "src_parsed": true,
+      "has_ref": true
     },
     {
       "case": "ffprobe_failed_keeps_audio",
@@ -194,7 +204,46 @@
         "ogg",
         "OUT.ogm"
       ],
-      "message": "输出文件不存在或为空"
+      "message": "输出文件不存在或为空",
+      "src_parsed": false,
+      "has_ref": true
+    },
+    {
+      "case": "no_reference_and_probe_failed",
+      "encoders": [
+        "libtheora",
+        "libxvid",
+        "mpeg4"
+      ],
+      "ok": false,
+      "argv": [
+        "FFMPEG",
+        "-y",
+        "-i",
+        "IN.avi",
+        "-c:v",
+        "libtheora",
+        "-q:v",
+        "7",
+        "-pix_fmt",
+        "yuv420p",
+        "-g",
+        "30",
+        "-c:a",
+        "libvorbis",
+        "-b:a",
+        "160000",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-f",
+        "ogg",
+        "OUT.ogm"
+      ],
+      "message": "输出文件不存在或为空",
+      "src_parsed": false,
+      "has_ref": false
     },
     {
       "case": "no_reference_at_all",
@@ -229,7 +278,9 @@
         "ogg",
         "OUT.ogm"
       ],
-      "message": "输出文件不存在或为空"
+      "message": "输出文件不存在或为空",
+      "src_parsed": true,
+      "has_ref": false
     },
     {
       "case": "ref_fps_24000_1001_src_same",
@@ -264,7 +315,9 @@
         "ogg",
         "OUT.ogm"
       ],
-      "message": "输出文件不存在或为空"
+      "message": "输出文件不存在或为空",
+      "src_parsed": true,
+      "has_ref": true
     },
     {
       "case": "ref_fps_30000_1001_src_same",
@@ -299,7 +352,9 @@
         "ogg",
         "OUT.ogm"
       ],
-      "message": "输出文件不存在或为空"
+      "message": "输出文件不存在或为空",
+      "src_parsed": true,
+      "has_ref": true
     }
   ]
 }

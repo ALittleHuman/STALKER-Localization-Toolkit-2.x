@@ -1173,6 +1173,31 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         check(ctx, stats.full_detail_calls == 1 && full.find("首个差异@") != std::string::npos &&
                       full.find("only here") != std::string::npos,
               "文本模式完整明细不对");
+        // ★★ P17-101（审计 `02 F-08`）：**首个差异必须按"字符"报，不许按字节**。
+        //   两条 UTF-8 序列共享头字节时（例：`一`=E4 B8 80 与 `二`=E4 BA 8C），
+        //   逐字节比会命中的是**第 2 个字节**，只取一个字节 ⇒ `utf8_next` 解不开 ⇒ 报成 `U+?`
+        //   （用户看到的是一句废话）；位置也会按**字节**偏移报，与"第几个字符"对不上。
+        //   ⇒ 判据两头都要：位置是**码位下标**（这里是 1，不是字节 1）、字符是**完整码位**
+        //     （`U+4E00` vs `U+4E8C`，而不是 `U+?`）。
+        {
+            const std::string ca_txt = "一x";
+            const std::string cb_txt = "二x";
+            exml::XmlCompareResult cdiff =
+                exml::compare_text("x.xml", "<r><s id=\"a\"><text>" + ca_txt + "</text></s></r>",
+                                   "<r><s id=\"a\"><text>" + cb_txt + "</text></s></r>", "utf-8",
+                                   "utf-8");
+            const std::string cfull = exml::full_text_detail(cdiff, "A", "B");
+            check(ctx, cdiff.text_diff.size() == 1,
+                  "P17-101 前提：`一x` 与 `二x` 必须被认成一条 text_diff");
+            check(ctx, cfull.find("首个差异@0:") != std::string::npos,
+                  "P17-101 首个差异的位置必须是**码位下标**（期望 @1，不是字节偏移）；实测明细=" +
+                      cfull.substr(0, 260));
+            check(ctx, cfull.find("U+4E00") != std::string::npos &&
+                          cfull.find("U+4E8C") != std::string::npos &&
+                          cfull.find("U+?") == std::string::npos,
+                  "P17-101 首个差异必须报**完整字符**（期望 U+4E00 / U+4E8C，不许 U+?）；实测=" +
+                      cfull.substr(0, 260));
+        }
     });
 
     // ⑧8.1/8.2/8.6/8.7 ffmpeg 定位：**只认两处**（配置里存在的文件 / 程序目录），
@@ -2893,6 +2918,11 @@ int run_cli(const std::vector<std::string>& args) {
              128000, true, true, 640, 480, 25.0, true, 2},
             {"ffprobe_failed_keeps_audio", true, true, "theora", 640, 480, 25.0, 800000, true, 44100,
              2, 128000, false, false, 0, 0, 0.0, false, 0},
+            // ★★ P17-101（审计 `02 F-09`）：**无参考 + 探针失败**（与上一行的区别只在 `has_ref=false`）。
+            //   1.x 在 `src_info is None` 时只看探针、**不看参考**，且必发告警 ⇒ 这一格的告警位必须是 1。
+            //   （与 `probe_video_argv.py` 里同名用例同一张表，基线由 `--write` 真调 1.x 算。）
+            {"no_reference_and_probe_failed", false, false, "", 0, 0, 0.0, 0, false, 0, 0, 0, false,
+             false, 0, 0, 0.0, false, 0},
             {"no_reference_at_all", false, false, "", 0, 0, 0.0, 0, false, 0, 0, 0, true, true, 640,
              480, 25.0, true, 0},
             // ★★ P17-9（审计 02 F-03）：**非整数参考帧率**（23.976 / 29.97）。
@@ -2951,6 +2981,10 @@ int run_cli(const std::vector<std::string>& args) {
                       << "|fps=" << (plan.fps_applied ? 1 : 0) << "|vbr=" << plan.video_bitrate
                       << "|abr=" << plan.audio_bitrate << "|ar=" << plan.audio_sample_rate
                       << "|ac=" << plan.audio_channels << "|an=" << (plan.audio_disabled ? 1 : 0)
+                      // ★★ P17-101（审计 `02 F-09`）：**告警位也要能被判据看见** ——
+                      //   修前这里没有它 ⇒ 位算错也没人会发现（"无参考 + 探针失败"那条路
+                      //   1.x 必告警、我们静默，就是这么漏掉的）。
+                      << "|probe_warn=" << (plan.audio_kept_on_probe_failure ? 1 : 0)
                       << "\n";
         }
         return kExitOk;

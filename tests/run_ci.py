@@ -4583,7 +4583,19 @@ def step_video_plugin(release: bool) -> None:
         ("ffprobe_failed_keeps_audio",
          media(True, "theora", 640, 480, 25.0, 800000, True, 44100, 2, 128000),
          source(0, 0, 0.0, False, parsed=False), enc_all),
+        # ★★ P17-101（审计 `02 F-09`）：**无参考 + 探针失败**这一格（与上一行只差"没有参考"）。
+        #   原来这里**没有**这一格 ⇒ `video-plugin` 步在这条路上不会红；而"告警位"正是
+        #   审计那条判定的唯一考点。加上它，夹具侧就与 CLI 的用例表逐格对齐（10 格）。
+        ("no_reference_and_probe_failed", None, source(0, 0, 0.0, False, parsed=False), enc_all),
         ("no_reference_at_all", None, source(640, 480, 25.0, True), enc_all),
+        # ★★ P17-9（审计 02 F-03）：非整数参考帧率（23.976/29.97）—— CLI 的用例表里早就有，
+        #   这里一直缺 ⇒ 夹具侧的覆盖率低于参照侧。本批一并补齐。
+        ("ref_fps_24000_1001_src_same",
+         media(True, "theora", 640, 480, 24000.0 / 1001.0, 800000, True, 44100, 2, 128000),
+         source(640, 480, 25.0, True), enc_all),
+        ("ref_fps_30000_1001_src_same",
+         media(True, "theora", 640, 480, 30000.0 / 1001.0, 800000, True, 44100, 2, 128000),
+         source(640, 480, 25.0, True), enc_all),
     ]
 
     problems = []

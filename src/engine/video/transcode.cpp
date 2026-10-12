@@ -198,7 +198,15 @@ TranscodePlan plan_transcode(const TranscodeRequest& request) {
     // 摘要里的音频值 = **真的写进 argv 的那几个数**（-an 时是 0 ⇒ 面板也就不显示音频行，
     // 与 1.x 一致：1.x 的 `if sa and ra:` 在源无音轨时同样什么都不打印）。
     if (!src.parsed) {
-        plan.audio_kept_on_probe_failure = src.parsed == false && request.has_reference;
+        // ★★ P17-101（审计 `02 F-09`）：**去掉 `&& request.has_reference`**。
+        //   事实（修前）：`= src.parsed == false && request.has_reference;` —— 与审计原话逐字相同。
+        //   查 1.x 本体（`video_ogm_app.py:310-317`）：判据是 **`if src_info is None:`** ——
+        //   它只问"探针失没失败"，**根本不看有没有参考信息**，而且那一支里**必发告警**
+        //   （`log_summary("警告: 无法解析源文件音轨信息，按保留音轨处理（…）", "warn")`）。
+        //   ⇒ "无参考 + 探针失败"这条路上，1.x **告警、我们静默**（位不置）＝"复制了行为、丢了告警"。
+        //   位名本身就是"**探针失败**时保留了音频"⇒ 只要探针失败就该置位（与有无参考无关）。
+        //   ★ 音频那四个数的取值**不变**（仍走参考值/默认值那条已对拍过的路），本批只补告警位。
+        plan.audio_kept_on_probe_failure = true;
         plan.audio_bitrate = ref_abitrate;
         plan.audio_sample_rate = static_cast<int>(ref_ar);
         plan.audio_channels = ref_ac;

@@ -400,16 +400,70 @@ void collect_by_id(const XmlElementNode& node, std::map<std::string, std::string
 }
 
 // `_first_diff_info` + `_char_desc`（首个差异位置的字符描述）
+// ★★ P17-101（审计 `02 F-08`）：**按字符（码位）比，不许按字节比**。
+//   事实（修前）：这里逐**字节** `a[i] != b[i]`，然后 `ca = a.substr(i, 1)` —— 一次只取**一个字节**。
+//   后果（编码一旦不是 ASCII 就必然踩到）：
+//     · `"一致"` 与 `"一改"` 的首个差异在**第二个**码位（U+81F4 vs U+6539），
+//       而两条 UTF-8 序列的**头字节 0xE8 与 0xE6 不同** ⇒ 位置报对了；
+//     · 但 `"一致"` 与 `"一致x"` 之外的常见情形 —— 例如 `"ab"` vs `"aé"`（é = C3 A9）：
+//       首个不同字节是 `b`(0x62) vs `0xC3` ⇒ 还能解释；
+//     · 真正致命的是**两个码位共享头字节**：`"一"`(E4 B8 80) vs `"二"`(E4 BA 8C)
+//       ⇒ 首个不同字节是各自**第 2 个字节**（0xB8 vs 0xBA）⇒ 只取这**一个字节**去 `char_desc`
+//       ⇒ UTF-8 解不开 ⇒ 报成 `U+?`（**用户看到的是一句废话**）；
+//     · 而 `pos` 是**字节**偏移却当成"位置"报给用户，与"第几个字符"也对不上。
+//   改法：**同时**用 `text::utf8_next` 走两条串（每个片段都是一个完整码位），
+//     逐码位比；不同时 `pos` ＝ **码位下标**，`ca`/`cb` ＝ **完整的那一个字符**（不是半截字节）。
+//     ★ 非法 UTF-8 的兜底仍是"取 1 个字节"（`utf8_next` 返回 false 时 pos 至少 +1）——
+//       坏数据依旧能报出来，而不是死循环。
 bool first_diff_info(const std::string& a, const std::string& b, size_t& pos, std::string& ca,
                      std::string& cb) {
-    const size_t limit = std::min(a.size(), b.size());
-    for (size_t i = 0; i < limit; ++i) {
-        if (a[i] != b[i]) {
-            pos = i;
-            ca = a.substr(i, 1);
-            cb = b.substr(i, 1);
+    const uint8_t* pa = reinterpret_cast<const uint8_t*>(a.data());
+    const uint8_t* pb = reinterpret_cast<const uint8_t*>(b.data());
+    size_t ia = 0;
+    size_t ib = 0;
+    size_t index = 0;
+    while (ia < a.size() && ib < b.size()) {
+        // 非 ASCII 时这几个变量在**前导字节**上只写一次，所以"首字节相同、后续字节不同"
+        // 不会误报；两个串长度不同（例如 3 字节 vs 2 字节）会**更早**命中差异，也正确。
+        size_t ja = ia;
+        size_t jb = ib;
+        uint32_t cpa = 0;
+        uint32_t cpb = 0;
+        const bool oka = text::utf8_next(pa, a.size(), ja, cpa);
+        const bool okb = text::utf8_next(pb, b.size(), jb, cpb);
+        // 一个片段比对（非法 UTF-8 时 utf8_next 已经把 pos 推到下一个字节）
+        const size_t na_len = ja - ia;
+        const size_t nb_len = jb - ib;
+        if (na_len != nb_len || a.compare(ia, na_len, b, ib, nb_len) != 0) {
+            pos = index;                       // ★ 码位下标（不是字节偏移）
+            ca = a.substr(ia, na_len);         // ★ 完整字符
+            cb = b.substr(ib, nb_len);
             return true;
         }
+        if (!oka || !okb) {
+            // 两侧这段字节完全相同但**都不是合法码位**：继续按字节推进（不许卡住）
+            ia = ja > ia ? ja : ia + 1;
+            ib = jb > ib ? jb : ib + 1;
+        } else {
+            ia = ja;
+            ib = jb;
+        }
+        ++index;
+    }
+    // 走到这里说明"公共前缀的码位全同"；剩下的是**长度不同**（一方更长）
+    if (ia < a.size() || ib < b.size()) {
+        pos = index;
+        const size_t ja = ia;
+        const size_t jb = ib;
+        size_t ja2 = ia;
+        size_t jb2 = ib;
+        uint32_t cpa = 0;
+        uint32_t cpb = 0;
+        text::utf8_next(pa, a.size(), ja2, cpa);
+        text::utf8_next(pb, b.size(), jb2, cpb);
+        ca = a.substr(ja, (ja2 > ja ? ja2 : ja + 1) - ja);
+        cb = b.substr(jb, (jb2 > jb ? jb2 : jb + 1) - jb);
+        return true;
     }
     return false;
 }

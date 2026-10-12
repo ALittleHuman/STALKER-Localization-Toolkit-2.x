@@ -140,6 +140,12 @@ def cases():
         ("mpeg4_ref_fallback_noxvid", ref_mpeg4, src_same, noxvid),
         ("last_resort_only_mpeg4", ref_theora, src_same, onlympeg),
         ("ffprobe_failed_keeps_audio", ref_theora, None, allenc),
+        # ★★ P17-101（审计 `02 F-09`）：「**无参考 + 探针失败**」这一格原来**没被对拍过** ——
+        #   1.x 的判据是 `if src_info is None:`（`video_ogm_app.py:310-317`，只看探针成败、
+        #   **不看有没有参考**）且那一支**必发告警**；我们修前写成
+        #   `= src.parsed == false && request.has_reference` ⇒ 这一格上"1.x 告警、我们静默"。
+        #   期望 argv 由 `--write` 真调 1.x 本体算（不是手写）。
+        ("no_reference_and_probe_failed", None, None, allenc),
         ("no_reference_at_all", None, src_same, allenc),
         ("ref_fps_24000_1001_src_same", ref_fps_23976, src_same, allenc),
         ("ref_fps_30000_1001_src_same", ref_fps_2997, src_same, allenc),
@@ -176,6 +182,12 @@ def main() -> int:
             "ok": ok,
             "argv": recorded["cmd"],
             "message": msg,
+            # ★★ P17-101（审计 `02 F-09`）：把这一格的**输入事实**也记下来 ——
+            #   1.x 的告警判据是 `if src_info is None:`（`video_ogm_app.py:310`）⇒
+            #   期望的 `probe_warn` = `0 if src is not None else 1`，可**从基线独立算**，
+            #   不必反查用例表（那会变成拿我们自己的表当期望）。
+            "src_parsed": src is not None,
+            "has_ref": ref is not None,
         })
         print("%-38s ok=%s  %s" % (name, ok, " ".join(recorded["cmd"] or [])))
 

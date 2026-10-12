@@ -112,11 +112,15 @@ def headless(api, args):
     plan = engine.video_plan_transcode(request)
     argv = ENC_SEP.join(plan["argv"])
     summary = ENC_SEP.join(["%s"] * 2)  # 占位（下面立刻覆盖，保持形状显式）
-    summary = ("%s|scale=%d|fps=%d|vbr=%d|abr=%d|ar=%d|ac=%d|an=%d"
+    # ★★ P17-101（审计 `02 F-09`）：CLI 的 PLANSUM 加了 `probe_warn`（探针失败仍保留音频的告警位），
+    #   本夹具是"与 C++ 侧逐行一致"的对照物 ⇒ **必须跟着加**，否则门禁 `video-plugin` 会报
+    #   "计划不一致"（那正是这条判据要的灵敏度）。值同样**读引擎结论**，不在夹具里自己判。
+    summary = ("%s|scale=%d|fps=%d|vbr=%d|abr=%d|ar=%d|ac=%d|an=%d|probe_warn=%d"
                % (plan["video_encoder"], 1 if plan["scale_applied"] else 0,
                   1 if plan["fps_applied"] else 0, plan["video_bitrate"], plan["audio_bitrate"],
                   plan["audio_sample_rate"], plan["audio_channels"],
-                  1 if plan["audio_disabled"] else 0))
+                  1 if plan["audio_disabled"] else 0,
+                  1 if plan.get("audio_kept_on_probe_failure") else 0))
     case = payload.get("case", "case")
     return {"lines": ["PLAN\t%s\t%s" % (case, argv), "PLANSUM\t%s\t%s" % (case, summary)]}
 

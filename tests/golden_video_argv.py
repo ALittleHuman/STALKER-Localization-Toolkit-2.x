@@ -36,6 +36,11 @@ def main() -> int:
 
     baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
     want = {row["case"]: row["argv"] for row in baseline["cases"]}
+    # ★★ P17-101（审计 `02 F-09`）：**告警位的期望值来自基线的"输入事实"**，
+    #   不是反推 argv、更不是照我们的实现写 —— 1.x 的判据是 `if src_info is None:`
+    #   （`video_ogm_app.py:310`，只看探针成败、**不看有没有参考**）⇒
+    #   期望 `probe_warn` = `0 if src_parsed else 1`。
+    want_src_parsed = {row["case"]: bool(row.get("src_parsed", True)) for row in baseline["cases"]}
 
     proc = subprocess.run([str(CLI), "--video-plan"], stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT)
@@ -82,7 +87,7 @@ def main() -> int:
     # ── PLANSUM：界面「视频参数」面板读的那几个值的判据 ─────────────────────
     # 期望值**从 1.x 录下来的 argv 反推**（哪个开关真在命令行里 ⇒ 摘要该报什么），
     # 不是我照实现手写的 —— 否则"面板说的"和"真正交给 ffmpeg 的"能一起错。
-    def summary_from_argv(argv):
+    def summary_from_argv(name, argv):
         def value_after(flag):
             if flag in argv:
                 index = argv.index(flag)
@@ -96,17 +101,21 @@ def main() -> int:
         audio_bitrate = value_after("-b:a") or "0"
         sample_rate = value_after("-ar") or "0"
         channels = value_after("-ac") or "0"
-        return ("%s|scale=%d|fps=%d|vbr=%s|abr=%s|ar=%s|ac=%s|an=%d"
+        # ★★ P17-101（审计 `02 F-09`）：`probe_warn` 的期望值**从基线的输入事实算**：
+        #   1.x 是 `if src_info is None:` 那一支必告警 ⇒ 期望 = "这一格的源探针失败了吗"。
+        #   （不反推 argv、不查我们的用例表 —— 那两种都是"拿自己当期望"。）
+        probe_warn_expected = 0 if want_src_parsed.get(name, True) else 1
+        return ("%s|scale=%d|fps=%d|vbr=%s|abr=%s|ar=%s|ac=%s|an=%d|probe_warn=%d"
                 % (encoder, 1 if "scale=" in vf else 0, 1 if "fps=" in vf else 0,
                    video_bitrate, audio_bitrate, sample_rate, channels,
-                   1 if "-an" in argv else 0))
+                   1 if "-an" in argv else 0, probe_warn_expected))
 
     for name, argv in want.items():
         if name not in summaries:
             print("[%s] 我们的 CLI 没输出 PLANSUM" % name)
             failed += 1
             continue
-        expected = summary_from_argv(argv)
+        expected = summary_from_argv(name, argv)
         if summaries[name] != expected:
             failed += 1
             print("[%s] PLANSUM 与 1.x argv 反推的不一致" % name)
@@ -114,6 +123,23 @@ def main() -> int:
             print("   我们:          %s" % summaries[name])
         else:
             print("[%s] PLANSUM ok %s" % (name, summaries[name]))
+
+    # ★★ P17-101（审计 `02 F-09`）：把那一格**单独点名**判一次。
+    #   修前 `transcode.cpp:200-201` 是 `= src.parsed == false && request.has_reference`
+    #   ⇒「无参考 + 探针失败」时告警位是 **0**（1.x 在 `src_info is None` 那一支**必告警**）
+    #   ⇒ 这一条会红，而它就是审计那条判定的**唯一考点**。
+    probe_case = "no_reference_and_probe_failed"
+    if probe_case in summaries:
+        if "probe_warn=1" not in summaries[probe_case]:
+            failed += 1
+            print("[%s] ★ 无参考 + 探针失败时**必须置告警位**（1.x 在 `src_info is None` 那一支必告警）；"
+                  "实测 %s" % (probe_case, summaries[probe_case]))
+        else:
+            print("[%s] ★ 探针失败告警位 = 1（判据 02 F-09 的考点）" % probe_case)
+    else:
+        failed += 1
+        print("[%s] ★ 基线里缺这一格（`probe_video_argv.py` 的用例表与 CLI 的用例表要对齐）"
+              % probe_case)
 
     verdict = "FAIL" if failed else "PASS"
     print("")
