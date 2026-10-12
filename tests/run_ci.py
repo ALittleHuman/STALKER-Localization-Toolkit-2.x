@@ -5446,6 +5446,35 @@ def step_version_identity(release: bool) -> None:
         fail("版本身份有判据不成立（见上）")
 
 
+def step_dated_doc(release: bool) -> None:
+    """★★ P17-105（审计 `03 F-12`）：**带日期的"当时快照"文档必须自认是快照** ＋ 已更正的断言必须与实现一致。
+
+    事实：`docs/2.0.0-1.x-vs-2.x控件对照(2026-09-27).md` 大面积过期（三处被审计点名），
+    而且 ★ **没有任何门禁读这两份 2026-09-27 的文档** ⇒ 它们可以**无限漂**。
+
+    判据 `tests/check_dated_docs_current.py`（**6 个反例自证**）：
+    ① 两份带日期的文档，**文件头必须自认"当时快照 / 不是规格"**并指向当前真源；
+    ② 控件对照里三处**已更正**的断言不许再出现旧说法（`缺 5 个` / `无按钮…开不了转码` / `缺 context`），
+       且实现侧对得上（`convert_page.cpp` 六颗按钮 / 插件 `context` 槽位那条链）；
+       ★ 只扫**行内断言**、**不**扫「（P17-104 更正…）」那段说明（说明里引用旧说法是有意的）。
+    独立成步、静态、不依赖构建产物。
+    """
+    say("[dated-doc] P17-105：带日期的快照文档必须自认快照 ＋ 已更正断言与实现同源（审计 `03 F-12`）")
+    script = ROOT / "tests" / "check_dated_docs_current.py"
+    if not require_repo_file(script, "带日期文档核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("DATED-DOC") or s.startswith("✓ 反例自证") or s.startswith("✗ ")
+                or s.startswith("✓ 两份") or s.startswith("✓ 控件对照")):
+            say("  " + s[:170])
+    if rc == 0 and "DATED-DOC ok" in out:
+        ok("2026-09-27 那两份文档自认快照；三处已更正断言与实现同源（文档漂了就红）")
+    else:
+        fail("带日期的快照文档没自认快照 / 旧说法回来了（见上）")
+
+
 def step_extract_symlink(release: bool) -> None:
     """★★ P17-103（审计 `01 F-06`）：解包落盘**不许跟着软链接/重解析点走**。
 
@@ -5597,6 +5626,9 @@ STEPS = [
     # ★★ P17-103（审计 `01 F-06`）：解包落盘不许跟着软链接/重解析点走。
     #   需要 CLI 产物；自带夹具（真造 junction）。被 `--only` 过滤时进 UNCOVERED。
     ("extract-symlink", step_extract_symlink),
+    # ★★ P17-105（审计 `03 F-12`）：带日期的快照文档必须自认快照 ＋ 已更正断言与实现同源。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
+    ("dated-doc", step_dated_doc),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。
