@@ -44,6 +44,12 @@ struct PyHostStatus {
     bool enabled = false;       // 构建期是否带 Python 支持（编译开关 + 开发文件）
     bool initialized = false;   // 解释器是否已经起来
     bool gil_released = false;  // 主线程是否已把 GIL 放开（工作线程才能安全回调进 Python）
+    // ★★ P17-106（审计 `05 PLG-03`，用户 2026-10-12 拍板口径 A）：**曾经起来过**。
+    //   为什么单开一位：`shutdown_python()` 之后 `initialized` 就是 false —— 光看它**看不出来**
+    //   曾经起过 ⇒ 再 `init_python()` 会一声不响往下走，得到一个"半死宿主"。
+    //   口径：`ever_initialized == true` 时 `init_python()` **明确拒绝**（理由写进 `reason`），
+    //   不支持在本进程内重启解释器（`Py_FinalizeEx` 之后 pybind11 的类型注册不可重做）。
+    bool ever_initialized = false;
     std::string version;        // 解释器版本（"3.14.6"；未起来为空）
     std::string home;           // **请求**的 home（空 = 没指定，让解释器自己找）
     std::string prefix;         // 解释器**实际**的 base_prefix（未起来为空）

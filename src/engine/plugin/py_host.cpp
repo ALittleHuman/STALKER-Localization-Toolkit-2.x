@@ -3412,7 +3412,28 @@ PyHostStatus init_python(const std::string& home) {
     PyHostStatus& status = status_storage();
     refresh_reason_if_disabled(status);
     if (!status.enabled) return status;
+    // ★★ P17-106（审计 `05 PLG-03`，**用户 2026-10-12 拍板：口径 A「明确拒绝」**）：
+    //   `shutdown_python()` 之后再 `init_python()` 原来**一声不响地往下走** —— 而解释器已经
+    //   `Py_FinalizeEx` 过了、GIL/线程态/注册表残留都没清 ⇒ 得到的是"**半死宿主**"：
+    //   看着初始化成功，实际用起来随时炸（而且炸在下游，最难查）。
+    //   ⇒ 口径：**明确拒绝**，理由写进 `status.reason`（零静默：不许假装成功）。
+    //   ★ 为什么不做"真支持重启"：`Py_FinalizeEx` 之后 pybind11 的类型注册**不可重做**
+    //     （本文件 `:3021` 那句老注释就是这个意思）⇒ 要支持得先把整条注册链改成可重入的，
+    //     那是**产品级重构**，收益与风险不成比例。用户的裁定＝A。
+    //   ★★ **顺序有讲究**（我这里第一版就写错了，门禁当场抓到）：
+    //     **先**判"已经起着吗"（幂等直接返回），**再**判"曾经起过吗"。
+    //     反过来的话，宿主正常活着时再调一次 `init_python()`（`load_python_plugins_from_dir`
+    //     就是不带 home 再调一次）会被当成"重启"**误拒** ⇒ `--py-plugins` 整条链全红。
+    //   ★ 判定用**独立的一位** `ever_initialized`（不是 `status.initialized`：
+    //     后者在 shutdown 后就是 false，正是"看不出来曾经起过"的原因）。
     if (status.initialized) return status;
+    if (status.ever_initialized) {
+        status.initialized = false;
+        status.reason =
+            "宿主已关闭：解释器已经 Py_FinalizeEx 终结，不支持在本进程内重启"
+            "（pybind11 的类型注册不可重做）。要再用插件请重开进程。";
+        return status;
+    }
 
     const std::string wanted_home = resolve_python_home(home);
     status.home = wanted_home;
@@ -3490,6 +3511,9 @@ PyHostStatus init_python(const std::string& home) {
         status.reason = "Py_InitializeFromConfig 没报错，但 Py_IsInitialized() 为假";
         return status;
     }
+    // ★★ P17-106（审计 `05 PLG-03`）：**真起来了才置"曾经起来过"**（失败路径不置，
+    //   否则"起失败一次就永远不许再试"——那是把守卫变成误伤）。
+    status.ever_initialized = true;
     status.version = version_from_interpreter();
     status.prefix = py_str_or_empty("base_prefix");
     if (status.version.empty() || status.prefix.empty()) {

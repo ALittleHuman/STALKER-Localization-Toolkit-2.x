@@ -5446,6 +5446,40 @@ def step_version_identity(release: bool) -> None:
         fail("版本身份有判据不成立（见上）")
 
 
+def step_python_restart(release: bool) -> None:
+    """★★ P17-106（审计 `05 PLG-03`，用户 2026-10-12 拍板**口径 A：明确拒绝**）：
+    `shutdown_python()` 之后再 `init_python()` **必须明确拒绝并给理由**。
+
+    修前事实：第二次 `init_python()` **一声不响地往下走** —— 而解释器已经 `Py_FinalizeEx` 过、
+    GIL/线程态/注册表残留都没清 ⇒ 拿到的是"**半死宿主**"：看着起来了，用起来随时炸，
+    而且炸在下游（最难查的那种）。★ 根因是判定看的是 `status.initialized` —— 它在 shutdown 后
+    本来就是 false ⇒ **看不出来"曾经起过"**。
+
+    口径 A（用户拍板）：**不**做"真支持重启"（`Py_FinalizeEx` 之后 pybind11 的类型注册不可重做，
+    要支持得把整条注册链改成可重入＝产品级重构）；改为**明确拒绝** ＋ 理由可见。
+
+    判据：CLI 探针 `--python-restart-probe`（**进程级**动作，单独一条命令，不进 `--selftest`）——
+    起来 → 关掉 → 再起来，逐条断言：第一次必须起来；第二次**不许**起来、**必须**给理由、
+    理由里要能看出"不支持在本进程内重启"。退出码：0=绿 / 1=红 / 3=本构建没编 Python（skip）。
+    """
+    say("[python-restart] P17-106：宿主重启必须明确拒绝（审计 `05 PLG-03`，口径 A）")
+    if not CLI_EXE.is_file():
+        fail("缺构建产物 %s（先跑 build 步）" % CLI_EXE)
+        return
+    rc, out = run([str(CLI_EXE), "--python-restart-probe"], timeout=600)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if s.startswith("PYRESTART"):
+            say("  " + s[:180])
+    if rc == 0 and "PYRESTART ok" in out:
+        ok("shutdown 之后再 init 被明确拒绝（理由可见）—— 不会给出半死宿主")
+    elif rc == 3 or "PYRESTART skip" in out:
+        say("  ⚠ 本构建没编 Python 宿主 —— 本步记为 skip")
+        ok("宿主重启判据在本构建不适用（已如实 skip）")
+    else:
+        fail("宿主重启没有被明确拒绝（见上）—— 半死宿主又回来了")
+
+
 def step_dated_doc(release: bool) -> None:
     """★★ P17-105（审计 `03 F-12`）：**带日期的"当时快照"文档必须自认是快照** ＋ 已更正的断言必须与实现一致。
 
@@ -5629,6 +5663,9 @@ STEPS = [
     # ★★ P17-105（审计 `03 F-12`）：带日期的快照文档必须自认快照 ＋ 已更正断言与实现同源。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
     ("dated-doc", step_dated_doc),
+    # ★★ P17-106（审计 `05 PLG-03`，口径 A）：宿主 shutdown 之后再 init 必须明确拒绝。
+    #   需要 CLI 产物；进程级探针（单独一条命令）。被 `--only` 过滤时进 UNCOVERED。
+    ("python-restart", step_python_restart),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。

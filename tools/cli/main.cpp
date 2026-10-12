@@ -194,6 +194,9 @@ void print_usage() {
            "                                              只此一份实现 —— GUI 只是调它，不自己拼参数）\n"
            "  --python-host   起一次 CPython 插件宿主并打印状态（插件改装 P2；\n"
            "                  `--python-home <目录>` 可显式指定发行包自带的 python/）\n"
+           "  --python-restart-probe\n"
+           "                  宿主重启探针：起来 → 关掉 → 再起来，断言第二次**明确拒绝**\n"
+           "                  （审计 05 PLG-03，口径 A；`Py_FinalizeEx` 之后不支持重启）\n"
            "  --py-plugins [目录]\n"
            "                  Python 插件加载链：起宿主 → 扫 `*.py` → `register(api)` →\n"
            "                  进注册表 → **真消费一次**（调 fs 工具栏那条命令）→ 逐条报账\n"
@@ -3872,6 +3875,50 @@ int run_cli(const std::vector<std::string>& args) {
             return kExitFail;
         }
         std::cout << "PLUGINROLLBACK ok owner=" << owner << " rolled_and_clean=1\n";
+        return kExitOk;
+    }
+
+    // ★★ P17-106（审计 `05 PLG-03`，用户 2026-10-12 拍板**口径 A：明确拒绝**）：
+    //   宿主的**重启探针** —— 起来 → 关掉 → 再起来一次，把第二次的状态如实打出来。
+    //   为什么必须有这条探针：`shutdown_python()` 之后 `initialized` 本来就是 false，
+    //   光看那个字段**看不出来"曾经起过"** ⇒ 原来的行为是"一声不响往下走"，
+    //   给出一个半死宿主（炸在下游，最难查）。口径 A 要求第二次**明确拒绝并给理由**。
+    //   ★ 单独一条动作（不进 `--selftest`）：`Py_FinalizeEx` 之后再初始化解释器是**进程级**
+    //     动作，不能塞进"跑一堆判据"的自检里当副作用。
+    if (action == "--python-restart-probe") {
+        const std::string home = python_home;
+        const xrkit::plugin::PyHostStatus first = xrkit::plugin::init_python(home);
+        std::cout << "PYRESTART first initialized=" << (first.initialized ? 1 : 0)
+                  << " enabled=" << (first.enabled ? 1 : 0)
+                  << " version=" << (first.version.empty() ? "(空)" : first.version) << "\n";
+        if (first.reason.size() > 0) std::cout << "PYRESTART first reason=" << first.reason << "\n";
+        xrkit::plugin::shutdown_python();
+        const xrkit::plugin::PyHostStatus second = xrkit::plugin::init_python(home);
+        std::cout << "PYRESTART second initialized=" << (second.initialized ? 1 : 0) << "\n";
+        std::cout << "PYRESTART second reason=" << second.reason << "\n";
+        std::vector<std::string> bad;
+        const auto want2 = [&bad](bool cond, const std::string& what) {
+            if (!cond) bad.push_back(what);
+        };
+        if (!first.enabled) {
+            std::cout << "PYRESTART skip reason=本构建没编 Python 宿主\n";
+            return kExitSkip;
+        }
+        want2(first.initialized, "第一次没起来（探针前提不成立）");
+        // ★ 口径 A 的三条：第二次**不许**起来、**必须**给理由、理由里要能看出"不支持重启"
+        want2(!second.initialized,
+              "第二次 init 又「起来」了 —— 那是半死宿主（口径 A 不许）");
+        want2(!second.reason.empty(), "第二次 init 被拒却没给理由（零静默）");
+        want2(second.reason.find("重启") != std::string::npos ||
+                  second.reason.find("Py_FinalizeEx") != std::string::npos,
+              "理由里看不出「不支持在本进程内重启」");
+        if (!bad.empty()) {
+            std::cout << "PYRESTART fail count=" << bad.size() << " why=";
+            for (size_t i = 0; i < bad.size(); ++i) std::cout << (i ? "；" : "") << bad[i];
+            std::cout << "\n";
+            return kExitFail;
+        }
+        std::cout << "PYRESTART ok refused_restart=1 reason_visible=1\n";
         return kExitOk;
     }
 
