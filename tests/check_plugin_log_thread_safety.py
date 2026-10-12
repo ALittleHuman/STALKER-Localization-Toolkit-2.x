@@ -43,6 +43,46 @@ for _stream in (sys.stdout, sys.stderr):
 ROOT = Path(__file__).resolve().parent.parent
 PY_HOST = ROOT / "src" / "engine" / "plugin" / "py_host.cpp"
 REGISTRY_H = ROOT / "include" / "xrkit" / "engine" / "plugin" / "registry.h"
+COMPARE_H = ROOT / "include" / "xrkit" / "engine" / "xml" / "compare.h"
+ABI_HOST = ROOT / "src" / "engine" / "plugin" / "abi_host.cpp"
+DESIGN_DOC = ROOT / "docs" / "2.0.0-设计口径.md"
+
+
+def audit_sink_contract(compare_h: str, abi_host: str, design_doc: str) -> list:
+    """③ ★★ P17-99（审计 `05 PLG-04`）：ABI 明文列的 sink 键不许被静默丢；`ids_a`/`ids_b` 不许恒 0。
+
+    * `ids_a`/`ids_b` 必须**从插件真报上来的 ID 数出来**（不能再取 `id_text_*` —— 那是文本模式的表，
+      C ABI 的 sink 没有任何键写它 ⇒ 恒 0）；
+    * 宿主不认识的键必须**记进 `unhandled_keys`**（零静默）；
+    * 结果结构里必须有 `unhandled_keys` 这个字段；
+    * **口径必须落在字据上**（`docs/2.0.0-设计口径.md` §4.5）：`row_kind` 不落位 / 但不许静默丢 /
+      ID 数按插件报的算 —— 三句都在。
+    """
+    problems = []
+    abi = strip_comments(abi_host)
+    cmp = strip_comments(compare_h)
+    if "unhandled_keys" not in cmp:
+        problems.append("compare.h：`XmlCompareResult` 里没有 `unhandled_keys` 字段（不认识的键无处记）")
+    if "unhandled_keys.push_back" not in abi:
+        problems.append("abi_host.cpp：不认识的 sink 键没有记进 `unhandled_keys`（静默丢）")
+    if "id_text_a.size()" in abi or "id_text_b.size()" in abi:
+        problems.append("abi_host.cpp：`ids_a`/`ids_b` 又取回 `id_text_*.size()` 了"
+                        "（那是**文本模式**的表，C ABI 的 sink 不写它 ⇒ 插件模式下恒 0）")
+    if "ids_a_seen" not in abi or "ids_b_seen" not in abi:
+        problems.append("abi_host.cpp：`ids_a`/`ids_b` 不是从插件报上来的 ID 里数的")
+    if "### 4.5" not in design_doc or "row_kind" not in design_doc:
+        problems.append("docs/2.0.0-设计口径.md：缺 §4.5（sink 键的认/不认口径）")
+    else:
+        at = design_doc.find("### 4.5")
+        window = design_doc[at:at + 2400]
+        for needle, why in (
+                ("不落位", "没写「`row_kind` 不落位」"),
+                ("静默丢", "没写「不许静默丢」"),
+                ("真报上来的 ID 数", "没写「ID 数按插件真报上来的算」"),
+        ):
+            if needle not in window:
+                problems.append("docs/2.0.0-设计口径.md §4.5：%s" % why)
+    return problems
 
 
 def strip_comments(text: str) -> str:
@@ -130,7 +170,22 @@ def selfcheck() -> tuple:
                 "// 写（注册/注销/回滚）只发生在主线程；读可以在工作线程（发布后只读）；\n"
                 "// 将来要在工作线程写，就先给注册表加锁并同步改这条注释。\n")
     cases = [
-        ("好形状", 0, audit_log_buffer(good_host) + audit_registry_contract(good_reg)),
+        ("好形状", 0, audit_log_buffer(good_host) + audit_registry_contract(good_reg)
+         + audit_sink_contract("struct X { std::vector<std::string> unhandled_keys; };",
+                               "target->unhandled_keys.push_back(k); ids_a_seen.insert(x); ids_b_seen.insert(y);",
+                               "### 4.5 x\nrow_kind 不落位；不许静默丢；按真报上来的 ID 数\n")),
+        ("IDS 取回 id_text_*（修前形状）", 1,
+         audit_sink_contract("struct X { std::vector<std::string> unhandled_keys; };",
+                             "result.ids_a = result.id_text_a.size(); ids_a_seen.insert(x); ids_b_seen.insert(y);",
+                             "### 4.5 x\nrow_kind 不落位；不许静默丢；按真报上来的 ID 数\n")),
+        ("不认识的键静默丢（修前形状）", 1,
+         audit_sink_contract("struct X { std::vector<std::string> unhandled_keys; };",
+                             "ids_a_seen.insert(x); ids_b_seen.insert(y);",
+                             "### 4.5 x\nrow_kind 不落位；不许静默丢；按真报上来的 ID 数\n")),
+        ("口径没落字据", 1,
+         audit_sink_contract("struct X { std::vector<std::string> unhandled_keys; };",
+                             "target->unhandled_keys.push_back(k); ids_a_seen.insert(x); ids_b_seen.insert(y);",
+                             "（没有 §4.5）\n")),
         ("裸访问器又回来了（修前形状）", 1,
          audit_log_buffer(good_host.replace("void append_plugin_log_line",
                                             "std::vector<std::string>& plugin_log_buffer() { return b; }\n"
@@ -159,7 +214,7 @@ def selfcheck() -> tuple:
 
 
 def main() -> int:
-    print("== P17-98：插件日志缓冲的线程安全 ＋ 注册表的线程约定（审计 `05 PLG-08`）==")
+    print("== P17-98/P17-99：插件日志缓冲的线程安全 ＋ 注册表线程约定 ＋ C ABI sink 零静默 ==")
     print()
     print("-- 反例自证 --")
     self_ok, results = selfcheck()
@@ -176,12 +231,15 @@ def main() -> int:
     print("   ✓ 反例自证 %d/%d" % (len(results), len(results)))
     print()
 
-    for path in (PY_HOST, REGISTRY_H):
+    for path in (PY_HOST, REGISTRY_H, COMPARE_H, ABI_HOST, DESIGN_DOC):
         if not path.is_file():
             print("PLG-THREADSAFE fail 仓库自带文件缺失：%s" % path)
             return 1
     problems = audit_log_buffer(PY_HOST.read_text(encoding="utf-8", errors="replace"))
     problems += audit_registry_contract(REGISTRY_H.read_text(encoding="utf-8", errors="replace"))
+    problems += audit_sink_contract(COMPARE_H.read_text(encoding="utf-8", errors="replace"),
+                                   ABI_HOST.read_text(encoding="utf-8", errors="replace"),
+                                   DESIGN_DOC.read_text(encoding="utf-8", errors="replace"))
     print("-- 实测 --")
     if problems:
         for item in problems:
@@ -192,8 +250,10 @@ def main() -> int:
     print("   ✓ 日志缓冲：写走 `append_plugin_log_line`（锁 + 上限）、读+清空走 `take_python_log_lines`（同锁 swap）")
     print("   ✓ 裸访问器 `plugin_log_buffer()` 已消失；`api.log` 不再直接动那个 vector")
     print("   ✓ 注册表线程约定已成字据（写只在主线程／读可在工作线程／要并发写先加锁）")
+    print("   ✓ C ABI sink：`ids_a`/`ids_b` 从插件报的 ID 数出来；不认识的键记进 `unhandled_keys`（零静默）")
+    print("   ✓ 口径已落在 `docs/2.0.0-设计口径.md` §4.5（`row_kind` 不落位／不许静默丢／ID 数按插件报的算）")
     print()
-    print("PLG-THREADSAFE ok 日志缓冲有锁、注册表有字据（审计 05 PLG-08）")
+    print("PLG-THREADSAFE ok 日志缓冲有锁、注册表有字据、ABI sink 无静默丢（审计 05 PLG-08 / 05 PLG-04）")
     return 0
 
 

@@ -3262,7 +3262,7 @@ def step_ui_facade(release: bool) -> None:
         fail("控件门面能力表不通过（判据 rc=%d / 探针 rc=%d；见上）" % (rc, rc_probe))
 
 
-def step_plugin_threadsafe(release: bool) -> None:
+def step_plugin_contract(release: bool) -> None:
     """★★ P17-98（审计 `05 PLG-08`）：插件日志缓冲要有锁 ＋ 注册表的线程约定要有字据。
 
     事实（实查分两半，处置不同）：
@@ -3278,9 +3278,9 @@ def step_plugin_threadsafe(release: bool) -> None:
     ② 注册表：`registry.h` 必须写明"写只在主线程／读可在工作线程／将来要并发写先加锁"三句。
     独立成步、静态、不依赖构建产物。退出码：0=绿、1=有断言不成立。
     """
-    say("[plugin-threadsafe] P17-98：插件日志缓冲的锁 ＋ 注册表线程约定字据（审计 `05 PLG-08`）")
+    say("[plugin-contract] P17-98/P17-99：插件日志缓冲的锁 ＋ 注册表线程约定 ＋ C ABI sink 零静默")
     script = ROOT / "tests" / "check_plugin_log_thread_safety.py"
-    if not require_repo_file(script, "插件日志线程安全核对器"):
+    if not require_repo_file(script, "插件日志/ABI sink 契约核对器"):
         return
     rc, out = run([sys.executable, str(script)], timeout=180)
     for raw in out.splitlines():
@@ -3292,7 +3292,7 @@ def step_plugin_threadsafe(release: bool) -> None:
     if rc == 0 and "PLG-THREADSAFE ok" in out:
         ok("插件日志缓冲有锁（写/读+清空两个入口）＋ 注册表线程约定已成字据")
     else:
-        fail("插件日志缓冲/注册表的线程面不成立（见上）—— 跨线程写缓冲不许再直连 vector")
+        fail("插件日志缓冲/注册表/ABI sink 的契约面不成立（见上）—— 跨线程写缓冲不许直连 vector、sink 键不许静默丢")
 
 
 def step_when_value(release: bool) -> None:
@@ -5465,9 +5465,9 @@ STEPS = [
     # ★★ P17-97（审计 `05 PLG-06`）：`when` 的值类型不许互相冒充 ＋ 比较口径要有字据。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
     ("when-value", step_when_value),
-    # ★★ P17-98（审计 `05 PLG-08`）：插件日志缓冲的锁 ＋ 注册表线程约定字据。
-    #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
-    ("plugin-threadsafe", step_plugin_threadsafe),
+    # ★★ P17-98/P17-99（审计 `05 PLG-08` / `05 PLG-04`）：插件日志缓冲的锁 ＋ 注册表线程约定字据
+    #   ＋ C ABI sink 零静默。独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
+    ("plugin-contract", step_plugin_contract),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。

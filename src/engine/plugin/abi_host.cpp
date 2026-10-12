@@ -1,8 +1,10 @@
 #include "xrkit/engine/plugin/abi_host.h"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <map>
+#include <set>
 #include <sstream>
 
 namespace xrkit::plugin {
@@ -311,12 +313,45 @@ int PluginApiAdapter::on_compare_mode(stk_host* host, const char* name, const ch
                 target->count_diff.push_back(split3(value));
             } else if (k == "detail") {
                 target->error = value;  // 复用字段：插件给的完整明细
+            } else {
+                // ★★ P17-99（审计 `05 PLG-04`）：**不认识的键不许静默丢**。
+                //   修前这里是"什么都不做"——而 ABI 明文列了 `row_kind`（`abi.h:111`）⇒
+                //   插件认真按契约报的东西，宿主一声不响地扔掉。
+                //   口径（写进 `docs/2.0.0-设计口径.md`）：`row_kind` 属"**行级**类别"，
+                //   而插件模式在宿主侧**没有**对应的结果字段（内建行类别来自内建统计解析）
+                //   ⇒ **不伪造一个位置**，但**如实记账**（哪怕同一键重复出现也只记一次）。
+                if (std::find(target->unhandled_keys.begin(), target->unhandled_keys.end(), k) ==
+                    target->unhandled_keys.end()) {
+                    target->unhandled_keys.push_back(k);
+                }
             }
         };
         compare(user, rel.c_str(), text_a.c_str(), text_b.c_str(), enc_a.c_str(), enc_b.c_str(),
                 sink, &result);
-        result.ids_a = result.id_text_a.size();
-        result.ids_b = result.id_text_b.size();
+        // ★★ P17-99（审计 `05 PLG-04`）：`ids_a` / `ids_b` 原来是 `id_text_a.size()` ——
+        //   而 `id_text_*` 是**文本模式**的明细表，C ABI 的 sink **没有任何键写它**
+        //   ⇒ 插件模式下这两个数**恒 0**（XML 页的「ID 数: A=0 B=0」列因此永远是 0）。
+        //   口径（与"插件报了什么就认什么"一致）：**从插件真的报上来的 ID 里数**（去重）——
+        //   `text_diff` / `count_diff` 的第 1 列是 ID，`only_a`/`only_b` 的整串就是 ID。
+        //   ★ 不猜数量、不写死：插件没报就是 0（那是它真的没报）。
+        {
+            std::set<std::string> ids_a_seen;
+            std::set<std::string> ids_b_seen;
+            for (const auto& row : result.text_diff) {
+                if (!row[0].empty()) { ids_a_seen.insert(row[0]); ids_b_seen.insert(row[0]); }
+            }
+            for (const auto& row : result.count_diff) {
+                if (!row[0].empty()) { ids_a_seen.insert(row[0]); ids_b_seen.insert(row[0]); }
+            }
+            for (const std::string& id : result.only_a) {
+                if (!id.empty()) ids_a_seen.insert(id);
+            }
+            for (const std::string& id : result.only_b) {
+                if (!id.empty()) ids_b_seen.insert(id);
+            }
+            result.ids_a = ids_a_seen.size();
+            result.ids_b = ids_b_seen.size();
+        }
         return result;
     };
     return self_ptr->registry_.register_compare_mode(self_ptr->plugin_name_, std::move(mode)) ? 1

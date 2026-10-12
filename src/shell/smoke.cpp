@@ -11289,6 +11289,13 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
                 // ★ 夹具故意把两侧**完全相同的文本**判成"不一致" —— 内置统计/文本模式对
                 //   相同文本必然判一致 ⇒ 下面那条断言在修前（回调从不被调用）**必红**。
                 sink(sink_user, "consistent", "0");
+                // ★★ P17-99（审计 `05 PLG-04`）：顺带把另外两条通道也走到 ——
+                //   · `only_a` 的整串就是 ID ⇒ 结果里的 `ids_a` 必须跟着**数出来**（修前恒 0）；
+                //   · `row_kind` 是 ABI 明文列了、宿主侧**没有对应结果字段**的键 ⇒ 必须**如实记进
+                //     `unhandled_keys`**（修前"什么都不做"＝静默丢）。
+                sink(sink_user, "only_a", "p1799-a");
+                sink(sink_user, "only_b", "p1799-b");
+                sink(sink_user, "row_kind", "diff");
             };
             check(adapter.api().register_compare_mode(adapter.api().host, "插件模式", "plugin_mode",
                                                       40, col_keys, col_headings, col_widths, 3,
@@ -11347,6 +11354,26 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
                                  "「不一致」= 状态列「%1」；修前页面只走内置 compare_stats ⇒ 必是"
                                  "「一致」）")
                       .arg(status_cell));
+            // ★★ P17-99（审计 `05 PLG-04`）：**sink 回传的东西不许被静默丢** —— 两条都要有牙：
+            //   ① `ids_a`/`ids_b` 原来是 `id_text_a.size()`（C ABI 的 sink **没有任何键写它**）
+            //      ⇒ 插件模式下恒 0（XML 页「ID 数: A=0 B=0」永远是 0）。现在从**插件真的报上来的 ID**里数。
+            //   ② `row_kind` 宿主侧没有对应字段 ⇒ 必须**记进 `unhandled_keys`**，不许一声不响扔掉。
+            //   ★ 判据直接问**结果对象**（不是看界面文案）：`XmlCompareResult` 的两个面。
+            {
+                const xrkit::engine::xml::XmlCompareResult probe =
+                    registry.compare_mode("插件模式")->compare(QStringLiteral("z.xml").toStdString(),
+                                                               "<root/>", "<root/>", "auto", "auto");
+                check(probe.ids_a == 1 && probe.ids_b == 1,
+                      QStringLiteral("P17-99 插件报的 `only_a`/`only_b` 必须计入 ID 数（期望 A=1 B=1，"
+                                     "实测 A=%1 B=%2；修前取的是**文本模式**的 `id_text_*` ⇒ 恒 0）")
+                          .arg(probe.ids_a)
+                          .arg(probe.ids_b));
+                check(probe.unhandled_keys.size() == 1 &&
+                          probe.unhandled_keys[0] == std::string("row_kind"),
+                      QStringLiteral("P17-99 宿主不认识的 sink 键必须**如实记账**（期望 [row_kind]，"
+                                     "实测 %1 项；修前是「什么都不做」＝静默丢）")
+                          .arg(probe.unhandled_keys.size()));
+            }
             page.hide();
             QDir(root).removeRecursively();
         }

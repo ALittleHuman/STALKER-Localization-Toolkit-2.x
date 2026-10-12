@@ -95,6 +95,11 @@ struct XmlCompareResult {
     std::vector<std::array<std::string, 3>> text_diff;   // (id, A 文本, B 文本)
     std::map<std::string, std::string> id_text_a;        // 明细里要看原文（文本模式）
     std::map<std::string, std::string> id_text_b;
+    // ★★ P17-99（审计 `05 PLG-04`）：C ABI 比较模式**回传了我们不认识的 sink 键**时逐条记在这里
+    //   （零静默：插件报上来的东西不许静默丢）。已知会落在这里的键是 `row_kind`
+    //   —— 它属"**行级**类别"，而插件模式在宿主侧**没有**对应字段（内建行类别来自内建统计解析）
+    //   ⇒ 见 `docs/2.0.0-设计口径.md` 的口径条目，**不在这条链上伪造一个位置**，但**如实记账**。
+    std::vector<std::string> unhandled_keys;
     bool untrusted_a = false;  // 一侧解析失败 ⇒ 结果不可信（界面必须告警）
     bool untrusted_b = false;
     std::string warning;
