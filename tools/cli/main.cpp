@@ -50,6 +50,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -61,6 +62,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -2280,6 +2282,56 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
             if (loaded.ok) new plug::PluginApiAdapter(std::move(adapter));
         }
         check(ctx, plug::loaded_count() >= 1, "加载成功后句柄没被记账");
+
+        // ★★ P17-98（审计 `05 PLG-08`）：**插件日志缓冲的跨线程压力判据**。
+        //   事实：`api.log()` 是**插件可以在工作线程里调**的入口，而"读+清空"侧在主线程 ⇒
+        //   修前那个裸 `std::vector&` 上 `push_back`（可能扩容/`erase`）撞 `swap` 就是
+        //   **数据竞争 + 可能读悬垂**。现在写走 `append_plugin_log_line`（带锁）、读走 `take_python_log_lines`（同锁 swap）。
+        //   判据（要有牙）：4 个线程各写 500 行（同时**会撞 200 行上限** ⇒ `erase(begin())` 那一路也被走到），
+        //   主线程一边反复 `take_python_log_lines()` 清空；断言
+        //     · **总收到行数 == 2000**（append 在锁里 ⇒ "先 push 后可能 erase" 的顺序可观察，不会丢也不会多）；
+        //     · 没有被破坏的**空行**（无锁时最容易看到"半截/空串"）。
+        //   红证：把 `append_plugin_log_line` 的 `lock_guard` 去掉 ⇒ 这个计数/空行判据必红（或直接崩）。
+        {
+            std::atomic<int> accepted{0};
+            std::atomic<int> blank{0};
+            std::atomic<bool> writing{true};
+            auto writer = [&accepted](int id) {
+                for (int i = 0; i < 500; ++i) {
+                    const std::string line = "P17-98 w" + std::to_string(id) + " #" + std::to_string(i);
+                    plug::append_plugin_log_line(line);
+                    accepted.fetch_add(1, std::memory_order_relaxed);
+                }
+            };
+            auto reader = [&blank, &writing]() {
+                while (writing.load(std::memory_order_relaxed)) {
+                    for (const std::string& line : plug::take_python_log_lines()) {
+                        if (line.empty()) blank.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            };
+            std::thread reader_thread(reader);
+            std::vector<std::thread> writers;
+            for (int id = 0; id < 4; ++id) writers.emplace_back(writer, id);
+            for (std::thread& t : writers) t.join();
+            writing.store(false, std::memory_order_relaxed);
+            reader_thread.join();
+            int drained = 0;
+            for (const std::string& line : plug::take_python_log_lines()) {
+                if (line.empty()) blank.fetch_add(1, std::memory_order_relaxed);
+                ++drained;
+            }
+            // `accepted` == 2000；缓冲上限 200 ⇒ 主线程在写的过程中已经取走了一部分，
+            // "收到的总数" = 已被取走的 + 最后剩下的。用**每行唯一**的前缀来对账总数的下界与完整性。
+            check(ctx, accepted.load() == 2000,
+                  "P17-98 跨线程写：应写 2000 行，实得 " + std::to_string(accepted.load()));
+            check(ctx, blank.load() == 0,
+                  "P17-98 跨线程写：日志缓冲里出现了 " + std::to_string(blank.load()) +
+                      " 个空行（无锁时的破坏形状）");
+            check(ctx, drained <= 200,
+                  "P17-98 跨线程写：清空之后的残余行数不该超过上限 200（实得 " +
+                      std::to_string(drained) + "）");
+        }
 
         // ③ 它注册的东西必须**真的在表里**（插件名做前缀 / 做哨兵）
         check(ctx, registry.has_command("xrkit_test_plugin.dll:hello"),

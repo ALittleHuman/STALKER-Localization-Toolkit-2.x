@@ -3262,6 +3262,39 @@ def step_ui_facade(release: bool) -> None:
         fail("控件门面能力表不通过（判据 rc=%d / 探针 rc=%d；见上）" % (rc, rc_probe))
 
 
+def step_plugin_threadsafe(release: bool) -> None:
+    """★★ P17-98（审计 `05 PLG-08`）：插件日志缓冲要有锁 ＋ 注册表的线程约定要有字据。
+
+    事实（实查分两半，处置不同）：
+    · **日志缓冲（真缺陷）**：`api.log()` 是**插件可以在工作线程里调**的入口（本仓页面/任务回调就有
+      跑在工作线程的），而"读+清空"侧 `take_python_log_lines()` 在主线程 ⇒ 修前那个裸 `std::vector&` 上，
+      `push_back`（可能扩容/`erase`）撞 `swap` ＝ **数据竞争 + 可能读悬垂**；
+      现在写走 `append_plugin_log_line`（带锁 + 200 行上限），读+清空走 `take_python_log_lines`（同锁 swap）。
+    · **注册表（不是缺陷，但缺字据）**：写只在主线程（`Hub::load_plugins()`），读可被工作线程问
+      （`menu_items_for`/`panels_for`/`invoke`）＝"发布后只读"那一档；但原来**一个字都没写** ⇒ 本批写成字据。
+
+    判据两组（`tests/check_plugin_log_thread_safety.py`，自带 5 个反例自证）：
+    ① 日志缓冲：带锁的两个入口必须在、裸访问器 `plugin_log_buffer()` 必须已消失、`api.log` 不许绕过入口；
+    ② 注册表：`registry.h` 必须写明"写只在主线程／读可在工作线程／将来要并发写先加锁"三句。
+    独立成步、静态、不依赖构建产物。退出码：0=绿、1=有断言不成立。
+    """
+    say("[plugin-threadsafe] P17-98：插件日志缓冲的锁 ＋ 注册表线程约定字据（审计 `05 PLG-08`）")
+    script = ROOT / "tests" / "check_plugin_log_thread_safety.py"
+    if not require_repo_file(script, "插件日志线程安全核对器"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=180)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("PLG-THREADSAFE") or s.startswith("✓ 反例自证")
+                or s.startswith("✗ ") or s.startswith("✓ 日志缓冲")
+                or s.startswith("✓ 裸访问器") or s.startswith("✓ 注册表")):
+            say("  " + s[:170])
+    if rc == 0 and "PLG-THREADSAFE ok" in out:
+        ok("插件日志缓冲有锁（写/读+清空两个入口）＋ 注册表线程约定已成字据")
+    else:
+        fail("插件日志缓冲/注册表的线程面不成立（见上）—— 跨线程写缓冲不许再直连 vector")
+
+
 def step_when_value(release: bool) -> None:
     """★★ P17-97（审计 `05 PLG-06`）：**`when` 的值不许让类型互相冒充**。
 
@@ -5432,6 +5465,9 @@ STEPS = [
     # ★★ P17-97（审计 `05 PLG-06`）：`when` 的值类型不许互相冒充 ＋ 比较口径要有字据。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
     ("when-value", step_when_value),
+    # ★★ P17-98（审计 `05 PLG-08`）：插件日志缓冲的锁 ＋ 注册表线程约定字据。
+    #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
+    ("plugin-threadsafe", step_plugin_threadsafe),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。

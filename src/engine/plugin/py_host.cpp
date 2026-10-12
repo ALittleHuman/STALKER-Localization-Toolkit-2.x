@@ -29,6 +29,46 @@
 #endif
 
 namespace xrkit::plugin {
+
+// ★★ P17-98（审计 `05 PLG-08`）：插件日志缓冲（`api.log()` 的近期行）的**唯一两个入口**。
+//   **必须定义在文件作用域、且在下面那个匿名命名空间之前** —— `PyPluginApi::log`（在匿名命名空间里）
+//   要调它，而一个匿名命名空间从第 40 行一直开到三千多行：
+//     · 声明写在匿名命名空间里、定义写在文件作用域 ⇒ **两个不同的函数** ⇒ `LNK2019`；
+//     · 声明写在文件作用域、调用点在匿名命名空间里且在声明之前 ⇒ `C3861 找不到标识符`。
+//   ★ 这两条都是我**真踩过的**（P17-97 回退一次、P17-98 再踩一次），所以写在这里当路标。
+#ifdef XRKIT_WITH_PYTHON
+namespace log_buffer_detail {
+std::mutex& plugin_log_mutex() {
+    // 故意不析构：静态析构顺序会咬人（与 `core/log.cpp` 的 `g_mutex` 同口径）。
+    static std::mutex* instance = new std::mutex();
+    return *instance;
+}
+std::vector<std::string>& plugin_log_storage() {
+    static std::vector<std::string>* instance = new std::vector<std::string>();
+    return *instance;
+}
+constexpr size_t kPluginLogCap = 200;
+}  // namespace log_buffer_detail
+
+// 写侧的**唯一入口**（带锁 + 200 行上限；满了丢最旧的 —— 它是诊断缓冲，不是日志系统）。
+// ★ 为什么要有锁：`api.log` 是**插件可以在工作线程里调**的入口（本仓的页面/任务回调就有跑在工作线程的），
+//   而读+清空侧 `take_python_log_lines()` 在主线程（插件加载之后 / 任务收尾）——
+//   原来的裸 vector 上，`push_back`（可能扩容、可能 `erase(begin())`）撞上 `swap` 就是
+//   **数据竞争 + 可能读悬垂**。
+// ★ 没编 Python 宿主时**也要有定义**：`--selftest` 的跨线程压力判据在两种构建里都跑得到它。
+#endif  // XRKIT_WITH_PYTHON
+
+void append_plugin_log_line(const std::string& line) {
+#ifdef XRKIT_WITH_PYTHON
+    std::lock_guard<std::mutex> lock(log_buffer_detail::plugin_log_mutex());
+    std::vector<std::string>& buffer = log_buffer_detail::plugin_log_storage();
+    buffer.push_back(line);
+    if (buffer.size() > log_buffer_detail::kPluginLogCap) buffer.erase(buffer.begin());
+#else
+    (void)line;   // 没编宿主就没有缓冲可写（调用方只在宿主可用时才会走到这里）
+#endif
+}
+
 namespace {
 
 std::mutex& host_mutex() {
@@ -86,12 +126,20 @@ std::vector<py::object>* keepalive() {
     return instance;
 }
 
-// `api.log()` 的近期行（探针/门禁用它证明"插件的日志通道真的通"；**上界面**（Hub 日志栏）
-// 随阶段 3 的宿主门面一起接）。上限 200 行，满了丢最旧的 —— 它是诊断缓冲，不是日志系统。
-std::vector<std::string>& plugin_log_buffer() {
-    static std::vector<std::string> instance;
-    return instance;
-}
+// ★★ P17-98（审计 `05 PLG-08`）：`api.log()` 的近期行 —— **唯一入口**（自带锁 + 200 行上限）。
+//   修前这里是个**裸 `std::vector&` 访问器**，于是"写"（`api.log`，插件可在**工作线程**调）
+//   与"读+清空"（`take_python_log_lines`，主线程在插件加载后/任务收尾调）可以同时碰同一个 vector：
+//   `push_back`（可能扩容、也可能 `erase(begin())`）撞上 `swap` 就是**数据竞争 + 可能读悬垂**。
+//   ★ 定义在文件后面（与 `take_python_log_lines` 一起，且都在 `XRKIT_WITH_PYTHON` 里）——
+//     这一条是 P17-97 那次回退换来的教训：**声明与定义必须同一个命名空间、同一套条件编译**。
+// ★★ P17-98（审计 `05 PLG-08`）：`api.log()` 的近期行 —— **唯一入口**（自带锁 + 200 行上限）。
+//   修前这里是个**裸 `std::vector&` 访问器**，于是"写"（`api.log`，插件可在**工作线程**调）
+//   与"读+清空"（`take_python_log_lines`，主线程在插件加载后/任务收尾调）可以同时碰同一个 vector。
+//   ⇒ 现在写走 `append_plugin_log_line`（带锁 + 上限），读+清空走 `take_python_log_lines`
+//     （同一把锁里 swap 出来再返回）；**两个函数以外不许再直接碰那个 vector**。
+//   ★ 实现放在文件后面（与 `take_python_log_lines` 一起）—— 那条
+//     `void append_plugin_log_line(...)` 的声明**必须留在文件作用域**，
+//     否则会与定义分处两个命名空间（P17-97 那次 `LNK2019` 就是这么来的）。
 
 size_t& loaded_python_plugins() {
     static size_t instance = 0;
@@ -224,9 +272,9 @@ public:
     void log(const std::string& message) const {
         const std::string line = "[" + owner_ + "] " + message;
         core::log(core::Level::Info, line);
-        std::vector<std::string>& buffer = plugin_log_buffer();
-        buffer.push_back(line);
-        if (buffer.size() > 200) buffer.erase(buffer.begin());
+        // ★★ P17-98（审计 `05 PLG-08`）：走**带锁的入口**（这个回调可能在工作线程上被调，
+        //   而缓冲的读侧在主线程 ⇒ 直连 vector 是数据竞争）。
+        append_plugin_log_line(line);
     }
 
     py::object register_command(const std::string& action_id, const std::string& label,
@@ -3655,10 +3703,14 @@ size_t loaded_python_plugin_count() {
 
 // 插件日志缓冲（诊断用；探针/自检读它证明"插件日志通道真的通"）。
 // ★ 不放进 `PyHostStatus`：它不是"宿主状态"，而是**每次加载/回调都可能多出来的行**。
+// ★★ P17-98（审计 `05 PLG-08`）：**写侧的唯一入口**在文件开头（`append_plugin_log_line`，带锁 + 上限），
+//   这里是**读+清空**（同一把锁里 swap 出来再返回）。两个函数以外**不许**直接碰那个 vector
+//   （判据见 `tests/check_plugin_log_thread_safety.py`）。
 std::vector<std::string> take_python_log_lines() {
     std::vector<std::string> out;
 #ifdef XRKIT_WITH_PYTHON
-    out.swap(plugin_log_buffer());
+    std::lock_guard<std::mutex> lock(log_buffer_detail::plugin_log_mutex());
+    out.swap(log_buffer_detail::plugin_log_storage());
 #endif
     return out;
 }

@@ -43,6 +43,21 @@ using Context = std::map<std::string, ContextValue>;
 //     ⇒ 插件要匹配它就写 `"1"`（写 `1` 现在**不会**命中 —— 那正是"类型别冒充"的意思）；
 //   · `None` 仍是"期望这个键不存在"（`ctx.get(k) == None` 的 1.x 语义，见 `when_ok`）。
 
+// ── ★★ P17-98（审计 `05 PLG-08`）：注册表的**线程约定**（修前一个字都没写，只能靠读代码猜）──
+//   **写（注册/注销/回滚）只发生在主线程**：
+//     · 插件加载 —— `Hub::load_plugins()` → `load_all_plugins_from_dir()`（Hub 构造末尾，主线程）；
+//     · 插件卸载/重扫 —— 同一个入口，主线程；
+//     · 注册期问题（`errors_`）也由上面两条路写。
+//   **读可以在工作线程**：插件页/面板的回调里会问 `menu_items_for()` / `panels_for()` / `invoke()`
+//     这些（`Registry::invoke` 只 catch C++ 异常、不改容器）——即"**发布后只读**"那一档，
+//     容器的元素在加载完成后不再增删 ⇒ 工作线程读是安全的。
+//   ★ **边界（写在这里免得后人误用）**：这条约定成立的前提是"加载完成之后没有并发写"。
+//     将来若要**在工作线程里注册/注销**，必须先给注册表加锁并同步改这条注释——
+//     **不要**只加一行 `.push_back()` 就当它是线程安全的。
+//   ★ 本仓另一处并发点是**插件日志缓冲**（`api.log` 可在工作线程调）——那一处**已经**加了锁，
+//     见 `src/engine/plugin/py_host.cpp` 的 `append_plugin_log_line` / `take_python_log_lines`
+//     （判据：`tests/check_plugin_log_thread_safety.py`）。
+
 struct WhenSpec {
     std::vector<std::pair<std::string, ContextValue>> match;
     std::function<bool(const Context&)> predicate;
