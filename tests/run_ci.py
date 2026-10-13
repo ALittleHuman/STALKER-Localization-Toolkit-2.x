@@ -5480,6 +5480,42 @@ def step_python_restart(release: bool) -> None:
         fail("宿主重启没有被明确拒绝（见上）—— 半死宿主又回来了")
 
 
+def step_db_whole_read(release: bool) -> None:
+    """★★ P17-111（复审计 `01 F-09`）：DB 兜底**整包读必须有尺寸上限**。
+
+    修前事实：`db.cpp` 退回整文件读那一段是**无上限**的
+    `std::vector<uint8_t> raw((istreambuf_iterator<char>(in)), …)`，而它发生在
+    "**还认不出这是不是 DB**"之前 ⇒ 随手指一个几 GB 的文件就会被**整个读进内存**
+    （白读 ＋ 可能撑爆进程）。
+
+    判据 `tests/check_db_whole_read_limit.py`（**真造大文件试**，用**稀疏文件**）：
+    ① 上限压到 1 MiB、对一个**逻辑 64 MiB** 的"认不出格式"文件 ⇒ 必须**非零退出**、
+    **在超时内返回**、理由里**同时**写出"文件多大"与"上限多少"；② 小文件走同一条路行为照旧。
+    ★ 判据自曝边界：`--dump` 不露 `whole_read_refused` ⇒ 本条断言的是"**拒绝发生且理由可见**"，
+      **不是**"内部真的没读进去"。需要 CLI 产物。
+    """
+    say("[db-whole-read] P17-111：DB 兜底整包读要有尺寸上限（复审计 `01 F-09`）")
+    script = ROOT / "tests" / "check_db_whole_read_limit.py"
+    if not require_repo_file(script, "DB 整包读上限核对器"):
+        return
+    if not CLI_EXE.is_file():
+        fail("缺构建产物 %s（先跑 build 步）" % CLI_EXE)
+        return
+    rc, out = run([sys.executable, str(script), str(CLI_EXE)], timeout=1800)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("DB-WHOLE-READ") or s.startswith("✓ ") or s.startswith("✗ ")
+                or s.startswith("⚠") or s.startswith("原始行")):
+            say("  " + s[:180])
+    if rc == 0 and "DB-WHOLE-READ ok" in out:
+        ok("超限的整包读被拒（理由含尺寸与上限）；正常路径不受影响")
+    elif rc == 2:
+        say("  ⚠ 缺 CLI —— 本步记为 skip")
+        ok("DB 整包读上限判据在本环境不适用（已如实 skip）")
+    else:
+        fail("DB 兜底整包读仍无上限（见上）")
+
+
 def step_loose_guard(release: bool) -> None:
     """★★ P17-110（复审计 `01 F-07`）：散装层条目表**不许跟着软链接/junction 走，且必须有上限**。
 
@@ -5816,6 +5852,9 @@ STEPS = [
     # ★★ P17-110（复审计 `01 F-07`）：散装层条目表不进链接 ＋ 有上限（自指链接不得不终止）。
     #   需要 CLI 产物；自带夹具（真造 junction ＋ 超时）。被 `--only` 过滤时进 UNCOVERED。
     ("loose-guard", step_loose_guard),
+    # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
+    #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。
+    ("db-whole-read", step_db_whole_read),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。

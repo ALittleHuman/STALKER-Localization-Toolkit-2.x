@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -770,8 +771,36 @@ DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallb
     }
 
     // ── 退回整文件读（= 旧路径，含逐字节回退扫描；错误文案也与旧版一致）──────────
+    // ★★ P17-111（复审计 `01 F-09`）：**先量尺寸，再决定读不读**。
+    //   修前这里直接 `std::vector<uint8_t> raw((istreambuf_iterator<char>(in)), …)` ——
+    //   **无上限**，而这一步发生在"还认不出是不是 DB"之前 ⇒ 随手指一个几 GB 的文件
+    //   就会被整个读进内存（白读 ＋ 可能撑爆进程）。
+    //   口径：超过 `XRKIT_DB_MAX_WHOLE_READ_BYTES` ⇒ **明确拒绝并写清三件事**
+    //   （多大 / 上限多少 / 怎么改），**不许**先啃进内存再说（零静默）。
+    //   ★ 环境变量 `XRKIT_DB_WHOLE_READ_LIMIT` 可覆盖（判据用它造小夹具，不必真造 GB 文件）。
     in.clear();
+    in.seekg(0, std::ios::end);
+    const std::streamoff end_pos = in.tellg();
+    const uint64_t file_bytes = end_pos > 0 ? static_cast<uint64_t>(end_pos) : 0;
+    res.file_size = file_bytes;   // 既有字段（不加同义字段）
     in.seekg(0, std::ios::beg);
+    uint64_t limit = XRKIT_DB_MAX_WHOLE_READ_BYTES;
+    if (const char* env = std::getenv("XRKIT_DB_WHOLE_READ_LIMIT")) {
+        // 空/非法 ⇒ 保持默认（不因为环境变量写坏就把闸门放开）
+        char* endp = nullptr;
+        const unsigned long long parsed = std::strtoull(env, &endp, 10);
+        if (endp != env && parsed > 0) limit = static_cast<uint64_t>(parsed);
+    }
+    if (file_bytes > limit) {
+        res.whole_read_refused = true;
+        res.whole_file_reason = "文件 " + std::to_string(file_bytes) +
+                                " 字节超过整包读上限 " + std::to_string(limit) +
+                                " 字节 ⇒ 拒绝整包读（这是「认不出格式时的兜底路径」；"
+                                "请在下拉里选定具体 DB 格式，或换用本工具能 seek 的包）";
+        res.error = res.whole_file_reason;
+        stamp();
+        return res;
+    }
     const std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),
                                    std::istreambuf_iterator<char>());
     if (raw.empty()) {
