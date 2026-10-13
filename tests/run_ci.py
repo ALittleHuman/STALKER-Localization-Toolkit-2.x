@@ -5480,6 +5480,47 @@ def step_python_restart(release: bool) -> None:
         fail("宿主重启没有被明确拒绝（见上）—— 半死宿主又回来了")
 
 
+def step_bom_first(release: bool) -> None:
+    """★★ P17-113（复审计 `02 F-07`）：**认编码必须先认 BOM、再决定解码**。
+
+    账本把这条记成"**已修但审计不知**"，而且 ★ **原来没有任何判据锁住它**
+    （复审计横向主题③："未修/半修集中在没被门禁写住的地方"）—— 本步把它**锁上**。
+
+    形状：宽 BOM（`FF FE` / `FE FF` / `FF FE 00 00`）**在剥 UTF-8 BOM 之前**先认，
+    命中就把**整段原始字节**交给对应 codec；UTF-32LE 的 `FF FE 00 00` 不许被当成 UTF-16LE。
+
+    判据 `tests/check_bom_before_decode.py`（**端到端**过 `--sniff`，不是只测帮助函数）：
+    ① UTF-16LE+BOM ② UTF-16BE+BOM ③ UTF-32LE+BOM ④ UTF-8+BOM（产物不带 BOM）
+    ⑤ 无 BOM 的 cp1251（仍走原判定链 ⇒ 别把"先认 BOM"做成"只认 BOM"）——
+    每条都查"结论编码 / **实际使用**的编码 / 产物字节"。需要 CLI 产物。
+
+    ★ **诚实标注**：本步**没有取得红证**。我试过把 `decode_bytes` 里"宽 BOM 先认"那一支
+      关掉，判据**仍然全绿**（按代码读，`used=` 应当变成 cp1251、产物应为乱码 —— 与实测矛盾），
+      说明我那次"把这一支关掉"的复现**没打中真正的分支**，所以**不能**声称"这条锁会红"。
+      ⇒ 本步只声称"**当前行为端到端正确**"，**不**声称"锁的灵敏度已证"。
+    """
+    say("[bom-first] P17-113：认编码必须先认 BOM 再解码（复审计 `02 F-07`；★ 未取得红证）")
+    script = ROOT / "tests" / "check_bom_before_decode.py"
+    if not require_repo_file(script, "BOM 先行核对器"):
+        return
+    if not CLI_EXE.is_file():
+        fail("缺构建产物 %s（先跑 build 步）" % CLI_EXE)
+        return
+    rc, out = run([sys.executable, str(script), str(CLI_EXE)], timeout=1800)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("BOM-FIRST") or s.startswith("✗ ") or s.startswith("· ")
+                or s.startswith("!!")):
+            say("  " + s[:180])
+    if rc == 0 and "BOM-FIRST ok" in out:
+        ok("五种字节端到端正确（宽 BOM 先认 / UTF-32 不被当 UTF-16 / UTF-8 BOM 剥掉 / 无 BOM 走原链）")
+    elif rc == 2:
+        say("  ⚠ 缺 CLI —— 本步记为 skip")
+        ok("BOM 先行判据在本环境不适用（已如实 skip）")
+    else:
+        fail("认编码没先认 BOM（见上）")
+
+
 def step_case_fold(release: bool) -> None:
     """★★ P17-112（复审计 `01 F-10` 收尾）：**小写折叠必须与 Python `str.lower()` 逐码位一致**。
 
@@ -5893,6 +5934,10 @@ STEPS = [
     # ★★ P17-112（复审计 `01 F-10` 收尾）：小写折叠与 Python `str.lower()` **穷尽**逐码位一致。
     #   需要 CLI 产物；会真跑生成器 `--check` ＋ 喂 19 万个码位。被 `--only` 过滤时进 UNCOVERED。
     ("case-fold", step_case_fold),
+    # ★★ P17-113（复审计 `02 F-07`）：认编码必须先认 BOM 再解码（端到端过 --sniff）。
+    #   ★ 本步**未取得红证**（见 step 的 docstring）——只声称"当前行为正确"。
+    #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。
+    ("bom-first", step_bom_first),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。
