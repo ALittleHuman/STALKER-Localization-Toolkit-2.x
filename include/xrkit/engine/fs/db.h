@@ -101,9 +101,6 @@ struct DbListing {
     //   —— 两个一起露给用户才算可观测（零静默）。
     std::string whole_file_reason;
     bool ambiguous = false;      // 唯一自洽判定出多个候选（此时走旧路径裁决）
-    // ★★ P17-111（复审计 `01 F-09`）：**因为超上限而拒绝整包读**（不是"读失败"）。
-    //   ★ 文件多大用既有的 `file_size`（别再加一个同义字段）。
-    bool whole_read_refused = false;
 };
 
 // ★★ 2026-10-11（P17-85，审计 01 F-09 C 步的**最后一处**）：把"这次是怎么读的"三个事实
@@ -119,15 +116,6 @@ struct DbReadInfo {
     bool used_seek = false;           // true = 只读块头与尾部表；false = 退回整文件读
     std::string whole_file_reason;    // 空 = 没退回；非空 = **为什么**不得不整包读
     bool ambiguous = false;           // 自洽判定出多个候选（回退时通常为真）
-    // ★★ P17-111（复审计 `01 F-09`）：**整包读的尺寸上限**。
-    //   修前事实：退回整文件读那一段（`db.cpp:775`）是**无上限**的
-    //   `std::vector<uint8_t> raw((istreambuf_iterator…))` —— 用户随手指一个大文件
-    //   （几 GB 的镜像/视频）就会被**整个读进内存**；而这一步发生在"还认不出是不是 DB"之前
-    //   ⇒ 白读、还可能直接把进程撑爆。
-    //   口径：**默认上限**见 `kDbWholeReadLimitBytes`；**认不出格式的大文件**⇒ 明确拒绝
-    //   （错误里写清"多大、上限多少、怎么改"），**不许**先啃进内存再说。
-    uint64_t file_bytes = 0;          // 文件有多大（**在读之前** stat 出来的；拒绝时也如实给）
-    bool whole_read_refused = false;  // true = **因为超上限而拒绝整包读**（不是读失败）
 };
 
 // 列条目（`package_entries` 与 CLI `--dump` 用）。`db_fallback` 语义与原来完全一致：

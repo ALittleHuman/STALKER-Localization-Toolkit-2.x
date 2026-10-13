@@ -2409,37 +2409,58 @@ def step_shell_smoke(release: bool) -> None:
     ok("同一批解包只跑一遍（03 F-03：unpack_selected/unpack_all 不再直接调 extract_job）")
 
     # ── ★★ P17-13（2026-10-10，审计 01 F-08 Medium）：**不可信声明尺寸上限只许有一处定义** ──
-    #   事实（修前）：同一语义的常量分散在两个 TU 且取值不同 —— `lzhuf.cpp` 内联
+    #   事实（修前）：同一语义的常量分散在**三处** TU 且取值不同 —— `lzhuf.cpp` 内联
     #   `256 * 1024 * 1024`、`db.cpp` 的 `kMaxDecompressBytes = 512ull * 1024 * 1024`，
-    #   注释还自称"值必须能对照"（谁改一处另一处不会跟着变）。审计另点名的
-    #   `lzhuf_ref.c:360` 那处硬编码**先查后确认已不存在**（给的是旧版本行号）。
-    #   判据：① 两处都不许再出现裸字面量；② 两处都必须包含共享头
-    #   `xrkit/engine/fs/untrusted_limits.h`；③ 该头必须同时定义两个名字
+    #   注释还自称"值必须能对照"（谁改一处另一处不会跟着变）。
+    #   ★★ **2026-10-13（P17-115）更正**：这里原来写"`lzhuf_ref.c:360` 那处硬编码
+    #   **先查后确认已不存在**"—— **假的**。复审计（`N-01` P0）用 `git ls-files` 证伪：
+    #   该文件被跟踪且确实存在，`textsize > 256*1024*1024` 一直在；另有 `squashfs.cpp` 也
+    #   又写了一遍裸的 `512ull*1024*1024`（未 include 共享头）。我上一轮**轻信旧注释、没核**。
+    #   判据：① **三处**都不许再出现裸字面量；② 三处都必须 include 共享头
+    #   `xrkit/engine/fs/untrusted_limits.h`；③ 该头必须同时定义那几个名字
     #   （取值**刻意不强行改成一样**：改小 db 那条会改真实大包行为，属口径变更要先取证）。
+    #   ★ 口径教训（复审计要的"两向可判"）：判据只查"串在不在"会**放走**这种假断言 ⇒
+    #     现在查的是"**共享宏真的被用了**"（含 `lzhuf_ref.c` 与 `squashfs.cpp`），
+    #     而不是查某句注释还在不在。
     limits_h = ROOT / "include" / "xrkit" / "engine" / "fs" / "untrusted_limits.h"
     lzhuf_src = (ROOT / "src" / "engine" / "fs" / "lzhuf.cpp").read_text(
         encoding="utf-8", errors="replace")
     db_src = (ROOT / "src" / "engine" / "fs" / "db.cpp").read_text(
         encoding="utf-8", errors="replace")
     limits_txt = limits_h.read_text(encoding="utf-8", errors="replace") if limits_h.exists() else ""
+    # ★ P17-115（复审计 `N-01` P0）：**三处**都要查（原来漏了 lzhuf_ref.c 与 squashfs.cpp）
+    lzhuf_ref_src = (ROOT / "src" / "engine" / "fs" / "lzhuf_ref.c").read_text(
+        encoding="utf-8", errors="replace")
+    squashfs_src = (ROOT / "src" / "engine" / "fs" / "squashfs.cpp").read_text(
+        encoding="utf-8", errors="replace")
     raw_literals = []
     if re.search(r">\s*256\s*\*\s*1024\s*\*\s*1024", active_code(lzhuf_src)):
         raw_literals.append("lzhuf.cpp 的 256*1024*1024")
     if re.search(r"=\s*512ull\s*\*\s*1024\s*\*\s*1024", active_code(db_src)):
         raw_literals.append("db.cpp 的 512ull*1024*1024")
+    # lzhuf_ref.c 是 C 文件：只查"还有没有裸的 256*1024*1024 比较"
+    if re.search(r">\s*256\s*\*\s*1024\s*\*\s*1024", active_code(lzhuf_ref_src)):
+        raw_literals.append("lzhuf_ref.c 的 256*1024*1024")
+    if re.search(r"=\s*512ull\s*\*\s*1024\s*\*\s*1024", active_code(squashfs_src)):
+        raw_literals.append("squashfs.cpp 的 512ull*1024*1024")
     if raw_literals:
-        fail("不可信尺寸上限又写死了（01 F-08）：%s —— 必须走 untrusted_limits.h 里的具名常量"
-             % "、".join(raw_literals))
+        fail("不可信尺寸上限又写死了（01 F-08 / 复审计 N-01）：%s —— "
+             "必须走 untrusted_limits.h 里的具名常量" % "、".join(raw_literals))
     elif ("untrusted_limits.h" not in lzhuf_src or "untrusted_limits.h" not in db_src
+          or "untrusted_limits.h" not in lzhuf_ref_src or "untrusted_limits.h" not in squashfs_src
           or "XRKIT_LZHUF_MAX_DECLARED_BYTES" not in lzhuf_src
           or "XRKIT_DB_MAX_ENTRY_DECOMPRESS_BYTES" not in db_src
+          or "XRKIT_LZHUF_MAX_DECLARED_BYTES" not in lzhuf_ref_src
+          or "XRKIT_DB_MAX_ENTRY_DECOMPRESS_BYTES" not in squashfs_src
           or "XRKIT_LZHUF_MAX_DECLARED_BYTES" not in limits_txt
           or "XRKIT_DB_MAX_ENTRY_DECOMPRESS_BYTES" not in limits_txt):
-        fail("不可信尺寸上限没收敛到一处（01 F-08）：两处都要 include untrusted_limits.h 并用"
-             "具名常量（LZHUF→XRKIT_LZHUF_MAX_DECLARED_BYTES / DB→XRKIT_DB_MAX_ENTRY_DECOMPRESS_BYTES）")
+        fail("不可信尺寸上限没收敛到一处（01 F-08 / 复审计 N-01）：**四处**都要 include "
+             "untrusted_limits.h 并用具名常量（lzhuf.cpp/lzhuf_ref.c→XRKIT_LZHUF_MAX_DECLARED_BYTES、"
+             "db.cpp/squashfs.cpp→XRKIT_DB_MAX_ENTRY_DECOMPRESS_BYTES）")
     else:
-        ok("不可信尺寸上限一处定义（01 F-08：LZHUF 256 MiB / DB 512 MiB 都来自 "
-           "untrusted_limits.h，含大小关系 static_assert；取值刻意不强行统一）")
+        ok("不可信尺寸上限一处定义（01 F-08 / 复审计 N-01：lzhuf.cpp＋lzhuf_ref.c 用 LZHUF 宏、"
+           "db.cpp＋squashfs.cpp 用 DB 宏，四处都来自 untrusted_limits.h；"
+           "含大小关系 static_assert；取值刻意不强行统一）")
 
     # ── ★★ P17-16（2026-10-10，审计 01 F-12 Low）：**exe 目录不许用固定 MAX_PATH 缓冲** ────
     #   事实（修前）：`wchar_t buffer[MAX_PATH]` + 一次 `GetModuleFileNameW(..., MAX_PATH)`，

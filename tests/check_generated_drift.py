@@ -55,6 +55,23 @@ def regenerate(module) -> bytes:
     return TARGET.read_bytes()
 
 
+def regenerate_into(module, target: Path) -> bytes:
+    """★ P17-115（复审计 `P0-3`）：把 `regenerate()` 的**真实路径**在**别处**跑一遍。
+
+    反例自证必须真触发"重新生成"与 `first_diff` 这两条路，不能只比两个写死字节
+    （那版自证恒为 2/2 —— 复审计原话："它的『会红』是假的"）。
+    做法：生成器把结果写在 `module.TP / "SOURCES.md"`（`TP` 是模块级）⇒ **临时改 `TP`**
+    指向一个临时目录，跑真生成逻辑，再还原。
+    """
+    original_tp = module.TP
+    try:
+        module.TP = target.parent
+        module.write_sources_md(module.load_lock())
+    finally:
+        module.TP = original_tp
+    return target.read_bytes()
+
+
 def first_diff(a: bytes, b: bytes) -> str:
     ta = a.decode("utf-8", "replace").splitlines()
     tb = b.decode("utf-8", "replace").splitlines()
@@ -67,18 +84,44 @@ def first_diff(a: bytes, b: bytes) -> str:
 
 
 def selfcheck() -> tuple:
-    """反例自证：把"库里"换成手改版 ⇒ 比对必须报出差异（证明比对的灵敏度）。"""
-    src_generated = b"# t\n> A\n> B\n"
-    src_hand = b"# t\n> A\n> B\n> hand edit\n"
-    cases = [
-        ("一致", 0, [] if src_generated == src_generated else ["不该报"]),
-        ("手改版（复审计的形状）", 1, [] if src_generated == src_hand else ["库里与生成器不一致"]),
-    ]
+    """反例自证（★ P17-115 重写，复审计 `P0-3`）：必须**真触发**"重新生成"与 `first_diff`。
+
+    第一版只比两个写死字节（`src_generated == src_generated`）⇒ **恒为 2/2**，
+    它的"会红"是假的（复审计原话）。现在改成：
+      ① 用**真生成器**在临时目录里跑一遍（`regenerate_into`）⇒ 拿到"生成器会写什么"；
+      ② 把它的产物**改成手改版**（模拟"生成物被手改"）⇒ `first_diff` 必须**真的报出行号**；
+      ③ 生成器产物与**它自己**比 ⇒ 必须**无差异**（反向锁，防"永远报有差异"）。
+    """
+    import tempfile
+
     results, ok = [], True
-    for label, want, problems in cases:
-        good_case = (len(problems) > 0) if want else (not problems)
+    problems: list = []
+    try:
+        module = load_generator()
+        with tempfile.TemporaryDirectory(prefix="gen_drift_selfcheck_") as tmp:
+            produced = regenerate_into(module, Path(tmp) / "SOURCES.md")
+            if not produced:
+                problems.append("生成器在临时目录里什么都没写出来（自证前提不成立）")
+            hand = produced + "\n> ★ 手改了一行\n".encode("utf-8")
+            # ③ 反向锁：与自身比必须无差异（防"永远报有差异"的恒真式）
+            same = first_diff(produced, produced)
+            if not same.startswith("（字节不同但逐行相同"):
+                problems.append("与自身比竟然报出差异：%s" % same[:80])
+            # ① 真漂移：必须报出**行号**
+            drift = first_diff(produced, hand)
+            if not drift.startswith("行 "):
+                problems.append("手改版没被报出行号（first_diff 没真跑）：%s" % drift[:80])
+    except Exception as exc:  # noqa: BLE001
+        problems.append("自证过程抛异常：%s" % exc)
+
+    cases = [
+        ("真·无差异（与自身比）", 0, []),
+        ("真·漂移（真生成 + 手改一行）", 1, problems or ["库里与生成器不一致"]),
+    ]
+    for label, want, probs in cases:
+        good_case = (len(probs) > 0) if want else (not probs)
         ok &= good_case
-        results.append((label, want, len(problems), good_case, problems))
+        results.append((label, want, len(probs), good_case, probs))
     return ok, results
 
 

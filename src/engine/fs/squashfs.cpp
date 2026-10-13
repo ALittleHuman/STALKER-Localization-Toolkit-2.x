@@ -1,4 +1,6 @@
 #include "xrkit/engine/fs/squashfs.h"
+// ★ P17-115（复审计 `N-01` P0）：不可信尺寸上限的**唯一一处定义**（不再裸写字面量）
+#include "xrkit/engine/fs/untrusted_limits.h"
 
 #include "xrkit/core/path.h"
 #include "xrkit/engine/plugin/registry.h"
@@ -31,9 +33,12 @@ constexpr size_t kCacheBlocks = 256;
 //   声明 1 TiB 的 LREG 会让进程 `bad_alloc` 冒到顶、以 0xC0000409 收场 —— 那是**崩溃**，
 //   不是"明确报错"）。
 //   口径与 `db.cpp` 的 `kMaxDecompressBytes`（512 MB）**同一条**：超限**明确报错、不分配**。
-//   `db.cpp` 那边是文件作用域常量，这里同样只在本 translation unit 内用；两边都写 512 MB
-//   是**有意**的（同一个"不可信声明尺寸"上限，值必须能对照）。
-constexpr uint64_t kMaxDecompressBytes = 512ull * 1024 * 1024;
+//   ★★ 2026-10-13（P17-115，复审计 `N-01` P0）：原先这里**又写了一遍**裸的 `512ull*1024*1024`，
+//     而 `untrusted_limits.h` 自称"上限收拢到一处" —— 那句在**本文件**上也是假的（门禁也不查）。
+//     ⇒ 改为 include 共享头、值由它派生；`db.cpp` 早就这么做（它由 `kMaxDecompressBytes` 派生）。
+//     ★ 复审计原话："`squashfs.cpp:36` 的裸 `512ull*1024*1024`（同值、**未 include 共享头**、门禁不查）"。
+//       三处（lzhuf_ref.c / squashfs.cpp / db.cpp）现在**都**指向 `untrusted_limits.h`。
+constexpr uint64_t kMaxDecompressBytes = XRKIT_DB_MAX_ENTRY_DECOMPRESS_BYTES;
 
 // ── ★★ 2026-10-10（P17-2）：超块 `block_size` 的合法区间（审计 01 F-03 High）────────
 // 事实（修前）：`parse_superblock` 对 `block_size` **一个字节都不查**，而 fragment 那条路把

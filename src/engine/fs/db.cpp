@@ -792,7 +792,12 @@ DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallb
         if (endp != env && parsed > 0) limit = static_cast<uint64_t>(parsed);
     }
     if (file_bytes > limit) {
-        res.whole_read_refused = true;
+        // ★ P17-115（复审计 `P0-4`）：这里原来多置了一个 `res.whole_read_refused` —— 那个字段
+        //   **全仓没有消费点**（复审计点名），而"拒绝"这件事**已经**由下面这句
+        //   `whole_file_reason` 完整表达，并且**真的有**两个消费点在读它：
+        //   · 界面：`fs_page.cpp:953` → `note_package_read(...)`；
+        //   · Python：`py_host.cpp:1689` 把这个理由放进返回的字典。
+        //   ⇒ 删掉那个没人读的字段（**死字段本身就是误导**），理由照旧写。
         res.whole_file_reason = "文件 " + std::to_string(file_bytes) +
                                 " 字节超过整包读上限 " + std::to_string(limit) +
                                 " 字节 ⇒ 拒绝整包读（这是「认不出格式时的兜底路径」；"

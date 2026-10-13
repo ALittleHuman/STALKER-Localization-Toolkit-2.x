@@ -19,6 +19,15 @@
 #include <string.h>
 #include <stdint.h>
 
+// ★★ 2026-10-13（P17-115，复审计 `N-01` P0）：**"声明解压尺寸"上限改走共享宏，不再裸写**。
+//   事实（修前）：这里是 `256*1024*1024` 裸字面量，而 `untrusted_limits.h` 里那句
+//   "`lzhuf_ref.c` 那处硬编码**先查后确认已不存在**"是**假的** —— 本文件被 git 跟踪、
+//   该字面量一直在（复审计用 `git ls-files` 证伪；我上一轮轻信了旧注释没去核）。
+//   ⇒ 现在真正收拢到一处：改共享宏，两处一起变。
+//   ★ 本文件是 **C**（不是 C++）⇒ 用 `#define` 那个宏（头里唯一的 C++ 构件是 `static_assert`，
+//     已被 `#if defined(__cplusplus)` 圈住，C 编译不受影响）。
+#include "xrkit/engine/fs/untrusted_limits.h"
+
 // 本仓库内不导出符号：EXPORT 置空（唯一对参照源做的改动）
 #define EXPORT
 
@@ -368,7 +377,11 @@ EXPORT int lzhuf_decode(const unsigned char *src, int src_len, unsigned char *de
     int textsize;
 
     textsize = (int)lzhuf_read_u32_le(src);
-    if (textsize <= 0 || textsize > dest_cap || textsize > 256*1024*1024) return -1;
+    // ★ P17-115（复审计 `N-01` P0）：上限改走**共享宏**（原来这里裸写 256*1024*1024）
+    if (textsize <= 0 || textsize > dest_cap ||
+        (unsigned long long)textsize > (unsigned long long)XRKIT_LZHUF_MAX_DECLARED_BYTES) {
+        return -1;
+    }
 
     src_data = src; src_pos = 4; src_limit = src_len;
     getbuf = 0; getlen = 0;

@@ -110,9 +110,11 @@ def main() -> int:
              "② 小文件**不该**被判超限（上限没有误伤）")
         print("     原始行：%s" % (text2.strip().splitlines()[0][:150] if text2.strip() else "(无输出)"))
 
-    print("   ⚠ **判据自曝边界**：`--dump` 不露 `whole_read_refused`/`used_seek`，"
-          "所以本条断言的是「**拒绝发生且理由可见**」，**不是**「内部真的没读进去」；"
-          "内部事实由 `DbReadInfo::whole_read_refused` 承载（界面/Python 消费点可见）。")
+    print("   ⚠ **判据自曝边界**：`--dump` 是**另一条**入口（走 `list_db_seek`，它自己已露 "
+          "`seek=`/`file_bytes=`/`note=整包读 reason=…`）⇒ 本条**不**据此断言"
+          "「`package_entries` 内部真的没读」，只断言「**拒绝发生且理由可见**」。"
+          "★ 理由的**真消费点**（既有，不是新加字段）：界面 `fs_page.cpp:953`、"
+          "Python `py_host.cpp:1689`。")
 
     print("-" * 66)
     if PROBLEMS:

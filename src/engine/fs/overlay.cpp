@@ -593,9 +593,6 @@ std::vector<EntryInfo> package_entries(const std::string& path,
         read_info->used_seek = listed.used_seek;
         read_info->whole_file_reason = listed.whole_file_reason;
         read_info->ambiguous = listed.ambiguous;
-        // ★★ P17-111（复审计 `01 F-09`）：**拒读**与**读了多少**都要能露给消费点
-        read_info->file_bytes = listed.file_size;
-        read_info->whole_read_refused = listed.whole_read_refused;
     }
     if (!listed.ok) {
         error = listed.error;
