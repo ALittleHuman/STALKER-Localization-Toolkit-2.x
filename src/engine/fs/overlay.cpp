@@ -4,6 +4,8 @@
 
 #include "xrkit/core/path.h"
 #include "xrkit/engine/fs/squashfs.h"
+// ★★ P17-110（复审计 `01 F-07`）：链接/junction 的判断**与解包那条路共用同一份**
+#include "xrkit/engine/fs/link_check.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -466,14 +468,31 @@ std::vector<EntryInfo> loose_entries(const std::string& root, std::string& error
         error = "散装层根目录不存在：" + root;
         return out;
     }
+    // ★★ P17-110（复审计 `01 F-07`）：**不许跟着软链接/junction 走 ＋ 必须有上限**。
+    //   修前的事实：这里用 `std::filesystem::is_directory(full, ec)` —— 它**跟随**链接
+    //   （Windows 上 junction 也算目录）⇒ 两件事同时成立：
+    //     ① **走出根**：`<root>/out -> D:\别处` 会被当成普通子目录递归进去，条目表里出现
+    //        根本不属于这个根的东西（GUI 的树/大小列会照它显示）；
+    //     ② **自指成环 = 不终止**：`<root>/self -> <root>` 会被反复递归 —— 修前**没有任何
+    //        深度/条数上限** ⇒ 内存吃满、界面挂死（`loose_entries` 是在 UI 线程被调的）。
+    //   口径：链接**只作为"条目"报出去**（大小按链接本身给 0），**不递归进去**；
+    //   同时加**深度上限**与**条数上限**，到顶就**如实停下来并给理由**（零静默：
+    //   `error` 里写清"到上限了、表是截断的"，调用方就不会把它当完整清单）。
+    constexpr int kMaxDepth = 32;        // 深度上限（正常游戏目录远小于此；到顶必是环或病态）
+    constexpr size_t kMaxEntries = 200000;   // 条数上限（防"目录级炸弹"把内存吃光）
+    bool truncated = false;
+    int max_depth_hit = 0;
     // 递归收集：目录也算条目（与包侧同形）；每层按字节序排，保证渲染确定性
     std::vector<std::filesystem::path> dirs{base};
     std::vector<std::string> rels{""};
+    std::vector<int> depths{1};
     while (!dirs.empty()) {
         const std::filesystem::path dir = dirs.back();
         const std::string rel = rels.back();
+        const int depth = depths.back();
         dirs.pop_back();
         rels.pop_back();
+        depths.pop_back();
         std::vector<std::string> names;
         for (std::filesystem::directory_iterator it(dir, ec), end; it != end; it.increment(ec)) {
             if (ec) break;
@@ -481,22 +500,46 @@ std::vector<EntryInfo> loose_entries(const std::string& root, std::string& error
         }
         std::sort(names.begin(), names.end());
         for (const std::string& name : names) {
+            if (out.size() >= kMaxEntries) {
+                truncated = true;
+                break;
+            }
             const std::filesystem::path full = dir / core::path_from_utf8(name);
             const std::string child = rel.empty() ? name : rel + "/" + name;
-            const bool is_dir = std::filesystem::is_directory(full, ec);
+            // ★ 链接：报成条目，但**绝不递归**（见上：走出根 / 自指成环）
+            const bool linked = is_link_or_junction(full);
+            const bool is_dir = !linked && std::filesystem::is_directory(full, ec);
             uint64_t size = 0;
-            if (!is_dir) {
+            if (!is_dir && !linked) {
                 const auto bytes = std::filesystem::file_size(full, ec);
                 size = ec ? 0 : static_cast<uint64_t>(bytes);
             }
             out.emplace_back(child, is_dir, size);   // ★ 大小也带出去（1.x 的树有大小列）
+            if (linked) continue;                    // ← 关键：不进链接
             if (is_dir) {
+                if (depth >= kMaxDepth) {            // 到深度上限：停在这层，如实记账
+                    truncated = true;
+                    max_depth_hit = std::max(max_depth_hit, depth);
+                    continue;
+                }
                 dirs.push_back(full);
                 rels.push_back(child);
+                depths.push_back(depth + 1);
             }
         }
     }
     std::sort(out.begin(), out.end());
+    // ★★ P17-110：到上限就**如实说**（否则调用方会把截断的表当完整清单 —— 那是另一种静默）
+    if (truncated) {
+        error = "条目表已截断：";
+        if (out.size() >= kMaxEntries) {
+            error += "条数到上限（" + std::to_string(kMaxEntries) + " 条）";
+        } else {
+            error += "目录深度到上限（" + std::to_string(kMaxDepth) + " 层，最大到 " +
+                     std::to_string(max_depth_hit) + " 层）";
+        }
+        error += "；链接/联接只作为条目列出、不递归进去。";
+    }
     return out;
 }
 

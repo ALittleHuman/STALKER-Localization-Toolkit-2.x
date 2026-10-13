@@ -22,6 +22,8 @@
 #include "xrkit/engine/engine.h"
 #include "xrkit/engine/fs/db.h"
 #include "xrkit/engine/fs/extract_tree.h"
+// ★★ P17-110（复审计 `01 F-07`）：链接/junction 的判断与解包那条路**共用同一份**
+#include "xrkit/engine/fs/link_check.h"
 #include "xrkit/engine/fs/lzhuf.h"
 #include "xrkit/engine/fs/overlay.h"
 #include "xrkit/engine/plugin/abi_host.h"
@@ -197,6 +199,8 @@ void print_usage() {
            "  --python-restart-probe\n"
            "                  宿主重启探针：起来 → 关掉 → 再起来，断言第二次**明确拒绝**\n"
            "                  （审计 05 PLG-03，口径 A；`Py_FinalizeEx` 之后不支持重启）\n"
+           "  --loose-entries <根目录>\n"
+           "                  散装层条目表探针（复审计 01 F-07：链接只作条目、不递归；有上限）\n"
            "  --py-plugins [目录]\n"
            "                  Python 插件加载链：起宿主 → 扫 `*.py` → `register(api)` →\n"
            "                  进注册表 → **真消费一次**（调 fs 工具栏那条命令）→ 逐条报账\n"
@@ -1726,6 +1730,12 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         const auto missing = efs::loose_entries(core::path_to_utf8(work / "nope"), error);
         check(ctx, !error.empty() && missing.empty(),
               "不存在的散装目录必须报错，不许静默返回空表");
+        // ★★ P17-110（复审计 `01 F-07`）：**不许跟着软链接/junction 走，且必须有上限**。
+        //   ★ 自指 junction 这一格**不放在这里**：`--selftest` 是"跑一堆判据"的自检，
+        //     而"造 junction 再递归"是会**改文件系统**的进程级动作；更要紧的是 ——
+        //     修前它会**不终止**，一条永不返回的判据会让整个自检看起来像"卡住"而不是"红"。
+        //     ⇒ 单独一条 CLI 动作 ＋ 单独的门禁步（`tests/check_loose_entries_guard.py`，
+        //     形状与 `extract-symlink` 同一套：真造 junction、带超时）。
         std::filesystem::remove_all(work, ec);
     });
 
@@ -3919,6 +3929,35 @@ int run_cli(const std::vector<std::string>& args) {
             return kExitFail;
         }
         std::cout << "PYRESTART ok refused_restart=1 reason_visible=1\n";
+        return kExitOk;
+    }
+
+    // ★★ P17-110（复审计 `01 F-07`）：散装层条目表的**链接/上限**探针。
+    //   为什么单独一条动作：修前 `<root>/self -> <root>` 这种自指 junction 会让
+    //   `loose_entries` **不终止**（无限递归）⇒ 塞进 `--selftest` 会让自检"卡住"
+    //   而不是"报红"，诊断价值反而更差。这里**自己带超时**（由判据脚本掌控）。
+    //   输出口径（判据按行解析）：`LOOSE root=<路径> entries=<n> error=<…>`
+    //   ＋ 每条 `LOOSE entry <rel> dir=<0|1> linked=<0|1> size=<n>`
+    if (action == "--loose-entries") {
+        if (operands.empty()) {
+            std::cerr << "LOOSE error reason=用法：--loose-entries <根目录>\n";
+            return kExitUsage;
+        }
+        // ★ 这里**只报条目本身**（path / dir / size）：判据自己知道哪些是它造的链接。
+        //   ★ **全部写全名**（`xrkit::engine::fs::…`）：本函数作用域里另有一个 `efs` 别名
+        //     不覆盖这两位 ⇒ 用 `efs::` 会报"找不到标识符"。全名最稳。
+        std::string error;
+        const auto items = xrkit::engine::fs::loose_entries(operands[0], error);
+        std::string flat = error.empty() ? std::string("(空)") : error;
+        for (char& ch : flat) {
+            if (ch == '\n' || ch == '\r') ch = ' ';
+        }
+        std::cout << "LOOSE root=" << operands[0] << " entries=" << items.size()
+                  << " error=" << flat << "\n";
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            std::cout << "LOOSE entry " << items[i].path << " dir=" << (items[i].is_dir ? 1 : 0)
+                      << " size=" << items[i].size << "\n";
+        }
         return kExitOk;
     }
 

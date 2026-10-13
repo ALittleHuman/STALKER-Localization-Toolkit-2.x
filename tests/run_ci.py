@@ -5480,6 +5480,42 @@ def step_python_restart(release: bool) -> None:
         fail("宿主重启没有被明确拒绝（见上）—— 半死宿主又回来了")
 
 
+def step_loose_guard(release: bool) -> None:
+    """★★ P17-110（复审计 `01 F-07`）：散装层条目表**不许跟着软链接/junction 走，且必须有上限**。
+
+    修前事实：`overlay.cpp:loose_entries` 用 `std::filesystem::is_directory(full, ec)` ——
+    它**跟随**链接（Windows 上 junction 也算目录）⇒ ① **走出根**（`<root>/out -> D:\\别处`
+    会被递归进去，条目表里出现不属于这个根的东西）② **自指成环 = 不终止**
+    （`<root>/self -> <root>` 反复递归，而修前**没有任何深度/条数上限**）⇒ 内存吃满、
+    界面挂死（`loose_entries` 是在 UI 线程被调的）。
+
+    判据 `tests/check_loose_entries_guard.py`（**真造 junction 试**，带 25s 超时）：
+    ① 基线条目正确；② 自指 junction ⇒ **超时内返回** ＋ 条目数不爆炸 ＋ 链接本身可见 ＋
+    **不许**有 `self/…`；③ 指向根外的 junction ⇒ 外部内容**不许**被列进来。
+    非 Windows / 造不出 junction ⇒ 如实 skip（rc=2）。需要 CLI 产物。
+    """
+    say("[loose-guard] P17-110：散装层条目表不进链接 ＋ 有上限（复审计 `01 F-07`）")
+    script = ROOT / "tests" / "check_loose_entries_guard.py"
+    if not require_repo_file(script, "散装层链接/上限核对器"):
+        return
+    if not CLI_EXE.is_file():
+        fail("缺构建产物 %s（先跑 build 步）" % CLI_EXE)
+        return
+    rc, out = run([sys.executable, str(script), str(CLI_EXE)], timeout=1800)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("LOOSE-GUARD") or s.startswith("✓ ") or s.startswith("✗ ")
+                or s.startswith("⚠") or s.startswith("TIMEOUT")):
+            say("  " + s[:180])
+    if rc == 0 and "LOOSE-GUARD ok" in out:
+        ok("自指链接不再导致不终止；链接只作条目、不递归；根外内容不泄漏")
+    elif rc == 2:
+        say("  ⚠ 缺 CLI / 造不出 junction —— 本步记为 skip")
+        ok("散装层链接判据在本环境不适用（已如实 skip）")
+    else:
+        fail("散装层条目表还在跟着链接走（见上）")
+
+
 def step_generated_drift(release: bool) -> None:
     """★★ P17-109（复审计 [Medium]）：**生成物必须与生成器逐字节一致**。
 
@@ -5777,6 +5813,9 @@ STEPS = [
     # ★★ P17-109（复审计 [Medium]）：生成物必须与生成器逐字节一致（`04 F-07` 的漂移）。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED。会真跑一次生成器（不联网）再恢复工作区。
     ("gen-drift", step_generated_drift),
+    # ★★ P17-110（复审计 `01 F-07`）：散装层条目表不进链接 ＋ 有上限（自指链接不得不终止）。
+    #   需要 CLI 产物；自带夹具（真造 junction ＋ 超时）。被 `--only` 过滤时进 UNCOVERED。
+    ("loose-guard", step_loose_guard),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。

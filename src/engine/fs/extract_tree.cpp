@@ -1,4 +1,5 @@
 #include "xrkit/engine/fs/extract_tree.h"
+#include "xrkit/engine/fs/link_check.h"
 
 #include "xrkit/core/atomic_write.h"
 #include "xrkit/core/path.h"
@@ -22,32 +23,6 @@ namespace xrkit::engine::fs {
 namespace {
 
 namespace stdfs = std::filesystem;
-
-// ★★ P17-103（审计 `01 F-06`）：**这是不是"会跟出去"的那种链接**。
-//   `std::filesystem::is_symlink()` 在 Windows 上**看不见 junction**（目录联接的重解析点）——
-//   实测：`mklink /J` 造出来的目录，`symlink_status()` 报的是 `directory`。
-//   ⇒ 在 Windows 上用 **`FindFirstFileW`**：它一次调用就同时给出属性与**重解析标签**
-//     （`dwReserved0`），并排除 Data Dedup / OneDrive / WIM 那类"不是链接的重解析点"
-//     （它们不改变落点位置，误判会把正常目录当链接拒掉）。
-//     ★ 走 `GetFileAttributesW` + `CreateFileW`/`GetFileInformationByHandleEx` 那一版
-//       在本机**实测判不出来**（junction 被判成 0，见 P17-103 的探针记录）；
-//       而且**尾巴上的分隔符**会让 `FindFirstFileW` 失败 ⇒ 先剥掉。
-bool is_link_or_junction(const stdfs::path& p) {
-#if defined(_WIN32)
-    std::wstring w = p.wstring();
-    while (!w.empty() && (w.back() == L'\\' || w.back() == L'/')) w.pop_back();
-    if (w.empty()) return false;
-    WIN32_FIND_DATAW data{};
-    HANDLE h = ::FindFirstFileW(w.c_str(), &data);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    ::FindClose(h);
-    if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return false;
-    return data.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT ||
-           data.dwReserved0 == IO_REPARSE_TAG_SYMLINK;
-#else
-    return stdfs::is_symlink(stdfs::symlink_status(p));
-#endif
-}
 
 constexpr const char* kRejectEmpty = "条目路径为空（或不是字符串）";
 constexpr const char* kRejectAbsolute = "绝对路径 / UNC，拒绝写出";
