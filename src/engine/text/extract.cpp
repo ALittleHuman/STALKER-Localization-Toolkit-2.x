@@ -1,4 +1,5 @@
 #include "xrkit/engine/text/extract.h"
+#include "xrkit/engine/text/case_fold.h"   // ★ P17-112（01 F-10 收尾）：小写折叠跟 CPython 导出的表
 
 #include "xrkit/core/log.h"
 #include "xrkit/core/path.h"
@@ -11,7 +12,8 @@
 
 #include <algorithm>
 #if defined(_WIN32)
-#include <windows.h>   // ★ P17-44（01 F-10）：路径排序的 Unicode 小写折叠用 LCMapStringEx
+// ★ P17-112：不再需要 <windows.h> —— 小写折叠已改为 CPython 导出的表（见 case_fold.h），
+//   `LCMapStringEx` 那条"模仿 Python"的路已实测跟不上（全域 131276 个码位分歧）。
 #endif
 #include <chrono>
 #include <cstring>
@@ -366,28 +368,6 @@ std::string ascii_lower(const std::string& s) {
     return out;
 }
 
-// ★★ 2026-10-10（P17-44，审计 01 F-10 Low）：**路径排序的大小写折叠要走 Unicode，不是只看 ASCII**。
-//   事实：1.x 的排序键是 `str(path).lower()`（Python 的 Unicode 小写映射），而这里原来用
-//   `ascii_lower` —— 只折 A-Z。含**西里尔大写**的路径（STALKER 语料里很常见，如 `А.xml` / `а.xml`）
-//   在两条实现下**相对次序会不同** ⇒ 抽取顺序（进而生成的 ID 编号）与 1.x 不一致。
-//   实现：Windows 上用 `LCMapStringEx` 的 locale-invariant 小写（与 Python 的 simple lowercase
-//   对西里尔/拉丁/希腊这几族一致，正是路径里会出现的那几族）；非 Windows 或 API 失败时退回 ASCII 折叠。
-std::string path_lower(const std::string& s) {
-#if defined(_WIN32)
-    if (!s.empty()) {
-        const std::wstring wide = core::path_from_utf8(s).wstring();
-        std::wstring low(wide.size() + 8, L'\0');
-        const int n = LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE, wide.c_str(),
-                                    static_cast<int>(wide.size()), low.data(),
-                                    static_cast<int>(low.size()), nullptr, nullptr, 0);
-        if (n > 0) {
-            low.resize(static_cast<size_t>(n));
-            return core::path_to_utf8(std::filesystem::path(low));
-        }
-    }
-#endif
-    return ascii_lower(s);
-}
 
 // ── 候选判定（1.x 同名函数）──────────────────────────────────────────
 bool looks_like_id(const std::string& text) {
@@ -1289,6 +1269,29 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
     //   修前这里无条件 `st.ok = true`，调用方按 ok 判退码 ⇒ "产物缺失却退 0"。
     st.ok = st.error.empty() && st.write_failures == 0;
     return st;
+}
+
+
+// ★★ P17-112：把 path_lower 移出匿名命名空间 —— 判据要能直接考在用的那个函数。
+//   （第一版判据只考 case_fold_lower，于是把 path_lower 退回 ascii_lower 照样绿。）
+
+// ★★ 2026-10-10（P17-44，审计 01 F-10 Low）：**路径排序的大小写折叠要走 Unicode，不是只看 ASCII**。
+//   事实：1.x 的排序键是 `str(path).lower()`（Python 的 Unicode 小写映射），而这里原来用
+//   `ascii_lower` —— 只折 A-Z。含**西里尔大写**的路径（STALKER 语料里很常见，如 `А.xml` / `а.xml`）
+//   在两条实现下**相对次序会不同** ⇒ 抽取顺序（进而生成的 ID 编号）与 1.x 不一致。
+//
+// ★★ 2026-10-13（P17-112，复审计 `01 F-10` 的**收尾**）：P17-44 当时用 Windows
+//   `LCMapStringEx`（invariant ＋ `LCMAP_LOWERCASE`）"模仿" Python，并留了一句
+//   "与 Python 的 simple lowercase 对西里尔/拉丁/希腊一致"。**本批把这句话放到全域复核**
+//   （`0x20..0x2FFFF`）后**不成立**：
+//     · 单字符内分歧 **131276** 个码位（`U+01C5 ǅ` / `U+0524 Ԥ` / `U+03F4 ϴ` …）；
+//     · `U+0130 İ` 在 Python 下折成**两个**码位（`"i"` ＋ `U+0307`），Windows 保持不动。
+//   ⇒ 模仿这条路的根因是"两边各自一套 Unicode 版本/口径"，本来就跟不上。
+//   ⇒ 改为**从本机 CPython 导出表**（`tools/gen_case_fold_table.py` → `case_fold_table.inc`，
+//     与 `tools/gen_encoding_tables.py` 的先例同一套做法），查找见
+//     `include/xrkit/engine/text/case_fold.h`；门禁 `case-fold-table` 步**逐字节**守着表没漂。
+std::string path_lower(const std::string& s) {
+    return case_fold_lower(s);
 }
 
 }  // namespace xrkit::engine::text

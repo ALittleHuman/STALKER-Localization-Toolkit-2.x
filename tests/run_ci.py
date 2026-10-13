@@ -5480,6 +5480,41 @@ def step_python_restart(release: bool) -> None:
         fail("宿主重启没有被明确拒绝（见上）—— 半死宿主又回来了")
 
 
+def step_case_fold(release: bool) -> None:
+    """★★ P17-112（复审计 `01 F-10` 收尾）：**小写折叠必须与 Python `str.lower()` 逐码位一致**。
+
+    P17-44 当时用 Windows `LCMapStringEx` 去"模仿" Python 并留了"与 simple lowercase 一致"
+    这句结论；本批把它放到**全域**上复核后**不成立**：
+      · 单字符内分歧 **131276** 个码位（`U+01C5 ǅ` / `U+0524 Ԥ` / `U+03F4 ϴ` …）；
+      · `U+0130 İ` 在 Python 下折成**两个**码位（`"i"` ＋ `U+0307`），Windows 保持不动。
+    ⇒ 改为**不再模仿**：表由 `tools/gen_case_fold_table.py` **从本机 CPython 导出**。
+
+    判据 `tests/check_case_fold_parity.py`：① 真跑生成器 `--check` ⇒ 表与导出结果**逐字节**一致；
+    ② 把 `0x20..0x2FFFF`（跳过代理区）**穷尽**喂给 `--case-fold-probe`，逐码位与
+    `chr(cp).lower()` 比；③ 反例自证（确认修前那条路确实有分歧）。需要 CLI 产物。
+    """
+    say("[case-fold] P17-112：小写折叠与 Python `str.lower()` 逐码位一致（复审计 `01 F-10`）")
+    script = ROOT / "tests" / "check_case_fold_parity.py"
+    if not require_repo_file(script, "小写折叠对账器"):
+        return
+    if not CLI_EXE.is_file():
+        fail("缺构建产物 %s（先跑 build 步）" % CLI_EXE)
+        return
+    rc, out = run([sys.executable, str(script), str(CLI_EXE)], timeout=3600)
+    for raw in out.splitlines():
+        s = raw.strip()
+        if (s.startswith("CASE-FOLD") or s.startswith("✓ ") or s.startswith("✗ ")
+                or s.startswith("⚠")):
+            say("  " + s[:180])
+    if rc == 0 and "CASE-FOLD ok" in out:
+        ok("表由 CPython 导出且没漂；穷尽逐码位与 `str.lower()` 一致")
+    elif rc == 2:
+        say("  ⚠ 缺 CLI/生成器 —— 本步记为 skip")
+        ok("小写折叠对账在本环境不适用（已如实 skip）")
+    else:
+        fail("小写折叠与 1.x（Python）不一致（见上）")
+
+
 def step_db_whole_read(release: bool) -> None:
     """★★ P17-111（复审计 `01 F-09`）：DB 兜底**整包读必须有尺寸上限**。
 
@@ -5855,6 +5890,9 @@ STEPS = [
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。
     ("db-whole-read", step_db_whole_read),
+    # ★★ P17-112（复审计 `01 F-10` 收尾）：小写折叠与 Python `str.lower()` **穷尽**逐码位一致。
+    #   需要 CLI 产物；会真跑生成器 `--check` ＋ 喂 19 万个码位。被 `--only` 过滤时进 UNCOVERED。
+    ("case-fold", step_case_fold),
     # ★★ 2026-10-07（插件改装 P7a）：**引擎调用门面**（方案 3）—— 走真夹具验四处。
     ("engine-facade", step_engine_facade),
     # ★★ 2026-10-07（插件改装 P7b）：**宿主服务门面**（偏好读写 / exe 目录 / 系统字体目录）。

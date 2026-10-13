@@ -24,6 +24,7 @@
 #include "xrkit/engine/fs/extract_tree.h"
 // ★★ P17-110（复审计 `01 F-07`）：链接/junction 的判断与解包那条路**共用同一份**
 #include "xrkit/engine/fs/link_check.h"
+#include "xrkit/engine/text/case_fold.h"   // ★ P17-112（01 F-10 收尾）
 #include "xrkit/engine/fs/lzhuf.h"
 #include "xrkit/engine/fs/overlay.h"
 #include "xrkit/engine/plugin/abi_host.h"
@@ -201,6 +202,9 @@ void print_usage() {
            "                  （审计 05 PLG-03，口径 A；`Py_FinalizeEx` 之后不支持重启）\n"
            "  --loose-entries <根目录>\n"
            "                  散装层条目表探针（复审计 01 F-07：链接只作条目、不递归；有上限）\n"
+           "  --case-fold-probe\n"
+           "                  小写折叠探针：从 stdin 逐行读，报 `FOLD <原文hex> <表查找hex> <排序键hex>`\n"
+           "                  （复审计 01 F-10：口径＝本机 CPython `str.lower()`；判据穷尽逐码位对账）\n"
            "  --py-plugins [目录]\n"
            "                  Python 插件加载链：起宿主 → 扫 `*.py` → `register(api)` →\n"
            "                  进注册表 → **真消费一次**（调 fs 工具栏那条命令）→ 逐条报账\n"
@@ -3933,6 +3937,36 @@ int run_cli(const std::vector<std::string>& args) {
     }
 
     // ★★ P17-110（复审计 `01 F-07`）：散装层条目表的**链接/上限**探针。
+    // ★★ P17-112（复审计 `01 F-10` 收尾）：**小写折叠探针** —— 把 ASCII 收尾行口径用在
+    //   "逐行折小写"上，好让判据拿它跟 **Python 的 `str.lower()`** 逐字符对账（同源才有意义）。
+    //   用法：`--case-fold-probe` 从 **stdin** 逐行读 UTF-8，逐行输出折小写后的结果
+    //   （`FOLD <原文的 hex> <折后的 hex>`：用 hex 走 ASCII 通道，避免控制台编码搅进来）。
+    if (action == "--case-fold-probe") {
+        // 本地 hex（不引依赖：判据只按 ASCII 通道读这行）
+        const auto to_hex_local = [](const std::string& s) {
+            static const char* kDigits = "0123456789abcdef";
+            std::string hex;
+            hex.reserve(s.size() * 2);
+            for (const unsigned char byte : s) {
+                hex.push_back(kDigits[(byte >> 4) & 0xF]);
+                hex.push_back(kDigits[byte & 0xF]);
+            }
+            return hex;
+        };
+        std::string line;
+        while (std::getline(std::cin, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty()) continue;
+            // ★ 同时报**两个**：表查找（case_fold_lower）与**排序键在用的那个**（path_lower）
+            //   —— 判据必须考在用的那个；只考前者的话，把 path_lower 退回 ascii_lower 会**照样绿**。
+            const std::string folded = xrkit::engine::text::case_fold_lower(line);
+            const std::string as_path = xrkit::engine::text::path_lower(line);
+            std::cout << "FOLD " << to_hex_local(line) << " " << to_hex_local(folded) << " "
+                      << to_hex_local(as_path) << "\n";
+        }
+        return kExitOk;
+    }
+
     //   为什么单独一条动作：修前 `<root>/self -> <root>` 这种自指 junction 会让
     //   `loose_entries` **不终止**（无限递归）⇒ 塞进 `--selftest` 会让自检"卡住"
     //   而不是"报红"，诊断价值反而更差。这里**自己带超时**（由判据脚本掌控）。
