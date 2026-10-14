@@ -110,6 +110,33 @@ def main() -> int:
              "② 小文件**不该**被判超限（上限没有误伤）")
         print("     原始行：%s" % (text2.strip().splitlines()[0][:150] if text2.strip() else "(无输出)"))
 
+        # ③ ★★ P17-118（复审计 `P2-2`）：**覆盖值必须有界** —— 不许靠环境变量把闸门关掉。
+        #   口径是"下界 > 0、上界为默认值"，所以"不生效"的两种表现**不都一样**，判据要分开查：
+        #     · `-1`（`strtoull` 回绕成 ULONG_MAX）⇒ 不合法 ⇒ **保持默认**（于是按默认上限来量）；
+        #     · `999999999999`（大于默认）⇒ 想放宽 ⇒ **保持默认**。
+        #   两者都**不许**变成"闸门关掉"。判据用一个**大于默认上限**的稀疏文件来验证"闸门确实还在"：
+        #   若覆盖值生效（修前形状），这个文件会被**整包读进内存**后抱怨格式；
+        #   若覆盖值被拒（修后形状），它会**先被尺寸挡住**、理由里点名"超过整包读上限"。
+        huge = Path(tmp) / "huge.db"
+        with open(huge, "wb") as handle:
+            handle.write(b"NOT-A-DB-AT-ALL")
+            handle.seek(600 * 1024 * 1024)      # ★ 稀疏：逻辑 600 MiB > 默认 512 MiB
+            handle.write(b"\x00")
+        huge_size = huge.stat().st_size
+        for label, override in (("覆盖值 `-1`（回绕）", "-1"),
+                                ("覆盖值远超默认上限", "999999999999")):
+            rc3, text3, timed_out3 = dump(cli, huge, override)
+            want(not timed_out3, "③ %s 时仍在超时内返回" % label,
+                 "TIMEOUT(%ds)" % TIMEOUT_S if timed_out3 else "")
+            want(rc3 is not None and rc3 != 0,
+                 "③ %s **不许**把闸门关掉（必须仍然拒绝）" % label, "rc=%s" % rc3)
+            # ★ 要害：覆盖值被拒 ⇒ 按**默认**上限量 ⇒ 600 MiB > 512 MiB ⇒ 理由点名超限
+            want("超过整包读上限" in text3,
+                 "③ %s 被拒用默认上限（%d 字节 > 默认）⇒ 理由点名超限" % (label, huge_size),
+                 (text3.strip().splitlines()[0][:110] if text3.strip() else "(无输出)"))
+        print("     （③ 的对照：修前 `-1` 回绕成 ULONG_MAX、`999999999999` 大于默认值 "
+              "⇒ 覆盖值生效 ⇒ 这个 600 MiB 文件会被整包读进去、理由只会抱怨格式）")
+
     print("   ⚠ **判据自曝边界**：`--dump` 是**另一条**入口（走 `list_db_seek`，它自己已露 "
           "`seek=`/`file_bytes=`/`note=整包读 reason=…`）⇒ 本条**不**据此断言"
           "「`package_entries` 内部真的没读」，只断言「**拒绝发生且理由可见**」。"

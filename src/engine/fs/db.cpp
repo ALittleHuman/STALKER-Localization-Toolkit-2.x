@@ -778,18 +778,54 @@ DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallb
     //   口径：超过 `XRKIT_DB_MAX_WHOLE_READ_BYTES` ⇒ **明确拒绝并写清三件事**
     //   （多大 / 上限多少 / 怎么改），**不许**先啃进内存再说（零静默）。
     //   ★ 环境变量 `XRKIT_DB_WHOLE_READ_LIMIT` 可覆盖（判据用它造小夹具，不必真造 GB 文件）。
-    in.clear();
-    in.seekg(0, std::ios::end);
-    const std::streamoff end_pos = in.tellg();
-    const uint64_t file_bytes = end_pos > 0 ? static_cast<uint64_t>(end_pos) : 0;
+    //
+    // ★★ P17-118（复审计 `P2-3`）：**尺寸判据不许依赖 `tellg`**（它失败时会 fail-open）。
+    //   事实（修前）：这里用 `in.seekg(0, end)` + `in.tellg()` 量尺寸 —— `tellg` 失败返回 -1，
+    //   被 `end_pos > 0` 折成 **0** ⇒ `file_bytes = 0` ⇒ **闸门放行**（一个读不出尺寸的文件
+    //   反而能整包读）。这正是"闸门 fail-open"，与"零静默"相反。
+    //   改法：用 **`std::filesystem::file_size`**（它**不**依赖流状态；本文件已 include
+    //   `<filesystem>`），失败时走**明确拒绝**（fail-closed）而不是放行。
+    std::error_code size_ec;
+    const std::uintmax_t stat_size = std::filesystem::file_size(
+        xrkit::core::path_from_utf8(source), size_ec);
+    // ★★ 2026-10-14（本批**自己踩到的回归**，记在这里）：第一版把 `size_ec` 一律当"拒绝"，
+    //   结果吃掉了**既有**的"文件是空的"那条链 ⇒ `shell-smoke` 的 01 F-09 **反向夹具**
+    //   （11xx 小包走回退、`used_seek=0` ＋ 理由非空）当场变红：
+    //     `SHELL-SMOKE fail P17-85 回退整包读必须报（used_seek=0 理由=「」读入=0 / 整包=41）`。
+    //   ⇒ 口径要分清三件事：**不存在**（照旧走"文件是空的"）、**空文件**（同上）、
+    //     **量不出但存在**（权限等 ⇒ **fail-closed** 拒绝，不许当 0 字节放行）。
+    if (size_ec && std::filesystem::exists(xrkit::core::path_from_utf8(source))) {
+        res.whole_file_reason = "量不出文件尺寸（" + size_ec.message() +
+                                "）⇒ **拒绝**退回整包读（闸门不 fail-open；"
+                                "要么确认文件可读，要么在下拉里选定具体 DB 格式）";
+        res.error = res.whole_file_reason;
+        stamp();
+        return res;
+    }
+    const uint64_t file_bytes = size_ec ? 0u : static_cast<uint64_t>(stat_size);
     res.file_size = file_bytes;   // 既有字段（不加同义字段）
+    // ★★ 2026-10-14（本批**自己踩到的第二个坑**）：改用 `file_size` 量尺寸之后，我**漏掉了**
+    //   原来紧跟在 `tellg` 后面那句 `in.seekg(0, std::ios::beg)` —— 而 `tellg` 那条路
+    //   已经把流**指到文件尾**了 ⇒ 后面那个"整包读"读出来是**空的** ⇒
+    //   `shell-smoke` 的反向夹具看到 `文件是空的：…`（本该是 `seek=0 ＋ note=整包读`）。
+    //   ⇒ 教训：**换掉量尺寸的手段时，它顺带给流留下的状态也要一起管**（这里必须显式回绕）。
+    in.clear();
     in.seekg(0, std::ios::beg);
     uint64_t limit = XRKIT_DB_MAX_WHOLE_READ_BYTES;
     if (const char* env = std::getenv("XRKIT_DB_WHOLE_READ_LIMIT")) {
-        // 空/非法 ⇒ 保持默认（不因为环境变量写坏就把闸门放开）
+        // ★★ P17-118（复审计 `P2-2`）：**覆盖值必须有界**，否则"写坏环境变量"= 关掉闸门。
+        //   事实（修前）：`strtoull` 的返回值只判了 `> 0` ⇒ `-1` 会**回绕成 ULONG_MAX**
+        //   （≈1.8e19）⇒ 上限形同虚设（闸门被一个环境变量关掉）；也没有卡上界。
+        //   口径：**下界 > 0、上界为默认值**（想更宽就得改 `untrusted_limits.h` 里的具名常量，
+        //   那要连带复核内存峰值 —— 不能靠一个环境变量偷偷放宽）。
+        //   ★ 负数/非数字 ⇒ `endp != env && *endp == '\0'` 不成立或值为 0 ⇒ **保持默认**。
         char* endp = nullptr;
         const unsigned long long parsed = std::strtoull(env, &endp, 10);
-        if (endp != env && parsed > 0) limit = static_cast<uint64_t>(parsed);
+        const bool well_formed = (endp != env) && (endp != nullptr) && (*endp == '\0');
+        if (well_formed && parsed > 0 && parsed <= XRKIT_DB_MAX_WHOLE_READ_BYTES) {
+            limit = static_cast<uint64_t>(parsed);
+        }
+        // else：保持默认（不因为环境变量写坏/想放宽就把闸门放开）
     }
     if (file_bytes > limit) {
         // ★ P17-115（复审计 `P0-4`）：这里原来多置了一个 `res.whole_read_refused` —— 那个字段
