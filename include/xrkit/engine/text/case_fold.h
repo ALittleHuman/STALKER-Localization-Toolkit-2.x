@@ -6,13 +6,22 @@
 //   且 `U+0130 İ` 在 Python 下折成**两个**码位（`"i"` + `U+0307`）而 Windows 保持不动。
 //   根因是两边各自一套 Unicode 版本与映射口径 ⇒ 模仿这条路**本来就跟不上**。
 //
-// 口径（与 1.x `str(path).lower()` **同源**，与 `tools/gen_encoding_tables.py` 的先例一致）：
+// 口径（与 1.x `str(path).lower()` **同源，但只限"逐码位"那一部分** ——
+//   上下文相关规则见下面的 KNOWN_DIVERGENCE；与 `tools/gen_encoding_tables.py` 的先例一致）：
 //   表由 `tools/gen_case_fold_table.py` **从本机 CPython 导出**（`case_fold_table.inc`），
 //   `--check` 与门禁 `case-fold-table` 步**逐字节**守着"表没漂"。
 //
 // 边界（如实写在这里，免得被读成"完整 Unicode 大小写"）：
 //   · 只做 **`str.lower()` 的单码位/多码位映射**；**不做** `str.casefold()` 的
 //     额外等价（`ß` → `ss`、`İ` 的 NFKC 变体等）—— 1.x 用的就是 `.lower()`，不是 `.casefold()`。
+//   · ★★ **KNOWN_DIVERGENCE（已知分歧台账，用户 2026-10-13 裁定"投 A"）**：
+//     **上下文相关的小写映射**本表复现不了（本表是逐码位的）。这一类**已被穷举并界定**：
+//       唯一成员 `U+03A3 Σ` —— `'ΟΔΟΣ'.lower()` 得 `'οδος'`（末位 **ς**），本表恒给 **σ**；
+//       实测**只有这 1 个**（Unicode 16.0.0，CPython 3.14），**不是「可能还有别的」**。
+//     完整台账（含症状与界）由生成器写进 `case_fold_table.inc` 的 `KNOWN_DIVERGENCE` 段。
+//     **触发条件**：当语料出现希腊文、或与 1.x 对拍出现 `ς` ⇒ 这条会真实影响排序键 ⇒
+//       那时才升 B（引入上下文感知：需 `Cased`/`Case_Ignorable` 一套新表 ＋ 一条对账判据）。
+//       触发之前**不补** —— 素材面是西里尔＋中文，为一个不存在的场景铸通用件不划算。
 //   · 表只覆盖到 `U+2FFFF`（生成器的范围；更远的码位原样返回）。
 #pragma once
 
