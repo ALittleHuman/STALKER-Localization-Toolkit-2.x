@@ -3983,26 +3983,33 @@ int run_cli(const std::vector<std::string>& args) {
         //   ★ **全部写全名**（`xrkit::engine::fs::…`）：本函数作用域里另有一个 `efs` 别名
         //     不覆盖这两位 ⇒ 用 `efs::` 会报"找不到标识符"。全名最稳。
         std::string error;
-        const auto items = xrkit::engine::fs::loose_entries(operands[0], error);
+        // ★★ P17-120（复审计 `P2-5`）：读**结构化标志**，不再拿中文前缀判语义。
+        xrkit::engine::fs::LooseInfo loose_info;
+        const auto items = xrkit::engine::fs::loose_entries(operands[0], error, &loose_info);
         std::string flat = error.empty() ? std::string("(空)") : error;
         for (char& ch : flat) {
             if (ch == '\n' || ch == '\r') ch = ' ';
         }
         std::cout << "LOOSE root=" << operands[0] << " entries=" << items.size()
-                  << " error=" << flat << "\n";
+                  << " error=" << flat
+                  << " truncated=" << (loose_info.truncated ? 1 : 0) << "\n";
+        if (loose_info.truncated) {
+            std::string reason = loose_info.truncated_reason;
+            for (char& ch : reason) {
+                if (ch == '\n' || ch == '\r') ch = ' ';
+            }
+            std::cout << "LOOSE truncated_reason=" << reason << "\n";
+        }
         for (std::size_t i = 0; i < items.size(); ++i) {
             std::cout << "LOOSE entry " << items[i].path << " dir=" << (items[i].is_dir ? 1 : 0)
                       << " size=" << items[i].size << "\n";
         }
-        // ★★ P17-119（复审计 `P2-9`）：**退出码要与其它探针对齐**。
-        //   事实（修前）：这里无论 `error` 空不空都返回 `kExitOk` —— 而 `--sniff` 在同类情形下
-        //   返回 `kExitFail`。后果：只看退出码的判据/脚本会把"散装层根不存在"当成成功
-        //   ⇒ 又一个假绿入口。
-        //   口径：`error` 非空 ⇒ `kExitFail`；**唯一例外**是"截断"（那是**如实告知**而非失败，
-        //   理由以 `条目表已截断` 开头）。★ GUI 把截断当硬失败是 `P2-5`（另一个口径面），
-        //   这里不去动引擎语义、只用理由前缀把两者分开。
-        const bool truncated_only = error.rfind("条目表已截断", 0) == 0;
-        if (!error.empty() && !truncated_only) {
+        // ★★ P17-119 ＋ P17-120：**退出码要与其它探针对齐**（出错不再返回 0）。
+        //   ★ 这里原来靠**理由前缀**（`条目表已截断`）把"截断"从 error 里摘出去 ——
+        //     那是**字符串判语义**：引擎改一个中文字就静默失效（用户点名的"会烂的耦合"）。
+        //     现在截断走**结构化标志**、`error` 里**根本不会**再出现截断
+        //     ⇒ 前缀匹配**退役**（**替换，不并存**）。
+        if (!error.empty()) {
             return kExitFail;
         }
         return kExitOk;

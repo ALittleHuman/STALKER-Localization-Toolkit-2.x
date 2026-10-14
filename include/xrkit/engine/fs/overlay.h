@@ -70,7 +70,24 @@ struct MergeInput {
 //   · 路径一律用 '/' 分隔、相对 root、**不含**前导 './'；
 //   · 目录也作为条目出现（与包侧的 is_dir 同形），空目录照样算；
 //   · 排序：每层按名字的字节序（与包侧 `children` 的排序口径一致，保证渲染确定性）。
-std::vector<EntryInfo> loose_entries(const std::string& root, std::string& error);
+// ★★ P17-120（复审计 `P2-5`，用户 2026-10-13 点名的"**会烂的耦合**"）：
+//   散装层列条目时的**附带事实**（结构化标志，**与 `error` 并列**）。
+//
+// 为什么要有它（修前形状）：P17-110 把"到上限了"这件事**写进 `error`** —— 于是两个消费点
+//   只能**猜**"截断算不算 error"：
+//     · CLI 用**理由前缀**（`条目表已截断`）把它与真错分开 ⇒ **引擎改一个中文字就静默失效**，
+//       又回到"截断被当成功"的假绿（典型的字符串判语义耦合）；
+//     · GUI 干脆把**任何**非空 `error` 当**硬失败** ⇒ 超深/超多的目录**整份拒载**，
+//       与"只想告诉用户表被截断了"的意图相反。
+//   ⇒ 结构化：**截断 = `truncated` 标志（不是错误）**；`error` **只**表示"没读成"。
+//   两个消费点都读同一个标志，不再各自猜。
+struct LooseInfo {
+    bool truncated = false;        // true = 到了深度/条数上限，**表是截断的**（不是失败）
+    std::string truncated_reason;  // 截断的**可读理由**（给人看；**判语义请用 `truncated`**）
+};
+
+std::vector<EntryInfo> loose_entries(const std::string& root, std::string& error,
+                                     LooseInfo* info = nullptr);
 
 // ★ 1.x `_is_db` / `_is_sq` 的**照抄**（看 basename 的最后一个扩展名头两个字母）：
 //   `x.db` / `x.db0` / `x.db_base` ⇒ 真；`x.sq` / `x.sqfs` / `x.sq_textures` ⇒ 真。

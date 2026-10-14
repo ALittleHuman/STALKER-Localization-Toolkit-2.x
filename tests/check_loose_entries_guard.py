@@ -149,6 +149,32 @@ def main() -> int:
         usage = subprocess.run([str(cli), "--loose-entries"], capture_output=True, timeout=60)
         want(usage.returncode != 0, "④ 缺操作数 ⇒ 用法码（非 0）", "rc=%s" % usage.returncode)
 
+        # ⑤ ★★ P17-120（复审计 `P2-5`，用户点名的"会烂的耦合"）：**截断必须是结构化标志**。
+        #   为什么这一格只能**静态查**：上限是编译期常量（深度 32 / 条数 20 万）⇒ 造不出夹具来触发。
+        #   但"截断有没有和 error 分开"是**源码形状**问题，可以查得很硬：
+        #     · 引擎**不许**再把 `条目表已截断` 写进 `error`（只许写进 `LooseInfo`）；
+        #     · **CLI 不许**再用中文前缀判语义（`rfind("条目表已截断"` 必须消失）；
+        #     · **GUI 必须**读 `loose_info.truncated`（而不是"非空 error 就拒载"）。
+        engine_src = (ROOT / "src" / "engine" / "fs" / "overlay.cpp").read_text(
+            encoding="utf-8", errors="replace")
+        cli_src = (ROOT / "tools" / "cli" / "main.cpp").read_text(
+            encoding="utf-8", errors="replace")
+        gui_src = (ROOT / "src" / "shell" / "pages" / "fs_page.cpp").read_text(
+            encoding="utf-8", errors="replace")
+        want('error = "条目表已截断' not in engine_src,
+             "⑤ 引擎**不许**把「截断」写进 `error`（那是失败通道）",
+             "还在写" if 'error = "条目表已截断' in engine_src else "")
+        want("truncated_reason" in engine_src and "LooseInfo" in engine_src,
+             "⑤ 引擎提供 `LooseInfo.truncated` / `truncated_reason`（结构化）")
+        want('rfind("条目表已截断"' not in cli_src,
+             "⑤ CLI **退役**了中文前缀判语义（`rfind(...)` 已消失）",
+             "还在用前缀" if 'rfind("条目表已截断"' in cli_src else "")
+        want("truncated=" in cli_src,
+             "⑤ CLI 把标志**报出来**（`truncated=<0|1>`）")
+        want("loose_info.truncated" in gui_src,
+             "⑤ GUI 读的是**同一个标志**（不是「非空 error 就拒载」）",
+             "GUI 没读标志" if "loose_info.truncated" not in gui_src else "")
+
     print("-" * 66)
     if PROBLEMS:
         print("LOOSE-GUARD fail %d 项不成立：" % len(PROBLEMS))

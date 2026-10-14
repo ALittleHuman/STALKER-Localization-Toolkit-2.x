@@ -459,7 +459,8 @@ PackCollectResult collect_pack_files(const std::string& base,
     return out;
 }
 
-std::vector<EntryInfo> loose_entries(const std::string& root, std::string& error) {
+std::vector<EntryInfo> loose_entries(const std::string& root, std::string& error,
+                                       LooseInfo* info) {
     error.clear();
     std::vector<EntryInfo> out;
     std::error_code ec;
@@ -529,16 +530,24 @@ std::vector<EntryInfo> loose_entries(const std::string& root, std::string& error
         }
     }
     std::sort(out.begin(), out.end());
-    // ★★ P17-110：到上限就**如实说**（否则调用方会把截断的表当完整清单 —— 那是另一种静默）
+    // ★★ P17-110：到上限就**如实说**（否则调用方会把截断的表当完整清单 —— 那是另一种静默）。
+    // ★★ P17-120（复审计 `P2-5`）：**改成结构化标志** —— 截断**不再写进 `error`**。
+    //   `error` 从此只表示"没读成"；"到上限了"是 `LooseInfo::truncated`。
+    //   ★ 为什么必须改：两个消费点原来只能**猜**（CLI 靠中文前缀、GUI 把任何 error 当硬失败）
+    //     ⇒ 引擎改一个中文字分类就静默失效（用户点名的"会烂的耦合"）。
     if (truncated) {
-        error = "条目表已截断：";
+        std::string reason = "条目表已截断：";
         if (out.size() >= kMaxEntries) {
-            error += "条数到上限（" + std::to_string(kMaxEntries) + " 条）";
+            reason += "条数到上限（" + std::to_string(kMaxEntries) + " 条）";
         } else {
-            error += "目录深度到上限（" + std::to_string(kMaxDepth) + " 层，最大到 " +
-                     std::to_string(max_depth_hit) + " 层）";
+            reason += "目录深度到上限（" + std::to_string(kMaxDepth) + " 层，最大到 " +
+                      std::to_string(max_depth_hit) + " 层）";
         }
-        error += "；链接/联接只作为条目列出、不递归进去。";
+        reason += "；链接/联接只作为条目列出、不递归进去。";
+        if (info != nullptr) {
+            info->truncated = true;
+            info->truncated_reason = reason;
+        }
     }
     return out;
 }

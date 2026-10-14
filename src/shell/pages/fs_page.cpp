@@ -219,12 +219,22 @@ bool FsPage::gate_source(QString& path, QString* error_out) {
 
 bool FsPage::add_loose_dir(const QString& dir, QString* error) {
     std::string err;
-    const auto entries = engine::fs::loose_entries(dir.toUtf8().toStdString(), err);
+    // ★★ P17-120（复审计 `P2-5`）：读**结构化标志**。修前任何非空 `error` 都被当硬失败，
+    //   而“到上限了”当时也写在 `error` 里 ⇒ 超深/超多目录**整份拒载**，与意图相反。
+    //   现在“截断”与“没读成”**分开**：截断=加进去＋警告；真错=拒绝加载。
+    //   同一个标志，CLI 那边读的也是它（不再各自猜中文）。
+    engine::fs::LooseInfo loose_info;
+    const auto entries = engine::fs::loose_entries(dir.toUtf8().toStdString(), err, &loose_info);
     if (!err.empty()) {
         // 不存在的目录/读不动 ⇒ **可见失败**（不静默加一个空源）
         if (error != nullptr) *error = QString::fromStdString(err);
         log_message(QStringLiteral("散装层拒绝加载：%1").arg(QString::fromStdString(err)));
         return false;
+    }
+    if (loose_info.truncated) {
+        // 截断**不是失败**：照样加载，但必须**可见**（零静默）
+        log_message(QStringLiteral("散装层条目表被截断（仍加载）：%1")
+                        .arg(QString::fromStdString(loose_info.truncated_reason)));
     }
     QString gated = dir;
     QString gate_error;
@@ -1875,7 +1885,15 @@ bool FsPage::load_one_source(int source_index, QString* error_out) {
     // ★ 2026-10-03：`isDir` 这一支**现在走不到了**（目录不再成为源 —— 见 `add_paths`）；
     //   留着是为了"万一有历史/外部构造的目录型源"仍能加载，不至于静默失败。
     if (QFileInfo(gated).isDir()) {
-        entries = efs::loose_entries(gated.toUtf8().toStdString(), error);
+        {
+            // ★★ P17-120（复审计 `P2-5`）：截断走**结构化标志**，不写进 `error`
+            efs::LooseInfo loose_info;
+            entries = efs::loose_entries(gated.toUtf8().toStdString(), error, &loose_info);
+            if (loose_info.truncated) {
+                log_message(QStringLiteral("散装层条目表被截断（仍加载）：%1")
+                                .arg(QString::fromStdString(loose_info.truncated_reason)));
+            }
+        }
     } else {
         entries = efs::package_entries(gated.toUtf8().toStdString(),
                                        efs::format_key_to_db(current_format_key()), error,
@@ -2021,7 +2039,15 @@ int FsPage::load_selected() {
         efs::DbReadInfo read_info;
         // ★ 2026-10-03：同 `load_one_source` —— 目录型源已不再产生，这一支走不到（留着以防万一）。
         if (QFileInfo(gated).isDir()) {
-            entries = efs::loose_entries(gated.toUtf8().toStdString(), error);
+            {
+            // ★★ P17-120（复审计 `P2-5`）：截断走**结构化标志**，不写进 `error`
+            efs::LooseInfo loose_info;
+            entries = efs::loose_entries(gated.toUtf8().toStdString(), error, &loose_info);
+            if (loose_info.truncated) {
+                log_message(QStringLiteral("散装层条目表被截断（仍加载）：%1")
+                                .arg(QString::fromStdString(loose_info.truncated_reason)));
+            }
+        }
         } else {
             entries = efs::package_entries(gated.toUtf8().toStdString(),
                                            efs::format_key_to_db(current_format_key()), error,
