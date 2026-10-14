@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import os
 import hashlib
 import json
@@ -2505,18 +2506,56 @@ def step_shell_smoke(release: bool) -> None:
     #   都在**模块层**写死本机的 1.x 绝对路径（`E:\\Software\\Games\\...\\STALKER_Toolkit`）
     #   ⇒ 换机器/换检出位置就得改源码。现在三个都改成**环境变量 `XRKIT_TOOLKIT_1X` 优先**，
     #   没有才回落到本机既有位置（`gen_font_tables.py` 另保留 `--toolkit-1x`，命令行优先级最高）。
-    #   判据：三个生成器都必须引用 `XRKIT_TOOLKIT_1X`；且不许再出现"裸的、无环境变量开关的"赋值。
-    gen_missing = []
-    for gen_name in ("gen_plugin_contract.py", "gen_font_templates.py", "gen_font_tables.py"):
-        gen_src = (ROOT / "tools" / gen_name).read_text(encoding="utf-8", errors="replace")
-        if "XRKIT_TOOLKIT_1X" not in gen_src:
-            gen_missing.append(gen_name)
-    if gen_missing:
-        fail("生成器还硬编码着 1.x 路径（04 F-08）：%s 里没有 `XRKIT_TOOLKIT_1X`（环境变量）开关 ⇒ "
-             "换机器就得改源码" % "、".join(gen_missing))
+    #   判据（★ P17-116 重写，复审计 `P1-3` 的"两向可判"）：
+    #     · **名单靠 glob**（`tools/gen_*.py`）—— 不复写死清单；上一批的清单就漏了
+    #       `gen_theme_tables.py`（它一直硬编码着 1.x 路径，复审计点名）；
+    #     · **解析出真的赋值**（AST）—— 不是查"`XRKIT_TOOLKIT_1X` 这串在不在"：
+    #       凡是给 `TOOLKIT_1X` 赋**裸字面量路径**的，直接红（那正是"换机器就得改源码"）。
+    gen_bad = []
+    gen_files = sorted((ROOT / "tools").glob("gen_*.py"))
+    if not gen_files:
+        fail("`tools/gen_*.py` 一个都没扫到 —— 判据与仓库脱节，先修判据本身")
+    for gen_path in gen_files:
+        gen_src = gen_path.read_text(encoding="utf-8", errors="replace")
+        if "TOOLKIT_1X" not in gen_src:
+            continue                     # 不碰 1.x 目录的生成器不在本判据范围内
+        try:
+            tree = ast.parse(gen_src)
+        except SyntaxError as exc:
+            gen_bad.append("%s（语法错，判据无法解析：%s）" % (gen_path.name, exc))
+            continue
+        for node in ast.walk(tree):
+            targets = []
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+                value = node.value
+            elif isinstance(node, ast.AnnAssign):
+                targets = [node.target]
+                value = node.value
+            else:
+                continue
+            if value is None:
+                continue
+            names = [t.id for t in targets if isinstance(t, ast.Name)]
+            if "TOOLKIT_1X" not in names:
+                continue
+            # 值必须是"带环境变量开关"的形状：出现 `os.environ.get(...)` 调用
+            uses_env = any(
+                isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                and sub.func.attr == "get"
+                and isinstance(sub.func.value, ast.Attribute)
+                and sub.func.value.attr == "environ"
+                for sub in ast.walk(value))
+            if not uses_env:
+                gen_bad.append("%s（`TOOLKIT_1X` 赋的值里没有 "
+                               "`os.environ.get(\"XRKIT_TOOLKIT_1X\")` 开关）" % gen_path.name)
+    if gen_bad:
+        fail("生成器还硬编码着 1.x 路径（04 F-08 / 复审计 P1-3）：%s ⇒ 换机器就得改源码"
+             % "；".join(gen_bad))
     else:
-        ok("生成器不写死 1.x 路径（04 F-08：三个生成器都认 `XRKIT_TOOLKIT_1X`，"
-           "命令行 `--toolkit-1x` 优先级更高）")
+        ok("生成器不写死 1.x 路径（04 F-08 / 复审计 P1-3：扫了 %d 个 %s，凡给 `TOOLKIT_1X` "
+           "赋值的都必须带 `XRKIT_TOOLKIT_1X` 环境变量开关；名单靠 glob、判据解析真赋值）"
+           % (len(gen_files), "tools/gen_*.py"))
     #   事实（修前）：`tail_len = static_cast<uint32_t>(nblocks) * 4u` —— 窄化 ×4 不溢出**完全依赖**
     #   上游 `ino.size ≤ 512 MiB` 那条闸（保证 nblocks ≤ 2^29），安全性是"跨两处的隐式耦合"：
     #   谁放宽 block_size 校验或调大那条闸，就会退化成 tail 分配过小而循环按 nblocks 越界读。
@@ -5485,7 +5524,10 @@ def step_python_restart(release: bool) -> None:
     """
     say("[python-restart] P17-106：宿主重启必须明确拒绝（审计 `05 PLG-03`，口径 A）")
     if not CLI_EXE.is_file():
-        fail("缺构建产物 %s（先跑 build 步）" % CLI_EXE)
+        # ★ P17-116（复审计 P1-1）：缺**构建产物**属"外部前提缺件" ⇒ 走 `prereq`
+        #   （release 档 FAIL、其余档 SKIP+未覆盖）。原来走 `fail` ⇒ 会坏掉 `--fast` 的
+        #   "全 SKIP+PASS"语义，而步内 docstring 自己写的就是"记为 skip"（两处口径打架）。
+        prereq("构建产物（CLI）", "缺 %s（先跑 build 步）" % CLI_EXE, release)
         return
     rc, out = run([str(CLI_EXE), "--python-restart-probe"], timeout=600)
     for raw in out.splitlines():
@@ -5535,7 +5577,10 @@ def step_bom_first(release: bool) -> None:
     if not require_repo_file(script, "BOM 先行核对器"):
         return
     if not CLI_EXE.is_file():
-        fail("缺构建产物 %s（先跑 build 步）" % CLI_EXE)
+        # ★ P17-116（复审计 P1-1）：缺**构建产物**属"外部前提缺件" ⇒ 走 `prereq`
+        #   （release 档 FAIL、其余档 SKIP+未覆盖）。原来走 `fail` ⇒ 会坏掉 `--fast` 的
+        #   "全 SKIP+PASS"语义，而步内 docstring 自己写的就是"记为 skip"（两处口径打架）。
+        prereq("构建产物（CLI）", "缺 %s（先跑 build 步）" % CLI_EXE, release)
         return
     rc, out = run([sys.executable, str(script), str(CLI_EXE)], timeout=1800)
     for raw in out.splitlines():
@@ -5569,8 +5614,19 @@ def step_case_fold(release: bool) -> None:
     script = ROOT / "tests" / "check_case_fold_parity.py"
     if not require_repo_file(script, "小写折叠对账器"):
         return
+    # ★ P17-116（复审计 P1-2）：生成器与表也是**仓库自带件** ⇒ 缺件显式 FAIL，
+    #   不靠"checker 返回 rc==2 再记 ok"那条路（那正是被点名的假绿通道）。
+    for req, what in (
+        (ROOT / "tools" / "gen_case_fold_table.py", "小写折叠表生成器"),
+        (ROOT / "include" / "xrkit" / "engine" / "text" / "case_fold_table.inc", "小写折叠表"),
+    ):
+        if not require_repo_file(req, what):
+            return
     if not CLI_EXE.is_file():
-        fail("缺构建产物 %s（先跑 build 步）" % CLI_EXE)
+        # ★ P17-116（复审计 P1-1）：缺**构建产物**属"外部前提缺件" ⇒ 走 `prereq`
+        #   （release 档 FAIL、其余档 SKIP+未覆盖）。原来走 `fail` ⇒ 会坏掉 `--fast` 的
+        #   "全 SKIP+PASS"语义，而步内 docstring 自己写的就是"记为 skip"（两处口径打架）。
+        prereq("构建产物（CLI）", "缺 %s（先跑 build 步）" % CLI_EXE, release)
         return
     rc, out = run([sys.executable, str(script), str(CLI_EXE)], timeout=3600)
     for raw in out.splitlines():
@@ -5581,8 +5637,10 @@ def step_case_fold(release: bool) -> None:
     if rc == 0 and "CASE-FOLD ok" in out:
         ok("表由 CPython 导出且没漂；穷尽逐码位与 `str.lower()` 一致")
     elif rc == 2:
-        say("  ⚠ 缺 CLI/生成器 —— 本步记为 skip")
-        ok("小写折叠对账在本环境不适用（已如实 skip）")
+        # ★ P17-116（复审计 P1-2）：这一格原来是 `ok(...)` —— 但 rc==2 意味着
+        #   **生成器/表（仓库自带件）缺失**，那是 `require_repo_file` 的同口径 ⇒ 必须 FAIL。
+        #   （CLI 缺件已在上面的 `prereq` 拦掉，走不到这里。）
+        fail("小写折叠判据的前提缺件（生成器/表是**仓库自带件**，缺件 = FAIL，不许记 ok）")
     else:
         fail("小写折叠与 1.x（Python）不一致（见上）")
 
@@ -5606,7 +5664,10 @@ def step_db_whole_read(release: bool) -> None:
     if not require_repo_file(script, "DB 整包读上限核对器"):
         return
     if not CLI_EXE.is_file():
-        fail("缺构建产物 %s（先跑 build 步）" % CLI_EXE)
+        # ★ P17-116（复审计 P1-1）：缺**构建产物**属"外部前提缺件" ⇒ 走 `prereq`
+        #   （release 档 FAIL、其余档 SKIP+未覆盖）。原来走 `fail` ⇒ 会坏掉 `--fast` 的
+        #   "全 SKIP+PASS"语义，而步内 docstring 自己写的就是"记为 skip"（两处口径打架）。
+        prereq("构建产物（CLI）", "缺 %s（先跑 build 步）" % CLI_EXE, release)
         return
     rc, out = run([sys.executable, str(script), str(CLI_EXE)], timeout=1800)
     for raw in out.splitlines():
@@ -5617,8 +5678,9 @@ def step_db_whole_read(release: bool) -> None:
     if rc == 0 and "DB-WHOLE-READ ok" in out:
         ok("超限的整包读被拒（理由含尺寸与上限）；正常路径不受影响")
     elif rc == 2:
-        say("  ⚠ 缺 CLI —— 本步记为 skip")
-        ok("DB 整包读上限判据在本环境不适用（已如实 skip）")
+        # ★ P17-116（复审计 P1-2）：这一格也要分开看 —— CLI 缺件已由上面的 `prereq` 拦掉，
+        #   所以此刻 rc==2 只可能是**判据文件缺件**（仓库自带件）⇒ FAIL。
+        fail("DB 整包读上限判据的前提缺件（判据文件是**仓库自带件**，缺件 = FAIL）")
     else:
         fail("DB 兜底整包读仍无上限（见上）")
 
@@ -5642,7 +5704,10 @@ def step_loose_guard(release: bool) -> None:
     if not require_repo_file(script, "散装层链接/上限核对器"):
         return
     if not CLI_EXE.is_file():
-        fail("缺构建产物 %s（先跑 build 步）" % CLI_EXE)
+        # ★ P17-116（复审计 P1-1）：缺**构建产物**属"外部前提缺件" ⇒ 走 `prereq`
+        #   （release 档 FAIL、其余档 SKIP+未覆盖）。原来走 `fail` ⇒ 会坏掉 `--fast` 的
+        #   "全 SKIP+PASS"语义，而步内 docstring 自己写的就是"记为 skip"（两处口径打架）。
+        prereq("构建产物（CLI）", "缺 %s（先跑 build 步）" % CLI_EXE, release)
         return
     rc, out = run([sys.executable, str(script), str(CLI_EXE)], timeout=1800)
     for raw in out.splitlines():
@@ -5675,6 +5740,15 @@ def step_generated_drift(release: bool) -> None:
     script = ROOT / "tests" / "check_generated_drift.py"
     if not require_repo_file(script, "生成物漂移核对器"):
         return
+    # ★ P17-116（复审计 P1-2）：生成器/锁/生成物都是**仓库自带件** ⇒ 缺件显式 FAIL
+    #   （原来只在 checker 返回 rc==2 时记 `ok` —— 那条路 release 档也不会红）。
+    for req, what in (
+        (ROOT / "tools" / "fetch_third_party.py", "第三方拉取/生成器"),
+        (ROOT / "third_party" / "sources.lock.json", "第三方依赖锁"),
+        (ROOT / "third_party" / "SOURCES.md", "第三方 provenance 生成物"),
+    ):
+        if not require_repo_file(req, what):
+            return
     rc, out = run([sys.executable, str(script)], timeout=600)
     for raw in out.splitlines():
         s = raw.strip()
@@ -5684,8 +5758,9 @@ def step_generated_drift(release: bool) -> None:
     if rc == 0 and "GEN-DRIFT ok" in out:
         ok("`third_party/SOURCES.md` 与生成器逐字节一致（手改生成物这条路过不去了）")
     elif rc == 2:
-        say("  ⚠ 缺生成器/锁/生成物 —— 本步记为 skip")
-        ok("生成物漂移判据在本环境不适用（已如实 skip）")
+        # ★ P17-116（复审计 P1-2）：生成器/锁/生成物都是**仓库自带件** ⇒ 缺件必须 FAIL
+        #   （与 `require_repo_file` 同口径）。原来记 `ok` ⇒ release 档也不会红。
+        fail("生成物漂移判据的前提缺件（生成器/锁/生成物是**仓库自带件**，缺件 = FAIL）")
     else:
         fail("生成物与生成器漂了（见上）—— 改生成器后重跑，别手改生成物")
 
@@ -5709,13 +5784,19 @@ def step_python_names(release: bool) -> None:
     if not require_repo_file(script, "Python 名字解析核对器"):
         return
     rc, out = run([sys.executable, str(script)], timeout=600)
+    # ★ P17-116（复审计 P1-4）：**文案用实测计数**，别写死（实测随覆盖面变），
+    #   也不让真计数行被过滤吞掉 —— `-- 实测（N 个脚本）--` 原样透出来。
+    measured = ""
     for raw in out.splitlines():
         s = raw.strip()
+        if s.startswith("-- 实测（"):
+            measured = s.strip("- ").replace("--", "").strip()
         if (s.startswith("PY-NAMES") or s.startswith("✓ 反例自证") or s.startswith("✗ ")
-                or s.startswith("✓ 85") or s.startswith("✓ 8") or s.startswith("★ 边界")):
+                or s.startswith("✓ ") or s.startswith("★ 边界")):
             say("  " + s[:180])
     if rc == 0 and "PY-NAMES ok" in out:
-        ok("85 个脚本的名字引用都解析得住（写错变量名这一类不再漏过去）")
+        ok("Python 名字引用都解析得住（%s；写错变量名这一类不再漏过去）"
+           % (measured or "脚本数未解析到"))
     else:
         fail("有脚本存在「名字不存在」的引用（见上）")
 
@@ -5812,7 +5893,8 @@ def step_extract_symlink(release: bool) -> None:
         return
     cli = CLI_EXE
     if not cli.is_file():
-        fail("缺构建产物 %s（先跑 build 步）" % cli)
+        # ★ P17-116（复审计 P1-1）：同上 —— 缺构建产物走 `prereq`，不走 `fail`。
+        prereq("构建产物（CLI）", "缺 %s（先跑 build 步）" % cli, release)
         return
     rc, out = run([sys.executable, str(script), str(cli)], timeout=1800)
     for raw in out.splitlines():
@@ -5878,7 +5960,8 @@ def step_sqfs_superblock(release: bool) -> None:
         return
     cli = CLI_EXE
     if not cli.is_file():
-        fail("缺构建产物 %s（先跑 build 步）" % cli)
+        # ★ P17-116（复审计 P1-1）：同上 —— 缺构建产物走 `prereq`，不走 `fail`。
+        prereq("构建产物（CLI）", "缺 %s（先跑 build 步）" % cli, release)
         return
     rc, out = run([sys.executable, str(script), str(cli)], timeout=1200)
     for raw in out.splitlines():

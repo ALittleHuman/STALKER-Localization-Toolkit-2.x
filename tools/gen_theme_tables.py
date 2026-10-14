@@ -20,12 +20,19 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "src" / "core" / "theme_tables.inc"
-TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+# ★★ 2026-10-13（P17-116，复审计 `P1-3` ／ 审计 `04 F-08`）：**不许写死本机的 1.x 路径** ——
+#   优先读环境变量 `XRKIT_TOOLKIT_1X`（换机器/换检出位置不用改源码），没有才回落到本机既有位置。
+#   ★ 口径与**已经修好的**三个兄弟生成器完全一致（`gen_font_tables.py:45`、
+#     `gen_font_templates.py:36`、`gen_plugin_contract.py:27`）—— 上一批改了那三个、**漏了这个**，
+#     而判据的名单里也**没有它**（复审计 `P1-3` 的第二半：判据只查串、且名单漏项）。
+TOOLKIT_1X = Path(os.environ.get("XRKIT_TOOLKIT_1X")
+                  or r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
 THEME_PY = TOOLKIT_1X / "toolkit_theme.py"
 
 

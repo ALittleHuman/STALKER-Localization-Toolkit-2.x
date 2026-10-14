@@ -35,7 +35,17 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 ROOT = Path(__file__).resolve().parent.parent
-GLOBS = ("plugins/*.py", "tests/python_plugins/*.py", "tests/*.py")
+# ★ P17-116（复审计 P1-4）：原来的三处漏了 `tools/*.py`（10 个）与夹具目录里的 `.py`（8 个）
+#   —— 那正是"名字解析"最该覆盖的地方（生成器/夹具同样是"跑得起来的脚本"）。
+#   ★ 实测：扩面后从 85 → **91** 个脚本（复审计说 91，对上了）。
+GLOBS = (
+    "plugins/*.py",
+    "plugins/_fixtures/*.py",          # 随包携带的夹具页
+    "tests/*.py",
+    "tests/python_plugins/*.py",       # 引擎门面夹具
+    "tests/python_plugins_engine/*.py",
+    "tools/*.py",                      # 生成器/工具（复审计点名漏掉的那批）
+)
 BUILTINS = set(dir(builtins))
 
 
