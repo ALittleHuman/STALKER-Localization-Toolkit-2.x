@@ -3971,7 +3971,9 @@ int run_cli(const std::vector<std::string>& args) {
     //   `loose_entries` **不终止**（无限递归）⇒ 塞进 `--selftest` 会让自检"卡住"
     //   而不是"报红"，诊断价值反而更差。这里**自己带超时**（由判据脚本掌控）。
     //   输出口径（判据按行解析）：`LOOSE root=<路径> entries=<n> error=<…>`
-    //   ＋ 每条 `LOOSE entry <rel> dir=<0|1> linked=<0|1> size=<n>`
+    //   ＋ 每条 `LOOSE entry <rel> dir=<0|1> size=<n>`
+    //   ★★ P17-119（复审计 `P2-9`）：上面这行原来写的是 `… dir=<0|1> linked=<0|1> size=<n>`，
+    //     但探针**从来没打印过 `linked=`**（注释宣告了、实现没有）—— 已按实际输出改正。
     if (action == "--loose-entries") {
         if (operands.empty()) {
             std::cerr << "LOOSE error reason=用法：--loose-entries <根目录>\n";
@@ -3991,6 +3993,17 @@ int run_cli(const std::vector<std::string>& args) {
         for (std::size_t i = 0; i < items.size(); ++i) {
             std::cout << "LOOSE entry " << items[i].path << " dir=" << (items[i].is_dir ? 1 : 0)
                       << " size=" << items[i].size << "\n";
+        }
+        // ★★ P17-119（复审计 `P2-9`）：**退出码要与其它探针对齐**。
+        //   事实（修前）：这里无论 `error` 空不空都返回 `kExitOk` —— 而 `--sniff` 在同类情形下
+        //   返回 `kExitFail`。后果：只看退出码的判据/脚本会把"散装层根不存在"当成成功
+        //   ⇒ 又一个假绿入口。
+        //   口径：`error` 非空 ⇒ `kExitFail`；**唯一例外**是"截断"（那是**如实告知**而非失败，
+        //   理由以 `条目表已截断` 开头）。★ GUI 把截断当硬失败是 `P2-5`（另一个口径面），
+        //   这里不去动引擎语义、只用理由前缀把两者分开。
+        const bool truncated_only = error.rfind("条目表已截断", 0) == 0;
+        if (!error.empty() && !truncated_only) {
+            return kExitFail;
         }
         return kExitOk;
     }

@@ -133,6 +133,22 @@ def main() -> int:
         else:
             print("   ⚠ 造不出第二个 junction ⇒ ③ 格如实跳过")
 
+        # ④ ★★ P17-119（复审计 `P2-9`）：**退出码契约** —— 探针不许"出错也返回 0"。
+        #   事实（修前）：`--loose-entries` 无论 `error` 空不空都 `return kExitOk`，
+        #   而 `--sniff` 在同类情形下返回 `kExitFail` ⇒ 只看退出码的脚本会把
+        #   "散装层根不存在"当成成功（又一个假绿入口）。
+        #   口径：正常目录 → 0；**不存在的根 → 非 0**；缺操作数 → 用法码（3）。
+        rc_ok, _, _, _ = probe(cli, base)
+        want(rc_ok == 0, "④ 正常目录 ⇒ 退出码 0", "rc=%s" % rc_ok)
+        rc_missing, _, first_missing, _ = probe(cli, base / "definitely-not-here")
+        want(rc_missing is not None and rc_missing != 0,
+             "④ **不存在的根 ⇒ 非 0 退出**（修前是 0 ⇒ 假绿）", "rc=%s" % rc_missing)
+        want("不存在" in first_missing or "散装层" in first_missing,
+             "④ 且理由可见（零静默）", first_missing[:90])
+        # 缺操作数：直接手跑（`probe` 会塞一个路径）
+        usage = subprocess.run([str(cli), "--loose-entries"], capture_output=True, timeout=60)
+        want(usage.returncode != 0, "④ 缺操作数 ⇒ 用法码（非 0）", "rc=%s" % usage.returncode)
+
     print("-" * 66)
     if PROBLEMS:
         print("LOOSE-GUARD fail %d 项不成立：" % len(PROBLEMS))
