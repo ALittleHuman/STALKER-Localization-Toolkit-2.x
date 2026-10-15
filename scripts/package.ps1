@@ -196,8 +196,18 @@ if (-not $depSrc) {
 Write-Host "  自带依赖来源: $depSrc"
 Copy-Item -LiteralPath (Join-Path $depSrc 'ffmpeg.exe') -Destination $stage
 Copy-Item -LiteralPath (Join-Path $depSrc 'ffprobe.exe') -Destination $stage
-$ffVersion = (& (Join-Path $stage 'ffmpeg.exe') -version 2>&1 | Select-Object -First 1)
+# ★★ 2026-10-15（P17-123）：**这条守卫原来自己把 ffmpeg 掉死** ——
+#   `& ffmpeg -version 2>&1 | Select-Object -First 1` 拿到首行就**掉断上游管道**
+#   ⇒ ffmpeg 被终止 ⇒ `$LASTEXITCODE` 变成 -1（终止码）⇒ 下一行误报「起不来」。
+#   日志里**明明打出了正确的版本行**，这正是与事实相反的证词；且**间歇**
+#   （取决于 ffmpeg 在输出首行之后是否还活着）。
+#   ⇒ 改成**先落文件、再读首行**：管道不截断，退出码就是它真实的退出码。
+#   ★ 三重守卫（起不来 / 版本行认不出 / 主版本 ≠ 7）**一条不放松**。
+$ffLog = Join-Path $env:TEMP ('xrkit_ffprobe_{0}.txt' -f $PID)
+& (Join-Path $stage 'ffmpeg.exe') -version *> $ffLog
 $ffExit = $LASTEXITCODE
+$ffVersion = (Get-Content -LiteralPath $ffLog -TotalCount 1)
+Remove-Item -LiteralPath $ffLog -Force -ErrorAction SilentlyContinue
 Write-Host "  $ffVersion"
 # ★★ 2026-10-07（审计补充 H1-5）：这条守卫原来**可以整段绕过** ——
 #   `-match` 不命中（版本行形状变了 / ffmpeg 起不来）就什么都不做；命中了又只拦 `-eq 8`

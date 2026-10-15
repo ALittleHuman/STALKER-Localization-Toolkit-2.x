@@ -5455,6 +5455,38 @@ def step_package_platform(release: bool) -> None:
         fail("包内平台插件判据不成立（见上）")
 
 
+def step_release_criterion(release: bool) -> None:
+    """★ **发行口径链**（RC/FINAL）端到端跑一次（分层清单里唯一没有判据的一层）。
+
+    为什么单开一步（先查件的结论）：门禁里对 `scripts/package.ps1` 的引用**全是静态核**
+    （解析脚本文本 / 要求它包含某些断言），**没有任何一步真跑它** ⇒ `-Dev:$false`
+    那条**发行口径分支从未被执行过** —— 而 AUDIT 里"验收物 ≠ 交付物"正是这一类问题
+    （P17-78 的致命项）。所以这里真跑一次并断言：
+      · 发行口径包里 `plugins\` 顶层**无 .py**、`_fixtures\` 已剥离；
+      · **默认可见页＝六个内置页**（逐名同序，插件页数必须为 0）；
+      · 产物 `--smoke` 退出码 0。
+    ★ 环境受限（脚本自己起不来，例如本机对 `ffmpeg.exe` 的拦阻）⇒ 判据脚本退 2
+      ⇒ 这里走 `prereq`：**如实记为"本次未覆盖"**，不当判据失败、也不假绿。
+    """
+    say("[release-criterion] 发行口径链（`-Dev:$false`）端到端跑一次")
+    script = ROOT / "tests" / "check_release_criterion.py"
+    if not require_repo_file(script, "发行口径判据脚本"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=3300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("PKG-RELEASE") or s.startswith("\u2713") or s.startswith("\u2717") \
+                or s.startswith("\u539f\u59cb\u884c"):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("发行口径链跑通（`-Dev:$false` 打包成功：无插件夹具 ＋ 默认可见页＝六个内置页"
+           " ＋ 产物自检退出码 0）")
+    elif rc == 2:
+        prereq("发行口径的打包前提", "打包脚本在本机起不来（见上，已如实记为未覆盖）", release)
+    else:
+        fail("发行口径链判据不成立（见上）")
+
+
 def step_package_fixture_pages(release: bool) -> None:
     """★★ P17-81（甲）：**夹具定性（非产品）＋ 默认可见页＝六个内置页 ＋ 抬 `_fixtures\\` 才验插件页**。
 
@@ -6197,6 +6229,7 @@ STEPS = [
     #   才断"插件页生效"。排在 pkg-platform 之后：它也要在**产物副本**里真跑自检。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED；没有 dist 产物时记台账（release 档 FAIL）。
     ("package-pages", step_package_fixture_pages),
+    ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
     ("version-identity", step_version_identity),
 ]
