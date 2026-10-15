@@ -61,17 +61,33 @@ def scan_line(outcome):
 
 
 def result_line(outcome):
-    """完成后的那一行（口径同 C++ 页：失败/取消/全成三种说法）。"""
+    """完成后的那一行（口径同 C++ 页：**需要确认**/失败/取消/全成四种说法）。
+
+    ★★ P17-122（复审计分册 02 #1 Medium ／ 总报告 A-2；用户 2026-10-13 复核）：
+    修前这里**只**看 `exit_code != 0` ⇒ 而引擎在"没有窗口可弹"时返回的 `needs_confirm`
+    恰好把 `exit_code` 设成 **3** ⇒ 界面显示 **「完成，但有失败：成功 0 / 跳过 0 / 失败 0」**
+    （自相矛盾：说"有失败"而失败是 0），真正的原因（问句）只在 `stop_reason` 里捎带。
+    ⇒ **判具名字段 `needs_confirm`**，不再从 `exit_code` 推（数字当语义通道必烂）；
+      `exit_code == 3` 只作**兼容**（老调用方/跨进程那条路）。
+    """
     qualifier = ""
     if outcome["low_confidence"] or outcome["override_decl"] or outcome["used_mismatch"]:
         qualifier = "（低置信 %d / 声明被否决 %d / 判定与实用不一致 %d）" % (
             outcome["low_confidence"], outcome["override_decl"], outcome["used_mismatch"])
     counts = "成功 %d / 跳过 %d / 失败 %d" % (outcome["success"], outcome["skipped"],
                                             outcome["failed"])
+    # ① **需要用户确认**（结构化字段优先；`exit_code == 3` 只作兼容）
+    if outcome.get("needs_confirm") or outcome.get("exit_code") == 3:
+        return "需要用户确认（未转换）：" + counts + qualifier
+    # ② **取消**（★ 独立分支：取消不是失败，理由要原样报出）
+    #    ★ P17-122 顺带修：修前 `cancelled` 排在 `exit_code != 0` **之后** ⇒ 取消那一路
+    #      （`exit_code` 通常非 0）被"有失败"吃掉，用户看到的是"完成，但有失败"而不是
+    #      "用户取消" —— 三个状态共用一个数字通道的又一例。
+    if outcome["cancelled"]:
+        return outcome["stop_reason"] or "已取消"
+    # ③ 真失败
     if outcome["exit_code"] != 0:
         return "完成，但有失败：" + counts + qualifier
-    if outcome["cancelled"]:
-        return outcome["stop_reason"]
     return "全部完成：" + counts + qualifier
 
 
@@ -211,6 +227,13 @@ def register(api):
                 message(scan_line(outcome))
                 if outcome["stop_reason"]:
                     message(outcome["stop_reason"])
+                # ★★ P17-122：**把问句原样露出来**（零静默）。
+                #   引擎拼的唯一一份问句（含文件/判定/理由/置信度）在 `confirm_question`；
+                #   修前它**根本到不了这里**（字段没透传），用户只看到一句自相矛盾的"有失败"。
+                if outcome.get("needs_confirm") and outcome.get("confirm_question"):
+                    for line in str(outcome["confirm_question"]).splitlines():
+                        if line.strip():
+                            message(line)
                 message(result_line(outcome))
                 progress(100)
 

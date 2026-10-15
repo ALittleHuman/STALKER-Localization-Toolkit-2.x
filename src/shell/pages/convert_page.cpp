@@ -457,14 +457,26 @@ void ConvertPage::record_stats(const etxt::BatchOutcome& outcome, const QString&
                                         .arg(outcome.override_decl)
                                         .arg(outcome.used_mismatch)
                                   : QString();
-    if (outcome.exit_code != 0) {
-        status_->setText(QStringLiteral("完成，但有失败：成功 %1 / 跳过 %2 / 失败 %3%4")
+    // ★★ P17-122（复审计分册 02 #1 Medium ／ 总报告 A-2）：**四个状态各自独立判**。
+    //   修前这里是 `exit_code != 0` → `cancelled` → 全成 —— 而"需要确认"（`needs_confirm`）
+    //   与"取消"都会带上非 0 的 `exit_code` ⇒ **两者都被"有失败"吃掉**：
+    //     · 需要确认 ⇒ 显示「完成，但有失败：成功 0 / 跳过 0 / 失败 0」（自相矛盾）；
+    //     · 取消       ⇒ 显示"有失败"而不是 `stop_reason`。
+    //   ⇒ 语义走具名字段、分支互不覆盖；`exit_code == 3` 只作**兼容**（旧调用方/跨进程）。
+    if (outcome.needs_confirm) {
+        status_->setText(QStringLiteral("需要用户确认（未转换）：成功 %1 / 跳过 %2 / 失败 %3%4")
                              .arg(outcome.success)
                              .arg(outcome.skipped)
                              .arg(outcome.failed)
                              .arg(qualifier));
     } else if (outcome.cancelled) {
         status_->setText(utf8(outcome.stop_reason));
+    } else if (outcome.exit_code != 0) {
+        status_->setText(QStringLiteral("完成，但有失败：成功 %1 / 跳过 %2 / 失败 %3%4")
+                             .arg(outcome.success)
+                             .arg(outcome.skipped)
+                             .arg(outcome.failed)
+                             .arg(qualifier));
     } else {
         status_->setText(QStringLiteral("全部完成：成功 %1 / 跳过 %2 / 失败 %3%4")
                              .arg(outcome.success)

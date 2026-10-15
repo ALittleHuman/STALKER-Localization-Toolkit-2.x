@@ -334,6 +334,9 @@ const EngineFacade kFontFacade = {
         out.override_decl = result.override_decl;
         out.used_mismatch = result.used_mismatch;
         out.cancelled = result.cancelled;
+        // ★★ P17-122：把"需要确认"作为**具名字段**透出去（不再让上层从 `exit_code` 猜）
+        out.needs_confirm = result.needs_confirm;
+        out.confirm_question = result.confirm_question;
         out.stop_reason = result.stop_reason;
         out.duration = result.duration;
         out.exit_code = result.exit_code;

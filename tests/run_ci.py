@@ -4044,6 +4044,36 @@ def step_fontpack_plugin(release: bool) -> None:
        % compared)
 
 
+def step_plugin_needs_confirm(release: bool) -> None:
+    """插件**确认与交互回传**（P17-122；复审计分册 02 #1 Medium ／ 总报告 A-2）。
+
+    这条判据打的是**透传那一环**（不是那屏字）：
+      · **不注入**确认器 ⇒ 引擎必须返回 `needs_confirm=True`（结构化字段）＋ 非零退出
+        —— **不许猜、不许静默按 auto 继续**；
+      · **注入**确认器 ⇒ 引擎必须**真问到**（探针记下 `asked>=1`）且按答走（`needs_confirm=False`）。
+    ★ 红证：把 `py_host` 里 `out["needs_confirm"]` 那两行去掉 ⇒ 第一格红（字段不透传）；
+      把 `set_encoding_confirm` 的注册去掉 ⇒ 第二格红（问了没接上）。
+    """
+    say("[P17-122] 插件确认与交互回传：不注入 ⇒ 如实报「需要确认」；注入 ⇒ 真问")
+    script = ROOT / "tests" / "check_plugin_needs_confirm.py"
+    if not require_repo_file(script, "插件确认判据脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物（CLI）", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("ok ") or s.startswith("\u2717") or s.startswith("RESULT:"):
+            say("  " + s)
+    if rc == 0:
+        ok("插件确认回传两支都对（不注入⇒如实报；注入⇒真问并按答走；复审计分册 02 #1）")
+    elif rc == 2:
+        prereq("插件确认判据的样本", "缺样本（见上）", release)
+    else:
+        fail("插件确认回传判据不成立（见上）")
+
+
 def step_convert_plugin(release: bool) -> None:
     """插件改装 P9b：**第二页（编码转换）的收口判据**。
 
@@ -6060,6 +6090,7 @@ STEPS = [
     ("fontpack-plugin", step_fontpack_plugin),
     # ★★ 2026-10-08（插件改装 P9b）：**第二页收口** —— 编码转换插件页。
     ("convert-plugin", step_convert_plugin),
+    ("plugin-needs-confirm", step_plugin_needs_confirm),
     # ★★ 2026-10-08（插件改装 P10b）：**第三页收口** —— 文本提取插件页。
     ("text-plugin", step_text_plugin),
     # ★★ 2026-10-08（插件改装 P11b-2）：**第四页收口** —— XML 对比插件页。

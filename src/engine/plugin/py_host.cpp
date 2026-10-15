@@ -4,6 +4,12 @@
 #include "xrkit/engine/plugin/widget_facade.h"
 // ★ P7a：引擎调用门面（`api.engine.*`；用户拍板的方案 3）
 #include "xrkit/engine/plugin/engine_facade.h"
+// ★★ P17-122：插件侧的**确认器注入通道**要直接用引擎的确认注册槽
+//   （`xrkit::engine::text::set_encoding_confirm`）⇒ 必须包含引擎的 text 头。
+//   ★ 本批踩的坑：先前这里**没有**这个 include，而 `py_host.cpp` 里出现的 `TextHooks`
+//     是**门面**那个同名结构（`xrkit::plugin::TextHooks`），**不是**引擎的 ⇒ 编译器
+//     找不到 `xrkit::engine::text::*`，报了一串 "不是 xrkit::engine 的成员"。
+#include "xrkit/engine/text/convert.h"
 // ★ P7b：宿主服务门面（`api.host.*`：偏好读写 / exe 目录 / 系统字体目录）
 #include "xrkit/engine/plugin/host_facade.h"
 
@@ -1135,6 +1141,68 @@ public:
     }
 
     // ── ★★ P9a：convert 页那一组 ─────────────────────────────────────────────
+    // ★★ P17-122（复审计分册 02 #1 Medium ／ 总报告 A-2）：**插件侧的确认器注入通道**。
+    //
+    // 为什么需要它（缝在哪）：引擎的确认通道是**进程级注册槽**
+    // `etext::set_encoding_confirm()`，而全仓只有 GUI 那条（`install_encoding_confirm_modal`）
+    // 和自检的替身在注册 ⇒ **插件那条路没有任何注入通道** ⇒ 引擎永远返回 `needs_confirm`。
+    //
+    // 形状（照 GUI 那条的约定）：`callback(request_dict) -> (outcome, chosen_encoding)`
+    //   · `request_dict` 是**结构化请求**（path/encoding/step_label/flags_label/confidence/question）；
+    //   · 返回 `("confirmed"|"overridden"|"cancelled", chosen)`；
+    //   · **不抢装**：宿主/自检已装了就**不覆盖**（`has_encoding_confirm()`）——
+    //     否则自检会在离屏环境里弹真模态、永久卡住（GUI 那条踩过，务必保留这条纪律）；
+    //   · `callback = None` ⇒ **卸载**（把槽清空，回到"没有窗口可弹"那个状态）。
+    bool set_encoding_confirm(py::object callback) {
+        // ★★ 全名，不用别名 —— 本批自己踩的两个坑，都记在这里：
+        //   ① 在本函数里定 `namespace etxt = xrkit::engine::text;` 会与外层同名别名**冲突**（报
+        //     `只有现有命名空间才能由命名空间别名定义提供其他名称`）；
+        //   ② 别名叫 `etext` 也不行 —— `etext::set_encoding_confirm(...)` 会**撞上本类自己的同名成员**
+        //     （`PyUi::set_encoding_confirm`）⇒ 编译器去找 `PyUi` 那个重载。全名最稳。
+        using ConfirmFn = xrkit::engine::text::EncodingConfirmFn;
+        using Request = xrkit::engine::text::EncodingConfirmRequest;
+        using ECO = xrkit::engine::text::EncodingConfirmOutcome;
+        if (callback.is_none() != 0) {
+            xrkit::engine::text::set_encoding_confirm(ConfirmFn{});
+            return true;
+        }
+        if (xrkit::engine::text::has_encoding_confirm()) return false;   // ★ 不抢装
+        keepalive()->push_back(callback);                  // 持有引用（引擎会在工作线程叫它）
+        xrkit::engine::text::set_encoding_confirm(
+            [callback](const Request& request, std::string* chosen) {
+                using ECO = xrkit::engine::text::EncodingConfirmOutcome;   // lambda 里自己声明
+                py::gil_scoped_acquire acquire;
+                try {
+                    py::dict req;
+                    req["path"] = request.path;
+                    req["encoding"] = request.encoding;
+                    req["step_label"] = request.step_label;
+                    req["flags_label"] = request.flags_label;
+                    req["confidence"] = request.confidence;
+                    req["question"] = request.question;   // 引擎拼的唯一一份问句，页面不重拼
+                    py::object answer = callback(req);
+                    std::string verdict = "cancelled";
+                    if (py::isinstance<py::tuple>(answer) || py::isinstance<py::list>(answer)) {
+                        py::sequence seq = py::reinterpret_borrow<py::sequence>(answer);
+                        if (py::len(seq) > 0 && !seq[0].is_none()) {
+                            verdict = py::cast<std::string>(py::str(seq[0]));
+                        }
+                        if (py::len(seq) > 1 && chosen != nullptr && !seq[1].is_none()) {
+                            const std::string picked = py::cast<std::string>(py::str(seq[1]));
+                            if (!picked.empty()) *chosen = picked;
+                        }
+                    } else if (!answer.is_none()) {
+                        verdict = py::cast<std::string>(py::str(answer));
+                    }
+                    if (verdict == "confirmed") return ECO::Confirmed;
+                    if (verdict == "overridden") return ECO::Overridden;
+                    return ECO::Cancelled;   // 默认**不继续**（不静默放行）
+                } catch (const py::error_already_set&) {
+                    return ECO::Cancelled;    // 回调炸了 ⇒ 别静默继续
+                }
+            });
+        return true;
+    }
     py::object text_encodings() const {
         const EngineFacade* facade = available("text_encodings");
         if (facade == nullptr) return py::none();
@@ -1174,6 +1242,10 @@ public:
         out["override_decl"] = result.override_decl;
         out["used_mismatch"] = result.used_mismatch;
         out["cancelled"] = result.cancelled;
+        // ★★ P17-122（复审计分册 02 #1 Medium ／ 总报告 A-2）：**确认状态走具名字段**，
+        //   不让上层从 `exit_code == 3` 推 —— 数字/字符串当语义通道必烂（与中文前缀同族）。
+        out["needs_confirm"] = result.needs_confirm;
+        out["confirm_question"] = result.confirm_question;
         out["stop_reason"] = result.stop_reason;
         out["duration"] = result.duration;
         out["exit_code"] = result.exit_code;
@@ -3038,6 +3110,9 @@ void ensure_api_module() {
             .def("font_size_slots", &PyEngine::font_size_slots)
             // ★★ P9a：convert 页那一组（options / hooks 都是 dict；回调进 keepalive）
             .def("text_encodings", &PyEngine::text_encodings)
+            // ★★ P17-122：插件侧的确认器注入通道（不抢装；`None` = 卸载）
+            .def("set_encoding_confirm", &PyEngine::set_encoding_confirm,
+                 py::arg("callback") = py::none())
             .def("text_convert_batch", &PyEngine::text_convert_batch, py::arg("options"),
                  py::arg("hooks") = py::none())
             .def("text_restore_backups", &PyEngine::text_restore_backups, py::arg("options"),

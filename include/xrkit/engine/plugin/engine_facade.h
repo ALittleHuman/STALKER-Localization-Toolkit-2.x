@@ -95,6 +95,11 @@ struct TextBackupOptions {
 
 // hooks：取消 / **暂停闸门** / 消息 / 进度 —— 门面只负责转交（引擎在**工作线程**里叫它们）
 //   `gate`：返回 false ⇒ 引擎**停下**（页面用它实现「暂停/继续」：暂停时在里面等，恢复后返回 true）。
+//   ★★ **确认器不在这张表里**（P17-122 先查件的结论，别照抄直觉）：引擎的确认通道是
+//     **进程级注册槽** `etext::set_encoding_confirm()`（`convert.h:86`），因为它要同时服务
+//     GUI 页、CLI 与插件三条路，且**注入发生在装配期**（读侧加锁）。
+//     ⇒ 门面这一层**不需要新开 hook 成员**；插件侧要补的是**注册那个槽的通道**
+//       （见 `py_host` 的 `ui.set_encoding_confirm`），不是往这张表里塞回调。
 struct TextHooks {
     std::function<bool()> should_stop;
     std::function<bool()> gate;
@@ -128,6 +133,17 @@ struct TextConvertOutcome {
     int override_decl = 0;
     int used_mismatch = 0;
     bool cancelled = false;
+    // ★★ P17-122（复审计分册 02 #1 Medium ／ 总报告 A-2；用户 2026-10-13 复核）：
+    //   **"需要用户确认"是一个结构化状态，不是从 `exit_code == 3` 推出来的**。
+    //   事实（修前）：引擎在没有确认器时正确地返回了 `needs_confirm` ＋ `exit_code = 3`
+    //   ＋ 问句，但**门面这一层没透** ⇒ 插件页只能看 `exit_code` ⇒ 它拿 3 命中了
+    //   "`exit_code != 0` ⇒ 完成，但有失败"那个分支 ⇒ 界面显示
+    //   **「完成，但有失败：成功 0 / 跳过 0 / 失败 0」**（自相矛盾：说"有失败"而失败是 0），
+    //   真正的原因（问句）只在 `stop_reason` 里捎带。
+    //   ★ 根因与"靠中文前缀判语义"同族：**拿数字/字符串当语义通道，必烂**。
+    //     ⇒ 语义走**具名字段**；`exit_code == 3` 从此**只作兼容**（跨进程/旧调用方）。
+    bool needs_confirm = false;
+    std::string confirm_question;   // `needs_confirm` 时非空（问句原文）
     std::string stop_reason;
     std::string duration;
     int exit_code = 0;
