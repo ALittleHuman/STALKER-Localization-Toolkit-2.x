@@ -27,6 +27,29 @@ namespace xrkit::engine::fs {
 
 namespace stdfs = std::filesystem;
 
+// ★★ P17-121（复审计 `P2-4`）：**"会跟出去"不再靠两个标签的白名单，改判位**。
+//
+// 事实（修前）：这里只认 `IO_REPARSE_TAG_MOUNT_POINT`（junction，`0xA0000003`）与
+//   `IO_REPARSE_TAG_SYMLINK`（`0xA000000C`）两个值 ⇒ **任何别的"名字代理型"重解析点都漏网**，
+//   被 `std::filesystem::is_directory()` 跟随。复审计点名的是 **WSL 的目录重解析点**
+//   （`IO_REPARSE_TAG_LX_SYMLINK = 0xA000001D` 等 `LX_*` 族）。
+//
+// 判据（**判位，不是列清单**）：微软对"**重解析点的名字本身就是解释对象**"（name surrogate）
+//   的标记位是 `0x20000000` —— 置位的那些**会把路径解析指到别处**，必须当链接对待；
+//   没置位的是**过滤器/元数据型**（WOF 压缩 `0x80000017`、Dedup `0x80000013`、
+//   AppExecLink `0x8000001B`、云端分层 `0x9000001A` …）—— 它们**不改变落点**，误判会把正常
+//   目录拒掉（`P17-103` 就为这个把 Dedup/OneDrive/WIM 排除在外）。
+//
+// ★ 这条规则**在本机用能测到的真值核对过**（`FindFirstFileW` 实测）：
+//     · junction `0xA0000003` → 置位 ⇒ follow（与实测一致：`is_directory` 确实会跟出去）；
+//     · WOF `0x80000017` / Dedup `0x80000013` / AppExecLink `0x8000001B` / Cloud `0x9000001A`
+//       → **不**置位 ⇒ 不当链接（与 P17-103 的处置一致）。
+//   ⇒ 用位判据的好处：**新出现的名字代理型标签自动被覆盖**（含 WSL 那一族），
+//     不必每次去补一份清单（"补一个漏一个"正是这条审计的来路）。
+//
+// ★ 边界（如实写）：本机**没装 WSL**（`wsl --status` 报"未安装用于 Linux 的 Windows 子系统"）
+//   ⇒ `LX_*` 那类标签**在本机无法实测**；上面它被归为 follow 是**按官方位定义推出来的**，
+//   不是实测结论。判据里对此有自曝（见 `check_loose_entries_guard.py` 的 ⑤ 段）。
 inline bool is_link_or_junction(const stdfs::path& p) {
 #if defined(_WIN32)
     std::wstring w = p.wstring();
@@ -37,8 +60,9 @@ inline bool is_link_or_junction(const stdfs::path& p) {
     if (h == INVALID_HANDLE_VALUE) return false;
     ::FindClose(h);
     if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return false;
-    return data.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT ||
-           data.dwReserved0 == IO_REPARSE_TAG_SYMLINK;
+    // 名字代理位（name surrogate）：置位 ⇒ 路径解析跟着走 ⇒ 当链接。
+    constexpr DWORD kNameSurrogate = 0x20000000u;
+    return (data.dwReserved0 & kNameSurrogate) != 0;
 #else
     return stdfs::is_symlink(stdfs::symlink_status(p));
 #endif

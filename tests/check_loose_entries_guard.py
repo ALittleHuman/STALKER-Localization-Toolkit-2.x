@@ -175,6 +175,28 @@ def main() -> int:
              "⑤ GUI 读的是**同一个标志**（不是「非空 error 就拒载」）",
              "GUI 没读标志" if "loose_info.truncated" not in gui_src else "")
 
+        # ⑥ ★★ P17-121（复审计 `P2-4`）：**"会不会跟出去"要判位，不是列两个标签的白名单**。
+        #   事实（修前）：`is_link_or_junction` 只认 `MOUNT_POINT`/`SYMLINK` 两个值 ⇒
+        #   其它"名字代理型"重解析点（复审计点名的 **WSL `LX_*` 族**）**全部漏网**被跟随。
+        #   口径：判**名字代理位**（`0x20000000`）—— 置位=路径解析会跟着走；不置位=过滤器/元数据型
+        #   （WOF/Dedup/AppExecLink/Cloud）。★ 新出现的名字代理标签**自动被覆盖**，不必补清单。
+        #   ★ 实测边界（如实）：本机**没装 WSL** ⇒ `LX_*` 那类**量不到**，它被归为 follow 是
+        #     按官方位定义推出来的。判据只能查"用的是位判据"＋"注释里写清了这条边界"。
+        link_src = (ROOT / "include" / "xrkit" / "engine" / "fs" / "link_check.h").read_text(
+            encoding="utf-8", errors="replace")
+        want("0x20000000" in link_src and "kNameSurrogate" in link_src,
+             "⑥ `is_link_or_junction` 用**名字代理位**判（不是两个标签的白名单）")
+        want("== IO_REPARSE_TAG_MOUNT_POINT" not in link_src
+             and "== IO_REPARSE_TAG_SYMLINK" not in link_src,
+             "⑥ 两个标签的**白名单比较已退役**（替换，不并存）",
+             "还在列标签" if ("== IO_REPARSE_TAG_MOUNT_POINT" in link_src
+                             or "== IO_REPARSE_TAG_SYMLINK" in link_src) else "")
+        want(("LX" in link_src or "WSL" in link_src),
+             "⑥ 注释点名了这条要覆盖的那族（WSL `LX_*`）")
+        want("没装 WSL" in link_src or "无法实测" in link_src,
+             "⑥ 并**如实标注**了「本机量不到 `LX_*`」这条边界",
+             "没写边界" if ("没装 WSL" not in link_src and "无法实测" not in link_src) else "")
+
     print("-" * 66)
     if PROBLEMS:
         print("LOOSE-GUARD fail %d 项不成立：" % len(PROBLEMS))
