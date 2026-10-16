@@ -144,6 +144,45 @@ _RED = {
 }
 
 
+def owner_boundary_offenders(sources: dict) -> list:
+    """★★ P17-126（复审计「`owner/kind` 边界」的**运行期半**）：
+    **插件侧不得有口子自己填 owner**。
+
+    为什么是这个形状（先查件结论）：用户要的是「注册入口对跨用**当场拒绝**」，
+    而实测：`py_host.cpp` 的 `PyPluginApi` 内部一律用 `owner_`，
+    插件侧绑定签名里**没有** `plugin`/`owner` 参数
+    ⇒ 插件**选不了**自己的 owner ⇒ 「跨用」在当前表面上**无处可拒**。
+    ⇒ 本判据把「**没口子**」这件事**锁住**：谁加了 owner 参数，谁就红（而不是去造一个永远为真的拒绝）。
+    """
+    offenders = []
+    src = sources.get("src/engine/plugin/py_host.cpp", "")
+    if not src:
+        return ["拿不到 py_host.cpp（判据没跑成，不是通过）"]
+    # ① 扩号内找 `.def("register_xxx", &PyPluginApi::register_xxx` 的整段，
+    #   看它有没有 `py::arg("plugin")` / `py::arg("owner")` 这种**让插件填归属**的口子。
+    for ln, line in enumerate(src.splitlines(), 1):
+        if ".def(\"register_" not in line:
+            continue
+        # 取该 `.def(...)` 开始的若干行（绑定写法会换行）
+        block = "\n".join(src.splitlines()[ln - 1:ln + 6])
+        for bad in ('py::arg("plugin")', 'py::arg("owner")'):
+            if bad in block:
+                offenders.append("%d 行附近：`%s` 出现在插件侧绑定里 —— "
+                                 "插件不得自己填归属" % (ln, bad))
+    # ② 正面锁：内部必须真的用 `owner_` 填（不是口头约定）
+    if src.count("owner_") < 4:
+        offenders.append("插件侧归属只能由宜主 `owner_` 填 —— "
+                         "但 `owner_` 出现次数不足（%d）" % src.count("owner_"))
+    return offenders
+
+
+_REAL_SOURCES: dict = {}
+# ★★ P17-126：⑤（owner 归属边界）带来的**额外反例数** —— 收尾那句自证计数
+#   原来只数 `len(_RED)`（写法上就漏了后加的判据）⇒ 这里把它加上，
+#   免得又出现「新判据没计进自证」这种微缩版的“记录了、没人判”。
+OWNER_CASES = 1
+
+
 def selfcheck() -> list[str]:
     broken: list[str] = []
     if scan(_GREEN_SOURCES):
@@ -151,10 +190,33 @@ def selfcheck() -> list[str]:
     for name, sources in _RED.items():
         if not scan(sources):
             broken.append("反例「%s」没被判红" % name)
+    # ★★ P17-126：⑤（owner 归属边界）也要自证：
+    #   · 干净样本（现实源码）必须**不报**；
+    #   · 喂一个"给插件开了 owner 口子"的反例必须**报红**。
+    if owner_boundary_offenders(_REAL_SOURCES):
+        broken.append("⑤ 干净样本被误报：%s" % owner_boundary_offenders(_REAL_SOURCES))
+    _leak = dict(_REAL_SOURCES)
+    _leak["src/engine/plugin/py_host.cpp"] = (
+        _REAL_SOURCES["src/engine/plugin/py_host.cpp"]
+        + "\n            .def(\"register_command\", &PyPluginApi::register_command,\n"
+          "                 py::arg(\"action_id\"), py::arg(\"plugin\"))\n")
+    if not owner_boundary_offenders(_leak):
+        broken.append("反例「插件侧绑定多了 owner 口子」没被判红")
     return broken
 
 
 def main() -> int:
+    # ★★ P17-126：**先把真源码读进 `_REAL_SOURCES`，再跑自证** ——
+    #   因为 ⑤（owner 归属边界）的自证要用真源码当"干净样本"。
+    #   ★ 本批自己踩的坑：我最初把读源码留在 `selfcheck()` **之后** ⇒ `_REAL_SOURCES` 是空的
+    #     ⇒ ⑤ 的自证在空串上跑，**永远不报**（等于没自证）。
+    missing = [rel for rel in SCANNED if not (ROOT / rel).is_file()]
+    if missing:
+        print("PLUGINENTRY fail 找不到 %s（判据没跑成，不是通过）" % "、".join(missing))
+        return 1
+    for rel in SCANNED:
+        _REAL_SOURCES[rel] = (ROOT / rel).read_text(encoding="utf-8")
+
     broken = selfcheck()
     if broken:
         print("PLUGINENTRY fail 判据自证不过（%d 处）：" % len(broken))
@@ -169,13 +231,14 @@ def main() -> int:
             return 1
         sources[rel] = path.read_text(encoding="utf-8")
     offenders = scan(sources)
+    offenders = offenders + owner_boundary_offenders(sources)
     if offenders:
         print("PLUGINENTRY fail %d 处：插件加载入口分叉了" % len(offenders))
         for item in offenders[:10]:
             print("           " + item)
         return 1
     print("PLUGINENTRY ok 两个前端都走 %s（判据自证 %d 红 + 1 绿；Python 加载只由统一入口调）"
-          % (UNIFIED, len(_RED)))
+          % (UNIFIED, len(_RED) + OWNER_CASES))
     return 0
 
 
