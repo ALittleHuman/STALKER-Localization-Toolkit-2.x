@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""批次 C：把**发行口径链**（RC/FINAL，`-Dev:$false`）做成门禁步。
+r"""批次 C：把**发行口径链**（RC/FINAL，`-Dev:$false`）做成门禁步。
 
 分层清单里这是**唯一没有判据**的一层（门禁对 `package.ps1` 全是静态核，从未真跑）。
 本判据的口径（★ 环境受限时**如实 prereq**，不假绿、不假红）：
@@ -24,7 +24,7 @@ BUILT = ["页集合", "六", "内置"]
 
 
 def _powershell():
-    """解析可用的 PowerShell 宿主：优先 `pwsh`（7+），退回 `powershell.exe`（5.1）。
+    r"""解析可用的 PowerShell 宿主：优先 `pwsh`（7+），退回 `powershell.exe`（5.1）。
 
     ★ 本机实测只有 5.1（`pwsh` 不在 PATH、`Program Files\PowerShell\7` 不存在）⇒
       写死 `pwsh` 会让判据在任何环境下都跑不起来（判据自己坏掉，最糟的一种）。

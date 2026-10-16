@@ -502,7 +502,10 @@ def step_cli_contract(release: bool) -> None:
     #   的动作（另一个是 `--lzhuf`）⇒ 先落口径不会打到自检。判据与 `--lzhuf` 逐段同形。
     d_in = guard_dir / "decl_in.xml"
     d_out = guard_dir / "decl_out.xml"
-    d_in.write_bytes(b'<?xml version="1.0" encoding="windows-1251"?>\n<a>\u041f</a>\n')
+    # ★ 注意（本批核对）：`b'...'` 里 `\u` **不解码**，所以 `\\u041f` 是**字面的 6 个字符**
+    #   （不是字符 U+041F）。这里只把转义写成显式形式以消除 SyntaxWarning，
+    #   **字节内容一字不改** —— 想真写 U+041F 得用 `chr(0x41F).encode()`。
+    d_in.write_bytes(b'<?xml version="1.0" encoding="windows-1251"?>\n<a>\\u041f</a>\n')
     d1, do1 = run([str(CLI_EXE), "--decl-fix", str(d_in), "utf-8", str(d_out)])
     d2, do2 = run([str(CLI_EXE), "--decl-fix", str(d_in), "utf-8", str(d_out)])
     d3, do3 = run([str(CLI_EXE), "--decl-fix", str(d_in), "utf-8", str(d_out), "--force"])
@@ -5481,26 +5484,20 @@ def step_release_criterion(release: bool) -> None:
     （解析脚本文本 / 要求它包含某些断言），**没有任何一步真跑它** ⇒ `-Dev:$false`
     那条**发行口径分支从未被执行过** —— 而 AUDIT 里"验收物 ≠ 交付物"正是这一类问题
     （P17-78 的致命项）。所以这里真跑一次并断言：
-      · 发行口径包里 `plugins\` 顶层**无 .py**、`_fixtures\` 已剥离；
+      · 发行口径包里 `plugins/` 顶层**无 .py**、`plugins/_fixtures/` 已剥离；
       · **默认可见页＝六个内置页**（逐名同序，插件页数必须为 0）；
       · 产物 `--smoke` 退出码 0。
-    ★ 环境受限（脚本自己起不来，例如本机对 `ffmpeg.exe` 的拦阻）⇒ 判据脚本退 2
-      ⇒ 这里走 `prereq`：**如实记为"本次未覆盖"**，不当判据失败、也不假绿。
+    ★ 环境受限（脚本自己起不来）⇒ 判据脚本退 2 ⇒ 这里走 `prereq`：**如实记为"本次未覆盖"**，
+      不当判据失败、也不假绿。
     """
     say("[release-criterion] 发行口径链（`-Dev:$false`）端到端跑一次")
-    # ★★ 当前状态（P17-123 实测）：判据脚本已写好且能**真跑**，但被**产品侧前提**挡住：
-    #   `package.ps1` 自设 `$ErrorActionPreference='Stop'` ⇒ `windeployqt.exe`/、`ffmpeg.exe`
-    #   往 **stderr** 写的**正常 warning** 被当成**终止错误** ⇒ 脚本中断
-    #   （实测："Translations will not be available…"）。
-    #   ★ 判据侧**绕不过**它（外层预置 `$ErrorActionPreference` 压不过脚本内部赋值），
-    #     而为了过门禁去改产品脚本是本仓明确禁止的。
-    #   ⇒ 如实处置：**SKIP 并登进本次未覆盖清单** ——
-    #     不假绿（没说"已验"）、不拉红（常红的门禁等于没有门禁）、
-    #     且**每次门禁输出里都看得见**"发行口径链尚未真跑通"。
-    # ★★ P17-128：**真跑**。上一批这里是 `ledger(...)` + `return`（因为当时产品侧
-    #   `package.ps1` 把第三方工具的 stderr 警告当终止错误、判据侧绕不过）。
-    #   现在那个缺口已按脚本**既有惯用法**补好，链子端到端跑通
-    #   ⇒ 那几行 `ledger` **必须删掉**（留着就是「明明能跑却记成缺口」，又一种“记录了、没人判”）。
+    # ★★ P17-128：这一段注释**已被本轮改写**，旧的（P17-123 那版）说明当时是 SKIP——
+    #   那版口径已删，别再照它理解：
+    #   · P17-123 时：`package.ps1` 把 `windeployqt`/ffmpeg 的 **stderr 正常警告**当**终止错误**
+    #     ⇒ 脚本中断（实测："Translations will not be available…"）⇒ 当时如实记为 `ledger`；
+    #   · P17-128：那个缺口按**脚本里既有的惯用法**补好（`:370-406`／`:433-473` 同款：
+    #     存 `$ErrorActionPreference` → `Continue` → 跑 → 恢复；只包那两次调用、不动全局 `Stop`）
+    #     ⇒ **链子端到端跑通**，本步**真跑**：判据脚本退 0=绿、退 2=前提缺失（`prereq`）、其余=红。
     script = ROOT / "tests" / "check_release_criterion.py"
     if not require_repo_file(script, "发行口径判据脚本"):
         return
