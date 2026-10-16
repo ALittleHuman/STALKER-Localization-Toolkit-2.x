@@ -768,6 +768,35 @@ DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallb
         // 判不出来 / 有歧义：**不在这里下结论** —— 旧路径还会沿着链继续扫（逐字节回退），
         // 可能找到另一个 HEADER 块，也可能靠 `db_fallback` 裁决。退回整文件读，行为逐值一致。
         res.ambiguous = hits > 1;
+
+        // ★★ P17-127（复审计 `P2-1`）：**显式指定格式时，先在 seek 路径上把它当权威试一次**。
+        //
+        // 事实（修前）：`db_fallback` 只在退到整包读、且 `auto_detect(raw)` 失败之后才被用到
+        //   （本文件 `:860-861`）—— 而到了那里文件**已经被整包读进内存**了。于是对
+        //   "**> 512 MiB 且 seek 认不出**"的包：整包读闸门先拒绝 ⇒ **用户在下拉里选了格式也救不回**
+        //   （复审计 `P2-1` 的原话）。矛盾在于：**seek 路径本来就不需要把文件读进内存**。
+        //
+        // 修法（**不放松闸门**）：显式选了格式 ⇒ 就**只用那个格式**校验尾部块；通过就**直接返回**，
+        //   连整包读都不进 ⇒ 大文件也救得回，而闸门一个字没动。
+        //   ★ 不通过（格式不对 / 尺寸不自洽）⇒ 照旧往下走整包读那条路（含闸门），行为不变。
+        //   ★ 留痕：`whole_file_reason` 记"用的是显式格式、且没走整包读"（零静默）。
+        if (hits != 1 && db_fallback.has_value() && *db_fallback != DbFormat::Unknown) {
+            std::vector<DbEntry> forced_entries;
+            if (validate_header(header, comp, *db_fallback, forced_entries) &&
+                entries_self_consistent_size(res.file_size, forced_entries) &&
+                !forced_entries.empty()) {
+                res.used_seek = true;
+                res.header_bytes = header.size();
+                res.format = *db_fallback;
+                res.entries = std::move(forced_entries);
+                res.whole_file_reason = std::string("按**显式选定**的格式 ") +
+                                        db_format_key(*db_fallback) +
+                                        " 走 seek 解析（未整包读）";
+                res.ok = true;
+                stamp();
+                return res;
+            }
+        }
     }
 
     // ── 退回整文件读（= 旧路径，含逐字节回退扫描；错误文案也与旧版一致）──────────

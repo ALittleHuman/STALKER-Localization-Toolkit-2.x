@@ -3206,13 +3206,29 @@ SmokeResult run_smoke() {
                   QStringLiteral("P17-85 前提：11xx 包 ＋ 显式格式 ⇒ 子裁决成功（err=%1，实得 %2 条）")
                       .arg(QString::fromStdString(amb_error))
                       .arg(static_cast<int>(amb_entries.size())));
-            check(!amb_info.used_seek && !amb_info.whole_file_reason.empty() &&
-                      amb_info.header_bytes == static_cast<uint64_t>(amb.size()),
-                  QStringLiteral("P17-85 回退整包读必须报（used_seek=%1 理由=「%2」读入=%3 / 整包=%4）")
+            // ★★ P17-127（复审计 `P2-1`）：期望变了 —— 显式选定格式现在**先在 seek 路径上试**
+            //   （seek 路径不需要整包读）⇒ 这个小包由"seek=0 ＋ 整包读"变成
+            //   "**seek=1 ＋ 显式格式理由**"，而整包读闸门**一个字没动**。
+            check(amb_info.used_seek && !amb_info.whole_file_reason.empty() &&
+                      amb_info.whole_file_reason.find("显式选定") != std::string::npos,
+                  QStringLiteral("P17-127 显式选定格式 ⇒ 走 seek、不整包读"
+                                 "（used_seek=%1 理由=「%2」读入=%3 / 整包=%4）")
                       .arg(amb_info.used_seek ? 1 : 0)
                       .arg(QString::fromStdString(amb_info.whole_file_reason))
                       .arg(amb_info.header_bytes)
                       .arg(static_cast<qulonglong>(amb.size())));
+            // ── ★ 逆向保护照样要有：**不给格式**时，seek 认不出 ⇒ 必须退回整包读并写理由 ──
+            //   （01 F-09 要锁的就是这条：不许"认不出就静默当空包"）
+            {
+                std::string amb2_error;
+                efs::DbReadInfo amb2_info;
+                (void)efs::package_entries(amb_path.toStdString(), std::nullopt, amb2_error,
+                                           nullptr, &amb2_info);
+                check(!amb2_info.whole_file_reason.empty() &&
+                          amb2_info.whole_file_reason.find("seek") != std::string::npos,
+                      QStringLiteral("01 F-09 回退整包读必须报（不给格式 ⇒ 理由=「%1」）")
+                          .arg(QString::fromStdString(amb2_info.whole_file_reason)));
+            }
             QDir(entries_dir).removeRecursively();
         }
 

@@ -1054,12 +1054,31 @@ def step_cli_contract(release: bool) -> None:
     (f09_dir / "a.txt").write_text("hello", encoding="ascii")
     f09_11 = guard_dir / "f09_11xx.db"
     run([str(CLI_EXE), "--pack-db", str(f09_11), "11xx", str(f09_dir), "--force"])
+    # ★★ P17-127（复审计 `P2-1`）：**这条夹具的期望变了**（产品语义也变了）——
+    #   显式选定格式现在**先在 seek 路径上试**（seek 路径不需要整包读）⇒ 这个 11xx 小包
+    #   由"seek=0 ＋ 整包读"变成"**seek=1 ＋ 显式格式理由**"，而**闸门一个字没动**。
+    #   复审计 `P2-1` 要的正是"用户在下拉里选了格式就该救得回"。
     _, f09_out = run([str(CLI_EXE), "--dump", str(f09_11), "11xx"])
-    if "note=整包读" not in f09_out or "seek=0" not in f09_out:
-        fail("回退整包读没报出来（01 F-09 反向夹具）：期望 seek=0 ＋ note=整包读，实际 %r"
+    if "seek=1" not in f09_out or "显式选定" not in f09_out:
+        fail("显式格式没走 seek（P17-127 语义）：期望 seek=1 ＋ 显式选定格式的理由，实际 %r"
              % f09_out.strip()[:160])
     else:
-        ok("回退整包读必须报（01 F-09 反向夹具：11xx 小包走回退 ⇒ seek=0 ＋ note=整包读 + 理由）")
+        ok("显式选定格式 ⇒ 走 seek 解析、**不整包读**（P17-127；复审计 `P2-1` 的"
+           "「选了格式也救不回」已解决）")
+    # ── ★ 逆向保护**照样要有**：**不给格式**时，seek 认不出 ⇒ 必须退回整包读并写理由 ──
+    #   （这正是 01 F-09 要锁的那条路：不能"认不出就静默当空包"）
+    #   ★ 口径（本批实测修正）：**不给格式**时这个包**走不通**（最终认不出格式），
+    #     而 `--dump` 的 `note=整包读` 只在**成功**路径上打印 ⇒ 这里能验的是
+    #     「**走不通 ＋ 理由可操作**」（点名「在下拉里选定具体格式」）。
+    #     「回退整包读会进、且 `whole_file_reason` 非空」那条**由 C++ 侧直接断言**
+    #     （`smoke.cpp` 的 `DbReadInfo`，不受「成功才打印」限制；本批已加，checks 967→968）。
+    rc_amb, f09_amb = run([str(CLI_EXE), "--dump", str(f09_11)])
+    if rc_amb == 0 or "在下拉里选定具体格式" not in f09_amb:
+        fail("01 F-09 反向夹具（不给格式那一支）：期望**走不通**且理由点名「在下拉里选定具体格式」，"
+             "实际 rc=%s %r" % (rc_amb, f09_amb.strip()[:150]))
+    else:
+        ok("01 F-09 反向夹具（不给格式）：走不通且理由**可操作**；"
+           "「回退整包读会进＋理由非空」由 `shell-smoke` 直接断言")
 
     # ── ★★ P17-48（04 F-06 第二波）：`--pack-db` 同款写盘守卫 ──────────────────────
     #   ★ 判的是**引擎解析后的真实落点**（`resolve_pack_target` 会补扩展名）——判 operands[0] 会判错对象。
