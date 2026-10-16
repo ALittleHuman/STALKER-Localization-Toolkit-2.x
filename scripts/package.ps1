@@ -204,8 +204,13 @@ Copy-Item -LiteralPath (Join-Path $depSrc 'ffprobe.exe') -Destination $stage
 #   ⇒ 改成**先落文件、再读首行**：管道不截断，退出码就是它真实的退出码。
 #   ★ 三重守卫（起不来 / 版本行认不出 / 主版本 ≠ 7）**一条不放松**。
 $ffLog = Join-Path $env:TEMP ('xrkit_ffprobe_{0}.txt' -f $PID)
+# ★★ P17-128：同理包一层 `Continue` —— ffmpeg 也会往 stderr 写正常信息
+#   （它的 `-version` 输出本来就包含配置/库列表）。真失败仍然靠下面那条 `-ne 0` 拦。
+$prevEapFf = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 & (Join-Path $stage 'ffmpeg.exe') -version *> $ffLog
 $ffExit = $LASTEXITCODE
+$ErrorActionPreference = $prevEapFf
 $ffVersion = (Get-Content -LiteralPath $ffLog -TotalCount 1)
 Remove-Item -LiteralPath $ffLog -Force -ErrorAction SilentlyContinue
 Write-Host "  $ffVersion"
@@ -230,9 +235,18 @@ Write-Host "  版本守卫通过：自带 ffmpeg 是 7.x"
 Copy-Item -LiteralPath (Join-Path $root 'scripts\download_ffmpeg.py') -Destination $stage
 
 Write-Host "== windeployqt（铺 Qt 运行时；不铺翻译/示例）=="
+# ★★ P17-128（复审计 P2-1 同族的发行链缺口）：**这里得包一层 `Continue`** ——
+#   `$ErrorActionPreference='Stop'` 下，`windeployqt` 往 **stderr** 写的正常警告
+#   （实测："Translations will not be available…"）会被当成**终止错误** ⇒ 脚本中断。
+#   ★ 本脚本**早就有这个惯用法**（见 `:370-406`、`:433-473`），这里是**漏了**；
+#     只包这一次调用，**不**动全局的 `Stop`（真失败仍然要爆）。
+$prevEapQt = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 & (Join-Path $qt 'bin\windeployqt.exe') --release --no-translations --no-system-d3d-compiler `
     --no-opengl-sw (Join-Path $stage 'xrkit_app.exe')
-if ($LASTEXITCODE -ne 0) { throw "windeployqt 失败（退出码 $LASTEXITCODE）" }
+$qtExit = $LASTEXITCODE
+$ErrorActionPreference = $prevEapQt
+if ($qtExit -ne 0) { throw "windeployqt 失败（退出码 $qtExit）" }
 
 Write-Host "== README / version =="
 # ★★ 2026-10-07（审计补充 H1-5）：`git rev-parse` 原来**不查 `$LASTEXITCODE`** ——

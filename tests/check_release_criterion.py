@@ -4,7 +4,7 @@
 分层清单里这是**唯一没有判据**的一层（门禁对 `package.ps1` 全是静态核，从未真跑）。
 本判据的口径（★ 环境受限时**如实 prereq**，不假绿、不假红）：
 · 真跑 `scripts/package.ps1 -Dev:$false`（**发行口径**：`plugins/` 为空），落临时目录；
-· 断言：产物里 **没有** 任何 `plugins\*.py` / `_fixtures\`（发行口径的定义）；
+· 断言：产物里 **没有** 任何 `plugins/*.py` / `_fixtures/`（发行口径的定义）；
 · 并在该产物里真跑一次 `--smoke`，断言 **默认可见页＝六个内置页**（逐名同序）；
 · 退出码：0=绿；1=判据不成立；2=**环境不具备**（脚本自己起不来/缺前提）⇒ release 档按前提缺失 FAIL。
 """
@@ -54,21 +54,41 @@ def main():
     #   ★ 打包器（`--build-package`）走另一套宿主偏好所以正式打包没事 ——
     #     这正是"门禁里从没跑过它"的又一层原因：换个宿主就换一套 stderr 语义。
 
-    # ★ 先核前提：`version.h` 的预发布串必须与 `version.json` 一致 ——
-    #   否则 `package.ps1` 的「包内 exe ProductVersion == 期望串」断言必然失败，
-    #   而那是**前提不同步**，不是发行口径判据不成立。
+    # ★★ P17-128 修正②：**期望值从 `version.h` 取，不从 `version.json` 取**。
+    #
+    # 我先前的两版都错了，记在这里免得再犯：
+    #   · 第一版：两边不一致就 `return 2`（skip）⇒ 全量门禁里这一步**永远 SKIP**；
+    #   · 第二版：**在判据里改写 `version.h` 并重建** ⇒ **判据动了产品状态源**，
+    #     而且只重建了 shell、没重建 release ⇒ 包内 exe 仍是旧串 ⇒ 打包到核对那步必炸。
+    # ⇒ 正解：`version.h` 是**包内 exe ProductVersion 的直接来源** ⇒ 期望值就取它；
+    #   `version.json` 只是"最后一次发包"的记账，**与本次打包是否成功无关**。
+    #   （★ 本批实测：门禁脚本里**没有任何一处**写 `version.json` —— 我先前把手工残留
+    #     读成了"门禁顶号"，那是错的。）
     vh = ROOT / "include" / "xrkit" / "core" / "version.h"
     vcur = json.loads(VERSION.read_text(encoding="utf-8"))["current"]
-    want = "%s.%s" % (vcur["prerelease"], vcur["index"])
-    if vh.exists():
-        m = re.search(r'kPrerelease\s*=\s*"([^"]*)"', vh.read_text(encoding="utf-8", errors="replace"))
-        got = m.group(1) if m else ""
-        if got != want:
-            print("PKG-RELEASE skip 前提不同步：`version.h` 说 %r 而 `version.json` 说 %r"
-                  "（先按正规路径重打包/重建，再跑发行口径判据）" % (got, want))
-            return 2
-    with tempfile.TemporaryDirectory(prefix="pkgrel_") as tmp:
-        out = Path(tmp) / "dist"
+    if not vh.exists():
+        print("PKG-RELEASE skip 缺 version.h（判据没跑成，不是通过）")
+        return 2
+    m = re.search(r'kPrerelease\s*=\s*"([^"]*)"', vh.read_text(encoding="utf-8", errors="replace"))
+    hdr = (m.group(1) if m else "").strip()
+    if not hdr:
+        print("PKG-RELEASE skip version.h 里读不出 kPrerelease")
+        return 2
+    # `kPrerelease` = "<标记>.<序号>"；拼出 package.ps1 要的那个完整串
+    expect = "%s %s" % (vcur["version"], hdr)
+    if hdr != "%s.%s" % (vcur["prerelease"], vcur["index"]):
+        print("  前提：`version.h`=%r、`version.json`=%r 不一致 —— 本次按 **version.h** 打包"
+              "（它是包内 exe 的直接来源；不一致本身由 `version-identity` 步负责判）"
+              % (hdr, "%s.%s" % (vcur["prerelease"], vcur["index"])))
+    # ★ 不用 tempfile：`package.ps1:607` 是 `$dist = Join-Path $root $OutDir`，
+    #   所以 `-OutDir` **必须是相对仓库根**的目录名（默认 dist）——
+    #   传绝对路径会被拼成 `E:/.../2.x/C:/.../dist` ⇒ `New-Item` 报
+    #   「The given path's format is not supported」。
+    rel_out = "build/_pkgrel_check/dist"
+    out = ROOT / rel_out
+    if out.exists():
+        shutil.rmtree(out, ignore_errors=True)
+    try:
         v = json.loads(VERSION.read_text(encoding="utf-8"))["current"]
         ps = _powershell()
         if ps is None:
@@ -82,8 +102,7 @@ def main():
         #   ★ 判据在自己这一侧覆盖，**不动产品脚本一个字节**。
         inner = ("$ErrorActionPreference='Continue'; "
                  "& '%s' -OutDir '%s' -BuildIndex %d -VersionString '%s' -Dev:$false"
-                 % (PS, out, v["index"],
-                    "%s %s.%s" % (v["version"], v["prerelease"], v["index"])))
+                 % (PS, rel_out, v["index"], expect))
         args = [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", inner]
         try:
             proc = subprocess.run(args, capture_output=True, timeout=3000, cwd=str(ROOT))
@@ -91,10 +110,14 @@ def main():
             print("PKG-RELEASE ✗ 打包超时"); return 1
         text = ((proc.stdout or b"") + (proc.stderr or b"")).decode("utf-8", "replace")
         if proc.returncode != 0:
-            # ★ 脚本自己起不来（本机拦阻/缺前提）⇒ 如实报"前提缺失"，**不报判据不成立**
+            # ★ 环境真不具备时如实报"前提缺失"，**不报判据不成立**
             tail = [l.strip() for l in text.splitlines() if l.strip()][-3:]
             print("PKG-RELEASE skip 打包脚本退出码 %s ⇒ **环境不具备**（如实记为未覆盖，不当判据失败）"
                   % proc.returncode)
+            # ★ P17-128：把**为什么**打出来（我先前只打最后 3 行、而它常常是空的 ⇒ 无从诊断）
+            print("    输出行数=%d 前 6 行：" % len(text.splitlines()))
+            for l in text.splitlines()[:6]:
+                print("      " + l.strip()[:150])
             for l in tail:
                 print("    " + l[:140])
             return 2
@@ -107,12 +130,14 @@ def main():
             pkgdir = cands[0].parent
         top_plugins = pkgdir / "plugins"
         py_top = sorted(p.name for p in top_plugins.glob("*.py")) if top_plugins.exists() else []
+        # ★ P17-128：输出文案改用**正斜杠** —— 原来是反引号+反斜杠，那个 `\`` 是**非法转义**
+        #   （现在只是 SyntaxWarning，将来会变错误；门禁输出里也难看）。
         fix = pkgdir / "plugins" / "_fixtures"
         if py_top:
-            return fail("发行口径包里 `plugins\\` 顶层仍有 .py：%s" % ", ".join(py_top[:5]))
+            return fail("发行口径包里 `plugins/` 顶层仍有 .py：%s" % ", ".join(py_top[:5]))
         if fix.exists() and any(fix.iterdir()):
-            return fail("发行口径包里仍有 `plugins\\_fixtures\\` 夹具")
-        print("  ✓ 发行口径：`plugins\\` 顶层无 .py、`_fixtures\\` 已剥离")
+            return fail("发行口径包里仍有 `plugins/_fixtures/` 夹具")
+        print("  ✓ 发行口径：`plugins/` 顶层无 .py、`plugins/_fixtures/` 已剥离")
         # ② 默认可见页＝六个内置页（逐名同序）
         exe = pkgdir / ("xrkit_app.exe")
         if not exe.exists():
@@ -137,6 +162,8 @@ def main():
         print("PKG-RELEASE ok 发行口径链跑通：`-Dev:$false` 打包成功、无插件夹具、"
               "默认可见页＝六个内置页、产物自检退出码 0")
         return 0
+    finally:
+        shutil.rmtree(ROOT / "build" / "_pkgrel_check", ignore_errors=True)
 
 
 if __name__ == "__main__":

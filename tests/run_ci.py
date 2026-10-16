@@ -5497,13 +5497,10 @@ def step_release_criterion(release: bool) -> None:
     #   ⇒ 如实处置：**SKIP 并登进本次未覆盖清单** ——
     #     不假绿（没说"已验"）、不拉红（常红的门禁等于没有门禁）、
     #     且**每次门禁输出里都看得见**"发行口径链尚未真跑通"。
-    say("  尚未真跑通：产品侧 `package.ps1` 把第三方工具的 stderr warning 当终止错误"
-        "（判据侧绕不过，不为过门禁改产品）")
-    ledger("发行口径链（`-Dev:$false`）端到端",
-           "产品侧 `package.ps1` 把第三方工具的 stderr warning 当终止错误"
-           "（工具与能力都在 ⇒ 属我们的已知缺口，不是外部前提缺件）；"
-           "判据脚本 `tests/check_release_criterion.py` 已写好且能真跑")
-    return
+    # ★★ P17-128：**真跑**。上一批这里是 `ledger(...)` + `return`（因为当时产品侧
+    #   `package.ps1` 把第三方工具的 stderr 警告当终止错误、判据侧绕不过）。
+    #   现在那个缺口已按脚本**既有惯用法**补好，链子端到端跑通
+    #   ⇒ 那几行 `ledger` **必须删掉**（留着就是「明明能跑却记成缺口」，又一种“记录了、没人判”）。
     script = ROOT / "tests" / "check_release_criterion.py"
     if not require_repo_file(script, "发行口径判据脚本"):
         return
