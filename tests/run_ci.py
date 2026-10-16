@@ -6303,11 +6303,24 @@ def _restore_and_assert_version_json() -> None:
         say("  ✓ 版本状态未被门禁改动（`version.json` 逐字节相同；P17-130）")
         return
     fp.write_bytes(want)   # ★ 恢复（理由②：不许污染工作树）
+    # ★★ 收敛条件（用户 2026-10-16 追加要求）：**这条台账必须挂收敛条件**，否则它会烂成
+    #   「**永不消失的差异台账 ＝ 永久豁免**」—— 正是本仓防过的那种假绿。
+    #   ⇒ 条件**写死在文案里**，并且**可被一个具体动作验证**（不是口号）：
+    #     产品侧让**门禁那条打包路径**改用**显式序号**（不回写 `current.index`）的那一轮，
+    #     本条台账**必须消失**；条件已满足而它仍在 ⇒ **判据/恢复逻辑本身坏了，需复查**。
+    build_cmd = ROOT / "tools" / "cli" / "build_cmd.cpp"
+    writes_current = build_cmd.is_file() and "写回" in build_cmd.read_text(
+        encoding="utf-8", errors="replace")
     ledger("门禁改动版本状态（已恢复）",
            "本档门禁里有步骤走了打包链，而 `--build-package` 的写回段会改 `version.json` 的 "
            "`current.index`。`current.index` 由发布动作定义 ⇒ 验证不该写它"
-           "（用户 2026-10-16 裁定，P17-130）。**收敛点在产品侧**：让门禁那条打包路径不回写 `current`"
-           "（或用显式序号跑）。已**逐字节恢复**，工作树不受污染。")
+           "（用户 2026-10-16 裁定，P17-130）。已**逐字节恢复** ⇒ 工作树不受污染。"
+           "★★ **收敛条件＝打包链不再写 `current.index`**（产品侧改用显式序号跑）；"
+           "该条件满足而本条仍在 ⇒ **判据本身待复查**。"
+           "★ 当前判定（自动）：`build_cmd.cpp` 的写回路径 %s ⇒ %s"
+           % ("**在**" if writes_current else "**找不到**",
+              "属**过渡态**，如实记为台账" if writes_current
+              else "**收敛条件看似已满足** ⇒ 本条台账应消失，请复查本判据"))
 
 
 def main() -> int:
