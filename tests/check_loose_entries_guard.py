@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import tempfile
@@ -196,6 +197,49 @@ def main() -> int:
         want("没装 WSL" in link_src or "无法实测" in link_src,
              "⑥ 并**如实标注**了「本机量不到 `LX_*`」这条边界",
              "没写边界" if ("没装 WSL" not in link_src and "无法实测" not in link_src) else "")
+
+        # ⑦ ★★ P17-125（复审计 `P2-8`）：**头文件不引命名空间别名**（泄漏到每个 TU）
+        #   、**不留空 `#if` 块**（空的平台宏是误导）。
+        #   ★ 不动 `inline`：头文件里的自由函数**必须** `inline`，删了会重复定义
+        #     （复审计原文把它和别名并列，不妥）。
+        # ★ 判据要看**真的声明**：先剥掉注释（它们必然提到这个别名名），
+        #   再只认「`namespace X = Y;`」这种**别名声明**形状。
+        #   （本批第一版直接查字符串 ⇒ 被自己的说明注释弄成自红）
+        link_code = "\n".join(l for l in link_src.splitlines() if not l.lstrip().startswith("//"))
+        alias_decls = [l.strip() for l in link_code.splitlines()
+                       if re.match(r"\s*namespace\s+\w+\s*=", l)]
+        want(not alias_decls,
+             "⑦ `link_check.h` 不引命名空间别名（不泄漏到包含它的 TU）",
+             "还在引：" + "; ".join(alias_decls[:2]) if alias_decls else "")
+        want("std::filesystem::path" in link_src,
+             "⑦ 改用全名 `std::filesystem::`（不靠别名）")
+        ext_src = (ROOT / "src" / "engine" / "text" / "extract.cpp").read_text(
+            encoding="utf-8", errors="replace")
+        empty_if = []
+        lines = ext_src.splitlines()
+        for k, line in enumerate(lines):
+            if not line.strip().startswith("#if"):
+                continue
+            depth = 0
+            for j in range(k, min(len(lines), k + 60)):
+                s = lines[j].strip()
+                if s.startswith("#if"):
+                    depth += 1
+                elif s.startswith("#endif"):
+                    depth -= 1
+                    if depth == 0:
+                        break
+                elif j > k and s and not s.startswith("//"):
+                    break
+            else:
+                continue
+            body = [b.strip() for b in lines[k + 1:j]
+                    if b.strip() and not b.strip().startswith("//")]
+            if not body:
+                empty_if.append(k + 1)
+        want(not empty_if,
+             "⑦ `extract.cpp` 没有空 `#if` 块（空的平台徏是误导）",
+             "空块行号 " + ",".join(str(x) for x in empty_if) if empty_if else "")
 
     print("-" * 66)
     if PROBLEMS:

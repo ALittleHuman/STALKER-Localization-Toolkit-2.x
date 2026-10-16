@@ -25,8 +25,15 @@
 
 namespace xrkit::engine::fs {
 
-namespace stdfs = std::filesystem;
-
+// ★★ P17-125（复审计 `P2-8`）：**这里原来在命名空间作用域引了一个 `namespace stdfs` 别名**
+//   （`namespace stdfs = std::filesystem;`）—— 头文件里这么做会**泄漏到每个包含它的 TU**，
+//   与 `extract_tree.cpp` / `overlay.cpp` 各自那份别名**同名重叠**（"收敛面"）。
+//   ⇒ 本头文件**不再引入别名**，一律写 `std::filesystem::`（本文件里只出现两次，不值得为它开别名）。
+//
+//   ★ 关于复审计同条里的 `inline`：**这个是必需的，不是收敛问题** ——
+//     头文件里的**自由函数**必须 `inline`，否则每个包含它的 TU 都会生成一份定义
+//     ⇒ 链接期重复定义。如实记下这条，免得下次有人照"复审计原文"把它一起删掉。
+//
 // ★★ P17-121（复审计 `P2-4`）：**"会跟出去"不再靠两个标签的白名单，改判位**。
 //
 // 事实（修前）：这里只认 `IO_REPARSE_TAG_MOUNT_POINT`（junction，`0xA0000003`）与
@@ -50,7 +57,7 @@ namespace stdfs = std::filesystem;
 // ★ 边界（如实写）：本机**没装 WSL**（`wsl --status` 报"未安装用于 Linux 的 Windows 子系统"）
 //   ⇒ `LX_*` 那类标签**在本机无法实测**；上面它被归为 follow 是**按官方位定义推出来的**，
 //   不是实测结论。判据里对此有自曝（见 `check_loose_entries_guard.py` 的 ⑤ 段）。
-inline bool is_link_or_junction(const stdfs::path& p) {
+inline bool is_link_or_junction(const std::filesystem::path& p) {
 #if defined(_WIN32)
     std::wstring w = p.wstring();
     while (!w.empty() && (w.back() == L'\\' || w.back() == L'/')) w.pop_back();
@@ -64,7 +71,7 @@ inline bool is_link_or_junction(const stdfs::path& p) {
     constexpr DWORD kNameSurrogate = 0x20000000u;
     return (data.dwReserved0 & kNameSurrogate) != 0;
 #else
-    return stdfs::is_symlink(stdfs::symlink_status(p));
+    return std::filesystem::is_symlink(std::filesystem::symlink_status(p));
 #endif
 }
 

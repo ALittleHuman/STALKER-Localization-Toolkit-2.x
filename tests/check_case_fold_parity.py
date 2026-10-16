@@ -47,6 +47,7 @@ LO, HI = 0x20, 0x30000          # 上界与生成器同口径（打开区间）
 BATCH = 2000
 
 PROBLEMS: list = []
+SKIPPED: list = []     # ★ P17-125：本平台**没被验证**的格（不许算成"通过"）
 CASES = 0
 
 
@@ -151,14 +152,33 @@ def main() -> int:
          if bad_path else "%d 个码位全部一致" % checked)
 
     # ③ 反例自证：证明这格有意义（修前那条路确实有分歧）
-    diverged = []
-    for cp in (0x0130, 0x01C5, 0x0524, 0x03F4):
-        ch = chr(cp)
-        if windows_lower(ch) != ch.lower():
-            diverged.append("U+%04X" % cp)
-    want(len(diverged) >= 2,
-         "③ 反例自证：修前那条路（Windows API）确实与 Python 有分歧",
-         "分歧样例 " + ",".join(diverged) if diverged else "（非 Windows ⇒ 无法自证，如实标注）")
+    #
+    # ★★ P17-125（复审计 `P2-7`）：**非 Windows 下这格原来会"假绿"**。
+    #   事实（修前）：`windows_lower()` 在非 Windows 直接 `return ch` ⇒ 于是
+    #   `windows_lower(ch) != ch.lower()` 对**每个**大写字母都成立（拿 ch 跟自己的小写比）
+    #   ⇒ 两个探针必然"分歧" ⇒ `len(diverged) >= 2` **空转通过**；而那句
+    #   "（非 Windows ⇒ 无法自证，如实标注）" 的兜底文案**永远打印不出来**
+    #   —— 因为 `diverged` 永远非空。这是"判据自称如实、实际空转"的典型。
+    #   口径改为**三支**：
+    #     · Windows ⇒ 真自证（必须找到 ≥2 例分歧）；
+    #     · 非 Windows ⇒ **如实 SKIP**（`sys.exit` 之外的显式标记，且**不计入通过项**），
+    #       并**不把 CASES 加上去** —— 免得"跳过"被算成"通过"。
+    if sys.platform != "win32":
+        print("   ⚠ ③ 反例自证：本机非 Windows ⇒ **如实 SKIP**（Windows API 那条路量不到）")
+        print("      （这不是通过：本格在本平台**没有**被验证，别把它读成绿的）")
+        SKIPPED.append("③ 反例自证（Windows API 差异）")
+    else:
+        diverged = []
+        for cp in (0x0130, 0x01C5, 0x0524, 0x03F4):
+            ch = chr(cp)
+            if windows_lower(ch) != ch.lower():
+                diverged.append("U+%04X" % cp)
+        want(len(diverged) >= 2,
+             "③ 反例自证：修前那条路（Windows API）确实与 Python 有分歧",
+             "分歧样例 " + ",".join(diverged) if diverged else "（Windows 上竟找不到分歧 ⇒ 这条锁空转）")
+        # ★ 不在这里 `CASES += 1`：`CASES` 是模块级名字，在 `main` 里赋值会被当成局部名
+        #   ⇒ `UnboundLocalError`（本批自己踩的坑）；且 `want()` 已经计过"通过项"，
+        #   再计一次是**双重计数**。模块级 `CASES` 由 `want()` 维护。
 
     print("-" * 66)
     if PROBLEMS:
@@ -166,6 +186,11 @@ def main() -> int:
         for item in PROBLEMS:
             print("  · " + item)
         return 1
+    if SKIPPED:
+        print("CASE-FOLD ok %d 项（表由 CPython 导出且没漂 ＋ **穷尽逐码位**与 `str.lower()` 一致；"
+              "复审计 `01 F-10`）—— ★ **本平台跳过 %d 项**：%s"
+              % (CASES, len(SKIPPED), "、".join(SKIPPED)))
+        return 0
     print("CASE-FOLD ok %d 项（表由 CPython 导出且没漂 ＋ **穷尽逐码位**与 `str.lower()` 一致 ＋ "
           "反例自证；复审计 `01 F-10`）" % CASES)
     return 0

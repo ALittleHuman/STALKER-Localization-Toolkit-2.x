@@ -11,10 +11,11 @@
 #include <pcre2.h>
 
 #include <algorithm>
-#if defined(_WIN32)
 // ★ P17-112：不再需要 <windows.h> —— 小写折叠已改为 CPython 导出的表（见 case_fold.h），
-//   `LCMapStringEx` 那条"模仿 Python"的路已实测跟不上（全域 131276 个码位分歧）。
-#endif
+//   `LCMapStringEx` 那条「模仿 Python」的路已实测跟不上（全域 131276 个码位分歧）。
+// ★★ P17-125（复审计 `P2-8`）：这里原来是一个**空的 `#if defined(_WIN32)` 块**
+//   （区间内只有注释、没有代码）—— 空的平台宏是**误导**：看上去像"这里有平台分支"，
+//   而实际上它什么都不控制。⇒ 删掉宏，**保留说明**（原因比形式重要）。
 #include <chrono>
 #include <cstring>
 #include <filesystem>
