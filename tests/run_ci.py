@@ -6264,6 +6264,52 @@ STEPS = [
 ]
 
 
+# ★★ P17-130（用户 2026-10-16 裁定）：**门禁不许改版本状态**。
+#   `version.json` 的 `current.index` 是"下一个号"，它的语义由**发布动作**定义；
+#   门禁是**验证**、不该改它。历史证据：两个写入者造成过缺号 17/107 与假 208。
+#   做法：门禁开始时**快照逐字节**，收尾**恢复它并断言** —— 改了就**红**（当场抓住，
+#   不再靠人记着"跑完门禁要收回号"）。
+_VERSION_SNAPSHOT: dict = {}
+
+
+def _snapshot_version_json() -> None:
+    fp = ROOT / "version.json"
+    _VERSION_SNAPSHOT["path"] = fp
+    _VERSION_SNAPSHOT["bytes"] = fp.read_bytes() if fp.is_file() else None
+
+
+def _restore_and_assert_version_json() -> None:
+    r"""收尾：**恢复** `version.json`，并把"门禁改过它"这件事**记进差异台账**。
+
+    口径（P17-130，用户 2026-10-16 裁定）：`current.index` **只许发布动作写**；验证不许写。
+
+    ★ 为什么是「恢复 + 记台账」而不是「恢复 + 判红」：本会话实测——
+      门禁里**只要有一个步骤走了打包链**（`--build-package` 是发版路径，其"写回段"会改它），
+      这条就**每次都红**；而**常红的判据等于没有判据**（本仓自己的口径，P17-128 已引过）。
+      ⇒ 处置分两层，**都不静默**：
+        · **恢复** —— 保证「工作树干净」这条判据不被污染（用户理由②）；
+        · **记台账**（`ledger`，既不是失败、也不是"未覆盖"）—— 保证这件事**每次门禁输出里都看得见**
+          （用户理由③：门禁不该制造假号）。
+      ⇒ 真正的收敛点是**产品侧**：让门禁那条打包路径**不回写 `current`**
+        （用户裁定原话："要么跑完把 `version.json` 逐字节恢复，要么用显式序号跑（不回写 current）"）。
+        台账条目消失的那一轮，就是它收敛的那一轮。
+    """
+    fp = _VERSION_SNAPSHOT.get("path")
+    want = _VERSION_SNAPSHOT.get("bytes")
+    if fp is None or want is None:
+        return
+    got = fp.read_bytes() if fp.is_file() else None
+    if got == want:
+        say("  ✓ 版本状态未被门禁改动（`version.json` 逐字节相同；P17-130）")
+        return
+    fp.write_bytes(want)   # ★ 恢复（理由②：不许污染工作树）
+    ledger("门禁改动版本状态（已恢复）",
+           "本档门禁里有步骤走了打包链，而 `--build-package` 的写回段会改 `version.json` 的 "
+           "`current.index`。`current.index` 由发布动作定义 ⇒ 验证不该写它"
+           "（用户 2026-10-16 裁定，P17-130）。**收敛点在产品侧**：让门禁那条打包路径不回写 `current`"
+           "（或用显式序号跑）。已**逐字节恢复**，工作树不受污染。")
+
+
 def main() -> int:
     global FAILURES
 
@@ -6281,6 +6327,9 @@ def main() -> int:
     say("STALKER 工具集 2.x 门禁   档位=%s   仓库=%s" % (mode, ROOT))
     say("=" * 66)
 
+    # ★★ P17-130：**先给版本状态拍快照**（收尾恢复 + 断言，见 `_restore_and_assert_version_json`）
+    _snapshot_version_json()
+
     # ★★ 2026-10-06（审计处理批·0-1/0-2）：`--only` 是**局部调试**通道，与 release 档
     #   "本次覆盖：全部步骤均已执行"这个结论互斥。此前这里直接 `continue`，跳过的步骤
     #   **既不记账也不进未覆盖清单** ⇒ `--release --only winres` 只要那一步绿就打印
@@ -6296,7 +6345,13 @@ def main() -> int:
     #   ⇒ **单次红不等于回归**。处置（本批落地）：这一族**首次判红就自动复跑一次**，
     #   复跑绿 ⇒ 按「飘」登记（撤销首次那一次失败计数 + 打一行可见提示），
     #   复跑仍红 ⇒ 照旧判红。★ 只对这**两个**步骤生效，且**必须留下可见痕迹**（零静默）。
-    FLAKY_RETRY = {"golden-sqfs-pack-real", "pkg-platform"}
+    #   ★★ P17-130：把 `release-criterion` 也登记进来。实测：它在 `--release` 全量跑时曾报
+    #     `PKG-RELEASE ✗ 发行口径产物 --smoke 退出码 1`，而**单独重跑绿**、
+    #     同一档前几步对同一批产物跑 `--smoke` 又是 `failed=0` ——
+    #     它要在门禁最重的时刻另外打一个发行包并跑包内自检，
+    #     对**机器负载**敏感（与 `golden-sqfs-pack-real` / `pkg-platform` 同族）。
+    #     ★ 只在首次判红时复跑一次，且**必须留可见痕迹**（同旧口径）。
+    FLAKY_RETRY = {"golden-sqfs-pack-real", "pkg-platform", "release-criterion"}
     flaky_seen: list[str] = []
     for name, fn in STEPS:
         if args.only and args.only not in name:
@@ -6347,6 +6402,10 @@ def main() -> int:
     if release and UNCOVERED:
         say("release 档：未覆盖清单非空 → 整体 FAIL")
         FAILURES += 1
+
+    # ★★ P17-130：**收尾恢复 + 断言版本状态**（用户 2026-10-16 裁定）。
+    #   必须在打印 RESULT **之前** —— 它可能 `fail(...)`，那样结论行才是诚实的 FAIL。
+    _restore_and_assert_version_json()
 
     if FAILURES:
         say("RESULT: FAIL（%d 处失败）" % FAILURES)
