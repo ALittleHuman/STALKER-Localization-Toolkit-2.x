@@ -5840,8 +5840,12 @@ def step_loose_guard(release: bool) -> None:
     if rc == 0 and "LOOSE-GUARD ok" in out:
         ok("自指链接不再导致不终止；链接只作条目、不递归；根外内容不泄漏")
     elif rc == 2:
-        say("  ⚠ 缺 CLI / 造不出 junction —— 本步记为 skip")
-        ok("散装层链接判据在本环境不适用（已如实 skip）")
+        # ★★ P17-135（复审计 09 分册 ⑥）：**这里原来是 `ok()`** ——
+        #   造不出 junction 时 ②③ 两格**根本没跑**，却记成 PASS ⇒ `--release` 照样绿；
+        #   而文案自称「记为 skip」⇒ **文案与语义打架**。与我修过的 `P1-2`（`rc==2` 记 ok）同族。
+        #   ⇒ 走 `prereq`：release 档 FAIL、其余档 SKIP ＋ 进「本次未覆盖」（如实）。
+        prereq("造得出 Windows 目录联接（junction）",
+               "非 Windows 或权限不足 ⇒ 自指/根外两格**没跑**（见上）", release)
     else:
         fail("散装层条目表还在跟着链接走（见上）")
 
@@ -6497,6 +6501,17 @@ def main() -> int:
     else:
         say("  本档**没有任何步骤**改过 `version.json`（逐步骤 sha 取证）")
     _restore_and_assert_version_json()
+
+    # ★★ P17-135（复审计 09 分册 ⑨）：**`flaky_seen` 原来只 append、从没人读** ——
+    #   "首次判红、复跑绿"这件事在输出里**完全看不见** ⇒ 等于把 flaky 抹掉。
+    #   ⇒ 收尾显式列出（说 + 记差异台账：可见、不阻断）。
+    if flaky_seen:
+        say("  本轮「首次判红、复跑绿」的步骤（按飘红口径登记，%d 个）：%s"
+            % (len(flaky_seen), "、".join(flaky_seen)))
+        ledger("本轮有飘红（复跑绿）",
+               "%s —— 单次红不等于回归，但**必须看得见**（复审计 09 分册 ⑨）；"
+               "若同一步骤连续多档飘红，应按回归处理而不是继续按飘红记账"
+               % "、".join(flaky_seen))
 
     if FAILURES:
         say("RESULT: FAIL（%d 处失败）" % FAILURES)
