@@ -69,13 +69,29 @@ def main():
     if not vh.exists():
         print("PKG-RELEASE skip 缺 version.h（判据没跑成，不是通过）")
         return 2
-    m = re.search(r'kPrerelease\s*=\s*"([^"]*)"', vh.read_text(encoding="utf-8", errors="replace"))
+    vh_text = vh.read_text(encoding="utf-8", errors="replace")
+    m = re.search(r'kPrerelease\s*=\s*"([^"]*)"', vh_text)
     hdr = (m.group(1) if m else "").strip()
     if not hdr:
         print("PKG-RELEASE skip version.h 里读不出 kPrerelease")
         return 2
-    # `kPrerelease` = "<标记>.<序号>"；拼出 package.ps1 要的那个完整串
-    expect = "%s %s" % (vcur["version"], hdr)
+    # ★★ P17-136（复审计 09 分册 ⑩）：**单源**。判据自称"期望值取 `version.h`"，
+    #   但修前 `expect` 与产物目录都用了 `version.json` 的 `version`/`prerelease`/`index`
+    #   ⇒ **混用两个来源**，两者不一致时行为说不清。
+    #   ⇒ 现在**三件事全从 `version.h` 出**：主版本、标记、序号。
+    mv = re.search(r"kVersionMajor\s*=\s*(\d+)", vh_text)
+    mn = re.search(r"kVersionMinor\s*=\s*(\d+)", vh_text)
+    mp = re.search(r"kVersionPatch\s*=\s*(\d+)", vh_text)
+    if not (mv and mn and mp):
+        print("PKG-RELEASE skip version.h 里读不出 kVersionMajor/Minor/Patch")
+        return 2
+    mainver = "%s.%s.%s" % (mv.group(1), mn.group(1), mp.group(1))
+    # `kPrerelease` = "<标记>.<序号>"
+    if "." not in hdr:
+        print("PKG-RELEASE skip kPrerelease 形状不对：%r（期望「标记.序号」）" % hdr)
+        return 2
+    mark, idx = hdr.split(".", 1)
+    expect = "%s %s" % (mainver, hdr)
     if hdr != "%s.%s" % (vcur["prerelease"], vcur["index"]):
         print("  前提：`version.h`=%r、`version.json`=%r 不一致 —— 本次按 **version.h** 打包"
               "（它是包内 exe 的直接来源；不一致本身由 `version-identity` 步负责判）"
@@ -144,12 +160,21 @@ def main():
                   "「机器不行」；复审计 09 分册 High #1 / P17-133）")
             return 1
         # ① 发行口径：没有插件夹具
-        pkgdir = out / v["version"] / ("%s.%s" % (v["prerelease"], v["index"]))
+        # ★★ P17-136（复审计 09 分册 ⑧）：真实布局是 `dist/<版本>/<标记>/<序号>`（**三层**）。
+        #   修前算成 `dist/2.0.0/ALPHA.208`（两层）⇒ **永远不存在** ⇒ 每次走 `rglob` 兜底
+        #   ⇒ 那条"确定性分支"从未被验证过、也从不命中（"对着空气"的又一种形状）。
+        pkgdir = out / mainver / mark / idx
         if not pkgdir.exists():
             cands = [p for p in out.rglob("xrkit_app.exe")]
+            print("  ⚠ 确定性产物目录没命中：期望 `%s`（实际布局可能变了）" % pkgdir.relative_to(ROOT))
+            print("    已找到 %d 个候选 xrkit_app.exe%s"
+                  % (len(cands), ("：" + str(cands[0].parent.relative_to(ROOT))) if cands else ""))
             if not cands:
                 return fail("打包退出码 0，但产物里找不到 xrkit_app.exe")
             pkgdir = cands[0].parent
+        else:
+            print("  ✓ 确定性产物目录命中：`%s`（三层布局：版本/标记/序号）"
+                  % pkgdir.relative_to(ROOT))
         top_plugins = pkgdir / "plugins"
         py_top = sorted(p.name for p in top_plugins.glob("*.py")) if top_plugins.exists() else []
         # ★ P17-128：输出文案改用**正斜杠** —— 原来是反引号+反斜杠，那个 `\`` 是**非法转义**
@@ -179,6 +204,27 @@ def main():
             return fail("发行口径包里插件页数应为 0，实测 %d" % plugin)
         if builtin != 6:
             return fail("默认内置页应为 6，实测 %d" % builtin)
+        # ★★ P17-136（复审计 09 分册 ⑦）：**验名，不只数数**。
+        #   事实：smoke 那行本来就带 `[1=fs= 2=convert= …]` 的有序 id 列表，
+        #   而修前只用正则抓了三个计数 ⇒ "换了哪六个页"**完全没被检查**。
+        #   ⇒ 解析方括号里的有序 id，断言**顺序与名字**都对；
+        #     并顺带断言"内置标记与 id 后缀一致=1"（smoke 自己也算了一遍同一件事）。
+        m_list = re.search(r"PLUGIN-PAGES[^\n]*?\[([^\]]*)\]", st)
+        if not m_list:
+            return fail("产物 `--smoke` 的 PLUGIN-PAGES 行里没有页名列表 `[...]`"
+                        "（无法验名 ⇒ 认不出就报错，不静默放行）")
+        ids = re.findall(r"\d+\s*=\s*([A-Za-z0-9_]+)\s*=", m_list.group(1))
+        EXPECT_PAGES = ["fs", "convert", "text", "xml", "video", "fontpack"]
+        if ids != EXPECT_PAGES:
+            return fail("发行口径包的**内置页名单/顺序**不符：期望 %s，实测 %s"
+                        % (EXPECT_PAGES, ids))
+        print("  ✓ 内置页**实名与顺序**都对：%s" % ", ".join(ids))
+        m_ok = re.search(r"内置标记与 id 后缀一致=(\d)", st)
+        if not m_ok:
+            return fail("产物 `--smoke` 没打出「内置标记与 id 后缀一致=」（认不出就报错）")
+        if m_ok.group(1) != "1":
+            return fail("产物自报「内置标记与 id 后缀一致=%s」⇒ 页 id 与内置标记不同源"
+                        % m_ok.group(1))
         if smoke.returncode != 0:
             return fail("发行口径产物 `--smoke` 退出码 %s" % smoke.returncode)
         print("PKG-RELEASE ok 发行口径链跑通：`-Dev:$false` 打包成功、无插件夹具、"
