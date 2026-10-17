@@ -715,10 +715,19 @@ const EngineFacade kFontFacade = {
         return out;
     },
     /* fs_loose_entries：散装目录的条目表（error 非空 = 没读成） */
-    [](const std::string& root, std::string& error) {
+    [](const std::string& root, std::string& error, FsLooseInfo* info) {
+        // ★★ P17-134：把引擎的 `LooseInfo`（截断标志＋可读理由）**透到门面**，
+        //   否则「到上限」这条信号在跨门面时丢失（复审计 09 分册 ③）。
+        efs::LooseInfo native;
+        const std::vector<efs::EntryInfo> items = efs::loose_entries(root, error, &native);
         std::vector<FsEntry> out;
-        for (const efs::EntryInfo& item : efs::loose_entries(root, error)) {
+        out.reserve(items.size());
+        for (const efs::EntryInfo& item : items) {
             out.push_back({item.path, item.is_dir, item.size});
+        }
+        if (info != nullptr) {
+            info->truncated = native.truncated;
+            info->truncated_reason = native.truncated_reason;
         }
         return out;
     },

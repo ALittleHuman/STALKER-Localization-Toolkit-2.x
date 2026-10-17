@@ -65,15 +65,21 @@ def list_sources(args):
 
 
 def collect_entries(engine, kind, path, db_fallback_key):
-    """读一个源的条目表（包 ⇒ 过闸门；目录 ⇒ 散装）。返回 (entries, error)。"""
+    """读一个源的条目表（包 ⇒ 过闸门；目录 ⇒ 散装）。返回 (entries, error, truncated_reason)。
+
+    ★★ P17-134（复审计 09 分册 ③）：第三个返回值是**截断理由**（空串＝没截断）。
+    修前这里只回 `(entries, error)` —— 而引擎早把「到上限」从 `error` 移到 `truncated`
+    ⇒ 截断**从来没被读过**，从"误报失败"退化成**完全静默**。
+    ★ 口径：`error` 非空＝**没读成**；`truncated_reason` 非空＝**读成了但表是截断的**（不是失败）。
+    """
     gate = engine.fs_gate_path(path)
     if not gate["ok"]:
-        return [], (gate["error"] or "解密闸门拒绝")
+        return [], (gate["error"] or "解密闸门拒绝"), ""
     if kind == "loose":
         got = engine.fs_loose_entries(gate["path"])
-        return got["entries"], got["error"]
+        return got["entries"], got["error"], (got.get("truncated_reason") or "")
     got = engine.fs_package_entries(gate["path"], db_fallback_key)
-    return got["entries"], got["error"]
+    return got["entries"], got["error"], ""
 
 
 def unpack_plan(engine, args):
@@ -86,7 +92,7 @@ def unpack_plan(engine, args):
     for kind, path in srcs:
         if kind == "loose":
             continue                      # 散装目录不是"包"，不参与解包计划（同 C++ 页）
-        entries, error = collect_entries(engine, kind, path, key)
+        entries, error, _trunc = collect_entries(engine, kind, path, key)
         if error:
             errors.append("%s：%s" % (path, error))
             continue
@@ -130,12 +136,12 @@ def headless(api, args):
             return engine.fs_pack_squashfs(out, items)
         return engine.fs_pack_db(out, items, key)
     if action == "preview":
-        entries, _error = collect_entries(engine, args.get("kind", "package"),
+        entries, _error, _trunc = collect_entries(engine, args.get("kind", "package"),
                                           args["path"], args.get("format_key", "auto"))
         layout = engine.fs_preview_layout(args["path"], entries)
         return {"entries": layout, "count": len(layout)}
     # list
-    entries, error = collect_entries(engine, args.get("kind", "package"), args["path"],
+    entries, error, trunc = collect_entries(engine, args.get("kind", "package"), args["path"],
                                      args.get("format_key", "auto"))
     return {"entries": entries, "error": error, "count": len(entries)}
 
@@ -300,10 +306,15 @@ def register(api):
         def load_paths(paths):
             for path in paths:
                 if os.path.isdir(path):
-                    entries, error = collect_entries(engine, "loose", path, current_format_key())
+                    entries, error, trunc = collect_entries(
+                        engine, "loose", path, current_format_key())
                     if error:
                         say(log, status, "散装目录读不出：%s（%s）" % (path, error))
                     else:
+                        # ★ P17-134：**截断要说出来**（不是失败，但绝不能静默）
+                        if trunc:
+                            say(log, status, "散装目录条目表**被截断**（仍加载）：%s —— %s"
+                                % (path, trunc))
                         sources.append({"key": "loose:" + path, "kind": "loose", "path": path,
                                         "entries": entries, "checked": []})
                     for dirpath, _dirs, names in os.walk(path):
@@ -319,7 +330,7 @@ def register(api):
                 (len(sources), sum(len(s["entries"]) for s in sources)))
 
         def add_package(path):
-            entries, error = collect_entries(engine, "package", path, current_format_key())
+            entries, error, _trunc = collect_entries(engine, "package", path, current_format_key())
             if error:
                 say(log, status, "列不出条目：%s（%s）" % (path, error))
                 return False

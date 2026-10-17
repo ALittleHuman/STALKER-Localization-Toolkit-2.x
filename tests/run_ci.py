@@ -5776,6 +5776,37 @@ def step_db_whole_read(release: bool) -> None:
         fail("DB 兜底整包读仍无上限（见上）")
 
 
+def step_loose_truncation(release: bool) -> None:
+    r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
+
+    链条：`fs::loose_entries` → `EngineFacade::fs_loose_entries` → `py_host` 的 dict → 插件侧。
+    ★ **双向**判据（这是它有牙的关键）：
+      · 深目录（35 层 > `kMaxDepth=32`）⇒ `truncated=True` ＋ 理由非空 ＋ **`error` 为空**；
+      · 浅目录 ⇒ `truncated=False`（防"恒 True"的实现蒙混）。
+    ★ 红证：掐断门面那一环（`info->truncated` 不透传）⇒ 本步红（已实测）。
+    ★ 退出码：0=绿 / 1=判据不成立 / 2=缺 CLI 构建产物（前提缺失）。
+    """
+    say("[loose-truncation] 截断信号：引擎 → 门面 → py_host → Python（P17-134）")
+    script = ROOT / "tests" / "check_loose_truncation_chain.py"
+    if not require_repo_file(script, "截断链路判据"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物（CLI）", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=1200)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("TRUNC-CHAIN") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("截断信号透到 Python 且双向成立（深⇒真、浅⇒假；reason 有、error 空；复审计 09 分册 ③）")
+    elif rc == 2:
+        prereq("截断链路判据的样本", "缺样本/构建产物（见上）", release)
+    else:
+        fail("截断信号在门面/Python 通道丢了，或双向不成立（见上）")
+
+
 def step_loose_guard(release: bool) -> None:
     """★★ P17-110（复审计 `01 F-07`）：散装层条目表**不许跟着软链接/junction 走，且必须有上限**。
 
@@ -6133,6 +6164,7 @@ STEPS = [
     # ★★ P17-110（复审计 `01 F-07`）：散装层条目表不进链接 ＋ 有上限（自指链接不得不终止）。
     #   需要 CLI 产物；自带夹具（真造 junction ＋ 超时）。被 `--only` 过滤时进 UNCOVERED。
     ("loose-guard", step_loose_guard),
+    ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。
     ("db-whole-read", step_db_whole_read),

@@ -1632,10 +1632,15 @@ public:
         const EngineFacade* facade = available("fs_loose_entries");
         if (facade == nullptr) return py::none();
         std::string error;
-        const std::vector<FsEntry> entries = facade->fs_loose_entries(root, error);
+        // ★★ P17-134（复审计 09 分册 ③）：**截断走具名字段**，与 `error` 并列。
+        //   `error` 只表示"没读成"；「到上限了、表是截断的」是 `truncated`（不是失败）。
+        FsLooseInfo loose;
+        const std::vector<FsEntry> entries = facade->fs_loose_entries(root, error, &loose);
         py::dict out;
         out["entries"] = fs_entries_to_python(entries);
         out["error"] = error;
+        out["truncated"] = loose.truncated;
+        out["truncated_reason"] = loose.truncated_reason;
         return out;
     }
     py::object fs_sort_sources_by_basename(py::object paths) const {

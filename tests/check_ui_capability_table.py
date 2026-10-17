@@ -196,7 +196,7 @@ EXPECT_ENGINE = {
     "fs_preview_layout": "右栏解包产物预览的条目表",
     # ★★ P14-0b：fs 面第二批（合并树走**句柄**）
     "set_encoding_confirm": "插件侧注入编码确认器（不抢装；None=卸载；P17-122）",
-    "fs_loose_entries": "散装目录的条目表（error 非空=没读成）",
+    "fs_loose_entries": "散装目录的条目表（error 非空=没读成；truncated=到上限、表被截断）",
     "fs_sort_sources_by_basename": "按文件名排序后的下标（加载顺序）",
     "fs_tree_build": "建合并树 ⇒ 句柄（用完 fs_tree_free）",
     "fs_tree_free": "释放句柄",

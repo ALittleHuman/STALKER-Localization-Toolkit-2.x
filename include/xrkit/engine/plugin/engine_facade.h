@@ -424,6 +424,17 @@ struct FsEntry {
     uint64_t size = 0;
 };
 
+// ★★ P17-134（复审计 09 分册 ③）：**截断信号在门面上要有位置放**。
+//   事实（修前）：引擎把「到上限了」放在 `fs::LooseInfo.truncated`（P17-120 / `P2-5`），
+//   而门面这一层的 `fs_loose_entries` **没有参数接它** ⇒ 信号**丢在门面**；
+//   `py_host` 的 dict 里也没有 ⇒ `plugins/fs_page.py` 只能拿到 entries+error
+//   ⇒ 「截断」从原来的"误报失败"退化成**完全静默**（比原来更糟）。
+//   ★ 与引擎侧 `LooseInfo` 同形（一个 bool ＋ 一个可读理由），**判语义用 bool、给人看用 reason**。
+struct FsLooseInfo {
+    bool truncated = false;
+    std::string truncated_reason;
+};
+
 // ★★ 2026-10-11（P17-85，审计 01 F-09 C 步收尾）：**"这次列条目是怎么读的"** 的跨门面载体。
 //   为什么必须有它：`package_entries()` 内部**本来就知道**这次读了整包还是只读块头＋尾表
 //   （`DbReadInfo`），但门面只回 `std::vector<FsEntry>` ⇒ 界面/Python 那两条消费点**看不到**
@@ -686,7 +697,9 @@ struct EngineFacade {
         fs_preview_layout;
 
     // ── ★★ P14-0b：fs 面第二批（合并树；句柄式）────────────────────────────
-    std::function<std::vector<FsEntry>(const std::string& root, std::string& error)>
+    // `info` 可为 nullptr（老调用方不必传）；判语义一律用 `info->truncated`，**不解析文案**。
+    std::function<std::vector<FsEntry>(const std::string& root, std::string& error,
+                                       FsLooseInfo* info)>
         fs_loose_entries;
     std::function<std::vector<size_t>(const std::vector<std::string>& paths)>
         fs_sort_sources_by_basename;
