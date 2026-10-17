@@ -110,17 +110,39 @@ def main():
             print("PKG-RELEASE ✗ 打包超时"); return 1
         text = ((proc.stdout or b"") + (proc.stderr or b"")).decode("utf-8", "replace")
         if proc.returncode != 0:
-            # ★ 环境真不具备时如实报"前提缺失"，**不报判据不成立**
-            tail = [l.strip() for l in text.splitlines() if l.strip()][-3:]
-            print("PKG-RELEASE skip 打包脚本退出码 %s ⇒ **环境不具备**（如实记为未覆盖，不当判据失败）"
-                  % proc.returncode)
-            # ★ P17-128：把**为什么**打出来（我先前只打最后 3 行、而它常常是空的 ⇒ 无从诊断）
-            print("    输出行数=%d 前 6 行：" % len(text.splitlines()))
-            for l in text.splitlines()[:6]:
-                print("      " + l.strip()[:150])
+            # ★★ P17-133（复审计 09 分册 High #1，本批修正）：**默认判红（fail-closed）**。
+            #
+            #   修前（错）：只要退出码非零就 `return 2`（环境不具备）⇒ 门禁走 `prereq` ⇒
+            #     `--fast` 档 **PASS**。而 `package.ps1` 里十几条 `throw` 是**产品断言**
+            #     （版本身份 / 包内自检 / 可见页 / 插件目录）⇒ **任何一条破了都会被伪装成
+            #     「机器不行」**。这是我这套东西一路上最反对的那种假绿，却由我亲手造出来。
+            #
+            #   现在：**只有**能给出**正面环境证据**时才降级成"环境不具备"；
+            #     证据 = 实测过的**本机拦阻签名**（文件拷贝被拒 / 可执行起不来 / 工具不在）。
+            #     其余一律 `fail`（判据不成立）。
+            #
+            #   ★ 与 `ffmpeg` 版本判定那条同族：「**认不出就报错**」——
+            #     这里禁止"认不出就降级成环境"。
+            ENV_SIGNATURES = (
+                "PermissionDenied",              # 本机对特定文件名的写入/拷贝拦阻（实测过）
+                "Access is denied",
+                "UnauthorizedAccessException",
+                "is not recognized as the name",  # 宿主/工具不在 PATH
+                "not found. Looked in",          # package.ps1 自己的 ffmpeg/ffprobe 缺件文案
+                "找不到 windeployqt",
+            )
+            env_hits = [s for s in ENV_SIGNATURES if s in text]
+            tail = [l.strip() for l in text.splitlines() if l.strip()][-4:]
+            print("PKG-RELEASE 打包脚本退出码 %s（输出 %d 行）" % (proc.returncode, len(text.splitlines())))
             for l in tail:
-                print("    " + l[:140])
-            return 2
+                print("    " + l[:150])
+            if env_hits:
+                print("  ⇒ 命中**正面环境证据** %r ⇒ 记为「环境不具备」（未覆盖），**不当判据失败**"
+                      % env_hits[:2])
+                return 2
+            print("  ⇒ **没有**正面环境证据 ⇒ **判红**（不允许把产品断言失败伪装成"
+                  "「机器不行」；复审计 09 分册 High #1 / P17-133）")
+            return 1
         # ① 发行口径：没有插件夹具
         pkgdir = out / v["version"] / ("%s.%s" % (v["prerelease"], v["index"]))
         if not pkgdir.exists():

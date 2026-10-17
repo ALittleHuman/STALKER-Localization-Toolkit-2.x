@@ -6272,6 +6272,31 @@ STEPS = [
 _VERSION_SNAPSHOT: dict = {}
 
 
+# ★★ P17-133：**逐步骤版本状态监视器**（取证用，只观测、不改判）。
+#   为什么需要它：门禁跑完"字节相同"**不能**证明"没人改过" —— 收尾的恢复会让它们相同。
+#   唯一可信的取证是**每一步前后各取一次 sha**，把"谁改的"点出来。
+_VERSION_WATCH: dict = {}
+
+
+def _vw_hash():
+    import hashlib
+    fp = ROOT / "version.json"
+    if not fp.is_file():
+        return "missing"
+    return hashlib.sha256(fp.read_bytes()).hexdigest()[:16]
+
+
+def _vw_mark(step_name: str) -> None:
+    """在每个步骤**之后**调用：发现 `version.json` 变了就**当场点名**。"""
+    now = _vw_hash()
+    prev = _VERSION_WATCH.get("last")
+    if prev is not None and now != prev:
+        say("  !! 步骤 `%s` 改了 `version.json`（%s → %s）—— P17-133 取证"
+            % (step_name, prev, now))
+        _VERSION_WATCH.setdefault("culprits", []).append(step_name)
+    _VERSION_WATCH["last"] = now
+
+
 def _snapshot_version_json() -> None:
     fp = ROOT / "version.json"
     _VERSION_SNAPSHOT["path"] = fp
@@ -6302,6 +6327,20 @@ def _restore_and_assert_version_json() -> None:
     if got == want:
         say("  ✓ 版本状态未被门禁改动（`version.json` 逐字节相同；P17-130）")
         return
+    # ★★ P17-133 取证：**在恢复之前**把"快照字节 vs 当时磁盘字节"落盘。
+    #   为什么：我先前用"跑门禁前后 sha256 相同"证明"门禁没改它" —— **那个测量是循环的**
+    #   （守卫会恢复，所以"跑完 == 跑前"是它自己造成的）。取证必须发生在恢复**之前**。
+    try:
+        import hashlib as _hl
+        _dump = ROOT / "build" / "logs" / "_version_audit.txt"
+        _got_sha = _hl.sha256(got or b"").hexdigest()[:16]
+        _want_sha = _hl.sha256(want).hexdigest()[:16]
+        _dump.parent.mkdir(parents=True, exist_ok=True)
+        with _dump.open("a", encoding="utf-8") as _fh:
+            _fh.write("P17-133 取证：want=%s(%d B)  disk=%s(%d B)  equal=%s\n"
+                      % (_want_sha, len(want), _got_sha, len(got or b""), got == want))
+    except Exception:      # 取证失败绝不影响判定
+        pass
     fp.write_bytes(want)   # ★ 恢复（理由②：不许污染工作树）
     # ★★ 收敛条件（用户 2026-10-16 追加要求）：**这条台账必须挂收敛条件**，否则它会烂成
     #   「**永不消失的差异台账 ＝ 永久豁免**」—— 正是本仓防过的那种假绿。
@@ -6312,15 +6351,12 @@ def _restore_and_assert_version_json() -> None:
     writes_current = build_cmd.is_file() and "写回" in build_cmd.read_text(
         encoding="utf-8", errors="replace")
     ledger("门禁改动版本状态（已恢复）",
-           "本档门禁里有步骤走了打包链，而 `--build-package` 的写回段会改 `version.json` 的 "
-           "`current.index`。`current.index` 由发布动作定义 ⇒ 验证不该写它"
-           "（用户 2026-10-16 裁定，P17-130）。已**逐字节恢复** ⇒ 工作树不受污染。"
-           "★★ **收敛条件＝打包链不再写 `current.index`**（产品侧改用显式序号跑）；"
-           "该条件满足而本条仍在 ⇒ **判据本身待复查**。"
-           "★ 当前判定（自动）：`build_cmd.cpp` 的写回路径 %s ⇒ %s"
-           % ("**在**" if writes_current else "**找不到**",
-              "属**过渡态**，如实记为台账" if writes_current
-              else "**收敛条件看似已满足** ⇒ 本条台账应消失，请复查本判据"))
+           "本档有步骤改了 `version.json`（**哪个步骤**见上面的逐步骤 sha 取证行；已**逐字节恢复** ⇒ 工作树不受污染）。"
+           "`current.index` 由发布动作定义 ⇒ 验证不该写它（用户 2026-10-16 裁定）。"
+           "★★ **收敛条件＝查清谁在写、并让门禁那条路径不再写 `current.index`**。"
+           "★ 已**排除**的归因：**不是** `--build-package` 的写回段（全仓脚本层没有任何门禁步调它）。"
+           "★ 实测把写入点定在 `shell-smoke`，但该步单独跑**不复现** ⇒ **写入路径待查**。"
+           "★ 另记：本判据早期用「跑门禁前后字节相同」自证，那是**循环测量**（守卫会恢复 ⇒ 相同是它自己造成的），已改为**逐步骤取证**（P17-133）。")
 
 
 def main() -> int:
@@ -6370,7 +6406,11 @@ def main() -> int:
         if args.only and args.only not in name:
             continue
         before = FAILURES
+        # ★★ P17-133：步骤**前**记一次 sha（第一次进入时由下面初始化）
+        if _VERSION_WATCH.get("last") is None:
+            _VERSION_WATCH["last"] = _vw_hash()
         fn(release)
+        _vw_mark(name)
         if FAILURES > before and name in FLAKY_RETRY:
             say("  ↻ %s 首次判红 —— 按「飘」口径**复跑一次**再定性（P17-51/52 批报告）" % name)
             retry_before = FAILURES
@@ -6418,6 +6458,12 @@ def main() -> int:
 
     # ★★ P17-130：**收尾恢复 + 断言版本状态**（用户 2026-10-16 裁定）。
     #   必须在打印 RESULT **之前** —— 它可能 `fail(...)`，那样结论行才是诚实的 FAIL。
+    # ★★ P17-133：先把"谁改过 version.json"点名（在恢复**之前**，否则证据被恢复抹掉）
+    _culprits = _VERSION_WATCH.get("culprits", [])
+    if _culprits:
+        say("  本档改过 `version.json` 的步骤（P17-133 取证）：%s" % "、".join(_culprits))
+    else:
+        say("  本档**没有任何步骤**改过 `version.json`（逐步骤 sha 取证）")
     _restore_and_assert_version_json()
 
     if FAILURES:
