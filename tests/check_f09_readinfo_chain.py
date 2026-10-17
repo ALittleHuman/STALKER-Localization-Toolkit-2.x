@@ -147,6 +147,18 @@ def audit_fs_page(text: str) -> list:
     if notes != 3:
         problems.append("fs_page.cpp：只有 %d 处**调用** `note_package_read(...)`（三处消费点各一处；"
                         "`FsPage::note_package_read` 那个定义不计）" % notes)
+    # ★★ P17-137（复审计 09 分册 ④）：**四态真值表必须在页面出口上兑现**。
+    #   修前 `if (used_seek) return false;` 在旧契约下正确，但 P17-127 之后
+    #   `used_seek == true` 还能配**非空理由**（＝按显式选定的格式直走 seek）⇒ 那条事实被吞掉。
+    if re.search(r"if\s*\(\s*used_seek\s*\)\s*return\s+false\s*;", code):
+        problems.append("fs_page.cpp：仍有**裸的** `if (used_seek) return false;` ⇒ "
+                        "「显式选定格式直走 seek」（used_seek 且理由非空）会被吞掉"
+                        "（P17-137 / 复审计 ④）")
+    if "未整包读（seek 解析）" not in code:
+        problems.append("fs_page.cpp：缺「未整包读（seek 解析）」话术 ⇒ "
+                        "`used_seek && 理由非空` 这一态**没有可见出口**")
+    if "整包读" not in code:
+        problems.append("fs_page.cpp：缺「整包读」话术 ⇒ 退回整包读那一态没有可见出口")
     return problems
 
 
@@ -179,9 +191,14 @@ def selfcheck() -> tuple:
                    '  out["header_bytes"] = info.header_bytes;\n'
                    '  out["whole_file_reason"] = info.whole_file_reason;\n'
                    '}\n')
+    # ★ P17-137：好样本必须**同时**有"整包读"与"未整包读（seek 解析）"两种话术，
+    #   且吞掉条件收紧成 `used_seek && whole_file_reason.empty()`。
     good_page = ("entries = efs::package_entries(a, b, error, registry_, &read_info);\n"
                  "note_package_read(QStringLiteral(\"列条目\"), read_info.header_bytes,"
-                 " read_info.used_seek, read_info.whole_file_reason, raw);\n") * 3
+                 " read_info.used_seek, read_info.whole_file_reason, raw);\n"
+                 "if (used_seek && whole_file_reason.empty()) return false;\n"
+                 "log_message(QStringLiteral(\"整包读 %1 字节\"));\n"
+                 "log_message(QStringLiteral(\"未整包读（seek 解析）：%1\"));\n") * 3
     good_fixture = ('mark("pkg_readinfo_keys:%d" % 1)\nmark("pkg_readinfo_quiet:%d" % 1)\n')
     good_run_ci = '"pkg_readinfo_keys": "1",\n"pkg_readinfo_quiet": "1",\n'
 
@@ -203,6 +220,14 @@ def selfcheck() -> tuple:
             "note_package_read(x);\n")),
         ("夹具打了标记但没人判", 1, audit_fixture(
             good_fixture, '"pkg_readinfo_keys": "1",\n')),
+        # ★ P17-137：修前形状 —— 页面留着裸的 `if (used_seek) return false;`
+        #   且没有"未整包读（seek 解析）"话术 ⇒ 必须被抓（复审计 ④）
+        ("官方页把「显式格式直走 seek」吞掉（修前形状）", 1, audit_fs_page(
+            "entries = efs::package_entries(a, b, error, registry_, &read_info);\n"
+            "note_package_read(x);\n" * 1
+            + "note_package_read(y);\nnote_package_read(z);\n"
+            + "if (used_seek) return false;\n"
+            + "log_message(QStringLiteral(\"整包读 %1 字节\"));\n")),
     ]
     results, ok = [], True
     for label, want_min, problems in cases:

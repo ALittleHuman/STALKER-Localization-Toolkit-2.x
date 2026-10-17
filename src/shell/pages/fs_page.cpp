@@ -969,9 +969,20 @@ bool FsPage::note_package_read(const QString& tail, uint64_t header_bytes, bool 
                                const std::string& whole_file_reason,
                                const QString& display_path) {
     // ★★ P17-85（01 F-09 收尾）：可观测的**唯一出口**在页面这一层 —— 口径写在这里，别处不要各写一份。
-    //   `used_seek == true`（只读了块头与尾部表）⇒ **一个字都不打**：没退回就不许报理由，
-    //   否则"整包读"这句话会变成人人都在喊的噪音（那等于没有观测）。
-    if (used_seek) return false;
+    // ★★ P17-137（复审计 09 分册 ④）：修前这里是 `if (used_seek) return false;` ——
+    //   在**旧**契约下正确（没退回就没理由可报），但 P17-127 之后 `used_seek == true` 还能配
+    //   **非空理由**（＝按显式选定的格式直走 seek）⇒ 那条事实被这里**吞掉了**。
+    //   现在的规则按 `db.h` 的四态真值表来（别再说"used_seek 就是没退回"）：
+    //     · true  + 空   ⇒ **两个字都不打**（最常见，打了就是噪音）；
+    //     · true  + 非空 ⇒ 打一条**不同的话**：「未整包读（seek 解析）：…」——这是用户该知道的；
+    //     · false + 非空 ⇒ 打「整包读 N 字节：为什么」；
+    //     · false + 空   ⇒ 仍然打（并且骂一句"没有给出理由"），那是缺陷、不许静默。
+    if (used_seek && whole_file_reason.empty()) return false;
+    if (used_seek) {
+        log_message(QStringLiteral("%1：%2 —— 未整包读（seek 解析）：%3")
+                        .arg(tail, display_path, utf8(whole_file_reason)));
+        return true;
+    }
     const double mb = static_cast<double>(header_bytes) / (1024.0 * 1024.0);
     const QString size_text = mb >= 1.0 ? QStringLiteral("%1 MB").arg(mb, 0, 'f', 1)
                                         : QStringLiteral("%1 KB")
