@@ -192,34 +192,63 @@ def main():
         smoke = subprocess.run([str(exe), "--smoke"], capture_output=True, timeout=1800,
                                cwd=str(pkgdir))
         st = ((smoke.stdout or b"") + (smoke.stderr or b"")).decode("utf-8", "replace")
-        m = re.search(r"PLUGIN-PAGES 可见页集合=(\d+) 页（内置=(\d+) / 插件py=(\d+)）", st)
-        if not m:
-            for l in st.splitlines():
-                if "PLUGIN-PAGES" in l:
-                    print("    原始行：" + l.strip()[:130]); break
-            return fail("产物 `--smoke` 没打出 `PLUGIN-PAGES 可见页集合=`（认不出就报错，不静默放行）")
-        pages, builtin, plugin = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
-        print("  ✓ 可见页集合=%d 页（内置=%d / 插件py=%d）" % (pages, builtin, plugin))
+        # ★★ B-4（第三方只读审计 2026-10-18）：**优先认新 ASCII 行**（`PLUGIN-PAGES pages=…`），
+        #   认不到再退回旧的中文行（迁移期两种都在；老包只发旧行）。两套正则**同一个出口**：
+        #   解出来的三个数字与 id 名单必须同源，不许各解析一半。
+        m = re.search(r"PLUGIN-PAGES pages=(\d+) builtin=(\d+) plugin_py=(\d+) owner_matches_id=(\d)", st)
+        ids: list = []
+        used_new_line = m is not None
+        if m:
+            pages, builtin, plugin = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            m_list = re.search(r"PLUGIN-PAGES pages=[^\n]*?names=\[([^\]]*)\]", st)
+            ids = re.findall(r"\d+=([A-Za-z0-9_]+)", m_list.group(1)) if m_list else []
+            owner_ok = m.group(4) == "1"
+            print("  ✓（新 ASCII 行）可见页集合=%d 页（内置=%d / 插件py=%d）" % (pages, builtin, plugin))
+        else:
+            m = re.search(r"PLUGIN-PAGES 可见页集合=(\d+) 页（内置=(\d+) / 插件py=(\d+)）", st)
+            if not m:
+                for l in st.splitlines():
+                    if "PLUGIN-PAGES" in l:
+                        print("    原始行：" + l.strip()[:130]); break
+                return fail("产物 `--smoke` 没打出 `PLUGIN-PAGES`（新 ASCII 行与旧中文行都没有）"
+                            "（认不出就报错，不静默放行）")
+            pages, builtin, plugin = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            m_list = re.search(r"PLUGIN-PAGES[^\n]*?\[([^\]]*)\]", st)
+            owner_ok = True
+            print("  ✓（旧中文行）可见页集合=%d 页（内置=%d / 插件py=%d）" % (pages, builtin, plugin))
         if plugin != 0:
             return fail("发行口径包里插件页数应为 0，实测 %d" % plugin)
         if builtin != 6:
             return fail("默认内置页应为 6，实测 %d" % builtin)
         # ★★ P17-136（复审计 09 分册 ⑦）：**验名，不只数数**。
-        #   事实：smoke 那行本来就带 `[1=fs= 2=convert= …]` 的有序 id 列表，
-        #   而修前只用正则抓了三个计数 ⇒ "换了哪六个页"**完全没被检查**。
-        #   ⇒ 解析方括号里的有序 id，断言**顺序与名字**都对；
-        #     并顺带断言"内置标记与 id 后缀一致=1"（smoke 自己也算了一遍同一件事）。
-        m_list = re.search(r"PLUGIN-PAGES[^\n]*?\[([^\]]*)\]", st)
+        #   事实：smoke 那行本来就带 `[1=fs= 2=convert= …]`（旧）或 `names=[1=fs,2=convert,…]`（新）
+        #   的有序 id 列表，而修前只用正则抓了三个计数 ⇒ "换了哪六个页"**完全没被检查**。
+        #   ⇒ 解析方括号里的有序 id，断言**顺序与名字**都对。
         if not m_list:
             return fail("产物 `--smoke` 的 PLUGIN-PAGES 行里没有页名列表 `[...]`"
                         "（无法验名 ⇒ 认不出就报错，不静默放行）")
-        ids = re.findall(r"\d+\s*=\s*([A-Za-z0-9_]+)\s*=", m_list.group(1))
+        if not ids:
+            # 旧行：`1=fs=`（内置，尾部带标记串）或 `2=fs_py`（插件）⇒ 两种都要认
+            for item in m_list.group(1).split():
+                naming = re.match(r"^\d+=(.+)$", item)
+                if naming is not None:
+                    ids.append(naming.group(1).rstrip("="))
         EXPECT_PAGES = ["fs", "convert", "text", "xml", "video", "fontpack"]
         if ids != EXPECT_PAGES:
             return fail("发行口径包的**内置页名单/顺序**不符：期望 %s，实测 %s"
                         % (EXPECT_PAGES, ids))
         print("  ✓ 内置页**实名与顺序**都对：%s" % ", ".join(ids))
-        m_ok = re.search(r"内置标记与 id 后缀一致=(\d)", st)
+        if not owner_ok:
+            return fail("`owner_matches_id=0`：内置标记与 id 后缀不自洽（smoke 自己算的那条不变量红了）")
+        # 旧中文行才有这一格；新 ASCII 行用 `owner_matches_id=` 承载（上面已经判过）——
+        # 迁移期两行并存，这里只在"本轮认的是旧行"时要求它。
+        if used_new_line:
+            m_ok = re.search(r"内置标记与 id 后缀一致=(\d)", st)
+            if m_ok and m_ok.group(1) != "1":
+                return fail("产物自报「内置标记与 id 后缀一致=%s」⇒ 页 id 与内置标记不同源"
+                            % m_ok.group(1))
+        else:
+            m_ok = re.search(r"内置标记与 id 后缀一致=(\d)", st)
         if not m_ok:
             return fail("产物 `--smoke` 没打出「内置标记与 id 后缀一致=」（认不出就报错）")
         if m_ok.group(1) != "1":

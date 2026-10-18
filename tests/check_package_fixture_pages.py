@@ -80,7 +80,30 @@ NOTES: list[str] = []
 
 # `SHELL-SMOKE note PLUGIN-PAGES 可见页集合=7 页（内置=0 / 插件py=7）[1=fs_py 2=convert_py] 结束 · …`
 PAGES_RE = re.compile(r"PLUGIN-PAGES 可见页集合=(\d+)\s*页（内置=(\d+)\s*/\s*插件py=(\d+)）\[(.*?)\]\s*结束")
+# ★★ B-4（第三方只读审计 2026-10-18）：**新 ASCII 行**（`KEY k=v`）—— 迁移期与上面那条并存，
+#   本判据**优先认新行**、认不到再退回旧行（老包只发旧行）。固定骨架全是 ASCII，值里允许非 ASCII。
+PAGES_ASCII_RE = re.compile(
+    r"PLUGIN-PAGES pages=(\d+) builtin=(\d+) plugin_py=(\d+) owner_matches_id=(\d) names=\[(.*?)\]")
 SMOKE_OK_RE = re.compile(r"SHELL-SMOKE ok checks=(\d+) failed=0")
+
+
+def parse_pages_any(text: str):
+    """→ (pages, builtin, plugin_py, ids, 用的哪一行) 或 None。新 ASCII 行优先。"""
+    m = PAGES_ASCII_RE.search(text)
+    if m:
+        ids = re.findall(r"\d+=([A-Za-z0-9_]+)", m.group(5))
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)), ids, "ascii")
+    m = PAGES_RE.search(text)
+    if m:
+        # 旧行：条目形如 `1=fs=`（内置，尾部带"内置标记"串）或 `2=fs_py`（插件）——
+        #   ★ 两种都要认（`.rstrip("=")` 是原来那段的语义，别用"必须带尾等号"的正则）。
+        ids = []
+        for item in m.group(4).split():
+            naming = re.match(r"^\d+=(.+)$", item)
+            if naming is not None:
+                ids.append(naming.group(1).rstrip("="))
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)), ids, "legacy")
+    return None
 
 
 def say(line: str) -> None:
@@ -130,17 +153,14 @@ def release_package_problems(marker: str, top_files: list, fixture_files: list) 
 
 # ── ③④ 产物面：跑一次自检，比对可见页 ──────────────────────────────────────
 def parse_pages(out: str):
-    """返回 (页数, 内置数, 插件py数, [逐页 id])；判据行不匹配 ⇒ None。"""
-    match = PAGES_RE.search(out)
-    if match is None:
+    """返回 (页数, 内置数, 插件py数, [逐页 id])；两行都不匹配 ⇒ None。
+    ★★ B-4（第三方只读审计 2026-10-18）：**新 ASCII 行优先**（`PLUGIN-PAGES pages=…`），
+    认不到再退回旧中文行（迁移期两种都在；老包只发旧行）。"""
+    parsed = parse_pages_any(out)
+    if parsed is None:
         return None
-    ids = []
-    for item in match.group(4).split():
-        # 条目形如 `1=fs=`（内置，尾部带"内置标记"串）或 `2=fs_py`（插件）
-        naming = re.match(r"^\d+=(.+)$", item)
-        if naming is not None:
-            ids.append(naming.group(1).rstrip("="))
-    return int(match.group(1)), int(match.group(2)), int(match.group(3)), ids
+    pages, builtin, plugin_py, ids, _which = parsed
+    return pages, builtin, plugin_py, ids
 
 
 def run_smoke(pkg: Path, timeout: int = 900):
@@ -258,7 +278,14 @@ def audit_package(pkg: Path) -> None:
         check(smoke_ok2 is not None and rc2 == 0,
               "产物 %s（抬夹具形态）：`SHELL-SMOKE ok … failed=0` 且退出码 0" % rel,
               "rc=%s\n      %s" % (rc2, brief(out2)))
-        note = re.search(r"#8 包内插件：(\d+)\s*个文件（(\d+)\s*个 dll / (\d+)\s*个 py）", out2)
+        # ★★ B-4：**新 ASCII 行优先**（`PKG-PLUGINS files=… dll=… py=…`），认不到再退回旧中文行。
+        note = re.search(r"PKG-PLUGINS files=(\d+) dll=(\d+) py=(\d+)", out2)
+        if note is not None:
+            total, dlls, pys = int(note.group(1)), int(note.group(2)), int(note.group(3))
+        else:
+            note = re.search(r"#8 包内插件：(\d+)\s*个文件（(\d+)\s*个 dll / (\d+)\s*个 py）", out2)
+            if note is not None:
+                total, dlls, pys = int(note.group(1)), int(note.group(2)), int(note.group(3))
         if note is None:
             check(False, "产物 %s（抬夹具形态）：自检报出包内插件计数" % rel, brief(out2))
         else:

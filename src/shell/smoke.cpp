@@ -11052,6 +11052,20 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
                 .arg(hub.plugin_errors().size())
                 .arg(hub.plugin_notice())
                 .arg(QDir::toNativeSeparators(plugin_dir)));
+        // ★★ B-4（第三方只读审计 2026-10-18）：**机器消费行改成 ASCII `KEY k=v`**。
+        //   修前：这一行与 `PLUGIN-PAGES …` 都拿**中文当分隔符**（`个文件`/`（`/`）`/`页`/`结束`）⇒
+        //   消费侧的正则必须写死中文标点与全角括号，改一个标点就**静默失配**（最难查的一类）。
+        //   迁移策略（本批＝第一步）：**新旧两行都打** —— 旧行还能服务"老包/老判据"，
+        //   消费侧**优先认新行、认不到再退回旧行**；等新包产出后再把旧行删掉。
+        //   ★ 固定骨架里**只有 ASCII**；`names=`/`dir=` 的**值**允许非 ASCII（插件名/路径）。
+        result.notes.append(
+            QStringLiteral("PKG-PLUGINS files=%1 dll=%2 py=%3 errors=%4 names=[%5] dir=%6")
+                .arg(dlls.size() + pys.size())
+                .arg(dlls.size())
+                .arg(pys.size())
+                .arg(hub.plugin_errors().size())
+                .arg(names.isEmpty() ? QStringLiteral("-") : names.join(QStringLiteral(",")))
+                .arg(QDir::toNativeSeparators(plugin_dir)));
 
         // ★★ P17-81（甲：产品实现＝C++ 内置六页；`plugins\*_page.py` 降级为**夹具**）：
         //   **逐页点出"当前可见页集合"**，供门禁/打包链断言 —— 这是"同一份实现"那件事唯一的
@@ -11095,6 +11109,18 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
                                           : page_names.join(QStringLiteral(" ")))
                 .arg(QDir::toNativeSeparators(plugin_dir))
                 .arg(owner_matches_id ? QStringLiteral("1") : QStringLiteral("0")));
+        // ★★ B-4：同一笔事实的 **ASCII 版**（`KEY k=v`，迁移期与上面那行并存）。
+        //   条目形如 `1=fs` / `7=toolchain_py`（与上面那行**同一个** `page_names` 来源，
+        //   只是连接符从空格改成逗号 —— 逗号在中文文案里不会出现，机器切分不会歧义）。
+        result.notes.append(
+            QStringLiteral("PLUGIN-PAGES pages=%1 builtin=%2 plugin_py=%3 owner_matches_id=%4 names=[%5] dir=%6")
+                .arg(hub.page_count())
+                .arg(page_builtin)
+                .arg(page_plugin_py)
+                .arg(owner_matches_id ? 1 : 0)
+                .arg(page_names.isEmpty() ? QStringLiteral("-")
+                                          : page_names.join(QStringLiteral(",")))
+                .arg(QDir::toNativeSeparators(plugin_dir)));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
