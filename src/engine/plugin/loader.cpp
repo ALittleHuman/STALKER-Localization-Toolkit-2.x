@@ -22,6 +22,10 @@ namespace {
 struct Loaded {
     void* handle = nullptr;
     std::string path;
+    // ★★ S-04（第三方只读审计 2026-10-18）：**注册时的 owner 名**也要记住。
+    //   注册表按 owner 逐容器回滚，而回滚发生在 `unload_all()` —— 那里只有 `path`，
+    //   重新 `base_name()` 猜一个 owner 会在"显式传了别的名字"的调用方那里**回滚错家**。
+    std::string owner;
 };
 
 std::vector<Loaded>& loaded() {
@@ -127,7 +131,7 @@ LoadResult load_plugin(const std::string& dll_path, const PluginApiAdapter& adap
     //   （`tools/cli` 的 `--plugin-init-rollback` 探针打出来的 `registrations=` 因此
     //   永远只在失败那一路有值）。口径与失败分支**同一份实现**：按 owner 逐容器报账。
     result.registrations = adapter.registry().residue_for(adapter.plugin_name()).registrations();
-    loaded().push_back({reinterpret_cast<void*>(handle), dll_path});
+    loaded().push_back({reinterpret_cast<void*>(handle), dll_path, adapter.plugin_name()});
     return result;
 #endif
 }
@@ -206,13 +210,24 @@ std::vector<RegistrationError> load_all_plugins_from_dir(const std::string& dir,
     return errors;
 }
 
-// ★★ 2026-10-10（P17-39，审计 05 PLG-09 ③）：**`unload_all()` 只 `FreeLibrary`、不清注册表** —— 这是**有意**的。
-//   误用会造成**回调悬垂**：卸载后注册表里仍留着指向已卸载模块的函数指针。
-//   纪律：**只在确定没人再调那些回调时**才调它；正常退出走「逐条反注册 → 再卸载」那条
-//   （不清表就再来一轮加载会重复注册）。头文件早写了这句话，这里补上**为什么**。
-void unload_all() {
+// ★★ 2026-10-10（P17-39，审计 05 PLG-09 ③）：这条纪律原来写的是"只 `FreeLibrary`、不清注册表"。
+//   ★★ S-04（第三方只读审计 2026-10-18）：那条纪律**本身就是隐患** —— 卸载后注册表里仍留着
+//   指向已卸载模块的函数指针，任何 `Registry::invoke` 之外的消费（直接调 `menu_items_for` 的
+//   handler、或本地持有过回调）都是**回调悬垂**（实测症状：0xC0000005）。
+//   现在改成：**先按 owner 逐容器回滚，再 `FreeLibrary`**（顺序不能反 —— 表里存的是插件代码地址）。
+//   owner 的来源是 `Loaded::owner`（`load_plugin` 记下的 `adapter.plugin_name()`，不靠猜）。
+//   ★ 注册表从哪儿来：显式传入的优先；没传就用**活动注册表**（`active_registry()`，
+//     外壳/Hub 与 CLI 动作路径都走它）。两样都没有时**只能** FreeLibrary ——
+//     那种调用方手里没有表，也就谈不上"清表"；`回调悬垂` 的风险只在这一档仍然存在。
+void unload_all(Registry* registry) {
+    Registry* target = registry != nullptr ? registry : const_cast<Registry*>(active_registry());
 #ifdef _WIN32
     for (const Loaded& item : loaded()) {
+        // ① 先清表（按 owner 逐容器）
+        if (target != nullptr && !item.owner.empty()) {
+            target->rollback_plugin(item.owner);
+        }
+        // ② 再卸库
         if (item.handle != nullptr) ::FreeLibrary(reinterpret_cast<HMODULE>(item.handle));
     }
 #endif

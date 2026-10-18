@@ -2494,8 +2494,16 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         }
         check(ctx, registry.registration_errors().empty(),
               "这一段不该产生 registration_errors（插件注册都是合法的）");
-        plug::unload_all();
+        // ★★ S-04（第三方只读审计 2026-10-18）：**unload_all 必须先把表清干净、再卸库**。
+        //   修前它只 `FreeLibrary`（表里留着指向已卸载模块的函数指针 ⇒ 回调悬垂）。
+        //   本判据三步：①卸之前表里**确实有**注册（否则下面那条恒真）；②`unload_all(&registry)`
+        //   之后 `registration_count()` 回到 0；③句柄也清了。
+        const size_t before_unload = registry.registration_count();
+        check(ctx, before_unload > 0, "unload_all 夹具：卸之前表里应当有注册（否则下一条恒真）");
+        plug::unload_all(&registry);
         check(ctx, plug::loaded_count() == 0, "unload_all 没把句柄清掉");
+        check(ctx, registry.registration_count() == 0,
+              "unload_all 没按 owner 回滚注册（卸库后表里还留着指向已 unmapped 代码段的回调）");
     });
 
     // ★★ 2026-10-06（F1 命令 id 悬空）：**把 `abi_host.h` 那条承诺落成锁** ——

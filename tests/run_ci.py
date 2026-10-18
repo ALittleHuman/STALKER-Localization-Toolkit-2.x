@@ -756,6 +756,10 @@ def step_cli_contract(release: bool) -> None:
         encoding="utf-8", errors="replace")
     if '回调悬垂' not in ldr2:
         fail("unload_all 的纪律说明没了（05 PLG-09 ③）：必须写清只 FreeLibrary、不清注册表与误用会回调悬垂")
+    elif 'rollback_plugin(item.owner)' not in ldr2:
+        # ★★ S-04（第三方只读审计 2026-10-18）：光写清风险不够了 —— **行为**也要真的清表。
+        fail("unload_all 没按 owner 回滚注册（S-04）：卸库前必须 `rollback_plugin(<owner>)`，"
+             "否则表里留着指向已卸载模块的回调")
     elif '两个 available* 不是一回事' not in efc:
         fail("两个 available* 概念的区分说明没了（05 PLG-09 ④）：整体可用性 vs per-method 必须写清")
     else:

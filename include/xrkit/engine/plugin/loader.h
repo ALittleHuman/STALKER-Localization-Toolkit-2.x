@@ -65,8 +65,15 @@ std::vector<RegistrationError> load_all_plugins_from_dir(const std::string& dir,
 //   犯的是同一个错（两处各抄一份判定＝两份语义）。现在两处都调这一个函数。
 bool is_plugin_dll_name(const std::string& filename);
 
-// 释放所有已加载的插件库（只在确定没人再调它们的回调时用）
-void unload_all();
+// 释放所有已加载的插件库。
+//
+// ★★ S-04（第三方只读审计 2026-10-18）：**现在会先清表再卸库** —— 对每个已加载插件，
+//   按它的 owner（`load_plugin` 时记下的 `adapter.plugin_name()`）**逐容器回滚**注册，
+//   然后才 `FreeLibrary`。顺序不能反：表里存的是**插件代码里的函数指针**，先卸库就成了悬垂。
+//   · `registry`：显式给的优先；**不给**就用活动注册表（`active_registry()`，外壳与 CLI 都走它）。
+//   · 两者都没有时**只能** FreeLibrary —— 那种调用方手里没有表，也就谈不上清表；
+//     这一档仍要遵守旧纪律（**确定没人再调那些回调**时才调）—— 误用会**回调悬垂**。
+void unload_all(Registry* registry = nullptr);
 size_t loaded_count();
 
 }  // namespace xrkit::plugin
