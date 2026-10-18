@@ -6246,6 +6246,40 @@ def step_pack_result_flag(release: bool) -> None:
         fail("封包的成败仍在解析中文文案（改文案＝改语义，见上）（C-02）")
 
 
+def step_override_recursion(release: bool) -> None:
+    r"""**"用户改了源编码"那条重跑不许自递归**（第三方只读审计 T-09；P17-158）。
+
+    修前事实：`convert.cpp` 的 `Overridden` 分支直接 `return convert_bytes(…source_encoding =
+    chosen…)`，**没有重入保护** —— 确认回调把 `chosen` 回成 `"auto"` 时递归调用原样再进同一段
+    ⇒ **无限递归 ⇒ 爆栈**（进程死掉、没有错误信息）。
+
+    修法：`thread_local` 重跑深度 ＋ 深度 `!= 0` 就**明确报错返回**（理由点名 T-09/拒绝再重跑）
+    ＋ 递归包在 RAII `DepthScope` 里（异常安全）。
+    判据 `tests/check_override_recursion.py`（**静态锁**）：A 深度是 thread_local；B 守卫在递归
+    之前、递归点还在；C 拒绝理由写清；D 深度真的加减、包在 RAII 里。
+    ★ 为什么不写成行为锁：需要一份**会被判成"待确认"**的样本才会真走进 `Overridden` 分支 ——
+    我第一版拿 `"hello\n"` 当样本，它被判成高置信 utf-8，**根本不做确认** ⇒ 那三条自检
+    修前修后都绿（假锁），已删掉。真样本是下一步。
+    红证（非破坏式）：`git show <修前>:src/engine/text/convert.cpp` 跑 `--cpp` ⇒ 6 项红。
+    """
+    say("[override-recursion] 编码覆盖重跑不许自递归（审计 T-09）")
+    script = ROOT / "tests" / "check_override_recursion.py"
+    if not require_repo_file(script, "覆盖重跑自递归判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("OVERRIDE-RECURSION") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("覆盖重跑前查深度、拒绝时写明理由、递归包在 RAII 里（T-09）")
+    elif rc == 2:
+        prereq("覆盖重跑判据的输入", "缺 convert.cpp（判据没跑成，不是通过）", release)
+    else:
+        fail("编码覆盖重跑没有重入保护（确认回调回「auto」就会自递归到爆栈，见上）（T-09）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6673,6 +6707,8 @@ STEPS = [
     ("plugins-default-errors", step_plugins_default_errors),
     # ★★ P17-157（第三方只读审计 C-02）：封包成败不许拿中文文案判（结构化 flag）。
     ("pack-result-flag", step_pack_result_flag),
+    # ★★ P17-158（第三方只读审计 T-09）：编码覆盖重跑不许自递归（静态锁）。
+    ("override-recursion", step_override_recursion),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。

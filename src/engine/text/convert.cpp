@@ -22,6 +22,14 @@ std::mutex& confirm_mutex() {
     return *instance;
 }
 
+// ★★ T-09（第三方只读审计 2026-10-18）：**`convert_bytes` 因"用户改了源编码"而重跑的深度**。
+//   `thread_local` 而不是全局：转换跑在**工作线程**，两个线程各自的重跑互不相干；
+//   而"自递归"这件事本身就是同一条调用栈上的问题 ⇒ 线程局部正好。
+int& g_override_rerun_depth() {
+    static thread_local int depth = 0;
+    return depth;
+}
+
 EncodingConfirmFn& confirm_storage() {
     static EncodingConfirmFn* instance = new EncodingConfirmFn();
     return *instance;
@@ -272,6 +280,19 @@ ConvertOutcome convert_bytes(const std::vector<uint8_t>& raw_in, const std::stri
         if (outcome == EncodingConfirmOutcome::Overridden && !chosen.empty()) {
             // 用户显式改成了别的源编码 ⇒ **重跑判定**（把用户的选择当 override 用），
             // 这样后面的解码/写盘与"手动指定源编码"那条路**逐字节同一条**（只有一份实现）。
+            //
+            // ★★ T-09（第三方只读审计 2026-10-18）：**这条重跑不许自递归**。
+            //   修前这里直接 `return convert_bytes(...)`，没有重入保护：只要确认回调把
+            //   `chosen` 回成**"auto"**（或任何会被判成"还没决定"的值），递归调用就会**原样**
+            //   再进这一段 ⇒ 无限递归 ⇒ 爆栈（表现为进程直接死掉，没有任何错误信息）。
+            //   现在用**线程局部的重跑计数**卡住：同一线程第二次回到这里 ⇒ 明确报错返回，
+            //   不写盘、不递归（口径：宁可拒绝，也不能把调用方拖进爆栈）。
+            if (g_override_rerun_depth() != 0) {
+                out.error =
+                    "编码确认回调又要求重跑判定（chosen=" + chosen +
+                    "）—— 已经重跑过一次，**拒绝再重跑**（否则 convert_bytes 会自递归到爆栈，T-09）";
+                return out;
+            }
             const SniffResult again = sniff_encoding(raw, chosen);
             out.step = again.step;
             out.step_label = sniff_result_label(again);
@@ -280,12 +301,19 @@ ConvertOutcome convert_bytes(const std::vector<uint8_t>& raw_in, const std::stri
             out.confidence = again.confidence;
             out.low_confidence = again.low_confidence;
             out.override_decl = again.override_decl;
-            return convert_bytes(raw_in, rel_path,
-                                 [&options, &chosen] {
-                                     ConvertOptions copy = options;
-                                     copy.source_encoding = chosen;
-                                     return copy;
-                                 }());
+            {
+                // RAII：递归调用期间深度 +1（异常安全也要还原）
+                struct DepthScope {
+                    DepthScope() { ++g_override_rerun_depth(); }
+                    ~DepthScope() { --g_override_rerun_depth(); }
+                } depth_scope;
+                return convert_bytes(raw_in, rel_path,
+                                     [&options, &chosen] {
+                                         ConvertOptions copy = options;
+                                         copy.source_encoding = chosen;
+                                         return copy;
+                                     }());
+            }
         }
     }
 
