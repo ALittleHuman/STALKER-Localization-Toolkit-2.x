@@ -6393,10 +6393,22 @@ def _vw_mark(step_name: str) -> None:
     _VERSION_WATCH["procs"] = procs
 
 
+# ★★ P17-140（用户 2026-10-16）：**版本身份三件套**，同进同出。
+#   修前只快照/恢复 `version.json` —— **不回滚 `version.h` 与 `.rc`** ⇒ 若派生件也被写，
+#   就会出现「json 说 210、包内 exe 说 209」这种**三件不同步**（正是 `version-identity` 判的那件事）。
+_VERSION_IDENTITY = (
+    ROOT / "version.json",                                # 真来源
+    ROOT / "include" / "xrkit" / "core" / "version.h",    # 派生：kPrerelease / kBuildCount
+    ROOT / "assets" / "xrkit_winres.rc",                  # 派生：包内 exe 的 File/ProductVersion
+)
+
+
 def _snapshot_version_json() -> None:
-    fp = ROOT / "version.json"
-    _VERSION_SNAPSHOT["path"] = fp
-    _VERSION_SNAPSHOT["bytes"] = fp.read_bytes() if fp.is_file() else None
+    """快照**三件套**（函数名沿用旧名，避免大改；实际已覆盖 version.h 与 .rc）。"""
+    snaps = {}
+    for fp in _VERSION_IDENTITY:
+        snaps[fp] = fp.read_bytes() if fp.is_file() else None
+    _VERSION_SNAPSHOT["files"] = snaps
 
 
 def _restore_and_assert_version_json() -> None:
@@ -6415,45 +6427,35 @@ def _restore_and_assert_version_json() -> None:
         （用户裁定原话："要么跑完把 `version.json` 逐字节恢复，要么用显式序号跑（不回写 current）"）。
         台账条目消失的那一轮，就是它收敛的那一轮。
     """
-    fp = _VERSION_SNAPSHOT.get("path")
-    want = _VERSION_SNAPSHOT.get("bytes")
-    if fp is None or want is None:
+    snaps = _VERSION_SNAPSHOT.get("files") or {}
+    if not snaps:
         return
-    got = fp.read_bytes() if fp.is_file() else None
-    if got == want:
-        say("  ✓ 版本状态未被门禁改动（`version.json` 逐字节相同；P17-130）")
+    changed = []
+    for fp, want in snaps.items():
+        got = fp.read_bytes() if fp.is_file() else None
+        if got != want:
+            changed.append(fp.name)
+    if not changed:
+        say("  \u2713 版本状态未被门禁改动（**三件套**逐字节相同：version.json / version.h / .rc；"
+            "P17-140）")
         return
-    # ★★ P17-133 取证：**在恢复之前**把"快照字节 vs 当时磁盘字节"落盘。
-    #   为什么：我先前用"跑门禁前后 sha256 相同"证明"门禁没改它" —— **那个测量是循环的**
-    #   （守卫会恢复，所以"跑完 == 跑前"是它自己造成的）。取证必须发生在恢复**之前**。
-    try:
-        import hashlib as _hl
-        _dump = ROOT / "build" / "logs" / "_version_audit.txt"
-        _got_sha = _hl.sha256(got or b"").hexdigest()[:16]
-        _want_sha = _hl.sha256(want).hexdigest()[:16]
-        _dump.parent.mkdir(parents=True, exist_ok=True)
-        with _dump.open("a", encoding="utf-8") as _fh:
-            _fh.write("P17-133 取证：want=%s(%d B)  disk=%s(%d B)  equal=%s\n"
-                      % (_want_sha, len(want), _got_sha, len(got or b""), got == want))
-    except Exception:      # 取证失败绝不影响判定
-        pass
-    fp.write_bytes(want)   # ★ 恢复（理由②：不许污染工作树）
-    # ★★ 收敛条件（用户 2026-10-16 追加要求）：**这条台账必须挂收敛条件**，否则它会烂成
-    #   「**永不消失的差异台账 ＝ 永久豁免**」—— 正是本仓防过的那种假绿。
-    #   ⇒ 条件**写死在文案里**，并且**可被一个具体动作验证**（不是口号）：
-    #     产品侧让**门禁那条打包路径**改用**显式序号**（不回写 `current.index`）的那一轮，
-    #     本条台账**必须消失**；条件已满足而它仍在 ⇒ **判据/恢复逻辑本身坏了，需复查**。
-    build_cmd = ROOT / "tools" / "cli" / "build_cmd.cpp"
-    writes_current = build_cmd.is_file() and "写回" in build_cmd.read_text(
-        encoding="utf-8", errors="replace")
+    # ★ 恢复**全部三件**（不是只回滚 json）—— 否则派生件会与真来源不同步。
+    for fp, want in snaps.items():
+        if want is not None:
+            fp.write_bytes(want)
+    say("  版本身份三件套里被改的有：%s（已全部逐字节恢复）" % "、".join(changed))
     ledger("门禁改动版本状态（已恢复）",
-           "本档有步骤改了 `version.json`（**哪个步骤**见上面的逐步骤取证行；已**逐字节恢复** ⇒ 工作树不受污染）。"
+           "本档有步骤改了**版本身份三件套**之一（哪一件见上面那一行；已**逐字节恢复全部三件** "
+           "⇒ 工作树不受污染、三件不会不同步）。"
            "`current.index` 由发布动作定义 ⇒ 验证不该写它（用户 2026-10-16 裁定）。"
-           "★★ **已排除的假设（本批实测）**：① 不是 `--build-package` 的写回段（全仓脚本层没有门禁步调它）；"
-           "② **不是残留进程异步写** —— 逐步骤进程快照显示，写入那一刻 `xrkit`/`ffmpeg`/`windeployqt`/`cl`/`link` **一个都不在**；"
-           "③ **不是 index 被顶号** —— 连续三次全量门禁里 `current.index` 都保持 210。"
-           "★ **已定位**：写入点**在 `shell-smoke` 这一段之内**（连续三次被它点名），内容是**重写**（同语义、不同字节）。"
-           "★ **收敛条件**＝查清 `shell-smoke` 里**具体哪一处代码**写它（该步单独跑/两个 exe 单独跑都不复现 ⇒ 依赖前面步骤留下的状态）——查清并让它不写，本条台账必须消失。")
+           "★★ **步级答案（判据是「步」不是「某一行」）**：逐步骤 sha 夹逼、**连续三轮全量门禁**"
+           "都指向 **`shell-smoke`** 这一段，而该步在门禁里**确实在跑**（日志有 `SHELL-SMOKE ok`）。"
+           "★ 但 `--only shell-smoke` 单跑**不复现** ⇒ 写入**依赖前面步骤留下的状态**"
+           "（核查范围：另外试过 `--only build`／`package-pages`／`release-criterion`，单跑都不变）。"
+           "★ 已排除：①不是 `--build-package` 的写回段（脚本层没有门禁步调它）；"
+           "②不是残留进程（写入那一刻 `xrkit`/`ffmpeg`/`windeployqt`/`cl`/`link` 一个都不在）；"
+           "③不是 index 被顶号（三轮全量 `current.index` 都保持 210）。"
+           "★ **收敛条件**＝让 `shell-smoke` 那段在门禁状态下不写；满足后本条必须消失。")
 
 
 def main() -> int:
