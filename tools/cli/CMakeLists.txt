@@ -49,3 +49,17 @@ set_target_properties(xrkit_test_plugin_badinit PROPERTIES
   OUTPUT_NAME "xrkit_test_plugin_badinit"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
+# ★★ S-03（第三方只读审计 2026-10-18）：**init 抛 C++ 异常**的夹具。
+#   与 `_badinit` 是**两条不同的宿主分支**：那个走"返回 0"，这个走 `catch`。
+#   必须用 C++ 编译（`throw` 不是 C）⇒ 源文件是 `.cpp`。
+#   ★ 命名同样刻意不匹配 `xrkit_*_plugin.dll` 的打包 glob（`_throwinit` 结尾）。
+add_library(xrkit_test_plugin_throwinit SHARED
+  "${CMAKE_CURRENT_SOURCE_DIR}/../test_plugin/test_plugin_throwinit.cpp")
+target_include_directories(xrkit_test_plugin_throwinit PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_link_libraries(xrkit_test_plugin_throwinit PRIVATE xrkit_flags)
+set_target_properties(xrkit_test_plugin_throwinit PROPERTIES
+  PREFIX ""
+  OUTPUT_NAME "xrkit_test_plugin_throwinit"
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+  LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

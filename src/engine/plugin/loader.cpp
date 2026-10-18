@@ -7,8 +7,10 @@
 #include "xrkit/engine/plugin/py_host.h"
 
 #include <algorithm>
+#include <exception>
 #include <filesystem>
 #include <memory>
+#include <string>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -68,7 +70,43 @@ LoadResult load_plugin(const std::string& dll_path, const PluginApiAdapter& adap
         ::FreeLibrary(handle);
         return result;
     }
-    const int rc = init(&api);
+    // ★★ S-03（第三方只读审计 2026-10-18）：**入口异常护栏**。
+    //   修前：这里就是一句裸的 `const int rc = init(&api);` —— 插件（尤其 C++ 写的）在 `init`
+    //   里抛异常时，异常会穿过 `LoadLibrary` 边界一路冒到 `Hub` 构造路径；Qt 不接异常
+    //   ⇒ **进程终止**。注册期回调有 `Registry::invoke` 兜底，**入口本身没有**。
+    //   口径：拦下之后走**与"入口返回 0"同一条善后路径**（按 owner 回滚 → FreeLibrary → 报错），
+    //   理由里点名"抛了 C++ 异常"并带上 `what()`（零静默：用户看得到是哪个插件、为什么）。
+    //   ★ 只拦 **C++ 异常**：`catch(...)` 在 /EHsc 下就是 C++ 异常。**不拦 SEH**（访问违例等）——
+    //     那要 /EHa 或 `__try/__except`，会把"插件里崩了"变成"静默吞掉"，属口径变更，单独裁定。
+    //     别把这段读成"所有插件崩溃都被兜住了"。
+    //
+    //   ★★ 本修法第一版**自己踩了一个坑**（值得写在这里）：我把 `FreeLibrary(handle)` 写在了
+    //   **catch 块里面** —— 于是 `return result;` 之后，栈上那个异常对象开始析构，而它的
+    //   vtable/类型信息在**插件的模块里**；模块已经被 `FreeLibrary` 卸掉 ⇒ 访问违例
+    //   （`--smoke` 当场 0xC0000005，`S-03` 判据替我把这个错抓住了）。
+    //   ⇒ 口径：**`FreeLibrary` 必须在 catch 块之外**（先 `what()` 拷成 `std::string`、
+    //   让异常对象在 catch 收尾时正常析构，再卸载模块）。
+    int rc = 0;
+    std::string init_exception;   // 非空 ⇒ init 抛了 C++ 异常（已经拷好文案，与插件模块无关了）
+    try {
+        rc = init(&api);
+    } catch (const std::exception& e) {
+        init_exception = std::string("插件入口抛了 C++ 异常（已拦下，进程没有终止）：") + dll_path +
+                         "：" + e.what();
+    } catch (...) {
+        init_exception = std::string("插件入口抛了**非 std::exception** 的 C++ 异常"
+                                     "（已拦下，进程没有终止）：") + dll_path;
+    }
+    if (!init_exception.empty()) {
+        result.init_rc = -1;   // 没有返回值（不是 0，也不是成功）
+        result.error = init_exception;
+        result.registrations = adapter.registry().rollback_plugin(adapter.plugin_name());
+        core::log(core::Level::Warn, "插件 init 抛 C++ 异常，已按 owner 回滚 " +
+                                         std::to_string(result.registrations) + " 条注册：" +
+                                         adapter.plugin_name());
+        ::FreeLibrary(handle);   // ← 必须在 catch 之外（见上面那段坑）
+        return result;
+    }
     result.init_rc = rc;
     if (rc == 0) {
         result.error = "插件入口返回 0（它自己说初始化失败）：" + dll_path;

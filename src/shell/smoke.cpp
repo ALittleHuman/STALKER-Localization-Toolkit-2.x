@@ -8189,6 +8189,57 @@ SmokeResult run_smoke() {
             }
         }
 
+        // ★★ S-03（第三方只读审计 2026-10-18）：**DLL 插件 `init()` 抛 C++ 异常必须被拦下**。
+        //   修前事实：`load_plugin()` 里就是一句裸的 `const int rc = init(&api);` —— C++ 写的插件
+        //   在 `init` 里抛异常时，异常会穿过 `LoadLibrary` 边界冒到 `Hub` 构造路径（Qt 不接异常
+        //   ⇒ 进程终止）。注册期回调有 `Registry::invoke` 兜底，**入口本身没有**。
+        //   判据：装夹具 `xrkit_test_plugin_throwinit.dll`（**先注册一条再抛**）⇒
+        //     ① `LoadResult.ok == false` 且理由非空（进程还活着，本身就说明宿主拦下了）；
+        //     ② 理由**点名「C++ 异常」**并带 what()（零静默）；
+        //     ③ 失败的插件不许进已加载名单；
+        //     ④ 抛之前注册的那一条必须被**按 owner 回滚**掉（表里零残留）。
+        //   ★ 只拦 C++ 异常，**不拦 SEH**（访问违例）—— 见 `loader.cpp` 里那段注释。
+        {
+            const QString s03_app_dir = QCoreApplication::applicationDirPath();
+            QString s03_dll;
+            for (const QString& candidate :
+                 {s03_app_dir + QStringLiteral("/xrkit_test_plugin_throwinit.dll"),
+                  QDir::cleanPath(s03_app_dir +
+                                  QStringLiteral("/../../tools/cli/xrkit_test_plugin_throwinit.dll"))}) {
+                if (QFileInfo::exists(candidate)) {
+                    s03_dll = candidate;
+                    break;
+                }
+            }
+            if (s03_dll.isEmpty()) {
+                result.notes.append(
+                    QStringLiteral("S-03 夹具：这个布局里找不到 xrkit_test_plugin_throwinit.dll"
+                                   "（app_dir=%1）⇒ 本用例跳过（构建树/门禁里会真跑）")
+                        .arg(s03_app_dir));
+            } else {
+                plug::Registry s03_reg;
+                plug::PluginApiAdapter s03_adapter(s03_reg, "xrkit_test_plugin_throwinit.dll",
+                                                   nullptr);
+                const size_t s03_loaded_before = plug::loaded_count();
+                const plug::LoadResult s03 = plug::load_plugin(s03_dll.toStdString(), s03_adapter);
+                // 与既有那条同做法：回调盒要活到进程结束，别让适配器当场析构
+                new plug::PluginApiAdapter(std::move(s03_adapter));
+                check(!s03.ok && !s03.error.empty(),
+                      QStringLiteral("S-03 init 抛异常必须**失败**（能走到这一行＝进程没被终止）"));
+                check(s03.error.find("C++ 异常") != std::string::npos,
+                      QStringLiteral("S-03 理由要点名「C++ 异常」（零静默）：%1")
+                          .arg(QString::fromStdString(s03.error).left(120)));
+                check(plug::loaded_count() == s03_loaded_before,
+                      QStringLiteral("S-03 加载失败的插件不许进已加载名单（%1 → %2）")
+                          .arg(s03_loaded_before)
+                          .arg(plug::loaded_count()));
+                check(s03_reg.registration_count() == 0,
+                      QStringLiteral("S-03 抛异常**之前**注册的那一条必须被按 owner 回滚掉"
+                                     "（实得 %1 条残留）")
+                          .arg(s03_reg.registration_count()));
+            }
+        }
+
         // ④ 复位 ⇒ 与基线**逐值一致**（默认行为不许被这段新代码顺手改掉）
         plug::set_active_registry(nullptr);
         error.clear();
