@@ -6349,15 +6349,48 @@ def _vw_hash():
     return hashlib.sha256(fp.read_bytes()).hexdigest()[:16]
 
 
+def _vw_procs() -> list:
+    r"""当时还活着的**相关进程**（只挑 xrkit/ffmpeg/windeployqt —— 不再放进 powershell，
+    因为它就是我们自己的父进程，永远是活的、只会变噪音）。"""
+    try:
+        out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True,
+                             timeout=60).stdout.decode("mbcs", "replace")
+    except Exception:
+        return []
+    names = []
+    for line in out.splitlines():
+        first = line.split(",", 1)[0].strip().strip('"').lower()
+        if first.startswith(("xrkit_", "ffmpeg", "ffprobe", "windeployqt", "cl.exe", "link.exe")):
+            names.append(first)
+    return sorted(set(names))
+
+
 def _vw_mark(step_name: str) -> None:
-    """在每个步骤**之后**调用：发现 `version.json` 变了就**当场点名**。"""
+    r"""每个步骤**之后**：`version.json` 变了就点名 —— 并**带上那一刻还活着的进程**。
+
+    ★★ P17-139（目标 ② 的"逐步骤＋残留进程"）：单靠步骤名不够 ——
+      `shell-smoke` 被点名，但该步单独跑**不复现** ⇒ 必须看"那时谁还活着"。
+    """
     now = _vw_hash()
+    procs = _vw_procs()
     prev = _VERSION_WATCH.get("last")
+    prev_procs = _VERSION_WATCH.get("procs") or []
     if prev is not None and now != prev:
         say("  !! 步骤 `%s` 改了 `version.json`（%s → %s）—— P17-133 取证"
             % (step_name, prev, now))
+        say("     那一刻还活着的相关进程：%s"
+            % ("、".join(procs) if procs else "（无）"))
+        say("     上一格还活着的：%s"
+            % ("、".join(prev_procs) if prev_procs else "（无）"))
         _VERSION_WATCH.setdefault("culprits", []).append(step_name)
+    # 跨步骤存活的进程（上一格也在、这一格还在）⇒ 残留嫌疑
+    residual = sorted(set(procs) & set(prev_procs))
+    if residual:
+        seen = _VERSION_WATCH.setdefault("residual", {})
+        for name in residual:
+            seen[name] = seen.get(name, 0) + 1
     _VERSION_WATCH["last"] = now
+    _VERSION_WATCH["procs"] = procs
 
 
 def _snapshot_version_json() -> None:
@@ -6414,12 +6447,13 @@ def _restore_and_assert_version_json() -> None:
     writes_current = build_cmd.is_file() and "写回" in build_cmd.read_text(
         encoding="utf-8", errors="replace")
     ledger("门禁改动版本状态（已恢复）",
-           "本档有步骤改了 `version.json`（**哪个步骤**见上面的逐步骤 sha 取证行；已**逐字节恢复** ⇒ 工作树不受污染）。"
+           "本档有步骤改了 `version.json`（**哪个步骤**见上面的逐步骤取证行；已**逐字节恢复** ⇒ 工作树不受污染）。"
            "`current.index` 由发布动作定义 ⇒ 验证不该写它（用户 2026-10-16 裁定）。"
-           "★★ **收敛条件＝查清谁在写、并让门禁那条路径不再写 `current.index`**。"
-           "★ 已**排除**的归因：**不是** `--build-package` 的写回段（全仓脚本层没有任何门禁步调它）。"
-           "★ 实测把写入点定在 `shell-smoke`，但该步单独跑**不复现** ⇒ **写入路径待查**。"
-           "★ 另记：本判据早期用「跑门禁前后字节相同」自证，那是**循环测量**（守卫会恢复 ⇒ 相同是它自己造成的），已改为**逐步骤取证**（P17-133）。")
+           "★★ **已排除的假设（本批实测）**：① 不是 `--build-package` 的写回段（全仓脚本层没有门禁步调它）；"
+           "② **不是残留进程异步写** —— 逐步骤进程快照显示，写入那一刻 `xrkit`/`ffmpeg`/`windeployqt`/`cl`/`link` **一个都不在**；"
+           "③ **不是 index 被顶号** —— 连续三次全量门禁里 `current.index` 都保持 210。"
+           "★ **已定位**：写入点**在 `shell-smoke` 这一段之内**（连续三次被它点名），内容是**重写**（同语义、不同字节）。"
+           "★ **收敛条件**＝查清 `shell-smoke` 里**具体哪一处代码**写它（该步单独跑/两个 exe 单独跑都不复现 ⇒ 依赖前面步骤留下的状态）——查清并让它不写，本条台账必须消失。")
 
 
 def main() -> int:
@@ -6522,6 +6556,10 @@ def main() -> int:
     # ★★ P17-130：**收尾恢复 + 断言版本状态**（用户 2026-10-16 裁定）。
     #   必须在打印 RESULT **之前** —— 它可能 `fail(...)`，那样结论行才是诚实的 FAIL。
     # ★★ P17-133：先把"谁改过 version.json"点名（在恢复**之前**，否则证据被恢复抹掉）
+    _res = _VERSION_WATCH.get("residual") or {}
+    if _res:
+        say("  跨步骤仍活着的过程（残留嫌疑，P17-139）：%s"
+            % "、".join("%s×%d" % (k, v) for k, v in sorted(_res.items(), key=lambda kv: -kv[1])[:6]))
     _culprits = _VERSION_WATCH.get("culprits", [])
     if _culprits:
         say("  本档改过 `version.json` 的步骤（P17-133 取证）：%s" % "、".join(_culprits))
