@@ -6280,6 +6280,37 @@ def step_override_recursion(release: bool) -> None:
         fail("编码覆盖重跑没有重入保护（确认回调回「auto」就会自递归到爆栈，见上）（T-09）")
 
 
+def step_small_cleanups(release: bool) -> None:
+    r"""**三处小清理**（第三方只读审计 C-10 / C-11 / C-12；P17-159）。
+
+    · **C-10** `sniff.cpp::decode_bytes`：`first` 与 `declared` 修前是**两份字面相同的表达式**
+      ⇒ 改一处漏一处，"判定结论 ≠ 实际使用的编码"又会被复算掩盖。现在只算一次，`first` 是别名。
+    · **C-11** `extract_tree.cpp::failure_note()`：`if (…) return …;` 后面**同一行**还跟着一条声明
+      —— 读起来像"提前返回把后半句也带走了"。已拆行。
+    · **C-12** `hub.cpp::load_plugins`：`int loaded = 0;` ＋ `++loaded;` 是**死变量**（只增不读）。已删。
+
+    判据 `tests/check_small_cleanups.py`：三条各一对"没了 / 还在"的锁（删的是死东西，不是功能）。
+    ★ 注释里**引用**被删的代码不算残留（C-12.1 就踩过这条）。
+    红证（非破坏式）：`git show <修前>:<三个文件>` 跑 `--*-src` ⇒ 5 项红。
+    """
+    say("[small-cleanups] 三处小清理（审计 C-10 / C-11 / C-12）")
+    script = ROOT / "tests" / "check_small_cleanups.py"
+    if not require_repo_file(script, "小清理判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("SMALL-CLEANUP") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("C-10 一份表达式／C-11 一眼一语句／C-12 死代码已清（三条锁都在）")
+    elif rc == 2:
+        prereq("小清理判据的输入", "缺三份源码之一（判据没跑成，不是通过）", release)
+    else:
+        fail("小清理没做干净（见上）：同一表达式两份 / 一行两语句 / 死变量还在（C-10/11/12）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6709,6 +6740,8 @@ STEPS = [
     ("pack-result-flag", step_pack_result_flag),
     # ★★ P17-158（第三方只读审计 T-09）：编码覆盖重跑不许自递归（静态锁）。
     ("override-recursion", step_override_recursion),
+    # ★★ P17-159（第三方只读审计 C-10/C-11/C-12）：三处小清理（静态锁）。
+    ("small-cleanups", step_small_cleanups),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。

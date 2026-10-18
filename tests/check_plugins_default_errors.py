@@ -84,7 +84,10 @@ def main() -> int:
         print("PLUGINS-DEFAULT skip 缺 tools/cli/main.cpp")
         return 2
 
-    with tempfile.TemporaryDirectory(prefix="c01_") as tmp:
+    # ★ 门禁里这个临时目录常被别的步骤按着句柄（拷进去的 python3XX.dll / exe 还没被回收）
+    #   ⇒ 清理时 rmtree 会抛异常，把**判据自己**拖成 rc=1（实测：全量门禁里 A–D 全绿、
+    #   E1/E2 一行都没打出来就 FAIL）。`ignore_cleanup_errors` 只影响清理，不影响判据。
+    with tempfile.TemporaryDirectory(prefix="c01_", ignore_cleanup_errors=True) as tmp:
         box = Path(tmp)
         # ★ 拷不出一份能跑的副本（例如门禁里别的步骤还按着 python3XX.dll）⇒ **记 skip**，
         #   不许把"判据自己没跑成"伪装成"判据失败"（实绿/实红之外只允许第三种：未覆盖）。

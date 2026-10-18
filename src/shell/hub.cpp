@@ -876,7 +876,8 @@ void Hub::load_plugins(const QString& plugin_dir) {
     xrkit::plugin::load_all_plugins_from_dir(dir.toUtf8().toStdString(), registry_, ui);
     plugin_errors_ = registry_.registration_errors();
 
-    int loaded = 0;
+    // ★★ C-12（第三方只读审计 2026-10-18）：这里原来有个 `int loaded = 0;` —— **死变量**
+    //   （下面一行 `++loaded` 之后再也不读）。删掉，别让读者以为它在计什么数。
     for (const xrkit::plugin::RegistrationError& error : plugin_errors_) {
         log_line(QStringLiteral("插件问题：%1 —— %2")
                      .arg(QString::fromStdString(error.plugin))
@@ -885,7 +886,6 @@ void Hub::load_plugins(const QString& plugin_dir) {
     if (plugin_errors_.empty()) {
         plugin_notice_ = QStringLiteral("插件：无（目录 %1）").arg(QDir::toNativeSeparators(dir));
     } else {
-        ++loaded;
         plugin_notice_ = QStringLiteral("插件：%1 个问题（详见日志）").arg(plugin_errors_.size());
     }
     log_line(plugin_notice_);

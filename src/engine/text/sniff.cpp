@@ -420,8 +420,11 @@ DecodedBytes decode_bytes(const std::vector<uint8_t>& raw, const std::string& ov
     // ★ 判定只算一次：`first` 与 `used_mismatch` 必须来自**同一次**判定，
     //   否则"判定结论 ≠ 实际使用编码"这件事又会被复算掩盖掉。
     const SniffResult decided = had_utf8_bom ? SniffResult{} : sniff_encoding(body, override_enc);
-    const std::string first = had_utf8_bom ? std::string(kUtf8) : decided.encoding;
+    // ★★ C-10（第三方只读审计 2026-10-18）：**同一个表达式只许算一次**。
+    //   修前 `first` 与 `declared` 是**两份拷贝**（字面相同的表达式写了两遍）⇒ 改一处漏一处，
+    //   "判定结论 ≠ 实际使用的编码"这件事又会被复算掩盖掉（这条正是那段注释要防的）。
     const std::string declared = had_utf8_bom ? std::string(kUtf8) : decided.encoding;
+    const std::string& first = declared;   // 别名，不是第二份
     // 1.x BYTE_DECODE_CANDIDATES = [windows-1251, windows-1252, gbk]，末位 latin-1 保底
     const char* kCandidates[] = {kWindows1251, kWindows1252, kGbk};
     std::vector<std::string> tried;

@@ -356,7 +356,10 @@ bool only_matches(const std::string& want, const std::string& shell, const std::
 }
 
 std::string ExtractTreeResult::failure_note() const {
-    if (failures.empty()) return std::string();    const uint64_t total = files_written + failures.size();
+    // ★★ C-11（第三方只读审计 2026-10-18）：两条语句挤在一行里（`return` 后面还跟着一条
+    //   声明）—— 读起来像"提前返回"把后半句也带走了。拆开。
+    if (failures.empty()) return std::string();
+    const uint64_t total = files_written + failures.size();
     std::string note = std::to_string(failures.size()) + "/" + std::to_string(total) + " 项失败：";
     const size_t shown = std::min<size_t>(3, failures.size());
     for (size_t i = 0; i < shown; ++i) {
