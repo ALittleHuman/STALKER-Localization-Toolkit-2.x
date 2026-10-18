@@ -6147,6 +6147,38 @@ def step_build_residue(release: bool) -> None:
         fail("仓库里跟踪了 `build/`、`dist/` 下的残留，或 `.gitignore` 挡不住、或清理脚本不合口径（B-6）")
 
 
+def step_builder_guard(release: bool) -> None:
+    r"""**插件页 builder 必须有 C++ 异常护栏**（第三方只读审计 S-02；P17-154）。
+
+    修前事实：`src/shell/hub.cpp::render_plugin_slots` 里是一句裸的
+    `built = reg->builder(container);` —— C++ 插件在 builder 里抛异常时，异常会**穿进 Qt 的
+    页面构造路径**一路冒到 `QApplication::exec`；Qt 不接异常 ⇒ **进程终止**（与 S-03 同一族）。
+
+    修法（与 S-03 同一套口径）：拦下 → **留痕（点名插件与 `what()`）**→ 走"没造出控件"那条善后
+    （占位页顶替）；**抛过异常就一票否决** `anything_built`（半残页面比占位页更糟）。
+    判据 `tests/check_builder_guard.py`：A 调用点在 `try` 里、两类 catch 都在、`what()` 留痕；
+    B `builder_threw` 是一等公民、`anything_built` 里 `!builder_threw`、异常后 `make_placeholder`
+    ＋ `log_line`。**静态锁**（行为锁要"panel builder 会抛"的 DLL 夹具，已登记为下一步）。
+    红证（非破坏式）：拿 `git show <修前>:src/shell/hub.cpp` 跑 `--hub-src` ⇒ 7 项红。
+    """
+    say("[builder-guard] 插件页 builder 的 C++ 异常护栏（审计 S-02）")
+    script = ROOT / "tests" / "check_builder_guard.py"
+    if not require_repo_file(script, "builder 异常护栏判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("BUILDER-GUARD") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("builder 调用在 try 里、两类 catch 都在、异常文本留痕、抛过就一票否决走占位页（S-02）")
+    elif rc == 2:
+        prereq("builder 护栏判据的输入", "缺 src/shell/hub.cpp（判据没跑成，不是通过）", release)
+    else:
+        fail("插件页 builder 没有异常护栏（C++ 插件抛一次就把进程带走）（S-02）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6568,6 +6600,8 @@ STEPS = [
     # ★★ P17-152（第三方只读审计 B-6）：构建残留（仓库层判红／机器层报数／clean.ps1 可核）。
     #   纯静态 ＋ git 查询；被 `--only` 过滤时进 UNCOVERED。
     ("build-residue", step_build_residue),
+    # ★★ P17-154（第三方只读审计 S-02）：插件页 builder 的 C++ 异常护栏（静态锁）。
+    ("builder-guard", step_builder_guard),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。

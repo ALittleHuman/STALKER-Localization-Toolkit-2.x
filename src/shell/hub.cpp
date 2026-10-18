@@ -15,6 +15,11 @@
 #include "xrkit/engine/xml/compare.h"
 #include "theme.h"
 
+// ★★ S-02（第三方只读审计 2026-10-18）：builder 的异常护栏要用 `std::exception` 与 `std::string`
+//   （不靠别的头文件"碰巧"带进来 —— 换一个编译器/标准库版本就可能编不过）。
+#include <exception>
+#include <string>
+
 #include <QApplication>
 #include <QDateTime>
 #include <QDir>
@@ -450,6 +455,15 @@ int Hub::sync_pages() {
             //     · builder 返回非空控件 ⇒ 嵌进根里（C ABI 的老写法照旧可用）。
             auto* container = new QWidget;
             QWidget* built = nullptr;
+            // ★★ S-02（第三方只读审计 2026-10-18）：**builder 异常护栏**。
+            //   修前这里是一句裸的 `built = reg->builder(container);` —— C++ 插件（或任何会抛的
+            //   实现）在 builder 里抛异常时，异常会**穿进 Qt 的页面构造路径**一路冒到
+            //   `QApplication::exec`，Qt 不接异常 ⇒ **进程终止**（与 S-03 的 `init()` 同一族）。
+            //   口径与 S-03 相同：拦下来 → **留痕（点名插件与 what()）→ 走"没造出控件"那条善后**
+            //   （占位页顶替），绝不静默、也不假装这个页是好的。
+            //   ★ 只拦 **C++ 异常**（/EHsc 下 `catch(...)` 就是 C++ 异常）；**不拦 SEH**
+            //     （访问违例要 /EHa 或 `__try`，会把"插件里崩了"变成"静默吞掉"，属口径变更）。
+            std::string builder_exception;
             {
                 // ★ P13-2a-2：连**页面身份**一起设 ⇒ 插件页的右键菜单里能看到
                 //   其它插件注册的 context 命令（与内置六页同一口径）
@@ -458,7 +472,22 @@ int Hub::sync_pages() {
                 const std::string page_key =
                     reg->spec.replaces.empty() ? reg->spec.id : reg->spec.replaces;
                 plugin::UiPanelScope panel_scope(container, page_key, &registry_);
-                built = reg->builder(container);
+                try {
+                    built = reg->builder(container);
+                } catch (const std::exception& e) {
+                    builder_exception = e.what() != nullptr ? e.what() : "std::exception（what() 为空）";
+                } catch (...) {
+                    builder_exception = "非 std::exception 的 C++ 异常";
+                }
+            }
+            const bool builder_threw = !builder_exception.empty();
+            if (builder_threw) {
+                built = nullptr;   // 强制走"没造出控件"那条（占位页 + 留痕）
+                log_line(QStringLiteral("插件页「%1」（%2）的 builder 抛了 C++ 异常：%3"
+                                        " —— 已用占位页顶替（S-02）")
+                             .arg(id)
+                             .arg(QString::fromStdString(reg->owner))
+                             .arg(QString::fromStdString(builder_exception)));
             }
             // ★ 页控件的归属规则（这条很关键，P3 第一版就栽在这）：
             //   · builder 交回的是 **`PageBase`**（内置六页那种自带框架的页）⇒ **页就是它本人**，
@@ -476,9 +505,19 @@ int Hub::sync_pages() {
             }
             // "到底造出东西没有"：builder 交了控件，或者门面往根里落了控件（`place()` 会建布局）。
             // 两者都没有 ⇒ 仍然是"注册了却没出现"，必须**留痕 + 占位**（P1 起的零静默口径）。
+            // ★★ S-02：**builder 抛过异常 ⇒ 一律按"没造出控件"处理**。抛在半途的 builder 可能
+            //   已经往根里塞了几个控件（`placed->count() > 0`），但那个页面**半残** —— 拿它当真
+            //   比占位页更糟（用户看到半张页面、以为成功了）。所以 `builder_threw` 一票否决。
             QLayout* placed = widget == container ? container->layout() : nullptr;
-            const bool anything_built = built != nullptr || (placed != nullptr && placed->count() > 0);
-            if (!anything_built) {
+            const bool anything_built =
+                !builder_threw && (built != nullptr || (placed != nullptr && placed->count() > 0));
+            if (builder_threw) {
+                widget = make_placeholder(reg->spec);
+                if (widget != container) container->deleteLater();
+                log_line(QStringLiteral("页「%1」（%2）的 builder 抛异常后已用占位页顶替（S-02）")
+                             .arg(id)
+                             .arg(QString::fromStdString(reg->owner)));
+            } else if (!anything_built) {
                 widget = make_placeholder(reg->spec);
                 if (widget != container) container->deleteLater();
                 log_line(QStringLiteral("页「%1」（%2）没造出控件，已用占位页顶替")
