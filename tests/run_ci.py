@@ -5776,6 +5776,32 @@ def step_db_whole_read(release: bool) -> None:
         fail("DB 兜底整包读仍无上限（见上）")
 
 
+def step_lzhuf_delta(release: bool) -> None:
+    r"""`lzhuf_ref.c` 与参照源的分叉必须**只有已知三条**（复审计 09 分册 ⑤）。
+
+    修前：文件头自称「**仅**把 EXPORT 置空」，实际有三处分叉（EXPORT / P17-59 端序对齐 /
+    P17-115 共享宏），且**没有任何判据比对两份文件** ⇒ 再悄悄改一处没人发现。
+    本步跑 `tests/check_lzhuf_ref_delta.py`：比**代码**（去注释），差异集合必须等于冻结白名单；
+    白名单逐条仍成立（过期白名单会掩盖新差异）；文件头自述必须点名三处。
+    """
+    say("[lzhuf-delta] lzhuf_ref.c ↔ docs/reference/lzhuf_dll.c：分叉必须只有已知三条（复审计 ⑤）")
+    script = ROOT / "tests" / "check_lzhuf_ref_delta.py"
+    if not require_repo_file(script, "lzhuf 分叉判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        t = line.strip()
+        if t.startswith("\u2713") or t.startswith("\u2717") or t.startswith("LZHUF-DELTA") \
+                or t.startswith("==") or t.startswith("\u21d2"):
+            say("  " + t[:200])
+    if rc == 0:
+        ok("lzhuf_ref 的分叉＝已知三条（删 8/增 12，逐行冻结；白名单有效；自述同源）")
+    elif rc == 2:
+        prereq("lzhuf 参照源", "缺 docs/reference/lzhuf_dll.c（判据没跑成，不是通过）", release)
+    else:
+        fail("lzhuf_ref.c 与参照源出现**白名单之外**的分叉（见上）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6168,6 +6194,7 @@ STEPS = [
     # ★★ P17-110（复审计 `01 F-07`）：散装层条目表不进链接 ＋ 有上限（自指链接不得不终止）。
     #   需要 CLI 产物；自带夹具（真造 junction ＋ 超时）。被 `--only` 过滤时进 UNCOVERED。
     ("loose-guard", step_loose_guard),
+    ("lzhuf-delta", step_lzhuf_delta),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。

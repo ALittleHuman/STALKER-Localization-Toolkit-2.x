@@ -1,4 +1,14 @@
-// LZHUF 参考实现（逐字复制自 docs/reference/lzhuf_dll.c，仅把 EXPORT 置空）。
+// LZHUF 参考实现（取自 docs/reference/lzhuf_dll.c；**不是**逐字复制，见下）。
+//
+// ★★ 2026-10-16（P17-138，复审计 09 分册 ⑤）：这行原来写「**仅**把 EXPORT 置空」——
+//   **那是假的**。实测（去注释、逐行比对）与参照源有**三处**分叉，共删 8 行 / 增 12 行：
+//     ①（原设计）`#ifdef _WIN32 / __declspec(dllexport)` ⇒ `#define EXPORT`（本仓库不导出符号）；
+//     ②（P17-59，01 F-19）`*(unsigned*)src` / `*(unsigned*)dest` 这类**非对齐 + 端序**读写
+//        ⇒ `lzhuf_read_u32_le()` ＋ 四个显式字节存储；
+//     ③（P17-115，N-01）`textsize > 256*1024*1024` 裸字面量 ⇒ 共享宏
+//        `XRKIT_LZHUF_MAX_DECLARED_BYTES`（含 `#include "xrkit/engine/fs/untrusted_limits.h"`）。
+//   ⇒ 这三处**逐行冻结**在 `tests/check_lzhuf_ref_delta.py` 的白名单里：谁再悄悄多改一处，该判据红。
+//   ★ 口径：判据比的是**代码**（去注释、压空白），因为本仓的历史就是「注释说 A、代码是 B」。
 //
 // 为什么要直接编译它而不是自己移植：
 //   1.x 的 Python 移植版在**解码路径**上与 DLL 有差异（它的 _LZ_DLEN 只有 236 项且
