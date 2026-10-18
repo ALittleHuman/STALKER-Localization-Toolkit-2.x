@@ -6109,6 +6109,40 @@ def step_machine_lines(release: bool) -> None:
         fail("机器消费行还是拿中文当分隔符 / 消费侧没同时认新旧（见上）（B-4）")
 
 
+def step_build_residue(release: bool) -> None:
+    r"""**构建残留**不许进仓库；机器上的残留要能看见并能清（第三方只读审计 B-6；P17-152）。
+
+    审计点名：`dist/FAIL/`、`build/` 下大量临时脚本、`__pycache__` 留存。
+    实测（2026-10-18）：`dist/FAIL` 39 个目录、`build/logs/_*` 943 个文件、
+    `commit_msg*.txt` 13 个 —— 但 **`git ls-files build dist` = 0**：它们全是**未跟踪**的运行期产物。
+
+    ⇒ 判据**分两层**（别写成"开发机 `build/` 必须干净"）：
+      · **A 仓库层（可判红）**：仓库里不许**跟踪** `build/`、`dist/` 下的文件；
+        `.gitignore` 必须真挡得住（`git check-ignore` 也认）。
+      · **B 机器层（只报数，不判红）**：三处残留的计数打印 ＋ 指路 `scripts/clean.ps1`。
+        批次进行中必然有残留（取证脚本/日志就在里面）⇒ 判红等于逼人删证据。
+      · **C 清理脚本的锁**：`clean.ps1` 默认只列不删（`-Apply` 才删）、白名单只三处、
+        不碰 `dist\<版本>`；`.ps1` 必须带 UTF-8 BOM。
+    红证（已实测）：`git add -f build/logs/_residue_probe.txt` ⇒ A1 红；`git rm --cached` 还原 ⇒ 绿。
+    """
+    say("[build-residue] 构建残留：仓库层判红、机器层报数、清理脚本可核（审计 B-6）")
+    script = ROOT / "tests" / "check_build_residue.py"
+    if not require_repo_file(script, "构建残留判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("BUILD-RESIDUE") \
+                or s.startswith("==") or s.startswith("\u00b7") or s.startswith("\u2192"):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("仓库里零跟踪残留、.gitignore 真挡得住；机器层残留只报数（清理走 clean.ps1）（B-6）")
+    elif rc == 2:
+        prereq("构建残留判据的输入", "这个目录不是 git 工作树 / 缺 .gitignore（判据没跑成）", release)
+    else:
+        fail("仓库里跟踪了 `build/`、`dist/` 下的残留，或 `.gitignore` 挡不住、或清理脚本不合口径（B-6）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6527,6 +6561,9 @@ STEPS = [
     # ★★ P17-151（第三方只读审计 B-4）：机器消费行 ASCII 化（迁移第一步：双打 ＋ 认新不丢旧）。
     #   纯静态（读 smoke.cpp 与两个消费侧脚本，并真 import 解析函数跑两种形态）。
     ("machine-lines", step_machine_lines),
+    # ★★ P17-152（第三方只读审计 B-6）：构建残留（仓库层判红／机器层报数／clean.ps1 可核）。
+    #   纯静态 ＋ git 查询；被 `--only` 过滤时进 UNCOVERED。
+    ("build-residue", step_build_residue),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。
