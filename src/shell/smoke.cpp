@@ -8147,6 +8147,48 @@ SmokeResult run_smoke() {
                   QStringLiteral("T-05 撤掉压缩上限后同一条目必须能压（闸门没误伤）"));
         }
 
+        // ★★ S-01（第三方只读审计 2026-10-18）：`api.ui.alive()` 必须**真的能判活**。
+        //   修前事实：`alive` 的实现是 `unwrap(widget) != nullptr`，而 `unwrap` 就是
+        //   `reinterpret_cast<QWidget*>` —— **QWidget 销毁后指针不会变 null** ⇒ 插件缓存过句柄
+        //   再问 `alive()` **永远得到 true**，随后解引用就是悬垂访问。
+        //   修法：**每个发出去的句柄登记一个 `QPointer`**（析构自动置空）⇒ alive 有真凭据；
+        //   同时 `unwrap()` 对"已登记但已死"的句柄返回 nullptr ⇒ `set_text` 之类**安全地什么都不做**
+        //   （不是悬垂解引用）。
+        //   本判据：造一个 label ⇒ 活着时 alive=true；**直接 delete 它**（＝页被 replaces 顶掉/重建）
+        //   ⇒ alive 必须 false；再对死句柄 `set_text` 必须**不崩**（门面之后还能正常工作）。
+        {
+            if (plug::ui_facade() == nullptr) {
+                // 门面还没装（`--smoke` 通常是 Hub 构造时装上的）⇒ 自己装一份，只影响本用例之后
+                install_qt_ui_facade(nullptr);
+            }
+            const plug::UiFacade* ui_facade = plug::ui_facade();
+            check(ui_facade != nullptr && ui_facade->alive && ui_facade->set_text && ui_facade->label,
+                  QStringLiteral("S-01 夹具：门面没装上（alive/label/set_text 至少一条为空）"));
+            if (ui_facade != nullptr && ui_facade->alive && ui_facade->label) {
+                QWidget s01_host;
+                const plug::UiHandle s01_label =
+                    ui_facade->label(reinterpret_cast<plug::UiHandle>(&s01_host),
+                                     "S-01 活性探针", "");
+                check(s01_label != plug::kNoWidget,
+                      QStringLiteral("S-01 夹具：门面造不出 label（handle 为空）"));
+                check(ui_facade->alive(s01_label),
+                      QStringLiteral("S-01 活着的句柄必须 alive=true"));
+                delete reinterpret_cast<QWidget*>(s01_label);   // ＝页面被销毁
+                check(!ui_facade->alive(s01_label),
+                      QStringLiteral("S-01 **已销毁**的句柄 alive 必须 false"
+                                     "（修前是 `unwrap(h) != nullptr` ⇒ 恒 true）"));
+                if (ui_facade->set_text) {
+                    ui_facade->set_text(s01_label, "x");    // 必须**不崩**（已死句柄不得悬垂解引用）
+                }
+                const plug::UiHandle s01_again =
+                    ui_facade->label(reinterpret_cast<plug::UiHandle>(&s01_host), "S-01 二次探针", "");
+                check(s01_again != plug::kNoWidget && ui_facade->alive(s01_again),
+                      QStringLiteral("S-01 对死句柄 set_text 之后门面仍能正常造控件"
+                                     "（证明上一步没有悬垂解引用把内部状态弄坏）"));
+                delete reinterpret_cast<QWidget*>(s01_again);
+            }
+        }
+
         // ④ 复位 ⇒ 与基线**逐值一致**（默认行为不许被这段新代码顺手改掉）
         plug::set_active_registry(nullptr);
         error.clear();

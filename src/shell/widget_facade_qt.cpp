@@ -42,6 +42,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QTabWidget>
 #include <QProgressBar>
 #include <QPushButton>
@@ -55,6 +56,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 // ★ 本文件所有符号都是**内部实现**（只有 `install_qt_ui_facade` 需要对外）⇒ 整个文件裹在
@@ -213,8 +215,54 @@ std::thread::id& ui_thread_id() {
 }
 
 stk_widget* wrap(QWidget* widget) { return reinterpret_cast<stk_widget*>(widget); }
-QWidget* unwrap(plug::UiHandle handle) { return reinterpret_cast<QWidget*>(handle); }
-plug::UiHandle handle_of(stk_widget* widget) { return reinterpret_cast<plug::UiHandle>(widget); }
+
+// ★★ S-01（第三方只读审计 2026-10-18）：**句柄活性注册表**。
+//
+// 修前事实（审计原话）：`alive` 的实现是 `unwrap(widget) != nullptr`，而 `unwrap` 就是
+//   `reinterpret_cast<QWidget*>` —— **QWidget 被销毁后指针不会变 null** ⇒ 插件缓存过句柄
+//   再问 `alive()` **永远得到 true**，随后解引用就是悬垂访问。
+//
+// 修法：**每个发出去的句柄都登记一个 `QPointer<QWidget>`** —— `QPointer` 在 QObject 析构时
+//   自动置空，所以"活没活"第一次有了真凭据。三处口径：
+//     · `handle_of()` ＝ 唯一的**发句柄**入口 ⇒ 在这里登记；
+//     · `unwrap()` ＝ 所有 L1/L2 方法取控件的**唯一**入口 ⇒ 已登记的句柄一旦死了就返回
+//       `nullptr`（于是 `set_text` 之类**返回失败而不是悬垂解引用**）；
+//     · `alive()` ＝ 已登记 ⇒ 看 `QPointer`；**没登记 ⇒ 按旧口径（非空）**。没登记的是
+//       宿主自己传进来的句柄（例如面板根），我们没参与它的生命周期，不能替它编一个结论。
+//
+// ★ 为什么不禁用"没登记"那条路：插件页的 builder 会收到宿主给的 parent 句柄，它不在本表里；
+//   若一律判死，插件对"我自己这页的根"调 `alive()` 会突然变 false —— 那是**新造的假**。
+// ★ 表不删死项：删了之后同一个悬垂句柄会退回"没登记 ⇒ 非空 ⇒ true"，正好把本修法抵消。
+//   代价是每个"曾经造出来过"的控件留一个 `QPointer`（十几字节），一个会话里可以忽略。
+std::unordered_map<plug::UiHandle, QPointer<QWidget>>& handle_registry() {
+    static std::unordered_map<plug::UiHandle, QPointer<QWidget>>* instance =
+        new std::unordered_map<plug::UiHandle, QPointer<QWidget>>();
+    return *instance;
+}
+
+bool handle_alive(plug::UiHandle handle) {
+    if (handle == nullptr) return false;
+    const auto it = handle_registry().find(handle);
+    if (it == handle_registry().end()) return true;   // 没登记（宿主自有句柄）⇒ 旧口径
+    return !it->second.isNull();
+}
+
+QWidget* unwrap(plug::UiHandle handle) {
+    // 已登记的句柄：死了就**当作没有**（这一句让 `set_text`/`get_text`/… 全部安全）
+    if (handle != nullptr) {
+        const auto it = handle_registry().find(handle);
+        if (it != handle_registry().end() && it->second.isNull()) return nullptr;
+    }
+    return reinterpret_cast<QWidget*>(handle);
+}
+
+plug::UiHandle handle_of(stk_widget* widget) {
+    const plug::UiHandle handle = reinterpret_cast<plug::UiHandle>(widget);
+    if (widget != nullptr) {
+        handle_registry()[handle] = QPointer<QWidget>(reinterpret_cast<QWidget*>(widget));
+    }
+    return handle;
+}
 
 // 当前面板根（引擎层记的）：`parent == nullptr` 时落在这里（见 ui_facade.h 口径 ③）
 QWidget* resolve_parent(plug::UiHandle parent) {
@@ -473,8 +521,8 @@ const plug::UiFacade kQtFacade = {
             if (combo->count() > 0) combo->setCurrentIndex(0);
         }
     },
-    /* alive */
-    [](plug::UiHandle widget) { return unwrap(widget) != nullptr; },
+    /* alive：**真的判活**（S-01：已登记句柄看 QPointer；未登记的宿主句柄按旧口径非空） */
+    [](plug::UiHandle widget) { return handle_alive(widget); },
     /* log_append：宿主日志栏。装配时由外壳接上（`install_qt_ui_facade` 的 log_sink），
        这样引擎层不必认识 Hub。 */
     nullptr,
