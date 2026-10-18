@@ -2943,15 +2943,41 @@ int run_cli(const std::vector<std::string>& args) {
     xrkit::plugin::Registry plugin_registry;
     {
         const std::string dir = plugins_given ? plugins_dir : (xrkit::core::app_dir() + "/plugins");
-        // ★★ P2b：与 GUI 走**同一个**统一入口（`*.dll` + `*.py`）—— 修前两边各调
-        //   `load_plugins_from_dir`，Python 插件一旦加进来就会出现"GUI 有、CLI 没有"的分叉。
-        const std::vector<xrkit::plugin::RegistrationError> plugin_errors =
-            xrkit::plugin::load_all_plugins_from_dir(dir, plugin_registry, /*ui=*/nullptr);
+        // ★★ C-01 第二版（本批自我更正）：**默认目录不存在＝不算错**，这不是"吞错"，是口径。
+        //   第一版把"目录不存在"也当加载错误报了出来 —— 门禁当场抓到：`--fast` 的 `golden-db`
+        //   步红（`golden_db.py` 把 stdout+stderr 一起按 `\t` 切，多了三行 `PLUGINS-DEFAULT`）。
+        //   而"`plugins\` 目录不存在也不算错"是本仓**早就写在交付 README 与设计口径里的**：
+        //   GUI 也这么办。⇒ 默认路径下**目录不存在就不去加载**（不产生任何账）。
+        //   ★ 显式 `--plugins <不存在的目录>` **仍然照旧报错**（那是用户明确指了一个地方，
+        //     找不到就得说）—— 所以判据分两条：默认缺目录＝静默；显式缺目录＝报账。
+        const bool dir_exists =
+            std::filesystem::is_directory(xrkit::core::path_from_utf8(dir));
+        std::vector<xrkit::plugin::RegistrationError> plugin_errors;
+        if (plugins_given || dir_exists) {
+            // ★★ P2b：与 GUI 走**同一个**统一入口（`*.dll` + `*.py`）—— 修前两边各调
+            //   `load_plugins_from_dir`，Python 插件一旦加进来就会出现"GUI 有、CLI 没有"的分叉。
+            plugin_errors =
+                xrkit::plugin::load_all_plugins_from_dir(dir, plugin_registry, /*ui=*/nullptr);
+        }
         if (plugins_given) {
-            // 显式指定了插件目录才报账（默认路径下保持 CLI 输出与修前逐字节一致）
+            // 显式指定了插件目录才报账到 stdout（默认路径下保持 CLI 输出与修前逐字节一致）
             std::cout << "PLUGINS dir=" << dir << " errors=" << plugin_errors.size() << "\n";
             for (const xrkit::plugin::RegistrationError& e : plugin_errors) {
                 std::cout << "PLUGINS warn plugin=" << e.plugin << " reason=" << e.message << "\n";
+            }
+        } else if (!plugin_errors.empty()) {
+            // ★★ C-01（第三方只读审计 2026-10-18）：**默认插件目录的加载错误不许被吞**。
+            //   修前只有显式 `--plugins` 才把 `errors=N` 报出来；默认路径（`exe 旁边的 plugins\`，
+            //   也就是**用户真会用的那一条**）下加载失败只在 `core::log` 里留一行，
+            //   而日志可以关、也可以被刷走 ⇒ 用户看到的是"插件好像没生效"，没有任何计数可查。
+            //   ★ 走 **stderr**：stdout 与修前**逐字节一致**（既有契约/门禁比较的是 stdout，
+            //     例如 `tests/` 里那些逐行比对的判据），而"默认路径加载失败"这件事看得见。
+            //   ★ 前缀用 `PLUGINS-DEFAULT`（与显式路径的 `PLUGINS` 区分）：消费侧一眼能看出
+            //     "这是默认目录的账，不是我传进去的那个目录"。
+            std::cerr << "PLUGINS-DEFAULT dir=" << dir << " errors=" << plugin_errors.size() << "\n";
+            for (const xrkit::plugin::RegistrationError& e : plugin_errors) {
+                std::cerr << "PLUGINS-DEFAULT warn plugin=" << e.plugin << " reason=" << e.message
+                          << "\n";
             }
         }
     }

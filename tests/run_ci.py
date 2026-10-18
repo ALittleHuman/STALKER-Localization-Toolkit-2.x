@@ -6179,6 +6179,40 @@ def step_builder_guard(release: bool) -> None:
         fail("插件页 builder 没有异常护栏（C++ 插件抛一次就把进程带走）（S-02）")
 
 
+def step_plugins_default_errors(release: bool) -> None:
+    r"""**默认插件目录的加载错误不许被吞**（第三方只读审计 C-01；P17-155）。
+
+    修前事实：`tools/cli/main.cpp` 只有 `if (plugins_given)` 才把 `PLUGINS dir=… errors=N` 与
+    逐条 `PLUGINS warn …` 打到 stdout；**默认路径**（`exe 旁边的 plugins\`，也就是用户真会用的
+    那条）加载失败只在 `core::log` 里留一行 —— 日志可关、也可被刷走 ⇒ 用户看到"插件没生效"，
+    **没有任何计数可查**（零静默失守）。
+
+    修法：默认路径把同一笔账打到 **stderr**，前缀 `PLUGINS-DEFAULT`（逐条点名插件与原因）。
+    ★ 为什么换流不换语义：修前那条"默认路径 stdout 与逐字节一致"的口径要保住
+      （既有判据比较的是 stdout），而"加载失败"必须看得见。
+    判据 `tests/check_plugins_default_errors.py`（**黑盒**：把 CLI 与两枚 Python DLL 拷到临时目录跑，
+    不污染构建树）：A stderr 有 `errors=1`；A2 逐条点名；B stdout 里没有 `PLUGINS`（一致口径）；
+    C 干净目录不噪声；D 显式 `--plugins` 的旧路一字不改；E 静态锁（分支在、走 `std::cerr`）。
+    红证：把那一支改成永不成立 ⇒ A/A2/E1/E2 红（已实测）。
+    """
+    say("[plugins-default-errors] 默认插件目录的加载错误不许被吞（审计 C-01）")
+    script = ROOT / "tests" / "check_plugins_default_errors.py"
+    if not require_repo_file(script, "默认插件目录报账判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("PLUGINS-DEFAULT") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("默认路径的插件加载失败打到 stderr 且逐条点名；stdout 一致；显式路径一字不改（C-01）")
+    elif rc == 2:
+        prereq("默认插件目录报账的黑盒那半", "缺 CLI 构建产物（静态那几项已判、黑盒未验）", release)
+    else:
+        fail("默认插件目录的加载错误仍被吞掉（见上）：用户只会看到「插件好像没生效」（C-01）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6602,6 +6636,8 @@ STEPS = [
     ("build-residue", step_build_residue),
     # ★★ P17-154（第三方只读审计 S-02）：插件页 builder 的 C++ 异常护栏（静态锁）。
     ("builder-guard", step_builder_guard),
+    # ★★ P17-155（第三方只读审计 C-01）：默认插件目录的加载错误不许被吞（黑盒 ＋ 静态锁）。
+    ("plugins-default-errors", step_plugins_default_errors),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。
