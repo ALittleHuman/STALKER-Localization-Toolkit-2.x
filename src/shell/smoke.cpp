@@ -8014,6 +8014,92 @@ SmokeResult run_smoke() {
                       .arg(QString::fromStdString(error)));
         }
 
+        // ★★ T-02（第三方只读审计 2026-10-18，P1）：**加密 DB 的逐条提取也必须过闸门**。
+        //   修前形状：`extract_package` 先用 `list_db_seek`（**过**闸门 ⇒ 拿到的偏移属于
+        //   **解密产物**），再对每条调 `extract_entry_seek(image_path, …)` —— 打开的是**原始
+        //   加密文件**，而 `extract_entry_seek` 里**没有任何闸门**（`src/engine/fs/db.cpp`）。
+        //   SquashFS 分支恰好相反：每条 `read_file` 都重新过闸门 ⇒ **只有 DB 分支坏**。
+        //   症状：列条目成功，解包逐条报「偏移越界」或读出错误字节。
+        //   本判据的夹具**故意让密文与明文内容不同**（密文包 1 字节 / 明文包 27 字节）：
+        //   解密器把密文「解」成明文那一份 ⇒ 产物必须与明文包**逐字节一致**。
+        //   ★ 修前会读密文文件 offset 8 起的 27 字节 ⇒ 内容对不上 ⇒ 红（T-02 的红证）。
+        //   ★ 顺带锁「不许每条都解密一遍」：整批只许调解密器 **1 次**（列条目那次）。
+        {
+            const QString t02_dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_t02_gate"));
+            QDir(t02_dir).removeRecursively();
+            QDir().mkpath(t02_dir);
+            const QString t02_cipher = QDir(t02_dir).filePath(QStringLiteral("t02.stkenc.db"));
+            const QString t02_out = QDir(t02_dir).filePath(QStringLiteral("out"));
+            const std::string t02_payload = "PLAINTEXT-ONLY-0123456789";
+
+            const auto pack_one = [](const std::string& name, const std::string& data) {
+                std::vector<efs::DbPackItem> items;
+                efs::DbPackItem item;
+                item.path = name;
+                item.data.assign(data.begin(), data.end());
+                items.push_back(item);
+                return efs::pack_db(items, efs::DbFormat::Xdb);
+            };
+            const std::vector<uint8_t> t02_plain_raw = pack_one("plain.txt", t02_payload);
+            const std::vector<uint8_t> t02_cipher_raw = pack_one("cipher.txt", "C");
+            const auto dump_db = [](const QString& path, const std::vector<uint8_t>& raw) {
+                std::ofstream out(path.toStdString(), std::ios::binary | std::ios::trunc);
+                out.write(reinterpret_cast<const char*>(raw.data()),
+                          static_cast<std::streamsize>(raw.size()));
+                return raw.size() > 0;
+            };
+            check(!t02_plain_raw.empty() && !t02_cipher_raw.empty() &&
+                      dump_db(t02_cipher, t02_cipher_raw),
+                  QStringLiteral("T-02 夹具：造不出密文/明文 DB 包"));
+
+            const std::string t02_plain_text(t02_plain_raw.begin(), t02_plain_raw.end());
+            plug::Registry t02_reg;
+            int t02_decrypts = 0;
+            t02_reg.register_decryptor(
+                "t02_gate.dll", [](const std::string&) { return true; },
+                [&t02_decrypts, t02_plain_text](const std::string&, std::string& out) {
+                    ++t02_decrypts;
+                    out = t02_plain_text;
+                    return true;
+                });
+            plug::set_active_registry(&t02_reg);
+            const efs::ExtractTreeResult t02_res =
+                efs::extract_package(t02_cipher.toStdString(), t02_out.toStdString());
+            plug::set_active_registry(nullptr);
+
+            check(t02_res.ok && t02_res.failures.empty() && t02_res.files_written == 1,
+                  QStringLiteral("T-02 加密 DB 解包：应解出 1 个文件、零失败（实得 ok=%1 "
+                                 "files=%2 failures=%3 首条失败=%4）")
+                      .arg(t02_res.ok ? 1 : 0)
+                      .arg(t02_res.files_written)
+                      .arg(t02_res.failures.size())
+                      .arg(t02_res.failures.empty()
+                               ? QStringLiteral("<无>")
+                               : QString::fromStdString(t02_res.failures[0].reason)));
+
+            // 产物得**按字节**比（`extract_package` 把条目直接写在 `out_root` 下 ⇒
+            // `out/plain.txt`）。★ 这里**不许**用递归目录遍历：本仓"遍历只有一套"那条锁
+            //   （`walk-one` / `shell-smoke` 的 D2）会立刻红 —— 路径是确定的，直接读。
+            std::string t02_got;
+            const QString t02_product = QDir(t02_out).filePath(QStringLiteral("plain.txt"));
+            if (QFile::exists(t02_product)) {
+                QFile got_file(t02_product);
+                if (got_file.open(QIODevice::ReadOnly)) {
+                    const QByteArray bytes = got_file.readAll();
+                    t02_got.assign(bytes.constData(), static_cast<size_t>(bytes.size()));
+                }
+            }
+            check(t02_got == t02_payload,
+                  QStringLiteral("T-02 产物必须来自**解密产物**（期望 %1 字节 / 实得 %2 字节：%3）")
+                      .arg(static_cast<int>(t02_payload.size()))
+                      .arg(static_cast<int>(t02_got.size()))
+                      .arg(QString::fromStdString(t02_got.substr(0, 40))));
+            check(t02_decrypts == 1,
+                  QStringLiteral("T-02 整批只许解密 1 次（列条目那次；逐条提取走产物）实得 %1 次")
+                      .arg(t02_decrypts));
+            QDir(t02_dir).removeRecursively();
+        }
+
         // ④ 复位 ⇒ 与基线**逐值一致**（默认行为不许被这段新代码顺手改掉）
         plug::set_active_registry(nullptr);
         error.clear();

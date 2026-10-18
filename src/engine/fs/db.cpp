@@ -717,6 +717,9 @@ DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallb
         return res;
     }
     const std::string& source = gate.used_plugin ? gate.path : path;
+    // ★★ T-02（第三方只读审计 2026-10-18）：把"条目偏移属于哪份文件"露出去。
+    //   `extract_package` / CLI `--extract` 拿它去逐条提取 —— 修前它们传的是**原始**路径。
+    res.read_path = source;
     const auto bytes = std::filesystem::file_size(xrkit::core::path_from_utf8(source), ec);
     if (ec) {
         res.error = "读不出文件：" + source;
@@ -924,9 +927,23 @@ DbExtract extract_entry_seek(const std::string& path, const DbEntry& entry) {
         res.ok = true;   // 合法空文件（与内存版的 `sc == size_real == 0` 分支同结果）
         return res;
     }
-    std::ifstream in(xrkit::core::path_from_utf8(path), std::ios::binary);
+    // ★★ T-02（第三方只读审计 2026-10-18）：**本入口也必须过解密闸门**。
+    //   修前只有 `list_db_seek` 过闸门 ⇒ `extract_package` 用解密产物里的偏移、却去打开
+    //   **原始密文**：列条目成功、逐条提取报「偏移越界」或读出垃圾字节。
+    //   SquashFS 分支正好相反（每条 `read_file` 都过闸门）⇒ 只有 DB 分支坏。
+    //   口径与 `list_db_seek` / `squashfs.cpp::read_file` 逐字一致：
+    //     没有活动注册表 / 没有解密器命中 ⇒ `source == path`（与修前逐字节一致）；
+    //     已在产物目录里（调用方传的是 `DbListing::read_path`）⇒ 闸门直接放行、不二次解密。
+    const xrkit::plugin::DecryptGateResult gate =
+        xrkit::plugin::gate_active_read(path, nullptr);
+    if (!gate.ok) {
+        res.error = gate.error;
+        return res;
+    }
+    const std::string& source = gate.used_plugin ? gate.path : path;
+    std::ifstream in(xrkit::core::path_from_utf8(source), std::ios::binary);
     if (!in) {
-        res.error = "读不出文件：" + path;
+        res.error = "读不出文件：" + source;
         return res;
     }
     in.seekg(static_cast<std::streamoff>(entry.offset), std::ios::beg);
@@ -974,21 +991,29 @@ void append_entry_null(std::vector<uint8_t>& h, const std::string& name,
 }
 
 std::vector<uint8_t> build_header(const std::vector<DbPackItem>& items, DbFormat fmt,
-                                 std::vector<DbNameRewrite>* log, std::string* error) {
+                                 std::vector<DbNameRewrite>* log, std::string* error,
+                                 bool* ok) {
+    // ★★ T-04（第三方只读审计 2026-10-18）：**失败由返回值传出，不经 `error` 出参**。
+    //   修前 `pack_db` 靠 `error != nullptr && !error->empty()` 判断失败 ⇒ 不给 `error` 的
+    //   调用方拿到「空包头 ＋ 完整数据块」的包。`ok` 是**必填**的（不给默认值）。
+    *ok = true;
     std::vector<uint8_t> h;
     uint32_t off = 8;  // file-absolute offset（在 DATA chunk 头之后）
     for (const DbPackItem& it : items) {
-        // ★★ 2026-10-10（P17-65，审计 01 F-13）：**两条 4 GiB 窄化检查（opt-in）**。
+        // ★★ 2026-10-10（P17-65，审计 01 F-13）：**两条 4 GiB 窄化检查**。
         //   ① 单条目：`it.data.size()` 是 `size_t`，下面那句 `static_cast<uint32_t>` 在单条目
         //      ≥ 4 GiB 时**静默回绕**；
         //   ② 累计偏移：`off` 是 `uint32_t` 且只增不减，文件总长越过 4 GiB 时**静默回绕**。
         //   命中任一条都会产出"能打开、但条目大小/偏移全错"的 DB（比崩掉更难查）。
         //   ★★ 2026-10-10（P17-68，01 F-13 收官）：**检查已改成无条件** ——
         //   四处调用点（CLI / 官方 fs 页 / 门面 / py_host）都接上了出错理由（P17-65/66/67），
-        //   所以不再需要"给了 error 才检测"的 opt-in 保护；现在**任何**调用方都不可能拿到
-        //   一个静默窄化的包头（拿不到内容就不会落盘）。`error` 出参只用于**报理由**。
+        //   所以**没有**"给了 error 才检测"这回事；现在**任何**调用方都不可能拿到
+        //   一个静默窄化的包头（拿不到内容就不会落盘）。
+        //   ★★ T-04（2026-10-18）：失败经 `*ok` 传出，`error` 出参**只用于报理由**
+        //   （修前这条只在 `build_header` 里是对的，`pack_db` 又把闸门写回了看 `error`）。
         {
             if (!it.is_dir && it.data.size() > 0xFFFFFFFFull) {
+                *ok = false;
                 if (error != nullptr) {
                     *error = "单条目超过 4 GiB（DB 头字段是 uint32）：" + it.path + " = " +
                              std::to_string(it.data.size()) + " 字节";
@@ -998,6 +1023,7 @@ std::vector<uint8_t> build_header(const std::vector<DbPackItem>& items, DbFormat
             const uint64_t end = static_cast<uint64_t>(off) +
                                  static_cast<uint64_t>(it.is_dir ? 0 : it.data.size());
             if (end > 0xFFFFFFFFull) {
+                *ok = false;
                 if (error != nullptr) {
                     *error = "DB 总长越过 4 GiB（文件内偏移是 uint32）：处理到 " + it.path +
                              " 时累计 " + std::to_string(end) + " 字节";
@@ -1057,11 +1083,20 @@ std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& in_items, DbFormat f
     }
 
     if (rewrites != nullptr) rewrites->clear();
-    std::vector<uint8_t> header = build_header(items, fmt, rewrites, error);
-    // ★★ 2026-10-10（P17-65，审计 01 F-13）：**检测是 opt-in 的** —— 调用方给了 `error`
-    //   出参时才会被置位；这时我们**不再往下走**（不压缩、不拼数据），直接返回空。
-    //   未给 `error` 的调用方（今天还有三处）**行为逐字节不变**，留待各自单独接线。
-    if (error != nullptr && !error->empty()) return {};
+    bool header_ok = true;
+    std::vector<uint8_t> header = build_header(items, fmt, rewrites, error, &header_ok);
+    // ★★ T-04（第三方只读审计 2026-10-18）：**失败信号只看 `header_ok`，不看 `error` 出参**。
+    //   修前这里是 `if (error != nullptr && !error->empty()) return {};` —— 于是
+    //   `error == nullptr` 的调用方（本仓 smoke 里就有 `pack_db(items, fmt)`）拿到的是
+    //   「空包头 ＋ 完整数据块」：LZHUF 压一个空 header、再拼上数据区，
+    //   产出**能打开、但一个条目都没有**的包（比崩掉更难查）。
+    //   现在的口径：不传 `error` 就**拿不到失败的包**（失败理由只是不报，不改变产物）。
+    if (!header_ok) {
+        if (error != nullptr && error->empty()) {
+            *error = "DB 头构造失败（4 GiB 窄化检查命中）⇒ 不产出包";
+        }
+        return {};
+    }
     std::vector<uint8_t> compressed = lzhuf_encode(header.data(), header.size());
     if (const Scrambler* sc = scrambler_for(fmt)) compressed = sc->encrypt(compressed);
 

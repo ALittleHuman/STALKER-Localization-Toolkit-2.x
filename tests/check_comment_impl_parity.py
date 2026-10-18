@@ -44,6 +44,7 @@ HUB_H = ROOT / "src" / "shell" / "hub.h"
 SCREEN_SCALE_H = ROOT / "src" / "shell" / "screen_scale.h"
 SNIFF_CPP = ROOT / "src" / "engine" / "text" / "sniff.cpp"
 TEXT_SPEC = ROOT / "docs" / "2.0.0-文本模块规格.md"
+ATOMIC_H = ROOT / "include" / "xrkit" / "core" / "atomic_write.h"
 
 
 def audit_big5_cols(text: str) -> list:
@@ -133,16 +134,46 @@ def audit_sniff_thresholds(sniff_cpp: str, spec: str) -> list:
     return problems
 
 
+def audit_atomic_verify_claims(atomic_h: str) -> list:
+    """⑥ ★★ T-03（第三方只读审计 2026-10-18）：**写后校验的能力口径必须写准**。
+
+    事实（审计原话）：`Streamed` 档的期望哈希与实际哈希**同源**、`written` 数的是喂给
+    `ofstream` 的字节数 ⇒ 它抓不到磁盘层短写，而注释把能力写成了"抓得住写错内容"。
+    修法（用户 2026-10-16 裁决「A ＋ 限定语」）：补一次 `file_size(temp)` 比对，并把口径写成
+    「防进程内短写 ＋ 写后检测落点大小；**不承诺断电场景**（未 flush）」。
+    本组钉住**口径本身**（实现的行为锁在 CLI `--selftest` 里）：
+      · 必须写明「不承诺 … 断电」与「flush」（缺一样 ⇒ 后人可能再把话说满）；
+      · 必须点出机制是 `file_size`（说清"检测的是什么"）；
+      · **不许**再出现审计点名的那句「抓得住写错内容」（那是修前把话说满的来源）。
+    """
+    problems = []
+    head = atomic_h[:atomic_h.find("namespace xrkit::core")]
+    for needle, why in (("不承诺", "「不承诺」这类限定语"),
+                        ("断电", "「断电场景」这件事"),
+                        ("flush", "「未 flush」这个前提")):
+        if needle not in head:
+            problems.append("atomic_write.h：写后校验的口径里缺了 %s（T-03：能力不许写满）" % why)
+    if "file_size" not in head:
+        problems.append("atomic_write.h：没点出「检测落点大小」用的是 `file_size` —— 读者会以为在逐字节复核")
+    if "抓得住写错内容" in head:
+        problems.append("atomic_write.h：又写回「抓得住写错内容」了（审计点名的那句；"
+                        "Streamed 档不逐字节复核，逐字节要 `Readback`）")
+    return problems
+
+
 def selfcheck() -> tuple:
     good_enc = "constexpr uint16_t kBig5Cols = 0xFE - 0x40 + 1;      // 191\n"
     good_theme_h = "//   scale: 见 `ui_size_choices()`（当前是 0.9 小 / 1.0 默认）\nstruct UiSizeChoice {"
     good_theme_cpp = "static const std::vector<UiSizeChoice> kChoices = {{...}};\n"
     good_hub = "// 改用**回调**：Hub 造页时把它的 log_line 接进来\n// 本类**不用 Q_OBJECT / 不用 signals**\nvoid log_line(const QString& text);\n"
     good_scale = "//   ② **不要再宣称\"用逻辑 DPI\"** —— 真机实测它恒为 96\nnamespace xrkit::shell {"
+    good_atomic = ("// 默认档另加一次 `file_size(temp)` 比对；**不承诺断电场景**（未 flush）。\n"
+                   "namespace xrkit::core {")
     cases = [
         ("好形状", 0,
          audit_big5_cols(good_enc) + audit_theme_scale(good_theme_h, good_theme_cpp)
-         + audit_hub_invokable(good_hub) + audit_screen_scale(good_scale)),
+         + audit_hub_invokable(good_hub) + audit_screen_scale(good_scale)
+         + audit_atomic_verify_claims(good_atomic)),
         ("注释值算错（修前形状）", 1,
          audit_big5_cols("constexpr uint16_t kBig5Cols = 0xFE - 0x40 + 1;      // 190\n")),
         ("头文件里抄了一份档位值", 1,
@@ -165,6 +196,10 @@ def selfcheck() -> tuple:
         ("规格被改而常量没跟上", 1,
          audit_sniff_thresholds("constexpr size_t kStatMinEvidence = 2;\nconstexpr double kStatMargin = 0.20;\n",
                                 "决定性 = 证据(高位字节数) >= 2  且  |score| >= 0.15")),
+        ("写后校验口径把话说满（T-03 修前形状）", 1,
+         audit_atomic_verify_claims("// 流式档：边写边算哈希，**抓得住写错内容**。\nnamespace xrkit::core {")),
+        ("写后校验口径丢了「不承诺断电」", 1,
+         audit_atomic_verify_claims(good_atomic.replace("不承诺", "覆盖"))),
     ]
     results, ok = [], True
     for label, want, problems in cases:
@@ -192,7 +227,8 @@ def main() -> int:
     print("   ✓ 反例自证 %d/%d" % (len(results), len(results)))
     print()
 
-    for path in (ENCODING, THEME_H, THEME_CPP, HUB_H, SCREEN_SCALE_H, SNIFF_CPP, TEXT_SPEC):
+    for path in (ENCODING, THEME_H, THEME_CPP, HUB_H, SCREEN_SCALE_H, SNIFF_CPP, TEXT_SPEC,
+                 ATOMIC_H):
         if not path.is_file():
             print("COMMENT-PARITY fail 仓库自带文件缺失：%s" % path)
             return 1
@@ -203,6 +239,7 @@ def main() -> int:
     ss = SCREEN_SCALE_H.read_text(encoding="utf-8", errors="replace")
     sn = SNIFF_CPP.read_text(encoding="utf-8", errors="replace")
     spec = TEXT_SPEC.read_text(encoding="utf-8", errors="replace")
+    ah = ATOMIC_H.read_text(encoding="utf-8", errors="replace")
 
     groups = [
         ("① `kBig5Cols` 注释值 == 算出来的值（02 F-10）", audit_big5_cols(enc)),
@@ -210,6 +247,8 @@ def main() -> int:
         ("③ `log_line` 不带空标 `Q_INVOKABLE` ＋ 留下回调口径（03 F-11）", audit_hub_invokable(hh)),
         ("④ `screen_scale.h` 文件头不再宣称「用逻辑 DPI」（03 F-09）", audit_screen_scale(ss)),
         ("⑤ sniff 门槛常量 == 规格里那两个数（02 F-13）", audit_sniff_thresholds(sn, spec)),
+        ("⑥ 写后校验的能力口径写准（不承诺断电／未 flush）（T-03）",
+         audit_atomic_verify_claims(ah)),
     ]
     print("-- 实测 --")
     problems = []
@@ -222,7 +261,7 @@ def main() -> int:
     if problems:
         print("COMMENT-PARITY fail %d 项不成立" % len(problems))
         return 1
-    print("COMMENT-PARITY ok 五处「字据 ↔ 实现」都同源（02 F-10 / 03 F-09 / 03 F-10 / 03 F-11 / 02 F-13 已被判据钉住）")
+    print("COMMENT-PARITY ok 六处「字据 ↔ 实现」都同源（02 F-10 / 03 F-09 / 03 F-10 / 03 F-11 / 02 F-13 / T-03 已被判据钉住）")
     return 0
 
 

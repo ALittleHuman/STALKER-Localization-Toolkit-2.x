@@ -1988,6 +1988,65 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         std::filesystem::remove_all(dir, ec);
     });
 
+    // ★★ T-03（第三方只读审计 2026-10-18；用户 2026-10-16 裁决「A ＋ 限定语」）：
+    //   **默认档（Streamed）必须能检测"落点短写"**。
+    //
+    //   修前事实（审计原话，已逐行核实）：`expect_hash` 与 `got_hash` 两个操作数**同源**
+    //   ——都是内存里那一份 `data`（`fnv1a(data.data(), …)` vs `fnv1a(data.data()+off, …)`），
+    //   而 `written` 数的是"喂给 `ofstream` 的字节数"，不是盘上文件大小 ⇒ 流内写失败能抓，
+    //   **磁盘层短写抓不到**，注释却把它写成"抓得住写错内容"。
+    //
+    //   判据形状：注入"写完之后把 `.part` 截短 1 字节"（模拟盘上少了字节），断言
+    //     ① 必须**报错**（修前会判成功 ⇒ 红）；② 理由非空且含「自校验」；
+    //     ③ **不许** rename 出目标文件；④ **不许**留下 `.part`；
+    //     ⑤ 撤掉注入 ⇒ 绿（证明①的红来自注入，不是永远为红）。
+    //   ★ 用户加的限定语写进了注释与报错文案：买到的是「检测并明确报错」，不是「防止」；
+    //     **不承诺断电场景**（本档没 flush）。
+    reg.add("core: 写后校验能检测**落点短写**（Streamed 档；不承诺断电）", [](CheckContext& ctx) {
+        namespace core = xrkit::core;
+        std::error_code ec;
+        const std::filesystem::path dir =
+            std::filesystem::temp_directory_path(ec) / "xrkit_selftest_t03_shortwrite";
+        std::filesystem::remove_all(dir, ec);
+        std::filesystem::create_directories(dir, ec);
+        const std::filesystem::path target = dir / "short.bin";
+        std::filesystem::path part = target;
+        part += L".part";
+        const std::vector<uint8_t> data(4096, 0x7B);
+
+        core::WriteProbe probe;
+        probe.truncate_temp_file = [](const std::string& path_utf8) -> bool {
+            std::error_code e;
+            const std::filesystem::path p = core::path_from_utf8(path_utf8);
+            const std::uintmax_t n = std::filesystem::file_size(p, e);
+            if (e || n == 0) return false;
+            std::filesystem::resize_file(p, n - 1, e);
+            return !e;
+        };
+        const core::WriteProbe saved = core::set_write_probe(probe);
+        std::string error;
+        const bool ok = core::write_file_atomic(core::path_to_utf8(target), data,
+                                                /*atomic=*/true, error,
+                                                core::WriteVerify::Streamed);
+        const bool part_left = std::filesystem::exists(part);
+        const bool target_left = std::filesystem::exists(target);
+        core::set_write_probe(saved);
+
+        check(ctx, !ok, "落点短写（临时文件被截 1 字节）竟被 Streamed 档判为**成功** —— 这条锁恒真");
+        check(ctx, !error.empty(), "落点短写失败了却没有理由（零静默：要给逐条原因）");
+        check(ctx, error.find("自校验") != std::string::npos, "落点短写的理由不对：" + error);
+        check(ctx, !target_left, "落点短写还是 rename 出了目标文件");
+        check(ctx, !part_left, "落点短写留下了 .part");
+
+        // 反向格：撤掉注入 ⇒ 同一条路必须绿
+        std::string error2;
+        const bool ok2 = core::write_file_atomic(core::path_to_utf8(target), data,
+                                                 /*atomic=*/true, error2,
+                                                 core::WriteVerify::Streamed);
+        check(ctx, ok2, "撤掉落点短写注入后还是红（锁有残留状态）：" + error2);
+        std::filesystem::remove_all(dir, ec);
+    });
+
     // ★★ 2026-10-05（本批小件 ②）**性能锁换成"行为型"**。
     //
     // 旧判据是**耗时上界**（"默认档不比参照慢出量级"）—— 现场：本机余量只有 8%，
@@ -3367,8 +3426,11 @@ int run_cli(const std::vector<std::string>& args) {
                 std::cout << "EXTRACT error reason=归档里没有该条目: " << rel << "\n";
                 return kExitFail;
             }
+            // ★★ T-02（第三方只读审计 2026-10-18）：**取那一条也要读 `list.read_path`** ——
+            //   有插件解密器命中时它是解密产物；修前这里传的是原始 `source`（密文）⇒ 偏移对不上。
+            const std::string& db_source = list.read_path.empty() ? source : list.read_path;
             const xrkit::engine::fs::DbExtract r =
-                xrkit::engine::fs::extract_entry_seek(source, *found);
+                xrkit::engine::fs::extract_entry_seek(db_source, *found);
             if (!r.ok) {
                 std::cout << "EXTRACT error reason=" << r.error << "\n";
                 return kExitFail;

@@ -5835,6 +5835,74 @@ def step_convert_bom(release: bool) -> None:
         fail("编码转换没认出宽 BOM（见上）：UTF-16/32 会被当 windows-1251 有损解码（T-01）")
 
 
+def step_pack_db_api(release: bool) -> None:
+    r"""`pack_db` 的失败信号**不许依赖可选出参**（第三方审计 T-04；P17-143）。
+
+    修前事实：`build_header()` 的两条 4 GiB 窄化检查是**无条件**的（P17-68 改的），
+    但 `pack_db()` 的中止条件写成了 `if (error != nullptr && !error->empty()) return {};`
+    ⇒ `error == nullptr` 的调用方（本仓 smoke 里就有 `pack_db(items, fmt)`）拿到的是
+    **空包头 ＋ 完整数据块**：LZHUF 压一个空 header、再拼上数据区，
+    产出「能打开、但一个条目都没有」的包（比崩掉更难查）。`db.h` 的注释还写着
+    「给了它才启用检查」，与 `.cpp` 的「无条件」互相矛盾 —— 审计把两句都点出来了。
+
+    判据 `tests/check_pack_db_api.py`：A/B/C/D 静态（失败信号的形状、注释口径），
+    E 是**正控**（CLI `--pack-db` → `--dump` 正常路径没被弄坏）。
+    ★ 为什么 A/B/C 只能静态判：两条检查要真的持有 4 GiB 数据才可能触发（`data` 是实体
+      `std::vector`），门禁里不可能跑 —— 判的是「闸门看不看返回值」这件事本身。
+    红证：把闸门退回 `error != nullptr && ...` ⇒ B1/B2/C1 红（已实测，见 P17-143 批报告）。
+    """
+    say("[pack-db-api] pack_db 的失败信号：看返回值，不看 error 出参（第三方审计 T-04）")
+    script = ROOT / "tests" / "check_pack_db_api.py"
+    if not require_repo_file(script, "pack_db 失败信号判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("PACK-DB-API") \
+                or s.startswith("==") or s.startswith("\u00b7") or s.startswith("\u21d2"):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("失败信号只看返回值（不传 error 也拿不到坏包）；正常打包路径仍通（T-04）")
+    elif rc == 2:
+        prereq("pack_db 判据的运行时正控", "缺 CLI 构建产物（静态那些项已判、运行时正控未验）", release)
+    else:
+        fail("pack_db 的失败信号又回到了看 `error` 出参（见上）：不传 error 的调用方会拿到无条目表的包（T-04）")
+
+
+def step_version_ledger(release: bool) -> None:
+    r"""`version.json` 台账**对着认账账断账**（第三方审计 B-5／H-03；P17-143）。
+
+    修前：台账里有 10 条占位 commit（`2.0.0 ALPHA.13–16/19–23/BETA.1` 的串 `2.0.0 ALPHA.0`）、
+    36 条幽灵 artifacts（`dist/` 下早期日志与 zip）、以及断号 17/107，**没人认账**。
+    第一版判据直接要求"必须是真提交号/路径必须存在" ⇒ 对历史痕迹**永久红**（＝没有判据）。
+
+    用户 2026-10-16 裁决：**认账、不改史**（历史已推送、批报告按 SHA 引用、历史是回退点）
+    ⇒ 改成「对照只追加账本 `docs/2.0.0-版本台账认账.md`」：
+    现状里**出现账上没有的**占位/幽灵/断号 ⇒ 红；账上有的 ⇒ 豁免。
+    账上每行还必须**带理由**（不是一串裸键）。
+    红证（已实测）：空账本 ⇒ 红；账本删一条 ⇒ 只点名那一条；给 version.json 造一条新占位 ⇒ 红。
+    """
+    say("[version-ledger] version.json 台账：占位/幽灵/断号必须对得上认账账（第三方审计 B-5）")
+    script = ROOT / "tests" / "check_version_ledger.py"
+    if not require_repo_file(script, "台账对账判据"):
+        return
+    if not require_repo_file(ROOT / "docs" / "2.0.0-版本台账认账.md", "版本台账认账账"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("VERSION-LEDGER") \
+                or s.startswith("==") or s.startswith("\u00b7") or s.startswith("\u73b0\u72b6") \
+                or s.startswith("\u8d26\u4e0a"):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("占位/幽灵/断号逐条对得上账，且每条都有理由（B-5）")
+    elif rc == 2:
+        prereq("台账对账的输入", "缺 version.json 或认账账（判据没跑成，不是通过）", release)
+    else:
+        fail("version.json 里出现了**账上没有**的占位/幽灵/断号（见上）：要么它是真的，要么进认账账（B-5）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6229,6 +6297,12 @@ STEPS = [
     ("loose-guard", step_loose_guard),
     ("lzhuf-delta", step_lzhuf_delta),
     ("convert-bom", step_convert_bom),
+    # ★★ P17-143（第三方只读审计 T-04）：`pack_db` 的失败信号不许依赖可选出参。
+    #   静态判据 + 运行时正控（要 CLI 产物）；被 `--only` 过滤时进 UNCOVERED。
+    ("pack-db-api", step_pack_db_api),
+    # ★★ P17-143（第三方只读审计 B-5／H-03）：台账对**只追加的认账账**断账。
+    #   纯静态（读 version.json + docs/）；被 `--only` 过滤时进 UNCOVERED。
+    ("version-ledger", step_version_ledger),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。

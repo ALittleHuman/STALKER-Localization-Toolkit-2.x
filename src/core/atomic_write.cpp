@@ -184,6 +184,12 @@ bool write_file_atomic(const std::string& path, const std::vector<uint8_t>& data
     //   与校验结果无关（失败也照样报 —— 那正是"开关到底有没有生效"要看的）。
     if (g_write_probe.record != nullptr) g_write_probe.record(path, verify);
 
+    // ★★ T-03（第三方只读审计 2026-10-18）：**落点短写**注入（模拟磁盘层短写）。
+    //   与下面的 `tamper_temp_file` 分开：那个改内容、这个改长度。默认 nullptr ⇒ 生产零注入。
+    if (g_write_probe.truncate_temp_file != nullptr) {
+        g_write_probe.truncate_temp_file(path_to_utf8(temp));
+    }
+
     // 自检注入：写完之后、校验之前动一下临时文件（证明"读回复核真的在读回"）。
     // ★ **只在读回档触发**：流式档不读回临时文件，动了它只会让"写出去的产物"变成脏的，
     //   自检就自相矛盾了（2026-10-05 实测踩到）。默认（未设探针）这一段完全是死的。
@@ -226,6 +232,28 @@ bool write_file_atomic(const std::string& path, const std::vector<uint8_t>& data
         }
         if (got_hash != expect_hash) {
             error = "自校验不一致（写出的字节哈希与待写内容不同）";
+            remove_with_retry(temp, error);
+            return false;
+        }
+        // ★★ T-03（第三方只读审计 2026-10-18；用户 2026-10-16 裁决「A ＋ 限定语」）：
+        //   **写后检测落点大小**（一次 `stat`，零额外 I/O）。
+        //   上面两条判据的两个操作数都来自**内存里那一份** ⇒ 磁盘层短写抓不到；这里补上。
+        //   ★ 诚实口径（用户原话要点，别改成"防止"）：它买到的是「检测并明确报错」，
+        //     不是「防止」——本档**没有** FlushFileBuffers/fsync，`file_size` 可能只是
+        //     进程/OS 缓存里的大小 ⇒ **不承诺断电/崩溃场景**。要覆盖断电得 flush ＋ stat
+        //     （多一次真落盘），成本单独立项裁定。
+        std::error_code size_ec;
+        const std::uintmax_t on_disk = stdfs::file_size(temp, size_ec);
+        if (size_ec) {
+            error = "自校验失败（读不出落点大小：" + size_ec.message() +
+                    "；本档未 flush，不承诺断电场景）";
+            remove_with_retry(temp, error);
+            return false;
+        }
+        if (on_disk != static_cast<std::uintmax_t>(data.size())) {
+            error = "自校验不一致（落点 " + std::to_string(on_disk) + " 字节 ≠ 待写 " +
+                    std::to_string(data.size()) +
+                    " 字节；本档未 flush，**不承诺断电场景**）";
             remove_with_retry(temp, error);
             return false;
         }

@@ -70,13 +70,12 @@ struct DbNameRewrite {
 
 // 封包（写路径）：LZHUF 编码 + scrambler，产物应与 1.x 的 pack_db **逐字节一致**。
 // `rewrites` 非空 ⇒ 填**逐条**改写台账（返回后为空 vector = 一个名字都没被改写）。
-// 默认 `nullptr` ⇒ 行为与旧版**逐字节相同**（不给台账的调用点不用改）。
+// ★ `error` 是**可选的出错理由**，**不是**开关：不给它照样检查、照样拒绝。
+//   T-04（第三方只读审计 2026-10-18）：两条 4 GiB 窄化检查（单条目 / 累计偏移）是
+//   **无条件**的；命中时 `pack_db` 返回**空 vector**（调用方**不许写盘**），
+//   有 `error` 就把理由写进去，没有就只是不报理由 —— **产物形态不受出参有无影响**。
 std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& items, DbFormat fmt,
                              std::vector<DbNameRewrite>* rewrites = nullptr,
-                             // ★★ 2026-10-10（P17-65，审计 01 F-13）：**可选**的出错理由。
-                             //   给了它（非 `nullptr`）才启用"4 GiB 窄化"两条检查（单条目 / 累计偏移）；
-                             //   命中时返回**空 vector** 并置 error ⇒ 调用方**不许写盘**。
-                             //   不给（默认 `nullptr`）＝保持旧语义（未接线的调用点行为不变）。
                              std::string* error = nullptr);
 
 // ── seek 式读盘（大包的唯一可行路径）─────────────────────────────────
@@ -111,6 +110,12 @@ struct DbListing {
     //   —— 两个一起露给用户才算可观测（零静默）。
     std::string whole_file_reason;
     bool ambiguous = false;      // 唯一自洽判定出多个候选（此时走旧路径裁决）
+    // ★★ T-02（第三方只读审计 2026-10-18）：**这次列条目读的是哪份文件**。
+    //   没有插件解密器命中时 == 入参 `path`；命中时 == **解密产物**的路径
+    //   （`%TEMP%\xrkit_decrypted\<name>.decrypted`）。
+    //   为什么必须露出来：`entries` 里的 `offset` 是**按这份文件**算的。逐条提取如果拿原始
+    //   加密路径去读，就会「列条目成功、逐条提取报偏移越界/读出垃圾」—— 修前的真实现状。
+    std::string read_path;
 };
 
 // ★★ 2026-10-11（P17-85，审计 01 F-09 C 步的**最后一处**）：把"这次是怎么读的"三个事实
@@ -140,6 +145,9 @@ DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallb
 
 // 单条目 seek 提取：只读那一条的那一段（解包大 DB 时不再整包进内存）。
 // 与 `extract_entry(raw, entry)` 的产物**逐值一致**（同一段字节、同一套解码）。
+// ★★ T-02（第三方只读审计 2026-10-18）：**本入口也过解密闸门**（`plugin::gate_active_read`）。
+//   修前只有 `list_db_seek` 过闸门 ⇒ 加密包"列得出来、逐条提取却读原始密文"。
+//   传**解密产物**的路径（`DbListing::read_path`）进来时，闸门认得出"已在产物目录里"⇒ 不二次解密。
 DbExtract extract_entry_seek(const std::string& path, const DbEntry& entry);
 
 }  // namespace xrkit::engine::fs

@@ -524,6 +524,11 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
         result.error = listed.error;
         return finish();
     }
+    // ★★ T-02（第三方只读审计 2026-10-18）：**条目偏移属于 `listed.read_path` 那份文件**。
+    //   有插件解密器命中时它是**解密产物**；逐条提取必须读那一份（修前读的是原始密文 ⇒
+    //   列条目成功、逐条报「偏移越界」/读出垃圾字节）。
+    //   ★ 这样做**整批只解密一次**（`extract_entry_seek` 里的闸门认出"已在产物目录里"）。
+    const std::string& db_source = listed.read_path.empty() ? image_path : listed.read_path;
     result.ok = true;   // 从这里往后：单项失败算单项（与 SquashFS 分支同口径）
     ArtifactTally tally;   // ★ 产物口径：同一落点只算一次（真机 `maps\*.db` 的重复登记就靠它）
 
@@ -592,7 +597,7 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
             if (tally.note("d:", safe.path)) ++result.dirs_created;   // 产物口径（同落点只算一次）
             continue;
         }
-        const DbExtract data = extract_entry_seek(image_path, entry);
+        const DbExtract data = extract_entry_seek(db_source, entry);
         if (!data.ok) {
             result.failures.push_back({entry.path, data.error});
             continue;

@@ -57,6 +57,8 @@ MSVC 编 Qt 必须带 `/Zc:__cplusplus`（否则 Qt 触发 `#error C1189`）与 
 - `docs/2.0.0-待拍板清单.md` —— 14 条开放项与决策记录
 - `docs/2.0.0-SquashFS-writer规格.md` —— 自写 writer 的**逐字节复刻规则**与取证（M1-5）
 - `docs/2.0.0-文本模块规格.md` —— 文本模块的两条编码链、提取规则、门禁与缺口记账（M1-6）
+- `docs/2.0.0-版本台账认账.md` —— `version.json` 里**不可核**的历史痕迹（占位 commit／幽灵 artifacts／断号）
+  的**只追加认账账**：不改历史，但能把"现状里出现账上没有的项"机械判红（门禁步 `version-ledger`）
 
 ## 构建与门禁
 
