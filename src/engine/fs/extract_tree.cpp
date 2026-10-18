@@ -184,7 +184,15 @@ std::string refuse_if_link_traversed(const std::string& out_root, const std::str
     {
         std::error_code root_ec;
         const stdfs::file_status root_status = stdfs::symlink_status(root, root_ec);
-        if (is_link_or_junction(root)) {
+        // ★★ S-06（第三方只读审计 2026-10-18）：**问不出来就拒绝**（fail-closed）。
+        //   修前这里只看 `is_link_or_junction()`，而它在 stat 失败时返回 false ⇒ 守卫在
+        //   非法字符/超长路径/权限异常这些**最需要它**的输入上静默放行。
+        const LinkProbe root_probe = probe_link(root);
+        if (root_probe == LinkProbe::StatFailed) {
+            return "拒绝落盘：**问不出**输出根的属性（stat 失败，且不是「不存在」）：" +
+                   xrkit::core::path_to_utf8(root) + " —— 守卫不许 fail-open";
+        }
+        if (root_probe == LinkProbe::IsLink) {
             return "拒绝落盘：**输出根**本身是软链接/重解析点（" +
                    xrkit::core::path_to_utf8(root) + "）—— 会写到根外，本工具不跟";
         }
@@ -200,7 +208,13 @@ std::string refuse_if_link_traversed(const std::string& out_root, const std::str
         cur /= part;
         std::error_code seg_ec;
         const stdfs::file_status status = stdfs::symlink_status(cur, seg_ec);
-        if (is_link_or_junction(cur)) {
+        // ★★ S-06：同一条口径 —— 段上问不出来也拒（不存在的那一段仍放行，见下面那条注释）。
+        const LinkProbe seg_probe = probe_link(cur);
+        if (seg_probe == LinkProbe::StatFailed) {
+            return "拒绝落盘：**问不出**输出路径上某一段的属性（stat 失败）：" +
+                   xrkit::core::path_to_utf8(cur) + " —— 守门人自己看不见，就不许放行";
+        }
+        if (seg_probe == LinkProbe::IsLink) {
             return "拒绝落盘：输出目录里有**软链接/重解析点**（" +
                    xrkit::core::path_to_utf8(cur) + "）—— 会写到根外，本工具不跟";
         }
@@ -212,7 +226,13 @@ std::string refuse_if_link_traversed(const std::string& out_root, const std::str
     }
     std::error_code leaf_ec;
     const stdfs::file_status leaf = stdfs::symlink_status(target, leaf_ec);
-    if (is_link_or_junction(target)) {
+    // ★★ S-06：落点本身问不出来也拒（同一条 fail-closed 口径）。
+    const LinkProbe leaf_probe = probe_link(target);
+    if (leaf_probe == LinkProbe::StatFailed) {
+        return "拒绝落盘：**问不出**落点的属性（stat 失败）：" + xrkit::core::path_to_utf8(target) +
+               " —— 守卫不许 fail-open";
+    }
+    if (leaf_probe == LinkProbe::IsLink) {
         return "拒绝落盘：落点本身是**软链接/重解析点**（" +
                xrkit::core::path_to_utf8(target) + "）—— 本工具不跟";
     }

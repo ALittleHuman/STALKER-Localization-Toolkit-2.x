@@ -57,22 +57,54 @@ namespace xrkit::engine::fs {
 // ★ 边界（如实写）：本机**没装 WSL**（`wsl --status` 报"未安装用于 Linux 的 Windows 子系统"）
 //   ⇒ `LX_*` 那类标签**在本机无法实测**；上面它被归为 follow 是**按官方位定义推出来的**，
 //   不是实测结论。判据里对此有自曝（见 `check_loose_entries_guard.py` 的 ⑤ 段）。
-inline bool is_link_or_junction(const std::filesystem::path& p) {
+// ★★ S-06（第三方只读审计 2026-10-18）：**"判不出来"必须与"不是链接"分开**。
+//   修前 `is_link_or_junction` 在 `FindFirstFileW` 失败时直接 `return false` —— 那是 **fail-open**：
+//   非法字符、超长路径、权限异常……任何一种"stat 失败"都被读成"这里没有链接，放心写"，
+//   守卫在最需要它的那类输入上**静默失效**（审计原话）。
+//   现在拆三态：`NotLink` / `IsLink` / `StatFailed`，**只有"路径不存在"才算 NotLink**
+//   （那是"等会儿要建的普通目录/文件"）；其它失败一律 `StatFailed`，由**守卫侧**决定怎么处置
+//   （`refuse_if_link_traversed` 的选择是**拒绝** —— 守卫就该 fail-closed）。
+//   ★ 兼容：`is_link_or_junction()` 保留（等价于 `probe_link()==IsLink`），老调用点不必全改；
+//     **安全相关**的调用点要用 `probe_link()` 并显式处理 `StatFailed`。
+enum class LinkProbe {
+    NotLink,     // 不是"会跟出去"的链接（含"路径不存在"）
+    IsLink,      // 软链接 / junction / 名字代理型重解析点
+    StatFailed,  // **问不出来**（FindFirstFileW / symlink_status 失败，且不是"不存在"）
+};
+
+inline LinkProbe probe_link(const std::filesystem::path& p) {
 #if defined(_WIN32)
     std::wstring w = p.wstring();
     while (!w.empty() && (w.back() == L'\\' || w.back() == L'/')) w.pop_back();
-    if (w.empty()) return false;
+    if (w.empty()) return LinkProbe::NotLink;
     WIN32_FIND_DATAW data{};
+    ::SetLastError(ERROR_SUCCESS);
     HANDLE h = ::FindFirstFileW(w.c_str(), &data);
-    if (h == INVALID_HANDLE_VALUE) return false;
+    if (h == INVALID_HANDLE_VALUE) {
+        const DWORD err = ::GetLastError();
+        // 只把"真的不存在"读成 NotLink；`ERROR_INVALID_NAME`(123)、`ERROR_ACCESS_DENIED`(5)、
+        // `ERROR_FILENAME_EXCED_RANGE`(206) 等一律 StatFailed —— 那是"问不出来"，不是"没有"。
+        if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) return LinkProbe::NotLink;
+        return LinkProbe::StatFailed;
+    }
     ::FindClose(h);
-    if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return false;
+    if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return LinkProbe::NotLink;
     // 名字代理位（name surrogate）：置位 ⇒ 路径解析跟着走 ⇒ 当链接。
     constexpr DWORD kNameSurrogate = 0x20000000u;
-    return (data.dwReserved0 & kNameSurrogate) != 0;
+    return (data.dwReserved0 & kNameSurrogate) != 0 ? LinkProbe::IsLink : LinkProbe::NotLink;
 #else
-    return std::filesystem::is_symlink(std::filesystem::symlink_status(p));
+    std::error_code ec;
+    const std::filesystem::file_status st = std::filesystem::symlink_status(p, ec);
+    if (ec) {
+        if (ec == std::errc::no_such_file_or_directory) return LinkProbe::NotLink;
+        return LinkProbe::StatFailed;
+    }
+    return std::filesystem::is_symlink(st) ? LinkProbe::IsLink : LinkProbe::NotLink;
 #endif
+}
+
+inline bool is_link_or_junction(const std::filesystem::path& p) {
+    return probe_link(p) == LinkProbe::IsLink;
 }
 
 }  // namespace xrkit::engine::fs

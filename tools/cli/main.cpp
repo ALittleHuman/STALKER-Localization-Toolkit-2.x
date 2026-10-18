@@ -515,6 +515,38 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
 
     // ⑥6.12：目录条目必须**如实**带 is_dir ⇒ 引擎的 DIRTYPE 分支真的会被走到。
     // 1.x 在 App 侧把 is_dir 写死 False，那条分支在 App 路径下永不触发。
+    // ★★ S-06（第三方只读审计 2026-10-18）：**链接守卫不许 fail-open**。
+    //   修前 `is_link_or_junction()` 在 `FindFirstFileW` 失败时直接 `return false` ⇒
+    //   "问不出来" 被读成 "不是链接" ⇒ 守卫在非法字符/超长路径/权限异常这些**最需要它**的
+    //   输入上静默放行。现在三态（`probe_link`）+ 守卫侧 fail-closed。
+    reg.add("fs: 链接守卫在 stat 失败时不许 fail-open（S-06）", [](CheckContext& ctx) {
+        namespace fsys = std::filesystem;
+        namespace efs = xrkit::engine::fs;
+        std::error_code ec;
+        const fsys::path root = fsys::temp_directory_path(ec) / "xrkit_selftest_linkguard";
+        fsys::create_directories(root, ec);
+        const std::string root_utf8 = xrkit::core::path_to_utf8(root);
+        // ① 反向格：落点**不存在** ⇒ 必须放行（"等会儿要建的普通文件"，不是越界）
+        const std::string fresh =
+            efs::refuse_if_link_traversed(root_utf8, root_utf8 + "/fresh/leaf.txt");
+        check(ctx, fresh.empty(), "S-06 反向格：落点不存在 ⇒ 放行（别把守卫变成误伤）");
+        // ② 正格：段里带 Windows 非法字符 ⇒ `FindFirstFileW` 必然失败
+        //    ⇒ 修前被读成 NotLink（放行），修后必须 StatFailed（拒绝）
+        const std::string bad = root_utf8 + "/bad\"name/leaf.txt";
+        const efs::LinkProbe probe = efs::probe_link(xrkit::core::path_from_utf8(bad));
+        check(ctx, probe == efs::LinkProbe::StatFailed,
+              "S-06 probe_link 三态：非法字符 ⇒ StatFailed（修前被读成 NotLink ⇒ fail-open）");
+        const std::string refused = efs::refuse_if_link_traversed(root_utf8, bad);
+        check(ctx, !refused.empty(), "S-06 stat 失败 ⇒ 链接守卫必须**拒绝**落盘");
+        check(ctx, refused.find("问不出") != std::string::npos,
+              "S-06 拒绝理由要点明「问不出」（与「不存在」区分开，零静默）");
+        // ③ 正常树仍然放行（守卫没有变成"一律拒绝"）
+        fsys::create_directories(root / "ok", ec);
+        const std::string ok = efs::refuse_if_link_traversed(root_utf8, root_utf8 + "/ok/leaf.txt");
+        check(ctx, ok.empty(), "S-06 正常目录仍放行（守卫没有退化成一律拒绝）");
+        fsys::remove_all(root, ec);
+    });
+
     reg.add("fs: 目录条目真走 DIRTYPE（⑥6.12）", [](CheckContext& ctx) {
         namespace fsys = std::filesystem;
         namespace efs = xrkit::engine::fs;
