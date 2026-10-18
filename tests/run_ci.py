@@ -5903,6 +5903,43 @@ def step_version_ledger(release: bool) -> None:
         fail("version.json 里出现了**账上没有**的占位/幽灵/断号（见上）：要么它是真的，要么进认账账（B-5）")
 
 
+def step_cli_exit_codes(release: bool) -> None:
+    r"""CLI 退出码 3 的**双语义**必须被枚举、钉住、并写进文案（第三方审计 C-06；P17-144）。
+
+    事实（本步的判据现场枚举）：`tools/cli/main.cpp` 里 `return kExitUsage;` 共 **59** 处
+    （外加 `--convert-batch` 的 `return 3;` 一处），但它同时承担两种语义：
+      · **48** 处是真·用法错误（缺操作数／未知参数／未知格式名…）；
+      · **10** 处是**写盘守卫**（输出已存在且没 `--force`：`--extract`/`--pack-db`/`--decode-text`/
+        `--codec-lossy`/`--decl-fix`/`--sniff`/`--font-render`/`--resample-dump`/`--extract-chars`/`--lzhuf`）；
+      · **1** 处是 `--convert-batch` 的**待确认**（P17-87）。
+    用户 2026-10-16 口径：「我立了 9 个写盘动作的『守卫＝rc 3』，若别处也用 3，**先枚举所有
+    `kExitUsage` 语义再定，别直接改**」—— 枚举结果守卫是 10 处（不是 9），另有 1 处待确认。
+
+    结论（本步守的东西）：**rc 3 的真实含义是「我什么都没做，读我那一行的理由」**；代码一行不动，
+    该修的是文案（`--help` 与 `README.md` 原来只写「3=用法错误」）。
+    判据 A 枚举归族 ＋ B 处数冻结 ＋ C 字面量只一处 ＋ D 文案两种语义 ＋ E 黑盒（守卫 rc=3 且**不写盘**、
+    用法错误 rc=3、**失败** rc=1）。
+    红证（已实测）：①把某处守卫改成 `kExitFail` ⇒ B 红；②临时多插一处无理由的 `return kExitUsage;`
+    ⇒ A 红；③把帮助串里的「守卫/待确认」删掉 ⇒ D1/D1b 红。
+    """
+    say("[cli-exit-codes] 退出码 3 的双语义：枚举 ＋ 钉住 ＋ 文案一致（第三方审计 C-06）")
+    script = ROOT / "tests" / "check_cli_exit_codes.py"
+    if not require_repo_file(script, "CLI 退出码判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("CLI-EXIT-CODES") \
+                or s.startswith("==") or s.startswith("\u679a\u4e3e\u7ed3\u679c"):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("退出码 3 的两种语义已枚举并写进 --help/README；守卫命中时一个字节都没写（C-06）")
+    elif rc == 2:
+        prereq("退出码判据的黑盒那半", "缺 CLI 构建产物（静态那几项已判、黑盒未验）", release)
+    else:
+        fail("退出码 3 的语义/文案对不上了（见上）：新加一处 rc=3 必须归族并更新文案（C-06）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6303,6 +6340,9 @@ STEPS = [
     # ★★ P17-143（第三方只读审计 B-5／H-03）：台账对**只追加的认账账**断账。
     #   纯静态（读 version.json + docs/）；被 `--only` 过滤时进 UNCOVERED。
     ("version-ledger", step_version_ledger),
+    # ★★ P17-144（第三方只读审计 C-06）：退出码 3 的双语义（枚举＋冻结＋文案＋黑盒）。
+    #   需要 CLI 产物（黑盒那三条）；被 `--only` 过滤时进 UNCOVERED。
+    ("cli-exit-codes", step_cli_exit_codes),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。
