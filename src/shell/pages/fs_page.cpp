@@ -2157,10 +2157,13 @@ int FsPage::add_pack_files(const QStringList& paths) {
         ++added;
     }
     refresh_pack_list();
-    log_message(QStringLiteral("＋文件：%1 个（排除包文件 %2 个，不在根之下 %3 个）")
+    // ★ B-1（第三方只读审计 2026-10-18）：**空目录进不了包**这一笔账要打出来（零静默）。
+    log_message(QStringLiteral("＋文件：%1 个（排除包文件 %2 个，不在根之下 %3 个，"
+                               "空目录跳过 %4 个 —— 它们不会出现在包里）")
                     .arg(added)
                     .arg(collected.skipped_package_files)
-                    .arg(collected.skipped_outside_base));
+                    .arg(collected.skipped_outside_base)
+                    .arg(collected.skipped_empty_dirs));
     return added;
 }
 
@@ -2183,10 +2186,12 @@ int FsPage::add_pack_dir(const QString& dir) {
         ++added;
     }
     refresh_pack_list();
-    log_message(QStringLiteral("＋目录：%1 个（排除包文件 %2 个，不在根之下 %3 个）")
+    log_message(QStringLiteral("＋目录：%1 个（排除包文件 %2 个，不在根之下 %3 个，"
+                               "空目录跳过 %4 个 —— 它们不会出现在包里）")
                     .arg(added)
                     .arg(collected.skipped_package_files)
-                    .arg(collected.skipped_outside_base));
+                    .arg(collected.skipped_outside_base)
+                    .arg(collected.skipped_empty_dirs));
     return added;
 }
 

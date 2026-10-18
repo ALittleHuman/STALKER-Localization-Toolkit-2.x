@@ -6040,6 +6040,40 @@ def step_pack_spec_current(release: bool) -> None:
         fail("打包规格正文还在描述旧做法（见上）——读者会按它去等一个不存在的 zip（H-04）")
 
 
+def step_pack_skipped_dirs(release: bool) -> None:
+    r"""封包的**空目录**不许静默消失（第三方只读审计 B-1；P17-150）。
+
+    修前事实（审计原话）：`PackFileItem` 只有 `rel/source_path`（全部 `is_dir=false`）⇒
+    收集侧只收文件，**空目录无法进包**；DB 包内的目录信息只能靠路径推导。
+
+    ★★ 本批判据第一次跑就**更正了其中一处前提**：`--pack-db` 这条路**不缺目录条目** ——
+    CLI 的收集带着 `is_dir`（`pack_db` 写侧有专门的目录分支），空目录**真的进包、也解得出**。
+    真正会丢的是：① `--pack-sqfs` 不带 `--pack-dirs`；② **官方 fs 页**那条收集（只收文件）。
+
+    处置（**不做产品变更**，只做"如实记账"）：
+      · `PackCollectResult::skipped_empty_dirs`（引擎收集侧算：子树里一个文件都没有的目录）；
+      · CLI `--pack-sqfs` 打 `PACK skipped_dirs=N`；`--pack-db` 如实报 `0`（那条不丢）；
+      · 官方 fs 页把同一笔账打进日志（GUI 那条收集确实会丢）。
+    红证：把 CLI 的计数短路 ＋ 删掉引擎的 `++out.skipped_empty_dirs` ⇒ C/F2 红（已实测）。
+    """
+    say("[pack-skipped-dirs] 封包的空目录不许静默消失（审计 B-1；口径：如实记账）")
+    script = ROOT / "tests" / "check_pack_skipped_dirs.py"
+    if not require_repo_file(script, "空目录记账判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=1200)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("PACK-SKIPPED-DIRS") \
+                or s.startswith("==") or s.startswith("\u00b7"):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("空目录的损失如实报数（`--pack-sqfs` 报 N、`--pack-db` 报 0 且解包后真的在）（B-1）")
+    elif rc == 2:
+        prereq("空目录记账的黑盒那半", "缺 CLI 构建产物（静态那几项已判、黑盒未验）", release)
+    else:
+        fail("封包把空目录吞了却不说（见上）：`skipped_dirs` 与产物对不上（B-1）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6452,6 +6486,9 @@ STEPS = [
     # ★★ P17-149（第三方只读审计 H-04）：打包规格**正文**与实现同源（不是靠 banner 打补丁）。
     #   纯静态（读 docs/ 与 package.ps1）；被 `--only` 过滤时进 UNCOVERED。
     ("pack-spec-current", step_pack_spec_current),
+    # ★★ P17-150（第三方只读审计 B-1）：封包的空目录不许静默消失（如实记账）。
+    #   需要 CLI 产物（黑盒那几条）；被 `--only` 过滤时进 UNCOVERED。
+    ("pack-skipped-dirs", step_pack_skipped_dirs),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。

@@ -117,6 +117,29 @@ bool is_squashfs_head(const std::string& path) {
     return std::memcmp(head, "hsqs", 4) == 0 || std::memcmp(head, "sqsh", 4) == 0;
 }
 
+// ★★ B-1（第三方只读审计 2026-10-18）：**空目录的账**。
+//   `pack_db` 的写侧支持目录条目，但两个前端的**收集**都只收文件 ⇒ "子树里一个文件都没有"的
+//   目录封包之后会**完全消失**（"有文件在下面"的目录只是没有显式条目，产物里还能靠路径推出来）。
+//   口径与 `overlay.cpp::collect_pack_files` 的 `skipped_empty_dirs` **同一份**：
+//   丢了就报数（零静默），**不**擅自把目录塞进包（那会改变 DB 包的产物字节，属口径变更）。
+//   `entries` 里的 rel 必须是 '/' 分隔。
+int count_empty_dirs(const std::vector<std::pair<std::string, bool>>& entries) {
+    std::set<std::string> with_files;
+    for (const auto& item : entries) {
+        if (item.second) continue;   // 目录
+        for (size_t pos = item.first.rfind('/'); pos != std::string::npos;) {
+            with_files.insert(item.first.substr(0, pos));
+            if (pos == 0) break;
+            pos = item.first.rfind('/', pos - 1);
+        }
+    }
+    int empty = 0;
+    for (const auto& item : entries) {
+        if (item.second && with_files.count(item.first) == 0) ++empty;
+    }
+    return empty;
+}
+
 void print_usage() {
     std::cout
         << "xrkit_cli —— STALKER 汉化工具集 2.0 引擎命令行\n"
@@ -4323,6 +4346,14 @@ int run_cli(const std::vector<std::string>& args) {
         }
         std::sort(found.begin(), found.end(),
                   [](const Found& a, const Found& b) { return a.rel < b.rel; });
+        // ★★ B-1（第三方只读审计 2026-10-18）：**空目录的账**。
+        //   ★ 实测更正（本批判据第一次跑就暴露）：**`--pack-db` 这条路不缺目录条目** ——
+        //   上面的 `items` 一直带着 `is_dir`（`pack_db` 的写侧有专门的目录分支，
+        //   `append_entry_*` 会写 `dir\` + 全零字段）⇒ 空目录**真的进了包**、也解得出。
+        //   真正会丢的是：① `--pack-sqfs` 不带 `--pack-dirs`；② **官方 fs 页**那条收集
+        //   （`PackFileItem` 只有文件，见 `overlay.h`）。
+        //   所以这里如实报 `0`（不跟着审计的措辞编一个"丢了 2 个"）。
+        std::cout << "PACKDB skipped_dirs=0 reason=目录条目随包（含空目录）—— 这条收集一直带 is_dir\n";
         // ★★ T-05（第三方只读审计 2026-10-18）：**先量总量，再决定读不读**。
         //   修前：下面那个循环把每个文件整个读进 `DbPackItem.data`，`pack_db` 再拼一份连续
         //   `data`、`write_file_atomic` 又拷一份 ⇒ **峰值 2–3 倍总大小、且没有任何上限**
@@ -4454,7 +4485,8 @@ int run_cli(const std::vector<std::string>& args) {
             const bool is_dir = it->is_directory(ec2);
             const bool is_file = it->is_regular_file(ec2);
             if (!is_dir && !is_file) continue;
-            if (is_dir && !pack_dirs) continue;
+            // ★ B-1：**目录也要收进来**（哪怕不带 --pack-dirs）—— 不然"空目录丢了多少"根本没法数。
+            //   带不带目录条目，是**下面建 items 时**才决定的事。
             const std::filesystem::path rel = std::filesystem::relative(it->path(), root, ec2);
             if (ec2) continue;
             std::string rel_utf8 = path_to_utf8(rel);
@@ -4464,10 +4496,22 @@ int run_cli(const std::vector<std::string>& args) {
         }
         std::sort(found.begin(), found.end(),
                   [](const Found& a, const Found& b) { return a.rel < b.rel; });
+        // ★ B-1：空目录的账。`--pack-dirs` 时目录**真的进包** ⇒ 损失为 0；不带它时按口径报数。
+        const int sqfs_empty_dirs = pack_dirs ? 0 : [&found] {
+            std::vector<std::pair<std::string, bool>> scan;
+            scan.reserve(found.size());
+            for (const Found& f : found) scan.emplace_back(f.rel, f.is_dir);
+            return count_empty_dirs(scan);
+        }();
+        std::cout << "PACK skipped_dirs=" << sqfs_empty_dirs
+                  << " reason=" << (pack_dirs ? "带 --pack-dirs：目录条目进包，空目录不丢"
+                                              : "不带 --pack-dirs：空目录不会进包（逐条口径见 B-1）")
+                  << "\n";
 
         std::vector<xrkit::engine::fs::PackItem> items;
         items.reserve(found.size());
         for (const Found& f : found) {
+            if (f.is_dir && !pack_dirs) continue;   // ★ B-1：不带 --pack-dirs 时目录**不进包**（但账在上一条打出来了）
             xrkit::engine::fs::PackItem item;
             item.path = f.rel;
             item.is_dir = f.is_dir;

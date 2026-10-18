@@ -109,6 +109,14 @@ struct PackCollectResult {
     std::vector<PackFileItem> items;
     int skipped_outside_base = 0;
     int skipped_package_files = 0;
+    // ★★ B-1（第三方只读审计 2026-10-18）：**空目录进不了包**（`PackFileItem` 只有文件）⇒
+    //   这是**信息损失**，必须如实报数（零静默）。口径：数的是"**子树里一个文件都没有**的目录"
+    //   —— 那种目录在封包后完全消失；而"有文件在下面"的目录只是没有**显式条目**，产物里会被
+    //   路径推导出来，不算丢。
+    //   ★ 为什么不干脆把空目录打进包：DB 写侧**支持** `is_dir` 条目（`build_header` 有专门的
+    //     目录分支），但收集侧（这里）与两个前端的收集循环都不产目录项，且 DB 包要逐字节对齐
+    //     1.x 参照 —— 加目录条目会改变产物字节。要不要支持是**产品口径**，本批只做"如实记账"。
+    int skipped_empty_dirs = 0;
 };
 PackCollectResult collect_pack_files(const std::string& base,
                                      const std::vector<std::string>& roots);

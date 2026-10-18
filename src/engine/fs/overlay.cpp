@@ -418,8 +418,16 @@ PackCollectResult collect_pack_files(const std::string& base,
                                      const std::vector<std::string>& roots) {
     PackCollectResult out;
     std::set<std::string> have;   // 去重（1.x 的 `have` 集合）
+    std::set<std::string> dirs;   // ★ B-1：扫到的**目录**（相对 base，'/' 分隔）—— 只用来算"空目录账"
     std::error_code ec;
     const stdfs::path base_path = base.empty() ? stdfs::path() : core::path_from_utf8(base);
+    const auto rel_of = [&base_path](const stdfs::path& p) -> std::string {
+        if (base_path.empty()) return core::path_to_utf8(p.filename());
+        const stdfs::path relative = p.lexically_relative(base_path);
+        const std::string text = core::path_to_utf8(relative);
+        if (relative.empty() || text.rfind("..", 0) == 0) return std::string();
+        return text;
+    };
     for (const std::string& root : roots) {
         const stdfs::path root_path = core::path_from_utf8(root);
         std::vector<stdfs::path> files;
@@ -427,7 +435,16 @@ PackCollectResult collect_pack_files(const std::string& base,
             for (stdfs::recursive_directory_iterator it(root_path, ec), end; it != end;
                  it.increment(ec)) {
                 if (ec) break;
-                if (it->is_regular_file(ec)) files.push_back(it->path());
+                if (it->is_regular_file(ec)) {
+                    files.push_back(it->path());
+                } else if (it->is_directory(ec)) {
+                    // ★ B-1：目录也要记下来（不改收集语义，只用来算"空目录"那一笔账）
+                    std::string rel = rel_of(it->path());
+                    for (char& c : rel) {
+                        if (c == '\\') c = '/';
+                    }
+                    if (!rel.empty()) dirs.insert(rel);
+                }
             }
         } else if (stdfs::is_regular_file(root_path, ec)) {
             files.push_back(root_path);
@@ -438,24 +455,40 @@ PackCollectResult collect_pack_files(const std::string& base,
                 ++out.skipped_package_files;   // 1.x `_is_pack_file`：包文件不参与封包
                 continue;
             }
-            std::string rel;
-            if (base_path.empty()) {
-                rel = core::path_to_utf8(file.filename());
-            } else {
-                const stdfs::path relative = file.lexically_relative(base_path);
-                const std::string text = core::path_to_utf8(relative);
-                if (relative.empty() || text.rfind("..", 0) == 0) {
-                    ++out.skipped_outside_base;   // 不在 base 之下：跳过 + 报数（不静默丢）
-                    continue;
-                }
-                rel = text;
+            std::string rel = rel_of(file);
+            if (rel.empty()) {
+                if (base_path.empty()) continue;
+                ++out.skipped_outside_base;   // 不在 base 之下：跳过 + 报数（不静默丢）
+                continue;
             }
-            if (rel.empty() || !have.insert(rel).second) continue;
+            if (!have.insert(rel).second) continue;
             out.items.push_back({rel, core::path_to_utf8(file)});
         }
     }
     std::sort(out.items.begin(), out.items.end(),
               [](const PackFileItem& a, const PackFileItem& b) { return a.rel < b.rel; });
+
+    // ★★ B-1（第三方只读审计 2026-10-18）：**空目录的账**。
+    //   收集侧只产文件（`PackFileItem` 没有 is_dir）⇒ "**子树里一个文件都没有**"的目录封包之后
+    //   会**完全消失**（"有文件在下面"的目录只是没有显式条目，产物里还能靠路径推导出来，不算丢）。
+    //   这里把它数出来交给调用方打出去：**丢了就说丢了**（零静默）。
+    {
+        std::set<std::string> with_files;
+        for (const PackFileItem& item : out.items) {
+            std::string p = item.rel;
+            for (char& c : p) {
+                if (c == '\\') c = '/';
+            }
+            for (size_t pos = p.rfind('/'); pos != std::string::npos;) {
+                with_files.insert(p.substr(0, pos));
+                if (pos == 0) break;
+                pos = p.rfind('/', pos - 1);
+            }
+        }
+        for (const std::string& dir : dirs) {
+            if (with_files.count(dir) == 0) ++out.skipped_empty_dirs;
+        }
+    }
     return out;
 }
 
