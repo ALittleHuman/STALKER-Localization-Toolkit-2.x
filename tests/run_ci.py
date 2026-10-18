@@ -5973,6 +5973,39 @@ def step_pack_db_mem_gate(release: bool) -> None:
         fail("DB 封包的内存闸没生效或被绕过（见上）：超限仍会照压（T-05）")
 
 
+def step_readme_claims(release: bool) -> None:
+    r"""交付 README 的**落点口径**必须与产品行为一致（第三方只读审计 H-01；P17-148）。
+
+    修前事实：`scripts/package.ps1` 生成的 `README.txt` 与 `docs/2.0.0-打包与发版规格.md` §3 都写
+    「本工具**不改动游戏目录里的任何文件**」。但解包的**默认落点就是"来源所在目录"**
+    （引擎 `efs::resolve_output_root`），来源包通常在游戏/模组目录里 —— 2026-10-05 真发生过
+    「一次默认落点解包把 3.9 万个文件盖在模组目录上」的事故。
+    ⇒ 那句话在**用户可见面**上是误导：准确的是「**不会自动安装或修改游戏文件**」＋
+    「产物写到您选择的目录，但**默认落点是来源所在目录**」。
+
+    判据 `tests/check_readme_claims.py`：A 禁句（无条件承诺）、B 必须写清默认落点、
+    C 规格同步、D 同源锁（`resolve_output_root` 真的在头文件里）、E 三段可见面都在。
+    ★ 判的是 `package.ps1` 里的**模板**（唯一真源）；真实包里的 `README.txt` 要等打包放行才验得到。
+    红证：把两句退回修前 ⇒ A1/B1/B2/C1/C2/E1/D1 红（已实测，见 P17-148 批报告）。
+    """
+    say("[readme-claims] 交付 README 的落点口径：不许写无条件承诺、必须写清默认落点（审计 H-01）")
+    script = ROOT / "tests" / "check_readme_claims.py"
+    if not require_repo_file(script, "README 落点口径判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("README-CLAIMS") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("README/规格不再做无条件承诺，且都写清「默认落点＝来源所在目录」（H-01）")
+    elif rc == 2:
+        prereq("README 落点判据的输入", "缺 package.ps1 或打包规格（判据没跑成，不是通过）", release)
+    else:
+        fail("交付 README / 规格的落点口径与产品行为对不上（见上）（H-01）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6379,6 +6412,9 @@ STEPS = [
     # ★★ P17-145（第三方只读审计 T-05）：DB 封包的内存闸（超限拒绝 / 读之前就挡）。
     #   需要 CLI 产物（黑盒那几条）；被 `--only` 过滤时进 UNCOVERED。
     ("pack-db-mem-gate", step_pack_db_mem_gate),
+    # ★★ P17-148（第三方只读审计 H-01）：交付 README 的落点口径（禁无条件承诺 ＋ 写清默认落点）。
+    #   纯静态（读 package.ps1 与 docs/）；被 `--only` 过滤时进 UNCOVERED。
+    ("readme-claims", step_readme_claims),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。
