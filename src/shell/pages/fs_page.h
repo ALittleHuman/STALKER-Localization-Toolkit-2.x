@@ -241,8 +241,16 @@ public:
                                    const ProgressSink& progress, const MessageSink& message,
                                    int* written_out = nullptr);
     PackJob plan_pack(bool* ok, QString* why);
-    static QString run_pack_job(const PackJob& job, const ProgressSink& progress,
-                                const MessageSink& message);
+    // ★★ C-02（第三方只读审计 2026-10-18）：**成败用一等公民的 flag，不许拿中文前缀判**。
+    //   修前 `run_pack()` 靠 `!text.startsWith("封包失败") && !text.startsWith("封包：")`
+    //   来判成败 —— 改一条文案（甚至加个空格）就**改了语义**，而且新加一条失败消息只要
+    //   前缀没撞上就**静默算成功**。
+    struct PackRunResult {
+        bool ok = false;      // 唯一判据
+        QString message;      // 给人看的（成功/失败都带，零静默）
+    };
+    static PackRunResult run_pack_job(const PackJob& job, const ProgressSink& progress,
+                                      const MessageSink& message);
     void start_unpack(bool checked_only);   // 按钮：计划（主线程）+ task_->run
     void start_pack();
     TaskShell* task() const { return task_; }

@@ -6213,6 +6213,39 @@ def step_plugins_default_errors(release: bool) -> None:
         fail("默认插件目录的加载错误仍被吞掉（见上）：用户只会看到「插件好像没生效」（C-01）")
 
 
+def step_pack_result_flag(release: bool) -> None:
+    r"""**封包的成败不许拿中文文案判**（第三方只读审计 C-02；P17-157）。
+
+    修前事实：`fs_page.cpp::run_pack()` 里是
+    `return !text.startsWith("封包失败") && !text.startsWith("封包：");`
+    —— 成败判在**给人看的文案**上：改一条文案就改了语义，新加一条失败消息只要前缀没撞上
+    就**静默算成功**（假绿）。
+
+    修法：`run_pack_job()` 返回 `FsPage::PackRunResult{bool ok; QString message;}`，
+    `ok` 是唯一判据；所有返回点显式 `{true,…}`/`{false,…}`；`start_pack()` 的失败理由走
+    任务壳的 `message(...)` 通道（工作线程不碰 UI）。
+    判据 `tests/check_pack_result_flag.py`：A `run_pack` 里无 `startsWith`；B 结构体三件；
+    C 返回点全部显式给 bool（成功 2 / 失败 7）；D 失败理由走消息通道。
+    红证（非破坏式）：`git show <修前>:src/shell/pages/fs_page.{cpp,h}` 跑 `--cpp/--hdr` ⇒ 7 项红。
+    """
+    say("[pack-result-flag] 封包的成败不许拿中文文案判（审计 C-02）")
+    script = ROOT / "tests" / "check_pack_result_flag.py"
+    if not require_repo_file(script, "封包成败判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("PACK-RESULT") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("封包成败靠 `PackRunResult.ok`（文案只给人看），返回点全部显式（C-02）")
+    elif rc == 2:
+        prereq("封包成败判据的输入", "缺 fs_page.cpp/h（判据没跑成，不是通过）", release)
+    else:
+        fail("封包的成败仍在解析中文文案（改文案＝改语义，见上）（C-02）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6638,6 +6671,8 @@ STEPS = [
     ("builder-guard", step_builder_guard),
     # ★★ P17-155（第三方只读审计 C-01）：默认插件目录的加载错误不许被吞（黑盒 ＋ 静态锁）。
     ("plugins-default-errors", step_plugins_default_errors),
+    # ★★ P17-157（第三方只读审计 C-02）：封包成败不许拿中文文案判（结构化 flag）。
+    ("pack-result-flag", step_pack_result_flag),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。

@@ -2289,7 +2289,7 @@ FsPage::PackJob FsPage::plan_pack(bool* ok, QString* why) {
     return job;
 }
 
-QString FsPage::run_pack_job(const PackJob& job, const ProgressSink& progress,
+FsPage::PackRunResult FsPage::run_pack_job(const PackJob& job, const ProgressSink& progress,
                              const MessageSink& message) {
     // **纯执行**（工作线程里不碰控件）：sqfs ⇒ pack_squashfs；其余 ⇒ pack_db + 原子写
     // ★★ 2026-10-06（② 用户拍板）：**封包不再有取消** —— 用户原话「封包和字库的取消，
@@ -2311,17 +2311,17 @@ QString FsPage::run_pack_job(const PackJob& job, const ProgressSink& progress,
         }
         const efs::PackResult result = efs::pack_squashfs(job.out, items);
         if (progress) progress(100);
-        if (!result.ok) return QStringLiteral("封包失败（SquashFS）：%1").arg(utf8(result.error));
+        if (!result.ok) return {false, QStringLiteral("封包失败（SquashFS）：%1").arg(utf8(result.error))};
         const QString text = QStringLiteral("封包完成（SquashFS）：%1 个文件、%2 字节 → %3")
                                  .arg(static_cast<int>(items.size()))
                                  .arg(result.file_size)
                                  .arg(utf8(job.out));
         say(text);
-        return text;
+        return {true, text};
     }
     const std::optional<efs::DbFormat> fmt = efs::format_key_to_db(job.key);
     if (!fmt.has_value()) {
-        return QStringLiteral("封包：格式键 %1 既不是 DB 也不是 SquashFS").arg(utf8(job.key));
+        return {false, QStringLiteral("封包：格式键 %1 既不是 DB 也不是 SquashFS").arg(utf8(job.key))};
     }
     // ★★ T-05（第三方只读审计 2026-10-18）：**读之前先量总量**。
     //   修前：下面这个循环把每个文件整个读进 `DbPackItem.data`，`pack_db` 再拼一份连续
@@ -2336,27 +2336,27 @@ QString FsPage::run_pack_job(const PackJob& job, const ProgressSink& progress,
             const std::uintmax_t one =
                 std::filesystem::file_size(core::path_from_utf8(item.source_path), size_ec);
             if (size_ec) {
-                return QStringLiteral("封包失败：量不出文件尺寸（%1）：%2")
-                    .arg(utf8(size_ec.message()))
-                    .arg(utf8(item.source_path));
+                return {false, QStringLiteral("封包失败：量不出文件尺寸（%1）：%2")
+                                   .arg(utf8(size_ec.message()))
+                                   .arg(utf8(item.source_path))};
             }
             total += one;
         }
         const std::uint64_t pack_limit = efs::db_pack_max_bytes();
         if (total > pack_limit) {
-            return QStringLiteral(
-                       "封包失败：待封入的字节数 %1 超过 DB 封包上限 %2"
+            return {false, QStringLiteral(
+                              "封包失败：待封入的字节数 %1 超过 DB 封包上限 %2"
                        "（untrusted_limits.h 的 XRKIT_DB_MAX_PACK_BYTES；环境变量 "
-                       "XRKIT_DB_PACK_LIMIT 只能往小改）⇒ 一个字节都没读、不产出半成品")
-                .arg(static_cast<qulonglong>(total))
-                .arg(static_cast<qulonglong>(pack_limit));
+                              "XRKIT_DB_PACK_LIMIT 只能往小改）⇒ 一个字节都没读、不产出半成品")
+                                  .arg(static_cast<qulonglong>(total))
+                                  .arg(static_cast<qulonglong>(pack_limit))};
         }
     }
     std::vector<efs::DbPackItem> items;
     items.reserve(job.items.size());
     for (const efs::PackFileItem& item : job.items) {
         std::ifstream in(core::path_from_utf8(item.source_path), std::ios::binary);
-        if (!in) return QStringLiteral("封包失败：读不出 %1").arg(utf8(item.source_path));
+        if (!in) return {false, QStringLiteral("封包失败：读不出 %1").arg(utf8(item.source_path))};
         efs::DbPackItem pack_item;
         pack_item.path = item.rel;
         pack_item.is_dir = false;
@@ -2373,12 +2373,12 @@ QString FsPage::run_pack_job(const PackJob& job, const ProgressSink& progress,
     std::string pack_err;
     const std::vector<uint8_t> raw = efs::pack_db(items, *fmt, &rewrites, &pack_err);
     if (!pack_err.empty()) {
-        return QStringLiteral("封包失败（%1）").arg(utf8(pack_err));
+        return {false, QStringLiteral("封包失败（%1）").arg(utf8(pack_err))};
     }
     if (progress) progress(70);
     std::string write_error;
     if (!core::write_file_atomic(job.out, raw, true, write_error)) {
-        return QStringLiteral("封包失败（写盘）：%1").arg(utf8(write_error));
+        return {false, QStringLiteral("封包失败（写盘）：%1").arg(utf8(write_error))};
     }
     if (progress) progress(100);
     const QString text = QStringLiteral("封包完成（%1）：%2 个文件、%3 字节 → %4")
@@ -2399,7 +2399,7 @@ QString FsPage::run_pack_job(const PackJob& job, const ProgressSink& progress,
             say(QStringLiteral("  改名：%1 → %2").arg(utf8(r.source), utf8(r.written)));
         }
     }
-    return text;
+    return {true, text};
 }
 
 bool FsPage::run_pack(QString* summary) {
@@ -2410,10 +2410,9 @@ bool FsPage::run_pack(QString* summary) {
         if (summary != nullptr) *summary = why;
         return false;
     }
-    const QString text = run_pack_job(job, nullptr, nullptr);
-    if (summary != nullptr) *summary = text;
-    return !text.startsWith(QStringLiteral("封包失败")) &&
-           !text.startsWith(QStringLiteral("封包："));
+    const PackRunResult result = run_pack_job(job, nullptr, nullptr);
+    if (summary != nullptr) *summary = result.message;
+    return result.ok;   // ★ C-02：唯一判据是 flag，**不再**解析文案
 }
 
 void FsPage::start_pack() {
@@ -2432,7 +2431,13 @@ void FsPage::start_pack() {
     if (task_ == nullptr || !task_->run(QStringLiteral("封包"),
                                         [this, job](const ProgressSink& progress,
                                                     const MessageSink& message) {
-                                            run_pack_job(job, progress, message);
+                                            const PackRunResult r =
+                                                run_pack_job(job, progress, message);
+                                            // ★ 失败理由走**任务壳的消息通道**（`message` 回调本就是
+                                            //   跨线程那一份），不在工作线程里直接碰 UI。
+                                            if (!r.ok && message) {
+                                                message(r.message.toUtf8().toStdString());
+                                            }
                                         })) {
         log_message(QStringLiteral("有任务在跑，稍后再试"));
     }
