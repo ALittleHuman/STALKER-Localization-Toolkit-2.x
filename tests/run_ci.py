@@ -5802,6 +5802,39 @@ def step_lzhuf_delta(release: bool) -> None:
         fail("lzhuf_ref.c 与参照源出现**白名单之外**的分叉（见上）")
 
 
+def step_convert_bom(release: bool) -> None:
+    r"""编码转换必须认得**宽 BOM**（第三方审计 T-01；P17-142）。
+
+    修前事实：`convert.cpp` 的 `convert_bytes()` 只剥 2 字节就**丢掉了"它曾是 UTF-16"**这个事实
+    ⇒ 剩余字节没有 >=0x80（UTF-16LE 的西里尔高字节是 0x04）⇒ 判定链落到
+    「默认 windows-1251 低置信」⇒ 有损解出夹 NUL 的乱码、按目标编码写回、统计还报成功。
+    而 `sniff.cpp` 的 `decode_bytes()` 一直是对的（认出宽 BOM ⇒ 整段交给 codec）—— 两条路径不对称。
+
+    判据走真实产品路径（CLI `--convert-batch`），四份同内容夹具；
+    断言「宽 BOM 走 BOM 步骤、UTF-8 不被误判」，并**如实声明**产物那条因确认闸暂不能断言。
+    红证：把宽 BOM 段退回修前形状（只剥 2 字节）⇒ 本步红（已实测）。
+    """
+    say("[convert-bom] 编码转换的宽 BOM：必须走 BOM 步骤（第三方审计 T-01）")
+    script = ROOT / "tests" / "check_convert_bom.py"
+    if not require_repo_file(script, "宽 BOM 判据"):
+        return
+    if not CLI_EXE.is_file():
+        prereq("构建产物（CLI）", "缺 %s（先跑 build 步）" % CLI_EXE, release)
+        return
+    rc, out = run([sys.executable, str(script)], timeout=1200)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("BOM-CONVERT") \
+                or s.startswith("==") or s.startswith("["):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("宽 BOM 走 BOM 步骤、UTF-8 不被误判（产物那条见判据文件头待办；T-01）")
+    elif rc == 2:
+        prereq("宽 BOM 判据的样本", "缺 CLI 构建产物（判据没跑成，不是通过）", release)
+    else:
+        fail("编码转换没认出宽 BOM（见上）：UTF-16/32 会被当 windows-1251 有损解码（T-01）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6195,6 +6228,7 @@ STEPS = [
     #   需要 CLI 产物；自带夹具（真造 junction ＋ 超时）。被 `--only` 过滤时进 UNCOVERED。
     ("loose-guard", step_loose_guard),
     ("lzhuf-delta", step_lzhuf_delta),
+    ("convert-bom", step_convert_bom),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。

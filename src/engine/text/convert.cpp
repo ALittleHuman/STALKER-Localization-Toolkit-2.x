@@ -184,17 +184,37 @@ ConvertOutcome convert_bytes(const std::vector<uint8_t>& raw_in, const std::stri
     // 入口剥 BOM —— **剥掉不等于忘掉**：这个事实要参与后面的"要不要重写"判断
     bool had_utf8_bom = raw_in.size() >= 3 && raw_in[0] == 0xEF && raw_in[1] == 0xBB &&
                         raw_in[2] == 0xBF;
+    // ★★ T-01（第三方只读审计 2026-10-16）：**宽 BOM 必须先认再交**，
+    //   与 `sniff.cpp` 的 `decode_bytes()` 同语义（那边一直是对的，这边不对称）。
+    //   修前这里只剥 2 字节、**把"它曾是 UTF-16/32"这个事实丢掉** ⇒ 剩余字节里没有 ≥0x80
+    //   （UTF-16LE 的西里尔高字节是 0x04）⇒ 判定链落到「默认 windows-1251 低置信」
+    //   ⇒ 有损解出一串夹 NUL 的乱码，再按目标编码写回、统计还报成功。
+    const std::string wide_bom = bom_encoding(raw_in);
+    const bool had_wide_bom = (wide_bom == kUtf16 || wide_bom == kUtf32);
     std::vector<uint8_t> raw;
     if (had_utf8_bom) {
         raw.assign(raw_in.begin() + 3, raw_in.end());
-    } else if (raw_in.size() >= 2 &&
-               ((raw_in[0] == 0xFF && raw_in[1] == 0xFE) || (raw_in[0] == 0xFE && raw_in[1] == 0xFF))) {
-        raw.assign(raw_in.begin() + 2, raw_in.end());
+    } else if (had_wide_bom) {
+        // **整段交给 codec**：BOM 同时承载 LE/BE 端序，剥掉就没了
+        raw = raw_in;
     } else {
         raw = raw_in;
     }
 
-    const SniffResult sniffed = sniff_encoding(raw, options.source_encoding);
+    // 手动指定了源编码 ⇒ 用户已经决定过，BOM 不越权（与 `decode_bytes` 的 `manual` 分支一致）。
+    const std::string manual_probe = lower_ascii(strip(options.source_encoding));
+    const bool manual_src = !manual_probe.empty() && manual_probe != "auto";
+    SniffResult sniffed;
+    if (had_wide_bom && !manual_src) {
+        // BOM 是**一等步骤**（`SniffStep::Bom`），置信度恒 1 ⇒ **不许再进统计判定**
+        sniffed.step = SniffStep::Bom;
+        sniffed.encoding = wide_bom;
+        sniffed.reason = "宽字符 BOM（" + wide_bom + "）：整段交给该 codec，不参与统计判定";
+        sniffed.confidence = 1.0;
+        sniffed.low_confidence = false;
+    } else {
+        sniffed = sniff_encoding(raw, options.source_encoding);
+    }
     const std::string target = lower_ascii(strip(options.target_encoding));
     out.step = sniffed.step;
     out.step_label = sniff_result_label(sniffed);  // ⑨9.7：标签来自判定，不是复算
