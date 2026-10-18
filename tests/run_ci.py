@@ -6006,6 +6006,40 @@ def step_readme_claims(release: bool) -> None:
         fail("交付 README / 规格的落点口径与产品行为对不上（见上）（H-01）")
 
 
+def step_pack_spec_current(release: bool) -> None:
+    r"""打包规格的**正文**必须与实现同源（第三方只读审计 H-04；P17-149）。
+
+    修前事实：`docs/2.0.0-打包与发版规格.md` 正文 §2/§4 仍写「把 `qoffscreen.dll` **临时**铺进
+    舞台…**跑完删掉那个插件**再压包」，而实现早已是「**只出目录、不压 zip**」＋「`platforms\`
+    同时带 qwindows/qoffscreen、**随包常驻**」（用户 2026-10-07 裁决 + 2026-09-29 产物形态）。
+    靠文件头 banner 打补丁 ⇒ 读者读正文会读到与实现相反的做法。
+
+    判据 `tests/check_pack_spec_current.py`：
+      · 先**剥掉 HTML 注释块**（banner 是"历史更正记录"，不是正文；不剥的话更正本身会被判违规）；
+      · A 正文不许再有旧做法的断言句；B 正文必须写清三件事实（qoffscreen 常驻／只出目录不压 zip／
+        落点只留序号 `dist\<主版本>\<标记>\<序号>\`）＋ 包内自检的结论行；
+      · C **同源锁**：这三件事实在 `scripts/package.ps1` 里都有对应物（`platform_plugins=…`、
+        没有 `Compress-Archive`、`$pkgName` 只取序号、产物是 `Move-Item`）。
+    红证（非破坏式）：拿 `git show <修前>:docs/…` 的旧版跑 `--spec` ⇒ A1/B1/B2/B3 红（已实测）。
+    """
+    say("[pack-spec-current] 打包规格正文必须与实现同源（审计 H-04）")
+    script = ROOT / "tests" / "check_pack_spec_current.py"
+    if not require_repo_file(script, "打包规格同源判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("PACK-SPEC") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("规格正文与 `package.ps1` 同源（qoffscreen 常驻／只出目录不压 zip／落点只留序号）（H-04）")
+    elif rc == 2:
+        prereq("打包规格同源判据的输入", "缺规格或 package.ps1（判据没跑成，不是通过）", release)
+    else:
+        fail("打包规格正文还在描述旧做法（见上）——读者会按它去等一个不存在的 zip（H-04）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6415,6 +6449,9 @@ STEPS = [
     # ★★ P17-148（第三方只读审计 H-01）：交付 README 的落点口径（禁无条件承诺 ＋ 写清默认落点）。
     #   纯静态（读 package.ps1 与 docs/）；被 `--only` 过滤时进 UNCOVERED。
     ("readme-claims", step_readme_claims),
+    # ★★ P17-149（第三方只读审计 H-04）：打包规格**正文**与实现同源（不是靠 banner 打补丁）。
+    #   纯静态（读 docs/ 与 package.ps1）；被 `--only` 过滤时进 UNCOVERED。
+    ("pack-spec-current", step_pack_spec_current),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。
