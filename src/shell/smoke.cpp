@@ -8100,6 +8100,53 @@ SmokeResult run_smoke() {
             QDir(t02_dir).removeRecursively();
         }
 
+        // ★★ T-05（第三方只读审计 2026-10-18）：**引擎级封包总量闸门**（兜底那一半）。
+        //   修前：`pack_db` 把全部条目拼进一份连续 `data`，而调用方此前已把每个文件读进
+        //   `DbPackItem.data`、`write_file_atomic` 还会再拷一份 ⇒ 峰值 2–3 倍总大小、**无上限**。
+        //   现在 CLI / fs 页在**读之前**各量一次（真正省内存的那一道），`pack_db` 自己再量一次
+        //   —— 公开 API 的任何调用方都不许绕过。这里把上限用环境变量压到 1 MiB（**只能往小改**），
+        //   塞 2 MiB 的条目 ⇒ 必须空包 ＋ 非空理由，且理由里两个数都要读得出来（零静默）。
+        {
+#ifdef _WIN32
+            _putenv_s("XRKIT_DB_PACK_LIMIT", "1048576");
+#else
+            setenv("XRKIT_DB_PACK_LIMIT", "1048576", 1);
+#endif
+            const std::string probe = std::getenv("XRKIT_DB_PACK_LIMIT")
+                                          ? std::getenv("XRKIT_DB_PACK_LIMIT")
+                                          : "";
+            check(probe == "1048576",
+                  QStringLiteral("T-05 夹具：环境变量压上限没生效（读回 %1）")
+                      .arg(QString::fromStdString(probe)));
+            std::vector<efs::DbPackItem> t05_items;
+            efs::DbPackItem t05_one;
+            t05_one.path = "big.bin";
+            t05_one.data.assign(2u * 1024u * 1024u, 0x5A);   // 2 MiB > 压下来的 1 MiB
+            t05_items.push_back(std::move(t05_one));
+            std::string t05_err;
+            const std::vector<uint8_t> t05_bad =
+                efs::pack_db(t05_items, efs::DbFormat::Xdb, nullptr, &t05_err);
+            check(t05_bad.empty() && !t05_err.empty(),
+                  QStringLiteral("T-05 超上限时 pack_db 必须**空包 ＋ 理由**（实得 %1 字节 / 理由 %2）")
+                      .arg(t05_bad.size())
+                      .arg(QString::fromStdString(t05_err).left(80)));
+            check(t05_err.find("1048576") != std::string::npos &&
+                      t05_err.find("2097152") != std::string::npos,
+                  QStringLiteral("T-05 理由里要写出**多大**与**上限多少**（零静默）；实得：%1")
+                      .arg(QString::fromStdString(t05_err).left(110)));
+#ifdef _WIN32
+            _putenv_s("XRKIT_DB_PACK_LIMIT", "");
+#else
+            unsetenv("XRKIT_DB_PACK_LIMIT");
+#endif
+            // 反向格：撤掉压缩上限 ⇒ 同一条目必须能压（闸门没误伤正常路径）
+            std::string t05_ok_err;
+            const std::vector<uint8_t> t05_good =
+                efs::pack_db(t05_items, efs::DbFormat::Xdb, nullptr, &t05_ok_err);
+            check(!t05_good.empty() && t05_ok_err.empty(),
+                  QStringLiteral("T-05 撤掉压缩上限后同一条目必须能压（闸门没误伤）"));
+        }
+
         // ④ 复位 ⇒ 与基线**逐值一致**（默认行为不许被这段新代码顺手改掉）
         plug::set_active_registry(nullptr);
         error.clear();

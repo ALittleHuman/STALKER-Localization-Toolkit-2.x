@@ -1069,6 +1069,22 @@ std::vector<uint8_t> build_header(const std::vector<DbPackItem>& items, DbFormat
 
 }  // namespace
 
+std::uint64_t db_pack_max_bytes() {
+    // ★★ T-05（第三方只读审计 2026-10-18）：生效上限。解析规则与 `01 F-09` 那条整包读闸门
+    //   **逐条同口径**：下界 > 0、上界为默认值 ⇒ 环境变量**只能往小改**（写坏/想放宽都保持默认，
+    //   闸门不许被一个环境变量关掉）。
+    std::uint64_t limit = XRKIT_DB_MAX_PACK_BYTES;
+    if (const char* env = std::getenv("XRKIT_DB_PACK_LIMIT")) {
+        char* endp = nullptr;
+        const unsigned long long parsed = std::strtoull(env, &endp, 10);
+        const bool well_formed = (endp != env) && (endp != nullptr) && (*endp == '\0');
+        if (well_formed && parsed > 0 && parsed <= XRKIT_DB_MAX_PACK_BYTES) {
+            limit = static_cast<std::uint64_t>(parsed);
+        }
+    }
+    return limit;
+}
+
 std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& in_items, DbFormat fmt,
                              std::vector<DbNameRewrite>* rewrites, std::string* error) {
     if (error != nullptr) error->clear();
@@ -1080,6 +1096,27 @@ std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& in_items, DbFormat f
             if (c == '/') c = '\\';
         }
         items.push_back(std::move(copy));
+    }
+
+    // ★★ T-05（第三方只读审计 2026-10-18）：**引擎级总量闸门**（兜底，任何调用方都不许绕过）。
+    //   修前：`pack_db` 把全部条目拼进一份连续 `data`，调用方此前已把每个文件读进
+    //   `DbPackItem.data`，`write_file_atomic` 还会再拷一份 ⇒ 峰值 2–3 倍总大小、**无上限**。
+    //   这里量的是"已经进内存的字节数"（调用方那一半在**读之前**量 —— CLI / fs 页各有一道）。
+    {
+        std::uint64_t total = 0;
+        for (const DbPackItem& it : items) {
+            if (!it.is_dir) total += it.data.size();
+        }
+        const std::uint64_t limit = db_pack_max_bytes();
+        if (total > limit) {
+            if (error != nullptr) {
+                *error = "待封入的字节数 " + std::to_string(total) + " 超过 DB 封包上限 " +
+                         std::to_string(limit) +
+                         "（上限来自 untrusted_limits.h 的 XRKIT_DB_MAX_PACK_BYTES；环境变量 "
+                         "XRKIT_DB_PACK_LIMIT 只能往小改）⇒ 不产出包";
+            }
+            return {};
+        }
     }
 
     if (rewrites != nullptr) rewrites->clear();

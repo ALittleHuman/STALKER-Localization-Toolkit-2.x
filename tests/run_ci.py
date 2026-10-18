@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """STALKER 工具集 2.x 门禁（对齐 1.x 的"两级门禁"口径，2026-09-12 用户裁定）。
 
@@ -5940,6 +5940,39 @@ def step_cli_exit_codes(release: bool) -> None:
         fail("退出码 3 的语义/文案对不上了（见上）：新加一处 rc=3 必须归族并更新文案（C-06）")
 
 
+def step_pack_db_mem_gate(release: bool) -> None:
+    r"""DB 封包**不许无上限地吃内存**（第三方只读审计 T-05；P17-145）。
+
+    修前事实：`run_pack_job` 把每个文件读进 `DbPackItem.data`、`pack_db` 再拼一份连续 `data`、
+    `write_file_atomic` 又拷一份 ⇒ **峰值 2–3 倍总大小、且没有任何上限**（1.9 GB 级包直接 OOM）；
+    SquashFS 分支是流式的 ⇒ 两条路不对称。
+
+    修法：一条与 `untrusted_limits.h` 同源的上限（`XRKIT_DB_MAX_PACK_BYTES`，2 GiB）＋ **两道闸**：
+      · 调用方（CLI / 官方 fs 页）在**读文件之前**量总量 ⇒ 超限时一个字节都不读；
+      · 引擎 `pack_db` 再量一次（公开 API 的兜底；那一条由 `--smoke` 的 T-05 四条锁覆盖）。
+    环境变量 `XRKIT_DB_PACK_LIMIT` **只能往小改**（判据用它造小夹具，不必真造 GB 文件）。
+    判据：A 超限拒绝且不产出半成品；B 4 GiB 稀疏文件在短超时内被拒（＝**没被读进去**）；
+    C 上限给足时正常出包并能回读（没误伤）；D 静态锁（上限同族 ＋ 只能往小改 ＋ 引擎兜底在）。
+    红证：把两道闸都删掉 ⇒ A/B/D 红（已实测，见 P17-145 批报告）。
+    """
+    say("[pack-db-mem-gate] DB 封包要有内存闸（超限拒绝、读之前就挡、不误伤）—— 审计 T-05")
+    script = ROOT / "tests" / "check_pack_db_mem_gate.py"
+    if not require_repo_file(script, "DB 封包内存闸判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=1800)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("PACK-MEM-GATE") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("超限明确拒绝且不产出半成品；4 GiB 稀疏文件在短超时内被拒（＝没读进去）（T-05）")
+    elif rc == 2:
+        prereq("DB 封包内存闸的黑盒那半", "缺 CLI 构建产物（静态那几项已判、黑盒未验）", release)
+    else:
+        fail("DB 封包的内存闸没生效或被绕过（见上）：超限仍会照压（T-05）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6343,6 +6376,9 @@ STEPS = [
     # ★★ P17-144（第三方只读审计 C-06）：退出码 3 的双语义（枚举＋冻结＋文案＋黑盒）。
     #   需要 CLI 产物（黑盒那三条）；被 `--only` 过滤时进 UNCOVERED。
     ("cli-exit-codes", step_cli_exit_codes),
+    # ★★ P17-145（第三方只读审计 T-05）：DB 封包的内存闸（超限拒绝 / 读之前就挡）。
+    #   需要 CLI 产物（黑盒那几条）；被 `--only` 过滤时进 UNCOVERED。
+    ("pack-db-mem-gate", step_pack_db_mem_gate),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。

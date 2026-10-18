@@ -4323,6 +4323,35 @@ int run_cli(const std::vector<std::string>& args) {
         }
         std::sort(found.begin(), found.end(),
                   [](const Found& a, const Found& b) { return a.rel < b.rel; });
+        // ★★ T-05（第三方只读审计 2026-10-18）：**先量总量，再决定读不读**。
+        //   修前：下面那个循环把每个文件整个读进 `DbPackItem.data`，`pack_db` 再拼一份连续
+        //   `data`、`write_file_atomic` 又拷一份 ⇒ **峰值 2–3 倍总大小、且没有任何上限**
+        //   （审计原话：「1.9 GB 级包会直接 OOM」）。SquashFS 分支是流式的，两条路不对称。
+        //   口径：总量超过 `db_pack_max_bytes()` ⇒ **明确拒绝并写清三件事**（多大 / 上限多少 /
+        //   怎么改），**一个字节都不读、不产出半成品**（与 `01 F-09` 的整包读闸门同一套写法）。
+        {
+            std::uintmax_t total = 0;
+            for (const Found& f : found) {
+                if (f.is_dir) continue;
+                std::error_code size_ec;
+                const std::uintmax_t one = std::filesystem::file_size(f.full, size_ec);
+                if (size_ec) {
+                    std::cerr << "PACKDB error reason=量不出文件尺寸（" << size_ec.message()
+                              << "）：" << f.rel << "\n";
+                    return kExitFail;
+                }
+                total += one;
+            }
+            const std::uint64_t pack_limit = xrkit::engine::fs::db_pack_max_bytes();
+            if (total > pack_limit) {
+                std::cerr << "PACKDB error reason=待封入的字节数 " << total
+                          << " 超过 DB 封包上限 " << pack_limit
+                          << "（untrusted_limits.h 的 XRKIT_DB_MAX_PACK_BYTES；"
+                             "环境变量 XRKIT_DB_PACK_LIMIT 只能往小改）"
+                             "⇒ 一个字节都没读、不产出半成品\n";
+                return kExitFail;
+            }
+        }
         std::vector<xrkit::engine::fs::DbPackItem> items;
         for (const Found& f : found) {
             xrkit::engine::fs::DbPackItem item;

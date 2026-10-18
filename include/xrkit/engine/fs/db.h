@@ -68,6 +68,18 @@ struct DbNameRewrite {
     std::string written;  // 实际写进包里的名字（cp1251 字节 → UTF-8 回读，`?` 原样保留）
 };
 
+// ★★ 2026-10-18（T-05，第三方只读审计）：**DB 封包的内存闸门**。
+//
+// 问题：封包全程在内存里（`DbPackItem.data` → `pack_db` 拼的连续 `data` →
+//   `write_file_atomic` 又拷一份）⇒ 峰值 2–3 倍总大小，**修前无任何上限**（1.9 GB 级包会 OOM）。
+// 处置：一条与 `untrusted_limits.h` **同源**的上限 `XRKIT_DB_MAX_PACK_BYTES`（2 GiB）。
+//   · `db_pack_max_bytes()` 返回**生效值**；环境变量 `XRKIT_DB_PACK_LIMIT` **只能往小改**
+//     （与 `01 F-09` 的整包读闸门同一套解析规则：下界 >0、上界为默认值）；
+//   · **两道闸**：调用方（CLI / 官方 fs 页）在**读文件之前**先量总量（不白分配）；
+//     `pack_db` 自己再量一次（公开 API 的任何调用方都不许绕过）。
+//   ★ 真正的解法是流式封包；有了它这条上限才能放开 —— 见 `untrusted_limits.h` 的注释。
+std::uint64_t db_pack_max_bytes();
+
 // 封包（写路径）：LZHUF 编码 + scrambler，产物应与 1.x 的 pack_db **逐字节一致**。
 // `rewrites` 非空 ⇒ 填**逐条**改写台账（返回后为空 vector = 一个名字都没被改写）。
 // ★ `error` 是**可选的出错理由**，**不是**开关：不给它照样检查、照样拒绝。

@@ -54,11 +54,28 @@
 //   `01 F-09` 的分册证据（哪些真实包会退到这条路）与内存峰值实测。
 #define XRKIT_DB_MAX_WHOLE_READ_BYTES (512ull * 1024ull * 1024ull)
 
+// ★★ 2026-10-18（T-05，第三方只读审计）：**DB 封包"待封入字节总量"的上限**。
+//
+// 修前事实（审计原话）：`fs_page.cpp::run_pack_job` 把每个文件读进 `DbPackItem.data`，
+//   `pack_db()` 再拼一份连续的 `data`，最后 `write_file_atomic` 又拷一份 `vector`
+//   ⇒ **峰值约 2–3 倍总大小，且没有任何内存闸**；1.9 GB 级包会直接 OOM。
+//   SquashFS 分支是**流式**的（逐块读、逐块写），两条路不对称。
+//
+// 2 GiB：口径是"**覆盖真实语料里最大的 DB**"—— 真机最大的是 1.9 GB 级，2 GiB 留了余量；
+//   按 2–3 倍峰值，封一个 2 GiB 的包要 4–6 GiB 内存，这已经是"能跑就别同时开别的"的量级。
+//   **放宽它必须连带复核内存峰值**（那是口径变更，要单独裁定），所以环境变量
+//   `XRKIT_DB_PACK_LIMIT` **只能往小改**（判据用它造小夹具，不必真造 GB 文件）。
+//   ★ 真正的解法是"先写数据区、再写头"的**流式封包**（那时这条上限才能放开）—— 未做。
+#define XRKIT_DB_MAX_PACK_BYTES (2ull * 1024ull * 1024ull * 1024ull)   // 2 GiB（别看漏那个 1024）
+
 // 两者的大小关系是**有意的**（见上）：DB 那条不许被改到比 LZHUF 那条还小，
 // 否则 DB 侧会出现"能声明、却过不了 LZHUF 闸"的条目（读得进却解不开）。
 #if defined(__cplusplus)
 static_assert(XRKIT_DB_MAX_ENTRY_DECOMPRESS_BYTES >= XRKIT_LZHUF_MAX_DECLARED_BYTES,
               "DB 单条目上限不许小于 LZHUF 声明长度上限（否则合法条目读得进却解不开）");
+// T-05：单条目能压进包，整包上限自然要大于它（否则"能解开的条目压不回去"）。
+static_assert(XRKIT_DB_MAX_PACK_BYTES >= XRKIT_DB_MAX_ENTRY_DECOMPRESS_BYTES,
+              "DB 封包总量上限不许小于单条目解压上限（否则合法条目压不进包）");
 #endif
 
 #endif  // XRKIT_ENGINE_FS_UNTRUSTED_LIMITS_H
