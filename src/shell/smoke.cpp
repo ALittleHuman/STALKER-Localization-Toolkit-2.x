@@ -8006,20 +8006,18 @@ SmokeResult run_smoke() {
         //   ★★ S-05（第三方只读审计 2026-10-18）：**文件名不再带原名**（改用源路径哈希），
         //     所以这里不能写死 `cipher.stkenc.db.decrypted` —— 走引擎的 `decrypt_artifact_name()`，
         //     保证"外壳预期"与"引擎实现"是**同一份命名**（两处各写一份就是下一个分叉）。
-        //   ★★ S-05：产物名是**源路径哈希**（不带原名）⇒ 这里按"本次运行目录里有且只有一个
-        //     `*.decrypted`"来判，而不是写死某个文件名（写死就得复制引擎的哈希算法，那是第二份实现）。
+        //   ★★ S-05 **操作级**（用户裁决）：一次引擎操作（这里是 `package_entries`）返回时，
+        //     本次产生的解密临时件**必须已经删掉** —— 修前是"永不清理"。
         const QDir run_dir(QString::fromStdString(plug::decrypt_output_dir()));
-        const QFileInfoList artifacts =
+        const QFileInfoList leftovers =
             run_dir.entryInfoList(QStringList() << QStringLiteral("*.decrypted"), QDir::Files);
-        check(!artifacts.isEmpty(),
-              QStringLiteral("解密产物没落在引擎口径的目录里（本次运行目录 %1 下 0 个 *.decrypted）")
-                  .arg(run_dir.absolutePath()));
+        check(leftovers.isEmpty(),
+              QStringLiteral("S-05 操作返回后解密临时件应已清掉（本次运行目录 %1 下还剩 %2 个）")
+                  .arg(run_dir.absolutePath())
+                  .arg(leftovers.size()));
+        // 临时件还在时**名不带原名**这条，由 CLI 自检（`--selftest` 的 S-05 段）直接判 `decrypt_artifact_name`
         const QString decrypted_path =
-            artifacts.isEmpty() ? QString() : artifacts[0].absoluteFilePath();
-        // ★ S-05：**文件名不许带原文件名**（原包叫 cipher.stkenc.db ⇒ 产物名里不该出现 cipher）
-        check(!decrypted_path.isEmpty() &&
-                  !QFileInfo(decrypted_path).fileName().contains(QStringLiteral("cipher")),
-              QStringLiteral("解密产物名不该带原文件名（S-05）：%1").arg(decrypted_path));
+            leftovers.isEmpty() ? QString() : leftovers[0].absoluteFilePath();
         // 外壳先过 `gate_source`（产物入目录）再交给引擎 ⇒ 引擎那道闸门必须**认出来**、不二次解密
         if (QFileInfo::exists(decrypted_path)) {
             const int before = decrypt_calls;

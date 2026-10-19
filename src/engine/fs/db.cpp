@@ -698,6 +698,9 @@ DbExtract extract_entry(const std::vector<uint8_t>& raw, const DbEntry& entry) {
 
 DbListing list_db_seek(const std::string& path, std::optional<DbFormat> db_fallback,
                        const xrkit::plugin::Registry* registry) {
+    // ★ S-05 操作级：**这里不建作用域** —— `list_db_seek` 是**内层原语**，外层操作
+    //   （`extract_package`/`package_entries`/CLI 的 dump 路径）才有资格决定清理点：
+    //   在这里删，会把「列完条目再去逐条提取」那条批处理（T-02）的临时件提前删掉。
     DbListing res;
     const auto t0 = std::chrono::steady_clock::now();
     const auto stamp = [&res, t0]() {

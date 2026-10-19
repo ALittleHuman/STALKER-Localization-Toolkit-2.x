@@ -1,4 +1,5 @@
 #include "xrkit/engine/fs/extract_tree.h"
+#include "xrkit/engine/plugin/registry.h"
 #include "xrkit/engine/fs/link_check.h"
 
 #include "xrkit/core/atomic_write.h"
@@ -519,6 +520,9 @@ ExtractTreeResult extract_tree(const std::string& image_path, const std::string&
 ExtractTreeResult extract_package(const std::string& image_path, const std::string& out_root,
                                   const ExtractTreeOptions& options,
                                   std::optional<DbFormat> db_fallback) {
+    // ★★ S-05 操作级（用户裁决）：**一次引擎操作返回时**就把解密临时件删掉
+    //   （不是每个文件读完就删 —— Windows 句柄；也不是退出才删 —— 会躺半天）。
+    const xrkit::plugin::DecryptSessionScope decrypt_session_scope;
     // ① SquashFS：先只读 96 字节超块判 magic（大镜像不能整包进内存）⇒ 命中就走既有那条
     SuperBlock super;
     std::string super_error;

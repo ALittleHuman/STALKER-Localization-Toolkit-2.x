@@ -1,4 +1,5 @@
 #include "xrkit/engine/fs/overlay.h"
+#include "xrkit/engine/plugin/registry.h"
 
 #include "probe_decls.h"
 
@@ -590,6 +591,9 @@ std::vector<EntryInfo> package_entries(const std::string& path,
                                        std::string& error,
                                        const plugin::Registry* registry,
                                        DbReadInfo* read_info) {
+    // ★★ S-05 操作级（用户裁决）：**一次引擎操作返回时**就把解密临时件删掉
+    //   （不是每个文件读完就删 —— Windows 句柄；也不是退出才删 —— 会躺半天）。
+    const xrkit::plugin::DecryptSessionScope decrypt_session_scope;
     error.clear();
     std::vector<EntryInfo> out;
     // ★★ P17-85（01 F-09 收尾）：出参先**清零**（调用方可以复用一个变量；"没填"＝没发生整包读）。

@@ -579,6 +579,7 @@ DecryptGateResult gate_db_path(const Registry& registry, const std::string& path
         result.error = "解密结果落盘失败：" + error;
         return result;
     }
+    register_decrypt_artifact(target);
     result.used_plugin = true;
     result.path = target;
     core::log(core::Level::Info, "已用插件解密器 " + decryptor->plugin + " 解开：" + path);
@@ -714,6 +715,43 @@ std::string decrypt_output_dir() {
         return run_dir_slot();
     }();
     return dir;
+}
+
+namespace {
+
+// ★ S-05 操作级：线程本的会话深度 ＋ 本次操作登记的临时件。
+//   用 thread_local：转换/解包跑在工作线程，两个线程的操作各清各的。
+int& session_depth() {
+    static thread_local int depth = 0;
+    return depth;
+}
+
+std::vector<std::string>& session_artifacts() {
+    static thread_local std::vector<std::string> files;
+    return files;
+}
+
+void delete_artifacts(std::vector<std::string>& files) {
+    for (const std::string& f : files) {
+        std::error_code ec;
+        std::filesystem::remove(std::filesystem::path(f), ec);
+    }
+    files.clear();
+}
+
+}  // namespace
+
+DecryptSessionScope::DecryptSessionScope() { ++session_depth(); }
+
+DecryptSessionScope::~DecryptSessionScope() {
+    int& depth = session_depth();
+    if (depth > 0) --depth;
+    if (depth == 0) delete_artifacts(session_artifacts());   // ★ 最外层作用域结束 ⇒ 真删
+}
+
+void register_decrypt_artifact(const std::string& path) {
+    if (path.empty()) return;
+    session_artifacts().push_back(path);
 }
 
 std::string decrypt_artifact_name(const std::string& source_path) {

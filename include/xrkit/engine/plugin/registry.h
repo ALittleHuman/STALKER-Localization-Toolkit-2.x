@@ -370,6 +370,23 @@ std::string decrypt_artifact_name(const std::string& source_path);
 // 返回删掉的目录数。`decrypt_output_dir()` 第一次创建运行目录时会自动调一次。
 int sweep_stale_decrypt_dirs();
 
+// ★★ S-05 操作级（第三方只读审计 2026-10-18，用户裁决）：
+//   **一次引擎操作**（列条目 / 解包 / 单文件读）返回时，把这次操作期间产生的解密临时件删掉 ——
+//   不是"每个文件读完就删"（Windows 句柄：SquashFS 的 `ReadSession` 在整批里持有 ifstream，
+//   句柄没关时删不掉），也不是"退出才删"（工具一开半天，游戏资源副本就在盘上躺半天）。
+//   作用域是**可嵌套**的：内层 `DecryptSessionScope` 只标记，最外层析构才真删。
+class DecryptSessionScope {
+public:
+    DecryptSessionScope();
+    ~DecryptSessionScope();
+    DecryptSessionScope(const DecryptSessionScope&) = delete;
+    DecryptSessionScope& operator=(const DecryptSessionScope&) = delete;
+};
+
+// 登记一个"本次操作产生的解密临时件"（由 `gate_db_path` 在落盘成功后调用；
+// 没有外层作用域时登记到最近的嵌套深度，进程退出仍有 atexit 兜底）。
+void register_decrypt_artifact(const std::string& path);
+
 // 引擎读入口统一走的**活动闸门**：
 //   · `registry` 显式传入者优先，为空 ⇒ 用 `active_registry()`；两者都空 ⇒ 原样放行；
 //   · 路径已在 `decrypt_output_dir()` 里 ⇒ 原样放行（那是闸门自己的产物，二次解密会把
