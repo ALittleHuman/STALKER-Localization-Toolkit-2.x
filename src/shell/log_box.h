@@ -10,6 +10,8 @@
 #include <QPlainTextEdit>
 #include <QString>
 
+#include <functional>
+
 class QTimerEvent;
 
 namespace xrkit::shell {
@@ -24,6 +26,12 @@ public:
     void append_batched(const QString& line);
     // 立刻落盘（收尾/异常路径用）
     void flush();
+
+    // ★★ C-13（用户 2026-10-19 决策）：把这个控件里的日志**镜像**到落盘文件。
+    //   选 `flush()` 而不是 `append_batched()` 挂回调的理由：LogBox 已经是 80 ms 批量，
+    //   写文件跟着批量走 ⇒ 解包 3.9 万条覆盖时不会变成 3.9 万次 flush。
+    //   回调收到的是**这一批**的整块文本（多行）。
+    void set_persist(std::function<void(const QString&)> fn);
 
     // 超上限截断：> 5000 行 ⇒ 删到 3000 行（**整块删**，不是逐行丢）
     void enforce_limit();
@@ -45,6 +53,7 @@ private:
     QStringList pending_;
     int timer_id_ = 0;
     int flush_count_ = 0;
+    std::function<void(const QString&)> persist_;   // C-13：落盘镜像回调（可空）
     int trim_count_ = 0;
     int batch_ms_ = 80;
     int line_limit_ = 5000;

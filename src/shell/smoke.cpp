@@ -6461,6 +6461,27 @@ SmokeResult run_smoke() {
               QStringLiteral("P4 `task_run` 没被宿主接受"));
         check(text.contains(QStringLiteral("worker_done")),
               QStringLiteral("P4 任务壳的 worker 没跑完（标记里没有 worker_done）"));
+        // ★★ C-13（用户 2026-10-19 决策）：**界面上出现的每一条日志都要进落盘文件**。
+        //   修前的伤：`Hub::log_line` 只进 LogBox ⇒ 用户实际运行出来的 `logs/*.txt` 是 0 字节。
+        QFile::remove(hub.log_file_path());
+        hub.log_line(QStringLiteral("MARKER-C13-UI"));
+        if (hub.log_box() != nullptr) hub.log_box()->flush();
+        xrkit::core::log(xrkit::core::Level::Info, "MARKER-C13-ENGINE");
+        {
+            QFile lf(hub.log_file_path());
+            bool ui = false, engine = false;
+            qint64 size = 0;
+            if (lf.open(QIODevice::ReadOnly)) {
+                const QByteArray all = lf.readAll();
+                size = all.size();
+                ui = all.contains("MARKER-C13-UI");
+                engine = all.contains("MARKER-C13-ENGINE");
+            }
+            check(ui, QStringLiteral("C-13 界面日志要落盘（MARKER-C13-UI 不在文件里）"));
+            check(engine, QStringLiteral("C-13 引擎日志照旧落盘（MARKER-C13-ENGINE 不在文件里）"));
+            check(size > 0, QStringLiteral("C-13 日志文件不许是 0 字节（实得 %1）").arg(size));
+        }
+
         check(text.contains(QStringLiteral("worker_thread_ui:True")),
               QStringLiteral("P4 **线程纪律失效**：工作线程里调 `ui.label` 没有被拒"));
         QProgressBar* bar = page_widget != nullptr ? page_widget->findChild<QProgressBar*>() : nullptr;

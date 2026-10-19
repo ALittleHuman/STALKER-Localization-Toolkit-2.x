@@ -145,6 +145,10 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     // ── 底部：折叠日志抽屉 + 状态栏。日志默认收起、点「▸ 日志」才展开，
     //   不再像旧版那样常驻一块 200px 横条去抢内容区。
     log_box_ = new LogBox;
+    // ★★ C-13（用户 2026-10-19 决策）：**界面上出现的每一条日志都要进落盘文件**。
+    //   修前：`Hub::log_line` 只进 LogBox，一条都不进 `core::log` ⇒ 用户实际运行产生的
+    //   `logs/log_*.txt` 全是 **0 字节**（包里 5 份日志实测如此）。
+    log_box_->set_persist([](const QString& block) { xrkit::core::log_block(block.toStdString()); });
     log_view_ = log_box_;  // 兼容访问器（LogBox 是 QPlainTextEdit 子类）
     log_clear_ = new QPushButton(QStringLiteral("清空"));
     log_clear_->setObjectName(QStringLiteral("log_clear"));
@@ -190,9 +194,11 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
             QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
         QString clash;
         log_file_path_ = unique_log_path(log_dir, stamp, &clash);
+        // ★★ C-13（用户 2026-10-19）：`set_log_file` 必须**提到第一条 `log_line` 之前** ——
+        //   以前"运行日志落点冲突"那条是在挂文件**之前**说的，所以它自己进不了文件（丢一条）。
+        xrkit::core::set_log_file(log_file_path_.toStdString());
         // ★ 同秒已有同名运行日志 ⇒ 本次换了落点：**说出来**（否则用户会以为在看重名的那一份）
         if (!clash.isEmpty()) log_line(QStringLiteral("运行日志落点：%1").arg(clash));
-        xrkit::core::set_log_file(log_file_path_.toStdString());
         // ★ 落点**永远**打一条（不只冲突时）：用户与自检都要能看到"这一次的日志写去了哪"
         log_line(QStringLiteral("本次运行日志落点：%1")
                      .arg(QDir::toNativeSeparators(log_file_path_)));
@@ -201,6 +207,16 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
         if (!log_file_active()) {
             log_line(QStringLiteral("日志无法落盘：%1（本次运行的日志没有保存到文件）")
                          .arg(QDir::toNativeSeparators(log_file_path_)));
+        }
+        // ★★ C-13 §5.6：运行日志**保留 50 份**（新的留、当前这份永不删）。
+        //   删了几份要说出来；删不动（别的实例占着）也要说出来 —— 零静默。
+        const xrkit::core::PruneResult pruned =
+            xrkit::core::prune_log_files(log_dir.toStdString(), 50, log_file_path_.toStdString());
+        if (pruned.deleted > 0) {
+            log_line(QStringLiteral("旧运行日志已清理 %1 份（保留最近 50 份）").arg(pruned.deleted));
+        }
+        if (pruned.failed > 0) {
+            log_line(QStringLiteral("有 %1 份旧运行日志删不掉（可能被另一个实例占用）").arg(pruned.failed));
         }
     }
 

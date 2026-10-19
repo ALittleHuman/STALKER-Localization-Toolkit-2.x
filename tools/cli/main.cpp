@@ -524,6 +524,96 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
     // ★★ T-08（第三方只读审计 2026-10-18）：**编码确认里点「取消」⇒ 停整批**。
     //   修前：`Cancelled` 只让当前这一份失败，批处理照旧逐个弹窗（500 个文件要取消 500 次）。
     //   判据用**确认器被调用的次数**：3 个文件的批次里取消一次 ⇒ 确认器**只该被调 1 次**。
+    // ★★ C-13（第三方只读审计 2026-10-18；用户 2026-10-19 决策）：运行日志必须**包含全部内容**。
+    //   修前：`Hub::log_line` 只进 LogBox、**一条都不进 `core::log`** ⇒ 用户实际运行时产生的
+    //   `logs/log_*.txt` 全是 **0 字节**（包里 5 份实测如此；不是"打包污染"）。
+    reg.add("log: 日志块镜像 ＋ 保留 50 份（C-13）", [](CheckContext& ctx) {
+        namespace cfs = std::filesystem;
+        namespace core = xrkit::core;
+        std::error_code ec;
+        const cfs::path dir = cfs::temp_directory_path(ec) / "xrkit_c13_selftest";
+        cfs::remove_all(dir, ec);
+        cfs::create_directories(dir, ec);
+
+        // ① 块镜像：`log_block` 原样落盘（末尾补换行），且**一次**写进去多行
+        const std::string log_path = xrkit::core::path_to_utf8(dir / "log_main.txt");
+        core::set_log_file(log_path);
+        check(ctx, core::log_file_active(), "C-13 运行日志文件能挂上");
+        core::log_block("MARKER-UI-1\nMARKER-UI-2");
+        core::set_log_file("");   // 关掉再读，确保已 flush 到盘
+        std::string text;
+        {
+            std::ifstream in(xrkit::core::path_from_utf8(log_path), std::ios::binary);
+            text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }   // ★ 必须在这个作用域里关掉：Windows 上**打开着的文件删不掉**（会让下面的 prune 假失败）
+        check(ctx, text.find("MARKER-UI-1") != std::string::npos &&
+                       text.find("MARKER-UI-2") != std::string::npos,
+              "C-13 `log_block` 的多行块**原样落盘**（UI 行不再一条都不进文件）");
+
+        // ② 保留 50 份：造 55 份，当前这份（排在最后 = 最旧）也必须活着
+        // ★ 独立子目录 ＋ **每份不同的 mtime**：不这样写，55 份的 mtime 会被文件系统抹平，
+        //   "谁该被删"就退化成目录迭代顺序 —— 判据会随机器漂移（我第一次就这么假红）。
+        const cfs::path rotdir = dir / "rot";
+        cfs::create_directories(rotdir, ec);
+        auto stamp_of = [](int i) {
+            return cfs::file_time_type(cfs::file_time_type::duration(i * 1000000));
+        };
+        for (int i = 0; i < 55; ++i) {
+            const cfs::path f = rotdir / ("log_20260101_" + std::to_string(100000 + i) + ".txt");
+            std::ofstream out(f, std::ios::binary);
+            out << "x";
+            out.close();
+            // ★ 偏移**从 1 开始**：`duration(0)` 在本机设不进去（文件保留"现在"），
+            //   会让"最旧"那份被当成最新 —— 判据会假红（我踩过）。
+            cfs::last_write_time(f, stamp_of(i + 1), ec);   // i 越大越新
+        }
+        const cfs::path newest = rotdir / "log_20260101_100054.txt";
+        const cfs::path oldest = rotdir / "log_20260101_100000.txt";
+
+        // ── 情形 A：当前这份是**最新**的（在 50 份里）⇒ 恰好删 5 份
+        const core::PruneResult a = core::prune_log_files(
+            xrkit::core::path_to_utf8(rotdir), 50, xrkit::core::path_to_utf8(newest));
+        int remain = 0;
+        for (cfs::directory_iterator it(rotdir, ec), end; !ec && it != end; it.increment(ec)) {
+            if (it->is_regular_file() && it->path().filename().string().rfind("log_", 0) == 0) ++remain;
+        }
+        check(ctx, a.deleted == 5 && a.failed == 0,
+              "C-13 55 份保留 50 ⇒ 删 5 份（deleted=" + std::to_string(a.deleted) +
+                  " failed=" + std::to_string(a.failed) + "）");
+        check(ctx, remain == 50, "C-13 清完之后剩 50 份（remain=" + std::to_string(remain) + "）");
+        check(ctx, cfs::exists(newest), "C-13 当前正在写的那份还在");
+
+        // ── 情形 B（最小可判）：三份老的 ＋ keep=1，保护**最旧那份** ⇒ 只该删中间那份。
+        //   这样"保护"这件事和"份数上限"分开判，不受张数/mtime 并列影响。
+        const cfs::path small = dir / "prot";
+        cfs::create_directories(small, ec);
+        const char* names[3] = {"log_20260101_000001.txt", "log_20260101_000002.txt",
+                                "log_20260101_000003.txt"};
+        for (int i = 0; i < 3; ++i) {
+            std::ofstream out(small / names[i], std::ios::binary);
+            out << "x";
+            out.close();
+            cfs::last_write_time(small / names[i],
+                                 cfs::file_time_type(cfs::file_time_type::duration((i + 1) * 1000000)),
+                                 ec);   // 同样从 1 开始，避开 duration(0)
+        }
+        const cfs::path protect = small / names[0];   // 最旧
+        const core::PruneResult b = core::prune_log_files(
+            xrkit::core::path_to_utf8(small), 1, xrkit::core::path_to_utf8(protect));
+        check(ctx, cfs::exists(protect),
+              "C-13 **当前正在写的那份永不删**（哪怕它最旧、且 keep=1）");
+        check(ctx, b.deleted == 1,
+              "C-13 三份 keep=1 ＋ 保护最旧 ⇒ 只删中间那 1 份（deleted=" +
+                  std::to_string(b.deleted) + " failed=" + std::to_string(b.failed) + "）");
+        int remain_b = 0;
+        for (cfs::directory_iterator it(small, ec), end; !ec && it != end; it.increment(ec)) {
+            if (it->is_regular_file()) ++remain_b;
+        }
+        check(ctx, remain_b == 2,
+              "C-13 保护 ＋ 最新 ⇒ 剩 2 份（remain=" + std::to_string(remain_b) + "）");
+        cfs::remove_all(dir, ec);
+    });
+
     // ★★ S-05（第三方只读审计 2026-10-18）：解密产物是**运行期中间物**（含游戏资源副本）。
     //   修前：`%TEMP%\xrkit_decrypted\<原文件名>.decrypted` —— 名字可预测、且永不清理。
     //   现在：每次运行一个随机目录、文件名走源路径哈希、退出 atexit 删整棵、
