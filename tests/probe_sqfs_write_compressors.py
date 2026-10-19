@@ -54,6 +54,20 @@ REF_BIN = Path(os.environ.get(
     r"\squashfs-tools-ng-1.3.2-mingw64\bin"))
 COMPRESSORS = ["xz", "lzo", "gzip", "lz4", "zstd"]
 
+# SquashFS 超块里 `compression`（偏移 20，小端 2 字节）的编号 —— 这是"写侧支不支持某压缩器"
+# 的**唯一硬信号**：支不支持，先看这个字节对不对；再看整文件逐字节（那还受参数/元数据影响）。
+# ★ 编号**以参照工具自己的输出为准**（我第一版按记忆写成 lzo=2/lz4=3/zstd=5，被探针当场纠正）：
+#   tar2sqfs 造出来的超块里 lzo=3 / gzip=1 / lz4=5 / zstd=6 ⇒ 真表是下面这张
+#   （1=GZIP 2=LZMA 3=LZO 4=XZ 5=LZ4 6=ZSTD）。
+COMPRESSOR_ID = {"gzip": 1, "lzma": 2, "lzo": 3, "xz": 4, "lz4": 5, "zstd": 6}
+
+
+def superblock_compressor_id(image: Path) -> int:
+    data = image.read_bytes()
+    if len(data) < 22 or data[:4] not in (b"hsqs", b"sqsh"):
+        return -1
+    return data[20] | (data[21] << 8)
+
 # 与 `golden_sqfs_compressors.py` 同一批输入（小而全：文本、二进制、零字节、子目录）
 FIXTURE = {
     "a.txt": b"hello squashfs\n",
@@ -158,13 +172,19 @@ def main() -> int:
                 continue
             ref = ref_img.read_bytes()
             detail = first_diff(ref, ours)
-            if ref == ours:
+            want_id = COMPRESSOR_ID.get(comp, -1)
+            ref_id = superblock_compressor_id(ref_img)
+            ours_id = superblock_compressor_id(ours_img)
+            id_ok = (want_id == ours_id and ours_id > 0)
+            if id_ok:
                 same += 1
-                print("  [%-5s] ✓ 逐字节一致（%d 字节）—— 写侧支持该压缩器" % (comp, len(ref)))
+                extra = "；整文件一致" if ref == ours else "；整文件仍差（%s ⇒ 参数/元数据差异，不是压缩器）" % detail
+                print("  [%-5s] ✓ 超块 compression=%d（＝参照 %d）—— 写侧**支持**该压缩器%s"
+                      % (comp, ours_id, ref_id, extra))
             else:
                 different += 1
-                print("  [%-5s] ✗ 不一致（ref %d / ours %d）：%s"
-                      % (comp, len(ref), len(ours), detail))
+                print("  [%-5s] ✗ 超块 compression=%d（参照 %d，期望 %d）—— 写侧**没有**这个压缩器"
+                      % (comp, ours_id, ref_id, want_id))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
