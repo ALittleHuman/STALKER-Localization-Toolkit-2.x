@@ -6378,6 +6378,40 @@ def step_pyhost_oneline(release: bool) -> None:
         fail("`reason` 还是原样拼进那行机器记录（多行 traceback 会把协议拆散，见上）（C-04）")
 
 
+def step_user_ltx_identity(release: bool) -> None:
+    r"""设置文件必须与游戏的 `user.ltx` **分开**（第三方只读审计 H-02；P17-163）。
+
+    修前事实：`core/theme.cpp::user_ltx_path()` 返回 `app_dir()/user.ltx` —— 与**游戏自己的**
+    `user.ltx` 同名。工具放进游戏根目录时，`save_user_values()` 会把整份文件重新渲染一遍
+    （键还在，但**注释与空行全丢**）→ 对游戏配置就是破坏，用户不会立刻发现。
+
+    修法（用户裁决，方案 1）：设置写 `xrkit_user.ltx`；旧 `user.ltx` **只在硬条件下**迁移——
+    新文件不存在 ＋ 旧文件存在 ＋ 旧文件里有**我们写过的键**（`[theme] mode|scale` 或
+    `[ffmpeg] path|probe`）；否则**一个字节都不碰**；迁移走原子写，**旧文件不删不改不再写**。
+    判据 `tests/check_user_ltx_identity.py`（黑盒 `--ui-scale-probe` ＋ 静态锁）：
+    A 有我们的键 → 迁移、读到 1.25、生成 `xrkit_user.ltx`；A4 旧文件**逐字节未变**；
+    B 只有游戏键 → 不迁移；C 没有旧文件 → 不新建；D 静态锁。
+    ＋ `--smoke` 里那条既有判据（设置文件名）也改成 `xrkit_user.ltx` —— 它是本条的**天然行为锁**。
+    红证：把 `user_ltx_path()` 退回 `user.ltx` → D2/A1/A3 红 ＋ `SHELL-SMOKE` 那条红。
+    """
+    say("[user-ltx-identity] 设置文件与游戏的 user.ltx 分开（审计 H-02）")
+    script = ROOT / "tests" / "check_user_ltx_identity.py"
+    if not require_repo_file(script, "user.ltx 身份判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("USER-LTX") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("设置写 `xrkit_user.ltx`、旧文件只在有我们的键时迁移且逐字节不变（H-02）")
+    elif rc == 2:
+        prereq("user.ltx 身份判据的黑盒那半", "缺 CLI 构建产物（静态那几项已判、黑盒未验）", release)
+    else:
+        fail("设置仍写在游戏同名的 `user.ltx` 里（会洗掉游戏配置的注释/空行，见上）（H-02）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6813,6 +6847,8 @@ STEPS = [
     ("plugins-skip-diag", step_plugins_skip_diag),
     # ★★ P17-162（第三方只读审计 C-04）：PYHOST 的 reason 必须折成一行。
     ("pyhost-oneline", step_pyhost_oneline),
+    # ★★ P17-163（第三方只读审计 H-02）：设置文件与游戏 user.ltx 分开（有条件迁移）。
+    ("user-ltx-identity", step_user_ltx_identity),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。

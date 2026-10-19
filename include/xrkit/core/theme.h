@@ -68,7 +68,14 @@ LtxData parse_ltx(const std::string& text);
 std::string render_ltx(const LtxData& data);
 
 // `user.ltx` 的路径：**exe 所在目录**（1.x `app_dir()/user.ltx`；自动生成，不入库）。
-std::string user_ltx_path();
+std::string user_ltx_path();        // ★ H-02：现在是 `xrkit_user.ltx`（不再是游戏同名的 user.ltx）
+std::string legacy_user_ltx_path();  // 旧名字（只用于有条件迁移）
+
+// ★★ H-02（第三方只读审计 2026-10-18）：**有条件迁移**旧 `user.ltx` 的设置。
+//   硬条件：新文件不存在 ＋ 旧文件存在 ＋ 旧文件里能解析出**我们写过的键**
+//   （`[theme] mode|scale` 或 `[ffmpeg] path|probe`）—— 否则**一个字节都不碰**。
+//   返回：迁移的段数 / 0＝没迁移 / -1＝迁移失败（已留痕）。★ 旧文件不删、不改、不再写。
+int migrate_legacy_user_config();
 // exe 所在目录（1.x `app_dir()`）。发行版把 ffmpeg.exe/ffprobe.exe 放在这里，源码版
 // `download_ffmpeg.py` 也下到项目根 —— 两者都等于这个目录（⑧8.1"只认两处"之一）。
 std::string app_dir();

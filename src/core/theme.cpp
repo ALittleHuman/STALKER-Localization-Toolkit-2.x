@@ -1,7 +1,10 @@
 #include "xrkit/core/theme.h"
 
-#include "xrkit/core/atomic_write.h"   // M-shell-2：user.ltx 走原子写
+#include "xrkit/core/atomic_write.h"   // M-shell-2 / H-02：设置文件走原子写
+#include "xrkit/core/log.h"             // H-02：迁移与失败都要留痕（零静默）
 #include "xrkit/core/path.h"
+
+#include <filesystem>
 
 #include <algorithm>
 #include <cstring>
@@ -248,12 +251,79 @@ std::string app_dir() {
 std::string user_ltx_path() {
 #if defined(_WIN32)
     const std::string dir = app_dir();
+    if (dir != ".") return path_to_utf8(path_from_utf8(dir) / L"xrkit_user.ltx");
+#endif
+    return "xrkit_user.ltx";
+}
+
+// ★★ H-02（第三方只读审计 2026-10-18）：**别再用 `user.ltx` 这个名字**。
+//   修前设置写在 `app_dir()/user.ltx` —— 与**游戏自己的** `user.ltx` 同名：工具放进游戏根目录时，
+//   `save_user_values()` 会把整份文件重新渲染一遍（键还在，但**注释与空行全丢**）⇒ 对游戏配置
+//   就是破坏，且用户不会立刻发现（README 里一句警示躲不掉这件事）。
+//   现在：设置写 `xrkit_user.ltx`；旧 `user.ltx` **只在硬条件下**读一次做迁移：
+//     · 新文件不存在；· 旧文件存在；· 旧文件里有**我们写过的键**（`[theme] mode|scale` /
+//       `[ffmpeg] path|probe`）—— 游戏配置里不会有 `[theme]`，其余情况**一个字节都不碰**。
+//   迁移 = 旧内容**原子写**到新路径，然后只读新文件；**旧文件不删、不改、不再写**。
+std::string legacy_user_ltx_path() {
+#if defined(_WIN32)
+    const std::string dir = app_dir();
     if (dir != ".") return path_to_utf8(path_from_utf8(dir) / L"user.ltx");
 #endif
     return "user.ltx";
 }
 
+namespace {
+
+bool user_file_exists(const std::string& path) {
+    std::error_code ec;
+    return std::filesystem::is_regular_file(path_from_utf8(path), ec);
+}
+
+// 旧文件里**有我们写过的键**才算我们的（硬条件）
+bool has_our_keys(const LtxData& data) {
+    for (size_t i = 0; i < data.sections.size(); ++i) {
+        const std::string& section = data.sections[i];
+        for (const auto& kv : data.items[i]) {
+            if (section == kPrefSection && (kv.first == "mode" || kv.first == "scale")) return true;
+            if (section == "ffmpeg" && (kv.first == "path" || kv.first == "probe")) return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+int migrate_legacy_user_config() {
+    const std::string target = user_ltx_path();
+    const std::string legacy = legacy_user_ltx_path();
+    if (user_file_exists(target)) return 0;      // 新文件在 ⇒ 什么都不做
+    if (!user_file_exists(legacy)) return 0;     // 没有旧文件 ⇒ 什么都不做
+    std::ifstream in(path_from_utf8(legacy), std::ios::binary);
+    if (!in) return 0;
+    const std::string text((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    in.close();
+    const LtxData data = parse_ltx(text);
+    if (!has_our_keys(data)) return 0;   // ★ 硬条件：没有我们写过的键 ⇒ 一个字节都不碰
+    std::string error;
+    const std::vector<uint8_t> bytes(text.begin(), text.end());
+    if (!write_file_atomic(target, bytes, /*overwrite=*/true, error)) {
+        log(Level::Warn, "旧 user.ltx 未能迁移到 " + target + "：" + error);
+        return -1;
+    }
+    int sections = 0;
+    for (const std::string& section : data.sections) {
+        if (section == kPrefSection || section == "ffmpeg") ++sections;
+    }
+    log(Level::Info, "从旧 user.ltx 迁移了 " + std::to_string(sections) +
+                         " 个段到 " + target + "（旧文件未改动）");
+    return sections;
+}
+
 LtxData load_user_config() {
+    // ★ H-02：**第一次**读设置时给旧文件一次迁移机会（每进程一次；条件不满足/失败都返回 0/-1）
+    static const int kMigrated = migrate_legacy_user_config();
+    (void)kMigrated;
     std::ifstream in(path_from_utf8(user_ltx_path()), std::ios::binary);
     if (!in) return LtxData{};
     const std::string text((std::istreambuf_iterator<char>(in)),

@@ -1493,12 +1493,20 @@ SmokeResult run_smoke() {
     check(px(24) == 36, QStringLiteral("px(24) @1.5 = 36"));
     xrkit::core::set_ui_scale(1.0);
 
-    // ⑥ user.ltx 落在 **exe 所在目录**（1.x `app_dir()/user.ltx`），且只读不写
+    // ⑥ 设置文件落在 **exe 所在目录**，且与游戏同名的 `user.ltx` **分开**（H-02）
+    //   ★★ H-02（第三方只读审计 2026-10-18）：修前这里断言的是 `user.ltx` —— 而那个名字
+    //     **与游戏自己的配置文件同名**，工具放进游戏根目录时会把它重写一遍
+    //     （键还在、但注释与空行全丢）。现在设置写 `xrkit_user.ltx`；旧名字只用于有条件迁移。
     const QString path = QString::fromUtf8(xrkit::core::user_ltx_path());
-    check(QFileInfo(path).fileName().compare(QStringLiteral("user.ltx"), Qt::CaseInsensitive) == 0,
-          QStringLiteral("user.ltx 文件名"));
+    check(QFileInfo(path).fileName().compare(QStringLiteral("xrkit_user.ltx"), Qt::CaseInsensitive) == 0,
+          QStringLiteral("设置文件名 = xrkit_user.ltx（不与游戏同名，H-02）"));
     check(QFileInfo(path).absolutePath() == QCoreApplication::applicationDirPath(),
-          QStringLiteral("user.ltx 与 exe 同目录"));
+          QStringLiteral("设置文件与 exe 同目录"));
+    // ★ 旧名字仍然指向 `user.ltx`（迁移源就是它；不能两处各写一份路径）
+    const QString legacy = QString::fromUtf8(xrkit::core::legacy_user_ltx_path());
+    check(QFileInfo(legacy).fileName().compare(QStringLiteral("user.ltx"), Qt::CaseInsensitive) == 0 &&
+              QFileInfo(legacy).absolutePath() == QCoreApplication::applicationDirPath(),
+          QStringLiteral("迁移源仍是 exe 旁的 user.ltx（H-02）"));
 
     // ⑦ 滚动三闸门（M2-2）：对照表 ①1.1~1.8 —— **没有滚动条就不许滚**、装得下不占条、
     //    同一滚轮事件只有一个条子动、全局路由到第一个能滚的视口。
