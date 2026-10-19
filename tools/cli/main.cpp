@@ -3009,6 +3009,16 @@ int run_cli(const std::vector<std::string>& args) {
     xrkit::plugin::Registry plugin_registry;
     {
         const std::string dir = plugins_given ? plugins_dir : (xrkit::core::app_dir() + "/plugins");
+        // ★★ C-03（第三方只读审计 2026-10-18）：**诊断动作不该加载插件**（更不该因此起 CPython）。
+        //   修前每条命令都在这里无条件 `load_all_plugins_from_dir` —— 诊断动作因此变慢、有副作用，
+        //   而且**输出会被坏插件污染**（审计原话）。
+        //   口径：**白名单**，而且只收"完全不碰注册表"的动作 ——
+        //     · `--exe-version`：只读 exe 的 VERSIONINFO，用不到任何注册；
+        //     · `--help`/`--version`/无动作：本来就在参数解析阶段就返回了（走不到这里）。
+        //   ⚠ **绝不能进白名单**：`--dump`/`--list`（要解密插件）、`--unpack-*`、`--pack-*`、
+        //     `--convert-*`（要编码插件/工具插件）、`--selftest`（它自己就在验插件加载）。
+        //   ★ 用户**显式**给了 `--plugins` 就照旧加载（那是他明确要求的事，不做"贴心的忽略"）。
+        const bool skip_plugins = !plugins_given && action == "--exe-version";
         // ★★ C-01 第二版（本批自我更正）：**默认目录不存在＝不算错**，这不是"吞错"，是口径。
         //   第一版把"目录不存在"也当加载错误报了出来 —— 门禁当场抓到：`--fast` 的 `golden-db`
         //   步红（`golden_db.py` 把 stdout+stderr 一起按 `\t` 切，多了三行 `PLUGINS-DEFAULT`）。
@@ -3019,7 +3029,7 @@ int run_cli(const std::vector<std::string>& args) {
         const bool dir_exists =
             std::filesystem::is_directory(xrkit::core::path_from_utf8(dir));
         std::vector<xrkit::plugin::RegistrationError> plugin_errors;
-        if (plugins_given || dir_exists) {
+        if (!skip_plugins && (plugins_given || dir_exists)) {
             // ★★ P2b：与 GUI 走**同一个**统一入口（`*.dll` + `*.py`）—— 修前两边各调
             //   `load_plugins_from_dir`，Python 插件一旦加进来就会出现"GUI 有、CLI 没有"的分叉。
             plugin_errors =

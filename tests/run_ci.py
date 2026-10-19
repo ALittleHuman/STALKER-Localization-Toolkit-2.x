@@ -6311,6 +6311,41 @@ def step_small_cleanups(release: bool) -> None:
         fail("小清理没做干净（见上）：同一表达式两份 / 一行两语句 / 死变量还在（C-10/11/12）")
 
 
+def step_plugins_skip_diag(release: bool) -> None:
+    r"""**诊断动作不该加载插件**（第三方只读审计 C-03；P17-161）。
+
+    修前事实：`tools/cli/main.cpp` 在动作分派前**无条件** `load_all_plugins_from_dir` ⇒
+    每条命令都加载插件（`.py` 插件还会把 **CPython 起起来**）——诊断动作因此变慢、有副作用，
+    **输出会被坏插件污染**（审计原话）。
+
+    修法：**白名单**，只收"完全不碰注册表"的动作（当前只有 `--exe-version`）；显式 `--plugins`
+    照旧加载（不替用户做主）。⚠ `--dump`/`--unpack-*`/`--pack-*`/`--convert-*`/`--selftest`
+    **绝不能进**白名单。
+
+    判据 `tests/check_plugins_skip_diag.py`（黑盒：拷 CLI 到临时目录 ＋ 坏 `plugins\bogus.dll`）：
+    A `--exe-version` 的 stderr 没有 `PLUGINS-DEFAULT`；A2 stdout 也没有 `PLUGINS`；
+    A3 仍正常退出；B 对照 `--dump` **仍然加载**（白名单没关过头）；
+    C 静态锁：白名单里只有 `--exe-version`、显式 `--plugins` 照旧、加载那支真的用了它。
+    红证：把白名单关掉 ⇒ C1/C3/A 三项红（已实测）。
+    """
+    say("[plugins-skip-diag] 诊断动作不该加载插件（审计 C-03）")
+    script = ROOT / "tests" / "check_plugins_skip_diag.py"
+    if not require_repo_file(script, "诊断动作跳过插件判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("PLUGINS-SKIP-DIAG") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("`--exe-version` 不加载插件、`--dump` 照旧加载、显式 `--plugins` 照旧（C-03）")
+    elif rc == 2:
+        prereq("诊断动作跳过插件的黑盒那半", "缺 CLI 构建产物（静态那几项已判、黑盒未验）", release)
+    else:
+        fail("诊断动作仍在无条件加载插件（见上）：变慢、有副作用、输出可能被坏插件污染（C-03）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6742,6 +6777,8 @@ STEPS = [
     ("override-recursion", step_override_recursion),
     # ★★ P17-159（第三方只读审计 C-10/C-11/C-12）：三处小清理（静态锁）。
     ("small-cleanups", step_small_cleanups),
+    # ★★ P17-161（第三方只读审计 C-03）：诊断动作不该加载插件（白名单 ＋ 黑盒对照）。
+    ("plugins-skip-diag", step_plugins_skip_diag),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。
