@@ -5,6 +5,12 @@
 
 #include <lzma.h>
 
+// ★★ T-07（第三方只读审计 2026-10-18；参数按用户 2026-10-19 给的参照实现）：
+//   gzip 块 = `deflateInit2(level=9, Z_DEFLATED, windowBits=15, memLevel=8, Z_DEFAULT_STRATEGY)`
+//   ＋ `deflate(Z_FINISH)`；**不写** options 块。zlib 1.2.12（参照）与 1.3.2 在本机
+//   实测逐字节一致（`tests/probe_zlib_deflate_bytes.py`，3/3）。
+#include <zlib.h>
+
 namespace xrkit::engine::fs {
 namespace {
 
@@ -68,14 +74,48 @@ bool compress_block(Compression comp, const uint8_t* src, size_t src_len, size_t
             compressed = true;
             return true;
         }
-        case Compression::Gzip:
+        case Compression::Gzip: {
+            // ★ T-07：参照 squashfs-tools-ng 1.3.2 的 gzip 参数（用户钉死）。
+            //   ★ 契约与 xz 相同：**压完不小于原块就不算压**（gzip/zstd/lzo 都是这个口径；
+            //     lz4 不是 —— 那是另一件事，见审计文档）。
+            z_stream zs{};
+            if (deflateInit2(&zs, 9, Z_DEFLATED, 15, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
+                err = "deflateInit2 失败";
+                return false;
+            }
+            std::vector<uint8_t> buf(out_capacity);
+            zs.next_in = const_cast<Bytef*>(src);
+            zs.avail_in = static_cast<uInt>(src_len);
+            zs.next_out = buf.data();
+            zs.avail_out = static_cast<uInt>(buf.size());
+            const int rc = deflate(&zs, Z_FINISH);
+            const size_t produced = buf.size() - zs.avail_out;
+            deflateEnd(&zs);
+            if (rc != Z_STREAM_END) {
+                err = "deflate(Z_FINISH) 未收尾";
+                return false;
+            }
+            if (produced < src_len) {
+                buf.resize(produced);
+                out = std::move(buf);
+                compressed = true;
+            } else {
+                compressed = false;   // 不小于原块 ⇒ 原样存（与参照一致）
+            }
+            return true;
+        }
         case Compression::Lz4:
         case Compression::Zstd:
         case Compression::Lzo:
         case Compression::Lzma:
-            // 口径：**不写没法验证的代码**。1.x 的封包只产出 xz（tar2sqfs 默认），
-            // 因此这几种没有"逐字节一致"的参照基线，等有了基线再逐个补。
-            err = std::string("封包暂只支持 xz（无参照基线）：") + compression_name(comp);
+            // 口径：**不写没法验证的代码**。
+            //   · lzo：仓库 vendored 的是 minilzo，只有 `lzo1x_1_compress`，而参照默认是
+            //     `lzo1x_999` ⇒ 要换完整 lzo2（依赖替换，不是接线）；
+            //   · lz4：参照**无条件**写 8 字节 options 块并置 `COMPRESSOR_OPTIONS` 标志
+            //     （数据区起点/bytes_used/所有表偏移都要动），且"不可压"语义与我们契约相反；
+            //   · zstd / lzma：参照基线还没做进探针。
+            err = std::string("封包暂只支持 xz / gzip（其余无参照基线或需改布局）：") +
+                  compression_name(comp);
             return false;
         case Compression::Unknown:
             break;

@@ -121,6 +121,11 @@ struct PackOptions {
     uint32_t uid = 0;
     uint32_t gid = 0;
     uint32_t dev_block_size = 4096;  // 结尾补零到该块的整数倍（tar2sqfs 默认行为）
+    // ★★ T-07（第三方只读审计 2026-10-18）：**压缩器可选**。
+    //   ★ 默认仍是 `Xz` —— 与 1.x `sqfs_pack`（tar2sqfs 默认）逐字节一致那条黄金判据
+    //     （`tests/golden_sqfs_pack.py`）**必须保持绿**，所以默认路径一个字节都不许变。
+    //   目前写侧支持：`Xz`（原有）、`Gzip`（P17-169 起）。其余在 `compress_block` 里明确报错。
+    Compression compressor = Compression::Xz;
 };
 
 struct PackResult {

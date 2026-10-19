@@ -6412,6 +6412,43 @@ def step_user_ltx_identity(release: bool) -> None:
         fail("设置仍写在游戏同名的 `user.ltx` 里（会洗掉游戏配置的注释/空行，见上）（H-02）")
 
 
+def step_sqfs_write_compressor(release: bool) -> None:
+    r"""**SquashFS 写侧压缩器可选**（第三方只读审计 T-07；P17-169，用户裁决「先做 gzip」）。
+
+    修前事实：写侧 8 处硬编码 `Compression::Xz`，`compress_block` 对 gzip/lzo/lz4/zstd
+    直接回"封包暂只支持 xz" —— 而 `docs/2.0.0-设计口径.md` 承诺了这些选项。
+
+    用户 2026-10-19 的参照参数（钉死）：gzip =
+    `deflateInit2(level=9, Z_DEFLATED, window=15, memLevel=8, Z_DEFAULT_STRATEGY)` ＋ `deflate(Z_FINISH)`，
+    默认参数**不写** options 块；块级探针实测 zlib 1.2.12 与 1.3.2 输出**逐字节一致**（3/3）。
+    lzo（minilzo 没有 `lzo1x_999`）与 lz4（要改布局 ＋ 不可压语义相反）按用户判断**不做**。
+
+    判据 `tests/check_sqfs_write_compressor.py`：
+    A 显式 `xz` 与默认产出**逐字节相同**、超块 id=4（默认路径一个字节都不许变）；
+    B gzip ⇒ id=1、`--dump` 可读、**解包往返逐字节一致**；
+    C 未知压缩器 ⇒ 非零退出 ＋ 明确理由 ＋ **不产出**文件；
+    D 静态锁：`squashfs_write.cpp` 无残留 `Compression::Xz`、`opt_.compressor` ≥8 处
+    （`load_frag_block` 的解压必须与写同一个压缩器，否则去重读到错数据）。
+    红证：把 gzip 分支退回"暂只支持 xz" ⇒ B0/B1 红（已实测）。
+    """
+    say("[sqfs-write-compressor] SquashFS 写侧压缩器可选（审计 T-07）")
+    script = ROOT / "tests" / "check_sqfs_write_compressor.py"
+    if not require_repo_file(script, "写侧压缩器判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("SQFS-COMPRESSOR") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("默认 xz 逐字节不变、gzip 可打包/可读/往返一致、未知压缩器明确拒绝（T-07）")
+    elif rc == 2:
+        prereq("写侧压缩器判据的输入", "缺 CLI 构建产物或源码（判据没跑成，不是通过）", release)
+    else:
+        fail("写侧压缩器不合口径（见上）：默认路径变了、或 gzip 不可用、或未知名字被静默接受（T-07）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6847,6 +6884,8 @@ STEPS = [
     ("plugins-skip-diag", step_plugins_skip_diag),
     # ★★ P17-162（第三方只读审计 C-04）：PYHOST 的 reason 必须折成一行。
     ("pyhost-oneline", step_pyhost_oneline),
+    # ★★ P17-169（第三方只读审计 T-07）：SquashFS 写侧压缩器可选（gzip 一支）。
+    ("sqfs-write-compressor", step_sqfs_write_compressor),
     # ★★ P17-163（第三方只读审计 H-02）：设置文件与游戏 user.ltx 分开（有条件迁移）。
     ("user-ltx-identity", step_user_ltx_identity),
     ("loose-truncation", step_loose_truncation),

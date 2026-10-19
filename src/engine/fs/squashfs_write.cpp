@@ -623,7 +623,7 @@ bool Packer::load_frag_block(uint32_t index, std::string& err) const {
     if (!file_.read_at(e.offset, raw.data(), raw.size(), err)) return false;
     if (e.size_field & kUncompressedBit) {
         cached_frag_data_ = std::move(raw);
-    } else if (!decompress_block(Compression::Xz, raw.data(), raw.size(), opt_.block_size,
+    } else if (!decompress_block(opt_.compressor, raw.data(), raw.size(), opt_.block_size,
                                  cached_frag_data_, err)) {
         return false;
     }
@@ -667,7 +667,7 @@ bool Packer::write_fragment_block(std::string& err) {
     const uint32_t sum = xxh32(pending_frag_.data(), pending_frag_.size());
     bool compressed = false;
     std::vector<uint8_t> out;
-    if (!compress_block(Compression::Xz, pending_frag_.data(), pending_frag_.size(),
+    if (!compress_block(opt_.compressor, pending_frag_.data(), pending_frag_.size(),
                         opt_.block_size, out, compressed, err)) {
         return false;
     }
@@ -788,7 +788,7 @@ bool Packer::process_file(Node* n, std::string& err) {
         const uint32_t sum = xxh32(buf.data(), buf.size());
         bool compressed = false;
         std::vector<uint8_t> out;
-        if (!compress_block(Compression::Xz, buf.data(), buf.size(), static_cast<size_t>(bs), out,
+        if (!compress_block(opt_.compressor, buf.data(), buf.size(), static_cast<size_t>(bs), out,
                             compressed, err)) {
             return false;
         }
@@ -924,8 +924,8 @@ void Packer::write_dir_inode(std::vector<uint8_t>& out, const Node* n, uint64_t 
 
 bool Packer::serialize(std::string& err) {
     inode_table_start_ = file_.size();
-    MetaWriter im(&file_, false, Compression::Xz);
-    MetaWriter dm(&file_, true, Compression::Xz);
+    MetaWriter im(&file_, false, opt_.compressor);
+    MetaWriter dm(&file_, true, opt_.compressor);
 
     for (Node* n : inodes_) {
         std::vector<uint8_t> body;
@@ -1059,7 +1059,7 @@ bool Packer::run(const std::vector<PackItem>& items, PackResult& res) {
             put32(data, 0);
             if ((e.size_field & kUncompressedBit) == 0) any_compressed = true;
         }
-        if (!write_table(file_, Compression::Xz, data, fragment_table_start_, err)) {
+        if (!write_table(file_, opt_.compressor, data, fragment_table_start_, err)) {
             res.error = err;
             return false;
         }
@@ -1076,7 +1076,7 @@ bool Packer::run(const std::vector<PackItem>& items, PackResult& res) {
         std::vector<uint8_t> data;
         data.reserve(ids_.size() * 4);
         for (uint32_t id : ids_) put32(data, id);
-        if (!write_table(file_, Compression::Xz, data, id_table_start_, err)) {
+        if (!write_table(file_, opt_.compressor, data, id_table_start_, err)) {
             res.error = err;
             return false;
         }
@@ -1090,7 +1090,10 @@ bool Packer::run(const std::vector<PackItem>& items, PackResult& res) {
     put32(sb, opt_.mtime);
     put32(sb, opt_.block_size);
     put32(sb, fragment_entry_count_);
-    put16(sb, static_cast<uint16_t>(Compression::Xz));
+    // ★★ T-07：这一行是**超块的 compression 编号**（探针的主判据）；上面 7 处同样跟着
+    //   `opt_.compressor` 走 —— 特别是 `load_frag_block` 的**解压**必须与**写**用同一个压缩器，
+    //   否则去重比对会读到错数据（产物看起来能生成、内容是坏的）。
+    put16(sb, static_cast<uint16_t>(opt_.compressor));
     put16(sb, static_cast<uint16_t>(block_log_of(opt_.block_size)));
     put16(sb, flags);
     put16(sb, static_cast<uint16_t>(ids_.size()));

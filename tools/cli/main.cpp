@@ -2929,6 +2929,8 @@ bool parse_patch_sites(const std::string& text,
 int run_cli(const std::vector<std::string>& args) {
     bool verbose = false;
     bool pack_dirs = false;
+    // ★★ T-07：`--pack-sqfs` 的压缩器（默认 xz ⇒ 与 1.x 逐字节一致那条黄金判据不受影响）
+    std::string pack_compressor = "xz";
     bool clean = false;
     std::string text_prefix;
     std::string text_id_prefix;
@@ -2952,6 +2954,14 @@ int run_cli(const std::vector<std::string>& args) {
         if (a == "-v" || a == "--verbose") {
             verbose = true;
             continue;
+        }
+        if (a == "--compressor" && i + 1 < args.size()) {
+            pack_compressor = args[++i];
+            continue;
+        }
+        if (a == "--compressor") {
+            std::cerr << "PACK error reason=用法：--compressor <xz|gzip>\n";
+            return kExitUsage;
         }
         if (a == "--pack-dirs") {
             pack_dirs = true;
@@ -4689,8 +4699,22 @@ int run_cli(const std::vector<std::string>& args) {
             items.push_back(std::move(item));
         }
 
+        // ★★ T-07：压缩器从 `--compressor` 来（默认 xz ⇒ 默认路径逐字节不变）。
+        //   不认识的名字**明确拒绝**（不静默回落成 xz —— 那会让用户以为压成了别的）。
+        xrkit::engine::fs::PackOptions pack_options;
+        const std::string comp_key = pack_compressor;
+        if (comp_key == "xz") {
+            pack_options.compressor = xrkit::engine::fs::Compression::Xz;
+        } else if (comp_key == "gzip") {
+            pack_options.compressor = xrkit::engine::fs::Compression::Gzip;
+        } else {
+            std::cout << "PACK error reason=不支持的压缩器：" << comp_key
+                      << "（可选：xz / gzip；lzo/lz4/zstd 需要先补参照基线）\n";
+            return kExitFail;
+        }
+        std::cout << "PACK compressor=" << comp_key << "\n";
         const xrkit::engine::fs::PackResult r =
-            xrkit::engine::fs::pack_squashfs(out_path, items);
+            xrkit::engine::fs::pack_squashfs(out_path, items, pack_options);
         if (!r.ok) {
             std::cout << "PACK error reason=" << r.error << "\n";
             return kExitFail;

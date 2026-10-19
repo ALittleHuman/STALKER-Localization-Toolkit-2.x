@@ -2,19 +2,19 @@
 r"""判据 C-06：CLI 退出码 3 的**双语义**必须被枚举、钉住、并写进文案（第三方审计 C-06）。
 
 **事实（本判据现场枚举，不引审计、不引旧批）**
-  `tools/cli/main.cpp` 里 `return kExitUsage;`（＝3）有 **59** 处（`return 3;` 字面量另 1 处），
+  `tools/cli/main.cpp` 里 `return kExitUsage;`（＝3）有 **60** 处（`return 3;` 字面量另 1 处），
   但它同时承担**两种语义**：
 
   | 家族 | 数量 | 例子 | 语义 |
   | --- | --- | --- | --- |
-  | `USAGE` 真·用法错误 | 48 | 缺操作数、未知参数、未知格式名、未知动作 | "你命令行写错了" |
+  | `USAGE` 真·用法错误 | 49 | 缺操作数、未知参数、未知格式名、未知动作 | "你命令行写错了" |
   | `GUARD_EXISTS` 写盘守卫 | 10 | `--extract`/`--pack-db`/`--decode-text`/`--codec-lossy`/`--decl-fix`/`--sniff`/`--font-render`/`--resample-dump`/`--extract-chars`/`--lzhuf` 的"输出已存在且没 `--force`" | "**我什么都没写**，确认后再来" |
   | `GUARD_CONFIRM` 待用户确认 | 1 | `--convert-batch` 的 `needs_confirm`（P17-87） | "**我一个文件都没转**，由你显式指定后重跑" |
 
   ★ 用户 2026-10-16 的口径：「我立了 9 个写盘动作的『守卫 ＝ rc 3』，若别处也用 3，
     **先枚举所有 `kExitUsage` 语义再定，别直接改**」。
     枚举结果：守卫是 **10** 处（不是 9；`--lzhuf` 与 `--decode-text` 各有一条），
-    另有 `--convert-batch` 一处**待确认**；其余 48 处是真·用法错误。
+    另有 `--convert-batch` 一处**待确认**；其余 49 处是真·用法错误（+1：T-07 加的 `--compressor` 缺值）。
   ★ 结论（本批采用）：**rc 3 的真实含义是「我什么都没做，读我的理由行」** —— 代码一行不动，
     该改的是**文案**（`--help` 与 `README.md` 只写了「3=用法错误」）。
 
@@ -22,7 +22,7 @@ r"""判据 C-06：CLI 退出码 3 的**双语义**必须被枚举、钉住、并
   A **枚举**：每一处 `return kExitUsage;`／`return 3;` 都必须能找到**理由文案**（同函数内、
     往前 ≤ `LOOKBACK` 行），并按文案归进三族之一；归不进去 ⇒ 红（新加一处守卫/用法错误必须
     同时归族，否则这张表就过期了）；
-  B **定值**：三族的处数等于冻结值 `{USAGE:48, GUARD_EXISTS:10, GUARD_CONFIRM:1}`；
+  B **定值**：三族的处数等于冻结值 `{USAGE:49, GUARD_EXISTS:10, GUARD_CONFIRM:1}`；
     任何一处增删（含"把守卫改回 kExitFail"）⇒ 红，并在消息里说清该改哪里；
   C **字面量**：`return 3;` 只许出现在 `--convert-batch` 的待确认分支（其余一律走 `kExitUsage`）；
   D **文案**：`--help` 与 `README.md` 必须同时写出「3=」的**两种语义**（用法错误 ＋ 守卫/待确认），
@@ -49,7 +49,7 @@ README = ROOT / "README.md"
 CLI_EXE = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 
 LOOKBACK = 25
-FROZEN = {"USAGE": 48, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
+FROZEN = {"USAGE": 49, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
 
 PROBLEMS: list = []
 CASES = 0
