@@ -6481,6 +6481,39 @@ def step_sqfs_compressor_doc(release: bool) -> None:
         fail("设计口径仍在承诺没有的压缩器（见上）：读者会按文档以为 lz4/zstd 能用（T-07）")
 
 
+def step_sqfs_gzip_reference(release: bool) -> None:
+    r"""**gzip 产物与参照 `tar2sqfs -c gzip` 逐字节一致**（T-07 收口条件①；P17-171）。
+
+    用户 2026-10-19 裁决原文：「判据里必须有『参照 `tar2sqfs -c gzip` 产物与本 writer 产物
+    逐字节一致』这一条。**只有往返一致不够** —— 往返只能证明能读回，证明不了产物与参照**同族**。」
+
+    ★ 参照 tar 必须按 1.x `stalker_fs.sqfs_pack` 同款构造（`TarInfo` ＋ **mtime=0** ＋
+      目录 `0755` / 文件 `0644`）。用 Python 的 `tar.add()` 会把磁盘真实 mtime/uid 带进去，
+      于是在超块 `@40 bytes_used` 处**假红** —— 我第一次就这么误判"和参照对不上"。
+
+    判据 `tests/check_sqfs_gzip_vs_reference.py`：A gzip 参照 vs 我方**逐字节一致** ＋ 编号 1；
+    B 对照 xz 参照 vs 我方**逐字节一致** ＋ 编号 4（证明默认路径没被 gzip 改动碰到）。
+    红证（非破坏式）：`--ours-compressor xz` ⇒ A 两项红（@20 编号 1/4）；对现版 ⇒ ok 4 项。
+    缺 `tar2sqfs`/CLI ⇒ rc=2（**显式 SKIP**，门禁按未覆盖记账，不假装通过）。
+    """
+    say("[sqfs-gzip-reference] gzip 产物与参照 tar2sqfs 逐字节一致（T-07 条件①）")
+    script = ROOT / "tests" / "check_sqfs_gzip_vs_reference.py"
+    if not require_repo_file(script, "gzip 参照对拍判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("SQFS-GZIP-REF") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("gzip 与参照 tar2sqfs -c gzip **逐字节一致**（同族），xz 对照也一致（T-07 条件①）")
+    elif rc == 2:
+        prereq("gzip 参照对拍", "缺 tar2sqfs 或 CLI 构建产物（**未覆盖**，不算通过）", release)
+    else:
+        fail("gzip 产物与参照**不同族**（编号或字节不一致，见上）（T-07 条件①）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6920,6 +6953,8 @@ STEPS = [
     ("sqfs-write-compressor", step_sqfs_write_compressor),
     # ★★ P17-170（第三方只读审计 T-07 文档那半）：压缩能力读写分开写实。
     ("sqfs-compressor-doc", step_sqfs_compressor_doc),
+    # ★★ P17-171（T-07 收口条件①）：gzip 产物与参照 tar2sqfs 逐字节一致。
+    ("sqfs-gzip-reference", step_sqfs_gzip_reference),
     # ★★ P17-163（第三方只读审计 H-02）：设置文件与游戏 user.ltx 分开（有条件迁移）。
     ("user-ltx-identity", step_user_ltx_identity),
     ("loose-truncation", step_loose_truncation),

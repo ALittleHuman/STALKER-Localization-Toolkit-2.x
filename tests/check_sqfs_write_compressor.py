@@ -84,6 +84,16 @@ def main() -> int:
     want(src.count("opt_.compressor") >= 8,
          "D2 `opt_.compressor` 至少 8 处（超块 id ＋ 数据块 ＋ 元数据块 ＋ 两张表 ＋ fragment ＋ 解压回读）",
          "实测 %d" % src.count("opt_.compressor"))
+    # ★ 用户 2026-10-19 点名：`load_frag_block` 是**去重时的解压路径**，必须与写入用同一个压缩器。
+    #   漏了这一处，去重会拿错解压器去解已写下去的 fragment ⇒ 产物看起来能生成、内容是坏的。
+    # ★ 必须找**定义**（`Packer::load_frag_block`），不是某个调用点 —— 我第一次就是找
+    #   `load_frag_block(` 的第一个出现（调用点），把别人的函数体切出来判，结果假红。
+    i = src.find("Packer::load_frag_block(")
+    if i < 0:
+        i = src.find("load_frag_block(")
+    body = src[i:src.find("\n}\n", i) + 3] if i >= 0 else ""
+    want(bool(body) and "opt_.compressor" in body,
+         "D3 `load_frag_block`（去重解压路径）里的解压器跟着 `opt_.compressor` 走")
 
     tmp = Path(tempfile.mkdtemp(prefix="t07c_"))
     try:
