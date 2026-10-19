@@ -519,6 +519,40 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
     //   修前 `is_link_or_junction()` 在 `FindFirstFileW` 失败时直接 `return false` ⇒
     //   "问不出来" 被读成 "不是链接" ⇒ 守卫在非法字符/超长路径/权限异常这些**最需要它**的
     //   输入上静默放行。现在三态（`probe_link`）+ 守卫侧 fail-closed。
+    // ★★ T-08（第三方只读审计 2026-10-18）：**编码确认里点「取消」⇒ 停整批**。
+    //   修前：`Cancelled` 只让当前这一份失败，批处理照旧逐个弹窗（500 个文件要取消 500 次）。
+    //   判据用**确认器被调用的次数**：3 个文件的批次里取消一次 ⇒ 确认器**只该被调 1 次**。
+    reg.add("text: 编码确认取消 ⇒ 停整批（T-08）", [](CheckContext& ctx) {
+        namespace fsys = std::filesystem;
+        namespace etxt = xrkit::engine::text;
+        std::error_code ec;
+        const fsys::path root = fsys::temp_directory_path(ec) / "xrkit_selftest_t08";
+        fsys::remove_all(root, ec);
+        fsys::create_directories(root, ec);
+        for (const char* name : {"a.txt", "b.txt", "c.txt"}) {
+            std::ofstream(root / name) << "hello\n";
+        }
+        int calls = 0;
+        etxt::set_encoding_confirm([&calls](const etxt::EncodingConfirmRequest&, std::string*) {
+            ++calls;
+            return etxt::EncodingConfirmOutcome::Cancelled;
+        });
+        etxt::BatchOptions opt;
+        opt.source = xrkit::core::path_to_utf8(root);
+        opt.extensions = {".txt"};
+        opt.recursive = true;
+        opt.backup = false;
+        opt.source_encoding = "auto";
+        etxt::BatchHooks hooks;
+        const etxt::BatchOutcome out = etxt::convert_batch(opt, hooks);
+        etxt::set_encoding_confirm(nullptr);   // 夹具收走，别渗到后面的用例
+        check(ctx, calls == 1, "T-08 取消一次 ⇒ 确认器只该被调 1 次（修前是每个文件都调）");
+        check(ctx, out.cancelled, "T-08 取消 ⇒ 批次要标 cancelled（不是「失败一个、继续跑」）");
+        check(ctx, out.stop_reason.find("取消") != std::string::npos,
+              "T-08 stop_reason 要写明「已取消」（零静默，别只说失败 1 个）");
+        fsys::remove_all(root, ec);
+    });
+
     reg.add("fs: 链接守卫在 stat 失败时不许 fail-open（S-06）", [](CheckContext& ctx) {
         namespace fsys = std::filesystem;
         namespace efs = xrkit::engine::fs;

@@ -700,6 +700,19 @@ BatchOutcome convert_batch(const BatchOptions& opt, const BatchHooks& hooks) {
         co.target_encoding = opt.target_encoding;
         co.to_output_dir = !opt.output_dir.empty();
         const ConvertOutcome r = convert_file(file.full, target, co);
+        // ★★ T-08（第三方只读审计 2026-10-18）：**用户在编码确认里取消 ⇒ 停整批**。
+        //   修前：`Cancelled` 只让这一份 `ok=false`，批处理把它算作"失败一个"然后**继续**下一个
+        //   ⇒ 500 个文件要取消 500 次（审计原文：「不是停止整批」）。
+        //   现在靠 `ConvertOutcome::user_cancelled`（一等公民，不看文案）在**文件边界**停下，
+        //   并把"已处理 N / 共 M、后面的一个都没转"如实报出来（零静默）。
+        if (r.user_cancelled) {
+            out.cancelled = true;
+            out.stop_reason = "已取消：你在编码确认里点了取消（已处理 " +
+                              std::to_string(out.processed) + " / " +
+                              std::to_string(out.candidates) + " 个文件；**后面的一个都没转**）";
+            say(out.stop_reason);
+            break;
+        }
         if (r.needs_confirm) {
             // ★★ P17-87（§四·9）：**没有窗口可弹 ⇒ 不许猜** —— 当场停下，把问句与诊断
             //   原样交出去（调用方负责报出 + 非零退出）。**这一份与后面的都不转**（不替用户选）。

@@ -274,6 +274,10 @@ ConvertOutcome convert_bytes(const std::vector<uint8_t>& raw_in, const std::stri
         const EncodingConfirmOutcome outcome = confirm(request, &chosen);
         if (outcome == EncodingConfirmOutcome::Cancelled) {
             out.confirm_question = request.question;
+            // ★★ T-08（第三方只读审计 2026-10-18）：**把"用户取消"变成一等公民的事实**。
+            //   修前这里只写一句 error 文案 ⇒ 批处理只能把它当"这一份转换失败"，
+            //   于是**逐个弹窗**：500 个文件要取消 500 次。现在打标记，批处理据此**停整批**。
+            out.user_cancelled = true;
             out.error = "用户取消了编码确认（这一份未转换）";
             return out;
         }

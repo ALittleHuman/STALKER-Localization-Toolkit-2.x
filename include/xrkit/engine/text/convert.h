@@ -114,6 +114,10 @@ struct ConvertOutcome {
     uint64_t in_bytes = 0;
     uint64_t out_bytes = 0;
     std::vector<uint8_t> data;  // 要写出的内容（wrote=false 时为空）
+    // ★★ T-08（第三方只读审计 2026-10-18）：**"用户在编码确认里点了取消"是一等公民的事实**，
+    //   不许靠 `error` 的文案去认（那是 C-02 那类"改文案＝改语义"的老坑）。
+    //   批处理靠它**停下整批**（修前：取消只否决当前这一份，后面 499 个照样逐个弹窗）。
+    bool user_cancelled = false;
     std::string error;
 };
 
