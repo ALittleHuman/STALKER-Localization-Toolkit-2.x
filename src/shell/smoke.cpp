@@ -8003,11 +8003,23 @@ SmokeResult run_smoke() {
         check(decrypt_calls == 1, QStringLiteral("解密回调应恰好被调 1 次（实测 %1）")
                                       .arg(decrypt_calls));
         // 产物落点：必须落在**引擎那一份**目录里（外壳从同一处取值，才认得出"这是产物"）
+        //   ★★ S-05（第三方只读审计 2026-10-18）：**文件名不再带原名**（改用源路径哈希），
+        //     所以这里不能写死 `cipher.stkenc.db.decrypted` —— 走引擎的 `decrypt_artifact_name()`，
+        //     保证"外壳预期"与"引擎实现"是**同一份命名**（两处各写一份就是下一个分叉）。
+        //   ★★ S-05：产物名是**源路径哈希**（不带原名）⇒ 这里按"本次运行目录里有且只有一个
+        //     `*.decrypted`"来判，而不是写死某个文件名（写死就得复制引擎的哈希算法，那是第二份实现）。
+        const QDir run_dir(QString::fromStdString(plug::decrypt_output_dir()));
+        const QFileInfoList artifacts =
+            run_dir.entryInfoList(QStringList() << QStringLiteral("*.decrypted"), QDir::Files);
+        check(!artifacts.isEmpty(),
+              QStringLiteral("解密产物没落在引擎口径的目录里（本次运行目录 %1 下 0 个 *.decrypted）")
+                  .arg(run_dir.absolutePath()));
         const QString decrypted_path =
-            QDir(QString::fromStdString(plug::decrypt_output_dir()))
-                .filePath(QStringLiteral("cipher.stkenc.db.decrypted"));
-        check(QFileInfo::exists(decrypted_path),
-              QStringLiteral("解密产物没落在引擎口径的目录里：%1").arg(decrypted_path));
+            artifacts.isEmpty() ? QString() : artifacts[0].absoluteFilePath();
+        // ★ S-05：**文件名不许带原文件名**（原包叫 cipher.stkenc.db ⇒ 产物名里不该出现 cipher）
+        check(!decrypted_path.isEmpty() &&
+                  !QFileInfo(decrypted_path).fileName().contains(QStringLiteral("cipher")),
+              QStringLiteral("解密产物名不该带原文件名（S-05）：%1").arg(decrypted_path));
         // 外壳先过 `gate_source`（产物入目录）再交给引擎 ⇒ 引擎那道闸门必须**认出来**、不二次解密
         if (QFileInfo::exists(decrypted_path)) {
             const int before = decrypt_calls;

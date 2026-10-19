@@ -522,6 +522,44 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
     // ★★ T-08（第三方只读审计 2026-10-18）：**编码确认里点「取消」⇒ 停整批**。
     //   修前：`Cancelled` 只让当前这一份失败，批处理照旧逐个弹窗（500 个文件要取消 500 次）。
     //   判据用**确认器被调用的次数**：3 个文件的批次里取消一次 ⇒ 确认器**只该被调 1 次**。
+    // ★★ S-05（第三方只读审计 2026-10-18）：解密产物是**运行期中间物**（含游戏资源副本）。
+    //   修前：`%TEMP%\xrkit_decrypted\<原文件名>.decrypted` —— 名字可预测、且永不清理。
+    //   现在：每次运行一个随机目录、文件名走源路径哈希、退出 atexit 删整棵、
+    //         启动时清扫「PID 已不存在」的旧目录（不碰别的实例）。
+    reg.add("plugin: 解密临时件随机落点＋可清（S-05）", [](CheckContext& ctx) {
+        namespace plug = xrkit::plugin;
+        namespace fsys = std::filesystem;
+        const std::string dir = plug::decrypt_output_dir();
+        const fsys::path dir_path = xrkit::core::path_from_utf8(dir);
+        const std::string base = dir_path.filename().string();
+        check(ctx, dir_path.parent_path().filename() == "xrkit_decrypted",
+              "S-05 落点在 `%TEMP%/xrkit_decrypted/` 下");
+        const bool shaped = base.size() > 10 && base.find('-') != std::string::npos &&
+                            base.find_first_not_of("0123456789abcdef-") == std::string::npos;
+        check(ctx, shaped, "S-05 运行目录名形如 `<pid>-<8位hex 随机>`（不可预测）");
+        check(ctx, plug::decrypt_output_dir() == dir, "S-05 同一进程内落点固定（不会每次换）");
+        check(ctx, fsys::is_directory(dir_path), "S-05 运行目录真的建出来了");
+
+        const std::string a = plug::decrypt_artifact_name("D:/games/gamedata.db0");
+        const std::string b = plug::decrypt_artifact_name("D:/games/other.db0");
+        check(ctx, a.find("gamedata") == std::string::npos && a.size() > 12 &&
+                       a.rfind(".decrypted") == a.size() - 10,
+              "S-05 临时件名＝源路径哈希 ＋ .decrypted（**不带原文件名**）");
+        check(ctx, a != b && a == plug::decrypt_artifact_name("D:/games/gamedata.db0"),
+              "S-05 哈希稳定且区分不同源");
+
+        // 启动清扫：造一个「PID 已不存在」的旧运行目录 ⇒ 必须被清掉；自己在用的不许动
+        std::error_code ec;
+        const fsys::path root = dir_path.parent_path();
+        const fsys::path stale = root / "999999999-abcdef01";
+        fsys::create_directories(stale, ec);
+        std::ofstream(stale / "leftover.decrypted") << "x";
+        const int removed = plug::sweep_stale_decrypt_dirs();
+        check(ctx, !fsys::exists(stale), "S-05 启动清扫删掉「PID 已不存在」的旧目录");
+        check(ctx, fsys::exists(dir_path), "S-05 清扫不碰当前实例正在用的目录");
+        check(ctx, removed >= 1, "S-05 清扫要**报数**（零静默）");
+    });
+
     // ★★ C-04（第三方只读审计 2026-10-18）：**一行一条记录**是机器协议，`reason` 必须先折行。
     //   修前 `python_host_report()` 直接把 `status.reason` 拼进去 —— 解释器错误文本带换行时，
     //   一条 `PYHOST …` 记录会被拆成多行（解析侧漏掉后半截或把 traceback 行当新记录）。

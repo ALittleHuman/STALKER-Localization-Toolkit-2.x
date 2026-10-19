@@ -359,6 +359,17 @@ struct ActiveRegistryScope {
 // 外壳从同一处取值 ⇒ 两边认出"这是闸门自己的产物"，不会二次解密。目录不存在时**建出来**。
 std::string decrypt_output_dir();
 
+// ★★ S-05（第三方只读审计 2026-10-18）：解密产物落点与命名。
+//   · `decrypt_output_dir()` = `%TEMP%\xrkit_decrypted\<pid>-<每次运行随机 token>\`
+//     （**进程内固定**、不可预测；退出时 `atexit` 删整棵；启动时清扫"PID 已不存在"的旧目录）；
+//   · `decrypt_artifact_name(source)` = 源路径 32 位哈希 ＋ `.decrypted`
+//     （**不带原文件名** —— 同机进程无法按包名猜出临时件、也读不到包内容清单）。
+std::string decrypt_artifact_name(const std::string& source_path);
+
+// 清扫「PID 已不存在」的旧运行目录（只碰 `xrkit_decrypted\<pid>-<token>` 这种命名），
+// 返回删掉的目录数。`decrypt_output_dir()` 第一次创建运行目录时会自动调一次。
+int sweep_stale_decrypt_dirs();
+
 // 引擎读入口统一走的**活动闸门**：
 //   · `registry` 显式传入者优先，为空 ⇒ 用 `active_registry()`；两者都空 ⇒ 原样放行；
 //   · 路径已在 `decrypt_output_dir()` 里 ⇒ 原样放行（那是闸门自己的产物，二次解密会把

@@ -1,5 +1,15 @@
 #include "xrkit/engine/plugin/registry.h"
 
+// ★ S-05：随机 token / 哈希 / atexit / 进程探活
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <random>
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 #include "probe_decls.h"
 
 #include "xrkit/core/atomic_write.h"
@@ -558,8 +568,9 @@ DecryptGateResult gate_db_path(const Registry& registry, const std::string& path
     std::string name = path;
     const size_t slash = name.find_last_of("/\\");
     if (slash != std::string::npos) name = name.substr(slash + 1);
+    // ★ S-05：文件名用**源路径哈希**（不带原文件名 —— 不泄露包内容清单）
     const std::string target =
-        (out_dir.empty() ? std::string(".") : out_dir) + "/" + name + ".decrypted";
+        (out_dir.empty() ? std::string(".") : out_dir) + "/" + decrypt_artifact_name(path);
 
     const std::vector<uint8_t> bytes(plain.begin(), plain.end());
     std::string error;
@@ -605,15 +616,116 @@ void set_active_registry(const Registry* registry) { active_slot().store(registr
 
 const Registry* active_registry() { return active_slot().load(); }
 
-std::string decrypt_output_dir() {
+namespace {
+
+// ★★ S-05（第三方只读审计 2026-10-18）：解密产物是**运行期中间物**（含游戏资源副本），
+//   修前落在 `%TEMP%\xrkit_decrypted\<原文件名>.decrypted` —— **名字可预测**（同机任何进程都能
+//   按包名猜到并读取）且**永不清理**（工具一开半天，副本就在盘上躺半天；崩溃时连退出清理都没有）。
+//   现在：
+//     · 落点 = `%TEMP%\xrkit_decrypted\<pid>-<每次运行随机 token>\` —— 不可预测、按进程隔离；
+//     · 文件名 = 源路径的 32 位哈希 ＋ `.decrypted` —— **不泄露包内容清单**（不再带原文件名）；
+//     · 退出兜底：`atexit` 删**整棵运行目录**；
+//     · 启动清扫：只清「PID 已不存在」的旧运行目录（不碰其它实例正在用的）。
+std::string run_token() {
+    static const std::string token = [] {
+        std::random_device rd;
+        std::uint64_t v = (static_cast<std::uint64_t>(rd()) << 32) ^ static_cast<std::uint64_t>(rd());
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%08llx",
+                      static_cast<unsigned long long>(v & 0xffffffffULL));
+        return std::string(buf);
+    }();
+    return token;
+}
+
+std::string& run_dir_slot() {
+    static std::string dir;
+    return dir;
+}
+
+void cleanup_run_dir() {
+    const std::string& dir = run_dir_slot();
+    if (dir.empty()) return;
     std::error_code ec;
-    std::filesystem::path dir = std::filesystem::temp_directory_path(ec);
-    if (ec) dir = std::filesystem::path(".");
-    dir /= "xrkit_decrypted";
-    // 建不出来不在这里报错：真落盘失败时 `gate_db_path` 会给出"解密结果落盘失败"的可见失败
-    std::error_code ignore;
-    std::filesystem::create_directories(dir, ignore);
-    return core::path_to_utf8(dir);
+    std::filesystem::remove_all(std::filesystem::path(dir), ec);
+}
+
+#if defined(_WIN32)
+bool pid_alive(unsigned long pid) {
+    HANDLE h = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (h == nullptr) return false;   // 打不开 ⇒ 极可能已退出（权限不足的活进程会被误判，见下）
+    ::CloseHandle(h);
+    return true;
+}
+#else
+bool pid_alive(unsigned long) { return true; }   // 非 Windows 不扫（保守：宁可不删）
+#endif
+
+unsigned long owner_pid_of(const std::string& dirname) {
+    const size_t dash = dirname.find('-');
+    if (dash == std::string::npos || dash == 0) return 0;
+    unsigned long pid = 0;
+    for (size_t i = 0; i < dash; ++i) {
+        const char ch = dirname[i];
+        if (ch < '0' || ch > '9') return 0;
+        pid = pid * 10 + static_cast<unsigned long>(ch - '0');
+    }
+    return pid;
+}
+
+}  // namespace
+
+int sweep_stale_decrypt_dirs() {
+    std::error_code ec;
+    std::filesystem::path root = std::filesystem::temp_directory_path(ec);
+    if (ec) return 0;
+    root /= "xrkit_decrypted";
+    int removed = 0;
+    for (std::filesystem::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code isdir_ec;
+        if (!it->is_directory(isdir_ec)) continue;
+        const std::string name = it->path().filename().string();
+        const unsigned long pid = owner_pid_of(name);
+        if (pid == 0) continue;                 // 不是我们的命名空间 ⇒ 不碰
+        if (pid == static_cast<unsigned long>(::GetCurrentProcessId())) continue;  // 自己在用
+        if (pid_alive(pid)) continue;           // 别的实例还活着 ⇒ 不碰
+        std::error_code rm_ec;
+        std::filesystem::remove_all(it->path(), rm_ec);
+        if (!rm_ec) ++removed;
+    }
+    return removed;
+}
+
+std::string decrypt_output_dir() {
+    static const std::string dir = [] {
+        std::error_code ec;
+        std::filesystem::path root = std::filesystem::temp_directory_path(ec);
+        if (ec) root = std::filesystem::path(".");
+        root /= "xrkit_decrypted";
+        std::error_code ignore;
+        std::filesystem::create_directories(root, ignore);
+        (void)sweep_stale_decrypt_dirs();       // ★ 启动清扫：只清 PID 已不存在的旧目录
+        const std::string dirname = std::to_string(static_cast<unsigned long>(::GetCurrentProcessId())) +
+                                    "-" + run_token();
+        std::filesystem::path run = root / dirname;
+        std::filesystem::create_directories(run, ignore);
+        run_dir_slot() = core::path_to_utf8(run);
+        std::atexit(cleanup_run_dir);           // ★ 退出兜底：删整棵运行目录
+        return run_dir_slot();
+    }();
+    return dir;
+}
+
+std::string decrypt_artifact_name(const std::string& source_path) {
+    // FNV-1a 32 位：只要"同一源在本进程内稳定、且不泄露原名"就够了（不是安全哈希）
+    std::uint32_t h = 2166136261u;
+    for (const char ch : source_path) {
+        h ^= static_cast<std::uint8_t>(ch);
+        h *= 16777619u;
+    }
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%08x", h);
+    return std::string(buf) + ".decrypted";
 }
 
 DecryptGateResult gate_active_read(const std::string& path, const Registry* registry) {
