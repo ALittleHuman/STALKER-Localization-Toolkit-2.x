@@ -6346,6 +6346,38 @@ def step_plugins_skip_diag(release: bool) -> None:
         fail("诊断动作仍在无条件加载插件（见上）：变慢、有副作用、输出可能被坏插件污染（C-03）")
 
 
+def step_pyhost_oneline(release: bool) -> None:
+    r"""`PYHOST` 报告的 `reason` 必须先**折成一行**（第三方只读审计 C-04；P17-162）。
+
+    修前事实：`python_host_report()` 里是 `" reason=" + status.reason` —— 解释器错误文本
+    （多帧 traceback / `PyStatus.err_msg`）带 `\n` 时，一条机器记录被拆成多行：
+    解析侧要么漏掉后半截，要么把缩进的 traceback 行当成新记录（静默错位）。
+
+    修法：`py_host_one_line()`（`\r`/`\n`/`\t` → 空格、合并连续空白、吃行首空白），
+    **只洗 `reason` 这一个字段**（路径里的空格不许动）。
+    判据 `tests/check_pyhost_reason_oneline.py`（静态锁：A 走的是 `py_host_one_line(status.reason)`、
+    B 实现真分类空白、C 头文件有声明与理由）＋ `--selftest` 四条行为锁
+    （多行 ⇒ 单行、内容不丢、连续空白压掉、报告整行无换行）。
+    红证：把 `py_host_one_line` 改成直通 ⇒ 行为锁 2 条红（已实测）。
+    """
+    say("[pyhost-oneline] PYHOST 的 reason 必须折成一行（审计 C-04）")
+    script = ROOT / "tests" / "check_pyhost_reason_oneline.py"
+    if not require_repo_file(script, "PYHOST reason 折行判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("PYHOST-ONELINE") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("`reason` 过 `py_host_one_line`（实现真分类空白、头文件有声明）＋ `--selftest` 四条行为锁（C-04）")
+    elif rc == 2:
+        prereq("PYHOST reason 折行判据的输入", "缺 py_host.cpp/h（判据没跑成，不是通过）", release)
+    else:
+        fail("`reason` 还是原样拼进那行机器记录（多行 traceback 会把协议拆散，见上）（C-04）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6779,6 +6811,8 @@ STEPS = [
     ("small-cleanups", step_small_cleanups),
     # ★★ P17-161（第三方只读审计 C-03）：诊断动作不该加载插件（白名单 ＋ 黑盒对照）。
     ("plugins-skip-diag", step_plugins_skip_diag),
+    # ★★ P17-162（第三方只读审计 C-04）：PYHOST 的 reason 必须折成一行。
+    ("pyhost-oneline", step_pyhost_oneline),
     ("loose-truncation", step_loose_truncation),
     # ★★ P17-111（复审计 `01 F-09`）：DB 兜底整包读要有尺寸上限（稀疏大文件 ＋ 环境变量压上限）。
     #   需要 CLI 产物；被 `--only` 过滤时进 UNCOVERED。

@@ -522,6 +522,28 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
     // ★★ T-08（第三方只读审计 2026-10-18）：**编码确认里点「取消」⇒ 停整批**。
     //   修前：`Cancelled` 只让当前这一份失败，批处理照旧逐个弹窗（500 个文件要取消 500 次）。
     //   判据用**确认器被调用的次数**：3 个文件的批次里取消一次 ⇒ 确认器**只该被调 1 次**。
+    // ★★ C-04（第三方只读审计 2026-10-18）：**一行一条记录**是机器协议，`reason` 必须先折行。
+    //   修前 `python_host_report()` 直接把 `status.reason` 拼进去 —— 解释器错误文本带换行时，
+    //   一条 `PYHOST …` 记录会被拆成多行（解析侧漏掉后半截或把 traceback 行当新记录）。
+    reg.add("plugin: PYHOST 的 reason 必须折成一行（C-04）", [](CheckContext& ctx) {
+        namespace plug = xrkit::plugin;
+        const std::string multi =
+            "init failed:\r\nTraceback (most recent call last):\n  File \"x.py\", line 1\n"
+            "ValueError: 坏掉的行\n\tand tab";
+        const std::string one = plug::py_host_one_line(multi);
+        check(ctx, one.find('\n') == std::string::npos && one.find('\r') == std::string::npos &&
+                       one.find('\t') == std::string::npos,
+              "C-04 多行 reason ⇒ 折成一行（不含 \\r/\\n/\\t）");
+        check(ctx, one.find("Traceback") != std::string::npos &&
+                       one.find("ValueError") != std::string::npos,
+              "C-04 折行不丢内容（后半截 traceback 还在）");
+        check(ctx, one.find("  ") == std::string::npos,
+              "C-04 连续空白也压掉（不留下缩进残渣）");
+        const std::string line = plug::python_host_report();
+        check(ctx, line.find('\n') == std::string::npos && line.find('\r') == std::string::npos,
+              "C-04 `python_host_report()` 整行里没有换行（协议可判）");
+    });
+
     reg.add("text: 编码确认取消 ⇒ 停整批（T-08）", [](CheckContext& ctx) {
         namespace fsys = std::filesystem;
         namespace etxt = xrkit::engine::text;

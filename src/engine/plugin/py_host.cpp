@@ -3643,6 +3643,28 @@ PyHostStatus python_status() {
     return status;
 }
 
+// ★★ C-04（第三方只读审计 2026-10-18）：**一行一条记录**是机器协议，`reason` 必须先折行。
+//   实现放在这里（而不是 report 里内联）：①只有一个地方洗这件事；②自检可以直接调它做
+//   "多行输入 ⇒ 单行输出"的真判据（不是 grep 源码）。
+std::string py_host_one_line(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+    bool pending_space = false;
+    for (const char ch : text) {
+        const bool is_space = (ch == '\r' || ch == '\n' || ch == '\t' || ch == ' ');
+        if (is_space) {
+            pending_space = !out.empty();   // 行首空白直接吃掉
+            continue;
+        }
+        if (pending_space) {
+            out.push_back(' ');
+            pending_space = false;
+        }
+        out.push_back(ch);
+    }
+    return out;
+}
+
 std::string python_host_report() {
     const PyHostStatus status = python_status();
     return "PYHOST enabled=" + std::to_string(status.enabled ? 1 : 0) +
@@ -3652,7 +3674,8 @@ std::string python_host_report() {
            " api=" + std::to_string(status.api_version) +
            " home=" + (status.home.empty() ? "-" : status.home) +
            " prefix=" + (status.prefix.empty() ? "-" : status.prefix) +
-           " reason=" + status.reason;
+           // ★ C-04：`reason` 是唯一可能带换行的字段（traceback / err_msg）⇒ 折成一行。
+           " reason=" + py_host_one_line(status.reason);
 }
 
 // ── 命名判据：`*.py`（大小写不敏感，唯一一份）────────────────────────────────

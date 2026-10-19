@@ -71,6 +71,14 @@ PyHostStatus python_status();
 //   `PYHOST enabled=1 initialized=1 gil=released version=3.14.6 api=1 home= prefix= reason=`
 std::string python_host_report();
 
+// ★★ C-04（第三方只读审计 2026-10-18）：**把多行文本压成一行**。
+//   为什么需要：`python_host_report()` 是**机器协议**（"一行一条记录"，门禁与探针直接按行解析），
+//   而 `PyStatus.err_msg` / 解释器错误文本**经常带换行**（多帧 traceback）——
+//   修前 `reason=` 直接把原文拼进去 ⇒ 一条记录被拆成多行：解析侧要么漏掉后半截、
+//   要么把缩进的 traceback 行当成一条新记录（静默错位，最难查的一类）。
+//   口径：`\r`/`\n`/`\t` → 空格，合并连续空白；**只洗这一个字段**（路径里的空格不许动）。
+std::string py_host_one_line(const std::string& text);
+
 // ── P2b：从目录加载 **Python 插件**（`*.py`）────────────────────────────────────
 // 与 C ABI 的 `load_plugins_from_dir` **共用同一份 `Registry`**（用户红线：能力不许两套表）。
 //
