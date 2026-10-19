@@ -6449,6 +6449,38 @@ def step_sqfs_write_compressor(release: bool) -> None:
         fail("写侧压缩器不合口径（见上）：默认路径变了、或 gzip 不可用、或未知名字被静默接受（T-07）")
 
 
+def step_sqfs_compressor_doc(release: bool) -> None:
+    r"""**设计口径里的压缩能力必须读写分开写实**（第三方只读审计 T-07 的文档那半；P17-170）。
+
+    审计原话：「§3.1 承诺了 gzip/lz4/zstd，但实现里没有 —— UI 无入口，文档与实现不一致」。
+
+    现状：写侧 = `xz`（默认，与 1.x 逐字节一致）＋ **`gzip`（P17-169 已实现并验收）**；
+    `lzo`/`lz4`/`zstd` **未实现**，各有结构原因（lzo 要换 lzo2、lz4 要改布局＋反语义、zstd 无基线）；
+    读侧五种全支持。⇒ 文档必须**读写分开写实**，且如实列出没做的三种与原因。
+
+    判据 `tests/check_sqfs_compressor_doc.py`：A 标成读侧 ＋ 写明写侧只支持 xz/gzip ＋ 点明"不对称"；
+    B 单独一行列 lzo/lz4/zstd 及原因（minilzo 没有 lzo1x_999、要多写 options 块）；
+    C "默认压缩"行写明写侧另有 gzip；D 不许再有"UI 另给 gzip / lz4 / zstd"这类未落地承诺。
+    红证（非破坏式）：`git show <P17-169 之前>:docs/2.0.0-设计口径.md` 跑 `--doc` ⇒ 8 项红。
+    """
+    say("[sqfs-compressor-doc] 压缩能力必须读写分开写实（审计 T-07 文档那半）")
+    script = ROOT / "tests" / "check_sqfs_compressor_doc.py"
+    if not require_repo_file(script, "压缩能力文档判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("COMPRESSOR-DOC") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("设计口径读写分开写实：写侧 xz/gzip 已落地、没做的三种有据（T-07）")
+    elif rc == 2:
+        prereq("压缩能力文档判据的输入", "缺 docs/2.0.0-设计口径.md（判据没跑成，不是通过）", release)
+    else:
+        fail("设计口径仍在承诺没有的压缩器（见上）：读者会按文档以为 lz4/zstd 能用（T-07）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6886,6 +6918,8 @@ STEPS = [
     ("pyhost-oneline", step_pyhost_oneline),
     # ★★ P17-169（第三方只读审计 T-07）：SquashFS 写侧压缩器可选（gzip 一支）。
     ("sqfs-write-compressor", step_sqfs_write_compressor),
+    # ★★ P17-170（第三方只读审计 T-07 文档那半）：压缩能力读写分开写实。
+    ("sqfs-compressor-doc", step_sqfs_compressor_doc),
     # ★★ P17-163（第三方只读审计 H-02）：设置文件与游戏 user.ltx 分开（有条件迁移）。
     ("user-ltx-identity", step_user_ltx_identity),
     ("loose-truncation", step_loose_truncation),
