@@ -192,6 +192,27 @@ def _prune_kept_dirs(keep: int = 3) -> None:
         pass
 
 
+def _free_gb(path: Path) -> float:
+    try:
+        return shutil.disk_usage(str(path)).free / (1024.0 ** 3)
+    except OSError:
+        return -1.0
+
+
+def disk_space_ok(need_gb: float = 2.0) -> bool:
+    """★ 2026-10-20 现场教训：本判据要往 %TEMP% 复制整包（~250 MB/次）。C 盘被"保留现场"
+    撑到 0.1 GB 之后，每次 `copytree` 都 `[WinError 112] 磁盘空间不足` ⇒ **判据几乎全红**，
+    而那是环境问题、不是产品问题。这里先做**前置检查**：不够就按"未覆盖"如实说，不产出假红。"""
+    free = _free_gb(Path(tempfile.gettempdir()))
+    if free < 0:
+        return True
+    if free < need_gb:
+        print("   !! 临时盘余量 %.2f GB < %.1f GB ⇒ 本判据**未覆盖**（不是产品红；先清盘）"
+              % (free, need_gb))
+        return False
+    return True
+
+
 def run_smoke(pkg: Path, timeout: int = 900):
     env = dict(os.environ)
     env["QT_QPA_PLATFORM"] = "offscreen"   # ★ 只给子进程，不设持久变量
@@ -551,6 +572,9 @@ def selfcheck() -> tuple:
 
 
 def main() -> int:
+    if not disk_space_ok(2.0):
+        print("PKG-PAGES 未覆盖：临时盘余量不足（清盘后重跑）")
+        return 2
     say("PKG-PAGES P17-81：夹具定性（非产品）＋ 默认可见页＝六个内置页 ＋ 抬 `_fixtures\\` 才验插件页")
     say("")
     say("-- 反例自证 --")
