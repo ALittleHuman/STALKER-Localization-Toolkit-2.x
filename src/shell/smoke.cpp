@@ -6454,6 +6454,7 @@ SmokeResult run_smoke() {
     //   ③ worker 里碰**会改控件**的 `ui.*`（`set_text`）**仍然被拒**（白名单没把纪律冲掉）；
     //   ④ 取消**真的让任务停下来**（循环次数远小于上限 —— 不是"跑满 600 次刚好退出"）。
     {
+        const int p171_fails_before = result.failed;
         const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_cancel_probe"));
         QDir(dir).removeRecursively();
         QDir().mkpath(dir);
@@ -6701,6 +6702,16 @@ SmokeResult run_smoke() {
                                  return QStringLiteral("未被改写");
                              }()
                            : QStringLiteral("(没有页)")));
+        // ★★ 用户 2026-10-20：红的时候**现场必须在日志里**（临时目录会被清理，不能依赖它）。
+        if (result.failed > p171_fails_before) {
+            QFile mf(marker);
+            if (mf.open(QIODevice::ReadOnly)) {
+                result.notes.append(QStringLiteral("P17-1 标记全文：%1")
+                                        .arg(QString::fromUtf8(mf.readAll()).simplified()));
+            } else {
+                result.notes.append(QStringLiteral("P17-1 标记全文：(读不到 %1)").arg(marker));
+            }
+        }
         QDir(dir).removeRecursively();
     }
 

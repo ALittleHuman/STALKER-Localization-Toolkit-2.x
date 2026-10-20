@@ -178,6 +178,20 @@ def _kill_leftover_smoke() -> int:
 PHASE = ["default"]
 
 
+def _prune_kept_dirs(keep: int = 3) -> None:
+    """★ 2026-10-20 现场教训：`XRKIT_KEEP_PKG_PAGES_TMP` 一开，失败的临时副本就**不删**；
+    连跑几十次后把 C 盘撑到 0.1 GB ⇒ 之后每次 `copytree` 都 `[WinError 112] 磁盘空间不足`，
+    表现为"判据几乎全红"。这里只保留最新 `keep` 份现场，其余删掉（现场仍在日志里）。"""
+    try:
+        base = Path(tempfile.gettempdir())
+        dirs = sorted([p for p in base.glob("p1781_pkg_pages_*") if p.is_dir()],
+                      key=lambda p: p.stat().st_mtime, reverse=True)
+        for old in dirs[keep:]:
+            shutil.rmtree(old, ignore_errors=True)
+    except OSError:
+        pass
+
+
 def run_smoke(pkg: Path, timeout: int = 900):
     env = dict(os.environ)
     env["QT_QPA_PLATFORM"] = "offscreen"   # ★ 只给子进程，不设持久变量
@@ -367,6 +381,7 @@ def audit_package(pkg: Path) -> None:
                     encoding="utf-8")
                 say("   [诊断] ③ 失败现场：%s" % diag3)
                 os.environ["XRKIT_KEEP_PKG_PAGES_TMP"] = "1"
+                _prune_kept_dirs(3)
             except OSError as exc:
                 say("   [诊断] ③ 落盘失败：%s" % exc)
         pages = parse_pages(out) if out else None
@@ -449,6 +464,7 @@ def audit_package(pkg: Path) -> None:
                     encoding="utf-8")
                 say("   [诊断] ④ 失败现场：%s（work 保留：%s）" % (diag, work))
                 os.environ["XRKIT_KEEP_PKG_PAGES_TMP"] = "1"
+                _prune_kept_dirs(3)
             except OSError as exc:
                 say("   [诊断] 落盘失败：%s" % exc)
         check(smoke_ok2 is not None and rc2 == 0,
