@@ -6437,6 +6437,17 @@ SmokeResult run_smoke() {
                            plugin_file.write(source) == source.size();
         plugin_file.close();
         check(wrote, QStringLiteral("P17-1 取消探针夹具没写进 %1").arg(QDir::toNativeSeparators(dir)));
+        // ★★ 用户 2026-10-20：「写完做一次**读回校验**再构造 Hub」——
+        //   写成功 ≠ 读得到（截断/缓存/杀软扫描都会让"看起来写了"）。
+        {
+            QFile verify(plugin_file.fileName());
+            const bool readable = verify.open(QIODevice::ReadOnly);
+            const qint64 got = readable ? verify.size() : -1;
+            result.notes.append(QStringLiteral("P17-1 诊断：夹具读回 size=%1 期望 %2")
+                                   .arg(got).arg(source.size()));
+            check(readable && got == source.size(),
+                  QStringLiteral("P17-1 夹具**读回**校验：写进去的字节要能原样读回"));
+        }
 
         Hub hub(nullptr, dir);
         const int probe_page = hub.page_index(QStringLiteral("取消探针页"));
@@ -6444,6 +6455,27 @@ SmokeResult run_smoke() {
               QStringLiteral("P17-1 前提：取消探针页进页表（实得 %1，插件问题 %2 条）")
                   .arg(probe_page)
                   .arg(hub.plugin_errors().size()));
+        if (probe_page < 0) {
+            // ★★ 用户 2026-10-20：**先让 plugin_errors 说话** —— 页没注册有两种可能
+            //    （加载竞态 / 夹具没写成），必须留下可读证据，不能靠等 2 秒去糊。
+            const QFileInfo probe_file(QDir(dir).filePath(QStringLiteral("cancel_probe.py")));
+            result.notes.append(QStringLiteral("P17-1 诊断：页未注册 ⇒ 夹具存在=%1 大小=%2")
+                     .arg(probe_file.exists() ? 1 : 0)
+                     .arg(probe_file.exists() ? probe_file.size() : -1));
+            for (const auto& err : hub.plugin_errors()) {
+                result.notes.append(QStringLiteral("P17-1 诊断：plugin_errors → %1")
+                         .arg(QString::fromStdString(err.plugin + " | " + err.message)));
+            }
+            if (probe_file.exists()) {
+                QFile raw(probe_file.absoluteFilePath());
+                if (raw.open(QIODevice::ReadOnly)) {
+                    result.notes.append(QStringLiteral("P17-1 诊断：夹具前 80 字节 = %1")
+                             .arg(QString::fromUtf8(raw.read(80)).simplified()));
+                }
+            }
+            result.notes.append(QStringLiteral("P17-1 诊断：可见页集合 %1")
+                     .arg(hub.stack()->count()));
+        }
         QWidget* page_widget = probe_page >= 0 ? hub.stack()->widget(probe_page) : nullptr;
 
         const QString marker = QDir(dir).filePath(QStringLiteral("cancel_marker.txt"));
@@ -6581,11 +6613,32 @@ SmokeResult run_smoke() {
                            plugin_file.write(source) == source.size();
         plugin_file.close();
         check(wrote, QStringLiteral("P5 夹具 .py 没写进去"));
+        // ★★ 用户 2026-10-20：「写完做一次**读回校验**再构造 Hub」——
+        //   写成功 ≠ 读得到（截断/缓存/杀软扫描都会让"看起来写了"）。
+        {
+            QFile verify(plugin_file.fileName());
+            const bool readable = verify.open(QIODevice::ReadOnly);
+            const qint64 got = readable ? verify.size() : -1;
+            result.notes.append(QStringLiteral("P5 诊断：夹具读回 size=%1 期望 %2")
+                                   .arg(got).arg(source.size()));
+            check(readable && got == source.size(),
+                  QStringLiteral("P5 夹具**读回**校验：写进去的字节要能原样读回"));
+        }
 
         Hub hub(nullptr, dir);
         const int page = hub.page_index(QStringLiteral("门面L2b夹具页"));
         check(page >= 0, QStringLiteral("P5 `register_tool` 的页没进页表（插件问题 %1 条）")
                              .arg(hub.plugin_errors().size()));
+        if (page < 0) {
+            // 同 P17-1：把"页没注册"与"布局晚到"分开描述（这一步只取证，不改判定）。
+            result.notes.append(QStringLiteral("P5 诊断：页未注册 ⇒ 插件问题 %1 条，可见页 %2 个")
+                     .arg(hub.plugin_errors().size())
+                     .arg(hub.stack()->count()));
+            for (const auto& err : hub.plugin_errors()) {
+                result.notes.append(QStringLiteral("P5 诊断：plugin_errors → %1")
+                         .arg(QString::fromStdString(err.plugin + " | " + err.message)));
+            }
+        }
         QWidget* page_widget = page >= 0 ? hub.stack()->widget(page) : nullptr;
         // ★ 分栏的尺寸/分隔条位置**必须真的布局过**才读得出来 —— 与别处一样把 Hub `show()` 一次
         //   （离屏平台下 `hub.show()` 是既有做法；不 show 的话 `QSplitter::sizes()` 恒为 [0,0,0]，
