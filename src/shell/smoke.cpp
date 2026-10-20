@@ -6568,10 +6568,39 @@ SmokeResult run_smoke() {
             return read_marker();
         };
 
+        // ★★ 用户 2026-10-20 对 P17-1 的专门口径：
+        //   「先判 `probe_page >= 0`；为负时**不要等**（直接记录 plugin_errors / 夹具大小 / 页集合）。
+        //    只有 `probe_page >= 0` 时，再 `wait_until(start_button != nullptr, 2000ms)`。
+        //    等待后**重新取** `page_widget` 与按钮指针，不要沿用等待前的（避免 deleteLater 后的悬垂）。」
         QPushButton* start_button = nullptr;
-        if (page_widget != nullptr) {
-            for (QPushButton* candidate : page_widget->findChildren<QPushButton*>()) {
-                if (candidate->text() == QStringLiteral("起任务")) start_button = candidate;
+        if (probe_page >= 0) {
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+            while (std::chrono::steady_clock::now() < deadline) {
+                // 每轮重新取页与按钮（页可能被重建）
+                page_widget = hub.stack()->widget(probe_page);
+                start_button = nullptr;
+                if (page_widget != nullptr) {
+                    for (QPushButton* candidate : page_widget->findChildren<QPushButton*>()) {
+                        if (candidate->text() == QStringLiteral("起任务")) {
+                            start_button = candidate;
+                            break;
+                        }
+                    }
+                }
+                if (start_button != nullptr) break;
+                if (page_widget != nullptr && page_widget->layout() != nullptr) {
+                    page_widget->layout()->activate();
+                }
+                QApplication::processEvents();
+                QThread::msleep(10);
+            }
+            if (start_button == nullptr) {
+                result.notes.append(
+                    QStringLiteral("P17-1 诊断：等「起任务」按钮超时 2000ms（childCount=%1）")
+                        .arg(page_widget != nullptr
+                                 ? page_widget->findChildren<QWidget*>().size()
+                                 : -1));
             }
         }
         check(start_button != nullptr,
