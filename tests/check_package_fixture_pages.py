@@ -163,10 +163,34 @@ def parse_pages(out: str):
     return pages, builtin, plugin_py, ids
 
 
+def _kill_leftover_smoke() -> int:
+    """★ 隔离：先清掉上一轮残留的 `xrkit_app.exe`（P17-176 的教训：残留进程会占用文件/目录）。"""
+    try:
+        r = subprocess.run(["taskkill", "/F", "/T", "/IM", "xrkit_app.exe"],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+        txt = (r.stdout or b"").decode("utf-8", "replace")
+        return txt.count("SUCCESS") + txt.count("成功")
+    except (OSError, subprocess.SubprocessError):
+        return 0
+
+
 def run_smoke(pkg: Path, timeout: int = 900):
     env = dict(os.environ)
     env["QT_QPA_PLATFORM"] = "offscreen"   # ★ 只给子进程，不设持久变量
     env.setdefault("PYTHONUTF8", "1")
+    # ★★ 用户 2026-10-19/20：间歇红先查"是不是和共享目录撞车"。
+    #   包内 `--smoke` 会往 `%TEMP%\xrkit_smoke_*` 写日志与插件夹具；整档门禁里前面几步也在用
+    #   同一批 `%TEMP%` 目录，一旦有残留进程/残留文件就会撞。⇒ 这里给**本次自检一个独占的 TEMP**，
+    #   并在起跑前清掉残留进程。这是**测试隔离**，不是"重试把它改绿"。
+    killed = _kill_leftover_smoke()
+    if killed:
+        print("   [隔离] 起跑前清掉 %d 个残留 xrkit_app.exe" % killed)
+    # ★ 私有 TEMP 要**短**：放进包副本里会把路径拉长（`…\p1781_pkg_pages_xxxx\pkg\_smoke_temp\…`），
+    #   插件夹具那条链在长路径上会出问题（实测：取消探针页的按钮找不到）。
+    #   用系统 TEMP 下的短随机目录 ⇒ 既隔离、路径长度又与以前一致。
+    private_temp = Path(tempfile.mkdtemp(prefix="pktmp_"))
+    env["TEMP"] = str(private_temp)
+    env["TMP"] = str(private_temp)
     exe = pkg / "xrkit_app.exe"
     try:
         proc = subprocess.run([str(exe), "--smoke"], cwd=str(pkg), env=env,
