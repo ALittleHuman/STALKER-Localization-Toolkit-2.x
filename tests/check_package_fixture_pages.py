@@ -177,7 +177,23 @@ def run_smoke(pkg: Path, timeout: int = 900):
         return None, "[超时 %ds] 未收尾" % timeout
     except OSError as exc:
         return None, "起不来 `--smoke`：%s" % exc
-    return proc.returncode, proc.stdout.decode("utf-8", errors="replace")
+    out = proc.stdout.decode("utf-8", errors="replace")
+    # ★★ 用户 2026-10-19/20：间歇红要**先抓证据**（不许先用重试把它改绿）。
+    #   失败时把"跑了哪个包 / 退出码 / 失败的具体检查名"一起落到文件，便于事后定性。
+    if proc.returncode != 0:
+        fails = [l.strip() for l in out.splitlines() if "SHELL-SMOKE fail" in l]
+        diag = ROOT / "build" / "logs" / "pkg_pages_fail.txt"
+        try:
+            diag.parent.mkdir(parents=True, exist_ok=True)
+            diag.write_text(
+                "pkg=%s\nrc=%d\n\n== SHELL-SMOKE fail 行（%d 条）==\n%s\n\n== 末 40 行 ==\n%s\n"
+                % (pkg, proc.returncode, len(fails), "\n".join(fails),
+                   "\n".join(out.splitlines()[-40:])),
+                encoding="utf-8")
+            print("   [诊断] 失败细节已落盘：%s（fail 行 %d 条）" % (diag, len(fails)))
+        except OSError as exc:
+            print("   [诊断] 落盘失败：%s" % exc)
+    return proc.returncode, out
 
 
 def newest_package():
