@@ -766,13 +766,35 @@ void Hub::render_plugin_slots() {
         for (const plugin::PanelReg* panel : registry_.panels_for(host)) {
             auto* container = new QWidget;
             QWidget* built = nullptr;
+            bool panel_threw = false;
+            std::string panel_exception;
             {
                 // ★ P13-2a-2：同上（面板挂在宿主页的正文里 ⇒ 用那个页的身份）
                 plugin::UiPanelScope panel_scope(
                     container, page != nullptr ? page->page_id().toStdString()
                                                : std::string(),
                     &registry_);
-                built = reinterpret_cast<QWidget*>(panel->builder(container));
+                // ★★ 决策 2（用户 2026-10-18/19；第三方只读审计 S-02 的**面板那一半**）：
+                //   与页 builder **同口径** —— 插件面板的 builder 抛异常不许穿出去，
+                //   抛过异常就**整块丢弃**（不拿半残面板挂上去），并点名 title / plugin。
+                try {
+                    built = reinterpret_cast<QWidget*>(panel->builder(container));
+                } catch (const std::exception& exc) {
+                    panel_threw = true;
+                    panel_exception = exc.what() != nullptr ? exc.what() : "";
+                } catch (...) {
+                    panel_threw = true;
+                    panel_exception = "(非 std::exception 的 C++ 异常)";
+                }
+            }
+            if (panel_threw) {
+                // 一票否决：抛在半途的 builder 可能已经往 container 里塞了半截控件
+                container->deleteLater();
+                log_line(QStringLiteral("插件面板「%1」（%2）构建异常：%3 —— 该面板跳过")
+                             .arg(QString::fromStdString(panel->title))
+                             .arg(QString::fromStdString(panel->plugin))
+                             .arg(QString::fromStdString(panel_exception)));
+                continue;
             }
             if (built != nullptr && built != container) {
                 auto* outer = new QVBoxLayout(container);

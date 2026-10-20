@@ -36,7 +36,7 @@ for _stream in (sys.stdout, sys.stderr):
 ROOT = Path(__file__).resolve().parent.parent
 HUB = ROOT / "src" / "shell" / "hub.cpp"
 
-CALL = "built = reg->builder(container);"
+CALL = "builder(container)"   # ★ 页与面板两处的公共片段（是 `->builder(container)`，我第一版写成 `.builder(` 命中 0 处）
 
 PROBLEMS: list = []
 CASES = 0
@@ -59,7 +59,7 @@ def main() -> int:
     args = ap.parse_args()
     src_path = Path(args.hub_src)
 
-    print("== S-02：插件页 builder 的 C++ 异常护栏（静态锁）==")
+    print("== S-02 / 决策 2：插件页 **与面板** builder 的 C++ 异常护栏（静态锁）==")
     if not src_path.is_file():
         print("BUILDER-GUARD skip 缺 %s" % src_path)
         return 2
@@ -68,40 +68,51 @@ def main() -> int:
     # ★ 注释行里"引用旧代码"不算调用点（H-01/H-04 的教训：文档/注释引用代码不该锁住自己）
     hits = [i for i, l in enumerate(lines)
             if CALL in l and not l.lstrip().startswith("//")]
-    want(len(hits) == 1, "A1 只有**一处** builder 调用点（多处＝护栏可能只包了一半）",
-         "命中 %d 处" % len(hits))
-    if len(hits) != 1:
-        print("-" * 66)
-        print("BUILDER-GUARD fail %d 项不成立" % len(PROBLEMS))
-        return 1
-    at = hits[0]
-    # 免责：注释行里出现同样的字样不算调用点
-    if lines[at].lstrip().startswith("//"):
-        want(False, "A1b 命中行是注释、不是真的调用点", lines[at].strip()[:60])
+    # ★★ 决策 2（用户 2026-10-18/19）：**两个** builder 调用点都要有护栏 ——
+    #   页（`reg->builder`）与**面板**（`panel->builder`）。修前只锁了页那一个，
+    #   面板是裸调用：插件面板 builder 抛异常会直接穿出 Hub（整页崩，且不留痕）。
+    want(len(hits) == 2, "A1 恰好**两处** builder 调用点（页 ＋ 面板；少一处＝护栏只包了一半）",
+         "命中 %d 处：%s" % (len(hits), [lines[i].strip()[:40] for i in hits]))
+    if len(hits) != 2:
         print("-" * 66)
         print("BUILDER-GUARD fail %d 项不成立" % len(PROBLEMS))
         return 1
 
-    back = "\n".join(lines[max(0, at - 3):at])
-    want("try {" in back, "A2 调用点上方 3 行内必须有 `try {`（裸调用＝异常直接穿出去）",
-         back.strip().splitlines()[-1][:60] if back.strip() else "空")
-    fwd = "\n".join(lines[at:at + 8])
-    want("catch (const std::exception&" in fwd, "A3 调用点下方 8 行内必须接 `catch (const std::exception&`")
-    want("catch (...)" in fwd, "A4 还要有 `catch (...)`（非 std::exception 的 C++ 异常也别穿出去）")
-    want("e.what()" in fwd, "A5 异常文本要留下（`what()`）—— 零静默：用户得知道是哪个插件、为什么")
+    for k, at in enumerate(hits, start=1):
+        tag = "页" if "reg->builder" in lines[at] else "面板"
+        back = "\n".join(lines[max(0, at - 4):at])
+        want("try {" in back,
+             "A2[%d/%s] 调用点上方 4 行内必须有 `try {`（裸调用＝异常直接穿出去）" % (k, tag),
+             back.strip().splitlines()[-1][:60] if back.strip() else "空")
+        fwd = "\n".join(lines[at:at + 10])
+        want("catch (const std::exception&" in fwd,
+             "A3[%d/%s] 下方 10 行内接 `catch (const std::exception&`" % (k, tag))
+        want("catch (...)" in fwd,
+             "A4[%d/%s] 还要有 `catch (...)`（非 std::exception 的也别穿出去）" % (k, tag))
+        want("what()" in fwd,
+             "A5[%d/%s] 异常文本要留下（`what()`）—— 零静默" % (k, tag))
 
     text = "\n".join(lines)
     want("const bool builder_threw = !builder_exception.empty();" in text,
-         "B1 有显式的 `builder_threw` 标志（不是靠 `built == nullptr` 猜）")
+         "B1 页：显式 `builder_threw` 标志（不是靠 `built == nullptr` 猜）")
+    want("bool panel_threw = false;" in text and "if (panel_threw)" in text,
+         "B2 面板：显式 `panel_threw` 标志 ＋ 据此**一票否决**（不拿半残面板）")
     idx = [i for i, l in enumerate(lines) if "anything_built =" in l and "==" not in l]
     ab = "\n".join(lines[idx[0]:idx[0] + 3]) if idx else ""
     want(bool(ab) and "!builder_threw" in ab,
-         "B2 **抛过异常 ⇒ 一票否决**：`anything_built` 里必须有 `!builder_threw`"
-         "（抛在半途的 builder 会留下半残页面）",
-         ab.strip().splitlines()[-1][:70] if ab.strip() else "没找到赋值")
-    tail = "\n".join(lines[at:at + 60])
-    want("make_placeholder" in tail, "B3 异常之后走**占位页**（与「没造出控件」同一条善后）")
-    want("log_line" in tail and "异常" in tail, "B4 异常之后**留痕**（log_line 说明抛了异常）")
+         "B3 页：`anything_built` 里必须有 `!builder_threw`", ab.strip()[:60] if ab.strip() else "没找到")
+    page_at = next((i for i in hits if "reg->builder" in lines[i]), None)
+    panel_at = next((i for i in hits if "panel->builder" in lines[i]), None)
+    if page_at is not None:
+        tail = "\n".join(lines[page_at:page_at + 60])
+        want("make_placeholder" in tail, "B4 页：异常之后走**占位页**")
+        want("log_line" in tail and "异常" in tail, "B5 页：异常之后**留痕**")
+    if panel_at is not None:
+        tailp = "\n".join(lines[panel_at:panel_at + 30])
+        want("deleteLater" in tailp and "continue;" in tailp,
+             "B6 面板：异常之后 `deleteLater` ＋ `continue`（整块丢弃）")
+        want("log_line" in tailp and "异常" in tailp and "panel->title" in tailp,
+             "B7 面板：留痕要点名 `panel->title` 与 `panel->plugin`")
 
     print("-" * 66)
     if PROBLEMS:
@@ -109,8 +120,8 @@ def main() -> int:
         for item in PROBLEMS:
             print("  · " + item)
         return 1
-    print("BUILDER-GUARD ok %d 项（builder 调用在 try 里、两类 catch 都在、异常文本留痕、"
-          "抛过就一票否决走占位页；★ 行为锁待 panel-builder 夹具）" % CASES)
+    print("BUILDER-GUARD ok %d 项（页 ＋ 面板两个 builder 都在 try 里、两类 catch 都在、"
+          "异常文本留痕、抛过就整块丢弃）" % CASES)
     return 0
 
 
