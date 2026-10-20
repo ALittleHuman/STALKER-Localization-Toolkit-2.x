@@ -97,66 +97,6 @@ def statusline(module_subset=None):
 
 # ── ① contract_ok 的 area 条数 ────────────────────────────────────────────────
 
-def check_area_contract(tmp: Path) -> None:
-    # 静态面：生成表自己必须与契约一致（10 个区、含 bottom）
-    text = TABLES.read_text(encoding="utf-8")
-    areas_match = re.search(r"kAreas\[\]\s*=\s*\{(.*?)\};", text, re.S)
-    keys = re.findall(r'\{"([^"]*)"', areas_match.group(1)) if areas_match else []
-    count = re.search(r"kAreaCount\s*=\s*(\d+)", text)
-    want(areas_match is not None and count is not None, "生成表里能读到 AREAS 与 kAreaCount",
-         "读不到 ⇒ 后面的断言都是假的")
-    want(count is not None and int(count.group(1)) == 10,
-         "生成表 kAreaCount == 10（docs/2.0.0-设计口径.md：host 6 × location 2 × area 10）",
-         "实得 kAreaCount=%s" % (count.group(1) if count else "-"))
-    want(len(keys) > 0 and all(k != "" for k in keys) and "bottom" in keys,
-         "AREA_BOTTOM=\"bottom\" 在表里（2.x 相对 1.x 明文列出的唯一新增项）",
-         "实得 keys=%r" % keys)
-
-    # 引擎自己的 `contract_ok()` 必须也校它（探针：`--selftest` 里那条会读到 why）
-    rc, out = call(["--selftest"])
-    fails = [ln for ln in out.splitlines() if ln.startswith("FAIL")]
-    want(rc == 0 and not fails,
-         "基线：contract_ok() 通过（未注入）",
-         "rc=%d %s" % (rc, (fails or [""])[0]))
-
-    # ★ 注入：把 AREA_BOTTOM 删掉 + kAreaCount=9 ⇒ 必须红（修前这里全绿）
-    # ⚠ 写回**必须显式 LF**：`Path.write_text()` 在 Windows 上按 `os.linesep` 翻成 CRLF，
-    #   而生成物是 `bytes + LF`（`gen_plugin_contract.py` 明写"文本模式会把 \n 翻成 \r\n"）
-    #   ⇒ 任何非 LF 的写回都会让门禁 [13] 的逐字节比对**假红**（本批踩过一次，已修）。
-    backup = TABLES.read_bytes()
-    injected = backup.decode("utf-8").replace('    {"bottom", "bottom"},  // AREA_BOTTOM\n', "")
-    injected = re.sub(r"inline constexpr int kAreaCount = 10;",
-                      "inline constexpr int kAreaCount = 9;", injected).encode("utf-8")
-    want(injected != backup, "注入文本真的改动了生成表（删 AREA_BOTTOM + 条数 10→9）",
-         "替换没生效 ⇒ 注入段是空的")
-    try:
-        TABLES.write_bytes(injected)
-        build_ok = rebuild(tmp)
-        want(build_ok, "注入后重编 engine+cli 成功", "重编失败（构建输出见上）")
-        if build_ok:
-            rc2, out2 = call(["--selftest"])
-            red = rc2 != 0 and "契约表自检失败" in out2
-            want(red, "注入『删掉 AREA_BOTTOM』⇒ --selftest **必须红**（修前这里全绿）",
-                 "rc=%d\n%s" % (rc2, "\n".join(
-                     ln for ln in out2.splitlines() if "FAIL" in ln or "SELFTEST" in ln)[:900]))
-            want("槽位表 AREAS 应有 10 个区" in out2,
-                 "判红理由是 contract_ok() 自己那条（不是靠 CLI 里另抄的清单）",
-                 "没有出现 contract_ok 的 area 条数理由")
-    finally:
-        TABLES.write_bytes(backup)
-        rebuild(tmp)
-    # ★ 还原的判据：生成表必须与 HEAD 的 blob **逐字节**一致（LF 也不许被动）
-    restored = subprocess.run(["git", "cat-file", "blob",
-                               "HEAD:src/engine/plugin/contract_tables.inc"],
-                              cwd=str(ROOT), stdout=subprocess.PIPE, timeout=60).stdout
-    want(TABLES.read_bytes() == restored,
-         "注入段还原后生成表与 HEAD 逐字节一致（**含 LF**：文本模式写回会翻成 CRLF ⇒ 门禁 [13] 假红）",
-         "实测 %d 字节 vs HEAD %d 字节" % (len(TABLES.read_bytes()), len(restored)))
-    rc3, out3 = call(["--selftest"])
-    want(rc3 == 0 and "SELFTEST pass" in out3, "还原后 --selftest 重新变绿（基线没被改坏）",
-         "rc=%d" % rc3)
-
-
 def rebuild(tmp: Path) -> bool:
     """只重编 msvc-release（注入段用）。返回是否成功。"""
     env_file = ENV_CACHE
@@ -330,7 +270,10 @@ def main() -> int:
         print("[④ 静态面：3-4 加载序只此一份且每条加源路径都走]")
         check_static_locks()
         print("[① contract_ok 的 area 条数]（静态 + 引擎自检 + 删 AREA_BOTTOM 注入必红）")
-        check_area_contract(tmp)
+        # ★★ 决策 1（C ABI 退净）：`check_area_contract`（契约表 AREA_* 条数）那半**整段删掉** ——
+    #   它读的是 `contract_tables.inc` / `contract.cpp`，随 C ABI 一起不在仓库里了。
+    #   保留 `status_line()` 那半（`engine.cpp` 还在，模块自报这件事与 ABI 无关）。
+    #   红证记录：删掉 AREA_BOTTOM 会红 —— 那条锁随 ABI 一起退役，历史见 P17-1xx 批报告。
         print("[② status_line 的模块计数：常量自报 vs 从模块表算出来]")
         check_status_line()
         print("[③ LoadResult::registrations：成功路径不许是死的]")

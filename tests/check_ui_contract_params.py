@@ -46,6 +46,32 @@ ABI_HOST = ROOT / "src" / "engine" / "plugin" / "abi_host.cpp"
 
 # ── ② 绑定**多给**的参数（契约没点名）；2.x 富余项，必须写清为什么 ──────────────
 #     形状：方法名 → {参数名: 理由}
+# ══ 参数名的**唯一事实源**（决策 1「换源」）════════════════════════════════════
+#   修前：这张表从 `src/engine/plugin/contract_tables.inc` 读 —— 那是 **C ABI 的**生成表，
+#   C ABI 退净（决策 1）后它就没了。
+#   现在：**冻结在这里**（内容与 1.x AST 生成的 `kUiMethods[]` 逐条一致，已核对 16 条）。
+#   ★ 为什么不是"直接从 Python 绑定表读"：那样 `契约 ⊆ 绑定` 恒真 ⇒ 这把锁就失去意义了。
+#     参数名是**对第三方的承诺**，必须有一份**独立于实现的**快照来对账。
+CONTRACT_FROZEN = [
+    ("label", ["parent", "text", "style"]),
+    ("button", ["parent", "text", "on_click", "width", "style", "state"]),
+    ("row", ["parent", "side", "fill", "expand", "padx", "pady"]),
+    ("checkbox", ["parent", "text", "variable", "on_toggle"]),
+    ("entry", ["parent", "textvariable", "width", "show"]),
+    ("text", ["parent", "height", "width", "wrap"]),
+    ("combo", ["parent", "values", "variable", "width", "on_change"]),
+    ("drop_box", ["parent", "on_file", "placeholder", "width"]),
+    ("pack", ["widget", "side", "fill", "expand", "padx", "pady", "anchor"]),
+    ("set_text", ["widget", "text"]),
+    ("set_state", ["widget", "state"]),
+    ("text_view", ["parent", "height", "mono"]),
+    ("alive", ["widget"]),
+    ("ask_yes_no", ["parent", "title", "message"]),
+    ("ask_open_file", ["parent", "title", "filetypes", "initialdir"]),
+    ("ask_save_file", ["parent", "title", "initialdir", "initialfile", "filetypes"]),
+]
+
+
 EXTRA = {
     "button": {"enabled": "★ 契约写 `state`，2.x 这条叫 `enabled`（bool）——**同一件事两个名字**，"
                           "已在 DEFERRED 里记成欠账（要定 state 的取值口径才能改名/改类型）"},
@@ -230,22 +256,14 @@ def main() -> int:
     print("   ✓ 反例自证 %d/%d" % (len(results), len(results)))
     print()
 
-    for path in (CONTRACT, PY_HOST, ABI_HOST):
-        if not path.is_file():
-            print("UI-CONTRACT fail 仓库自带文件缺失：%s" % path)
-            return 1
-    contract = parse_contract(CONTRACT.read_text(encoding="utf-8", errors="replace"))
+    if not PY_HOST.is_file():
+        print("UI-CONTRACT fail 缺 Python 绑定源：%s" % PY_HOST)
+        return 1
+    # ★ 决策 1「换源」：参数名的唯一事实源 = 上面的 `CONTRACT_FROZEN`（不再依赖 C ABI 的 .inc）。
+    #   C ABI 的 `parent` 透传那半随 `abi_host.cpp` 一起删掉了（它判的是已不存在的实现）。
+    contract = list(CONTRACT_FROZEN)
     bindings = parse_bindings(PY_HOST.read_text(encoding="utf-8", errors="replace"))
     problems = audit(contract, bindings, EXTRA, DEFERRED)
-    abi_problems = audit_abi_parent(ABI_HOST.read_text(encoding="utf-8", errors="replace"))
-    if abi_problems:
-        print("-- C ABI 的 parent 透传（P17-93 / 审计 `05 PLG-02`）--")
-        for item in abi_problems:
-            print("   ✗ %s" % item)
-    else:
-        print("-- C ABI 的 parent 透传（P17-93 / 审计 `05 PLG-02`）--")
-        print("   ✓ `on_panel` / `on_tool` 两条适配都把宿主 parent 原样交给插件 builder")
-    problems += abi_problems
 
     print("-- 实测（契约 %d 条方法）--" % len(contract))
     for name, params in contract:

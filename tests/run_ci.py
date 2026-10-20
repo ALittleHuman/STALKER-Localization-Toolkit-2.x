@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -114,6 +115,22 @@ def run(cmd: list[str], env: dict[str, str] | None = None, timeout: int = 600) -
     child_env = dict(os.environ if env is None else env)
     child_env.setdefault("PYTHONUTF8", "1")
     child_env.setdefault("PYTHONIOENCODING", "utf-8")
+    # ★★ 用户 2026-10-19/20：间歇红先排除"和共享 %TEMP% 撞车"。
+    #   整档门禁里多个步骤都会起 `xrkit_app --smoke`，它固定往 `%TEMP%\xrkit_smoke_*` 写日志与
+    #   插件夹具；一旦有残留进程/残留文件就是一团乱（P17-176 的 vcruntime 也是同一类：残留进程）。
+    #   ⇒ **每个子进程一个独占的 TEMP/TMP**（短路径），互不相干；外加起跑前清掉残留 xrkit_app。
+    _step_tmp = Path(tempfile.gettempdir()) / ("rctmp_%d_%d" % (os.getpid(), int(time.time() * 1000) % 100000))
+    try:
+        _step_tmp.mkdir(parents=True, exist_ok=True)
+        child_env["TEMP"] = str(_step_tmp)
+        child_env["TMP"] = str(_step_tmp)
+    except OSError:
+        pass
+    try:
+        subprocess.run(["taskkill", "/F", "/T", "/IM", "xrkit_app.exe"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        pass
     try:
         proc = subprocess.run(
             cmd,
