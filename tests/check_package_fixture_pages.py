@@ -44,6 +44,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 for _stream in (sys.stdout, sys.stderr):
@@ -191,7 +192,11 @@ def run_smoke(pkg: Path, timeout: int = 900):
     # ★ 私有 TEMP 要**短**：放进包副本里会把路径拉长（`…\p1781_pkg_pages_xxxx\pkg\_smoke_temp\…`），
     #   插件夹具那条链在长路径上会出问题（实测：取消探针页的按钮找不到）。
     #   用系统 TEMP 下的短随机目录 ⇒ 既隔离、路径长度又与以前一致。
-    private_temp = Path(tempfile.mkdtemp(prefix="pktmp_"))
+    # ★★ 用户 2026-10-20 的取证要求：「查干扰 —— 杀软扫描」。实测线索：③ 的偶发红全是
+    #   **插件页没建出来**（P17-1 取消探针页 / P5 插件页视口为 0），而插件是**刚写进 %TEMP% 的 .py**。
+    #   今天 360 把仓库加白之后，把私有 TEMP 也挪进**仓库内**（= 白名单路径）做对照实验：
+    #   若失败率从 8/20 掉到 0/20，就说明是"杀软扫刚写的 .py 导致 import 偶发失败"。
+    private_temp = Path(tempfile.mkdtemp(prefix="pktmp_", dir=str(ROOT / "build")))
     env["TEMP"] = str(private_temp)
     env["TMP"] = str(private_temp)
     exe = pkg / "xrkit_app.exe"
@@ -383,19 +388,51 @@ def audit_package(pkg: Path) -> None:
             check(False, "产物 %s：`plugins\\_fixtures\\` 存在（④ 的显式装载要有东西可抬）" % rel)
             return
         lifted = []
+        _t_lift = time.time()
+        # ★ 数量必须在**搬之前**数（我第一版放在搬之后 ⇒ 目录已空 ⇒ 恒 0 ⇒ 假红）
+        fixture_total = len([p for p in fixture_dir.glob("*") if p.is_file()])
         for item in sorted(fixture_dir.glob("*")):
             if item.is_file():
                 target = work / "plugins" / item.name
                 shutil.move(str(item), str(target))
                 lifted.append(item.name)
-        say("  ④ 显式抬起 %d 个夹具到顶层：%s" % (len(lifted), ", ".join(lifted)))
+        lift_seconds = time.time() - _t_lift
+        say("  ④ 显式抬起 %d/%d 个夹具到顶层（%.2fs）：%s"
+            % (len(lifted), fixture_total, lift_seconds, ", ".join(lifted)))
+        # ★ lift 必须搬完：少一个 ⇒ 现场就不对，别把它当"smoke 飘"
+        check(len(lifted) == fixture_total,
+              "产物 %s：夹具**全部**抬到顶层（lifted=%d / 目录 %d）" % (rel, len(lifted), fixture_total),
+              "少搬 %d 个" % (fixture_total - len(lifted)))
         PHASE[0] = "lifted"
+        _t_smoke = time.time()
         rc2, out2 = run_smoke(work)
+        smoke_seconds = time.time() - _t_smoke
         pages2 = parse_pages(out2) if out2 else None
         if rc2 is None:
             check(False, "产物 %s（抬夹具形态）：`--smoke` 能跑完" % rel, str(out2))
             return
         smoke_ok2 = SMOKE_OK_RE.search(out2)
+        if smoke_ok2 is None or rc2 != 0:
+            # ★★ 用户 2026-10-20：④ 失败必须**留完整现场**（不只末 40 行），并保留临时目录。
+            diag = ROOT / "build" / "logs" / "pkg_pages_phase4_fail.txt"
+            try:
+                diag.parent.mkdir(parents=True, exist_ok=True)
+                plug_line = next((l for l in out2.splitlines() if "PKG-PLUGINS" in l), "<无>")
+                pages_lines = [l for l in out2.splitlines() if "PLUGIN-PAGES" in l]
+                fails4 = [l for l in out2.splitlines() if "SHELL-SMOKE fail" in l]
+                diag.write_text(
+                    "phase=4\npkg=%s\nlifted=%d/%d\nfixtures=%s\nrc=%s\nwhen=%s\n"
+                    "lift_seconds=%.2f\nsmoke_seconds=%.2f\nwork_dir=%s（故意保留）\n"
+                    "%s\n%s\n== SHELL-SMOKE fail（%d 条）==\n%s\n\n== 全量输出 ==\n%s\n"
+                    % (pkg, len(lifted), fixture_total, ", ".join(lifted), rc2,
+                       time.strftime("%Y-%m-%d %H:%M:%S"), lift_seconds, smoke_seconds, work,
+                       plug_line, "\n".join(pages_lines), len(fails4),
+                       "\n".join(fails4), out2),
+                    encoding="utf-8")
+                say("   [诊断] ④ 失败现场：%s（work 保留：%s）" % (diag, work))
+                os.environ["XRKIT_KEEP_PKG_PAGES_TMP"] = "1"
+            except OSError as exc:
+                say("   [诊断] 落盘失败：%s" % exc)
         check(smoke_ok2 is not None and rc2 == 0,
               "产物 %s（抬夹具形态）：`SHELL-SMOKE ok … failed=0` 且退出码 0" % rel,
               "rc=%s\n      %s" % (rc2, brief(out2)))
