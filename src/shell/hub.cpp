@@ -155,23 +155,10 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     QObject::connect(log_clear_, &QPushButton::clicked, this, [this] {
         if (log_box_ != nullptr) log_box_->clear_log();
     });
-    // ★★ 2026-10-06（③）「导出」（1.x `stalker_toolkit.py:355-373, 390`）——
-    //   2.x 原来只有「清空」，`导出` 全仓零命中 ⇒ 用户拿不到可发出来的日志文件。
-    log_export_ = new QPushButton(QStringLiteral("导出日志"));
-    log_export_->setObjectName(QStringLiteral("log_export"));
-    QObject::connect(log_export_, &QPushButton::clicked, this, [this] {
-        QString path;
-        QString why;
-        if (export_log(&path, &why)) {
-            log_line(QStringLiteral("日志已导出：%1").arg(QDir::toNativeSeparators(path)));
-        } else {
-            // 零静默：**写不出去必须明确报**（日志栏 + 状态栏两处可见）
-            const QString text = QStringLiteral("导出日志失败：%1").arg(why);
-            log_line(text);
-            if (status_label_ != nullptr) status_label_->setText(text);
-        }
-    });
-
+    // ★★ 决策 5.5（用户 2026-10-19）：**「导出日志」按钮已删除**。
+    //   理由：落盘日志本来就包含全部内容（引擎行 ＋ 界面行，见 C-13 的 `log_block` 镜像），
+    //   导出是**重复实现**；而且它当初存在的唯一理由是"落盘文件里只有引擎行"。
+    //   需要日志的用户直接拿 `log_file_path()`（启动时"本次运行日志落点"那条会打出来）。
     log_panel_ = new QWidget;
     log_panel_->setObjectName(QStringLiteral("log_panel"));
     // ★ 用户真机反馈（截图里折叠后的「日志 / 就绪」只剩一条窄缝）：给抽屉**头部一行**
@@ -181,7 +168,6 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     log_panel_layout->setContentsMargins(px(8), px(4), px(8), px(4));
     log_panel_layout->setSpacing(px(6));
     log_panel_layout->addWidget(log_box_, 1);
-    log_panel_layout->addWidget(log_export_, 0);
     log_panel_layout->addWidget(log_clear_, 0);
     log_panel_->setVisible(false);  // 默认折叠
 
@@ -634,59 +620,10 @@ void Hub::log_line(const QString& text) {
 
 bool Hub::log_file_active() const { return xrkit::core::log_file_active(); }
 
-// ★★ 2026-10-06（③）：1.x `stalker_toolkit.py:355-373` 的 `export_log()` 等价物 ——
-//   **GUI 简略日志 + 落盘详细日志合并**写一份新文件（文件名 `log_YYYYmmdd_HHMMSS.txt`）。
-// 零静默：① 目录建不出来 / ② 文件打不开 / ③ 详细日志读不回来 —— 全部要**说出来**
-//   （③ 按 1.x 的做法写进导出文件里，① ② 直接返回非空理由让调用方报给用户）。
-bool Hub::export_log(QString* out_path, QString* error) {
-    const auto bail = [this, error](const QString& why) {
-        last_export_error_ = why;
-        if (error != nullptr) *error = why;
-        return false;
-    };
-    const QString dir = hub_log_dir();
-    if (!QDir().mkpath(dir)) {
-        return bail(QStringLiteral("日志目录建不出来：%1").arg(QDir::toNativeSeparators(dir)));
-    }
-    const QString stamp =
-        QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
-    QString clash;
-    const QString path = unique_log_path(dir, stamp, &clash);
-    // ★ 本批：同一秒内的第二次导出**不许覆盖第一份**（那会静默丢一份）。落点已自增 ⇒ 说出来。
-    if (!clash.isEmpty()) log_line(QStringLiteral("导出日志落点：%1").arg(clash));
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        return bail(QStringLiteral("日志文件打不开：%1（%2）")
-                        .arg(QDir::toNativeSeparators(path), file.errorString()));
-    }
-    QTextStream out(&file);
-    out.setEncoding(QStringConverter::Utf8);
-    out << QStringLiteral("═══ 简略日志 (GUI) ═══\n");
-    if (log_box_ != nullptr) {
-        // 先落 pending（80 ms 攒批）—— 否则"刚刚写的那条标记"可能还在缓冲里，导出看不到它。
-        log_box_->flush();
-        out << log_box_->toPlainText();
-    }
-    out << QStringLiteral("\n═══ 详细日志 (%1) ═══\n")
-               .arg(QFileInfo(log_file_path_).fileName());
-    QFile detail(log_file_path_);
-    if (detail.open(QIODevice::ReadOnly)) {
-        out << QString::fromUtf8(detail.readAll());
-    } else {
-        out << QStringLiteral("(详细日志读取失败：%1)\n")
-                   .arg(QDir::toNativeSeparators(log_file_path_));
-    }
-    out.flush();
-    file.close();
-    if (file.error() != QFileDevice::NoError) {
-        return bail(QStringLiteral("日志写盘出错：%1（%2）")
-                        .arg(QDir::toNativeSeparators(path), file.errorString()));
-    }
-    last_export_error_.clear();
-    if (out_path != nullptr) *out_path = path;
-    return true;
-}
-
+// ★★ 决策 5.5（用户 2026-10-19）：`export_log()` 整体删除。
+//   它当初解决的是"落盘文件里只有引擎行、界面行一条都没有" ⇒ 所以要把内存缓冲与落盘文件**合并**导出。
+//   现在 `LogBox::flush()` 会把界面行镜像进落盘文件（C-13），落盘文件自己就能复盘一次运行，
+//   导出就是重复实现。删掉之后：**没有第二个日志来源**，也就不会出现两份不一致的日志。
 void Hub::render_plugin_slots() {
     // ⑫12.1：注册表里的每一类槽位都要**真的出现在界面上**（用户 2026-09-26 决策"补六类"）。
     // 本函数覆盖六类：工具栏菜单项 / 新建下拉 / 下拉条目 / 面板 / Hub 插件页 / **右键菜单

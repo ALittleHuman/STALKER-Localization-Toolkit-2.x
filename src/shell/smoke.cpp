@@ -2038,117 +2038,29 @@ SmokeResult run_smoke() {
                   QStringLiteral("③ Hub 启动即挂上落盘日志（%1，active=%2）")
                       .arg(log_hub.log_file_path())
                       .arg(log_hub.log_file_active() ? 1 : 0));
-            check(log_hub.log_export_button() != nullptr,
-                  QStringLiteral("③ 日志面板里有「导出日志」按钮"));
-            // 写一条**标记**：内存日志（日志栏）与落盘日志（core::log）两条通道都走
-            const QString marker =
-                QStringLiteral("SMOKE-MARKER-EXPORT-LOG-%1")
-                    .arg(QDateTime::currentMSecsSinceEpoch());
+            // ★★ 决策 5.5（用户 2026-10-19）：**「导出日志」按钮已删除** ——
+            //   落盘日志本来就含全部内容（引擎行 ＋ 界面行），导出是重复实现。
+            //   修前这条断言的是"按钮存在"；现在**反过来**判"按钮不许回来"（防回潮）。
+            check(log_hub.findChild<QPushButton*>(QStringLiteral("log_export")) == nullptr,
+                  QStringLiteral("③ 「导出日志」按钮**已删除**（落盘已含全部内容；别把重复实现加回来）"));
+            // 界面行必须进落盘文件（修前：`Hub::log_line` 只进 LogBox ⇒ 文件 0 字节）
+            const QString marker = QStringLiteral("SMOKE-MARKER-LOGFILE-%1")
+                                       .arg(QDateTime::currentMSecsSinceEpoch());
             log_hub.log_line(marker);
-            xrkit::core::log(xrkit::core::Level::Info, marker.toStdString());
-            QString exported;
-            QString why;
-            const bool export_ok = log_hub.export_log(&exported, &why);
-            check(export_ok && QFile::exists(exported),
-                  QStringLiteral("③ 导出日志文件存在（%1；失败理由「%2」）").arg(exported, why));
-            check(QFileInfo(exported).fileName().startsWith(QStringLiteral("log_")) &&
-                      QFileInfo(exported).suffix() == QStringLiteral("txt"),
-                  QStringLiteral("③ 导出文件名口径 = logs/log_YYYYmmdd_HHMMSS.txt（实得 %1）")
-                      .arg(QFileInfo(exported).fileName()));
-            QString body;
+            if (log_hub.log_box() != nullptr) log_hub.log_box()->flush();
             {
-                QFile file(exported);
-                if (file.open(QIODevice::ReadOnly)) body = QString::fromUtf8(file.readAll());
-            }
-            check(body.contains(marker) && body.contains(QStringLiteral("简略日志")) &&
-                      body.contains(QStringLiteral("详细日志")),
-                  QStringLiteral("③ 导出内容 = 内存日志 + 落盘日志**合并**（含刚写的标记；%1 字节）")
-                      .arg(body.size()));
-
-            // ★★ 本批：**同一秒内两次导出不许互相覆盖**（复核确认的真问题）。
-            //   修前的形态：两次 `export_log` 的落点都按 `currentDateTime()` 精确到秒算 ⇒
-            //   同一秒内第二次以 `Truncate` 打同一个名字 ⇒ **第一份被静默丢掉**。
-            //   判据（三条一起才算过）：① 两次落点**不同**且**都还在盘上**；
-            //   ② 两份内容**各自正确**（都含各自的标记 —— 证明不是"空壳文件"）；
-            //   ③ 序号自增这条**可见**（日志栏里有落点行；返回值就是最终落点）。
-            {
-                const QString marker2 =
-                    QStringLiteral("SMOKE-MARKER-SAME-SECOND-EXPORT-%1")
-                        .arg(QDateTime::currentMSecsSinceEpoch());
-                log_hub.log_line(marker2);
-                xrkit::core::log(xrkit::core::Level::Info, marker2.toStdString());
-                QString exported2;
-                QString why2;
-                const bool ok2 = log_hub.export_log(&exported2, &why2);
-                check(ok2 && QFile::exists(exported2),
-                      QStringLiteral("③ 同秒第二次导出成功（%1；理由「%2」）").arg(exported2, why2));
-                check(exported2 != exported,
-                      QStringLiteral("③ 同秒两次导出的落点**不同**（第一份 %1 / 第二份 %2）")
-                          .arg(QFileInfo(exported).fileName(), QFileInfo(exported2).fileName()));
-                check(QFile::exists(exported) && QFile::exists(exported2),
-                      QStringLiteral("③ 同秒两次导出的**两份都在**（覆盖 ⇒ 这里必红）"));
-                QString body2;
-                {
-                    QFile file(exported2);
-                    if (file.open(QIODevice::ReadOnly)) body2 = QString::fromUtf8(file.readAll());
+                QFile file(log_hub.log_file_path());
+                bool has = false;
+                qint64 size = 0;
+                if (file.open(QIODevice::ReadOnly)) {
+                    const QByteArray all = file.readAll();
+                    size = all.size();
+                    has = all.contains(marker.toUtf8());   // QByteArray::contains 要 QByteArray
                 }
-                // 第二份必须含**它自己那时候**的标记；第一份必须含第一份的标记。
-                QString body1_again;
-                {
-                    QFile file(exported);
-                    if (file.open(QIODevice::ReadOnly)) body1_again = QString::fromUtf8(file.readAll());
-                }
-                check(body2.contains(marker2) && body1_again.contains(marker),
-                      QStringLiteral("③ 两份导出**内容各自正确**（第 1 份含标记 1=%1；"
-                                     "第 2 份含标记 2=%2）")
-                          .arg(body1_again.contains(marker) ? 1 : 0)
-                          .arg(body2.contains(marker2) ? 1 : 0));
-                // 落点可见：① 点击回调里 `log_line("日志已导出：…")` 打**返回值**（真走点击那条路）；
-                //   ② `export_log` 自己在**自增**时打一行说明（本块直调函数 ⇒ 这条必须出现）。
-                //   两者合一 ⇒ "最终落点 + 为什么自增" 用户都看得见。
-                const QString log_text =
-                    log_hub.log_view() != nullptr ? log_hub.log_view()->toPlainText() : QString();
-                check(log_text.contains(QFileInfo(exported2).fileName()) ||
-                          log_text.contains(QStringLiteral("已存在")),
-                      QStringLiteral("③ 自增后的最终落点**可见**（日志栏里至少有自增说明或落点名；"
-                                     "查 %1 / 「已存在」）")
-                          .arg(QFileInfo(exported2).fileName()));
-
-                // ★★ 本批：**运行日志（构造时定名）也不能同秒互撞**。
-                //   第二个 Hub 在同一秒里构造 ⇒ 修前落点与第一个**同名** ⇒ `set_log_file`
-                //   把第一个的运行日志顶掉（静默丢一份）。修后必须自增。
-                xrkit::core::set_log_file(std::string());
-                Hub log_hub2;
-                check(!log_hub2.log_file_path().isEmpty() &&
-                          log_hub2.log_file_path() != log_hub.log_file_path(),
-                      QStringLiteral("③ 同秒构造两个 Hub 的运行日志落点**不同**"
-                                     "（第 1 个 %1 / 第 2 个 %2）")
-                          .arg(QFileInfo(log_hub.log_file_path()).fileName(),
-                               QFileInfo(log_hub2.log_file_path()).fileName()));
-                check(QFile::exists(log_hub.log_file_path()),
-                      QStringLiteral("③ 第 1 个 Hub 的运行日志**没被顶掉**（%1）")
-                          .arg(QFileInfo(log_hub.log_file_path()).fileName()));
-                QFile::remove(log_hub2.log_file_path());
-
-                QFile::remove(exported2);
+                check(has, QStringLiteral("③ 界面日志行要进落盘文件（%1 不在 %2 里）")
+                               .arg(marker, log_hub.log_file_path()));
+                check(size > 0, QStringLiteral("③ 落盘日志不许是 0 字节（实得 %1）").arg(size));
             }
-
-            // 写失败必须**明确报**：把落盘目录指到一个**文件**下面（mkpath 必失败）
-            const QString blocker =
-                QDir::temp().filePath(QStringLiteral("xrkit_smoke_log_blocker.txt"));
-            {
-                QFile file(blocker);
-                if (file.open(QIODevice::WriteOnly)) file.write("x");
-            }
-            set_hub_log_dir(blocker + QStringLiteral("/logs"));
-            QString bad_path;
-            QString bad_why;
-            const bool bad_ok = log_hub.export_log(&bad_path, &bad_why);
-            check(!bad_ok && !bad_why.isEmpty() && !log_hub.last_export_error().isEmpty(),
-                  QStringLiteral("③ 路径不可写 ⇒ 返回 false 且错误文本非空（实得「%1」）").arg(bad_why));
-            set_hub_log_dir(smoke_log_dir);
-            QFile::remove(blocker);
-            QFile::remove(exported);
         }
 
         // ★ 6.x 排版口径（用户 2026-09-27："排版有很大问题"）—— **几何断言，不看截图**。

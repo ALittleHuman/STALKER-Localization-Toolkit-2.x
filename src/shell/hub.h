@@ -101,14 +101,11 @@ public:
     QPushButton* log_clear_button() const { return log_clear_; }
     // ★ 2026-10-06（③）：「导出」按钮（1.x `:390`）—— 把内存日志 + 落盘详细日志**合并**
     //   写一份 `<log_dir>/log_YYYYmmdd_HHMMSS.txt`。
-    QPushButton* log_export_button() const { return log_export_; }
     // 本次运行 `core::set_log_file` 挂上的那个文件（空 = 没挂上 ⇒ 日志没有文件可查）
     QString log_file_path() const { return log_file_path_; }
     bool log_file_active() const;
     // 合并导出。失败 ⇒ **返回 false 且 `error` 非空**（零静默：写不出去必须说得出来）。
-    bool export_log(QString* out_path, QString* error);
     // 最近一次导出失败的理由（空 = 没失败过）——供自检直接读
-    QString last_export_error() const { return last_export_error_; }
     LogBox* log_box() const { return log_box_; }
     // ★ 方案一（Hana 重排）：导航改顶部标签条，日志改底部可折叠抽屉
     QPushButton* log_toggle() const { return log_toggle_; }
@@ -144,13 +141,11 @@ private:
     QPlainTextEdit* log_view_ = nullptr;
     LogBox* log_box_ = nullptr;
     QPushButton* log_clear_ = nullptr;
-    QPushButton* log_export_ = nullptr;
     QPushButton* log_toggle_ = nullptr;
     QWidget* log_panel_ = nullptr;
     QLabel* status_label_ = nullptr;
     bool log_expanded_ = false;
     QString log_file_path_;      // 本次运行落盘的那个文件（见 log_file_path()）
-    QString last_export_error_;  // 导出失败理由（零静默：失败要留得住）
     xrkit::plugin::Registry registry_;
     std::vector<xrkit::plugin::RegistrationError> plugin_errors_;
     QString plugin_notice_;

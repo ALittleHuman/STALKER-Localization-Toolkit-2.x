@@ -345,8 +345,7 @@ int main(int argc, char** argv) {
             // ★ 2026-10-06（③）：Hub 自己的日志区（`--log-open` 展开时才有几何）
             dump("hub", hub.log_toggle());
             dump("hub", hub.log_panel());
-            dump("hub", hub.log_export_button());
-            dump("hub", hub.log_clear_button());
+                    dump("hub", hub.log_clear_button());
             dump("hub", hub.log_box());
             // ★ 2026-10-02 用户圈着包列表表头打了个「？」（三列总宽 < 面板宽 ⇒ 右半边死区）：
             //   把**列宽合计 vs 视口宽**打出来，这种"没铺满"的毛病以后用数字判，不靠眯眼看图。
