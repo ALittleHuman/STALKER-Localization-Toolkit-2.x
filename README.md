@@ -11,7 +11,7 @@
 | 平台 | Windows x64 |
 | 编译器 | MSVC 14.44（VS 2022 BuildTools 17.14） |
 | 构建 | CMake + Ninja |
-| 插件机制 | **Python 模块接口**（`.py`；宿主为内嵌 CPython，两个前端共用同一份宿主与注册表）。C ABI 已按用户 2026-10-07 的裁决**退役**；历史遗留头 `include/xrkit/plugin/abi.h` 仅供旧件读取，不是新插件的入口 |
+| 插件机制 | **Python 模块接口**（`.py`；宿主为内嵌 CPython，两个前端共用同一份宿主与注册表）。**C ABI 已移除**（用户 2026-10-18 决策）：默认构建里没有 `stk_api` / `stk_plugin_init` / `LoadLibrary` 插件路径，**旧 DLL 插件不再加载**；遗留的 `.dll` 会被当成非插件忽略。控件门面契约（`stk_ui` 16 方法）仍在，但已搬到 `include/xrkit/engine/plugin/facade_api.h`（宿主内部契约，Python 绑定与外壳共用）|
 
 **为什么重写**（用户原话"不破不立"）：X-Ray 引擎本身是 C++，解包/封包用 C++ 更顺、精度更高；
 闭源插件源码已在我方手中；插件生态因题材冷门而不重要。
@@ -53,7 +53,7 @@ MSVC 编 Qt 必须带 `/Zc:__cplusplus`（否则 Qt 触发 `#error C1189`）与 
 
 ## 文档
 
-- `docs/2.0.0-设计口径.md` —— 分层架构、插件 C ABI、里程碑、七条验收判据
+- `docs/2.0.0-设计口径.md` —— 分层架构、**插件机制（Python；C ABI 已移除）**、里程碑、七条验收判据
 - `docs/2.0.0-行为口径对照表.md` —— 1.x 逐条行为判据（重写必须逐条重验）
 - `docs/2.0.0-待拍板清单.md` —— 14 条开放项与决策记录
 - `docs/2.0.0-SquashFS-writer规格.md` —— 自写 writer 的**逐字节复刻规则**与取证（M1-5）

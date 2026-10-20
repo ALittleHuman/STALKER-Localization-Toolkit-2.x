@@ -9,7 +9,6 @@
 #include "xrkit/engine/fs/lzhuf.h"   // ★ P17-17（01 F-14）：编码上限判据
 #include "xrkit/engine/fs/untrusted_limits.h"   // ★ P17-17：那三个上限的具名常量
 #include "xrkit/engine/fs/squashfs.h"
-#include "xrkit/engine/plugin/abi_host.h"
 #include "xrkit/engine/plugin/loader.h"
 // ★ P17-14（01 F-15）：保留设备名判定与写盘拦阻要看真实现
 #include "xrkit/core/atomic_write.h"
@@ -5671,39 +5670,7 @@ SmokeResult run_smoke() {
     }
 
     // ⑫12.1/12.5：**插件注册的比较模式要出现在 XML 页的同一个下拉里**
-    {
-        namespace plug = xrkit::plugin;
-        namespace exml = xrkit::engine::xml;
-        XmlPage page;
-        plug::Registry registry;
-        for (plug::CompareModeReg& mode : plug::builtin_compare_modes()) {
-            registry.register_compare_mode(exml::kBuiltinPlugin, std::move(mode));
-        }
-        plug::PluginApiAdapter adapter(registry, "demo.dll", nullptr);
-        const char* col_keys[] = {"rel", "detail"};
-        const char* col_headings[] = {"文件", "差异"};
-        const int col_widths[] = {280, 400};
-        const char* filter_labels[] = {"全部"};
-        const char* filter_kinds[] = {"same|diff|only_a|only_b"};
-        const auto compare_fn = +[](void*, const char*, const char*, const char*, const char*,
-                                    const char*, stk_result_sink, void*) {};
-        check(adapter.api().register_compare_mode(adapter.api().host, "插件模式", "plugin_mode", 40,
-                                                 col_keys, col_headings, col_widths, 2,
-                                                 filter_labels, 1, filter_kinds, compare_fn,
-                                                 nullptr) == 1,
-              QStringLiteral("⑫12.1 插件比较模式注册失败"));
-        page.set_registry(&registry);
-        QComboBox* modes = page.mode_combo();
-        QStringList keys;
-        for (int i = 0; modes != nullptr && i < modes->count(); ++i) {
-            keys << modes->itemData(i).toString();
-        }
-        check(keys.contains(QStringLiteral("stats")) && keys.contains(QStringLiteral("text")) &&
-                  keys.contains(QStringLiteral("plugin_mode")),
-              QStringLiteral("⑫12.1 内置与插件模式必须在同一个下拉里（%1）")
-                  .arg(keys.join(QStringLiteral("/"))));
-        check(keys.size() == 3, QStringLiteral("⑫12.5 模式条数应为 3（%1）").arg(keys.size()));
-    }
+        // ★★ 决策 1（C ABI 退净）：这一块整段删除（它用 `PluginApiAdapter` / `load_plugin` 测 C 插件）。
 
     // 视频转码接线（用户 2026-09-26：完整移植）—— argv 由引擎算，页面只起进程/报错
     {
@@ -7332,101 +7299,7 @@ SmokeResult run_smoke() {
     }
 
     // ⑫12.1 四类槽位渲染（用户 2026-09-26"补六类"：panel/tool/option/option_entry）
-    {
-        namespace plug = xrkit::plugin;
-        const QString empty = QDir::temp().filePath(QStringLiteral("xrkit_smoke_slots4"));
-        QDir(empty).removeRecursively();
-        QDir().mkpath(empty);
-        Hub hub(nullptr, empty);
-        const int builtin = hub.page_count();
-
-        plug::PluginApiAdapter adapter(hub.registry(), "slots4.dll", nullptr);
-        const char* choices[] = {"甲", "乙"};
-        check(adapter.api().register_option(adapter.api().host, "插件下拉", choices, 2, nullptr,
-                                           nullptr, "fs", "top_bar", nullptr, 1) == 1,
-              QStringLiteral("⑫12.1 新建下拉注册失败"));
-        check(adapter.api().register_option_entry(adapter.api().host, "fs", "top_bar", "插件条目",
-                                                  nullptr) == 1,
-              QStringLiteral("⑫12.1 下拉条目注册失败"));
-        const auto builder = +[](void*, stk_widget*) -> stk_widget* {
-            return reinterpret_cast<stk_widget*>(new QWidget());
-        };
-        check(adapter.api().register_panel(adapter.api().host, "插件面板", builder, nullptr, "fs",
-                                           "top_bar", nullptr, 2) == 1,
-              QStringLiteral("⑫12.1 面板注册失败"));
-        check(adapter.api().register_tool(adapter.api().host, "插件页", builder, nullptr, 3) == 1,
-              QStringLiteral("⑫12.1 Hub 插件页注册失败"));
-
-        hub.render_plugin_slots();
-        check(hub.plugin_pages_added() == 1 && hub.page_count() == builtin + 1,
-              QStringLiteral("⑫12.1 插件页没被追加（pages=%1 期望 %2）")
-                  .arg(hub.page_count())
-                  .arg(builtin + 1));
-
-        // ★★ P17-93（审计 `05 PLG-02`）：**C ABI 插件的 builder 必须收到宿主给的 parent** ——
-        //   修前 `abi_host.cpp` 的适配 lambda 写死 `builder(user, nullptr)`：形参收下就丢，
-        //   C ABI 插件**永远拿不到根容器**（而宿主侧早在 `hub.cpp:678/783` 就把它传下来了）。
-        //   判据（要有牙）：注册一个**记录收到什么 parent** 的 builder ⇒ 渲染后必须**非空**。
-        //   红证：把适配 lambda 改回 `builder(user, nullptr)` ⇒ 这里立刻红（能报出实得 nullptr）。
-        //   ★ 用**独立的 Hub**（不碰上面那个已渲染过的）—— 同一个 Hub 二次 `render_plugin_slots()`
-        //     会把插件页装两遍（那条判据在下面，不该被这条探针弄脏）。
-        {
-            const QString probe_dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_p1793"));
-            QDir(probe_dir).removeRecursively();
-            QDir().mkpath(probe_dir);
-            Hub probe_hub(nullptr, probe_dir);
-            plug::PluginApiAdapter probe_adapter(probe_hub.registry(), "p1793.dll", nullptr);
-            static void* p1793_seen_parent = nullptr;
-            p1793_seen_parent = nullptr;
-            const auto probing_builder = +[](void*, stk_widget* parent) -> stk_widget* {
-                p1793_seen_parent = reinterpret_cast<void*>(parent);
-                return reinterpret_cast<stk_widget*>(new QWidget());
-            };
-            check(probe_adapter.api().register_tool(probe_adapter.api().host, "parent 探针页",
-                                                    probing_builder, nullptr, 9) == 1,
-                  QStringLiteral("P17-93 探针页注册失败"));
-            probe_hub.render_plugin_slots();
-            check(p1793_seen_parent != nullptr,
-                  QStringLiteral("P17-93 C ABI 插件的 builder 没收到宿主 parent（实得 %1）")
-                      .arg(p1793_seen_parent == nullptr ? QStringLiteral("nullptr")
-                                                        : QStringLiteral("非空")));
-            QDir(probe_dir).removeRecursively();
-        }
-        // ★★ P1：插件页必须排在**内置六页之后**（1.x `stalker_toolkit.py:215-221` 的口径：
-        //   内置六工具固定在前，插件栏目按 order 稳定追加）—— 排序的"带"写错就红。
-        check(hub.page_id(builtin) == QStringLiteral("插件页") &&
-                  hub.page_owner(builtin) == QStringLiteral("slots4.dll"),
-              QStringLiteral("P1 插件页没排在内置页之后（第 %1 页 = 「%2」/「%3」）")
-                  .arg(builtin)
-                  .arg(hub.page_id(builtin))
-                  .arg(hub.page_owner(builtin)));
-
-        bool combo_ok = false;
-        bool entry_ok = false;
-        bool panel_ok = false;
-        for (int i = 0; i < hub.page_count(); ++i) {
-            PageBase* page = hub.page_at(i);
-            if (page == nullptr || page->page_id() != QStringLiteral("fs")) continue;
-            for (QComboBox* combo : page->action_bar()->findChildren<QComboBox*>()) {
-                if (combo->count() >= 2) combo_ok = true;
-                for (int k = 0; k < combo->count(); ++k) {
-                    if (combo->itemText(k) == QStringLiteral("插件条目")) entry_ok = true;
-                }
-            }
-            for (QWidget* w : page->body()->findChildren<QWidget*>()) {
-                if (w->objectName().startsWith(QStringLiteral("plugin_panel_"))) panel_ok = true;
-            }
-        }
-        check(combo_ok, QStringLiteral("⑫12.1 插件下拉没出现在 fs 页操作栏"));
-        check(entry_ok, QStringLiteral("⑫12.1 插件下拉条目没塞进对应 area 的下拉"));
-        check(panel_ok, QStringLiteral("⑫12.1 插件面板没出现在 fs 页正文"));
-
-        // 幂等：重渲染不许把插件页装两遍
-        hub.render_plugin_slots();
-        check(hub.page_count() == builtin + 1 && hub.plugin_pages_added() == 1,
-              QStringLiteral("⑫12.1 重渲染把插件页装了两遍（pages=%1）").arg(hub.page_count()));
-        QDir(empty).removeRecursively();
-    }
+        // ★★ 决策 1（C ABI 退净）：这一块整段删除（它用 `PluginApiAdapter` / `load_plugin` 测 C 插件）。
 
     // ★★ 2026-10-06（① 用户拍板「**插件的架构Bug，那必须修啊。**」）：两类槽位的**消费端**
     //   修前（本块就是它的锁）：
@@ -7442,117 +7315,7 @@ SmokeResult run_smoke() {
     //        且**点它真的调回插件**（走既有 `CommandReg`/`Registry::invoke`，没有新 ABI）；
     //        `when={"loaded":"1"}` 在没加载任何包时**不许**出现（＝`when` 按当前状态**重算**，
     //        不是构造时冻结的死条件）。
-    {
-        namespace plug = xrkit::plugin;
-        const QString empty = QDir::temp().filePath(QStringLiteral("xrkit_smoke_slots_ctx"));
-        QDir(empty).removeRecursively();
-        QDir().mkpath(empty);
-        Hub hub(nullptr, empty);
-        // 静态：`stk_command_fn` 是**裸函数指针**（不能捕获局部变量）⇒ 次数只能记在静态上
-        static int ctx_clicks = 0;
-        ctx_clicks = 0;
-        plug::PluginApiAdapter adapter(hub.registry(), "slots_ctx.dll", nullptr);
-        const auto on_ctx = +[](void*) { ++ctx_clicks; };
-        // when={"loaded": "1"}（C ABI 的 when 值是字符串；1.x 写的是 True，见 abi.h 的 stk_when）
-        const char* when_keys[] = {"loaded"};
-        const char* when_values[] = {"1"};
-        stk_when when;
-        when.keys = when_keys;
-        when.values = when_values;
-        when.count = 1;
-        when.fn = nullptr;
-        when.user = nullptr;
-        const char* cid = adapter.api().register_command(adapter.api().host, "ctx_action",
-                                                         "插件右键动作", on_ctx, nullptr, &when);
-        check(cid != nullptr, QStringLiteral("① context：插件命令注册失败"));
-        check(adapter.api().register_menu_item(adapter.api().host, "fs", "context", cid, 0) == 1,
-              QStringLiteral("① context：fs 的 context 挂载点注册失败"));
-        check(adapter.api().register_option_entry(adapter.api().host, "fs", "top_bar", "插件下拉值",
-                                                  nullptr) == 1,
-              QStringLiteral("① option_entry：下拉条目注册失败"));
-        hub.render_plugin_slots();
-
-        FsPage* fs = nullptr;
-        for (int i = 0; i < hub.page_count(); ++i) {
-            if (auto* candidate = dynamic_cast<FsPage*>(hub.page_at(i))) fs = candidate;
-        }
-        check(fs != nullptr, QStringLiteral("① 找不到 fs 页（Hub 没造出来？）"));
-        if (fs != nullptr) {
-            // ①-a **页面侧的取值入口**：插件下拉的"当前值"页面读得到（修前恒为空串）
-            const QString value = fs->plugin_option_value(QStringLiteral("top_bar"));
-            check(value == QStringLiteral("插件下拉值"),
-                  QStringLiteral("① option_entry：页面读不到插件下拉的值（实得「%1」）").arg(value));
-            // 反向：没登记过的 area 必须读成空 —— 证明这不是"恒定返回某个值"的假入口
-            check(fs->plugin_option_value(QStringLiteral("nope")).isEmpty(),
-                  QStringLiteral("① option_entry：不存在的 area 必须读成空"));
-
-            // ①-b context：**没加载任何包**（loaded=0）⇒ when 不满足 ⇒ 菜单里一条插件项都没有
-            QMenu denied(fs);
-            const int added_denied = fs->append_plugin_context_items(&denied, fs->plugin_context());
-            check(added_denied == 0 && denied.actions().isEmpty(),
-                  QStringLiteral("① context：loaded=0 时不许出现插件项（实得 %1 条 / 菜单 %2 项）")
-                      .arg(added_denied)
-                      .arg(denied.actions().size()));
-
-            // 加载一个源 ⇒ loaded=1 ⇒ when 满足 ⇒ 出现，且**点它真的调回插件**
-            fs->add_source(QStringLiteral("xrkit_smoke_ctx.db"), {});
-            check(fs->loaded_source_count() == 1,
-                  QStringLiteral("① context：夹具没把包加载起来（loaded=%1）")
-                      .arg(fs->loaded_source_count()));
-            QMenu allowed(fs);
-            const int added_allowed = fs->append_plugin_context_items(&allowed, fs->plugin_context());
-            QAction* plugin_action = nullptr;
-            for (QAction* act : allowed.actions()) {
-                if (act->text() == QStringLiteral("插件右键动作")) plugin_action = act;
-            }
-            check(added_allowed == 1 && plugin_action != nullptr,
-                  QStringLiteral("① context：loaded=1 时插件命令必须出现在菜单里（实得 %1 条）")
-                      .arg(added_allowed));
-            if (plugin_action != nullptr) plugin_action->trigger();
-            check(ctx_clicks == 1,
-                  QStringLiteral("① context：点菜单项必须把命令**回传插件**（既有 CommandReg/invoke；"
-                                 "实测调用 %1 次）")
-                      .arg(ctx_clicks));
-
-            // ①-c **真右键路径**：`customContextMenuRequested` 弹出的那个菜单里也得有它
-            //   （证明页面的右键处理器**真的调了** `append_plugin_context_items`；
-            //    只测基类方法的话，"页面根本没接线"这种漏法测不出来）。
-            QStringList seen;
-            QTimer::singleShot(0, [&seen, fs]() {
-                QMenu* shown = fs->last_package_context_menu();
-                if (shown == nullptr) return;
-                for (QAction* act : shown->actions()) seen << act->text();
-                shown->close();   // 让 `menu.exec()` 的嵌套事件循环退出来（自检不许卡住）
-            });
-            emit fs->package_list()->customContextMenuRequested(QPoint(4, 4));
-            check(seen.contains(QStringLiteral("插件右键动作")),
-                  QStringLiteral("① context：真右键路径的菜单里没有插件命令（实得 [%1]）")
-                      .arg(seen.join(QStringLiteral("/"))));
-
-            // ①-d 1.x 口径的**默认槽位**：`location` 留空（C ABI 里 NULL）＝ `"context"`
-            //   （`toolkit_plugins.py:361` 的 `location="context"`）。修前 NULL 被当非法槽位拒掉。
-            const char* cid2 = adapter.api().register_command(adapter.api().host, "ctx_default",
-                                                              "插件右键动作2", on_ctx, nullptr,
-                                                              nullptr);
-            check(cid2 != nullptr &&
-                      adapter.api().register_menu_item(adapter.api().host, "fs", nullptr, cid2, 1) ==
-                          1,
-                  QStringLiteral("① context：`location` 留空必须落到 1.x 的默认值 context"));
-
-            QMenu defaults(fs);
-            const int added_defaults =
-                fs->append_plugin_context_items(&defaults, fs->plugin_context());
-            bool second_ok = false;
-            for (QAction* act : defaults.actions()) {
-                if (act->text() == QStringLiteral("插件右键动作2")) second_ok = true;
-            }
-            check(added_defaults == 2 && second_ok,
-                  QStringLiteral("① context：默认槽位的命令也要在菜单里（实得 %1 条 / 第 2 条 %2）")
-                      .arg(added_defaults)
-                      .arg(second_ok ? 1 : 0));
-        }
-        QDir(empty).removeRecursively();
-    }
+        // ★★ 决策 1（C ABI 退净）：这一块整段删除（它用 `PluginApiAdapter` / `load_plugin` 测 C 插件）。
 
     // 视频端到端（2026-09-27）：**仅当按口径能定位到 ffmpeg/ffprobe 时才跑**；
     // 本机没有 user.ltx、程序目录也没有 exe（⑧8.1 只认两处、不搜 PATH）⇒ 会走"如实 note 跳过"，
@@ -8162,33 +7925,7 @@ SmokeResult run_smoke() {
                     break;
                 }
             }
-            if (s03_dll.isEmpty()) {
-                result.notes.append(
-                    QStringLiteral("S-03 夹具：这个布局里找不到 xrkit_test_plugin_throwinit.dll"
-                                   "（app_dir=%1）⇒ 本用例跳过（构建树/门禁里会真跑）")
-                        .arg(s03_app_dir));
-            } else {
-                plug::Registry s03_reg;
-                plug::PluginApiAdapter s03_adapter(s03_reg, "xrkit_test_plugin_throwinit.dll",
-                                                   nullptr);
-                const size_t s03_loaded_before = plug::loaded_count();
-                const plug::LoadResult s03 = plug::load_plugin(s03_dll.toStdString(), s03_adapter);
-                // 与既有那条同做法：回调盒要活到进程结束，别让适配器当场析构
-                new plug::PluginApiAdapter(std::move(s03_adapter));
-                check(!s03.ok && !s03.error.empty(),
-                      QStringLiteral("S-03 init 抛异常必须**失败**（能走到这一行＝进程没被终止）"));
-                check(s03.error.find("C++ 异常") != std::string::npos,
-                      QStringLiteral("S-03 理由要点名「C++ 异常」（零静默）：%1")
-                          .arg(QString::fromStdString(s03.error).left(120)));
-                check(plug::loaded_count() == s03_loaded_before,
-                      QStringLiteral("S-03 加载失败的插件不许进已加载名单（%1 → %2）")
-                          .arg(s03_loaded_before)
-                          .arg(plug::loaded_count()));
-                check(s03_reg.registration_count() == 0,
-                      QStringLiteral("S-03 抛异常**之前**注册的那一条必须被按 owner 回滚掉"
-                                     "（实得 %1 条残留）")
-                          .arg(s03_reg.registration_count()));
-            }
+        // ★★ 决策 1（C ABI 退净）：这一块整段删除（它用 `PluginApiAdapter` / `load_plugin` 测 C 插件）。
         }
 
         // ④ 复位 ⇒ 与基线**逐值一致**（默认行为不许被这段新代码顺手改掉）
@@ -8288,32 +8025,7 @@ SmokeResult run_smoke() {
                           .arg(out.trimmed().right(120)));
             }
             // ② `--plugins <目录>` ⇒ 闸门拒绝 + **同一条理由** + 非零退出
-            {
-                const auto [rc, out] = run_cli(
-                    cli, {QStringLiteral("--plugins"), plugin_dir, QStringLiteral("--dump"), enc_db});
-                // 期望文案：本进程用**同一个**插件 DLL 装出的注册表问一遍 `gate_db_path`
-                //（GUI 显示的就是这条；"同一条文案"要逐字比，不许各写一份）
-                plug::Registry mirror;
-                plug::PluginApiAdapter adapter(mirror, "xrkit_test_plugin.dll", nullptr);
-                // ★ 本批 S1-2 改了 `load_plugin` 的签名（第二参从裸 `stk_api` 收成**适配器**：
-                //   注册目标与回滚目标必须是同一份东西）—— 这一处是**编译必需**的跟随改动，
-                //   判据/行为一字未动。
-                const plug::LoadResult loaded = plug::load_plugin(plugin_dll.toStdString(),
-                                                                  adapter);
-                new plug::PluginApiAdapter(std::move(adapter));   // 回调活着要一直有效
-                const plug::DecryptGateResult want =
-                    plug::gate_db_path(mirror, enc_db.toStdString(), plug::decrypt_output_dir());
-                const QString want_text = QString::fromStdString(want.error);
-                check(rc != 0 && !out.contains(QStringLiteral("DUMP ok")) && want_text.size() > 0 &&
-                          out.contains(want_text),
-                      QStringLiteral("CLI 装了插件后必须被闸门拦下并给**同一条**理由"
-                                     "（exit=%1；期望含 %2；实得 %3）")
-                          .arg(rc)
-                          .arg(want_text)
-                          .arg(out.trimmed().right(160)));
-                check(loaded.ok, QStringLiteral("CLI 闸门判据：本进程装测试插件失败：%1")
-                                     .arg(QString::fromStdString(loaded.error)));
-            }
+        // ★★ 决策 1（C ABI 退净）：这一块整段删除（它用 `PluginApiAdapter` / `load_plugin` 测 C 插件）。
             // ③ 插件目录不存在 ⇒ 只记错、**不阻塞**（与 GUI 的启动口径一致）
             {
                 const QString ghost =
@@ -8332,35 +8044,7 @@ SmokeResult run_smoke() {
     }
 
     // ⑫12.1/12.4：插件槽位要**渲染出来**（工具栏菜单项 → 页面的操作栏按钮）
-    {
-        namespace plug = xrkit::plugin;
-        const QString empty = QDir::temp().filePath(QStringLiteral("xrkit_smoke_slots"));
-        QDir(empty).removeRecursively();
-        QDir().mkpath(empty);
-        Hub hub(nullptr, empty);
-        plug::PluginApiAdapter adapter(hub.registry(), "slots.dll", nullptr);
-        const auto on_click = +[](void*) {};
-        const char* cid =
-            adapter.api().register_command(adapter.api().host, "slot_action", "插件动作",
-                                           on_click, nullptr, nullptr);
-        check(cid != nullptr, QStringLiteral("⑫12.1 插件命令注册失败"));
-        check(adapter.api().register_menu_item(adapter.api().host, "xml", "toolbar", cid, 0) == 1,
-              QStringLiteral("⑫12.4 插件工具栏挂载点注册失败"));
-        hub.render_plugin_slots();
-        check(hub.plugin_slots_rendered() >= 1,
-              QStringLiteral("⑫12.1 插件槽位没有被渲染（渲染了 %1 个）")
-                  .arg(hub.plugin_slots_rendered()));
-        bool found = false;
-        for (int i = 0; i < hub.page_count(); ++i) {
-            PageBase* page = hub.page_at(i);
-            if (page == nullptr || page->page_id() != QStringLiteral("xml")) continue;
-            for (QPushButton* button : page->action_bar()->findChildren<QPushButton*>()) {
-                if (button->text() == QStringLiteral("插件动作")) found = true;
-            }
-        }
-        check(found, QStringLiteral("⑫12.1 插件动作按钮没出现在 XML 页的操作栏里"));
-        QDir(empty).removeRecursively();
-    }
+        // ★★ 决策 1（C ABI 退净）：这一块整段删除（它用 `PluginApiAdapter` / `load_plugin` 测 C 插件）。
 
     // ⑧ 视频转换页（M2-6f）：8.2 构造期不探测 / 8.3 三按钮小窗非阻塞 /
     // 8.5 状态三态（探测前不显示 ✗）/ 8.4 自动安装挂按钮上且缺件如实报。
@@ -9178,10 +8862,14 @@ SmokeResult run_smoke() {
         QDir(bad_dir).removeRecursively();
         QDir().mkpath(bad_dir);
         {
-            // 一个"看起来像插件但其实不是 DLL"的文件 ⇒ LoadLibrary 必失败
-            std::ofstream out((bad_dir + QStringLiteral("/not_a_plugin.dll")).toStdString(),
+            // ★★ 决策 1（C ABI 退净）：夹具从"坏 DLL"换成"**坏 .py**" ——
+            //   现在唯一会被扫描的是 `*.py`，坏 DLL 连扫都不会被扫到（也就不会有 registration_errors）。
+            //   ★ 顺带记一条真相（构建日志里出现过）：包里那条 `not_a_plugin.dll: LoadLibrary 失败（错误码 193）`
+            //     是**别的夹具**（`xrkit_test_plugin.dll` 时代）留下的日志，不是这条判据。
+            std::ofstream out((bad_dir + QStringLiteral("/bad_plugin.py")).toStdString(),
                               std::ios::binary | std::ios::trunc);
-            out << "this is not a PE file";
+            out << "def register(api):\n"
+                   "    raise RuntimeError('夹具：故意失败的插件')\n";
         }
         {
             Hub loud(nullptr, bad_dir);
@@ -11489,113 +11177,7 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
         }
 
         // ── 3-7：插件比较模式"注册成功后无人消费" ────────────────────────────────
-        {
-            namespace plug = xrkit::plugin;
-            XmlPage page;
-            plug::Registry registry;
-            for (plug::CompareModeReg& mode : plug::builtin_compare_modes()) {
-                registry.register_compare_mode(exml::kBuiltinPlugin, std::move(mode));
-            }
-            plug::PluginApiAdapter adapter(registry, "demo.dll", nullptr);
-            const char* col_keys[] = {"rel", "status", "detail"};
-            const char* col_headings[] = {"插件文件列", "插件状态列", "插件差异列"};
-            const int col_widths[] = {280, 60, 400};
-            const char* filter_labels[] = {"插件筛选"};
-            const char* filter_kinds[] = {"same|diff|only_a|only_b"};
-            const auto compare_fn = +[](void*, const char*, const char*, const char*, const char*,
-                                        const char*, stk_result_sink sink, void* sink_user) {
-                // 只为一件事：证明"这一轮是插件回调在跑"。
-                // ★ 夹具故意把两侧**完全相同的文本**判成"不一致" —— 内置统计/文本模式对
-                //   相同文本必然判一致 ⇒ 下面那条断言在修前（回调从不被调用）**必红**。
-                sink(sink_user, "consistent", "0");
-                // ★★ P17-99（审计 `05 PLG-04`）：顺带把另外两条通道也走到 ——
-                //   · `only_a` 的整串就是 ID ⇒ 结果里的 `ids_a` 必须跟着**数出来**（修前恒 0）；
-                //   · `row_kind` 是 ABI 明文列了、宿主侧**没有对应结果字段**的键 ⇒ 必须**如实记进
-                //     `unhandled_keys`**（修前"什么都不做"＝静默丢）。
-                sink(sink_user, "only_a", "p1799-a");
-                sink(sink_user, "only_b", "p1799-b");
-                sink(sink_user, "row_kind", "diff");
-            };
-            check(adapter.api().register_compare_mode(adapter.api().host, "插件模式", "plugin_mode",
-                                                      40, col_keys, col_headings, col_widths, 3,
-                                                      filter_labels, 1, filter_kinds, compare_fn,
-                                                      nullptr) == 1,
-                  QStringLiteral("3-7 前提：插件比较模式注册成功"));
-            page.set_registry(&registry);
-            page.resize(900, page_min_h());
-            page.show();
-            QApplication::processEvents();
-            // ★ 判据①：选中插件模式 ⇒ **表头必须来自插件**
-            page.set_mode(QStringLiteral("plugin_mode"));
-            QApplication::processEvents();
-            QStringList headers;
-            if (page.result_tree() != nullptr) {
-                for (int c = 0; c < page.result_tree()->columnCount(); ++c) {
-                    headers << page.result_tree()->headerItem()->text(c);
-                }
-            }
-            check(headers.size() == 3 && headers.join(QStringLiteral("|")) ==
-                                             QStringLiteral("插件文件列|插件状态列|插件差异列"),
-                  QStringLiteral("3-7 选中插件模式 ⇒ 表头来自**插件**（实测「%1」；"
-                                 "修前 find_mode 只查内置表 ⇒ 表头会是内置那套）")
-                      .arg(headers.join(QStringLiteral("|"))));
-            // ★ 判据②：**筛选**也必须来自插件
-            QStringList filters;
-            for (int i = 0; page.filter_combo() != nullptr && i < page.filter_combo()->count(); ++i) {
-                filters << page.filter_combo()->itemText(i);
-            }
-            check(filters.contains(QStringLiteral("插件筛选")),
-                  QStringLiteral("3-7 选中插件模式 ⇒ 筛选项来自插件（实测「%1」）")
-                      .arg(filters.join(QStringLiteral("|"))));
-            // ★ 判据③（同族的另一半：注册的回调**真的被调用**）：真跑一次比较 ——
-            //   夹具两侧**完全相同的 XML**，插件回调把它们判成"不一致"（`consistent=0`），
-            //   而内置统计/文本模式对相同文本必然判"一致" ⇒ 状态列显示什么就说明谁跑了。
-            const QString root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_xml_plugin"));
-            QDir(root).removeRecursively();
-            QDir().mkpath(root + QStringLiteral("/a"));
-            QDir().mkpath(root + QStringLiteral("/b"));
-            for (const char* side : {"a", "b"}) {
-                QFile out(root + QStringLiteral("/") + QLatin1String(side) +
-                          QStringLiteral("/z.xml"));
-                out.open(QIODevice::WriteOnly);
-                out.write("<root><e id=\"1\"><text>SAME</text></e></root>");
-                out.close();
-            }
-            const int rows = page.compare_dirs(root + QStringLiteral("/a"), root + QStringLiteral("/b"),
-                                               QStringLiteral("auto"), QStringLiteral("auto"));
-            QApplication::processEvents();
-            QString status_cell;
-            if (page.result_tree() != nullptr && page.result_tree()->topLevelItemCount() > 0) {
-                status_cell = page.result_tree()->topLevelItem(0)->text(1);   // 插件声明的"状态"列
-            }
-            check(rows == 1 && status_cell.contains(QStringLiteral("不一致")),
-                  QStringLiteral("3-7 插件注册的 compare 回调**必须真的被调用**（相同文本被插件判成"
-                                 "「不一致」= 状态列「%1」；修前页面只走内置 compare_stats ⇒ 必是"
-                                 "「一致」）")
-                      .arg(status_cell));
-            // ★★ P17-99（审计 `05 PLG-04`）：**sink 回传的东西不许被静默丢** —— 两条都要有牙：
-            //   ① `ids_a`/`ids_b` 原来是 `id_text_a.size()`（C ABI 的 sink **没有任何键写它**）
-            //      ⇒ 插件模式下恒 0（XML 页「ID 数: A=0 B=0」永远是 0）。现在从**插件真的报上来的 ID**里数。
-            //   ② `row_kind` 宿主侧没有对应字段 ⇒ 必须**记进 `unhandled_keys`**，不许一声不响扔掉。
-            //   ★ 判据直接问**结果对象**（不是看界面文案）：`XmlCompareResult` 的两个面。
-            {
-                const xrkit::engine::xml::XmlCompareResult probe =
-                    registry.compare_mode("插件模式")->compare(QStringLiteral("z.xml").toStdString(),
-                                                               "<root/>", "<root/>", "auto", "auto");
-                check(probe.ids_a == 1 && probe.ids_b == 1,
-                      QStringLiteral("P17-99 插件报的 `only_a`/`only_b` 必须计入 ID 数（期望 A=1 B=1，"
-                                     "实测 A=%1 B=%2；修前取的是**文本模式**的 `id_text_*` ⇒ 恒 0）")
-                          .arg(probe.ids_a)
-                          .arg(probe.ids_b));
-                check(probe.unhandled_keys.size() == 1 &&
-                          probe.unhandled_keys[0] == std::string("row_kind"),
-                      QStringLiteral("P17-99 宿主不认识的 sink 键必须**如实记账**（期望 [row_kind]，"
-                                     "实测 %1 项；修前是「什么都不做」＝静默丢）")
-                          .arg(probe.unhandled_keys.size()));
-            }
-            page.hide();
-            QDir(root).removeRecursively();
-        }
+        // ★★ 决策 1（C ABI 退净）：这一块整段删除（它用 `PluginApiAdapter` / `load_plugin` 测 C 插件）。
     }
 
     return result;

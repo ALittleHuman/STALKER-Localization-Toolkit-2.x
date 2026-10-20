@@ -38,7 +38,6 @@ GENERATED: dict[str, str] = {
     "src/engine/font/eaw_tables.inc": "tools/gen_font_tables.py",
     "src/engine/font/ltx_templates.inc": "tools/gen_font_templates.py",
     "src/engine/font/st_fallback.inc": "tools/gen_font_tables.py",
-    "src/engine/plugin/contract_tables.inc": "tools/gen_plugin_contract.py",
     # ★ H1-1 的主角：fs 版从"手写孤儿"改成**同一个编码表生成器**的产物
     "src/engine/fs/cp1251_tables.inc": "tools/gen_encoding_tables.py",
     "src/engine/text/cp1251_tables.inc": "tools/gen_encoding_tables.py",

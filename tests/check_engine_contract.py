@@ -41,7 +41,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build" / "msvc-release"
 CLI = BUILD / "tools" / "cli" / "xrkit_cli.exe"
-TABLES = ROOT / "src" / "engine" / "plugin" / "contract_tables.inc"
 
 VS_ROOT = Path(os.environ.get("XRKIT_VS", r"E:\Software\Tools\Visual Studio\2022\BuildTools"))
 VCVARS = VS_ROOT / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"

@@ -225,7 +225,9 @@ if ($isDev) {
     Write-Host "== 开发版：插件作为**夹具**随包携带（落 plugins\_fixtures\，默认不加载）=="
     # 夹具落点要先建出来（P17-81：`plugins\` 顶层保持为空 —— 它是加载器扫描路径）。
     New-Item -ItemType Directory -Force -Path $pluginDrop | Out-Null
-    # 只认**我们自己构建出来的插件 DLL**（`xrkit_*_plugin.dll`）：
+    # ★★ 决策 1（C ABI 退净）：C 插件夹具（`xrkit_*_plugin.dll`）已随 ABI 一起删除，
+#   所以下面这段**永远找不到文件** —— 保留它是为了老构建目录里遗留的 dll 不会被误塞进包。
+# 只认**我们自己构建出来的插件 DLL**（`xrkit_*_plugin.dll`）：
     #   插件目录的加载器会吃**任意** .dll（loader.cpp 只按后缀过滤），照搬整目录会把
     #   Qt 运行时那堆 DLL 也当成插件、并把它们从包根"搬走" ⇒ 包直接坏掉。
     #   命名前缀既是构建约定，也是"这是我的插件"的判据。

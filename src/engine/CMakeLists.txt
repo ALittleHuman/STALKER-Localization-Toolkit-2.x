@@ -21,9 +21,7 @@ add_library(xrkit_engine STATIC
   process/run.cpp
   video/ffmpeg.cpp
   video/transcode.cpp
-  plugin/contract.cpp
   plugin/registry.cpp
-  plugin/abi_host.cpp
   plugin/loader.cpp
   # ★★ 插件改装 P2：CPython 宿主（`XRKIT_WITH_PYTHON` 未定义时编出**降级**实现：
   #   `enabled=false` + 如实理由 —— 文件本身总是参与编译，避免"少编一个文件"变成静默降级）

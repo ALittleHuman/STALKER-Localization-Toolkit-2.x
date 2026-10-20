@@ -15,7 +15,6 @@
 #include "xrkit/core/atomic_write.h"
 #include "xrkit/core/log.h"
 #include "xrkit/core/path.h"
-#include "xrkit/engine/plugin/contract.h"
 
 #include <algorithm>
 #include <array>
@@ -77,6 +76,49 @@ bool when_ok(const WhenSpec& when, const Context& context) {
     return true;
 }
 
+namespace {
+
+// ══ 槽位表（决策 1「C ABI 退净」后**冻结在这里**）══════════════════════════════
+// 来由：这两张表原来在 `contract_tables.inc` 里（由 1.x AST 生成、门禁逐字节锁）。
+//   C ABI 退净把 `contract.*` 删了，但 **host/location 的合法性校验必须留着** ——
+//   它是"插件注册到不存在的槽位"这条拒绝的唯一依据（`Registry::bad_slot`）。
+//   ⇒ 内容与生成物**逐条一致**（fs/convert/text/xml/video/font ＋ toolbar/context），
+//     只是搬进本文件、不再是"生成物"。（`AREA_*` 与 `kUiMethods[]` 不在这里：
+//     前者随 C ABI 的 option_entry 一起退役，后者在 `tests/check_ui_contract_params.py` 的
+//     `CONTRACT_FROZEN`。）
+struct SlotSpec {
+    const char* key;
+    const char* label;
+};
+
+constexpr SlotSpec kHosts[] = {
+    {"fs", "文件系统"},   {"convert", "编码转换"}, {"text", "文本提取"},
+    {"xml", "XML校对"},   {"video", "视频转换"},   {"font", "汉化包生成"},
+};
+constexpr int kHostCount = 6;
+
+constexpr SlotSpec kLocations[] = {
+    {"toolbar", "工具标题下方的一行插件动作区"},
+    {"context", "工具主内容控件的右键菜单"},
+};
+constexpr int kLocationCount = 2;
+
+bool known_host(const std::string& key) {
+    for (int i = 0; i < kHostCount; ++i) {
+        if (key == kHosts[i].key) return true;
+    }
+    return false;
+}
+
+bool known_location(const std::string& key) {
+    for (int i = 0; i < kLocationCount; ++i) {
+        if (key == kLocations[i].key) return true;
+    }
+    return false;
+}
+
+}  // namespace
+
 void Registry::reject(const std::string& plugin, const std::string& message) {
     // 12.4/12.9：非法注册**绝不静默丢弃** —— 记进 registration_errors 并写日志
     errors_.push_back({plugin, message});
@@ -87,18 +129,18 @@ bool Registry::bad_slot(const std::string& plugin, const std::string& what,
                         const std::string& host_key, const std::string& location_key) {
     if (!known_host(host_key)) {
         std::string available;
-        for (int i = 0; i < host_count(); ++i) {
+        for (int i = 0; i < kHostCount; ++i) {
             if (!available.empty()) available += ", ";
-            available += plugin::host(i).key;  // 名字别与形参同名（否则调不到函数）
+            available += kHosts[i].key;  // 名字别与形参同名（否则调不到）
         }
         reject(plugin, what + " 的 host=" + host_key + " 不是已知组件（可用: " + available + "）");
         return true;
     }
     if (!location_key.empty() && !known_location(location_key)) {
         std::string available;
-        for (int i = 0; i < location_count(); ++i) {
+        for (int i = 0; i < kLocationCount; ++i) {
             if (!available.empty()) available += ", ";
-            available += plugin::location(i).key;
+            available += kLocations[i].key;
         }
         reject(plugin,
                what + " 的 location=" + location_key + " 不是已知槽位（可用: " + available + "）");

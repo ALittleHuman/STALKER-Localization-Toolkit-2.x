@@ -843,12 +843,12 @@ void Hub::load_plugins(const QString& plugin_dir) {
                             : plugin_dir;
     // ⑫12.2：把外壳实现的 `api.ui`（Qt 16 方法）交给插件 —— 插件的面板/按钮
     // 才真能造出控件；`stk_widget*` 仍是不透明句柄，插件不碰 Qt 类型。
-    const stk_ui* ui = qt_plugin_ui();
-    plugin_ui_installed_ = ui != nullptr;
-    // ★★ P2b（插件改装）：走**统一入口**（`*.dll` + `*.py`），与 CLI 的 `--plugins` 是
-    //   同一个函数 —— "两个前端加载同一批插件、进**同一份**注册表"由结构保证，
-    //   而不是两边各写一条路径（那正是 1.x 最贵的一类返工）。
-    xrkit::plugin::load_all_plugins_from_dir(dir.toUtf8().toStdString(), registry_, ui);
+    // ★★ 决策 1（C ABI 退净）：不再有 `qt_plugin_ui()` 这个入参 —— 唯一入口只认目录。
+    //   `plugin_ui_installed_` 仍然保留：它表示"控件门面可用"，而门面**不再依赖插件 ABI**
+    //   （`stk_ui` 搬到了 `facade_api.h`，外壳自己实现）⇒ 恒为 true。
+    plugin_ui_installed_ = true;
+    const std::vector<xrkit::plugin::RegistrationError> plugin_errors =
+        xrkit::plugin::load_all_plugins_from_dir(dir.toUtf8().toStdString(), registry_);
     plugin_errors_ = registry_.registration_errors();
 
     // ★★ C-12（第三方只读审计 2026-10-18）：这里原来有个 `int loaded = 0;` —— **死变量**

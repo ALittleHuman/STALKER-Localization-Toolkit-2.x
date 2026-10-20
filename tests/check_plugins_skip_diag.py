@@ -17,7 +17,7 @@ r"""判据 C-03：**诊断动作不该加载插件**（第三方只读审计 C-0
 
 断言（黑盒：把 CLI ＋ 两枚 Python DLL 拷到临时目录跑，**不污染构建树**）
 ----------------------------------------------------------------------
-A 默认目录里有坏 `plugins\bogus.dll` 时：
+A 默认目录里有坏 `plugins\bogus_plugin.py` 时：
   · `--exe-version` ⇒ stderr **没有** `PLUGINS-DEFAULT`（＝没去加载插件）；
 A2 同一次运行 stdout 里也没有 `PLUGINS`（逐字节一致口径不变）；
 B 对照：`--dump <不存在的文件>` ⇒ **仍然加载**（stderr 有 `PLUGINS-DEFAULT`）——
@@ -110,7 +110,10 @@ def main() -> int:
             return 2
         plugged = box / "plugins"
         plugged.mkdir()
-        (plugged / "bogus.dll").write_bytes(b"not a pe")
+        (plugged / "bogus_plugin.py").write_text(
+        "def register(api):\n"
+        "    raise RuntimeError('夹具：故意失败的插件')\n",
+        encoding="utf-8")   # ★ 决策 1：C ABI 退净后，加载失败只可能来自 .py
 
         rc, out, err = run(box, ["--exe-version", str(box / "xrkit_cli.exe")])
         want("PLUGINS-DEFAULT" not in err,

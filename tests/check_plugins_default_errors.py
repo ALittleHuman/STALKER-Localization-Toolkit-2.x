@@ -17,9 +17,9 @@ r"""判据 C-01：**默认插件目录的加载错误不许被吞**（第三方�
 
 断言（黑盒：把 CLI 拷出来跑，**不污染构建树**）
 ----------------------------------------------
-A 默认路径 + 一枚坏 `plugins\\bogus.dll` ⇒ **stderr** 出现 `PLUGINS-DEFAULT` 且 `errors=1`；
+A 默认路径 + 一枚坏 `plugins\\bogus_plugin.py` ⇒ **stderr** 出现 `PLUGINS-DEFAULT` 且 `errors=1`；
 B 同一次运行 **stdout 里没有 `PLUGINS`**（逐字节一致那条口径还在）；
-A2 stderr 逐条带 `plugin=bogus.dll`（点名，不只报数）；
+A2 stderr 逐条带 `plugin=bogus_plugin.py`（点名，不只报数）；
 C 默认目录**干净**时**不**打 `PLUGINS-DEFAULT`（不制造噪声）；
 D 显式 `--plugins` ⇒ stdout 照旧 `PLUGINS dir=… errors=1`（旧路一字不改）；
 E 静态锁：源码里那个 `else if (!plugin_errors.empty())` 分支在、且写的是 `std::cerr`。
@@ -106,7 +106,10 @@ def main() -> int:
         # A：默认目录里放一枚坏 dll
         plugged = box / "plugins"
         plugged.mkdir()
-        (plugged / "bogus.dll").write_bytes(b"not a pe")
+        (plugged / "bogus_plugin.py").write_text(
+        "def register(api):\n"
+        "    raise RuntimeError('夹具：故意失败的插件')\n",
+        encoding="utf-8")   # ★ 决策 1：C ABI 退净后，加载失败只可能来自 .py
         rc, out, err = run(box, ["--dump", str(target)])
         want("PLUGINS-DEFAULT" in err and "errors=1" in err,
              "A 默认路径下加载失败 ⇒ **stderr** 有 `PLUGINS-DEFAULT … errors=1`",
@@ -114,7 +117,7 @@ def main() -> int:
         want("PLUGINS" not in out,
              "B 同一次运行的 **stdout 里没有 `PLUGINS`**（默认路径 stdout 逐字节一致的口径还在）",
              [l.strip() for l in out.splitlines() if "PLUGINS" in l][:1] or "干净")
-        want("plugin=bogus.dll" in err, "A2 逐条**点名**（`plugin=bogus.dll`），不只报个总数")
+        want("plugin=bogus_plugin.py" in err, "A2 逐条**点名**（`plugin=bogus_plugin.py`），不只报个总数")
 
         # C：干净目录（存在但空）⇒ 不许有噪声
         shutil.rmtree(plugged)
@@ -139,7 +142,10 @@ def main() -> int:
 
         # D：显式 --plugins 的旧路一字不改
         plugged.mkdir()
-        (plugged / "bogus.dll").write_bytes(b"not a pe")
+        (plugged / "bogus_plugin.py").write_text(
+        "def register(api):\n"
+        "    raise RuntimeError('夹具：故意失败的插件')\n",
+        encoding="utf-8")   # ★ 决策 1：C ABI 退净后，加载失败只可能来自 .py
         rc, out, err = run(box, ["--plugins", str(plugged), "--dump", str(target)])
         want("PLUGINS dir=" in out and "errors=1" in out,
              "D 显式 `--plugins` ⇒ stdout 照旧 `PLUGINS dir=… errors=1`",

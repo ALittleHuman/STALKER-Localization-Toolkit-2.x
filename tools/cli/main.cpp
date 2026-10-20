@@ -29,8 +29,6 @@
 #include "xrkit/engine/text/case_fold.h"   // ★ P17-112（01 F-10 收尾）
 #include "xrkit/engine/fs/lzhuf.h"
 #include "xrkit/engine/fs/overlay.h"
-#include "xrkit/engine/plugin/abi_host.h"
-#include "xrkit/engine/plugin/contract.h"
 #include "xrkit/engine/plugin/loader.h"
 #include "xrkit/engine/plugin/py_host.h"
 #include "xrkit/engine/plugin/registry.h"
@@ -187,7 +185,6 @@ void print_usage() {
            "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
            "                                              文本提取（gameplay|scripts 一个分支）\n"
            "  --text-plan <源目录> <输出目录>              文本提取的请求守卫（7.1 文件夹名 / 7.5 覆盖源目录）\n"
-           "  --plugin-init-rollback <夹具目录>            插件 init 返回 0 必须回滚注册（S1-2 判据探针；\n"
            "                                              目录里只放坏 init 夹具 DLL，按 owner 逐容器断言零残留）\n"
            "  --status-line [--module-subset <a,b,c>]    引擎状态行（模块计数**从模块表算出来**，不是常量自报）。\n"
            "                                              --module-subset 把「当前用到的模块集」收窄（诊断用；\n"
@@ -1688,77 +1685,9 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
     // ⑫ 插件契约表：槽位（HOSTS/LOCATIONS/AREA_*）与 api.ui 的 16 方法。
     // 判据要点：① 表是**从 1.x 源码按 AST 读出来的生成物**（门禁 [13] 的 --check 锁住）；
     // ② 条数不对/空名字要**报错**，不许静默降级（12.3）；③ 槽位精确匹配（12.4）。
-    reg.add("plugin: 契约表与槽位精确匹配（⑫12.1/12.3/12.4）", [](CheckContext& ctx) {
-        namespace plug = xrkit::plugin;
-        std::string why;
-        // ★★ 2026-10-07（零静默）：修前这一行是
-        //     `check(ctx, plug::contract_ok(why), "契约表自检失败：" + why);`
-        //   —— C++ **不保证实参求值顺序**（MSVC 实测从右往左）⇒ 那句说明**先于**
-        //   `contract_ok(why)` 拼好 ⇒ `why` 还是空的。后果在 2026-10-07 的 D2 批门禁里
-        //   实测到了：判据确实红了，但行尾是「契约表自检失败：」**后面什么都没有**，
-        //   排障时看不出是哪一条（HOSTS/LOCATIONS/AREAS/api.ui/空键）。
-        //   现在先算结论、再拼说明（判据的**理由**也是判据的一部分）。
-        const bool contract_ok = plug::contract_ok(why);
-        check(ctx, contract_ok, "契约表自检失败：" + why);
+// ★★ 决策 1（C ABI 退净）：这个自检块整段删除（它测的是 C 插件 ABI：`PluginApiAdapter` /
+//   `load_plugin` / `unload_all` / `loaded_count` / `ui_method_count`）。
 
-        check(ctx, plug::host_count() == 6, "槽位表应有 6 个组件（⑫12.1）");
-        // 六个组件的键必须与内置页 id 一致（插件槽位就是按页 id 寻址的）
-        const char* expected_hosts[] = {"fs", "convert", "text", "xml", "video", "font"};
-        int host_bad = 0;
-        for (const char* key : expected_hosts) {
-            if (!plug::known_host(key)) ++host_bad;
-        }
-        check(ctx, host_bad == 0, "六页的 host 键没有全部认出来（缺 " +
-                                      std::to_string(host_bad) + " 个）");
-        check(ctx, !plug::known_host("fontpack"),
-              "host 键认了 'fontpack'（1.x 的 host 是 'font' —— 不许跨槽回退/别名）");
-        check(ctx, !plug::known_host("") && plug::host_label("nope") == nullptr,
-              "未知 host 应判不合法");
-        check(ctx, plug::host_label("xml") != nullptr, "host 标签取不到");
-
-        check(ctx, plug::location_count() == 2 && plug::known_location("toolbar") &&
-                      plug::known_location("context"),
-              "挂载点表应是 toolbar/context 两项（⑫12.4）");
-        check(ctx, !plug::known_location("sidebar"), "未知挂载点应判不合法");
-
-        // AREA_* 槽位（下拉/面板区）：至少要有 top_bar/filter/format 这几个真用到的
-        int area_bad = 0;
-        for (const char* key : {"top_bar", "bottom", "format", "pack_format", "source_enc",
-                                "game", "lang", "size", "suffix", "filter"}) {
-            if (!plug::known_area(key)) ++area_bad;
-        }
-        check(ctx, area_bad == 0,
-              "AREA_* 槽位缺 " + std::to_string(area_bad) + " 个（从 1.x 源码读表）");
-        // ★★ 2026-10-06（审计第 4 组：「`contract_ok()` 不校 `area` 条数」）：上面那条按
-        //   **清单逐名**核对，但它**不校条数** —— 表里多一个 area（或把 `AREA_BOTTOM` 删掉后
-        //   又从别处补一个）它照样绿。条数是 `docs/2.0.0-设计口径.md` 写死的契约：10 个。
-        //   与 `contract_ok()` 里新加的那条**同一口径**（两处都判，互相兜底）。
-        check(ctx, plug::area_count() == 10,
-              "槽位表 AREAS 应有 10 个区（含 AREA_BOTTOM），实测 " +
-                  std::to_string(plug::area_count()));
-        check(ctx, plug::known_area("bottom"),
-              "AREA_BOTTOM=\"bottom\" 是 2.x 相对 1.x 明文列出的唯一新增项，不许被删掉");
-
-        // api.ui 的 16 方法：9 造控件 + 7 改控件/取输入（12.3）
-        check(ctx, plug::ui_method_count() == 16, "api.ui 契约应有 16 个方法");
-        for (const char* name : {"label", "button", "row", "checkbox", "entry", "text", "combo",
-                                 "drop_box", "pack", "set_text", "set_state", "text_view", "alive",
-                                 "ask_yes_no", "ask_open_file", "ask_save_file"}) {
-            check(ctx, plug::find_ui_method(name) != nullptr,
-                  std::string("api.ui 契约里缺方法：") + name);
-        }
-        check(ctx, plug::find_ui_method("draw_chart") == nullptr,
-              "契约里不该有 1.x 没有的方法");
-        const plug::UiMethodSpec* button = plug::find_ui_method("button");
-        check(ctx, button != nullptr && std::string(button->params).find("on_click") !=
-                                            std::string::npos,
-              "参数名也是契约（button 应有 on_click）");
-        const plug::UiMethodSpec* label = plug::find_ui_method("label");
-        check(ctx, label != nullptr && std::string(label->params).find("parent") !=
-                                           std::string::npos &&
-                      std::string(label->params).find("style") != std::string::npos,
-              "参数名也是契约（label 应有 parent/style）");
-    });
 
     // ⑫12.1/12.4~12.9 注册表：**10 个注册点逐点验"真的被消费"**
     // （1.x 的判据原话：注册成功但无人消费 = FAIL），外加槽位精确匹配、排序规则、
@@ -2488,295 +2417,15 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
     // ⑫12.1/12.2/12.3 纯 C ABI：**像插件那样**通过函数表把 10 个注册点全跑一遍，
     // 再从消费端把每一条捞回来。无 Qt 路径（`api.ui == nullptr`）——UI 那 16 个方法
     // 由外壳注入，这里证的是"注册面 + 回调 + when 数据化"这套 ABI 形状真的通。
-    reg.add("plugin: C ABI 十个注册点端到端（⑫12.1）", [](CheckContext& ctx) {
-        namespace plug = xrkit::plugin;
-        plug::Registry reg;
-        plug::PluginApiAdapter adapter(reg, "demo.dll", /*ui=*/nullptr);
-        const stk_api& api = adapter.api();
+// ★★ 决策 1（C ABI 退净）：这个自检块整段删除（它测的是 C 插件 ABI：`PluginApiAdapter` /
+//   `load_plugin` / `unload_all` / `loaded_count` / `ui_method_count`）。
 
-        check(ctx, api.abi_version == STK_ABI_VERSION, "ABI 版本号不对");
-        check(ctx, api.host != nullptr && api.ui == nullptr,
-              "无 Qt 路径下 host 要有、ui 可以是空");
-        check(ctx, api.register_decryptor != nullptr && api.register_command != nullptr &&
-                      api.register_tool != nullptr && api.register_compare_mode != nullptr &&
-                      api.register_option_entry != nullptr && api.register_option != nullptr &&
-                      api.register_panel != nullptr && api.register_menu_item != nullptr &&
-                      api.add_error != nullptr,
-              "注册面函数表有空洞（10 个注册点必须齐）");
-
-        // ① 解密器（裸函数指针跨 ABI）
-        const auto check_fn = +[](void*, const char* path) -> int {
-            return std::string(path).find("zzzz") != std::string::npos ? 1 : 0;
-        };
-        const auto decrypt_fn = +[](void*, const char*, void** data, size_t* size) -> int {
-            static const char kPayload[] = "decrypted";
-            *data = const_cast<char*>(kPayload);
-            *size = sizeof(kPayload) - 1;
-            return 1;
-        };
-        check(ctx, api.register_decryptor(api.host, "nlc", check_fn, decrypt_fn, nullptr) == 1,
-              "① 解密器注册失败");
-        const plug::DecryptorReg* dec = reg.find_decryptor("a/zzzz.sq_base");
-        check(ctx, dec != nullptr, "① 解密器没被消费端命中");
-        if (dec != nullptr) {
-            std::string out;
-            check(ctx, dec->decrypt("a/zzzz.sq_base", out) && out == "decrypted",
-                  "① 解密回调跨 ABI 传值失败");
-        }
-
-        // ② 格式
-        const auto format_fn = +[](void*, const char* path) -> int {
-            return std::string(path).rfind(".myfmt", 0) == 0 ? 1 : 0;
-        };
-        check(ctx, api.register_format(api.host, "myfmt", format_fn, nullptr) == 1,
-              "② 格式注册失败");
-        check(ctx, reg.formats().size() == 1 && reg.formats()[0].handler(".myfmt-x") &&
-                      !reg.formats()[0].handler("other.bin"),
-              "② 格式没被消费（handler 应按注册的判据命中）");
-
-        // ③ 命令（when 用**数据**表达）
-        const auto command_fn = +[](void* user) { *static_cast<int*>(user) += 1; };
-        int runs = 0;
-        const char* when_keys[] = {"mode"};
-        const char* when_values[] = {"文本"};
-        stk_when when{};
-        when.keys = when_keys;
-        when.values = when_values;
-        when.count = 1;
-        const char* command_id =
-            api.register_command(api.host, "demo_action", "演示动作", command_fn, &runs, &when);
-        check(ctx, command_id != nullptr && std::string(command_id) == "demo.dll:demo_action",
-              "③ 命令 id 形态不对（应是 <插件>:<动作名>）");
-        check(ctx, api.register_command(api.host, "bad name", "x", command_fn, &runs, nullptr) ==
-                          nullptr,
-              "③ 非法动作名没被拒");
-
-        // ④ 挂载点（精确匹配 + when 生效）
-        check(ctx, api.register_menu_item(api.host, "xml", "toolbar", command_id, 5) == 1,
-              "④ 挂载点注册失败");
-        check(ctx, api.register_menu_item(api.host, "nope", "toolbar", command_id, 0) == 0,
-              "④ 非法 host 没被拒");
-        plug::Context hit;
-        hit["mode"] = std::string("文本");
-        plug::Context miss;
-        miss["mode"] = std::string("统计");
-        const auto items_hit = reg.menu_items_for("xml", "toolbar", hit);
-        const auto items_miss = reg.menu_items_for("xml", "toolbar", miss);
-        check(ctx, items_hit.size() == 1 && items_hit[0]->id == "demo.dll:demo_action",
-              "④ 挂载点没被消费");
-        check(ctx, items_miss.empty(), "④ ABI 传过来的 when 没生效（应只在 mode=文本 时出现）");
-        if (!items_hit.empty()) {
-            items_hit[0]->handler();
-            check(ctx, runs == 1, "③ 命令回调跨 ABI 调用失败");
-        }
-
-        // ⑤ 下拉条目 / ⑥ 新建下拉
-        check(ctx, api.register_option_entry(api.host, "xml", "filter", "插件筛选项", nullptr) == 1,
-              "⑤ 下拉条目注册失败");
-        check(ctx, reg.option_entries_for("xml", "filter").size() == 1 &&
-                      reg.option_entries_for("xml", "filter")[0] == "插件筛选项",
-              "⑤ 下拉条目没被消费");
-        const char* choices[] = {"甲", "乙"};
-        check(ctx, api.register_option(api.host, "插件下拉", choices, 2, nullptr, nullptr, "fs",
-                                       "top_bar", nullptr, 3) == 1,
-              "⑥ 新建下拉注册失败");
-        check(ctx, reg.options_for("fs", "top_bar").size() == 1 &&
-                      reg.options_for("fs", "top_bar")[0]->choices.size() == 2,
-              "⑥ 新建下拉没被消费");
-
-        // ⑦ 面板 / ⑧ Hub 页
-        const auto builder = +[](void*, stk_widget*) -> stk_widget* { return nullptr; };
-        check(ctx, api.register_panel(api.host, "插件面板", builder, nullptr, "xml", "top_bar",
-                                      nullptr, 1) == 1,
-              "⑦ 面板注册失败");
-        check(ctx, reg.panels_for("xml", "top_bar").size() == 1, "⑦ 面板没被消费");
-        check(ctx, api.register_tool(api.host, "插件页", builder, nullptr, 2) == 1,
-              "⑧ Hub 页注册失败");
-        check(ctx, reg.tools_sorted().size() == 1 && reg.tools_sorted()[0]->name == "插件页",
-              "⑧ Hub 页没被消费");
-
-        // ⑨ 比较模式：回调通过**宿主提供的 sink** 回传（跨 ABI 没有所有权问题）
-        const auto compare_fn = +[](void* user, const char*, const char*, const char*, const char*,
-                                    const char*, stk_result_sink sink, void* sink_user) {
-            *static_cast<bool*>(user) = true;
-            sink(sink_user, "consistent", "0");
-            sink(sink_user, "only_a", "id_only_a");
-            sink(sink_user, "text_diff", "id_x\t甲\t乙");
-        };
-        bool compare_ran = false;
-        const char* col_keys[] = {"rel", "status", "detail"};
-        const char* col_headings[] = {"文件", "状态", "差异"};
-        const int col_widths[] = {280, 60, 400};
-        const char* filter_labels[] = {"全部", "仅不一致"};
-        const char* filter_kinds[] = {"same|diff|only_a|only_b", "diff"};
-        check(ctx, api.register_compare_mode(api.host, "插件模式", "plugin_mode", 7, col_keys,
-                                             col_headings, col_widths, 3, filter_labels, 2,
-                                             filter_kinds, compare_fn, &compare_ran) == 1,
-              "⑨ 比较模式注册失败");
-        const plug::CompareModeReg* mode = reg.compare_mode("插件模式");
-        check(ctx, mode != nullptr && mode->spec.columns.size() == 3 &&
-                      mode->spec.filters.size() == 2 &&
-                      mode->spec.filters[1].row_kinds.size() == 1 &&
-                      mode->spec.filters[1].row_kinds[0] == "diff",
-              "⑨ 比较模式声明（列/筛选）没被消费");
-        if (mode != nullptr && mode->compare) {
-            const xrkit::engine::xml::XmlCompareResult result =
-                mode->compare("x.xml", "<a/>", "<b/>", "utf-8", "utf-8");
-            check(ctx, compare_ran && !result.consistent && result.only_a.size() == 1 &&
-                          result.only_a[0] == "id_only_a" && result.text_diff.size() == 1 &&
-                          result.text_diff[0][0] == "id_x" && result.text_diff[0][2] == "乙",
-                  "⑨ 插件比较回调的 sink 数据没被正确解析回结果");
-        }
-
-        // ⑩ 插件自报错误：走同一条留痕通道（Hub 启动时可见）
-        const size_t errors_before = reg.registration_errors().size();
-        api.add_error(api.host, "插件自己发现的异常");
-        check(ctx, reg.registration_errors().size() == errors_before + 1 &&
-                      reg.registration_errors().back().message.find("插件自己发现的异常") !=
-                          std::string::npos,
-              "⑩ 插件自报错误没进 registration_errors");
-        check(ctx, reg.registration_errors().size() >= 2, "被拒的注册没有全部留痕");
-    });
 
     // ⑫12.4 + 用户口径：**插件加载失败不阻塞启动**；加载成功的要真的注册进表。
     // 夹具是同一构建里编出来的 `xrkit_test_plugin.dll`（**用 C 编译**，证明 ABI 是纯 C）。
-    reg.add("plugin: DLL 加载与注册（⑫12.4）", [](CheckContext& ctx) {
-        namespace plug = xrkit::plugin;
-        plug::Registry registry;
+// ★★ 决策 1（C ABI 退净）：这个自检块整段删除（它测的是 C 插件 ABI：`PluginApiAdapter` /
+//   `load_plugin` / `unload_all` / `loaded_count` / `ui_method_count`）。
 
-        // ① 加载不存在的 DLL：只报错、不崩
-        plug::LoadResult broken;
-        {
-            plug::PluginApiAdapter adapter(registry, "broken.dll", nullptr);
-            broken = plug::load_plugin("no_such_plugin_xyz.dll", adapter);
-        }
-        check(ctx, !broken.ok && !broken.error.empty(),
-              "加载不存在的 DLL 应失败并给出理由（不许崩）");
-
-        // ② 真 DLL：与 CLI 同目录（构建时就放好了）
-        const std::string dll = xrkit::core::app_dir() + "/xrkit_test_plugin.dll";
-        std::error_code ec;
-        const bool present =
-            std::filesystem::is_regular_file(xrkit::core::path_from_utf8(dll), ec);
-        if (!present) {
-            // 自家产物缺失 ⇒ 如实报红（不是 SKIP）
-            check(ctx, false, "找不到测试插件 " + dll + "（构建没编出来？）");
-            return;
-        }
-        {
-            plug::PluginApiAdapter adapter(registry, "xrkit_test_plugin.dll", nullptr);
-            const plug::LoadResult loaded = plug::load_plugin(dll, adapter);
-            check(ctx, loaded.ok && loaded.init_rc == 1, "加载测试插件失败：" + loaded.error);
-            // ★★ 2026-10-06（审计第 4 组：「`LoadResult::registrations` **死字段**」）：
-            //   修前**只有失败分支**写这个字段，成功加载时恒为 0 ⇒ 它名义上是"这次加载
-            //   带来的注册条数"，实际上消费端读到的永远是 0。这里按**同一份来源**
-            //   （`residue_for(owner).registrations()`）核对：成功路径必须如实报出条数。
-            const size_t truth =
-                registry.residue_for("xrkit_test_plugin.dll").registrations();
-            check(ctx, loaded.registrations > 0 && loaded.registrations == truth,
-                  "成功加载时 registrations 必须是**真条数**（实测 " +
-                      std::to_string(loaded.registrations) + "，按 owner 逐容器核对为 " +
-                      std::to_string(truth) + "）—— 修前成功路径恒为 0（死字段）");
-            if (loaded.ok) new plug::PluginApiAdapter(std::move(adapter));
-        }
-        check(ctx, plug::loaded_count() >= 1, "加载成功后句柄没被记账");
-
-        // ★★ P17-98（审计 `05 PLG-08`）：**插件日志缓冲的跨线程压力判据**。
-        //   事实：`api.log()` 是**插件可以在工作线程里调**的入口，而"读+清空"侧在主线程 ⇒
-        //   修前那个裸 `std::vector&` 上 `push_back`（可能扩容/`erase`）撞 `swap` 就是
-        //   **数据竞争 + 可能读悬垂**。现在写走 `append_plugin_log_line`（带锁）、读走 `take_python_log_lines`（同锁 swap）。
-        //   判据（要有牙）：4 个线程各写 500 行（同时**会撞 200 行上限** ⇒ `erase(begin())` 那一路也被走到），
-        //   主线程一边反复 `take_python_log_lines()` 清空；断言
-        //     · **总收到行数 == 2000**（append 在锁里 ⇒ "先 push 后可能 erase" 的顺序可观察，不会丢也不会多）；
-        //     · 没有被破坏的**空行**（无锁时最容易看到"半截/空串"）。
-        //   红证：把 `append_plugin_log_line` 的 `lock_guard` 去掉 ⇒ 这个计数/空行判据必红（或直接崩）。
-        {
-            std::atomic<int> accepted{0};
-            std::atomic<int> blank{0};
-            std::atomic<bool> writing{true};
-            auto writer = [&accepted](int id) {
-                for (int i = 0; i < 500; ++i) {
-                    const std::string line = "P17-98 w" + std::to_string(id) + " #" + std::to_string(i);
-                    plug::append_plugin_log_line(line);
-                    accepted.fetch_add(1, std::memory_order_relaxed);
-                }
-            };
-            auto reader = [&blank, &writing]() {
-                while (writing.load(std::memory_order_relaxed)) {
-                    for (const std::string& line : plug::take_python_log_lines()) {
-                        if (line.empty()) blank.fetch_add(1, std::memory_order_relaxed);
-                    }
-                }
-            };
-            std::thread reader_thread(reader);
-            std::vector<std::thread> writers;
-            for (int id = 0; id < 4; ++id) writers.emplace_back(writer, id);
-            for (std::thread& t : writers) t.join();
-            writing.store(false, std::memory_order_relaxed);
-            reader_thread.join();
-            int drained = 0;
-            for (const std::string& line : plug::take_python_log_lines()) {
-                if (line.empty()) blank.fetch_add(1, std::memory_order_relaxed);
-                ++drained;
-            }
-            // `accepted` == 2000；缓冲上限 200 ⇒ 主线程在写的过程中已经取走了一部分，
-            // "收到的总数" = 已被取走的 + 最后剩下的。用**每行唯一**的前缀来对账总数的下界与完整性。
-            check(ctx, accepted.load() == 2000,
-                  "P17-98 跨线程写：应写 2000 行，实得 " + std::to_string(accepted.load()));
-            check(ctx, blank.load() == 0,
-                  "P17-98 跨线程写：日志缓冲里出现了 " + std::to_string(blank.load()) +
-                      " 个空行（无锁时的破坏形状）");
-            check(ctx, drained <= 200,
-                  "P17-98 跨线程写：清空之后的残余行数不该超过上限 200（实得 " +
-                      std::to_string(drained) + "）");
-        }
-
-        // ③ 它注册的东西必须**真的在表里**（插件名做前缀 / 做哨兵）
-        check(ctx, registry.has_command("xrkit_test_plugin.dll:hello"),
-              "插件注册的命令没进表");
-        check(ctx, registry.formats().size() == 1 &&
-                      registry.formats()[0].plugin == "xrkit_test_plugin.dll",
-              "插件注册的格式没进表");
-        plug::Context demo;
-        demo["mode"] = std::string("demo");
-        plug::Context other;
-        other["mode"] = std::string("别的");
-        check(ctx, registry.menu_items_for("xml", "toolbar", demo).size() == 1 &&
-                      registry.menu_items_for("xml", "toolbar", other).empty(),
-              "插件挂载点/它的 when 没生效（应只在 mode=demo 时出现）");
-        check(ctx, registry.option_entries_for("xml", "filter").size() == 1 &&
-                      registry.option_entries_for("xml", "filter")[0] == "demo 筛选项",
-              "插件下拉条目没进表");
-        check(ctx, registry.panels_for("xml", "top_bar").size() == 1, "插件面板没进表");
-        const plug::CompareModeReg* mode = registry.compare_mode("demo 模式");
-        check(ctx, mode != nullptr && mode->spec.plugin == "xrkit_test_plugin.dll",
-              "插件比较模式没进表（哨兵应是插件名，不是内置）");
-        if (mode != nullptr && mode->compare) {
-            const auto diff = mode->compare("a.xml", "AAA", "BBB", "utf-8", "utf-8");
-            const auto same = mode->compare("a.xml", "SAME", "SAME", "utf-8", "utf-8");
-            check(ctx, !diff.consistent && diff.only_a.size() == 1 &&
-                          diff.only_a[0] == "a.xml" && same.consistent,
-                  "插件比较回调经 sink 回传的结果不对（回调没跨 DLL 边界跑通）");
-        }
-        // ④ 命令回调真的能跨 DLL 调用（不崩）
-        const auto items = registry.menu_items_for("xml", "toolbar", demo);
-        if (!items.empty()) {
-            items[0]->handler();
-            check(ctx, true, "插件命令回调跨 DLL 调用没有崩");
-        }
-        check(ctx, registry.registration_errors().empty(),
-              "这一段不该产生 registration_errors（插件注册都是合法的）");
-        // ★★ S-04（第三方只读审计 2026-10-18）：**unload_all 必须先把表清干净、再卸库**。
-        //   修前它只 `FreeLibrary`（表里留着指向已卸载模块的函数指针 ⇒ 回调悬垂）。
-        //   本判据三步：①卸之前表里**确实有**注册（否则下面那条恒真）；②`unload_all(&registry)`
-        //   之后 `registration_count()` 回到 0；③句柄也清了。
-        const size_t before_unload = registry.registration_count();
-        check(ctx, before_unload > 0, "unload_all 夹具：卸之前表里应当有注册（否则下一条恒真）");
-        plug::unload_all(&registry);
-        check(ctx, plug::loaded_count() == 0, "unload_all 没把句柄清掉");
-        check(ctx, registry.registration_count() == 0,
-              "unload_all 没按 owner 回滚注册（卸库后表里还留着指向已 unmapped 代码段的回调）");
-    });
 
     // ★★ 2026-10-06（F1 命令 id 悬空）：**把 `abi_host.h` 那条承诺落成锁** ——
     //   `register_command` 返回的 `const char*`（命令 id）必须**在宿主生命周期内一直有效**。
@@ -2788,48 +2437,9 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
     //   ③ 中间在堆上**涂抹同尺寸块**（把扩容时释放的那些数组复用掉）——没有 ③，悬空指针
     //     常常还"恰好"读得出旧内容（SSO 的 move 是 memcpy，旧缓冲里可能还留着原文）。
     //   ⇒ 改回 `std::vector` 立刻红（先证红后改绿的口径：本轮实测过）。
-    reg.add("plugin: 命令 id 指针在注册第 2/3 个命令后仍然有效（⑫12.2 契约锁）",
-            [](CheckContext& ctx) {
-        namespace plug = xrkit::plugin;
-        plug::Registry reg2;
-        // 插件名**故意取短**：id 是 `p:c0` 这种 SSO 串 —— bug 只在 SSO 串上真会读到脏数据
-        // （长 id 的字符数据在堆上，move 只搬指针 ⇒ 内容看着还对，这也是它一直没被发现的原因）
-        plug::PluginApiAdapter adapter(reg2, "p", /*ui=*/nullptr);
-        const stk_api& api = adapter.api();
-        const auto handler = +[](void*) {};
-        const char* want_ids[3] = {"p:c0", "p:c1", "p:c2"};
-        const char* ids[3] = {nullptr, nullptr, nullptr};
-        for (int i = 0; i < 3; ++i) {
-            ids[i] = api.register_command(api.host, want_ids[i] + 2, "标签", handler, nullptr,
-                                          nullptr);
-        }
-        check(ctx, ids[0] != nullptr && ids[1] != nullptr && ids[2] != nullptr,
-              "注册 3 个命令时有返回值是空的（夹具前提不成立）");
-        {
-            // 堆涂抹：尺寸覆盖 `vector` 扩容时释放过的那几档（1/2/3 个 string ⇒ 32/64/96 B）
-            std::vector<std::unique_ptr<char[]>> noise;
-            const size_t sizes[] = {96, 64, 32, 128, 48, 64, 32};
-            for (int round = 0; round < 24; ++round) {
-                for (size_t n : sizes) {
-                    auto block = std::unique_ptr<char[]>(new char[n]);
-                    std::memset(block.get(), 'X', n);
-                    noise.push_back(std::move(block));
-                }
-            }
-            check(ctx, noise.size() == 24 * 7 && noise.back().get()[0] == 'X',
-                  "堆涂抹夹具本身没问题（哨兵）");
-        }
-        for (int i = 0; i < 3; ++i) {
-            const std::string got = ids[i] != nullptr ? std::string(ids[i]) : std::string("<null>");
-            check(ctx, ids[i] != nullptr && got == want_ids[i],
-                  "命令 id 指针失效：第 " + std::to_string(i) + " 个读到「" + got + "」，期望「" +
-                      want_ids[i] + "」（`owned_` 必须是「插入不搬家」的容器）");
-        }
-        check(ctx, ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2],
-              "3 个命令 id 的指针不该相同");
-        check(ctx, adapter.owned_strings().size() == 3 && adapter.owned_strings().front() == "p:c0",
-              "注册期字符串台账内容/数量不对");
-    });
+// ★★ 决策 1（C ABI 退净）：这个自检块整段删除（它测的是 C 插件 ABI：`PluginApiAdapter` /
+//   `load_plugin` / `unload_all` / `loaded_count` / `ui_method_count`）。
+
 
     // ⑥6.7 路径越界判据（safe_out_path）：归档条目名是不可信输入，这条判据挡的是
     // **任意文件写**。1.x 只把理由写在注释里，2.0 把"拒因"带出来 —— 所以这里连
@@ -3249,7 +2859,7 @@ int run_cli(const std::vector<std::string>& args) {
             // ★★ P2b：与 GUI 走**同一个**统一入口（`*.dll` + `*.py`）—— 修前两边各调
             //   `load_plugins_from_dir`，Python 插件一旦加进来就会出现"GUI 有、CLI 没有"的分叉。
             plugin_errors =
-                xrkit::plugin::load_all_plugins_from_dir(dir, plugin_registry, /*ui=*/nullptr);
+                xrkit::plugin::load_all_plugins_from_dir(dir, plugin_registry);
         }
         if (plugins_given) {
             // 显式指定了插件目录才报账到 stdout（默认路径下保持 CLI 输出与修前逐字节一致）
@@ -4228,82 +3838,9 @@ int run_cli(const std::vector<std::string>& args) {
         });
     }
 
-    if (action == "--plugin-init-rollback") {
-        if (operands.empty()) {
-            std::cerr << "PLUGINROLLBACK error reason=用法：--plugin-init-rollback <只放夹具的目录>\n";
-            return kExitUsage;
-        }
-        const std::string dir = operands[0];
-        // owner = 目录里**第一个** *.dll（升序 —— 与 `load_plugins_from_dir` 的加载/命名口径同源）
-        std::string owner;
-        {
-            std::error_code ec;
-            std::vector<std::string> names;
-            for (std::filesystem::directory_iterator it(xrkit::core::path_from_utf8(dir), ec), end;
-                 it != end; it.increment(ec)) {
-                if (ec) break;
-                if (!it->is_regular_file(ec)) continue;
-                std::string name = xrkit::core::path_to_utf8(it->path().filename());
-                // ★★ S2-2（B 批）：探针与 `load_plugins_from_dir` **共用同一份**命名判据
-                //   （修前两处各抄一份大小写敏感的 `.dll` 判定 ⇒ `NLC.DLL` 连探针都找不到）。
-                if (xrkit::plugin::is_plugin_dll_name(name)) {
-                    names.push_back(name);
-                }
-            }
-            std::sort(names.begin(), names.end());
-            if (!names.empty()) owner = names.front();
-        }
-        if (owner.empty()) {
-            std::cout << "PLUGINROLLBACK skip reason=目录里没有 *.dll（夹具没准备）：" << dir << "\n";
-            return kExitSkip;
-        }
-        xrkit::plugin::Registry registry;
-        const size_t mark = registry.registration_count();
-        const size_t loaded_before = xrkit::plugin::loaded_count();
-        const std::vector<xrkit::plugin::RegistrationError> load_errors =
-            xrkit::plugin::load_plugins_from_dir(dir, registry, /*ui=*/nullptr);
-        const size_t loaded_after = xrkit::plugin::loaded_count();
-        const xrkit::plugin::PluginResidue residue = registry.residue_for(owner);
-        std::cout << "PLUGINROLLBACK info dir=" << dir << " dll=" << owner << " mark=" << mark
-                  << " count=" << registry.registration_count() << " loaded_before=" << loaded_before
-                  << " loaded_after=" << loaded_after << " errors=" << load_errors.size() << "\n";
-        // 逐项可见：脏在哪个容器一眼看得出（不是只报一句"总数不对"）
-        std::cout << "PLUGINROLLBACK residue " << residue.describe() << "\n";
-        for (const xrkit::plugin::RegistrationError& e : load_errors) {
-            std::cout << "PLUGINROLLBACK load-error plugin=" << e.plugin << " reason=" << e.message
-                      << "\n";
-        }
-        for (const xrkit::plugin::RegistrationError& e : registry.registration_errors()) {
-            if (e.plugin == owner) {
-                std::cout << "PLUGINROLLBACK error plugin=" << e.plugin << " reason=" << e.message
-                          << "\n";
-            }
-        }
-        std::vector<std::string> bad;
-        const auto want = [&bad](bool cond, const std::string& what) {
-            if (!cond) bad.push_back(what);
-        };
-        bool reported = false;
-        for (const xrkit::plugin::RegistrationError& e : load_errors) {
-            if (e.plugin == owner && e.message.find("入口返回 0") != std::string::npos) {
-                reported = true;
-            }
-        }
-        want(reported, "宿主没如实报『入口返回 0』（或 owner 名不是 " + owner + "）");
-        want(loaded_after == loaded_before, "加载失败却把句柄记进了已加载名单");
-        want(residue.clean(), "表里还留着属于它的注册（按 owner 逐容器）");
-        want(residue.compare_modes == 0, "内置/别家的比较模式被算成它的残留（口径错了）");
-        want(registry.registration_count() == mark, "registration_count() 没回到加载前的 mark");
-        want(residue.errors > 0, "失败留痕被一并抹掉了（零静默：理由必须看得见）");
-        if (!bad.empty()) {
-            std::cout << "PLUGINROLLBACK fail count=" << bad.size() << " why=";
-            for (size_t i = 0; i < bad.size(); ++i) std::cout << (i ? "；" : "") << bad[i];
-            std::cout << "\n";
-            return kExitFail;
-        }
-        std::cout << "PLUGINROLLBACK ok owner=" << owner << " rolled_and_clean=1\n";
-        return kExitOk;
-    }
+        // ★★ 决策 1（C ABI 退净）：`--plugin-init-rollback` 探针整段删除 ——
+        //   它测的是「C 插件 init 返回 0 时按 owner 回滚注册、再 FreeLibrary」（S1-2），
+        //   而 C 插件这条路已经不存在了（`load_plugin`/`unload_all` 一并删除）。
 
     // ★★ P17-106（审计 `05 PLG-03`，用户 2026-10-12 拍板**口径 A：明确拒绝**）：
     //   宿主的**重启探针** —— 起来 → 关掉 → 再起来一次，把第二次的状态如实打出来。

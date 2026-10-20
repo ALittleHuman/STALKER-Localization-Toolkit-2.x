@@ -16,50 +16,8 @@ target_link_libraries(xrkit_cli PRIVATE xrkit_engine xrkit_core xrkit_flags vers
 #   ⇒ 运行期必须把 `python3XX.dll` 拷到 exe 旁边（口径见根 CMakeLists 的同名函数）。
 xrkit_attach_python_runtime(xrkit_cli)
 
-# 测试插件：**故意用 C 编译**（.c + C 编译器）——用来证明这套 ABI 真的是纯 C ABI，
-# 也用来当"M2-7c 加载链路"的夹具（自检会 LoadLibrary 它、跑它的注册、调它的回调）。
-# 输出到与 CLI 同一个目录（`xrkit_test_plugin.dll` 落在 xrkit_cli.exe 旁边），
-# 这样自检用 `app_dir()/xrkit_test_plugin.dll` 就能找到它 —— 不写死构建目录。
-add_library(xrkit_test_plugin SHARED "${CMAKE_CURRENT_SOURCE_DIR}/../test_plugin/test_plugin.c")
-target_include_directories(xrkit_test_plugin PRIVATE "${CMAKE_SOURCE_DIR}/include")
-# ★ 必须挂 xrkit_flags：它带 `/utf-8`。不加的话 MSVC 按 GBK 读源文件，
-# 中文注释末尾的悬挂首字节会把行尾换行"吃掉"、把下一行并进注释 —— 症状是
-# 几十行外的语法错（实测：abi.h(71) "语法错误: )"）。这条对 .c 同样适用。
-target_link_libraries(xrkit_test_plugin PRIVATE xrkit_flags)
-set_target_properties(xrkit_test_plugin PROPERTIES
-  PREFIX ""
-  OUTPUT_NAME "xrkit_test_plugin"
-  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-  LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-
-# ★★ 坏 init 夹具（S1-2）：与上面那枚**同一份写法**，只有**最后一句**注册不同 ——
-#   `register_compare_mode` 的 compare 传 0（"缺 compare" ⇒ 宿主拒绝 ⇒ 插件 `return 0`）。
-#   ⇒ 它提供的是"**前 6 条注册成功、入口却返回 0**"这个触发形态：
-#     宿主此时若只 `FreeLibrary` 而不回滚，表里就留下 6 个指向已 unmap 代码段的裸函数指针。
-#   ★ 为什么不改 `test_plugin.c`：那枚是"加载成功 + 6 条注册都在表里"那条判据的夹具。
-#   ★ 命名**刻意不匹配**打包脚本的 `xrkit_*_plugin.dll` glob（`_badinit` 结尾）——
-#     一枚"注定 init 失败"的插件不该被塞进发行/开发包的 `plugins\` 里。
-#   ★ 输出到与 CLI 同一个目录：门禁/自检按 `app_dir()`（= xrkit_cli.exe 旁边）找它。
-add_library(xrkit_test_plugin_badinit SHARED
-  "${CMAKE_CURRENT_SOURCE_DIR}/../test_plugin/test_plugin_badinit.c")
-target_include_directories(xrkit_test_plugin_badinit PRIVATE "${CMAKE_SOURCE_DIR}/include")
-target_link_libraries(xrkit_test_plugin_badinit PRIVATE xrkit_flags)
-set_target_properties(xrkit_test_plugin_badinit PROPERTIES
-  PREFIX ""
-  OUTPUT_NAME "xrkit_test_plugin_badinit"
-  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-  LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-
-# ★★ S-03（第三方只读审计 2026-10-18）：**init 抛 C++ 异常**的夹具。
-#   与 `_badinit` 是**两条不同的宿主分支**：那个走"返回 0"，这个走 `catch`。
-#   必须用 C++ 编译（`throw` 不是 C）⇒ 源文件是 `.cpp`。
-#   ★ 命名同样刻意不匹配 `xrkit_*_plugin.dll` 的打包 glob（`_throwinit` 结尾）。
-add_library(xrkit_test_plugin_throwinit SHARED
-  "${CMAKE_CURRENT_SOURCE_DIR}/../test_plugin/test_plugin_throwinit.cpp")
-target_include_directories(xrkit_test_plugin_throwinit PRIVATE "${CMAKE_SOURCE_DIR}/include")
-target_link_libraries(xrkit_test_plugin_throwinit PRIVATE xrkit_flags)
-set_target_properties(xrkit_test_plugin_throwinit PROPERTIES
-  PREFIX ""
-  OUTPUT_NAME "xrkit_test_plugin_throwinit"
-  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-  LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+# ★★ 决策 1（用户 2026-10-18/19「C ABI 退干净」）：
+#   原来这里有三个 C 插件夹具 target（`xrkit_test_plugin` / `_badinit` / `_throwinit`）——
+#   它们存在的唯一目的是验证 C ABI 的加载链（LoadLibrary / `stk_plugin_init` / 失败回滚 /
+#   异常护栏）。C ABI 已删除 ⇒ 三个夹具连同它们的源文件一起删掉。
+#   Python 插件的夹具在 `tests/python_plugins/` 与 `src/shell/smoke.cpp` 里。

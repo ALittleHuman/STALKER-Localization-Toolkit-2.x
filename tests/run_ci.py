@@ -746,41 +746,26 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("构建计数注释不写死当前值（04 F-12：改说「由打包器就地改写」，并注明 17/107 是历史断号别补）")
 
-    # ── ★★ P17-38（2026-10-10，审计 05 PLG-09 ②） ──
-    #   事实（修前）：`loader.cpp` 的目录扫描里写的是 `if (!it->is_regular_file(ec)) continue;`
-    #   —— stat 失败会把 `ec` 置位，`continue` 之后循环头先 `it.increment(ec)`、紧接着
-    #   `if (ec) break;` 就**提前结束整次扫描** ⇒ 后续插件文件**静默漏载**（一次 stat 失败＝后面全不扫）。
-    #   判据：该扫描必须用**独立的 stat_ec**，不许把迭代器的 `ec` 交给 `is_regular_file`。
+    # ── ★★ 决策 1（用户 2026-10-18/19「C ABI 退干净」）：**验收判据** ──
+    #   原来这里的两条（P17-38 / P17-39）判的是 **DLL 加载器**的现场纪律：
+    #     · 目录扫描必须用独立 `stat_ec`（一次 stat 失败不许停扫）；
+    #     · `unload_all()` 必须写清"只 FreeLibrary、不清注册表"＋按 owner 回滚（S-04）。
+    #   C ABI 退净之后这两条**无处可判**：扫描只剩 `py_host` 的 `*.py`，`unload_all` 已删除。
+    #   ⇒ 换成决策 1 的**验收**：ABI 那套符号必须真的不在（不是"注释里说删了"）。
     loader_src = (ROOT / "src" / "engine" / "plugin" / "loader.cpp").read_text(
         encoding="utf-8", errors="replace")
-    # ★ 先剥注释再查：本判据自己的说明里就引用了那段旧代码（`is_regular_file(ec)`），
-    #   不剥注释会把注释里的引用当成"代码还在"（P17-8 的 --help 锁踩过同款）。
     loader_code = active_code(loader_src)
-    if "is_regular_file(ec)" in loader_code:
-        fail("插件目录扫描会因一次 stat 失败就静默停扫（05 PLG-09 ②）：还在把迭代器的 ec "
-             "交给 is_regular_file ⇒ 必须换成独立的 stat_ec")
-    elif "stat_ec" not in loader_code:
-        fail("插件目录扫描缺独立的 stat_ec（05 PLG-09 ②）")
+    abi_leftovers = [name for name in ("LoadLibrary", "is_plugin_dll_name", "unload_all",
+                                       "loaded_count", "PluginApiAdapter", "stk_api",
+                                       "STK_PLUGIN_ENTRY", "load_plugins_from_dir")
+                     if name in loader_code]
+    if abi_leftovers:
+        fail("C ABI 没退干净：`loader.cpp` 里还有 %s（决策 1 要求默认构建里不存在 C ABI）"
+             % "、".join(abi_leftovers))
+    elif "load_python_plugins_from_dir" not in loader_code:
+        fail("统一入口不再调 `load_python_plugins_from_dir`（唯一那条链断了）")
     else:
-        ok("插件扫描不因 stat 失败停扫（05 PLG-09 ②：stat 用独立 stat_ec，迭代器的 ec 只反映迭代本身）")
-
-    # ── ★★ P17-39（2026-10-10，审计 05 PLG-09 ③④）：两处纪律/概念区分必须在源码现场 ──
-    #   ③ `unload_all()` 只 FreeLibrary、不清注册表 ⇒ 误用会回调悬垂；
-    #   ④ `*_facade_available()`（整体）与 `available(method)`（per-method）同名不同义。
-    ldr2 = (ROOT / "src" / "engine" / "plugin" / "loader.cpp").read_text(
-        encoding="utf-8", errors="replace")
-    efc = (ROOT / "src" / "engine" / "plugin" / "engine_facade.cpp").read_text(
-        encoding="utf-8", errors="replace")
-    if '回调悬垂' not in ldr2:
-        fail("unload_all 的纪律说明没了（05 PLG-09 ③）：必须写清只 FreeLibrary、不清注册表与误用会回调悬垂")
-    elif 'rollback_plugin(item.owner)' not in ldr2:
-        # ★★ S-04（第三方只读审计 2026-10-18）：光写清风险不够了 —— **行为**也要真的清表。
-        fail("unload_all 没按 owner 回滚注册（S-04）：卸库前必须 `rollback_plugin(<owner>)`，"
-             "否则表里留着指向已卸载模块的回调")
-    elif '两个 available* 不是一回事' not in efc:
-        fail("两个 available* 概念的区分说明没了（05 PLG-09 ④）：整体可用性 vs per-method 必须写清")
-    else:
-        ok("插件纪律与概念区分都在现场（05 PLG-09 ③④：unload_all 的回调悬垂风险 + 两个 available* 的取舍）")
+        ok("C ABI 已退干净：`loader.cpp` 只剩 Python 一条链（无 LoadLibrary / stk_api / unload_all）")
 
     # ── ★★ P17-41（2026-10-10，审计 03 F-05）：插件槽位重渲染必须**真销毁**上一轮的下拉 ──
     #   事实（修前）：`PageBase::clear_plugin_option_combos()` 只有一行 `plugin_option_combos_.clear();`
@@ -831,29 +816,29 @@ def step_cli_contract(release: bool) -> None:
     else:
         ok("插件页 builder 异常被兜住（零碎批：hub.cpp 的 builder 调用在 try 里，异常只记账、不穿进 UI）")
 
-    # ── ★★ P17-47（零碎批）：`stk_api` 的「声明 ↔ 赋值」对账（审计：10 个注册点无表对账）──
-    #   做法：从 abi.h 的 stk_api 结构体抽 `(*name)` 成员，逐个查宿主里有没有赋值；
-    #   抽到的数量 < 8 也判红（解析器与源码脱节 = 这条锁变成永远绿的摆设）。解析前先剥注释。
-    abi_txt = (ROOT / "include" / "xrkit" / "plugin" / "abi.h").read_text(
+    # ── ★★ 决策 1（C ABI 退净）：控件门面 16 方法必须**全部**在 `plugin_ui.cpp` 里实现 ──
+    #   原来这里是 P17-47：从 `abi.h` 的 `stk_api` 抽 10 个注册点，逐个查宿主有没有赋值。
+    #   C ABI 退净后 `abi.h` 与 `abi_host.cpp` 都不存在了 ⇒ 那条锁无处可判。
+    #   换成同一价值的一条：`facade_api.h` 的 `stk_ui` 16 个方法，`plugin_ui.cpp` 里必须都有实现
+    #   （门面是 Python 插件唯一能用的那套控件语义：缺一个＝插件侧少一种控件）。
+    facade_txt = (ROOT / "include" / "xrkit" / "engine" / "plugin" / "facade_api.h").read_text(
         encoding="utf-8", errors="replace")
-    api_at = abi_txt.find("typedef struct stk_api {")
-    if api_at < 0:
-        fail("abi.h 里找不到 stk_api 定义（零碎批）：判据失效，先修判据本身")
+    stk_at = facade_txt.find("typedef struct stk_ui {")
+    facade_impl = active_code((ROOT / "src" / "shell" / "plugin_ui.cpp").read_text(
+        encoding="utf-8", errors="replace"))
+    if stk_at < 0:
+        fail("`facade_api.h` 里找不到 `stk_ui` 定义：判据失效，先修判据本身")
     else:
-        api_body = active_code(abi_txt[api_at:abi_txt.find("} stk_api;", api_at)])
-        members = re.findall(r"\(\*(\w+)\)\s*\(", api_body)
-        hosts = ""
-        for rel in ("src/engine/plugin/abi_host.cpp", "src/engine/plugin/loader.cpp",
-                    "tools/cli/main.cpp"):
-            hosts += (ROOT / rel).read_text(encoding="utf-8", errors="replace")
-        if len(members) < 8:
-            fail("stk_api 只解析出 %d 个注册点（零碎批）：与预期（≥8）不符" % len(members))
+        body = facade_txt[stk_at:facade_txt.find("} stk_ui;", stk_at)]
+        fields = re.findall(r"\(\*(\w+)\)\s*\(", body)
+        if len(fields) != 16:
+            fail("`stk_ui` 解析出 %d 个方法（期望 16）：解析器与源码脱节" % len(fields))
         else:
-            missing = [m for m in members if not re.search(r"\.\s*" + re.escape(m) + r"\s*=", hosts)]
+            missing = [f for f in fields if ("ui_" + f + "(") not in facade_impl]
             if missing:
-                fail("stk_api 有声明却没人赋值（零碎批）：%s" % "、".join(missing))
+                fail("控件门面有声明却没有实现：%s" % "、".join(missing))
             else:
-                ok("stk_api 声明与赋值对账（零碎批：%d 个注册点全部在宿主里赋值）" % len(members))
+                ok("控件门面 16 方法全部有实现（`stk_ui` ↔ `plugin_ui.cpp`，决策 1 之后的新对账）")
 
     # ── ★★ P17-51（接口契约批「标签换行」）：插件 `ui_label` 必须能换行 ──
     #   修前没有 setWordWrap ⇒ 长文案被截断成一行（1.x 的 TkUiFactory.label 按宽度折行）。
@@ -1893,15 +1878,11 @@ def step_font_tables(release: bool) -> None:
             return
         ok("%s与 1.x 一致" % what)
 
-    # 插件契约表（槽位 HOSTS/LOCATIONS/AREA_* + api.ui 的 16 方法及其参数名）——
-    # ⑫12.3 要求"契约清单从源码 AST 读，读不到就报错、不许静默降级"，
-    # 所以它是**生成物 + --check 锁**，不是手抄的一份表。
-    gen = ROOT / "tools" / "gen_plugin_contract.py"
-    if not require_repo_file(gen, "插件契约生成器"):
-        return
-    if not require_repo_file(ROOT / "src" / "engine" / "plugin" / "contract_tables.inc",
-                             "插件契约生成物"):
-        return
+    # ★★ 决策 1（C ABI 退净）：`contract_tables.inc`（插件契约生成物）与它的生成器检查
+    #   一并删除 —— C ABI 的 `stk_api`/`AREA_*` 已经不存在，参数名的那把锁换到了
+    #   `tests/check_ui_contract_params.py` 的 `CONTRACT_FROZEN`（16 条，独立于实现）。
+    return
+
     for src in ("toolkit_plugins.py", "toolkit_plugin_ui.py"):
         if not (TOOLKIT_1X / src).is_file():
             prereq("1.x 参照仓库（%s）" % src, "未找到", release)
