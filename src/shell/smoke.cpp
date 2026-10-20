@@ -6402,7 +6402,16 @@ SmokeResult run_smoke() {
               QStringLiteral("P4 任务壳的 worker 没跑完（标记里没有 worker_done）"));
         // ★★ C-13（用户 2026-10-19 决策）：**界面上出现的每一条日志都要进落盘文件**。
         //   修前的伤：`Hub::log_line` 只进 LogBox ⇒ 用户实际运行出来的 `logs/*.txt` 是 0 字节。
-        QFile::remove(hub.log_file_path());
+        // ★★ 用户 2026-10-20（C-13 的真因）：修前在这里 `QFile::remove(hub.log_file_path())`
+        //   —— 那是**正在被 `core::log` 的 `g_file` 打开着**的文件。Windows 上要么删不掉、
+        //   要么目录项没了而句柄还指向旧文件 ⇒ 之后写进去的标记按路径读回**看不到**，
+        //   看起来像"sink 丢写"。改成**切一份新文件**再写标记、再读（产品路径不动）。
+        {
+            const QString c13_log = QDir::temp().filePath(
+                QStringLiteral("xrkit_smoke_c13_log.txt"));
+            QFile::remove(c13_log);          // 新路径上的旧残留（没被任何句柄打开）
+            hub.set_log_file(c13_log);
+        }
         hub.log_line(QStringLiteral("MARKER-C13-UI"));
         if (hub.log_box() != nullptr) hub.log_box()->flush();
         xrkit::core::log(xrkit::core::Level::Info, "MARKER-C13-ENGINE");
@@ -6451,6 +6460,7 @@ SmokeResult run_smoke() {
         const QByteArray source =
             "# -*- coding: utf-8 -*-\n"
             "import os\n"
+            "import threading\n"
             "import time\n"
             "\n"
             "\n"
@@ -6458,9 +6468,21 @@ SmokeResult run_smoke() {
             "    ui = api.ui\n"
             "\n"
             "    def mark(text):\n"
-            "        with open(os.path.join(api.plugin_dir, 'cancel_marker.txt'), 'a',\n"
-            "                  encoding='utf-8') as fh:\n"
-            "            fh.write(text + '\\n')\n"
+            "        try:\n"
+            "            with open(os.path.join(api.plugin_dir, 'cancel_marker.txt'), 'a',\n"
+            "                      encoding='utf-8') as fh:\n"
+            "                fh.write(text + '\\n')\n"
+            "        except Exception as exc:\n"
+            "            try:\n"
+            "                with open(os.path.join(api.plugin_dir, 'cancel_mark_error.txt'), 'a',\n"
+            "                          encoding='utf-8') as fh:\n"
+            "                    fh.write('mark_error:%r\\n' % (exc,))\n"
+            "            except Exception:\n"
+            "                pass\n"
+            "\n"
+            "    def mark_env(tag):\n"
+            "        mark('%s pid:%d tid:%d dir:%s'\n"
+            "             % (tag, os.getpid(), threading.get_ident(), api.plugin_dir))\n"
             "\n"
             "    def build():\n"
             "        status = ui.label(None, '就绪')\n"
@@ -6472,22 +6494,42 @@ SmokeResult run_smoke() {
             "        ui.task_on_message(panel, on_message)\n"
             "\n"
             "        def worker(progress, message):\n"
-            "            progress(0)\n"
-            "            ui.set_text(status, 'worker-must-not-write')\n"
-            "            mark('cancel_read:%d' % int(bool(ui.task_cancel_requested(panel))))\n"
+            "            mark_env('worker_enter')\n"
+            "            try:\n"
+            "                progress(0)\n"
+            "            except Exception as exc:\n"
+            "                mark('worker_progress_error:%r' % (exc,))\n"
+            "            try:\n"
+            "                ui.set_text(status, 'worker-must-not-write')\n"
+            "            except Exception as exc:\n"
+            "                mark('worker_set_text_error:%r' % (exc,))\n"
+            "            try:\n"
+            "                mark_env('cancel_read:%d'\n"
+            "                         % int(bool(ui.task_cancel_requested(panel))))\n"
+            "            except Exception as exc:\n"
+            "                mark('worker_cancel_read_error:%r' % (exc,))\n"
             "            loops = 0\n"
             "            while loops < 2000:\n"
             "                loops += 1\n"
             "                if ui.task_cancel_requested(panel):\n"
             "                    break\n"
             "                time.sleep(0.01)\n"
-            "            mark('cancel_after:%d' % int(bool(ui.task_cancel_requested(panel))))\n"
+            "            try:\n"
+            "                mark_env('cancel_after:%d'\n"
+            "                         % int(bool(ui.task_cancel_requested(panel))))\n"
+            "            except Exception as exc:\n"
+            "                mark('worker_cancel_after_error:%r' % (exc,))\n"
             "            mark('loops:%d' % loops)\n"
             "            message('loops:%d' % loops)\n"
             "            progress(100)\n"
             "\n"
             "        def start():\n"
-            "            ui.task_run(panel, '取消探针', worker)\n"
+            "            try:\n"
+            "                accepted = ui.task_run(panel, '取消探针', worker)\n"
+            "            except Exception as exc:\n"
+            "                mark('task_run_error:%r' % (exc,))\n"
+            "                accepted = None\n"
+            "            mark('task_run:%r' % (accepted,))\n"
             "\n"
             "        ui.button(None, '起任务', start)\n"
             "\n"

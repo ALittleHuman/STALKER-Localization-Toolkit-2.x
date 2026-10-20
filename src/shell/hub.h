@@ -103,6 +103,13 @@ public:
     //   写一份 `<log_dir>/log_YYYYmmdd_HHMMSS.txt`。
     // 本次运行 `core::set_log_file` 挂上的那个文件（空 = 没挂上 ⇒ 日志没有文件可查）
     QString log_file_path() const { return log_file_path_; }
+
+    // ★★ 用户 2026-10-20（C-13）：**不要在开着的日志文件上 `QFile::remove`** ——
+    //   Windows 上要么删不掉、要么目录项没了而 `core::log` 的 `g_file` 句柄还指着旧文件，
+    //   随后写进去的标记按**路径**读回自然看不到（那会伪装成"sink 丢写"）。
+    //   这里给自检/调用方一个显式切文件入口：先关旧的、再开新的（`core::set_log_file` 就是这语义），
+    //   并把 `log_file_path_` 同步成新路径，免得查询接口还报旧文件。
+    void set_log_file(const QString& path);
     bool log_file_active() const;
     // 合并导出。失败 ⇒ **返回 false 且 `error` 非空**（零静默：写不出去必须说得出来）。
     // 最近一次导出失败的理由（空 = 没失败过）——供自检直接读

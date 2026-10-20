@@ -618,6 +618,11 @@ void Hub::log_line(const QString& text) {
     if (log_box_ != nullptr) log_box_->append_batched(text);
 }
 
+void Hub::set_log_file(const QString& path) {
+    log_file_path_ = path;
+    xrkit::core::set_log_file(path.toStdString());
+}
+
 bool Hub::log_file_active() const { return xrkit::core::log_file_active(); }
 
 // ★★ 决策 5.5（用户 2026-10-19）：`export_log()` 整体删除。
