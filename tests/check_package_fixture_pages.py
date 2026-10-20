@@ -174,6 +174,9 @@ def _kill_leftover_smoke() -> int:
         return 0
 
 
+PHASE = ["default"]
+
+
 def run_smoke(pkg: Path, timeout: int = 900):
     env = dict(os.environ)
     env["QT_QPA_PLATFORM"] = "offscreen"   # ★ 只给子进程，不设持久变量
@@ -250,17 +253,40 @@ def package_looks_complete(pkg: Path) -> str:
 
 
 def newest_package():
+    """★ 用户 2026-10-20：**输入要钉死** —— 按 `version.json` 的 `current.index` 取包，
+    不再"rglob 里挑最大的"（那会把开发包/旧包混进同一条判据的输入，红绿就随目录内容漂）。
+    取不到唯一一个就报**歧义**（返回 None + 理由），由调用方按"未覆盖"处理。"""
     base = ROOT / "dist"
     if not base.is_dir():
         return None
-    best = None
-    for index_dir in base.glob("*/*/*"):
-        if not index_dir.is_dir() or not index_dir.name.isdigit():
-            continue
-        score = int(index_dir.name)
-        if best is None or score > best[0]:
-            best = (score, index_dir)
-    return best[1] if best else None
+    # ★★ 用户 2026-10-20「包选择要钉死」＋ 一条现场教训：`current.index` 会被门禁里的
+    #   `shell-smoke` 临时改写（它跑打包脚本、脚本会写 version.json，随后门禁逐字节恢复）。
+    #   所以**先看 `tree`**（只在"成功发包"时写、稳定）里最大的序号；没有才退回 `current.index`。
+    idx = ""
+    try:
+        import json
+        data = json.loads((ROOT / "version.json").read_text(encoding="utf-8"))
+        best = -1
+        for ver, marks in (data.get("tree") or {}).items():
+            for mark, builds in (marks or {}).items():
+                for num in (builds or {}):
+                    if str(num).isdigit():
+                        best = max(best, int(num))
+        if best > 0:
+            idx = str(best)
+        else:
+            idx = str(data["current"]["index"])
+    except (OSError, ValueError, KeyError, TypeError):
+        idx = ""
+    if not idx:
+        return None
+    cands = [p for p in base.glob("*/*/*") if p.is_dir() and p.name == idx]
+    if len(cands) == 1:
+        return cands[0]
+    if len(cands) > 1:
+        print("   !! 包候选歧义（序号 %s 匹配到 %d 个目录）：%s" % (idx, len(cands), cands))
+        return None
+    return None
 
 
 def package_marker(pkg: Path) -> str:
@@ -275,6 +301,19 @@ def package_marker(pkg: Path) -> str:
             if match is not None:
                 return match.group(1).upper()
     return ""
+
+
+# ★ 依赖插件页夹具的检查（默认形态必然为 0）——见本文件头与用户 2026-10-20 的定性。
+FIXTURE_DEPENDENT = ("P17-82", "P16-3b-2", "P16-3c", "P4 虚拟列表", "P4 拖入", "P4 任务壳",
+                     "P4 worker")
+
+
+def fixture_only_failures(out: str) -> tuple:
+    """返回 (夹具依赖的失败行, 其余失败行)。"""
+    fails = [ln.strip() for ln in out.splitlines() if "SHELL-SMOKE fail" in ln]
+    only = [f for f in fails if any(k in f for k in FIXTURE_DEPENDENT)]
+    rest = [f for f in fails if f not in only]
+    return only, rest
 
 
 def audit_package(pkg: Path) -> None:
@@ -312,9 +351,21 @@ def audit_package(pkg: Path) -> None:
             check(False, "产物 %s（默认形态）：`--smoke` 能跑完" % rel, str(out))
             return
         smoke_ok = SMOKE_OK_RE.search(out)
-        check(smoke_ok is not None and rc == 0,
-              "产物 %s（默认形态）：`SHELL-SMOKE ok … failed=0` 且退出码 0" % rel,
-              "rc=%s\n      %s" % (rc, brief(out)))
+        only_fx, rest_fx = fixture_only_failures(out)
+        if smoke_ok is not None and rc == 0:
+            check(True, "产物 %s（默认形态）：`SHELL-SMOKE ok … failed=0` 且退出码 0" % rel)
+        elif not rest_fx and only_fx:
+            # ★ 用户 2026-10-20 定性：这些检查**需要插件页夹具**，默认形态拿不到控件 ⇒ 必然 0。
+            #   记 **未覆盖**（NOTE），不是产品红；④ 抬夹具后照旧全跑。
+            check(True, "产物 %s（默认形态）：%d 条**夹具依赖**检查按未覆盖记账（④ 抬夹具后验）"
+                  % (rel, len(only_fx)), "例：" + only_fx[0][:80])
+            NOTES.append("%s 默认形态：%d 条夹具依赖检查未覆盖（%s）"
+                         % (rel, len(only_fx), ", ".join(sorted({f.split(" ")[2] if len(f.split(" ")) > 2 else "?" for f in only_fx}))))
+        else:
+            check(False,
+                  "产物 %s（默认形态）：`SHELL-SMOKE ok … failed=0` 且退出码 0" % rel,
+                  "rc=%s 夹具依赖 %d 条 / **其余 %d 条**\n      %s"
+                  % (rc, len(only_fx), len(rest_fx), brief(out)))
         check(pages is not None,
               "产物 %s（默认形态）：自检打出 `PLUGIN-PAGES 可见页集合=…` 那一行" % rel,
               brief(out))
@@ -338,6 +389,7 @@ def audit_package(pkg: Path) -> None:
                 shutil.move(str(item), str(target))
                 lifted.append(item.name)
         say("  ④ 显式抬起 %d 个夹具到顶层：%s" % (len(lifted), ", ".join(lifted)))
+        PHASE[0] = "lifted"
         rc2, out2 = run_smoke(work)
         pages2 = parse_pages(out2) if out2 else None
         if rc2 is None:
