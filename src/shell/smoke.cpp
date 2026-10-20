@@ -6015,8 +6015,9 @@ SmokeResult run_smoke() {
             for (QLabel* item : page_widget->findChildren<QLabel*>()) labels_cb << item->text();
         }
         check(labels_cb.contains(QStringLiteral("回调改的:来自工作线程")),
-              QStringLiteral("P12c-2 回调里没改到控件（标签实得：%1）")
-                  .arg(labels_cb.join(QStringLiteral(" / "))));
+              QStringLiteral("P12c-2 回调里没改到控件（标签实得：%1 / plugin_errors=%2）")
+                  .arg(labels_cb.join(QStringLiteral(" / ")))
+                  .arg(hub.plugin_errors().size()));
         check(marker_text.contains(QStringLiteral("progress_set:42")),
               QStringLiteral("P12c 进度条设 42 没读回 42（标记=%1）")
                   .arg(marker_text.isEmpty() ? QStringLiteral("(空)") : marker_text.simplified()));
@@ -6028,8 +6029,9 @@ SmokeResult run_smoke() {
             for (QLabel* item : page_widget->findChildren<QLabel*>()) labels_after << item->text();
         }
         check(labels_after.contains(QStringLiteral("点过了")),
-              QStringLiteral("P3 `set_text` 没改到控件（标签实得：%1）")
-                  .arg(labels_after.join(QStringLiteral(" / "))));
+              QStringLiteral("P3 `set_text` 没改到控件（标签实得：%1 / plugin_errors=%2）")
+                  .arg(labels_after.join(QStringLiteral(" / ")))
+                  .arg(hub.plugin_errors().size()));
         const QString hub_log = hub.log_box() != nullptr ? hub.log_box()->toPlainText() : QString();
         check(hub_log.contains(QStringLiteral("门面夹具：按钮被点了")),
               QStringLiteral("P3 `ui.log()` 没进宿主日志栏"));

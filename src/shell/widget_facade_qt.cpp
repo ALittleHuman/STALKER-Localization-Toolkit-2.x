@@ -27,6 +27,8 @@
 #include "xrkit/engine/plugin/widget_facade.h"
 
 #include <QCheckBox>
+#include <QCoreApplication>
+#include <QThread>
 #include <QComboBox>
 #include <QApplication>
 #include <QClipboard>
@@ -1213,8 +1215,24 @@ plug::UiFacade& mutable_facade() {
 
 // 外壳装配时调一次：装门面，并把"写宿主日志栏"这条接上（`sink` 可空 ⇒ 该条不可用、调用侧记账）
 void install_qt_ui_facade(std::function<void(const std::string&)> log_sink) {
-    // ★ "UI 线程"＝装门面的那个线程（外壳在 GUI 主线程装配；工作线程里的 `api.ui.*` 会被挡住）
-    ui_thread_id() = std::this_thread::get_id();
+    // ★ "UI 线程"＝**第一次**装门面的那个线程（外壳在 GUI 主线程装配；工作线程里的 `api.ui.*` 会被挡住）
+    //
+    // ★★ 2026-10-20 修（PKG-PAGES 偶发红的真因）：修前这里**无条件改写** `ui_thread_id()`。
+    //   自检（`--smoke`）里会有"在工作线程里构造 Hub / 装配门面"的线程纪律用例 ⇒ 那一下把
+    //   UI 线程改成了 worker 的 id ⇒ 之后**所有**插件页的控件创建都被判成"非 UI 线程"并拒绝
+    //   （日志现场：`WARN [l2_demo.py] 控件门面只许在宿主 UI 线程调用（ui.label 在别的线程被调用，已拒绝）`），
+    //   页面于是落到占位页 ⇒ P3/P6/P12c-2/P13-*/P15-* 整片红，且**随用例执行顺序漂**。
+    //   修法：只认第一次；再装配只换 `log_append`，不改写线程身份。
+    // ★★ 2026-10-20 二次修正：**UI 线程＝跑 Qt 事件循环的那个线程**（`QCoreApplication::instance()->thread()`），
+    //   不是"谁先装门面"。修前用"先装者"，第一版修法用"第一次"，两者都可能在自检里
+    //   （线程纪律用例先在工作线程构造 Hub）把 UI 线程认错 ⇒ 之后所有控件创建被拒 ⇒ 占位页。
+    //   现在：只有在**主线程**上装门面才登记；工作线程上的装配只接 `log_append`、不改线程身份。
+    std::thread::id& id = ui_thread_id();
+    QCoreApplication* app = QCoreApplication::instance();
+    const bool on_main = app != nullptr && QThread::currentThread() == app->thread();
+    if (on_main || id == std::thread::id()) {
+        if (on_main) id = std::this_thread::get_id();
+    }
     mutable_facade().log_append = std::move(log_sink);
     plug::set_ui_facade(&mutable_facade());
 }
