@@ -278,7 +278,8 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     // ★★ P3（控件门面）：外壳**装配时**把门面装上 —— 插件的 `api.ui.*` 才有实现；
     //    `log_append` 接到 Hub 自己的日志栏（引擎层因此不必认识 Hub）。
     //    没装（CLI/离屏自检不带外壳）时，`api.ui.*` 一律返回空并**逐条记账**（零静默）。
-    install_qt_ui_facade([this](const std::string& line) { log_line(QString::fromStdString(line)); });
+    install_qt_ui_facade([this](const std::string& line) { log_line(QString::fromStdString(line)); },
+                         this);
     log_line(QStringLiteral("Hub 就绪：%1 个内置页").arg(builtin_page_count()));
     load_plugins(plugin_dir);
 }
@@ -319,6 +320,8 @@ void Hub::apply_ui_size(double scale, QString* problem) {
 }
 
 Hub::~Hub() {
+    // ★★ 2026-10-21：把进程级 sink 收回 —— 否则插件后续 `api.ui.log_append` 会打到已析构的 this。
+    clear_qt_ui_facade_log_sink(this);
     // 引擎读入口的活动注册表钩子只有**指针**：本对象一死，`registry_` 也跟着死。
     // 只在钩子确实指着**我自己这一份**时收回（两个 Hub 同时活着时不许互相踩）。
     if (plugin::active_registry() == &registry_) plugin::set_active_registry(nullptr);

@@ -25,7 +25,17 @@ const stk_ui* qt_plugin_ui();
 // （`ui_facade_available()` 会如实报"缺方法"，调用侧记账）。
 // 门面实现见 `ui_facade_qt.cpp`：它把 `ui_facade.h` 的 18 个方法**转发**给本文件这张
 // C ABI 表，因此"C ABI 插件"与"Python 插件"用的**是同一套控件语义**（只许一份实现）。
-void install_qt_ui_facade(std::function<void(const std::string&)> log_sink);
+// ★★ 2026-10-21（用户指出的结构性问题）：`log_append` 是**进程级 sink**，而每个 Hub 装配时
+//   都用 `[this]` 捕获自己的日志栏 ⇒ 后装配的 Hub 覆盖前一个；先装配的那个 Hub 一析构，
+//   全局 sink 里还留着悬垂的 `this`（插件再调 `api.ui.log_append` 就是 UAF）。
+//   修法：① 只有**主线程**的装配才设置 sink；② 装配时登记 owner，`~Hub` 调
+//   `clear_qt_ui_facade_log_sink(this)` —— 只有"当前 sink 确实是自己"时才清空。
+void install_qt_ui_facade(std::function<void(const std::string&)> log_sink,
+                          const void* owner = nullptr);
+void clear_qt_ui_facade_log_sink(const void* owner);
+
+// ★ 启动时打诊断用：现在"是不是 UI 线程"的**真实判定**（以 Qt 为准，见 .cpp 注释）。
+bool qt_ui_facade_on_ui_thread();
 
 // ★★ 插件改装 P3（控件门面 L1/L2）：**取控件当前文本**。
 // 为什么放在这里而不是在门面实现里另写一份：`plugin_ui.cpp` 是"控件语义"的**唯一实现**

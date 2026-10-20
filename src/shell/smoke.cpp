@@ -330,6 +330,20 @@ bool wait_page_ready(QWidget* page, int ms, QString* why) {
 
 SmokeResult run_smoke() {
     SmokeResult result;
+
+    // ★★ 用户 2026-10-21：**启动时打一行 `on_ui_thread` 的真实判定 ＋ `QCoreApplication::thread()`** ——
+    //   以后任何一次红，都能立刻看出"是不是被线程闸门拒了"（而不是靠猜）。
+    {
+        QCoreApplication* app = QCoreApplication::instance();
+        result.notes.append(
+            QStringLiteral("UI-FACADE on_ui_thread=%1 app_thread=%2 cur_thread=%3")
+                .arg(qt_ui_facade_on_ui_thread() ? 1 : 0)
+                .arg(app != nullptr
+                         ? QString::number(reinterpret_cast<quintptr>(app->thread()), 16)
+                         : QStringLiteral("<null>"))
+                .arg(QString::number(
+                    reinterpret_cast<quintptr>(QThread::currentThread()), 16)));
+    }
     const auto check = [&result](bool good, const QString& what) {
         ++result.checks;
         if (!good) {
@@ -6481,9 +6495,12 @@ SmokeResult run_smoke() {
             "            except Exception:\n"
             "                pass\n"
             "\n"
-            "    def mark_env(tag):\n"
-            "        mark('%s pid:%d tid:%d dir:%s'\n"
-            "             % (tag, os.getpid(), threading.get_ident(), api.plugin_dir))\n"
+            "    def mark_env():\n"
+            "        # ★ 2026-10-21：**env 必须单独一行** —— 挂在值行后面会把 `cancel_read:0` 变成\n"
+            "        #   `cancel_read:0 pid:... tid:...`，而判据做的是 `marker_value(...) == '0'` 的精确比较\n"
+            "        #   ⇒ 我自己把判据弄红了（实测：取消位读到 1，检查仍报\"没读到\"）。\n"
+            "        mark('env pid:%d tid:%d dir:%s'\n"
+            "             % (os.getpid(), threading.get_ident(), api.plugin_dir))\n"
             "\n"
             "    def build():\n"
             "        status = ui.label(None, '就绪')\n"
@@ -6495,7 +6512,8 @@ SmokeResult run_smoke() {
             "        ui.task_on_message(panel, on_message)\n"
             "\n"
             "        def worker(progress, message):\n"
-            "            mark_env('worker_enter')\n"
+            "            mark('worker_enter')\n"
+            "            mark_env()\n"
             "            try:\n"
             "                progress(0)\n"
             "            except Exception as exc:\n"
@@ -6505,8 +6523,8 @@ SmokeResult run_smoke() {
             "            except Exception as exc:\n"
             "                mark('worker_set_text_error:%r' % (exc,))\n"
             "            try:\n"
-            "                mark_env('cancel_read:%d'\n"
-            "                         % int(bool(ui.task_cancel_requested(panel))))\n"
+            "                mark('cancel_read:%d'\n"
+            "                     % int(bool(ui.task_cancel_requested(panel))))\n"
             "            except Exception as exc:\n"
             "                mark('worker_cancel_read_error:%r' % (exc,))\n"
             "            loops = 0\n"
@@ -6516,8 +6534,8 @@ SmokeResult run_smoke() {
             "                    break\n"
             "                time.sleep(0.01)\n"
             "            try:\n"
-            "                mark_env('cancel_after:%d'\n"
-            "                         % int(bool(ui.task_cancel_requested(panel))))\n"
+            "                mark('cancel_after:%d'\n"
+            "                     % int(bool(ui.task_cancel_requested(panel))))\n"
             "            except Exception as exc:\n"
             "                mark('worker_cancel_after_error:%r' % (exc,))\n"
             "            mark('loops:%d' % loops)\n"

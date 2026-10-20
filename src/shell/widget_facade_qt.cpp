@@ -904,8 +904,16 @@ const plug::UiFacade kQtFacade = {
             if (box->fn) box->fn(text.toStdString());
         });
     },
-    /* on_ui_thread：门面是在哪个线程装的，就以那个线程为"UI 线程" */
-    []() { return std::this_thread::get_id() == ui_thread_id(); },
+    /* on_ui_thread：**以 Qt 为准** —— 跑事件循环的那个线程就是 UI 线程。
+       ★★ 2026-10-21（用户指出的结构性问题）：修前是 `this_thread::get_id() == ui_thread_id()`，
+       而 `ui_thread_id()` 在**第一次主线程装配之前**是默认构造的 id ⇒ 那时候任何真实线程 id
+       都判 false ⇒ 插件页的 `ui.*` 整页被拒 ⇒ 落占位页（**随执行顺序漂**）。
+       现在不再依赖"谁先装配"：没 app 就放行（判不了 ≠ 拒绝），有 app 就比 `app->thread()`。 */
+    []() {
+        QCoreApplication* app = QCoreApplication::instance();
+        if (app == nullptr) return true;
+        return QThread::currentThread() == app->thread();
+    },
     // ── ★★ P5：重型 L2 第二批（滚动视口 / 可分栏）──────────────────────────────
     /* viewport：宿主造「容器 + ScrollViewport + 画布」，**句柄＝画布**（插件往它里面 pack）。
        条子只由宿主造（口径 1.6）；`min_body_height` 由调用方给（口径 3.3）。 */
@@ -1214,27 +1222,36 @@ plug::UiFacade& mutable_facade() {
 }
 
 // 外壳装配时调一次：装门面，并把"写宿主日志栏"这条接上（`sink` 可空 ⇒ 该条不可用、调用侧记账）
-void install_qt_ui_facade(std::function<void(const std::string&)> log_sink) {
-    // ★ "UI 线程"＝**第一次**装门面的那个线程（外壳在 GUI 主线程装配；工作线程里的 `api.ui.*` 会被挡住）
-    //
-    // ★★ 2026-10-20 修（PKG-PAGES 偶发红的真因）：修前这里**无条件改写** `ui_thread_id()`。
-    //   自检（`--smoke`）里会有"在工作线程里构造 Hub / 装配门面"的线程纪律用例 ⇒ 那一下把
-    //   UI 线程改成了 worker 的 id ⇒ 之后**所有**插件页的控件创建都被判成"非 UI 线程"并拒绝
-    //   （日志现场：`WARN [l2_demo.py] 控件门面只许在宿主 UI 线程调用（ui.label 在别的线程被调用，已拒绝）`），
-    //   页面于是落到占位页 ⇒ P3/P6/P12c-2/P13-*/P15-* 整片红，且**随用例执行顺序漂**。
-    //   修法：只认第一次；再装配只换 `log_append`，不改写线程身份。
-    // ★★ 2026-10-20 二次修正：**UI 线程＝跑 Qt 事件循环的那个线程**（`QCoreApplication::instance()->thread()`），
-    //   不是"谁先装门面"。修前用"先装者"，第一版修法用"第一次"，两者都可能在自检里
-    //   （线程纪律用例先在工作线程构造 Hub）把 UI 线程认错 ⇒ 之后所有控件创建被拒 ⇒ 占位页。
-    //   现在：只有在**主线程**上装门面才登记；工作线程上的装配只接 `log_append`、不改线程身份。
-    std::thread::id& id = ui_thread_id();
+namespace {
+// sink 的归属：只有"装配它的那个 Hub"才允许清（见 `clear_qt_ui_facade_log_sink`）
+const void* g_log_sink_owner = nullptr;
+}  // namespace
+
+bool qt_ui_facade_on_ui_thread() {
     QCoreApplication* app = QCoreApplication::instance();
-    const bool on_main = app != nullptr && QThread::currentThread() == app->thread();
-    if (on_main || id == std::thread::id()) {
-        if (on_main) id = std::this_thread::get_id();
+    if (app == nullptr) return true;
+    return QThread::currentThread() == app->thread();
+}
+
+void install_qt_ui_facade(std::function<void(const std::string&)> log_sink, const void* owner) {
+    // ★★ 2026-10-21（用户口径）：**只有主线程的装配才设置 sink**。
+    //   修前每个 Hub（含自检里在工作线程构造的）都会覆盖这个进程级 sink ⇒
+    //   ① 后装配的 Hub 抢走日志；② 前一个 Hub 析构后 sink 里留着悬垂 `this`。
+    QCoreApplication* app = QCoreApplication::instance();
+    const bool on_main = app == nullptr || QThread::currentThread() == app->thread();
+    if (on_main) {
+        mutable_facade().log_append = std::move(log_sink);
+        g_log_sink_owner = owner;
     }
-    mutable_facade().log_append = std::move(log_sink);
     plug::set_ui_facade(&mutable_facade());
+}
+
+void clear_qt_ui_facade_log_sink(const void* owner) {
+    // 只有"当前 sink 确实是自己"时才清 —— 两个 Hub 同时活着时不许互相踩。
+    if (owner != nullptr && owner == g_log_sink_owner) {
+        mutable_facade().log_append = nullptr;
+        g_log_sink_owner = nullptr;
+    }
 }
 
 }  // namespace xrkit::shell
