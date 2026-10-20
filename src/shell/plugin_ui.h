@@ -11,7 +11,7 @@
 // ★ 三个标准对话框（`ask_yes_no` / `ask_open_file` / `ask_save_file`）会**阻塞**：
 //   自检不跑这条路径（只核对槽位非空）；真实路径由用户点击触发。
 
-#include "xrkit/plugin/abi.h"
+#include "xrkit/engine/plugin/facade_api.h"
 
 #include <functional>
 #include <string>

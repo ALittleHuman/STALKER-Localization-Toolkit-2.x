@@ -18,7 +18,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// ★★ 决策 1 第一刀：控件门面契约搬到了独立头。
+//   ★ 必须在 `#ifdef __cplusplus` **之外** include —— 这个头会被 `tools/test_plugin/*.c`
+//     以 **C** 方式包含，放在 C++ 条件里会让 C 编译看不到 `stk_widget`（本刀第二个坑）。
+#include "xrkit/engine/plugin/facade_api.h"
+
 #ifdef __cplusplus
+// ★★ 决策 1 第一刀：控件门面契约搬到了独立头（**必须在 `extern "C"` 之前 include** ——
+//   在 extern "C" 里 include 任何 C++ 标准库头都会炸 `STL1003`，这是本刀第一个坑）。
+//   ★ 文件名**不能叫 `ui_*`**：Qt 的 autouic 会把 `ui_xxx.h` 当成 uic 生成物，
+//     直接报 `AutoUic error: includes the uic file …`（本刀第三个坑）—— 所以叫 facade_api.h。
+
 extern "C" {
 #endif
 
@@ -32,51 +42,10 @@ extern "C" {
 #define STK_EXPORT __attribute__((visibility("default")))
 #endif
 
-// 不透明句柄：插件只认识指针，永远不知道背后是 Qt 还是别的
-typedef struct stk_widget stk_widget;
-typedef struct stk_host stk_host;
-
-// ── api.ui：16 方法（9 造控件 + 7 改控件/取输入）─────────────────────
-// 参数名与 1.x `TkUiFactory` 一致（第三方就是照那套写的）：
-//   label(parent, text, style) / button(parent, text, on_click, width, style, state)
-//   row(parent, side, fill, expand, padx, pady) / checkbox(parent, text, variable, on_toggle)
-//   entry(parent, textvariable, width, show) / text(parent, height, width, wrap)
-//   combo(parent, values, variable, width, on_change) / drop_box(parent, on_file, placeholder, width)
-//   pack(widget, side, fill, expand, padx, pady, anchor)
-//   set_text(widget, text) / set_state(widget, state) / text_view(parent, height, mono)
-//   alive(widget) / ask_yes_no(title, message) / ask_open_file(title) / ask_save_file(title)
-typedef void (*stk_click_fn)(void* user);
-typedef void (*stk_change_fn)(void* user, const char* value);
-typedef void (*stk_file_fn)(void* user, const char* path);
-
-typedef struct stk_ui {
-    /* 1 */ stk_widget* (*label)(stk_host* h, stk_widget* parent, const char* text,
-                                 const char* style);
-    /* 2 */ stk_widget* (*button)(stk_host* h, stk_widget* parent, const char* text,
-                                  stk_click_fn on_click, void* user, const char* style,
-                                  int state);
-    /* 3 */ stk_widget* (*row)(stk_host* h, stk_widget* parent, const char* side,
-                              const char* fill, int expand, int padx, int pady);
-    /* 4 */ stk_widget* (*checkbox)(stk_host* h, stk_widget* parent, const char* text,
-                                    stk_change_fn on_toggle, void* user);
-    /* 5 */ stk_widget* (*entry)(stk_host* h, stk_widget* parent, const char* initial,
-                                 int width, const char* show);
-    /* 6 */ stk_widget* (*text)(stk_host* h, stk_widget* parent, int height, int width,
-                                const char* wrap);
-    /* 7 */ stk_widget* (*combo)(stk_host* h, stk_widget* parent, const char* const* values,
-                                 int count, stk_change_fn on_change, void* user);
-    /* 8 */ stk_widget* (*drop_box)(stk_host* h, stk_widget* parent, stk_file_fn on_file,
-                                    void* user, const char* placeholder, int width);
-    /* 9 */ void (*pack)(stk_host* h, stk_widget* parent, stk_widget* child, const char* side,
-                         const char* fill, int expand, int padx, int pady);
-    /* 10 */ void (*set_text)(stk_host* h, stk_widget* widget, const char* text);
-    /* 11 */ void (*set_state)(stk_host* h, stk_widget* widget, int state);
-    /* 12 */ stk_widget* (*text_view)(stk_host* h, stk_widget* parent, int height, int mono);
-    /* 13 */ int (*alive)(stk_host* h, stk_widget* widget);
-    /* 14 */ int (*ask_yes_no)(stk_host* h, const char* title, const char* message);
-    /* 15 */ const char* (*ask_open_file)(stk_host* h, const char* title);
-    /* 16 */ const char* (*ask_save_file)(stk_host* h, const char* title);
-} stk_ui;
+// ★★ 决策 1（C ABI 退净）第一刀：控件门面契约（`stk_ui` 16 方法 ＋ 不透明句柄）
+//   已搬到 `xrkit/engine/plugin/facade_api.h` —— 它**不是** C 插件专属（外壳控件门面与
+//   Python 绑定共用同一张表），所以不能跟着本头一起删。
+//   这里只保留 C 插件 ABI（`stk_api` ＋ 入口）本身。
 
 // ── 注册面：10 个注册点（⑫12.1）────────────────────────────────────
 // 全部返回 int：1=成功，0=被拒（宿主会把理由记进 registration_errors 并写日志）。

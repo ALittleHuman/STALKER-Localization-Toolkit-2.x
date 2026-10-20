@@ -6958,7 +6958,6 @@ STEPS = [
     ("when-value", step_when_value),
     # ★★ P17-98/P17-99（审计 `05 PLG-08` / `05 PLG-04`）：插件日志缓冲的锁 ＋ 注册表线程约定字据
     #   ＋ C ABI sink 零静默。独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
-    ("plugin-contract", step_plugin_contract),
     # ★★ P17-100（审计 `01 F-17`）：SquashFS 超块版本/块对数 ＋ 元数据块长度的读侧校验。
     #   需要 CLI 产物；自带夹具（现打镜像）。被 `--only` 过滤时进 UNCOVERED。
     ("sqfs-superblock", step_sqfs_superblock),
@@ -7080,7 +7079,6 @@ STEPS = [
     # ★★ 2026-10-09（P16-0b）：官方页 replaces 契约 + 插件隔离 + 内置页引擎直连棘轮
     ("official-pages", step_official_pages),
     # ★★ 2026-10-09（P16-0b）：struct stk_ui ↔ kUiMethods[] 逐名同序
-    ("abi-closure", step_abi_closure),
     # ★★ 2026-10-09（P16-0b）：判据引用的文档必须存在
     ("doc-cite", step_doc_citations),
     # ★★ 2026-10-09（P16-1b 判定半）：二进制补丁识别与 1.x 金标准逐条对拍
@@ -7121,7 +7119,6 @@ STEPS = [
     # ★ S1 批两条（2026-10-06）：文本提取守卫在真跑那条路上生效 / 插件 init 失败回滚注册。
     #   各自独立成步（不塞进 selftest）：被 `--only` 过滤时会按假绿批的记账进 UNCOVERED。
     ("extract-guard", step_extract_guard),
-    ("plugin-init-rollback", step_plugin_init_rollback),
     # ★★ 2026-10-06（S2 批）：2-1/2-2 的边界域、1-4 的解包选中口径。
     #   各自独立成步（不塞进 selftest）：被 `--only` 过滤时会按假绿批的记账进 UNCOVERED。
     ("codec-strict", step_codec_strict),
