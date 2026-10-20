@@ -6651,6 +6651,33 @@ SmokeResult run_smoke() {
             QApplication::processEvents();
             QThread::msleep(5);
         }
+
+        // ★★ 用户 2026-10-20 批准的口径（④）：**有界等待"插件页内容就绪"**，超时**明确报未就绪**
+        //   （带 objectName / childCount），按红处理，**不静默重试**。
+        //   取证依据：同一份 work 目录复跑 3 次全绿（908/0）⇒ 是单进程内的构造/检查时序，
+        //   不是输入问题、也不是夹具写读问题（读回校验 0 失败）。
+        {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+            bool ready = false;
+            while (std::chrono::steady_clock::now() < deadline) {
+                if (page_widget != nullptr &&
+                    !page_widget->findChildren<FacadeTree*>().isEmpty()) {
+                    ready = true;
+                    break;
+                }
+                if (page_widget != nullptr && page_widget->layout() != nullptr) {
+                    page_widget->layout()->activate();
+                }
+                QApplication::processEvents();
+                QThread::msleep(10);
+            }
+            if (!ready) {
+                result.notes.append(
+                    QStringLiteral("P5 诊断：插件页内容未就绪（等 2000ms；objectName=%1 childCount=%2）")
+                        .arg(page_widget != nullptr ? page_widget->objectName() : QStringLiteral("<null>"))
+                        .arg(page_widget != nullptr ? page_widget->findChildren<QWidget*>().size() : -1));
+            }
+        }
         // ① 插件页由宿主套上**外壳**（P16-2c：与内置六页同一个 `PageBase` 外壳 ——
         //    `PageBase` 构造里自带 `ScrollViewport(Fit::Content)` ＋ header ＋ action_bar）。
         //   ★ 修前宿主套的是**裸** `ScrollViewport`、页控件本人就是视口，所以这条判据写成
@@ -7138,6 +7165,30 @@ SmokeResult run_smoke() {
             const QString act_path =
                 QDir::temp().filePath(QStringLiteral("xrkit_smoke_listact.txt"));
             QFile::remove(act_path);
+            // ★★ 同 P5：**有界等待**这个"40 行门面列表"出现（用户 2026-10-20 口径：
+            //   有界等待 ＋ 超时明确报未就绪，不静默重试）。取证：同一 work 目录复跑全绿 ⇒ 时序。
+            {
+                const auto deadline =
+                    std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+                while (std::chrono::steady_clock::now() < deadline) {
+                    bool found = false;
+                    if (page_widget != nullptr) {
+                        for (VirtualList* candidate : page_widget->findChildren<VirtualList*>()) {
+                            if (candidate->row_count() == 40) {
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (found) break;
+                    if (page_widget != nullptr && page_widget->layout() != nullptr) {
+                        page_widget->layout()->activate();
+                    }
+                    QApplication::processEvents();
+                    QThread::msleep(10);
+                }
+            }
+
             VirtualList* act_view = nullptr;
             if (page_widget != nullptr) {
                 for (VirtualList* candidate : page_widget->findChildren<VirtualList*>()) {
