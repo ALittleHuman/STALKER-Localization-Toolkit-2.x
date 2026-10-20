@@ -225,32 +225,10 @@ if ($isDev) {
     Write-Host "== 开发版：插件作为**夹具**随包携带（落 plugins\_fixtures\，默认不加载）=="
     # 夹具落点要先建出来（P17-81：`plugins\` 顶层保持为空 —— 它是加载器扫描路径）。
     New-Item -ItemType Directory -Force -Path $pluginDrop | Out-Null
-    # ★★ 决策 1（C ABI 退净）：C 插件夹具（`xrkit_*_plugin.dll`）已随 ABI 一起删除，
-#   所以下面这段**永远找不到文件** —— 保留它是为了老构建目录里遗留的 dll 不会被误塞进包。
-# 只认**我们自己构建出来的插件 DLL**（`xrkit_*_plugin.dll`）：
-    #   插件目录的加载器会吃**任意** .dll（loader.cpp 只按后缀过滤），照搬整目录会把
-    #   Qt 运行时那堆 DLL 也当成插件、并把它们从包根"搬走" ⇒ 包直接坏掉。
-    #   命名前缀既是构建约定，也是"这是我的插件"的判据。
-    $pluginDirs = @(
-        (Join-Path $root 'build\msvc-release\tools\cli'),   # xrkit_test_plugin.dll 落点
-        (Join-Path $root 'build\msvc-shell\tools\cli'),     # 外壳预设下的同一目标
-        (Join-Path $root 'build\plugins')
-    )
-    foreach ($d in $pluginDirs) {
-        if (-not (Test-Path $d)) { continue }
-        Get-ChildItem -LiteralPath $d -Filter 'xrkit_*_plugin.dll' -File -ErrorAction SilentlyContinue |
-            ForEach-Object {
-                # ★★ 2026-10-05（本批）：**同名只算一次** —— 同一枚插件会在**多个**构建目录里
-                #   各有一份（`msvc-release` 与 `msvc-shell` 是同一目标的两种预设），而且
-                #   `Copy-Item -Force` 到同一个落点本来就是"后写覆盖前写"。
-                #   修前不去重 ⇒ `插件 2 个：xrkit_test_plugin.dll, xrkit_test_plugin.dll`，
-                #   而包里其实只有 **1** 个文件 —— 那句数会一路写进 README.txt（用户可见面），
-                #   与"零静默/说明书必须与实际打的包一致"直接冲突。
-                if ($copiedPlugins -contains $_.Name) { return }
-                Copy-Item -LiteralPath $_.FullName -Destination $pluginDrop -Force
-                $copiedPlugins += $_.Name
-            }
-    }
+    # ★★ 决策 1（C ABI 退净）：**这里原来会扫 `xrkit_*_plugin.dll` 塞进 `_fixtures`** ——
+    #   C 插件夹具已随 ABI 删除，那段只会把**老构建目录里遗留的 dll** 捞进包
+    #   （ALPHA.213 实测：`_fixtures` 里还躺着 1 枚 `xrkit_test_plugin.dll`）。
+    #   ⇒ 整段删除。开发版的夹具只剩 `.py`（下面那段显式清单）。
     # ★★ P16-2a（切打包口径）：开发版带**随包的全部 Python 插件** ——
     #   六页插件版（fs/convert/text/xml/video/fontpack）＋ **三插件同页**（`toolchain_page.py`）。
     #   ★ 这里是**显式清单**（不放宽）：这 7 枚必须都在源里、也都必须进包；少一枚立刻 throw。
@@ -282,7 +260,7 @@ if ($isDev) {
     if ($copiedPlugins.Count -gt 0) {
         Write-Host ("  插件 {0} 个：{1}" -f $copiedPlugins.Count, ($copiedPlugins -join ', '))
     } else {
-        Write-Host "  插件 0 个（没有已构建的 xrkit_*_plugin.dll）"
+        Write-Host "  插件 0 个（决策 1 之后不再有 C 插件夹具）"
     }
 } else {
     Write-Host "== 发行版：plugins\ 保持为空（既定策略：NLC 解密插件不随包发布）=="
@@ -395,7 +373,7 @@ if ($isDev) {
                            "该子目录**不参与加载** —— `plugins\` 顶层为空、程序默认跑的仍是内置六页）：{2}。")
         $pluginLineHead -f $copiedPlugins.Count, ($copiedPlugins.Count - 1), ($copiedPlugins -join ', ')
     } else {
-        "插件：本包是**开发版**，但构建产物里没有 xrkit_*_plugin.dll，plugins\ 为空。"
+        "插件：本包是**开发版**，但构建产物里没有插件夹具，plugins\ 为空。"
     }
 } else {
     $pluginLine = "插件：plugins\ 为空目录（发行版策略：NLC 解密插件闭源、不随包发布；" +

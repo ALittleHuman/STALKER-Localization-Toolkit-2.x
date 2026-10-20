@@ -156,9 +156,11 @@ def check_status_line() -> None:
 # ── ③ LoadResult::registrations 成功路径不是死的 ────────────────────────────
 
 def check_registrations() -> None:
-    fixture = BUILD / "tools" / "cli" / "xrkit_test_plugin.dll"
+    # ★★ 决策 1（C ABI 退净）：夹具从 `xrkit_test_plugin.dll` 换成 **Python 夹具**
+    #   （`tests/python_plugins/hello.py`）—— 现在唯一能被加载的就是 `.py`。
+    fixture = ROOT / "tests" / "python_plugins" / "hello.py"
     if not fixture.exists():
-        want(False, "测试插件夹具存在（%s）" % fixture.name, "构建没编出来")
+        want(False, "Python 插件夹具存在（%s）" % fixture.name, "仓库里没有这枚夹具")
         return
     tmp = Path(tempfile.mkdtemp(prefix="xrkit_engine_contract_"))
     try:
