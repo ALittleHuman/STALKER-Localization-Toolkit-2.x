@@ -6514,6 +6514,40 @@ def step_sqfs_gzip_reference(release: bool) -> None:
         fail("gzip 产物与参照**不同族**（编号或字节不一致，见上）（T-07 条件①）")
 
 
+def step_package_structure(release: bool) -> None:
+    r"""发行包**分类计划**（决策 4 的 A 半；P17-177）。
+
+    用户 2026-10-19/20 口径：「不要让夹具去模拟整个 `package.ps1`，那会变成第二套打包逻辑。
+    给 `package.ps1` 加一个 `-PlanOnly`：只读源清单，输出『每个文件落到哪』的 JSON，
+    不复制、不写盘。然后用临时目录造假舞台跑它，断言根目录散文件 ≤ 12、`logs\`/`user.ltx`
+    不在计划里、`python314.dll` 留根、`.pyd` 进 `python\`、ffmpeg 进 `bin\`、
+    `version.txt` 有 `layout=bin+python`。这条叫 `package-structure`，与将来的 `package-real` 分开。
+    **★ 这条绿不代表包能发**；`package-real` 没跑，release 档仍按阻塞记账。」
+
+    判据 `tests/check_package_structure.py`（跑真 `-PlanOnly`，20 项）：
+    A 计划可解析 / `layout=bin+python` / 根 ≤12；B 运行期产物不进包；C 三类留根；
+    D `.pyd` 等进 `python\`；E ffmpeg 三件进 `bin\`；F 静态锁（共用 `Get-PackageDest`）。
+    红证：把 `.pyd` 规则改成"留根" ⇒ D 项红（已实测）。
+    """
+    say("[package-structure] 发行包分类计划（决策 4 的 A 半；**不等于包能发**）")
+    script = ROOT / "tests" / "check_package_structure.py"
+    if not require_repo_file(script, "发行包结构判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("PKG-STRUCTURE") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("发行包分类计划形态对（根 ≤12、三类留根、pyd→python\\、ffmpeg→bin\\）；"
+           "★ 真打包另由 package-real 验")
+    elif rc == 2:
+        prereq("发行包结构判据", "缺 powershell 或 package.ps1（判据没跑成，不是通过）", release)
+    else:
+        fail("发行包分类计划不合口径（见上）：要么根目录还是散的，要么该挪的没挪（决策 4）")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6955,6 +6989,8 @@ STEPS = [
     ("sqfs-compressor-doc", step_sqfs_compressor_doc),
     # ★★ P17-171（T-07 收口条件①）：gzip 产物与参照 tar2sqfs 逐字节一致。
     ("sqfs-gzip-reference", step_sqfs_gzip_reference),
+    # ★★ P17-177（决策 4 A 半）：发行包分类计划（-PlanOnly）。真打包另由 package-real 验。
+    ("package-structure", step_package_structure),
     # ★★ P17-163（第三方只读审计 H-02）：设置文件与游戏 user.ltx 分开（有条件迁移）。
     ("user-ltx-identity", step_user_ltx_identity),
     ("loose-truncation", step_loose_truncation),

@@ -24,7 +24,14 @@ param(
     # ★★ 2026-10-05（本批 #8）：**开发版默认带全部插件**。默认值按下文 `current.prerelease`
     #   推导（ALPHA/BETA ⇒ 开发版）；显式 `-Dev:$false` ⇒ 强制发行口径（plugins\ 为空）。
     #   `DevWasSet` 用来区分"用户显式关了"与"默认值"两种情况。
-    [bool]$Dev = $false
+    [bool]$Dev = $false,
+    # ★★ 决策 4（用户 2026-10-18/19）：**只算计划、不动盘**。
+    #   `-PlanOnly` 输出"每个文件落到哪"的 JSON 就退出（不复制、不写 version.txt、不做自检）；
+    #   与真打包**共用同一批分类规则**（`Get-PackageDest`）—— 判据验的是这份规则，
+    #   不是另写一套模拟流程。
+    [switch]$PlanOnly,
+    # 计划模式可以指向一个**假源树**（判据用临时目录造夹具）；缺省＝真实源
+    [string]$SourceRoot = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,10 +50,100 @@ $shell = Join-Path $root 'build\msvc-shell'
 $pluginDrop = Join-Path $stage 'plugins\_fixtures'
 $qt    = 'E:\Software\Tools\Qt\6.8.3\msvc2022_64'
 
+# ══ 决策 4：**分类规则**（计划与真打包共用这一份，不许写第二套）════════════════
+#   口径（用户 2026-10-18/19）：
+#     · 必须留根：`xrkit_app.exe`、`python3XX.dll`/`python3.dll`（exe 的导入表）、
+#       `vcruntime140*.dll`、`Qt6*.dll`、README/version/LICENSE；
+#     · `bin\`：`ffmpeg.exe`、`ffprobe.exe`、`download_ffmpeg.py`；
+#     · `python\`：embeddable 的其余件（*.pyd、python3*.zip、python3*._pth、python.exe/
+#       pythonw.exe/python.cat、sqlite3.dll、libcrypto-3.dll、libssl-3.dll、libffi-8.dll）；
+#     · **不进包**：运行期产物 `logs\*`、`user.ltx`（自检是重定向到 %TEMP% 的，
+#       包里出现它们只说明"有人在舞台上跑过 exe"）。
+#   返回 '' 表示留根；返回 $null 表示**不进包**。
+function Get-PackageDest {
+    param([string]$RelPath)
+    $name = Split-Path $RelPath -Leaf
+    $lower = $name.ToLowerInvariant()
+    if ($RelPath -match '(^|[\\/])(logs)([\\/]|$)' -or $lower -eq 'user.ltx') { return $null }
+    if ($lower -eq 'xrkit_app.exe') { return '' }
+    if ($lower -in @('ffmpeg.exe', 'ffprobe.exe', 'download_ffmpeg.py')) { return 'bin' }
+    if ($lower -in @('readme.txt', 'version.txt', 'license.txt')) { return '' }
+    if ($lower -match '^(python3\d*|pythonwd?)\.dll$') { return '' }
+    if ($lower -match '^(vcruntime140.*|qt6.*)\.dll$') { return '' }
+    if ($lower -match '\.pyd$') { return 'python' }
+    if ($lower -match '^python3.*\.(zip|_pth)$') { return 'python' }
+    if ($lower -in @('python.exe', 'pythonw.exe', 'python.cat', 'sqlite3.dll',
+                     'libcrypto-3.dll', 'libssl-3.dll', 'libffi-8.dll')) { return 'python' }
+    return ''
+}
+
 $exe = Get-ChildItem -Path $shell -Recurse -Filter 'xrkit_app.exe' -ErrorAction SilentlyContinue |
        Select-Object -First 1
 if (-not $exe) { throw "找不到 msvc-shell 的 xrkit_app.exe（先跑 scripts\build.ps1 -Preset msvc-shell）" }
 if (-not (Test-Path (Join-Path $qt 'bin\windeployqt.exe'))) { throw "找不到 windeployqt：$qt" }
+
+# ★★ 2026-10-20（P17-176 的真因）：**打包前不许有残留进程**。
+#   那次"vcruntime140.dll 权限不足"十几次，最后查明是**自检跑完没退干净的 xrkit_app**
+#   还在从 dist 目录里跑、把 DLL 映射住了 ⇒ Copy-Item 报 PermissionDenied。
+#   ⇒ 这里先查一遍：占着就直接拒绝并说清楚（不自动杀：用户可能正在用界面）。
+$busy = @(Get-Process xrkit_app, xrkit_cli, ffmpeg, ffprobe -ErrorAction SilentlyContinue)
+if ($busy.Count -gt 0) {
+    # 用户口径（2026-10-20）：「要么明确拒绝并提示先关掉，要么**停止并写日志**」。
+    # 这里选**停止 ＋ 写日志**：打包是无人值守的（门禁里跑），停下来等人来点会卡死流程；
+    # 而且这些进程几乎都是**上一轮自检没退干净**的实例（P17-176 的真因）。
+    foreach ($proc in $busy) {
+        Write-Host ("PACKAGE stop-process {0} (PID {1}) {2}" -f $proc.ProcessName, $proc.Id, $proc.Path)
+        try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch {
+            throw ("停不掉进程 {0} (PID {1})：{2}`n  它是 vcruntime140.dll 复制失败的典型原因，先手工关掉再打包。" -f `
+                   $proc.ProcessName, $proc.Id, $_.Exception.Message)
+        }
+    }
+    Start-Sleep -Milliseconds 800
+    $still = @(Get-Process xrkit_app, xrkit_cli, ffmpeg, ffprobe -ErrorAction SilentlyContinue)
+    if ($still.Count -gt 0) {
+        throw ("打包前仍有 {0} 个进程占着文件 —— 先关掉再打包（否则 vcruntime140.dll 会 PermissionDenied）。" -f $still.Count)
+    }
+}
+
+# ══ 决策 4：`-PlanOnly` —— 只算计划、不动盘 ══════════════════════════════════
+#   用法：pwsh -File scripts/package.ps1 -PlanOnly [-SourceRoot <目录>]
+#   输出一行 JSON（`PLAN ` 前缀），内容包括：每个文件的 `src/dest`、被排除的运行期产物、
+#   以及**根目录散文件数**。真打包走的是同一批规则（`Get-PackageDest`）。
+if ($PlanOnly) {
+    $srcRoot = if ($SourceRoot) { $SourceRoot } else { $shell }
+    if (-not (Test-Path $srcRoot)) { throw "PlanOnly：源目录不存在 $srcRoot" }
+    $files = @(Get-ChildItem -LiteralPath $srcRoot -Recurse -File -ErrorAction SilentlyContinue)
+    $entries = @()
+    $excluded = @()
+    foreach ($f in $files) {
+        $rootFull = (Resolve-Path -LiteralPath $srcRoot).Path
+        $rel = $f.FullName.Substring($rootFull.Length).TrimStart('\', '/')
+        $dest = Get-PackageDest -RelPath $rel
+        $leaf = $f.Name
+        if ($null -eq $dest) {
+            $excluded += [ordered]@{ src = $rel; reason = '运行期产物，不进包' }
+            continue
+        }
+        $target = if ($dest -eq '') { $leaf } else { "$dest/$leaf" }
+        $entries += [ordered]@{ src = $rel; dest = $target; dir = $dest }
+    }
+    $rootCount = @($entries | Where-Object { $_.dir -eq '' }).Count
+    $payload = [ordered]@{
+        plan        = 'package-structure/v1'
+        source_root = $srcRoot
+        layout      = 'bin+python'
+        entries     = $entries
+        excluded    = $excluded
+        root_files  = $rootCount
+    }
+    Write-Host ("PLAN " + ($payload | ConvertTo-Json -Depth 6 -Compress))
+    Write-Host ("PLAN summary files={0} root={1} bin={2} python={3} excluded={4}" -f `
+        $entries.Count, $rootCount,
+        @($entries | Where-Object { $_.dir -eq 'bin' }).Count,
+        @($entries | Where-Object { $_.dir -eq 'python' }).Count,
+        $excluded.Count)
+    exit 0
+}
 
 Write-Host "== 清理舞台 =="
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
@@ -348,6 +445,7 @@ commit=$commit
 built=$stamp
 platform_plugins=qwindows,qoffscreen
 python_runtime=$pyContract
+layout=bin+python
 exe_identity=$exeIdentity
 "@ | Set-Content -LiteralPath (Join-Path $stage 'version.txt') -Encoding UTF8
 # ★★ 2026-10-07（用户裁决）：`platform_plugins=` 这一行是**包自己的契约声明** ——
