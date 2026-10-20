@@ -38,6 +38,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -213,6 +214,10 @@ def disk_space_ok(need_gb: float = 2.0) -> bool:
     return True
 
 
+LAST_SMOKE_TEMP = [None]      # 本轮 smoke 的私有 TEMP（失败取证要从这里拷现场）
+PHASE4_ONLY = [False]         # `--phase4-only`：只跑 ④（定向复测，省时间也少噪声）
+
+
 def run_smoke(pkg: Path, timeout: int = 900):
     env = dict(os.environ)
     env["QT_QPA_PLATFORM"] = "offscreen"   # ★ 只给子进程，不设持久变量
@@ -232,6 +237,7 @@ def run_smoke(pkg: Path, timeout: int = 900):
     #   今天 360 把仓库加白之后，把私有 TEMP 也挪进**仓库内**（= 白名单路径）做对照实验：
     #   若失败率从 8/20 掉到 0/20，就说明是"杀软扫刚写的 .py 导致 import 偶发失败"。
     private_temp = Path(tempfile.mkdtemp(prefix="pktmp_", dir=str(ROOT / "build")))
+    LAST_SMOKE_TEMP[0] = private_temp
     env["TEMP"] = str(private_temp)
     env["TMP"] = str(private_temp)
     exe = pkg / "xrkit_app.exe"
@@ -356,6 +362,59 @@ def fixture_only_failures(out: str) -> tuple:
     return only, rest
 
 
+def capture_phase4_artifacts(pkg: Path, out: str) -> Path:
+    """④ 失败时把现场**拷出来**（在删 pktmp 之前调用）。
+
+    用户 2026-10-21 口径：不只两个文件 —— 还要 plugin_errors / 宿主页诊断 / 日志尾部 /
+    文件大小·mtime·sha256；`l2_trace.txt` 单独留（判"builder 没跑完"还是"判据读太早"）。
+    **缺文件也要写一行"缺失"**（缺失本身就是证据），单文件截断 64 KB。
+    """
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    dest = ROOT / "build" / "logs" / ("pkg_pages_phase4_artifacts_" + ts)
+    dest.mkdir(parents=True, exist_ok=True)
+    private = LAST_SMOKE_TEMP[0]
+    names = ["l2_trace.txt", "build_error.txt", "l2_marker.txt",
+             "cancel_marker.txt", "cancel_mark_error.txt", "cancel_probe.py", "l2_demo.py"]
+    manifest = []
+    src_dirs = []
+    if private is not None:
+        src_dirs = [private / "xrkit_smoke_uifacade_l2", private / "xrkit_smoke_cancel_probe",
+                    private]
+    for name in names:
+        found = None
+        for d in src_dirs:
+            cand = d / name
+            if cand.is_file():
+                found = cand
+                break
+        if found is None:
+            manifest.append("%-24s 缺失（找过：%s）" % (name, ", ".join(str(d) for d in src_dirs)))
+            continue
+        dst = dest / name
+        try:
+            data = found.read_bytes()[:65536]
+            dst.write_bytes(data)
+            digest = hashlib.sha256(found.read_bytes()).hexdigest()
+            st = found.stat()
+            manifest.append("%-24s size=%d mtime=%s sha256=%s%s"
+                            % (name, st.st_size,
+                               time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(st.st_mtime)),
+                               digest, "（已截断 64KB）" if st.st_size > 65536 else ""))
+        except OSError as exc:
+            manifest.append("%-24s 拷贝失败：%s" % (name, exc))
+    # stdout 尾部 200 行
+    try:
+        tail = "\n".join(out.splitlines()[-200:])
+        (dest / "stdout_tail.txt").write_text(tail, encoding="utf-8", errors="replace")
+        manifest.append("stdout_tail.txt            %d 行（末 200）" % len(out.splitlines()[-200:]))
+    except OSError:
+        manifest.append("stdout_tail.txt            写入失败")
+    (dest / "manifest.txt").write_text(
+        "phase=4\npkg=%s\nwhen=%s\n\n%s\n" % (pkg, ts, "\n".join(manifest)),
+        encoding="utf-8")
+    return dest
+
+
 def audit_package(pkg: Path) -> None:
     rel = pkg.relative_to(ROOT).as_posix()
     marker = package_marker(pkg)
@@ -385,7 +444,11 @@ def audit_package(pkg: Path) -> None:
         shutil.copytree(pkg, work)
 
         # ── ③ 默认形态：可见页＝六个内置页 ────────────────────────────────
-        rc, out = run_smoke(work)
+        if PHASE4_ONLY[0]:
+            say("   [--phase4-only] 跳过 ③（定向复测只跑 ④，少噪声也省时间）")
+            rc, out = 0, ""
+        else:
+            rc, out = run_smoke(work)
         if rc != 0:
             # ★★ 用户 2026-10-20：「失败时能读出是哪个页、childCount 多少、等了多久」——
             #   ③ 也要留**全量输出**与现场（原来只留末 40 行，读不出页/控件细节）。
@@ -401,6 +464,11 @@ def audit_package(pkg: Path) -> None:
                        len(fails3), "\n".join(fails3), "\n".join(notes3), out),
                     encoding="utf-8")
                 say("   [诊断] ③ 失败现场：%s" % diag3)
+                try:
+                    art3 = capture_phase4_artifacts(pkg, out)
+                    say("   [诊断] ③ 现场 artifacts：%s" % art3)
+                except OSError as exc:
+                    say("   [诊断] artifacts 落盘失败：%s" % exc)
                 os.environ["XRKIT_KEEP_PKG_PAGES_TMP"] = "1"
                 _prune_kept_dirs(3)
             except OSError as exc:
@@ -484,6 +552,11 @@ def audit_package(pkg: Path) -> None:
                        "\n".join(fails4), out2),
                     encoding="utf-8")
                 say("   [诊断] ④ 失败现场：%s（work 保留：%s）" % (diag, work))
+                try:
+                    art = capture_phase4_artifacts(pkg, out2)
+                    say("   [诊断] ④ 现场 artifacts：%s" % art)
+                except OSError as exc:
+                    say("   [诊断] artifacts 落盘失败：%s" % exc)
                 os.environ["XRKIT_KEEP_PKG_PAGES_TMP"] = "1"
                 _prune_kept_dirs(3)
             except OSError as exc:
@@ -572,6 +645,9 @@ def selfcheck() -> tuple:
 
 
 def main() -> int:
+    if "--phase4-only" in sys.argv:
+        PHASE4_ONLY[0] = True
+        sys.argv.remove("--phase4-only")
     if not disk_space_ok(2.0):
         print("PKG-PAGES 未覆盖：临时盘余量不足（清盘后重跑）")
         return 2

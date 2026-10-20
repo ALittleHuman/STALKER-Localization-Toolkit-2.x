@@ -6024,6 +6024,22 @@ SmokeResult run_smoke() {
         check(marker_after.contains(QStringLiteral("task_msg_text:")),
               QStringLiteral("P12c-2 任务壳消息没回到插件回调（标记=%1）")
                   .arg(marker_after.simplified()));
+        // ★ 2026-10-21：把"判据开始读标记"的时刻也写进 l2_trace.txt（与夹具的 build 事件同一格式），
+        //   这样能判"是 builder 没跑完，还是判据读太早"。
+        {
+            QFile trace(QDir(dir).filePath(QStringLiteral("l2_trace.txt")));
+            if (trace.open(QIODevice::Append | QIODevice::Text)) {
+                trace.write(QStringLiteral("read|%1|%2|%3\n")
+                                .arg(QString::number(
+                                         std::chrono::duration<double>(
+                                             std::chrono::steady_clock::now().time_since_epoch())
+                                             .count(),
+                                     'f', 6))
+                                .arg(reinterpret_cast<quintptr>(QThread::currentThread()))
+                                .arg(QCoreApplication::applicationPid())
+                                .toUtf8());
+            }
+        }
         QStringList labels_cb;
         if (page_widget != nullptr) {
             for (QLabel* item : page_widget->findChildren<QLabel*>()) labels_cb << item->text();
@@ -6072,6 +6088,7 @@ SmokeResult run_smoke() {
             "# -*- coding: utf-8 -*-\n"
             "import atexit\n"
             "import os\n"
+            "import threading\n"
             "import time\n"
             "import traceback\n"
             "def register(api):\n"
@@ -6102,6 +6119,20 @@ SmokeResult run_smoke() {
             "        except Exception:\n"
             "            pass\n"
             "\n"
+            "    def _trace(event):\n"
+            "        # ★ 2026-10-21（用户口径）：**独立**的 l2_trace.txt，一行\n"
+            "        #   `event|monotonic|thread_id|pid` —— 只记 build_start / built / error，\n"
+            "        #   这样既能判断\"builder 没跑完\"还是\"判据读太早\"，又不会破坏\n"
+            "        #   `marker_value` 的**精确比较**（值行保持原样）。\n"
+            "        try:\n"
+            "            with open(os.path.join(api.plugin_dir, 'l2_trace.txt'), 'a',\n"
+            "                      encoding='utf-8') as fh:\n"
+            "                fh.write('%s|%.6f|%d|%d\\n'\n"
+            "                         % (event, time.monotonic(), threading.get_ident(),\n"
+            "                            os.getpid()))\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "\n"
             "    def _flush():\n"
             "        try:\n"
             "            if _fh is not None:\n"
@@ -6114,9 +6145,11 @@ SmokeResult run_smoke() {
             "    def _guard(fn):\n"
             "        def wrapper():\n"
             "            mark('build_start')\n"
+            "            _trace('build_start')\n"
             "            try:\n"
             "                value = fn()\n"
             "                mark('built')\n"
+            "                _trace('built')\n"
             "                return value\n"
             "            except BaseException:\n"
             "                try:\n"
@@ -6125,6 +6158,7 @@ SmokeResult run_smoke() {
             "                        fh.write(traceback.format_exc())\n"
             "                except Exception:\n"
             "                    pass\n"
+            "                _trace('error')\n"
             "                raise\n"
             "            finally:\n"
             "                _flush()\n"
@@ -6756,10 +6790,34 @@ SmokeResult run_smoke() {
                   .arg(loops.isEmpty() ? QStringLiteral("(没读到)") : loops));
 
         // ③ 纪律抽查：worker 里改控件必须被拒（主线程回调写的最后一句话才是控件上的值）
+        //
+        // ★★ 2026-10-21：这条以前是**同步读一次**。worker 的 `message('loops:N')` 要经过
+        //   `task_on_message` 排到主线程才落到标签上 ⇒ 负载高时"回调还没到"就被判成
+        //   "worker 改到了控件"（实测报错文案正是 `标签实得 未被改写`，即 `worker_label == nullptr`）。
+        //   口径（用户 2026-10-21）：「修判据的**完成条件**，不加固定等待，也不重试」——
+        //   有界等这个标签出现（≤2000ms，泵事件），超时仍按红并说清"回调未到"。
         QLabel* worker_label = nullptr;
-        if (page_widget != nullptr) {
-            for (QLabel* candidate : page_widget->findChildren<QLabel*>()) {
-                if (candidate->text().startsWith(QStringLiteral("loops:"))) worker_label = candidate;
+        {
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+            while (std::chrono::steady_clock::now() < deadline) {
+                worker_label = nullptr;
+                if (page_widget != nullptr) {
+                    for (QLabel* candidate : page_widget->findChildren<QLabel*>()) {
+                        if (candidate->text().startsWith(QStringLiteral("loops:"))) {
+                            worker_label = candidate;
+                            break;
+                        }
+                    }
+                }
+                if (worker_label != nullptr) break;
+                QApplication::processEvents();
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            if (worker_label == nullptr) {
+                result.notes.append(
+                    QStringLiteral("P17-1 ③ 诊断：等 `loops:` 标签 2000ms 未出现 ⇒ "
+                                   "worker 的 message 回调没到主线程"));
             }
         }
         check(worker_label != nullptr &&
