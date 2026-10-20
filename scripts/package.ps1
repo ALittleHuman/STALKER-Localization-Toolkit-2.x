@@ -86,12 +86,18 @@ if (-not (Test-Path (Join-Path $qt 'bin\windeployqt.exe'))) { throw "找不到 w
 #   那次"vcruntime140.dll 权限不足"十几次，最后查明是**自检跑完没退干净的 xrkit_app**
 #   还在从 dist 目录里跑、把 DLL 映射住了 ⇒ Copy-Item 报 PermissionDenied。
 #   ⇒ 这里先查一遍：占着就直接拒绝并说清楚（不自动杀：用户可能正在用界面）。
-$busy = @(Get-Process xrkit_app, xrkit_cli, ffmpeg, ffprobe -ErrorAction SilentlyContinue)
+$busy = @(Get-Process xrkit_app, xrkit_cli, ffmpeg, ffprobe -ErrorAction SilentlyContinue |
+          Where-Object { $_.Id -ne $PID })
 if ($busy.Count -gt 0) {
     # 用户口径（2026-10-20）：「要么明确拒绝并提示先关掉，要么**停止并写日志**」。
-    # 这里选**停止 ＋ 写日志**：打包是无人值守的（门禁里跑），停下来等人来点会卡死流程；
-    # 而且这些进程几乎都是**上一轮自检没退干净**的实例（P17-176 的真因）。
+    #   ★★ 但**绝不能杀自己的父进程**：`xrkit_cli --build-package` 就是靠 `package.ps1` 打包的，
+    #     而它也叫 `xrkit_cli.exe` —— 第一版预检把父进程杀了 ⇒ `_pkg.py` 每次都以 -1 结束、
+    #     包里一个文件都没有（P17-181 连挂两次）。所以：`xrkit_cli` 只**提示不杀**。
     foreach ($proc in $busy) {
+        if ($proc.ProcessName -eq 'xrkit_cli') {
+            Write-Host ("PACKAGE warn 有 xrkit_cli 在跑（PID {0}）—— 很可能就是本次打包的父进程，**不杀**" -f $proc.Id)
+            continue
+        }
         Write-Host ("PACKAGE stop-process {0} (PID {1}) {2}" -f $proc.ProcessName, $proc.Id, $proc.Path)
         try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch {
             throw ("停不掉进程 {0} (PID {1})：{2}`n  它是 vcruntime140.dll 复制失败的典型原因，先手工关掉再打包。" -f `
@@ -99,7 +105,7 @@ if ($busy.Count -gt 0) {
         }
     }
     Start-Sleep -Milliseconds 800
-    $still = @(Get-Process xrkit_app, xrkit_cli, ffmpeg, ffprobe -ErrorAction SilentlyContinue)
+    $still = @(Get-Process xrkit_app, ffmpeg, ffprobe -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID })
     if ($still.Count -gt 0) {
         throw ("打包前仍有 {0} 个进程占着文件 —— 先关掉再打包（否则 vcruntime140.dll 会 PermissionDenied）。" -f $still.Count)
     }
@@ -172,7 +178,18 @@ if ($pyZip.Count -eq 0) {
 }
 $pyFiles = @(Get-ChildItem -LiteralPath $pyEmbed -File -Recurse)
 if ($pyFiles.Count -eq 0) { throw "embeddable Python 目录是空的：$pyEmbed" }
-Copy-Item -Path (Join-Path $pyEmbed '*') -Destination $stage -Recurse -Force
+# ★★ 决策 4：**逐文件按 `Get-PackageDest` 落位**（与 `-PlanOnly` 同一份规则）。
+#   `python3XX.dll` / `python3.dll` 留根（exe 的导入表要它们）；其余进 `python\`。
+$pyMoved = 0
+foreach ($f in $pyFiles) {
+    $dest = Get-PackageDest -RelPath $f.Name
+    if ($null -eq $dest) { continue }
+    $target = if ($dest -eq '') { $stage } else { Join-Path $stage $dest }
+    New-Item -ItemType Directory -Force -Path $target | Out-Null
+    Copy-Item -LiteralPath $f.FullName -Destination $target -Force
+    if ($dest -ne '') { ++$pyMoved }
+}
+Write-Host ("  CPython：留根 {0} 个，进 python\ {1} 个" -f ($pyFiles.Count - $pyMoved), $pyMoved)
 Write-Host ("  CPython 运行期 + 标准库：{0} 个文件（{1:N1} MB，来源 third_party\python-embed）" `
             -f $pyFiles.Count, (($pyFiles | Measure-Object -Property Length -Sum).Sum / 1MB))
 
@@ -291,8 +308,11 @@ if (-not $depSrc) {
            ". Put both in the same directory and set XRKIT_FFMPEG_DIR, or pass a directory there.")
 }
 Write-Host "  自带依赖来源: $depSrc"
-Copy-Item -LiteralPath (Join-Path $depSrc 'ffmpeg.exe') -Destination $stage
-Copy-Item -LiteralPath (Join-Path $depSrc 'ffprobe.exe') -Destination $stage
+# ★★ 决策 4：ffmpeg/ffprobe 进 `bin\`（`find_ffmpeg` 已认这个落点；根目录优先的老口径不变）
+$binDir = Join-Path $stage 'bin'
+New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $depSrc 'ffmpeg.exe') -Destination $binDir
+Copy-Item -LiteralPath (Join-Path $depSrc 'ffprobe.exe') -Destination $binDir
 # ★★ 2026-10-15（P17-123）：**这条守卫原来自己把 ffmpeg 掉死** ——
 #   `& ffmpeg -version 2>&1 | Select-Object -First 1` 拿到首行就**掉断上游管道**
 #   ⇒ ffmpeg 被终止 ⇒ `$LASTEXITCODE` 变成 -1（终止码）⇒ 下一行误报「起不来」。
@@ -305,7 +325,7 @@ $ffLog = Join-Path $env:TEMP ('xrkit_ffprobe_{0}.txt' -f $PID)
 #   （它的 `-version` 输出本来就包含配置/库列表）。真失败仍然靠下面那条 `-ne 0` 拦。
 $prevEapFf = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
-& (Join-Path $stage 'ffmpeg.exe') -version *> $ffLog
+& (Join-Path $binDir 'ffmpeg.exe') -version *> $ffLog
 $ffExit = $LASTEXITCODE
 $ErrorActionPreference = $prevEapFf
 $ffVersion = (Get-Content -LiteralPath $ffLog -TotalCount 1)
@@ -329,7 +349,7 @@ if ($ffMajor -ne 7) {
 }
 Write-Host "  版本守卫通过：自带 ffmpeg 是 7.x"
 # 自动安装按钮的真身（程序目录里没有自带件时，页面用得上它）
-Copy-Item -LiteralPath (Join-Path $root 'scripts\download_ffmpeg.py') -Destination $stage
+Copy-Item -LiteralPath (Join-Path $root 'scripts\download_ffmpeg.py') -Destination $binDir
 
 Write-Host "== windeployqt（铺 Qt 运行时；不铺翻译/示例）=="
 # ★★ P17-128（复审计 P2-1 同族的发行链缺口）：**这里得包一层 `Continue`** ——
@@ -448,6 +468,15 @@ python_runtime=$pyContract
 layout=bin+python
 exe_identity=$exeIdentity
 "@ | Set-Content -LiteralPath (Join-Path $stage 'version.txt') -Encoding UTF8
+
+# ★★ 决策 4 验收：**包根散文件 ≤ 12**（"外面的文件太多了"变成判据）。
+$rootFiles = @(Get-ChildItem -LiteralPath $stage -File)
+Write-Host ("  包根散文件：{0} 个" -f $rootFiles.Count)
+if ($rootFiles.Count -gt 12) {
+    throw ("包根散文件 {0} 个（上限 12）：{1}`n  分类规则在 `Get-PackageDest` 里；多出来的该进 python\\ 或 bin\\。" -f `
+           $rootFiles.Count, (($rootFiles | Select-Object -ExpandProperty Name | Sort-Object) -join ', '))
+}
+
 # ★★ 2026-10-07（用户裁决）：`platform_plugins=` 这一行是**包自己的契约声明** ——
 #   门禁（`tests\check_package_platform.py`）看到它才会对**这个序号**执行"platforms\ 里
 #   两份都在 + 从产物目录真跑 `--smoke` 要求 failed=0"。修前打的包（ALPHA.57/58/59）

@@ -220,6 +220,35 @@ def run_smoke(pkg: Path, timeout: int = 900):
     return proc.returncode, out
 
 
+def package_looks_complete(pkg: Path) -> str:
+    """★ 判据的**前提**：这个包是"打完了的"，不是被打包过程改写了一半/被中断的残包。
+
+    来由（P17-181 的取证）：`build/logs/pkg_pages_fail.txt` 显示抬夹具形态的 6~9 条失败全是
+    "门面控件 0 个 / entry 关键字没生效" —— 那次 `package-pages` 判的是**上一次被中断的
+    `_pkg.py` 留在 `dist/` 里的半成品**（版本已 bump、包目录已建、但打包流程没跑完）。
+    判据本身没错，是**输入**不完整 ⇒ 这里先验完整性，不完整返回 rc=2（未覆盖），
+    **不判红、也不重试**。
+    """
+    if not (pkg / "xrkit_app.exe").is_file():
+        return "缺 xrkit_app.exe"
+    exe = pkg / "xrkit_app.exe"
+    if exe.stat().st_size < 512 * 1024:
+        return "xrkit_app.exe 体积异常（%d B）" % exe.stat().st_size
+    vt = pkg / "version.txt"
+    if not vt.is_file():
+        return "缺 version.txt"
+    try:
+        text = vt.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return "读不出 version.txt：%s" % exc
+    if "version=" not in text:
+        return "version.txt 里没有 `version=` 行"
+    for rel in ("python", "bin"):
+        if not (pkg / rel).is_dir():
+            return "缺 `%s\\` 子目录（分类布局没落地 ⇒ 大概率是半成品）" % rel
+    return ""
+
+
 def newest_package():
     base = ROOT / "dist"
     if not base.is_dir():
@@ -450,7 +479,17 @@ def main() -> int:
                          "package.ps1 的包内自检里，每次打包都会跑）" % (ROOT / "dist").relative_to(ROOT))
             say("  LEDGER 本次没有 dist 产物 ⇒ ②③④ 未执行（每次打包时 package.ps1 会跑同一套断言）")
         else:
-            audit_package(pkg)
+            # ★★ 前提检查（P17-181 的取证）：包必须是"打完了的"。
+            #   那次 `package-pages` 判的是**上一次被中断的 `_pkg.py` 留在 dist/ 里的半成品**
+            #   （版本已 bump、目录已建、流程没跑完）⇒ 抬夹具形态 9 条假红（门面控件 0 个）。
+            #   输入不完整 ⇒ rc=2（未覆盖），**不判红、也不重试**。
+            why = package_looks_complete(pkg)
+            if why:
+                say("  PKG-PAGES skip 包不完整（%s）：%s" % (why, pkg.relative_to(ROOT)))
+                say("     ↑ 不是判据缺陷：`dist/` 里那份被打包过程改写了一半或被中断 ⇒ 重打一次包再判")
+                NOTES.append("包不完整（%s）" % why)
+            else:
+                audit_package(pkg)
 
     if FAILURES:
         say("")
