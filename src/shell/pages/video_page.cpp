@@ -1100,7 +1100,14 @@ QString VideoPage::auto_install() {
         return QStringLiteral("随包自带的 ffmpeg 已在程序目录：") + native(bundled) +
                QStringLiteral("（点击本按钮会重新探测并直接用它）");
     }
-    const QString script = QDir(app_dir).filePath(QStringLiteral("download_ffmpeg.py"));
+    // ★★ 决策 4：脚本随包进 `bin\`（老包还在根）⇒ 两处都找，**根优先**
+    const QString script = [&app_dir] {
+        const QString at_root = QDir(app_dir).filePath(QStringLiteral("download_ffmpeg.py"));
+        if (QFile::exists(at_root)) return at_root;
+        const QString in_bin =
+            QDir(app_dir).filePath(QStringLiteral("bin/download_ffmpeg.py"));
+        return QFile::exists(in_bin) ? in_bin : at_root;
+    }();
     if (QFileInfo::exists(script)) {
         return QStringLiteral("程序目录里有 ") + native(script) +
                QStringLiteral("（点击本按钮会运行它下载 ffmpeg 7.x 到程序目录，它会拒绝 8.x）");
@@ -1120,7 +1127,14 @@ void VideoPage::run_auto_install() {
     const QString message = auto_install();
     last_auto_install_ = message;
     const QString app_dir = utf8(xrkit::core::app_dir());
-    const QString script = QDir(app_dir).filePath(QStringLiteral("download_ffmpeg.py"));
+    // ★★ 决策 4：脚本随包进 `bin\`（老包还在根）⇒ 两处都找，**根优先**
+    const QString script = [&app_dir] {
+        const QString at_root = QDir(app_dir).filePath(QStringLiteral("download_ffmpeg.py"));
+        if (QFile::exists(at_root)) return at_root;
+        const QString in_bin =
+            QDir(app_dir).filePath(QStringLiteral("bin/download_ffmpeg.py"));
+        return QFile::exists(in_bin) ? in_bin : at_root;
+    }();
     if (QFileInfo::exists(QDir(app_dir).filePath(QStringLiteral("ffmpeg.exe")))) {
         locator_.invalidate();
         const bool found = detect();

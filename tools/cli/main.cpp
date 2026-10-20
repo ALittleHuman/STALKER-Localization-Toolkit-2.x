@@ -524,6 +524,49 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
     // ★★ T-08（第三方只读审计 2026-10-18）：**编码确认里点「取消」⇒ 停整批**。
     //   修前：`Cancelled` 只让当前这一份失败，批处理照旧逐个弹窗（500 个文件要取消 500 次）。
     //   判据用**确认器被调用的次数**：3 个文件的批次里取消一次 ⇒ 确认器**只该被调 1 次**。
+    // ★★ 决策 4（用户 2026-10-18/19）：发行包收拢 ⇒ `ffmpeg.exe` / `ffprobe.exe` 进 `bin\`。
+    //   引擎的 `find_ffmpeg` 必须认这个新落点，且**保持根的优先级**（老包照旧能用）。
+    reg.add("video: ffmpeg 定位要认 bin\\ 且根优先（决策 4）", [](CheckContext& ctx) {
+        namespace vfs = std::filesystem;
+        namespace vd = xrkit::engine::video;
+        std::error_code ec;
+        const vfs::path root = vfs::temp_directory_path(ec) / "xrkit_d4_ffmpeg";
+        vfs::remove_all(root, ec);
+        vfs::create_directories(root / "bin", ec);
+        {
+            std::ofstream f(root / "bin" / "ffmpeg.exe", std::ios::binary);
+            f << "x";
+        }
+        {
+            std::ofstream f(root / "bin" / "ffprobe.exe", std::ios::binary);
+            f << "x";
+        }
+        const std::string app_dir = xrkit::core::path_to_utf8(root);
+        vd::FfmpegConfig cfg;
+        vd::FfmpegPaths r = vd::find_ffmpeg(app_dir, cfg);
+        check(ctx, r.found && r.ffmpeg.find("bin") != std::string::npos,
+              "D4-1 `bin\ffmpeg.exe` 要被认到（发行包收拢后的落点）");
+        check(ctx, r.has_probe && r.ffprobe.find("bin") != std::string::npos,
+              "D4-2 `bin\ffprobe.exe` 同上");
+
+        // 根目录也有 ⇒ **根优先**（老包 + 用户手放的 exe 不能被新落点抢走）
+        {
+            std::ofstream f(root / "ffmpeg.exe", std::ios::binary);
+            f << "x";
+        }
+        vd::FfmpegPaths r2 = vd::find_ffmpeg(app_dir, cfg);
+        check(ctx, r2.found && r2.ffmpeg.find("bin") == std::string::npos,
+              "D4-3 根目录也有时**根优先**（老包行为不变）");
+
+        // 配了路径 ⇒ 配置优先（8.1 的既有口径不许被这次改动碰坏）
+        vfs::remove_all(root / "ffmpeg.exe", ec);
+        cfg.path = xrkit::core::path_to_utf8(root / "bin" / "ffprobe.exe");   // 存在即可
+        vd::FfmpegPaths r3 = vd::find_ffmpeg(app_dir, cfg);
+        check(ctx, r3.ffmpeg_from_config && r3.ffmpeg == cfg.path,
+              "D4-4 显式配置仍**优先于**任何自动落点（8.1）");
+        vfs::remove_all(root, ec);
+    });
+
     // ★★ C-13（第三方只读审计 2026-10-18；用户 2026-10-19 决策）：运行日志必须**包含全部内容**。
     //   修前：`Hub::log_line` 只进 LogBox、**一条都不进 `core::log`** ⇒ 用户实际运行时产生的
     //   `logs/log_*.txt` 全是 **0 字节**（包里 5 份实测如此；不是"打包污染"）。

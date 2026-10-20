@@ -36,20 +36,31 @@ FfmpegPaths find_ffmpeg(const std::string& app_dir, const FfmpegConfig& config) 
     const bool manual_probe = is_file(config.probe);
     const std::string local_ffmpeg = join_exe(app_dir, "ffmpeg.exe");
     const std::string local_probe = join_exe(app_dir, "ffprobe.exe");
+    // ★★ 决策 4（用户 2026-10-18/19）：发行包按类别收拢 ⇒ ffmpeg/ffprobe 挪进 `bin\`。
+    //   查找顺序保持"配置 → 根 → `bin\`"，**根目录优先**：老包（散在根）与临时手放的
+    //   `ffmpeg.exe` 都还照旧能用；`bin\` 只是新增的**第二个自动落点**。
+    const std::string bin_ffmpeg = join_exe(app_dir, "bin/ffmpeg.exe");
+    const std::string bin_probe = join_exe(app_dir, "bin/ffprobe.exe");
     const bool local_ffmpeg_ok = is_file(local_ffmpeg);
     const bool local_probe_ok = is_file(local_probe);
+    const bool bin_ffmpeg_ok = is_file(bin_ffmpeg);
+    const bool bin_probe_ok = is_file(bin_probe);
 
     if (manual_ffmpeg) {
         out.ffmpeg = config.path;
         out.ffmpeg_from_config = true;
     } else if (local_ffmpeg_ok) {
         out.ffmpeg = local_ffmpeg;  // 自动找到的**不写盘**（8.7）
+    } else if (bin_ffmpeg_ok) {
+        out.ffmpeg = bin_ffmpeg;    // ★ 决策 4：发行包的 `bin\ffmpeg.exe`
     }
     if (manual_probe) {
         out.ffprobe = config.probe;
         out.ffprobe_from_config = true;
     } else if (local_probe_ok) {
         out.ffprobe = local_probe;
+    } else if (bin_probe_ok) {
+        out.ffprobe = bin_probe;    // ★ 决策 4：发行包的 `bin\ffprobe.exe`
     }
     out.found = !out.ffmpeg.empty();
     out.has_probe = !out.ffprobe.empty();
