@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -36,7 +37,10 @@ for _stream in (sys.stdout, sys.stderr):
 ROOT = Path(__file__).resolve().parent.parent
 HUB = ROOT / "src" / "shell" / "hub.cpp"
 
-CALL = "builder(container)"   # ★ 页与面板两处的公共片段（是 `->builder(container)`，我第一版写成 `.builder(` 命中 0 处）
+# ★★ 用户 2026-10-19/20 要求固化：**找调用点用正则**，别写字面片段。
+#   我第一版写 `.builder(container)` 命中 0 处（实际是 `->builder(`）⇒ 判据直接红，
+#   白跑一轮。这条也适用于其它"找调用点"的静态锁。
+CALL_RE = re.compile(r"(->|\.)builder\s*\(")
 
 PROBLEMS: list = []
 CASES = 0
@@ -67,7 +71,7 @@ def main() -> int:
 
     # ★ 注释行里"引用旧代码"不算调用点（H-01/H-04 的教训：文档/注释引用代码不该锁住自己）
     hits = [i for i, l in enumerate(lines)
-            if CALL in l and not l.lstrip().startswith("//")]
+            if CALL_RE.search(l) and not l.lstrip().startswith("//")]
     # ★★ 决策 2（用户 2026-10-18/19）：**两个** builder 调用点都要有护栏 ——
     #   页（`reg->builder`）与**面板**（`panel->builder`）。修前只锁了页那一个，
     #   面板是裸调用：插件面板 builder 抛异常会直接穿出 Hub（整页崩，且不留痕）。

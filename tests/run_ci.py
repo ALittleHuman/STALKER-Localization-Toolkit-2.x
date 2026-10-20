@@ -6548,6 +6548,35 @@ def step_package_structure(release: bool) -> None:
         fail("发行包分类计划不合口径（见上）：要么根目录还是散的，要么该挪的没挪（决策 4）")
 
 
+def step_shell_freshness(release: bool) -> None:
+    r"""**外壳二进制必须是新的**（P17-176 的坑固化；用户 2026-10-19/20 要求）。
+
+    那次 `_p1781_buildshell.py` 在没设 `PYTHONIOENCODING` 时崩在 `UnicodeEncodeError`
+    （退出码 1），但**崩在打印上、exe 没被替换**；`--smoke` 用的是**旧 exe** ——
+    "已删掉的导出块"看起来还在（stderr 仍有 `SMOKE-MARKER-EXPORT-LOG`），checks 数也不变。
+    两轮都被骗过去 ⇒ 现在改成判据：`xrkit_app.exe` 不早于 `src/shell` 最新源，
+    且 `.ninja_log` 里真有它的构建记录。（`--smoke` 的 checks 数变化只作旁证。）
+
+    红证：把 exe 的 mtime 改到源之前（`Set-ItemProperty -Name LastWriteTime`）⇒ A 项红。
+    """
+    say("[shell-freshness] 外壳二进制必须是新的（防「构建静默失败 + 旧 exe」）")
+    script = ROOT / "tests" / "check_shell_freshness.py"
+    if not require_repo_file(script, "外壳新鲜度判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("SHELL-FRESH") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("外壳 exe 不早于源、且有 ninja 构建记录（不会再拿旧二进制验收）")
+    elif rc == 2:
+        prereq("外壳新鲜度判据", "缺 build/msvc-shell 产物（判据没跑成，不是通过）", release)
+    else:
+        fail("外壳二进制比源旧或没有构建记录（见上）：**你现在跑的是旧 exe**")
+
+
 def step_loose_truncation(release: bool) -> None:
     r"""**截断信号**必须透到 Python（复审计 09 分册 ③；P17-134）。
 
@@ -6991,6 +7020,8 @@ STEPS = [
     ("sqfs-gzip-reference", step_sqfs_gzip_reference),
     # ★★ P17-177（决策 4 A 半）：发行包分类计划（-PlanOnly）。真打包另由 package-real 验。
     ("package-structure", step_package_structure),
+    # ★★ P17-178（用户要求固化）：外壳二进制必须是新的，防「构建静默失败 + 旧 exe」。
+    ("shell-freshness", step_shell_freshness),
     # ★★ P17-163（第三方只读审计 H-02）：设置文件与游戏 user.ltx 分开（有条件迁移）。
     ("user-ltx-identity", step_user_ltx_identity),
     ("loose-truncation", step_loose_truncation),

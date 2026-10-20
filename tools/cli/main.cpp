@@ -60,6 +60,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -598,9 +599,16 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         //   "谁该被删"就退化成目录迭代顺序 —— 判据会随机器漂移（我第一次就这么假红）。
         const cfs::path rotdir = dir / "rot";
         cfs::create_directories(rotdir, ec);
-        auto stamp_of = [](int i) {
-            return cfs::file_time_type(cfs::file_time_type::duration(i * 1000000));
+        // ★★ 用户 2026-10-19/20 要求固化：**不要用 0 当"最旧"**。
+        //   实测这台机器上 `last_write_time(f, duration(0))` **设不进去**（文件保留"现在"），
+        //   于是"最旧那份"被当成最新 ⇒ 判据假红（P17-172 卡了三轮才用插桩看出来）。
+        //   现在统一用 `now - (i+1) 小时`，并且**写完读回断言**：读不回就红。
+        //   口径：**编号越大越新**（与文件名里的时间戳同向）⇒ i 从 0..total-1 递增时，
+        //   mtime 从 `now-total 小时` 走到 `now-1 小时`。
+        auto stamp_of = [](int i, int total) {
+            return cfs::file_time_type::clock::now() - std::chrono::hours(total - i);
         };
+        int stamp_bad = 0;
         for (int i = 0; i < 55; ++i) {
             const cfs::path f = rotdir / ("log_20260101_" + std::to_string(100000 + i) + ".txt");
             std::ofstream out(f, std::ios::binary);
@@ -608,7 +616,10 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
             out.close();
             // ★ 偏移**从 1 开始**：`duration(0)` 在本机设不进去（文件保留"现在"），
             //   会让"最旧"那份被当成最新 —— 判据会假红（我踩过）。
-            cfs::last_write_time(f, stamp_of(i + 1), ec);   // i 越大越新
+            cfs::last_write_time(f, stamp_of(i, 55), ec);   // i 越大越新
+            std::error_code rec;
+            const cfs::file_time_type got = cfs::last_write_time(f, rec);
+            if (rec || got >= cfs::file_time_type::clock::now() - std::chrono::minutes(30)) ++stamp_bad;
         }
         const cfs::path newest = rotdir / "log_20260101_100054.txt";
         const cfs::path oldest = rotdir / "log_20260101_100000.txt";
@@ -620,6 +631,8 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         for (cfs::directory_iterator it(rotdir, ec), end; !ec && it != end; it.increment(ec)) {
             if (it->is_regular_file() && it->path().filename().string().rfind("log_", 0) == 0) ++remain;
         }
+        check(ctx, stamp_bad == 0,
+              "C-13 夹具的 mtime **真的写进去了**（读回不是\"现在\"；写不进就红，不许假绿）");
         check(ctx, a.deleted == 5 && a.failed == 0,
               "C-13 55 份保留 50 ⇒ 删 5 份（deleted=" + std::to_string(a.deleted) +
                   " failed=" + std::to_string(a.failed) + "）");
@@ -636,9 +649,7 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
             std::ofstream out(small / names[i], std::ios::binary);
             out << "x";
             out.close();
-            cfs::last_write_time(small / names[i],
-                                 cfs::file_time_type(cfs::file_time_type::duration((i + 1) * 1000000)),
-                                 ec);   // 同样从 1 开始，避开 duration(0)
+            cfs::last_write_time(small / names[i], stamp_of(i, 3), ec);   // 同样 i 越大越新
         }
         const cfs::path protect = small / names[0];   // 最旧
         const core::PruneResult b = core::prune_log_files(
