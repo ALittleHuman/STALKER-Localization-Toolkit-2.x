@@ -275,6 +275,57 @@ QString qss_rule_body(const QString& sheet, const QString& selector, bool last) 
     return QString();
 }
 
+// ══ 共享前置：**插件页"内容就绪"的有界等待**（用户 2026-10-20 裁定）════════════════
+// 契约（四条全满足才算就绪）：
+//   ① `page != nullptr`；
+//   ② `page->layout() != nullptr && layout()->count() > 0`；
+//   ③ **连续两次泵事件之间，子树控件数不变**（不再长东西）；
+//   ④ 页或它的主视口 `width() > 0`（★ offscreen 下**不许用 `isVisible()`**：
+//      父窗没 `show()` 时它恒假，会把"就绪"判成"没就绪"）。
+// 每轮：`layout()->activate()` ＋ `processEvents(AllEvents, 10)` ＋ `msleep(5)`。
+// 超时：把 `objectName / childCount / layout count / page size` 写进 `why`，
+//       **由调用方 `check()` 判红** —— 助手不替断言、不重试、不延长超时。
+// 调用方**必须**在等待后重新取子控件指针（等待期间可能有 deleteLater/重建）。
+bool wait_page_ready(QWidget* page, int ms, QString* why) {
+    if (why != nullptr) why->clear();
+    const auto fail = [&](const QString& detail) {
+        if (why != nullptr) {
+            *why = QStringLiteral("%1（objectName=%2 childCount=%3 layoutCount=%4 pageSize=%5x%6）")
+                       .arg(detail)
+                       .arg(page != nullptr ? page->objectName() : QStringLiteral("<null>"))
+                       .arg(page != nullptr ? page->findChildren<QWidget*>().size() : -1)
+                       .arg(page != nullptr && page->layout() != nullptr ? page->layout()->count() : -1)
+                       .arg(page != nullptr ? page->width() : -1)
+                       .arg(page != nullptr ? page->height() : -1);
+        }
+        return false;
+    };
+    if (page == nullptr) return fail(QStringLiteral("页不存在"));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    int last_count = -1;
+    int stable_rounds = 0;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (page->layout() != nullptr) page->layout()->activate();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        const int count = page->findChildren<QWidget*>().size();
+        if (count == last_count) {
+            ++stable_rounds;
+        } else {
+            stable_rounds = 0;
+            last_count = count;
+        }
+        const bool has_layout = page->layout() != nullptr && page->layout()->count() > 0;
+        int width = page->width();
+        if (width <= 0) {
+            const auto views = page->findChildren<ScrollViewport*>();
+            if (!views.isEmpty() && views.first() != nullptr) width = views.first()->width();
+        }
+        if (has_layout && stable_rounds >= 1 && width > 0) return true;
+        QThread::msleep(5);
+    }
+    return fail(QStringLiteral("超时 %1ms 未就绪").arg(ms));
+}
+
 }  // namespace
 
 SmokeResult run_smoke() {
@@ -6090,7 +6141,14 @@ SmokeResult run_smoke() {
         check(page >= 0, QStringLiteral("P4 `register_tool` 的页没进页表（插件问题 %1 条）")
                              .arg(hub.plugin_errors().size()));
         QWidget* page_widget = page >= 0 ? hub.stack()->widget(page) : nullptr;
-        if (page_widget != nullptr) page_widget->resize(600, 400);
+        {
+            // ★ 共享前置（用户 2026-10-20 契约）：这个插件页要**先就绪**再判内容。
+            //   超时不重试：objectName/childCount/layout/pageSize 记进 notes，断言照旧判红。
+            QString why_ready;
+            if (!wait_page_ready(page_widget, 2000, &why_ready)) {
+                result.notes.append(QStringLiteral("页就绪诊断：") + why_ready);
+            }
+        }
         QApplication::processEvents();
         const auto read_marker = [&marker]() {
             QFile file(marker);
@@ -6477,7 +6535,14 @@ SmokeResult run_smoke() {
                      .arg(hub.stack()->count()));
         }
         QWidget* page_widget = probe_page >= 0 ? hub.stack()->widget(probe_page) : nullptr;
-
+        {
+            // ★ 共享前置（用户 2026-10-20 契约）：这个插件页要**先就绪**再判内容。
+            //   超时不重试：objectName/childCount/layout/pageSize 记进 notes，断言照旧判红。
+            QString why_ready;
+            if (!wait_page_ready(page_widget, 2000, &why_ready)) {
+                result.notes.append(QStringLiteral("页就绪诊断：") + why_ready);
+            }
+        }
         const QString marker = QDir(dir).filePath(QStringLiteral("cancel_marker.txt"));
         const auto read_marker = [&marker]() {
             QFile file(marker);
@@ -6640,7 +6705,14 @@ SmokeResult run_smoke() {
             }
         }
         QWidget* page_widget = page >= 0 ? hub.stack()->widget(page) : nullptr;
-        // ★ 分栏的尺寸/分隔条位置**必须真的布局过**才读得出来 —— 与别处一样把 Hub `show()` 一次
+        {
+            // ★ 共享前置（用户 2026-10-20 契约）：这个插件页要**先就绪**再判内容。
+            //   超时不重试：objectName/childCount/layout/pageSize 记进 notes，断言照旧判红。
+            QString why_ready;
+            if (!wait_page_ready(page_widget, 2000, &why_ready)) {
+                result.notes.append(QStringLiteral("页就绪诊断：") + why_ready);
+            }
+        }
         //   （离屏平台下 `hub.show()` 是既有做法；不 show 的话 `QSplitter::sizes()` 恒为 [0,0,0]，
         //   那样判的是"布局没跑"而不是"分栏不对" —— 本批实测踩到过）。
         hub.show();
@@ -6888,7 +6960,14 @@ SmokeResult run_smoke() {
         check(page >= 0, QStringLiteral("P6 `register_tool` 的页没进页表（插件问题 %1 条）")
                              .arg(hub.plugin_errors().size()));
         QWidget* page_widget = page >= 0 ? hub.stack()->widget(page) : nullptr;
-        hub.show();
+        {
+            // ★ 共享前置（用户 2026-10-20 契约）：这个插件页要**先就绪**再判内容。
+            //   超时不重试：objectName/childCount/layout/pageSize 记进 notes，断言照旧判红。
+            QString why_ready;
+            if (!wait_page_ready(page_widget, 2000, &why_ready)) {
+                result.notes.append(QStringLiteral("页就绪诊断：") + why_ready);
+            }
+        }
         if (page >= 0) hub.switch_to_page(QStringLiteral("门面树夹具页"));
         for (int i = 0; i < 20; ++i) {
             QApplication::processEvents();

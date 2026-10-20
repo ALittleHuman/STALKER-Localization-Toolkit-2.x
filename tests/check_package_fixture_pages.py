@@ -351,6 +351,24 @@ def audit_package(pkg: Path) -> None:
 
         # ── ③ 默认形态：可见页＝六个内置页 ────────────────────────────────
         rc, out = run_smoke(work)
+        if rc != 0:
+            # ★★ 用户 2026-10-20：「失败时能读出是哪个页、childCount 多少、等了多久」——
+            #   ③ 也要留**全量输出**与现场（原来只留末 40 行，读不出页/控件细节）。
+            diag3 = ROOT / "build" / "logs" / "pkg_pages_phase3_fail.txt"
+            try:
+                fails3 = [l for l in out.splitlines() if "SHELL-SMOKE fail" in l]
+                notes3 = [l for l in out.splitlines() if "SHELL-SMOKE note" in l and "诊断" in l]
+                diag3.parent.mkdir(parents=True, exist_ok=True)
+                diag3.write_text(
+                    "phase=3\npkg=%s\nrc=%s\nwhen=%s\nwork_dir=%s（故意保留）\n"
+                    "== fail（%d 条）==\n%s\n\n== 就绪诊断 notes ==\n%s\n\n== 全量输出 ==\n%s\n"
+                    % (pkg, rc, time.strftime("%Y-%m-%d %H:%M:%S"), work,
+                       len(fails3), "\n".join(fails3), "\n".join(notes3), out),
+                    encoding="utf-8")
+                say("   [诊断] ③ 失败现场：%s" % diag3)
+                os.environ["XRKIT_KEEP_PKG_PAGES_TMP"] = "1"
+            except OSError as exc:
+                say("   [诊断] ③ 落盘失败：%s" % exc)
         pages = parse_pages(out) if out else None
         if rc is None:
             check(False, "产物 %s（默认形态）：`--smoke` 能跑完" % rel, str(out))
