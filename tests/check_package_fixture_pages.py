@@ -380,7 +380,7 @@ def capture_phase4_artifacts(pkg: Path, out: str) -> Path:
     dest = ROOT / "build" / "logs" / ("pkg_pages_phase4_artifacts_" + ts)
     dest.mkdir(parents=True, exist_ok=True)
     private = LAST_SMOKE_TEMP[0]
-    names = ["page_trace.txt", "l2_trace.txt", "build_error.txt", "l2_marker.txt",
+    names = ["plugin_files.txt", "page_trace.txt", "l2_trace.txt", "build_error.txt", "l2_marker.txt",
              "cancel_marker.txt", "cancel_mark_error.txt", "cancel_probe.py", "l2_demo.py"]
     manifest = []
     src_dirs = []
@@ -399,7 +399,9 @@ def capture_phase4_artifacts(pkg: Path, out: str) -> Path:
             continue
         dst = dest / name
         try:
-            data = found.read_bytes()[:65536]
+            # ★ 2026-10-21：日志类文件要留**尾部**（关键事件都在最后），只留头部等于把现场截掉。
+            raw = found.read_bytes()
+            data = raw[-262144:] if found.suffix in (".txt", ".log") else raw[:65536]
             dst.write_bytes(data)
             digest = hashlib.sha256(found.read_bytes()).hexdigest()
             st = found.stat()

@@ -938,7 +938,15 @@ const plug::UiFacade kQtFacade = {
     []() {
         QCoreApplication* app = QCoreApplication::instance();
         if (app == nullptr) return true;
-        return QThread::currentThread() == app->thread();
+        // ★★ 2026-10-21 加固：**两道都要过**。只比 `QThread::currentThread()` 会在
+        //   非 Qt 线程被 Qt "收养" 时给出 QThread 包装对象，某些时序下会与 app->thread() 相等
+        //   （实测出现过「工作线程里调 ui.label 没有被拒」）。所以再加一道**原始 std::thread::id**
+        //   比对：`ui_thread_id()` 只在主线程装配时登记。
+        const bool same_qthread = QThread::currentThread() == app->thread();
+        const bool same_std = (ui_thread_id() == std::thread::id())
+                                  ? same_qthread
+                                  : (std::this_thread::get_id() == ui_thread_id());
+        return same_qthread && same_std;
     },
     // ── ★★ P5：重型 L2 第二批（滚动视口 / 可分栏）──────────────────────────────
     /* viewport：宿主造「容器 + ScrollViewport + 画布」，**句柄＝画布**（插件往它里面 pack）。

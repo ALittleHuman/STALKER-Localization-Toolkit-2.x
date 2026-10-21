@@ -1,6 +1,10 @@
 #include "xrkit/engine/plugin/widget_facade.h"
 
 #include <mutex>
+#include <thread>
+#include <iomanip>
+#include <fstream>
+#include <filesystem>
 
 namespace xrkit::plugin {
 namespace {
@@ -284,6 +288,22 @@ void set_current_page_context(const std::string& page_id, xrkit::plugin::Registr
     std::lock_guard<std::mutex> guard(facade_mutex());
     page_id_storage() = page_id;
     page_registry_storage() = registry;
+}
+
+void trace_event(const std::string& kind, const std::string& detail) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path file = fs::temp_directory_path(ec) / "page_trace.txt";
+    if (ec) return;
+    std::ofstream out(file, std::ios::app | std::ios::binary);
+    if (!out.is_open()) return;
+    const auto now = std::chrono::duration<double>(
+                         std::chrono::steady_clock::now().time_since_epoch())
+                         .count();
+    out << current_page_id() << '|' << kind << '|' << detail << '|' << std::fixed
+        << std::setprecision(6) << now << '|'
+        << std::hash<std::thread::id>{}(std::this_thread::get_id()) << '|'
+        << std::this_thread::get_id() << '\n';
 }
 
 std::string current_page_id() {

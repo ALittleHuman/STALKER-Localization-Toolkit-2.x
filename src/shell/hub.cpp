@@ -21,6 +21,8 @@
 #include <string>
 
 #include <QApplication>
+#include <QDirIterator>
+#include <QCryptographicHash>
 #include <QCoreApplication>
 #include <QThread>
 #include <QDateTime>
@@ -709,7 +711,18 @@ int Hub::sync_pages() {
         // 当前页**被摘掉了**（注销 / 被替换）⇒ 回到第一页，不许留在空页上。
         set_current_page(0);
     }
+    // ★ 2026-10-21（用户口径 ④）：**sync 层**——把当前页集合记一行
+    //   （register 成功但这里没有 ⇒ 同步/可见性问题，不在加载）。
+    {
+        QStringList ids;
+        for (int k = 0; k < page_count(); ++k) ids << page_id(k);
+        trace_page_event("sync", QStringLiteral("registrations=%1 pages=[%2]")
+                                     .arg(registry_.registration_count())
+                                     .arg(ids.join(QLatin1Char(',')))
+                                     .toStdString());
+    }
     return created;
+
 }
 
 void Hub::log_line(const QString& text) {
@@ -937,6 +950,36 @@ void Hub::render_plugin_slots() {
     }
 }
 
+namespace {
+// ★ 2026-10-21（用户口径 ①）：**文件层**——Hub 加载前把目录里的 `.py` 逐一记账
+//   （size / mtime / sha256），写 `%TEMP%/plugin_files.txt`。
+//   这样"页没注册"能先分出：**夹具没落盘**（这里没有）vs **落盘了但没被扫到**。
+void dump_plugin_files(const QString& dir) {
+    QFile out(QDir::temp().filePath(QStringLiteral("plugin_files.txt")));
+    if (!out.open(QIODevice::Append | QIODevice::Text)) return;
+    out.write(QStringLiteral("== dir=%1 ==\n").arg(dir).toUtf8());
+    QDirIterator it(dir, QDir::Files, QDirIterator::NoIteratorFlags);
+    while (it.hasNext()) {
+        const QString path = it.next();
+        const QFileInfo info(path);
+        if (info.suffix().compare(QStringLiteral("py"), Qt::CaseInsensitive) != 0) continue;
+        QFile f(path);
+        QString digest = QStringLiteral("(打不开)");
+        if (f.open(QIODevice::ReadOnly)) {
+            QCryptographicHash hash(QCryptographicHash::Sha256);
+            hash.addData(&f);
+            digest = QString::fromLatin1(hash.result().toHex());
+        }
+        out.write(QStringLiteral("%1 size=%2 mtime=%3 sha256=%4\n")
+                      .arg(info.fileName())
+                      .arg(info.size())
+                      .arg(info.lastModified().toString(Qt::ISODateWithMs))
+                      .arg(digest)
+                      .toUtf8());
+    }
+}
+}  // namespace
+
 void Hub::load_plugins(const QString& plugin_dir) {
     // ⑫12.4：插件注册期的非法寻址要在 **Hub 启动时可见** —— 这里做三件事：
     // ① 真去加载（失败不阻塞启动）；② 把错误逐条打进日志栏；③ 状态栏给一句汇总。
@@ -951,8 +994,8 @@ void Hub::load_plugins(const QString& plugin_dir) {
     //   `plugin_ui_installed_` 仍然保留：它表示"控件门面可用"，而门面**不再依赖插件 ABI**
     //   （`stk_ui` 搬到了 `facade_api.h`，外壳自己实现）⇒ 恒为 true。
     plugin_ui_installed_ = true;
-    const std::vector<xrkit::plugin::RegistrationError> plugin_errors =
-        xrkit::plugin::load_all_plugins_from_dir(dir.toUtf8().toStdString(), registry_);
+    dump_plugin_files(dir);
+    xrkit::plugin::load_all_plugins_from_dir(dir.toUtf8().toStdString(), registry_);
     plugin_errors_ = registry_.registration_errors();
 
     // ★★ C-12（第三方只读审计 2026-10-18）：这里原来有个 `int loaded = 0;` —— **死变量**

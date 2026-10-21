@@ -313,10 +313,20 @@ public:
     bool register_tool(const std::string& name, py::object builder, int order,
                        const std::string& replaces, const std::string& subtitle,
                        const std::string& title) const {
+        const bool callable = builder.is_none() ? false : (PyCallable_Check(builder.ptr()) != 0);
+        plugin::trace_event("register", "plugin=" + owner_ + " name=" + name + " callable=" +
+                                             (callable ? "1" : "0"));
         PanelBuilder wrapped = wrap_python_builder(builder, "register_tool(" + name + ")");
-        if (!wrapped) return false;
-        return registry_->register_tool(owner_, name, std::move(wrapped), order, replaces,
-                                       subtitle, title);
+        if (!wrapped) {
+            plugin::trace_event("register", "plugin=" + owner_ + " name=" + name +
+                                                 " ret=0 error=builder 不可调用/包装失败");
+            return false;
+        }
+        const bool ok = registry_->register_tool(owner_, name, std::move(wrapped), order, replaces,
+                                                subtitle, title);
+        plugin::trace_event("register", "plugin=" + owner_ + " name=" + name +
+                                             " ret=" + (ok ? "1" : "0"));
+        return ok;
     }
 
     bool register_option_entry(const std::string& host, const std::string& area,
@@ -3754,6 +3764,7 @@ std::vector<RegistrationError> load_python_plugins_impl(
 
     for (const std::string& file : files) {
         const std::string owner = base_name(file);
+        plugin::trace_event("load_start", "file=" + owner);
         const std::string module_name = "xrkit_plugin_" + sanitize_module_name(owner);
         std::string failure;
         try {
@@ -3809,12 +3820,14 @@ std::vector<RegistrationError> load_python_plugins_impl(
             errors.push_back({owner, message});
             registry.add_error(owner, message);
             core::log(core::Level::Warn, "Python 插件加载失败：" + owner + "：" + failure);
+            plugin::trace_event("load", "file=" + owner + " ret=error error=" + failure);
             continue;
         }
         ++acc.loaded;
         acc.registrations += registry.residue_for(owner).registrations();
         ++loaded_python_plugins();
         core::log(core::Level::Info, "Python 插件已加载：" + owner);
+        plugin::trace_event("load", "file=" + owner + " ret=ok");
     }
     return errors;
 #endif

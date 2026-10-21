@@ -355,6 +355,11 @@ void set_current_panel_root(UiHandle root);
 // ★★ P13-2a-2：**当前面板的页面身份** —— 门面菜单要按它去注册表里取
 //   「其它插件注册的右键命令」（宿主建面板时设、退出时恢复）。
 void set_current_page_context(const std::string& page_id, Registry* registry);
+
+// ★★ 2026-10-21（用户口径）：**四层 trace** 的引擎侧入口（无 Qt，写 `%TEMP%/page_trace.txt`）。
+//   一层 = 加载（`load`）、一层 = 登记（`register`）。行式：
+//   `page_id|kind|detail|monotonic|thread|pid`。写失败就放弃（诊断不许影响产品）。
+void trace_event(const std::string& kind, const std::string& detail);
 std::string current_page_id();
 Registry* current_page_registry();
 UiHandle current_panel_root();
