@@ -236,7 +236,12 @@ def run_smoke(pkg: Path, timeout: int = 900):
     #   **插件页没建出来**（P17-1 取消探针页 / P5 插件页视口为 0），而插件是**刚写进 %TEMP% 的 .py**。
     #   今天 360 把仓库加白之后，把私有 TEMP 也挪进**仓库内**（= 白名单路径）做对照实验：
     #   若失败率从 8/20 掉到 0/20，就说明是"杀软扫刚写的 .py 导致 import 偶发失败"。
-    private_temp = Path(tempfile.mkdtemp(prefix="pktmp_", dir=str(ROOT / "build")))
+    # ★ 2026-10-21：私有 TEMP 的位置可以换（默认在 `build/`＝仓库内＝360 白名单内）。
+    #   用 `XRKIT_PKTMP_DIR=system` 可切到 `%TEMP%`，用来做"路径/杀软"对照实验。
+    _pktmp_parent = str(ROOT / "build")
+    if os.environ.get("XRKIT_PKTMP_DIR") == "system":
+        _pktmp_parent = None
+    private_temp = Path(tempfile.mkdtemp(prefix="pktmp_", dir=_pktmp_parent))
     LAST_SMOKE_TEMP[0] = private_temp
     env["TEMP"] = str(private_temp)
     env["TMP"] = str(private_temp)
