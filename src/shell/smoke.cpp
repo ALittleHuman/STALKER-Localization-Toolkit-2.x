@@ -72,6 +72,7 @@
 #include <QRegularExpression>
 #include <QVariant>
 #include <QScrollBar>
+#include <QSaveFile>
 #include <QSet>
 #include <QStackedWidget>
 #include <QElapsedTimer>
@@ -327,6 +328,25 @@ bool wait_page_ready(QWidget* page, int ms, QString* why) {
 }
 
 }  // namespace
+
+// ★★ 2026-10-21（用户口径第 4 条，之前漏做）：**运行时写的 .py 夹具一律走 QSaveFile ＋ 读回校验**。
+//   修前用裸 `QFile::open(WriteOnly|Truncate)`：`write()` 返回字节数**不证明** Hub 扫目录时文件完整
+//   （缓存/杀软/中断都可能让"看起来写了"）。读回要比 **size ＋ SHA-256**，不是只看 size。
+bool write_fixture_safely(const QString& path, const QByteArray& source) {
+    QSaveFile out(path);
+    if (!out.open(QIODevice::WriteOnly)) return false;
+    if (out.write(source) != source.size()) {
+        out.cancelWriting();
+        return false;
+    }
+    if (!out.commit()) return false;
+    QFile in(path);
+    if (!in.open(QIODevice::ReadOnly)) return false;
+    const QByteArray got = in.readAll();
+    return got.size() == source.size() &&
+           QCryptographicHash::hash(got, QCryptographicHash::Sha256) ==
+               QCryptographicHash::hash(source, QCryptographicHash::Sha256);
+}
 
 SmokeResult run_smoke() {
     SmokeResult result;
@@ -5790,10 +5810,8 @@ SmokeResult run_smoke() {
             "        raise RuntimeError('register_command 失败')\n"
             "    api.register_menu_item('fs', 'toolbar', cid, 0)\n"
             "    api.log('自检夹具已注册')\n";
-        QFile plugin_file(QDir(dir).filePath(QStringLiteral("smoke_hello.py")));
-        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
-                           plugin_file.write(source) == source.size();
-        plugin_file.close();
+        const QString fixture_path = QDir(dir).filePath(QStringLiteral("smoke_hello.py"));
+        const bool wrote = write_fixture_safely(fixture_path, source);
         check(wrote, QStringLiteral("P2b 夹具 .py 没写进 %1").arg(QDir::toNativeSeparators(dir)));
 
         Hub hub(nullptr, dir);
@@ -5885,10 +5903,8 @@ SmokeResult run_smoke() {
             "        ui.task_run(panel, '夹具任务', task_worker)\n"
             "        mark('built')\n"
             "    api.register_tool('门面夹具页', build, 5)\n";
-        QFile plugin_file(QDir(dir).filePath(QStringLiteral("ui_demo.py")));
-        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
-                           plugin_file.write(source) == source.size();
-        plugin_file.close();
+        const QString fixture_path = QDir(dir).filePath(QStringLiteral("ui_demo.py"));
+        const bool wrote = write_fixture_safely(fixture_path, source);
         check(wrote, QStringLiteral("P3 夹具 .py 没写进 %1").arg(QDir::toNativeSeparators(dir)));
 
         Hub hub(nullptr, dir);
@@ -6233,14 +6249,12 @@ SmokeResult run_smoke() {
             "            mark('worker_done')\n"
             "        mark('run:%d' % int(ui.task_run(panel, '夹具任务', worker)))\n"
             "    api.register_tool('门面L2夹具页', build, 6)\n";
-        QFile plugin_file(QDir(dir).filePath(QStringLiteral("l2_demo.py")));
+        const QString fixture_path = QDir(dir).filePath(QStringLiteral("l2_demo.py"));
+        const bool wrote = write_fixture_safely(fixture_path, source);
         check(hub.plugin_errors().empty(),
               QStringLiteral("P17-82 调试：L2 夹具不该有插件问题（实得 %1 条）")
                   .arg(hub.plugin_errors().size()));
-        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
-                           plugin_file.write(source) == source.size();
-        plugin_file.close();
-        check(wrote, QStringLiteral("P4 夹具 .py 没写进去"));
+        check(wrote, QStringLiteral("P4 夹具 .py 没写进去（QSaveFile ＋ 读回校验）"));
 
         Hub hub(nullptr, dir);
         const int page = hub.page_index(QStringLiteral("门面L2夹具页"));
@@ -6643,15 +6657,13 @@ SmokeResult run_smoke() {
             "        ui.button(None, '起任务', start)\n"
             "\n"
             "    api.register_tool('取消探针页', build, 6)\n";
-        QFile plugin_file(QDir(dir).filePath(QStringLiteral("cancel_probe.py")));
-        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
-                           plugin_file.write(source) == source.size();
-        plugin_file.close();
+        const QString fixture_path = QDir(dir).filePath(QStringLiteral("cancel_probe.py"));
+        const bool wrote = write_fixture_safely(fixture_path, source);
         check(wrote, QStringLiteral("P17-1 取消探针夹具没写进 %1").arg(QDir::toNativeSeparators(dir)));
         // ★★ 用户 2026-10-20：「写完做一次**读回校验**再构造 Hub」——
         //   写成功 ≠ 读得到（截断/缓存/杀软扫描都会让"看起来写了"）。
         {
-            QFile verify(plugin_file.fileName());
+            QFile verify(fixture_path);
             const bool readable = verify.open(QIODevice::ReadOnly);
             const qint64 got = readable ? verify.size() : -1;
             result.notes.append(QStringLiteral("P17-1 诊断：夹具读回 size=%1 期望 %2")
@@ -6889,15 +6901,13 @@ SmokeResult run_smoke() {
             "        mark('collapsed2:%d' % int(ui.split_is_collapsed(split, 2)))\n"
             "        mark('sash0:%d' % ui.split_sash_pos(split, 0))\n"
             "    api.register_tool('门面L2b夹具页', build, 7)\n";
-        QFile plugin_file(QDir(dir).filePath(QStringLiteral("l5_demo.py")));
-        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
-                           plugin_file.write(source) == source.size();
-        plugin_file.close();
+        const QString fixture_path = QDir(dir).filePath(QStringLiteral("l5_demo.py"));
+        const bool wrote = write_fixture_safely(fixture_path, source);
         check(wrote, QStringLiteral("P5 夹具 .py 没写进去"));
         // ★★ 用户 2026-10-20：「写完做一次**读回校验**再构造 Hub」——
         //   写成功 ≠ 读得到（截断/缓存/杀软扫描都会让"看起来写了"）。
         {
-            QFile verify(plugin_file.fileName());
+            QFile verify(fixture_path);
             const bool readable = verify.open(QIODevice::ReadOnly);
             const qint64 got = readable ? verify.size() : -1;
             result.notes.append(QStringLiteral("P5 诊断：夹具读回 size=%1 期望 %2")
@@ -7165,10 +7175,8 @@ SmokeResult run_smoke() {
             "        ui.list_on_activate(act_list, on_list_activate)\n"
             "        mark('built')\n"
             "    api.register_tool('门面树夹具页', build, 8)\n";
-        QFile plugin_file(QDir(dir).filePath(QStringLiteral("l6_demo.py")));
-        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
-                           plugin_file.write(source) == source.size();
-        plugin_file.close();
+        const QString fixture_path = QDir(dir).filePath(QStringLiteral("l6_demo.py"));
+        const bool wrote = write_fixture_safely(fixture_path, source);
         check(wrote, QStringLiteral("P6 夹具 .py 没写进去"));
 
         Hub hub(nullptr, dir);
@@ -7638,10 +7646,8 @@ SmokeResult run_smoke() {
             "        mark('ok_has_text:%d' % int(bool(marks['ok'])))\n"
             "        api.ui.label(None, '引擎门面夹具')\n"
             "    api.register_tool('引擎门面夹具页', build, 9)\n";
-        QFile plugin_file(QDir(dir).filePath(QStringLiteral("engine_demo.py")));
-        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
-                           plugin_file.write(source) == source.size();
-        plugin_file.close();
+        const QString fixture_path = QDir(dir).filePath(QStringLiteral("engine_demo.py"));
+        const bool wrote = write_fixture_safely(fixture_path, source);
         check(wrote, QStringLiteral("P7a 夹具 .py 没写进去"));
         Hub hub(nullptr, dir);
         check(hub.page_index(QStringLiteral("引擎门面夹具页")) >= 0,
@@ -7674,10 +7680,8 @@ SmokeResult run_smoke() {
             "    def build():\n"
             "        api.ui.label(None, '这是插件版的汉化包生成页')\n"
             "    api.register_tool('fontpack_py', build, 0, 'fontpack', '插件版', '汉化包生成')\n";
-        QFile plugin_file(QDir(dir).filePath(QStringLiteral("fontpack_py.py")));
-        const bool wrote = plugin_file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
-                           plugin_file.write(source) == source.size();
-        plugin_file.close();
+        const QString fixture_path = QDir(dir).filePath(QStringLiteral("fontpack_py.py"));
+        const bool wrote = write_fixture_safely(fixture_path, source);
         check(wrote, QStringLiteral("P7c 夹具 .py 没写进去"));
         Hub hub(nullptr, dir);
         const int replaced = hub.page_index(QStringLiteral("fontpack"));

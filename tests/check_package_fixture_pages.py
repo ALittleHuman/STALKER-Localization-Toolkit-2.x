@@ -409,6 +409,18 @@ def capture_phase4_artifacts(pkg: Path, out: str) -> Path:
                                digest, "（已截断 64KB）" if st.st_size > 65536 else ""))
         except OSError as exc:
             manifest.append("%-24s 拷贝失败：%s" % (name, exc))
+    # ★ 2026-10-21：把 smoke 里所有**诊断类**行单独抽出来（`诊断` / `plugin_errors` / `插件问题`），
+    #   这样"页没注册"那类红不用去 200 行尾巴里翻（下一轮就看这个文件）。
+    try:
+        diag_lines = [ln for ln in out.splitlines()
+                      if ("诊断" in ln or "plugin_errors" in ln or "插件问题" in ln
+                          or "已用占位页顶替" in ln)]
+        (dest / "diag_lines.txt").write_text("\n".join(diag_lines[-200:]),
+                                             encoding="utf-8", errors="replace")
+        manifest.append("diag_lines.txt             %d 行" % len(diag_lines[-200:]))
+    except OSError:
+        manifest.append("diag_lines.txt             写入失败")
+
     # stdout 尾部 200 行
     try:
         tail = "\n".join(out.splitlines()[-200:])

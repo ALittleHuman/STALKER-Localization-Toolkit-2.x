@@ -51,10 +51,29 @@ namespace {
 // ★★ P1：内置六页的**声明清单搬去了 `pages/page_factory.cpp`**（它属于页模块，不属于 Hub）。
 //   这里只剩"造不出来时的兜底页" —— 留着它是因为"页建不出来"必须能被看见，
 //   而不是变成一片空白（零静默）。
+}  // namespace
+
+void trace_page_event(const std::string& kind, const std::string& detail) {
+    QFile out(QDir::temp().filePath(QStringLiteral("page_trace.txt")));
+    if (!out.open(QIODevice::Append | QIODevice::Text)) return;
+    const double now = std::chrono::duration<double>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count();
+    out.write(QStringLiteral("%1|%2|%3|%4|%5|%6\n")
+                  .arg(QString::fromStdString(xrkit::plugin::current_page_id()))
+                  .arg(QString::fromStdString(kind))
+                  .arg(QString::fromStdString(detail))
+                  .arg(QString::number(now, 'f', 6))
+                  .arg(reinterpret_cast<quintptr>(QThread::currentThread()))
+                  .arg(QCoreApplication::applicationPid())
+                  .toUtf8());
+}
+
+namespace {
+
 // ★★ 2026-10-21（用户口径）：**每个插件页**都写一份 `page_trace.txt` ——
-//   `page_id|event|monotonic|thread|pid`，event ∈ build_start / built / error:<what>。
-//   这样 P5 / P13 / ⑭ 那类"某个页没建完"的红，失败时能直接读出**是哪个页、卡在哪一步**，
-//   而不用去猜。写到 `QDir::temp()`（判据的私有 TEMP ⇒ 失败取证器能原样拷走）。
+//   一行 = `page_id|event|monotonic|thread|pid`，event ∈ build_start / built / error:<what>。
+//   这样 P5 / P13 / ⑭ 那类"某个页没建完"的红，失败时能直接读出**是哪个页、卡在哪一步**。
 void trace_page_build(const QString& page_id, const QString& event) {
     QFile out(QDir::temp().filePath(QStringLiteral("page_trace.txt")));
     if (!out.open(QIODevice::Append | QIODevice::Text)) return;
@@ -497,12 +516,53 @@ int Hub::sync_pages() {
                 //   （其它插件是挂在内置 host 上的；不替换 ⇒ 用本页 id，本就取不到，正常）
                 const std::string page_key =
                     reg->spec.replaces.empty() ? reg->spec.id : reg->spec.replaces;
+                trace_page_event(
+                    "scope_ctor",
+                    QStringLiteral("root=%1 previous=%2")
+                        .arg(reinterpret_cast<quintptr>(container), 0, 16)
+                        .arg(reinterpret_cast<quintptr>(static_cast<void*>(
+                                 xrkit::plugin::current_panel_root())), 0, 16)
+                        .toStdString());
                 plugin::UiPanelScope panel_scope(container, page_key, &registry_);
+                trace_page_event(
+                    "scope_ctor_after",
+                    QStringLiteral("current_after=%1")
+                        .arg(reinterpret_cast<quintptr>(static_cast<void*>(
+                                 xrkit::plugin::current_panel_root())), 0, 16)
+                        .toStdString());
                 const QString trace_id = QString::fromStdString(reg->spec.id);
                 trace_page_build(trace_id, QStringLiteral("build_start"));
                 try {
                     built = reg->builder(container);
                     trace_page_build(trace_id, QStringLiteral("built"));
+                    // ★ 2026-10-21：settle **必须在 scope 还活着时**量 —— 放到 scope 之后量，
+                    //   `current_page_id()` / `current_panel_root()` 已经被还原（实测拿到空值），
+                    //   `same` 也就永远 0，等于没量。
+                    {
+                        QLayout* now_layout = container->layout();
+                        const auto scope_now = xrkit::plugin::current_panel_root();
+                        trace_page_event(
+                            "settle",
+                            QStringLiteral("ret=%1 placed=%2 anything=%3 container=%4 "
+                                           "layout=%5 scope=%6 same=%7")
+                                .arg(built != nullptr ? 1 : 0)
+                                .arg(now_layout != nullptr ? now_layout->count() : -1)
+                                .arg((built != nullptr ||
+                                      (now_layout != nullptr && now_layout->count() > 0))
+                                         ? 1
+                                         : 0)
+                                .arg(reinterpret_cast<quintptr>(container), 0, 16)
+                                .arg(now_layout != nullptr
+                                         ? QString::fromLatin1(
+                                               now_layout->metaObject()->className())
+                                         : QStringLiteral("none"))
+                                .arg(reinterpret_cast<quintptr>(
+                                         static_cast<void*>(scope_now)), 0, 16)
+                                .arg(scope_now == reinterpret_cast<plugin::UiHandle>(container)
+                                         ? 1
+                                         : 0)
+                                .toStdString());
+                    }
                 } catch (const std::exception& e) {
                     builder_exception = e.what() != nullptr ? e.what() : "std::exception（what() 为空）";
                     trace_page_build(trace_id, QStringLiteral("error:%1")
@@ -533,6 +593,11 @@ int Hub::sync_pages() {
                 outer->addWidget(built);
                 widget = container;
             } else if (container != widget) {
+                trace_page_event("container_delete_later",
+                                 QStringLiteral("container=%1 widget=%2")
+                                     .arg(reinterpret_cast<quintptr>(container), 0, 16)
+                                     .arg(reinterpret_cast<quintptr>(widget), 0, 16)
+                                     .toStdString());
                 container->deleteLater();
             }
             // "到底造出东西没有"：builder 交了控件，或者门面往根里落了控件（`place()` 会建布局）。
@@ -547,11 +612,6 @@ int Hub::sync_pages() {
             //   `settle|built=<0|1>|placed=<N>|anything=<0|1>`。
             //   有了这一行就能区分：**builder 没跑完**（没有 built 事件）vs
             //   **跑完了但控件没落进容器**（built 事件在、placed=0、anything=0 ⇒ 占位页）。
-            trace_page_build(QString::fromStdString(reg->spec.id),
-                             QStringLiteral("settle:built=%1 placed=%2 anything=%3")
-                                 .arg(built != nullptr ? 1 : 0)
-                                 .arg(placed != nullptr ? placed->count() : -1)
-                                 .arg(anything_built ? 1 : 0));
             if (builder_threw) {
                 widget = make_placeholder(reg->spec);
                 if (widget != container) container->deleteLater();

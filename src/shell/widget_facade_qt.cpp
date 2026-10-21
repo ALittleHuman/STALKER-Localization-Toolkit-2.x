@@ -269,8 +269,22 @@ plug::UiHandle handle_of(stk_widget* widget) {
 // 当前面板根（引擎层记的）：`parent == nullptr` 时落在这里（见 ui_facade.h 口径 ③）
 QWidget* resolve_parent(plug::UiHandle parent) {
     QWidget* widget = unwrap(parent);
-    if (widget != nullptr) return widget;
-    return unwrap(plug::current_panel_root());
+    QWidget* resolved = widget;
+    if (resolved == nullptr) resolved = unwrap(plug::current_panel_root());
+    // ★ 2026-10-21（用户口径）：`place=-1` 那类红要分清是"scope root 错了"还是
+    //   "resolve_parent 返回 null" ⇒ 每次解析都记一条。
+    {
+        QWidget* root = unwrap(plug::current_panel_root());
+        trace_page_event(
+            "resolve",
+            QStringLiteral("parent_arg=%1 resolved=%2 current_root=%3 same=%4")
+                .arg(reinterpret_cast<quintptr>(widget), 0, 16)
+                .arg(reinterpret_cast<quintptr>(resolved), 0, 16)
+                .arg(reinterpret_cast<quintptr>(root), 0, 16)
+                .arg(resolved != nullptr && resolved == root ? 1 : 0)
+                .toStdString());
+    }
+    return resolved;
 }
 
 // ★ L1 的"装配"承诺：**宿主负责排版**。插件只描述"要一个 label"，不该被要求自己 pack ——
@@ -292,6 +306,7 @@ bool is_field_input(QWidget* widget) {
 
 void place(QWidget* parent, QWidget* child) {
     if (parent == nullptr || child == nullptr) return;
+    const int before = parent->layout() != nullptr ? parent->layout()->count() : -1;
     auto* layout = qobject_cast<QVBoxLayout*>(parent->layout());
     if (layout == nullptr) {
         layout = new QVBoxLayout(parent);
@@ -318,6 +333,17 @@ void place(QWidget* parent, QWidget* child) {
         }
     }
     layout->addWidget(child);
+    trace_page_event(
+        "place",
+        QStringLiteral("parent=%1 layout=%2 before=%3 child=%4 after=%5")
+            .arg(reinterpret_cast<quintptr>(parent), 0, 16)
+            .arg(parent->layout() != nullptr
+                     ? QString::fromLatin1(parent->layout()->metaObject()->className())
+                     : QStringLiteral("none"))
+            .arg(before)
+            .arg(reinterpret_cast<quintptr>(child), 0, 16)
+            .arg(parent->layout() != nullptr ? parent->layout()->count() : -1)
+            .toStdString());
 }
 
 // ── 回调盒（保活 + 把 std::function 变成 C ABI 要的"裸函数指针 + user"）────────

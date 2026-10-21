@@ -37,6 +37,13 @@ void clear_qt_ui_facade_log_sink(const void* owner);
 // ★ 启动时打诊断用：现在"是不是 UI 线程"的**真实判定**（以 Qt 为准，见 .cpp 注释）。
 bool qt_ui_facade_on_ui_thread();
 
+// ★★ 2026-10-21（用户口径）：**page_trace 的统一入口**。写 `%TEMP%/page_trace.txt`，
+//   一行 = `page_id|kind|detail|monotonic|thread|pid`；`kind` 例：
+//   `build_start` / `built` / `error:<what>` / `settle:…` / `scope_ctor` / `scope_dtor` /
+//   `resolve` / `place` / `container_delete_later`。
+//   只在诊断里用；**不许改产品行为**（写失败就放弃）。
+void trace_page_event(const std::string& kind, const std::string& detail);
+
 // ★★ 插件改装 P3（控件门面 L1/L2）：**取控件当前文本**。
 // 为什么放在这里而不是在门面实现里另写一份：`plugin_ui.cpp` 是"控件语义"的**唯一实现**
 // （C ABI 的 `api.ui` 与 Python 侧的 `api.ui` 都走它）—— 门面只是把它再包一层。
