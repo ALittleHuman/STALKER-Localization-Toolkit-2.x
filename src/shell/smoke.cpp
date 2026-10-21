@@ -287,6 +287,20 @@ QString qss_rule_body(const QString& sheet, const QString& selector, bool last) 
 // 超时：把 `objectName / childCount / layout count / page size` 写进 `why`，
 //       **由调用方 `check()` 判红** —— 助手不替断言、不重试、不延长超时。
 // 调用方**必须**在等待后重新取子控件指针（等待期间可能有 deleteLater/重建）。
+// ★★ 2026-10-22（用户口径）：**判据完成条件的统一 helper**。
+//   `wait_until(pred, ms)`：QElapsedTimer ＋ processEvents ＋ msleep(5)，返回 bool。
+//   调用方**超时照旧 `check(false)`**（不重试、不加固定 sleep），并把当时读到的值写进 notes。
+bool wait_until(const std::function<bool()>& pred, int ms) {
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < ms) {
+        QApplication::processEvents(QEventLoop::AllEvents, 10);
+        if (pred != nullptr && pred()) return true;
+        QThread::msleep(5);
+    }
+    return pred != nullptr && pred();
+}
+
 bool wait_page_ready(QWidget* page, int ms, QString* why) {
     if (why != nullptr) why->clear();
     const auto fail = [&](const QString& detail) {
@@ -6813,7 +6827,13 @@ SmokeResult run_smoke() {
               QStringLiteral("P17-1 ② 前提：插件任务壳上有可点的「取消」按钮"));
         if (cancel_button != nullptr) cancel_button->click();
 
+        // ★ 2026-10-22：**等 cancel_after 或 loops 任一出现**再判取消位
+        //   （原来只等 `cancel_after`；worker 若先写 `loops` 再写 `cancel_after`，
+        //    负载高时读到的就是"没读到"）。
         text = wait_for_marker(QStringLiteral("cancel_after"), 5000);
+        if (!text.contains(QStringLiteral("cancel_after:"))) {
+            text = wait_for_marker(QStringLiteral("loops"), 2000);
+        }
         const QString cancel_after = marker_value(text, QStringLiteral("cancel_after"));
         const QString loops = marker_value(text, QStringLiteral("loops"));
         check(cancel_after == QStringLiteral("1"),
@@ -7005,6 +7025,33 @@ SmokeResult run_smoke() {
         //   ★ 修前宿主套的是**裸** `ScrollViewport`、页控件本人就是视口，所以这条判据写成
         //     "页控件必须 dynamic_cast 成 ScrollViewport"；口径升级后页控件是 `PageBase`，
         //     判据随之量**它的自带视口**（更严：还量 `minsize_ok()`）。**没有放宽。**
+        // ★ 2026-10-22：**完成条件**——插件页的视口/分栏要等布局落地，否则
+        //   `findChildren<ScrollViewport*>()` 可能还是 0（实测报"没被套上宿主视口"）。
+        {
+            int last = -1;
+            int stable = 0;
+            const bool ok = wait_until(
+                [&]() {
+                    const int now = page_widget != nullptr
+                                        ? page_widget->findChildren<ScrollViewport*>().size()
+                                        : 0;
+                    if (now > 0 && now == last) {
+                        ++stable;
+                    } else {
+                        stable = 0;
+                        last = now;
+                    }
+                    return now > 0 && stable >= 1;
+                },
+                2000);
+            if (!ok) {
+                result.notes.append(
+                    QStringLiteral("P5 诊断：等视口 2000ms 未就绪（find_viewport=%1）")
+                        .arg(page_widget != nullptr
+                                 ? page_widget->findChildren<ScrollViewport*>().size()
+                                 : -1));
+            }
+        }
         auto* page_base = dynamic_cast<PageBase*>(page_widget);
         if (page_base != nullptr) {
             check(page_base->viewport() != nullptr &&
@@ -7481,7 +7528,14 @@ SmokeResult run_smoke() {
             if (only_tree != nullptr) {
                 emit only_tree->customContextMenuRequested(QPoint(9, 9));
             }
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            // ★ 2026-10-22：**完成条件**——菜单项由 `QTimer::singleShot(0)` 收集，负载高时一次
+            //   `processEvents(50)` 不够 ⇒ 实测报 `实得 []`（其实菜单还没 popup 出来）。
+            //   有界等它以**非空**为准（≤2000ms），超时仍判红并记 note。
+            const bool menu_seen = wait_until([&seen_only]() { return !seen_only.isEmpty(); }, 2000);
+            if (!menu_seen) {
+                result.notes.append(QStringLiteral(
+                    "P13-2a-2 诊断：等菜单项 2000ms 仍为空（popup 没起来或没被收集）"));
+            }
             check(seen_only == QStringList({QStringLiteral("甲"), QStringLiteral("乙")}),
                   QStringLiteral("P13-2a-2 插件页菜单里混进了别的项（实得 [%1]）")
                       .arg(seen_only.join(QStringLiteral("/"))));
