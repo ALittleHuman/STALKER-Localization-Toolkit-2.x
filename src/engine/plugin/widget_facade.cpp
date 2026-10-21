@@ -1,6 +1,7 @@
 #include "xrkit/engine/plugin/widget_facade.h"
 
 #include <mutex>
+#include <sstream>
 #include <thread>
 #include <iomanip>
 #include <fstream>
@@ -274,9 +275,24 @@ std::vector<std::string> ui_worker_safe_method_names() {
     return out;
 }
 
+// 前置声明：`set_current_panel_root` 里要用它（定义在下面，且必须是**无锁**版本）
+void trace_event_raw(const std::string& page, const std::string& kind,
+                     const std::string& detail);
+
 void set_current_panel_root(UiHandle root) {
-    std::lock_guard<std::mutex> lock(facade_mutex());
-    panel_root_storage() = root;
+    UiHandle old_root = nullptr;
+    std::string page;
+    {
+        std::lock_guard<std::mutex> lock(facade_mutex());
+        old_root = panel_root_storage();
+        page = page_id_storage();
+        panel_root_storage() = root;
+    }
+    // ★★ 2026-10-22（用户口径）：`current_root=0` 要当成**事件**看 —— 谁写的、哪个线程、当时哪页。
+    std::ostringstream detail;
+    detail << "old=" << old_root << " new=" << root
+           << " thread_std=" << std::hash<std::thread::id>{}(std::this_thread::get_id());
+    trace_event_raw(page, "root_set", detail.str());
 }
 
 UiHandle current_panel_root() {
@@ -290,7 +306,10 @@ void set_current_page_context(const std::string& page_id, xrkit::plugin::Registr
     page_registry_storage() = registry;
 }
 
-void trace_event(const std::string& kind, const std::string& detail) {
+// ★ 2026-10-22（用户口径）：**带 page 的无锁版本** —— `set_current_panel_root` 持有
+//   `facade_mutex` 时不能再调 `current_page_id()`（同一把锁 ⇒ 自死锁）。
+void trace_event_raw(const std::string& page, const std::string& kind,
+                     const std::string& detail) {
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path file = fs::temp_directory_path(ec) / "page_trace.txt";
@@ -300,10 +319,13 @@ void trace_event(const std::string& kind, const std::string& detail) {
     const auto now = std::chrono::duration<double>(
                          std::chrono::steady_clock::now().time_since_epoch())
                          .count();
-    out << current_page_id() << '|' << kind << '|' << detail << '|' << std::fixed
-        << std::setprecision(6) << now << '|'
-        << std::hash<std::thread::id>{}(std::this_thread::get_id()) << '|'
-        << std::this_thread::get_id() << '\n';
+    out << page << '|' << kind << '|' << detail << '|' << std::fixed
+        << std::setprecision(6) << now << '|' << std::hash<std::thread::id>{}(
+            std::this_thread::get_id()) << '|' << std::this_thread::get_id() << '\n';
+}
+
+void trace_event(const std::string& kind, const std::string& detail) {
+    trace_event_raw(current_page_id(), kind, detail);
 }
 
 std::string current_page_id() {
@@ -316,30 +338,45 @@ xrkit::plugin::Registry* current_page_registry() {
     return page_registry_storage();
 }
 
-UiPanelScope::UiPanelScope(UiHandle root) {
+UiPanelScope::UiPanelScope(UiHandle root) : scope_root_(root) {
     previous_ = current_panel_root();
     set_current_panel_root(root);
-    // ★ 2026-10-22：引擎侧也记一对 ctor/dtor（带 previous 与 root），
-    //   用来抓"嵌套 scope 乱序析构 ⇒ 全局 root 停在 nullptr"这一类。
-    trace_event("scope_engine_ctor",
-                std::string("root=") + (root != nullptr ? "1" : "0") + " previous=" +
-                    (previous_ != nullptr ? "1" : "0"));
+    // ★ 2026-10-22（用户口径）：带 **scope 地址**（this）与 previous/root ——
+    //   只看 ctor/dtor 数量不够，要看 dtor 的 `current_before` 是不是它自己的 root。
+    std::ostringstream detail;
+    detail << "scope=" << static_cast<const void*>(this) << " root=" << root
+           << " previous=" << previous_
+           << " thread_std=" << std::hash<std::thread::id>{}(std::this_thread::get_id());
+    trace_event("scope_ctor", detail.str());
 }
 
 // ★ P13-2a-2：连页面身份一起设（宿主建插件页/面板时用）
 UiPanelScope::UiPanelScope(UiHandle root, const std::string& page_id,
                            xrkit::plugin::Registry* registry)
     : restores_page_context_(true),
+      scope_root_(root),
       previous_page_id_(current_page_id()),
       previous_registry_(current_page_registry()) {
     previous_ = current_panel_root();
     set_current_panel_root(root);
     set_current_page_context(page_id, registry);
+    std::ostringstream detail;
+    detail << "scope=" << static_cast<const void*>(this) << " root=" << root
+           << " previous=" << previous_ << " page=" << page_id
+           << " thread_std=" << std::hash<std::thread::id>{}(std::this_thread::get_id());
+    trace_event("scope_ctor", detail.str());
 }
 
 UiPanelScope::~UiPanelScope() {
-    trace_event("scope_engine_dtor",
-                std::string("restore=") + (previous_ != nullptr ? "1" : "0"));
+    {
+        const UiHandle before = current_panel_root();
+        std::ostringstream detail;
+        detail << "scope=" << static_cast<const void*>(this) << " current_before=" << before
+               << " own_root=" << scope_root_ << " previous=" << previous_
+               << " lifo=" << (before == scope_root_ ? 1 : 0)
+               << " thread_std=" << std::hash<std::thread::id>{}(std::this_thread::get_id());
+        trace_event("scope_dtor", detail.str());
+    }
     set_current_panel_root(previous_);
     if (restores_page_context_) {
         set_current_page_context(previous_page_id_, previous_registry_);

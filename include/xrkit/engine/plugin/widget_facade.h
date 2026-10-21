@@ -375,6 +375,8 @@ struct UiPanelScope {
 
 private:
     UiHandle previous_ = nullptr;
+    // ★ 2026-10-22（用户口径）：本人的 root（dtor 里要和 `current_before` 比 ⇒ 判"乱序恢复"）
+    UiHandle scope_root_ = nullptr;
     // ★ P13-2a-2：只有「连页面身份」那个构造会置位 ⇒ 析构时才知道要不要恢复
     bool restores_page_context_ = false;
     std::string previous_page_id_;
