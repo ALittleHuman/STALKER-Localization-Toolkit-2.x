@@ -373,6 +373,39 @@ void Hub::set_current_page(int index) {
     if (page_tabs_ == nullptr || index < 0 || index >= page_tabs_->count()) return;
     page_tabs_->setCurrentIndex(index);   // 与页栈的连接已存在 ⇒ 两处同步
     if (stack_ != nullptr) stack_->setCurrentIndex(index);
+    // ★★ 2026-10-21（用户口径）：**visible 打点** —— 判"页实例"只许比**注册实例**：
+    //   `stack()->widget(idx)` 与 `page_widgets_[idx]`；**不许**拿它跟 builder 的根容器比
+    //   （插件页会被 `PluginPage` 包一层，两者天然不同 ⇒ 那样算 `same` 永远 0，会把正常包装
+    //   误判成"页被重建"）。
+    if (stack_ == nullptr) return;
+    const QString id = page_id(index);
+    QWidget* stack_widget = stack_->widget(index);
+    QWidget* registered = (index < static_cast<int>(page_widgets_.size()))
+                              ? page_widgets_[static_cast<size_t>(index)]
+                              : nullptr;
+    QWidget* builder_root = page_builder_roots_.value(id, nullptr);
+    QWidget* content_root = builder_root;
+    if (auto* base = dynamic_cast<PageBase*>(stack_widget)) {
+        if (base->body_layout() != nullptr && base->body_layout()->count() > 0) {
+            QLayoutItem* item = base->body_layout()->itemAt(0);
+            if (item != nullptr && item->widget() != nullptr) content_root = item->widget();
+        }
+    }
+    const int viewports =
+        stack_widget != nullptr ? stack_widget->findChildren<ScrollViewport*>().size() : -1;
+    trace_page_event(
+        "visible",
+        QStringLiteral("page_id=%1 index=%2 stack_widget=%3 registered_widget=%4 "
+                       "same_registered=%5 builder_root=%6 content_root=%7 find_viewport=%8")
+            .arg(id)
+            .arg(index)
+            .arg(reinterpret_cast<quintptr>(stack_widget), 0, 16)
+            .arg(reinterpret_cast<quintptr>(registered), 0, 16)
+            .arg(stack_widget != nullptr && stack_widget == registered ? 1 : 0)
+            .arg(reinterpret_cast<quintptr>(builder_root), 0, 16)
+            .arg(reinterpret_cast<quintptr>(content_root), 0, 16)
+            .arg(viewports)
+            .toStdString());
 }
 
 QString Hub::page_title(int index) const {
@@ -533,6 +566,7 @@ int Hub::sync_pages() {
                                  xrkit::plugin::current_panel_root())), 0, 16)
                         .toStdString());
                 const QString trace_id = QString::fromStdString(reg->spec.id);
+                page_builder_roots_.insert(trace_id, container);
                 trace_page_build(trace_id, QStringLiteral("build_start"));
                 try {
                     built = reg->builder(container);
@@ -546,7 +580,8 @@ int Hub::sync_pages() {
                         trace_page_event(
                             "settle",
                             QStringLiteral("ret=%1 placed=%2 anything=%3 container=%4 "
-                                           "layout=%5 scope=%6 same=%7")
+                                           "layout=%5 scope=%6 same=%7 builder_root=%8 "
+                                           "page_widget=%9")
                                 .arg(built != nullptr ? 1 : 0)
                                 .arg(now_layout != nullptr ? now_layout->count() : -1)
                                 .arg((built != nullptr ||
@@ -563,6 +598,8 @@ int Hub::sync_pages() {
                                 .arg(scope_now == reinterpret_cast<plugin::UiHandle>(container)
                                          ? 1
                                          : 0)
+                                .arg(reinterpret_cast<quintptr>(container), 0, 16)
+                                .arg(reinterpret_cast<quintptr>(built), 0, 16)
                                 .toStdString());
                     }
                 } catch (const std::exception& e) {

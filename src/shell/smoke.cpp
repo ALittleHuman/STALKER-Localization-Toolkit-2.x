@@ -6305,7 +6305,7 @@ SmokeResult run_smoke() {
             drop_handled = drop_filter->dispatch(&drop, zone);
         }
         QApplication::processEvents();
-        const QString text = read_marker();
+        QString text = read_marker();
         const int calls_at = text.indexOf(QStringLiteral("provider_calls:"));
         const int calls_end = text.indexOf(QLatin1Char('\n'), calls_at);
         const int calls = calls_at < 0
@@ -6548,6 +6548,30 @@ SmokeResult run_smoke() {
             check(size > 0, QStringLiteral("C-13 日志文件不许是 0 字节（实得 %1）").arg(size));
         }
 
+        // ★★ 2026-10-21：**完成条件**先于断言 —— worker 在别的工作线程里跑，
+        //   `worker_thread_ui:` 这一行可能**还没落盘**就被读到（实测在打包自检里出现过，
+        //   报错"没有被拒"，其实是"还没写"）。有界等 ≤2000ms（泵事件），超时照旧判红。
+        {
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+            while (std::chrono::steady_clock::now() < deadline) {
+                QApplication::processEvents();
+                QFile mf(marker);
+                if (mf.open(QIODevice::ReadOnly)) {
+                    const QString now = QString::fromUtf8(mf.readAll());
+                    mf.close();
+                    if (now.contains(QStringLiteral("worker_thread_ui:"))) {
+                        text = now;
+                        break;
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            if (!text.contains(QStringLiteral("worker_thread_ui:"))) {
+                result.notes.append(QStringLiteral(
+                    "P4 诊断：等 `worker_thread_ui:` 2000ms 未出现（worker 没跑到那一行）"));
+            }
+        }
         check(text.contains(QStringLiteral("worker_thread_ui:True")),
               QStringLiteral("P4 **线程纪律失效**：工作线程里调 `ui.label` 没有被拒"));
         QProgressBar* bar = page_widget != nullptr ? page_widget->findChild<QProgressBar*>() : nullptr;

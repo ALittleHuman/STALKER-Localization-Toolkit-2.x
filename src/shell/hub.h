@@ -7,6 +7,7 @@
 // 本类**不用 Q_OBJECT / 不用 signals**（回调一律 lambda），所以不需要 moc。
 
 #include <QMainWindow>
+#include <QHash>
 #include <QString>
 
 #include "page_host.h"
@@ -165,6 +166,11 @@ private:
     std::vector<QString> page_ids_;
     std::vector<QString> page_owners_;
     std::vector<QWidget*> page_widgets_;
+
+    // ★ 2026-10-21（用户口径）：每页**builder 收到的根容器**（诊断用）。
+    //   `visible` 打点要拿它和 `PageBase::body_layout()` 里的 content 对照 ——
+    //   **不许**拿 `stack()->widget(idx)` 去比它：插件页会被 `PluginPage` 包一层，天然不同。
+    QHash<QString, QWidget*> page_builder_roots_;
 };
 
 }  // namespace xrkit::shell
