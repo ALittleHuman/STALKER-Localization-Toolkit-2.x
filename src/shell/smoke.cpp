@@ -6195,7 +6195,7 @@ SmokeResult run_smoke() {
             "        return wrapper\n"
             "\n"
             "    @_guard\n"
-            "    def build():\n"
+            "    def build():\n"            "        main_ident = threading.get_ident()\n"
             "        ui = api.ui\n"
             "        calls = {'n': 0}\n"
             "        rows = ui.list(None, 18)\n"
@@ -6255,7 +6255,12 @@ SmokeResult run_smoke() {
             "        ui.drop_zone_on_drop(zone, lambda paths: mark('drop:' + ','.join(sorted(paths))))\n"
             "        panel = ui.task_panel(None, True)\n"
             "        def worker(progress, message):\n"
-            "            mark('worker_thread_ui:%s' % (ui.label(None, '不该出现') is None))\n"
+            "            mark('worker_ident:%d' % threading.get_ident())\n"
+            "            mark('worker_main_ident:%d' % main_ident)\n"
+            "            mark('worker_ui_thread:%d' % int(ui.on_ui_thread()))\n"
+            "            _lbl = ui.label(None, '不该出现')\n"
+            "            mark('worker_label_none:%d' % int(_lbl is None))\n"
+            "            mark('worker_thread_ui:%s' % (_lbl is None))\n"
             "            message('开始干活')\n"
             "            progress(50)\n"
             "            time.sleep(0.05)\n"
@@ -6586,8 +6591,22 @@ SmokeResult run_smoke() {
                     "P4 诊断：等 `worker_thread_ui:` 2000ms 未出现（worker 没跑到那一行）"));
             }
         }
+        {
+            const auto mark_of = [&text](const QString& key) {
+                const int at = text.indexOf(key + QLatin1Char(':'));
+                if (at < 0) return QStringLiteral("?");
+                return text.mid(at + key.size() + 1).split(QLatin1Char('\n')).first().trimmed();
+            };
+            result.notes.append(
+                QStringLiteral("P4 读数：ident=%1 main=%2 ui_thread=%3 label_none=%4")
+                    .arg(mark_of(QStringLiteral("worker_ident")))
+                    .arg(mark_of(QStringLiteral("worker_main_ident")))
+                    .arg(mark_of(QStringLiteral("worker_ui_thread")))
+                    .arg(mark_of(QStringLiteral("worker_label_none"))));
+        }
         check(text.contains(QStringLiteral("worker_thread_ui:True")),
-              QStringLiteral("P4 **线程纪律失效**：工作线程里调 `ui.label` 没有被拒"));
+              QStringLiteral("P4 **线程纪律失效**：工作线程里调 `ui.label` 没有被拒"
+                             "（读数见 notes：ident/main/ui_thread/label_none）"));
         QProgressBar* bar = page_widget != nullptr ? page_widget->findChild<QProgressBar*>() : nullptr;
         check(bar != nullptr && bar->value() == 100,
               QStringLiteral("P4 Python worker 的 progress(100) 没到宿主进度条（实得 %1）")
