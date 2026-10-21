@@ -6497,6 +6497,34 @@ SmokeResult run_smoke() {
                     if (candidate->text() == QStringLiteral("两模式")) two_mode = candidate;
                 }
             }
+            // ★★ 2026-10-22（用户口径）：**完成条件**——等"左键动作菜单"的**两项**都装上再断言
+            //   （只等第一项会漏掉"第二项没装进去"那一类）。超时照旧判红，note 带 actions。
+            {
+                int last = -1;
+                int stable = 0;
+                const bool ok = wait_until(
+                    [&]() {
+                        int now = -1;
+                        if (two_mode != nullptr && two_mode->menu() != nullptr) {
+                            now = two_mode->menu()->actions().size();
+                        }
+                        if (now == last) {
+                            ++stable;
+                        } else {
+                            stable = 0;
+                            last = now;
+                        }
+                        return now == 2 && stable >= 1;
+                    },
+                    2000);
+                if (!ok) {
+                    result.notes.append(
+                        QStringLiteral("P16-3c 诊断：等两项菜单 2000ms 未就绪（actions=%1）")
+                            .arg(two_mode != nullptr && two_mode->menu() != nullptr
+                                     ? two_mode->menu()->actions().size()
+                                     : -1));
+                }
+            }
             check(marker_value(QStringLiteral("menu_ok")) == QStringLiteral("1") &&
                       two_mode != nullptr && two_mode->menu() != nullptr &&
                       two_mode->menu()->actions().size() == 2,
@@ -7528,12 +7556,15 @@ SmokeResult run_smoke() {
         //   而"无注册即无痕迹"（1.x）意味着**连分隔符都不许加**、菜单里只有插件自己的标签。
         {
             QStringList seen_only;
-            QTimer::singleShot(0, [&seen_only]() {
-                auto* popup = qobject_cast<QMenu*>(QApplication::activePopupWidget());
-                if (popup == nullptr) return;
-                for (QAction* act : popup->actions()) seen_only << act->text();
-                popup->close();
-            });
+            // ★★ 2026-10-22（用户口径）：三层读数改由**轮询**采（原先 singleShot 一次性采，
+            //   实测 `menu_timer_fired|actions=-1 popup=0` —— timer 跑了，但那一刻
+            //   `activePopupWidget()` 还是空 ⇒ 菜单还没起来就采完了）。
+            //   现在：`wait_until` 里反复看 popup，收到**两项**才算完成；超时仍判红。
+            // ★★ 2026-10-22：**必须用 QTimer 在模态循环里采**。
+            //   上一版用 `emit` 之后 `wait_until` 轮询 ⇒ `QMenu::exec()` 开的**嵌套事件循环**
+            //   把调用方挡住、popup 永远没人关 ⇒ 出包自检**挂死**（实测 00:53 起的 xrkit_app 一直不退出）。
+            //   正确做法：先起一个 10ms 的 QTimer，它会在嵌套循环里被派发；收满两项就关掉 popup。
+            trace_page_event("menu_timer_scheduled", "actions=?");
             FacadeTree* only_tree = nullptr;
             if (page_widget != nullptr) {
                 for (FacadeTree* candidate : page_widget->findChildren<FacadeTree*>()) {
@@ -7544,16 +7575,52 @@ SmokeResult run_smoke() {
                     }
                 }
             }
-            if (only_tree != nullptr) {
+            if (only_tree == nullptr) {
+                result.notes.append(
+                    QStringLiteral("P13-2a-2 诊断：页里没找到带 ra1 的门面树（右键菜单无从请求）"));
+            } else {
+                bool fired = false;
+                bool visible_logged = false;
+                QTimer menu_timer;
+                menu_timer.setInterval(10);
+                QObject::connect(&menu_timer, &QTimer::timeout, [&]() {
+                    auto* popup = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+                    if (popup == nullptr) return;
+                    const int actions = popup->actions().size();
+                    if (!fired) {
+                        fired = true;
+                        trace_page_event(
+                            "menu_timer_fired",
+                            QStringLiteral("actions=%1 popup=1").arg(actions).toStdString());
+                    }
+                    if (!visible_logged) {
+                        visible_logged = true;
+                        trace_page_event(
+                            "menu_visible",
+                            QStringLiteral("visible=%1 actions=%2")
+                                .arg(popup->isVisible() ? 1 : 0)
+                                .arg(actions)
+                                .toStdString());
+                    }
+                    if (actions < 2) return;
+                    seen_only.clear();
+                    for (QAction* act : popup->actions()) seen_only << act->text();
+                    popup->close();
+                    menu_timer.stop();
+                });
+                menu_timer.start();
                 emit only_tree->customContextMenuRequested(QPoint(9, 9));
-            }
-            // ★ 2026-10-22：**完成条件**——菜单项由 `QTimer::singleShot(0)` 收集，负载高时一次
-            //   `processEvents(50)` 不够 ⇒ 实测报 `实得 []`（其实菜单还没 popup 出来）。
-            //   有界等它以**非空**为准（≤2000ms），超时仍判红并记 note。
-            const bool menu_seen = wait_until([&seen_only]() { return !seen_only.isEmpty(); }, 2000);
-            if (!menu_seen) {
-                result.notes.append(QStringLiteral(
-                    "P13-2a-2 诊断：等菜单项 2000ms 仍为空（popup 没起来或没被收集）"));
+                menu_timer.stop();
+                if (seen_only.isEmpty()) {
+                    // 没走模态（或菜单被别处关掉）时再兜 1 秒
+                    wait_until([&seen_only]() { return !seen_only.isEmpty(); }, 1000);
+                }
+                if (seen_only.isEmpty()) {
+                    result.notes.append(
+                        QStringLiteral("P13-2a-2 诊断：菜单两项没采到（fired=%1）")
+                            .arg(fired ? 1 : 0));
+                    trace_page_event("menu_timer_fired", "actions=-1 popup=0");
+                }
             }
             check(seen_only == QStringList({QStringLiteral("甲"), QStringLiteral("乙")}),
                   QStringLiteral("P13-2a-2 插件页菜单里混进了别的项（实得 [%1]）")
