@@ -319,6 +319,11 @@ xrkit::plugin::Registry* current_page_registry() {
 UiPanelScope::UiPanelScope(UiHandle root) {
     previous_ = current_panel_root();
     set_current_panel_root(root);
+    // ★ 2026-10-22：引擎侧也记一对 ctor/dtor（带 previous 与 root），
+    //   用来抓"嵌套 scope 乱序析构 ⇒ 全局 root 停在 nullptr"这一类。
+    trace_event("scope_engine_ctor",
+                std::string("root=") + (root != nullptr ? "1" : "0") + " previous=" +
+                    (previous_ != nullptr ? "1" : "0"));
 }
 
 // ★ P13-2a-2：连页面身份一起设（宿主建插件页/面板时用）
@@ -333,6 +338,8 @@ UiPanelScope::UiPanelScope(UiHandle root, const std::string& page_id,
 }
 
 UiPanelScope::~UiPanelScope() {
+    trace_event("scope_engine_dtor",
+                std::string("restore=") + (previous_ != nullptr ? "1" : "0"));
     set_current_panel_root(previous_);
     if (restores_page_context_) {
         set_current_page_context(previous_page_id_, previous_registry_);
