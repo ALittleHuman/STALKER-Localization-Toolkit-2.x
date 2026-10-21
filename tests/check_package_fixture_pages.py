@@ -184,8 +184,10 @@ def _prune_kept_dirs(keep: int = 3) -> None:
     连跑几十次后把 C 盘撑到 0.1 GB ⇒ 之后每次 `copytree` 都 `[WinError 112] 磁盘空间不足`，
     表现为"判据几乎全红"。这里只保留最新 `keep` 份现场，其余删掉（现场仍在日志里）。"""
     try:
-        base = Path(tempfile.gettempdir())
-        dirs = sorted([p for p in base.glob("p1781_pkg_pages_*") if p.is_dir()],
+        dirs = []
+        for base in (ROOT / "build", Path(tempfile.gettempdir())):
+            dirs += [p for p in base.glob("p1781_pkg_pages_*") if p.is_dir()]
+        dirs = sorted(dirs,
                       key=lambda p: p.stat().st_mtime, reverse=True)
         for old in dirs[keep:]:
             shutil.rmtree(old, ignore_errors=True)
@@ -420,6 +422,34 @@ def capture_phase4_artifacts(pkg: Path, out: str) -> Path:
     return dest
 
 
+def repo_write_allowed() -> bool:
+    """★ 用户 2026-10-21 的前置探针：**先证明仓库路径能写 DLL**，再跑判据。
+
+    为什么必须探：本机 360「主动防御」会按"文件名＋仓库路径"拦 `vcruntime140.dll`
+    （实测：改名片/换路径/先写 `.tmp` 再改名都被拒，`%TEMP%` 可写）。它一旦生效，
+    打包/自检会出现**一片红**，而那是环境问题、不是产品问题。
+    探针不过 ⇒ 判据按**未覆盖**记账（return 2），绝不产出假红。
+    """
+    probe_dir = ROOT / "build" / "probe_av"
+    src = ROOT / "third_party" / "python-embed" / "vcruntime140.dll"
+    try:
+        probe_dir.mkdir(parents=True, exist_ok=True)
+        dst = probe_dir / "vcruntime140.dll"
+        shutil.copy2(src, dst)
+        with open(dst, "rb") as fh:
+            ok = len(fh.read(1)) == 1
+        dst.unlink(missing_ok=True)
+        shutil.rmtree(probe_dir, ignore_errors=True)
+        return ok
+    except OSError as exc:
+        print("   !! 仓库路径写 DLL 被拒（%s）⇒ 安全软件没放行这个目录" % exc)
+        try:
+            shutil.rmtree(probe_dir, ignore_errors=True)
+        except OSError:
+            pass
+        return False
+
+
 def audit_package(pkg: Path) -> None:
     rel = pkg.relative_to(ROOT).as_posix()
     marker = package_marker(pkg)
@@ -443,7 +473,9 @@ def audit_package(pkg: Path) -> None:
         return
 
     # ★ 只动**临时副本**：原产物一个字节都不许改（④ 要把夹具抬到顶层）
-    tmp = Path(tempfile.mkdtemp(prefix="p1781_pkg_pages_"))
+    # ★★ 用户 2026-10-21：包副本**落在仓库里**（`build/`），这样只要仓库目录在安全软件里放行，
+    #   复制品就不会再被单独扫（不用把整个 `%TEMP%` 放开）。
+    tmp = Path(tempfile.mkdtemp(prefix="p1781_pkg_pages_", dir=str(ROOT / "build")))
     try:
         work = tmp / "pkg"
         shutil.copytree(pkg, work)
@@ -655,6 +687,9 @@ def main() -> int:
         sys.argv.remove("--phase4-only")
     if not disk_space_ok(2.0):
         print("PKG-PAGES 未覆盖：临时盘余量不足（清盘后重跑）")
+        return 2
+    if not repo_write_allowed():
+        print("PKG-PAGES 未覆盖：仓库路径仍被安全软件拦截（把仓库目录加入信任区后重跑）")
         return 2
     say("PKG-PAGES P17-81：夹具定性（非产品）＋ 默认可见页＝六个内置页 ＋ 抬 `_fixtures\\` 才验插件页")
     say("")
