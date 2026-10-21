@@ -21,6 +21,8 @@
 #include <string>
 
 #include <QApplication>
+#include <QCoreApplication>
+#include <QThread>
 #include <QDateTime>
 #include <QDir>
 #include <QDockWidget>
@@ -49,6 +51,25 @@ namespace {
 // ★★ P1：内置六页的**声明清单搬去了 `pages/page_factory.cpp`**（它属于页模块，不属于 Hub）。
 //   这里只剩"造不出来时的兜底页" —— 留着它是因为"页建不出来"必须能被看见，
 //   而不是变成一片空白（零静默）。
+// ★★ 2026-10-21（用户口径）：**每个插件页**都写一份 `page_trace.txt` ——
+//   `page_id|event|monotonic|thread|pid`，event ∈ build_start / built / error:<what>。
+//   这样 P5 / P13 / ⑭ 那类"某个页没建完"的红，失败时能直接读出**是哪个页、卡在哪一步**，
+//   而不用去猜。写到 `QDir::temp()`（判据的私有 TEMP ⇒ 失败取证器能原样拷走）。
+void trace_page_build(const QString& page_id, const QString& event) {
+    QFile out(QDir::temp().filePath(QStringLiteral("page_trace.txt")));
+    if (!out.open(QIODevice::Append | QIODevice::Text)) return;
+    const double now = std::chrono::duration<double>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count();
+    out.write(QStringLiteral("%1|%2|%3|%4|%5\n")
+                  .arg(page_id)
+                  .arg(event)
+                  .arg(QString::number(now, 'f', 6))
+                  .arg(reinterpret_cast<quintptr>(QThread::currentThread()))
+                  .arg(QCoreApplication::applicationPid())
+                  .toUtf8());
+}
+
 QWidget* make_placeholder(const PageSpec& spec) {
     auto* widget = new QWidget;
     auto* layout = new QVBoxLayout(widget);
@@ -477,12 +498,18 @@ int Hub::sync_pages() {
                 const std::string page_key =
                     reg->spec.replaces.empty() ? reg->spec.id : reg->spec.replaces;
                 plugin::UiPanelScope panel_scope(container, page_key, &registry_);
+                const QString trace_id = QString::fromStdString(reg->spec.id);
+                trace_page_build(trace_id, QStringLiteral("build_start"));
                 try {
                     built = reg->builder(container);
+                    trace_page_build(trace_id, QStringLiteral("built"));
                 } catch (const std::exception& e) {
                     builder_exception = e.what() != nullptr ? e.what() : "std::exception（what() 为空）";
+                    trace_page_build(trace_id, QStringLiteral("error:%1")
+                                                  .arg(QString::fromStdString(builder_exception)));
                 } catch (...) {
                     builder_exception = "非 std::exception 的 C++ 异常";
+                    trace_page_build(trace_id, QStringLiteral("error:非 std::exception"));
                 }
             }
             const bool builder_threw = !builder_exception.empty();
@@ -516,6 +543,15 @@ int Hub::sync_pages() {
             QLayout* placed = widget == container ? container->layout() : nullptr;
             const bool anything_built =
                 !builder_threw && (built != nullptr || (placed != nullptr && placed->count() > 0));
+            // ★ 2026-10-21（用户口径）：把"判定结果"也写进 page_trace ——
+            //   `settle|built=<0|1>|placed=<N>|anything=<0|1>`。
+            //   有了这一行就能区分：**builder 没跑完**（没有 built 事件）vs
+            //   **跑完了但控件没落进容器**（built 事件在、placed=0、anything=0 ⇒ 占位页）。
+            trace_page_build(QString::fromStdString(reg->spec.id),
+                             QStringLiteral("settle:built=%1 placed=%2 anything=%3")
+                                 .arg(built != nullptr ? 1 : 0)
+                                 .arg(placed != nullptr ? placed->count() : -1)
+                                 .arg(anything_built ? 1 : 0));
             if (builder_threw) {
                 widget = make_placeholder(reg->spec);
                 if (widget != container) container->deleteLater();

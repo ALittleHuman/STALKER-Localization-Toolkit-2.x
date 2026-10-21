@@ -380,7 +380,7 @@ def capture_phase4_artifacts(pkg: Path, out: str) -> Path:
     dest = ROOT / "build" / "logs" / ("pkg_pages_phase4_artifacts_" + ts)
     dest.mkdir(parents=True, exist_ok=True)
     private = LAST_SMOKE_TEMP[0]
-    names = ["l2_trace.txt", "build_error.txt", "l2_marker.txt",
+    names = ["page_trace.txt", "l2_trace.txt", "build_error.txt", "l2_marker.txt",
              "cancel_marker.txt", "cancel_mark_error.txt", "cancel_probe.py", "l2_demo.py"]
     manifest = []
     src_dirs = []
