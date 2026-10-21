@@ -367,7 +367,14 @@ private:
         Registry* registry = registry_;
         return [kept, what, owner, registry](void* parent) -> void* {
             py::gil_scoped_acquire acquire;
+            // ★ 2026-10-22：探针 —— Hub 传进来的 `parent` 到底是不是空？
+            //   （实测 builder 里 `current_panel_root()` 变成 0，怀疑就是这一层把 root 设成了 nullptr）
+            trace_event("py_builder_parent",
+                        std::string("parent=") + (parent != nullptr ? "1" : "0"));
             UiPanelScope scope(parent);
+            trace_event("py_builder_scope",
+                        std::string("root_after=") +
+                            (current_panel_root() != nullptr ? "1" : "0"));
             try {
                 py::object result = kept();
                 if (result.is_none() != 0) return kNoWidget;
