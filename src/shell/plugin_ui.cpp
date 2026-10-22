@@ -1,5 +1,14 @@
 #include "plugin_ui.h"
 
+#include <QDir>
+#include <QFile>
+#include <QMutex>
+#include <QMutexLocker>
+#include <QStringList>
+#include <QThread>
+#include <QCoreApplication>
+#include <cstdlib>
+
 #include "xrkit/core/theme.h"
 
 #include <QCheckBox>
@@ -223,3 +232,82 @@ std::string qt_plugin_widget_text(stk_widget* widget) {
 }
 
 }  // namespace xrkit::shell
+
+
+// ══ ★ 2026-10-22（用户口径）：page_trace 的**外壳侧 ring**（文件作用域）════════════════
+//   要点：① 只做"过滤 + 追加"，**零文件 I/O**；② `flush_shell_page_trace()` 一次性落盘，
+//   并且**由 xrkit_app 自己在退出前调用**（Python 判据是父进程，拿不到子进程内存）；
+//   ③ 每轮第一次 append 时**截断**文件，避免跨轮混在一起。
+namespace {
+struct ShellPageTraceRing {
+    QMutex mutex;
+    QStringList lines;
+    int dropped = 0;
+    bool truncated = false;
+};
+ShellPageTraceRing& shell_trace_ring() {
+    static ShellPageTraceRing ring;
+    return ring;
+}
+bool shell_trace_enabled() {
+    static const bool enabled = qEnvironmentVariableIsSet("XRKIT_PAGE_TRACE") &&
+                                qEnvironmentVariable("XRKIT_PAGE_TRACE") == QStringLiteral("1");
+    return enabled;
+}
+QString shell_trace_filter() {
+    static const QString filter = qEnvironmentVariable("XRKIT_PAGE_TRACE_FILTER");
+    return filter;
+}
+}  // namespace
+
+void append_shell_page_trace(const std::string& page, const std::string& kind,
+                             const std::string& detail) {
+    if (!shell_trace_enabled()) return;
+    const QString filter = shell_trace_filter();
+    if (!filter.isEmpty() &&
+        !QString::fromStdString(page).contains(filter, Qt::CaseInsensitive)) {
+        return;
+    }
+    const double now = std::chrono::duration<double>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count();
+    const QString line = QStringLiteral("%1|%2|%3|%4|%5|%6\n")
+                             .arg(QString::fromStdString(page))
+                             .arg(QString::fromStdString(kind))
+                             .arg(QString::fromStdString(detail))
+                             .arg(QString::number(now, 'f', 6))
+                             .arg(reinterpret_cast<quintptr>(QThread::currentThread()))
+                             .arg(QCoreApplication::applicationPid());
+    QMutexLocker lock(&shell_trace_ring().mutex);
+    QStringList& ring = shell_trace_ring().lines;
+    ring << line;
+    if (ring.size() > 4096) {
+        ring.removeFirst();
+        ++shell_trace_ring().dropped;
+    }
+}
+
+void flush_shell_page_trace() {
+    if (!shell_trace_enabled()) return;
+    QStringList copy;
+    int dropped = 0;
+    bool first = false;
+    {
+        QMutexLocker lock(&shell_trace_ring().mutex);
+        copy = shell_trace_ring().lines;
+        shell_trace_ring().lines.clear();
+        dropped = shell_trace_ring().dropped;
+        shell_trace_ring().dropped = 0;
+        first = !shell_trace_ring().truncated;
+        shell_trace_ring().truncated = true;
+    }
+    if (copy.isEmpty() && dropped == 0) return;
+    QFile out(QDir::temp().filePath(QStringLiteral("page_trace.txt")));
+    const auto mode = first ? (QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)
+                            : (QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+    if (!out.open(mode)) return;
+    if (dropped > 0) {
+        out.write(QStringLiteral("shell|trace_dropped|count=%1\n").arg(dropped).toUtf8());
+    }
+    for (const QString& line : copy) out.write(line.toUtf8());
+}

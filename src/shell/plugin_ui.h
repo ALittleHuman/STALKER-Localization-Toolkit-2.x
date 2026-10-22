@@ -44,6 +44,12 @@ bool qt_ui_facade_on_ui_thread();
 //   只在诊断里用；**不许改产品行为**（写失败就放弃）。
 void trace_page_event(const std::string& kind, const std::string& detail);
 
+// ★ 2026-10-22（用户口径）：外壳侧 page_trace 的**轻量追加**与**一次性落盘**。
+//   `append_shell_page_trace` 零文件 I/O；`flush_shell_page_trace` 由 xrkit_app 退出前调用。
+void append_shell_page_trace(const std::string& page, const std::string& kind,
+                             const std::string& detail);
+void flush_shell_page_trace();
+
 // ★★ 2026-10-22（用户口径）：**菜单就绪钩子**（只发通知，不做等待）。
 //   两处菜单共用同一个回调：`button_on_menu`（按钮左键动作菜单）与 `context_menu`（右键）。
 //   时机＝**actions 已装完、popup/exec 之前**；带 `id` 与 `actions` 数。
