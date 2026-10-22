@@ -352,6 +352,17 @@ std::vector<std::string>& trace_ring() {
 }
 constexpr size_t kTraceRingCap = 4096;
 
+void flush_page_trace();   // 前置声明（下面的自动 flush 结构要用）
+
+namespace {
+// ★ 2026-10-22（用户口径）：**由引擎自己**在进程退出前 flush —— 不靠外部调用者，
+//   也不从 Python 父进程调（父进程拿不到子进程的 ring）。
+struct PageTraceAutoFlush {
+    PageTraceAutoFlush() { std::atexit([] { flush_page_trace(); }); }
+};
+PageTraceAutoFlush g_page_trace_auto_flush;
+}  // namespace
+
 void flush_page_trace() {
     if (!page_trace_enabled()) return;
     std::vector<std::string> copy;
@@ -362,7 +373,7 @@ void flush_page_trace() {
     if (copy.empty()) return;
     namespace fs = std::filesystem;
     std::error_code ec;
-    const fs::path file = fs::temp_directory_path(ec) / "page_trace.txt";
+    const fs::path file = fs::temp_directory_path(ec) / "page_trace_engine.txt";
     if (ec) return;
     std::ofstream out(file, std::ios::app | std::ios::binary);
     if (!out.is_open()) return;

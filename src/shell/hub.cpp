@@ -68,19 +68,7 @@ void trace_page_event(const std::string& kind, const std::string& detail) {
             if (page != filter) return;
         }
     }
-    QFile out(QDir::temp().filePath(QStringLiteral("page_trace.txt")));
-    if (!out.open(QIODevice::Append | QIODevice::Text)) return;
-    const double now = std::chrono::duration<double>(
-                           std::chrono::steady_clock::now().time_since_epoch())
-                           .count();
-    out.write(QStringLiteral("%1|%2|%3|%4|%5|%6\n")
-                  .arg(QString::fromStdString(xrkit::plugin::current_page_id()))
-                  .arg(QString::fromStdString(kind))
-                  .arg(QString::fromStdString(detail))
-                  .arg(QString::number(now, 'f', 6))
-                  .arg(reinterpret_cast<quintptr>(QThread::currentThread()))
-                  .arg(QCoreApplication::applicationPid())
-                  .toUtf8());
+        append_shell_page_trace(xrkit::plugin::current_page_id(), kind, detail);
 }
 
 namespace {

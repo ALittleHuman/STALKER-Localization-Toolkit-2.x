@@ -364,6 +364,13 @@ bool write_fixture_safely(const QString& path, const QByteArray& source) {
 
 SmokeResult run_smoke() {
     SmokeResult result;
+    // ★ 2026-10-22（用户口径）：每轮开始**删掉两份 trace**，避免跨轮残留。
+    if (qEnvironmentVariableIsSet("XRKIT_PAGE_TRACE") &&
+        qEnvironmentVariable("XRKIT_PAGE_TRACE") == QStringLiteral("1")) {
+        QFile::remove(QDir::temp().filePath(QStringLiteral("page_trace_shell.txt")));
+        QFile::remove(QDir::temp().filePath(QStringLiteral("page_trace_engine.txt")));
+        QFile::remove(QDir::temp().filePath(QStringLiteral("page_trace.txt")));
+    }
 
     // ★ 2026-10-22（用户口径）：**菜单就绪**用宿主的回调当同步信号（两处菜单共用）。
     QHash<QString, int> menu_ready_actions;
@@ -11806,6 +11813,15 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
         // ── 3-7：插件比较模式"注册成功后无人消费" ────────────────────────────────
         // ★★ 决策 1（C ABI 退净）：这一块整段删除（它用 `PluginApiAdapter` / `load_plugin` 测 C 插件）。
     }
+
+    // ★ 2026-10-22（用户口径）：**子进程内**落盘（外壳/引擎各一份），atexit 兜底（幂等）。
+    static bool flush_registered = false;
+    if (!flush_registered) {
+        flush_registered = true;
+        std::atexit(&flush_shell_page_trace);
+        // 引擎侧自己在 widget_facade.cpp 里注册了 atexit flush（不依赖本文件的 include）。
+    }
+    flush_shell_page_trace();
 
     return result;
 }

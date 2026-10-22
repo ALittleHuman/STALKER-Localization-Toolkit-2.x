@@ -234,6 +234,8 @@ std::string qt_plugin_widget_text(stk_widget* widget) {
 }  // namespace xrkit::shell
 
 
+namespace xrkit::shell {
+
 // ══ ★ 2026-10-22（用户口径）：page_trace 的**外壳侧 ring**（文件作用域）════════════════
 //   要点：① 只做"过滤 + 追加"，**零文件 I/O**；② `flush_shell_page_trace()` 一次性落盘，
 //   并且**由 xrkit_app 自己在退出前调用**（Python 判据是父进程，拿不到子进程内存）；
@@ -301,8 +303,8 @@ void flush_shell_page_trace() {
         first = !shell_trace_ring().truncated;
         shell_trace_ring().truncated = true;
     }
-    if (copy.isEmpty() && dropped == 0) return;
-    QFile out(QDir::temp().filePath(QStringLiteral("page_trace.txt")));
+    if (copy.isEmpty() && dropped == 0) return;   // ★ 幂等：第二次 flush 无内容 ⇒ 不碰文件
+    QFile out(QDir::temp().filePath(QStringLiteral("page_trace_shell.txt")));
     const auto mode = first ? (QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)
                             : (QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
     if (!out.open(mode)) return;
@@ -311,3 +313,5 @@ void flush_shell_page_trace() {
     }
     for (const QString& line : copy) out.write(line.toUtf8());
 }
+
+}  // namespace xrkit::shell
