@@ -27,6 +27,7 @@
 #include "xrkit/engine/plugin/widget_facade.h"
 
 #include <QCheckBox>
+#include <functional>
 #include <QCoreApplication>
 #include <QThread>
 #include <QComboBox>
@@ -277,11 +278,14 @@ QWidget* resolve_parent(plug::UiHandle parent) {
         QWidget* root = unwrap(plug::current_panel_root());
         trace_page_event(
             "resolve",
-            QStringLiteral("parent_arg=%1 resolved=%2 current_root=%3 same=%4")
+            QStringLiteral("parent_arg=%1 resolved=%2 current_root=%3 same=%4 "
+                           "thread_std=%5")
                 .arg(reinterpret_cast<quintptr>(widget), 0, 16)
                 .arg(reinterpret_cast<quintptr>(resolved), 0, 16)
                 .arg(reinterpret_cast<quintptr>(root), 0, 16)
                 .arg(resolved != nullptr && resolved == root ? 1 : 0)
+                .arg(QString::number(std::hash<std::thread::id>{}(
+                    std::this_thread::get_id())))
                 .toStdString());
     }
     return resolved;

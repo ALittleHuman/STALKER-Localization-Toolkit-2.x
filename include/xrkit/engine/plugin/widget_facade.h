@@ -351,7 +351,9 @@ bool ui_method_worker_safe(const std::string& method);
 std::vector<std::string> ui_worker_safe_method_names();
 
 // ── 当前面板根：宿主在调插件 builder 之前设好（见文件头 ③）──────────────────
-void set_current_panel_root(UiHandle root);
+// ★ 2026-10-22（用户口径）：`reason` 由调用点传入（scope_ctor / scope_dtor /
+//   py_scope_ctor / py_scope_dtor / other）—— `root_set` 里能直接看出"是谁把 root 写空的"。
+void set_current_panel_root(UiHandle root, const char* reason = "other");
 // ★★ P13-2a-2：**当前面板的页面身份** —— 门面菜单要按它去注册表里取
 //   「其它插件注册的右键命令」（宿主建面板时设、退出时恢复）。
 void set_current_page_context(const std::string& page_id, Registry* registry);

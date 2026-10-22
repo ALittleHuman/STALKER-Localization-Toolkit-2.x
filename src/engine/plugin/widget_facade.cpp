@@ -1,6 +1,7 @@
 #include "xrkit/engine/plugin/widget_facade.h"
 
 #include <mutex>
+#include <cstdlib>
 #include <sstream>
 #include <thread>
 #include <iomanip>
@@ -279,7 +280,7 @@ std::vector<std::string> ui_worker_safe_method_names() {
 void trace_event_raw(const std::string& page, const std::string& kind,
                      const std::string& detail);
 
-void set_current_panel_root(UiHandle root) {
+void set_current_panel_root(UiHandle root, const char* reason) {
     UiHandle old_root = nullptr;
     std::string page;
     {
@@ -291,6 +292,8 @@ void set_current_panel_root(UiHandle root) {
     // ★★ 2026-10-22（用户口径）：`current_root=0` 要当成**事件**看 —— 谁写的、哪个线程、当时哪页。
     std::ostringstream detail;
     detail << "old=" << old_root << " new=" << root
+           << " page=" << page
+           << " reason=" << (reason != nullptr ? reason : "other")
            << " thread_std=" << std::hash<std::thread::id>{}(std::this_thread::get_id());
     trace_event_raw(page, "root_set", detail.str());
 }
@@ -308,8 +311,21 @@ void set_current_page_context(const std::string& page_id, xrkit::plugin::Registr
 
 // ★ 2026-10-22（用户口径）：**带 page 的无锁版本** —— `set_current_panel_root` 持有
 //   `facade_mutex` 时不能再调 `current_page_id()`（同一把锁 ⇒ 自死锁）。
+// ★★ 2026-10-22：**诊断开关**。这套 trace 每行一次 open/write/close，
+//   一次 `--smoke` 会写几百 KB；开着它本身就会拖慢器件、改变时序
+//   ⇒ 我把它从"总是开"改成"默认关、`XRKIT_PAGE_TRACE=1` 才开"。
+//   （教训与用户 2026-10-21 那条一致：**加诊断不许改变被测对象**。）
+bool page_trace_enabled() {
+    static const bool enabled = [] {
+        const char* v = std::getenv("XRKIT_PAGE_TRACE");
+        return v != nullptr && v[0] == '1';
+    }();
+    return enabled;
+}
+
 void trace_event_raw(const std::string& page, const std::string& kind,
                      const std::string& detail) {
+    if (!page_trace_enabled()) return;
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path file = fs::temp_directory_path(ec) / "page_trace.txt";
@@ -340,7 +356,7 @@ xrkit::plugin::Registry* current_page_registry() {
 
 UiPanelScope::UiPanelScope(UiHandle root) : scope_root_(root) {
     previous_ = current_panel_root();
-    set_current_panel_root(root);
+    set_current_panel_root(root, "py_scope_ctor");
     // ★ 2026-10-22（用户口径）：带 **scope 地址**（this）与 previous/root ——
     //   只看 ctor/dtor 数量不够，要看 dtor 的 `current_before` 是不是它自己的 root。
     std::ostringstream detail;
@@ -358,7 +374,7 @@ UiPanelScope::UiPanelScope(UiHandle root, const std::string& page_id,
       previous_page_id_(current_page_id()),
       previous_registry_(current_page_registry()) {
     previous_ = current_panel_root();
-    set_current_panel_root(root);
+    set_current_panel_root(root, "scope_ctor");
     set_current_page_context(page_id, registry);
     std::ostringstream detail;
     detail << "scope=" << static_cast<const void*>(this) << " root=" << root
@@ -377,7 +393,7 @@ UiPanelScope::~UiPanelScope() {
                << " thread_std=" << std::hash<std::thread::id>{}(std::this_thread::get_id());
         trace_event("scope_dtor", detail.str());
     }
-    set_current_panel_root(previous_);
+    set_current_panel_root(previous_, restores_page_context_ ? "scope_dtor" : "py_scope_dtor");
     if (restores_page_context_) {
         set_current_page_context(previous_page_id_, previous_registry_);
     }

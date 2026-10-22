@@ -56,6 +56,10 @@ namespace {
 }  // namespace
 
 void trace_page_event(const std::string& kind, const std::string& detail) {
+    // ★ 与引擎侧同一个开关（见 widget_facade.cpp 的说明）：默认关，避免诊断本身改变时序。
+    static const bool enabled = qEnvironmentVariableIsSet("XRKIT_PAGE_TRACE") &&
+                                qEnvironmentVariable("XRKIT_PAGE_TRACE") == QStringLiteral("1");
+    if (!enabled) return;
     QFile out(QDir::temp().filePath(QStringLiteral("page_trace.txt")));
     if (!out.open(QIODevice::Append | QIODevice::Text)) return;
     const double now = std::chrono::duration<double>(
