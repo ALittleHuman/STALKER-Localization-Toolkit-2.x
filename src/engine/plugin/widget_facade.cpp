@@ -336,24 +336,60 @@ const std::string& page_trace_filter() {
 bool page_trace_accepts(const std::string& page) {
     const std::string& filter = page_trace_filter();
     if (filter.empty()) return true;
-    return page == filter;
+    // ★ 2026-10-22（用户口径）：**ASCII 子串**（过滤值只许 ASCII，避开 PowerShell 的编码坑）。
+    return page.find(filter) != std::string::npos;
 }
 
-void trace_event_raw(const std::string& page, const std::string& kind,
-                     const std::string& detail) {
-    if (!page_trace_enabled() || !page_trace_accepts(page)) return;
+// ★ 2026-10-22（用户口径）：**进程内 ring buffer**（固定容量、丢最旧），
+//   失败时一次性 dump —— 不再每条 open/write/close（前一版正是它把 P5 竞态拖过去的）。
+std::mutex& trace_ring_mutex() {
+    static std::mutex m;
+    return m;
+}
+std::vector<std::string>& trace_ring() {
+    static std::vector<std::string> ring;
+    return ring;
+}
+constexpr size_t kTraceRingCap = 4096;
+
+void flush_page_trace() {
+    if (!page_trace_enabled()) return;
+    std::vector<std::string> copy;
+    {
+        std::lock_guard<std::mutex> lock(trace_ring_mutex());
+        copy.swap(trace_ring());
+    }
+    if (copy.empty()) return;
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path file = fs::temp_directory_path(ec) / "page_trace.txt";
     if (ec) return;
     std::ofstream out(file, std::ios::app | std::ios::binary);
     if (!out.is_open()) return;
+    for (const std::string& line : copy) out << line;
+}
+
+void trace_event_raw(const std::string& page, const std::string& kind,
+                     const std::string& detail) {
+    if (!page_trace_enabled() || !page_trace_accepts(page)) return;
+    // ★ 只记这几类（用户口径）：place 太密，默认不记。
+    static const bool trace_place = [] {
+        const char* v = std::getenv("XRKIT_PAGE_TRACE_PLACE");
+        return v != nullptr && v[0] == '1';
+    }();
+    if (!trace_place && kind == "place") return;
     const auto now = std::chrono::duration<double>(
                          std::chrono::steady_clock::now().time_since_epoch())
                          .count();
-    out << page << '|' << kind << '|' << detail << '|' << std::fixed
-        << std::setprecision(6) << now << '|' << std::hash<std::thread::id>{}(
-            std::this_thread::get_id()) << '|' << std::this_thread::get_id() << '\n';
+    std::ostringstream line;
+    line << page << '|' << kind << '|' << detail << '|' << std::fixed
+         << std::setprecision(6) << now << '|'
+         << std::hash<std::thread::id>{}(std::this_thread::get_id()) << '|'
+         << std::this_thread::get_id() << '\n';
+    std::lock_guard<std::mutex> lock(trace_ring_mutex());
+    auto& ring = trace_ring();
+    ring.push_back(line.str());
+    if (ring.size() > kTraceRingCap) ring.erase(ring.begin());
 }
 
 void trace_event(const std::string& kind, const std::string& detail) {
