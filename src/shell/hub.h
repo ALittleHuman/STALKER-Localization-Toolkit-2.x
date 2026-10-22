@@ -7,6 +7,7 @@
 // 本类**不用 Q_OBJECT / 不用 signals**（回调一律 lambda），所以不需要 moc。
 
 #include <QMainWindow>
+#include <functional>
 #include <QHash>
 #include <QString>
 
@@ -105,6 +106,12 @@ public:
     // 本次运行 `core::set_log_file` 挂上的那个文件（空 = 没挂上 ⇒ 日志没有文件可查）
     QString log_file_path() const { return log_file_path_; }
 
+    // ★★ 2026-10-22（用户口径）：**页装配完成钩子** —— 只发信号、不做等待、不改产品行为。
+    //   自检用它代替"数 ScrollViewport 个数"这类轮询：`page_ready(id)` 之后才判页内容。
+    void set_page_ready_hook(std::function<void(const QString&)> hook) {
+        page_ready_hook_ = std::move(hook);
+    }
+
     // ★★ 用户 2026-10-20（C-13）：**不要在开着的日志文件上 `QFile::remove`** ——
     //   Windows 上要么删不掉、要么目录项没了而 `core::log` 的 `g_file` 句柄还指着旧文件，
     //   随后写进去的标记按**路径**读回自然看不到（那会伪装成"sink 丢写"）。
@@ -165,6 +172,7 @@ private:
     PageRegistry pages_;
     std::vector<QString> page_ids_;
     std::vector<QString> page_owners_;
+    std::function<void(const QString&)> page_ready_hook_;
     std::vector<QWidget*> page_widgets_;
 
     // ★ 2026-10-21（用户口径）：每页**builder 收到的根容器**（诊断用）。

@@ -7015,7 +7015,12 @@ SmokeResult run_smoke() {
                   QStringLiteral("P5 夹具**读回**校验：写进去的字节要能原样读回"));
         }
 
+        // ★ 2026-10-22（用户口径）：**等宿主的 page_ready 信号**，不数视口个数。
+        QStringList page_ready_seen;
         Hub hub(nullptr, dir);
+        hub.set_page_ready_hook([&page_ready_seen](const QString& id) {
+            page_ready_seen << id;
+        });
         const int page = hub.page_index(QStringLiteral("门面L2b夹具页"));
         check(page >= 0, QStringLiteral("P5 `register_tool` 的页没进页表（插件问题 %1 条）")
                              .arg(hub.plugin_errors().size()));
@@ -7083,20 +7088,13 @@ SmokeResult run_smoke() {
         // ★ 2026-10-22：**完成条件**——插件页的视口/分栏要等布局落地，否则
         //   `findChildren<ScrollViewport*>()` 可能还是 0（实测报"没被套上宿主视口"）。
         {
-            int last = -1;
-            int stable = 0;
+            // ★ 2026-10-22（用户口径）：等**宿主 page_ready 信号**（页与服务都就位才发），
+            //   不再数 `ScrollViewport` 个数当同步原语。
             const bool ok = wait_until(
                 [&]() {
-                    const int now = page_widget != nullptr
-                                        ? page_widget->findChildren<ScrollViewport*>().size()
-                                        : 0;
-                    if (now > 0 && now == last) {
-                        ++stable;
-                    } else {
-                        stable = 0;
-                        last = now;
-                    }
-                    return now > 0 && stable >= 1;
+                    return page_ready_seen.contains(QStringLiteral("门面L2b夹具页")) &&
+                           page_widget != nullptr &&
+                           !page_widget->findChildren<ScrollViewport*>().isEmpty();
                 },
                 2000);
             if (!ok) {

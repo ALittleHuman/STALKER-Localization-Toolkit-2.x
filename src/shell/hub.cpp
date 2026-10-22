@@ -703,6 +703,8 @@ int Hub::sync_pages() {
                 page->set_subtitle(reg->spec.subtitle);
                 attach_page_services(page);   // ★ 机制交付（唯一入口）
             }
+            // ★ 完成钩子：页与它的服务都已就位 —— 只发信号。
+            if (page_ready_hook_) page_ready_hook_(id);
             stack_->insertWidget(k, widget);
             page_tabs_->insertTab(k, reg->spec.title);
             page_ids_.insert(page_ids_.begin() + k, id);
