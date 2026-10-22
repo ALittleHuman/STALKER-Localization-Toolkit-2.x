@@ -11822,6 +11822,7 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
         // 引擎侧自己在 widget_facade.cpp 里注册了 atexit flush（不依赖本文件的 include）。
     }
     flush_shell_page_trace();
+    flush_engine_page_trace();
 
     return result;
 }

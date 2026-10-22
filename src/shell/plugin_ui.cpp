@@ -10,6 +10,7 @@
 #include <cstdlib>
 
 #include "xrkit/core/theme.h"
+#include "xrkit/engine/plugin/widget_facade.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -302,6 +303,8 @@ void append_shell_page_trace(const std::string& page, const std::string& kind,
         ++shell_trace_ring().dropped;
     }
 }
+
+void flush_engine_page_trace() { xrkit::plugin::flush_page_trace(); }
 
 void flush_shell_page_trace() {
     if (!shell_trace_enabled()) return;

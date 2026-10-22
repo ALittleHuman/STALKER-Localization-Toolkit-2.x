@@ -362,6 +362,10 @@ void set_current_page_context(const std::string& page_id, Registry* registry);
 //   一层 = 加载（`load`）、一层 = 登记（`register`）。行式：
 //   `page_id|kind|detail|monotonic|thread|pid`。写失败就放弃（诊断不许影响产品）。
 void trace_event(const std::string& kind, const std::string& detail);
+
+// ★ 2026-10-22（用户口径）：引擎侧 ring 的**一次性落盘**。必须在 `xrkit_app` 退出前调用
+//   （引擎自己已注册 atexit 兜底；外壳收尾也会显式调一次，幂等）。
+void flush_page_trace();
 std::string current_page_id();
 Registry* current_page_registry();
 UiHandle current_panel_root();

@@ -382,7 +382,12 @@ void flush_page_trace() {
 
 void trace_event_raw(const std::string& page, const std::string& kind,
                      const std::string& detail) {
-    if (!page_trace_enabled() || !page_trace_accepts(page)) return;
+    // ★ 2026-10-22（用户口径）：page 为空时**不许盲用当前页**（scope_dtor 之后可能已还原），
+    //   用 thread-local 的"最后一个非空页"兜底。
+    static thread_local std::string engine_last_page;
+    const std::string effective_page = !page.empty() ? page : engine_last_page;
+    if (!page.empty()) engine_last_page = page;
+    if (!page_trace_enabled() || !page_trace_accepts(effective_page)) return;
     // ★ 只记这几类（用户口径）：place 太密，默认不记。
     static const bool trace_place = [] {
         const char* v = std::getenv("XRKIT_PAGE_TRACE_PLACE");
@@ -393,7 +398,7 @@ void trace_event_raw(const std::string& page, const std::string& kind,
                          std::chrono::steady_clock::now().time_since_epoch())
                          .count();
     std::ostringstream line;
-    line << page << '|' << kind << '|' << detail << '|' << std::fixed
+    line << effective_page << '|' << kind << '|' << detail << '|' << std::fixed
          << std::setprecision(6) << now << '|'
          << std::hash<std::thread::id>{}(std::this_thread::get_id()) << '|'
          << std::this_thread::get_id() << '\n';
