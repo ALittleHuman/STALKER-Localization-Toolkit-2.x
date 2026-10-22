@@ -663,7 +663,20 @@ const plug::UiFacade kQtFacade = {
                              append_registry_context_items(
                                  &menu, plug::current_page_registry(),
                                  plug::current_page_id(), xrkit::plugin::Context(), target);
-                             notify_menu_ready("context_menu", menu.actions().size());
+                             trace_page_event("menu_build",
+                     QStringLiteral("menu_id=context_menu actions=%1")
+                         .arg(menu.actions().size())
+                         .toStdString());
+    notify_menu_ready("context_menu", menu.actions().size());
+    trace_page_event("menu_ready",
+                     QStringLiteral("menu_id=context_menu actions=%1 thread=%2")
+                         .arg(menu.actions().size())
+                         .arg(reinterpret_cast<quintptr>(QThread::currentThread()))
+                         .toStdString());
+    trace_page_event("menu_show",
+                     QStringLiteral("menu_id=context_menu actions=%1 mode=exec")
+                         .arg(menu.actions().size())
+                         .toStdString());
     menu.exec(target->mapToGlobal(pos));   // 点空白关掉 ⇒ 无回调
                          });
     },
@@ -735,8 +748,21 @@ const plug::UiFacade kQtFacade = {
                 if (on_choice) on_choice(index);
             });
         }
+        trace_page_event("menu_build",
+                         QStringLiteral("menu_id=button_on_menu actions=%1")
+                             .arg(items.size())
+                             .toStdString());
         notify_menu_ready("button_on_menu", static_cast<int>(items.size()));
+        trace_page_event("menu_ready",
+                         QStringLiteral("menu_id=button_on_menu actions=%1 thread=%2")
+                             .arg(items.size())
+                             .arg(reinterpret_cast<quintptr>(QThread::currentThread()))
+                             .toStdString());
         widget->setMenu(menu);
+        trace_page_event("menu_show",
+                         QStringLiteral("menu_id=button_on_menu actions=%1 mode=setMenu")
+                             .arg(items.size())
+                             .toStdString());
         return true;
     },
     /* list_set_row_count */
