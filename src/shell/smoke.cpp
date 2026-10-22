@@ -374,8 +374,15 @@ SmokeResult run_smoke() {
 
     // ★ 2026-10-22（用户口径）：**菜单就绪**用宿主的回调当同步信号（两处菜单共用）。
     QHash<QString, int> menu_ready_actions;
+    // ★ 2026-10-23（用户口径）：钩子是**全局**的，必须带 **page** 才能分清
+    //   "钩子没发" 与 "采集串到别的页"。
     set_menu_ready_hook([&menu_ready_actions](const char* id, int actions) {
-        menu_ready_actions.insert(QString::fromLatin1(id), actions);
+        const QString page = QString::fromStdString(xrkit::plugin::current_page_id());
+        const QString menu_id = QString::fromLatin1(id);
+        menu_ready_actions.insert(page + QStringLiteral("|") + menu_id, actions);
+        // ★ 2026-10-23：**兜底裸键** —— 钩子可能在 page context 还原后才触发（page 为空），
+        //   那种情况下 `page|id` 永远对不上，会误判"钩子没发"。
+        if (page.isEmpty()) menu_ready_actions.insert(menu_id, actions);
     });
 
     // ★★ 用户 2026-10-21：**启动时打一行 `on_ui_thread` 的真实判定 ＋ `QCoreApplication::thread()`** ——
@@ -6093,6 +6100,7 @@ SmokeResult run_smoke() {
             }
         }
         QStringList labels_cb;
+        QWidget* labels_root = page_widget;   // ★ 诊断：收集范围的实际根
         if (page_widget != nullptr) {
             for (QLabel* item : page_widget->findChildren<QLabel*>()) labels_cb << item->text();
         }
@@ -6117,11 +6125,23 @@ SmokeResult run_smoke() {
                 if (!any_text) placeholder = QStringLiteral("no-text");
             }
             result.notes.append(
-                QStringLiteral("P12c-2 诊断：page=%1 child=%2 placeholder=%3")
+                QStringLiteral("P12c-2 诊断：page=%1 child=%2 placeholder=%3 "
+                               "page_widget=%4 labels_root=%5 labels_count=%6 stack_widget=%7 same_stack=%8")
                     .arg(page_widget != nullptr ? page_widget->objectName()
                                                 : QStringLiteral("<null>"))
                     .arg(child)
-                    .arg(placeholder));
+                    .arg(placeholder)
+                    .arg(reinterpret_cast<quintptr>(page_widget), 0, 16)
+                    .arg(reinterpret_cast<quintptr>(labels_root), 0, 16)
+                    .arg(labels_cb.size())
+                    .arg(reinterpret_cast<quintptr>(
+                             hub.stack() != nullptr && hub.stack()->currentWidget() != nullptr
+                                 ? hub.stack()->currentWidget()
+                                 : nullptr), 0, 16)
+                    .arg(hub.stack() != nullptr &&
+                                 hub.stack()->currentWidget() == page_widget
+                             ? 1
+                             : 0));
         }
         check(labels_cb.contains(QStringLiteral("回调改的:来自工作线程")),
               QStringLiteral("P12c-2 回调里没改到控件（标签实得：%1 / plugin_errors=%2）")
@@ -6558,7 +6578,14 @@ SmokeResult run_smoke() {
                 // ★ 2026-10-22：等**宿主回调**（`button_on_menu`，actions==2），不再轮询控件。
                 const bool ok = wait_until(
                     [&]() {
-                        return menu_ready_actions.value(QStringLiteral("button_on_menu"), -1) == 2;
+                        const QString page =
+                            QString::fromStdString(xrkit::plugin::current_page_id());
+                        const QString key = page + QStringLiteral("|button_on_menu");
+                        const int n = menu_ready_actions.contains(key)
+                                          ? menu_ready_actions.value(key)
+                                          : menu_ready_actions.value(
+                                                QStringLiteral("button_on_menu"), -1);
+                        return n == 2;
                     },
                     2000);
                 if (!ok) {
@@ -6953,8 +6980,18 @@ SmokeResult run_smoke() {
                            now.contains(QStringLiteral("loops:"));
                 },
                 2000);
-            result.notes.append(QStringLiteral("P17-1 ② 诊断：marker 落盘=%1（等 2000ms）")
-                                    .arg(marker_ok ? 1 : 0));
+            {
+                const QFileInfo info(marker);
+                result.notes.append(
+                    QStringLiteral("P17-1 ② 诊断：marker 落盘=%1 path=%2 size=%3 "
+                                   "mtime=%4 read_at=%5")
+                        .arg(marker_ok ? 1 : 0)
+                        .arg(marker)
+                        .arg(info.exists() ? info.size() : -1)
+                        .arg(info.exists() ? info.lastModified().toString("hh:mm:ss.zzz")
+                                           : QStringLiteral("<无>"))
+                        .arg(QTime::currentTime().toString("hh:mm:ss.zzz")));
+            }
         }
         // ★ 2026-10-22：**等 cancel_after 或 loops 任一出现**再判取消位
         //   （原来只等 `cancel_after`；worker 若先写 `loops` 再写 `cancel_after`，
@@ -7750,7 +7787,12 @@ SmokeResult run_smoke() {
                     trace_page_event("menu_timer_fired", "actions=-1 popup=0");
                 }
                 // ★ 2026-10-22：宿主回调到的 actions 数也是证据（`context_menu`）。
-                if (!menu_ready_actions.contains(QStringLiteral("context_menu"))) {
+                const QString cur_page =
+                    QString::fromStdString(xrkit::plugin::current_page_id());
+                const bool ctx_ready =
+                    menu_ready_actions.contains(cur_page + QStringLiteral("|context_menu")) ||
+                    menu_ready_actions.contains(QStringLiteral("context_menu"));
+                if (!ctx_ready) {
                     result.notes.append(QStringLiteral(
                         "P13-2a-2 诊断：宿主没有发出 menu-ready（context_menu）"));
                 }
