@@ -4960,6 +4960,14 @@ SmokeResult run_smoke() {
                     QThread::msleep(10);
                 }
                 const bool builtin_ok = fs != nullptr && text.contains(QStringLiteral("已加载"));
+                if (!builtin_ok && !(fs_slot_page != nullptr && text.contains(probe))) {
+                    result.notes.append(
+                        QStringLiteral("日志诊断：fs=%1 slot_page=%2 log_len=%3 末行=%4")
+                            .arg(fs != nullptr ? 1 : 0)
+                            .arg(fs_slot_page != nullptr ? 1 : 0)
+                            .arg(text.size())
+                            .arg(text.right(120).replace(QLatin1Char('\n'), QLatin1Char(' '))));
+                }
                 const bool plugin_ok = fs_slot_page != nullptr && text.contains(probe);
                 check(builtin_ok || plugin_ok,
                       QStringLiteral("日志要记 app 内操作：Hub 里加载包后日志要有「已加载」"
@@ -7378,7 +7386,16 @@ SmokeResult run_smoke() {
         }
         {
             // ① 选中两行（直接改 `QTreeWidgetItem` 的选中态＝用户点出来的那条路）
-            FacadeTree* multi_tree = qobject_cast<FacadeTree*>(tree);
+            FacadeTree* multi_tree = nullptr;
+            {
+                // ★ 2026-10-22：等句柄能被 `qobject_cast` 成 FacadeTree（≤1000ms）
+                wait_until(
+                    [&]() {
+                        multi_tree = qobject_cast<FacadeTree*>(tree);
+                        return multi_tree != nullptr;
+                    },
+                    1000);
+            }
             check(multi_tree != nullptr, QStringLiteral("P15-0 门面树句柄转不过去"));
             if (multi_tree != nullptr) {
                 multi_tree->clearSelection();
@@ -7441,13 +7458,33 @@ SmokeResult run_smoke() {
         // ★★ P13-1a：行尾动作（fs 页的 ✕）—— 合成点击（与 fs 页自检同一手法）
         {
             FacadeTree* action_tree = nullptr;
-            if (page_widget != nullptr) {
-                for (FacadeTree* candidate : page_widget->findChildren<FacadeTree*>()) {
-                    QTreeWidgetItem* first = candidate->topLevelItem(0);
-                    if (first != nullptr && FacadeTree::key_of(first) == "ra1") {
-                        action_tree = candidate;
-                        break;
-                    }
+            // ★ 2026-10-22：**完成条件** —— 树是插件页 builder 造的，偶发还没落地就断言了
+            //   （实测 `诊断：页里没找到带 ra1 的门面树` + `P15-0 门面树句柄转不过去`）。
+            //   有界等 ≤2000ms，超时仍判红并记 note（自带 tree 数量与 childCount）。
+            {
+                const bool got = wait_until(
+                    [&]() {
+                        if (page_widget == nullptr) return false;
+                        for (FacadeTree* candidate : page_widget->findChildren<FacadeTree*>()) {
+                            QTreeWidgetItem* first = candidate->topLevelItem(0);
+                            if (first != nullptr && FacadeTree::key_of(first) == "ra1") {
+                                action_tree = candidate;
+                                return true;
+                            }
+                        }
+                        return false;
+                    },
+                    2000);
+                if (!got) {
+                    result.notes.append(
+                        QStringLiteral("P13-1a 诊断：等 ra1 门面树 2000ms 未出现"
+                                       "（tree 数=%1 child=%2）")
+                            .arg(page_widget != nullptr
+                                     ? page_widget->findChildren<FacadeTree*>().size()
+                                     : -1)
+                            .arg(page_widget != nullptr
+                                     ? page_widget->findChildren<QWidget*>().size()
+                                     : -1));
                 }
             }
             check(action_tree != nullptr, QStringLiteral("P13-1a 没找到带 ra1 的门面树"));
@@ -7609,8 +7646,19 @@ SmokeResult run_smoke() {
                     menu_timer.stop();
                 });
                 menu_timer.start();
+                trace_page_event("menu_emit_begin", "point=9,9");
                 emit only_tree->customContextMenuRequested(QPoint(9, 9));
                 menu_timer.stop();
+                {
+                    auto* popup_now = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+                    trace_page_event(
+                        "menu_after_emit",
+                        QStringLiteral("popup=%1 actions=%2 seen=%3")
+                            .arg(popup_now != nullptr ? 1 : 0)
+                            .arg(popup_now != nullptr ? popup_now->actions().size() : -1)
+                            .arg(seen_only.size())
+                            .toStdString());
+                }
                 if (seen_only.isEmpty()) {
                     // 没走模态（或菜单被别处关掉）时再兜 1 秒
                     wait_until([&seen_only]() { return !seen_only.isEmpty(); }, 1000);
