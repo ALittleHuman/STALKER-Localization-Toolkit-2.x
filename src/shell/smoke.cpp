@@ -7109,14 +7109,6 @@ SmokeResult run_smoke() {
             }
         }
         QWidget* page_widget = page >= 0 ? hub.stack()->widget(page) : nullptr;
-        {
-            // ★ 共享前置（用户 2026-10-20 契约）：这个插件页要**先就绪**再判内容。
-            //   超时不重试：objectName/childCount/layout/pageSize 记进 notes，断言照旧判红。
-            QString why_ready;
-            if (!wait_page_ready(page_widget, 2000, &why_ready)) {
-                result.notes.append(QStringLiteral("页就绪诊断：") + why_ready);
-            }
-        }
         //   （离屏平台下 `hub.show()` 是既有做法；不 show 的话 `QSplitter::sizes()` 恒为 [0,0,0]，
         //   那样判的是"布局没跑"而不是"分栏不对" —— 本批实测踩到过）。
         hub.show();
@@ -7126,6 +7118,17 @@ SmokeResult run_smoke() {
         for (int i = 0; i < 20; ++i) {
             QApplication::processEvents();
             QThread::msleep(5);
+        }
+
+        {
+            // ★★ 2026-10-22（用户口径）：**顺序反了** —— `wait_page_ready` 要求页有宽度，
+            //   而它原来在 `hub.show()` / `switch_to_page` **之前** ⇒ 宽度自然是 0，
+            //   于是偶发"内容已建（childCount=238）却判未就绪"。
+            //   现在挪到 show ＋ 切页 ＋ 事件循环**之后**；超时仍判红并记 why。
+            QString why_ready;
+            if (!wait_page_ready(page_widget, 2000, &why_ready)) {
+                result.notes.append(QStringLiteral("页就绪诊断（show 之后）：") + why_ready);
+            }
         }
 
         // ★★ 用户 2026-10-20 批准的口径（④）：**有界等待"插件页内容就绪"**，超时**明确报未就绪**
