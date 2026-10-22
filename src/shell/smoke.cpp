@@ -6096,6 +6096,28 @@ SmokeResult run_smoke() {
         if (page_widget != nullptr) {
             for (QLabel* item : page_widget->findChildren<QLabel*>()) labels_cb << item->text();
         }
+        // ★ 2026-10-22（用户口径）：先报**页 id 与是否占位页** —— `anything=0` 的占位页
+        //   按 P5 的 root_set 分支查；`anything=1` 才轮到标签/主题。
+        {
+            QString placeholder = QStringLiteral("?");
+            int child = -1;
+            if (page_widget != nullptr) {
+                child = page_widget->findChildren<QWidget*>().size();
+                placeholder = QStringLiteral("0");
+                for (QLabel* l : page_widget->findChildren<QLabel*>()) {
+                    if (l->text().contains(QStringLiteral("业务内容按 M2-6"))) {
+                        placeholder = QStringLiteral("1");
+                        break;
+                    }
+                }
+            }
+            result.notes.append(
+                QStringLiteral("P12c-2 诊断：page=%1 child=%2 placeholder=%3")
+                    .arg(page_widget != nullptr ? page_widget->objectName()
+                                                : QStringLiteral("<null>"))
+                    .arg(child)
+                    .arg(placeholder));
+        }
         check(labels_cb.contains(QStringLiteral("回调改的:来自工作线程")),
               QStringLiteral("P12c-2 回调里没改到控件（标签实得：%1 / plugin_errors=%2）")
                   .arg(labels_cb.join(QStringLiteral(" / ")))
@@ -6912,6 +6934,22 @@ SmokeResult run_smoke() {
                 3000);
             result.notes.append(QStringLiteral("P17-1 ② 诊断：worker-finished 事件=%1（等 3000ms）")
                                     .arg(finished ? 1 : 0));
+        }
+        // ★★ 2026-10-22（用户口径）：worker-finished 事件到了**之后**，再有界等 marker 落盘
+        //   （事件可能早于文件写入；只信事件不确认 marker 就会读到"没读到"）。
+        {
+            const bool marker_ok = wait_until(
+                [&]() {
+                    QApplication::processEvents();
+                    QFile mf(marker);
+                    if (!mf.open(QIODevice::ReadOnly)) return false;
+                    const QString now = QString::fromUtf8(mf.readAll());
+                    return now.contains(QStringLiteral("cancel_after:")) ||
+                           now.contains(QStringLiteral("loops:"));
+                },
+                2000);
+            result.notes.append(QStringLiteral("P17-1 ② 诊断：marker 落盘=%1（等 2000ms）")
+                                    .arg(marker_ok ? 1 : 0));
         }
         // ★ 2026-10-22：**等 cancel_after 或 loops 任一出现**再判取消位
         //   （原来只等 `cancel_after`；worker 若先写 `loops` 再写 `cancel_after`，
