@@ -60,14 +60,8 @@ void trace_page_event(const std::string& kind, const std::string& detail) {
     static const bool enabled = qEnvironmentVariableIsSet("XRKIT_PAGE_TRACE") &&
                                 qEnvironmentVariable("XRKIT_PAGE_TRACE") == QStringLiteral("1");
     if (!enabled) return;
-    {
-        // ★ 只筛一页（与引擎侧同一个环境变量）
-        const QString filter = qEnvironmentVariable("XRKIT_PAGE_TRACE_FILTER");
-        if (!filter.isEmpty()) {
-            const QString page = QString::fromStdString(xrkit::plugin::current_page_id());
-            if (page != filter) return;
-        }
-    }
+    // ★ 2026-10-22：过滤已下沉到 `append_shell_page_trace()`（ASCII 子串）；
+    //   这里原来按**整串相等**比，会把 `门面L2b夹具页` 全挡掉。
         append_shell_page_trace(xrkit::plugin::current_page_id(), kind, detail);
 }
 
@@ -77,18 +71,7 @@ namespace {
 //   一行 = `page_id|event|monotonic|thread|pid`，event ∈ build_start / built / error:<what>。
 //   这样 P5 / P13 / ⑭ 那类"某个页没建完"的红，失败时能直接读出**是哪个页、卡在哪一步**。
 void trace_page_build(const QString& page_id, const QString& event) {
-    QFile out(QDir::temp().filePath(QStringLiteral("page_trace.txt")));
-    if (!out.open(QIODevice::Append | QIODevice::Text)) return;
-    const double now = std::chrono::duration<double>(
-                           std::chrono::steady_clock::now().time_since_epoch())
-                           .count();
-    out.write(QStringLiteral("%1|%2|%3|%4|%5\n")
-                  .arg(page_id)
-                  .arg(event)
-                  .arg(QString::number(now, 'f', 6))
-                  .arg(reinterpret_cast<quintptr>(QThread::currentThread()))
-                  .arg(QCoreApplication::applicationPid())
-                  .toUtf8());
+        append_shell_page_trace(page_id.toStdString(), event.toStdString(), std::string());
 }
 
 QWidget* make_placeholder(const PageSpec& spec) {

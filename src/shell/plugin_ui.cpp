@@ -265,16 +265,30 @@ QString shell_trace_filter() {
 void append_shell_page_trace(const std::string& page, const std::string& kind,
                              const std::string& detail) {
     if (!shell_trace_enabled()) return;
+    // ★ 2026-10-22（用户口径）：**不要盲用 `current_page_id()`** —— `scope_dtor` 之后
+    //   page context 可能已经被还原（拿到空串）。这里用 thread-local 的"最后一个非空页"兜底，
+    //   调用点若能直接给 page（推荐）就以它为准。
+    // ★ 只记用户点名的五类（`place` 太密，默认不记）。
+    static const bool trace_place = [] {
+        const char* v = std::getenv("XRKIT_PAGE_TRACE_PLACE");
+        return v != nullptr && v[0] == '1';
+    }();
+    if (!trace_place && kind == "place") return;
+
+    static thread_local std::string last_page;
+    const std::string effective = !page.empty() ? page : last_page;
+    if (!page.empty()) last_page = page;
+    if (effective.empty()) return;
     const QString filter = shell_trace_filter();
     if (!filter.isEmpty() &&
-        !QString::fromStdString(page).contains(filter, Qt::CaseInsensitive)) {
+        !QString::fromStdString(effective).contains(filter, Qt::CaseInsensitive)) {
         return;
     }
     const double now = std::chrono::duration<double>(
                            std::chrono::steady_clock::now().time_since_epoch())
                            .count();
     const QString line = QStringLiteral("%1|%2|%3|%4|%5|%6\n")
-                             .arg(QString::fromStdString(page))
+                             .arg(QString::fromStdString(effective))
                              .arg(QString::fromStdString(kind))
                              .arg(QString::fromStdString(detail))
                              .arg(QString::number(now, 'f', 6))
