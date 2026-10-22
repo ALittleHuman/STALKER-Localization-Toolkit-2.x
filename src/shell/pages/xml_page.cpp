@@ -126,7 +126,22 @@ XmlPage::XmlPage(QWidget* parent)
     detail_view_->setObjectName(QStringLiteral("xml_detail_text"));
     detail_view_->setReadOnly(true);
     detail_view_->setMaximumHeight(xrkit::core::px(150));
-    detail_layout->addWidget(detail_head_, 0);
+    // ★ 2026-10-22（用户实测反馈）：给明细栏一个**显式收起入口**（不只是"取消选中"）。
+    {
+        auto* head_row = new QHBoxLayout;
+        auto* collapse = new QPushButton(QStringLiteral("收起明细"));
+        collapse->setObjectName(QStringLiteral("xml_detail_collapse"));
+        QObject::connect(collapse, &QPushButton::clicked, this, [this] {
+            if (result_tree_ != nullptr) {
+                result_tree_->clearSelection();
+                result_tree_->setCurrentItem(nullptr);
+            }
+            show_detail_for_item(nullptr);
+        });
+        head_row->addWidget(detail_head_, 1);
+        head_row->addWidget(collapse, 0);
+        detail_layout->addLayout(head_row);
+    }
     detail_layout->addWidget(detail_view_, 0);
     detail_layout->addWidget(new QLabel(QStringLiteral("差异 id（逐条复制）")), 0);
     id_list_ = new QTreeWidget;
@@ -172,7 +187,12 @@ XmlPage::XmlPage(QWidget* parent)
                      [this](const QString&) { refresh_rows(); });
     // ★★ D2 批：选中回调（1.x `<<TreeviewSelect>>` → `_on_row_select`）＋双击弹窗
     QObject::connect(result_tree_, &QTreeWidget::itemSelectionChanged, this, [this] {
-        show_detail_for_item(result_tree_->currentItem());
+        // ★★ 2026-10-22（用户实测反馈）：**点空白处收不回去** —— 修前用的是
+        //   `currentItem()`，而"清空选择"之后 `currentItem()` 往往**仍指向上一行**
+        //   （current 与 selected 是两件事）⇒ 详情栏一直停在那儿。
+        //   现在按 **selectedItems()** 判断：没有选中项 ⇒ 收起明细。
+        const QList<QTreeWidgetItem*> selected = result_tree_->selectedItems();
+        show_detail_for_item(selected.isEmpty() ? nullptr : selected.first());
     });
     QObject::connect(result_tree_, &QTreeWidget::itemDoubleClicked, this,
                      [this](QTreeWidgetItem* item, int) {

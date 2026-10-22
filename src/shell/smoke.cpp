@@ -2102,8 +2102,9 @@ SmokeResult run_smoke() {
         for (int i = 0; i < 500; ++i) log.append_batched(QStringLiteral("line %1").arg(i));
         check(log.pending() == 500 && log.toPlainText().isEmpty(),
               QStringLiteral("4.4 攒批：80 ms 内不动文档（pending=%1）").arg(log.pending()));
-        QThread::msleep(160);
-        QApplication::processEvents();
+        // ★ 2026-10-22：把固定 160ms 换成**完成条件**（等 flush 真的发生），
+        //   与其它几处同一口径：超时仍判红，但不因机器负载误判。
+        wait_until([&log]() { return log.flush_count() > 0; }, 2000);
         check(log.flush_count() == 1, QStringLiteral("4.4 攒批：500 行只落一次（flush=%1）")
                                           .arg(log.flush_count()));
         check(log.blockCount() == 500, QStringLiteral("4.4 500 行都在（实测 %1）")
