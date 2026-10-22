@@ -365,6 +365,12 @@ bool write_fixture_safely(const QString& path, const QByteArray& source) {
 SmokeResult run_smoke() {
     SmokeResult result;
 
+    // ★ 2026-10-22（用户口径）：**菜单就绪**用宿主的回调当同步信号（两处菜单共用）。
+    QHash<QString, int> menu_ready_actions;
+    set_menu_ready_hook([&menu_ready_actions](const char* id, int actions) {
+        menu_ready_actions.insert(QString::fromLatin1(id), actions);
+    });
+
     // ★★ 用户 2026-10-21：**启动时打一行 `on_ui_thread` 的真实判定 ＋ `QCoreApplication::thread()`** ——
     //   以后任何一次红，都能立刻看出"是不是被线程闸门拒了"（而不是靠猜）。
     {
@@ -6508,21 +6514,10 @@ SmokeResult run_smoke() {
             // ★★ 2026-10-22（用户口径）：**完成条件**——等"左键动作菜单"的**两项**都装上再断言
             //   （只等第一项会漏掉"第二项没装进去"那一类）。超时照旧判红，note 带 actions。
             {
-                int last = -1;
-                int stable = 0;
+                // ★ 2026-10-22：等**宿主回调**（`button_on_menu`，actions==2），不再轮询控件。
                 const bool ok = wait_until(
                     [&]() {
-                        int now = -1;
-                        if (two_mode != nullptr && two_mode->menu() != nullptr) {
-                            now = two_mode->menu()->actions().size();
-                        }
-                        if (now == last) {
-                            ++stable;
-                        } else {
-                            stable = 0;
-                            last = now;
-                        }
-                        return now == 2 && stable >= 1;
+                        return menu_ready_actions.value(QStringLiteral("button_on_menu"), -1) == 2;
                     },
                     2000);
                 if (!ok) {
@@ -6882,6 +6877,20 @@ SmokeResult run_smoke() {
               QStringLiteral("P17-1 ② 前提：插件任务壳上有可点的「取消」按钮"));
         if (cancel_button != nullptr) cancel_button->click();
 
+        // ★★ 2026-10-22（用户口径）：**优先等 TaskShell 的 worker-finished 事件**，
+        //   事件到了再读 cancel_after/loops（不再只等文本）。
+        {
+            static int worker_finished_count = 0;
+            TaskShell::set_worker_finished_hook([] { ++worker_finished_count; });
+            const bool finished = wait_until(
+                [&]() {
+                    QApplication::processEvents();
+                    return worker_finished_count > 0;
+                },
+                3000);
+            result.notes.append(QStringLiteral("P17-1 ② 诊断：worker-finished 事件=%1（等 3000ms）")
+                                    .arg(finished ? 1 : 0));
+        }
         // ★ 2026-10-22：**等 cancel_after 或 loops 任一出现**再判取消位
         //   （原来只等 `cancel_after`；worker 若先写 `loops` 再写 `cancel_after`，
         //    负载高时读到的就是"没读到"）。
@@ -7666,6 +7675,11 @@ SmokeResult run_smoke() {
                         QStringLiteral("P13-2a-2 诊断：菜单两项没采到（fired=%1）")
                             .arg(fired ? 1 : 0));
                     trace_page_event("menu_timer_fired", "actions=-1 popup=0");
+                }
+                // ★ 2026-10-22：宿主回调到的 actions 数也是证据（`context_menu`）。
+                if (!menu_ready_actions.contains(QStringLiteral("context_menu"))) {
+                    result.notes.append(QStringLiteral(
+                        "P13-2a-2 诊断：宿主没有发出 menu-ready（context_menu）"));
                 }
             }
             check(seen_only == QStringList({QStringLiteral("甲"), QStringLiteral("乙")}),

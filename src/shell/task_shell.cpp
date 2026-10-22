@@ -14,6 +14,10 @@
 
 namespace xrkit::shell {
 
+namespace {
+std::function<void()>& worker_finished_hook_storage();
+}  // namespace
+
 TaskShell::TaskShell(QWidget* parent, CancelButton cancel) : QObject(parent) {
     panel_ = new QWidget(parent);
     // ★ 2026-10-05：给它一个 objectName，好让 QSS **只把这一处**置成透明 —— 它是"字段行"
@@ -86,6 +90,17 @@ TaskShell::~TaskShell() {
 //   已结束线程的栈/句柄被长期占着。
 //   只在主线程调（`run()` 开头）：「已完成」由 worker 自己置的原子位判定，join 一个刚置位的
 //   线程最多等它几微秒的收尾（不是等整轮任务）。
+namespace {
+std::function<void()>& worker_finished_hook_storage() {
+    static std::function<void()> hook;
+    return hook;
+}
+}  // namespace
+
+void TaskShell::set_worker_finished_hook(std::function<void()> hook) {
+    worker_finished_hook_storage() = std::move(hook);
+}
+
 void TaskShell::reap_finished_workers() {
     for (auto it = workers_.begin(); it != workers_.end();) {
         if (it->done != nullptr && it->done->load()) {
@@ -161,7 +176,12 @@ bool TaskShell::run(const QString& title, const WorkerFn& worker) {
                 this, [this] { apply_error(QStringLiteral("未知错误")); }, Qt::QueuedConnection);
         }
         QMetaObject::invokeMethod(this, [this] { apply_finish(QString()); }, Qt::QueuedConnection);
-        // ★★ P17-4（03 F-08）：「这一格跑完了」——**最后一句**才置位（回收方据此 join）。
+                // ★ 2026-10-22（用户口径）：worker 的**完成事件**（只发通知）。
+        if (worker_finished_hook_storage()) {
+            QMetaObject::invokeMethod(
+                this, [] { worker_finished_hook_storage()(); }, Qt::QueuedConnection);
+        }
+// ★★ P17-4（03 F-08）：「这一格跑完了」——**最后一句**才置位（回收方据此 join）。
         done->store(true);
     }), done});
     return true;

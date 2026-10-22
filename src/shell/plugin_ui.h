@@ -44,6 +44,12 @@ bool qt_ui_facade_on_ui_thread();
 //   只在诊断里用；**不许改产品行为**（写失败就放弃）。
 void trace_page_event(const std::string& kind, const std::string& detail);
 
+// ★★ 2026-10-22（用户口径）：**菜单就绪钩子**（只发通知，不做等待）。
+//   两处菜单共用同一个回调：`button_on_menu`（按钮左键动作菜单）与 `context_menu`（右键）。
+//   时机＝**actions 已装完、popup/exec 之前**；带 `id` 与 `actions` 数。
+void set_menu_ready_hook(std::function<void(const char* id, int actions)> hook);
+void notify_menu_ready(const char* id, int actions);
+
 // ★★ 插件改装 P3（控件门面 L1/L2）：**取控件当前文本**。
 // 为什么放在这里而不是在门面实现里另写一份：`plugin_ui.cpp` 是"控件语义"的**唯一实现**
 // （C ABI 的 `api.ui` 与 Python 侧的 `api.ui` 都走它）—— 门面只是把它再包一层。

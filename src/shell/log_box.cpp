@@ -36,10 +36,12 @@ void LogBox::flush() {
     cursor.movePosition(QTextCursor::End);
     if (!document()->isEmpty()) cursor.insertText(QStringLiteral("\n"));
     cursor.insertText(text);
-    ++flush_count_;
     // ★★ C-13：**落盘镜像**必须在插入文档之后 —— 界面上看到的每一条都要在文件里。
     //   （以前这里没有回调，所以 `logs/*.txt` 只有引擎行，UI 行一条都没有 ⇒ 5 份 0 字节）
     if (persist_) persist_(text);
+    // ★ 2026-10-22（用户口径）：`flush_count_` 必须**在 persist 之后**递增 —— 它要当
+    //   "已落盘"的同步信号用；放在前面就变成"文本刷新了但文件还没写"。
+    ++flush_count_;
     enforce_limit();
 }
 

@@ -36,6 +36,9 @@ class TaskShell : public QObject {
     Q_OBJECT
 
 public:
+    // ★★ 2026-10-22（用户口径）：**worker 完成回调** —— 只发通知、不做等待。
+    //   自检用它当"这一次任务真跑完了"的同步信号（比读夹具标记文本可靠）。
+    static void set_worker_finished_hook(std::function<void()> hook);
     // ★★ 2026-10-06（② 用户拍板）**谁能有「取消」**：
     //   用户原话：「**封包和字库的取消，在这里本质是完全没有的，故直接删除即可。**」
     //   ⇒ 文件系统页（封包/解包）与汉化包生成页**不再创建这颗按钮**（`CancelButton::No`）；
@@ -142,6 +145,7 @@ private:
     // ★★ P17-4（审计 03 F-08）：回收**已完成**的 worker（join + 摘除）。只在主线程调
     //   （`run()` 开头与析构/`stop_and_wait` 前）。判据：smoke「顺序跑多次 ⇒ 槽位不增」。
     void reap_finished_workers();
+
 
     QWidget* panel_ = nullptr;
     QProgressBar* bar_ = nullptr;

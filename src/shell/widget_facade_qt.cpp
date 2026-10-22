@@ -268,6 +268,21 @@ plug::UiHandle handle_of(stk_widget* widget) {
 }
 
 // 当前面板根（引擎层记的）：`parent == nullptr` 时落在这里（见 ui_facade.h 口径 ③）
+namespace {
+std::function<void(const char*, int)>& menu_ready_hook_storage() {
+    static std::function<void(const char*, int)> hook;
+    return hook;
+}
+}  // namespace
+
+void set_menu_ready_hook(std::function<void(const char*, int)> hook) {
+    menu_ready_hook_storage() = std::move(hook);
+}
+
+void notify_menu_ready(const char* id, int actions) {
+    if (menu_ready_hook_storage()) menu_ready_hook_storage()(id, actions);
+}
+
 QWidget* resolve_parent(plug::UiHandle parent) {
     QWidget* widget = unwrap(parent);
     QWidget* resolved = widget;
@@ -648,7 +663,8 @@ const plug::UiFacade kQtFacade = {
                              append_registry_context_items(
                                  &menu, plug::current_page_registry(),
                                  plug::current_page_id(), xrkit::plugin::Context(), target);
-                             menu.exec(target->mapToGlobal(pos));   // 点空白关掉 ⇒ 无回调
+                             notify_menu_ready("context_menu", menu.actions().size());
+    menu.exec(target->mapToGlobal(pos));   // 点空白关掉 ⇒ 无回调
                          });
     },
     /* copy_text：写系统剪贴板（xml 页「复制 ID」；与 C++ 页同一份实现） */
@@ -719,6 +735,7 @@ const plug::UiFacade kQtFacade = {
                 if (on_choice) on_choice(index);
             });
         }
+        notify_menu_ready("button_on_menu", static_cast<int>(items.size()));
         widget->setMenu(menu);
         return true;
     },
