@@ -20,6 +20,7 @@
 #include "xrkit/core/theme.h"
 
 #include <algorithm>
+#include <functional>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
@@ -369,6 +370,20 @@ private:
             py::gil_scoped_acquire acquire;
             // ★ 2026-10-22：探针 —— Hub 传进来的 `parent` 到底是不是空？
             //   （实测 builder 里 `current_panel_root()` 变成 0，怀疑就是这一层把 root 设成了 nullptr）
+            // ★★ 2026-10-23（用户口径）：**进 builder 之前**记门面/线程两项 ——
+            //   `facade=0` ⇒ 门面没装（所有 ui.* 返回 None）；`facade=1,on_ui=0` ⇒ 线程闸门拒。
+            {
+                const auto* facade = ui_facade();
+                int on_ui = -1;
+                if (facade != nullptr && facade->on_ui_thread) {
+                    on_ui = facade->on_ui_thread() ? 1 : 0;
+                }
+                trace_event("py_builder_enter",
+                            std::string("facade=") + (facade != nullptr ? "1" : "0") +
+                                " on_ui=" + std::to_string(on_ui) + " thread_std=" +
+                                std::to_string(std::hash<std::thread::id>{}(
+                                    std::this_thread::get_id())));
+            }
             trace_event("py_builder_parent",
                         std::string("parent=") + (parent != nullptr ? "1" : "0"));
             UiPanelScope scope(parent);

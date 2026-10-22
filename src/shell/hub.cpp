@@ -308,12 +308,8 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     //   放在构造末尾的理由：`attach_services` 要给页"日志栏 + 状态栏 + 切页"这些机制，
     //   而它们（`log_box_` / `status_label_`）刚刚才建好。
     register_builtin_pages(pages_);
-    sync_pages();
-    drain_page_diagnostics();
-    if (page_count() > 0) set_current_page(0);
-    // ★★ P3（控件门面）：外壳**装配时**把门面装上 —— 插件的 `api.ui.*` 才有实现；
-    //    `log_append` 接到 Hub 自己的日志栏（引擎层因此不必认识 Hub）。
-    //    没装（CLI/离屏自检不带外壳）时，`api.ui.*` 一律返回空并**逐条记账**（零静默）。
+    // ★★ 2026-10-23（用户口径）：**门面必须先装** —— 任何在 `sync_pages()` 期间
+    //   被 build 的插件页，`ui.*` 都要靠它；晚装就是"所有 ui.* 返回 None"。
     install_qt_ui_facade([this](const std::string& line) { log_line(QString::fromStdString(line)); },
                          this);
     log_line(QStringLiteral("Hub 就绪：%1 个内置页").arg(builtin_page_count()));
@@ -829,6 +825,13 @@ void Hub::render_plugin_slots() {
                 return nullptr;
             }
         });
+
+    sync_pages();
+    drain_page_diagnostics();
+    if (page_count() > 0) set_current_page(0);
+    // ★★ P3（控件门面）：外壳**装配时**把门面装上 —— 插件的 `api.ui.*` 才有实现；
+    //    `log_append` 接到 Hub 自己的日志栏（引擎层因此不必认识 Hub）。
+    //    没装（CLI/离屏自检不带外壳）时，`api.ui.*` 一律返回空并**逐条记账**（零静默）。
     }
     sync_pages();
     drain_page_diagnostics();

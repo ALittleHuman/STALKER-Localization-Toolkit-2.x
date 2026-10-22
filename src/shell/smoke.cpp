@@ -6103,13 +6103,18 @@ SmokeResult run_smoke() {
             int child = -1;
             if (page_widget != nullptr) {
                 child = page_widget->findChildren<QWidget*>().size();
+                // ★ 2026-10-23：**递归**找占位文案（上一版只看直接子件 ⇒ 误报 placeholder=0）。
                 placeholder = QStringLiteral("0");
+                bool any_text = false;
                 for (QLabel* l : page_widget->findChildren<QLabel*>()) {
-                    if (l->text().contains(QStringLiteral("业务内容按 M2-6"))) {
+                    if (!l->text().isEmpty()) any_text = true;
+                    if (l->text().contains(QStringLiteral("业务内容按 M2-6")) ||
+                        l->text().contains(QStringLiteral("逐片接入"))) {
                         placeholder = QStringLiteral("1");
                         break;
                     }
                 }
+                if (!any_text) placeholder = QStringLiteral("no-text");
             }
             result.notes.append(
                 QStringLiteral("P12c-2 诊断：page=%1 child=%2 placeholder=%3")
