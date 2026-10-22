@@ -60,6 +60,14 @@ void trace_page_event(const std::string& kind, const std::string& detail) {
     static const bool enabled = qEnvironmentVariableIsSet("XRKIT_PAGE_TRACE") &&
                                 qEnvironmentVariable("XRKIT_PAGE_TRACE") == QStringLiteral("1");
     if (!enabled) return;
+    {
+        // ★ 只筛一页（与引擎侧同一个环境变量）
+        const QString filter = qEnvironmentVariable("XRKIT_PAGE_TRACE_FILTER");
+        if (!filter.isEmpty()) {
+            const QString page = QString::fromStdString(xrkit::plugin::current_page_id());
+            if (page != filter) return;
+        }
+    }
     QFile out(QDir::temp().filePath(QStringLiteral("page_trace.txt")));
     if (!out.open(QIODevice::Append | QIODevice::Text)) return;
     const double now = std::chrono::duration<double>(

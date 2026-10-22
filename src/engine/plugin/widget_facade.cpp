@@ -323,9 +323,25 @@ bool page_trace_enabled() {
     return enabled;
 }
 
+// ★ 2026-10-22（用户口径）：**只筛一页**（`XRKIT_PAGE_TRACE_FILTER=门面L2夹具页`），
+//   避免全量 trace 把文件写大、也避免 I/O 改变时序。
+const std::string& page_trace_filter() {
+    static const std::string filter = [] {
+        const char* v = std::getenv("XRKIT_PAGE_TRACE_FILTER");
+        return std::string(v != nullptr ? v : "");
+    }();
+    return filter;
+}
+
+bool page_trace_accepts(const std::string& page) {
+    const std::string& filter = page_trace_filter();
+    if (filter.empty()) return true;
+    return page == filter;
+}
+
 void trace_event_raw(const std::string& page, const std::string& kind,
                      const std::string& detail) {
-    if (!page_trace_enabled()) return;
+    if (!page_trace_enabled() || !page_trace_accepts(page)) return;
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path file = fs::temp_directory_path(ec) / "page_trace.txt";
