@@ -99,6 +99,17 @@ namespace {
 QString g_log_dir;  // 空 = 用默认（exe 目录 / logs）
 }  // namespace
 
+namespace {
+std::function<void(const QString&)>& page_ready_hook_storage() {
+    static std::function<void(const QString&)> hook;
+    return hook;
+}
+}  // namespace
+
+void Hub::set_page_ready_hook(std::function<void(const QString&)> hook) {
+    page_ready_hook_storage() = std::move(hook);
+}
+
 QString hub_log_dir() {
     if (!g_log_dir.isEmpty()) return g_log_dir;
     // 1.x `os.path.join(app_dir(), "logs")`：**exe 所在目录**（发行版就在程序旁边）
@@ -683,7 +694,7 @@ int Hub::sync_pages() {
                 attach_page_services(page);   // ★ 机制交付（唯一入口）
             }
             // ★ 完成钩子：页与它的服务都已就位 —— 只发信号。
-            if (page_ready_hook_) page_ready_hook_(id);
+            if (page_ready_hook_storage()) page_ready_hook_storage()(id);
             stack_->insertWidget(k, widget);
             page_tabs_->insertTab(k, reg->spec.title);
             page_ids_.insert(page_ids_.begin() + k, id);

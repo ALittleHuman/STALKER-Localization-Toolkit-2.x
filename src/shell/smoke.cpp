@@ -7033,10 +7033,15 @@ SmokeResult run_smoke() {
 
         // ★ 2026-10-22（用户口径）：**等宿主的 page_ready 信号**，不数视口个数。
         QStringList page_ready_seen;
-        Hub hub(nullptr, dir);
-        hub.set_page_ready_hook([&page_ready_seen](const QString& id) {
+        Hub::set_page_ready_hook([&page_ready_seen](const QString& id) {
             page_ready_seen << id;
         });
+        Hub hub(nullptr, dir);
+        // ★ 静态钩子必须在本块结束前撤掉：它捕获的是**栈上的** `page_ready_seen`，
+        //   留着会被后面别的 Hub 构造调到 ⇒ 悬垂引用（实测 smoke 在 l5_demo 之后直接崩掉）。
+        struct PageReadyHookReset {
+            ~PageReadyHookReset() { Hub::set_page_ready_hook(nullptr); }
+        } page_ready_hook_reset;
         const int page = hub.page_index(QStringLiteral("门面L2b夹具页"));
         check(page >= 0, QStringLiteral("P5 `register_tool` 的页没进页表（插件问题 %1 条）")
                              .arg(hub.plugin_errors().size()));

@@ -108,9 +108,9 @@ public:
 
     // ★★ 2026-10-22（用户口径）：**页装配完成钩子** —— 只发信号、不做等待、不改产品行为。
     //   自检用它代替"数 ScrollViewport 个数"这类轮询：`page_ready(id)` 之后才判页内容。
-    void set_page_ready_hook(std::function<void(const QString&)> hook) {
-        page_ready_hook_ = std::move(hook);
-    }
+    // ★★ 2026-10-22：改为 **static** —— 页在 Hub 构造函数里就建好了，
+    //   实例成员钩子注册得太晚（实测 `page_ready_seen` 永远为空，P5 白等 2s）。
+    static void set_page_ready_hook(std::function<void(const QString&)> hook);
 
     // ★★ 用户 2026-10-20（C-13）：**不要在开着的日志文件上 `QFile::remove`** ——
     //   Windows 上要么删不掉、要么目录项没了而 `core::log` 的 `g_file` 句柄还指着旧文件，
@@ -172,7 +172,6 @@ private:
     PageRegistry pages_;
     std::vector<QString> page_ids_;
     std::vector<QString> page_owners_;
-    std::function<void(const QString&)> page_ready_hook_;
     std::vector<QWidget*> page_widgets_;
 
     // ★ 2026-10-21（用户口径）：每页**builder 收到的根容器**（诊断用）。
