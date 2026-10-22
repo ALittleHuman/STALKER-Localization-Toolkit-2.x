@@ -6277,6 +6277,7 @@ SmokeResult run_smoke() {
             "        ui.drop_zone_on_drop(zone, lambda paths: mark('drop:' + ','.join(sorted(paths))))\n"
             "        panel = ui.task_panel(None, True)\n"
             "        def worker(progress, message):\n"
+            "            mark('worker_enter|thread=%d' % threading.get_ident())\n"
             "            mark('worker_ident:%d' % threading.get_ident())\n"
             "            mark('worker_main_ident:%d' % main_ident)\n"
             "            mark('worker_ui_thread:%d' % int(ui.on_ui_thread()))\n"
@@ -6287,8 +6288,13 @@ SmokeResult run_smoke() {
             "            progress(50)\n"
             "            time.sleep(0.05)\n"
             "            progress(100)\n"
+            "            mark('task_progress|value=100')\n"
             "            mark('worker_done')\n"
-            "        mark('run:%d' % int(ui.task_run(panel, '夹具任务', worker)))\n"
+            "            mark('task_done|thread=%d' % threading.get_ident())\n"
+            "        mark('task_panel|panel=%d' % int(panel is not None))\n"
+            "        _run = ui.task_run(panel, '夹具任务', worker)\n"
+            "        mark('task_run|ret=%d|running_before=0' % int(bool(_run)))\n"
+            "        mark('run:%d' % int(_run))\n"
             "    api.register_tool('门面L2夹具页', build, 6)\n";
         const QString fixture_path = QDir(dir).filePath(QStringLiteral("l2_demo.py"));
         const bool wrote = write_fixture_safely(fixture_path, source);
@@ -6647,6 +6653,14 @@ SmokeResult run_smoke() {
               QStringLiteral("P4 **线程纪律失效**：工作线程里调 `ui.label` 没有被拒"
                              "（读数见 notes：ident/main/ui_thread/label_none）"));
         QProgressBar* bar = page_widget != nullptr ? page_widget->findChild<QProgressBar*>() : nullptr;
+        // ★ 2026-10-22（用户口径）：进度是**排队回主线程**的 ⇒ 用完成条件，
+        //   不要固定 sleep、也不要"读完就断言"。
+        if (bar != nullptr) {
+            wait_until([bar]() {
+                QApplication::processEvents();
+                return bar->value() == 100;
+            }, 2000);
+        }
         check(bar != nullptr && bar->value() == 100,
               QStringLiteral("P4 Python worker 的 progress(100) 没到宿主进度条（实得 %1）")
                   .arg(bar == nullptr ? QStringLiteral("无进度条") : QString::number(bar->value())));
