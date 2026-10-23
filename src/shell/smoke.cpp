@@ -376,13 +376,14 @@ SmokeResult run_smoke() {
     QHash<QString, int> menu_ready_actions;
     // ★ 2026-10-23（用户口径）：钩子是**全局**的，必须带 **page** 才能分清
     //   "钩子没发" 与 "采集串到别的页"。
-    set_menu_ready_hook([&menu_ready_actions](const char* id, int actions) {
-        const QString page = QString::fromStdString(xrkit::plugin::current_page_id());
-        const QString menu_id = QString::fromLatin1(id);
+    set_menu_ready_hook([&menu_ready_actions](const char* menu_id_raw, int actions,
+                                              const char* page_raw) {
+        // ★★ 2026-10-23（用户口径）：page **由调用点给**（菜单构建时捕获），
+        //   不再问 `current_page_id()`；`(page, menu_id)` 才是稳定键。
+        const QString page = QString::fromStdString(page_raw != nullptr ? page_raw : "");
+        const QString menu_id = QString::fromLatin1(menu_id_raw);
         menu_ready_actions.insert(page + QStringLiteral("|") + menu_id, actions);
-        // ★ 2026-10-23：**兜底裸键** —— 钩子可能在 page context 还原后才触发（page 为空），
-        //   那种情况下 `page|id` 永远对不上，会误判"钩子没发"。
-        if (page.isEmpty()) menu_ready_actions.insert(menu_id, actions);
+        if (page.isEmpty()) menu_ready_actions.insert(menu_id, actions);   // 仅诊断
     });
 
     // ★★ 用户 2026-10-21：**启动时打一行 `on_ui_thread` 的真实判定 ＋ `QCoreApplication::thread()`** ——

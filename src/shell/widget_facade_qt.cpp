@@ -269,18 +269,18 @@ plug::UiHandle handle_of(stk_widget* widget) {
 
 // 当前面板根（引擎层记的）：`parent == nullptr` 时落在这里（见 ui_facade.h 口径 ③）
 namespace {
-std::function<void(const char*, int)>& menu_ready_hook_storage() {
-    static std::function<void(const char*, int)> hook;
+std::function<void(const char*, int, const char*)>& menu_ready_hook_storage() {
+    static std::function<void(const char*, int, const char*)> hook;
     return hook;
 }
 }  // namespace
 
-void set_menu_ready_hook(std::function<void(const char*, int)> hook) {
+void set_menu_ready_hook(std::function<void(const char*, int, const char*)> hook) {
     menu_ready_hook_storage() = std::move(hook);
 }
 
-void notify_menu_ready(const char* id, int actions) {
-    if (menu_ready_hook_storage()) menu_ready_hook_storage()(id, actions);
+void notify_menu_ready(const char* menu_id, int actions, const char* page) {
+    if (menu_ready_hook_storage()) menu_ready_hook_storage()(menu_id, actions, page);
 }
 
 QWidget* resolve_parent(plug::UiHandle parent) {
@@ -667,7 +667,8 @@ const plug::UiFacade kQtFacade = {
                      QStringLiteral("menu_id=context_menu actions=%1")
                          .arg(menu.actions().size())
                          .toStdString());
-    notify_menu_ready("context_menu", menu.actions().size());
+    const std::string ctx_page = xrkit::plugin::current_page_id();
+    notify_menu_ready("context_menu", menu.actions().size(), ctx_page.c_str());
     trace_page_event("menu_ready",
                      QStringLiteral("menu_id=context_menu actions=%1 thread=%2")
                          .arg(menu.actions().size())
@@ -752,7 +753,9 @@ const plug::UiFacade kQtFacade = {
                          QStringLiteral("menu_id=button_on_menu actions=%1")
                              .arg(items.size())
                              .toStdString());
-        notify_menu_ready("button_on_menu", static_cast<int>(items.size()));
+        // ★ 菜单**构建时**捕获页（这之后页上下文可能被还原）
+        const std::string menu_page = xrkit::plugin::current_page_id();
+        notify_menu_ready("button_on_menu", static_cast<int>(items.size()), menu_page.c_str());
         trace_page_event("menu_ready",
                          QStringLiteral("menu_id=button_on_menu actions=%1 thread=%2")
                              .arg(items.size())

@@ -56,8 +56,11 @@ void flush_engine_page_trace();
 // ★★ 2026-10-22（用户口径）：**菜单就绪钩子**（只发通知，不做等待）。
 //   两处菜单共用同一个回调：`button_on_menu`（按钮左键动作菜单）与 `context_menu`（右键）。
 //   时机＝**actions 已装完、popup/exec 之前**；带 `id` 与 `actions` 数。
-void set_menu_ready_hook(std::function<void(const char* id, int actions)> hook);
-void notify_menu_ready(const char* id, int actions);
+// ★★ 2026-10-23（用户口径）：**page 由调用点传**（菜单构建时捕获），
+//   不在 ready 时读 `current_page_id()` —— 那时页上下文可能已还原（为空）。
+void set_menu_ready_hook(
+    std::function<void(const char* menu_id, int actions, const char* page)> hook);
+void notify_menu_ready(const char* menu_id, int actions, const char* page);
 
 // ★★ 插件改装 P3（控件门面 L1/L2）：**取控件当前文本**。
 // 为什么放在这里而不是在门面实现里另写一份：`plugin_ui.cpp` 是"控件语义"的**唯一实现**
