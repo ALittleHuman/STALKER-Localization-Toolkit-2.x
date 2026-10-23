@@ -310,71 +310,16 @@ def package_looks_complete(pkg: Path) -> str:
 
 
 def newest_package():
-    """★ 包选择的**唯一真相源**：`version.json` 的 `current`（`prerelease` + `index`）。
+    """★ 2026-10-23：**包选择收敛到 `tests/package_select.py`**（唯一实现）。
 
-    为什么改成"按 current 取"（2026-10-23）：
-      · 从 BETA 起，`dist/` 下会**同时存在多个标记**（ALPHA.257 / BETA.1 …），
-        "取 tree 里最大序号"会跨标记比大小 —— `ALPHA.257 > BETA.1` ⇒ 判 BETA 包时
-        实际跑的是 ALPHA 包（**判错对象**，比判错结论更糟）；
-      · `current` 就是"这一次要验的那一个"（打包成功时由 `--build-package` 写），
-        与"我要验哪个标记"是同一件事。
-    兜底：`current` 指向的目录不存在时，退回"tree 里该标记下最大序号"；再不行退回全 tree 最大序号
-    （并打印走了哪条兜底路径 —— 选包路径必须可读，不许静默）。
-    取不到唯一一个就报**歧义**（返回 None），由调用方按"未覆盖"处理。"""
-    base = ROOT / "dist"
-    if not base.is_dir():
-        return None
-    import json
-    try:
-        data = json.loads((ROOT / "version.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    tree = data.get("tree") or {}
-    cur = data.get("current") or {}
-    cur_mark = str(cur.get("prerelease") or "")
-    cur_idx = str(cur.get("index") or "")
-
-    def dirs_for(mark: str, idx: str):
-        return [p for p in base.glob("*/*/*")
-                if p.is_dir() and p.name == idx and (not mark or p.parent.name == mark)]
-
-    # ① 首选：current（标记 + 序号）都命中且唯一
-    if cur_mark and cur_idx:
-        cands = dirs_for(cur_mark, cur_idx)
-        if len(cands) == 1:
-            return cands[0]
-        if len(cands) > 1:
-            print("   !! 包候选歧义（current=%s/%s 匹配到 %d 个目录）：%s"
-                  % (cur_mark, cur_idx, len(cands), cands))
-            return None
-        print("   [选包] current=%s/%s 的目录不存在 ⇒ 走兜底" % (cur_mark, cur_idx))
-
-    # ② 兜底 A：同一标记下 tree 里最大序号
-    if cur_mark:
-        best = -1
-        for num in (tree.get("2.0.0", {}).get(cur_mark) or {}):
-            if str(num).isdigit():
-                best = max(best, int(num))
-        if best > 0:
-            cands = dirs_for(cur_mark, str(best))
-            if len(cands) == 1:
-                print("   [选包] 兜底A：标记 %s 下最大序号 %d" % (cur_mark, best))
-                return cands[0]
-
-    # ③ 兜底 B：全 tree 最大序号（跨标记，可能选错对象 —— 打印警告）
-    best = -1
-    best_mark = ""
-    for ver, marks in tree.items():
-        for mark, builds in (marks or {}).items():
-            for num in (builds or {}):
-                if str(num).isdigit() and int(num) > best:
-                    best, best_mark = int(num), mark
-    if best > 0:
-        cands = dirs_for(best_mark, str(best))
-        if len(cands) == 1:
-            print("   !! [选包] 兜底B（跨标记，仅应急）：%s/%d" % (best_mark, best))
-            return cands[0]
-    return None
+    修前这里、`check_package_platform.py`、`check_version_identity.py` 各写一份；
+    实测 `current=BETA/1` 时后两个选到 **BETA/258**（跨标记最大序号）⇒ 门禁在验**另一个包**。
+    现在三处都调 `resolve_current_package()`，并把它回报的 `reason` 打印出来（选包路径必须可读）。
+    """
+    from package_select import resolve_current_package
+    pkg, _marker, _index, reason = resolve_current_package()
+    print("   [选包] %s ⇒ %s" % (reason, pkg if pkg is not None else "<无>"))
+    return pkg
 
 
 def package_marker(pkg: Path) -> str:

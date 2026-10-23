@@ -184,16 +184,11 @@ def last_release() -> tuple[str, str, int] | None:
 
 
 def newest_package() -> Path | None:
-    if not DIST.is_dir():
-        return None
-    best: tuple[int, Path] | None = None
-    for index_dir in DIST.glob("*/*/*"):
-        if not index_dir.is_dir() or not index_dir.name.isdigit():
-            continue
-        score = int(index_dir.name)
-        if best is None or score > best[0]:
-            best = (score, index_dir)
-    return best[1] if best else None
+    """★ 2026-10-23：包选择收敛到 `tests/package_select.py`（修前这里是"跨标记最大序号"）。"""
+    from package_select import resolve_current_package
+    pkg, _marker, _index, reason = resolve_current_package()
+    say("  [选包] %s ⇒ %s" % (reason, pkg if pkg is not None else "<无>"))
+    return pkg
 
 
 def read_version_txt(path: Path) -> dict[str, str]:
@@ -222,14 +217,33 @@ def main() -> int:
               "tree 是空的")
         say("VERSION-IDENTITY: FAIL")
         return 1
-    version, marker, index = found
+    # ★★ 2026-10-23（口径更新，必须写清为什么）：**期望值改取 `current`**，不再取"tree 最后成功发包"。
+    #   事实：`dist/` 现在会同时留**冻结参照包**（BETA.258）与**当前包**（BETA.1）。
+    #   tree-last 跨标记取最大序号 ⇒ 期望变成 BETA.258，而 current 是 BETA.1
+    #   ⇒ 本条 ③ 会拿"当前包"去比"另一个包的号"（实测 4 条红，全是这个口径错位，不是产品问题）。
+    #   为什么现在敢读 `current`：它是"这一轮要验的那一个"，而且
+    #     ① 唯一会静默改它的诊断写入者（`xrkit_build_gui --layout-report`）已于 2026-10-23 修掉，
+    #        并新增门禁第 119 步 `layout-readonly` 锁住；
+    #     ② `run_ci.py` 收尾逐字节恢复三件套并点名改动者。
+    #   旧口径"不读 current.index"的理由（GUI/门禁会推它）已经不成立。
+    from package_select import current_identity, tree_last_release
+    version, marker, index = current_identity()
+    if not marker or index <= 0:
+        check(False, "version.json 的 `current` 有可用的 标记+序号（期望值从它来）",
+              "current=%r" % ((version, marker, index),))
+        say("VERSION-IDENTITY: FAIL")
+        return 1
     want_version = ("%s %s.%d" % (version, marker, index)) if marker else version
-    say("  真来源：version.json 的 tree 最后一次成功发包 = %s（序号 %d）" % (want_version, index))
+    say("  真来源：version.json 的 `current` = %s（序号 %d）" % (want_version, index))
+    tv, tm, ti = tree_last_release()
+    if tm and ti > 0 and (tm, ti) != (marker, index):
+        say("  注：tree 里最后一次成功发包是 %s.%d（与 current 不同 —— 那是**冻结参照包**）；"
+            "本轮只验 current" % (tm, ti))
 
     # ① version.h
     header_text = VERSION_H.read_text(encoding="utf-8")
     problems = header_problems(header_text, marker, index)
-    check(not problems, "① version.h 的 kPrerelease/kBuildCount == tree 现算的期望值",
+    check(not problems, "① version.h 的 kPrerelease/kBuildCount == current 的期望值",
           "\n      ".join(problems))
 
     # ② .rc
@@ -255,7 +269,7 @@ def main() -> int:
             pkg_version = fields_txt.get("version", "")
             pkg_index = fields_txt.get("index", "")
             check(pkg_version == want_version and pkg_index == str(index),
-                  "③ 最新包 %s 的 version.txt == tree 现算的期望值" % pkg.relative_to(ROOT).as_posix(),
+                  "③ 当前包 %s 的 version.txt == current 的期望值" % pkg.relative_to(ROOT).as_posix(),
                   "version=「%s」(期望「%s」) index=「%s」(期望 %d)"
                   % (pkg_version, want_version, pkg_index, index))
             exe = pkg / "xrkit_app.exe"

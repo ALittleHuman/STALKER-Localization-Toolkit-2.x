@@ -131,17 +131,11 @@ def run_static() -> None:
 # ── ②③ 产物面 ─────────────────────────────────────────────────────────────
 
 def newest_package() -> Path | None:
-    base = ROOT / "dist"
-    if not base.is_dir():
-        return None
-    best: tuple[int, Path] | None = None
-    for index_dir in base.glob("*/*/*"):
-        if not index_dir.is_dir() or not index_dir.name.isdigit():
-            continue
-        score = int(index_dir.name)
-        if best is None or score > best[0]:
-            best = (score, index_dir)
-    return best[1] if best else None
+    """★ 2026-10-23：包选择收敛到 `tests/package_select.py`（修前这里是"跨标记最大序号"）。"""
+    from package_select import resolve_current_package
+    pkg, _marker, _index, reason = resolve_current_package()
+    say("  [选包] %s ⇒ %s" % (reason, pkg if pkg is not None else "<无>"))
+    return pkg
 
 
 SMOKE_RE = re.compile(r"SHELL-SMOKE ok checks=(\d+) failed=0")
