@@ -2348,6 +2348,16 @@ def step_shell_smoke(release: bool) -> None:
         fail("外壳自检未通过（退出码 %d，见上）" % rc)
         return
 
+    # ★★ 2026-10-23（用户口径：**NOT_COVERED 不许混进 PASS**）：
+    #   自检收尾行现在带 `not_covered=K`。判据可能因为"主体不存在/对照组不成立"而**没条件跑**，
+    #   那时 `failed=0` 依然成立 —— 只看 failed 就等于把"没验"读成"验过了"。
+    #   处置与其它"未覆盖"一致：release 档 FAIL（`prereq` 零容忍），其余档记 SKIP + 未覆盖清单。
+    #   ★ 只是**可见 + 记账**，不改任何判据内容。
+    m_nc = re.search(r"SHELL-SMOKE ok checks=\d+ failed=\d+ not_covered=(\d+)", out)
+    if m_nc and int(m_nc.group(1)) > 0:
+        prereq("外壳自检的未覆盖项（not_covered=%s）" % m_nc.group(1),
+               "见输出里的 `NOT-COVERED` note（判据主体不存在或对照组不成立）", release)
+
     # 对照表 1.6：**活代码里不许有裸滚动条**（1.x 是"不许有裸 `ttk.Scrollbar(`"，唯一例外是
     # 插件的 Tk 回退）。Qt 侧等价判据：`new QScrollBar(` 只允许出现在滚动组件里 ——
     # 别处自己造条子就等于绕过三闸门（这正是 1.x 花钱那一族的入口）。
