@@ -35,8 +35,11 @@ from __future__ import annotations
 
 import ctypes
 import json
+import hashlib
 import re
+import shutil
 import sys
+import tempfile
 from ctypes import wintypes
 from pathlib import Path
 
@@ -287,7 +290,55 @@ def main() -> int:
                     % (exe.relative_to(ROOT).as_posix(), fields.get("ProductVersion"),
                        fields.get("numeric"), pkg_version))
 
-    # ④ 自证：分析器不是恒真式
+    # ④ ★★ 2026-10-23（Q2）：**包内 exe 的 sha256** 硬不变量。
+    #   口径：
+    #     · `version.txt` 里必须有 `exe_sha256=`（由 `--build-package` 在包落到最终目录后写，唯一写入者）；
+    #     · 本判据**独立再算一遍**包内 exe 的哈希（hashlib，不复用 C++ 实现），与字段逐字比；
+    #     · 老包（BETA.1 / BETA.258 等）**没有这个字段** ⇒ 本脚本退 **3**（"不具备新不变量"），
+    #       由门禁按档位处置：release 档 FAIL、其它档记未覆盖（NOT_COVERED）—— **不冒充通过**。
+    pkg_for_sha = newest_package()
+    missing_field = False
+    if pkg_for_sha is not None:
+        fields_sha = read_version_txt(pkg_for_sha / "version.txt")
+        want_sha = fields_sha.get("exe_sha256", "").strip().lower()
+        exe_sha_path = pkg_for_sha / "xrkit_app.exe"
+        if "exe_sha256" not in fields_sha:
+            missing_field = True
+            NOTES.append("包 %s 没有 `exe_sha256=`（Q2 之前打的包）⇒ ④ 未覆盖"
+                         % pkg_for_sha.relative_to(ROOT).as_posix())
+            say("  NOT-COVERED %s/version.txt 没有 `exe_sha256=`（Q2 之前打的包）⇒ ④ 未执行"
+                % pkg_for_sha.relative_to(ROOT).as_posix())
+        elif not exe_sha_path.is_file():
+            check(False, "④ %s 里有 xrkit_app.exe（算 sha256 需要它）"
+                  % pkg_for_sha.relative_to(ROOT).as_posix())
+        else:
+            got_sha = hashlib.sha256(exe_sha_path.read_bytes()).hexdigest()
+            check(bool(want_sha) and got_sha == want_sha,
+                  "④ 包内 exe 现算的 sha256 == version.txt 的 `exe_sha256=`（**独立第三只眼**）",
+                  "现算=%s / version.txt=%s" % (got_sha[:16] + "…", (want_sha or "（空）")[:16] + "…"))
+            # 同一个包的两个字段必须互相同源：version= 里的「标记.序号」== index=
+            check(fields_sha.get("version", "") == want_version
+                  and fields_sha.get("index", "") == str(index),
+                  "④ 同一份 version.txt 的 `version=` / `index=` 与 current 一致",
+                  "version=「%s」index=「%s」" % (fields_sha.get("version", ""),
+                                                 fields_sha.get("index", "")))
+            say("  原始读数：%s → sha256=%s（version.txt: %s）"
+                % (exe_sha_path.relative_to(ROOT).as_posix(), got_sha[:16] + "…", want_sha[:16] + "…"))
+            # 反例自证：**改包内 exe 一个字节**，本判据必须红（在临时副本上做，不动产物）
+            tmp = Path(tempfile.mkdtemp(prefix="sha_sc_", dir=str(ROOT / "build")))
+            try:
+                fake = tmp / "xrkit_app.exe"
+                shutil.copy2(exe_sha_path, fake)
+                data = bytearray(fake.read_bytes())
+                data[len(data) // 2] ^= 0x01
+                fake.write_bytes(data)
+                flipped = hashlib.sha256(fake.read_bytes()).hexdigest()
+                check(flipped != want_sha,
+                      "自证：包内 exe 改一个字节 ⇒ 现算的 sha256 必须与 `exe_sha256=` 不同")
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+
+    # ⑤ 自证：分析器不是恒真式
     bad_header = header_text.replace("kBuildCount = %d" % index, "kBuildCount = %d" % (index + 1))
     check(bool(header_problems(bad_header, marker, index)),
           "自证：kBuildCount 改成 N+1 的假 version.h 必须被判红")
@@ -301,6 +352,10 @@ def main() -> int:
     if FAILURES:
         say("VERSION-IDENTITY: FAIL（%d 条不成立）" % len(FAILURES))
         return 1
+    if missing_field:
+        # ★ Q2：老包不具备新不变量 ⇒ **第三态**（门禁 release 档 FAIL、其它档记未覆盖）
+        say("VERSION-IDENTITY: NOT-COVERED（包缺 `exe_sha256=`，Q2 之前打的）")
+        return 3
     say("VERSION-IDENTITY: PASS%s" % ("（③ 未执行，见台账）" if NOTES else ""))
     return 2 if NOTES else 0
 

@@ -20,6 +20,9 @@ param(
     [string]$OutDir = 'dist',
     # 构建序号与完整版本串由 CLI（--build-package）传进来 —— 版本口径只有一处：version.json
     [int]$BuildIndex = 0,
+    # ★★ 2026-10-23（Q2）：**构建产物 exe 的 sha256**（由 `--build-package` 传进来）。
+    #   `exe_sha256=` 的**唯一写入者**是 CLI；本脚本只**核对**舞台里那份 exe 与它一致。
+    [string]$ExeSha256 = '',
     [string]$VersionString = '',
     # ★★ 2026-10-05（本批 #8）：**开发版默认带全部插件**。默认值按下文 `current.prerelease`
     #   推导（ALPHA/BETA ⇒ 开发版）；显式 `-Dev:$false` ⇒ 强制发行口径（plugins\ 为空）。
@@ -429,6 +432,31 @@ if ($exeIdentity -ne $verLine) {
           "（version.h 没被写回？`--build-package` 的写回段失败？.rc 没重生成？）"
 }
 Write-Host ("  版本身份判据通过：包内 exe ProductVersion=「{0}」" -f $exeIdentity)
+
+# ── ★★ 2026-10-23（Q2）：**包内 exe 的 sha256 必须等于构建产物**（唯一真值由 CLI 传进来）────
+#   为什么要有它：VERSIONINFO 只证明"版本串对"，不证明"**字节**就是刚编出来的那一份"
+#   （被替换/降级/打错包时版本串可能照样对）。这里对**舞台里的 exe** 现算一遍，
+#   与 CLI 传进来的期望值逐字比；不一致或没传 ⇒ **打包失败**（包不落地）。
+#   ★ 本脚本**不写** `exe_sha256=` —— 那个字段由 `--build-package` 在包落到最终目录后写，
+#     保持"唯一写入者"。
+if ($ExeSha256 -eq '') {
+    throw ("没有拿到 -ExeSha256（构建产物 exe 的 sha256）—— 打包链必须由 `--build-package` 驱动：" +
+           "`exe_sha256` 是包内 exe 的硬不变量，不许手工打包时静默缺省。")
+}
+$stageExe = Join-Path $stage 'xrkit_app.exe'
+if (-not (Test-Path -LiteralPath $stageExe)) {
+    throw ("找不到舞台里的 xrkit_app.exe：$stageExe（打包还没铺完？）")
+}
+$stageSha = (& $shellCli --sha256 $stageExe | Select-Object -First 1)
+if ($LASTEXITCODE -ne 0 -or -not ($stageSha -match '^SHA256\s+([0-9a-f]{64})\s')) {
+    throw ("算不出舞台 exe 的 sha256（退出码 $LASTEXITCODE）：$stageSha")
+}
+$stageSha = $Matches[1]
+if ($stageSha -ne $ExeSha256.ToLower()) {
+    throw ("包内 exe 的 sha256 与构建产物不一致：stage=$stageSha / 期望=$($ExeSha256.ToLower())" +
+           " ⇒ 这一份不是刚编出来的那个 exe，拒绝出包。")
+}
+Write-Host ("  包内 exe sha256 判据通过：{0}" -f $stageSha)
 # ★★ 插件改装 P2c：把"随包带了哪个 CPython 运行期/标准库"写进**包自己的契约声明** ——
 #   门禁（tests\run_ci.py 的 `[python-embed]` 步）看到这一行，才会对**这个序号**执行
 #   "从产物目录跑 `xrkit_app.exe --python-host` 真能起宿主"（口径同 `platform_plugins=`：

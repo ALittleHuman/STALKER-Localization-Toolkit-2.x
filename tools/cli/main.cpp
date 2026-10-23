@@ -19,6 +19,7 @@
 #include "build_cmd.h"
 #include "version_store_check.h"
 #include "xrkit/core/build_version.h"
+#include "xrkit/core/sha256.h"
 #include "xrkit/core/theme.h"
 #include "xrkit/core/version.h"
 #include "xrkit/engine/engine.h"
@@ -248,7 +249,7 @@ void print_usage() {
            //   `--help` 的输出里必须出现**每一个** `action == "--xxx"` 的动作名（两半都对账）。
            "  --version-store [--set] [--list] ...\n"
            "                  版本号存储（读/写/列举；只读模式不带 --set）\n"
-           "  --exe-version [文件]                        现读 exe 的 VERSIONINFO（判据用）\n"
+           "  --exe-version [文件]                        现读 exe 的 VERSIONINFO（判据用）\n  --sha256 <文件>                             算文件 SHA-256（打包链唯一哈希实现）\n"
            "  --lzhuf <decode|encode> <输入> <输出> [--force]\n"
            "                                              LZHUF 编解码（1.x 的可逆域；对拍用）。\n"
            "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
@@ -3212,6 +3213,24 @@ int run_cli(const std::vector<std::string>& args) {
 
     if (action == "--build-package") {
         return xrkit_cli::run_build_package(operands);
+    }
+
+    if (action == "--sha256") {
+        // ★★ 2026-10-23（Q2）：**唯一哈希实现**。打包链（`package.ps1`）与判据都来调它，
+        //   这样"C++ / PowerShell / Python 三处各算一遍"不会变成三种算法。
+        //   输出：`SHA256 <小写十六进制> <文件>`（机器可解析）；失败：`SHA256 error reason=...`。
+        if (operands.empty()) {
+            std::cerr << "SHA256 error reason=用法：--sha256 <文件>\n";
+            return kExitUsage;
+        }
+        std::string hash_error;
+        const std::string hex = xrkit::core::sha256_file(operands[0], hash_error);
+        if (hex.empty()) {
+            std::cout << "SHA256 error reason=" << hash_error << "\n";
+            return kExitFail;
+        }
+        std::cout << "SHA256 " << hex << " " << operands[0] << "\n";
+        return kExitOk;
     }
 
     if (action == "--exe-version") {

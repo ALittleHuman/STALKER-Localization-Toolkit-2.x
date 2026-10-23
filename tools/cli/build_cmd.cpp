@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "xrkit/core/build_version.h"
+#include "xrkit/core/sha256.h"
 #include "xrkit/core/atomic_write.h"
 #include "xrkit/core/version.h"
 
@@ -199,21 +200,42 @@ int run_build_package(const std::vector<std::string>& operands) {
     cmd += "chcp 65001 >nul && powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\build.ps1";
     cmd += " -Preset msvc-shell > \"";
     cmd += log;
-    cmd += "\" 2>&1 && powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\package.ps1";
-    cmd += " -BuildIndex " + std::to_string(want_index);
-    cmd += " -VersionString \"" + full + "\" >> \"";
-    cmd += log;
     cmd += "\" 2>&1";
     std::cout << "BUILDPKG start version=" << full << " log=" << log << "\n";
     std::cout.flush();
 
 #ifdef _WIN32
-    const int rc = run_windowless_utf8(cmd);  // 无控制台窗口（用户要求：不要打开 cmd）
+    int rc = run_windowless_utf8(cmd);  // 无控制台窗口（用户要求：不要打开 cmd）
 #else
     // 本项目只出 Windows 包（scripts/*.ps1 都是 PowerShell）⇒ 非 Windows 不做等价实现，
     // 直接失败。（保留 std::system 会让"无控制台窗口"静态锁永远红 —— 它就是拦这个的。）
     const int rc = -1;
 #endif
+    // ── ★★ 2026-10-23（Q2）：**包内 exe 的 sha256** 是硬不变量 ─────────────────
+    //   口径：`--build-package` 是 `exe_sha256=` 的**唯一写入者**；`package.ps1` 只**核对**
+    //   （它拿到这里算好的期望值，对**舞台里的 exe** 现算一遍，不一致就 throw）。
+    //   为什么在 build 之后、package 之前算：此时 exe 刚编出来，正是要打进包的那一份。
+    std::string pkg_sha;
+    if (rc == 0) {
+        std::string sha_error;
+        pkg_sha = xrkit::core::sha256_file("build\\msvc-shell\\src\\shell\\xrkit_app.exe", sha_error);
+        if (pkg_sha.empty()) {
+            std::cout << "BUILDPKG error reason=算包内 exe 的 sha256 失败：" << sha_error << "\n";
+            rc = 1;   // 走统一失败分支（回滚三件套 + 归档现场）
+        } else {
+            std::cout << "BUILDPKG exe-sha256=" << pkg_sha << "\n";
+            std::cout.flush();
+            std::string cmd2;
+            cmd2 += "chcp 65001 >nul && powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\package.ps1";
+            cmd2 += " -BuildIndex " + std::to_string(want_index);
+            cmd2 += " -VersionString \"" + full + "\"";
+            cmd2 += " -ExeSha256 \"" + pkg_sha + "\" >> \"";
+            cmd2 += log;
+            cmd2 += "\" 2>&1";
+            rc = run_windowless_utf8(cmd2);
+        }
+    }
+
     if (rc != 0) {
         // ③ 失败：版本/标记/序号**逐字节回退**（判据就是"与备份逐字节相同"）
         if (!xrkit::core::restore_version_store(backup, store_path, err)) {
@@ -333,6 +355,55 @@ int run_build_package(const std::vector<std::string>& operands) {
                                      std::to_string(want_index);   // 只留序号（上层已是 主版本/标记）
         rec.artifacts.push_back(dir_hint);   // 可直接双击跑的目录（历史版本按序号共存）
     }
+    // ── ★★ 2026-10-23（Q2 的"唯一写入者"这一步）：把 `exe_sha256=` 写进**最终落点**的 version.txt。
+    //   时机：包已经落到 `dist\\<主版本>\\<标记>\\<序号>\\` 之后 ⇒ 算的是**包内那份**而不是舞台那份。
+    //   纪律：原子写；写后**读回比对**；再对包内 exe 现算一遍，三者必须一致。
+    {
+        const std::filesystem::path final_dir = std::filesystem::path("dist") / want_version /
+                                                want_prerelease / std::to_string(want_index);
+        const std::filesystem::path final_exe = final_dir / "xrkit_app.exe";
+        const std::filesystem::path final_txt = final_dir / "version.txt";
+        std::string sha_error;
+        const std::string landed_sha = xrkit::core::sha256_file(final_exe.string(), sha_error);
+        if (landed_sha.empty() || landed_sha != pkg_sha) {
+            std::cout << "BUILDPKG error reason=包内 exe 的 sha256 与构建产物不一致（" 
+                      << (landed_sha.empty() ? sha_error : landed_sha) << " vs " << pkg_sha
+                      << "）⇒ 包不可信\n";
+            return kFail;
+        }
+        std::ifstream in(final_txt);
+        if (!in) {
+            std::cout << "BUILDPKG error reason=读不到 " << final_txt.string() << "（写 exe_sha256 需要它）\n";
+            return kFail;
+        }
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const std::string key = "exe_sha256=";
+        const std::string line = key + landed_sha + "\n";
+        const size_t at = text.find(key);
+        if (at != std::string::npos) {
+            const size_t eol = text.find('\n', at);
+            text.replace(at, (eol == std::string::npos ? text.size() : eol + 1) - at, line);
+        } else {
+            if (!text.empty() && text.back() != '\n') text.push_back('\n');
+            text += line;
+        }
+        std::string werr;
+        if (!xrkit::core::write_file_atomic(final_txt.string(),
+                                            std::vector<uint8_t>(text.begin(), text.end()), true, werr)) {
+            std::cout << "BUILDPKG error reason=写 " << final_txt.string() << " 失败：" << werr << "\n";
+            return kFail;
+        }
+        std::ifstream check_stream(final_txt);
+        std::string check((std::istreambuf_iterator<char>(check_stream)),
+                          std::istreambuf_iterator<char>());
+        if (check.find(line) == std::string::npos) {
+            std::cout << "BUILDPKG error reason=写回 exe_sha256 后读不到（原子写失败？）\n";
+            return kFail;
+        }
+        std::cout << "BUILDPKG wrote exe_sha256=" << landed_sha << " into "
+                  << final_txt.string() << "\n";
+    }
+
     store.append(want_version, want_prerelease, want_index, rec);
     if (!xrkit::core::save_version_store(store_path, store, err)) {
         std::cout << "BUILDPKG error reason=写构建史失败：" << err << "\n";

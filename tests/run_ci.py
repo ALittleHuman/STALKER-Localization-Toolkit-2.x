@@ -5644,7 +5644,15 @@ def step_version_identity(release: bool) -> None:
                 or s.startswith("原始读数") or s.startswith("真来源"):
             say("  " + s)
     if rc == 0:
-        ok("version.h / .rc / 包内 exe 的版本身份三者与 version.json 的 tree 一致")
+        ok("version.h / .rc / 包内 exe 的版本身份三者与 current 一致；"
+           "包内 exe 的 `exe_sha256=` 独立复核通过")
+    elif rc == 3:
+        # ★★ 2026-10-23（Q2）：**老包不具备新不变量**（version.txt 没有 `exe_sha256=`）。
+        #   这不是产品红，也不是绿：release 档零容忍（`prereq` ⇒ FAIL），
+        #   其它档记 SKIP + 未覆盖清单（可见，不冒充通过）。
+        #   收敛条件：重打一个新包（它自带该字段）后，本条自动消失。
+        prereq("包内 exe 的 sha256 不变量（`exe_sha256=`）",
+               "当前包是 Q2 之前打的，没有这个字段 ⇒ ④ 未执行；重打一个新包即可覆盖", release)
     elif rc == 2:
         # ★ 2026-10-10（P17-2，审计 04 F-05）：同上 —— 包内 exe 版本身份那一条。
         package_fact("包内 exe 的版本身份",

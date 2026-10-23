@@ -5,6 +5,7 @@ add_library(xrkit_core STATIC
   path.cpp
   atomic_write.cpp
   build_version.cpp
+  sha256.cpp
   theme.cpp)
 
 target_include_directories(xrkit_core PUBLIC "${CMAKE_SOURCE_DIR}/include")
