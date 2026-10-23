@@ -3009,6 +3009,39 @@ def step_shell_smoke(release: bool) -> None:
        "不写死）+ 候选过滤 + 四态标记缓存 + 预览/缩放；内置页与插件门面**共用**它，界面骨架只出现一次）")
 
 
+def step_layout_readonly(release: bool) -> None:
+    """**诊断模式不许改仓库状态**：`xrkit_build_gui --layout-report` 前后三件套 sha256 不变。
+
+    2026-10-23 实测：`BuildWindow` 构造尾部 `refresh_derived()` → `xrkit_cli --version-store set`
+    ⇒ 把 `version.json` 的 `current` 覆盖成下拉框选中项（BETA/1 → ALPHA/258）。
+    门禁里唯一跑它的步骤是 `shell-smoke` ⇒ 这正是 P17-133 那条"shell-smoke 改了 version.json"
+    的**唯一写入者**；而修前它"绿"是靠写盘掩盖了"界面与 CLI 序号口径不一致"。
+    修法：诊断模式 `read_only` + prerelease 默认选 `current`。
+    **本步锁的是"以后不许再有人在诊断路径上写盘"**（比只修一次值）。
+
+    判据 `tests/check_layout_report_readonly.py`：三件套前后 sha256 逐个不变、连跑两次也不变、
+    并自带"临时副本被写必须报出来"的反例自证。
+    退出码：0=绿 / 1=红 / 2=缺 exe（按外部前提处理）。
+    """
+    say("[layout-readonly] 诊断模式不许改仓库状态（--layout-report 前后三件套 sha256 不变）")
+    script = ROOT / "tests" / "check_layout_report_readonly.py"
+    if not require_repo_file(script, "诊断只读判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("LAYOUT-READONLY") \
+                or s.startswith("第一次") or s.startswith("第二次"):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("诊断模式只读：`--layout-report` 前后 version.json/version.h/.rc 的 sha256 不变")
+    elif rc == 2:
+        prereq("诊断只读判据的输入", "缺 build/msvc-shell 的 xrkit_build_gui.exe（先跑 shell-smoke 步）",
+               release)
+    else:
+        fail("诊断模式改了仓库状态（见上）：诊断工具不许改被测对象")
+
+
 def step_winres(release: bool) -> None:
     """Windows 版本资源（VERSIONINFO）：exe 里的元数据必须**非空**，且与 `core::version_string()` 同源。
 
@@ -7145,6 +7178,9 @@ STEPS = [
     ("golden-sqfs-metacross", step_golden_sqfs_metacross),
     ("bench", step_bench),
     ("shell-smoke", step_shell_smoke),
+    # ★★ 2026-10-23：诊断模式不许改仓库状态（P17-133 真凶的回归锁）。
+    #   排在 shell-smoke 之后：那一步才把 xrkit_build_gui.exe 编出来。
+    ("layout-readonly", step_layout_readonly),
     # ★★ 2026-10-06（审计处理批·0-8 后半）：这一步**必须排在 shell 构建之后**。
     #   修前它在第 5 步、外壳构建在第 36 步，而它的 ③ 号判据读的是**磁盘上现存的**
     #   `xrkit_app.exe` / `xrkit_build_gui.exe` 的 PE 子系统 ⇒
