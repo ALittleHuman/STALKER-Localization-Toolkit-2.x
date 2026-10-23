@@ -943,12 +943,35 @@ const plug::UiFacade kQtFacade = {
     [](plug::UiHandle panel, const std::string& title,
        std::function<void(plug::UiFacade::TaskProgress, plug::UiFacade::TaskMessage)> worker) {
         TaskShell* shell = task_of(panel);
-        if (shell == nullptr || !worker) return false;
-        return shell->run(QString::fromStdString(title),
-                          [worker](const ProgressSink& progress, const MessageSink& message) {
-                              worker([progress](int percent) { progress(percent); },
-                                     [message](const std::string& text) { message(text); });
-                          });
+        // ★★ 2026-10-23（用户口径）：`task_run` 失败要能分清三种原因 ——
+        //   `shell_found=0`（面板句柄没注册/页被重建）、`running_before=1`（复位竞态）、
+        //   `worker_null=1`（Python worker 不可调用）。
+        if (shell == nullptr || !worker) {
+            trace_page_event(
+                "task_run",
+                QStringLiteral("ret=0 shell_found=%1 running_before=-1 worker_null=%2")
+                    .arg(shell != nullptr ? 1 : 0)
+                    .arg(worker ? 0 : 1)
+                    .toStdString());
+            return false;
+        }
+        trace_page_event(
+            "task_run",
+            QStringLiteral("ret=? shell_found=1 running_before=%1 worker_null=0")
+                .arg(shell->running() ? 1 : 0)
+                .toStdString());
+        const bool ok =
+            shell->run(QString::fromStdString(title),
+                       [worker](const ProgressSink& progress, const MessageSink& message) {
+                           worker([progress](int percent) { progress(percent); },
+                                  [message](const std::string& text) { message(text); });
+                       });
+        // ★ 2026-10-23：把**真实返回值**补进读数（原来只记 `ret=?`，判断不了闸门）。
+        trace_page_event(
+            "task_run_result",
+            QStringLiteral("ret=%1 running_after=%2").arg(ok ? 1 : 0).arg(
+                shell->running() ? 1 : 0).toStdString());
+        return ok;
     },
     /* task_status */
     [](plug::UiHandle panel) {
