@@ -310,39 +310,70 @@ def package_looks_complete(pkg: Path) -> str:
 
 
 def newest_package():
-    """★ 用户 2026-10-20：**输入要钉死** —— 按 `version.json` 的 `current.index` 取包，
-    不再"rglob 里挑最大的"（那会把开发包/旧包混进同一条判据的输入，红绿就随目录内容漂）。
-    取不到唯一一个就报**歧义**（返回 None + 理由），由调用方按"未覆盖"处理。"""
+    """★ 包选择的**唯一真相源**：`version.json` 的 `current`（`prerelease` + `index`）。
+
+    为什么改成"按 current 取"（2026-10-23）：
+      · 从 BETA 起，`dist/` 下会**同时存在多个标记**（ALPHA.257 / BETA.1 …），
+        "取 tree 里最大序号"会跨标记比大小 —— `ALPHA.257 > BETA.1` ⇒ 判 BETA 包时
+        实际跑的是 ALPHA 包（**判错对象**，比判错结论更糟）；
+      · `current` 就是"这一次要验的那一个"（打包成功时由 `--build-package` 写），
+        与"我要验哪个标记"是同一件事。
+    兜底：`current` 指向的目录不存在时，退回"tree 里该标记下最大序号"；再不行退回全 tree 最大序号
+    （并打印走了哪条兜底路径 —— 选包路径必须可读，不许静默）。
+    取不到唯一一个就报**歧义**（返回 None），由调用方按"未覆盖"处理。"""
     base = ROOT / "dist"
     if not base.is_dir():
         return None
-    # ★★ 用户 2026-10-20「包选择要钉死」＋ 一条现场教训：`current.index` 会被门禁里的
-    #   `shell-smoke` 临时改写（它跑打包脚本、脚本会写 version.json，随后门禁逐字节恢复）。
-    #   所以**先看 `tree`**（只在"成功发包"时写、稳定）里最大的序号；没有才退回 `current.index`。
-    idx = ""
+    import json
     try:
-        import json
         data = json.loads((ROOT / "version.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    tree = data.get("tree") or {}
+    cur = data.get("current") or {}
+    cur_mark = str(cur.get("prerelease") or "")
+    cur_idx = str(cur.get("index") or "")
+
+    def dirs_for(mark: str, idx: str):
+        return [p for p in base.glob("*/*/*")
+                if p.is_dir() and p.name == idx and (not mark or p.parent.name == mark)]
+
+    # ① 首选：current（标记 + 序号）都命中且唯一
+    if cur_mark and cur_idx:
+        cands = dirs_for(cur_mark, cur_idx)
+        if len(cands) == 1:
+            return cands[0]
+        if len(cands) > 1:
+            print("   !! 包候选歧义（current=%s/%s 匹配到 %d 个目录）：%s"
+                  % (cur_mark, cur_idx, len(cands), cands))
+            return None
+        print("   [选包] current=%s/%s 的目录不存在 ⇒ 走兜底" % (cur_mark, cur_idx))
+
+    # ② 兜底 A：同一标记下 tree 里最大序号
+    if cur_mark:
         best = -1
-        for ver, marks in (data.get("tree") or {}).items():
-            for mark, builds in (marks or {}).items():
-                for num in (builds or {}):
-                    if str(num).isdigit():
-                        best = max(best, int(num))
+        for num in (tree.get("2.0.0", {}).get(cur_mark) or {}):
+            if str(num).isdigit():
+                best = max(best, int(num))
         if best > 0:
-            idx = str(best)
-        else:
-            idx = str(data["current"]["index"])
-    except (OSError, ValueError, KeyError, TypeError):
-        idx = ""
-    if not idx:
-        return None
-    cands = [p for p in base.glob("*/*/*") if p.is_dir() and p.name == idx]
-    if len(cands) == 1:
-        return cands[0]
-    if len(cands) > 1:
-        print("   !! 包候选歧义（序号 %s 匹配到 %d 个目录）：%s" % (idx, len(cands), cands))
-        return None
+            cands = dirs_for(cur_mark, str(best))
+            if len(cands) == 1:
+                print("   [选包] 兜底A：标记 %s 下最大序号 %d" % (cur_mark, best))
+                return cands[0]
+
+    # ③ 兜底 B：全 tree 最大序号（跨标记，可能选错对象 —— 打印警告）
+    best = -1
+    best_mark = ""
+    for ver, marks in tree.items():
+        for mark, builds in (marks or {}).items():
+            for num in (builds or {}):
+                if str(num).isdigit() and int(num) > best:
+                    best, best_mark = int(num), mark
+    if best > 0:
+        cands = dirs_for(best_mark, str(best))
+        if len(cands) == 1:
+            print("   !! [选包] 兜底B（跨标记，仅应急）：%s/%d" % (best_mark, best))
+            return cands[0]
     return None
 
 
