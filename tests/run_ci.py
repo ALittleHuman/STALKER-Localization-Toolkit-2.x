@@ -2342,21 +2342,33 @@ def step_shell_smoke(release: bool) -> None:
         s = line.strip()
         if s.startswith("SHELL-SMOKE") or s.startswith("!!"):
             say("  " + s)
-    if rc == 0 and "SHELL-SMOKE ok" in out:
-        ok("外壳构建 + 离屏自检通过")
-    else:
-        fail("外壳自检未通过（退出码 %d，见上）" % rc)
+    # ★★★ 2026-10-23（用户口径）：**三种计数分开读，不靠字符串前缀、不只看 rc**。
+    #   事实：收尾行恒以 `SHELL-SMOKE ok` 开头 —— `... ok checks=935 failed=1` 也"以 ok 开头"
+    #   （`pkg-platform` 的 docstring 记过同一条假绿）；而只看 rc 又漏掉第三态。
+    #   统一成：
+    #     rc==0 && failed==0 && not_covered==0  ⇒ PASS
+    #     rc==0 && failed>0                      ⇒ FAIL
+    #     rc==0 && not_covered>0                 ⇒ prereq / UNCOVERED（没验，不等于验过）
+    #     rc!=0                                  ⇒ FAIL（含超时 124）
+    #   收尾行缺 `failed=` 字段也按 FAIL（协议变了就该红，不许静默当 0）。
+    m_smoke = re.search(r"SHELL-SMOKE ok checks=(\d+) failed=(\d+)(?: not_covered=(\d+))?", out)
+    if m_smoke is None:
+        fail("外壳自检没有可解析的收尾行（`SHELL-SMOKE ok checks=N failed=M …`；退出码 %d）" % rc)
         return
-
-    # ★★ 2026-10-23（用户口径：**NOT_COVERED 不许混进 PASS**）：
-    #   自检收尾行现在带 `not_covered=K`。判据可能因为"主体不存在/对照组不成立"而**没条件跑**，
-    #   那时 `failed=0` 依然成立 —— 只看 failed 就等于把"没验"读成"验过了"。
-    #   处置与其它"未覆盖"一致：release 档 FAIL（`prereq` 零容忍），其余档记 SKIP + 未覆盖清单。
-    #   ★ 只是**可见 + 记账**，不改任何判据内容。
-    m_nc = re.search(r"SHELL-SMOKE ok checks=\d+ failed=\d+ not_covered=(\d+)", out)
-    if m_nc and int(m_nc.group(1)) > 0:
-        prereq("外壳自检的未覆盖项（not_covered=%s）" % m_nc.group(1),
-               "见输出里的 `NOT-COVERED` note（判据主体不存在或对照组不成立）", release)
+    checks_n = int(m_smoke.group(1))
+    failed_n = int(m_smoke.group(2))
+    nc_n = int(m_smoke.group(3) or 0)
+    say("  [shell-smoke] checks=%d failed=%d not_covered=%d rc=%d"
+        % (checks_n, failed_n, nc_n, rc))
+    if rc != 0 or failed_n > 0:
+        fail("外壳自检未通过（checks=%d failed=%d 退出码 %d，见上）" % (checks_n, failed_n, rc))
+        return
+    if nc_n > 0:
+        prereq("外壳自检的未覆盖项（not_covered=%d）" % nc_n,
+               "见输出里的 `NOT-COVERED` note（判据主体不存在或对照组不成立）；"
+               "**没验不等于验过**", release)
+        return
+    ok("外壳构建 + 离屏自检通过（checks=%d failed=0 not_covered=0）" % checks_n)
 
     # 对照表 1.6：**活代码里不许有裸滚动条**（1.x 是"不许有裸 `ttk.Scrollbar(`"，唯一例外是
     # 插件的 Tk 回退）。Qt 侧等价判据：`new QScrollBar(` 只允许出现在滚动组件里 ——

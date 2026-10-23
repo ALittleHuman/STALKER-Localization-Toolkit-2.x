@@ -64,7 +64,8 @@ QString cli_path() {
 
 class BuildWindow : public QWidget {
 public:
-    BuildWindow() {
+    BuildWindow(bool read_only = false) {
+        read_only_ = read_only;
         setWindowTitle(QStringLiteral("xrkit 构建（2.0.0）"));
         // 图标与 1.x 同款（app_icon.ico，随 exe 一起放；找不到就跳过，不阻塞）
         {
@@ -334,6 +335,16 @@ private:
         if (!keep_pre.isEmpty()) {
             const int i = combo_prerelease_->findText(keep_pre);
             if (i >= 0) combo_prerelease_->setCurrentIndex(i);
+        } else {
+            // ★★ 2026-10-23（同一处一致性缺陷的另一半）：**默认标记必须等于 current**。
+            //   修前这里什么都不选 ⇒ 落到列表第一项（字母序 = ALPHA），而 `current` 可能是 BETA
+            //   ⇒ 界面按 ALPHA 算 next（258），CLI 按 current（BETA）算 next（259），
+            //   `--layout-report` 的「序号口径唯一」那条判据**必然红**；
+            //   而修前它之所以"绿"，是因为构造期顺手把 current 改成了 ALPHA —— 用**写盘**掩盖了不一致。
+            //   现在（诊断模式不写盘）必须把默认值选对。
+            const int i = combo_prerelease_->findText(
+                QString::fromStdString(store_.current_prerelease));
+            if (i >= 0) combo_prerelease_->setCurrentIndex(i);
         }
         combo_version_->blockSignals(false);
         combo_prerelease_->blockSignals(false);
@@ -422,7 +433,15 @@ private:
         int next = 0;
         bool synced = false;
         if (!current_version().isEmpty() && !current_prerelease().isEmpty()) {
-            next = sync_store_and_read_next(current_version(), current_prerelease(), &synced);
+            if (read_only_) {
+                // 2026-10-23: diagnostic mode computes only, never writes.
+                // next_index() reads tree only (same value the CLI reports after `set`),
+                // so the display is unchanged while version.json stays untouched.
+                next = next_index();
+                synced = next > 0;
+            } else {
+                next = sync_store_and_read_next(current_version(), current_prerelease(), &synced);
+            }
         }
         if (!synced) next = next_index();   // CLI 调不动时的兜底（下面会记一行，不静默）
         const int shown = next > 0 ? next : 1;
@@ -522,6 +541,11 @@ private:
     QString new_version_;
     std::string store_path_;
     xrkit::core::VersionStore store_;
+    // 2026-10-23: diagnostic mode (--layout-report) must never write to disk.
+    //   Before: the ctor called sync_store_and_read_next() -> `xrkit_cli --version-store set`,
+    //   rewriting version.json's current (measured: BETA/1 reset to ALPHA/258).
+    //   That is the P17-133 culprit "shell-smoke changed version.json" (it runs --layout-report).
+    bool read_only_ = false;
 };
 
 #include <QApplication>
@@ -538,7 +562,8 @@ int main(int argc, char** argv) {
     //   表单区 ≤ 200px、构建史 ≥ 110px、日志区 ≤ 窗口高 50%。退出码 0/1 供门禁使用。
     if (argc > 1 && std::string(argv[1]) == "--layout-report") {
         xrkit::shell::apply_theme(app, xrkit::core::ThemeMode::Dark);
-        BuildWindow window;
+        // 2026-10-23: criterion mode => read-only (must not touch version.json).
+        BuildWindow window(/*read_only=*/true);
         window.resize(xrkit::core::px(900), xrkit::core::px(700));
         window.show();
         QApplication::processEvents();
