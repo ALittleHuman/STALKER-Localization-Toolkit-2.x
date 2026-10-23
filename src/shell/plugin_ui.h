@@ -68,4 +68,16 @@ void notify_menu_ready(const char* menu_id, int actions, const char* page);
 // 认得的控件：QLabel/QPushButton/QLineEdit/QPlainTextEdit；不认得返回空串。
 std::string qt_plugin_widget_text(stk_widget* widget);
 
+// ★★ 2026-10-23（P5 实证）：**把宿主新造的页容器认成"在册且活着"的句柄**。
+//
+//   事实（`build/logs/p5_probe/summary.json` 的实测）：插件页存在时，页容器的地址会
+//   **复用**某个已销毁门面控件的地址；而 `unwrap()` 对"已登记但已死"的地址返回 nullptr
+//   ⇒ `resolve_parent()` 拿到 null ⇒ 该页**所有**控件都无父（`place_null`）
+//   ⇒ 页看起来"根本没建出来"。10 次里 6 次出现 `root_stale=1`，1 次直接红 8 条
+//   （P17-82 ×4 / P16-3b-2 / P16-3c / P4 ×2）。
+//
+//   修法就是这一句：**新容器登记进去（覆盖任何陈旧条目）** ⇒ 它不会再被死项遮住；
+//   容器销毁后自然变成死项，语义与其它句柄一致（插件对它 `alive()` 变 false 是对的）。
+void adopt_host_widget(void* widget);
+
 }  // namespace xrkit::shell

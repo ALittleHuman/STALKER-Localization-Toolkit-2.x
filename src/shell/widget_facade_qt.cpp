@@ -267,6 +267,20 @@ plug::UiHandle handle_of(stk_widget* widget) {
     return handle;
 }
 
+// ★★ 2026-10-23（P5 实证）：宿主自己造的页容器也要"在册且活着"。
+//
+//   修前：容器的地址**从不登记** ⇒ 若它恰好复用某个已销毁门面控件的地址，
+//   `unwrap()` 就会把**活着的容器**判死（`root_stale=1` 那条 trace 抓到的就是这个）
+//   ⇒ `resolve_parent()` 返回 null ⇒ 该页所有控件无父 ⇒ 空页。
+//
+//   这里**覆盖写**（而不是"只登记不存在时"）：死项必须被活项替换掉，
+//   否则下一次复用同一地址还会被遮住。与 `handle_of` 同一张表、同一套语义。
+void adopt_host_widget(void* widget) {
+    if (widget == nullptr) return;
+    const plug::UiHandle handle = reinterpret_cast<plug::UiHandle>(widget);
+    handle_registry()[handle] = QPointer<QWidget>(reinterpret_cast<QWidget*>(widget));
+}
+
 // 当前面板根（引擎层记的）：`parent == nullptr` 时落在这里（见 ui_facade.h 口径 ③）
 namespace {
 std::function<void(const char*, int, const char*)>& menu_ready_hook_storage() {
@@ -291,16 +305,31 @@ QWidget* resolve_parent(plug::UiHandle parent) {
     //   "resolve_parent 返回 null" ⇒ 每次解析都记一条。
     {
         QWidget* root = unwrap(plug::current_panel_root());
+        // ★ 2026-10-23（P5 判决性实验）：把"根地址在不在句柄表里 / 是否已死"**分开记**。
+        //   页容器是 `new QWidget` 造的、**从未登记** ⇒ 正常情况下 `root_in_reg=0`；
+        //   一旦 `root_in_reg=1 && root_stale=1`，就说明这个地址被某个**已销毁的门面控件**
+        //   占用过（地址复用）⇒ `unwrap()` 把活着的容器判死 ⇒ 控件无父 ⇒ `place_null`
+        //   ⇒ `anything_built=false` ⇒ 占位页 ⇒ P5 红。这条 trace 只观测，不改行为。
+        const plug::UiHandle raw_root = plug::current_panel_root();
+        bool root_in_reg = false;
+        bool root_stale = false;
+        if (raw_root != nullptr) {
+            const auto it = handle_registry().find(raw_root);
+            root_in_reg = it != handle_registry().end();
+            root_stale = root_in_reg && it->second.isNull();
+        }
         trace_page_event(
             "resolve",
             QStringLiteral("parent_arg=%1 resolved=%2 current_root=%3 same=%4 "
-                           "thread_std=%5")
+                           "thread_std=%5 root_in_reg=%6 root_stale=%7")
                 .arg(reinterpret_cast<quintptr>(widget), 0, 16)
                 .arg(reinterpret_cast<quintptr>(resolved), 0, 16)
                 .arg(reinterpret_cast<quintptr>(root), 0, 16)
                 .arg(resolved != nullptr && resolved == root ? 1 : 0)
                 .arg(QString::number(std::hash<std::thread::id>{}(
                     std::this_thread::get_id())))
+                .arg(root_in_reg ? 1 : 0)
+                .arg(root_stale ? 1 : 0)
                 .toStdString());
     }
     return resolved;
@@ -324,7 +353,25 @@ bool is_field_input(QWidget* widget) {
 }
 
 void place(QWidget* parent, QWidget* child) {
-    if (parent == nullptr || child == nullptr) return;
+    if (parent == nullptr || child == nullptr) {
+        // ★ 2026-10-23（P5 判决性实验）：**空父静默返回**是"空页无痕"的唯一出口。
+        //   修前这里一行痕迹都没有 ⇒ 看起来像"控件根本没造"。现在记一条，
+        //   才能把"造了但没挂上"与"没造出来"分开。只观测，不改行为。
+        const plug::UiHandle raw_root = plug::current_panel_root();
+        bool root_stale = false;
+        if (raw_root != nullptr) {
+            const auto it = handle_registry().find(raw_root);
+            root_stale = it != handle_registry().end() && it->second.isNull();
+        }
+        trace_page_event("place_null",
+                         QStringLiteral("parent=%1 child=%2 root=%3 root_stale=%4")
+                             .arg(reinterpret_cast<quintptr>(parent), 0, 16)
+                             .arg(reinterpret_cast<quintptr>(child), 0, 16)
+                             .arg(reinterpret_cast<quintptr>(raw_root), 0, 16)
+                             .arg(root_stale ? 1 : 0)
+                             .toStdString());
+        return;
+    }
     const int before = parent->layout() != nullptr ? parent->layout()->count() : -1;
     auto* layout = qobject_cast<QVBoxLayout*>(parent->layout());
     if (layout == nullptr) {
