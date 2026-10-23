@@ -7766,7 +7766,24 @@ SmokeResult run_smoke() {
                 menu_timer.start();
                 trace_page_event("menu_emit_begin", "point=9,9");
                 emit only_tree->customContextMenuRequested(QPoint(9, 9));
-                menu_timer.stop();
+                // ★★ 2026-10-23（用户口径）：**不许无条件 stop** ——
+                //   走 `QMenu::exec()` 时 emit 会阻塞、timer 在嵌套循环里能跑（seen 非空）；
+                //   走 `popup()` 非模态时 emit 立刻返回，这里 stop 会赶在第一个 10ms tick 之前
+                //   把采集窗口关掉 ⇒ `seen_only` 永远为空（这正是 P13-2a-2 的红）。
+                const bool took_in_nested_loop = !seen_only.isEmpty();
+                if (took_in_nested_loop) {
+                    menu_timer.stop();
+                } else {
+                    // timer 继续跑，泵事件等它采到；采到或超时后再 stop。
+                    wait_until([&seen_only]() { return !seen_only.isEmpty(); }, 1000);
+                    menu_timer.stop();
+                }
+                trace_page_event(
+                    "menu_mode",
+                    QStringLiteral("nested_loop=%1 seen=%2")
+                        .arg(took_in_nested_loop ? 1 : 0)
+                        .arg(seen_only.size())
+                        .toStdString());
                 {
                     auto* popup_now = qobject_cast<QMenu*>(QApplication::activePopupWidget());
                     trace_page_event(
@@ -7777,10 +7794,7 @@ SmokeResult run_smoke() {
                             .arg(seen_only.size())
                             .toStdString());
                 }
-                if (seen_only.isEmpty()) {
-                    // 没走模态（或菜单被别处关掉）时再兜 1 秒
-                    wait_until([&seen_only]() { return !seen_only.isEmpty(); }, 1000);
-                }
+                // （等待已合并到上面的分支里，这里不再重复等。）
                 if (seen_only.isEmpty()) {
                     result.notes.append(
                         QStringLiteral("P13-2a-2 诊断：菜单两项没采到（fired=%1）")
