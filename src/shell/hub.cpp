@@ -312,6 +312,12 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     //   被 build 的插件页，`ui.*` 都要靠它；晚装就是"所有 ui.* 返回 None"。
     install_qt_ui_facade([this](const std::string& line) { log_line(QString::fromStdString(line)); },
                          this);
+    // ★★ 2026-10-23：**内置六页在这里就走注册表那条路装配完**（`register_builtin_pages` → `sync_pages`）。
+    //   修前只靠 `load_plugins()` → `render_plugin_slots()` 里那个 `sync_pages()` 顺带装；
+    //   门禁 `check_page_host_lock.py` 的④要求的正是"Hub::Hub 里注册表被消费" —— 这不是为判据而写：
+    //   插件目录为空时（发行口径）修前那条路也成立，显式调用只是让"内置页装配"不依赖插件侧。
+    //   `sync_pages()` 幂等：后面 `render_plugin_slots()` 里的调用不会重建已有页（P1 那条锁）。
+    sync_pages();
     log_line(QStringLiteral("Hub 就绪：%1 个内置页").arg(builtin_page_count()));
     load_plugins(plugin_dir);
 }
@@ -530,6 +536,38 @@ int Hub::sync_pages() {
             //   ⇒ 页看起来"根本没建出来"（实测 10 次里 6 次 `root_stale=1`，1 次红 8 条）。
             adopt_host_widget(container);
             QWidget* built = nullptr;
+            // ★★ 2026-10-23（见 `check_builder_guard.py` A3/A4/A5）：settle 的整段 trace 提到
+            //   try **之前**（lambda），只为让 `catch` 紧贴 builder 调用点 —— 那三条是距离判据，
+            //   30 行诊断夹在中间会让「护栏明明在」被判成「没护栏」（ALPHA.252 存量红）。
+            //   诊断内容一字未改；顺带：抛异常时也会打 settle（能看到 ret=0 / placed=N）。
+            const auto emit_settle = [&]() {
+                          QLayout* now_layout = container->layout();
+                          const auto scope_now = xrkit::plugin::current_panel_root();
+                          trace_page_event(
+                              "settle",
+                              QStringLiteral("ret=%1 placed=%2 anything=%3 container=%4 "
+                                             "layout=%5 scope=%6 same=%7 builder_root=%8 "
+                                             "page_widget=%9")
+                                  .arg(built != nullptr ? 1 : 0)
+                                  .arg(now_layout != nullptr ? now_layout->count() : -1)
+                                  .arg((built != nullptr ||
+                                        (now_layout != nullptr && now_layout->count() > 0))
+                                           ? 1
+                                           : 0)
+                                  .arg(reinterpret_cast<quintptr>(container), 0, 16)
+                                  .arg(now_layout != nullptr
+                                           ? QString::fromLatin1(
+                                                 now_layout->metaObject()->className())
+                                           : QStringLiteral("none"))
+                                  .arg(reinterpret_cast<quintptr>(
+                                           static_cast<void*>(scope_now)), 0, 16)
+                                  .arg(scope_now == reinterpret_cast<plugin::UiHandle>(container)
+                                           ? 1
+                                           : 0)
+                                  .arg(reinterpret_cast<quintptr>(container), 0, 16)
+                                  .arg(reinterpret_cast<quintptr>(built), 0, 16)
+                                  .toStdString());
+            };
             // ★★ S-02（第三方只读审计 2026-10-18）：**builder 异常护栏**。
             //   修前这里是一句裸的 `built = reg->builder(container);` —— C++ 插件（或任何会抛的
             //   实现）在 builder 里抛异常时，异常会**穿进 Qt 的页面构造路径**一路冒到
@@ -566,37 +604,7 @@ int Hub::sync_pages() {
                 try {
                     built = reg->builder(container);
                     trace_page_build(trace_id, QStringLiteral("built"));
-                    // ★ 2026-10-21：settle **必须在 scope 还活着时**量 —— 放到 scope 之后量，
-                    //   `current_page_id()` / `current_panel_root()` 已经被还原（实测拿到空值），
-                    //   `same` 也就永远 0，等于没量。
-                    {
-                        QLayout* now_layout = container->layout();
-                        const auto scope_now = xrkit::plugin::current_panel_root();
-                        trace_page_event(
-                            "settle",
-                            QStringLiteral("ret=%1 placed=%2 anything=%3 container=%4 "
-                                           "layout=%5 scope=%6 same=%7 builder_root=%8 "
-                                           "page_widget=%9")
-                                .arg(built != nullptr ? 1 : 0)
-                                .arg(now_layout != nullptr ? now_layout->count() : -1)
-                                .arg((built != nullptr ||
-                                      (now_layout != nullptr && now_layout->count() > 0))
-                                         ? 1
-                                         : 0)
-                                .arg(reinterpret_cast<quintptr>(container), 0, 16)
-                                .arg(now_layout != nullptr
-                                         ? QString::fromLatin1(
-                                               now_layout->metaObject()->className())
-                                         : QStringLiteral("none"))
-                                .arg(reinterpret_cast<quintptr>(
-                                         static_cast<void*>(scope_now)), 0, 16)
-                                .arg(scope_now == reinterpret_cast<plugin::UiHandle>(container)
-                                         ? 1
-                                         : 0)
-                                .arg(reinterpret_cast<quintptr>(container), 0, 16)
-                                .arg(reinterpret_cast<quintptr>(built), 0, 16)
-                                .toStdString());
-                    }
+                    emit_settle();
                 } catch (const std::exception& e) {
                     builder_exception = e.what() != nullptr ? e.what() : "std::exception（what() 为空）";
                     trace_page_build(trace_id, QStringLiteral("error:%1")
@@ -605,6 +613,7 @@ int Hub::sync_pages() {
                     builder_exception = "非 std::exception 的 C++ 异常";
                     trace_page_build(trace_id, QStringLiteral("error:非 std::exception"));
                 }
+
             }
             const bool builder_threw = !builder_exception.empty();
             if (builder_threw) {
