@@ -7163,6 +7163,42 @@ SmokeResult run_smoke() {
             QThread::msleep(5);
         }
 
+        // ★★ 2026-10-23（用户口径）：切页之后**重新取**页实例 ——
+        //   原来 `page_widget` 是在 `hub.show()/switch_to_page` **之前**取的，
+        //   若切页导致页被重建，旧指针的宽度/layout 都不对 ⇒ `wait_page_ready` 必红。
+        page_widget = page >= 0 ? hub.stack()->widget(page) : nullptr;
+        {
+            const QWidget* current = hub.stack() != nullptr ? hub.stack()->currentWidget() : nullptr;
+            const bool same_current = current == page_widget;
+            trace_page_event(
+                "p5_page",
+                QStringLiteral("page=0x%1 objectName=%2 layout_count=%3 child=%4 "
+                               "width=%5 height=%6 visible=%7 current_eq_page=%8 "
+                               "ready_seen=%9 viewports=%10")
+                    .arg(reinterpret_cast<quintptr>(page_widget), 0, 16)
+                    .arg(page_widget != nullptr ? page_widget->objectName()
+                                                : QStringLiteral("<null>"))
+                    .arg(page_widget != nullptr && page_widget->layout() != nullptr
+                             ? page_widget->layout()->count()
+                             : -1)
+                    .arg(page_widget != nullptr ? page_widget->findChildren<QWidget*>().size()
+                                                : -1)
+                    .arg(page_widget != nullptr ? page_widget->width() : -1)
+                    .arg(page_widget != nullptr ? page_widget->height() : -1)
+                    .arg(page_widget != nullptr && page_widget->isVisible() ? 1 : 0)
+                    .arg(same_current ? 1 : 0)
+                    .arg(page_ready_seen.contains(QStringLiteral("门面L2b夹具页")) ? 1 : 0)
+                    .arg(page_widget != nullptr
+                             ? page_widget->findChildren<ScrollViewport*>().size()
+                             : -1)
+                    .toStdString());
+            if (!same_current) {
+                result.notes.append(QStringLiteral(
+                    "P5 诊断：切页后 currentWidget != page（current=0x%1 page=0x%2）")
+                        .arg(reinterpret_cast<quintptr>(current), 0, 16)
+                        .arg(reinterpret_cast<quintptr>(page_widget), 0, 16));
+            }
+        }
         {
             // ★★ 2026-10-22（用户口径）：**顺序反了** —— `wait_page_ready` 要求页有宽度，
             //   而它原来在 `hub.show()` / `switch_to_page` **之前** ⇒ 宽度自然是 0，
