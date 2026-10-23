@@ -406,6 +406,12 @@ SmokeResult run_smoke() {
             result.failures.append(what);
         }
     };
+    // ★★ 2026-10-23（用户口径）：**第三态**。"这一条本轮没条件跑"既不记 PASS 也不记 FAIL，
+    //   而是单独计数（收尾行 `not_covered=K`）＋ 留一条可见的 note（含原因）。
+    const auto not_covered = [&result](const QString& what) {
+        ++result.not_covered;
+        result.notes.append(QStringLiteral("NOT-COVERED ") + what);
+    };
 
     // ★★ 2026-10-06（③）：落盘日志的目录 —— **先把自检的落盘目录改成临时目录**，
     //   免得门禁每跑一次就往构建目录里写一堆 `logs/log_*.txt`。默认口径先在这里钉住。
@@ -6193,6 +6199,7 @@ SmokeResult run_smoke() {
             "import traceback\n"
             "def register(api):\n"
             "    _fh = None\n"
+            "    _lock = threading.Lock()   # ★ 2026-10-23：build 线程与 worker 线程共用 _fh ⇒ 写必须串行\n"
             "\n"
             "    def _open_fh():\n"
             "        global _fh\n"
@@ -6210,12 +6217,16 @@ SmokeResult run_smoke() {
             "        #   （现场正好是\"标签是占位页文案、列表为空\"）。\n"
             "        #   现在：**整个 build 只开一次句柄**、写后立即 flush（标记仍即时可见），\n"
             "        #   而且**绝不抛异常**（诊断 I/O 不许弄死被测对象）。\n"
+            "        # ★★ 2026-10-23：**加锁 + 锁内 flush** —— 主线程（build）与工作线程（worker）共用\n"
+            "        #   同一个句柄；不加锁时读者可能先看到 worker 的行、后看到主线程的行\n"
+            "        #   （本轮实测 2/30：marker 里明明有 `run:1`，先前那次读却读不到）。\n"
             "        try:\n"
             "            fh = _fh if _fh is not None else _open_fh()\n"
             "            if fh is None:\n"
             "                return\n"
-            "            fh.write(text + '\\n')\n"
-            "            fh.flush()\n"
+            "            with _lock:\n"
+            "                fh.write(text + '\\n')\n"
+            "                fh.flush()\n"
             "        except Exception:\n"
             "            pass\n"
             "\n"
@@ -6633,6 +6644,13 @@ SmokeResult run_smoke() {
               QStringLiteral("P4 `log_view_clear` 没清掉内容"));
         check(drop_handled && text.contains(QStringLiteral("drop:C:/tmp/a.txt,C:/tmp/b.txt")),
               QStringLiteral("P4 拖入区域的回调没收到本机路径（handled=%1）").arg(drop_handled));
+        // ★★ 2026-10-23：**完成条件**。`run:1` 由主线程在 `ui.task_run` 之后写，
+        //   而 `worker_done` 由工作线程写；两个线程共用一个句柄时，读者可能先看到后者
+        //   （本轮实测 2/30：marker 里确有 `run:1`，但那份快照没有）。等键出现再判，不固定 sleep。
+        if (!text.contains(QStringLiteral("run:1")) &&
+            wait_until([&] { return read_marker().contains(QStringLiteral("run:1")); }, 2000)) {
+            text = read_marker();
+        }
         check(text.contains(QStringLiteral("run:1")),
               QStringLiteral("P4 `task_run` 没被宿主接受"));
         check(text.contains(QStringLiteral("worker_done")),
@@ -9803,48 +9821,145 @@ SmokeResult run_smoke() {
 
         // ① 标签背后的底板：**字段行容器**（`DropZones::attach_row` 统一挂 `field_row` 名字，
         //    六个页面都走这一条）自己不许涂底 —— 涂了就是用户截图里标签背后那块深灰圆角。
-        int plate_hits = 0;
-        int plate_rows_scanned = 0;   // ★ 候选样本数（B1-5：没有自证样本 ⇒ 候选集空就恒绿）
+        //
+        // ★★★ 2026-10-23（用户口径，替换"候选集为空就红"的一刀切）：**三态**
+        //     · PASS            ＝ 该页**有预期行**且量到了行；
+        //     · PRODUCT_FAIL    ＝ 有预期行却是 0（或标签带涂了底）—— 只有这一种是产品红；
+        //     · NOT_COVERED     ＝ 该页本来就没有字段行 / 页没建出来 / 不是当前页 ⇒ 单独计数，不冒充红；
+        //     · GATE_SELF_FAIL  ＝ **对照组**也为 0（判据/环境坏）⇒ 记 NOT_COVERED 并**点名**，
+        //                          绝不让"判据自己坏了"伪装成"产品坏了"。
+        //   对照组＝内置 `fs` 页（最简、永远存在）。若 fs 为 0 而**别的内置页**量到行 ⇒ 判据没坏
+        //   ⇒ fs 那 0 行算产品红；若**所有页**都 0 行 ⇒ 判据/环境坏（GATE_SELF_FAIL）。
+        //   期望值来自**设计**（`attach_row` 的调用点 × 该 helper 的调用次数）：
+        //   fs 1（另一行在"封包"标签页上，同一时刻不可见）/ convert 2 / text 2 / xml 2 /
+        //   video 3 / fontpack 3。
+        struct ExpectedRow {
+            const char* id;
+            int rows;
+        };
+        const ExpectedRow kExpectedRows[] = {
+            {"fs", 1}, {"convert", 2}, {"text", 2}, {"xml", 2}, {"video", 3}, {"fontpack", 3}};
+        const auto expected_rows_of = [&](const QString& id) {
+            for (const ExpectedRow& row : kExpectedRows) {
+                if (id == QString::fromLatin1(row.id)) return row.rows;
+            }
+            return -1;   // 不认识的页（插件页/新增页）⇒ 本判据不管，记未覆盖
+        };
+
+        int plate_hits = 0;          // 涂底的字段行数（产品红）
         QString plate_detail;
-        for (QWidget* container : style_hub.findChildren<QWidget*>()) {
-            if (container->objectName() != QStringLiteral("field_row")) continue;
-            // 只看**当前页上真的显示出来**的行：没显示的页还没走过布局，几何是退化值
-            // （实测：隐藏页的行容器宽 640、输入框挪到 x=452）⇒ 那种残缺几何上的像素
-            // 判据不是用户看到的界面，会假红。
-            if (!container->isVisible()) continue;
-            const auto* edit = container->findChild<QLineEdit*>();
-            const auto* label = container->findChild<QLabel*>();
-            if (edit == nullptr || label == nullptr) continue;   // 只认"标签 + 输入框"这种字段行
-            const QSize size = container->size();
-            if (size.width() < 8 || size.height() < 8) continue;
-            ++plate_rows_scanned;
-            // 判据直接盯"谁涂了底"：把**行容器自己**渲染成图（DrawWindowBackground）
-            QImage image(size, QImage::Format_ARGB32_Premultiplied);
-            image.fill(QColor(0, 0, 0, 0));
-            container->render(&image);
-            // 标签带 = 左边 2..(输入框左缘-2)，纵向取中间 3/5（避开上下边框与输入框）
-            const int right = std::max(3, edit->x() - 2);
-            const QRect strip(2, size.height() / 5, std::max(1, right - 2),
-                              std::max(1, size.height() * 3 / 5));
-            const QColor painted = dominant(image, strip);
-            if (painted.alpha() == 0) continue;   // 透明 = 容器不涂底（这就是要的）
-            if (painted != surface2) {
-                ++plate_hits;
-                if (plate_detail.isEmpty()) {
-                    plate_detail = QStringLiteral("字段行(%1,%2 %3x%4) 标签带涂了 %5（应为卡片底 %6）")
-                                       .arg(container->x())
-                                       .arg(container->y())
-                                       .arg(size.width())
-                                       .arg(size.height())
-                                       .arg(painted.name(), surface2.name());
+        QStringList zero_row_pages;  // 有预期却是 0 的页（产品红）
+        int pages_measured = 0;      // 真量过的页数（对照组用的分母）
+        int control_rows = 0;        // fs 页量到的行数（对照组）
+        int pages_skipped = 0;       // 未覆盖的页数
+        QStringList skipped_pages;
+
+        for (int page_index = 0; page_index < style_hub.page_count(); ++page_index) {
+            const QString page_id = style_hub.page_id(page_index);
+            const int expected = expected_rows_of(page_id);
+            if (expected < 0) {
+                ++pages_skipped;
+                skipped_pages << page_id + QStringLiteral("(不认识的页)");
+                continue;
+            }
+            if (expected == 0) {
+                ++pages_skipped;
+                skipped_pages << page_id + QStringLiteral("(设计上没有字段行)");
+                continue;
+            }
+            // 切到这一页并泵布局（**必须**：隐藏页的几何是退化值，见下面那段旧注释）
+            style_hub.set_current_page(page_index);
+            for (int pass = 0; pass < 3; ++pass) {
+                if (style_hub.layout() != nullptr) style_hub.layout()->activate();
+                QApplication::processEvents();
+            }
+            int scanned = 0;
+            for (QWidget* container : style_hub.findChildren<QWidget*>()) {
+                if (container->objectName() != QStringLiteral("field_row")) continue;
+                // 只看**当前页上真的显示出来**的行：没显示的页还没走过布局，几何是退化值
+                // （实测：隐藏页的行容器宽 640、输入框挪到 x=452）⇒ 那种残缺几何上的像素
+                // 判据不是用户看到的界面，会假红。
+                if (!container->isVisible()) continue;
+                const auto* edit = container->findChild<QLineEdit*>();
+                const auto* label = container->findChild<QLabel*>();
+                if (edit == nullptr || label == nullptr) continue;   // 只认"标签 + 输入框"这种字段行
+                const QSize size = container->size();
+                if (size.width() < 8 || size.height() < 8) continue;
+                ++scanned;
+                // 判据直接盯"谁涂了底"：把**行容器自己**渲染成图（DrawWindowBackground）
+                QImage image(size, QImage::Format_ARGB32_Premultiplied);
+                image.fill(QColor(0, 0, 0, 0));
+                container->render(&image);
+                // 标签带 = 左边 2..(输入框左缘-2)，纵向取中间 3/5（避开上下边框与输入框）
+                const int right = std::max(3, edit->x() - 2);
+                const QRect strip(2, size.height() / 5, std::max(1, right - 2),
+                                  std::max(1, size.height() * 3 / 5));
+                const QColor painted = dominant(image, strip);
+                if (painted.alpha() == 0) continue;   // 透明 = 容器不涂底（这就是要的）
+                if (painted != surface2) {
+                    ++plate_hits;
+                    if (plate_detail.isEmpty()) {
+                        plate_detail = QStringLiteral("页 %1 的字段行(%2,%3 %4x%5) 标签带涂了 %6"
+                                                      "（应为卡片底 %7）")
+                                           .arg(page_id)
+                                           .arg(container->x())
+                                           .arg(container->y())
+                                           .arg(size.width())
+                                           .arg(size.height())
+                                           .arg(painted.name(), surface2.name());
+                    }
                 }
             }
+            ++pages_measured;
+            if (page_id == QStringLiteral("fs")) control_rows = scanned;
+            if (scanned == 0) zero_row_pages << page_id;
+            result.notes.append(
+                QStringLiteral("⑭ 逐页：%1 期望 %2 行，量到 %3 行").arg(page_id).arg(expected).arg(scanned));
         }
-        check(plate_rows_scanned > 0 && plate_hits == 0,
-              QStringLiteral("⑭ 标签背后不许有深灰底板（扫到 %1 个可见字段行，%2 处涂底；%3）")
-                  .arg(plate_rows_scanned)
-                  .arg(plate_hits)
-                  .arg(plate_detail.isEmpty() ? QStringLiteral("无") : plate_detail));
+
+        // 判定（三态 + 对照组）
+        //   `pages_measured == 0` ⇒ **不适用**（本 Hub 没有可判的内置页，例如判据 ④ 的抬夹具形态）
+        //   ⇒ 只留 note、不计未覆盖；
+        //   `pages_measured > 0` 但**全部**为 0 行 ⇒ 判据/环境不成立（GATE_SELF_FAIL）⇒ 记未覆盖。
+        const bool all_zero = pages_measured > 0 && control_rows == 0 &&
+                              zero_row_pages.size() == pages_measured;
+        if (pages_measured == 0) {
+            result.notes.append(QStringLiteral(
+                "⑭ 整体不适用：本 Hub 没有一个可判的内置页（量过 0 页，跳过 %1 页）")
+                                    .arg(pages_skipped));
+        } else if (all_zero) {
+            not_covered(QStringLiteral("⑭ 字段行判据：**对照组/全部页都为 0**"
+                                       "（fs=%1，量过 %2 页，0 行的页 %3）⇒ 判据或环境不成立，"
+                                       "本轮的 ⑴ 标签背后底板 一条**未覆盖**（不冒充产品红）")
+                            .arg(control_rows)
+                            .arg(pages_measured)
+                            .arg(zero_row_pages.isEmpty() ? QStringLiteral("无")
+                                                          : zero_row_pages.join(QStringLiteral(","))));
+        } else {
+            check(zero_row_pages.isEmpty() && plate_hits == 0,
+                  QStringLiteral("⑭ 标签背后不许有深灰底板（量过 %1 页；没行的页 %2；涂底 %3 处；%4）")
+                      .arg(pages_measured)
+                      .arg(zero_row_pages.isEmpty() ? QStringLiteral("无")
+                                                    : zero_row_pages.join(QStringLiteral(",")))
+                      .arg(plate_hits)
+                      .arg(plate_detail.isEmpty() ? QStringLiteral("无") : plate_detail));
+        }
+        if (pages_skipped > 0) {
+            // ★★ 2026-10-23（用户口径的细化）：**"不适用" ≠ "未覆盖"**。
+            //   `pages_measured == 0` 时本判据的**主体不存在**（例如判据 ④ 的抬夹具形态：六页
+            //   全被插件页顶替 ⇒ 本 Hub 里一个内置页都没有）⇒ 记一条**可见的 note**，但**不**
+            //   计 `not_covered`（否则"判据不适用"会让消费侧永远拿不到 PASS，反而逼人放宽判据）。
+            //   真正算未覆盖的是上面那条"对照组/全部页都为 0"（判据或环境不成立）。
+            const bool applicable = pages_measured > 0;
+            const QString detail = QStringLiteral("⑭ 字段行判据：%1 页不适用（%2）")
+                                       .arg(pages_skipped)
+                                       .arg(skipped_pages.join(QStringLiteral(",")));
+            if (applicable) {
+                result.notes.append(QStringLiteral("⑭ 跳过（不适用，不计未覆盖）：") + detail);
+            } else {
+                result.notes.append(QStringLiteral("⑭ 整体不适用（本 Hub 没有内置页）：") + detail);
+            }
+        }
 
         // ② 任务面板（同一个机制的另一处现场，用户截图图二"缺了一块"）：它是裸容器且带进度条，
         //    渲染出来的底必须是**透明的**（底交给卡片），不许自己涂一层 `bg`。

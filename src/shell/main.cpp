@@ -174,9 +174,10 @@ int main(int argc, char** argv) {
         for (const QString& failure : result.failures) {
             out << "  SHELL-SMOKE fail " << failure << "\n";
         }
-        out << QStringLiteral("SHELL-SMOKE ok checks=%1 failed=%2 mode=%3\n")
+        out << QStringLiteral("SHELL-SMOKE ok checks=%1 failed=%2 not_covered=%3 mode=%4\n")
                    .arg(result.checks)
                    .arg(result.failed)
+                   .arg(result.not_covered)
                    .arg(QString::fromUtf8(xrkit::core::theme_mode_name(mode)));
         out.flush();
         return result.failed == 0 ? 0 : 1;

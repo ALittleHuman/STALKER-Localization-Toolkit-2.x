@@ -87,6 +87,10 @@ PAGES_RE = re.compile(r"PLUGIN-PAGES 可见页集合=(\d+)\s*页（内置=(\d+)\
 PAGES_ASCII_RE = re.compile(
     r"PLUGIN-PAGES pages=(\d+) builtin=(\d+) plugin_py=(\d+) owner_matches_id=(\d) names=\[(.*?)\]")
 SMOKE_OK_RE = re.compile(r"SHELL-SMOKE ok checks=(\d+) failed=0")
+# ★★ 2026-10-23（用户口径）：**第三态 not_covered 必须可见、不许静默算通过**。
+#   `--smoke` 的收尾行现在带 `not_covered=K`（未覆盖的判据条数）；K>0 ⇒ 记台账（脚本退码 2），
+#   既不算 PASS 也不算产品 FAIL。
+NOT_COVERED_RE = re.compile(r"SHELL-SMOKE ok checks=\d+ failed=\d+ not_covered=(\d+)")
 
 
 def parse_pages_any(text: str):
@@ -530,6 +534,12 @@ def audit_package(pkg: Path) -> None:
             return
         smoke_ok = SMOKE_OK_RE.search(out)
         only_fx, rest_fx = fixture_only_failures(out)
+        # ★ 第三态：未覆盖条数（>0 ⇒ 记台账 ⇒ 本脚本退 2，不冒充 PASS）
+        _nc = NOT_COVERED_RE.search(out)
+        if _nc is not None and int(_nc.group(1)) > 0:
+            say("   !! ③ 自检报 not_covered=%s 条未覆盖（不是产品红；见 --smoke 的 NOT-COVERED note）"
+                % _nc.group(1))
+            NOTES.append("%s ③ not_covered=%s" % (rel, _nc.group(1)))
         if smoke_ok is not None and rc == 0:
             check(True, "产物 %s（默认形态）：`SHELL-SMOKE ok … failed=0` 且退出码 0" % rel)
         elif not rest_fx and only_fx:
@@ -585,6 +595,10 @@ def audit_package(pkg: Path) -> None:
             check(False, "产物 %s（抬夹具形态）：`--smoke` 能跑完" % rel, str(out2))
             return
         smoke_ok2 = SMOKE_OK_RE.search(out2)
+        _nc2 = NOT_COVERED_RE.search(out2) if out2 else None
+        if _nc2 is not None and int(_nc2.group(1)) > 0:
+            say("   !! ④ 自检报 not_covered=%s 条未覆盖（不是产品红）" % _nc2.group(1))
+            NOTES.append("%s ④ not_covered=%s" % (rel, _nc2.group(1)))
         if smoke_ok2 is None or rc2 != 0:
             # ★★ 用户 2026-10-20：④ 失败必须**留完整现场**（不只末 40 行），并保留临时目录。
             diag = ROOT / "build" / "logs" / "pkg_pages_phase4_fail.txt"

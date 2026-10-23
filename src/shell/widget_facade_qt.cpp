@@ -281,6 +281,12 @@ void adopt_host_widget(void* widget) {
     handle_registry()[handle] = QPointer<QWidget>(reinterpret_cast<QWidget*>(widget));
 }
 
+QWidget* make_host_widget() {
+    auto* widget = new QWidget;
+    adopt_host_widget(widget);
+    return widget;
+}
+
 // 当前面板根（引擎层记的）：`parent == nullptr` 时落在这里（见 ui_facade.h 口径 ③）
 namespace {
 std::function<void(const char*, int, const char*)>& menu_ready_hook_storage() {

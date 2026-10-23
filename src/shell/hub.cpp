@@ -529,12 +529,11 @@ int Hub::sync_pages() {
             //     · 门面的 `parent=None` 落到这个根上（`place()` 负责按宿主规范排版）；
             //     · builder 的形参也从 `nullptr` 改成这个根（新建控件自然有父，不会变成顶层窗口）；
             //     · builder 返回非空控件 ⇒ 嵌进根里（C ABI 的老写法照旧可用）。
-            auto* container = new QWidget;
-            // ★★ 2026-10-23（P5 实证）：把容器登记成"在册且活着"的句柄。
-            //   修前容器从不登记 ⇒ 地址一旦复用某个**已销毁**门面控件的地址，`unwrap()` 就会
-            //   把活着的容器判死 ⇒ `resolve_parent()` 返回 null ⇒ 整页控件无父（`place_null`）
+            // ★★ 2026-10-23（P5 实证）：容器必须"在册且活着" —— 走 `make_host_widget()`，
+            //   它内部 `adopt_host_widget`。修前容器从不登记 ⇒ 地址一旦复用某个**已销毁**门面控件的
+            //   地址，`unwrap()` 就把活容器判死 ⇒ `resolve_parent()` 返回 null ⇒ 整页控件无父
             //   ⇒ 页看起来"根本没建出来"（实测 10 次里 6 次 `root_stale=1`，1 次红 8 条）。
-            adopt_host_widget(container);
+            auto* container = make_host_widget();
             QWidget* built = nullptr;
             // ★★ 2026-10-23（见 `check_builder_guard.py` A3/A4/A5）：settle 的整段 trace 提到
             //   try **之前**（lambda），只为让 `catch` 紧贴 builder 调用点 —— 那三条是距离判据，
@@ -931,9 +930,8 @@ void Hub::render_plugin_slots() {
         //   ★★ P3：与插件页同一套口径 —— 宿主给根容器 + `UiPanelScope`（门面的落点），
         //   builder 返回的控件（老写法）嵌进根里；一件都没造出来 ⇒ 留痕（零静默）。
         for (const plugin::PanelReg* panel : registry_.panels_for(host)) {
-            auto* container = new QWidget;
-            // ★★ 2026-10-23（P5 实证）：同上（页容器与面板容器是同一个坑）。
-            adopt_host_widget(container);
+            // ★★ 2026-10-23（P5 实证）：同上（页容器与面板容器是同一个坑）⇒ 同一个工厂。
+            auto* container = make_host_widget();
             QWidget* built = nullptr;
             bool panel_threw = false;
             std::string panel_exception;

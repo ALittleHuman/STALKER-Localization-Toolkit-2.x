@@ -16,6 +16,10 @@
 #include <functional>
 #include <string>
 
+// ★ 2026-10-23：`make_host_widget()` 的返回类型 —— 本头文件故意**不引 Qt**（12.2 的边界），
+//   所以只前置声明（`QWidget` 在全局命名空间）。
+class QWidget;
+
 namespace xrkit::shell {
 
 const stk_ui* qt_plugin_ui();
@@ -79,5 +83,10 @@ std::string qt_plugin_widget_text(stk_widget* widget);
 //   修法就是这一句：**新容器登记进去（覆盖任何陈旧条目）** ⇒ 它不会再被死项遮住；
 //   容器销毁后自然变成死项，语义与其它句柄一致（插件对它 `alive()` 变 false 是对的）。
 void adopt_host_widget(void* widget);
+
+// ★★ 2026-10-23（用户口径「下次换个页又会踩地址复用」）：**宿主自己造的、会当 parent/句柄用的控件**
+//   一律走这个工厂 —— 它 = `new QWidget` + `adopt_host_widget`，把"忘了登记"从"可能忘记"变成"不可能"。
+//   判据：`tests/check_host_widget_adopt.py`（hub.cpp 里不许再出现 `container = new QWidget`）。
+QWidget* make_host_widget();
 
 }  // namespace xrkit::shell

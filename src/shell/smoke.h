@@ -14,6 +14,10 @@ namespace xrkit::shell {
 struct SmokeResult {
     int checks = 0;
     int failed = 0;
+    // ★★ 2026-10-23（用户口径）：**未覆盖必须单独计数** —— 不许混进 PASS，也不冒充 FAIL。
+    //   "这条判据本轮没条件跑"（页没建出来 / 该页本来就没这个形状 / 判据自检前提不成立）
+    //   记在这里；收尾行打印 `not_covered=K`，消费侧自己决定容忍度（不许静默算通过）。
+    int not_covered = 0;
     QStringList failures;
     QStringList notes;  // 实测值等证据（无论成败都打印，供人核对；如拖动一步的 ms）
 };
