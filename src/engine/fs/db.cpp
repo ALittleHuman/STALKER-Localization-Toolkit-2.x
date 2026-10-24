@@ -1155,6 +1155,16 @@ std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& in_items, DbFormat f
                              std::vector<DbNameRewrite>* rewrites, std::string* error,
                              std::vector<DbDuplicate>* duplicates, bool strict) {
     if (error != nullptr) error->clear();
+    // ★ H4（2026-10-24 全量审计）：**公开 API 的对称性** —— `unpack_db` 明确拒 `Unknown`，
+    //   而 `pack_db` 修前会落到 `build_header` 的 `else` 分支、**静默按 11xx 写**
+    //   （"以为在写 xdb"）。现在两边同口径：Unknown 直接拒，理由点名。
+    if (fmt == DbFormat::Unknown) {
+        if (error != nullptr) {
+            *error = "未知 DB 格式（DbFormat::Unknown）：pack_db 需要明确格式 —— "
+                     "修前这里会静默按 11xx 写，调用方却以为自己在写别的格式";
+        }
+        return {};
+    }
     // ★★ batch-3 / 3a：**重名检测**（官方不查重 ⇒ 默认只警告 + 记录，不失败）。
     //   为什么不做默认拒绝：1.x 的 `pack_db` 不去重、`unpack_db` 返回完整 list、解包是 last-wins
     //   ⇒ 官方能吃的包我们也得能吃/能产；拒绝会变成"比官方更严的新限制"。

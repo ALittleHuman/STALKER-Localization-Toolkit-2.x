@@ -5298,7 +5298,12 @@ int run_cli(const std::vector<std::string>& args) {
                       << "（拒绝静默截断；确认要覆盖请加 --force）\n";
             return kExitUsage;
         }
-        std::ofstream out_file(operands[2], std::ios::binary | std::ios::trunc);
+        // ★ H1（2026-10-24 全量审计）：**路径必须走 `path_from_utf8`** ——
+        //   直接把 `std::string` 交给 `ofstream` 在 Windows 上按 **CP_ACP** 解释，
+        //   中文/西里尔输出路径会**打不开**（同一个文件里 `--decode` 早就这么做了；
+        //   `patch.cpp` 也把这条写成过教训）。
+        std::ofstream out_file(path_from_utf8(operands[2]),
+                              std::ios::binary | std::ios::trunc);
         if (!out_file) {
             std::cout << "LZHUF error reason=无法写输出文件\n";
             return kExitFail;

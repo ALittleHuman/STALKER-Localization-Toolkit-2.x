@@ -307,7 +307,8 @@ int migrate_legacy_user_config() {
     if (!has_our_keys(data)) return 0;   // ★ 硬条件：没有我们写过的键 ⇒ 一个字节都不碰
     std::string error;
     const std::vector<uint8_t> bytes(text.begin(), text.end());
-    if (!write_file_atomic(target, bytes, /*overwrite=*/true, error)) {
+    // ★ H9（全量审计）：第三个参数是 **atomic**，不是 overwrite（注释修正，语义不变）。
+    if (!write_file_atomic(target, bytes, /*atomic=*/true, error)) {
         log(Level::Warn, "旧 user.ltx 未能迁移到 " + target + "：" + error);
         return -1;
     }

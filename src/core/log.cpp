@@ -1,4 +1,5 @@
 #include "xrkit/core/log.h"
+#include "xrkit/core/path.h"
 
 #include <cstdio>
 #include <ctime>
@@ -92,7 +93,9 @@ PruneResult prune_log_files(const std::string& dir, int keep, const std::string&
     for (std::filesystem::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
         std::error_code fec;
         if (!it->is_regular_file(fec)) continue;
-        const std::string name = it->path().filename().string();
+        // ★ H2（全量审计）：`filename().string()` 在 Windows 上按 **CP_ACP** 窄化 ——
+        //   非 ACP 可表示的名字（西里尔/中文）会塌成 `?`，导致日志轮转的"当前这一份"判等失配。
+        const std::string name = path_to_utf8(it->path().filename());
         // 只认 log_*.txt（同秒后缀 _2/_3 也算），别误删别的文件
         if (name.rfind("log_", 0) != 0) continue;
         if (name.size() < 4 || name.compare(name.size() - 4, 4, ".txt") != 0) continue;
@@ -107,7 +110,8 @@ PruneResult prune_log_files(const std::string& dir, int keep, const std::string&
     //   会退化成目录迭代顺序（随机器漂移）。文件名就是我们自己的时间戳命名，倒序＝新的在前。
     std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
         if (a.when != b.when) return a.when > b.when;
-        return a.path.filename().string() > b.path.filename().string();
+        return path_to_utf8(a.path.filename()) >
+               path_to_utf8(b.path.filename());
     });
     const std::filesystem::path protect = std::filesystem::path(protect_path);
     int kept = 0;

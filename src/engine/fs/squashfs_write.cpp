@@ -336,10 +336,10 @@ struct Node {
     std::vector<uint32_t> block_sizes;
 };
 
-void free_tree(Node* n) {
-    for (Node* c : n->children) free_tree(c);
-    delete n;
-}
+// ★ H7（2026-10-24 全量审计）：这里原来有一个 `free_tree()` —— **全仓零调用**：
+//   `Packer` 的 Node 树在成功与失败路径上都不释放（一进程一次封包，量小、退出即回收），
+//   但那个函数**看起来像"会释放"**，是死代码里最容易误导人的一类。删掉它，
+//   并把"树不释放"这条事实写在这里（要真释放得给 `Packer` 加 RAII，单独立项）。
 
 // ── 写表（复刻 sqfs_write_table：数据块 + 位置数组）────────────────────
 bool write_table(OutFile& file, Compression comp, const std::vector<uint8_t>& data,

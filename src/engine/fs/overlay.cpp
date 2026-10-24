@@ -20,7 +20,9 @@ namespace {
 namespace stdfs = std::filesystem;
 
 std::string basename_lower(const std::string& path) {
-    std::string name = xrkit::core::path_from_utf8(path).filename().string();
+    // ★ H2（全量审计）：同 log.cpp —— `.string()` 是 CP_ACP 窄化；用 `path_to_utf8` 保留 UTF-8。
+    std::string name =
+        xrkit::core::path_to_utf8(xrkit::core::path_from_utf8(path).filename());
     for (char& c : name) {
         if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
     }
