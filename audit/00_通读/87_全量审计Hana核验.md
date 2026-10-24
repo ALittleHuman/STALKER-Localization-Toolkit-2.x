@@ -111,3 +111,54 @@ R2 / R25 / R5 / R12 / D1 / R8 —— 与我的台账一致，无异议（这几�
    连带改生成器输出路径 + `case-fold-table` 门禁步路径 + `extract.cpp` 的 include；
    反例必须**造**：同一清单里 `Тест.txt` / `тест.txt` ⇒ 现 ASCII 折叠**漏判**（天然红，正好当修前证伪）；
    并记"行为变更"（duplicates 计数会上升、`--strict` 会拒以前能过的包）。
+
+---
+
+## 十、C0：写盘点 grid 判据（**先红后绿**的第一步，2026-10-24）
+
+判据：`tests/check_cli_output_paths.py`（**尚未接进门禁** —— C0 的用途是"在父提交上先红"）。
+它按**产物形态**取格（不按动作枚举），四类落点 × {ASCII, CJK 文件名, CJK 父目录, 西里尔}：
+
+```
+-- 形态 1：单产物 blob（--lzhuf encode → decode 往返）
+  ✓ ×4 全绿（out=343 字节，解回原文）          ← H1 的修法**已被钉住**
+-- 形态 2：包内单条目（--pack-db → --extract）
+  ✓ extract × ASCII                            （哈希相等）
+  ✗ extract × CJK 文件名：rc=0「EXTRACT ok」但**期望落点不存在**
+  ✗ extract × CJK 父目录：rc≠0「无法写输出文件」
+  ✗ extract × 西里尔：rc≠0「无法写输出文件」
+```
+
+### ★ 一条比"整条动作不可用"更严重的发现（修正 Hana 的严重度定位）
+
+它把 `--extract` 定为"功能性缺陷：中文落点直接失败、用户看得见"。
+实测**不全是**：**CJK 文件名那一格 rc=0 且打印 `EXTRACT ok`，但文件根本不在给定路径上**
+（ANSI 转换把名字变成另一个可用名，于是**静默写到别处**）。父目录是 CJK 时才打不开、才报错。
+
+⇒ 严重度应分两档：
+- **CJK 文件名 ⇒ 静默错位**（rc=0 + 报成功，产物在"乱码名"下）；比"打不开"危险，因为用户不会去找；
+- **CJK/西里尔父目录 ⇒ 明确失败**（rc≠0 + 理由）。
+两档都由同一句 `std::ofstream out(operands[2], …)` 造成，修法相同（`path_from_utf8` + 原子写），
+但**判据必须断言"期望落点存在 + 字节相等"**，只断言 rc 会把第一档当成绿。
+
+### 同时核实的三个坑（都成立）
+
+1. **`write_file_atomic` 会自动建父目录**（`atomic_write.cpp:124-131`）⇒ 换成它之后
+   "输出到不存在目录 ⇒ 失败"会变成功。C1/C2 的 helper 必须**先判父目录**，保持旧语义。
+2. **`:5131` 的锚点注释会说谎**（"本文件里 `ofstream out(path_from_utf8(operands[1])…)` 有两处"）——
+   sweep 之后就是假话；必须同步改。
+3. **`check_cli_exit_codes.py` 用行距启发式**（`LOOKBACK` 往前找"同层或更外层"的最近一条文案）——
+   sweep 会把行号全挪掉 ⇒ 那条门禁会假绿/假红。**这一批必须把它的锚点从"行距"改成"动作名 + token"**。
+
+### 11 处写盘点（核实与它给的表一致）
+
+```
+3434 --extract        裸 std::string   ← 唯一非 path_from_utf8
+3749 --codec-lossy    path_from_utf8
+3824 --decl-fix       path_from_utf8
+4326 --pack-db        path_from_utf8   ← 它列的"我没列的两处"之一
+4550 --font-render dds / 4566 ini      ← ini 那处也是它补的
+4648 --extract-chars  4985 --resample-dump  5142 --sniff  5249 --decode-text  5305 --lzhuf(已修)
+```
+全部 `std::ios::trunc` 直写 ⇒ **11 处都不原子**。而 `--pack-sqfs`（`:4356` 一带）走 `pack_squashfs` 的 `.part`、
+GUI `fs_page.cpp:2380` 走 `write_file_atomic` ⇒ **同一条不变量在 CI 真跑的那条路上有洞**（提交信息用这句）。
