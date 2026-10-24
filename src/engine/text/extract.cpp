@@ -742,17 +742,6 @@ std::string replace_all(std::string subject, const std::string& needle,
     return out;
 }
 
-std::string read_file_bytes_utf8(const std::string& path, bool& ok) {
-    std::ifstream in(core::path_from_utf8(path), std::ios::binary);
-    if (!in) {
-        ok = false;
-        return {};
-    }
-    std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    ok = true;
-    return data;
-}
-
 // Python 文本模式**写**：把 \n 翻成 os.linesep（Windows = \r\n）。
 // 1.x 的 `_generate_output_file` 与 `_generate_text_xml` 都是文本模式写，
 // 所以产物里是 CRLF —— 不对拍就发现不了（看代码只会以为写的是 \n）。

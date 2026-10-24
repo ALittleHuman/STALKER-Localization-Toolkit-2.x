@@ -4695,8 +4695,6 @@ SmokeResult run_smoke() {
                           .arg(pkg_a_item != nullptr ? 1 : 0)
                           .arg(sub_item != nullptr ? 1 : 0)
                           .arg(pkg_b_item != nullptr ? 1 : 0));
-                const bool group_checkable =
-                    sub_item != nullptr && sub_item->flags().testFlag(Qt::ItemIsUserCheckable);
                 // ★★ 2026-10-02（用户「包树直接引用树的统一函数就行啊」之后）：**默认收起**的树
                 //   还必须**点得开** —— 发一条 `itemClicked`（等价于用户点条目身体）⇒ 该节点应被展开。
                 //   离屏时 `click_on_indicator` 判为"不在那一小块上"⇒ 走"点身体"这条路（见它的注释）。
@@ -5981,10 +5979,10 @@ SmokeResult run_smoke() {
             for (QComboBox* item : page_widget->findChildren<QComboBox*>()) {
                 if (item->count() == 2) has_combo = true;
             }
-            for (QCheckBox* item : page_widget->findChildren<QCheckBox*>()) has_check = true;
-            for (QPlainTextEdit* item : page_widget->findChildren<QPlainTextEdit*>()) {
-                has_view = true;
-            }
+            // 2026-10-24：原来用 `for (QCheckBox* item : ...) has_check = true;` —— 循环变量
+            //   只为"有没有一个"而存在（编译器 C4189）。改成 isEmpty() 判定，语义不变。
+            if (!page_widget->findChildren<QCheckBox*>().isEmpty()) has_check = true;
+            if (!page_widget->findChildren<QPlainTextEdit*>().isEmpty()) has_view = true;
         }
         check(label_texts.contains(QStringLiteral("门面标签")),
               QStringLiteral("P3 门面造出的标签没进插件页（实得：%1）")
@@ -7663,8 +7661,6 @@ SmokeResult run_smoke() {
             const QString action_log_path =
                 QDir::temp().filePath(QStringLiteral("xrkit_smoke_rowaction.txt"));
             QFile::remove(action_log_path);
-            QTreeWidgetItem* first_row =
-                action_tree != nullptr ? action_tree->topLevelItem(0) : nullptr;
             // ★ 手搓一格（不依赖真实布局：树没显示时 `visualItemRect` 是空矩形 ⇒ 命不中）
             QRect cell(0, 0, 300, 20);
             QStyleOptionViewItem option;

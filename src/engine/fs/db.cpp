@@ -319,10 +319,6 @@ bool entries_fit_size(uint64_t file_size, const std::vector<DbEntry>& entries) {
     return true;
 }
 
-bool entries_fit_file(const std::vector<uint8_t>& raw, const std::vector<DbEntry>& entries) {
-    return entries_fit_size(raw.size(), entries);
-}
-
 bool entries_self_consistent_size(uint64_t file_size, const std::vector<DbEntry>& entries) {
     if (entries.empty()) return false;
     if (!entries_fit_size(file_size, entries)) return false;
