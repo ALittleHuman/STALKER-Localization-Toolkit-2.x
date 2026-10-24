@@ -3137,6 +3137,32 @@ def step_version_json_strict(release: bool) -> None:
         fail("version.json 严格解析判据不成立（见上）：尾随内容没有被拒")
 
 
+def step_cli_write_sites(release: bool) -> None:
+    """**CLI 写盘点**静态锁（C1）：`run_cli()` 区间内 `std::ofstream` 必须为 0。
+
+    11 个写盘点的路径表达式各不相同（`operands[2]` / `operands[out_arg]` / `tgt.path` / `args[1]`），
+    所以按 `operands[` 匹配会漏；而产品写盘点 100% 在 `run_cli()` 里、夹具写盘点 100% 在它之前
+    ⇒ "区间内计数 == 0"最干净。防假绿：区间必须 > 2000 行 + helper 必须存在。
+
+    判据 `tests/check_cli_write_sites.py`。退出码：0=绿 / 1=红 / 2=缺源文件。
+    """
+    say("[cli-write-sites] run_cli() 区间内不许出现 std::ofstream（C1）")
+    script = ROOT / "tests" / "check_cli_write_sites.py"
+    if not require_repo_file(script, "CLI 写盘点静态判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("CLI-WRITE"):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("写盘唯一入口是 `write_cli_output()`（run_cli 区间内零 ofstream）")
+    elif rc == 2:
+        prereq("CLI 写盘点判据的输入", "缺 tools/cli/main.cpp", release)
+    else:
+        fail("CLI 写盘点判据不成立（见上）：又出现了裸 ofstream")
+
+
 def step_winres(release: bool) -> None:
     """Windows 版本资源（VERSIONINFO）：exe 里的元数据必须**非空**，且与 `core::version_string()` 同源。
 
@@ -7139,6 +7165,8 @@ STEPS = [
     # ★★ P17-144（第三方只读审计 C-06）：退出码 3 的双语义（枚举＋冻结＋文案＋黑盒）。
     #   需要 CLI 产物（黑盒那三条）；被 `--only` 过滤时进 UNCOVERED。
     ("cli-exit-codes", step_cli_exit_codes),
+    # ★★ 2026-10-24（C1）：CLI 写盘点静态锁（run_cli 区间内 ofstream 必须为 0）。
+    ("cli-write-sites", step_cli_write_sites),
     # ★★ P17-145（第三方只读审计 T-05）：DB 封包的内存闸（超限拒绝 / 读之前就挡）。
     #   需要 CLI 产物（黑盒那几条）；被 `--only` 过滤时进 UNCOVERED。
     ("pack-db-mem-gate", step_pack_db_mem_gate),

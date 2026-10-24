@@ -2683,6 +2683,44 @@ bool parse_patch_sites(const std::string& text,
 
 }  // namespace
 
+namespace {
+
+// ★★ C1（2026-10-24，H1b/H6b）：**CLI 写盘点的唯一入口**。
+//   为什么只做 open/write/close/检查、**不**打印、**不**建父目录、**不**带 exists 守卫：
+//   · 11 个站点的文案、stdout/stderr、路径来源（operands[2] / operands[out_arg] / tgt.path / args[1]）
+//     各不相同 —— helper 一旦打印就会把差异抹平，那就不是"机械替换"了；
+//   · exists 守卫有 2 个站点是**两条路径一次判**（`--font-render` 的 dds+ini），
+//     把它塞进 helper 会让"两产物同路径"这种病态输入在第二次写时改变行为 ⇒ 守卫留在站点。
+//   写后检查：`close()` 之后再判一次流状态（磁盘满/被占用在这里现形）。
+//   返回**状态枚举**，让每个站点保持自己原来的文案与流。
+enum class CliWriteStatus { Ok, OpenFailed, WriteFailed };
+
+inline CliWriteStatus write_cli_output(const std::string& path_utf8,
+                                       const std::vector<uint8_t>& bytes) {
+    std::ofstream out(xrkit::core::path_from_utf8(path_utf8),
+                      std::ios::binary | std::ios::trunc);
+    if (!out) return CliWriteStatus::OpenFailed;
+    if (!bytes.empty()) {
+        out.write(reinterpret_cast<const char*>(bytes.data()),
+                  static_cast<std::streamsize>(bytes.size()));
+    }
+    out.close();
+    if (!out) return CliWriteStatus::WriteFailed;
+    return CliWriteStatus::Ok;
+}
+
+inline CliWriteStatus write_cli_output(const std::string& path_utf8, std::string_view text) {
+    std::ofstream out(xrkit::core::path_from_utf8(path_utf8),
+                      std::ios::binary | std::ios::trunc);
+    if (!out) return CliWriteStatus::OpenFailed;
+    if (!text.empty()) out.write(text.data(), static_cast<std::streamsize>(text.size()));
+    out.close();
+    if (!out) return CliWriteStatus::WriteFailed;
+    return CliWriteStatus::Ok;
+}
+
+}  // namespace
+
 int run_cli(const std::vector<std::string>& args) {
     bool verbose = false;
     bool pack_dirs = false;
@@ -3431,14 +3469,15 @@ int run_cli(const std::vector<std::string>& args) {
                       << "（拒绝静默截断；确认要覆盖请加 --force）\n";
             return kExitUsage;
         }
-                std::ofstream out(operands[2], std::ios::binary | std::ios::trunc);
-        if (!out) {
+        const CliWriteStatus ex_st = write_cli_output(operands[2], data);
+        if (ex_st == CliWriteStatus::OpenFailed) {
             std::cout << "EXTRACT error reason=无法写输出文件：" << operands[2] << "\n";
             return kExitFail;
         }
-        out.write(reinterpret_cast<const char*>(data.data()),
-                  static_cast<std::streamsize>(data.size()));
-        out.close();
+        if (ex_st == CliWriteStatus::WriteFailed) {
+            std::cout << "EXTRACT error reason=写失败（" << operands[2] << "）\n";
+            return kExitFail;
+        }
         std::cout << "EXTRACT ok path=" << rel << " bytes=" << data.size() << "\n";
         return kExitOk;
     }
@@ -3746,17 +3785,15 @@ int run_cli(const std::vector<std::string>& args) {
                       << "（拒绝静默截断；确认要覆盖请加 --force）\n";
             return kExitUsage;
         }
-        std::ofstream file(xrkit::core::path_from_utf8(operands[out_arg]),
-                           std::ios::binary | std::ios::trunc);
-        if (!file) {
+        const CliWriteStatus cd_st = write_cli_output(operands[out_arg], out);
+        if (cd_st == CliWriteStatus::OpenFailed) {
             std::cout << "CODEC error reason=写不到输出：" << operands[out_arg] << "\n";
             return kExitFail;
         }
-        if (!out.empty()) {
-            file.write(reinterpret_cast<const char*>(out.data()),
-                       static_cast<std::streamsize>(out.size()));
+        if (cd_st == CliWriteStatus::WriteFailed) {
+            std::cout << "CODEC error reason=写失败（" << operands[out_arg] << "）\n";
+            return kExitFail;
         }
-        file.close();
         std::cout << "CODEC ok mode=" << (strict ? "strict" : "lossy") << " encoding=" << encoding
                   << " bytes=" << out.size() << "\n";
         return kExitOk;
@@ -3821,13 +3858,15 @@ int run_cli(const std::vector<std::string>& args) {
                       << "（拒绝静默截断；确认要覆盖请加 --force）\n";
             return kExitUsage;
         }
-        std::ofstream file(xrkit::core::path_from_utf8(operands[2]), std::ios::binary | std::ios::trunc);
-        if (!file) {
+        const CliWriteStatus df_st = write_cli_output(operands[2], fixed);
+        if (df_st == CliWriteStatus::OpenFailed) {
             std::cout << "DECLFIX error reason=写不到输出：" << operands[2] << "\n";
             return kExitFail;
         }
-        file.write(fixed.data(), static_cast<std::streamsize>(fixed.size()));
-        file.close();
+        if (df_st == CliWriteStatus::WriteFailed) {
+            std::cout << "DECLFIX error reason=写失败（" << operands[2] << "）\n";
+            return kExitFail;
+        }
         std::cout << "DECLFIX ok bytes=" << fixed.size() << "\n";
         return kExitOk;
     }
@@ -4323,14 +4362,15 @@ int run_cli(const std::vector<std::string>& args) {
                       << "（拒绝静默截断；确认要覆盖请加 --force）\n";
             return kExitUsage;
         }
-        std::ofstream out(path_from_utf8(tgt.path), std::ios::binary | std::ios::trunc);
-        if (!out) {
+        const CliWriteStatus pd_st = write_cli_output(tgt.path, bytes);
+        if (pd_st == CliWriteStatus::OpenFailed) {
             std::cout << "PACKDB error reason=无法写输出文件\n";
             return kExitFail;
         }
-        out.write(reinterpret_cast<const char*>(bytes.data()),
-                  static_cast<std::streamsize>(bytes.size()));
-        out.close();
+        if (pd_st == CliWriteStatus::WriteFailed) {
+            std::cout << "PACKDB error reason=写失败（" << tgt.path << "）\n";
+            return kExitFail;
+        }
         std::cout << "PACKDB ok items=" << items.size() << " bytes=" << bytes.size() << "\n";
         // 名字改写台账（**清零静默**）：只在真发生改写时打，逐条给「源名 → 写进包里的名字」。
         // 计数行**恒在**（=0 也要说）——"没打印"与"没发生"必须能区分开。
@@ -4547,14 +4587,12 @@ int run_cli(const std::vector<std::string>& args) {
                 }
             }
         }
-        std::ofstream f(path_from_utf8(dds_path), std::ios::binary | std::ios::trunc);
-            if (!f) {
+        const CliWriteStatus fr_dds = write_cli_output(dds_path, product.dds);
+            if (fr_dds == CliWriteStatus::OpenFailed) {
                 std::cout << "FONTRENDER error reason=写不出 " << dds_path << "\n";
                 return kExitFail;
             }
-            f.write(reinterpret_cast<const char*>(product.dds.data()),
-                    static_cast<std::streamsize>(product.dds.size()));
-            if (!f) {
+            if (fr_dds == CliWriteStatus::WriteFailed) {
                 std::cout << "FONTRENDER error reason=写 DDS 失败\n";
                 return kExitFail;
             }
@@ -4563,13 +4601,12 @@ int run_cli(const std::vector<std::string>& args) {
             xrkit::engine::font::to_windows_newlines(product.ini);
         {
             // 1.x 用 `open(path, "w", encoding="ascii")` ⇒ 文本模式把 \n 翻成 \r\n。
-            std::ofstream f(path_from_utf8(ini_path), std::ios::binary | std::ios::trunc);
-            if (!f) {
+            const CliWriteStatus fr_ini = write_cli_output(ini_path, ini_bytes);
+            if (fr_ini == CliWriteStatus::OpenFailed) {
                 std::cout << "FONTRENDER error reason=写不出 " << ini_path << "\n";
                 return kExitFail;
             }
-            f.write(ini_bytes.data(), static_cast<std::streamsize>(ini_bytes.size()));
-            if (!f) {
+            if (fr_ini == CliWriteStatus::WriteFailed) {
                 std::cout << "FONTRENDER error reason=写 ini 失败\n";
                 return kExitFail;
             }
@@ -4645,13 +4682,14 @@ int run_cli(const std::vector<std::string>& args) {
                       << "（拒绝静默截断；确认要覆盖请加 --force）\n";
             return kExitUsage;
         }
-        std::ofstream f(path_from_utf8(args[1]), std::ios::binary | std::ios::trunc);
-            if (!f) {
+        // ★ 注意：本动作的路径来自 `args[1]`（**不是** operands）—— 见 :4637 那段注释。
+        //   helper 的 path 由调用点取，两者别混。
+        const CliWriteStatus cs_st = write_cli_output(args[1], body);
+            if (cs_st == CliWriteStatus::OpenFailed) {
                 std::cout << "CHARSET error reason=写不出 " << args[1] << "\n";
                 return kExitFail;
             }
-            f.write(body.data(), static_cast<std::streamsize>(body.size()));
-            if (!f) {
+            if (cs_st == CliWriteStatus::WriteFailed) {
                 std::cout << "CHARSET error reason=写失败\n";
                 return kExitFail;
             }
@@ -4982,14 +5020,12 @@ int run_cli(const std::vector<std::string>& args) {
                       << "（拒绝静默截断；确认要覆盖请加 --force）\n";
             return kExitUsage;
         }
-        std::ofstream f(path_from_utf8(operands[5]), std::ios::binary | std::ios::trunc);
-        if (!f) {
+        const CliWriteStatus rs_st = write_cli_output(operands[5], dst);
+        if (rs_st == CliWriteStatus::OpenFailed) {
             std::cout << "RESAMPLE error reason=写不出 " << operands[5] << "\n";
             return kExitFail;
         }
-        f.write(reinterpret_cast<const char*>(dst.data()),
-                static_cast<std::streamsize>(dst.size()));
-        if (!f) {
+        if (rs_st == CliWriteStatus::WriteFailed) {
             std::cout << "RESAMPLE error reason=写失败\n";
             return kExitFail;
         }
@@ -5128,8 +5164,9 @@ int run_cli(const std::vector<std::string>& args) {
         }
         // ★★ 2026-10-10（P17-31，审计 04 F-06 第二波）：**输出已存在即拒绝，除非 `--force`**。
         //   与 `--lzhuf`/`--decl-fix`/`--resample-dump`/`--font-render` 同款。
-        //   ★ 锚点提示：本文件里 `std::ofstream out(path_from_utf8(operands[1])…)` 有**两处**
-        //     （本处与 `--decode-text`），所以判据/改件必须带动作名做锚点，别只按那一行匹配。
+        //   ★★ C1（2026-10-24）：**本提示已过期** —— 那种"裸 ofstream(operands[1])"的写法
+        //     已经全部收进 `write_cli_output()`（11 处）⇒ `run_cli` 里不再有 ofstream，
+        //     判据因此可以按"函数区间内计数 == 0"来守（不再需要按动作名找行）。
         bool sniff_force = false;
         for (const std::string& op : operands) {
             if (op == "--force") sniff_force = true;
@@ -5139,13 +5176,15 @@ int run_cli(const std::vector<std::string>& args) {
                       << "（拒绝静默截断；确认要覆盖请加 --force）\n";
             return kExitUsage;
         }
-        std::ofstream out(path_from_utf8(operands[1]), std::ios::binary | std::ios::trunc);
-        if (!out) {
+        const CliWriteStatus sn_st = write_cli_output(operands[1], db.text);
+        if (sn_st == CliWriteStatus::OpenFailed) {
             std::cout << "SNIFF error reason=无法写输出文件：" << operands[1] << "\n";
             return kExitFail;
         }
-        out.write(db.text.data(), static_cast<std::streamsize>(db.text.size()));
-        out.close();
+        if (sn_st == CliWriteStatus::WriteFailed) {
+            std::cout << "SNIFF error reason=写失败（" << operands[1] << "）\n";
+            return kExitFail;
+        }
         // ★ 2026-10-06 置信度系统上屏（零静默）：
         //   conf/lowconf/overdecl/statn/statscore = 判定的"不确定那部分"（用户口径③④）
         //   mism = **判定结论 ≠ 实际使用编码**（旧版在这里静默分叉过）
@@ -5246,13 +5285,15 @@ int run_cli(const std::vector<std::string>& args) {
                       << "（拒绝静默截断；确认要覆盖请加 --force）\n";
             return kExitUsage;
         }
-        std::ofstream out(path_from_utf8(operands[1]), std::ios::binary | std::ios::trunc);
-        if (!out) {
+        const CliWriteStatus dc_st = write_cli_output(operands[1], r.text);
+        if (dc_st == CliWriteStatus::OpenFailed) {
             std::cout << "DECODE error reason=无法写输出文件：" << operands[1] << "\n";
             return kExitFail;
         }
-        out.write(r.text.data(), static_cast<std::streamsize>(r.text.size()));
-        out.close();
+        if (dc_st == CliWriteStatus::WriteFailed) {
+            std::cout << "DECODE error reason=写失败（" << operands[1] << "）\n";
+            return kExitFail;
+        }
         std::cout << "DECODE ok enc=" << r.encoding << " chars=" << r.chars
                   << " bytes=" << r.text.size() << "\n";
         return kExitOk;
@@ -5302,15 +5343,15 @@ int run_cli(const std::vector<std::string>& args) {
         //   直接把 `std::string` 交给 `ofstream` 在 Windows 上按 **CP_ACP** 解释，
         //   中文/西里尔输出路径会**打不开**（同一个文件里 `--decode` 早就这么做了；
         //   `patch.cpp` 也把这条写成过教训）。
-        std::ofstream out_file(path_from_utf8(operands[2]),
-                              std::ios::binary | std::ios::trunc);
-        if (!out_file) {
+        const CliWriteStatus lz_st = write_cli_output(operands[2], out);
+        if (lz_st == CliWriteStatus::OpenFailed) {
             std::cout << "LZHUF error reason=无法写输出文件\n";
             return kExitFail;
         }
-        out_file.write(reinterpret_cast<const char*>(out.data()),
-                       static_cast<std::streamsize>(out.size()));
-        out_file.close();
+        if (lz_st == CliWriteStatus::WriteFailed) {
+            std::cout << "LZHUF error reason=写失败（" << operands[2] << "）\n";
+            return kExitFail;
+        }
         std::cout << "LZHUF ok mode=" << operands[0] << " in=" << in.size()
                   << " out=" << out.size() << "\n";
         return kExitOk;

@@ -203,3 +203,46 @@ GUI `fs_page.cpp:2380` 走 `write_file_atomic` ⇒ **同一条不变量在 CI �
    helper 一旦打印就会把差异抹平 ⇒ 那就不是"机械替换"了）；
 2. **是 11 处不是 10 处**：`--lzhuf`（`5305`）路径虽已修，写仍不原子，也必须换 ——
    否则 C2 的静态判据（`run_cli` 区间内 `std::ofstream` 计数 == 0）会红。
+
+---
+
+## 十二、C1 落地（2026-10-24）：11 处写盘点收进 `write_cli_output()`
+
+### 12.1 做了什么
+
+- `tools/cli/main.cpp` 里新增 `enum class CliWriteStatus { Ok, OpenFailed, WriteFailed }` +
+  两个重载（`vector<uint8_t>` / `std::string_view`）。
+  **helper 只做 open/write/close/写后检查，不打印、不建父目录、不带 exists 守卫**
+  （守卫留在站点：`--font-render` 那两处是**两条路径一次判**，塞进 helper 会改变"两产物同路径"的行为）。
+- **11 处全部换过去**（含 `--lzhuf`，虽然它的路径早已修好、但写仍不原子）：
+  `EXTRACT / CODEC / DECLFIX / PACKDB / FONTRENDER(dds, ini) / CHARSET / RESAMPLE / SNIFF / DECODE / LZHUF`。
+- 各站点的**文案、流、路径表达式逐字保留**（`operands[2]` / `operands[out_arg]` / `tgt.path` / `args[1]`）；
+  `--extract-chars` 那句"`args` 不是 `operands`"的路标保留并补了"helper 的 path 由调用点取"。
+- 新增门禁步 **`cli-write-sites`（第 123 步）** + `tests/check_cli_write_sites.py`：
+  `run_cli()` 区间内 `std::ofstream` 计数必须为 **0**；防假绿两条（区间 > 2000 行；`write_cli_output` 必须存在）。
+
+### 12.2 行为变更（**两条，都必须记账**）
+
+1. **`--extract` 的路径 bug 被顺手修掉了**（它原来是唯一的裸 `std::ofstream(operands[2])`）：
+   grid 的 3 个 CJK/西里尔格从**红转绿**（`exists False→True`、`rc 1→0`、sha256 从空到正确）。
+   ⇒ 与 C0 基线的 diff **正好就是这 10 个字段**，没有别的差异 —— 这既是"修正"，也是"没有引入别的东西"的证据。
+2. **7 处写失败不再静默打印 ok**（原来没有写后检查）：`EXTRACT / CODEC / DECLFIX / PACKDB / SNIFF /
+   DECODE / LZHUF` 现在会打 `"<TOKEN> error reason=写失败（<path>）"` 并 `kExitFail`。
+   原来只有 4 处有写后检查（FONTRENDER×2 / CHARSET / RESAMPLE，文案逐字保留）。
+   ★ **网格抓不到这条**（造不出磁盘满），只能靠代码审查 ⇒ 队列记 **H6c，无自动判据覆盖**。
+
+### 12.3 验收
+
+```
+CLI-WRITE ok run_cli 区间 2670 行内零 ofstream；写盘唯一入口是 write_cli_output()
+CLI-OUT    ok 四类落点 × 两种产物形态全部可用且字节正确（8/8 格绿）
+run_ci.py --fast → RESULT: PASS
+```
+C1 基线已落盘（`_cli_out_baseline_c1.json`）；往后改这一带要跟**C1 基线**比，而不是 C0（C0 已作为"修前证伪"留档）。
+
+### 12.4 C2 要继承的两件事
+
+1. helper 内部换 `core::write_file_atomic` 时，**必须先判父目录**（它会 `create_directories`，
+   否则"输出到不存在目录 ⇒ 失败"会变成功）；
+2. `write_file_atomic` 对 data 会算两遍 FNV；`--pack-db` 在 1.9 GB 样本上量一次（新建 + `--force` 覆盖两条路），
+   再决定要不要 `WriteVerify::Skip`。
