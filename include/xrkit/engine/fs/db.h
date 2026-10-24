@@ -93,9 +93,21 @@ std::uint64_t db_pack_max_bytes();
 //   T-04（第三方只读审计 2026-10-18）：两条 4 GiB 窄化检查（单条目 / 累计偏移）是
 //   **无条件**的；命中时 `pack_db` 返回**空 vector**（调用方**不许写盘**），
 //   有 `error` 就把理由写进去，没有就只是不报理由 —— **产物形态不受出参有无影响**。
+// ★★ 2026-10-24（batch-3 / 3a）：**重复路径**（同一包内归一化后相同）。
+//   口径以官方为准（1.x `pack_db` 不去重、`unpack_db` 返回完整 list、批量解包 last-wins）：
+//   **默认只警告 + 记录两条原始路径，不失败**；`strict=true` 才拒绝（那是我方显式选择，不是官方行为）。
+struct DbDuplicate {
+    std::string first;    // 先出现的那条（原始写法，未归一）
+    std::string second;   // 撞上来的那条（原始写法）
+};
+
+// `duplicates` 非空 ⇒ 收集所有重复对照（**不改变产物**）；
+// `strict` ⇒ 有重复就失败（`error` 里点名两条路径，返回空 vector）。
 std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& items, DbFormat fmt,
                              std::vector<DbNameRewrite>* rewrites = nullptr,
-                             std::string* error = nullptr);
+                             std::string* error = nullptr,
+                             std::vector<DbDuplicate>* duplicates = nullptr,
+                             bool strict = false);
 
 // ── seek 式读盘（大包的唯一可行路径）─────────────────────────────────
 // X-Ray DB 的布局是 `[DATA 块头 + 数据][HEADER 块头 + 条目表]` ⇒ **条目表在文件尾部**。

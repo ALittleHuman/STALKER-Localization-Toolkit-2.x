@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iterator>
 #include <mutex>
+#include <unordered_map>
 
 #include "minilzo.h"
 
@@ -1116,9 +1117,71 @@ std::uint64_t db_pack_max_bytes() {
     return limit;
 }
 
+namespace {
+
+// 重名键（与《重名口径表》D1/D2/D4 一致）：`\`→`/`、去尾斜杠、丢空段与 `.`、Windows 折小写。
+// ★ 大小写只在 Windows 折（其它平台保留——官方在 Windows 上落盘就是大小写不敏感）。
+std::string dup_key(const std::string& path) {
+    std::string out;
+    std::string seg;
+    auto flush = [&]() {
+        if (seg.empty() || seg == ".") {
+            seg.clear();
+            return;
+        }
+        if (!out.empty()) out += '/';
+#ifdef _WIN32
+        for (char& c : seg) {
+            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        }
+#endif
+        out += seg;
+        seg.clear();
+    };
+    for (char c : path) {
+        if (c == '/' || c == '\\') {
+            flush();
+        } else {
+            seg += c;
+        }
+    }
+    flush();
+    return out;
+}
+
+}  // namespace
+
 std::vector<uint8_t> pack_db(const std::vector<DbPackItem>& in_items, DbFormat fmt,
-                             std::vector<DbNameRewrite>* rewrites, std::string* error) {
+                             std::vector<DbNameRewrite>* rewrites, std::string* error,
+                             std::vector<DbDuplicate>* duplicates, bool strict) {
     if (error != nullptr) error->clear();
+    // ★★ batch-3 / 3a：**重名检测**（官方不查重 ⇒ 默认只警告 + 记录，不失败）。
+    //   为什么不做默认拒绝：1.x 的 `pack_db` 不去重、`unpack_db` 返回完整 list、解包是 last-wins
+    //   ⇒ 官方能吃的包我们也得能吃/能产；拒绝会变成"比官方更严的新限制"。
+    //   ★ 位置：**归一化（`/`→`\`）之前**，这样记录/报出的是**用户给的原始路径**
+    //     （归一化之后再报，`dupdir/a.txt` 会变成 `dupdir\a.txt`，定位时对不上用户看到的清单）。
+    {
+        std::unordered_map<std::string, std::string> seen;   // key → 第一条原始路径
+        for (const DbPackItem& it : in_items) {
+            const std::string key = dup_key(it.path);
+            if (key.empty()) continue;
+            const auto found = seen.find(key);
+            if (found == seen.end()) {
+                seen.emplace(key, it.path);
+                continue;
+            }
+            if (duplicates != nullptr) duplicates->push_back(DbDuplicate{found->second, it.path});
+            if (strict) {
+                if (error != nullptr) {
+                    *error = "重复路径（--strict）：「" + found->second + "」与「" + it.path +
+                             "」归一化后相同 —— 官方格式允许重名、解包是 last-wins；"
+                             "strict 档拒绝产出这种包";
+                }
+                return {};
+            }
+        }
+    }
+
     std::vector<DbPackItem> items;
     items.reserve(in_items.size());
     for (const DbPackItem& it : in_items) {

@@ -3452,6 +3452,18 @@ SmokeResult run_smoke() {
             items.push_back(dup_file);
             items.push_back(dup_file);   // ← 同路径的**第二条记录**（真机 maps\*.db 的形状）
             const std::vector<uint8_t> dup_raw = efs3::pack_db(items, efs3::DbFormat::Xdb);
+            // ★★ batch-3 / 3a：默认**只警告**（不失败，与官方一致）；`strict` 才拒绝。
+            //   判据两格：① 默认产物非空（不许因为重名就拒官方能吃的包）；
+            //             ② strict 档返回空 + 错误文案里**两条路径都在**。
+            {
+                std::string strict_err;
+                const std::vector<uint8_t> strict_raw = efs3::pack_db(
+                    items, efs3::DbFormat::Xdb, nullptr, &strict_err, nullptr, /*strict=*/true);
+                const bool named_twice = strict_err.find("dupdir/a.txt") != std::string::npos;
+                check(!dup_raw.empty() && strict_raw.empty() && named_twice &&
+                          strict_err.find("重复路径") != std::string::npos,
+                      QStringLiteral("重名：默认照产（警告）+ strict 拒绝并点名路径（batch-3/3a）"));
+            }
             std::ofstream dup_out(dup_pkg.toStdString(), std::ios::binary | std::ios::trunc);
             dup_out.write(reinterpret_cast<const char*>(dup_raw.data()),
                           static_cast<std::streamsize>(dup_raw.size()));

@@ -164,7 +164,7 @@ void print_usage() {
            "                                              DB 六格式）或一个目录（递归找包）；落点＝包名去扩\n"
            "                                              展名、磁盘父目录不进产物、包内已自带同名壳不叠一层\n"
            "                                              （与 GUI 共用同一份落点实现）\n"
-           "  --pack-db <输出> <格式> <输入目录>          按目录打包 DB（逐字节对拍用；输出已存在时拒绝，加 [--force] 覆盖）\n"
+           "  --pack-db <输出> <格式> <输入目录>          按目录打包 DB（逐字节对拍用；输出已存在时拒绝，加 [--force] 覆盖；重名默认只警告，加 [--strict] 拒绝）\n"
            "  --pack-sqfs <输出> <输入目录> [--pack-dirs] [--compressor <xz|gzip>]\n"
         "      自写 SquashFS 封包（**默认 xz**，与 1.x 逐字节一致；gzip 需显式指定）。\n"
         "      其余压缩器（lzo/lz4/zstd）未实现 —— 明确拒绝，不静默回落。\n"
@@ -4281,11 +4281,28 @@ int run_cli(const std::vector<std::string>& args) {
         //   即启用"4 GiB 窄化"两条检查（单条目 / 累计偏移）；命中就**不往下走、不写盘**，
         //   并且**放在写盘守卫之前**（先算内容；算不出来就别落盘）。
         std::string packdb_err;
-        const std::vector<uint8_t> bytes =
-            xrkit::engine::fs::pack_db(items, *fmt, &rewrites, &packdb_err);
+        // ★★ batch-3 / 3a：**重名**（归一化后路径相同）。官方格式允许重名、解包是 last-wins
+        //   ⇒ 默认**只警告 + 逐对打印两条原始路径**（零静默），`--strict` 才拒绝。
+        std::vector<xrkit::engine::fs::DbDuplicate> packdb_dups;
+        bool packdb_strict = false;
+        for (const std::string& op : operands) {
+            if (op == "--strict") packdb_strict = true;
+        }
+        const std::vector<uint8_t> bytes = xrkit::engine::fs::pack_db(
+            items, *fmt, &rewrites, &packdb_err, &packdb_dups, packdb_strict);
         if (!packdb_err.empty()) {
             std::cerr << "PACKDB error reason=" << packdb_err << "\n";
             return kExitFail;
+        }
+        if (!packdb_dups.empty()) {
+            std::cout << "PACKDB warning duplicates=" << packdb_dups.size()
+                      << " reason=同一包内归一化后路径相同（官方语义：解包 last-wins，后一条覆盖前一条）"
+                         "；加 --strict 可拒绝产出\n";
+            for (const xrkit::engine::fs::DbDuplicate& d : packdb_dups) {
+                std::cout << "PACKDB duplicate first=" << d.first << " second=" << d.second << "\n";
+            }
+        } else {
+            std::cout << "PACKDB warning duplicates=0\n";
         }
         // ★★ 2026-10-04（用户红线「GUI 的功能，CLI 肯定要全部拥有」）：输出 operand **可以是目录、
         //   也可以没有扩展名** ⇒ 与 GUI 走同一条引擎规则补落点与扩展名（`xdb→.xdb.db`、`sqfs→.sqfs`）。

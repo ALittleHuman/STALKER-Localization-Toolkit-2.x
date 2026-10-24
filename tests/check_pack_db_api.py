@@ -61,7 +61,11 @@ def want(cond: bool, label: str, detail: str = "") -> bool:
 def pack_db_comment_in_header(raw: str) -> str:
     """`db.h` 里 pack_db 那段注释（从「封包（写路径）」到声明结束）。"""
     a = raw.find("// 封包（写路径）")
-    b = raw.find("std::string* error = nullptr);")
+    # ★ 2026-10-24（batch-3 / 3a）：`pack_db` 多了两个**默认参数**（duplicates / strict）
+    #   ⇒ 声明不再以 `std::string* error = nullptr);` 结尾。锚点跟着签名走（判据不许因签名演进而静默失效）。
+    b = raw.find("bool strict = false);")
+    if b < 0:
+        b = raw.find("std::string* error = nullptr);")   # 兼容旧签名（回滚时仍能判）
     if a < 0 or b < 0 or b <= a:
         return ""
     return raw[a:b]
