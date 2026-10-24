@@ -23,7 +23,9 @@
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
+import json
 import shutil
 import subprocess
 import sys
@@ -41,6 +43,14 @@ for _s in (sys.stdout, sys.stderr):
 
 PAYLOAD = bytes(range(256)) * 8   # 2048 字节，含不可打印字节：能抓"按文本写"的错
 problems: list[str] = []
+# ★ C0.5/C1 的"纯机械替换"证据：每格记五元组（rc / 落点是否存在 / 产物 sha256 / 输出首行）
+#   ⇒ C1 之后与 C0 的记录 diff 必须为空（红格也算事实记进去）。
+RECORDS: dict[str, dict] = {}
+
+
+def record(cell: str, rc: int, exists: bool, sha256: str, out_first: str) -> None:
+    RECORDS[cell] = {"rc": rc, "exists": exists, "sha256": sha256,
+                     "out_first": out_first.strip()[:120]}
 
 
 def check(ok: bool, label: str, detail: str = "") -> None:
@@ -75,7 +85,8 @@ def grid_for_lzhuf(tmp: Path) -> None:
     for label, out, parent in cases:
         if parent is not tmp:
             parent.mkdir(parents=True, exist_ok=True)
-        rc, text = run(["--lzhuf", "encode", str(src), str(out), "--force"])
+        rc_enc, text_enc = run(["--lzhuf", "encode", str(src), str(out), "--force"])
+        rc, text = rc_enc, text_enc
         # ★ encode 的产物**不该**等于原文 ⇒ 判"往返"：encode 出来的文件再 decode 回原文
         back = tmp / (label.replace(" ", "_") + ".back.bin")
         roundtrip = False
@@ -87,6 +98,9 @@ def grid_for_lzhuf(tmp: Path) -> None:
         check(rc == 0 and roundtrip,
               "lzhuf encode→decode 往返 × %s：rc=0 且解回原文（out=%d 字节）"
               % (label, out.stat().st_size if out.is_file() else -1), text)
+        record("lzhuf/" + label, rc, out.is_file(),
+               hashlib.sha256(out.read_bytes()).hexdigest() if out.is_file() else "",
+               text)
         if out.is_file():
             out.unlink()
 
@@ -115,6 +129,8 @@ def grid_for_extract(tmp: Path) -> None:
         exists = out.is_file()
         okbytes = exists and hashlib.sha256(out.read_bytes()).hexdigest() == want
         diag = "期望落点存在=%s 大小=%s" % (exists, out.stat().st_size if exists else "-")
+        record("extract/" + label, rc, exists,
+               hashlib.sha256(out.read_bytes()).hexdigest() if exists else "", text)
         check(rc == 0 and okbytes, "extract × %s：rc=0 且产物哈希相等（%s）" % (label, diag), text)
         # --force 覆盖：先塞垃圾，再覆盖，内容必须等于新产物
         if out.is_file():
@@ -126,7 +142,15 @@ def grid_for_extract(tmp: Path) -> None:
             out.unlink()
 
 
+def load_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--record", default="", help="把每格五元组写到这个 json（基线）")
+    ap.add_argument("--compare", default="", help="与基线 json 逐格 diff（C1 的验收判据）")
+    args = ap.parse_args()
     print("== CLI 写盘落点（H1b/H6b）：非 ASCII 路径必须可用 + 产物字节正确 ==")
     if not CLI.is_file():
         print("CLI-OUT skip 缺 %s" % CLI.relative_to(ROOT).as_posix())
@@ -137,6 +161,32 @@ def main() -> int:
         grid_for_extract(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    if args.record:
+        Path(args.record).write_text(json.dumps(RECORDS, ensure_ascii=False, indent=2) + "\n",
+                                     encoding="utf-8")
+        print("  已记录基线：%s（%d 格）" % (args.record, len(RECORDS)))
+    if args.compare:
+        base = load_json(Path(args.compare))
+        diffs = []
+        for cell, want in base.items():
+            got = RECORDS.get(cell)
+            if got is None:
+                diffs.append("%s：新跑没有这一格（判据少跑了？）" % cell)
+                continue
+            for key in ("rc", "exists", "sha256", "out_first"):
+                if got.get(key) != want.get(key):
+                    diffs.append("%s.%s：%r -> %r" % (cell, key, want.get(key), got.get(key)))
+        for cell in RECORDS:
+            if cell not in base:
+                diffs.append("%s：基线里没有这一格（新加的格？）" % cell)
+        if diffs:
+            print("  ✗ 与基线不一致（%d 处）：" % len(diffs))
+            for d in diffs[:20]:
+                print("      " + d)
+            problems.append("与 C0 基线逐格 diff 不为空")
+        else:
+            print("  ✓ 与基线逐格一致（%d 格：rc/落点/字节/首行）" % len(base))
+
     if problems:
         print("CLI-OUT fail %d 项不成立：" % len(problems))
         for item in problems:

@@ -82,15 +82,57 @@ def classify(message: str) -> str:
     return ""
 
 
-def find_message(lines, i) -> str:
-    """找 return 那处 rc=3 的**理由文案**（同一个 `{}` 块里的那一条）。
+def action_blocks(lines) -> list[tuple[int, str]]:
+    """把 `main.cpp` 切成**动作块**：`if (action == "--xxx")` 到下一个动作/文件尾。
 
-    ★ 坑（本判据第一版踩到）：直接往前抓"最近的 cerr/cout"会**跨块**抓到别的分支的理由
-      —— 例：`未知动作` 那处 `return` 上方 13 行刚好是 `--lzhuf` 的"无法写输出文件"。
-      口径：只认**缩进 ≤ return 自身缩进**的最近一条（同层或更外层 = 同一个块），
-      块内的（更深缩进）一律跳过。
+    ★ C0.5（2026-10-24）：本判据原来用**行距启发式**（`LOOKBACK` 往前找最近一条文案），
+      而一次机械替换（11 处写盘点收进 helper，每处缩短 4~5 行）就会把行距全挪掉 ——
+      于是这条门禁会因为"行号变了"而假红/假绿，**和改动对错无关**。
+      现在改成**按动作块**找：同一个 `action == "--X"` 块里的理由文案才算这一处的理由。
+      块边界不随代码行数漂移 ⇒ sweep 之后仍然有效。
     """
+    blocks = []
+    for i, line in enumerate(lines):
+        if 'action == "' in line and "if" in line:
+            blocks.append((i, line.strip()))
+    if not blocks:
+        return [(0, "<无动作块>")]
+    return blocks
+
+
+def enclosing_block(blocks, i: int) -> tuple:
+    """返回行 i 所属的 (块起点, 块终点, 动作行)。"""
+    cur = blocks[0]
+    for k, (start, label) in enumerate(blocks):
+        if start <= i:
+            cur = (start, label)
+            nxt = blocks[k + 1][0] if k + 1 < len(blocks) else 10 ** 9
+    start, label = cur
+    end = 10 ** 9
+    for s2, _l2 in blocks:
+        if s2 > start:
+            end = min(end, s2)
+    return (start, end, label)
+
+
+def find_message(lines, i, blocks) -> str:
+    """找 return 那处 rc=3 的**理由文案** —— 只在**同一个动作块内**找（不再按行距）。"""
+    start, end, _label = enclosing_block(blocks, i)
     ret_indent = len(lines[i]) - len(lines[i].lstrip())
+    # ① 同块内往上找最近一条"像理由"的行（缩进 ≤ return，避免抓到更深层的分支）
+    for j in range(i - 1, start - 1, -1):
+        raw = lines[j]
+        s = raw.strip()
+        if not s:
+            continue
+        if "std::cerr <<" in s or ("std::cout <<" in s and ("reason=" in s or "hint=" in s)):
+            if len(raw) - len(raw.lstrip()) <= ret_indent:
+                return s
+    # ② 同块内没有理由行、但有 print_usage ⇒ 仍算用法错误
+    for j in range(i - 1, start - 1, -1):
+        if "print_usage()" in lines[j]:
+            return "print_usage()"
+    # ③ 不在任何动作块里（`action.empty()` 那一族）⇒ 往上有限找（这一段没有 sweep 风险）
     for j in range(i - 1, max(-1, i - 1 - LOOKBACK), -1):
         raw = lines[j]
         s = raw.strip()
@@ -99,8 +141,6 @@ def find_message(lines, i) -> str:
         if "std::cerr <<" in s or ("std::cout <<" in s and ("reason=" in s or "hint=" in s)):
             if len(raw) - len(raw.lstrip()) <= ret_indent:
                 return s
-    # ★ 没有直接的理由行、但紧接着打用法 ⇒ 仍然算"用法错误"（这是 `action.empty()` 那一处）
-    for j in range(i - 1, max(-1, i - 4), -1):
         if "print_usage()" in lines[j]:
             return "print_usage()"
     return ""
@@ -109,12 +149,13 @@ def find_message(lines, i) -> str:
 def enumerate_sites(text: str):
     """→ [(行号, 原文行, 最近理由文案, 族)]。"""
     lines = text.splitlines()
+    blocks = action_blocks(lines)
     sites = []
     for i, line in enumerate(lines):
         s = line.strip()
         if s not in ("return kExitUsage;", "return 3;"):
             continue
-        message = find_message(lines, i)
+        message = find_message(lines, i, blocks)
         sites.append((i + 1, s, message, classify(message) if message else ""))
     return sites
 
