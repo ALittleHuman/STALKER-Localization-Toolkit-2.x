@@ -46,6 +46,17 @@ public:
         skip_ws();
         if (!value(out, err)) return false;
         skip_ws();
+        // ★★ H8（2026-10-24 全量审计）：**尾随内容必须判错**。
+        //   修前这里直接 `return true` ⇒ `{"current":{}}garbage` 也会解析成功；
+        //   而这个解析器**同时**被 `--version-store` 当"不可信输入"读、被 `--build-package`
+        //   读回写。吞掉尾随垃圾的后果不是"崩"，是**静默按截断后的内容理解**，
+        //   下一次写回就把用户文件里那一段覆盖掉（丢数据且无声）。
+        //   ★ 只允许**空白**尾随（换行/空格是合法 JSON 结尾），其余一律报错并给偏移。
+        if (i_ != s_.size()) {
+            err = "JSON 尾部有尾随内容（偏移 " + std::to_string(i_) + "，长度 " +
+                  std::to_string(s_.size()) + "）：「" + s_.substr(i_, 24) + "」";
+            return false;
+        }
         return true;
     }
 

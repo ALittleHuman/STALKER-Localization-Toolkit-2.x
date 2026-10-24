@@ -69,3 +69,45 @@ R2 / R25 / R5 / R12 / D1 / R8 —— 与我的台账一致，无异议（这几�
   JSON 尾部不校验，都是"真实可触发"的正确性缺口，只是概率低。给 8.5 更合适。
 - **它最值钱的一句**我完全同意：「凡是没有判据兜底的口径，注释迟早会说谎」——
   H3/H4 正是活例子（注释写得很硬、代码没跟上）。
+
+---
+
+## 七、第二版（Hana 的三条事实修正）核验
+
+| 它说 | 我核到的原文 | 结论 |
+|---|---|---|
+| `main.cpp:3434` 是 `--extract` 不是 `--decode` | `:3415` 打印 `EXTRACT error reason=`、`:3429` 用 `operands[2]` 判已存在、`:3434` 直接 `std::ofstream out(operands[2], …)` | **它对，我上一版写错了** |
+| `--decode` 的写盘在 `:5249` 且已用 `path_from_utf8` | `:5249 std::ofstream out(path_from_utf8(operands[1]), …)` | **它对** |
+| `:612/:647` 是 smoke C-13 夹具、传 `cfs::path`、`:630 .string()` 只比 ASCII | `:612 std::ofstream out(f, …)`（`f` 是 `cfs::path`）、`:647 out(small / names[i], …)`、`:630` 只做 `rfind("log_",0)` | **它对** |
+
+⇒ **H6 的剩余集合修正为**：`--extract`（功能性缺陷：中文落点整条动作失败）＋ `:3422-3424` 注释自己点名的那一串
+（`--decl-fix`/`--resample-dump`/`--font-render`/`--sniff`/`--decode-text`/`--codec-lossy`/`--extract-chars`/`--pack-db`），
+`--lzhuf` 已修、`--decode` 本来就对（但**要进 grid 防回归**）。
+⇒ 严重度定位：**不是 P0 静默损坏，是"整条动作对中文落点不可用"**（会打 `EXTRACT error reason=无法写输出文件` 并 `kExitFail`）。
+⇒ 判据写法随之改：断言"**非 ASCII 落点必须成功且字节一致**"，不是"必须报错"。
+
+## 八、H8 落地（2026-10-24）✅
+
+- `build_version.cpp` 的 `JParser::parse()` 末尾加 `i_ == s_.size()` 断言；报错点名**偏移**与尾巴前 24 字节。
+- 只放行**空白尾随**（换行/空格是合法 JSON 结尾）—— 这一条很关键：不加就会把正常的 `version.json`（末尾有换行）判红。
+- 新增门禁步 **`version-json-strict`（第 122 步）** + `tests/check_version_json_strict.py`：
+  走**真入口** `--version-store`（不是只测函数）——
+  ```
+  ✓ A 合法 version.json（尾随换行属合法结尾）能读
+  ✓ D1 自证：坏文件确实带 garbage
+  ✓ B1 尾部 `garbage` ⇒ 非零退出 + 点名「尾随」「偏移」
+  ✓ C1 解析失败时文件**逐字节不变**
+  ✓ B2 两个对象连写 ⇒ 非零 + 点名尾随；C2 同样不写回
+  ```
+- `--fast` **PASS**。
+
+## 九、下一步（按三方商定的序）
+
+1. **H1b/H6b**（下一批）：`--extract` 修路径 + `:3422` 那一串 sweep 成 `core::write_file_atomic`（档位按体积选：
+   单产物 `Streamed`，大产物别一刀切 `Readback`）＋ **静态形态判据**（CLI 里禁止
+   `std::ofstream <ident>(operands[` 这种把 `std::string` 直接喂 ofstream 的形态）；
+   grid = `{--lzhuf, --extract, --decode, --patch-apply} × {ASCII, CJK, 西里尔}`，断言**字节**不只 rc。
+2. **H3**（再下一批，单独）：折叠原语**下沉到 core**（`text→fs` 已存在 ⇒ `fs→text` 是环），
+   连带改生成器输出路径 + `case-fold-table` 门禁步路径 + `extract.cpp` 的 include；
+   反例必须**造**：同一清单里 `Тест.txt` / `тест.txt` ⇒ 现 ASCII 折叠**漏判**（天然红，正好当修前证伪）；
+   并记"行为变更"（duplicates 计数会上升、`--strict` 会拒以前能过的包）。

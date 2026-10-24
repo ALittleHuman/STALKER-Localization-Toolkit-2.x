@@ -3106,6 +3106,37 @@ def step_db_dir_consistency(release: bool) -> None:
         fail("DB 目录自洽判据不成立（见上）：畸形目录条目没有被明确拒绝")
 
 
+def step_version_json_strict(release: bool) -> None:
+    """**version.json 严格解析**（H8）：JSON 尾部不许有尾随垃圾。
+
+    修前 `build_version.cpp` 的 `JParser::parse()` 是 `skip_ws(); value(); return true;`
+    —— **没有"读到末尾"断言** ⇒ `{"current":{…}}garbage` 也算合法。而它是
+    `--version-store`（**不可信输入**）与 `--build-package` 读回的那一份：
+    吞掉尾巴的后果不是崩，是**静默按截断内容理解**、下次写回把尾巴覆盖掉。
+
+    判据 `tests/check_version_json_strict.py`（走真入口 `--version-store`）：
+    合法档必须成功（尾随换行属合法结尾）；`garbage` 与"两对象连写"必须失败且点名「尾随/偏移」；
+    **失败时文件逐字节不变**（复用"解析失败不写"保护）。
+    退出码：0=绿 / 1=红 / 2=缺 CLI 产物。
+    """
+    say("[version-json-strict] version.json 尾部尾随内容必须判错（H8）")
+    script = ROOT / "tests" / "check_version_json_strict.py"
+    if not require_repo_file(script, "version.json 严格解析判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("VJSON-STRICT"):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("尾随内容被拒（走 --version-store 真入口）、失败不写回、合法档不受影响")
+    elif rc == 2:
+        prereq("version.json 严格解析判据的输入", "缺 build/msvc-release 的 xrkit_cli.exe（先跑 build 步）",
+               release)
+    else:
+        fail("version.json 严格解析判据不成立（见上）：尾随内容没有被拒")
+
+
 def step_winres(release: bool) -> None:
     """Windows 版本资源（VERSIONINFO）：exe 里的元数据必须**非空**，且与 `core::version_string()` 同源。
 
@@ -7103,6 +7134,8 @@ STEPS = [
     # ★★ P17-143（第三方只读审计 B-5／H-03）：台账对**只追加的认账账**断账。
     #   纯静态（读 version.json + docs/）；被 `--only` 过滤时进 UNCOVERED。
     ("version-ledger", step_version_ledger),
+    # ★★ 2026-10-24（H8，全量审计）：version.json 尾部尾随内容必须判错（走 --version-store 真入口）。
+    ("version-json-strict", step_version_json_strict),
     # ★★ P17-144（第三方只读审计 C-06）：退出码 3 的双语义（枚举＋冻结＋文案＋黑盒）。
     #   需要 CLI 产物（黑盒那三条）；被 `--only` 过滤时进 UNCOVERED。
     ("cli-exit-codes", step_cli_exit_codes),
