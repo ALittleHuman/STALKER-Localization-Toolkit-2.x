@@ -273,7 +273,12 @@ def check_baselines() -> int:
         rec = json.loads(rec_path.read_text(encoding="utf-8"))
         if rec.get("kind") != "real":
             continue
+        # ★★ 2026-10-24：**样本位置以 CORPUS 为准**（基线里只该存"哪个样本 + 什么格式"，
+        #   不该存绝对路径）。修前基线记的是旧 `Games\Golden Sphere\…` ⇒ 样本一搬家
+        #   就报"源不可达"，而样本其实在。与 `collect_golden` 用同一条口径。
         image = Path(rec["image"])
+        if not image.exists() and rec.get("id"):
+            image = corpus_path(rec["id"])
         key = rec["format"]
         print("[%s/%s]" % (rec["id"], key))
         if not image.exists():

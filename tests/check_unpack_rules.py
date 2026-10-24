@@ -38,12 +38,17 @@ ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 
 # 真机样本（与 tests/collect_golden.py 同一口径：写死绝对路径，缺件按外部前提处理）
-GAMES = Path(r"E:\Software\Games\STALKER\Games")
-VESSEL_AI = GAMES / "VESSEL" / "S.T.A.L.K.E.R. VESSEL" / "database" / "configs" / "ai.db"
-IWP_MAPS = GAMES / "IWP" / "database" / "maps"
+# ★★ 2026-10-24：样本已搬家（`Transition\DB双向验证套件\samples\原件\`）⇒ 统一走
+#   `tests/samples.py` 的多根解析；脚本只写相对片段。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
+
+GAMES = samples.ROOTS[0]
+VESSEL_AI = samples.find("VESSEL", "S.T.A.L.K.E.R. VESSEL", "database", "configs", "ai.db")
+IWP_MAPS = samples.find_any(("IWP", "database", "maps"), ("IWP_database", "maps"))
 IWP_FAKE_START = IWP_MAPS / "fake_start.db"
 IWP_JUPITER = IWP_MAPS / "jupiter.db"
-GS_LEVELS = GAMES / "Golden Sphere" / "gamedata.db_levels"
+GS_LEVELS = samples.find("Golden Sphere", "gamedata.db_levels")
 
 # 真机上**查实过**的硬数字（改回旧口径立刻对不上）
 VESSEL_README_BYTES = 8148

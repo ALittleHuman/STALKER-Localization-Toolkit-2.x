@@ -37,8 +37,11 @@ TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit
 # 真语料：gameplay 全取；scripts 取 `gamedata\scripts`（468 个 .script，实测 446 个能提到文本）
 #   ★ 别用 `gamedata\config\scripts`：那 3695 个里 3693 个是纯 logic 的 .ltx（一条都提不到），
 #     只有 2 个 .script 有文本 —— 拿它当语料等于只测"原样写回"（实测踩过）。
-REAL_GAMEPLAY = Path(r"E:\Software\Games\STALKER\Games\Golden Sphere\gamedata\config\gameplay")
-REAL_SCRIPTS = Path(r"E:\Software\Games\STALKER\Games\Golden Sphere\gamedata\scripts")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
+
+REAL_GAMEPLAY = samples.find("Golden Sphere", "gamedata", "config", "gameplay")
+REAL_SCRIPTS = samples.find("Golden Sphere", "gamedata", "scripts")
 SCRIPT_SAMPLE = 60
 
 FIXED_TS = 1700000000

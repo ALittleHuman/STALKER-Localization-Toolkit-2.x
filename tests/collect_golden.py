@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import json
 import sys
 import time
@@ -26,7 +27,27 @@ MANIFEST = ROOT / "tests" / "golden" / "manifest.json"
 
 # 真机样本根（2026-09-24 实测：已从 E:\Human 迁到 Games\ 下）
 NLC = Path(r"E:\Software\Games\STALKER\Games\NLC Improved\NLC Improved [OBT]")
-GS = Path(r"E:\Software\Games\STALKER\Games\Golden Sphere")
+# ★★ 2026-10-24：真机样本被整理到 `Transition\DB双向验证套件\samples\原件\` 下
+#   （旧的 `Games\Golden Sphere` 已不在）⇒ 用**多根解析**，两个位置都认，
+#   并允许 `XRKIT_SAMPLES` 环境变量整体覆盖（一台机器一个根，不靠改代码）。
+SAMPLE_ROOTS = [
+    Path(r"E:\Software\Games\STALKER\Games"),
+    Path(r"E:\Software\Tools\Transition\DB双向验证套件\samples\原件"),
+]
+if os.environ.get("XRKIT_SAMPLES"):
+    SAMPLE_ROOTS.insert(0, Path(os.environ["XRKIT_SAMPLES"]))
+
+
+def _find_rel(rel: str) -> Path:
+    """在样本根里找 `rel`（先到先用）；找不到就返回第一个根下的路径（让报错点名它）。"""
+    for root in SAMPLE_ROOTS:
+        cand = root / rel
+        if cand.exists():
+            return cand
+    return SAMPLE_ROOTS[0] / rel
+
+
+GS = _find_rel("Golden Sphere")
 SOC = Path(r"E:\Software\Games\STALKER\Original\SoC_Source\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS")
 
 # 语料选择原则：覆盖每一类**解析路径**，而不是把硬盘上的包全抄一遍。
@@ -146,9 +167,15 @@ def main() -> int:
               "基准表与语料定义已经不同源" % (len(unknown), "、".join(unknown)))
         return 1
 
+    # ★★ 2026-10-24：**样本位置以 `CORPUS` 为准**（manifest 只存哈希基线）。
+    #   修前这里直接用 manifest 里记的**绝对路径** ⇒ 样本一搬家（本机：真机样本被整理到
+    #   `Transition\DB双向验证套件\samples\原件\` 下）就报"样本缺失"，而 CORPUS 里
+    #   的多根解析已经能找到它 —— "位置"与"基线"两个信息混在一个字段里，是结构病。
+    #   现在：id → CORPUS 的 path（多根解析过）；CORPUS 没有这个 id 时才退回 manifest 的路径。
+    corpus_path = {it["id"]: it["path"] for it in CORPUS}
     missing = changed = ok = 0
     for entry in entries:
-        path = Path(entry["path"])
+        path = Path(corpus_path.get(entry["id"], entry["path"]))
         if not path.exists():
             print("  --  %-22s 样本缺失：%s" % (entry["id"], path))
             missing += 1
