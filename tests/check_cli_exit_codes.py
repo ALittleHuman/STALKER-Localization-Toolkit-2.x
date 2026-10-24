@@ -49,7 +49,10 @@ README = ROOT / "README.md"
 CLI_EXE = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 
 LOOKBACK = 25
-FROZEN = {"USAGE": 48, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
+# ★ 2026-10-24（Q2）：新增 `--sha256 <文件>` 动作 ⇒ 多一处真·用法错误（缺操作数）
+#   ⇒ USAGE 48 → 49。**按本判据自己的规矩**：增删一处就必须重估口径并改本表，
+#   不是把判据放宽 —— 族的划分没变（缺操作数 = 用法错误）。
+FROZEN = {"USAGE": 49, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
 
 PROBLEMS: list = []
 CASES = 0

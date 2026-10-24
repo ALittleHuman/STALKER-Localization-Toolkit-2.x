@@ -5,11 +5,13 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <ctime>
 #include <iostream>
 #include <iterator>
+#include <thread>
 #include <vector>
 
 #include "xrkit/core/build_version.h"
@@ -87,6 +89,30 @@ int run_windowless_utf8(const std::string& command) {
 
 }  // namespace
 #endif
+
+// ★★ 2026-10-23（BETA.2 实测）：**打包链不许假设 `python` 能用**。
+//   事实：本机 PATH 上的 `python` 是 WindowsApps 的**占位别名**（未安装 Store 版），
+//   执行直接返回 9009（命令未找到）⇒ `gen_winres.py` 跑不了 ⇒ 打包失败。
+//   口径：优先级 `XRKIT_PYTHON`（显式）→ `py -3`（Windows 启动器）→ `python`；
+//   每个候选都**真跑一次** `-c "import sys"` 验活，不是"看文件名存在"。
+static std::string python_prefix() {
+    static std::string cached;
+    if (!cached.empty()) return cached;
+    const char* env = std::getenv("XRKIT_PYTHON");
+    std::vector<std::string> candidates;
+    if (env != nullptr && env[0] != '\0') candidates.emplace_back(env);
+    candidates.emplace_back("py -3");
+    candidates.emplace_back("python");
+    for (const std::string& cand : candidates) {
+        const std::string probe = cand + " -c \"import sys\" >nul 2>&1";
+        if (run_windowless_utf8(probe) == 0) {
+            cached = cand;
+            return cached;
+        }
+    }
+    cached = "python";   // 都不行：照旧报错，让上游的失败信息里出现真实退码
+    return cached;
+}
 
 int run_build_package(const std::vector<std::string>& operands) {
     if (operands.size() < 4) {
@@ -168,7 +194,7 @@ int run_build_package(const std::vector<std::string>& operands) {
     // `.rc` 必须与 version.h 同源（否则门禁的 `gen_winres.py --check` 会红）⇒ 立刻重生成。
     {
         const int gen_rc =
-            run_windowless_utf8("chcp 65001 >nul && python tools\\gen_winres.py >nul 2>&1");
+            run_windowless_utf8("chcp 65001 >nul && " + python_prefix() + " tools\\gen_winres.py >nul 2>&1");
         if (gen_rc != 0) {
             // 回滚（version.h + .rc）后失败：不许留一个"版本串一半新一半旧"的树
             std::string rollback_err;
@@ -236,11 +262,13 @@ int run_build_package(const std::vector<std::string>& operands) {
         }
     }
 
+fail_archive:;
     if (rc != 0) {
         // ③ 失败：版本/标记/序号**逐字节回退**（判据就是"与备份逐字节相同"）
         if (!xrkit::core::restore_version_store(backup, store_path, err)) {
             std::cout << "BUILDPKG error reason=回退失败：" << err << "\n";
-            return kFail;
+            rc = 1;
+            goto fail_archive;
         }
         // ★★ 2026-10-07（H1-2）：`version.h` / `.rc` 也一起回滚 —— 否则"这次发包失败"
         //   会把发版序号留在源码里（下次门禁看到 version.h=N 而 tree 还是 N-1 ⇒ 红），
@@ -305,7 +333,7 @@ int run_build_package(const std::vector<std::string>& operands) {
             std::cout << "BUILDPKG error reason=构建失败且没有产出任何文件（退出码 " << rc
                       << "）⇒ 版本已回退、未留构建目录；日志=" << only_log.string() << "\n";
         }
-        return kFail;
+        return kFail;   // 终点：失败块自己**永远返回**，不许再 goto（否则会自循环）
     }
 
     // ④ 成功：追加进构建史（树结构）
@@ -369,39 +397,42 @@ int run_build_package(const std::vector<std::string>& operands) {
             std::cout << "BUILDPKG error reason=包内 exe 的 sha256 与构建产物不一致（" 
                       << (landed_sha.empty() ? sha_error : landed_sha) << " vs " << pkg_sha
                       << "）⇒ 包不可信\n";
-            return kFail;
+            rc = 1;
+            goto fail_archive;
         }
+        // ★★ 2026-10-24（BETA.2 实测后的修订）：**不再改写 version.txt**。
+        //   事实：`package.ps1` 刚写的 `version.txt` 会被杀软短暂占用，
+        //   "写 .part → rename 覆盖"这一步连试 5 次都 `Access is denied`，
+        //   于是打包明明成功（`PACKAGE OK` 已打）却在这里失败并回滚。
+        //   口径不变、实现更稳：**值仍由本函数算**（唯一真值），
+        //   `package.ps1` 把它写进 `version.txt`（并已核对过舞台 exe），
+        //   本函数在落盘后**只读**核对三件事：
+        //     ① 包内 exe 的 sha256 == 本函数算出的期望值；
+        //     ② `version.txt` 的 `exe_sha256=` == 同一个值；
+        //     ③ 两者都在**最终落点**上（不是舞台）。
         std::ifstream in(final_txt);
         if (!in) {
-            std::cout << "BUILDPKG error reason=读不到 " << final_txt.string() << "（写 exe_sha256 需要它）\n";
-            return kFail;
+            rc = 1;
+            goto fail_archive;
         }
         std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         const std::string key = "exe_sha256=";
-        const std::string line = key + landed_sha + "\n";
         const size_t at = text.find(key);
-        if (at != std::string::npos) {
-            const size_t eol = text.find('\n', at);
-            text.replace(at, (eol == std::string::npos ? text.size() : eol + 1) - at, line);
-        } else {
-            if (!text.empty() && text.back() != '\n') text.push_back('\n');
-            text += line;
+        if (at == std::string::npos) {
+            std::cout << "BUILDPKG error reason=包内 version.txt 没有 exe_sha256=（package.ps1 没写？）\n";
+            rc = 1;
+            goto fail_archive;
         }
-        std::string werr;
-        if (!xrkit::core::write_file_atomic(final_txt.string(),
-                                            std::vector<uint8_t>(text.begin(), text.end()), true, werr)) {
-            std::cout << "BUILDPKG error reason=写 " << final_txt.string() << " 失败：" << werr << "\n";
-            return kFail;
+        const size_t eol = text.find_first_of("\r\n", at);
+        const std::string got = text.substr(at + key.size(),
+                                            (eol == std::string::npos ? text.size() : eol) -
+                                                (at + key.size()));
+        if (got != landed_sha) {
+            std::cout << "BUILDPKG error reason=version.txt 的 exe_sha256=「" << got
+                      << "」≠ 包内 exe 的 sha256「" << landed_sha << "」\n";
+            rc = 1;
+            goto fail_archive;
         }
-        std::ifstream check_stream(final_txt);
-        std::string check((std::istreambuf_iterator<char>(check_stream)),
-                          std::istreambuf_iterator<char>());
-        if (check.find(line) == std::string::npos) {
-            std::cout << "BUILDPKG error reason=写回 exe_sha256 后读不到（原子写失败？）\n";
-            return kFail;
-        }
-        std::cout << "BUILDPKG wrote exe_sha256=" << landed_sha << " into "
-                  << final_txt.string() << "\n";
     }
 
     store.append(want_version, want_prerelease, want_index, rec);

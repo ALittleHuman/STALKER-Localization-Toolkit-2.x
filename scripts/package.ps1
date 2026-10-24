@@ -475,6 +475,7 @@ platform_plugins=qwindows,qoffscreen
 python_runtime=$pyContract
 layout=bin+python
 exe_identity=$exeIdentity
+exe_sha256=$($ExeSha256.ToLower())
 "@ | Set-Content -LiteralPath (Join-Path $stage 'version.txt') -Encoding UTF8
 
 # ★★ 决策 4 验收：**包根散文件 ≤ 12**（"外面的文件太多了"变成判据）。

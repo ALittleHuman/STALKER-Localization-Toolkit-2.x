@@ -8,6 +8,7 @@ r"""批次 C：把**发行口径链**（RC/FINAL，`-Dev:$false`）做成门禁�
 · 并在该产物里真跑一次 `--smoke`，断言 **默认可见页＝六个内置页**（逐名同序）；
 · 退出码：0=绿；1=判据不成立；2=**环境不具备**（脚本自己起不来/缺前提）⇒ release 档按前提缺失 FAIL。
 """
+import hashlib
 import json
 import re
 import shutil
@@ -116,9 +117,19 @@ def main():
         #   而 `windeployqt`/`ffmpeg` 往 stderr 写的**正常 warning** 会被当成终止错误
         #   ⇒ 脚本在**我们自己调它**的时候中断（打包器走另一套宿主偏好，所以正式打包没这问题）。
         #   ★ 判据在自己这一侧覆盖，**不动产品脚本一个字节**。
+        # ★★ 2026-10-24（Q2）：`package.ps1` 现在**要求** `-ExeSha256`（包内 exe 的硬不变量）。
+        #   本判据是"自己调打包脚本"的那条路（不走 `--build-package`），所以要**自己**算：
+        #   值必须来自**构建产物**（`package.ps1` 就是把它铺进包里的），与正式打包同一个口径。
+        shell_exe = ROOT / "build" / "msvc-shell" / "src" / "shell" / "xrkit_app.exe"
+        if not shell_exe.is_file():
+            print("PKG-RELEASE skip 缺 %s（先跑 shell-smoke 步把外壳编出来）"
+                  % shell_exe.relative_to(ROOT).as_posix())
+            return 2
+        exe_sha = hashlib.sha256(shell_exe.read_bytes()).hexdigest()
+        print("  构建产物 exe 的 sha256：%s…" % exe_sha[:16])
         inner = ("$ErrorActionPreference='Continue'; "
-                 "& '%s' -OutDir '%s' -BuildIndex %d -VersionString '%s' -Dev:$false"
-                 % (PS, rel_out, v["index"], expect))
+                 "& '%s' -OutDir '%s' -BuildIndex %d -VersionString '%s' -ExeSha256 '%s' -Dev:$false"
+                 % (PS, rel_out, v["index"], expect, exe_sha))
         args = [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", inner]
         try:
             proc = subprocess.run(args, capture_output=True, timeout=3000, cwd=str(ROOT))

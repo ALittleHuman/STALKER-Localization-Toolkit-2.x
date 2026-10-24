@@ -20,7 +20,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _utf8_stdio() -> None:
+    """★ 2026-10-24：控制台可能是 GBK ⇒ 直接 print 带 `⇒`/`✓` 的 CLI 输出会
+    UnicodeEncodeError（BETA.2 打包时实测：包已经打好，却被"打印"这一步弄成 exit 1）。
+    与 `run_ci.py` 同一条纪律：脚本**自己**保证能打印。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def main() -> int:
+    _utf8_stdio()
     idx = sys.argv[1] if len(sys.argv) > 1 else ""
     marker = sys.argv[2] if len(sys.argv) > 2 else "ALPHA"
     if not idx:
@@ -32,6 +44,10 @@ def main() -> int:
         return 2
     env = dict(os.environ)
     env["PATH"] = r"C:\Users\Administrator01\AppData\Local\Python\bin;" + env.get("PATH", "")
+    # ★★ 2026-10-23：把**本启动器自己的解释器**告诉打包链（`--build-package` 要跑
+    #   `tools/gen_winres.py`）。PATH 上的 `python` 在本机是 WindowsApps 的占位别名
+    #   （返回 9009）⇒ 光改 PATH 不可靠；显式给 `XRKIT_PYTHON` 才是单一真值。
+    env["XRKIT_PYTHON"] = sys.executable
     proc = subprocess.run([str(cli), "--build-package", str(ROOT / "version.json"),
                            "2.0.0", marker, idx],
                           cwd=str(ROOT), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

@@ -52,7 +52,11 @@ $env:Path = "$cmakeBin;$ninjaBin;$qt\bin;$env:Path"
 #    让 CMakeLists 走自带探测 —— 那种情况下 tests/run_ci.py 的 build 步会判红。
 $incDefine = ''
 try {
-    $incDefine = (& python (Join-Path $root 'tools\probe_showincludes_prefix.py') `
+    # ★★ 2026-10-23：**不许假设 `python` 可用**。本机 PATH 上的 `python` 是 WindowsApps 的
+#   占位别名（执行返回 9009）⇒ 打包链在这里直接失败（BETA.2 实测）。
+#   优先级：`XRKIT_PYTHON`（打包链会传）→ `py -3` → `python`。
+$pyExe = if ($env:XRKIT_PYTHON) { $env:XRKIT_PYTHON } else { 'python' }
+$incDefine = (& $pyExe (Join-Path $root 'tools\probe_showincludes_prefix.py') `
                             --env-file $envFile --define | Select-Object -Last 1)
     if (-not $incDefine) { $incDefine = '' }
 } catch {
