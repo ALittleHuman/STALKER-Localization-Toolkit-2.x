@@ -1,6 +1,7 @@
 #include "xrkit/engine/fs/squashfs.h"
 // ★ P17-115（复审计 `N-01` P0）：不可信尺寸上限的**唯一一处定义**（不再裸写字面量）
 #include "xrkit/engine/fs/untrusted_limits.h"
+#include "name_check.h"
 
 #include "xrkit/core/path.h"
 #include "xrkit/engine/plugin/registry.h"
@@ -506,6 +507,21 @@ bool Image::list(std::vector<Entry>& out, std::string& err) {
                 i += nsz;
 
                 if (e_type == 0) break;  // 哨兵：该组的下一组
+                // ★★ 2026-10-24（hotfix-1 / R10）：**名字合法性在 parser 就拦**。
+                //   控制字符（含 NUL）会让下游 Win32 路径 API 在 NUL 处截断 ⇒ 判定与落点不一致。
+                //   与落盘层共用同一把尺（`fs/name_check.h`），不各写一份。
+                if (const std::string why = name_check::segment_reject_reason(name); !why.empty()) {
+                    err = "目录项名字不合法（条目「" + (cur.prefix.empty() ? name : cur.prefix + "/" + name) +
+                          "」）：" + why;
+                    return false;
+                }
+                // ★★ hotfix-1 / R15：**不支持的类型明确拒绝**，不再当普通文件去读数据块。
+                if (e_type == kTypeSlink || e_type == kTypeSlinkX) {
+                    err = "不支持的条目类型（软链接）：条目「" +
+                          (cur.prefix.empty() ? name : cur.prefix + "/" + name) +
+                          "」—— 本工具不落盘软链接；遇到它明确报错而不是当普通文件读";
+                    return false;
+                }
                 const std::string path = cur.prefix.empty() ? name : cur.prefix + "/" + name;
                 const uint64_t child_ref = (static_cast<uint64_t>(sblk) << 16) | e_off;
                 if (e_type == kTypeDir || e_type == kTypeDirX) {
@@ -731,6 +747,11 @@ bool Image::read_entry_file(const std::string& path, std::vector<uint8_t>& out,
     }
     Inode ino;
     if (!read_inode(found->inode_ref, ino, err)) return false;
+    // ★★ hotfix-1 / R15：同一把尺 —— 直接按 ref 来读时也不许把 slink 当普通文件。
+    if (ino.type == kTypeSlink || ino.type == kTypeSlinkX) {
+        err = "不支持的条目类型（软链接）：" + path + " —— 本工具不落盘软链接";
+        return false;
+    }
     return read_file_data(found->inode_ref, ino, out, err);
 }
 

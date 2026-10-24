@@ -3042,6 +3042,39 @@ def step_layout_readonly(release: bool) -> None:
         fail("诊断模式改了仓库状态（见上）：诊断工具不许改被测对象")
 
 
+def step_fs_name_rules(release: bool) -> None:
+    """**名字合法性**（hotfix-1：R10 控制字符 / R20 保留设备名 / R15 slink 拒绝）。
+
+    修前：parser（`squashfs.cpp`）把目录项名字当原始字节收下；落盘层 `safe_out_path` 只看
+    `..`/盘符/ADS/尾点空格；保留名只在 `core::write_file_atomic` 的**叶子**上筛 ⇒
+      · 名字里的 `\0` 会让 Win32 路径 API **在 NUL 处截断**（写到另一条路径，判定却仍说"在输出目录内"）；
+      · `CON/` 这类**目录段**没有任何一层筛；
+      · 软链接条目被当普通文件读数据块（报"长度不符"这种**看不出原因**的错）。
+    现在：`src/engine/fs/name_check.h` 是**唯一一把尺**，parser 与落盘层都调它；slink 明确报
+    "不支持的条目类型"。
+
+    判据 `tests/check_fs_name_rules.py`：静态（同一把尺、两处都调）+ 行为（改镜像里的名字：
+    控制字符 / 保留名都必须被拒且**理由点名**；未改名的同一张镜像必须能解包 ⇒ 防一刀切）。
+    退出码：0=绿 / 1=红 / 2=缺 CLI 产物。
+    """
+    say("[fs-name-rules] 名字合法性：控制字符 / 保留设备名 / slink 明确拒绝（hotfix-1）")
+    script = ROOT / "tests" / "check_fs_name_rules.py"
+    if not require_repo_file(script, "名字合法性判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("FS-NAME") \
+                or s.startswith("解包退出码") or s.startswith("控制字符镜像") or s.startswith("保留名镜像"):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("名字合法性：控制字符/保留名/slink 三处都明确拒绝（parser 与落盘层同一把尺）")
+    elif rc == 2:
+        prereq("名字合法性判据的输入", "缺 build/msvc-release 的 xrkit_cli.exe（先跑 build 步）", release)
+    else:
+        fail("名字合法性判据不成立（见上）：坏名没有被明确拒绝")
+
+
 def step_winres(release: bool) -> None:
     """Windows 版本资源（VERSIONINFO）：exe 里的元数据必须**非空**，且与 `core::version_string()` 同源。
 
@@ -7011,6 +7044,8 @@ STEPS = [
     # ★★ P17-103（审计 `01 F-06`）：解包落盘不许跟着软链接/重解析点走。
     #   需要 CLI 产物；自带夹具（真造 junction）。被 `--only` 过滤时进 UNCOVERED。
     ("extract-symlink", step_extract_symlink),
+    # ★★ 2026-10-24（hotfix-1）：名字合法性（控制字符/保留名/slink）。与 extract-symlink 同族。
+    ("fs-name-rules", step_fs_name_rules),
     # ★★ P17-105（审计 `03 F-12`）：带日期的快照文档必须自认快照 ＋ 已更正断言与实现同源。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED。静态判据。
     ("dated-doc", step_dated_doc),

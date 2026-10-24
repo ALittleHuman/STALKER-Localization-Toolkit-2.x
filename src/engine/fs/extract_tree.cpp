@@ -1,6 +1,7 @@
 #include "xrkit/engine/fs/extract_tree.h"
 #include "xrkit/engine/plugin/registry.h"
 #include "xrkit/engine/fs/link_check.h"
+#include "name_check.h"
 
 #include "xrkit/core/atomic_write.h"
 #include "xrkit/core/path.h"
@@ -278,6 +279,14 @@ OutPathResult safe_out_path(const std::string& out_dir, const std::string& rel) 
         }
         if (seg == "..") {
             result.reason = kRejectDotDot;
+            return result;
+        }
+        // ★★ 2026-10-24（hotfix-1 / R10 + R20）：**每一段**都查名字合法性 ——
+        //   控制字符（含 NUL）+ Windows 保留设备名。修前只有 `write_file_atomic` 查**叶子**的
+        //   保留名，**目录段**（`CON/`）没人查；NUL 则三层都不查（会被 Win32 截断到别处）。
+        //   与 parser 共用同一把尺（`fs/name_check.h`）。
+        if (const std::string why = name_check::segment_reject_reason(seg); !why.empty()) {
+            result.reason = why;
             return result;
         }
         if (seg == ".") continue;   // 剥完正好是 `.`（`".. "` 之类已在上面被 `..` 拦掉）
