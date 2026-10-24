@@ -195,16 +195,35 @@ def main() -> int:
     #   处置：再按**文件名**建一份索引兜底；基线里"源已不可达"的样本记 denied（可见、进"未覆盖"），
     #   内容比对**一条不放松**。
     base_by_name = {}
+    # ★★ 2026-10-24（样本集漂移的根因；R 系列）：`real/<序号>_<名字>` 的**序号是位置序**，
+    #   任何一棵语料树不可达都会让 id 整体前移；而下面的"按名字兜底"只按 basename 匹配，
+    #   于是 **同名不同文件**（实测 `XR_3DA.exe`：bin 与 bin\dedicated 两份，尺寸 1636424 / 1599560）
+    #   会被拿去和**另一个**文件比哈希 ⇒ 报 `stale`（"样本内容变了"），其实是**换了文件**。
+    #   ⇒ 兜底必须同时看**名字 + 尺寸**：同尺寸不同哈希才是真漂移；尺寸不同 ⇒ 是另一个文件。
+    base_by_size = {}
     for e in base_entries:
         sid = e.get("id", "")
         if sid.startswith("real/") and "_" in sid:
-            base_by_name[sid.split("_", 1)[1]] = e
+            name = sid.split("_", 1)[1]
+            base_by_name[name] = e            # 保留旧兜底（只用于"名字唯一"的情形）
+            base_by_size[(name, e.get("size"))] = e
     failures: list[str] = []
     stale: list[str] = []
     denied: list[str] = []
     compared = 0
     for sample_id, path in items:
-        exp = base.get(sample_id) or base_by_name.get(path.name)
+        exp = base.get(sample_id)
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = None
+        if exp is not None and size is not None and exp.get("size") != size:
+            # id 命中但**尺寸对不上** ⇒ 这个 id 现在指向的是**另一个文件**（语料集变了）
+            exp = None
+        if exp is None and size is not None:
+            exp = base_by_size.get((path.name, size))
+        if exp is None:
+            exp = base_by_name.get(path.name)
         if exp is None:
             # 基线里完全没有这个样本（新加的文件）⇒ 环境/夹具层面的"未覆盖"，不是内容不一致
             print("  !! 新增样本（基线没有，记未覆盖）：%s" % sample_id)
@@ -217,6 +236,10 @@ def main() -> int:
             raw = read_bytes_retry(path)
         except OSError as exc:
             print("  !! %s：读取被系统拒绝（%s）—— 记 SKIP，不判红" % (sample_id, exc))
+            denied.append(sample_id)
+            continue
+        if size is not None and exp.get("size") != size:
+            # 走到这里说明按 (名字,尺寸) 也没找到同款 ⇒ 不是同一份文件（语料集变了）⇒ 记 denied
             denied.append(sample_id)
             continue
         if hashlib.sha256(raw).hexdigest() != exp["sha256"]:
