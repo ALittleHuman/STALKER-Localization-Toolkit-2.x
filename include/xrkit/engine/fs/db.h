@@ -28,6 +28,13 @@ struct DbEntry {
     uint32_t crc = 0;
     bool is_dir = false;
     bool use_lzhuf = false;
+    // ★★ 2026-10-24（batch-2 / D2+E3）：**目录条目自洽**。
+    //   三种格式对"目录"的定义不同（xdb：三字段全零；null 系：dir 标志为 0 且 offset/size 全零；
+    //   11xx：offset==0 且 size==0），任一格式下"看起来是目录、但字段自相矛盾"（例：11xx 的
+    //   offset==0 却 size>0）⇒ 这里置位，`entries_fit_size` 一律判不自洽。
+    //   为什么必须有它：修前自洽判定对目录条目**直接 continue**，于是 `is_dir` 一旦判错，
+    //   一个巨大的目录条目就能绕过全部算术检查（台账 02 D2/E3）。
+    bool malformed = false;
 };
 
 struct DbList {

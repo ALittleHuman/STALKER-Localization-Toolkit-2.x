@@ -219,6 +219,10 @@ std::vector<DbEntry> parse_xdb(const std::vector<uint8_t>& d) {
         e.offset = rd32(d, p);
         p += 4;
         e.is_dir = (e.offset == 0 && e.size_real == 0 && e.size_comp == 0);
+        // ★ batch-2 / E3（xdb 侧）：**文件条目 offset 不许为 0**。
+        //   修前这种条目会被 `entries_fit_size` 的 `e.offset == 0` 判掉；但走"显式格式 + 整包读"
+        //   那条路（`unpack_db`）不经过自洽判定 ⇒ 现在在解析阶段就打上 malformed，由 unpack_db 拒。
+        if (!e.is_dir && e.offset == 0) e.malformed = true;
         out.push_back(std::move(e));
     }
     return out;
@@ -267,6 +271,11 @@ std::vector<DbEntry> fmt_null(const std::vector<uint8_t>& d, int nf, int off_i, 
         e.size_comp = kv.second[static_cast<size_t>(sc_i)];
         e.crc = 0;
         e.is_dir = (kv.second[static_cast<size_t>(dir_i)] == 0);
+        // ★ batch-2：null 系的目录标志就是 offset 字段；**目录还必须 size 全零**，
+        //   否则是"看起来像目录、却带着文件尺寸"的畸形条目（会让下游按目录跳过检查）。
+        if (e.is_dir && (e.offset != 0 || e.size_real != 0 || e.size_comp != 0)) {
+            e.malformed = true;
+        }
         out.push_back(std::move(e));
     }
     return out;
@@ -285,6 +294,12 @@ std::vector<DbEntry> fmt_11xx(const std::vector<uint8_t>& d) {
         e.crc = 0;
         e.is_dir = (e.offset == 0);
         e.use_lzhuf = (uncomp == 0);
+        // ★ batch-2 / E3：11xx 的目录 ⇔ offset==0 **且 size==0**。
+        //   `offset==0 但 size>0` 是自相矛盾的条目（xdb/官方 converter 都把它当坏包）——
+        //   修前它被当目录、然后被自洽判定整条跳过 ⇒ 巨大 size 绕过所有检查。
+        if (e.is_dir && (e.size_comp != 0 || e.size_real != 0)) {
+            e.malformed = true;
+        }
         out.push_back(std::move(e));
     }
     return out;
@@ -307,7 +322,14 @@ std::vector<DbEntry> parse_format(const std::vector<uint8_t>& d, DbFormat f) {
 // ★ seek 式读盘拿不到 `raw` ⇒ 判据改成**显式传文件大小**（语义与 `raw.size()` 完全相同）。
 bool entries_fit_size(uint64_t file_size, const std::vector<DbEntry>& entries) {
     for (const DbEntry& e : entries) {
-        if (e.is_dir) continue;
+        // ★★ batch-2（D2+E3）：**目录条目也要查**（修前是 `if (e.is_dir) continue;`）。
+        //   三格式的目录定义统一收在这里：目录必须 offset/size 全零；解析阶段已经判过
+        //   "格式相关的自相矛盾"（记在 `malformed`），这里再做一次格式无关的兜底。
+        if (e.malformed) return false;
+        if (e.is_dir) {
+            if (e.offset != 0 || e.size_real != 0 || e.size_comp != 0) return false;
+            continue;
+        }
         if (e.path.empty()) return false;
         for (char c : e.path) {
             if (static_cast<unsigned char>(c) < 32) return false;
@@ -594,6 +616,16 @@ DbList unpack_db(const std::vector<uint8_t>& raw, DbFormat fmt) {
         data = sc->decrypt(data);
     }
     res.entries = parse_format(data, fmt);
+    // ★★ batch-2（D2+E3）：**显式格式那条路也要拦畸形条目**（修前只有自洽判定在拦，
+    //   而 `unpack_db` 不做自洽 —— 于是"用户在下拉里选定格式"就能绕过全部目录检查）。
+    for (const DbEntry& e : res.entries) {
+        if (e.malformed) {
+            res.error = "条目表畸形：目录条目字段自相矛盾（或文件条目 offset==0）—— 条目「" +
+                        e.path + "」offset=" + std::to_string(e.offset) + " size=" +
+                        std::to_string(e.size_comp) + " is_dir=" + (e.is_dir ? "1" : "0");
+            return res;
+        }
+    }
     const auto t1 = std::chrono::steady_clock::now();
     res.elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     res.ok = true;

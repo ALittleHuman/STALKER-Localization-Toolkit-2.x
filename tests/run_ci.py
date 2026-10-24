@@ -3075,6 +3075,37 @@ def step_fs_name_rules(release: bool) -> None:
         fail("名字合法性判据不成立（见上）：坏名没有被明确拒绝")
 
 
+def step_db_dir_consistency(release: bool) -> None:
+    """**DB 目录条目自洽**（batch-2 / D2+E3）：三格式目录语义 + 畸形必须拒。
+
+    修前（台账 02）：`entries_fit_size` 对目录条目**直接 `continue`** ⇒ `is_dir` 一旦判错，
+    一个巨大的目录条目就绕过全部算术检查；而 `unpack_db`（"显式选格式 + 整包读"那条路）
+    **完全不做自洽判定** ⇒ 用户在下拉里选个格式就能绕过。
+    现在：解析阶段给畸形条目打 `malformed`（11xx 的 `offset==0 && size>0`、null 系的
+    "目录标志 0 但 size≠0"、xdb 的"文件条目 offset==0"），`entries_fit_size` 与 `unpack_db`
+    两处都拒。
+
+    判据 `tests/check_db_dir_consistency.py`：手工按格式拼镜像 —— 正向（xdb/11xx 能正常 dump）
+    ＋ 反向（三种畸形都必被拒、理由点名"畸形/自相矛盾"）。
+    退出码：0=绿 / 1=红 / 2=缺 CLI 产物。
+    """
+    say("[db-dir-consistency] DB 目录条目自洽：三格式语义 + 畸形必须拒（batch-2）")
+    script = ROOT / "tests" / "check_db_dir_consistency.py"
+    if not require_repo_file(script, "DB 目录自洽判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("DB-DIR"):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("DB 目录语义：畸形目录/offset==0 文件条目都被拒，合法镜像不受影响")
+    elif rc == 2:
+        prereq("DB 目录自洽判据的输入", "缺 build/msvc-release 的 xrkit_cli.exe（先跑 build 步）", release)
+    else:
+        fail("DB 目录自洽判据不成立（见上）：畸形目录条目没有被明确拒绝")
+
+
 def step_winres(release: bool) -> None:
     """Windows 版本资源（VERSIONINFO）：exe 里的元数据必须**非空**，且与 `core::version_string()` 同源。
 
@@ -7176,6 +7207,8 @@ STEPS = [
     ("golden-db", step_golden_db),
     ("db-11xx-dirlock", step_db_11xx_dirlock),
     ("db-name1251-lock", step_db_name_cp1251_lock),
+    # ★★ 2026-10-24（batch-2）：DB 目录条目自洽（三格式目录语义 + 畸形必须拒）。
+    ("db-dir-consistency", step_db_dir_consistency),
     ("unpack-rules", step_unpack_rules),
     ("fs-hardening", step_fs_hardening),
     # ★★ P17-2（2026-10-10）：SquashFS 读侧三处 DoS（01 F-01/F-02/F-03，三处都 High）。
