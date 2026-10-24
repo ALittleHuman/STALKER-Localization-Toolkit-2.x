@@ -4364,7 +4364,8 @@ int run_cli(const std::vector<std::string>& args) {
         }
         const CliWriteStatus pd_st = write_cli_output(tgt.path, bytes);
         if (pd_st == CliWriteStatus::OpenFailed) {
-            std::cout << "PACKDB error reason=无法写输出文件\n";
+            // ★ C3（2026-10-24）：原来只有"无法写输出文件"、**不打路径** —— 哪个文件？
+            std::cout << "PACKDB error reason=无法写输出文件：" << tgt.path << "\n";
             return kExitFail;
         }
         if (pd_st == CliWriteStatus::WriteFailed) {
@@ -5345,7 +5346,8 @@ int run_cli(const std::vector<std::string>& args) {
         //   `patch.cpp` 也把这条写成过教训）。
         const CliWriteStatus lz_st = write_cli_output(operands[2], out);
         if (lz_st == CliWriteStatus::OpenFailed) {
-            std::cout << "LZHUF error reason=无法写输出文件\n";
+            // ★ C3（2026-10-24）：同 PACKDB —— 失败文案必须点名路径（零静默）。
+            std::cout << "LZHUF error reason=无法写输出文件：" << operands[2] << "\n";
             return kExitFail;
         }
         if (lz_st == CliWriteStatus::WriteFailed) {
