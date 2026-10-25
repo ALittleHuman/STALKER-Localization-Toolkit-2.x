@@ -11,7 +11,7 @@ P17-44（`01 F-10`）在 2.x 里用 **Windows `LCMapStringEx`**（invariant ＋ 
   · 单字符内分歧 **131276** 个码位（`U+01C5 ǅ` / `U+0524 Ԥ` / `U+03F4 ϴ` …）；
   · `U+0130 İ` 在 Python 下折成**两个**码位（`"i"` ＋ `U+0307`），Windows 保持不动。
 ⇒ 修法：**不再模仿** —— 表由 `tools/gen_case_fold_table.py` **从本机 CPython 导出**
-（`include/xrkit/engine/text/case_fold_table.inc`），查找见 `case_fold.h`。
+（`include/xrkit/core/case_fold_table.inc`），查找见 `case_fold.h`。
 
 判据（三格，都是"跟 Python 对账"）
 ----------------------------------
@@ -42,7 +42,7 @@ for _stream in (sys.stdout, sys.stderr):
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 GENERATOR = ROOT / "tools" / "gen_case_fold_table.py"
-TABLE = ROOT / "include" / "xrkit" / "engine" / "text" / "case_fold_table.inc"
+TABLE = ROOT / "include" / "xrkit" / "core" / "case_fold_table.inc"
 LO, HI = 0x20, 0x30000          # 上界与生成器同口径（打开区间）
 BATCH = 2000
 

@@ -1,3 +1,4 @@
+#include "xrkit/core/case_fold.h"
 #include "xrkit/core/path.h"
 
 #ifdef _WIN32
@@ -44,7 +45,7 @@ bool path_equals(const std::string& a, const std::string& b) {
     auto ib = pb.begin();
 #ifdef _WIN32
     const auto lower = [](char c) {
-        return (c >= 'A' && c <= 'Z') ? char(c - 'A' + 'a') : c;
+        return xrkit::core::ascii_lower_char(c);
     };
 #endif
     for (; ia != pa.end() && ib != pb.end(); ++ia, ++ib) {

@@ -1,3 +1,4 @@
+#include "xrkit/core/case_fold.h"
 #include "xrkit/engine/fs/extract_tree.h"
 #include "xrkit/engine/plugin/registry.h"
 #include "xrkit/engine/fs/link_check.h"
@@ -62,7 +63,7 @@ std::string strip_trailing_dots_spaces(const std::string& seg) {
 bool has_dot(const std::string& seg) { return seg.find('.') != std::string::npos; }
 
 bool ascii_iequal(char a, char b) {
-    const auto lower = [](char c) { return (c >= 'A' && c <= 'Z') ? char(c - 'A' + 'a') : c; };
+    const auto lower = [](char c) { return xrkit::core::ascii_lower_char(c); };
     return lower(a) == lower(b);
 }
 
@@ -104,7 +105,7 @@ std::string artifact_key(const std::string& path) {
     }
 #ifdef _WIN32
     for (char& c : key) {
-        if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+        c = xrkit::core::ascii_lower_char(c);
     }
 #endif
     return key;

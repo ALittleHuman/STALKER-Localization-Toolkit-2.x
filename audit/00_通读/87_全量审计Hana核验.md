@@ -307,3 +307,63 @@ run_ci.py --fast → RESULT: PASS（123 步）
   记 **H6d**（待补，优先级低）。
 - `--pack-db` 在 1.9 GB 上的耗时**没量**：既然默认档是 Streamed（一遍），这条基准已无意义；
   若以后有人给 CLI 开 `Readback`，那时再量。
+
+---
+
+## 十四、H3(a) 落地（2026-10-25）：折叠原语下沉到 core（**只搬家，不改语义**）
+
+### 14.1 为什么下沉（采纳 Hana 的分层判断）
+
+`text → fs` 的行为依赖已经存在（`text/extract.cpp` include `fs/overlay.h`）⇒
+`fs → text` 会成环。所以不是"让 fs 上调 text"，而是把**原语**搬进 `core`：
+
+```
+include/xrkit/core/case_fold.h          ← 声明（不含表）
+src/core/case_fold.cpp                  ← 唯一包含表的 TU（21.2 KB，不再每个 TU 各背一份）
+include/xrkit/core/case_fold_table.inc  ← git mv 自 engine/text/（内容逐字节未改）
+include/xrkit/engine/text/case_fold.h   ← 改成薄转发（保 `engine::text::case_fold_lower` 名字与行为）
+```
+
+连带改的三处路径（必须先改，否则表会"看起来没漂但读的是旧位置"）：
+`tools/gen_case_fold_table.py` 的 `TARGET`、`tests/check_case_fold_parity.py` 的 `TABLE`、
+`tests/run_ci.py` 的 `require_repo_file` 路径。
+
+### 14.2 (a) 阶段**保持 ASCII 行为**：5 个文件 6 处手写折叠换上同一原语
+
+```
+src/core/path.cpp            path_equals 的逐字符折叠      → core::ascii_lower_char
+src/engine/fs/db.cpp         dup_key                      → 同上
+src/engine/fs/extract_tree   ascii_iequal / artifact_key    → 同上（2 处）
+src/engine/fs/overlay.cpp    basename_lower                → 同上
+src/engine/text/sniff.cpp    normalize_name                → 同上
+```
+`ascii_lower_char()` 与旧手写实现**逐字节等价**（只折 A-Z）⇒ 本阶段**不应有任何可观测变化**。
+
+### 14.3 验收（三条都是"搬家正确"的判据，不是"变强"的判据）
+
+```
+CASE-FOLD-TABLE ok 表与 CPython 导出结果逐字节一致（21695 字节）
+CASE-FOLD       ok 4 项：穷尽 194,528 个码位与 str.lower() 一致 + 反例自证（含 path_lower 那个排序键）
+CLI-OUT         与 C1 基线**逐格一致**（8 格）
+run_ci.py --fast → RESULT: PASS（123 步）
+```
+★ 特别注意：`CASE-FOLD` 那条考的是 `case_fold_lower`（Unicode）**和** `path_lower`（排序键），
+搬家后两者仍与 CPython 逐码位一致 ⇒ 说明搬的是**同一份表、同一个算法**，没有搬错。
+
+### 14.4 (b) 阶段要动的站点与**预测**（下一步，单独一次、含重定基线）
+
+| 站点 | 现状 | (b) 之后 |
+|---|---|---|
+| `path_equals`（core/path.cpp） | ASCII | Unicode ⇒ `Дом`/`дом` 判等（V-11 与 Qt 的 `Qt::CaseInsensitive` 一致） |
+| `dup_key`（db.cpp） | ASCII | Unicode ⇒ **`--strict` 拒绝面变大** |
+| `artifact_key`（extract_tree） | ASCII | Unicode ⇒ `files_written`/`dirs_created` **可能变小**（两个不同名算成一个落点） |
+| `component_equal`（extract_tree） | ASCII | Unicode |
+| `normalize_name`（sniff） | ASCII | Unicode（**会影响格式判定**，要单独看） |
+| `basename_lower`（overlay） | ASCII | Unicode（**只影响排序**，会改变源列表顺序） |
+
+**判别器（Hana 给的，我采纳）**：`--dump` 的字节必须**完全不变**（协议层忠实报记录数），
+`--unpack` 的 `files=` **允许变** —— 若 `--dump` 动了，说明我误改了记录口径而不是统计口径。
+
+**明确不纳入**：`MergeTree::child_by_name`（字节精确是刻意的，R26）——不在 H3 里动，另行决定。
+**不过度承诺**：H3 后 `path_equals` 与 Qt 的 `Qt::CaseInsensitive` 只是**在夹具覆盖的字符上一致**，
+不保证逐字节等价（`İ`/`ß`/希腊词尾 sigma 是已知分歧区）。

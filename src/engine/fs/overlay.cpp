@@ -1,3 +1,4 @@
+#include "xrkit/core/case_fold.h"
 #include "xrkit/engine/fs/overlay.h"
 #include "xrkit/engine/plugin/registry.h"
 
@@ -24,7 +25,7 @@ std::string basename_lower(const std::string& path) {
     std::string name =
         xrkit::core::path_to_utf8(xrkit::core::path_from_utf8(path).filename());
     for (char& c : name) {
-        if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+        c = xrkit::core::ascii_lower_char(c);
     }
     return name;
 }

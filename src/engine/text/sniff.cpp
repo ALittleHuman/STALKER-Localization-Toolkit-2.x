@@ -1,3 +1,4 @@
+#include "xrkit/core/case_fold.h"
 #include "xrkit/engine/text/sniff.h"
 
 #include "xrkit/core/path.h"
@@ -49,7 +50,7 @@ bool iequal_at(const std::vector<uint8_t>& raw, size_t pos, const char* word) {
     if (pos + n > raw.size()) return false;
     for (size_t i = 0; i < n; ++i) {
         char c = static_cast<char>(raw[pos + i]);
-        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        c = xrkit::core::ascii_lower_char(c);
         if (c != word[i]) return false;
     }
     return true;
@@ -94,7 +95,7 @@ std::string normalize_name(const std::string& in) {
     }
     s = s.substr(b, e - b);
     for (char& c : s) {
-        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        c = xrkit::core::ascii_lower_char(c);
     }
     if (s == "cp1251" || s == "cp-1251" || s == "windows1251") return kWindows1251;
     if (s == "cp1252" || s == "cp-1252" || s == "windows1252") return kWindows1252;

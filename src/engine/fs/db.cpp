@@ -1,3 +1,4 @@
+#include "xrkit/core/case_fold.h"
 #include "xrkit/engine/fs/db.h"
 #include "xrkit/engine/fs/untrusted_limits.h"   // ★ P17-13（01 F-08）
 
@@ -1132,7 +1133,7 @@ std::string dup_key(const std::string& path) {
         if (!out.empty()) out += '/';
 #ifdef _WIN32
         for (char& c : seg) {
-            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+            c = xrkit::core::ascii_lower_char(c);
         }
 #endif
         out += seg;

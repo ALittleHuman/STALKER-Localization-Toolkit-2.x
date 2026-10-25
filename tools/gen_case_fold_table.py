@@ -25,7 +25,7 @@
 用游程压缩成区间：同一段"连续码位、结果也连续"的合并成一条。
 
 用法：
-    python tools/gen_case_fold_table.py             # 生成（写 include/xrkit/engine/text/case_fold_table.inc）
+    python tools/gen_case_fold_table.py             # 生成（写 include/xrkit/core/case_fold_table.inc）
     python tools/gen_case_fold_table.py --check     # 只校验：生成结果与磁盘上那份**逐字节**比（门禁用）
 """
 
@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-TARGET = ROOT / "include" / "xrkit" / "engine" / "text" / "case_fold_table.inc"
+TARGET = ROOT / "include" / "xrkit" / "core" / "case_fold_table.inc"
 MAX_CP = 0x30000
 
 

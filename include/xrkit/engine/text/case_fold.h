@@ -25,120 +25,26 @@
 //   · 表只覆盖到 `U+2FFFF`（生成器的范围；更远的码位原样返回）。
 #pragma once
 
-#include <cstdint>
-#include <string>
+// ★★ H3(a)（2026-10-25）：**实现已下沉到 `xrkit/core/case_fold.{h,cpp}`**。
+//   原因：`text → fs` 的行为依赖已存在（`text/extract.cpp` include `fs/overlay.h`），
+//   而 fs 侧也要判"同一性" ⇒ `fs → text` 会成环。表 21.2 KB 现在只在
+//   `src/core/case_fold.cpp` 里包含一次（不再每个 TU 背一份）。
+//   本头保留旧名字（`engine::text::case_fold_lower`），**行为不变**；新代码请直接用 `core`。
 
-#include "xrkit/engine/text/case_fold_table.inc"
+#include <string>
+#include <string_view>
+
+#include "xrkit/core/case_fold.h"
 
 namespace xrkit::engine::text {
 
-// 单个码位的小写映射：返回**追加到 out 的字节数**（0 = 无映射，调用方按原样追加）。
-// 多字符映射（`U+0130` 那种）按 UTF-8 直接追加进去。
-inline std::size_t case_fold_append_one(std::uint32_t cp, std::string& out) {
-    // ① 多字符例外（极少数，先查；数量很小）
-    for (unsigned int i = 0; i < kCaseFoldMultiCount; ++i) {
-        if (kCaseFoldMultiCp[i] == cp) {
-            const char* bytes = kCaseFoldMultiUtf8[i];
-            const std::size_t len = std::char_traits<char>::length(bytes);
-            out.append(bytes, len);
-            return len;
-        }
-    }
-    // ② 区间表：区间按 first_cp 升序 ⇒ 二分
-    std::size_t lo = 0;
-    std::size_t hi = kCaseFoldRunCount;
-    while (lo < hi) {
-        const std::size_t mid = (lo + hi) / 2;
-        const unsigned int first = kCaseFoldRuns[mid][0];
-        const unsigned int count = kCaseFoldRuns[mid][2];
-        if (cp < first) {
-            hi = mid;
-        } else if (cp >= first + count) {
-            lo = mid + 1;
-        } else {
-            const std::uint32_t low = kCaseFoldRuns[mid][1] + (cp - first);
-            // 小写结果一律 ≤ U+10FFFF ⇒ 按 UTF-8 编码（这里只需 1~4 字节，手写比依赖 locale 稳）
-            char buf[4];
-            std::size_t n = 0;
-            if (low < 0x80) {
-                buf[n++] = static_cast<char>(low);
-            } else if (low < 0x800) {
-                buf[n++] = static_cast<char>(0xC0 | (low >> 6));
-                buf[n++] = static_cast<char>(0x80 | (low & 0x3F));
-            } else if (low < 0x10000) {
-                buf[n++] = static_cast<char>(0xE0 | (low >> 12));
-                buf[n++] = static_cast<char>(0x80 | ((low >> 6) & 0x3F));
-                buf[n++] = static_cast<char>(0x80 | (low & 0x3F));
-            } else {
-                buf[n++] = static_cast<char>(0xF0 | (low >> 18));
-                buf[n++] = static_cast<char>(0x80 | ((low >> 12) & 0x3F));
-                buf[n++] = static_cast<char>(0x80 | ((low >> 6) & 0x3F));
-                buf[n++] = static_cast<char>(0x80 | (low & 0x3F));
-            }
-            out.append(buf, n);
-            return n;
-        }
-    }
-    return 0;   // 无映射（表里只收"值不等于自身"的码位）
-}
-
-// UTF-8 字符串的小写折叠（口径同 Python `str.lower()`；非法字节原样透传）。
+// 兼容入口：老调用点（`text/extract.cpp` 的 `path_lower`）继续用这个名字。
 inline std::string case_fold_lower(const std::string& utf8) {
-    std::string out;
-    out.reserve(utf8.size());
-    std::size_t i = 0;
-    while (i < utf8.size()) {
-        const unsigned char b0 = static_cast<unsigned char>(utf8[i]);
-        std::size_t extra = 0;
-        std::uint32_t cp = 0;
-        if (b0 < 0x80) {
-            cp = b0;
-        } else if ((b0 & 0xE0) == 0xC0) {
-            cp = b0 & 0x1F;
-            extra = 1;
-        } else if ((b0 & 0xF0) == 0xE0) {
-            cp = b0 & 0x0F;
-            extra = 2;
-        } else if ((b0 & 0xF8) == 0xF0) {
-            cp = b0 & 0x07;
-            extra = 3;
-        } else {
-            out.push_back(utf8[i]);   // 非法起始字节：原样透传（不猜、不吞）
-            ++i;
-            continue;
-        }
-        if (i + extra >= utf8.size()) {           // 截断的序列：原样透传
-            out.append(utf8, i, utf8.size() - i);
-            break;
-        }
-        bool ok = true;
-        for (std::size_t k = 1; k <= extra; ++k) {
-            const unsigned char bk = static_cast<unsigned char>(utf8[i + k]);
-            if ((bk & 0xC0) != 0x80) {
-                ok = false;
-                break;
-            }
-            cp = (cp << 6) | (bk & 0x3F);
-        }
-        if (!ok) {
-            out.push_back(utf8[i]);
-            ++i;
-            continue;
-        }
-        if (case_fold_append_one(cp, out) == 0) {
-            out.append(utf8, i, extra + 1);        // 无映射 ⇒ 原样
-        }
-        i += extra + 1;
-    }
-    return out;
+    return xrkit::core::case_fold_lower(utf8);
 }
-
-}  // namespace xrkit::engine::text
 
 // ★★ P17-112：`path_lower()` 是 `src/engine/text/extract.cpp` 里**排序键**用的那一个
-//   （1.x 的 `str(path).lower()` 对位物）。这里声明出来是为了让**探针/判据能直接考它** ——
-//   ★ 这条不是洁癖：本批第一版判据只考 `case_fold_lower()`，结果"把 `path_lower` 退回
-//     `ascii_lower`"**照样绿**（判据考的不是真正在用的那个函数）。判据必须考**在用的那个**。
-namespace xrkit::engine::text {
+//   （定义在 extract.cpp；判据直接考它，不许退回 ASCII）。
 std::string path_lower(const std::string& s);
+
 }  // namespace xrkit::engine::text

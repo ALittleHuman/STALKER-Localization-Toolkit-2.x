@@ -5895,7 +5895,7 @@ def step_case_fold(release: bool) -> None:
     #   不靠"checker 返回 rc==2 再记 ok"那条路（那正是被点名的假绿通道）。
     for req, what in (
         (ROOT / "tools" / "gen_case_fold_table.py", "小写折叠表生成器"),
-        (ROOT / "include" / "xrkit" / "engine" / "text" / "case_fold_table.inc", "小写折叠表"),
+        (ROOT / "include" / "xrkit" / "core" / "case_fold_table.inc", "小写折叠表"),
     ):
         if not require_repo_file(req, what):
             return
