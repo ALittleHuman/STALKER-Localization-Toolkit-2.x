@@ -2695,28 +2695,39 @@ namespace {
 //   返回**状态枚举**，让每个站点保持自己原来的文案与流。
 enum class CliWriteStatus { Ok, OpenFailed, WriteFailed };
 
+// C2（2026-10-24）：内部换成 `core::write_file_atomic`（同目录 .part → 自校验 → rename）。
+//   ★ **先判父目录**：`write_file_atomic` 会 `create_directories(parent)`（atomic_write.cpp:124-131），
+//     而 C1 之前的 11 处都是"父目录不存在 ⇒ 打不开 ⇒ 失败"。不先判，同一份输入会从失败变成功 ——
+//     那是**语义变更**，不是加固。所以父目录不存在一律映射成 `OpenFailed`（保持旧行为），
+//     "要不要自动建目录"留给单独的口径决定。
+//   ★ 校验档位用**默认**（`WriteVerify::Streamed`：边写边算哈希，一遍）。只有显式 Readback 才是两遍；
+//     CLI 这条路径不该为"读回"付第二遍 I/O（实测代价见 87 号台账 §十三）。
+inline CliWriteStatus write_cli_output_impl(const std::string& path_utf8, const uint8_t* data,
+                                           size_t size) {
+    const std::filesystem::path target = xrkit::core::path_from_utf8(path_utf8);
+    const std::filesystem::path parent = target.parent_path();
+    if (!parent.empty()) {
+        std::error_code dir_ec;
+        if (!std::filesystem::exists(parent, dir_ec) || dir_ec) {
+            return CliWriteStatus::OpenFailed;   // 与"父目录不存在 ⇒ 打不开"的旧语义一致
+        }
+    }
+    std::string why;
+    const std::vector<uint8_t> bytes(data, data + size);
+    if (xrkit::core::write_file_atomic(path_utf8, bytes, /*atomic=*/true, why)) {
+        return CliWriteStatus::Ok;
+    }
+    return CliWriteStatus::WriteFailed;
+}
+
 inline CliWriteStatus write_cli_output(const std::string& path_utf8,
                                        const std::vector<uint8_t>& bytes) {
-    std::ofstream out(xrkit::core::path_from_utf8(path_utf8),
-                      std::ios::binary | std::ios::trunc);
-    if (!out) return CliWriteStatus::OpenFailed;
-    if (!bytes.empty()) {
-        out.write(reinterpret_cast<const char*>(bytes.data()),
-                  static_cast<std::streamsize>(bytes.size()));
-    }
-    out.close();
-    if (!out) return CliWriteStatus::WriteFailed;
-    return CliWriteStatus::Ok;
+    return write_cli_output_impl(path_utf8, bytes.data(), bytes.size());
 }
 
 inline CliWriteStatus write_cli_output(const std::string& path_utf8, std::string_view text) {
-    std::ofstream out(xrkit::core::path_from_utf8(path_utf8),
-                      std::ios::binary | std::ios::trunc);
-    if (!out) return CliWriteStatus::OpenFailed;
-    if (!text.empty()) out.write(text.data(), static_cast<std::streamsize>(text.size()));
-    out.close();
-    if (!out) return CliWriteStatus::WriteFailed;
-    return CliWriteStatus::Ok;
+    return write_cli_output_impl(path_utf8, reinterpret_cast<const uint8_t*>(text.data()),
+                                 text.size());
 }
 
 }  // namespace
@@ -4569,6 +4580,20 @@ int run_cli(const std::vector<std::string>& args) {
         }
         const std::string dds_path = operands[5] + ".dds";
         const std::string ini_path = operands[5] + ".ini";
+        // ★★ C2（2026-10-24，用户拍板）：**不留半成品，但只删"本次新建"的那个**。
+        //   若 dds 原本存在、本次覆盖了它，再"删掉半成品"就等于把用户的旧文件也删了 ——
+        //   那比留一个半成品更贵。所以先记"本次是否新建"，删除只在新建时做；
+        //   覆盖场景降级为**文案说清谁在盘上**（零静默）。
+        bool created_dds = false;
+        bool created_ini = false;
+        {
+            std::error_code ec_d;
+            created_dds = !std::filesystem::exists(path_from_utf8(dds_path), ec_d) || ec_d;
+            std::error_code ec_i;
+            created_ini = !std::filesystem::exists(path_from_utf8(ini_path), ec_i) || ec_i;
+        }
+        const std::string ini_bytes =
+            xrkit::engine::font::to_windows_newlines(product.ini);
         {
             // ★★ 2026-10-10（P17-30，审计 04 F-06 第二波）：**两个产物都已存在即拒绝，除非 `--force`**。
         //   本动作一次写 **DDS + ini 两份**（`dds_path` / `ini_path`）⇒ 两份都要判，否则
@@ -4594,21 +4619,31 @@ int run_cli(const std::vector<std::string>& args) {
                 return kExitFail;
             }
             if (fr_dds == CliWriteStatus::WriteFailed) {
-                std::cout << "FONTRENDER error reason=写 DDS 失败\n";
+                std::cout << "FONTRENDER error reason=写 DDS 失败（" << dds_path
+                          << "，原子写未留下半成品）\n";
                 return kExitFail;
             }
         }
-        const std::string ini_bytes =
-            xrkit::engine::font::to_windows_newlines(product.ini);
         {
             // 1.x 用 `open(path, "w", encoding="ascii")` ⇒ 文本模式把 \n 翻成 \r\n。
             const CliWriteStatus fr_ini = write_cli_output(ini_path, ini_bytes);
-            if (fr_ini == CliWriteStatus::OpenFailed) {
+            if (fr_ini != CliWriteStatus::Ok) {
+                // ★ C2 的"不留半成品"：**只删本次新建的 dds**；覆盖场景一个字节都不动。
                 std::cout << "FONTRENDER error reason=写不出 " << ini_path << "\n";
-                return kExitFail;
-            }
-            if (fr_ini == CliWriteStatus::WriteFailed) {
-                std::cout << "FONTRENDER error reason=写 ini 失败\n";
+                if (created_dds) {
+                    std::error_code rm_ec;
+                    const bool removed =
+                        std::filesystem::remove(path_from_utf8(dds_path), rm_ec);
+                    if (removed && !rm_ec) {
+                        std::cout << "FONTRENDER note=dds 已删除（本次新建，全或无）\n";
+                    } else {
+                        std::cout << "FONTRENDER note=dds 删除失败（" << rm_ec.message()
+                                  << "）—— 盘上仍有 " << dds_path << "\n";
+                    }
+                } else {
+                    std::cout << "FONTRENDER note=dds 已写出（覆盖了原有文件）、ini 未写出 ："
+                              << dds_path << "\n";
+                }
                 return kExitFail;
             }
         }

@@ -246,3 +246,64 @@ C1 基线已落盘（`_cli_out_baseline_c1.json`）；往后改这一带要跟**
    否则"输出到不存在目录 ⇒ 失败"会变成功）；
 2. `write_file_atomic` 对 data 会算两遍 FNV；`--pack-db` 在 1.9 GB 样本上量一次（新建 + `--force` 覆盖两条路），
    再决定要不要 `WriteVerify::Skip`。
+
+---
+
+## 十三、C2 落地（2026-10-25）：原子写 + "不留半成品"（只删本次新建）
+
+### 13.1 helper 换成 `core::write_file_atomic`，并**先判父目录**
+
+- `write_cli_output_impl()`：`parent_path()` 不存在 ⇒ 直接返回 `OpenFailed`
+  （保持 C1 之前的"父目录不存在 ⇒ 打不开 ⇒ 失败"语义；`write_file_atomic` 自己会
+  `create_directories`，不先判就会把"失败"变"成功"——那是语义变更不是加固）。
+- 校验档位用**默认**（`WriteVerify::Streamed`：边写边算哈希，**一遍**）。
+  ⇒ 之前担心的"双遍 FNV"只发生在显式 `Readback`；CLI 这条路径用的是默认值 ⇒
+  **1.9 GB 基准测的是一个不存在的问题**，不做（Hana 的提醒 ① 成立）。
+- 实测（三条）：
+  ```
+  --lzhuf encode in.bin <不存在目录>/out.lz  → LZHUF error reason=无法写输出文件：…
+                                              rc=1，目录**没有被建出来**
+  --lzhuf encode/decode 往返                  → 内容一致、盘上无 *.part 残留
+  grid --compare（对 C1 基线）                → 8 格**逐格一致**（原子化没有改可观测行为）
+  ```
+
+### 13.2 `--font-render` 的"不留半成品"（用户拍板：删，但只删本次新建）
+
+- **先算后写**：`product`（渲染）与 `ini_bytes`（换行）都在任何写盘之前准备好 ⇒ 渲染类失败不会留半成品。
+- 两次原子写：**dds 先、ini 后**（ini 是"看得见的成果"）。
+- ini 失败时按表处置：
+  | dds 目标 | 行为 | 文案 |
+  |---|---|---|
+  | **本次新建** | 删 dds ⇒ 盘上零产物 | `FONTRENDER note=dds 已删除（本次新建，全或无）` |
+  | **覆盖了原有文件** | **不删**（删了等于把用户旧文件也删了） | `FONTRENDER note=dds 已写出（覆盖了原有文件）、ini 未写出 ：<path>` |
+  | 删 dds 失败 | —— | 同时报两条：`dds 删除失败（<理由>）—— 盘上仍有 <path>` |
+- 行为面复验：`GOLDEN-FONT-RENDER: PASS (cases=28 failed=0 strike_cases=14)`（两产物逐字节对拍未受影响）。
+
+### 13.3 两条判据（都不依赖造磁盘满）
+
+1. **静态锁升级**：`cli-write-sites` 现在四条——
+   - 用 `tests/_cpp_source.py::function_body()` **精确切函数体**（删掉"区间 > 2000 行"这种尺寸守卫，
+     那是"按距离猜结构"，函数变长/变短都会误判）；
+   - 函数体内 `std::ofstream` == 0；
+   - **每次 `write_cli_output(...)` 的返回值都被判断**（H6c 的静态锁：`const CliWriteStatus X = …`
+     之后必须出现 `X ==`/`X !=`；内联比较也算）—— 这条能在"写失败静默打印 ok"这类回归上变红；
+   - **`--font-render` 的删除分支必须被 `if (created_dds)` 包住**，且覆盖场景文案存在。
+2. **行为面**：`--lzhuf` 往返 + 无 `.part` 残留（上一批已有 grid 覆盖），父目录不存在仍失败（本轮新增实测）。
+
+### 13.4 验收
+
+```
+CLI-WRITE ok run_cli 函数体内零 ofstream；写盘唯一入口 write_cli_output()；返回值全部被判断；
+          font-render 半成品处置有守卫
+CLI-OUT   与 C1 基线逐格一致（8 格）
+GOLDEN-FONT-RENDER PASS (cases=28)
+run_ci.py --fast → RESULT: PASS（123 步）
+```
+
+### 13.5 留给后面的账
+
+- 行为判据"ini 指向一个目录 ⇒ rc≠0 且 dds 不存在/仍存在"两格**没做**：
+  `--font-render` 需要真字体 + 字符集夹具，构造成本高；当前用**静态锁 + golden 对拍**兜。
+  记 **H6d**（待补，优先级低）。
+- `--pack-db` 在 1.9 GB 上的耗时**没量**：既然默认档是 Streamed（一遍），这条基准已无意义；
+  若以后有人给 CLI 开 `Readback`，那时再量。
