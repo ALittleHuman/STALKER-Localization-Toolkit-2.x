@@ -5741,6 +5741,33 @@ SmokeResult run_smoke() {
                 check(false, QStringLiteral("⑩10.5 导出文件读不回来"));
             }
         }
+        // ★★ 2026-10-25（用户对导出报告的反馈）：「csv 完全没发挥表格的优势」
+        //   ⇒ 新增 XLSX 报告。这里只判**容器级**三件事（不需要 Excel 参与）：
+        //     ① 是 zip（`PK\x03\x04`）；② 三张表的 sheet XML 都在；③ 表名/表头是中文明文。
+        //   ★ 范围＝**全部比较结果**（不是筛选后）—— 用户裁定；判据按 `results` 全量算行数。
+        {
+            const QString xlsx = root + QStringLiteral("/out.xlsx");
+            check(page.export_xlsx(xlsx, QStringLiteral("2026-10-25 12:00:00")),
+                  QStringLiteral("⑩10.6 导出 XLSX 成功"));
+            // ★ 便于**离线复核**：临时目录会被清理，另存一份到 build/logs（不进库）
+            QFile::copy(xlsx, QStringLiteral("build/logs/_smoke_xml_export.xlsx"));
+            QFile file(xlsx);
+            if (file.open(QIODevice::ReadOnly)) {
+                const QByteArray body = file.readAll();
+                check(body.startsWith("PK\x03\x04") && body.size() > 2000,
+                      QStringLiteral("⑩10.6 产物是 zip 容器且非空（%1 字节）").arg(body.size()));
+                check(body.contains("xl/worksheets/sheet3.xml"),
+                      QStringLiteral("⑩10.6 三张表都在（明细/汇总/统计）"));
+                check(body.contains("差异明细") && body.contains("文件汇总") &&
+                          body.contains("统计"),
+                      QStringLiteral("⑩10.6 表名是中文明文（Excel 里能直接看到）"));
+                check(body.contains("autoFilter") && body.contains("pane ySplit=\"1\""),
+                      QStringLiteral("⑩10.6 带自动筛选 + 冻结表头（表格该有的两件事）"));
+            } else {
+                check(false, QStringLiteral("⑩10.6 导出的 xlsx 读不回来"));
+            }
+        }
+
         // 10.3：行文本是**计数摘要**（统计模式下差异来自"次数不同"），
         // 完整明细只在"看这一行"时才生成
         bool summary_ok = false;

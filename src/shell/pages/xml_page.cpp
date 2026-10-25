@@ -1,6 +1,7 @@
 #include "xml_page.h"
 
 #include "xrkit/core/theme.h"
+#include "xrkit/core/xlsx.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/sniff.h"
 #include "xrkit/engine/xml/dirdiff.h"
@@ -12,6 +13,8 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDateTime>
+
+#include <cstdlib>
 #include <QDialog>
 #include <QDir>
 #include <QDirIterator>
@@ -294,22 +297,23 @@ XmlPage::XmlPage(QWidget* parent)
     clear_button_ = add_action(QStringLiteral("清除"));
     clear_button_->setObjectName(QStringLiteral("xml_clear"));
     QObject::connect(clear_button_, &QPushButton::clicked, this, [this] { clear_dirs(); });
-    auto* export_button = add_action(QStringLiteral("导出 CSV"));
+    auto* export_button = add_action(QStringLiteral("导出 Excel"));
     export_button_ = export_button;   // ★ P17-6：成员化 —— 比较期间要跟模式/筛选/清除一起禁用
     export_button->setObjectName(QStringLiteral("xml_export"));
     QObject::connect(export_button, &QPushButton::clicked, this, [this] {
+        // ★★ 2026-10-25 用户：「导出 csv……完全没有任何用」⇒ 默认导出 **XLSX 报告**
+        //   （明细/汇总/统计三张表；范围＝全部比较结果）。CSV 那条仍留在
+        //   `export_csv()`（CLI/对拍用），只是不再是按钮的落点。
         const QString path = QFileDialog::getSaveFileName(
-            this, QStringLiteral("导出 CSV"), QStringLiteral("xml_compare.csv"),
-            QStringLiteral("CSV 文件 (*.csv)"));
+            this, QStringLiteral("导出 Excel"), QStringLiteral("xml_compare.xlsx"),
+            QStringLiteral("Excel 工作簿 (*.xlsx)"));
         if (path.isEmpty()) return;
-        QString problem;
-        // ⑤：生成时间 = **真实当前时间**（原来是写死的 `1970-01-01 00:00:00`）
-        if (!export_csv_auto(path)) {
-            problem = QStringLiteral("导出失败");
-        }
-        status_->setText(problem.isEmpty()
-                             ? QStringLiteral("已导出 %1 行").arg(visible_count())
-                             : problem);
+        const QString done = export_xlsx(
+                                   path, QDateTime::currentDateTime().toString(
+                                             QStringLiteral("yyyy-MM-dd HH:mm:ss")))
+                                 ? QString()
+                                 : status_->text();
+        if (!done.isEmpty()) status_->setText(done);
     });
     refresh_rows();
     refresh_stats_label();
@@ -945,6 +949,160 @@ bool XmlPage::export_csv(const QString& path, const QString& generated_at) {
 
 // ★ 2026-10-06（⑤）：CSV 的生成时间＝**真实当前时间**（1.x `:1312` `datetime.now()` 的
 //   `%Y-%m-%d %H:%M:%S` 口径）。2.x 原来在按钮里写死 `"1970-01-01 00:00:00"`。
+bool XmlPage::export_xlsx(const QString& path, const QString& generated_at) {
+    // ★★ 2026-10-25（用户）：「导出 csv 是导出全部内容……完全没有发挥表格的优势」
+    //   ⇒ XLSX 报告，三张表：
+    //     · 明细：**每行 = 一个差异 id**（可筛选/排序/透视；不再是"把差异聚成一格文字"）
+    //     · 汇总：**每文件一行**（差异数 / ID 数 / 各类计数）
+    //     · 统计：元数据 + 总计数（不再是 CSV 顶部那 7 行"占位"）
+    //   范围：**全部比较结果**（用户裁定）。
+    if (task_ != nullptr && task_->running()) {
+        status_->setText(QStringLiteral("比较进行中：导出已拒绝（等它结束或先取消）"));
+        log_to_host(QStringLiteral("导出 Excel 被拒：比较任务正在跑"));
+        return false;
+    }
+    // 行状态文本：与界面「状态」列**同一份实现**（`cell_text`；保留键 "status"）
+    const auto row_status = [this](const Row& row) -> std::string {
+        const exml::XmlModeSpec* spec = mode();
+        if (spec != nullptr) {
+            for (const exml::XmlColumn& column : spec->columns) {
+                if (column.key == "status") return cell_text(row, column);
+            }
+        }
+        return std::string();
+    };
+
+    std::vector<xrkit::core::XlsxSheet> sheets;
+
+    // ── 表 1：明细（每行一个差异 id）────────────────────────────────────
+    {
+        xrkit::core::XlsxSheet sheet;
+        sheet.name = "差异明细";
+        sheet.header = {"文件（相对）", "状态", "类别", "ID", "A 次数", "B 次数", "说明"};
+        sheet.widths = {56, 10, 16, 36, 8, 8, 70};
+        for (int index : visible_) { (void)index; }   // 占位：范围=全部，不用 visible_
+        for (const Row& row : results_) {
+            const QString rel = utf8(row.result.rel);
+            const std::string status = row_status(row);
+            for (const std::string& id : row.result.only_a) {
+                sheet.rows.push_back({xrkit::core::XlsxCell::of_text(rel.toStdString()),
+                                      xrkit::core::XlsxCell::of_text(status),
+                                      xrkit::core::XlsxCell::of_text("仅 A"),
+                                      xrkit::core::XlsxCell::of_text(id),
+                                      xrkit::core::XlsxCell::of_number(1),
+                                      xrkit::core::XlsxCell::of_number(0),
+                                      xrkit::core::XlsxCell::of_text("")});
+            }
+            for (const std::string& id : row.result.only_b) {
+                sheet.rows.push_back({xrkit::core::XlsxCell::of_text(rel.toStdString()),
+                                      xrkit::core::XlsxCell::of_text(status),
+                                      xrkit::core::XlsxCell::of_text("仅 B"),
+                                      xrkit::core::XlsxCell::of_text(id),
+                                      xrkit::core::XlsxCell::of_number(0),
+                                      xrkit::core::XlsxCell::of_number(1),
+                                      xrkit::core::XlsxCell::of_text("")});
+            }
+            for (const auto& item : row.result.count_diff) {   // (id, A 次数, B 次数)
+                sheet.rows.push_back(
+                    {xrkit::core::XlsxCell::of_text(rel.toStdString()),
+                     xrkit::core::XlsxCell::of_text(status),
+                     xrkit::core::XlsxCell::of_text("次数不同"),
+                     xrkit::core::XlsxCell::of_text(item[0]),
+                     xrkit::core::XlsxCell::of_number(std::atof(item[1].c_str())),
+                     xrkit::core::XlsxCell::of_number(std::atof(item[2].c_str())),
+                     xrkit::core::XlsxCell::of_text("")});
+            }
+            for (const auto& item : row.result.text_diff) {   // (id, A 文本, B 文本)
+                sheet.rows.push_back(
+                    {xrkit::core::XlsxCell::of_text(rel.toStdString()),
+                     xrkit::core::XlsxCell::of_text(status),
+                     xrkit::core::XlsxCell::of_text("文本不同"),
+                     xrkit::core::XlsxCell::of_text(item[0]),
+                     xrkit::core::XlsxCell::of_number(1),
+                     xrkit::core::XlsxCell::of_number(1),
+                     xrkit::core::XlsxCell::of_text("A: " + item[1] + "  →  B: " + item[2])});
+            }
+        }
+        sheets.push_back(std::move(sheet));
+    }
+
+    // ── 表 2：汇总（每文件一行）──────────────────────────────────────────
+    {
+        xrkit::core::XlsxSheet sheet;
+        sheet.name = "文件汇总";
+        sheet.header = {"文件（相对）",       "状态",     "差异数",   "ID 数 A", "ID 数 B",
+                        "仅 A",               "仅 B",     "文本不同", "次数不同"};
+        sheet.widths = {56, 10, 8, 8, 8, 8, 8, 10, 10};
+        for (const Row& row : results_) {
+            const size_t diffs = row.result.only_a.size() + row.result.only_b.size() +
+                                 row.result.text_diff.size() + row.result.count_diff.size();
+            sheet.rows.push_back(
+                {xrkit::core::XlsxCell::of_text(utf8(row.result.rel).toStdString()),
+                 xrkit::core::XlsxCell::of_text(row_status(row)),
+                 xrkit::core::XlsxCell::of_number(static_cast<double>(diffs)),
+                 xrkit::core::XlsxCell::of_number(static_cast<double>(row.result.ids_a)),
+                 xrkit::core::XlsxCell::of_number(static_cast<double>(row.result.ids_b)),
+                 xrkit::core::XlsxCell::of_number(static_cast<double>(row.result.only_a.size())),
+                 xrkit::core::XlsxCell::of_number(static_cast<double>(row.result.only_b.size())),
+                 xrkit::core::XlsxCell::of_number(static_cast<double>(row.result.text_diff.size())),
+                 xrkit::core::XlsxCell::of_number(
+                     static_cast<double>(row.result.count_diff.size()))});
+        }
+        sheets.push_back(std::move(sheet));
+    }
+
+    // ── 表 3：统计（元数据 + 总计数）─────────────────────────────────────
+    {
+        xrkit::core::XlsxSheet sheet;
+        sheet.name = "统计";
+        sheet.header = {"项目", "值"};
+        sheet.widths = {22, 110};
+        uint64_t consistent = 0, inconsistent = 0, only_a = 0, only_b = 0;
+        count_kinds(&consistent, &inconsistent, &only_a, &only_b);
+        const exml::XmlModeSpec* spec = mode();
+        std::string enc_a_used, enc_b_used;
+        for (const Row& row : results_) {
+            if (enc_a_used.empty() && !row.result.encoding_a.empty()) enc_a_used = row.result.encoding_a;
+            if (enc_b_used.empty() && !row.result.encoding_b.empty()) enc_b_used = row.result.encoding_b;
+        }
+        const auto add = [&sheet](const std::string& key, const std::string& value) {
+            sheet.rows.push_back({xrkit::core::XlsxCell::of_text(key),
+                                  xrkit::core::XlsxCell::of_text(value)});
+        };
+        add("生成时间", generated_at.toStdString());
+        add("比较模式", spec != nullptr ? spec->name : "");
+        add("文件夹 A", dir_a_edit_->text().trimmed().toUtf8().toStdString());
+        add("文件夹 B", dir_b_edit_->text().trimmed().toUtf8().toStdString());
+        add("编码（A / B）",
+            enc_a_combo_->currentData().toString().toUtf8().toStdString() + " / " +
+                enc_b_combo_->currentData().toString().toUtf8().toStdString());
+        add("实际使用编码（A / B）", enc_a_used + " / " + enc_b_used);
+        add("筛选条件（仅影响界面）", filter_combo_->currentText().toUtf8().toStdString());
+        add("一致", std::to_string(consistent));
+        add("不一致", std::to_string(inconsistent));
+        // `name_a()/name_b()` 返回的是 **std::string**（不是 QString）——直接拼
+        add("仅 " + name_a(), std::to_string(only_a));
+        add("仅 " + name_b(), std::to_string(only_b));
+        add("比较文件数", std::to_string(results_.size()));
+        add("明细行数", std::to_string(sheets.front().rows.size()));
+        add("导出范围", "全部比较结果（不受界面筛选影响）");
+        sheets.push_back(std::move(sheet));
+    }
+
+    std::string error;
+    if (!xrkit::core::write_xlsx_file(path.toUtf8().toStdString(), sheets, &error)) {
+        status_->setText(QStringLiteral("导出失败：%1").arg(utf8(error)));
+        log_to_host(QStringLiteral("导出 Excel 失败：%1").arg(utf8(error)));
+        return false;
+    }
+    const QString done = QStringLiteral("已导出 Excel：%1 个文件 / %2 条明细")
+                             .arg(results_.size())
+                             .arg(sheets.front().rows.size());
+    status_->setText(done);
+    log_to_host(done);
+    return true;
+}
+
 bool XmlPage::export_csv_auto(const QString& path) {
     return export_csv(path, QDateTime::currentDateTime().toString(QStringLiteral(
                                 "yyyy-MM-dd HH:mm:ss")));

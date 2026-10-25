@@ -6,6 +6,7 @@ add_library(xrkit_core STATIC
   atomic_write.cpp
   build_version.cpp
   sha256.cpp
+  xlsx.cpp
   case_fold.cpp
   theme.cpp)
 

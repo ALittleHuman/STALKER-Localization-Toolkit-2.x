@@ -82,6 +82,9 @@ public:
     QString row_text(int index) const;
     QString detail_text(int index) const;  // 完整明细（1.x 的 detail_builder）
     bool export_csv(const QString& path, const QString& generated_at);
+    // ★★ 2026-10-25（用户对导出报告的反馈）：**XLSX 报告**（明细/汇总/统计三张表，
+    //   带列宽、冻结表头、自动筛选）。范围 = **全部比较结果**（用户裁定，不是当前筛选）。
+    bool export_xlsx(const QString& path, const QString& generated_at);
 
     // ── ★ 2026-10-06（⑤ 三个小件，逐条对 1.x）──────────────────────────
     // 「清除」（1.x `:391-392` + `_clear_entries` `:514-518`）：清**两个目录栏**。
