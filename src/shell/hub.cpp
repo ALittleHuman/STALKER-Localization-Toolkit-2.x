@@ -271,8 +271,10 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
 
     // ── 菜单：主题（暗/亮，原地更新）
     QMenu* view_menu = menuBar()->addMenu(QStringLiteral("视图"));
-    QAction* dark = view_menu->addAction(QStringLiteral("暗色主题"));
-    QAction* light = view_menu->addAction(QStringLiteral("亮色主题"));
+    // ★★ 2026-10-25 用户：「主题应当收束，就和页面大小一样」⇒ 收成子菜单（与「界面大小」同形态）。
+    QMenu* theme_menu = view_menu->addMenu(QStringLiteral("主题"));
+    QAction* dark = theme_menu->addAction(QStringLiteral("暗色主题"));
+    QAction* light = theme_menu->addAction(QStringLiteral("亮色主题"));
 
     // ★ 用户 2026-09-30：「上面除了主题之外，再增加一个调整 UI 控件大小（当然，包括里面的字体）
     //   的下拉菜单。」⇒ 视图菜单里加「界面大小」子菜单（立即生效；字体与控件一起缩放）。

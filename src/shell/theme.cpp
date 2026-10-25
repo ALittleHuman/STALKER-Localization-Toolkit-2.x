@@ -264,6 +264,8 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
     size("pad8", 8);
     size("pad10", 10);
     size("pad14", 14);
+    // ★ 2026-10-25：菜单项右侧给子菜单箭头留位用（新增令牌，不是改现有值）
+    size("pad24", 24);
     size("r3", 3);
     size("r2", 2);
     size("ind14", 14);
@@ -440,7 +442,11 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                //     文字色与内距**不写在这一条里**（写在 `::item` 上）—— 一是 1.x 的口径就是
                //     这三条，二是自检那条锁钉的就是"这一块恰好三条"。多写一条即红。
                "QMenu { background: @{surface2}; border: 1px solid @{border}; relief: flat; }"
-               "QMenu::item { color: @{text}; padding: @{pad4} @{pad8}; }"
+               // ★★ 2026-10-25 用户实测（截图）：子菜单的**文字和右侧三角重合** ——
+    //   修前 `padding: @{pad4} @{pad8}` 右边只留 8px，而 Qt 在 item 矩形**内部**画子菜单箭头。
+    //   现在右边留出箭头宽度；再给箭头一个显式尺寸（不然不同 DPI 下箭头大小与留白对不上）。
+    "QMenu::item { color: @{text}; padding: @{pad4} @{pad24} @{pad4} @{pad8}; }"
+    "QMenu::right-arrow { width: @{pad8}; height: @{pad8}; margin-right: @{pad4}; }"
                "QMenu::item:selected { background: @{selected}; color: @{text_bright}; }"
                "QMenu::separator { height: 1px; background: @{border}; margin: @{pad2} 0; }"
                "QProgressBar { background: @{entry_bg}; border: 1px solid @{border}; border-radius: @{r3};"
@@ -507,8 +513,11 @@ double ui_size_base_font_pt() {
 
 const std::vector<UiSizeChoice>& ui_size_choices() {
     // ★ 用户 2026-09-30：「小有点偏小，默认有点偏大，大和特大就不用说了。」⇒ 收紧档位
-    static const std::vector<UiSizeChoice> kChoices = {{"小", 0.9}, {"默认", 1.0},
-                                                       {"大", 1.1}, {"特大", 1.2}};
+    // ★★ 用户 2026-10-25（实测截图）：「目前的**小**才应该是默认（正常）大小」
+    //   ⇒ 档位数值不动（仍是 0.9/1.0/1.1/1.2，判据钉着这个集合），只把**标签**顺着改：
+    //     0.9 叫「默认」；原来的「默认」(1.0) 顺延成「大」，1.1 → 「特大」，1.2 → 「超大」。
+    static const std::vector<UiSizeChoice> kChoices = {{"默认", 0.9}, {"大", 1.0},
+                                                       {"特大", 1.1}, {"超大", 1.2}};
     return kChoices;
 }
 
@@ -546,9 +555,16 @@ void apply_ui_size(QApplication& app, double scale) {
 xrkit::core::ThemeMode apply_startup_ui(QApplication& app) {
     const xrkit::core::ThemeMode mode = xrkit::core::load_theme_mode();
     apply_theme(app, mode);
-    apply_screen_ui_scale();
+    const double screen_scale = apply_screen_ui_scale();
     const double saved_scale = xrkit::core::load_ui_scale();
-    if (saved_scale > 0.0) xrkit::core::set_ui_scale(saved_scale);
+    if (saved_scale > 0.0) {
+        xrkit::core::set_ui_scale(saved_scale);
+    } else {
+        // ★★ 2026-10-25 用户裁定：「目前的**小**才应该是默认（正常）大小」。
+        //   没有偏好时不再直接用 1.0，而是 **0.9 × 屏幕系数**（高 DPI 机器保留放大，
+        //   但在 100% 缩放的本机上就是 0.9）。用户手动选过的档位仍然原样生效。
+        xrkit::core::set_ui_scale(screen_scale > 1.0 ? screen_scale * 0.9 : 0.9);
+    }
     apply_theme(app, mode);
     return mode;
 }

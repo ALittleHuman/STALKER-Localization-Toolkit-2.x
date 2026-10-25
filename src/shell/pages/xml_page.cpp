@@ -25,6 +25,8 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QThread>
+#include <QSplitter>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -111,7 +113,13 @@ XmlPage::XmlPage(QWidget* parent)
     result_tree_ = new QTreeWidget;
     result_tree_->setObjectName(QStringLiteral("xml_rows"));
     result_tree_->setRootIsDecorated(false);   // 平表：没有层级，不该画展开箭头
-    body_layout()->addWidget(result_tree_, 1);
+    // ★★ 2026-10-25 用户：「详情/差异 id 以及整个明细栏也需要能够拖拽改变高度」
+    //   ⇒ 结果表与明细栏放进竖向 QSplitter（总览行在分栏**下面**，始终可见）。
+    auto* split = new QSplitter(Qt::Vertical);
+    split->setObjectName(QStringLiteral("xml_split"));
+    split->setChildrenCollapsible(false);
+    split->addWidget(result_tree_);
+    body_layout()->addWidget(split, 1);
     apply_result_columns();
 
     // ★★ D2 批：详情栏（1.x `:436-458`）—— 上半＝明细正文，下半＝逐条 id + 复制id。
@@ -125,10 +133,25 @@ XmlPage::XmlPage(QWidget* parent)
     detail_view_ = new QPlainTextEdit;
     detail_view_->setObjectName(QStringLiteral("xml_detail_text"));
     detail_view_->setReadOnly(true);
-    detail_view_->setMaximumHeight(xrkit::core::px(150));
+    // ★ 2026-10-25：不再写死 150px 上限 —— 明细栏在 QSplitter 里，高度由用户拖。
     // ★ 2026-10-22（用户实测反馈）：给明细栏一个**显式收起入口**（不只是"取消选中"）。
     {
         auto* head_row = new QHBoxLayout;
+        // ★★ 2026-10-25 用户：「详情和差异 id 都和日志这个地方一样，需要能够点击展开和收起」
+        //   ⇒ 两个小标题做成可点的 QToolButton（▾/▸），与日志的折叠同一个交互。
+        auto* detail_toggle = new QToolButton;
+        detail_toggle->setObjectName(QStringLiteral("xml_detail_toggle"));
+        detail_toggle->setAutoRaise(true);
+        detail_toggle->setCheckable(true);
+        detail_toggle->setChecked(true);
+        detail_toggle->setText(QStringLiteral("▾ 详情"));
+        QObject::connect(detail_toggle, &QToolButton::toggled, this,
+                         [this, detail_toggle](bool on) {
+                             if (detail_view_ != nullptr) detail_view_->setVisible(on);
+                             detail_toggle->setText(on ? QStringLiteral("▾ 详情")
+                                                       : QStringLiteral("▸ 详情"));
+                         });
+        head_row->addWidget(detail_toggle, 0);
         auto* collapse = new QPushButton(QStringLiteral("收起明细"));
         collapse->setObjectName(QStringLiteral("xml_detail_collapse"));
         QObject::connect(collapse, &QPushButton::clicked, this, [this] {
@@ -139,23 +162,41 @@ XmlPage::XmlPage(QWidget* parent)
             show_detail_for_item(nullptr);
         });
         head_row->addWidget(detail_head_, 1);
-        head_row->addWidget(collapse, 0);
+        // ★ 2026-10-25 用户：「明细，右边的按钮偏上」⇒ 按钮在行内**垂直居中**
+        head_row->addWidget(collapse, 0, Qt::AlignVCenter);
         detail_layout->addLayout(head_row);
     }
-    detail_layout->addWidget(detail_view_, 0);
-    detail_layout->addWidget(new QLabel(QStringLiteral("差异 id（逐条复制）")), 0);
+    detail_layout->addWidget(detail_view_, 1);
+    {
+        // 「差异 id（逐条复制）」也做成可折叠（与「详情」同一交互）
+        auto* id_toggle = new QToolButton;
+        id_toggle->setObjectName(QStringLiteral("xml_id_toggle"));
+        id_toggle->setAutoRaise(true);
+        id_toggle->setCheckable(true);
+        id_toggle->setChecked(true);
+        id_toggle->setText(QStringLiteral("▾ 差异 id（逐条复制）"));
+        QObject::connect(id_toggle, &QToolButton::toggled, this, [this, id_toggle](bool on) {
+            if (id_list_ != nullptr) id_list_->setVisible(on);
+            id_toggle->setText(on ? QStringLiteral("▾ 差异 id（逐条复制）")
+                                  : QStringLiteral("▸ 差异 id（逐条复制）"));
+        });
+        detail_layout->addWidget(id_toggle, 0, Qt::AlignLeft);
+    }
     id_list_ = new QTreeWidget;
     id_list_->setObjectName(QStringLiteral("xml_id_list"));
     id_list_->setRootIsDecorated(false);
-    id_list_->setMaximumHeight(xrkit::core::px(150));
+    // ★ 2026-10-25：上限交给 QSplitter/折叠开关，不再写死 150px。
     // 列表结构（列/列策略）只有一份实现：`fill_id_tree` 第一次调用时装上（这里用空表触发）
     fill_id_tree(id_list_, {});
-    detail_layout->addWidget(id_list_, 0);
+    detail_layout->addWidget(id_list_, 1);
     // ★ 1.x `:965-971` `_hide_detail`：**没选中行时详情栏不占位**（它一开始是"平时隐藏"，
     //   选中一行才加进分栏）。这不只是观感 —— 详情栏常驻会把这一页顶到 836px，
     //   800px 高的窗口里统计行直接被挤到折线以下（实测 GEOM xml_stats y=720 / 视口 583）。
     detail_panel_->setVisible(false);
-    body_layout()->addWidget(detail_panel_, 0);
+    split->addWidget(detail_panel_);   // ★ 2026-10-25：明细栏进分栏（高度可拖）
+    split->setStretchFactor(0, 1);
+    split->setStretchFactor(1, 0);
+    split->setSizes({xrkit::core::px(360), xrkit::core::px(240)});
 
     // ★★ 2026-10-06（⑤）：统计标签 —— 1.x `xml_compare_app.py:406-409` 建 label、
     //   `:675-676` 写值：`一致 {cons}  |  不一致 {incon}  |  仅 {name_a} {oa}  |  仅 {name_b} {ob}`。
@@ -163,6 +204,8 @@ XmlPage::XmlPage(QWidget* parent)
     stats_label_ = new QLabel;
     stats_label_->setObjectName(QStringLiteral("xml_stats"));
     stats_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    // ★ 2026-10-25 用户：「总览稍微偏上了一些」⇒ 加一点上边距（不挤到分栏手柄上）
+    stats_label_->setContentsMargins(0, xrkit::core::px(6), 0, 0);
     body_layout()->addWidget(stats_label_, 0);
 
     task_ = new TaskShell(this);
@@ -747,11 +790,25 @@ void XmlPage::fill_id_tree(QTreeWidget* tree, const std::vector<XmlDetailId>& id
         item->setText(1, one.category);
         item->setText(2, one.id);
         tree->addTopLevelItem(item);
-        auto* copy = new QPushButton(QStringLiteral("复制id"));
+        // ★★ 2026-10-25 用户实测（截图）：按钮**文字被裁**（只看见「:制」）、**偏下**、**太大**。
+        //   三处一起改：① 文案缩成「复制」（完整 id 进 tooltip）；② 高度按 px(20) 固定、
+        //   宽度按字宽算（不再靠列宽施舍）；③ 外面包一层容器并**垂直居中** ——
+        //   `setItemWidget` 会把控件拉伸到整个单元格矩形，直接放按钮就会贴顶/贴底。
+        auto* copy = new QPushButton(QStringLiteral("复制"));
         copy->setObjectName(QStringLiteral("xml_copy_id"));
+        copy->setToolTip(QStringLiteral("复制 id：%1").arg(one.id));
+        copy->setFixedHeight(xrkit::core::px(20));
+        copy->setMinimumWidth(copy->fontMetrics().horizontalAdvance(copy->text()) +
+                              xrkit::core::px(16));
+        copy->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         const QString id_text = one.id;
         QObject::connect(copy, &QPushButton::clicked, this, [this, id_text] { copy_id(id_text); });
-        tree->setItemWidget(item, 0, copy);
+        auto* copy_holder = new QWidget;
+        auto* copy_holder_layout = new QHBoxLayout(copy_holder);
+        copy_holder_layout->setContentsMargins(xrkit::core::px(4), 0, xrkit::core::px(4), 0);
+        copy_holder_layout->setSpacing(0);
+        copy_holder_layout->addWidget(copy, 0, Qt::AlignVCenter | Qt::AlignLeft);
+        tree->setItemWidget(item, 0, copy_holder);
     }
 }
 

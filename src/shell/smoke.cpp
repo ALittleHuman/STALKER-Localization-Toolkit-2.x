@@ -10507,9 +10507,17 @@ SmokeResult run_smoke() {
         //   取下标（UB/崩溃）。现在把"ids 非空"也写进控制流条件里。
         if (page.id_list() != nullptr && page.id_list()->topLevelItemCount() > 0 && !ids.empty()) {
             QTreeWidgetItem* item = page.id_list()->topLevelItem(0);
-            auto* button = qobject_cast<QPushButton*>(page.id_list()->itemWidget(item, 0));
-            check(button != nullptr && button->text() == QStringLiteral("复制id"),
-                  QStringLiteral("D2-XML 每条 id 后面有「复制id」按钮"));
+            // ★★ 2026-10-25 用户实测：按钮文字**被裁**（只看得见「:制」）⇒ 文案缩成「复制」、
+            //   外面包了一层容器做垂直居中（`setItemWidget` 会把控件拉伸到整个单元格）。
+            //   ⇒ 判据跟着改：从容器里按 objectName 找按钮；完整 id 必须落在 tooltip 里
+            //   （"看得见的短"与"拿得到的长"两件事都钉住，不是只放宽断言）。
+            auto* cell = page.id_list()->itemWidget(item, 0);
+            auto* button = cell != nullptr
+                               ? cell->findChild<QPushButton*>(QStringLiteral("xml_copy_id"))
+                               : nullptr;
+            check(button != nullptr && button->text() == QStringLiteral("复制") &&
+                      button->toolTip().contains(ids.front().id),
+                  QStringLiteral("D2-XML 每条 id 后面有「复制」按钮（完整 id 在 tooltip 里）"));
             if (button != nullptr) {
                 QGuiApplication::clipboard()->clear();
                 button->click();
