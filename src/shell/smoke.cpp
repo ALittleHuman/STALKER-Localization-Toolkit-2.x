@@ -10615,7 +10615,8 @@ SmokeResult run_smoke() {
                   .arg(all_fonts.size())
                   .arg(msyh_fonts.size()));
 
-        // ★ 默认字体三级优先级（1.x `:129-149`）：上次用过的（存在）→ 系统雅黑 → 仓库根
+        // ★ 默认字体优先级（1.x `:129-149` 的形态，2026-10-25 改序）：上次用过的（存在）→
+        //   **NotoSansSC** → 系统雅黑（兜底）→ exe 旁（Noto → msyh.ttf）
         // ★★ 2026-10-06（审计处理批·0-3 之 B1-5 同族）：修前两条锁包在 `if (!msyh_fonts.isEmpty())` 里，
         //   候选集为空时（本机没装 MSYH ⇒ `font_candidates("MSYH")` 返回空）断言**整条消失**
         //   且无痕迹 ⇒ 换台机器两条锁静默没了还看着像绿。现在：空集 ⇒ 明确记 note（可见），
@@ -10640,6 +10641,47 @@ SmokeResult run_smoke() {
         check(fallback.isEmpty() || QFileInfo::exists(fallback),
               QStringLiteral("D2-字体 默认字体兜底必须是个**真存在**的文件（实得「%1」）")
                   .arg(fallback));
+
+        // ★★ 2026-10-25（用户）：**`user.ltx` 再记一项 —— 玩家选择的字体（家族名）**。
+        //   判据三格：① `[font] path` 与原值一致；② `[font] name` 非空且等于 `font_family_name()`
+        //   （= 落盘与展示**同源**，不许页面自己拼一个）；③ 这段写盘后 user.ltx **逐字节还原**。
+        {
+            const QString font_for_name = msyh_fonts.isEmpty() ? QString() : msyh_fonts.first();
+            if (font_for_name.isEmpty()) {
+                result.notes.append(QStringLiteral("D2-字体 本机没有可用字体 ⇒ 「[font] name 落盘」未覆盖"));
+            } else {
+                const QString ltx_path = QString::fromStdString(xrkit::core::user_ltx_path());
+                QFile backup(ltx_path);
+                const bool ltx_existed = backup.exists();
+                QByteArray ltx_before;
+                if (backup.open(QIODevice::ReadOnly)) ltx_before = backup.readAll();
+                backup.close();
+
+                QString name_problem;
+                const bool wrote = page.apply_font_choice(font_for_name, &name_problem);
+                const QString got_path = QString::fromStdString(
+                    xrkit::core::load_user_value("font", "path", ""));
+                const QString got_name = QString::fromStdString(
+                    xrkit::core::load_user_value("font", "name", ""));
+                const QString want_name = xrkit::shell::font_family_name(font_for_name);
+                check(wrote && !got_name.isEmpty() && got_name == want_name,
+                      QStringLiteral("D2-字体 选中字体 ⇒ user.ltx 记下 [font] name（实得「%1」，期望「%2」，problem=「%3」）")
+                          .arg(got_name, want_name, name_problem));
+                check(got_path == font_for_name,
+                      QStringLiteral("D2-字体 选中字体 ⇒ [font] path 仍是原值（实得「%1」）").arg(got_path));
+
+                QFile restore(ltx_path);
+                if (ltx_existed) {
+                    if (restore.open(QIODevice::WriteOnly | QIODevice::Truncate)) restore.write(ltx_before);
+                } else {
+                    QFile::remove(ltx_path);
+                }
+                restore.close();
+                QString why;
+                check(user_ltx_restored(ltx_path, ltx_existed, ltx_before, &why),
+                      QStringLiteral("D2-字体 记 [font] name 之后 user.ltx 逐字节还原（%1）").arg(why));
+            }
+        }
 
         // 11.8 的"同一判据"：列表标记缓存 == 引擎的四态标记（不许页面自己判一遍）
         //   ★★ P8a：选择器抽到 `font_picker.cpp`（宿主唯一一份）⇒ 缓存也用那份实现

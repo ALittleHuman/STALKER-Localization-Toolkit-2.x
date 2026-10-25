@@ -40,8 +40,16 @@ QString font_mark_of(const QString& font_path);
 // 预览样张两行（第二行带西里尔与数字）；日语字体按引擎给的替换表换成繁体字形
 QString font_preview_line(const QString& font_path, int which);
 
-// 默认字体路径（唯一一份）：上次用过的（仍存在）→ 系统雅黑 → exe 旁 msyh.ttf
+// 默认字体路径（唯一一份）：
+//   ① 上次用过的（`user.ltx` 的 `[font] path`，**文件仍存在**才算）
+//   ② 系统里的 **NotoSansSC**（2026-10-25 用户裁定：默认字体从微软雅黑改成 NotoSansSC）
+//   ③ 系统微软雅黑（**兜底**，按用户口径保留）
+//   ④ exe 旁：先 NotoSansSC.*，再 msyh.ttf
 QString default_font_path(const QString& saved);
+
+// 字体**家族名**（如 `NotoSansSC`）：给 `user.ltx` 的 `[font] name` 用。
+// 取不到（字体打不开 / 没有家族信息）⇒ 回落到文件名主干（**绝不返回空串**）。
+QString font_family_name(const QString& font_path);
 
 // **宿主唯一的字库选择器**（非模态）。`current` 用于预选；用户确认 ⇒ `on_picked(路径)`；
 // 需要报账的问题（写 user.ltx 失败等）由调用方在 `on_picked` 里处理，`on_problem` 可空。

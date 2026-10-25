@@ -44,6 +44,9 @@ QString utf8(const std::string& text) { return QString::fromStdString(text); }
 // user.ltx 里记住上次字体用的段名/键名（1.x `_CFG_SECTION = "font"` / `"path"`，`:23`/`:135`）
 constexpr const char* kFontSection = "font";
 constexpr const char* kFontKey = "path";
+// ★★ 2026-10-25：**再记一项"玩家选择的字体"**（家族名，如 `NotoSansSC`）——
+//   路径会因移动/改名失效，名字不会。与 `path` 在**同一次** `save_user_values` 里写（不做两次写盘）。
+constexpr const char* kFontNameKey = "name";
 
 // 字体后缀白名单（1.x `:501-503`：**小写比较**，逐个 fnmatch）
 const char* kFontExts[] = {".ttf", ".ttc", ".otf"};
@@ -310,7 +313,13 @@ bool FontPackPage::remember_font(const QString& path, QString* problem) {
     // 1.x `:598-607`：记住这次选的字体（写 user.ltx 的 `[font] path`，**保留其它段**）。
     // 失败**必须明确告警**（"下次启动需重新选择字体"），绝不静默。
     if (path.isEmpty()) return true;
-    if (!xrkit::core::save_user_value(kFontSection, kFontKey, path.toUtf8().toStdString())) {
+    // ★★ 2026-10-25：`path` + `name` **一次写**（保留其它段；失败整条回滚不落半份）。
+    const QString family = xrkit::shell::font_family_name(path);
+    const std::vector<std::pair<std::string, std::string>> values = {
+        {kFontKey, path.toUtf8().toStdString()},
+        {kFontNameKey, family.toUtf8().toStdString()},
+    };
+    if (!xrkit::core::save_user_values(kFontSection, values)) {
         if (problem != nullptr) {
             *problem = QStringLiteral("警告: 无法写入 user.ltx，下次启动需重新选择字体");
         }

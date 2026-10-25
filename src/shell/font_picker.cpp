@@ -136,19 +136,52 @@ QString font_preview_line(const QString& font_path, int which) {
 QString default_font_path(const QString& saved) {
     // ① 上次用过的（user.ltx 的 `[font] path`，**文件仍存在**才算）
     if (!saved.isEmpty() && QFileInfo::exists(saved)) return QDir::toNativeSeparators(saved);
-    // ② 系统微软雅黑（按名字优先级逐个目录找）
+    // ★★ 2026-10-25（用户裁定）：**默认字体从微软雅黑改成 NotoSansSC**。
+    //   雅黑**保留为兜底**（用户明确要"留作兜底"，不是删掉）。
+    //   候选名取 Noto Sans SC 官方发行与 Windows 自带可变体的常见文件名。
+    static const char* kNotoNames[] = {"NotoSansSC-Regular.otf", "NotoSansSC-Regular.ttf",
+                                       "NotoSansSC-VF.otf", "NotoSansSC-VF.ttf",
+                                       "NotoSansSC.ttf", "NotoSansSC.otf"};
+    const auto first_in = [](const QString& dir, const char* const* names, size_t n) -> QString {
+        for (size_t i = 0; i < n; ++i) {
+            const QString cand = QDir(dir).filePath(QString::fromLatin1(names[i]));
+            if (QFileInfo::exists(cand)) return cand;
+        }
+        return QString();
+    };
+    // ② 系统目录：先 NotoSansSC，再微软雅黑（按名字优先级逐个目录找）
     for (const std::string& raw_dir : efont::system_font_dirs()) {
         const QString dir = utf8(raw_dir);
+        const QString noto = first_in(dir, kNotoNames, std::size(kNotoNames));
+        if (!noto.isEmpty()) return QDir::toNativeSeparators(noto);
         for (const char* name : {"msyh.ttc", "msyh.ttf", "msyhl.ttc"}) {
             const QString cand = QDir(dir).filePath(QString::fromLatin1(name));
             if (QFileInfo::exists(cand)) return QDir::toNativeSeparators(cand);
         }
     }
-    // ③ 仓库根 / exe 所在目录的 msyh.ttf（1.x 的预留分支；源码版没有这个文件）
-    const QString local =
-        QDir(QString::fromStdString(xrkit::core::app_dir())).filePath(QStringLiteral("msyh.ttf"));
+    // ③ exe 旁：先 NotoSansSC.*，再 msyh.ttf（1.x 的预留分支；源码版通常没有）
+    const QString local_dir = QString::fromStdString(xrkit::core::app_dir());
+    const QString local_noto = first_in(local_dir, kNotoNames, std::size(kNotoNames));
+    if (!local_noto.isEmpty()) return QDir::toNativeSeparators(local_noto);
+    const QString local = QDir(local_dir).filePath(QStringLiteral("msyh.ttf"));
     if (QFileInfo::exists(local)) return QDir::toNativeSeparators(local);
     return QString();
+}
+
+QString font_family_name(const QString& font_path) {
+    const QString trimmed = font_path.trimmed();
+    if (trimmed.isEmpty()) return QString();
+    const int id = QFontDatabase::addApplicationFont(trimmed);
+    QString family;
+    if (id >= 0) {
+        const QStringList families = QFontDatabase::applicationFontFamilies(id);
+        if (!families.isEmpty()) family = families.first();
+        QFontDatabase::removeApplicationFont(id);   // 只是"问一下名字"，别把它留在应用字体表里
+    }
+    if (!family.isEmpty()) return family;
+    // 回落：文件名主干（**绝不返回空串** —— `[font] name` 的意义就是"可读的身份"）
+    const QString stem = QFileInfo(trimmed).completeBaseName();
+    return stem.isEmpty() ? trimmed : stem;
 }
 
 QDialog* make_font_picker(QWidget* parent, const QString& current,

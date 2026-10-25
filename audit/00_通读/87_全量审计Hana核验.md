@@ -367,3 +367,42 @@ run_ci.py --fast → RESULT: PASS（123 步）
 **明确不纳入**：`MergeTree::child_by_name`（字节精确是刻意的，R26）——不在 H3 里动，另行决定。
 **不过度承诺**：H3 后 `path_equals` 与 Qt 的 `Qt::CaseInsensitive` 只是**在夹具覆盖的字符上一致**，
 不保证逐字节等价（`İ`/`ß`/希腊词尾 sigma 是已知分歧区）。
+
+---
+
+## 十五、产品变更（2026-10-25，用户裁定）：默认字体 NotoSansSC ＋ `[font] name`
+
+### 15.1 两件事
+
+1. **默认字体从微软雅黑改成 NotoSansSC**（`src/shell/font_picker.cpp::default_font_path`）：
+   ① 上次用过的（`[font] path`，文件仍存在）→ ② **系统 NotoSansSC**（`NotoSansSC-Regular.otf/.ttf`、
+   `NotoSansSC-VF.otf/.ttf`、`NotoSansSC.ttf/.otf`）→ ③ **系统微软雅黑（兜底，用户明确要保留）** →
+   ④ exe 旁（先 Noto，再 `msyh.ttf`）。
+2. **`user.ltx` 再记一项：玩家选择的字体**（`[font] name`，家族名如 `NotoSansSC`）：
+   - 与 `[font] path` 在**同一次** `save_user_values` 里写（不做两次写盘、不落半份）；
+   - 家族名由 `font_family_name()` 取（`QFontDatabase::addApplicationFont` → 家族名 → **用完就移除**；
+     取不到回落文件名主干，**绝不返回空串**）；
+   - 为什么记名字：路径会因移动/改名失效，名字不会。
+
+### 15.2 判据（smoke `checks` 936 → **939**）
+
+```
+① 选中字体 ⇒ [font] name 非空且 == font_family_name(该字体)   （落盘与展示同源）
+② 选中字体 ⇒ [font] path 仍是原值
+③ 这段写盘之后 user.ltx **逐字节还原**（自检验完不留状态）
+```
+三条都跑在真字体上（本机 `msyh`）；没有可用字体时记 **note**（明确"未覆盖"，不静默）。
+
+### 15.3 验收
+
+```
+SHELL-SMOKE ok checks=939 failed=0 not_covered=0
+run_ci.py --fast → RESULT: PASS（123 步）
+```
+
+### 15.4 没有做的事（有意）
+
+- **不改** `default_font_path` 的"上次用过的优先"——那是 1.x 的口径，用户只要求换**默认**。
+- **不写**"实际生效的字体"到 user.ltx（用户选的是"加 name"，不是"启动就写盘"）——
+  启动写盘会多一次无意义的写、也会把默认值固化进文件。
+- 历史台账 `42_font_picker.md` 里的"三级优先级"是**当时**的记录，不改写（它记的是历史，不是现状）。
