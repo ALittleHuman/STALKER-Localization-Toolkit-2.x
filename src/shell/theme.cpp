@@ -71,6 +71,16 @@ public:
     //   （Base/Button/Mid/Text 都已经各有其主，见 apply_theme 那一段），硬塞一个角色
     //   会连带改掉别的控件观感；而"颜色只有一处真值"这条仍然成立 —— 真值就是主题令牌，
     //   这里只是把它搬过来。**本文件里没有任何写死的色值。**
+    // ★★ 2026-10-26 用户实测（截图）：「下拉菜单的定位还是有非常严重的 BUG」。
+    //   机制：Qt 对**不可编辑**的 QComboBox 默认按"菜单式弹层"处理（`SH_ComboBox_Popup`=1）——
+    //   它会把**当前选中项**对齐到 combo 上，于是选中靠后的项时弹层整体上移、盖住上面的行，
+    //   看起来就是"飘到别处"。这里返回 0 ⇒ 走**列表式**：弹层贴在 combo 正下方、左边对齐。
+    int styleHint(StyleHint hint, const QStyleOption* option, const QWidget* widget,
+                  QStyleHintReturn* return_data) const override {
+        if (hint == QStyle::SH_ComboBox_Popup) return 0;
+        return QProxyStyle::styleHint(hint, option, widget, return_data);
+    }
+
     void set_arrow_color(const QColor& color) { arrow_color_ = color; }
     void set_arrow_colors(const QColor& arrow, const QColor& slot, const QColor& edge) {
         arrow_color_ = arrow;

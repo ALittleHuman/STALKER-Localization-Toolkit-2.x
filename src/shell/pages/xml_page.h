@@ -39,6 +39,8 @@ class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
+class QSplitter;
+class QToolButton;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -96,6 +98,10 @@ public:
     // 导出 CSV：**生成时间取真实当前时间**（1.x `:1312` `datetime.now()`）。
     //   2.x 原来把 `generated_at` 写死成 `"1970-01-01 00:00:00"`（`xml_page.cpp:161`）。
     bool export_csv_auto(const QString& path);
+
+    // ★★ 2026-10-26 用户实测：两项都收起时明细栏**高度不许还占着**；点空白要能收起。
+    void update_detail_sections();
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
     // ── ★ 2026-10-06（D2 批）：多列结果表 / 详情栏 / 双击弹窗 ─────────────
     QTreeWidget* result_tree() const { return result_tree_; }
@@ -179,6 +185,11 @@ private:
     // 把"逐条 id + 复制id 按钮"填进一棵树（详情栏与弹窗**共用这一份**）
     void fill_id_tree(QTreeWidget* tree, const std::vector<XmlDetailId>& ids);
     QTreeWidgetItem* item_for_visible_row(int index) const;
+
+    // ★★ 2026-10-26：结果表/明细栏的分栏 + 两个折叠小标题（收起时压高度要用）
+    QSplitter* split_ = nullptr;
+    QToolButton* detail_toggle_ = nullptr;
+    QToolButton* id_toggle_ = nullptr;
 
     QLineEdit* dir_a_edit_ = nullptr;
     QLineEdit* dir_b_edit_ = nullptr;

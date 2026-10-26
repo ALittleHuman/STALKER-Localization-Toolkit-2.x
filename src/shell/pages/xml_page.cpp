@@ -118,11 +118,11 @@ XmlPage::XmlPage(QWidget* parent)
     result_tree_->setRootIsDecorated(false);   // 平表：没有层级，不该画展开箭头
     // ★★ 2026-10-25 用户：「详情/差异 id 以及整个明细栏也需要能够拖拽改变高度」
     //   ⇒ 结果表与明细栏放进竖向 QSplitter（总览行在分栏**下面**，始终可见）。
-    auto* split = new QSplitter(Qt::Vertical);
-    split->setObjectName(QStringLiteral("xml_split"));
-    split->setChildrenCollapsible(false);
-    split->addWidget(result_tree_);
-    body_layout()->addWidget(split, 1);
+    split_ = new QSplitter(Qt::Vertical);
+    split_->setObjectName(QStringLiteral("xml_split"));
+    split_->setChildrenCollapsible(false);
+    split_->addWidget(result_tree_);
+    body_layout()->addWidget(split_, 1);
     apply_result_columns();
 
     // ★★ D2 批：详情栏（1.x `:436-458`）—— 上半＝明细正文，下半＝逐条 id + 复制id。
@@ -143,6 +143,7 @@ XmlPage::XmlPage(QWidget* parent)
         // ★★ 2026-10-25 用户：「详情和差异 id 都和日志这个地方一样，需要能够点击展开和收起」
         //   ⇒ 两个小标题做成可点的 QToolButton（▾/▸），与日志的折叠同一个交互。
         auto* detail_toggle = new QToolButton;
+        detail_toggle_ = detail_toggle;
         detail_toggle->setObjectName(QStringLiteral("xml_detail_toggle"));
         detail_toggle->setAutoRaise(true);
         detail_toggle->setCheckable(true);
@@ -150,9 +151,9 @@ XmlPage::XmlPage(QWidget* parent)
         detail_toggle->setText(QStringLiteral("▾ 详情"));
         QObject::connect(detail_toggle, &QToolButton::toggled, this,
                          [this, detail_toggle](bool on) {
-                             if (detail_view_ != nullptr) detail_view_->setVisible(on);
                              detail_toggle->setText(on ? QStringLiteral("▾ 详情")
                                                        : QStringLiteral("▸ 详情"));
+                             update_detail_sections();
                          });
         head_row->addWidget(detail_toggle, 0);
         auto* collapse = new QPushButton(QStringLiteral("收起明细"));
@@ -173,15 +174,16 @@ XmlPage::XmlPage(QWidget* parent)
     {
         // 「差异 id（逐条复制）」也做成可折叠（与「详情」同一交互）
         auto* id_toggle = new QToolButton;
+        id_toggle_ = id_toggle;
         id_toggle->setObjectName(QStringLiteral("xml_id_toggle"));
         id_toggle->setAutoRaise(true);
         id_toggle->setCheckable(true);
         id_toggle->setChecked(true);
         id_toggle->setText(QStringLiteral("▾ 差异 id（逐条复制）"));
         QObject::connect(id_toggle, &QToolButton::toggled, this, [this, id_toggle](bool on) {
-            if (id_list_ != nullptr) id_list_->setVisible(on);
             id_toggle->setText(on ? QStringLiteral("▾ 差异 id（逐条复制）")
                                   : QStringLiteral("▸ 差异 id（逐条复制）"));
+            update_detail_sections();
         });
         detail_layout->addWidget(id_toggle, 0, Qt::AlignLeft);
     }
@@ -195,11 +197,13 @@ XmlPage::XmlPage(QWidget* parent)
     // ★ 1.x `:965-971` `_hide_detail`：**没选中行时详情栏不占位**（它一开始是"平时隐藏"，
     //   选中一行才加进分栏）。这不只是观感 —— 详情栏常驻会把这一页顶到 836px，
     //   800px 高的窗口里统计行直接被挤到折线以下（实测 GEOM xml_stats y=720 / 视口 583）。
+    // ★ 2026-10-26：点明细栏的**空白处**也要能收起（用户：「现在只能点按钮了」）
+    detail_panel_->installEventFilter(this);
     detail_panel_->setVisible(false);
-    split->addWidget(detail_panel_);   // ★ 2026-10-25：明细栏进分栏（高度可拖）
-    split->setStretchFactor(0, 1);
-    split->setStretchFactor(1, 0);
-    split->setSizes({xrkit::core::px(360), xrkit::core::px(240)});
+    split_->addWidget(detail_panel_);   // ★ 2026-10-25：明细栏进分栏（高度可拖）
+    split_->setStretchFactor(0, 1);
+    split_->setStretchFactor(1, 0);
+    split_->setSizes({xrkit::core::px(360), xrkit::core::px(240)});
 
     // ★★ 2026-10-06（⑤）：统计标签 —— 1.x `xml_compare_app.py:406-409` 建 label、
     //   `:675-676` 写值：`一致 {cons}  |  不一致 {incon}  |  仅 {name_a} {oa}  |  仅 {name_b} {ob}`。
@@ -801,9 +805,14 @@ void XmlPage::fill_id_tree(QTreeWidget* tree, const std::vector<XmlDetailId>& id
         auto* copy = new QPushButton(QStringLiteral("复制"));
         copy->setObjectName(QStringLiteral("xml_copy_id"));
         copy->setToolTip(QStringLiteral("复制 id：%1").arg(one.id));
-        copy->setFixedHeight(xrkit::core::px(20));
-        copy->setMinimumWidth(copy->fontMetrics().horizontalAdvance(copy->text()) +
-                              xrkit::core::px(16));
+        // ★ 2026-10-26 用户复测：**还是被裁** ⇒ 高度 20→26、右边距 16→34（QSS 里还有 8px 内距）
+        // ★★ 2026-10-26 第二版：不再"猜"宽高 —— 直接用它自己的 `sizeHint()`
+        //   （sizeHint 已经把 QSS 的 padding/border 与字体算进去了；手写的数值总有一边对不上）。
+        //   同时把**行高**也抬到按钮的 sizeHint（`setItemWidget` 不会按控件撑行，
+        //   行不够高时按钮被裁的正是文字 —— 这就是用户两次看到"还是那样"的机制）。
+        copy->setFixedSize(copy->sizeHint());
+        item->setSizeHint(0, QSize(copy->sizeHint().width() + xrkit::core::px(10),
+                                   copy->sizeHint().height() + xrkit::core::px(6)));
         copy->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         const QString id_text = one.id;
         QObject::connect(copy, &QPushButton::clicked, this, [this, id_text] { copy_id(id_text); });
@@ -845,6 +854,38 @@ void XmlPage::show_detail_for_item(QTreeWidgetItem* item) {
     if (detail_view_ != nullptr) detail_view_->setPlainText(detail_text(index));
     fill_id_tree(id_list_, detail_ids_for(index));
     if (detail_panel_ != nullptr) detail_panel_->setVisible(true);  // 1.x `_show_detail`
+}
+
+void XmlPage::update_detail_sections() {
+    if (detail_panel_ == nullptr) return;
+    const bool show_detail = detail_toggle_ == nullptr || detail_toggle_->isChecked();
+    const bool show_ids = id_toggle_ == nullptr || id_toggle_->isChecked();
+    if (detail_view_ != nullptr) detail_view_->setVisible(show_detail);
+    if (id_list_ != nullptr) id_list_->setVisible(show_ids);
+    // ★★ 2026-10-26 用户实测：**两项都收起时高度还在**（截图：一大片空白）
+    //   ⇒ 两个都收起就把面板压到"头部那一行 + 两个小标题"的高度；任一展开就恢复可拖。
+    if (split_ == nullptr) return;
+    if (!show_detail && !show_ids) {
+        const int collapsed = xrkit::core::px(24) * 2 + xrkit::core::px(10) + xrkit::core::px(24);
+        detail_panel_->setMaximumHeight(collapsed);
+        const int total = split_->height();
+        split_->setSizes({std::max(0, total - collapsed), collapsed});
+    } else {
+        detail_panel_->setMaximumHeight(QWIDGETSIZE_MAX);
+    }
+}
+
+bool XmlPage::eventFilter(QObject* watched, QEvent* event) {
+    // 明细栏的**空白区**（不是子控件）被点 ⇒ 等同于"取消选中"（用户要求恢复这个习惯）
+    if (watched == detail_panel_ && event->type() == QEvent::MouseButtonPress) {
+        if (result_tree_ != nullptr) {
+            result_tree_->clearSelection();
+            result_tree_->setCurrentItem(nullptr);
+        }
+        show_detail_for_item(nullptr);
+        return true;
+    }
+    return PageBase::eventFilter(watched, event);
 }
 
 QDialog* XmlPage::make_detail_dialog(int index, QWidget* parent) {

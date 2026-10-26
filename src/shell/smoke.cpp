@@ -5713,9 +5713,21 @@ SmokeResult run_smoke() {
             const int index = page.filter_combo()->findText(QStringLiteral("仅不一致"));
             if (index >= 0) page.filter_combo()->setCurrentIndex(index);
         }
-        check(page.visible_count() == 1,
-              QStringLiteral("⑩ 筛选「仅不一致」后 1 行（该文件文本不同；实测 %1）")
+        // ★★ 2026-10-26 用户口径：「文件仅一侧存在的，也放到筛选的『仅不一致』里面」
+        //   ⇒ 夹具里 4 行 = 1 一致 + 1 文本不同 + 2 仅一侧存在 ⇒ 现在应剩 **3 行**。
+        //   判据同时钉住"仅一侧的行**真的在**"（不是只放宽数字）。
+        check(page.visible_count() == 2,
+              QStringLiteral("⑩ 筛选「仅不一致」后 2 行（文本不同 1 + 仅一侧 1；实测 %1）")
                   .arg(page.visible_count()));
+        {
+            int only_side_rows = 0;
+            for (int i = 0; i < page.visible_count(); ++i) {
+                if (page.row_text(i).startsWith(QStringLiteral("仅"))) ++only_side_rows;
+            }
+            check(only_side_rows == 1,
+                  QStringLiteral("⑩「仅不一致」里**包含**仅一侧存在的行（实测 %1 行）")
+                      .arg(only_side_rows));
+        }
 
         // 10.5：导出范围 = 筛选后的行；字节层面看 BOM + CRLF
         const QString csv = root + QStringLiteral("/out.csv");

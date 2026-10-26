@@ -539,8 +539,10 @@ const std::vector<XmlModeSpec>& builtin_modes() {
                               {"ids_a", "ID 数 A", 90},
                               {"ids_b", "ID 数 B", 90},
                               {"detail", "差异详情", 400}};
+        // ★★ 2026-10-26 用户：「文件仅一侧存在的，也放到筛选的『仅不一致』里面」
+        //   ⇒ 「仅不一致」不再只收 diff 行，也收 only_a/only_b（一侧有的本来就不一致）。
         stats_mode.filters = {{"全部", {"same", "diff", "only_a", "only_b"}, {}},
-                              {"仅不一致", {"diff"}, {}},
+                              {"仅不一致", {"diff", "only_a", "only_b"}, {}},
                               {"仅一侧存在", {"only_a", "only_b"}, {}}};
 
         XmlModeSpec text_mode;
@@ -554,8 +556,10 @@ const std::vector<XmlModeSpec>& builtin_modes() {
                              {"ids_a", "ID 数 A", 90},
                              {"ids_b", "ID 数 B", 90},
                              {"detail", "差异详情", 400}};
+        // ★★ 2026-10-26 同上：`仅不一致` 收 diff + only_a/only_b；**去掉 differ_types {"only"}**
+        //   （那个子类型对"整个文件只在一侧"的行永远为空 ⇒ 加了就等于把这类行筛掉）。
         text_mode.filters = {{"全部", {"same", "diff", "only_a", "only_b"}, {}},
-                             {"仅不一致", {"diff"}, {"only"}},
+                             {"仅不一致", {"diff", "only_a", "only_b"}, {}},
                              {"仅文本不同", {"diff"}, {"text"}},
                              {"仅一侧存在", {"only_a", "only_b"}, {}}};
         return std::vector<XmlModeSpec>{stats_mode, text_mode};
