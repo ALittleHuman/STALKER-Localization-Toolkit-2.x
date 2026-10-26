@@ -37,6 +37,12 @@ struct DirDiffOptions {
                                    const std::string& text_b, const std::string& enc_a,
                                    const std::string& enc_b)> compare;
     std::function<bool()> should_stop;   // 每个文件之前轮询
+    // ★★ 2026-10-26（用户实测）：**mod 覆盖树对齐**。
+    //   B 侧常见结构是 `<mod>/configs/...`（每个 mod 子目录各是一个 gamedata 根），
+    //   而 A 侧是 `configs/...` ⇒ 按原样配对会**零交集**（实测 186 个文件全判"仅一侧"）。
+    //   开着它：两侧都先"剥到已知根（configs/scripts/textures/…）"，按**根之后的相对路径**配对；
+    //   A 的 `configs/x.xml` 会对上 B 的 `<mod>/configs/x.xml`，**每个 mod 各出一行**（看得出是哪个 mod）。
+    bool align_mod_dirs = false;
 };
 
 struct DirDiffReport {

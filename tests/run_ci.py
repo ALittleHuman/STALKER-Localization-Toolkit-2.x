@@ -3163,6 +3163,38 @@ def step_cli_write_sites(release: bool) -> None:
         fail("CLI 写盘点判据不成立（见上）：又出现了裸 ofstream")
 
 
+def step_xml_mod_align(release: bool) -> None:
+    """**XML 目录对比：mod 覆盖树对齐** ＋ **仅一侧行的真实计数**（2026-10-26 用户实测）。
+
+    两个真语料上撞到的 bug：
+      ① B 侧是 mod 覆盖树（`<mod>/configs/...`）而 A 侧是 `configs/...` ⇒ 按相对路径配对
+         **零交集**（实测 186 行全判"仅一侧"），报告无信息；
+      ② 只在一侧的行**行数/ID 数恒为 0**（`only_one_side()` 直接短路）⇒ 看起来像"空文件"。
+
+    判据 `tests/check_xml_mod_align.py`（现造夹具，不依赖真实语料）：
+      · 不对齐 ⇒ 全判仅一侧（证明修前前提成立）；
+      · 对齐 ⇒ mod1/a.xml 一致、mod2/a.xml 不一致、A 的 a.xml 不再仅一侧；
+      · 仅一侧的行 `ids_b=1`（真实计数）。
+    退出码：0=绿 / 1=红 / 2=缺 CLI。
+    """
+    say("[xml-mod-align] mod 覆盖树对齐（<mod>/configs/x ↔ configs/x）＋ 仅一侧行的真实计数")
+    script = ROOT / "tests" / "check_xml_mod_align.py"
+    if not require_repo_file(script, "XML mod 对齐判据"):
+        return
+    rc, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("XML-MOD-ALIGN") \
+                or s.startswith("=="):
+            say("  " + s[:200])
+    if rc == 0:
+        ok("mod 覆盖树按根对齐配对（每个 mod 一行）；仅一侧行给出真实行数/ID 数")
+    elif rc == 2:
+        prereq("XML mod 对齐判据的输入", "缺 build/msvc-release 的 xrkit_cli.exe", release)
+    else:
+        fail("XML mod 对齐判据不成立（见上）")
+
+
 def step_winres(release: bool) -> None:
     """Windows 版本资源（VERSIONINFO）：exe 里的元数据必须**非空**，且与 `core::version_string()` 同源。
 
@@ -7162,6 +7194,8 @@ STEPS = [
     ("version-ledger", step_version_ledger),
     # ★★ 2026-10-24（H8，全量审计）：version.json 尾部尾随内容必须判错（走 --version-store 真入口）。
     ("version-json-strict", step_version_json_strict),
+    # ★★ 2026-10-26：XML 对比的 mod 覆盖树对齐（+ 仅一侧行的真实计数）。
+    ("xml-mod-align", step_xml_mod_align),
     # ★★ P17-144（第三方只读审计 C-06）：退出码 3 的双语义（枚举＋冻结＋文案＋黑盒）。
     #   需要 CLI 产物（黑盒那三条）；被 `--only` 过滤时进 UNCOVERED。
     ("cli-exit-codes", step_cli_exit_codes),

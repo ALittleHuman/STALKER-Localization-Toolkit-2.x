@@ -12,6 +12,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QCheckBox>
 #include <QDateTime>
 
 #include <cstdlib>
@@ -233,6 +234,18 @@ XmlPage::XmlPage(QWidget* parent)
     // 10.4：切模式只重建筛选项 + 清空结果（**不重跑 I/O**）
     QObject::connect(mode_combo_, &QComboBox::currentTextChanged, this,
                      [this](const QString&) { set_mode(QString()); });
+    // ★★ 2026-10-26：**mod 覆盖树对齐**。B 侧是 `<mod>/configs/...` 而 A 侧是 `configs/...` 时，
+    //   原样配对是零交集（实测 186 行全判"仅一侧"）。默认开：两侧都从根开始时 key 完全相同，
+    //   对普通目录**行为不变**；只有存在外层 mod 目录时才真正起作用。
+    align_check_ = new QCheckBox(QStringLiteral("mod 目录对齐"));
+    align_check_->setObjectName(QStringLiteral("xml_align_mod"));
+    align_check_->setChecked(true);
+    align_check_->setToolTip(QStringLiteral(
+        "B 侧每个 mod 子目录各自当成一个 gamedata 根来与 A 对齐（<mod>/configs/x ↔ configs/x）；\n"
+        "普通目录不受影响。"));
+    opt_row->addSpacing(xrkit::core::px(12));
+    opt_row->addWidget(align_check_, 0);
+
     QObject::connect(filter_combo_, &QComboBox::currentTextChanged, this,
                      [this](const QString&) { refresh_rows(); });
     // ★★ D2 批：选中回调（1.x `<<TreeviewSelect>>` → `_on_row_select`）＋双击弹窗
@@ -266,6 +279,8 @@ XmlPage::XmlPage(QWidget* parent)
         //   快照下来（worker 里 `current_mode_key()` 会读这个快照，不再碰 `mode_combo_`）。
         //   同时任务跑完（`apply_finish`）再清空，免得下一轮主线程路径读到旧值。
         mode_key_at_task_start_ = mode_combo_->currentData().toString();
+        // ★ 2026-10-26：勾选框也在这里快照（worker 里读控件会被 thread-contract 判红）
+        align_at_task_start_ = align_check_ != nullptr && align_check_->isChecked();
         // ★★ 2026-10-06（审计 3-5）：**起 worker 之前**在主线程同步禁用模式/筛选控件 ——
         //   「比较期间不许切模式/换筛选」这条只在这里生效（worker 那边另有阻塞式排队，
         //   管的是自检直接调 `compare_dirs` 的情形）；收尾在 `apply_finish` 恢复。
@@ -509,6 +524,7 @@ int XmlPage::compare_dirs(const QString& dir_a, const QString& dir_b, const QStr
     const exml::XmlModeSpec* spec_this_round = mode();
     const plugin::CompareModeReg* reg_this_round = mode_reg();
     exml::DirDiffOptions options;
+    options.align_mod_dirs = align_at_task_start_;   // worker 只读快照
     options.dir_a = dir_a.toUtf8().toStdString();
     options.dir_b = dir_b.toUtf8().toStdString();
     options.enc_a = enc_a.toUtf8().toStdString();

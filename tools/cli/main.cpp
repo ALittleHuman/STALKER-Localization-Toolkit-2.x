@@ -4111,6 +4111,9 @@ int run_cli(const std::vector<std::string>& args) {
                 opt.enc_a = operands[++i];
             } else if (operands[i] == "--enc-b" && i + 1 < operands.size()) {
                 opt.enc_b = operands[++i];
+            } else if (operands[i] == "--align-mod-dirs") {
+                // ★ 2026-10-26：B 侧是 mod 覆盖树（`<mod>/configs/...`）时，剥到根再配对
+                opt.align_mod_dirs = true;
             } else {
                 std::cerr << "XMLDIRS error reason=未知参数 " << operands[i] << "\n";
                 return kExitUsage;

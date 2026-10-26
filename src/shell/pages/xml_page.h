@@ -33,6 +33,7 @@
 #include <functional>
 #include <vector>
 
+class QCheckBox;
 class QComboBox;
 class QDialog;
 class QLabel;
@@ -126,6 +127,7 @@ public:
 
     QComboBox* mode_combo() const { return mode_combo_; }
     QComboBox* filter_combo() const { return filter_combo_; }
+    QCheckBox* align_mod_check() const { return align_check_; }
     // ★★ 2026-10-06（审计 3-5）：比较期间"模式/筛选控件"到底禁用没有 —— 判据要读得到
     //   （审计那条判据的后半句是"顺带把比较期间模式/筛选控件按需禁用，消除 results_ 的
     //   主/worker 并发写"）。**只读**：控件不在（构造期）也算"没禁用"。
@@ -197,6 +199,9 @@ private:
     QComboBox* enc_b_combo_ = nullptr;
     QComboBox* mode_combo_ = nullptr;
     QComboBox* filter_combo_ = nullptr;
+    QCheckBox* align_check_ = nullptr;   // mod 覆盖树对齐
+    // ★★ 2026-10-26（THREAD-CONTRACT 判据）：worker 不许碰控件 ⇒ 起线程**之前**把勾选值快照下来
+    bool align_at_task_start_ = true;
     QTreeWidget* result_tree_ = nullptr;
     QWidget* detail_panel_ = nullptr;
     QLabel* detail_head_ = nullptr;
