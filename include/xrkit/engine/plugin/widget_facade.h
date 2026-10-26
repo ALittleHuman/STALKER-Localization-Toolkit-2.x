@@ -316,6 +316,19 @@ struct UiFacade {
     //   理由见那边与 `src/shell/drop_filter.h`）。落点＝树控件本身，回调收本机路径列表。
     std::function<void(UiHandle tree, std::function<void(const std::vector<std::string>&)> on_drop)>
         tree_on_drop;
+
+    // ★★ 2026-10-26（用户：「纯补门面」P2）—— **复杂插件页缺的三件原语**。
+    //   为什么是这三件（一把门面扫下来实测的缺口）：
+    //     · `set_visible`：条件显隐 —— 修前门面**连 hide 都没有**，插件做不了"按状态显示/隐藏"；
+    //     · `destroy`：动态删控件 —— 修前只能"造"，不能"收"（re-build 场景必卡）；
+    //     · `timer`：UI 线程定时回调 —— 修前只能拿 worker 线程硬凑，而 worker 碰控件会被纪律拒。
+    //   三件都**不碰 C ABI**（C 插件那条路已退净），只加插件门面。
+    std::function<void(UiHandle widget, bool visible)> set_visible;
+    // 删控件（`deleteLater`：本轮回合结束才真删 ⇒ 在它自己的回调里删自己也安全）。
+    // 只受理**门面造出来的**句柄；宿主自有句柄（面板根）拒绝，不能替宿主删它的东西。
+    std::function<void(UiHandle widget)> destroy;
+    // 定时回调（毫秒）。生命周期绑在 `parent` 上：页销毁 ⇒ 定时器随父对象一起停。
+    std::function<void(UiHandle parent, int interval_ms, std::function<void()> on_tick)> timer;
 };
 
 // 外壳注入实现（`src/shell/ui_facade_qt.cpp`）。传 nullptr = 撤销（无 GUI 依赖的进程/用例）。

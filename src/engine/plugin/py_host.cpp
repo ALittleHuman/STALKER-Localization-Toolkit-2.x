@@ -2282,6 +2282,34 @@ public:
             facade->set_enabled(handle_of(widget), enabled);
         }
     }
+    // ★★ 2026-10-26：P2 三件原语（条件显隐 / 动态删控件 / UI 线程定时回调）
+    void set_visible(py::object widget, bool visible) const {
+        if (const UiFacade* facade = available("set_visible")) {
+            facade->set_visible(handle_of(widget), visible);
+        }
+    }
+    void destroy(py::object widget) const {
+        if (const UiFacade* facade = available("destroy")) facade->destroy(handle_of(widget));
+    }
+    void timer(py::object parent, int interval_ms, py::object on_tick) const {
+        const UiFacade* facade = available("timer");
+        if (facade == nullptr || on_tick.is_none()) return;
+        if (PyCallable_Check(on_tick.ptr()) == 0) {
+            core::log(core::Level::Warn, "[" + owner_ + "] ui.timer 的 callback 不是可调用对象");
+            return;
+        }
+        py::object kept = on_tick;
+        keepalive()->push_back(kept);
+        std::function<void()> tick = [kept]() {
+            py::gil_scoped_acquire acquire;
+            try {
+                kept();
+            } catch (const py::error_already_set& err) {
+                core::log(core::Level::Warn, std::string("ui.timer 回调异常：") + err.what());
+            }
+        };
+        facade->timer(handle_of(parent), interval_ms, std::move(tick));
+    }
     bool alive(py::object widget) const {
         if (const UiFacade* facade = available("alive")) return facade->alive(handle_of(widget));
         return false;
@@ -3442,6 +3470,11 @@ void ensure_api_module() {
                  py::arg("callback") = py::none())
             // ★★ P17-82：本机文件/目录拖到这棵树上（与 list_on_drop 同一机制）
             .def("tree_on_drop", &PyUi::tree_on_drop, py::arg("tree"),
+                 py::arg("callback") = py::none())
+            // ★★ 2026-10-26：P2 三件原语
+            .def("set_visible", &PyUi::set_visible, py::arg("widget"), py::arg("visible"))
+            .def("destroy", &PyUi::destroy, py::arg("widget"))
+            .def("timer", &PyUi::timer, py::arg("parent"), py::arg("interval_ms"),
                  py::arg("callback") = py::none());
         py::class_<PyPluginApi>(m, "Api")
             .def_property_readonly("plugin_file", &PyPluginApi::owner)

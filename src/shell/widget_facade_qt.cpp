@@ -30,6 +30,7 @@
 #include <functional>
 #include <QCoreApplication>
 #include <QThread>
+#include <QTimer>
 #include <QComboBox>
 #include <QApplication>
 #include <QClipboard>
@@ -1372,6 +1373,47 @@ const plug::UiFacade kQtFacade = {
        （与 `list_on_drop` **同一个机制、同一份过滤器实现**） */
     [](plug::UiHandle tree, std::function<void(const std::vector<std::string>&)> on_drop) {
         set_drag_handler(tree, std::move(on_drop));
+    },
+    // ── ★★ 2026-10-26（用户：「纯补门面」P2）三件原语 ────────────────────
+    /* set_visible：条件显隐 */
+    [](plug::UiHandle widget, bool visible) {
+        if (QWidget* target = unwrap(widget)) target->setVisible(visible);
+    },
+    /* destroy：删控件。只删**门面造出来的**（登记表里有）；宿主句柄一律不受理。
+       先 `hide` + 从布局里摘掉，再 `deleteLater` —— 立刻不可见，但不在本轮回合里析构，
+       于是"在控件自己的回调里把它删掉"也是安全的。 */
+    [](plug::UiHandle widget) {
+        if (widget == nullptr) return;
+        if (handle_registry().find(widget) == handle_registry().end()) {
+            // 宿主自有句柄（面板根）：不受理，也不能替宿主删它的东西。
+            trace_page_event("destroy_refused",
+                             QStringLiteral("handle=%1 reason=host_widget")
+                                 .arg(reinterpret_cast<quintptr>(widget), 0, 16)
+                                 .toStdString());
+            return;
+        }
+        if (QWidget* target = unwrap(widget)) {
+            target->hide();
+            if (QWidget* parent = target->parentWidget()) {
+                if (QLayout* layout = parent->layout()) layout->removeWidget(target);
+            }
+            target->deleteLater();
+        }
+    },
+    /* timer：UI 线程定时回调（生命周期绑 parent） */
+    [](plug::UiHandle parent, int interval_ms, std::function<void()> on_tick) {
+        if (!on_tick) return;
+        QWidget* host = resolve_parent(parent);
+        QObject* owner = host != nullptr ? static_cast<QObject*>(host)
+                                         : static_cast<QObject*>(qApp);
+        if (owner == nullptr) return;
+        auto* box = keep(std::make_unique<ClickBox>(ClickBox{std::move(on_tick)}));
+        auto* timer = new QTimer(owner);
+        timer->setInterval(interval_ms > 0 ? interval_ms : 50);
+        QObject::connect(timer, &QTimer::timeout, timer, [box]() {
+            if (box != nullptr && box->fn) box->fn();
+        });
+        timer->start();
     },
 };
 
