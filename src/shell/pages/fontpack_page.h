@@ -144,6 +144,7 @@ private:
     QLineEdit* out_edit_ = nullptr;
     QLineEdit* pack_edit_ = nullptr;     // IX-Ray 参照包（整包目录）
     QWidget* pack_row_ = nullptr;        // 那一行（位图模式下隐藏）
+    QWidget* scan_row_ = nullptr;       // 「扫描参照包」那一行（IX-Ray 专属）
     QString ixr_pack_at_start_;          // 起 worker 前的快照（worker 不许读控件）
     QComboBox* game_combo_ = nullptr;
     QComboBox* lang_combo_ = nullptr;

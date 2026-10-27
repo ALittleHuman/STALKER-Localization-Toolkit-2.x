@@ -4973,10 +4973,10 @@ int run_cli(const std::vector<std::string>& args) {
                   << " lang=" << m.lang << " lang_from_ltx=" << (m.lang_from_ltx ? 1 : 0)
                   << " config_dir=" << (m.config_dir.empty() ? "-" : m.config_dir)
                   << " font_config=" << (m.font_config.empty() ? "-" : m.font_config)
-                  << " slots=" << m.slots.size() << " ttf=" << m.ttf_count
+                  << " slots=" << m.font_slots.size() << " ttf=" << m.ttf_count
                   << " dds=" << m.dds_count
                   << " text_dir=" << (m.text_dir.empty() ? "-" : m.text_dir) << "\n";
-        for (const auto& slot : m.slots) {
+        for (const auto& slot : m.font_slots) {
             std::cout << "LANGPACK slot section=" << slot.section
                       << " base=" << (slot.base.empty() ? "-" : slot.base)
                       << " name=" << (slot.has_name ? slot.name : "-")

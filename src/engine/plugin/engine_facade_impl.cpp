@@ -1113,8 +1113,8 @@ const EngineFacade kFontFacade = {
         out.ttf = model.ttf_count;
         out.dds = model.dds_count;
         out.evidence = model.evidence;
-        out.slots.reserve(model.slots.size());
-        for (const auto& slot : model.slots) {
+        out.slots.reserve(model.font_slots.size());
+        for (const auto& slot : model.font_slots) {
             LangPackSlotInfo info;
             info.section = slot.section;
             info.base = slot.base;

@@ -298,6 +298,9 @@ XmlPage::XmlPage(QWidget* parent)
     // 路径变化 ⇒ 重新判断"是否一侧为空"
     QObject::connect(dir_a_edit_, &QLineEdit::editingFinished, this, [this] { update_extract_mode(); });
     QObject::connect(dir_b_edit_, &QLineEdit::editingFinished, this, [this] { update_extract_mode(); });
+    // 浏览按钮是程序化 setText（不触发 editingFinished）⇒ 再挂 textChanged
+    QObject::connect(dir_a_edit_, &QLineEdit::textChanged, this, [this](const QString&) { update_extract_mode(); });
+    QObject::connect(dir_b_edit_, &QLineEdit::textChanged, this, [this](const QString&) { update_extract_mode(); });
 
     QObject::connect(filter_combo_, &QComboBox::currentTextChanged, this,
                      [this](const QString&) { refresh_rows(); });
@@ -1249,6 +1252,8 @@ void XmlPage::update_extract_mode() {
     bool show = false;
     if (!a.isEmpty() && !b.isEmpty()) {
         const auto empty_of = [](const QString& path) {
+            // 目录**不存在**也按空处理（用户常先把"目标"目录填进去，其实还没建）
+            if (!QDir(path).exists()) return true;
             xrkit::engine::fs::WalkReport report;
             const std::string root = path.toUtf8().toStdString();
             const auto items = xrkit::engine::fs::collect_tree(root, &report);
@@ -1263,12 +1268,27 @@ void XmlPage::update_extract_mode() {
         show = (empty_a != empty_b);   // 恰好一边为空
     }
     extract_mode_ = show;
+    // ★★ 2026-10-27（用户：「下拉菜单也没有显示文本提取相关内容」）：
+    //   一侧为空 ⇒ 模式下拉**真的多出第三项**「提取文本」并自动选中；恢复后移除。
+    if (mode_combo_ != nullptr) {
+        const int existing = mode_combo_->findData(QStringLiteral("extract"));
+        mode_combo_->blockSignals(true);
+        if (show && existing < 0) {
+            mode_combo_->addItem(QStringLiteral("提取文本"), QStringLiteral("extract"));
+            mode_combo_->setCurrentIndex(mode_combo_->findData(QStringLiteral("extract")));
+        } else if (!show && existing >= 0) {
+            mode_combo_->removeItem(existing);
+            if (mode_combo_->count() > 0) mode_combo_->setCurrentIndex(0);
+        }
+        mode_combo_->blockSignals(false);
+    }
     if (extract_wrap_ != nullptr) extract_wrap_->setVisible(show);
     if (extract_button_ != nullptr) extract_button_->setVisible(show);
     if (start_button_ != nullptr) start_button_->setVisible(!show);
     if (filter_combo_ != nullptr) filter_combo_->setVisible(!show);
     if (show && status_ != nullptr) {
-        status_->setText(QStringLiteral("一侧为空：用「提取文本」产出标准语言包（两个产物至少勾一个）"));
+        status_->setText(QStringLiteral("一侧为空：已切到「提取文本」（模式下拉第三项）——"
+                                        "产出标准语言包，两个产物至少勾一个"));
     }
 }
 

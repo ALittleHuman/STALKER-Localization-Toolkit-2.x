@@ -4,6 +4,7 @@
 
 #include "xrkit/core/theme.h"
 #include "xrkit/engine/font/ixr.h"
+#include "xrkit/engine/font/langpack.h"
 #include "xrkit/engine/font/metrics.h"
 #include "xrkit/engine/font/system_dirs.h"
 
@@ -146,6 +147,45 @@ FontPackPage::FontPackPage(QWidget* parent)
         row_layout->addWidget(pack_browse, 0);
         pack_row_ = pack_row;
         body_layout()->addWidget(pack_row);
+
+        // ★★ 2026-10-27（用户：「那扫描生成的怎么弄？」）：**扫描参照包** ——
+        //   与 CLI `--langpack-scan` / 插件页同一个引擎实现（`scan_lang_pack`）。
+        //   扫描结果直接写在状态行：profile / lang / 段数 / ttf 数（缺什么也写）。
+        auto* scan_row = new QWidget;
+        scan_row->setObjectName(QStringLiteral("font_ixr_scan_row"));
+        auto* scan_layout = new QHBoxLayout(scan_row);
+        scan_layout->setContentsMargins(0, 0, 0, 0);
+        auto* scan_button = new QPushButton(QStringLiteral("扫描参照包"));
+        scan_button->setObjectName(QStringLiteral("font_ixr_scan"));
+        QObject::connect(scan_button, &QPushButton::clicked, this, [this] {
+            const QString pack = pack_edit_ != nullptr ? pack_edit_->text().trimmed() : QString();
+            if (pack.isEmpty()) {
+                if (result_label_ != nullptr) result_label_->setText(QStringLiteral("先选「参照包」目录"));
+                return;
+            }
+            const engine::font::LangPackModel model =
+                engine::font::scan_lang_pack(pack.toUtf8().toStdString());
+            QString text = QStringLiteral("扫描：profile=%1 lang=%2 段=%3 ttf=%4")
+                               .arg(QString::fromStdString(engine::font::profile_name(model.profile)))
+                               .arg(QString::fromStdString(model.lang))
+                               .arg(model.font_slots.size())
+                               .arg(model.ttf_count);
+            for (const std::string& line : model.evidence) {
+                text += QStringLiteral("｜") + QString::fromStdString(line);
+            }
+            if (state_label_ != nullptr) state_label_->setText(text);
+        });
+        scan_layout->addWidget(scan_button, 0);
+        scan_layout->addStretch(1);
+        scan_row_ = scan_row;
+        body_layout()->addWidget(scan_row);
+        scan_row->setVisible(false);
+        QObject::connect(game_combo_, &QComboBox::currentTextChanged, this,
+                         [this](const QString&) {
+                             const bool ixr = game_combo_->currentData().toString() ==
+                                              QStringLiteral("IX-Ray");
+                             if (scan_row_ != nullptr) scan_row_->setVisible(ixr);
+                         });
         pack_row->setVisible(false);
         QObject::connect(game_combo_, &QComboBox::currentTextChanged, this,
                          [this](const QString&) {

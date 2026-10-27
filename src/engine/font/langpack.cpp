@@ -200,7 +200,7 @@ LangPackModel scan_lang_pack(const std::string& root) {
         slot.size = size.empty() ? 0 : std::atoi(size.c_str());
         slot.opentype = kv_of(sec, "opentype");
         slot.shader = kv_of(sec, "shader");
-        model.slots.push_back(std::move(slot));
+        model.font_slots.push_back(std::move(slot));
     }
 
     // ⑤ 资源证据：矢量 fonts/<lang>/*.ttf vs 位图 textures/ui/ui_font_*.dds
@@ -216,13 +216,13 @@ LangPackModel scan_lang_pack(const std::string& root) {
     // ⑦ 判定（顺序写死：矢量优先；位图内部按 shader，再按配置目录）
     bool any_name = false;
     std::string shader_sample;
-    for (const auto& slot : model.slots) {
+    for (const auto& slot : model.font_slots) {
         if (slot.has_name) any_name = true;
         if (shader_sample.empty() && !slot.shader.empty()) shader_sample = lower(slot.shader);
     }
     if (any_name && model.ttf_count > 0) {
         model.profile = PackProfile::IxRay;
-        model.evidence.push_back("fonts.ltx 段里有 name=" + model.slots.front().name +
+        model.evidence.push_back("fonts.ltx 段里有 name=" + model.font_slots.front().name +
                                  "，且 fonts/" + model.lang + "/ 有 " +
                                  std::to_string(model.ttf_count) + " 个 .ttf ⇒ 矢量（IX-Ray）");
         if (model.dds_count > 0) {

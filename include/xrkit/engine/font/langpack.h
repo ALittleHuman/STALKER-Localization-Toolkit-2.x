@@ -46,7 +46,7 @@ struct LangPackModel {
     std::string ttf_dir;      // 相对 root 的 fonts/<lang>（存在时）
     int ttf_count = 0;
     int dds_count = 0;
-    std::vector<LangPackSlot> slots;
+    std::vector<LangPackSlot> font_slots;  // ★ 不叫 slots：Qt 里那是宏
     std::vector<std::string> evidence;  // 判定依据/缺什么（零静默）
 };
 
