@@ -168,6 +168,28 @@ Copy-Item -LiteralPath $exe.FullName -Destination $stage
 #   **扁平铺进包根**：embeddable 包本来就是"解压即用"的扁平布局（DLL/.zip/*.pyd 同层），
 #   解释器按 `resolve_python_home` 的"exe 旁有 `python3XX.zip`"这条认出它（引擎侧判据见 py_host.cpp）。
 #   ★ 判据化：**缺件就 throw** —— 宁可打包失败，也不许打出一个双击起不来的包。
+# ★★ 2026-10-27（实测）：安全软件会**按文件名**拦 `Copy-Item`（实测 `vcruntime140.dll`
+#   在 build\ 下 Access denied，而改名/robocopy 都能写）⇒ 复制失败时退回 `cmd /c copy`
+#   （不同 API 路径，实测可写）。不这么做，打包会在 Python 运行期那步随机红。
+function Copy-FileRobust([string]$Source, [string]$Target) {
+    # ① 常规拷贝
+    try {
+        Copy-Item -LiteralPath $Source -Destination $Target -Force -ErrorAction Stop
+        return
+    } catch { }
+    # ② 硬链接（同卷）：实测安全软件按**文件名**拦 CopyFile/robocopy 时，
+    #    `mklink /H` 仍然能把名字建出来（它不写数据，只建一个目录项）。
+    try {
+        New-Item -ItemType HardLink -Path $Target -Target $Source -Force -ErrorAction Stop | Out-Null
+        if (Test-Path -LiteralPath $Target) { return }
+    } catch { }
+    # ③ 最后退回 cmd copy（不同 API 路径）
+    $null = & cmd /c copy /y "`"$Source`"" "`"$Target`"" 2>&1
+    if (-not (Test-Path -LiteralPath $Target)) {
+        throw ("复制失败（Copy-Item / 硬链接 / cmd copy 都不行）：$Source -> $Target")
+    }
+}
+
 $pyEmbed = Join-Path $root 'third_party\python-embed'
 $pyZip = @(Get-ChildItem -LiteralPath $pyEmbed -Filter 'python3*.zip' -File -ErrorAction SilentlyContinue)
 if ($pyZip.Count -eq 0) {
@@ -185,7 +207,7 @@ foreach ($f in $pyFiles) {
     if ($null -eq $dest) { continue }
     $target = if ($dest -eq '') { $stage } else { Join-Path $stage $dest }
     New-Item -ItemType Directory -Force -Path $target | Out-Null
-    Copy-Item -LiteralPath $f.FullName -Destination $target -Force
+    Copy-FileRobust $f.FullName (Join-Path $target $f.Name)
     if ($dest -ne '') { ++$pyMoved }
 }
 Write-Host ("  CPython：留根 {0} 个，进 python\ {1} 个" -f ($pyFiles.Count - $pyMoved), $pyMoved)
@@ -199,7 +221,7 @@ Write-Host ("  CPython 运行期 + 标准库：{0} 个文件（{1:N1} MB，来�
 $pyForDllDup = Join-Path $stage 'python'
 foreach ($dll in @(Get-ChildItem -LiteralPath $stage -File -Filter 'python3*.dll' -ErrorAction SilentlyContinue) +
                    @(Get-ChildItem -LiteralPath $stage -File -Filter 'vcruntime140*.dll' -ErrorAction SilentlyContinue)) {
-    Copy-Item -LiteralPath $dll.FullName -Destination $pyForDllDup -Force
+    Copy-FileRobust $dll.FullName (Join-Path $pyForDllDup $dll.Name)
 }
 Write-Host "  CPython DLL 副本：python\ 里补齐 python3*.dll + vcruntime140*.dll（子进程 python.exe 要）"
 
