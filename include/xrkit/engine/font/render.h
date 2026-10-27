@@ -71,4 +71,22 @@ std::vector<uint32_t> font_missing_chars(const std::string& font_path,
 std::vector<uint32_t> font_unrenderable(const std::string& font_path,
                                         const std::vector<uint32_t>& chars);
 
+// ── ★★ 2026-10-26：文本样张渲染（给插件页的「原字体 vs 候选」并排预览）────────
+//
+// 为什么放在引擎层：插件没有光栅能力（无 PIL/无 Qt），而引擎本来就有 FreeType 与
+// `raster_glyph` 的**唯一一份**口径（Pillow 布局盒）。这里只把它拼成一张图：
+//   · 画布 = 一行字（`\n` 只算缺字，不换行 —— 预览是单行样张）；
+//   · 输出 **PPM(P6)**（Qt `QPixmap::load` 原生支持；不引入 PNG/zlib 依赖）；
+//   · 缺字（`FT_Get_Char_Index == 0` 或画不出墨迹）**计数返回**（零静默）。
+struct TextSample {
+    bool ok = false;
+    int width = 0;
+    int height = 0;
+    int missing = 0;   // 画不出来的码位数（不是"字体里有没有"——.notdef 空白也算缺）
+    std::string error;
+};
+
+TextSample render_text_sample(const std::string& font_path, const std::string& utf8_text,
+                              int pixel_size, const std::string& out_ppm);
+
 }  // namespace xrkit::engine::font

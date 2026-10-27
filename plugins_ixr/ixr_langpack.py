@@ -129,6 +129,30 @@ def register(api):
 
         ui.button(parent, "给选中段选字体…", on_pick_slot_font)
 
+        # ── 预览（P3）：引擎出样张 PPM → ui.image 显示；换新图先 destroy 旧控件 ──
+        preview = {"widget": None}
+
+        def do_preview():
+            font = ""
+            for path in state["plan"].values():
+                font = path
+                break
+            if not font:
+                ui.log_view_append(log, "先给一个段选字体（预览用它）")
+                return
+            out = os.path.join(api.plugin_dir, "_lib", "preview.ppm")
+            sample = api.engine.font_sample(font, "原字体 vs 候选：你好 ABC Привет", 28, out)
+            if not sample or not sample.get("ok"):
+                ui.log_view_append(log, "预览失败：%s" % (sample or {}).get("error", "?"))
+                return
+            if preview["widget"] is not None:
+                ui.destroy(preview["widget"])
+            preview["widget"] = ui.image(parent, out, 0, 0)
+            ui.log_view_append(log, "预览：%dx%d，缺字 %d"
+                               % (sample["width"], sample["height"], sample["missing"]))
+
+        ui.button(parent, "预览样张", do_preview)
+
         out_entry = ui.entry(parent, host.pref_get(SECTION, "out", ""), 60)
         ui.label(parent, "输出目录")
 

@@ -1131,6 +1131,20 @@ public:
     explicit PyEngine(std::string owner) : owner_(std::move(owner)) {}
 
     // ★★ 2026-10-26：语言包识别（IX-Ray「指定」模式的底座）—— 与 CLI 同一份引擎实现
+    py::object font_sample(const std::string& font_path, const std::string& text,
+                           int pixel_size, const std::string& out) const {
+        const EngineFacade* facade = available("font_sample");
+        if (facade == nullptr) return py::none();
+        const FontSampleResult r = facade->font_sample(font_path, text, pixel_size, out);
+        py::dict d;
+        d["ok"] = r.ok;
+        d["error"] = r.error;
+        d["width"] = r.width;
+        d["height"] = r.height;
+        d["missing"] = r.missing;
+        d["out"] = r.out;
+        return d;
+    }
     py::object langpack_scan(const std::string& root) const {
         const EngineFacade* facade = available("langpack_scan");
         if (facade == nullptr) return py::none();
@@ -3209,6 +3223,9 @@ void ensure_api_module() {
         py::class_<PyEngine>(m, "Engine")
             // ★★ 2026-10-26：语言包识别（只读；与 CLI --langpack-scan 同一份引擎实现）
             .def("langpack_scan", &PyEngine::langpack_scan, py::arg("root"))
+            // ★★ 2026-10-26（P3 预览）：文本样张 → PPM（配 `ui.image` 显示）
+            .def("font_sample", &PyEngine::font_sample, py::arg("font_path"), py::arg("text"),
+                 py::arg("pixel_size"), py::arg("out"))
             .def("font_check", &PyEngine::font_check, py::arg("font_path"))
             .def("font_pack", &PyEngine::font_pack, py::arg("options"))
             .def("font_state_marks", &PyEngine::font_state_marks)

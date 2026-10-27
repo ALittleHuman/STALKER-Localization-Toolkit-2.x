@@ -13,6 +13,7 @@
 #include "xrkit/engine/plugin/engine_facade.h"
 
 #include "xrkit/engine/font/langpack.h"
+#include "xrkit/engine/font/render.h"
 
 #include "xrkit/engine/font/metrics.h"
 #include "xrkit/engine/font/package.h"
@@ -1124,6 +1125,20 @@ const EngineFacade kFontFacade = {
             info.has_name = slot.has_name;
             out.slots.push_back(std::move(info));
         }
+        return out;
+    },
+    /* font_sample：文本样张（预览）。引擎 `render_text_sample` 的唯一一份实现。 */
+    [](const std::string& font_path, const std::string& text, int pixel_size,
+       const std::string& out_path) {
+        FontSampleResult out;
+        const efont::TextSample sample =
+            efont::render_text_sample(font_path, text, pixel_size, out_path);
+        out.ok = sample.ok;
+        out.error = sample.error;
+        out.width = sample.width;
+        out.height = sample.height;
+        out.missing = sample.missing;
+        out.out = out_path;
         return out;
     },
 };

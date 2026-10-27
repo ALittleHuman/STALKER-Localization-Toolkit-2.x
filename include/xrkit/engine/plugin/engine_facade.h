@@ -32,6 +32,16 @@ namespace xrkit::plugin {
 // ── 值类型（Python 侧对应 dict / list）──────────────────────────────────────
 // ★★ 2026-10-26（用户：「IX-Ray 必须施工」）：语言包识别的门面值类型。
 //   语义与引擎 `engine::font::scan_lang_pack()` 一一对应（门面不写业务逻辑，只做转换）。
+// ★★ 2026-10-26（P3 预览）：文本样张结果（引擎 `render_text_sample` 的转发）
+struct FontSampleResult {
+    bool ok = false;
+    std::string error;
+    int width = 0;
+    int height = 0;
+    int missing = 0;
+    std::string out;
+};
+
 struct LangPackSlotInfo {
     std::string section;
     std::string base;
@@ -800,6 +810,10 @@ struct EngineFacade {
     //   与 CLI 的 `--langpack-scan` 走**同一个**引擎实现（`engine::font::scan_lang_pack`）
     //   ⇒ 插件页与 CLI/判据看到的是同一份结论，不会分叉。
     std::function<LangPackScanResult(const std::string& root)> langpack_scan;
+    // ★★ 2026-10-26（P3 预览）：文本样张 → PPM（插件页用 `ui.image` 显示；缺字计数返回）
+    std::function<FontSampleResult(const std::string& font_path, const std::string& text,
+                                   int pixel_size, const std::string& out)>
+        font_sample;
 };
 
 // 外壳注入实现（`src/shell/engine_facade_impl.cpp`）。传 nullptr = 撤销。

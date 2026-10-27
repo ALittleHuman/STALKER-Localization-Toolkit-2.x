@@ -63,6 +63,7 @@ const char* const kMethodNames[] = {
     "patch_identify", "patch_apply",
     // ★★ 2026-10-26：语言包识别（IX-Ray「指定」模式的底座）
     "langpack_scan",
+    "font_sample",
 };
 
 bool has_impl(const EngineFacade& facade, const std::string& name) {
@@ -142,6 +143,7 @@ bool has_impl(const EngineFacade& facade, const std::string& name) {
     if (name == "patch_identify") return static_cast<bool>(facade.patch_identify);
     if (name == "patch_apply") return static_cast<bool>(facade.patch_apply);
     if (name == "langpack_scan") return static_cast<bool>(facade.langpack_scan);
+    if (name == "font_sample") return static_cast<bool>(facade.font_sample);
     return false;
 }
 

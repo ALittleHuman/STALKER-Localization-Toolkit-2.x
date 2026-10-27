@@ -604,3 +604,132 @@ bool render_font(const std::string& font_path, const std::vector<uint32_t>& char
 }
 
 }  // namespace xrkit::engine::font
+
+
+namespace {
+// 本 TU 的 UTF-8 解码（与 sample_cps 同一读法；预览文本允许任意字符）
+std::vector<uint32_t> decode_utf8_text(const std::string& text) {
+    std::vector<uint32_t> out;
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(text.data());
+    const size_t n = text.size();
+    size_t i = 0;
+    while (i < n) {
+        const uint8_t b = p[i];
+        uint32_t cp = 0;
+        size_t len = 1;
+        if (b < 0x80) {
+            cp = b;
+        } else if ((b & 0xE0) == 0xC0) {
+            cp = b & 0x1F; len = 2;
+        } else if ((b & 0xF0) == 0xE0) {
+            cp = b & 0x0F; len = 3;
+        } else {
+            cp = b & 0x07; len = 4;
+        }
+        for (size_t k = 1; k < len && i + k < n; ++k) cp = (cp << 6) | (p[i + k] & 0x3F);
+        out.push_back(cp);
+        i += len;
+    }
+    return out;
+}
+}  // namespace
+
+namespace xrkit::engine::font {
+
+// ── ★★ 2026-10-26：文本样张（预览用）。复用本文件的 `raster_glyph` —— 口径只一份。
+TextSample render_text_sample(const std::string& font_path, const std::string& utf8_text,
+                              int pixel_size, const std::string& out_ppm) {
+    TextSample out;
+    if (pixel_size <= 4) {
+        out.error = "字号太小";
+        return out;
+    }
+    FT_Library lib = nullptr;
+    if (FT_Init_FreeType(&lib) != 0) {
+        out.error = "FreeType 起不来";
+        return out;
+    }
+    struct LibGuard {
+        FT_Library lib;
+        ~LibGuard() { if (lib) FT_Done_FreeType(lib); }
+    } guard{lib};
+    FT_Face face = nullptr;
+    if (FT_New_Face(lib, font_path.c_str(), 0, &face) != 0) {
+        out.error = "字体打不开";
+        return out;
+    }
+    struct FaceGuard {
+        FT_Face face;
+        ~FaceGuard() { if (face) FT_Done_Face(face); }
+    } face_guard{face};
+    if (FT_Set_Pixel_Sizes(face, 0, static_cast<FT_UInt>(pixel_size)) != 0) {
+        out.error = "字号设置失败";
+        return out;
+    }
+
+    // 先量：一次遍历拿宽度与缺字
+    std::vector<uint32_t> cps = decode_utf8_text(utf8_text);
+    struct Cell { uint32_t cp; int advance; int pen_x; };
+    std::vector<Cell> cells;
+    int pen = 0;
+    Raster probe;
+    measure_asc(face, probe);
+    const int asc = probe.asc_px;
+    const int desc = static_cast<int>((face->size->metrics.descender + 32) >> 6);
+    for (uint32_t cp : cps) {
+        FT_UInt index = FT_Get_Char_Index(face, cp);
+        Raster r;
+        raster_glyph(face, index, r);
+        // ★ 只有 `index == 0`（字体里根本没有这个码位）才算缺字；
+        //   空格之类本来就没墨迹，不能算缺（修前把空格记成 1 个缺字 —— 假红）。
+        if (index == 0) ++out.missing;
+        int advance = r.advance >> 6;
+        if (advance <= 0) advance = pixel_size / 2 + 1;
+        cells.push_back({cp, advance, pen});
+        pen += advance;
+    }
+    const int pad = 6;
+    out.width = pen + pad * 2;
+    out.height = (asc - desc) + pad * 2;
+    if (out.width <= pad * 2 || out.height <= pad * 2) {
+        out.error = "空文本";
+        return out;
+    }
+    std::vector<uint8_t> canvas(static_cast<size_t>(out.width) * out.height * 3, 0x10);
+
+    for (const Cell& cell : cells) {
+        Raster r;
+        raster_glyph(face, FT_Get_Char_Index(face, cell.cp), r);
+        if (!r.has_ink) continue;
+        // 墨迹画布 r 的 y=box_y0 对应"ascent 线以上 box_y0 像素" ⇒ 贴到 pen_y = asc - box_y0
+        const int pen_y = pad + asc - r.box_y0;
+        for (int y = 0; y < r.canvas_h; ++y) {
+            const uint8_t* row = r.px.data() + static_cast<size_t>(y) * r.canvas_w;
+            const int ty = pen_y + y;
+            if (ty < 0 || ty >= out.height) continue;
+            for (int x = 0; x < r.canvas_w; ++x) {
+                const int tx = pad + cell.pen_x + x;
+                if (tx < 0 || tx >= out.width) continue;
+                const uint8_t a = row[x];
+                if (a == 0) continue;
+                uint8_t* dst = canvas.data() + (static_cast<size_t>(ty) * out.width + tx) * 3;
+                for (int ch = 0; ch < 3; ++ch) {
+                    dst[ch] = static_cast<uint8_t>((dst[ch] * (255 - a) + 235 * a) / 255);
+                }
+            }
+        }
+    }
+
+    std::ofstream file(core::path_from_utf8(out_ppm), std::ios::binary | std::ios::trunc);
+    if (!file) {
+        out.error = "写不出文件";
+        return out;
+    }
+    file << "P6\n" << out.width << " " << out.height << "\n255\n";
+    file.write(reinterpret_cast<const char*>(canvas.data()),
+               static_cast<std::streamsize>(canvas.size()));
+    out.ok = static_cast<bool>(file);
+    if (!out.ok) out.error = "写入失败";
+    return out;
+}
+}  // namespace xrkit::engine::font

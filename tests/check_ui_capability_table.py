@@ -240,6 +240,8 @@ EXPECT_ENGINE = {
     # ★★ 2026-10-26（IX-Ray 第一刀 → 插件可用）：语言包识别。
     #    与 CLI `--langpack-scan` **同一份引擎实现**（插件/CLI/判据不会分叉）。
     "langpack_scan": "★语言包四档识别（profile/lang/槽位/资源；只读；IX-Ray「指定」模式的底座）",
+    # ★★ 2026-10-26（P3 预览）：文本样张 —— 插件没有光栅能力，预览必须走引擎。
+    "font_sample": "★文本样张（PPM；缺字计数）—— 配 ui.image 做「原字体 vs 候选」并排预览",
 }
 # ★★ P7b：**宿主服务门面**（`api.host.*`）—— 宿主替插件办的杂事（样板页 fontpack 真的要用）
 EXPECT_HOST = {

@@ -213,6 +213,7 @@ void print_usage() {
            "                  批量编码转换（与内置 convert 页同一个引擎实现；判据对拍用它）\n"
            "  --build-font-pack <SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录>\n"
            "  --langpack-scan <语言包目录>      只读识别：profile/lang/槽位/资源（IX-Ray 生成器「指定」模式的底座）\n"
+           "  --font-sample <字体> <文本> <字号> <out.ppm>   文本样张（预览用；缺字计数）\n"
            "                    [--suffix s] [--offset n] [--no-full-cyrillic]\n"
            "                                              出整棵 gamedata 汉化包（与 1.x 对拍）\n"
            // ★★ 2026-10-05（小件 ①）：`--build-package` **实现早已存在**（`tools/cli/build_cmd.cpp`，
@@ -4821,6 +4822,23 @@ int run_cli(const std::vector<std::string>& args) {
                   << " failed=" << outcome.failed << " backed_up=" << outcome.backed_up
                   << " exit=" << outcome.exit_code << "\n";
         return outcome.exit_code == 0 ? kExitOk : 1;
+    }
+
+    if (action == "--font-sample") {
+        if (operands.size() < 4) {
+            std::cerr << "SAMPLE error reason=用法：--font-sample <字体> <文本> <字号> <out.ppm>\n";
+            return kExitUsage;
+        }
+        const int px = std::atoi(operands[2].c_str());
+        const xrkit::engine::font::TextSample s = xrkit::engine::font::render_text_sample(
+            operands[0], operands[1], px, operands[3]);
+        if (!s.ok) {
+            std::cout << "SAMPLE error reason=" << s.error << "\n";
+            return kExitFail;
+        }
+        std::cout << "SAMPLE ok width=" << s.width << " height=" << s.height
+                  << " missing=" << s.missing << " out=" << operands[3] << "\n";
+        return kExitOk;
     }
 
     // 语言包识别（只读）：IX-Ray 生成器「指定」模式的底座。

@@ -3383,6 +3383,32 @@ def step_bench(release: bool) -> None:
         fail("bench 超出数量级上界（见上）")
 
 
+def step_font_sample(release: bool) -> None:
+    """文本样张（`--font-sample`）：预览的**唯一一份**光栅口径（P3）。
+
+    判据 = `tests/check_font_sample.py`：PPM 结构 + 墨迹 + 缺字口径（空格不算缺）+
+    坏字体退 1 + 字号 0 不崩。外部前提（系统字体）缺失 ⇒ 退 2。
+    """
+    say("[?] 文本样张（--font-sample：PPM / 缺字口径 / 零静默）")
+    script = ROOT / "tests" / "check_font_sample.py"
+    if not require_repo_file(script, "文本样张判据脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("FONT-SAMPLE") or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("文本样张：PPM/墨迹/缺字口径/零静默 全过")
+    elif rc == 2:
+        prereq("系统字体（arial / NotoSansSC）", "缺样本（见上）", release)
+    else:
+        fail("文本样张判据不通过（见上）")
+
+
 def step_ixr_plugin(release: bool) -> None:
     """IX-Ray 插件（真插件，不是内置页）：生成器判据 + 插件无头装载。
 
@@ -7518,6 +7544,8 @@ STEPS = [
     #   排在 bench 之后（要 CLI 产物；不需要外壳）。
     ("langpack-scan", step_langpack_scan),
     # ★★ 2026-10-26：IX-Ray 插件（真插件）—— 生成器 + 无头装载一根链。
+    # ★★ 2026-10-26（P3 预览）：文本样张（引擎唯一光栅口径）
+    ("font-sample", step_font_sample),
     ("ixr-plugin", step_ixr_plugin),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
