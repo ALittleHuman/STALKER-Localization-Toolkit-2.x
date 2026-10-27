@@ -460,6 +460,12 @@ def audit_package(pkg: Path) -> None:
     problems = release_package_problems(marker, top_files, fixture_files)
     check(not problems, "产物 %s：夹具不进发行口径包（ALPHA/BETA 走 `_fixtures\\`）" % rel,
           "\n      ".join(problems))
+    # ★★ 2026-10-27（用户）：「这些插件如果没用，就可以删掉了」⇒ **开发版包内也不带夹具**
+    if marker not in RELEASE_MARKERS:
+        check(not top_files and not fixture_files,
+              "产物 %s：开发版包内也不带插件夹具（夹具只留在仓库）" % rel,
+              "顶层 %s / `_fixtures` %s" % (top_files, fixture_files))
+
 
     exe = pkg / "xrkit_app.exe"
     if not exe.is_file():
@@ -541,20 +547,20 @@ def audit_package(pkg: Path) -> None:
                   "产物 %s（默认形态）：**默认可见页＝六个内置页**（逐名同序）" % rel,
                   "期望 %s，实得 %s" % (BUILTIN_IDS, ids))
 
-        # ── ④ 显式把 `_fixtures\` 抬到顶层再跑一次（同机制：计数与"插件页生效"同一次运行）──
-        fixture_dir = work / "plugins" / "_fixtures"
-        if not fixture_dir.is_dir():
-            check(False, "产物 %s：`plugins\\_fixtures\\` 存在（④ 的显式装载要有东西可抬）" % rel)
-            return
+        # ── ④ 从**仓库**把夹具抬到包副本的 plugins/ 再跑一次 ──────────────
+        # ★★ 2026-10-27（用户）：「这些插件如果没用，就可以删掉了」⇒ 包里不再带夹具；
+        #   但"插件页真的生效"这条判据不能丢 ⇒ 抬的来源改成仓库 `plugins/` + `hello.py`。
         lifted = []
         _t_lift = time.time()
-        # ★ 数量必须在**搬之前**数（我第一版放在搬之后 ⇒ 目录已空 ⇒ 恒 0 ⇒ 假红）
-        fixture_total = len([p for p in fixture_dir.glob("*") if p.is_file()])
-        for item in sorted(fixture_dir.glob("*")):
-            if item.is_file():
-                target = work / "plugins" / item.name
-                shutil.move(str(item), str(target))
-                lifted.append(item.name)
+        fixture_total = len(FIXTURE_PAGES)
+        (work / "plugins").mkdir(parents=True, exist_ok=True)
+        for rel_fixture in FIXTURE_PAGES:
+            src_fixture = ROOT / rel_fixture
+            if not src_fixture.is_file():
+                check(False, "仓库夹具缺失：%s" % rel_fixture)
+                continue
+            shutil.copy2(src_fixture, work / "plugins" / src_fixture.name)
+            lifted.append(src_fixture.name)
         lift_seconds = time.time() - _t_lift
         say("  ④ 显式抬起 %d/%d 个夹具到顶层（%.2fs）：%s"
             % (len(lifted), fixture_total, lift_seconds, ", ".join(lifted)))

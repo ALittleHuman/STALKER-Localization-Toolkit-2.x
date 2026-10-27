@@ -61,30 +61,33 @@ FIXTURE_DROP_RE = re.compile(
 
 
 def audit_package(source: str, expected: list) -> list:
+    """2026-10-27 口径（用户：「这些插件如果没用，就可以删掉了」）：
+      · 包里**不再带夹具** ⇒ package.ps1 里不许再出现 `plugins\_fixtures` 落点、
+        也不许 `-Destination $pluginDrop` 往 stage 拷；
+      · 但"包内 exe 能加载 .py"仍要真验 ⇒ 显式清单（7 枚页 + hello.py）必须还在，
+        且要拷到**包外**临时目录（`$plugTmp`）。
+    """
     problems = []
     if ".py" not in source:
-        problems.append("package.ps1 里看不到任何 `.py` —— 随包插件那一段没了？")
+        problems.append("package.ps1 里看不到任何 `.py` —— 插件链自检那一段没了？")
     if "plugins" not in source:
         problems.append("package.ps1 里看不到 `plugins` 目录")
     listed = quoted_names(source)
     missing = [n for n in expected if n not in listed]
     if missing:
         problems.append("package.ps1 的显式清单里缺：%s" % missing)
-    # ② 解析必须要求新格式
     for token in ("个文件", "个 dll", "个 py"):
         if token not in source:
             problems.append("package.ps1 的解析里看不到 `%s` —— 还在按旧格式（只数 dll）判？" % token)
-    # ④（P17-81）随包夹具的落点必须是子目录 `plugins\_fixtures\`
-    drop = FIXTURE_DROP_RE.search(source)
-    if drop is None:
-        problems.append("package.ps1 里没有把随包夹具收口到 `plugins\\_fixtures\\` 的赋值行"
-                        "（形如 `$pluginDrop = Join-Path $stage 'plugins\\_fixtures'`）—— "
-                        "夹具落回顶层就会被加载器扫到（P17-78：验收物 ≠ 交付物）")
-    else:
-        target = "-Destination $%s" % drop.group(1)
-        if target not in source:
-            problems.append("package.ps1 的拷贝目标没有用那个夹具落点变量（找不到 `%s`）—— "
-                            "落点变量没人用＝夹具还在往别处拷" % target)
+    # 新口径：包里不许再带夹具
+    if "_fixtures" in source:
+        problems.append("package.ps1 里仍有 `_fixtures` —— 2026-10-27 起夹具不随包（只留在仓库）")
+    if "-Destination $pluginDrop" in source:
+        problems.append("package.ps1 仍把夹具拷到 stage 的 `$pluginDrop`（包里会带上夹具）")
+    # 插件链自检必须真跑一次：从仓库拷到**包外**临时目录
+    if not re.search(r"Copy-Item[^\n]*-Destination \$plugTmp", source):
+        problems.append("package.ps1 没有把仓库夹具拷到包外临时目录（`-Destination $plugTmp`）—— "
+                        "包内 python 链就没被真验")
     return problems
 
 
@@ -118,8 +121,8 @@ def audit_smoke(source: str) -> list:
 
 def selfcheck():
     good_pkg = ("$stage = Join-Path $root 'build\\package_stage'\n"
-                "$pluginDrop = Join-Path $stage 'plugins\\_fixtures'\n"
-                "Copy-Item -LiteralPath $srcPlugin -Destination $pluginDrop\n"
+                "$plugTmp = Join-Path $root 'build\\_pyplug_check'\n"
+                "Copy-Item -LiteralPath $srcPath -Destination $plugTmp\n"
                 + "".join("'%s'\n" % n for n in EXPECTED_PAGES)
                 + "if ($pluginText -match 'plugins：(\\d+)\\s*个文件') {}\n"
                 + "'（(\\d+)\\s*个 dll'\n'(\\d+)\\s*个 py）'\n")
@@ -129,13 +132,13 @@ def selfcheck():
         ("缺一枚 py", good_pkg.replace("'toolchain_page.py'\n", ""), good_smoke, 1),
         ("只报 dll", good_pkg, "#8 包内插件：%1 个 dll（%2）", 1),
         ("没有那行 note", good_pkg, "别的 note", 1),
-        # ★★ P17-81：落点退回顶层（＝夹具会被加载器扫到）必须报红
-        ("落点退回顶层",
-         good_pkg.replace("plugins\\_fixtures", "plugins"),
+        # 2026-10-27：又往包里带夹具（`_fixtures` 或拷到 stage）必须报红
+        ("又往包里带夹具",
+         good_pkg.replace("$plugTmp = Join-Path $root 'build\\_pyplug_check'",
+                          "$pluginDrop = Join-Path $stage 'plugins\\_fixtures'"),
          good_smoke, 1),
-        # ★★ P17-81：落点变量没人用（拷贝还在往别处拷）必须报红
-        ("落点变量没被使用",
-         good_pkg.replace("-Destination $pluginDrop", "-Destination (Join-Path $stage 'plugins')"),
+        ("夹具拷进 stage",
+         good_pkg.replace("-Destination $plugTmp", "-Destination $pluginDrop"),
          good_smoke, 1),
     ]
     results, ok = [], True

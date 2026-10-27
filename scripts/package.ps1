@@ -6,7 +6,6 @@
    ① 包内**不带** ffmpeg、**不带** NLC 解密插件、**不带**实验性引擎补丁；`plugins\` 目录**存在但为空**
       （插件由用户自己放；发行包为空是既有决策）；
       ★★ P17-81（甲）：**产品实现＝C++ 内置六页**；`plugins\*_page.py` 与 `hello.py` 一律是
-      **插件 API 能力验证夹具（非产品）** ⇒ 开发版把它们放在 `plugins\_fixtures\`（加载器**不递归**，
       因而随包携带、默认不加载），发行版**一枚都不进包**。两份形态的包内自检都断言
       "默认可见页＝六个内置页"（见下面"包内自检"那一段）。
    ② Qt 运行时用官方 `windeployqt` 铺（不手抄 DLL 名单，避免漏平台插件）；
@@ -43,14 +42,11 @@ $root  = Split-Path -Parent $PSScriptRoot
 $stage = Join-Path $root 'build\package_stage'
 $shell = Join-Path $root 'build\msvc-shell'
 # ★★ P17-81（甲：**产品实现＝C++ 内置六页**；`plugins\*_page.py` 与 `hello.py` 一律降级为
-#   **插件 API 能力验证夹具**，非产品）：随包插件不再落进 `plugins\` 顶层，而是 `plugins\_fixtures\`。
 #   为什么：顶层是**加载器扫描路径**（`loader.cpp:108` / `py_host.cpp:107/3428` 三处都是
 #   **非递归**的 `directory_iterator`）⇒ 放子目录＝"随包携带、默认不加载"。
 #   于是"同一个 exe 里有没有 `plugins\` 决定它跑哪一份实现"这件事（P17-78 的致命项）消失：
 #   **开发包与发行包默认都跑内置六页**（各自的包内自检都会断言这件事）。
-#   ★ 夹具页仍然被验：`package.ps1` 与门禁**都把 `_fixtures\` 显式抬到顶层跑一次**
 #     （同一次运行里既取包内插件计数、又断"插件页真的生效"）—— 见下面"包内自检"那一段的口径。
-$pluginDrop = Join-Path $stage 'plugins\_fixtures'
 $qt    = 'E:\Software\Tools\Qt\6.8.3\msvc2022_64'
 
 # ══ 决策 4：**分类规则**（计划与真打包共用这一份，不许写第二套）════════════════
@@ -214,57 +210,18 @@ try {
 #   但开发/自测时每次都要手动把插件拷进去，而"包内自检"因此**从来验不到插件链路**。
 #   口径（本批定；★★ P17-81 改定"落点"那一半，其余不变）：
 #     · **开发版**（标记 ∈ {ALPHA, BETA}）⇒ 把已构建插件**复制进包**，但落点是
-#       `plugins\_fixtures\`（**夹具**，非产品；见文件头 `$pluginDrop` 的理由）；
 #     · **发行版**（标记 ∈ {RC, FINAL}，或显式 `-Dev:$false`）⇒ **仍按既定策略**：
 #       `plugins\` 存在但为空、**NLC 解密插件不随包发布**，且**夹具一枚都不进包**。
 #   ★ 判据（可判红，P17-81 改写：开发版与发行版**同向**）：`plugins\` **顶层必须为空**
-#     ＋ 包内自检的"可见页集合"必须是**六个内置页** ＋ `_fixtures\` 的夹具枚数与清单一致
-#     （发行版：`_fixtures\` 也必须为空）。
 #     ⇒ 把这一段删掉 / 把落点改回顶层 / 把可见页那个 note 删掉，都会立刻红。
 $isDev = ($Prerelease -match '^(?i)ALPHA|BETA')   # 标记口径见 docs/2.0.0-打包与发版规格.md
 if ($PSBoundParameters.ContainsKey('Dev')) { $isDev = $Dev }   # 显式 -Dev 覆盖标记推导
 $copiedPlugins = @()
 if ($isDev) {
-    Write-Host "== 开发版：插件作为**夹具**随包携带（落 plugins\_fixtures\，默认不加载）=="
-    # 夹具落点要先建出来（P17-81：`plugins\` 顶层保持为空 —— 它是加载器扫描路径）。
-    New-Item -ItemType Directory -Force -Path $pluginDrop | Out-Null
-    # ★★ 决策 1（C ABI 退净）：**这里原来会扫 `xrkit_*_plugin.dll` 塞进 `_fixtures`** ——
-    #   C 插件夹具已随 ABI 删除，那段只会把**老构建目录里遗留的 dll** 捞进包
-    #   （ALPHA.213 实测：`_fixtures` 里还躺着 1 枚 `xrkit_test_plugin.dll`）。
-    #   ⇒ 整段删除。开发版的夹具只剩 `.py`（下面那段显式清单）。
-    # ★★ P16-2a（切打包口径）：开发版带**随包的全部 Python 插件** ——
-    #   六页插件版（fs/convert/text/xml/video/fontpack）＋ **三插件同页**（`toolchain_page.py`）。
-    #   ★ 这里是**显式清单**（不放宽）：这 7 枚必须都在源里、也都必须进包；少一枚立刻 throw。
-    #     修前只带一枚 `hello.py` 夹具 ⇒ "六页 + 三插件进包"这件事在包里**根本没发生**，
-    #     而包内自检又只看 dll ⇒ 谁把这一段删掉都不会红（切打包口径要修的就是这个）。
-    $expectedPages = @(
-        'fs_page.py', 'convert_page.py', 'text_page.py',
-        'xml_page.py', 'video_page.py', 'fontpack_page.py',
-        'toolchain_page.py'
-    )
-    $srcPlugins = Join-Path $root 'plugins'
-    foreach ($name in $expectedPages) {
-        $srcPlugin = Join-Path $srcPlugins $name
-        if (-not (Test-Path $srcPlugin)) {
-            throw "随包插件缺失：$srcPlugin（开发版包内必须带齐六页插件版 + 三插件同页）"
-        }
-        Copy-Item -LiteralPath $srcPlugin -Destination $pluginDrop -Force
-        $copiedPlugins += $name
-    }
-    # ★★ 插件改装 P2b/P2c：另外仍带一枚 **最小 Python 夹具** —— 它验的是"包内 exe 能不能
-    #   加载 `.py`"这一条最短路（与上面 7 枚真实插件互补）。
-    #   发行版不带它（与"发行口径包里 `plugins\` 顶层与 `_fixtures\` 都为空"同一条口径）。
-    $pyFixture = Join-Path $root 'tests\python_plugins\hello.py'
-    if (-not (Test-Path $pyFixture)) {
-        throw "找不到 Python 插件夹具：$pyFixture（开发版包内自检要真验 `.py` 加载链）"
-    }
-    Copy-Item -LiteralPath $pyFixture -Destination $pluginDrop -Force
-    $copiedPlugins += 'hello.py'
-    if ($copiedPlugins.Count -gt 0) {
-        Write-Host ("  插件 {0} 个：{1}" -f $copiedPlugins.Count, ($copiedPlugins -join ', '))
-    } else {
-        Write-Host "  插件 0 个（决策 1 之后不再有 C 插件夹具）"
-    }
+    # ★★ 2026-10-27（用户）：「这些插件如果没用，就可以删掉了」——
+    #   夹具（六页插件版 + 三插件同页 + hello.py）**不再随包**（发行/开发包都不带）。
+    #   它们只服务门禁：`tests/check_package_fixture_pages.py` ④ 从**仓库** `plugins/` 抬一次验插件页。
+    Write-Host "== 开发版：不再随包携带插件夹具（夹具留在仓库，门禁从仓库抬）=="
 } else {
     Write-Host "== 发行版：plugins\ 保持为空（既定策略：NLC 解密插件不随包发布）=="
 }
@@ -362,7 +319,6 @@ if ($commitExit -ne 0 -or $commit -eq '') {
 $stamp  = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
 # ★ 2026-10-05（#8）：README 里那句"plugins\ 为空"必须与**实际打出来的包**一致 ——
 #   开发版带插件时还写"为空"就是谎报（零静默红线同源：说明书也是"可见面"的一部分）。
-# ★★ P17-81：口径改为"**开发版把插件作为夹具带在 `plugins\_fixtures\`**（非产品、默认不加载）"——
 #   顶层 `plugins\` 现在**真的**是空的（加载器只扫顶层、非递归），所以说明书必须照这个说，
 #   不许再写"plugins\ 已带 N 个插件"（那是夹具被当产品的旧口径，正是 P17-78 的根）。
 if ($isDev) {
@@ -372,7 +328,6 @@ if ($isDev) {
         #   README 是**用户可见面**，印出 `{0}` 就是谎报（零静默红线同源）。
         #   可靠写法：**先把串拼好，再单独一句 `-f`**（实测 PS 5.1 / pwsh 都正确）。
         $pluginLineHead = ("插件：本包是**开发版**，随包夹具 {0} 个文件（1 个 dll + {1} 个 py）在 " +
-                           "plugins\_fixtures\ 子目录（**非产品**：产品实现是 C++ 内置六页；" +
                            "该子目录**不参与加载** —— `plugins\` 顶层为空、程序默认跑的仍是内置六页）：{2}。")
         $pluginLineHead -f $copiedPlugins.Count, ($copiedPlugins.Count - 1), ($copiedPlugins -join ', ')
     } else {
@@ -603,15 +558,28 @@ try {
     Remove-Item -Force $pyLog, $pyErr -ErrorAction SilentlyContinue
 
     if ($isDev) {
-        # 开发版才随包携带 Python 夹具（发行口径包里 `plugins\` 与 `_fixtures\` 都为空）。
-        # ★★ P17-81：**这条链要显式指向 `_fixtures\`** —— 顶层 `plugins\` 现在是空的
-        #   （夹具默认不加载，见文件头 `$pluginDrop`），照旧指顶层会得到 `loaded=0` ⇒ 假红。
-        #   验的是"包内 exe 能不能加载 `.py`、注册能不能走通"这条链路，与"默认形态"无关；
-        #   默认形态由下面那两行 note 断言（顶层 0 个插件 ＋ 可见页＝六个内置页）。
+        # ★★ 2026-10-27（用户）：「这些插件如果没用，就可以删掉了」—— 包里**不再带夹具**。
+        #   但"包内 exe 能不能加载 .py"这条链路仍要真验：把**仓库**里的夹具临时拷到包外的
+        #   临时目录（不进包），跑一次 `--py-plugins`，验完即删。
+        $plugTmp = Join-Path $root 'build\_pyplug_check'
+        if (Test-Path $plugTmp) { Remove-Item -Recurse -Force $plugTmp }
+        New-Item -ItemType Directory -Force -Path $plugTmp | Out-Null
+        # 显式清单（**裸文件名**，门禁按 'name.py' 认；路径在下面按目录拼）
+        $fixturePages = @('fs_page.py', 'convert_page.py', 'text_page.py',
+                          'xml_page.py', 'video_page.py', 'fontpack_page.py',
+                          'toolchain_page.py')
+        foreach ($name in $fixturePages) {
+            $srcPath = Join-Path $root (Join-Path 'plugins' $name)
+            if (-not (Test-Path $srcPath)) { throw "门禁夹具缺失：$srcPath（包内 python 链要真验）" }
+            Copy-Item -LiteralPath $srcPath -Destination $plugTmp -Force
+        }
+        $hello = Join-Path $root (Join-Path (Join-Path 'tests' 'python_plugins') 'hello.py')
+        if (-not (Test-Path $hello)) { throw "门禁夹具缺失：$hello" }
+        Copy-Item -LiteralPath $hello -Destination $plugTmp -Force
         $plugLog = Join-Path $stage 'pyplugins.log'
         $plugErr = Join-Path $stage 'pyplugins.err.log'
         $plugProc = Start-Process -FilePath (Join-Path $stage 'xrkit_app.exe') `
-            -ArgumentList '--py-plugins', "`"$pluginDrop`"" `
+            -ArgumentList '--py-plugins', "`"$plugTmp`"" `
             -NoNewWindow -Wait -PassThru -RedirectStandardOutput $plugLog -RedirectStandardError $plugErr
         $plugLine = Select-String -Path $plugLog -Pattern 'PYPLUGINS files=\d+ loaded=[1-9]\d* .*errors=0' |
             Select-Object -First 1
@@ -622,13 +590,13 @@ try {
         }
         Write-Host "  $($plugLine.Line.Trim())  (exit=$($plugProc.ExitCode))"
         Remove-Item -Force $plugLog, $plugErr -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $plugTmp -ErrorAction SilentlyContinue
     }
 } finally {
     $ErrorActionPreference = $prevEapPy
 }
 
 # ★★ P17-81 改写（甲：产品实现＝C++ 内置六页；`plugins\*_page.py` 降级为**夹具**）：
-#   修前这里的口径是"开发版 `plugins\` **非空** ＋ 自检报出插件数"。夹具挪进 `plugins\_fixtures\`
 #   之后（见文件头 `$pluginDrop`），那句口径**正好反过来** —— 顶层必须**为空**，否则就是
 #   "夹具随包默认加载"（P17-78 的致命项：验收物 ≠ 交付物）。
 #   现在两条断言都来自**包内自检自己的两行 note**（`src/shell/smoke.cpp`）：
@@ -637,9 +605,6 @@ try {
 #   断言（开发版与发行版**同向** —— 交付物口径一致）：
 #     · 顶层没插件（①的 0 个文件/0 dll/0 py）；
 #     · **可见页＝六个内置页**（②的内置=6 / 插件py=0 / 且名单恰是 6 个**无 `_py` 后缀**的 id）；
-#     · 夹具仍在包里（`plugins\_fixtures\` 的枚数与 `$copiedPlugins` 清单一致）；
-#     · 发行版额外：**整个包一个夹具都没有**（顶层与 `_fixtures\` 都为空）。
-#   ★ **"插件页真的生效"** 这件事由**门禁**那一步显式把 `_fixtures\` 抬到顶层跑一次来断
 #     （同一次运行里既取"抬上来之后的计数"、又断可见页＝七个插件页）——
 #     两条断言**同一个机制**（不许分两处各修一半）。理由：包内自检必须验的是**交付物形态**
 #     （默认），把夹具抬上去再跑属于"验夹具链路"，那条链路的入口在门禁侧（＝P17-79 §十·2）。
@@ -675,8 +640,7 @@ if ($pageList -ne '' -and $pageList -ne '(空)') {
     }
 }
 $builtinSlots = @('fs', 'convert', 'text', 'xml', 'video', 'fontpack')   # 与 smoke.cpp 的 kSlots 同序
-$fixtureDir = Join-Path $stage 'plugins\_fixtures'
-$fixtureFiles = @(Get-ChildItem -LiteralPath $fixtureDir -File -ErrorAction SilentlyContinue)
+$fixtureFiles = @(Get-ChildItem -LiteralPath (Join-Path $stage 'plugins') -File -Recurse -ErrorAction SilentlyContinue)
 Write-Host ("  包内 plugins\ 顶层：{0} 个文件（自检态）" -f $pluginTotal)
 Write-Host ("  包内 self-check 第 1 行：#8 包内插件：{0}" -f $pluginText)
 Write-Host ("  包内 self-check 第 2 行：{0}" -f $pageText)
@@ -688,10 +652,9 @@ if ($isDev) {
     if ($pageTotal -lt 0 -or $pageBuiltin -lt 0) {
         throw ("包内自检的可见页行不是新格式（要给出总页数 / 内置数 / 插件py 数）—— 实测：{0}" -f $pageText)
     }
-    # ① 顶层（加载器扫描路径）必须**没有**插件 —— 夹具不是产品，默认不许被加载
+    # ① 顶层（加载器扫描路径）必须**没有**插件
     if ($pluginTotal -ne 0 -or $pluginDlls -ne 0 -or $pluginPys -ne 0) {
-        throw ("开发版包内 `plugins\` 顶层必须为空（夹具一律落 `plugins\_fixtures\`、默认不加载）—— " +
-               "实测自检：{0} 个文件（{1} 个 dll / {2} 个 py）" -f $pluginTotal, $pluginDlls, $pluginPys)
+        throw ("开发版包内 plugins 顶层必须为空 —— 实测 {0} 个文件 / {1} dll / {2} py" -f $pluginTotal, $pluginDlls, $pluginPys)
     }
     # ② 可见页＝六个内置页（逐名点名，不许"数目对了就算"）
     if ($pageBuiltin -ne $builtinSlots.Count -or $pagePluginPy -ne 0 -or `
@@ -706,22 +669,14 @@ if ($isDev) {
                    ($i + 1), $builtinSlots[$i], $pageBuiltinIds[$i], $pageList)
         }
     }
-    # ③ 夹具仍随包携带（枚数与清单一致）—— "随包携带、默认不加载"是两件事，都要成立
-    if ($fixtureFiles.Count -ne $copiedPlugins.Count) {
-        throw ("`plugins\_fixtures\` 里的夹具枚数与清单不一致（目录 {0} / 清单 {1}）—— " +
-               "夹具必须随包携带（默认不加载），少了就是「验得到的东西没打进去」" -f `
-               $fixtureFiles.Count, $copiedPlugins.Count)
-    }
-    foreach ($name in $expectedPages) {
-        if (-not (Test-Path (Join-Path $fixtureDir $name))) {
-            throw ("开发版包内 `plugins\_fixtures\` 缺随包夹具：{0}（六页插件版 + 三插件同页必须齐）" -f $name)
-        }
+    # ③ 2026-10-27 口径：**开发版也不带夹具**（夹具留在仓库，门禁从仓库抬）
+    if ($fixtureFiles.Count -ne 0) {
+        throw ("开发版包内不许有插件夹具（plugins 下多出 {0} 个文件）—— 夹具只留在仓库 plugins/" -f $fixtureFiles.Count)
     }
     if ($pluginLoaded -ne 0) {
         throw ("开发版包内自检**装载有失败**（Hub 启动装载 errors={0}）—— 见包内自检的日志" -f $pluginLoaded)
     }
-    Write-Host ("  插件自检通过：顶层 0 个插件（可见页＝六个内置页）、`_fixtures\` 随包携带 {0} 枚夹具、装载 errors=0" -f `
-        $fixtureFiles.Count)
+    Write-Host "  插件自检通过：包里 0 个插件（可见页＝六个内置页）、无夹具（夹具在仓库）"
 } else {
     if ($pluginTotal -ne 0 -or $pluginDlls -ne 0 -or $pluginPys -ne 0) {
         throw ("发行版的 `plugins\` 顶层必须为空（既定策略：NLC 解密插件不随包发布），" +
@@ -731,9 +686,7 @@ if ($isDev) {
         throw ("发行版包内可见页必须是六个内置页（实测 内置 {0} / 插件py {1}）" -f $pageBuiltin, $pagePluginPy)
     }
     if ($fixtureFiles.Count -ne 0) {
-        throw ("发行口径包里不许有夹具（实测 `plugins\_fixtures\` 有 {0} 个文件）" -f $fixtureFiles.Count)
     }
-    Write-Host "  插件自检通过：发行版 `plugins\` 顶层与 `_fixtures\` 都为空（可见页＝六个内置页）"
 }
 
 # ★ 2026-09-28 用户口径（原话）：
