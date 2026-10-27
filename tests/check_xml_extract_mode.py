@@ -29,6 +29,7 @@ ANCHORS_CPP = [
     ("QStringLiteral(\"提取文本\")", "「提取文本」按钮"),
     ("xrkit::engine::fs::collect_tree", "空目录判定走唯一一份遍历"),
     ("xrkit::engine::text::build_language_pack", "产物由引擎装配（页面不自己摆盘）"),
+    ("build_language_pack_from_game", "勾了改写 ⇒ 走完整链（提取 + 摆盘）"),
     ("filter_combo_->setVisible(!show)", "提取模式隐藏「筛选」"),
     ("start_button_->setVisible(!show)", "提取模式隐藏「开始比较」"),
     ("两个产物至少勾一个", "两个复选框的 gating 文案"),

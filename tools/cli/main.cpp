@@ -4834,6 +4834,7 @@ int run_cli(const std::vector<std::string>& args) {
                          "<提取产物|-> <输出根> [--lang L] [--overwrite]\n";
             return kExitUsage;
         }
+        bool from_game = false;
         xrkit::engine::text::LangPackBuildOptions opt;
         opt.texts_dir = operands[0];
         opt.rewritten = operands[1] == "-" ? std::string() : operands[1];
@@ -4847,10 +4848,38 @@ int run_cli(const std::vector<std::string>& args) {
                 opt.include_texts = false;
             } else if (operands[i] == "--no-rewritten") {
                 opt.include_rewritten = false;
+            } else if (operands[i] == "--extract") {
+                from_game = true;
             } else {
                 std::cerr << "LANGPACK-BUILD error reason=未知参数 " << operands[i] << "\n";
                 return kExitUsage;
             }
+        }
+        if (from_game) {
+            // 「提取文本」的完整链：先按标准提取抽 scripts/gameplay，再按标准语言包摆盘。
+            xrkit::engine::text::LangPackFromGameOptions gopt;
+            gopt.source_dir = operands[0];
+            gopt.out_root = operands[2];
+            gopt.lang = opt.lang.empty() ? "rus" : opt.lang;
+            gopt.include_texts = opt.include_texts;
+            gopt.include_rewritten = opt.include_rewritten;
+            gopt.overwrite = opt.overwrite;
+            const xrkit::engine::text::LangPackFromGameResult g =
+                xrkit::engine::text::build_language_pack_from_game(gopt);
+            if (!g.ok) {
+                std::cout << "LANGPACK-BUILD error reason=" << g.error << "\n";
+                return kExitFail;
+            }
+            for (const std::string& warn : g.warnings) {
+                std::cout << "LANGPACK-BUILD warn " << warn << "\n";
+            }
+            std::cout << "LANGPACK-BUILD ok out=" << g.pack.out_dir << " lang=" << g.pack.lang
+                      << " xml=" << g.pack.xml_written << " rewritten=" << g.pack.rewritten_copied
+                      << " empty_tables=" << g.pack.empty_tables
+                      << " skipped_existing=" << g.pack.skipped_existing
+                      << " extracted_files=" << g.extracted_files
+                      << " extracted_strings=" << g.extracted_strings << "\n";
+            return kExitOk;
         }
         const xrkit::engine::text::LangPackBuildResult r =
             xrkit::engine::text::build_language_pack(opt);

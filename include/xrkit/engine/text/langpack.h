@@ -41,4 +41,27 @@ struct LangPackBuildResult {
 
 LangPackBuildResult build_language_pack(const LangPackBuildOptions& options);
 
+// ★★ 2026-10-27：**从"非空一侧"直接装配**（XML 校对第三模式的完整链）——
+//   先按标准提取把 scripts/gameplay 抽成"改写后的源 + 文本 XML"，再按标准语言包摆盘。
+//   两步都在引擎层：页面/CLI 只传目录，不各写一套。
+struct LangPackFromGameOptions {
+    std::string source_dir;   // 非空一侧（含 scripts/ 与/或 gameplay/，可含 configs/text/<lang>）
+    std::string out_root;
+    std::string lang = "rus";
+    bool include_texts = true;
+    bool include_rewritten = true;
+    bool overwrite = false;
+};
+
+struct LangPackFromGameResult {
+    bool ok = false;
+    std::string error;
+    uint64_t extracted_files = 0;
+    uint64_t extracted_strings = 0;
+    LangPackBuildResult pack;
+    std::vector<std::string> warnings;
+};
+
+LangPackFromGameResult build_language_pack_from_game(const LangPackFromGameOptions& options);
+
 }  // namespace xrkit::engine::text

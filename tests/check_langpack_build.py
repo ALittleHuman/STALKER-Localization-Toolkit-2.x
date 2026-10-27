@@ -114,7 +114,29 @@ def main() -> int:
             problems += 1
             fail("两个产物都不勾的行为不对：rc=%d\n%s" % (rc4, stdout4[-300:]))
 
-        # ⑦ 源目录不存在 ⇒ 退 1
+        # ⑦ --extract：从"非空一侧"真抽（scripts/gameplay 两分支）再摆盘
+        src2 = tmp / "src_game"
+        (src2 / "gameplay").mkdir(parents=True)
+        (src2 / "gameplay" / "x.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?><gameplay><text>Привет мир</text></gameplay>',
+            encoding="utf-8")
+        out2 = tmp / "out_game"
+        rc6, stdout6 = run([str(src2), "-", str(out2), "--extract"])
+        game_ok = rc6 == 0 and "extracted_files=" in stdout6
+        rewritten = out2 / "rus" / "gameplay" / "x.xml"
+        texts = list((out2 / "rus" / "configs" / "text" / "rus").glob("*.xml"))
+        if game_ok and rewritten.is_file() and "sgtat_" in rewritten.read_text(encoding="utf-8"):
+            ok("--extract：gameplay 被改写成 ID 引用（sgtat_…）")
+        else:
+            problems += 1
+            fail("--extract 没改写 gameplay：rc=%d\n%s" % (rc6, stdout6[-400:]))
+        if texts and "Привет" in texts[0].read_text(encoding="utf-8"):
+            ok("--extract：文本 XML 落在标准布局里且含原文")
+        else:
+            problems += 1
+            fail("--extract 的文本 XML 不对：%s" % [p.name for p in texts])
+
+        # ⑧ 源目录不存在 ⇒ 退 1
         rc5, stdout5 = run([str(tmp / "nope"), "-", str(tmp / "out3")])
         if rc5 == 1 and "不存在" in stdout5:
             ok("源目录不存在：退 1 且说理由")

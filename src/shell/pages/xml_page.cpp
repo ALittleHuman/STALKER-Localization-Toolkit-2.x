@@ -1301,15 +1301,30 @@ void XmlPage::run_extract() {
     if (out.isEmpty()) {
         out = QDir(source).absolutePath() + QStringLiteral("/_langpack");
     }
-    xrkit::engine::text::LangPackBuildOptions opt;
-    opt.texts_dir = source.toUtf8().toStdString();
-    opt.out_root = out.toUtf8().toStdString();
-    opt.include_texts = want_texts;
-    opt.include_rewritten = want_rewritten;
-    // 语言：优先取 localization.ltx 里的 language；没有就 rus（标准槽）
-    opt.lang = "rus";
-    const xrkit::engine::text::LangPackBuildResult result =
-        xrkit::engine::text::build_language_pack(opt);
+    // ★★ 2026-10-27：勾了「改写脚本/配置」⇒ 走**完整链**（先按标准提取抽
+    //   scripts/gameplay，再按标准语言包摆盘）；只勾文本 ⇒ 直接摆盘。
+    xrkit::engine::text::LangPackBuildResult result;
+    if (want_rewritten) {
+        xrkit::engine::text::LangPackFromGameOptions gopt;
+        gopt.source_dir = source.toUtf8().toStdString();
+        gopt.out_root = out.toUtf8().toStdString();
+        gopt.lang = "rus";
+        gopt.include_texts = want_texts;
+        gopt.include_rewritten = true;
+        const xrkit::engine::text::LangPackFromGameResult g =
+            xrkit::engine::text::build_language_pack_from_game(gopt);
+        result = g.pack;
+        result.ok = g.ok;
+        if (!g.ok) result.error = g.error;
+    } else {
+        xrkit::engine::text::LangPackBuildOptions opt;
+        opt.texts_dir = source.toUtf8().toStdString();
+        opt.out_root = out.toUtf8().toStdString();
+        opt.include_texts = want_texts;
+        opt.include_rewritten = false;
+        opt.lang = "rus";
+        result = xrkit::engine::text::build_language_pack(opt);
+    }
     if (!result.ok) {
         status_->setText(QStringLiteral("提取失败：%1")
                              .arg(QString::fromStdString(result.error)));

@@ -1,12 +1,15 @@
 #include "xrkit/engine/text/langpack.h"
 
 #include "xrkit/core/path.h"
-#include "xrkit/engine/fs/overlay.h"   // 遍历只有一套：fs::collect_tree()
+#include "xrkit/engine/fs/overlay.h"
+#include "xrkit/engine/text/extract.h"   // 遍历只有一套：fs::collect_tree()
 
 #include <algorithm>
 #include <cctype>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -208,6 +211,85 @@ LangPackBuildResult build_language_pack(const LangPackBuildOptions& options) {
 
     if (out.xml_written == 0 && out.rewritten_copied == 0 && out.skipped_existing == 0) {
         out.error = "一个文件都没写（源目录里没有 .xml？）";
+        return out;
+    }
+    out.ok = true;
+    return out;
+}
+
+
+
+
+// ── ★★ 2026-10-27：从"非空一侧"直接装配（提取 + 摆盘两步都在引擎层）─────────
+LangPackFromGameResult build_language_pack_from_game(const LangPackFromGameOptions& options) {
+    LangPackFromGameResult out;
+    const fs::path src = core::path_from_utf8(options.source_dir);
+    if (!is_dir(src)) {
+        out.error = "源目录不存在：" + options.source_dir;
+        return out;
+    }
+    // 临时工作区（提取产物 + 文本 XML 都先落这里，最后再摆盘）
+    std::error_code ec;
+    fs::path tmp = fs::temp_directory_path(ec);
+    if (ec) tmp = fs::path(".");
+    const fs::path work = tmp / ("xrkit_lp_" + std::to_string(static_cast<unsigned long long>(
+                                                  std::hash<std::string>{}(options.source_dir))) +
+                                 "_" + std::to_string(std::time(nullptr)));
+    const fs::path rew = work / "rewritten";
+    const fs::path texts = work / "texts";
+    fs::create_directories(rew, ec);
+    fs::create_directories(texts, ec);
+
+    // ① 提取：scripts / gameplay 两个分支，谁在就抽谁
+    ExtractOptions eopt;
+    eopt.prefix = "gs";
+    for (const auto& pair : {std::make_pair("scripts", ExtractKind::Scripts),
+                             std::make_pair("gameplay", ExtractKind::Gameplay)}) {
+        const fs::path branch = src / pair.first;
+        if (!is_dir(branch)) continue;
+        // 目标按**分支名**落地：extract_dir 把改写后的源写进 target 的**根**，
+        // 标准语言包要的是 `scripts/...` / `gameplay/...` ⇒ 这里给 target = rew/<分支>。
+        const fs::path branch_out = rew / pair.first;
+        fs::create_directories(branch_out, ec);
+        const ExtractStats stats = extract_dir(core::path_to_utf8(branch),
+                                               core::path_to_utf8(branch_out),
+                                               core::path_to_utf8(texts), eopt);
+        if (!stats.ok) {
+            out.error = std::string("提取失败（") + pair.first + "）：" + stats.error;
+            fs::remove_all(work, ec);
+            return out;
+        }
+        out.extracted_files += stats.files;
+        out.extracted_strings += stats.strings;
+        for (const std::string& skip : stats.skipped) out.warnings.push_back("提取跳过：" + skip);
+    }
+
+    // ② 源里若自带文本目录，也一起收（语言包可能已经是"文本 + 字体"形态）
+    fs::path lang_texts = src / "configs" / "text" / options.lang;
+    if (!is_dir(lang_texts)) lang_texts = src / "text" / options.lang;
+    if (is_dir(lang_texts)) {
+        for (fs::directory_iterator it(lang_texts, ec), end; !ec && it != end; it.increment(ec)) {
+            if (!is_file(it->path())) continue;
+            if (lower(it->path().extension().string()) != ".xml") continue;
+            fs::copy_file(it->path(), texts / it->path().filename(),
+                          fs::copy_options::overwrite_existing, ec);
+        }
+    }
+
+    // ③ 摆盘（复用上一刀那唯一一份实现）
+    LangPackBuildOptions bopt;
+    bopt.texts_dir = core::path_to_utf8(texts);
+    bopt.rewritten = (options.include_rewritten && is_dir(rew)) ? core::path_to_utf8(rew) : std::string();
+    bopt.out_root = options.out_root;
+    bopt.lang = options.lang;
+    bopt.include_texts = options.include_texts;
+    bopt.include_rewritten = options.include_rewritten;
+    bopt.overwrite = options.overwrite;
+    out.pack = build_language_pack(bopt);
+    for (const std::string& warn : out.pack.warnings) out.warnings.push_back(warn);
+    fs::remove_all(work, ec);
+    if (!out.pack.ok) {
+        out.error = out.pack.error;
         return out;
     }
     out.ok = true;
