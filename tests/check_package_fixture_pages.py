@@ -243,9 +243,16 @@ def run_smoke(pkg: Path, timeout: int = 900):
     #   若失败率从 8/20 掉到 0/20，就说明是"杀软扫刚写的 .py 导致 import 偶发失败"。
     # ★ 2026-10-21：私有 TEMP 的位置可以换（默认在 `build/`＝仓库内＝360 白名单内）。
     #   用 `XRKIT_PKTMP_DIR=system` 可切到 `%TEMP%`，用来做"路径/杀软"对照实验。
-    _pktmp_parent = str(ROOT / "build")
-    if os.environ.get("XRKIT_PKTMP_DIR") == "system":
-        _pktmp_parent = None
+    # ★★★ 2026-10-27（实测反证）：私有 TEMP 放 `build/`（E: 盘）之后，包内 `--smoke` 会
+    #   **在 ⑫12.4 之后静默返回 0**（stdout 一行都没有、stderr 停在 bad_plugin，事件日志无崩溃）。
+    #   取证矩阵（同一 exe）：
+    #     TEMP=%LOCALAPPDATA%\Temp\pktmp_…  ⇒ PASS（914/940 条检查照跑）
+    #     TEMP=C:\_pktmp_…（新空目录）        ⇒ 静默 0（无 ok 行）
+    #     TEMP=E:\_pktmp_…（新空目录）        ⇒ 静默 0（无 ok 行）
+    #     TEMP=<repo>\build\pktmp_…（E: 盘）  ⇒ 静默 0（无 ok 行）
+    #   ⇒ 结论：**别把私有 TEMP 放到用户 Temp 之外**（原因未查明，但不该在判据里赌它）。
+    #   要复现"repo 内 TEMP"的老形态：`XRKIT_PKTMP_DIR=repo`。
+    _pktmp_parent = str(ROOT / "build") if os.environ.get("XRKIT_PKTMP_DIR") == "repo" else None
     private_temp = Path(tempfile.mkdtemp(prefix="pktmp_", dir=_pktmp_parent))
     LAST_SMOKE_TEMP[0] = private_temp
     env["TEMP"] = str(private_temp)

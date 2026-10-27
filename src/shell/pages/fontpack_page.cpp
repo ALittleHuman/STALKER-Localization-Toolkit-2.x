@@ -125,26 +125,27 @@ FontPackPage::FontPackPage(QWidget* parent)
     body_layout()->addWidget(path_row(QStringLiteral("输出目录："), out_edit_, true,
                                       QStringLiteral("选择输出目录"), out_judge));
 
-    // IX-Ray 的"参照包"（整包目录）：位图模式没有这个概念 ⇒ 默认隐藏
+    // ★★★ 2026-10-27（用户）：参照包这一行**必须走同一个 `path_row`** ——
+    //   我第一版手搓了一行，结果两个毛病：
+    //     ① 没调 `drop_zones_.attach_row(...)` ⇒ **拖不进去**（其它三行都能拖）；
+    //     ② 容器没变成拖放区域 ⇒ 少了区域那层样式（用户看到的"一个有一个黑底、一个没有"）。
+    //   修法就是**别再手搓**：同一份 helper 造行，拖放与样式一起继承。
     pack_edit_ = new QLineEdit;
     pack_edit_->setObjectName(QStringLiteral("font_ixr_pack"));
-    pack_edit_->setPlaceholderText(QStringLiteral("参照整包目录（例如 MODS\\~NotoSansSC，能当模组打的那份）"));
+    pack_edit_->setPlaceholderText(
+        QStringLiteral("参照整包目录（例如 MODS\\~NotoSansSC，能当模组打的那份）"));
+    const auto pack_judge = [this]() {
+        return dialog_start_for(pack_edit_->text().trimmed(), QStringList{}, false);
+    };
     {
-        auto* pack_browse = new QPushButton(QStringLiteral("选择…"));   // 与其它三行同一文案
-        pack_browse->setObjectName(QStringLiteral("font_ixr_pack_browse"));
-        QObject::connect(pack_browse, &QPushButton::clicked, this, [this] {
-            const QString picked = QFileDialog::getExistingDirectory(
-                this, QStringLiteral("选择参照整包目录"),
-                QDir::toNativeSeparators(pack_edit_->text().trimmed()));
-            if (!picked.isEmpty()) pack_edit_->setText(QDir::toNativeSeparators(picked));
-        });
-        auto* pack_row = new QWidget;
+        QWidget* pack_row = path_row(QStringLiteral("参照包："), pack_edit_, true,
+                                     QStringLiteral("选择参照整包目录"), pack_judge);
         pack_row->setObjectName(QStringLiteral("font_ixr_pack_row"));
-        auto* row_layout = new QHBoxLayout(pack_row);
-        row_layout->setContentsMargins(0, 0, 0, 0);
-        row_layout->addWidget(new QLabel(QStringLiteral("参照包：")), 0);
-        row_layout->addWidget(pack_edit_, 1);
-        row_layout->addWidget(pack_browse, 0);
+        // 按钮改回它自己的名字（`pick_dir_button` 已被上面三行占用；
+        // 同名会让"按名字点按钮"的自检点到别人身上）
+        for (QPushButton* button : pack_row->findChildren<QPushButton*>()) {
+            button->setObjectName(QStringLiteral("font_ixr_pack_browse"));
+        }
         pack_row_ = pack_row;
         body_layout()->addWidget(pack_row);
 
