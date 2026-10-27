@@ -69,3 +69,6 @@ tests/**/*_marker.txt
 
 # IXR 插件探针证据（每轮重写，不入库）
 plugins_ixr/ixr_marker.txt
+
+# IXR 插件运行期生成的计划文件
+plugins_ixr/_lib/last_plan.json

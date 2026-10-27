@@ -148,8 +148,7 @@ def register(api):
                 return
             sizes = [slot for slot, box in size_boxes if ui.checkbox_state(box)]
             if sizes:
-                ui.log_view_append(log, "分区：%s（v0.1 只记录，生成按整包一字体）"
-                                   % ",".join(str(s) for s in sizes))
+                ui.log_view_append(log, "分区：%s" % ",".join(str(s) for s in sizes))
             font = ""
             for path in state["plan"].values():
                 font = path
@@ -158,11 +157,16 @@ def register(api):
                 ui.log_view_append(log, "先在表里给至少一个段选字体（v0.1 整包一个字体）")
                 return
             python = _helper_python()
-            cmd = [python, helper, "--pack", root, "--font", font, "--out", out]
-            ui.log_view_append(log, "运行：" + " ".join(cmd))
-            result = host.run_process(python, [helper, "--pack", root, "--font", font,
-                                               "--out", out],
-                                      lambda line: ui.log_view_append(log, line))
+            # ★ 逐槽位计划 + 分区档位：写一份计划 JSON 给助手（段 → 字体；sizes）
+            plan_path = os.path.join(api.plugin_dir, "_lib", "last_plan.json")
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                json.dump({"sections": dict(state["plan"]), "sizes": sizes}, handle,
+                          ensure_ascii=False)
+            args = [helper, "--pack", root, "--font", font, "--out", out, "--plan", plan_path]
+            if sizes:
+                args += ["--sizes", ",".join(str(s) for s in sizes)]
+            ui.log_view_append(log, "运行：" + " ".join([python] + args))
+            result = host.run_process(python, args, lambda line: ui.log_view_append(log, line))
             if not result.get("started"):
                 ui.log_view_append(log, "起不来：%s" % result.get("stderr_tail", ""))
                 return

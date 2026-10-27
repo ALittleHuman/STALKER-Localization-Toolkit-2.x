@@ -113,6 +113,8 @@ def main() -> int:
     ap.add_argument("--text-root", action="append", default=[], help="额外文本根（可重复）")
     ap.add_argument("--charset-scope", default="used", choices=["used", "common"])
     ap.add_argument("--limit-sections", default="", help="只处理这些段（逗号分隔；默认全部）")
+    ap.add_argument("--plan", default="", help="逐槽位字体计划 JSON：{\"sections\": {段: 字体路径}, \"sizes\": [14,16]}")
+    ap.add_argument("--sizes", default="", help="分区：只处理这些字号档（逗号分隔；空=全部）")
     args = ap.parse_args()
 
     pack = Path(args.pack)
@@ -159,23 +161,47 @@ def main() -> int:
     shutil.copytree(pack, out)
     out_fonts = (out / "gamedata" / "fonts" / lang) if (out / "gamedata").is_dir() else (out / "fonts" / lang)
 
-    cjk_source = TTFont(str(font), fontNumber=0)
-    cjk_cmap = cjk_source.getBestCmap() or {}
+    default_source = TTFont(str(font), fontNumber=0)
+    default_cmap = default_source.getBestCmap() or {}
     wanted = sorted({ord(c) for c in chars if ord(c) > 0x20})
 
     limit = {s.strip() for s in args.limit_sections.split(",") if s.strip()}
+    # ★★ 2026-10-26：逐槽位字体计划（「分部位/分区」的落点）——
+    #   段 → 字体；没在计划里的段用 `--font`。sizes 是分区：只处理这些字号档的段。
+    plan_sections: dict[str, str] = {}
+    plan_sizes: set[int] = set()
+    if args.plan:
+        plan_path = Path(args.plan)
+        if not plan_path.is_file():
+            log("IXRGEN error reason=计划文件不存在：%s" % plan_path)
+            return 1
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        plan_sections = {str(k): str(v) for k, v in (plan.get("sections") or {}).items()}
+        plan_sizes = {int(x) for x in (plan.get("sizes") or [])}
+    if args.sizes:
+        plan_sizes |= {int(x) for x in args.sizes.split(",") if x.strip()}
     report = {"lang": lang, "pack": str(pack), "out": str(out), "sections": [], "fonts": [],
               "missing": 0, "charset": len(wanted)}
 
     # 每个被引用的字体文件合并一次（同名字体被多个段共用 ⇒ 只做一遍）
     by_name: dict[str, list[str]] = {}
+    font_for_name: dict[str, Path] = {}
     for sec_name, sec in sections.items():
         name = sec["kv"].get("name", "")
         if not name:
             continue
         if limit and sec_name not in limit:
             continue
+        if plan_sizes:
+            size = int(sec["kv"].get("size") or 0)
+            if size and size not in plan_sizes:
+                report.setdefault("skipped_sections", []).append(
+                    {"name": sec_name, "reason": "size %d not in partition" % size})
+                continue
         by_name.setdefault(name, []).append(sec_name)
+        chosen = plan_sections.get(sec_name, "")
+        if chosen:
+            font_for_name[name] = Path(chosen)
 
     total_added = 0
     for name in sorted(by_name):
@@ -185,6 +211,15 @@ def main() -> int:
             report["sections"].append({"name": name, "status": "missing-file",
                                        "sections": by_name[name]})
             continue
+        cjk_source, cjk_cmap = default_source, default_cmap
+        section_font = font_for_name.get(name)
+        if section_font is not None and not section_font.is_file():
+            log("IXRGEN warn 计划里的字体不存在：%s（段 %s 回退为 --font）"
+                % (section_font, by_name[name][0]))
+            section_font = None
+        if section_font is not None and section_font != font:
+            cjk_source = TTFont(str(section_font), fontNumber=0)
+            cjk_cmap = cjk_source.getBestCmap() or {}
         dst = TTFont(str(base_path), fontNumber=0)
         if "glyf" not in dst:
             log("IXRGEN warn %s 不是 glyf 轮廓（CFF 暂不支持），跳过" % base_path.name)
@@ -241,6 +276,8 @@ def main() -> int:
             report["sections"].append({"name": sec_name, "font": name, "status": "ok"})
 
     report["added"] = total_added
+    report["plan_sections"] = {k: v for k, v in plan_sections.items()}
+    report["sizes"] = sorted(plan_sizes)
     log("IXRGEN done 字体 %d 个，新增字形 %d，缺字 %d"
         % (len(report["fonts"]), total_added, report["missing"]))
     log("IXRGEN " + json.dumps(report, ensure_ascii=False))

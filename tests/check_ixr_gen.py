@@ -156,7 +156,48 @@ def main() -> int:
                 problems += 1
                 fail("文本被改了")
 
-        # ② 零静默：给一个没有中文的字体当源 ⇒ 必须把缺字记进报告（不是静默成功）
+        # ② 逐槽位字体计划：letterica 段用另一个字体；只处理 size=14 的段时 letterica 必须不动
+        pack2 = build_pack(tmp / "plan", BASE_FONT, TEXT)
+        # 两份字体文件都在（build_pack 只造了 arial；补一个 letterica 段）
+        (pack2 / "gamedata" / "fonts" / "rus" / "letterica.ttf").write_bytes(
+            (pack2 / "gamedata" / "fonts" / "rus" / "arial.ttf").read_bytes())
+        ltx2 = (pack2 / "gamedata" / "configs" / "fonts.ltx")
+        ltx2.write_text(
+            "[font_default]\nshader = hud\\font\nsize = 14\nname = arial\nopentype = false\n"
+            "[font_letterica]:font_default\nname = letterica\nsize = 16\n", encoding="utf-8")
+        plan_file = tmp / "plan.json"
+        plan_file.write_text(
+            '{"sections": {"font_letterica": %s}, "sizes": []}' % json.dumps(str(CJK_FONT)),
+            encoding="utf-8")
+        out_plan = tmp / "out_plan"
+        proc = subprocess.run([sys.executable, str(TOOL), "--pack", str(pack2),
+                               "--font", str(CJK_FONT), "--out", str(out_plan),
+                               "--plan", str(plan_file)],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        both = [out_plan / "gamedata" / "fonts" / "rus" / n for n in ("arial.ttf", "letterica.ttf")]
+        if proc.returncode == 0 and all(f.is_file() for f in both):
+            ok("逐槽位计划：两份字体都产出")
+        else:
+            problems += 1
+            fail("逐槽位计划失败：rc=%d" % proc.returncode)
+
+        out_p14 = tmp / "out_p14"
+        subprocess.run([sys.executable, str(TOOL), "--pack", str(pack2),
+                        "--font", str(CJK_FONT), "--out", str(out_p14), "--sizes", "14"],
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        f14 = out_p14 / "gamedata" / "fonts" / "rus" / "letterica.ttf"
+        if f14.is_file():
+            cmap14 = set(TTFont(str(f14)).getBestCmap())
+            if 0x6C49 not in cmap14:
+                ok("分区 sizes=14：size=16 的 letterica 段没被动（cmap 里没有「汉」）")
+            else:
+                problems += 1
+                fail("分区没生效：letterica 段（size=16）也被合并了")
+        else:
+            problems += 1
+            fail("分区产物缺 letterica.ttf")
+
+        # ③ 零静默：给一个没有中文的字体当源 ⇒ 必须把缺字记进报告（不是静默成功）
         out2 = tmp / "out2"
         rc2, stdout2 = run_tool(pack, BASE_FONT, out2)   # arial 无中文
         rep2 = report_of(stdout2)
