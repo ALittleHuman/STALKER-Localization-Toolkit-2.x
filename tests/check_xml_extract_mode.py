@@ -1,0 +1,87 @@
+# -*- coding: utf-8 -*-
+"""XML 校对第三模式「提取文本」的**静态判据**（界面接线层）。
+
+为什么静态：这一条的用户可见行为（"一侧为空 ⇒ 模式变三、筛选消失、按钮换成提取"）在无头
+自检里没法真的点；而它的**结构性前提**可以逐条钉住（缺一条就是"界面没接上"）：
+  ① 一侧为空才出现（判定走 `fs::collect_tree`，与比较/导出同一份遍历）；
+  ② 提取模式下**隐藏「筛选」**、隐藏「开始比较」，显示「提取文本」；
+  ③ 两个复选框（文本 XML / 改写后的脚本配置）默认勾上，**至少一个**才启用按钮；
+  ④ 真正调的是引擎 `text::build_language_pack`（不许页面自己写一套摆盘逻辑）；
+  ⑤ 结果走状态行（零静默：写出几个 XML、几个改写产物、拒绝覆盖几个）。
+自证：把某一锚点在内存里改坏 ⇒ 判据必须报红（不是恒绿）。
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+CPP = ROOT / "src" / "shell" / "pages" / "xml_page.cpp"
+HDR = ROOT / "src" / "shell" / "pages" / "xml_page.h"
+
+ANCHORS_CPP = [
+    ("void XmlPage::update_extract_mode()", "提取模式的判定/切换入口"),
+    ("void XmlPage::run_extract()", "提取动作入口"),
+    ("xml_extract_texts", "功能①复选框 objectName"),
+    ("xml_extract_rewritten", "功能②复选框 objectName"),
+    ("xml_extract_out", "输出根目录输入框"),
+    ("xml_extract_hint", "一侧为空的提示行"),
+    ("QStringLiteral(\"提取文本\")", "「提取文本」按钮"),
+    ("xrkit::engine::fs::collect_tree", "空目录判定走唯一一份遍历"),
+    ("xrkit::engine::text::build_language_pack", "产物由引擎装配（页面不自己摆盘）"),
+    ("filter_combo_->setVisible(!show)", "提取模式隐藏「筛选」"),
+    ("start_button_->setVisible(!show)", "提取模式隐藏「开始比较」"),
+    ("两个产物至少勾一个", "两个复选框的 gating 文案"),
+    ("拒绝覆盖", "同名文件拒绝覆盖要报出来"),
+]
+ANCHORS_HDR = [
+    ("void update_extract_mode();", "头文件声明切换入口"),
+    ("void run_extract();", "头文件声明提取入口"),
+    ("extract_mode_", "模式状态位"),
+    ("texts_check_", "功能①控件成员"),
+    ("rewrite_check_", "功能②控件成员"),
+]
+
+
+def check(text: str, anchors: list[tuple[str, str]]) -> list[str]:
+    return [f"缺锚点：{why}（{anchor}）" for anchor, why in anchors if anchor not in text]
+
+
+def main() -> int:
+    print("== XML 校对第三模式「提取文本」静态判据 ==")
+    for path in (CPP, HDR):
+        if not path.is_file():
+            print("!! 缺 %s" % path)
+            return 1
+    cpp = CPP.read_text(encoding="utf-8", errors="replace")
+    hdr = HDR.read_text(encoding="utf-8", errors="replace")
+
+    problems = check(cpp, ANCHORS_CPP) + check(hdr, ANCHORS_HDR)
+    for p in problems:
+        print("  ✗ " + p)
+    if not problems:
+        print("  ✓ 界面接线锚点 %d 条全在（cpp %d + hdr %d）"
+              % (len(ANCHORS_CPP) + len(ANCHORS_HDR), len(ANCHORS_CPP), len(ANCHORS_HDR)))
+
+    # 自证：故意改坏一条锚点 ⇒ 判据必须报红
+    broken = cpp.replace("start_button_->setVisible(!show)", "start_button_->setVisible(show)")
+    if check(broken, ANCHORS_CPP):
+        print("  ✓ 自证：改坏一条锚点 ⇒ 判据会红")
+    else:
+        print("  ✗ 自证失败：改坏锚点后判据仍绿（恒绿判据）")
+        problems.append("self-red")
+
+    if problems:
+        print("XML-EXTRACT-MODE: FAIL（%d 处）" % len(problems))
+        return 1
+    print("XML-EXTRACT-MODE: PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    raise SystemExit(main())

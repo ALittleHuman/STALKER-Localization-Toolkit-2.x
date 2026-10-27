@@ -4,6 +4,8 @@
 #include "xrkit/core/xlsx.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/sniff.h"
+#include "xrkit/engine/fs/overlay.h"
+#include "xrkit/engine/text/langpack.h"
 #include "xrkit/engine/xml/dirdiff.h"
 
 #include "../pair_tree.h"
@@ -246,6 +248,57 @@ XmlPage::XmlPage(QWidget* parent)
     opt_row->addSpacing(xrkit::core::px(12));
     opt_row->addWidget(align_check_, 0);
 
+    // ── ★★ 2026-10-27：第三模式「提取文本」的选项行（默认隐藏；一侧为空时出现）──────
+    auto* extract_row = new QHBoxLayout;
+    extract_hint_ = new QLabel(
+        QStringLiteral("检测到一侧为空：切到「提取文本」——产物是标准语言包（configs/text/<lang> + 改写后的脚本/配置）"));
+    extract_hint_->setObjectName(QStringLiteral("xml_extract_hint"));
+    extract_hint_->setWordWrap(true);
+    texts_check_ = new QCheckBox(QStringLiteral("文本 XML（含空表）"));
+    texts_check_->setObjectName(QStringLiteral("xml_extract_texts"));
+    texts_check_->setChecked(true);
+    rewrite_check_ = new QCheckBox(QStringLiteral("改写后的脚本/配置"));
+    rewrite_check_->setObjectName(QStringLiteral("xml_extract_rewritten"));
+    rewrite_check_->setChecked(true);
+    extract_out_edit_ = new QLineEdit;
+    extract_out_edit_->setObjectName(QStringLiteral("xml_extract_out"));
+    extract_out_edit_->setPlaceholderText(QStringLiteral("输出根目录（默认：非空一侧的上一级）"));
+    auto* extract_browse = new QPushButton(QStringLiteral("浏览…"));
+    extract_browse->setObjectName(QStringLiteral("xml_extract_browse"));
+    QObject::connect(extract_browse, &QPushButton::clicked, this, [this] {
+        const QString picked = QFileDialog::getExistingDirectory(
+            this, QStringLiteral("选择输出目录"),
+            extract_out_edit_->text().trimmed().isEmpty()
+                ? QDir::homePath()
+                : QDir::toNativeSeparators(extract_out_edit_->text().trimmed()));
+        if (!picked.isEmpty()) extract_out_edit_->setText(QDir::toNativeSeparators(picked));
+    });
+    extract_row->addWidget(texts_check_, 0);
+    extract_row->addWidget(rewrite_check_, 0);
+    extract_row->addWidget(extract_out_edit_, 1);
+    extract_row->addWidget(extract_browse, 0);
+    auto* extract_wrap = new QWidget;
+    extract_wrap->setObjectName(QStringLiteral("xml_extract_row"));
+    auto* extract_box = new QVBoxLayout(extract_wrap);
+    extract_box->setContentsMargins(0, 0, 0, 0);
+    extract_box->addWidget(extract_hint_, 0);
+    extract_box->addLayout(extract_row);
+    extract_wrap->setVisible(false);
+    body_layout()->addWidget(extract_wrap, 0);
+    extract_wrap_ = extract_wrap;
+    // 两个复选框至少勾一个 ⇒ 「提取文本」才可用；两边都改勾选也允许（那时按钮禁用并说理由）
+    const auto refresh_extract_button = [this] {
+        if (extract_button_ == nullptr) return;
+        const bool any = (texts_check_ != nullptr && texts_check_->isChecked()) ||
+                         (rewrite_check_ != nullptr && rewrite_check_->isChecked());
+        extract_button_->setEnabled(any);
+    };
+    QObject::connect(texts_check_, &QCheckBox::toggled, this, refresh_extract_button);
+    QObject::connect(rewrite_check_, &QCheckBox::toggled, this, refresh_extract_button);
+    // 路径变化 ⇒ 重新判断"是否一侧为空"
+    QObject::connect(dir_a_edit_, &QLineEdit::editingFinished, this, [this] { update_extract_mode(); });
+    QObject::connect(dir_b_edit_, &QLineEdit::editingFinished, this, [this] { update_extract_mode(); });
+
     QObject::connect(filter_combo_, &QComboBox::currentTextChanged, this,
                      [this](const QString&) { refresh_rows(); });
     // ★★ D2 批：选中回调（1.x `<<TreeviewSelect>>` → `_on_row_select`）＋双击弹窗
@@ -264,8 +317,14 @@ XmlPage::XmlPage(QWidget* parent)
                          if (QDialog* dialog = make_detail_dialog(index, this)) dialog->show();
                      });
 
+    extract_button_ = add_action(QStringLiteral("提取文本"));
+    extract_button_->setObjectName(QStringLiteral("xml_extract"));
+    extract_button_->setVisible(false);
+    QObject::connect(extract_button_, &QPushButton::clicked, this, [this] { run_extract(); });
+
     auto* start = add_action(QStringLiteral("开始比较"));
     start->setObjectName(QStringLiteral("xml_start"));
+    start_button_ = start;
     QObject::connect(start, &QPushButton::clicked, this, [this] {
         const QString a = dir_a_edit_->text().trimmed();
         const QString b = dir_b_edit_->text().trimmed();
@@ -1172,6 +1231,95 @@ DialogStart XmlPage::dir_a_dialog_start() const {
 
 DialogStart XmlPage::dir_b_dialog_start() const {
     return dialog_start_for(dir_b_edit_->text(), QStringList{dir_a_edit_->text()}, false);
+}
+
+}  // namespace xrkit::shell
+
+
+namespace xrkit::shell {
+
+// ── ★★ 2026-10-27：第三模式「提取文本」（用户 2026-10-26 口径）─────────────
+//
+// 触发：两侧都填了，且**恰好一边是空目录**（含"只有空子目录"）。
+// 空判定 = 递归遍历件数 == 0（与比较/导出用**同一份** `fs::collect_tree`）。
+// 切到提取模式：隐藏「筛选」与「开始比较」，显示提取选项行与「提取文本」。
+void XmlPage::update_extract_mode() {
+    const QString a = dir_a_edit_->text().trimmed();
+    const QString b = dir_b_edit_->text().trimmed();
+    bool show = false;
+    if (!a.isEmpty() && !b.isEmpty()) {
+        const auto empty_of = [](const QString& path) {
+            xrkit::engine::fs::WalkReport report;
+            const std::string root = path.toUtf8().toStdString();
+            const auto items = xrkit::engine::fs::collect_tree(root, &report);
+            int files = 0;
+            for (const auto& item : items) {
+                if (!item.is_dir) ++files;
+            }
+            return files == 0;
+        };
+        const bool empty_a = empty_of(a);
+        const bool empty_b = empty_of(b);
+        show = (empty_a != empty_b);   // 恰好一边为空
+    }
+    extract_mode_ = show;
+    if (extract_wrap_ != nullptr) extract_wrap_->setVisible(show);
+    if (extract_button_ != nullptr) extract_button_->setVisible(show);
+    if (start_button_ != nullptr) start_button_->setVisible(!show);
+    if (filter_combo_ != nullptr) filter_combo_->setVisible(!show);
+    if (show && status_ != nullptr) {
+        status_->setText(QStringLiteral("一侧为空：用「提取文本」产出标准语言包（两个产物至少勾一个）"));
+    }
+}
+
+void XmlPage::run_extract() {
+    const QString a = dir_a_edit_->text().trimmed();
+    const QString b = dir_b_edit_->text().trimmed();
+    if (a.isEmpty() || b.isEmpty()) {
+        status_->setText(QStringLiteral("请先选两个文件夹"));
+        return;
+    }
+    // 非空一侧 = 文本来源（另一侧只是"空壳"，用它触发模式）
+    const auto files_of = [](const QString& path) {
+        xrkit::engine::fs::WalkReport report;
+        const auto items = xrkit::engine::fs::collect_tree(
+            path.toUtf8().toStdString(), &report);
+        int files = 0;
+        for (const auto& item : items) {
+            if (!item.is_dir) ++files;
+        }
+        return files;
+    };
+    const QString source = files_of(a) == 0 ? b : a;
+    const bool want_texts = texts_check_ != nullptr && texts_check_->isChecked();
+    const bool want_rewritten = rewrite_check_ != nullptr && rewrite_check_->isChecked();
+    if (!want_texts && !want_rewritten) {
+        status_->setText(QStringLiteral("两个产物至少勾一个"));
+        return;
+    }
+    QString out = extract_out_edit_ != nullptr ? extract_out_edit_->text().trimmed() : QString();
+    if (out.isEmpty()) {
+        out = QDir(source).absolutePath() + QStringLiteral("/_langpack");
+    }
+    xrkit::engine::text::LangPackBuildOptions opt;
+    opt.texts_dir = source.toUtf8().toStdString();
+    opt.out_root = out.toUtf8().toStdString();
+    opt.include_texts = want_texts;
+    opt.include_rewritten = want_rewritten;
+    // 语言：优先取 localization.ltx 里的 language；没有就 rus（标准槽）
+    opt.lang = "rus";
+    const xrkit::engine::text::LangPackBuildResult result =
+        xrkit::engine::text::build_language_pack(opt);
+    if (!result.ok) {
+        status_->setText(QStringLiteral("提取失败：%1")
+                             .arg(QString::fromStdString(result.error)));
+        return;
+    }
+    status_->setText(QStringLiteral("已提取：%1 个文本 XML、%2 个改写产物 ⇒ %3（拒绝覆盖 %4 个）")
+                         .arg(result.xml_written)
+                         .arg(result.rewritten_copied)
+                         .arg(QString::fromStdString(result.out_dir))
+                         .arg(result.skipped_existing));
 }
 
 }  // namespace xrkit::shell

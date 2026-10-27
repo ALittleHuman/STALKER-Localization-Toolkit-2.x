@@ -3383,6 +3383,27 @@ def step_bench(release: bool) -> None:
         fail("bench 超出数量级上界（见上）")
 
 
+def step_xml_extract_mode(release: bool) -> None:
+    """XML 校对第三模式「提取文本」的**界面接线**（静态判据）。
+
+    用户可见行为在无头自检里点不到；结构性前提逐条钉住（缺一条就是"界面没接上"）：
+    一侧为空才出现 / 提取模式隐藏筛选与开始比较 / 两复选框至少一个 / 真调引擎装配 / 结果进状态行。
+    """
+    say("[?] XML 校对第三模式「提取文本」（界面接线静态判据）")
+    script = ROOT / "tests" / "check_xml_extract_mode.py"
+    if not require_repo_file(script, "提取模式静态判据脚本"):
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("XML-EXTRACT-MODE") or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("提取模式接线：锚点全在 + 自证会红")
+    else:
+        fail("提取模式接线判据不通过（见上）")
+
+
 def step_langpack_build(release: bool) -> None:
     """标准语言包装配（`--langpack-build`）—— XML 校对第三模式「提取文本」的落点。
 
@@ -7572,6 +7593,8 @@ STEPS = [
     ("font-sample", step_font_sample),
     # ★★ 2026-10-26：标准语言包（XML 校对第三模式的产物）
     ("langpack-build", step_langpack_build),
+    # ★★ 2026-10-27：XML 校对第三模式（提取文本）界面接线
+    ("xml-extract-mode", step_xml_extract_mode),
     ("ixr-plugin", step_ixr_plugin),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。

@@ -155,6 +155,20 @@ public:
     DialogStart dir_b_dialog_start() const;
 
 private:
+    // ★★ 2026-10-27（用户 2026-10-26 口径）：**第三模式「提取文本」** ——
+    //   一侧是空目录（含"只有空子目录"）时出现；产物 = 标准语言包（见 engine::text::langpack）。
+    //   两个复选框至少勾一个才允许提取（取代「开始比较」）。
+    void update_extract_mode();
+    void run_extract();
+    bool extract_mode_ = false;
+    class QCheckBox* texts_check_ = nullptr;
+    class QCheckBox* rewrite_check_ = nullptr;
+    class QPushButton* extract_button_ = nullptr;
+    class QLineEdit* extract_out_edit_ = nullptr;
+    class QLabel* extract_hint_ = nullptr;
+    class QWidget* extract_wrap_ = nullptr;
+    class QPushButton* start_button_ = nullptr;
+
     struct Row {
         engine::xml::XmlCompareResult result;
         std::string kind;  // same / diff / only_a / only_b
