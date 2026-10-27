@@ -66,3 +66,6 @@ tests/**/*_marker.txt
 /tools/build_gui/styles/
 /tools/build_gui/tls/
 /tools/build_gui/app_icon.ico
+
+# IXR 插件探针证据（每轮重写，不入库）
+plugins_ixr/ixr_marker.txt
