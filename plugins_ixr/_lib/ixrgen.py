@@ -1,21 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""IX-Ray 语言包生成器（**外部助手**，纯 fonttools）—— 2.x 侧只当它是命令行工具。
+"""IX-Ray 语言包生成器（外部助手，纯 fonttools）—— v0.3。
 
-口径（`12_规划_语言包识别与分部位字体.md` §五 + 用户 2026-10-26）：
-  · 输入 = 一个**能当模组打的整包**（如 `MODS\\~NotoSansSC`）；
-  · 「指定」模式 = 以该包为基底：**替换字体、其余文件逐字节保留**（不按模板重写整棵 gamedata）；
-  · 只改 `fonts.ltx` 里该段的 `name`/`opentype`（注释/继承/未知键原样保留）；
-  · 字符集 = 包里 `configs/text/<lang>/*.xml` + 额外 `--text-root` + `configs/ui/**/*.xml` 的
-    `font="..."` 引用（大字号段按段裁剪暂不做，保持"全包字符集"最小口径）；
-  · 缺字必须**进报告**（`missing` 计数 + 码位），不许静默。
+v0.3（2026-10-27）新增：
+  · `--langs rus,eng` / `--all-langs`：一次为多个语言各出一份包（需 `--split-output`，
+    否则拒绝 —— 多语言写到同一目录会互相覆盖）。
+
+既有口径（`12_规划_语言包识别与分部位字体.md` §五 + 用户 2026-10-26）：
+  · 「指定」模式 = 以参照包为基底：只替换字体，其余文件逐字节保留；
+  · 只改字体文件本身（名字不变 ⇒ fonts.ltx 不用动）；
+  · 字符集 = 包内 configs/text/<lang>/*.xml + --text-root + configs/ui/**/*.xml；
+  · 逐槽位字体计划（--plan）；分区（--sizes）；缺字必须入报告（零静默）。
 
 用法：
-  python ixrgen.py --pack <整包目录> --font <CJK ttf> --out <输出目录>
-                   [--text-root DIR]... [--charset-scope used|common] [--limit-sections a,b]
-输出：JSON（stdout 最后一行 `IXRGEN {...}`）+ 人读行。
-
-退出码：0 成功；1 失败（读不到/不是字体包/写不出）；2 外部前提缺（fonttools/字体/样本）。
+  python ixrgen.py --pack <整包> --font <CJK> --out <目录> [--langs rus,eng --split-output]
+                   [--plan plan.json] [--sizes 14,16] [--text-root DIR]...
+退出码：0 成功；1 失败；2 外部前提缺（fonttools）。
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from pathlib import Path
 
 try:
     from fontTools.ttLib import TTFont
-except Exception:  # pragma: no cover - 外部前提
+except Exception:  # pragma: no cover
     print("IXRGEN error reason=缺少 fonttools（pip install fonttools）")
     raise SystemExit(2)
 
@@ -37,40 +37,35 @@ def log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def parse_ltx(path: Path) -> list[dict]:
-    """保留原始行（生成时按行改写，注释/继承/未知键原样）。"""
-    rows: list[dict] = []
+def parse_ltx(path: Path) -> dict[str, dict]:
+    secs: dict[str, dict] = {}
     cur: dict | None = None
     for raw in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
-        line = raw.rstrip()
-        rows.append({"raw": line, "section": None, "kv": None})
-        s = line.strip()
+        s = raw.strip()
         if not s or s.startswith(";") or s.startswith("#"):
             continue
         if s.startswith("[") and "]" in s:
             head = s[1:s.index("]")]
-            name = head.split(":", 1)[0].strip()
-            cur = {"name": name, "base": head.split(":", 1)[1].strip() if ":" in head else "",
+            cur = {"name": head.split(":", 1)[0].strip(),
+                   "base": head.split(":", 1)[1].strip() if ":" in head else "",
                    "kv": {}}
-            rows[-1]["section"] = cur
+            secs[cur["name"]] = cur
             continue
         if cur is not None and "=" in s:
             k, v = s.split("=", 1)
-            key = k.strip().lower()
-            cur["kv"][key] = v.strip()
-            rows[-1]["kv"] = (cur, key)
-    return rows
+            cur["kv"][k.strip().lower()] = v.strip()
+    return secs
 
 
-def sections_of(rows: list[dict]) -> dict[str, dict]:
-    out: dict[str, dict] = {}
-    for row in rows:
-        if row["section"]:
-            out[row["section"]["name"]] = row["section"]
-    return out
+def detect_langs(pack: Path) -> list[str]:
+    gd = pack / "gamedata" if (pack / "gamedata").is_dir() else pack
+    fonts = gd / "fonts"
+    if not fonts.is_dir():
+        return []
+    return sorted(d.name for d in fonts.iterdir() if d.is_dir())
 
 
-def collect_charset(pack: Path, text_roots: list[Path], scope: str) -> set[str]:
+def collect_charset(pack: Path, lang: str, text_roots: list[Path], scope: str) -> set[str]:
     chars: set[str] = set()
 
     def eat(xml: Path) -> None:
@@ -79,23 +74,23 @@ def collect_charset(pack: Path, text_roots: list[Path], scope: str) -> set[str]:
         except Exception:
             return
         for node in root.iter():
-            if node.tag in ("text", "caption") and node.text:
-                chars.update(node.text)
-            for value in (node.attrib or {}).values():
-                if node.tag in ("text", "caption") and value:
+            if node.tag in ("text", "caption"):
+                if node.text:
+                    chars.update(node.text)
+                for value in (node.attrib or {}).values():
                     chars.update(value)
 
+    gd = pack / "gamedata" if (pack / "gamedata").is_dir() else pack
     dirs: list[Path] = []
-    for gd in (pack / "gamedata", pack):
-        if (gd / "configs").is_dir():
-            for lang_dir in (gd / "configs" / "text").glob("*"):
-                if lang_dir.is_dir():
-                    dirs.append(lang_dir)
-            ui = gd / "configs" / "ui"
-            if ui.is_dir():
-                dirs.append(ui)
-            break
-    dirs.extend(text_roots)
+    lang_dir = gd / "configs" / "text" / lang
+    if lang_dir.is_dir():
+        dirs.append(lang_dir)
+    for root in text_roots:
+        cand = root / lang
+        dirs.append(cand if cand.is_dir() else root)
+    ui = gd / "configs" / "ui"
+    if ui.is_dir():
+        dirs.append(ui)
     for d in dirs:
         if d.is_dir():
             for xml in d.rglob("*.xml"):
@@ -105,21 +100,156 @@ def collect_charset(pack: Path, text_roots: list[Path], scope: str) -> set[str]:
     return chars
 
 
+def merge_into(base_path: Path, cjk_source, cjk_cmap: dict, wanted: list[int]) -> tuple[int, list[int]]:
+    dst = TTFont(str(base_path), fontNumber=0)
+    if "glyf" not in dst:
+        raise RuntimeError("not-glyf")
+    dst_cmap = dst.getBestCmap() or {}
+    need = [cp for cp in wanted if cp not in dst_cmap and cp in cjk_cmap]
+    missing = [cp for cp in wanted if cp not in dst_cmap and cp not in cjk_cmap]
+    if need:
+        from fontTools.pens.recordingPen import DecomposingRecordingPen
+        from fontTools.pens.transformPen import TransformPen
+        from fontTools.pens.ttGlyphPen import TTGlyphPen
+
+        scale = dst["head"].unitsPerEm / cjk_source["head"].unitsPerEm
+        order = list(dst.getGlyphOrder())
+        order_set = set(order)
+        glyf = dst["glyf"]
+        hmtx = dst["hmtx"]
+        glyph_set = cjk_source.getGlyphSet()
+        added_map: dict[int, str] = {}
+        for cp in need:
+            gname = cjk_cmap[cp]
+            pen = TTGlyphPen(None)
+            rec = DecomposingRecordingPen(glyph_set)
+            glyph_set[gname].draw(rec)
+            rec.replay(TransformPen(pen, (scale, 0, 0, scale, 0, 0)))
+            glyph = pen.glyph()
+            newname = "uni%04X" % cp
+            while newname in order_set:
+                newname += "_"
+            glyf.glyphs[newname] = glyph
+            order.append(newname)
+            order_set.add(newname)
+            adv, lsb = cjk_source["hmtx"][gname]
+            hmtx.metrics[newname] = (int(round(adv * scale)), int(round(lsb * scale)))
+            added_map[cp] = newname
+        dst.setGlyphOrder(order)
+        dst["maxp"].numGlyphs = len(order)
+        # ★ cmap 必须真写；只加字形不加映射 = 引擎找不到字（修过）
+        for sub in dst["cmap"].tables:
+            if not sub.isUnicode():
+                continue
+            for cp, glyph_name in added_map.items():
+                sub.cmap[cp] = glyph_name
+    dst.save(str(base_path))
+    return len(need), missing
+
+
+def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
+    pack = Path(args.pack)
+    out = (Path(args.out) / lang) if args.split_output else Path(args.out)
+    gd = pack / "gamedata" if (pack / "gamedata").is_dir() else pack
+    fonts_ltx = gd / "configs" / "fonts.ltx"
+    if not fonts_ltx.is_file():
+        raise SystemExit("IXRGEN error reason=不是字体包（缺 configs/fonts.ltx）：%s" % fonts_ltx)
+    fonts_dir = gd / "fonts" / lang
+    if not fonts_dir.is_dir():
+        return {"lang": lang, "status": "skipped", "reason": "缺 fonts/%s" % lang,
+                "added": 0, "missing": 0, "fonts": [], "sections": []}
+
+    sections = parse_ltx(fonts_ltx)
+    wanted = sorted({ord(c) for c in collect_charset(
+        pack, lang, [Path(p) for p in (args.text_root or [])], args.charset_scope)
+        if ord(c) > 0x20})
+
+    plan_sections: dict[str, str] = {}
+    plan_sizes: set[int] = set()
+    if args.plan:
+        plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
+        plan_sections = {str(k): str(v) for k, v in (plan.get("sections") or {}).items()}
+        plan_sizes = {int(x) for x in (plan.get("sizes") or [])}
+    if args.sizes:
+        plan_sizes |= {int(x) for x in args.sizes.split(",") if x.strip()}
+
+    if out.exists():
+        shutil.rmtree(out)
+    shutil.copytree(pack, out)
+    out_gd = out / "gamedata" if (out / "gamedata").is_dir() else out
+    out_fonts = out_gd / "fonts" / lang
+
+    by_name: dict[str, list[str]] = {}
+    font_for_name: dict[str, Path] = {}
+    skipped_sections: list[dict] = []
+    for sec_name, sec in sections.items():
+        name = sec["kv"].get("name", "")
+        if not name:
+            continue
+        if plan_sizes:
+            size = int(sec["kv"].get("size") or 0)
+            if size and size not in plan_sizes:
+                skipped_sections.append({"name": sec_name,
+                                         "reason": "size %d not in partition" % size})
+                continue
+        by_name.setdefault(name, []).append(sec_name)
+        chosen = plan_sections.get(sec_name, "")
+        if chosen:
+            font_for_name[name] = Path(chosen)
+
+    report = {"lang": lang, "pack": str(pack), "out": str(out), "sections": [],
+              "fonts": [], "missing": 0, "charset": len(wanted),
+              "added": 0, "skipped_sections": skipped_sections,
+              "plan_sections": plan_sections, "sizes": sorted(plan_sizes), "status": "ok"}
+
+    for name in sorted(by_name):
+        path = out_fonts / (name if name.lower().endswith(".ttf") else name + ".ttf")
+        if not path.is_file():
+            report["sections"].append({"name": name, "status": "missing-file"})
+            continue
+        src = font_for_name.get(name)
+        if src is not None and not src.is_file():
+            log("IXRGEN warn 计划里的字体不存在：%s（段 %s 回退为 --font）" % (src, by_name[name][0]))
+            src = None
+        use_src = Path(src) if src is not None else Path(args.font)
+        if use_src != Path(args.font):
+            one = TTFont(str(use_src), fontNumber=0)
+            cmap = one.getBestCmap() or {}
+        else:
+            one, cmap = cjk_source, cjk_cmap
+        try:
+            added, missing = merge_into(path, one, cmap, wanted)
+        except RuntimeError:
+            log("IXRGEN warn %s 不是 glyf 轮廓（CFF 暂不支持），跳过" % path.name)
+            report["sections"].append({"name": name, "status": "not-glyf"})
+            continue
+        report["added"] += added
+        report["missing"] += len(missing)
+        report["fonts"].append({"name": path.name, "added": added, "missing": len(missing),
+                                "missing_list": ["U+%04X" % cp for cp in missing[:20]]})
+        for sec_name in by_name[name]:
+            report["sections"].append({"name": sec_name, "font": name, "status": "ok"})
+    return report
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="IX-Ray 语言包生成（fonttools 外部助手）")
-    ap.add_argument("--pack", required=True, help="参照包（能当模组打的整包目录）")
-    ap.add_argument("--font", required=True, help="中文字体 .ttf/.otf")
-    ap.add_argument("--out", required=True, help="输出目录（会先清空）")
-    ap.add_argument("--text-root", action="append", default=[], help="额外文本根（可重复）")
+    ap.add_argument("--pack", required=True)
+    ap.add_argument("--font", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--lang", default="", help="只处理这一个语言（默认：包里的 primary lang）")
+    ap.add_argument("--langs", default="", help="多个语言（逗号分隔；需 --split-output）")
+    ap.add_argument("--all-langs", action="store_true", help="包里有几个语言就出几份")
+    ap.add_argument("--split-output", action="store_true",
+                    help="多语言时输出到 <out>/<lang>/")
+    ap.add_argument("--text-root", action="append", default=[])
     ap.add_argument("--charset-scope", default="used", choices=["used", "common"])
-    ap.add_argument("--limit-sections", default="", help="只处理这些段（逗号分隔；默认全部）")
-    ap.add_argument("--plan", default="", help="逐槽位字体计划 JSON：{\"sections\": {段: 字体路径}, \"sizes\": [14,16]}")
-    ap.add_argument("--sizes", default="", help="分区：只处理这些字号档（逗号分隔；空=全部）")
+    ap.add_argument("--plan", default="")
+    ap.add_argument("--sizes", default="")
     args = ap.parse_args()
 
     pack = Path(args.pack)
     font = Path(args.font)
-    out = Path(args.out)
     if not pack.is_dir():
         log("IXRGEN error reason=参照包不存在：%s" % pack)
         return 1
@@ -127,160 +257,45 @@ def main() -> int:
         log("IXRGEN error reason=中文字体不存在：%s" % font)
         return 1
     gd = pack / "gamedata" if (pack / "gamedata").is_dir() else pack
-    fonts_ltx = gd / "configs" / "fonts.ltx"
-    if not fonts_ltx.is_file():
-        log("IXRGEN error reason=不是字体包（缺 configs/fonts.ltx）：%s" % fonts_ltx)
+    if not (gd / "configs" / "fonts.ltx").is_file():
+        log("IXRGEN error reason=不是字体包（缺 configs/fonts.ltx）：%s"
+            % (gd / "configs" / "fonts.ltx"))
         return 1
 
-    # 语言：localization.ltx 的 [string_table] language；缺 ⇒ rus
-    lang = "rus"
-    loc = gd / "configs" / "localization.ltx"
-    if loc.is_file():
-        for row in parse_ltx(loc):
-            sec = row["section"]
-            if sec and sec["name"].lower() == "string_table" and sec["kv"].get("language"):
+    langs: list[str] = []
+    if args.all_langs:
+        langs = detect_langs(pack)
+    elif args.langs:
+        langs = [s.strip() for s in args.langs.split(",") if s.strip()]
+    elif args.lang:
+        langs = [args.lang]
+    else:
+        lang = "rus"
+        loc = gd / "configs" / "localization.ltx"
+        if loc.is_file():
+            sec = parse_ltx(loc).get("string_table", {})
+            if sec and sec["kv"].get("language"):
                 lang = sec["kv"]["language"]
-
-    rows = parse_ltx(fonts_ltx)
-    sections = sections_of(rows)
-    fonts_dir = gd / "fonts" / lang
-    if not fonts_dir.is_dir():
-        log("IXRGEN error reason=缺 fonts/%s（这不是矢量字体包，或语言判定错了）" % lang)
+        langs = [lang]
+    if not langs:
+        log("IXRGEN error reason=包内没有可识别的语言目录（fonts/<lang>）")
         return 1
-    ttf_in_pack = sorted(p.name for p in fonts_dir.glob("*.ttf"))
-    if not ttf_in_pack:
-        log("IXRGEN error reason=fonts/%s 里没有 .ttf" % lang)
+    if len(langs) > 1 and not args.split_output:
+        log("IXRGEN error reason=多语言必须加 --split-output（否则会互相覆盖）")
         return 1
 
-    chars = collect_charset(pack, [Path(p) for p in args.text_root], args.charset_scope)
-    log("IXRGEN 字符集 %d 个（scope=%s）" % (len(chars), args.charset_scope))
-
-    # 输出：整包副本（逐字节保留），只替换字体
-    if out.exists():
-        shutil.rmtree(out)
-    shutil.copytree(pack, out)
-    out_fonts = (out / "gamedata" / "fonts" / lang) if (out / "gamedata").is_dir() else (out / "fonts" / lang)
-
-    default_source = TTFont(str(font), fontNumber=0)
-    default_cmap = default_source.getBestCmap() or {}
-    wanted = sorted({ord(c) for c in chars if ord(c) > 0x20})
-
-    limit = {s.strip() for s in args.limit_sections.split(",") if s.strip()}
-    # ★★ 2026-10-26：逐槽位字体计划（「分部位/分区」的落点）——
-    #   段 → 字体；没在计划里的段用 `--font`。sizes 是分区：只处理这些字号档的段。
-    plan_sections: dict[str, str] = {}
-    plan_sizes: set[int] = set()
-    if args.plan:
-        plan_path = Path(args.plan)
-        if not plan_path.is_file():
-            log("IXRGEN error reason=计划文件不存在：%s" % plan_path)
-            return 1
-        plan = json.loads(plan_path.read_text(encoding="utf-8"))
-        plan_sections = {str(k): str(v) for k, v in (plan.get("sections") or {}).items()}
-        plan_sizes = {int(x) for x in (plan.get("sizes") or [])}
-    if args.sizes:
-        plan_sizes |= {int(x) for x in args.sizes.split(",") if x.strip()}
-    report = {"lang": lang, "pack": str(pack), "out": str(out), "sections": [], "fonts": [],
-              "missing": 0, "charset": len(wanted)}
-
-    # 每个被引用的字体文件合并一次（同名字体被多个段共用 ⇒ 只做一遍）
-    by_name: dict[str, list[str]] = {}
-    font_for_name: dict[str, Path] = {}
-    for sec_name, sec in sections.items():
-        name = sec["kv"].get("name", "")
-        if not name:
-            continue
-        if limit and sec_name not in limit:
-            continue
-        if plan_sizes:
-            size = int(sec["kv"].get("size") or 0)
-            if size and size not in plan_sizes:
-                report.setdefault("skipped_sections", []).append(
-                    {"name": sec_name, "reason": "size %d not in partition" % size})
-                continue
-        by_name.setdefault(name, []).append(sec_name)
-        chosen = plan_sections.get(sec_name, "")
-        if chosen:
-            font_for_name[name] = Path(chosen)
-
-    total_added = 0
-    for name in sorted(by_name):
-        base_path = out_fonts / (name if name.lower().endswith(".ttf") else name + ".ttf")
-        if not base_path.is_file():
-            log("IXRGEN warn 段 %s 引用的 %s 不在包里（跳过）" % (by_name[name][0], base_path.name))
-            report["sections"].append({"name": name, "status": "missing-file",
-                                       "sections": by_name[name]})
-            continue
-        cjk_source, cjk_cmap = default_source, default_cmap
-        section_font = font_for_name.get(name)
-        if section_font is not None and not section_font.is_file():
-            log("IXRGEN warn 计划里的字体不存在：%s（段 %s 回退为 --font）"
-                % (section_font, by_name[name][0]))
-            section_font = None
-        if section_font is not None and section_font != font:
-            cjk_source = TTFont(str(section_font), fontNumber=0)
-            cjk_cmap = cjk_source.getBestCmap() or {}
-        dst = TTFont(str(base_path), fontNumber=0)
-        if "glyf" not in dst:
-            log("IXRGEN warn %s 不是 glyf 轮廓（CFF 暂不支持），跳过" % base_path.name)
-            report["sections"].append({"name": name, "status": "not-glyf",
-                                       "sections": by_name[name]})
-            continue
-        dst_cmap = dst.getBestCmap() or {}
-        need = [cp for cp in wanted if cp not in dst_cmap and cp in cjk_cmap]
-        missing = [cp for cp in wanted if cp not in dst_cmap and cp not in cjk_cmap]
-        if need:
-            from fontTools.pens.recordingPen import DecomposingRecordingPen
-            from fontTools.pens.transformPen import TransformPen
-            from fontTools.pens.ttGlyphPen import TTGlyphPen
-
-            scale = dst["head"].unitsPerEm / cjk_source["head"].unitsPerEm
-            order = list(dst.getGlyphOrder())
-            order_set = set(order)
-            glyf = dst["glyf"]
-            hmtx = dst["hmtx"]
-            glyph_set = cjk_source.getGlyphSet()
-            added_map: dict[int, str] = {}
-            for cp in need:
-                gname = cjk_cmap[cp]
-                pen = TTGlyphPen(None)
-                rec = DecomposingRecordingPen(glyph_set)
-                glyph_set[gname].draw(rec)
-                rec.replay(TransformPen(pen, (scale, 0, 0, scale, 0, 0)))
-                glyph = pen.glyph()
-                newname = "uni%04X" % cp
-                while newname in order_set:
-                    newname += "_"
-                glyf.glyphs[newname] = glyph
-                order.append(newname)
-                order_set.add(newname)
-                adv, lsb = cjk_source["hmtx"][gname]
-                hmtx.metrics[newname] = (int(round(adv * scale)), int(round(lsb * scale)))
-                added_map[cp] = newname
-            dst.setGlyphOrder(order)
-            dst["maxp"].numGlyphs = len(order)
-            # ★ 关键：字形加进去了还得**进 cmap**，否则引擎按码位找不到（修前漏了这一步：
-            #   added 数对、输出 cmap 里却没有——判据一读 cmap 就露）。
-            for sub in dst["cmap"].tables:
-                if not sub.isUnicode():
-                    continue
-                for cp, glyph_name in added_map.items():
-                    sub.cmap[cp] = glyph_name
-        dst.save(str(base_path))
-        total_added += len(need)
-        report["missing"] += len(missing)
-        report["fonts"].append({"name": base_path.name, "added": len(need),
-                                "missing": len(missing),
-                                "missing_list": ["U+%04X" % cp for cp in missing[:20]]})
-        for sec_name in by_name[name]:
-            report["sections"].append({"name": sec_name, "font": name, "status": "ok"})
-
-    report["added"] = total_added
-    report["plan_sections"] = {k: v for k, v in plan_sections.items()}
-    report["sizes"] = sorted(plan_sizes)
-    log("IXRGEN done 字体 %d 个，新增字形 %d，缺字 %d"
-        % (len(report["fonts"]), total_added, report["missing"]))
-    log("IXRGEN " + json.dumps(report, ensure_ascii=False))
+    cjk_source = TTFont(str(font), fontNumber=0)
+    cjk_cmap = cjk_source.getBestCmap() or {}
+    reports = []
+    for lang in langs:
+        rep = build_one(args, lang, cjk_source, cjk_cmap)
+        reports.append(rep)
+        log("IXRGEN 语言 %s：字形 +%d，缺字 %d，状态 %s"
+            % (lang, rep.get("added", 0), rep.get("missing", 0), rep.get("status")))
+    total = {"langs": langs, "reports": reports,
+             "added": sum(r.get("added", 0) for r in reports),
+             "missing": sum(r.get("missing", 0) for r in reports)}
+    log("IXRGEN " + json.dumps(total, ensure_ascii=False))
     return 0
 
 

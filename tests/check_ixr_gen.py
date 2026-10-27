@@ -197,6 +197,41 @@ def main() -> int:
             problems += 1
             fail("分区产物缺 letterica.ttf")
 
+        # ②b 多语言：造一个双语言包（fonts/rus + fonts/eng），--all-langs 必须出两份
+        pack3 = build_pack(tmp / "multi", BASE_FONT, TEXT)
+        for lang in ("rus", "eng"):
+            (pack3 / "gamedata" / "fonts" / lang).mkdir(parents=True, exist_ok=True)
+            (pack3 / "gamedata" / "fonts" / lang / "arial.ttf").write_bytes(
+                (pack3 / "gamedata" / "fonts" / "rus" / "arial.ttf").read_bytes())
+            (pack3 / "gamedata" / "configs" / "text" / lang).mkdir(parents=True, exist_ok=True)
+            (pack3 / "gamedata" / "configs" / "text" / lang / "t.xml").write_text(
+                '<?xml version="1.0" encoding="utf-8"?><string_table>'
+                '<string id="a"><text>你好</text></string></string_table>', encoding="utf-8")
+        out_multi = tmp / "out_multi"
+        proc = subprocess.run([sys.executable, str(TOOL), "--pack", str(pack3),
+                               "--font", str(CJK_FONT), "--out", str(out_multi),
+                               "--all-langs", "--split-output"],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        both = [out_multi / lang / "gamedata" / "fonts" / lang / "arial.ttf"
+                for lang in ("rus", "eng")]
+        if proc.returncode == 0 and all(f.is_file() for f in both):
+            ok("多语言：--all-langs --split-output 出了 rus / eng 两份")
+        else:
+            problems += 1
+            fail("多语言没出两份：rc=%d\n%s"
+                 % (proc.returncode, proc.stdout.decode("utf-8", "replace")[-300:]))
+
+        # ②c 多语言没给 --split-output ⇒ 必须拒绝（不许互相覆盖）
+        proc = subprocess.run([sys.executable, str(TOOL), "--pack", str(pack3),
+                               "--font", str(CJK_FONT), "--out", str(tmp / "out_bad"),
+                               "--all-langs"],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        if proc.returncode == 1 and "split-output" in proc.stdout.decode("utf-8", "replace"):
+            ok("多语言不给 --split-output：退 1 且说理由")
+        else:
+            problems += 1
+            fail("多语言没有 split-output 保护：rc=%d" % proc.returncode)
+
         # ③ 零静默：给一个没有中文的字体当源 ⇒ 必须把缺字记进报告（不是静默成功）
         out2 = tmp / "out2"
         rc2, stdout2 = run_tool(pack, BASE_FONT, out2)   # arial 无中文

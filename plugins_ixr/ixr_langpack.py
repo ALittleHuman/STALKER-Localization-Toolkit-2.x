@@ -153,6 +153,55 @@ def register(api):
 
         ui.button(parent, "预览样张", do_preview)
 
+        # ★★ 2026-10-27：**并排对比**（原字体 vs 候选）—— 两张样张各出一张 ui.image。
+        #   "原字体" = 参照包里该段的 ttf；"候选" = 用户给该段选的字体（没选就用参照包字体）。
+        compare = {"left": None, "right": None}
+
+        def do_compare():
+            model = state["scan"]
+            if not model or not model.get("slots"):
+                ui.log_view_append(log, "先扫描参照包")
+                return
+            slot = model["slots"][0]
+            base = ""
+            # 参照包内的 ttf：text_dir 的同级 fonts/<lang>/<name>.ttf
+            name = slot.get("name") or ""
+            pack_root = ui.get_text(pack_entry).strip()
+            if name and pack_root:
+                cand_path = os.path.join(pack_root, "gamedata", "fonts", model["lang"],
+                                         name + ".ttf")
+                if os.path.isfile(cand_path):
+                    base = cand_path
+            if not base:
+                ui.log_view_append(log, "找不到参照包里的原始 ttf（位图包不支持对比预览）")
+                return
+            chosen = ""
+            for path in state["plan"].values():
+                chosen = path
+                break
+            out_l = os.path.join(api.plugin_dir, "_lib", "cmp_base.ppm")
+            left = api.engine.font_sample(base, "原字体：你好 Привет", 28, out_l)
+            if not left or not left.get("ok"):
+                ui.log_view_append(log, "原字体样张失败：%s" % (left or {}).get("error", "?"))
+                return
+            if compare["left"] is not None:
+                ui.destroy(compare["left"])
+            compare["left"] = ui.image(parent, out_l, 0, 0)
+            ui.log_view_append(log, "原字体：缺字 %d" % left["missing"])
+            if chosen:
+                out_r = os.path.join(api.plugin_dir, "_lib", "cmp_cand.ppm")
+                right = api.engine.font_sample(chosen, "候选：你好 Привет", 28, out_r)
+                if right and right.get("ok"):
+                    if compare["right"] is not None:
+                        ui.destroy(compare["right"])
+                    compare["right"] = ui.image(parent, out_r, 0, 0)
+                    ui.log_view_append(log, "候选：缺字 %d" % right["missing"])
+
+        ui.button(parent, "并排对比（原字体 vs 候选）", do_compare)
+
+        multi_check = ui.checkbox(parent, "多语言：每个语言各出一份（--all-langs）", None)
+        multi_check_holder = {"box": multi_check}
+
         out_entry = ui.entry(parent, host.pref_get(SECTION, "out", ""), 60)
         ui.label(parent, "输出目录")
 
@@ -189,6 +238,8 @@ def register(api):
             args = [helper, "--pack", root, "--font", font, "--out", out, "--plan", plan_path]
             if sizes:
                 args += ["--sizes", ",".join(str(s) for s in sizes)]
+            if multi_check_holder["box"] is not None and ui.checkbox_state(multi_check_holder["box"]):
+                args += ["--all-langs", "--split-output"]
             ui.log_view_append(log, "运行：" + " ".join([python] + args))
             result = host.run_process(python, args, lambda line: ui.log_view_append(log, line))
             if not result.get("started"):
