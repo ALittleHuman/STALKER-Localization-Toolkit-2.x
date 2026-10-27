@@ -3383,6 +3383,84 @@ def step_bench(release: bool) -> None:
         fail("bench 超出数量级上界（见上）")
 
 
+def step_ixr_plugin(release: bool) -> None:
+    """IX-Ray 插件（真插件，不是内置页）：生成器判据 + 插件无头装载。
+
+    两件一起判，因为它们是一根链：
+      ① `plugins_ixr/_lib/ixrgen.py`：真合并（cmap 必含码位）/ 逐字节保留 / 缺字入账 / 非字体包退 1；
+      ② `plugins_ixr/ixr_langpack.py`：headless 装载 + 探针真调 `api.engine.langpack_scan`。
+    外部前提（系统字体 / fonttools / 真包）缺失 ⇒ 退 2 ⇒ release FAIL。
+    """
+    say("[?] IX-Ray 插件：生成器（ixrgen）+ 插件无头装载")
+    script = ROOT / "tests" / "check_ixr_gen.py"
+    if not require_repo_file(script, "IXR 生成器判据脚本"):
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("IXR-GEN") or s.startswith("!!"):
+            say("  " + s)
+    plugin_ok = True
+    if rc == 0:
+        ok("生成器：真合并 / 逐字节保留 / 缺字入账 全过")
+    elif rc == 2:
+        prereq("系统字体或 fonttools", "缺外部前提（见上）", release)
+        plugin_ok = False
+    else:
+        fail("IXR 生成器判据不通过（见上）")
+        plugin_ok = False
+
+    fixture = ROOT / "plugins_ixr"
+    if not fixture.is_dir():
+        prereq("IX-Ray 插件目录", "缺 plugins_ixr/", release)
+        return
+    marker = fixture / "ixr_marker.txt"
+    if marker.exists():
+        marker.unlink()
+    langpack_tmp = Path(tempfile.mkdtemp(prefix="ixr_probe_"))
+    lp = langpack_tmp / "ixr_pack" / "gamedata"
+    (lp / "configs").mkdir(parents=True)
+    (lp / "configs" / "fonts.ltx").write_text(
+        "[font_default]\nshader = hud\\font\nsize = 14\nname = arial\nopentype = false\n"
+        "[font_letterica]:font_default\nname = letterica\nsize = 16\n", encoding="utf-8")
+    (lp / "configs" / "localization.ltx").write_text(
+        "[string_table]\nlanguage = rus\n", encoding="utf-8")
+    (lp / "fonts" / "rus").mkdir(parents=True)
+    (lp / "fonts" / "rus" / "arial.ttf").write_bytes(b"")
+    (lp / "fonts" / "rus" / "letterica.ttf").write_bytes(b"")
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["XRKIT_IXR_PROBE"] = str(langpack_tmp / "ixr_pack")
+    prc, pout = run([str(CLI_EXE), "--py-plugins", str(fixture)], env=env, timeout=600)
+    shutil.rmtree(langpack_tmp, ignore_errors=True)
+    for raw in pout.splitlines():
+        s = raw.strip()
+        if s.startswith("PYPLUGINS") and ("files=" in s or "error" in s):
+            say("  " + s[:140])
+    if not marker.is_file():
+        fail("插件没写出探针证据（装载失败？rc=%d）" % prc)
+        return
+    got = {}
+    for line in marker.read_text(encoding="utf-8").splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            got[k.strip()] = v.strip()
+    problems = []
+    if got.get("probe_profile") != "ixr":
+        problems.append("probe_profile=%r（期望 ixr）" % got.get("probe_profile"))
+    if got.get("probe_lang") != "rus":
+        problems.append("probe_lang=%r（期望 rus）" % got.get("probe_lang"))
+    if got.get("probe_slots") != "2":
+        problems.append("probe_slots=%r（期望 2）" % got.get("probe_slots"))
+    if got.get("probe_ttf") != "2":
+        problems.append("probe_ttf=%r（期望 2）" % got.get("probe_ttf"))
+    if problems:
+        fail("插件探针不对：" + "；".join(problems))
+    elif plugin_ok:
+        ok("插件：headless 装载 + 探针真调 langpack_scan（ixr/rus/2 段）")
+
+
 def step_langpack_scan(release: bool) -> None:
     """语言包识别（IX-Ray 生成器「指定」模式的底座，2026-10-26 用户拍板）。
 
@@ -7439,6 +7517,8 @@ STEPS = [
     # ★★ 2026-10-26（用户：「IX-Ray 必须施工」第一刀）：语言包四档识别。
     #   排在 bench 之后（要 CLI 产物；不需要外壳）。
     ("langpack-scan", step_langpack_scan),
+    # ★★ 2026-10-26：IX-Ray 插件（真插件）—— 生成器 + 无头装载一根链。
+    ("ixr-plugin", step_ixr_plugin),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
     ("version-identity", step_version_identity),

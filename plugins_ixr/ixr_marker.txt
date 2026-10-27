@@ -1,0 +1,5 @@
+probe_profile:ixr
+probe_lang:rus
+probe_slots:2
+probe_ttf:2
+probe_sections:font_default,font_letterica
