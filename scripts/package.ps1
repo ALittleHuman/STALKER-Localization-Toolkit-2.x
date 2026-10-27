@@ -192,6 +192,39 @@ Write-Host ("  CPython：留根 {0} 个，进 python\ {1} 个" -f ($pyFiles.Coun
 Write-Host ("  CPython 运行期 + 标准库：{0} 个文件（{1:N1} MB，来源 third_party\python-embed）" `
             -f $pyFiles.Count, (($pyFiles | Measure-Object -Property Length -Sum).Sum / 1MB))
 
+# ★★★ 2026-10-27（实测 0xC0000135）：包里的 `python\python.exe` 起不来 ——
+#   `python3XX.dll` / `vcruntime140*.dll` 按布局留在**包根**（主程序 exe 需要它们在那儿），
+#   而子进程 `python\python.exe` 的 DLL 搜索只从**自己目录**开始 ⇒ 缺 DLL。
+#   修法：把这两类 DLL **再拷一份到 `python\`**（多 ~8 MB，换"助手真能起"）。
+$pyForDllDup = Join-Path $stage 'python'
+foreach ($dll in @(Get-ChildItem -LiteralPath $stage -File -Filter 'python3*.dll' -ErrorAction SilentlyContinue) +
+                   @(Get-ChildItem -LiteralPath $stage -File -Filter 'vcruntime140*.dll' -ErrorAction SilentlyContinue)) {
+    Copy-Item -LiteralPath $dll.FullName -Destination $pyForDllDup -Force
+}
+Write-Host "  CPython DLL 副本：python\ 里补齐 python3*.dll + vcruntime140*.dll（子进程 python.exe 要）"
+
+# ★★ 2026-10-27（用户：「汉化包生成现在还是没有 IX-Ray 的选项」）：**IX-Ray 生成器随包**。
+#   产品内它是"外部助手"（与 ffmpeg 同一模式）：启动器 + 助手 + vendored fontTools。
+#   落点（与 engine::font::ixr_resolve_tools 的口径一致）：
+#     <app>/tools/ixr_run.py、<app>/tools/ixrgen.py、<app>/tools/fontlib/fontTools/
+$ixrTools = Join-Path $stage 'tools'
+$ixrFontlib = Join-Path $ixrTools 'fontlib'
+New-Item -ItemType Directory -Force -Path $ixrFontlib | Out-Null
+$ixrRunSrc = Join-Path $root 'plugins_ixr\_lib\ixr_run.py'
+$ixrGenSrc = Join-Path $root 'plugins_ixr\_lib\ixrgen.py'
+$ixrFontSrc = Join-Path $root 'vendor\fonttools\fontTools'
+foreach ($f in @($ixrRunSrc, $ixrGenSrc)) {
+    if (-not (Test-Path $f)) { throw ("IX-Ray 生成器缺件：{0}（页面的 IX-Ray 选项要靠它）" -f $f) }
+}
+if (-not (Test-Path $ixrFontSrc)) {
+    throw ("缺 vendored fontTools：{0}（IX-Ray 合并内核；放进仓库 vendor\fonttools）" -f $ixrFontSrc)
+}
+Copy-Item -LiteralPath $ixrRunSrc -Destination $ixrTools -Force
+Copy-Item -LiteralPath $ixrGenSrc -Destination $ixrTools -Force
+Copy-Item -LiteralPath $ixrFontSrc -Destination (Join-Path $ixrFontlib 'fontTools') -Recurse -Force
+$ixrCount = @(Get-ChildItem -LiteralPath $ixrTools -Recurse -File).Count
+Write-Host ("  IX-Ray 生成器：{0} 个文件（启动器 + 助手 + vendored fontTools，来源 vendor\fonttools）" -f $ixrCount)
+
 # ★★ 2026-10-05（本批 #8）：开发版 = 标记 ∈ {ALPHA, BETA}（版本口径仍是 version.json 一处）。
 #   在复制插件**之前**先把这个开关定下来 —— 它决定 `plugins\` 是"带全部插件"还是"空目录"。
 $Prerelease = ''
@@ -555,6 +588,21 @@ try {
                "实得退出码 $($pyProc.ExitCode)）—— 见 include/xrkit/engine/plugin/py_host.h 的口径")
     }
     Write-Host "  $($pyLine.Line.Trim())  (exit=$($pyProc.ExitCode))"
+
+    # ★★ 2026-10-27：包内 IX-Ray 助手自检（启动器 + vendored fontTools 能不能 import）
+    #   ★ 直接 `& python.exe ...` 取输出与退码（Start-Process 那条路在 CI 里拿不到输出，
+    #     实测过：日志空、退码非 0，读不出原因）。
+    $pyExe = Join-Path $stage 'python\python.exe'
+    if (-not (Test-Path $pyExe)) { throw "包内找不到 python\python.exe（IX-Ray 自检要它）" }
+    $ixrScript = Join-Path $stage 'tools\ixr_run.py'
+    if (-not (Test-Path $ixrScript)) { throw "包内找不到 tools\ixr_run.py（IX-Ray 生成器未随包）" }
+    $ixrOut = & $pyExe $ixrScript --selftest 2>&1
+    $ixrRc = $LASTEXITCODE
+    $ixrText = ($ixrOut | Out-String).Trim()
+    if ($ixrRc -ne 0 -or $ixrText -notmatch 'IXR-RUN selftest ok') {
+        throw ("包内 IX-Ray 助手自检失败（实得 rc={0}；输出：{1}）—— 汉化包生成页的 IX-Ray 选项会不可用" -f $ixrRc, $ixrText)
+    }
+    Write-Host ("  {0}  (exit={1})" -f $ixrText, $ixrRc)
     Remove-Item -Force $pyLog, $pyErr -ErrorAction SilentlyContinue
 
     if ($isDev) {
