@@ -175,7 +175,20 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
 
     if out.exists():
         shutil.rmtree(out)
-    shutil.copytree(pack, out)
+    # ★★★ 2026-10-27（用户：「MODS\123 生成出来什么东西」）：
+    #   「指定」模式**不再整包复制** —— 旧行为把参照包连同 `ixr_addons/`、`textures/`、
+    #   `configs/` 一起抄成 128 MB 的"另一份模组"，用户打开一看全是游戏文件。
+    #   现在默认只产**字体**：只复制 `gamedata/fonts/**`（含 eng/editors 等同一套字体树），
+    #   文本与配置**字节不动**（本来也不改它们）。
+    #   要旧行为（整包为基底）显式加 `--full-pack`。
+    if args.full_pack:
+        shutil.copytree(pack, out)
+    else:
+        out.mkdir(parents=True, exist_ok=True)
+        src_gd = pack / "gamedata" if (pack / "gamedata").is_dir() else pack
+        src_fonts = src_gd / "fonts"
+        if src_fonts.is_dir():
+            shutil.copytree(src_fonts, out / "gamedata" / "fonts")
     out_gd = out / "gamedata" if (out / "gamedata").is_dir() else out
     out_fonts = out_gd / "fonts" / lang
 
@@ -235,6 +248,8 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description="IX-Ray 语言包生成（fonttools 外部助手）")
     ap.add_argument("--pack", required=True)
+    ap.add_argument("--full-pack", action="store_true",
+                    help="整包为基底（旧行为；默认只产字体，不抄 texts/textures/addons）")
     ap.add_argument("--font", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--lang", default="", help="只处理这一个语言（默认：包里的 primary lang）")

@@ -9884,7 +9884,7 @@ SmokeResult run_smoke() {
             int rows;
         };
         const ExpectedRow kExpectedRows[] = {
-            {"fs", 1}, {"convert", 2}, {"text", 2}, {"xml", 2}, {"video", 3}, {"fontpack", 3}};
+            {"fs", 1}, {"convert", 2}, {"text", 2}, {"xml", 2}, {"video", 3}, {"fontpack", 4}};
         const auto expected_rows_of = [&](const QString& id) {
             for (const ExpectedRow& row : kExpectedRows) {
                 if (id == QString::fromLatin1(row.id)) return row.rows;
@@ -9920,8 +9920,22 @@ SmokeResult run_smoke() {
                 QApplication::processEvents();
             }
             int scanned = 0;
+            // ★★★ 2026-10-27（用户：「一个有黑底，一个没有」就这样从我眼皮下漏过去）：
+            //   原来只扫 `objectName == "field_row"` —— 页面只要把行容器**改个名字**，
+            //   这块底板就扫不到（我那行就是这么漏的）。现在改成
+            //   **按名字 ∪ 按 `DropZones` 注册的容器**（注册是真源，名字只是 QSS 的约定）。
+            QList<QWidget*> row_containers;
+            auto* page_widget = style_hub.stack()->widget(page_index);
+            if (auto* as_page = dynamic_cast<PageBase*>(page_widget)) {
+                for (QWidget* zone : as_page->drop_zones().containers()) {
+                    if (zone != nullptr && !row_containers.contains(zone)) row_containers << zone;
+                }
+            }
             for (QWidget* container : style_hub.findChildren<QWidget*>()) {
                 if (container->objectName() != QStringLiteral("field_row")) continue;
+                if (!row_containers.contains(container)) row_containers << container;
+            }
+            for (QWidget* container : row_containers) {
                 // 只看**当前页上真的显示出来**的行：没显示的页还没走过布局，几何是退化值
                 // （实测：隐藏页的行容器宽 640、输入框挪到 x=452）⇒ 那种残缺几何上的像素
                 // 判据不是用户看到的界面，会假红。

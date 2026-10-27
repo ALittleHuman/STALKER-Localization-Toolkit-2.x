@@ -22,6 +22,10 @@
 #include <QFontDatabase>
 #include <QFontMetrics>
 #include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -140,12 +144,18 @@ FontPackPage::FontPackPage(QWidget* parent)
     {
         QWidget* pack_row = path_row(QStringLiteral("参照包："), pack_edit_, true,
                                      QStringLiteral("选择参照整包目录"), pack_judge);
-        pack_row->setObjectName(QStringLiteral("font_ixr_pack_row"));
         // 按钮改回它自己的名字（`pick_dir_button` 已被上面三行占用；
         // 同名会让"按名字点按钮"的自检点到别人身上）
         for (QPushButton* button : pack_row->findChildren<QPushButton*>()) {
             button->setObjectName(QStringLiteral("font_ixr_pack_browse"));
         }
+        // ★★★ 2026-10-27（用户：「他妈的自己看看颜色」）：**别再给这一行 setObjectName** ——
+        //   `DropZones::attach_row` 会给容器挂 `field_row`，QSS 里
+        //   `QWidget#field_row { background: transparent; }` 才让它"不涂底"。
+        //   我上一版把它改名成 `font_ixr_pack_row` ⇒ 命中泛化规则
+        //   `QWidget { background: @{bg}; }` ⇒ 标签背后出现一块深灰底板（用户截图那一条）。
+        //   要定位这一行就用动态属性，别动 objectName。
+        pack_row->setProperty("ixr_pack_row", true);
         pack_row_ = pack_row;
         body_layout()->addWidget(pack_row);
 
@@ -539,15 +549,25 @@ FontPackPage::BuildOutcome FontPackPage::run_build(
             outcome.reason = utf8(result.error);
             outcome.ixr_log = utf8(result.stdout_tail) + utf8(result.stderr_tail);
         } else {
-            // 助手报告在 stdout 的 `IXRGEN {...}` 里；这里只抓 added/missing 两个数（人读面向）
+            // 助手报告在 stdout 的 `IXRGEN {...}` 里 —— **按 JSON 解析**（不是数子串：
+            //   子串统计既脆、又会被线程契约的静态判据误当成"碰控件"）。
             const QString all = utf8(result.stdout_tail);
-            const int added_pos = all.indexOf(QStringLiteral("\"added\":"));
-            if (added_pos >= 0) {
-                outcome.ixr_added = all.mid(added_pos + 8).trimmed().section(',', 0, 0).toInt();
-            }
-            const int miss_pos = all.indexOf(QStringLiteral("\"missing\":"));
-            if (miss_pos >= 0) {
-                outcome.ixr_missing = all.mid(miss_pos + 10).trimmed().section(',', 0, 0).toInt();
+            const int marker = all.indexOf(QStringLiteral("IXRGEN {"));
+            if (marker >= 0) {
+                const int line_end = all.indexOf(QChar('\n'), marker);
+                const QString json_text = all.mid(
+                    marker + 7, line_end < 0 ? -1 : line_end - marker - 7).trimmed();
+                QJsonParseError parse_error{};
+                const QJsonDocument doc = QJsonDocument::fromJson(json_text.toUtf8(), &parse_error);
+                if (parse_error.error == QJsonParseError::NoError && doc.isObject()) {
+                    const QJsonObject obj = doc.object();
+                    outcome.ixr_added = obj.value(QStringLiteral("added")).toInt();
+                    outcome.ixr_missing = obj.value(QStringLiteral("missing")).toInt();
+                    for (const QJsonValue& value : obj.value(QStringLiteral("reports")).toArray()) {
+                        outcome.ixr_fonts +=
+                            value.toObject().value(QStringLiteral("fonts")).toArray().size();
+                    }
+                }
             }
         }
         return outcome;
@@ -586,7 +606,9 @@ void FontPackPage::apply_result(const BuildOutcome& outcome) {
         if (result_label_ != nullptr) {
             result_label_->setText(
                 outcome.ok
-                    ? QStringLiteral("完成（IX-Ray 矢量）：新增字形 %1、缺字 %2")
+                    ? QStringLiteral("完成（IX-Ray 矢量）：字体 %1 个、新增字形 %2、缺字 %3"
+                                     "（产物只有 gamedata/fonts，文本与配置没动）")
+                          .arg(outcome.ixr_fonts)
                           .arg(outcome.ixr_added)
                           .arg(outcome.ixr_missing)
                     : QStringLiteral("失败：") + outcome.reason);

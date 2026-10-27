@@ -143,18 +143,30 @@ def main() -> int:
                 problems += 1
                 fail("报告 added=%r（期望 >0）" % rep.get("added"))
 
-        # ① 逐字节保留：ltx 与文本都不许被改
+        # ① 2026-10-27 新口径：**默认只产字体** —— 输出里**不许有** configs/texts/ixr_addons
+        #   （用户：「MODS\123 生成出来什么东西」：旧行为把整包抄成 128 MB 的"另一份模组"）。
+        #   文本与配置**不进产物** ⇒ 也就谈不上"被改"。
         if merged.is_file():
-            if (out / "gamedata" / "configs" / "fonts.ltx").read_bytes() == ltx_before:
-                ok("fonts.ltx 逐字节未改（「指定」模式只换字体）")
+            stray = []
+            for sub in ("configs", "textures", "ixr_addons"):
+                if (out / "gamedata" / sub).exists() or (out / sub).exists():
+                    stray.append(sub)
+            if not stray:
+                ok("默认只产字体：产物里没有 configs/textures/ixr_addons")
             else:
                 problems += 1
-                fail("fonts.ltx 被改了（「指定」模式必须原样保留）")
-            if (out / "gamedata" / "configs" / "text" / "rus" / "st_test.xml").read_bytes() == text_before:
-                ok("文本逐字节未改")
+                fail("默认模式抄了非字体目录：%s" % stray)
+            # 参照包本身**逐字节未改**（这条比"输出里那份没改"更强）
+            if (pack / "gamedata" / "configs" / "fonts.ltx").read_bytes() == ltx_before:
+                ok("参照包的 fonts.ltx 逐字节未改")
             else:
                 problems += 1
-                fail("文本被改了")
+                fail("参照包的 fonts.ltx 被改了（只许读）")
+            if (pack / "gamedata" / "configs" / "text" / "rus" / "st_test.xml").read_bytes() == text_before:
+                ok("参照包的文本逐字节未改")
+            else:
+                problems += 1
+                fail("参照包的文本被改了（只许读）")
 
         # ② 逐槽位字体计划：letterica 段用另一个字体；只处理 size=14 的段时 letterica 必须不动
         pack2 = build_pack(tmp / "plan", BASE_FONT, TEXT)
@@ -274,20 +286,27 @@ def main() -> int:
             else:
                 problems += 1
                 fail("真包生成失败：rc=%d\n%s" % (rc9, stdout9[-400:]))
-            if out_ltx.is_file() and out_ltx.read_bytes() == base_ltx:
-                ok("真包：fonts.ltx 逐字节未改（「指定」模式只换字体）")
+            # 2026-10-27 新口径：产物只有 gamedata/fonts ⇒ 输出里不该有 configs；
+            #   "没被改"这条改成验**参照包原文件**（只许读）。
+            if not out_ltx.exists():
+                ok("真包：产物里没有 configs（默认只产字体）")
             else:
                 problems += 1
-                fail("真包：fonts.ltx 被改了")
+                fail("真包：产物里出现了 configs/fonts.ltx（默认模式不该抄）")
+            if (real / "gamedata" / "configs" / "fonts.ltx").read_bytes() == base_ltx:
+                ok("真包：参照包的 fonts.ltx 逐字节未改")
+            else:
+                problems += 1
+                fail("真包：参照包的 fonts.ltx 被改了")
             sample_text = list((real / "gamedata" / "configs" / "text" / "rus").glob("*.xml"))[:1]
             if sample_text:
                 rel = sample_text[0].relative_to(real)
                 copied = out_real / rel
-                if copied.is_file() and copied.read_bytes() == sample_text[0].read_bytes():
-                    ok("真包：文本 XML 逐字节未改")
+                if not copied.exists() and sample_text[0].is_file():
+                    ok("真包：产物里没有文本（默认只产字体）")
                 else:
                     problems += 1
-                    fail("真包：文本 XML 被改了")
+                    fail("真包：产物里抄了文本 %s" % rel)
         else:
             print("!! 真包 ~NotoSansSC 不在（跳过真包夹具）")
             print("IXR-GEN: SKIP (real-packs-missing)")
