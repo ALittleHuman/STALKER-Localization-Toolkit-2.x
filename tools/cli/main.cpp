@@ -45,6 +45,7 @@
 #include "xrkit/engine/text/convert.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/extract.h"
+#include "xrkit/engine/text/langpack.h"
 #include "xrkit/engine/text/sniff.h"
 #include "xrkit/engine/third_party_probe.h"
 #include "xrkit/engine/video/ffmpeg.h"
@@ -214,6 +215,8 @@ void print_usage() {
            "  --build-font-pack <SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录>\n"
            "  --langpack-scan <语言包目录>      只读识别：profile/lang/槽位/资源（IX-Ray 生成器「指定」模式的底座）\n"
            "  --font-sample <字体> <文本> <字号> <out.ppm>   文本样张（预览用；缺字计数）\n"
+           "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite]\n"
+           "                                   装配标准语言包（空表写成 <string_table></string_table>）\n"
            "                    [--suffix s] [--offset n] [--no-full-cyrillic]\n"
            "                                              出整棵 gamedata 汉化包（与 1.x 对拍）\n"
            // ★★ 2026-10-05（小件 ①）：`--build-package` **实现早已存在**（`tools/cli/build_cmd.cpp`，
@@ -4822,6 +4825,47 @@ int run_cli(const std::vector<std::string>& args) {
                   << " failed=" << outcome.failed << " backed_up=" << outcome.backed_up
                   << " exit=" << outcome.exit_code << "\n";
         return outcome.exit_code == 0 ? kExitOk : 1;
+    }
+
+    // 标准语言包装配（XML 校对第三模式「提取文本」的落点）
+    if (action == "--langpack-build") {
+        if (operands.size() < 3) {
+            std::cerr << "LANGPACK-BUILD error reason=用法：--langpack-build <文本目录> "
+                         "<提取产物|-> <输出根> [--lang L] [--overwrite]\n";
+            return kExitUsage;
+        }
+        xrkit::engine::text::LangPackBuildOptions opt;
+        opt.texts_dir = operands[0];
+        opt.rewritten = operands[1] == "-" ? std::string() : operands[1];
+        opt.out_root = operands[2];
+        for (size_t i = 3; i < operands.size(); ++i) {
+            if (operands[i] == "--lang" && i + 1 < operands.size()) {
+                opt.lang = operands[++i];
+            } else if (operands[i] == "--overwrite") {
+                opt.overwrite = true;
+            } else if (operands[i] == "--no-texts") {
+                opt.include_texts = false;
+            } else if (operands[i] == "--no-rewritten") {
+                opt.include_rewritten = false;
+            } else {
+                std::cerr << "LANGPACK-BUILD error reason=未知参数 " << operands[i] << "\n";
+                return kExitUsage;
+            }
+        }
+        const xrkit::engine::text::LangPackBuildResult r =
+            xrkit::engine::text::build_language_pack(opt);
+        if (!r.ok) {
+            std::cout << "LANGPACK-BUILD error reason=" << r.error << "\n";
+            return kExitFail;
+        }
+        for (const std::string& warn : r.warnings) {
+            std::cout << "LANGPACK-BUILD warn " << warn << "\n";
+        }
+        std::cout << "LANGPACK-BUILD ok out=" << r.out_dir << " lang=" << r.lang
+                  << " xml=" << r.xml_written << " rewritten=" << r.rewritten_copied
+                  << " empty_tables=" << r.empty_tables
+                  << " skipped_existing=" << r.skipped_existing << "\n";
+        return kExitOk;
     }
 
     if (action == "--font-sample") {

@@ -3383,6 +3383,30 @@ def step_bench(release: bool) -> None:
         fail("bench 超出数量级上界（见上）")
 
 
+def step_langpack_build(release: bool) -> None:
+    """标准语言包装配（`--langpack-build`）—— XML 校对第三模式「提取文本」的落点。
+
+    判据 = `tests/check_langpack_build.py`：布局 / 空表归一 / 有内容的 XML 逐字节未改 /
+    默认拒绝覆盖 / `--overwrite` 才覆盖 / 两产物都不勾退 1 / 源目录不存在退 1。
+    """
+    say("[?] 标准语言包装配（--langpack-build：布局 / 空表 / 拒绝覆盖）")
+    script = ROOT / "tests" / "check_langpack_build.py"
+    if not require_repo_file(script, "标准语言包判据脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("LANGPACK-BUILD") or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("标准语言包：布局/空表/拒绝覆盖/两种产物全过")
+    else:
+        fail("标准语言包装配判据不通过（见上）")
+
+
 def step_font_sample(release: bool) -> None:
     """文本样张（`--font-sample`）：预览的**唯一一份**光栅口径（P3）。
 
@@ -7546,6 +7570,8 @@ STEPS = [
     # ★★ 2026-10-26：IX-Ray 插件（真插件）—— 生成器 + 无头装载一根链。
     # ★★ 2026-10-26（P3 预览）：文本样张（引擎唯一光栅口径）
     ("font-sample", step_font_sample),
+    # ★★ 2026-10-26：标准语言包（XML 校对第三模式的产物）
+    ("langpack-build", step_langpack_build),
     ("ixr-plugin", step_ixr_plugin),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
