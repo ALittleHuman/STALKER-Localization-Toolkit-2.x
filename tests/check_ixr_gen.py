@@ -253,6 +253,39 @@ def main() -> int:
         else:
             problems += 1
             fail("非字体包没被拒：rc=%d\n%s" % (rc3, stdout3[-300:]))
+        # ④ **真包夹具**（用户口径：判据以 MODS 下三个真实字体包为夹具）：
+        #   拿 ~NotoSansSC 当参照包生成一遍，核"逐字节保留 + 能出字体"。
+        real = Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat\Chronicles of Pripyat"
+                    r"\Chronicles of Pripyat 4.26 IX-Ray\MODS\~NotoSansSC")
+        if real.is_dir():
+            out_real = tmp / "out_real"
+            rc9, stdout9 = run_tool(real, CJK_FONT, out_real)
+            base_ltx = (real / "gamedata" / "configs" / "fonts.ltx").read_bytes()
+            out_ltx = (out_real / "gamedata" / "configs" / "fonts.ltx")
+            fonts = list((out_real / "gamedata" / "fonts" / "rus").glob("*.ttf"))
+            if rc9 == 0 and fonts:
+                ok("真包 ~NotoSansSC：生成成功、产出 %d 个 ttf" % len(fonts))
+            else:
+                problems += 1
+                fail("真包生成失败：rc=%d\n%s" % (rc9, stdout9[-400:]))
+            if out_ltx.is_file() and out_ltx.read_bytes() == base_ltx:
+                ok("真包：fonts.ltx 逐字节未改（「指定」模式只换字体）")
+            else:
+                problems += 1
+                fail("真包：fonts.ltx 被改了")
+            sample_text = list((real / "gamedata" / "configs" / "text" / "rus").glob("*.xml"))[:1]
+            if sample_text:
+                rel = sample_text[0].relative_to(real)
+                copied = out_real / rel
+                if copied.is_file() and copied.read_bytes() == sample_text[0].read_bytes():
+                    ok("真包：文本 XML 逐字节未改")
+                else:
+                    problems += 1
+                    fail("真包：文本 XML 被改了")
+        else:
+            print("!! 真包 ~NotoSansSC 不在（跳过真包夹具）")
+            print("IXR-GEN: SKIP (real-packs-missing)")
+            return 2
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
