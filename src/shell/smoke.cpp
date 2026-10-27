@@ -120,10 +120,10 @@ namespace {
 
 // 判据用的期望值：**契约**（页 id 是插件槽位/日志的稳定标识），不是"再抄一份清单"。
 // 清单本身从 `builtin_page()`（真实清单）读，两边交叉核对。
-constexpr const char* kExpectedIds[] = {"fs", "convert", "text", "xml", "video", "fontpack"};
-constexpr const char* kExpectedTitles[] = {"文件系统", "编码转换", "文本提取",
+constexpr const char* kExpectedIds[] = {"fs", "convert", "xml", "video", "fontpack"};
+constexpr const char* kExpectedTitles[] = {"文件系统", "编码转换",
                                            "文本工具", "视频转换", "汉化包生成"};
-constexpr int kExpectedCount = 6;
+constexpr int kExpectedCount = 5;
 
 // ★★ 2026-10-02 包列表**树化**（用户：「左边的包列表的结构应该也是一个文件树」）之后，
 //   "第 0 行"不再等于"第 0 个源" —— 源节点散在树里、中间还夹着**纯分组节点**。
@@ -737,7 +737,6 @@ SmokeResult run_smoke() {
     static const SlotExpect kSlots[] = {
         {"fs", "文件系统", "fs_py", "文件系统"},
         {"convert", "编码转换", "convert_py", "编码转换"},
-        {"text", "文本提取", "text_py", "文本提取"},
         // ★ 2026-10-27 用户：内置页改名「文本工具」；插件夹具仍叫「XML 校对」。
         //   两版如实登记，不许谁去"顺手统一"—— 两版都要能在各自形态下判绿。
         {"xml", "文本工具", "xml_py", "XML 校对"},
@@ -1012,7 +1011,7 @@ SmokeResult run_smoke() {
         QTemporaryDir drop_tmp;
         const QList<QWidget*> page_widgets = {
             create_page(0), create_page(1), create_page(2),
-            create_page(3), create_page(4), create_page(5)};
+            create_page(3), create_page(4)};
         const auto zone_ok = [](PageBase* page, QWidget* zone) {
             // 区域自己必须是拖放目标、必须带反馈属性，且**过滤器真的挂在它身上**
             if (page == nullptr || zone == nullptr) return false;
@@ -1074,7 +1073,7 @@ SmokeResult run_smoke() {
                 }
             }
         }
-        check(edit_total >= 14 && not_droppable.isEmpty(),
+        check(edit_total >= 12 && not_droppable.isEmpty(),   // 摘掉「文本提取」页后 14 → 12
               QStringLiteral("① 每个目录/文件输入都在拖放区域里、且输入框自己不吞拖放"
                              "（输入 %1 个；不合格 %2）")
                   .arg(edit_total)
@@ -1131,7 +1130,7 @@ SmokeResult run_smoke() {
                 }
             }
         }
-        check(drop_fail.isEmpty() && zones_checked >= 13,
+        check(drop_fail.isEmpty() && zones_checked >= 12,   // 摘掉「文本提取」页后 13 → 12
               QStringLiteral("② 拖到**相应区域** ⇒ 该区域的输入被填上、且区域看得见接住了"
                              "（验了 %1 个区域；不合格 %2）")
                   .arg(zones_checked)
@@ -8145,9 +8144,9 @@ SmokeResult run_smoke() {
                               .arg(hub.plugin_errors().size()));
         check(replaced < 0, QStringLiteral("P7c 内置 fontpack 页仍可见（`replaces` 没生效，下标=%1）")
                                 .arg(replaced));
-        // 可见页数不变：内置六页里被顶掉 1 页、插件页补 1 页 ⇒ 总数仍是 6
-        check(hub.page_count() == 6,
-              QStringLiteral("P7c 可见页数应当不变（实得 %1，内置六页）").arg(hub.page_count()));
+        // 可见页数不变：内置 5 页里被顶掉 1 页、插件页补 1 页 ⇒ 总数仍是 5
+        check(hub.page_count() == 5,
+              QStringLiteral("P7c 可见页数应当不变（实得 %1，内置 5 页）").arg(hub.page_count()));
         check(fresh >= 0 && hub.stack()->widget(fresh) != nullptr &&
                   hub.stack()->widget(fresh)->windowTitle() == QStringLiteral("汉化包生成"),
               QStringLiteral("P7c 迁移后的页标题不是原名（id 与 title 应当可以不同）"));
@@ -10045,27 +10044,32 @@ SmokeResult run_smoke() {
             int offenders = 0;
             int combos_scanned = 0;   // ★ 候选样本数（B1-5）
             QString detail;
-            for (QComboBox* combo : style_hub.findChildren<QComboBox*>()) {
-                if (!combo->isVisible()) continue;
-                ++combos_scanned;
-                QImage image(combo->size(), QImage::Format_ARGB32_Premultiplied);
-                image.fill(QColor(0, 0, 0, 0));
-                combo->render(&image);
-                // 判据：把控件渲染出来，看**它自己的底**是不是干净的输入框底 ——
-                // 取"文字下方那条横带"（避开文字/箭头；离屏上文字会退化成方块，
-                // 落在文字上的判据会假红），并要求那一带**只有一个颜色且 == entry_bg**。
-                // 旧样式（容器给控件涂了一层深灰 / 弹层底色撞色）在这里立刻红。
-                const QRect foot(px(4), std::max(1, combo->height() - px(8)),
-                                 std::max(1, combo->width() - px(8)), px(6));
-                const QColor painted = dominant(image, foot);
-                if (painted != entry) {
-                    ++offenders;
-                    if (detail.isEmpty()) {
-                        detail = QStringLiteral("%1 自己的底是 %2（应为 %3）")
-                                     .arg(combo->objectName(), painted.name(), entry.name());
+            // ★★ 2026-10-27（摘掉「文本提取」页之后）：**逐页切过去再扫** ——
+            //   只看当前页会得到 0 个样本（fs 页没有下拉），判据会变成"恒红"。
+            const int keep_index = style_hub.stack()->currentIndex();
+            for (int page_index = 0; page_index < style_hub.stack()->count(); ++page_index) {
+                style_hub.stack()->setCurrentIndex(page_index);
+                QWidget* page = style_hub.stack()->widget(page_index);
+                if (page == nullptr) continue;
+                for (QComboBox* combo : page->findChildren<QComboBox*>()) {
+                    if (!combo->isVisible()) continue;
+                    ++combos_scanned;
+                    QImage image(combo->size(), QImage::Format_ARGB32_Premultiplied);
+                    image.fill(QColor(0, 0, 0, 0));
+                    combo->render(&image);
+                    const QRect foot(px(4), std::max(1, combo->height() - px(8)),
+                                     std::max(1, combo->width() - px(8)), px(6));
+                    const QColor painted = dominant(image, foot);
+                    if (painted != entry) {
+                        ++offenders;
+                        if (detail.isEmpty()) {
+                            detail = QStringLiteral("%1 自己的底是 %2（应为 %3）")
+                                         .arg(combo->objectName(), painted.name(), entry.name());
+                        }
                     }
                 }
             }
+            style_hub.stack()->setCurrentIndex(keep_index);
             check(combos_scanned > 0 && offenders == 0,
                   QStringLiteral("⑭ 下拉框自己的底要与输入框同一套令牌（扫到 %1 个可见下拉，%2 处；%3）")
                       .arg(combos_scanned)

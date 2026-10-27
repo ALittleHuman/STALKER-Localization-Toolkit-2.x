@@ -42,7 +42,7 @@ PACKAGE = ROOT / "scripts" / "package.ps1"
 SMOKE = ROOT / "src" / "shell" / "smoke.cpp"
 PLUGINS = ROOT / "plugins"
 
-EXPECTED_PAGES = ["fs_page.py", "convert_page.py", "text_page.py",
+EXPECTED_PAGES = ["fs_page.py", "convert_page.py",
                   "xml_page.py", "video_page.py", "fontpack_page.py",
                   "toolchain_page.py"]
 

@@ -21,7 +21,7 @@
      （`QT_QPA_PLATFORM=offscreen`），读 `PLUGIN-PAGES 可见页集合=…` 那一行 ⇒ 逐名比对六个内置 id。
      ⇒ 这就是 P17-78 第四条的止血：**发行口径那一份被真的跑过**（开发包默认也跑同一份实现）。
   ④ **把 `_fixtures\\` 显式抬上来跑一次**（P17-79 §十·2 的"同机制"）：同一次运行里
-     **既取"抬上来之后的包内插件计数"、又断"插件页真的生效"** —— 七个插件页 id 逐个点名、
+     **既取"抬上来之后的包内插件计数"、又断"插件页真的生效"** —— 六个插件页 id 逐个点名、
      且**不再有内置页**。这一条**不依赖"开发包默认加载夹具"**，所以与 ③ 不打架。
      ★ 抬起来只动**临时副本**（原产物一个字节都不动）——`--py-plugins` 那条链在
        `package.ps1` 的包内自检里已经跑过（它读 `plugins\\`，那里是空的、加载不到东西）。
@@ -61,7 +61,6 @@ ROOT = Path(__file__).resolve().parent.parent
 FIXTURE_PAGES = [
     "plugins/fs_page.py",
     "plugins/convert_page.py",
-    "plugins/text_page.py",
     "plugins/xml_page.py",
     "plugins/video_page.py",
     "plugins/fontpack_page.py",
@@ -70,9 +69,9 @@ FIXTURE_PAGES = [
 ]
 
 # 六个内置页 id（与 `src/shell/pages/page_factory.cpp` 的 `kBuiltinPages[]` 同源；顺序＝槽位序）
-BUILTIN_IDS = ["fs", "convert", "text", "xml", "video", "fontpack"]
+BUILTIN_IDS = ["fs", "convert", "xml", "video", "fontpack"]
 # 夹具页的插件 id（`replaces` 用的新 id；`toolchain_page.py` 没有 replaces，是"新增页"）
-PLUGIN_IDS = ["fs_py", "convert_py", "text_py", "xml_py", "video_py", "fontpack_py", "toolchain_py"]
+PLUGIN_IDS = ["fs_py", "convert_py", "xml_py", "video_py", "fontpack_py", "toolchain_py"]
 
 MARKER = "NON-PRODUCT-FIXTURE"
 RELEASE_MARKERS = ("RC", "FINAL")
@@ -643,7 +642,7 @@ def audit_package(pkg: Path) -> None:
             say("  抬夹具形态实测：%d 页（内置=%d / 插件py=%d）%s"
                 % (count2, builtin2, plugin_py2, ids2))
             check(builtin2 == 0 and plugin_py2 == len(PLUGIN_IDS) and ids2 == PLUGIN_IDS,
-                  "产物 %s（抬夹具形态）：**插件页真的生效**（七个插件页逐名同序、内置页全被顶掉）"
+                  "产物 %s（抬夹具形态）：**插件页真的生效**（六个插件页逐名同序、内置页全被顶掉）"
                   % rel,
                   "期望 %s，实得 %s" % (PLUGIN_IDS, ids2))
     finally:
@@ -679,14 +678,14 @@ def selfcheck() -> tuple:
     add("好形状（开发版带 `_fixtures`）",
         release_package_problems("ALPHA", [], ["fs_page.py", "hello.py"]), 0)
 
-    good_out = ("SHELL-SMOKE note PLUGIN-PAGES 可见页集合=6 页（内置=6 / 插件py=0）"
-                "[1=fs= 2=convert= 3=text= 4=xml= 5=video= 6=fontpack=] 结束 · dir=x\n")
-    lifted_out = ("SHELL-SMOKE note PLUGIN-PAGES 可见页集合=7 页（内置=0 / 插件py=7）"
-                  "[1=fs_py 2=convert_py 3=text_py 4=xml_py 5=video_py 6=fontpack_py "
-                  "7=toolchain_py] 结束 · dir=x\n")
-    add("好形状（默认形态解析）", [] if parse_pages(good_out) == (6, 6, 0, BUILTIN_IDS) else ["解析不对"], 0)
+    good_out = ("SHELL-SMOKE note PLUGIN-PAGES 可见页集合=5 页（内置=5 / 插件py=0）"
+                "[1=fs= 2=convert= 3=xml= 4=video= 5=fontpack=] 结束 · dir=x\n")
+    lifted_out = ("SHELL-SMOKE note PLUGIN-PAGES 可见页集合=6 页（内置=0 / 插件py=6）"
+                  "[1=fs_py 2=convert_py 3=xml_py 4=video_py 5=fontpack_py "
+                  "6=toolchain_py] 结束 · dir=x\n")
+    add("好形状（默认形态解析）", [] if parse_pages(good_out) == (5, 5, 0, BUILTIN_IDS) else ["解析不对"], 0)
     add("好形状（抬夹具形态解析）",
-        [] if parse_pages(lifted_out) == (7, 0, 7, PLUGIN_IDS) else ["解析不对"], 0)
+        [] if parse_pages(lifted_out) == (6, 0, 6, PLUGIN_IDS) else ["解析不对"], 0)
     add("判据行缺失", [] if parse_pages("SHELL-SMOKE ok checks=1 failed=0\n") is None else ["应当取不到"], 0)
     return all_ok, results
 

@@ -165,8 +165,26 @@ FontPackPage::FontPackPage(QWidget* parent)
             }
             const engine::font::LangPackModel model =
                 engine::font::scan_lang_pack(pack.toUtf8().toStdString());
-            QString text = QStringLiteral("扫描：profile=%1 lang=%2 段=%3 ttf=%4")
-                               .arg(QString::fromStdString(engine::font::profile_name(model.profile)))
+            // ★ 自动判断档位：ixr → IX-Ray；cop → CoP；cis → ClS；soc → SoC
+            const char* detected = engine::font::profile_name(model.profile);
+            if (std::string(detected) != "unknown") {
+                const QString want = QString::fromStdString(detected) == QStringLiteral("ixr")
+                                         ? QStringLiteral("IX-Ray")
+                                     : QString::fromStdString(detected) == QStringLiteral("cop")
+                                         ? QStringLiteral("CoP")
+                                     : QString::fromStdString(detected) == QStringLiteral("cis")
+                                         ? QStringLiteral("ClS")
+                                         : QStringLiteral("SoC");
+                const int idx = game_combo_->findData(want);
+                if (idx >= 0) game_combo_->setCurrentIndex(idx);
+            }
+            // 预填文本目录（用户没填时才填）：<参照包>/gamedata/configs/text/<lang>
+            if (xml_edit_ != nullptr && xml_edit_->text().trimmed().isEmpty() &&
+                !model.text_dir.empty()) {
+                xml_edit_->setText(QDir::toNativeSeparators(QString::fromStdString(model.text_dir)));
+            }
+            QString text = QStringLiteral("扫描：profile=%1（已自动切档位）lang=%2 段=%3 ttf=%4")
+                               .arg(QString::fromStdString(detected))
                                .arg(QString::fromStdString(model.lang))
                                .arg(model.font_slots.size())
                                .arg(model.ttf_count);
@@ -179,20 +197,15 @@ FontPackPage::FontPackPage(QWidget* parent)
         scan_layout->addStretch(1);
         scan_row_ = scan_row;
         body_layout()->addWidget(scan_row);
-        scan_row->setVisible(false);
+        scan_row->setVisible(true);
+        // ★★ 2026-10-27（用户）：「扫描是对全局生效的」—— 参照包行与扫描按钮**始终可见**，
+        //   不跟 IX-Ray 绑定；扫描结果会**自动判断** SoC/ClS/CoP/IX-Ray 并切下拉。
+        pack_row->setVisible(true);
         QObject::connect(game_combo_, &QComboBox::currentTextChanged, this,
                          [this](const QString&) {
                              const bool ixr = game_combo_->currentData().toString() ==
                                               QStringLiteral("IX-Ray");
-                             if (scan_row_ != nullptr) scan_row_->setVisible(ixr);
-                         });
-        pack_row->setVisible(false);
-        QObject::connect(game_combo_, &QComboBox::currentTextChanged, this,
-                         [this](const QString&) {
-                             const bool ixr = game_combo_->currentData().toString() ==
-                                              QStringLiteral("IX-Ray");
-                             if (pack_row_ != nullptr) pack_row_->setVisible(ixr);
-                             // 位图专属的三个选项在 IX-Ray 下没意义 ⇒ 置灰（不隐藏，免得用户找不到）
+                             // 位图专属的两个选项在 IX-Ray 下没意义 ⇒ 置灰（不隐藏，免得用户找不到）
                              if (size_combo_ != nullptr) size_combo_->setEnabled(!ixr);
                              if (cyrillic_box_ != nullptr) cyrillic_box_->setEnabled(!ixr);
                          });

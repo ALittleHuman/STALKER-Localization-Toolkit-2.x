@@ -21,15 +21,35 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 
-# 真包夹具（本机才有；缺了走 2，不判红）
-REAL_PACKS = [
+# ★★ 2026-10-27（用户把 MODS 挪到了游戏目录的**上一级**，且有开关前缀 `~`）：
+#   真包夹具改成"按候选根 + 两种前缀"解析，找不到才记缺样本（不再写死一条绝对路径）。
+_GAME_ROOTS = [
     Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat\Chronicles of Pripyat"
-         r"\Chronicles of Pripyat 4.26 IX-Ray\MODS\~NotoSansSC"),
-    Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat\Chronicles of Pripyat"
-         r"\Chronicles of Pripyat 4.26 IX-Ray\MODS\~HPSimplifiedHans-Light"),
-    Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat\Chronicles of Pripyat"
-         r"\Chronicles of Pripyat 4.26 IX-Ray\MODS\~HPSimplifiedHans-Regular"),
+         r"\Chronicles of Pripyat 4.26 IX-Ray"),
+    Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat"),
 ]
+_PACK_NAMES = ["NotoSansSC", "HPSimplifiedHans-Light", "HPSimplifiedHans-Regular"]
+
+
+def real_packs() -> list:
+    found = []
+    for root in _GAME_ROOTS:
+        for mods in (root / "MODS", root.parent / "MODS", root / ".." / "MODS"):
+            if not mods.is_dir():
+                continue
+            for name in _PACK_NAMES:
+                for cand in (mods / name, mods / ("~" + name)):
+                    if cand.is_dir():
+                        found.append(cand)
+    # 去重（按 resolve）
+    seen, unique = set(), []
+    for p in found:
+        key = str(p.resolve()).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(p)
+    return unique
 
 failures = 0
 
@@ -172,12 +192,13 @@ def main() -> int:
         shutil.rmtree(tmp, ignore_errors=True)
 
     # ⑤ 真包夹具（外部前提；缺了退 2）
-    missing = [p for p in REAL_PACKS if not p.is_dir()]
+    packs = real_packs()
+    missing = [] if len(packs) >= 3 else ["（候选根）"]
     if missing:
-        print("!! 缺真包夹具 %d/%d 个（例 %s）" % (len(missing), len(REAL_PACKS), missing[0]))
+        print("!! 缺真包夹具（找到 %d 个；候选根：%s）" % (len(packs), [str(x) for x in _GAME_ROOTS]))
         print("LANGPACK-SCAN: SKIP (real-packs-missing)")
         return 2
-    for pack in REAL_PACKS:
+    for pack in packs:
         rc, out = run_scan(pack)
         prof, lang, slots, ttf = (field(out, "profile"), field(out, "lang"),
                                   field(out, "slots"), field(out, "ttf"))

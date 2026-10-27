@@ -255,8 +255,14 @@ def main() -> int:
             fail("非字体包没被拒：rc=%d\n%s" % (rc3, stdout3[-300:]))
         # ④ **真包夹具**（用户口径：判据以 MODS 下三个真实字体包为夹具）：
         #   拿 ~NotoSansSC 当参照包生成一遍，核"逐字节保留 + 能出字体"。
-        real = Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat\Chronicles of Pripyat"
-                    r"\Chronicles of Pripyat 4.26 IX-Ray\MODS\~NotoSansSC")
+        # ★★ 2026-10-27：MODS 挪到游戏目录上一级、且可能带 `~` 前缀 ⇒ 用候选根解析
+        candidates = [
+            Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat\Chronicles of Pripyat\MODS\NotoSansSC"),
+            Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat\Chronicles of Pripyat\MODS\~NotoSansSC"),
+            Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat\Chronicles of Pripyat"
+                 r"\Chronicles of Pripyat 4.26 IX-Ray\MODS\~NotoSansSC"),
+        ]
+        real = next((c for c in candidates if c.is_dir()), Path("__missing__"))
         if real.is_dir():
             out_real = tmp / "out_real"
             rc9, stdout9 = run_tool(real, CJK_FONT, out_real)

@@ -229,8 +229,8 @@ def main():
             print("  ✓（旧中文行）可见页集合=%d 页（内置=%d / 插件py=%d）" % (pages, builtin, plugin))
         if plugin != 0:
             return fail("发行口径包里插件页数应为 0，实测 %d" % plugin)
-        if builtin != 6:
-            return fail("默认内置页应为 6，实测 %d" % builtin)
+        if builtin != 5:
+            return fail("默认内置页应为 5（2026-10-27 摘掉「文本提取」页），实测 %d" % builtin)
         # ★★ P17-136（复审计 09 分册 ⑦）：**验名，不只数数**。
         #   事实：smoke 那行本来就带 `[1=fs= 2=convert= …]`（旧）或 `names=[1=fs,2=convert,…]`（新）
         #   的有序 id 列表，而修前只用正则抓了三个计数 ⇒ "换了哪六个页"**完全没被检查**。
@@ -244,7 +244,7 @@ def main():
                 naming = re.match(r"^\d+=(.+)$", item)
                 if naming is not None:
                     ids.append(naming.group(1).rstrip("="))
-        EXPECT_PAGES = ["fs", "convert", "text", "xml", "video", "fontpack"]
+        EXPECT_PAGES = ["fs", "convert", "xml", "video", "fontpack"]
         if ids != EXPECT_PAGES:
             return fail("发行口径包的**内置页名单/顺序**不符：期望 %s，实测 %s"
                         % (EXPECT_PAGES, ids))

@@ -4,7 +4,6 @@
 #include "fontpack_page.h"
 #include "fs_page.h"
 #include "page_base.h"
-#include "text_page.h"
 #include "video_page.h"
 #include "xml_page.h"
 
@@ -27,10 +26,9 @@ namespace {
 constexpr PageInfo kBuiltinPages[] = {
     {"fs", "文件系统", "", 0},
     {"convert", "编码转换", "", 1},
-    {"text", "文本提取", "", 2},
-    {"xml", "文本工具", "", 3},
-    {"video", "视频转换", "", 4},
-    {"fontpack", "汉化包生成", "", 5},
+    {"xml", "文本工具", "", 2},
+    {"video", "视频转换", "", 3},
+    {"fontpack", "汉化包生成", "", 4},
 };
 
 constexpr int kBuiltinPageCount =
@@ -41,7 +39,6 @@ constexpr int kBuiltinPageCount =
 QWidget* build_builtin(const QString& id, const QString& title, QWidget* parent) {
     if (id == QStringLiteral("fs")) return new FsPage(parent);
     if (id == QStringLiteral("convert")) return new ConvertPage(parent);
-    if (id == QStringLiteral("text")) return new TextPage(parent);
     if (id == QStringLiteral("xml")) return new XmlPage(parent);
     if (id == QStringLiteral("video")) return new VideoPage(parent);
     if (id == QStringLiteral("fontpack")) return new FontPackPage(parent);

@@ -613,7 +613,7 @@ try {
         if (Test-Path $plugTmp) { Remove-Item -Recurse -Force $plugTmp }
         New-Item -ItemType Directory -Force -Path $plugTmp | Out-Null
         # 显式清单（**裸文件名**，门禁按 'name.py' 认；路径在下面按目录拼）
-        $fixturePages = @('fs_page.py', 'convert_page.py', 'text_page.py',
+        $fixturePages = @('fs_page.py', 'convert_page.py',
                           'xml_page.py', 'video_page.py', 'fontpack_page.py',
                           'toolchain_page.py')
         foreach ($name in $fixturePages) {
@@ -687,7 +687,7 @@ if ($pageList -ne '' -and $pageList -ne '(空)') {
         if ($pageId -like '*_py') { $pagePluginIds += $pageId } else { $pageBuiltinIds += $pageId }
     }
 }
-$builtinSlots = @('fs', 'convert', 'text', 'xml', 'video', 'fontpack')   # 与 smoke.cpp 的 kSlots 同序
+$builtinSlots = @('fs', 'convert', 'xml', 'video', 'fontpack')   # 与 smoke.cpp 的 kSlots 同序
 $fixtureFiles = @(Get-ChildItem -LiteralPath (Join-Path $stage 'plugins') -File -Recurse -ErrorAction SilentlyContinue)
 Write-Host ("  包内 plugins\ 顶层：{0} 个文件（自检态）" -f $pluginTotal)
 Write-Host ("  包内 self-check 第 1 行：#8 包内插件：{0}" -f $pluginText)

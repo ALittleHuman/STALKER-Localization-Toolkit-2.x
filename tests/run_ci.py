@@ -4991,104 +4991,6 @@ def step_package_plugin_list(release: bool) -> None:
         fail("随包插件清单/包内自检口径有断言不成立（见上）")
 
 
-def step_text_plugin(release: bool) -> None:
-    """插件改装 P10b：**第三页（文本提取/改写）的收口判据**。
-
-    判据：
-      ① 参照 = `xrkit_cli --extract-text`（内置 C++ 页用的就是这条引擎路）；
-         插件 = `--py-plugin-call plugins --plugin text_page.py`（插件页导出的 `headless`）；
-      ② 两边产物**文件表 + 每文件 sha256 逐字节全等**，且**比较数 ≥2**（空集不算通过）；
-      ③ **取消语义**：JSON 里 `"cancel": true` ⇒ 确定性地"第一次问就说停" ⇒
-         结果必须 `cancelled=True` / `ok=True`（取消不是失败）/ `files=0`（还没写就停）。
-    """
-    say("[text-plugin] 插件改装 P10b：文本提取页（插件）产物与引擎参照逐字节一致")
-    if not CLI_EXE.exists():
-        prereq("构建产物 xrkit_cli.exe", "缺失（先跑 build 步）", release)
-        return
-    plugin = ROOT / "plugins" / "text_page.py"
-    if not plugin.is_file():
-        prereq("文本提取插件 plugins/text_page.py", "缺失", release)
-        return
-    work = ROOT / "build" / "text_plugin"
-    if work.exists():
-        shutil.rmtree(work, ignore_errors=True)
-    src = work / "scripts"
-    src.mkdir(parents=True)
-    (src / "a.script").write_text('local s = "Привет, сталкер!"\n', encoding="cp1251")
-    (src / "d.ltx").write_text('[wpn_akm]\ninv_name = "АКМ"\n; inv_name = Не должно попасть\n',
-                               encoding="cp1251")
-    ref_out = work / "ref"
-    plug_out = work / "plug"
-
-    rc_ref, out_ref = run([str(CLI_EXE), "--extract-text", str(src), str(ref_out),
-                           "--prefix", "p10b", "--id-prefix", "sgtat_p10b_gp_0", "--clean"],
-                          timeout=600)
-    payload = json.dumps({"source_dir": str(src), "target_dir": str(plug_out), "prefix": "p10b",
-                          "id_prefix": "sgtat_p10b_gp_0", "clean": True}, ensure_ascii=False)
-    rc_plug, out_plug = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
-                             "--plugin", "text_page.py", payload], timeout=600)
-    for raw in out_plug.splitlines():
-        s = raw.strip()
-        if s.startswith("PYPLUGINCALL") and not s.startswith("PYPLUGINCALL result="):
-            say("  " + s[:170])
-    for raw in out_ref.splitlines():
-        s = raw.strip()
-        if s.startswith("TEXT ok") or s.startswith("TEXT fail"):
-            say("  " + s[:170])
-
-    def digest(root: Path) -> dict:
-        out = {}
-        for path in sorted(root.rglob("*")):
-            if path.is_file():
-                out[str(path.relative_to(root)).replace("\\", "/")] = hashlib.sha256(
-                    path.read_bytes()).hexdigest()
-        return out
-
-    ref_tree = digest(ref_out)
-    plug_tree = digest(plug_out)
-    compared = sum(1 for key in ref_tree if key in plug_tree and ref_tree[key] == plug_tree[key])
-    only_ref = sorted(set(ref_tree) - set(plug_tree))
-    only_plug = sorted(set(plug_tree) - set(ref_tree))
-    differing = sorted(k for k in set(ref_tree) & set(plug_tree) if ref_tree[k] != plug_tree[k])
-    say("  参照 %d 个文件 / 插件 %d 个文件 / 逐字节相同 %d 个"
-        % (len(ref_tree), len(plug_tree), compared))
-    problems = []
-    if only_ref or only_plug or differing:
-        problems.append("产物不一致（只在参照 %s；只在插件 %s；内容不同 %s）"
-                        % (only_ref[:4] or "无", only_plug[:4] or "无", differing[:4] or "无"))
-    if rc_ref != 0 or rc_plug != 0 or len(ref_tree) < 2 or compared < 2:
-        problems.append("判据没跑成（参照 rc=%d / 插件 rc=%d / 参照文件 %d / 比较数 %d）"
-                        "—— 空集不算通过" % (rc_ref, rc_plug, len(ref_tree), compared))
-
-    # ③ 取消语义（插件 headless；确定性谓词）
-    cancel_payload = json.dumps({"source_dir": str(src), "target_dir": str(work / "cancel_out"),
-                                 "prefix": "p10b", "id_prefix": "sgtat_p10b_gp_0",
-                                 "clean": True, "cancel": True}, ensure_ascii=False)
-    rc_cancel, out_cancel = run([str(CLI_EXE), "--py-plugin-call", str(ROOT / "plugins"),
-                                 "--plugin", "text_page.py", cancel_payload], timeout=600)
-    result = {}
-    for raw in out_cancel.splitlines():
-        s = raw.strip()
-        if s.startswith("PYPLUGINCALL plugin=") and " result=" in s:
-            try:
-                result = json.loads(s.split(" result=", 1)[1])
-            except ValueError:
-                result = {}
-    say("  取消：rc=%d cancelled=%s ok=%s files=%s"
-        % (rc_cancel, result.get("cancelled"), result.get("ok"), result.get("files")))
-    if result.get("cancelled") is not True or result.get("ok") is not True:
-        problems.append("取消语义不对（cancelled=%s / ok=%s）—— 取消既要真停，也不能报成失败"
-                        % (result.get("cancelled"), result.get("ok")))
-    if result.get("files") != 0:
-        problems.append("取消在**第一个文件边界**就停 ⇒ files 应为 0（实得 %s）"
-                        % result.get("files"))
-    if problems:
-        fail("文本提取页（插件）不成立：%s" % "；".join(problems))
-        return
-    ok("文本提取页（插件）与引擎参照**逐字节一致**（%d 个文件全等）；取消语义（cancelled+ok+files=0）"
-       "也对" % compared)
-
-
 def step_video_plugin(release: bool) -> None:
     """插件改装 P12c-3：**第五页（视频转换）的收口判据**。
 
@@ -5977,7 +5879,7 @@ def step_package_fixture_pages(release: bool) -> None:
       ② 发行口径包（RC/FINAL）`plugins\\` 顶层与 `_fixtures\\` 都不含夹具；
       ③ 在**产物副本**里跑 `--smoke` ⇒ 默认**可见页＝六个内置页**（逐名同序）；
       ④ **显式把 `_fixtures\\` 抬到顶层再跑一次** ⇒ 同一次运行里既取包内插件计数、
-         又断**插件页真的生效**（七个插件页逐名；内置页全被顶掉）。原产物**一个字节都不动**
+         又断**插件页真的生效**（六个插件页逐名；内置页全被顶掉）。原产物**一个字节都不动**
          （只动临时副本）—— 这也是"抬一次"与"交付物形态"不再打架的原因（P17-79 §四·补）。
       退出码：0=绿、1=判据不成立、2=本次没有包可跑（同 `pkg-platform`，release 档按前提缺失 FAIL）。
     """
@@ -7503,7 +7405,6 @@ STEPS = [
     ("convert-plugin", step_convert_plugin),
     ("plugin-needs-confirm", step_plugin_needs_confirm),
     # ★★ 2026-10-08（插件改装 P10b）：**第三页收口** —— 文本提取插件页。
-    ("text-plugin", step_text_plugin),
     # ★★ 2026-10-08（插件改装 P11b-2）：**第四页收口** —— XML 对比插件页。
     ("xml-plugin", step_xml_plugin),
     ("fs-plugin", step_fs_plugin),
