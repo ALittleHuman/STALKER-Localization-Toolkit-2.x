@@ -2291,6 +2291,12 @@ public:
     void destroy(py::object widget) const {
         if (const UiFacade* facade = available("destroy")) facade->destroy(handle_of(widget));
     }
+    py::object image(py::object parent, std::string path, int width, int height) const {
+        if (const UiFacade* facade = available("image")) {
+            return wrap(facade->image(handle_of(parent), path, width, height));
+        }
+        return py::none();
+    }
     void timer(py::object parent, int interval_ms, py::object on_tick) const {
         const UiFacade* facade = available("timer");
         if (facade == nullptr || on_tick.is_none()) return;
@@ -3475,7 +3481,10 @@ void ensure_api_module() {
             .def("set_visible", &PyUi::set_visible, py::arg("widget"), py::arg("visible"))
             .def("destroy", &PyUi::destroy, py::arg("widget"))
             .def("timer", &PyUi::timer, py::arg("parent"), py::arg("interval_ms"),
-                 py::arg("callback") = py::none());
+                 py::arg("callback") = py::none())
+            // ★★ 2026-10-26：P3 图片预览（读不到文件 ⇒ 返回 None，调用侧据此报错）
+            .def("image", &PyUi::image, py::arg("parent"), py::arg("path"),
+                 py::arg("width") = 0, py::arg("height") = 0);
         py::class_<PyPluginApi>(m, "Api")
             .def_property_readonly("plugin_file", &PyPluginApi::owner)
             .def_property_readonly("plugin_dir", &PyPluginApi::plugin_dir)

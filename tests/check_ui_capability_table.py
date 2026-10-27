@@ -140,6 +140,9 @@ EXPECT_UI = {
     "set_visible": "★L2 条件显隐（复杂状态机 UI 的起点；修前门面没有 hide）",
     "destroy": "★L2 动态删控件（只受理门面造出来的句柄；宿主句柄拒绝并留痕）",
     "timer": "★L2 UI 线程定时回调（生命周期绑 parent；修前只能拿 worker 硬凑）",
+    # ★★ 2026-10-26（用户：「纯补门面」P3）—— 图片预览。IXR 要"原字体 vs 候选"并排，
+    #    内置字库页是 C++ QPixmap 自绘，插件此前**没有任何**显示图片的路。
+    "image": "★L2 图片预览（路径 → QLabel/QPixmap，等比缩放；读不到文件返回空句柄）",
 }
 # Widget：**故意为空** —— 不透明句柄，插件不能对它做任何事（禁 L4 裸 Qt）
 EXPECT_WIDGET: dict[str, str] = {}

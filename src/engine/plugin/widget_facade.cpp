@@ -84,6 +84,8 @@ const char* const kMethodNames[] = {
     "tree_on_click",
     // ★★ 2026-10-26：P2 三件原语（复杂插件页的前提）
     "set_visible", "destroy", "timer",
+    // ★★ 2026-10-26：P3 图片预览
+    "image",
 };
 
 bool has_impl(const UiFacade& facade, const std::string& name) {
@@ -197,6 +199,7 @@ bool has_impl(const UiFacade& facade, const std::string& name) {
     if (name == "set_visible") return static_cast<bool>(facade.set_visible);
     if (name == "destroy") return static_cast<bool>(facade.destroy);
     if (name == "timer") return static_cast<bool>(facade.timer);
+    if (name == "image") return static_cast<bool>(facade.image);
     return false;
 }
 

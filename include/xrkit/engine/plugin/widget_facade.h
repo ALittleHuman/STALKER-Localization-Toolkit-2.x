@@ -329,6 +329,13 @@ struct UiFacade {
     std::function<void(UiHandle widget)> destroy;
     // 定时回调（毫秒）。生命周期绑在 `parent` 上：页销毁 ⇒ 定时器随父对象一起停。
     std::function<void(UiHandle parent, int interval_ms, std::function<void()> on_tick)> timer;
+    // ★★ 2026-10-26（用户：「纯补门面」P3）—— **图片**。
+    //   为什么现在加：IX-Ray 生成器要"原字体 vs 候选字体"并排预览（1.x 那个 AI 翻译插件
+    //   也没用图片，所以这是**新增**能力，不是回归）；内置字库页的预览是 C++ `QPixmap`
+    //   自绘，插件没有这条路。
+    //   语义：给一个**图片文件路径**（PNG/BMP/JPG，Qt 能读的都行），按 width/height 等比
+    //   缩放到框内（0 = 原始尺寸）；读不到文件 ⇒ 返回空句柄（零静默：调用侧据此报错）。
+    std::function<UiHandle(UiHandle parent, const std::string& path, int width, int height)> image;
 };
 
 // 外壳注入实现（`src/shell/ui_facade_qt.cpp`）。传 nullptr = 撤销（无 GUI 依赖的进程/用例）。

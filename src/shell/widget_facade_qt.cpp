@@ -1415,6 +1415,28 @@ const plug::UiFacade kQtFacade = {
         });
         timer->start();
     },
+    /* image：图片预览（路径 → QLabel + QPixmap；等比缩放到框内，0 = 原始尺寸）。
+       读不到文件 ⇒ 返回空句柄（**零静默**：调用侧据此报错，不假装成功）。 */
+    [](plug::UiHandle parent, const std::string& path, int width, int height) {
+        QWidget* host = resolve_parent(parent);
+        const QString file = QString::fromStdString(path);
+        QPixmap pixmap;
+        if (file.isEmpty() || !pixmap.load(file) || pixmap.isNull()) {
+            trace_page_event("image_failed",
+                             QStringLiteral("path=%1 reason=load_failed").arg(file).toStdString());
+            return plug::kNoWidget;
+        }
+        if (width > 0 || height > 0) {
+            const int w = width > 0 ? width : pixmap.width();
+            const int h = height > 0 ? height : pixmap.height();
+            pixmap = pixmap.scaled(w, h, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        }
+        auto* label = new QLabel;
+        label->setPixmap(pixmap);
+        label->setAlignment(Qt::AlignCenter);
+        place(host, label);
+        return handle_of(wrap(label));
+    },
 };
 
 plug::UiFacade& mutable_facade() {
