@@ -37,6 +37,7 @@
 #include "xrkit/engine/font/charset.h"
 #include "xrkit/engine/font/glyph.h"
 #include "xrkit/engine/font/metrics.h"
+#include "xrkit/engine/font/langpack.h"
 #include "xrkit/engine/font/package.h"
 #include "xrkit/engine/font/render.h"
 #include "xrkit/engine/font/resample.h"
@@ -211,6 +212,7 @@ void print_usage() {
            "                  [--backup] [--exclude <模式>]\n"
            "                  批量编码转换（与内置 convert 页同一个引擎实现；判据对拍用它）\n"
            "  --build-font-pack <SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录>\n"
+           "  --langpack-scan <语言包目录>      只读识别：profile/lang/槽位/资源（IX-Ray 生成器「指定」模式的底座）\n"
            "                    [--suffix s] [--offset n] [--no-full-cyrillic]\n"
            "                                              出整棵 gamedata 汉化包（与 1.x 对拍）\n"
            // ★★ 2026-10-05（小件 ①）：`--build-package` **实现早已存在**（`tools/cli/build_cmd.cpp`，
@@ -4819,6 +4821,41 @@ int run_cli(const std::vector<std::string>& args) {
                   << " failed=" << outcome.failed << " backed_up=" << outcome.backed_up
                   << " exit=" << outcome.exit_code << "\n";
         return outcome.exit_code == 0 ? kExitOk : 1;
+    }
+
+    // 语言包识别（只读）：IX-Ray 生成器「指定」模式的底座。
+    // 输出是机器行（LANGPACK ...）；认不出四档 ⇒ 退出码 3（"什么都没做"，不是 1=失败）。
+    if (action == "--langpack-scan") {
+        if (operands.size() < 1) {
+            std::cerr << "LANGPACK error reason=用法：--langpack-scan <语言包目录>\n";
+            return kExitUsage;
+        }
+        const xrkit::engine::font::LangPackModel m =
+            xrkit::engine::font::scan_lang_pack(operands[0]);
+        std::cout << "LANGPACK profile=" << xrkit::engine::font::profile_name(m.profile)
+                  << " lang=" << m.lang << " lang_from_ltx=" << (m.lang_from_ltx ? 1 : 0)
+                  << " config_dir=" << (m.config_dir.empty() ? "-" : m.config_dir)
+                  << " font_config=" << (m.font_config.empty() ? "-" : m.font_config)
+                  << " slots=" << m.slots.size() << " ttf=" << m.ttf_count
+                  << " dds=" << m.dds_count
+                  << " text_dir=" << (m.text_dir.empty() ? "-" : m.text_dir) << "\n";
+        for (const auto& slot : m.slots) {
+            std::cout << "LANGPACK slot section=" << slot.section
+                      << " base=" << (slot.base.empty() ? "-" : slot.base)
+                      << " name=" << (slot.has_name ? slot.name : "-")
+                      << " size=" << slot.size
+                      << " opentype=" << (slot.opentype.empty() ? "-" : slot.opentype)
+                      << " shader=" << (slot.shader.empty() ? "-" : slot.shader) << "\n";
+        }
+        for (const std::string& line : m.evidence) {
+            std::cout << "LANGPACK evidence " << line << "\n";
+        }
+        if (m.profile == xrkit::engine::font::PackProfile::Unknown) {
+            std::cout << "LANGPACK unrecognized\n";
+            return kExitSkip;   // 2：认不出四档（"没出错、但不是正常路径"，与 --sniff 低置信同口径）
+        }
+        std::cout << "LANGPACK ok profile=" << xrkit::engine::font::profile_name(m.profile) << "\n";
+        return kExitOk;
     }
 
     if (action == "--build-font-pack") {

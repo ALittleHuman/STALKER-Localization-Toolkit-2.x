@@ -3383,6 +3383,37 @@ def step_bench(release: bool) -> None:
         fail("bench 超出数量级上界（见上）")
 
 
+def step_langpack_scan(release: bool) -> None:
+    """语言包识别（IX-Ray 生成器「指定」模式的底座，2026-10-26 用户拍板）。
+
+    判据 = `tests/check_langpack_scan.py`：
+      · 合成夹具四档（ixr/cop/cis/soc）＋ unknown（零静默 + 退码 2）；
+      · 自证：删掉 ttf ⇒ 不再判 IX-Ray（判据会红，不是恒绿）；
+      · 只读：扫描前后源树清单/大小/mtime 全同；
+      · 真包夹具：MODS 下三个字体包 ⇒ profile=ixr / lang=rus / slots=36 / ttf>0。
+    外部前提缺件（真包不在）⇒ 退码 2 ⇒ release 档 FAIL、其余档记未覆盖。
+    """
+    say("[?] 语言包识别（--langpack-scan：四档 + 只读 + 真包夹具）")
+    script = ROOT / "tests" / "check_langpack_scan.py"
+    if not require_repo_file(script, "语言包识别判据脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("LANGPACK-SCAN") \
+                or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("四档识别 / 只读 / 真包夹具全过")
+    elif rc == 2:
+        prereq("真包夹具（MODS 下三个字体包）", "缺样本（见上）", release)
+    else:
+        fail("语言包识别判据不通过（见上）")
+
+
 def step_px_only(release: bool) -> None:
     """像素口径（屏幕自适应，2026-09-27 用户：「我电脑是2.5K屏，所以做一个自适应」）：
     **设计稿像素一律过 px()** —— 非零裸字面量按 96 DPI 定死，在高 DPI 屏上不会跟着缩放。
@@ -7374,6 +7405,9 @@ STEPS = [
     #   才断"插件页生效"。排在 pkg-platform 之后：它也要在**产物副本**里真跑自检。
     #   独立成步：被 `--only` 过滤时进 UNCOVERED；没有 dist 产物时记台账（release 档 FAIL）。
     ("package-pages", step_package_fixture_pages),
+    # ★★ 2026-10-26（用户：「IX-Ray 必须施工」第一刀）：语言包四档识别。
+    #   排在 bench 之后（要 CLI 产物；不需要外壳）。
+    ("langpack-scan", step_langpack_scan),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
     ("version-identity", step_version_identity),
