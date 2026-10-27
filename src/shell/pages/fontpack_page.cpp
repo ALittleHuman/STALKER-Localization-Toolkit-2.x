@@ -3,6 +3,7 @@
 #include "../font_picker.h"
 
 #include "xrkit/core/theme.h"
+#include "xrkit/engine/font/ixr.h"
 #include "xrkit/engine/font/metrics.h"
 #include "xrkit/engine/font/system_dirs.h"
 
@@ -123,9 +124,47 @@ FontPackPage::FontPackPage(QWidget* parent)
     body_layout()->addWidget(path_row(QStringLiteral("输出目录："), out_edit_, true,
                                       QStringLiteral("选择输出目录"), out_judge));
 
+    // IX-Ray 的"参照包"（整包目录）：位图模式没有这个概念 ⇒ 默认隐藏
+    pack_edit_ = new QLineEdit;
+    pack_edit_->setObjectName(QStringLiteral("font_ixr_pack"));
+    pack_edit_->setPlaceholderText(QStringLiteral("参照整包目录（例如 MODS\\~NotoSansSC，能当模组打的那份）"));
+    {
+        auto* pack_browse = new QPushButton(QStringLiteral("浏览…"));
+        pack_browse->setObjectName(QStringLiteral("font_ixr_pack_browse"));
+        QObject::connect(pack_browse, &QPushButton::clicked, this, [this] {
+            const QString picked = QFileDialog::getExistingDirectory(
+                this, QStringLiteral("选择参照整包目录"),
+                QDir::toNativeSeparators(pack_edit_->text().trimmed()));
+            if (!picked.isEmpty()) pack_edit_->setText(QDir::toNativeSeparators(picked));
+        });
+        auto* pack_row = new QWidget;
+        pack_row->setObjectName(QStringLiteral("font_ixr_pack_row"));
+        auto* row_layout = new QHBoxLayout(pack_row);
+        row_layout->setContentsMargins(0, 0, 0, 0);
+        row_layout->addWidget(new QLabel(QStringLiteral("参照包：")), 0);
+        row_layout->addWidget(pack_edit_, 1);
+        row_layout->addWidget(pack_browse, 0);
+        pack_row_ = pack_row;
+        body_layout()->addWidget(pack_row);
+        pack_row->setVisible(false);
+        QObject::connect(game_combo_, &QComboBox::currentTextChanged, this,
+                         [this](const QString&) {
+                             const bool ixr = game_combo_->currentData().toString() ==
+                                              QStringLiteral("IX-Ray");
+                             if (pack_row_ != nullptr) pack_row_->setVisible(ixr);
+                             // 位图专属的三个选项在 IX-Ray 下没意义 ⇒ 置灰（不隐藏，免得用户找不到）
+                             if (size_combo_ != nullptr) size_combo_->setEnabled(!ixr);
+                             if (cyrillic_box_ != nullptr) cyrillic_box_->setEnabled(!ixr);
+                         });
+    }
     game_combo_ = new QComboBox;
     game_combo_->setObjectName(QStringLiteral("font_game"));
-    for (const char* game : {"SoC", "ClS", "CoP"}) game_combo_->addItem(utf8(game), utf8(game));
+    // ★★ 2026-10-27（用户：「汉化包生成现在还是没有 IX-Ray 的选项」）：
+    //   第四项 = IX-Ray（**矢量**）。它不是位图模板，走外部 fonttools 助手
+    //   （见 engine::font::ixr_build 与 tools/ixr_run.py），需要用户给一个"参照整包"。
+    for (const char* game : {"SoC", "ClS", "CoP", "IX-Ray"}) {
+        game_combo_->addItem(utf8(game), utf8(game));
+    }
     // 1.x `:71-82`：加载语言 = eng/rus/chs/**自定义**（自定义才显示输入框）
     lang_combo_ = new QComboBox;
     lang_combo_->setObjectName(QStringLiteral("font_lang"));
@@ -221,6 +260,13 @@ FontPackPage::FontPackPage(QWidget* parent)
         //   画到控件上（`apply_result`）。修前 worker 直接调 `build()` ⇒ 跨线程读下拉框、
         //   写 `result_label_`/`state_label_`、裸 `++refused_count_`（数据竞争），
         //   并且页析构时 `result_label_` 先于 `task_` 被删 ⇒ 访问违例。
+        // ★ IX-Ray：参照包在**主线程**快照（worker 不许读控件）
+        ixr_pack_at_start_ = pack_edit_ != nullptr ? pack_edit_->text().trimmed() : QString();
+        if (game_combo_->currentData().toString() == QStringLiteral("IX-Ray") &&
+            ixr_pack_at_start_.isEmpty()) {
+            result_label_->setText(QStringLiteral("IX-Ray 需要「参照包」（能当模组打的整包目录）"));
+            return;
+        }
         const engine::font::PackageOptions options = prepare(xml_dir, font, out);
         auto outcome = std::make_shared<BuildOutcome>();
         const bool started = task_->run(QStringLiteral("生成汉化包"),
@@ -420,6 +466,38 @@ engine::font::PackageOptions FontPackPage::prepare(const QString& xml_dir, const
 FontPackPage::BuildOutcome FontPackPage::run_build(
     const engine::font::PackageOptions& options) const {
     BuildOutcome outcome;
+    // ★★ 2026-10-27：IX-Ray（矢量）—— 走外部 fonttools 助手（`engine::font::ixr_build`）。
+    //   与位图出包**并列**的一条路：不判字形（助手自己会报缺字数），不做"先判后建"的目录守卫
+    //   （助手先 copy 整包再改字体；失败时它自己删临时产物）。
+    if (options.game == "IX-Ray") {
+        outcome.ixr = true;
+        xrkit::engine::font::IxrBuildOptions ixr;
+        ixr.pack = ixr_pack_at_start_.toStdString();
+        ixr.font = options.font_path;
+        ixr.out = options.out_dir;
+        ixr.langs = options.lang == "chs" ? std::string() : std::string();
+        const xrkit::engine::font::IxrBuildResult result =
+            xrkit::engine::font::ixr_build(ixr);
+        outcome.ok = result.ok;
+        outcome.result.ok = result.ok;
+        if (!result.ok) {
+            outcome.result.error = result.error;
+            outcome.reason = utf8(result.error);
+            outcome.ixr_log = utf8(result.stdout_tail) + utf8(result.stderr_tail);
+        } else {
+            // 助手报告在 stdout 的 `IXRGEN {...}` 里；这里只抓 added/missing 两个数（人读面向）
+            const QString all = utf8(result.stdout_tail);
+            const int added_pos = all.indexOf(QStringLiteral("\"added\":"));
+            if (added_pos >= 0) {
+                outcome.ixr_added = all.mid(added_pos + 8).trimmed().section(',', 0, 0).toInt();
+            }
+            const int miss_pos = all.indexOf(QStringLiteral("\"missing\":"));
+            if (miss_pos >= 0) {
+                outcome.ixr_missing = all.mid(miss_pos + 10).trimmed().section(',', 0, 0).toInt();
+            }
+        }
+        return outcome;
+    }
     // 11.9：**先判后建** —— 缺字形/检测失败直接拒绝，且**不建任何目录**。
     // （`font_unrenderable` 只告警不拒绝：那条路在引擎的 build_package 里以 warning 体现。）
     // 判据**只有** `check_font` 那一份（引擎的 `classify_cjk_font`），页面不自己再判一遍。
@@ -448,6 +526,17 @@ void FontPackPage::apply_result(const BuildOutcome& outcome) {
     if (!ui_thread_guard("FontPackPage::apply_result")) return;
     if (outcome.refused) {
         if (result_label_ != nullptr) result_label_->setText(outcome.reason);
+        return;
+    }
+    if (outcome.ixr) {
+        if (result_label_ != nullptr) {
+            result_label_->setText(
+                outcome.ok
+                    ? QStringLiteral("完成（IX-Ray 矢量）：新增字形 %1、缺字 %2")
+                          .arg(outcome.ixr_added)
+                          .arg(outcome.ixr_missing)
+                    : QStringLiteral("失败：") + outcome.reason);
+        }
         return;
     }
     if (result_label_ != nullptr) {

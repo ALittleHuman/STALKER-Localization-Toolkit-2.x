@@ -2,12 +2,12 @@
 r"""判据 C-06：CLI 退出码 3 的**双语义**必须被枚举、钉住、并写进文案（第三方审计 C-06）。
 
 **事实（本判据现场枚举，不引审计、不引旧批）**
-  `tools/cli/main.cpp` 里 `return kExitUsage;`（＝3）有 **63** 处（`return 3;` 字面量另 1 处），
+  `tools/cli/main.cpp` 里 `return kExitUsage;`（＝3）有 **65** 处（`return 3;` 字面量另 1 处），
   但它同时承担**两种语义**：
 
   | 家族 | 数量 | 例子 | 语义 |
   | --- | --- | --- | --- |
-  | `USAGE` 真·用法错误 | 53 | 缺操作数、未知参数、未知格式名、未知动作 | "你命令行写错了" |
+  | `USAGE` 真·用法错误 | 55 | 缺操作数、未知参数、未知格式名、未知动作 | "你命令行写错了" |
   | `GUARD_EXISTS` 写盘守卫 | 10 | `--extract`/`--pack-db`/`--decode-text`/`--codec-lossy`/`--decl-fix`/`--sniff`/`--font-render`/`--resample-dump`/`--extract-chars`/`--lzhuf` 的"输出已存在且没 `--force`" | "**我什么都没写**，确认后再来" |
   | `GUARD_CONFIRM` 待用户确认 | 1 | `--convert-batch` 的 `needs_confirm`（P17-87） | "**我一个文件都没转**，由你显式指定后重跑" |
 
@@ -55,7 +55,8 @@ LOOKBACK = 25
 # ★★ 2026-10-26：`--langpack-scan` 缺操作数 ⇒ 新增一处 USAGE（49 → 50）。
 #   按本判据自己的规矩：增删一处就必须重估口径并改本表（不是把判据放宽）。
 # 2026-10-27：`--font-sample` 缺操作数再 +1（50 → 51）。
-FROZEN = {"USAGE": 53, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
+# 2026-10-27：`--ixr-build` 两处用法错误（缺操作数 / 未知参数）⇒ 53 → 55。
+FROZEN = {"USAGE": 55, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
 
 PROBLEMS: list = []
 CASES = 0

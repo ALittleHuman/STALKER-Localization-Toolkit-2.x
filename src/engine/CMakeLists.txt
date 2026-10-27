@@ -41,6 +41,7 @@ add_library(xrkit_engine STATIC
   font/charset.cpp
   font/cjk_state.cpp
   font/glyph.cpp
+    font/ixr.cpp
     font/langpack.cpp
   font/metrics.cpp
   font/package.cpp

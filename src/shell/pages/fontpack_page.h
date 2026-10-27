@@ -79,6 +79,10 @@ public:
         engine::font::CjkFontCheck check;
         engine::font::PackageResult result;
         QString reason;                       // 拒绝/失败的理由（原样来自引擎与状态标记）
+    bool ixr = false;                    // IX-Ray（矢量）走外部 fonttools 助手
+    int ixr_added = 0;
+    int ixr_missing = 0;
+    QString ixr_log;                     // 助手输出尾巴（失败时贴出来）
     };
     engine::font::PackageOptions prepare(const QString& xml_dir, const QString& font_path,
                                          const QString& out_dir) const;
@@ -92,6 +96,8 @@ public:
     QLineEdit* xml_edit() const { return xml_edit_; }
     QLineEdit* font_edit() const { return font_edit_; }
     QLineEdit* out_edit() const { return out_edit_; }
+    QLineEdit* pack_edit() const { return pack_edit_; }
+    QWidget* pack_row() const { return pack_row_; }
     QComboBox* game_combo() const { return game_combo_; }
     QComboBox* lang_combo() const { return lang_combo_; }
     QLineEdit* lang_edit() const { return lang_edit_; }
@@ -136,6 +142,9 @@ private:
     QLineEdit* xml_edit_ = nullptr;
     QLineEdit* font_edit_ = nullptr;
     QLineEdit* out_edit_ = nullptr;
+    QLineEdit* pack_edit_ = nullptr;     // IX-Ray 参照包（整包目录）
+    QWidget* pack_row_ = nullptr;        // 那一行（位图模式下隐藏）
+    QString ixr_pack_at_start_;          // 起 worker 前的快照（worker 不许读控件）
     QComboBox* game_combo_ = nullptr;
     QComboBox* lang_combo_ = nullptr;
     QLineEdit* lang_edit_ = nullptr;

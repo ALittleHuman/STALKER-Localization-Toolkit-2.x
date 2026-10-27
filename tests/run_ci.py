@@ -3454,6 +3454,32 @@ def step_font_sample(release: bool) -> None:
         fail("文本样张判据不通过（见上）")
 
 
+def step_ixr_product(release: bool) -> None:
+    """IX-Ray **产品入口**（`--ixr-build`）：C++ 找工具链 → 起 fonttools 助手 → 收退码。
+
+    页面（汉化包生成的 IX-Ray 选项）只调引擎 `ixr_build`；这条判据验的就是那一段：
+    缺参数退 3 / 真跑出合并字体（cmap 有「你」）/ 坏包零静默 / 工具链缺件点名。
+    """
+    say("[?] IX-Ray 产品入口（--ixr-build：C++ → fonttools 助手）")
+    script = ROOT / "tests" / "check_ixr_product.py"
+    if not require_repo_file(script, "IXR 产品入口判据脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("IXR-PRODUCT") or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("IX-Ray 产品入口：退码/真跑/零静默/工具链缺件 全过")
+    elif rc == 2:
+        prereq("系统字体或 vendored fontTools", "缺外部前提（见上）", release)
+    else:
+        fail("IX-Ray 产品入口判据不通过（见上）")
+
+
 def step_ixr_plugin(release: bool) -> None:
     """IX-Ray 插件（真插件，不是内置页）：生成器判据 + 插件无头装载。
 
@@ -7596,6 +7622,8 @@ STEPS = [
     # ★★ 2026-10-27：XML 校对第三模式（提取文本）界面接线
     ("xml-extract-mode", step_xml_extract_mode),
     ("ixr-plugin", step_ixr_plugin),
+    # ★★ 2026-10-27：IX-Ray 产品入口（汉化包生成页的 IX-Ray 选项后端）
+    ("ixr-product", step_ixr_product),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
     ("version-identity", step_version_identity),

@@ -37,6 +37,7 @@
 #include "xrkit/engine/font/charset.h"
 #include "xrkit/engine/font/glyph.h"
 #include "xrkit/engine/font/metrics.h"
+#include "xrkit/engine/font/ixr.h"
 #include "xrkit/engine/font/langpack.h"
 #include "xrkit/engine/font/package.h"
 #include "xrkit/engine/font/render.h"
@@ -215,6 +216,8 @@ void print_usage() {
            "  --build-font-pack <SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录>\n"
            "  --langpack-scan <语言包目录>      只读识别：profile/lang/槽位/资源（IX-Ray 生成器「指定」模式的底座）\n"
            "  --font-sample <字体> <文本> <字号> <out.ppm>   文本样张（预览用；缺字计数）\n"
+           "  --ixr-build <参照包> <字体> <输出目录> [--langs rus,eng | --all-langs --split-output]\n"
+           "                                   生成 IX-Ray 矢量包（外部 fonttools 助手）\n"
            "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite]\n"
            "                                   装配标准语言包（空表写成 <string_table></string_table>）\n"
            "                    [--suffix s] [--offset n] [--no-full-cyrillic]\n"
@@ -4894,6 +4897,49 @@ int run_cli(const std::vector<std::string>& args) {
                   << " xml=" << r.xml_written << " rewritten=" << r.rewritten_copied
                   << " empty_tables=" << r.empty_tables
                   << " skipped_existing=" << r.skipped_existing << "\n";
+        return kExitOk;
+    }
+
+    // IX-Ray 矢量包（外部 fonttools 助手；产品入口与页面共用一份）
+    if (action == "--ixr-build") {
+        if (operands.size() < 3) {
+            std::cerr << "IXR error reason=用法：--ixr-build <参照包> <字体> <输出目录> "
+                         "[--langs L | --all-langs --split-output] [--plan f] [--sizes 14,16]\n";
+            return kExitUsage;
+        }
+        xrkit::engine::font::IxrBuildOptions opt;
+        opt.pack = operands[0];
+        opt.font = operands[1];
+        opt.out = operands[2];
+        for (size_t i = 3; i < operands.size(); ++i) {
+            const std::string& a = operands[i];
+            if (a == "--langs" && i + 1 < operands.size()) {
+                opt.langs = operands[++i];
+            } else if (a == "--all-langs") {
+                opt.all_langs = true;
+            } else if (a == "--split-output") {
+                opt.split_output = true;
+            } else if (a == "--plan" && i + 1 < operands.size()) {
+                opt.plan = operands[++i];
+            } else if (a == "--sizes" && i + 1 < operands.size()) {
+                opt.sizes = operands[++i];
+            } else {
+                std::cerr << "IXR error reason=未知参数 " << a << "\n";
+                return kExitUsage;
+            }
+        }
+        const xrkit::engine::font::IxrBuildResult result =
+            xrkit::engine::font::ixr_build(opt);
+        if (!result.ok) {
+            if (!result.stdout_tail.empty()) std::cout << result.stdout_tail;
+            if (!result.stderr_tail.empty()) std::cout << result.stderr_tail;
+            std::cout << "IXR error reason=" << result.error << "\n";
+            return kExitFail;
+        }
+        // 助手自己会打印 `IXRGEN {...}`；这里只补一条机器行（含实际用的解释器，便于排障）
+        std::cout << result.stdout_tail;
+        std::cout << "IXR ok python=" << result.python << " launcher=" << result.launcher
+                  << " out=" << opt.out << "\n";
         return kExitOk;
     }
 
