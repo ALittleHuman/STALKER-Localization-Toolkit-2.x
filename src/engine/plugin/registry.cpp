@@ -93,7 +93,7 @@ struct SlotSpec {
 
 constexpr SlotSpec kHosts[] = {
     {"fs", "文件系统"},   {"convert", "编码转换"}, {"text", "文本提取"},
-    {"xml", "XML校对"},   {"video", "视频转换"},   {"font", "汉化包生成"},
+    {"xml", "文本工具"},   {"video", "视频转换"},   {"font", "汉化包生成"},
 };
 constexpr int kHostCount = 6;
 

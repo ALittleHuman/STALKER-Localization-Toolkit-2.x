@@ -122,7 +122,7 @@ namespace {
 // 清单本身从 `builtin_page()`（真实清单）读，两边交叉核对。
 constexpr const char* kExpectedIds[] = {"fs", "convert", "text", "xml", "video", "fontpack"};
 constexpr const char* kExpectedTitles[] = {"文件系统", "编码转换", "文本提取",
-                                           "XML校对", "视频转换", "汉化包生成"};
+                                           "文本工具", "视频转换", "汉化包生成"};
 constexpr int kExpectedCount = 6;
 
 // ★★ 2026-10-02 包列表**树化**（用户：「左边的包列表的结构应该也是一个文件树」）之后，
@@ -738,9 +738,9 @@ SmokeResult run_smoke() {
         {"fs", "文件系统", "fs_py", "文件系统"},
         {"convert", "编码转换", "convert_py", "编码转换"},
         {"text", "文本提取", "text_py", "文本提取"},
-        // ★ 这一槽位两版标题**不同**：内置是「XML校对」（无空格），插件版是「XML 校对」（有空格）。
-        //   如实登记两版，不许谁去"顺手统一"—— 两版都要能在各自形态下判绿。
-        {"xml", "XML校对", "xml_py", "XML 校对"},
+        // ★ 2026-10-27 用户：内置页改名「文本工具」；插件夹具仍叫「XML 校对」。
+        //   两版如实登记，不许谁去"顺手统一"—— 两版都要能在各自形态下判绿。
+        {"xml", "文本工具", "xml_py", "XML 校对"},
         {"video", "视频转换", "video_py", "视频转换"},
         {"fontpack", "汉化包生成", "fontpack_py", "汉化包生成"},
     };

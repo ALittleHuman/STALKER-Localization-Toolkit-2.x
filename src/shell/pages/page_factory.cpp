@@ -28,7 +28,7 @@ constexpr PageInfo kBuiltinPages[] = {
     {"fs", "文件系统", "", 0},
     {"convert", "编码转换", "", 1},
     {"text", "文本提取", "", 2},
-    {"xml", "XML校对", "", 3},
+    {"xml", "文本工具", "", 3},
     {"video", "视频转换", "", 4},
     {"fontpack", "汉化包生成", "", 5},
 };

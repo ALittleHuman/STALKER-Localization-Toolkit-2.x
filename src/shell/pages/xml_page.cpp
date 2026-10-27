@@ -56,7 +56,7 @@ const char* kEncodings[] = {etxt::kUtf8,    etxt::kWindows1251, etxt::kWindows12
 }  // namespace
 
 XmlPage::XmlPage(QWidget* parent)
-    : PageBase(QStringLiteral("xml"), QStringLiteral("XML校对"), parent) {
+    : PageBase(QStringLiteral("xml"), QStringLiteral("文本工具"), parent) {
     // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内说明整段删（六页统一）
     dir_a_edit_ = new QLineEdit;
     dir_a_edit_->setObjectName(QStringLiteral("xml_dir_a"));
@@ -345,7 +345,7 @@ XmlPage::XmlPage(QWidget* parent)
         //   管的是自检直接调 `compare_dirs` 的情形）；收尾在 `apply_finish` 恢复。
         set_compare_controls_enabled(false);
         // 任务壳拒绝（已有任务在跑）⇒ 把刚禁用的控件马上放回去（否则页面会僵住）
-        const bool started = task_->run(QStringLiteral("XML 校对"), [this, a, b, enc_a, enc_b](
+        const bool started = task_->run(QStringLiteral("文本工具"), [this, a, b, enc_a, enc_b](
                                                   const ProgressSink& progress,
                                                   const MessageSink& message) {
             progress(0);

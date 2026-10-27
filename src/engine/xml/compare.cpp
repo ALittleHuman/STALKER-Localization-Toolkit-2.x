@@ -852,7 +852,7 @@ std::string render_csv(const XmlCsvReport& report) {
         }
         out += "\r\n";
     };
-    row({"XML校对报告"});
+    row({"文本工具报告"});
     row({"生成时间: " + report.generated_at});
     row({"比较模式: " + report.mode_name});
     row({"文件夹 A: " + report.folder_a});

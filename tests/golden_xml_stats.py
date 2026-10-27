@@ -320,7 +320,7 @@ def main() -> int:
                             % proc.stdout.decode("utf-8", errors="replace")[:200])
         else:
             header_rows = [
-                ["XML校对报告"],
+                ["文本工具报告"],
                 ["生成时间: 2026-09-24 00:00:00"],
                 ["比较模式: 行数/ID 统计"],
                 ["文件夹 A: A 目录"],
