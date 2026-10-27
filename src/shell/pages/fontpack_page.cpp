@@ -130,7 +130,7 @@ FontPackPage::FontPackPage(QWidget* parent)
     pack_edit_->setObjectName(QStringLiteral("font_ixr_pack"));
     pack_edit_->setPlaceholderText(QStringLiteral("参照整包目录（例如 MODS\\~NotoSansSC，能当模组打的那份）"));
     {
-        auto* pack_browse = new QPushButton(QStringLiteral("浏览…"));
+        auto* pack_browse = new QPushButton(QStringLiteral("选择…"));   // 与其它三行同一文案
         pack_browse->setObjectName(QStringLiteral("font_ixr_pack_browse"));
         QObject::connect(pack_browse, &QPushButton::clicked, this, [this] {
             const QString picked = QFileDialog::getExistingDirectory(

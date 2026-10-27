@@ -263,7 +263,7 @@ XmlPage::XmlPage(QWidget* parent)
     extract_out_edit_ = new QLineEdit;
     extract_out_edit_->setObjectName(QStringLiteral("xml_extract_out"));
     extract_out_edit_->setPlaceholderText(QStringLiteral("输出根目录（默认：非空一侧的上一级）"));
-    auto* extract_browse = new QPushButton(QStringLiteral("浏览…"));
+    auto* extract_browse = new QPushButton(QStringLiteral("选择…"));   // 与全站路径行同一文案
     extract_browse->setObjectName(QStringLiteral("xml_extract_browse"));
     QObject::connect(extract_browse, &QPushButton::clicked, this, [this] {
         const QString picked = QFileDialog::getExistingDirectory(
