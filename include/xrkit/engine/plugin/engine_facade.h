@@ -30,6 +30,31 @@
 namespace xrkit::plugin {
 
 // ── 值类型（Python 侧对应 dict / list）──────────────────────────────────────
+// ★★ 2026-10-26（用户：「IX-Ray 必须施工」）：语言包识别的门面值类型。
+//   语义与引擎 `engine::font::scan_lang_pack()` 一一对应（门面不写业务逻辑，只做转换）。
+struct LangPackSlotInfo {
+    std::string section;
+    std::string base;
+    std::string name;
+    std::string opentype;
+    std::string shader;
+    int size = 0;
+    bool has_name = false;
+};
+
+struct LangPackScanResult {
+    std::string profile;      // "soc" / "cis" / "cop" / "ixr" / "unknown"
+    std::string lang;
+    bool lang_from_ltx = false;
+    std::string config_dir;   // "configs" / "config"
+    std::string font_config;  // 找到的那份 fonts.ltx（绝对路径）
+    std::string text_dir;     // configs/text/<lang>（存在时）
+    int ttf = 0;
+    int dds = 0;
+    std::vector<LangPackSlotInfo> slots;
+    std::vector<std::string> evidence;
+};
+
 struct FontCheckResult {
     std::string state;                    // "ok" / "japanese" / "missing" / "unknown"
     std::string mark;                     // 引擎给的短标记（"✓ 中文" / "⚠ 日语字体…" 等）
@@ -771,6 +796,10 @@ struct EngineFacade {
                                                   const std::vector<engine::patch::PatchSite>& sites,
                                                   bool force)>
         patch_apply;
+    // ★★ 2026-10-26（IX-Ray 第一刀 → 插件可用）：**语言包识别**（只读）。
+    //   与 CLI 的 `--langpack-scan` 走**同一个**引擎实现（`engine::font::scan_lang_pack`）
+    //   ⇒ 插件页与 CLI/判据看到的是同一份结论，不会分叉。
+    std::function<LangPackScanResult(const std::string& root)> langpack_scan;
 };
 
 // 外壳注入实现（`src/shell/engine_facade_impl.cpp`）。传 nullptr = 撤销。

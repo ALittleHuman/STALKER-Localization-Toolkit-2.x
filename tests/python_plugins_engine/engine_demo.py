@@ -34,6 +34,19 @@ def register(api):
     mark("marks_japanese:%s" % marks["japanese"])
     mark("marks_missing:%s" % marks["missing"])
 
+    # ★★ 2026-10-26：语言包识别（IX-Ray「指定」模式的底座）—— 与 CLI --langpack-scan 同一份引擎实现
+    langpack_root = os.environ.get("XRKIT_ENGINE_LANGPACK", "")
+    if langpack_root:
+        model = engine.langpack_scan(langpack_root)
+        mark("langpack_profile:%s" % model["profile"])
+        mark("langpack_lang:%s" % model["lang"])
+        mark("langpack_slots:%d" % len(model["slots"]))
+        mark("langpack_ttf:%d" % model["ttf"])
+        mark("langpack_evidence:%d" % len(model["evidence"]))
+        mark("langpack_first_section:%s" % (model["slots"][0]["section"] if model["slots"] else ""))
+    else:
+        mark("langpack_skipped:no-pack")
+
     font = os.environ.get("XRKIT_ENGINE_FONT", "")
     if font:
         check = engine.font_check(font)

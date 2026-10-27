@@ -1130,6 +1130,38 @@ class PyEngine {
 public:
     explicit PyEngine(std::string owner) : owner_(std::move(owner)) {}
 
+    // ★★ 2026-10-26：语言包识别（IX-Ray「指定」模式的底座）—— 与 CLI 同一份引擎实现
+    py::object langpack_scan(const std::string& root) const {
+        const EngineFacade* facade = available("langpack_scan");
+        if (facade == nullptr) return py::none();
+        const LangPackScanResult r = facade->langpack_scan(root);
+        py::dict out;
+        out["profile"] = r.profile;
+        out["lang"] = r.lang;
+        out["lang_from_ltx"] = r.lang_from_ltx;
+        out["config_dir"] = r.config_dir;
+        out["font_config"] = r.font_config;
+        out["text_dir"] = r.text_dir;
+        out["ttf"] = r.ttf;
+        out["dds"] = r.dds;
+        py::list slots;
+        for (const auto& slot : r.slots) {
+            py::dict item;
+            item["section"] = slot.section;
+            item["base"] = slot.base;
+            item["name"] = slot.name;
+            item["size"] = slot.size;
+            item["opentype"] = slot.opentype;
+            item["shader"] = slot.shader;
+            item["has_name"] = slot.has_name;
+            slots.append(item);
+        }
+        out["slots"] = slots;
+        py::list evidence;
+        for (const auto& line : r.evidence) evidence.append(line);
+        out["evidence"] = evidence;
+        return out;
+    }
     py::object font_check(const std::string& font_path) const {
         const EngineFacade* facade = available("font_check");
         if (facade == nullptr) return py::none();
@@ -3175,6 +3207,8 @@ void ensure_api_module() {
             // ★★ P12b：跑外部进程（宿主服务）
             .def("run_process", &PyHost::run_process, py::arg("options"));
         py::class_<PyEngine>(m, "Engine")
+            // ★★ 2026-10-26：语言包识别（只读；与 CLI --langpack-scan 同一份引擎实现）
+            .def("langpack_scan", &PyEngine::langpack_scan, py::arg("root"))
             .def("font_check", &PyEngine::font_check, py::arg("font_path"))
             .def("font_pack", &PyEngine::font_pack, py::arg("options"))
             .def("font_state_marks", &PyEngine::font_state_marks)

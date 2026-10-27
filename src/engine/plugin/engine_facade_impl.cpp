@@ -12,6 +12,8 @@
 
 #include "xrkit/engine/plugin/engine_facade.h"
 
+#include "xrkit/engine/font/langpack.h"
+
 #include "xrkit/engine/font/metrics.h"
 #include "xrkit/engine/font/package.h"
 #include "xrkit/engine/text/batch.h"
@@ -1095,6 +1097,34 @@ const EngineFacade kFontFacade = {
     [](const std::string& src, const std::string& out,
        const std::vector<engine::patch::PatchSite>& sites, bool force) {
         return engine::patch::apply_patch(src, out, sites, force);
+    },
+    /* langpack_scan：语言包识别（只读）。**转调引擎同一份** `scan_lang_pack`
+       ⇒ CLI `--langpack-scan` 与插件页看到的是同一结论。 */
+    [](const std::string& root) {
+        LangPackScanResult out;
+        const efont::LangPackModel model = efont::scan_lang_pack(root);
+        out.profile = efont::profile_name(model.profile);
+        out.lang = model.lang;
+        out.lang_from_ltx = model.lang_from_ltx;
+        out.config_dir = model.config_dir;
+        out.font_config = model.font_config;
+        out.text_dir = model.text_dir;
+        out.ttf = model.ttf_count;
+        out.dds = model.dds_count;
+        out.evidence = model.evidence;
+        out.slots.reserve(model.slots.size());
+        for (const auto& slot : model.slots) {
+            LangPackSlotInfo info;
+            info.section = slot.section;
+            info.base = slot.base;
+            info.name = slot.name;
+            info.opentype = slot.opentype;
+            info.shader = slot.shader;
+            info.size = slot.size;
+            info.has_name = slot.has_name;
+            out.slots.push_back(std::move(info));
+        }
+        return out;
     },
 };
 

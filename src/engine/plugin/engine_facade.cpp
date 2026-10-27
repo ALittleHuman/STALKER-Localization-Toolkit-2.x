@@ -61,6 +61,8 @@ const char* const kMethodNames[] = {
     "pkg_write_manifest", "pkg_install", "pkg_restore",
     // ★★ P16-1c：二进制补丁（判定半 / 写盘半；站点表由调用方传入）
     "patch_identify", "patch_apply",
+    // ★★ 2026-10-26：语言包识别（IX-Ray「指定」模式的底座）
+    "langpack_scan",
 };
 
 bool has_impl(const EngineFacade& facade, const std::string& name) {
@@ -139,6 +141,7 @@ bool has_impl(const EngineFacade& facade, const std::string& name) {
     if (name == "pkg_restore") return static_cast<bool>(facade.pkg_restore);
     if (name == "patch_identify") return static_cast<bool>(facade.patch_identify);
     if (name == "patch_apply") return static_cast<bool>(facade.patch_apply);
+    if (name == "langpack_scan") return static_cast<bool>(facade.langpack_scan);
     return false;
 }
 

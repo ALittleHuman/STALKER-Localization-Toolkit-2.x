@@ -3817,7 +3817,21 @@ def step_engine_facade(release: bool) -> None:
             break
     if font:
         env["XRKIT_ENGINE_FONT"] = font
+    # ★★ 2026-10-26：语言包识别夹具（ixr 形态：段里有 name + fonts/rus/*.ttf）
+    langpack_tmp = Path(tempfile.mkdtemp(prefix="engine_langpack_"))
+    lp = langpack_tmp / "ixr_pack" / "gamedata"
+    (lp / "configs").mkdir(parents=True)
+    (lp / "configs" / "fonts.ltx").write_text(
+        "[font_default]\nshader = hud\\font\nsize = 14\nname = arial\nopentype = false\n"
+        "[font_letterica]:font_default\nname = letterica\nsize = 16\n", encoding="utf-8")
+    (lp / "configs" / "localization.ltx").write_text(
+        "[string_table]\nlanguage = rus\n", encoding="utf-8")
+    (lp / "fonts" / "rus").mkdir(parents=True)
+    (lp / "fonts" / "rus" / "arial.ttf").write_bytes(b"")
+    (lp / "fonts" / "rus" / "letterica.ttf").write_bytes(b"")
+    env["XRKIT_ENGINE_LANGPACK"] = str(langpack_tmp / "ixr_pack")
     rc, out = run([str(CLI_EXE), "--py-plugins", str(fixture)], env=env, timeout=600)
+    shutil.rmtree(langpack_tmp, ignore_errors=True)
     for raw in out.splitlines():
         s = raw.strip()
         if s.startswith("PYPLUGINS") and ("error" in s or "files=" in s or "loaded=" in s):
@@ -3856,6 +3870,23 @@ def step_engine_facade(release: bool) -> None:
             problems.append("font_check 的状态不是四态之一：%r（字体=%s）" % (state, font))
     elif value_of("check_skipped") != "no-font":
         problems.append("没给字体时夹具应当留一行 check_skipped（零静默）")
+
+    # ── ★★ 2026-10-26：语言包识别（插件侧真调到引擎同一份实现）────────────
+    if value_of("langpack_profile") != "ixr":
+        problems.append("插件调 langpack_scan 没识别成 ixr（实得 %r）"
+                        % (value_of("langpack_profile") or "(缺)"))
+    if value_of("langpack_lang") != "rus":
+        problems.append("langpack_scan 的 lang 不是 rus（实得 %r）"
+                        % (value_of("langpack_lang") or "(缺)"))
+    if value_of("langpack_slots") != "2":
+        problems.append("langpack_scan 槽位数不是 2（实得 %r）"
+                        % (value_of("langpack_slots") or "(缺)"))
+    if value_of("langpack_ttf") != "2":
+        problems.append("langpack_scan 的 ttf 数不是 2（实得 %r）"
+                        % (value_of("langpack_ttf") or "(缺)"))
+    if value_of("langpack_first_section") != "font_default":
+        problems.append("langpack_scan 首个槽位不是 font_default（实得 %r）"
+                        % (value_of("langpack_first_section") or "(缺)"))
 
     # ── ★★ P9a：convert 那一组（第二页迁移用的引擎面）────────────────────────
     #   判据全部走**真夹具**（真目录、真字节），不判"接口存在"。
