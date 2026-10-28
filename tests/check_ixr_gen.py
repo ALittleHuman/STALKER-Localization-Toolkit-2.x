@@ -229,6 +229,61 @@ def main() -> int:
             problems += 1
             fail("段名里还带注释：%s" % bad_names)
 
+        # ①-b2 用户口径（2026-10-29）：「提取看原文，生成看译文。」
+        #   生成阶段没给译文 ⇒ 必须**明确警告**且报告标 translation=false（不许静默出原文包）。
+        no_tr_out = tmp / "out_no_translation"
+        rc_nt, so_nt = run_tool(pack, CJK_FONT, no_tr_out)
+        rep_nt = report_of(so_nt)
+        if rc_nt == 0 and "IXRGEN warn 没有给译文" in so_nt:
+            ok("没给译文：明确警告（不会静默出原文包）")
+        else:
+            problems += 1
+            fail("没给译文却没警告：rc=%d\n%s" % (rc_nt, so_nt[-300:]))
+        per_lang = (rep_nt.get("reports") or [{}])[0]
+        if per_lang.get("translation") is False:
+            ok("报告里 translation=false（每语言报告里）")
+        else:
+            problems += 1
+            fail("报告里的 translation 不是 false（实得 %r）" % per_lang.get("translation"))
+
+        # ①-c 2026-10-29（用户）：「换了别的名字和文件树形式、更多此类文件夹，都能生成吗？
+        #   里面的额外字体呢？」—— 造一个**任意名字 + 多层嵌套**的 addon：
+        #   它自带 `configs/text/rus/*.xml` 与 `fonts/rus/extra.ttf`；断言
+        #   ① 它的文本被翻译件替换；② 它的 ttf 也被补了中文。
+        add_pack = build_pack(tmp / "addon", BASE_FONT, "Hello")
+        add_dir = add_pack / "ixr_addons" / "_renamed" / "nested"
+        (add_dir / "configs" / "text" / "rus").mkdir(parents=True, exist_ok=True)
+        (add_dir / "fonts" / "rus").mkdir(parents=True, exist_ok=True)
+        (add_dir / "configs" / "text" / "rus" / "addon.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?><string_table>'
+            '<string id="b"><text>старый текст</text></string></string_table>', encoding="utf-8")
+        shutil.copy2(BASE_FONT, add_dir / "fonts" / "rus" / "extra.ttf")
+        add_cn = tmp / "addon_cn"
+        add_cn.mkdir(parents=True, exist_ok=True)
+        (add_cn / "addon.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?><string_table>'
+            '<string id="b"><text>附加模组译文</text></string></string_table>', encoding="utf-8")
+        add_out = tmp / "out_addon"
+        rc_a, so_a = run_tool(add_pack, CJK_FONT, add_out, ["--text-root", str(add_cn)])
+        replaced = add_out / "ixr_addons" / "_renamed" / "nested" / "configs" / "text" / "rus" / "addon.xml"
+        if rc_a == 0 and replaced.is_file() and "附加模组译文" in replaced.read_text(
+                encoding="utf-8", errors="replace"):
+            ok("任意名字/嵌套的 addon：它的文本被翻译件替换")
+        else:
+            problems += 1
+            fail("addon 里的文本没被替换：rc=%d\n%s" % (rc_a, so_a[-400:]))
+        extra_ttf = add_out / "ixr_addons" / "_renamed" / "nested" / "fonts" / "rus" / "extra.ttf"
+        if extra_ttf.is_file():
+            cm = set(TTFont(str(extra_ttf)).getBestCmap())
+            if any(ord(ch) in cm for ch in "附加模组译文"):
+                ok("addon 自带的 ttf 也被补了字形（不再漏成方块）")
+            else:
+                problems += 1
+                fail("addon 自带的 ttf 没补字形（cmap 里找不到译文里的字）")
+        else:
+            problems += 1
+            fail("addon 自带的 ttf 没进产物")
+
         # ② 逐槽位字体计划：letterica 段用另一个字体；只处理 size=14 的段时 letterica 必须不动
         pack2 = build_pack(tmp / "plan", BASE_FONT, TEXT)
         # 两份字体文件都在（build_pack 只造了 arial；补一个 letterica 段）

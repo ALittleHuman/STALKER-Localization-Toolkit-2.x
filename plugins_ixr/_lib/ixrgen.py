@@ -229,30 +229,60 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
         #   文本来源＝`--text-root`（页面里就是「文本 XML」那一栏），落到包的 `<lang>` 文本目录，
         #   逐字节复制（翻译件已经是成品，不许我们再加工）。
         text_dirs = [Path(x) for x in (args.text_root or []) if Path(x).is_dir()]
+        translation_given = bool(text_dirs)
         if not text_dirs:
-            # 没指「文本 XML」⇒ 用参照包自带的文本（产物仍是完整包；用户要的是"能直接打"）
+            # ★★ 用户口径（2026-10-29）：「提取看原文，生成看译文。」
+            #   生成阶段的**字符集与文本都该来自译文**；没给译文就只能用参照包自带的原文
+            #   ⇒ 那出来的仍是"原文包"。**不许静默**：明确警告 + 报告里标 translation=false。
+            log("IXRGEN warn 没有给译文（--text-root / 「文本 XML」）⇒ 字符集与文本只能取参照包原文，"
+                "产物不是汉化包")
             own = src_gd / "configs" / "text" / lang
             if not own.is_dir():
                 own = src_gd / "text" / lang
             if own.is_dir():
                 text_dirs = [own]
         text_copied = 0
+        text_unmatched: list[str] = []
         if text_dirs and not args.no_texts:
-            dst_texts = out / "gamedata" / "configs" / "text" / lang
-            # 整包照镜子时这里已经带着原语言的 XML ⇒ **先清空**再放翻译件，
-            # 否则残留的原文会和新文本混在一起（同一 id 两份，游戏取哪个看加载顺序）。
-            if dst_texts.is_dir():
-                for stale in dst_texts.glob("*.xml"):
-                    stale.unlink()
-            dst_texts.mkdir(parents=True, exist_ok=True)
+            # ★★★ 2026-10-29（用户：「换了别的名字和文件树形式、更多此类文件夹，都能生成吗？
+            #   里面的额外字体呢？」）：文本替换**不再只认 gamedata/configs/text** ——
+            #   产物树里**每一个** `<某处>/configs/text/<lang>/` 都要换（addon 自带的那份也算）。
+            #   匹配按**文件名**：翻译源里同名的就换，没有的保留原文并逐条记账（零静默）。
+            by_name_xml: dict[str, Path] = {}
             for root in text_dirs:
                 base = root / lang if (root / lang).is_dir() else root
                 for xml in sorted(base.rglob("*.xml")):
-                    target = dst_texts / xml.name
-                    shutil.copy2(xml, target)
-                    text_copied += 1
-                    scan_long(xml)
-            log("IXRGEN 文本：%d 个 XML ⇒ %s" % (text_copied, dst_texts))
+                    by_name_xml.setdefault(xml.name, xml)
+            targets = [d for d in out.rglob(lang)
+                       if d.is_dir() and d.parent.name == "text"]
+            if not targets:
+                targets = [out / "gamedata" / "configs" / "text" / lang]
+                targets[0].mkdir(parents=True, exist_ok=True)
+            for dst_texts in targets:
+                for stale in dst_texts.glob("*.xml"):
+                    name = stale.name
+                    src = by_name_xml.get(name)
+                    if src is not None:
+                        shutil.copy2(src, stale)
+                        text_copied += 1
+                        scan_long(src)
+                    else:
+                        text_unmatched.append(
+                            str(stale.relative_to(out)) + "（翻译源里没有同名文件，保留原文）")
+            # 翻译源里有、但产物树里没有任何 text 目录接得住的文件 ⇒ 放到主 text 目录
+            main_texts = out / "gamedata" / "configs" / "text" / lang
+            placed = {p.name for d in targets for p in d.glob("*.xml")}
+            for name, xml in by_name_xml.items():
+                if name in placed:
+                    continue
+                main_texts.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(xml, main_texts / name)
+                text_copied += 1
+                scan_long(xml)
+            log("IXRGEN 文本：%d 个 XML 替换到 %d 个 text 目录" % (text_copied, len(targets)))
+            for line in text_unmatched[:10]:
+                log("IXRGEN warn 未替换：" + line)
+            report_unmatched = len(text_unmatched)
             if long_texts:
                 log("IXRGEN warn 超长无换行文本 %d 段（上限 %d 字）" % (len(long_texts), LONG_LIMIT))
                 for line in long_texts[:5]:
@@ -288,6 +318,8 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
               "added": 0, "skipped_sections": skipped_sections,
               "plan_sections": plan_sections, "sizes": sorted(plan_sizes),
               "texts": text_copied, "copied": locals().get("total_copied", 0),
+              "translation": locals().get("translation_given", False),
+              "text_unmatched": locals().get("report_unmatched", 0),
               "long_texts": len(long_texts), "status": "ok"}
 
     for name in sorted(by_name):
@@ -317,12 +349,44 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
                                 "missing_list": ["U+%04X" % cp for cp in missing[:20]]})
         for sec_name in by_name[name]:
             report["sections"].append({"name": sec_name, "font": name, "status": "ok"})
+
+    # ★★★ 2026-10-29（同上）：**产物里所有 ttf 都要补字形** —— addon 自带的字体
+    #   （`ixr_addons/<任意名字>/...\*.ttf`）以前完全没被合并，那些界面里的中文会变方块。
+    #   已经按 fonts.ltx 处理过的不重复；CFF 轮廓的跳过并记账（与主流程同口径）。
+    # 被 fonts.ltx **任何**段引用过的字体都算"受管"（哪怕分区把它跳过了）——
+    # 否则分区用例里 letterica（size=16 被跳过）会被额外字体那一遍偷偷合并。
+    all_names = {str(sec["kv"].get("name", "")) for sec in sections.values()}
+    all_names |= set(by_name)
+    processed = {str(out_fonts / (n if n.lower().endswith(".ttf") else n + ".ttf"))
+                 for n in all_names if n}
+    extra_fonts = 0
+    if not args.no_extra_fonts and not args.fonts_only:
+        for path in sorted(out.rglob("*.ttf")):
+            if str(path) in processed:
+                continue
+            try:
+                added, missing = merge_into(path, cjk_source, cjk_cmap, wanted)
+            except RuntimeError:
+                report["sections"].append({"name": str(path.relative_to(out)),
+                                           "status": "not-glyf"})
+                continue
+            extra_fonts += 1
+            report["added"] += added
+            report["missing"] += len(missing)
+            report["fonts"].append({"name": str(path.relative_to(out)), "added": added,
+                                    "missing": len(missing),
+                                    "missing_list": ["U+%04X" % cp for cp in missing[:20]]})
+        if extra_fonts:
+            log("IXRGEN 额外字体：%d 个（addon 里的 ttf）也补了字形" % extra_fonts)
+    report["extra_fonts"] = extra_fonts
     return report
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="IX-Ray 语言包生成（fonttools 外部助手）")
     ap.add_argument("--pack", required=True)
+    ap.add_argument("--no-extra-fonts", action="store_true",
+                    help="不处理 addon 里自带的 ttf（默认会一并补字形）")
     ap.add_argument("--no-texts", action="store_true",
                     help="只产字体，不把「文本 XML」写进产物（默认会写，汉化包必须带文本）")
     ap.add_argument("--fonts-only", action="store_true",

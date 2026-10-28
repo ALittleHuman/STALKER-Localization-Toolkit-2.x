@@ -72,7 +72,8 @@ FontPackPage::FontPackPage(QWidget* parent)
     // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内说明整段删（六页统一）
     xml_edit_ = new QLineEdit;
     xml_edit_->setObjectName(QStringLiteral("font_xml_dir"));
-    xml_edit_->setPlaceholderText(QStringLiteral("文本 XML 目录（只扫顶层）"));
+    xml_edit_->setPlaceholderText(
+        QStringLiteral("译文 XML 目录（只扫顶层）—— 生成看译文：字符集与文本都取这里"));
     font_edit_ = new QLineEdit;
     font_edit_->setObjectName(QStringLiteral("font_path"));
     font_edit_->setPlaceholderText(QStringLiteral("字体文件（.ttf/.ttc/.otf）"));
@@ -137,7 +138,7 @@ FontPackPage::FontPackPage(QWidget* parent)
     pack_edit_ = new QLineEdit;
     pack_edit_->setObjectName(QStringLiteral("font_ixr_pack"));
     pack_edit_->setPlaceholderText(
-        QStringLiteral("参照整包目录（例如 MODS\\~NotoSansSC，能当模组打的那份）"));
+        QStringLiteral("参照包（原文结构：fonts.ltx / textures / addons 照抄，只换字体与文本）"));
     const auto pack_judge = [this]() {
         return dialog_start_for(pack_edit_->text().trimmed(), QStringList{}, false);
     };
