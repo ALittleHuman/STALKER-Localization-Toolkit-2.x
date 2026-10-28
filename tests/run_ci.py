@@ -126,11 +126,33 @@ def run(cmd: list[str], env: dict[str, str] | None = None, timeout: int = 600) -
         child_env["TMP"] = str(_step_tmp)
     except OSError:
         pass
-    try:
-        subprocess.run(["taskkill", "/F", "/T", "/IM", "xrkit_app.exe"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
-    except (OSError, subprocess.SubprocessError):
-        pass
+    # ★★★ 2026-10-28（第三方只读审查，代码有据）：修前按**进程名** `taskkill /IM xrkit_app.exe`
+    #   ⇒ 门禁一跑就会**杀掉用户正在用的界面实例**。现在只杀 exe 路径在**仓库内**的那些
+    #   （＝本次构建产出的），用户从 dist/ 之外开的实例一律不碰。
+    def _kill_own_app_processes() -> int:
+        script = (
+            "Get-Process xrkit_app -ErrorAction SilentlyContinue | "
+            "Where-Object { $_.Path -and $_.Path.StartsWith('%s', "
+            "[System.StringComparison]::OrdinalIgnoreCase) } | "
+            "ForEach-Object { $_.Id }" % str(ROOT).replace("'", "''"))
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", script],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30)
+            ids = [line.strip() for line in out.stdout.decode("utf-8", "replace").splitlines()
+                   if line.strip().isdigit()]
+        except (OSError, subprocess.SubprocessError):
+            return 0
+        killed = 0
+        for pid in ids:
+            try:
+                subprocess.run(["taskkill", "/F", "/T", "/PID", pid],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+                killed += 1
+            except (OSError, subprocess.SubprocessError):
+                pass
+        return killed
+    _kill_own_app_processes()
     try:
         proc = subprocess.run(
             cmd,

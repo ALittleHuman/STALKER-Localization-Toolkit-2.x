@@ -147,15 +147,28 @@ def main() -> int:
         #   （用户：「MODS\123 生成出来什么东西」：旧行为把整包抄成 128 MB 的"另一份模组"）。
         #   文本与配置**不进产物** ⇒ 也就谈不上"被改"。
         if merged.is_file():
-            stray = []
-            for sub in ("textures", "ixr_addons"):
-                if (out / "gamedata" / sub).exists() or (out / sub).exists():
-                    stray.append(sub)
-            if not stray:
-                ok("产物不带 textures/ixr_addons（只带 fonts + texts）")
+            # 2026-10-28 新口径：默认**整包照镜子** —— 参照包里有什么，产物就有什么
+            #（fonts.ltx / localization.ltx / textures / ixr_addons 一样不少），
+            #  只把字体换成合并后的、文本换成翻译件。
+            missing = []
+            for src_file in pack.rglob("*"):
+                if not src_file.is_file():
+                    continue
+                rel = src_file.relative_to(pack)
+                if not (out / rel).is_file():
+                    missing.append(str(rel))
+            if not missing:
+                ok("产物照镜子：参照包的 %d 个文件一个不少" % sum(1 for _ in pack.rglob("*") if _.is_file()))
             else:
                 problems += 1
-                fail("产物抄了不该抄的目录：%s" % stray)
+                fail("产物缺 %d 个参照包文件（例 %s）" % (len(missing), missing[:3]))
+            ltx_src = pack / "gamedata" / "configs" / "fonts.ltx"
+            ltx_out = out / "gamedata" / "configs" / "fonts.ltx"
+            if ltx_src.is_file() and ltx_out.is_file() and ltx_src.read_bytes() == ltx_out.read_bytes():
+                ok("产物里的 fonts.ltx 与参照包逐字节一致（决定字体节怎么引用）")
+            else:
+                problems += 1
+                fail("产物里的 fonts.ltx 缺失或被改（游戏会按别的字体节渲染）")
             # ★ 2026-10-28：汉化包必须带文本（用户：「我汉化包呢」）
             text_out = out / "gamedata" / "configs" / "text" / "rus"
             src_text = pack / "gamedata" / "configs" / "text" / "rus" / "st_test.xml"
@@ -336,11 +349,12 @@ def main() -> int:
                 fail("真包生成失败：rc=%d\n%s" % (rc9, stdout9[-400:]))
             # 2026-10-27 新口径：产物只有 gamedata/fonts ⇒ 输出里不该有 configs；
             #   "没被改"这条改成验**参照包原文件**（只许读）。
-            if not out_ltx.exists():
-                ok("真包：产物里没有 configs/fonts.ltx（字体结构不改）")
+            # 2026-10-28 照镜子口径：产物**必须**带 fonts.ltx，且与参照包逐字节一致
+            if out_ltx.is_file() and out_ltx.read_bytes() == base_ltx:
+                ok("真包：产物带 fonts.ltx 且逐字节一致（字体节引用才成立）")
             else:
                 problems += 1
-                fail("真包：产物里出现了 configs/fonts.ltx（不该抄/改配置）")
+                fail("真包：产物缺 fonts.ltx 或被改（游戏会按别的字体节渲染）")
             if (real / "gamedata" / "configs" / "fonts.ltx").read_bytes() == base_ltx:
                 ok("真包：参照包的 fonts.ltx 逐字节未改")
             else:

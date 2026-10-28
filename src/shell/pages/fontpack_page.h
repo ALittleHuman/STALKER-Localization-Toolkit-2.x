@@ -83,7 +83,8 @@ public:
     int ixr_added = 0;
     int ixr_missing = 0;
     int ixr_fonts = 0;                   // 产出的字体个数（报告里每个字体一条）
-        int ixr_texts = 0;                   // 写进产物的文本 XML 个数
+        int ixr_texts = 0;
+        int ixr_copied = 0;                   // 写进产物的文本 XML 个数
     QString ixr_log;                     // 助手输出尾巴（失败时贴出来）
     };
     engine::font::PackageOptions prepare(const QString& xml_dir, const QString& font_path,

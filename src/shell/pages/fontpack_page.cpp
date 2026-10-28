@@ -572,6 +572,7 @@ FontPackPage::BuildOutcome FontPackPage::run_build(
                         outcome.ixr_fonts +=
                             one.value(QStringLiteral("fonts")).toArray().size();
                         outcome.ixr_texts += one.value(QStringLiteral("texts")).toInt();
+                        outcome.ixr_copied += one.value(QStringLiteral("copied")).toInt();
                     }
                 }
             }
@@ -612,8 +613,9 @@ void FontPackPage::apply_result(const BuildOutcome& outcome) {
         if (result_label_ != nullptr) {
             result_label_->setText(
                 outcome.ok
-                    ? QStringLiteral("完成（IX-Ray 矢量）：字体 %1 个、文本 %2 个、"
-                                     "新增字形 %3、缺字 %4（产物可直接当模组用）")
+                    ? QStringLiteral("完成（IX-Ray 矢量）：整包 %1 个文件、字体 %2、文本 %3、"
+                                     "新增字形 %4、缺字 %5（照参照包原样＋换字体/文本）")
+                          .arg(outcome.ixr_copied)
                           .arg(outcome.ixr_fonts)
                           .arg(outcome.ixr_texts)
                           .arg(outcome.ixr_added)

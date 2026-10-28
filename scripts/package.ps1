@@ -85,6 +85,10 @@ if (-not (Test-Path (Join-Path $qt 'bin\windeployqt.exe'))) { throw "找不到 w
 #   那次"vcruntime140.dll 权限不足"十几次，最后查明是**自检跑完没退干净的 xrkit_app**
 #   还在从 dist 目录里跑、把 DLL 映射住了 ⇒ Copy-Item 报 PermissionDenied。
 #   ⇒ 这里先查一遍：占着就直接拒绝并说清楚（不自动杀：用户可能正在用界面）。
+# ★★★ 2026-10-28（第三方只读审查，代码有据）：**`-PlanOnly` 是"只算计划、不动盘"**，
+#   但修前这段"清进程"排在 PlanOnly 分支之前 ⇒ 只跑个计划也可能**杀掉用户正在用的
+#   xrkit_app / ffmpeg / ffprobe**。⇒ 整段收进 `if (-not $PlanOnly)`。
+if (-not $PlanOnly) {
 $busy = @(Get-Process xrkit_app, xrkit_cli, ffmpeg, ffprobe -ErrorAction SilentlyContinue |
           Where-Object { $_.Id -ne $PID })
 if ($busy.Count -gt 0) {
@@ -109,6 +113,8 @@ if ($busy.Count -gt 0) {
         throw ("打包前仍有 {0} 个进程占着文件 —— 先关掉再打包（否则 vcruntime140.dll 会 PermissionDenied）。" -f $still.Count)
     }
 }
+}
+
 
 # ══ 决策 4：`-PlanOnly` —— 只算计划、不动盘 ══════════════════════════════════
 #   用法：pwsh -File scripts/package.ps1 -PlanOnly [-SourceRoot <目录>]

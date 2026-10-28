@@ -207,20 +207,23 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
 
     if out.exists():
         shutil.rmtree(out)
-    # ★★★ 2026-10-27（用户：「MODS\123 生成出来什么东西」）：
-    #   「指定」模式**不再整包复制** —— 旧行为把参照包连同 `ixr_addons/`、`textures/`、
-    #   `configs/` 一起抄成 128 MB 的"另一份模组"，用户打开一看全是游戏文件。
-    #   现在默认只产**字体**：只复制 `gamedata/fonts/**`（含 eng/editors 等同一套字体树），
-    #   文本与配置**字节不动**（本来也不改它们）。
-    #   要旧行为（整包为基底）显式加 `--full-pack`。
-    if args.full_pack:
-        shutil.copytree(pack, out)
-    else:
+    # ★★★ 2026-10-28（用户：拿 MODS\123 与参照包对比「缺了什么看出来没？」）：
+    #   **默认＝照镜子**：参照包里有什么，产物就有什么（fonts.ltx / localization.ltx /
+    #   textures/map / ixr_addons 一样不少），只把**字体**换成合并后的、**文本**换成翻译件。
+    #   缺一个 `fonts.ltx`，游戏就可能仍按原字体节渲染 ⇒ 中文全成方块，前面几轮全白做。
+    #   只要字体的话用 `--fonts-only`。
+    src_gd = pack / "gamedata" if (pack / "gamedata").is_dir() else pack
+    if args.fonts_only:
         out.mkdir(parents=True, exist_ok=True)
-        src_gd = pack / "gamedata" if (pack / "gamedata").is_dir() else pack
         src_fonts = src_gd / "fonts"
         if src_fonts.is_dir():
             shutil.copytree(src_fonts, out / "gamedata" / "fonts")
+    else:
+        shutil.copytree(pack, out)
+        copied_all = sum(1 for _ in out.rglob("*") if _.is_file())
+        total_copied = copied_all
+        log("IXRGEN 基底：整包照抄 %d 个文件（fonts / configs / textures / ixr_addons 全保留）"
+            % copied_all)
         # ★★★ 2026-10-28（用户：「我汉化包呢？这是能直接打的吗？」）：
         #   只换字体不叫汉化包 —— **文本也要进产物**（否则装上去还是俄文）。
         #   文本来源＝`--text-root`（页面里就是「文本 XML」那一栏），落到包的 `<lang>` 文本目录，
@@ -236,6 +239,11 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
         text_copied = 0
         if text_dirs and not args.no_texts:
             dst_texts = out / "gamedata" / "configs" / "text" / lang
+            # 整包照镜子时这里已经带着原语言的 XML ⇒ **先清空**再放翻译件，
+            # 否则残留的原文会和新文本混在一起（同一 id 两份，游戏取哪个看加载顺序）。
+            if dst_texts.is_dir():
+                for stale in dst_texts.glob("*.xml"):
+                    stale.unlink()
             dst_texts.mkdir(parents=True, exist_ok=True)
             for root in text_dirs:
                 base = root / lang if (root / lang).is_dir() else root
@@ -249,7 +257,7 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
                 log("IXRGEN warn 超长无换行文本 %d 段（上限 %d 字）" % (len(long_texts), LONG_LIMIT))
                 for line in long_texts[:5]:
                     log("IXRGEN warn " + line)
-                log_path = out / "_xrkit_long_texts.log"
+                log_path = out.parent / (out.name + ".long_texts.log")
                 log_path.write_text(
                     "long_texts=%d limit=%d\n" % (len(long_texts), LONG_LIMIT) +
                     "\n".join(long_texts) + "\n", encoding="utf-8")
@@ -279,7 +287,8 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
               "fonts": [], "missing": 0, "charset": len(wanted),
               "added": 0, "skipped_sections": skipped_sections,
               "plan_sections": plan_sections, "sizes": sorted(plan_sizes),
-              "texts": text_copied, "long_texts": len(long_texts), "status": "ok"}
+              "texts": text_copied, "copied": locals().get("total_copied", 0),
+              "long_texts": len(long_texts), "status": "ok"}
 
     for name in sorted(by_name):
         path = out_fonts / (name if name.lower().endswith(".ttf") else name + ".ttf")
@@ -316,8 +325,10 @@ def main() -> int:
     ap.add_argument("--pack", required=True)
     ap.add_argument("--no-texts", action="store_true",
                     help="只产字体，不把「文本 XML」写进产物（默认会写，汉化包必须带文本）")
+    ap.add_argument("--fonts-only", action="store_true",
+                    help="只产字体（不照抄参照包）；默认是整包照镜子＋换字体/文本")
     ap.add_argument("--full-pack", action="store_true",
-                    help="整包为基底（旧行为；默认只产字体，不抄 texts/textures/addons）")
+                    help="（兼容旧参数）等同默认：整包为基底")
     ap.add_argument("--font", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--lang", default="", help="只处理这一个语言（默认：包里的 primary lang）")
