@@ -172,21 +172,43 @@ Copy-Item -LiteralPath $exe.FullName -Destination $stage
 #   在 build\ 下 Access denied，而改名/robocopy 都能写）⇒ 复制失败时退回 `cmd /c copy`
 #   （不同 API 路径，实测可写）。不这么做，打包会在 Python 运行期那步随机红。
 function Copy-FileRobust([string]$Source, [string]$Target) {
-    # ① 常规拷贝
+    # 实测事实（2026-10-28）：安全软件按**文件名**拦 `CopyFile`（`vcruntime140*.dll`），
+    # 但 `mklink /H` 能建目录项；而"失败一次 Copy-Item 会留下 0 字节占位"，
+    # 占位被扫时删不掉 ⇒ 硬链接也报 Access is denied。所以：
+    #   ① 先删目标（多次重试，等扫描器松手）② 硬链接（主路径）③ Copy-Item ④ cmd copy。
+    for ($attempt = 0; $attempt -lt 6; ++$attempt) {
+        if (-not (Test-Path -LiteralPath $Target)) { break }
+        Remove-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $Target) { Start-Sleep -Milliseconds 200 }
+    }
+    if (-not (Test-Path -LiteralPath $Target)) {
+        try {
+            New-Item -ItemType HardLink -Path $Target -Target $Source -ErrorAction Stop | Out-Null
+            if (Test-Path -LiteralPath $Target) { return }
+        } catch { }
+    }
     try {
         Copy-Item -LiteralPath $Source -Destination $Target -Force -ErrorAction Stop
         return
-    } catch { }
-    # ② 硬链接（同卷）：实测安全软件按**文件名**拦 CopyFile/robocopy 时，
-    #    `mklink /H` 仍然能把名字建出来（它不写数据，只建一个目录项）。
-    try {
-        New-Item -ItemType HardLink -Path $Target -Target $Source -Force -ErrorAction Stop | Out-Null
-        if (Test-Path -LiteralPath $Target) { return }
-    } catch { }
-    # ③ 最后退回 cmd copy（不同 API 路径）
+    } catch {
+        Write-Host ("  [robust] Copy-Item 失败：{0}（{1}）" -f (Split-Path -Leaf $Target), $_.Exception.Message)
+    }
+    for ($attempt = 0; $attempt -lt 6; ++$attempt) {
+        if (-not (Test-Path -LiteralPath $Target)) { break }
+        Remove-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $Target) { Start-Sleep -Milliseconds 200 }
+    }
+    if (-not (Test-Path -LiteralPath $Target)) {
+        try {
+            New-Item -ItemType HardLink -Path $Target -Target $Source -ErrorAction Stop | Out-Null
+            if (Test-Path -LiteralPath $Target) { return }
+        } catch {
+            Write-Host ("  [robust] 硬链接失败：{0}（{1}）" -f (Split-Path -Leaf $Target), $_.Exception.Message)
+        }
+    }
     $null = & cmd /c copy /y "`"$Source`"" "`"$Target`"" 2>&1
     if (-not (Test-Path -LiteralPath $Target)) {
-        throw ("复制失败（Copy-Item / 硬链接 / cmd copy 都不行）：$Source -> $Target")
+        throw ("复制失败（硬链接 / Copy-Item / cmd copy 都不行）：$Source -> $Target")
     }
 }
 
