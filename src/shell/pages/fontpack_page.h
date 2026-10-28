@@ -147,6 +147,7 @@ private:
     QWidget* pack_row_ = nullptr;        // 那一行（位图模式下隐藏）
     QWidget* scan_row_ = nullptr;       // 「扫描参照包」那一行（IX-Ray 专属）
     QString ixr_pack_at_start_;          // 起 worker 前的快照（worker 不许读控件）
+    QString ixr_text_at_start_;          // 「文本 XML」快照＝字符集来源
     QComboBox* game_combo_ = nullptr;
     QComboBox* lang_combo_ = nullptr;
     QLineEdit* lang_edit_ = nullptr;

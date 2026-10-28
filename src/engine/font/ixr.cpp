@@ -83,6 +83,10 @@ IxrBuildResult ixr_build(const IxrBuildOptions& options) {
     }
     if (options.all_langs) run.args.push_back("--all-langs");
     if (options.split_output) run.args.push_back("--split-output");
+    if (!options.text_root.empty()) {
+        run.args.push_back("--text-root");
+        run.args.push_back(options.text_root);
+    }
     if (!options.plan.empty()) {
         run.args.push_back("--plan");
         run.args.push_back(options.plan);

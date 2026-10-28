@@ -42,7 +42,15 @@ def parse_ltx(path: Path) -> dict[str, dict]:
     cur: dict | None = None
     for raw in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
         s = raw.strip()
-        if not s or s.startswith(";") or s.startswith("#"):
+        # ★★★ 2026-10-27（用户：「生成结果是俄语包而非汉化包」）：
+        #   IX-Ray 的 fonts.ltx 大量**行尾注释**：`name = Arial ;Arial is default font by system`
+        #   —— 不剥注释，字体名就变成 `Arial ;Arial is default font by system` ⇒ 找不到文件
+        #   ⇒ **主字体（font_default = Arial）被整个跳过** ⇒ 出来的还是俄语字库。
+        #   口径：`;` 起注释（行首/行尾都算），`#` 同理。
+        for mark in (";", "#"):
+            if mark in s:
+                s = s.split(mark, 1)[0].strip()
+        if not s:
             continue
         if s.startswith("[") and "]" in s:
             head = s[1:s.index("]")]

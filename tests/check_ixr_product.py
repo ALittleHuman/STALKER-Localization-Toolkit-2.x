@@ -63,7 +63,7 @@ def make_pack(root: Path) -> Path:
         "[string_table]\nlanguage = rus\n", encoding="utf-8")
     (gd / "configs" / "text" / "rus" / "t.xml").write_text(
         '<?xml version="1.0" encoding="utf-8"?><string_table>'
-        '<string id="a"><text>你好汉化</text></string></string_table>', encoding="utf-8")
+        '<string id="a"><text>Hello</text></string></string_table>', encoding="utf-8")
     return pack
 
 
@@ -107,8 +107,15 @@ def main() -> int:
 
         # ② 真跑：包 + 字体 ⇒ 输出合并后的字体
         pack = make_pack(tmp)
+        # 汉字来源目录（页面里就是「文本 XML」那一栏）
+        cn_dir = tmp / "cn_text"
+        cn_dir.mkdir(parents=True, exist_ok=True)
+        (cn_dir / "cn.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?><string_table>'
+            '<string id="a"><text>你好汉化</text></string></string_table>', encoding="utf-8")
         out_dir = tmp / "out"
-        rc, out = run_cli(["--ixr-build", str(pack), str(CJK), str(out_dir)], env_extra)
+        rc, out = run_cli(["--ixr-build", str(pack), str(CJK), str(out_dir),
+                           "--text-root", str(cn_dir)], env_extra)
         merged = out_dir / "gamedata" / "fonts" / "rus" / "arial.ttf"
         if rc == 0 and "IXR ok" in out and merged.is_file():
             ok("真跑：rc=0、IXR ok、输出字体存在")
@@ -127,6 +134,28 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 problems += 1
                 fail("读不出输出字体：%r" % (exc,))
+
+        # ②-b 2026-10-27（用户：「生成结果是俄语包而非汉化包」）：
+        #   包内文本是拉丁、汉字在 --text-root 指的目录里 ⇒ 产物字体必须含「汉」。
+        cn_dir = tmp / "cn_text"
+        cn_dir.mkdir(parents=True, exist_ok=True)
+        (cn_dir / "cn.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?><string_table>'
+            '<string id="a"><text>你好汉化</text></string></string_table>', encoding="utf-8")
+        out_cn = tmp / "out_cn"
+        rc, out = run_cli(["--ixr-build", str(pack), str(CJK), str(out_cn),
+                           "--text-root", str(cn_dir)], env_extra)
+        merged_cn = out_cn / "gamedata" / "fonts" / "rus" / "arial.ttf"
+        if rc == 0 and merged_cn.is_file():
+            from fontTools.ttLib import TTFont
+            if 0x6C49 in set(TTFont(str(merged_cn)).getBestCmap()):
+                ok("--text-root：「文本 XML」里的中文进了字符集（cmap 含「汉」）")
+            else:
+                problems += 1
+                fail("产物字体里没有「汉」—— 字符集没吃 --text-root")
+        else:
+            problems += 1
+            fail("带 --text-root 的生成失败：rc=%d" % rc)
 
         # ③ 零静默：参照包不存在 ⇒ 退 1 且带出助手的话
         rc, out = run_cli(["--ixr-build", str(tmp / "nope"), str(CJK), str(tmp / "o2")],

@@ -4919,6 +4919,8 @@ int run_cli(const std::vector<std::string>& args) {
                 opt.all_langs = true;
             } else if (a == "--split-output") {
                 opt.split_output = true;
+            } else if (a == "--text-root" && i + 1 < operands.size()) {
+                opt.text_root = operands[++i];
             } else if (a == "--plan" && i + 1 < operands.size()) {
                 opt.plan = operands[++i];
             } else if (a == "--sizes" && i + 1 < operands.size()) {

@@ -326,6 +326,10 @@ FontPackPage::FontPackPage(QWidget* parent)
         //   并且页析构时 `result_label_` 先于 `task_` 被删 ⇒ 访问违例。
         // ★ IX-Ray：参照包在**主线程**快照（worker 不许读控件）
         ixr_pack_at_start_ = pack_edit_ != nullptr ? pack_edit_->text().trimmed() : QString();
+        // ★★ 2026-10-27（用户：「生成结果是俄语包而非汉化包」）：**字符集来自「文本 XML」**——
+        //   那一栏才是"要汉化的文本"。参照包只提供字体与 fonts.ltx（结构），
+        //   字符集若只读参照包的 `configs/text/<lang>`，出来的永远是俄语字形集。
+        ixr_text_at_start_ = xml_edit_ != nullptr ? xml_edit_->text().trimmed() : QString();
         if (game_combo_->currentData().toString() == QStringLiteral("IX-Ray") &&
             ixr_pack_at_start_.isEmpty()) {
             result_label_->setText(QStringLiteral("IX-Ray 需要「参照包」（能当模组打的整包目录）"));
@@ -539,7 +543,7 @@ FontPackPage::BuildOutcome FontPackPage::run_build(
         ixr.pack = ixr_pack_at_start_.toStdString();
         ixr.font = options.font_path;
         ixr.out = options.out_dir;
-        ixr.langs = options.lang == "chs" ? std::string() : std::string();
+        ixr.text_root = ixr_text_at_start_.toStdString();
         const xrkit::engine::font::IxrBuildResult result =
             xrkit::engine::font::ixr_build(ixr);
         outcome.ok = result.ok;

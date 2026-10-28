@@ -59,10 +59,10 @@ def build_pack(root: Path, font: Path, text: str) -> Path:
     return pack
 
 
-def run_tool(pack: Path, font: Path, out: Path) -> tuple[int, str]:
-    proc = subprocess.run([sys.executable, str(TOOL), "--pack", str(pack),
-                           "--font", str(font), "--out", str(out)],
-                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+def run_tool(pack: Path, font: Path, out: Path, extra: list | None = None) -> tuple[int, str]:
+    cmd = [sys.executable, str(TOOL), "--pack", str(pack),
+           "--font", str(font), "--out", str(out)] + list(extra or [])
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return proc.returncode, proc.stdout.decode("utf-8", errors="replace")
 
 
@@ -167,6 +167,44 @@ def main() -> int:
             else:
                 problems += 1
                 fail("参照包的文本被改了（只许读）")
+
+        # ①-b 2026-10-27（用户：「生成结果是俄语包而非汉化包」）——两条回归：
+        #   (1) `fonts.ltx` 的**行尾注释**必须剥掉：`name = arial ;Arial is default...`
+        #       不剥 ⇒ 字体名带注释 ⇒ 找不到文件 ⇒ 主字体被跳过 ⇒ 出来还是原语言字库。
+        #   (2) 字符集必须吃 `--text-root`（页面里＝「文本 XML」那一栏）：
+        #       包内文本是拉丁，文本根里是中文 ⇒ 产物字体必须含「汉」。
+        pack_c = build_pack(tmp / "comment", BASE_FONT, "Hello")
+        ltx_c = pack_c / "gamedata" / "configs" / "fonts.ltx"
+        ltx_c.write_text(ltx_c.read_text(encoding="utf-8").replace(
+            "name = arial\n", "name = arial ;Arial is default font by system\n"), encoding="utf-8")
+        cn_root = tmp / "cn_text"
+        (cn_root).mkdir(parents=True, exist_ok=True)
+        (cn_root / "cn.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?><string_table>'
+            '<string id="a"><text>\u4f60\u597d\u6c49\u5316</text></string></string_table>',
+            encoding="utf-8")
+        out_c = tmp / "out_comment"
+        rc_c, so_c = run_tool(pack_c, CJK_FONT, out_c, ["--text-root", str(cn_root)])
+        rep_c = report_of(so_c)
+        merged_c = out_c / "gamedata" / "fonts" / "rus" / "arial.ttf"
+        if rc_c == 0 and merged_c.is_file():
+            cmap_c = set(TTFont(str(merged_c)).getBestCmap())
+            if 0x6C49 in cmap_c:
+                ok("行尾注释被剥掉 ＋ --text-root 中文进字符集（cmap 含「汉」）")
+            else:
+                problems += 1
+                fail("产物字体里没有「汉」—— 注释没剥或 text-root 没吃（charset=%r added=%r）"
+                     % (rep_c.get("charset"), rep_c.get("added")))
+        else:
+            problems += 1
+            fail("带注释的 fonts.ltx 生成失败：rc=%d\n%s" % (rc_c, so_c[-400:]))
+        sec_names = [s.get("name") for s in (rep_c.get("reports") or [{}])[0].get("sections", [])]
+        bad_names = [n for n in sec_names if n and (";" in str(n) or "default" in str(n).lower() and " " in str(n))]
+        if not bad_names:
+            ok("段名里没有残留注释（%s）" % ", ".join(str(n) for n in sec_names)[:80])
+        else:
+            problems += 1
+            fail("段名里还带注释：%s" % bad_names)
 
         # ② 逐槽位字体计划：letterica 段用另一个字体；只处理 size=14 的段时 letterica 必须不动
         pack2 = build_pack(tmp / "plan", BASE_FONT, TEXT)

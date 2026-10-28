@@ -24,6 +24,9 @@ struct IxrBuildOptions {
     std::string langs;     // `rus,eng`；空 = 用包里的 primary lang
     bool all_langs = false;
     bool split_output = false;
+    // ★★ 2026-10-27（用户：「生成结果是俄语包而非汉化包」）：**字符集必须来自这份文本**。
+    //   页面把「文本 XML」指过来；空 = 只用参照包自己的 `configs/text/<lang>`。
+    std::string text_root;
     std::string plan;      // 逐槽位字体计划 JSON（可空）
     std::string sizes;     // 分区字号档（逗号分隔，可空）
 };
