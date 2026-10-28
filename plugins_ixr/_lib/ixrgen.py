@@ -181,6 +181,30 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
     if args.sizes:
         plan_sizes |= {int(x) for x in args.sizes.split(",") if x.strip()}
 
+    # ★★ 2026-10-28（用户）：复制文本时顺带查**超长且没有换行**的正文 ——
+    #   逐条记进 `long_texts`，最后落一份 `_xrkit_long_texts.log`（文件|id|码位数|前 180 字）。
+    long_texts: list[str] = []
+    LONG_LIMIT = 512
+
+    def scan_long(xml: Path) -> None:
+        try:
+            root = ET.fromstring(xml.read_bytes())
+        except Exception:
+            return
+        for node in root.iter():
+            if node.tag not in ("text", "caption"):
+                continue
+            body = (node.text or "")
+            if not body:
+                continue
+            cp = len(body)
+            has_nl = "\n" in body
+            if cp > (LONG_LIMIT * 2 if has_nl else LONG_LIMIT):
+                sid = ""
+                parent = xml.stem
+                long_texts.append("%s|%s|%d|%s" % (xml.name, sid or parent, cp,
+                                                   body[:180].replace("\n", " ")))
+
     if out.exists():
         shutil.rmtree(out)
     # ★★★ 2026-10-27（用户：「MODS\123 生成出来什么东西」）：
@@ -219,7 +243,17 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
                     target = dst_texts / xml.name
                     shutil.copy2(xml, target)
                     text_copied += 1
+                    scan_long(xml)
             log("IXRGEN 文本：%d 个 XML ⇒ %s" % (text_copied, dst_texts))
+            if long_texts:
+                log("IXRGEN warn 超长无换行文本 %d 段（上限 %d 字）" % (len(long_texts), LONG_LIMIT))
+                for line in long_texts[:5]:
+                    log("IXRGEN warn " + line)
+                log_path = out / "_xrkit_long_texts.log"
+                log_path.write_text(
+                    "long_texts=%d limit=%d\n" % (len(long_texts), LONG_LIMIT) +
+                    "\n".join(long_texts) + "\n", encoding="utf-8")
+                log("IXRGEN warn log=%s" % log_path)
     out_gd = out / "gamedata" if (out / "gamedata").is_dir() else out
     out_fonts = out_gd / "fonts" / lang
 
@@ -245,7 +279,7 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
               "fonts": [], "missing": 0, "charset": len(wanted),
               "added": 0, "skipped_sections": skipped_sections,
               "plan_sections": plan_sections, "sizes": sorted(plan_sizes),
-              "texts": text_copied, "status": "ok"}
+              "texts": text_copied, "long_texts": len(long_texts), "status": "ok"}
 
     for name in sorted(by_name):
         path = out_fonts / (name if name.lower().endswith(".ttf") else name + ".ttf")

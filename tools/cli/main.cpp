@@ -5459,12 +5459,39 @@ int run_cli(const std::vector<std::string>& args) {
         for (const std::string& s : st.repl_skipped) {
             std::cout << "TEXT repl-skip " << s << "\n";
         }
+        // ★★ 2026-10-28（用户）：「有出现一段文本没有换行过的，超过上限需要弹警告并且写日志」。
+        //   CLI 侧照做：逐条打印 + **落一份日志文件**（<输出>/_xrkit_long_texts.log），
+        //   日志里带文件名 / id / 码位数 / 前 180 字节，方便回原文定位。
+        if (!st.long_texts.empty()) {
+            std::cout << "TEXT warn long=" << st.long_texts.size() << " limit=512\n";
+            std::size_t shown = 0;
+            for (const std::string& s : st.long_texts) {
+                if (shown++ >= 5) {
+                    std::cout << "TEXT warn ...（共 " << st.long_texts.size() << " 条，见日志）\n";
+                    break;
+                }
+                std::cout << "TEXT warn " << s << "\n";
+            }
+            // 写盘一律走 `write_cli_output()`（C1 锁：run_cli 里不许出现裸 ofstream）
+            std::string log_text = "long_texts=" + std::to_string(st.long_texts.size()) +
+                                   " limit=512\n";
+            for (const std::string& s : st.long_texts) log_text += s + "\n";
+            const std::filesystem::path log_path =
+                std::filesystem::path(path_from_utf8(target)) / "_xrkit_long_texts.log";
+            const CliWriteStatus log_st = write_cli_output(path_to_utf8(log_path), log_text);
+            if (log_st == CliWriteStatus::Ok) {
+                std::cout << "TEXT warn log=" << path_to_utf8(log_path) << "\n";
+            } else {
+                std::cout << "TEXT warn log-write-failed=" << path_to_utf8(log_path) << "\n";
+            }
+        }
         std::cout << (st.ok ? "TEXT ok " : "TEXT fail ")
                   << "kind=" << type_dir << " files=" << st.files
                   << " strings=" << st.strings << " chars=" << st.chars
                   << " skipped=" << st.skipped.size()
                   << " replskip=" << st.repl_skipped.size()
                   << " writefail=" << st.write_failures
+                  << " long=" << st.long_texts.size()
                   << " xml=" << (st.texts_xml_name.empty() ? "-" : st.texts_xml_name)
                   << " ms=" << static_cast<long long>(st.elapsed_ms) << "\n";
         if (!st.ok) {

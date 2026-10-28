@@ -114,6 +114,34 @@ def main() -> int:
                 fail("改写脚本的 id 与 XML 对不上（ids=%r / xml 里 %d 个）" % (ids, len(have)))
         else:
             fail("缺改写后的脚本或 XML（脚本改写链没跑）")
+        # ④ 2026-10-28（用户）：「一段文本没有换行、超过上限 ⇒ 弹警告 + 写日志」。
+        #   长文本源：800 字无换行 ⇒ 必须有 `TEXT warn long=1` 且落 `_xrkit_long_texts.log`；
+        #   短文本源 ⇒ `long=0` 且不生成日志。
+        long_src = tmp / "src_long" / "scripts"
+        long_src.mkdir(parents=True, exist_ok=True)
+        (long_src / "long.script").write_text(
+            'local t = "%s"\n' % ("Текст для проверки. " * 40).strip(), encoding="utf-8")
+        out_long = tmp / "out_long"
+        rc, out = run([str(CLI), "--extract-text", str(long_src), str(out_long)])
+        log_file = out_long / "_xrkit_long_texts.log"
+        if rc == 0 and "TEXT warn long=1" in out and log_file.is_file():
+            body = log_file.read_text(encoding="utf-8", errors="replace")
+            if "long.script|sgtat_" in body:
+                ok("超长无换行文本：告警进 stdout 且日志点名 文件|id|长度")
+            else:
+                fail("日志里没有「文件|id|长度」三段（实得 %r）" % body[:160])
+        else:
+            fail("超长文本没告警/没日志：rc=%d\n%s" % (rc, out[-400:]))
+
+        short_src = tmp / "src_short" / "scripts"
+        short_src.mkdir(parents=True, exist_ok=True)
+        (short_src / "short.script").write_text('local t = "短文本"\n', encoding="utf-8")
+        out_short = tmp / "out_short"
+        rc, out = run([str(CLI), "--extract-text", str(short_src), str(out_short)])
+        if rc == 0 and "long=0" in out and not (out_short / "_xrkit_long_texts.log").exists():
+            ok("短文本：不告警、不写日志（判据不是恒红）")
+        else:
+            fail("短文本却告警/写日志：rc=%d\n%s" % (rc, out[-300:]))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

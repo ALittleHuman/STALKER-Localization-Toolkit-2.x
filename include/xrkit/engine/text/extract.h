@@ -63,6 +63,10 @@ struct ExtractStats {
     //   破坏是**静默**的；本批按"零静默 + 不切碎语料"处理 —— 跳过 + 逐条报出来。
     //   计数进 ASCII 收尾行 `replskip=`（供脚本判红）。
     std::vector<std::string> repl_skipped;
+    // ★★ 2026-10-28（用户）：「有出现一段文本没有换行过的，超过上限需要弹警告并且写日志，
+    //   好定位修改。」⇒ 每条正文都量一次：**不含换行**且超过上限的，逐条记账。
+    //   形态：「<相对路径>|<id>|<码位数>|<前 120 字节>」；上限见 extract.cpp 的 kLongTextLimit。
+    std::vector<std::string> long_texts;
     std::string texts_xml_name;        // 实际产出的文本 XML 文件名（空=这一类没提到文本）
     double elapsed_ms = 0.0;
     // ★ 2026-10-06：`should_stop()` 在文件边界返回 true ⇒ **已按请求停下**。

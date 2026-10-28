@@ -124,6 +124,49 @@ void copy_tree(const fs::path& src, const fs::path& dst, bool overwrite, int& co
 
 }  // namespace
 
+namespace {
+
+// ★★ 2026-10-28（用户）：「有出现一段文本没有换行过的，超过上限需要弹警告并且写日志」。
+//   口径：**不含换行**且 > 512 码位（有换行的放宽到 1024）；日志形态
+//   `长文本：<文件>|<id>|<码位数>|<前 60 字符>` —— 用户拿这条去原文里定位修改。
+constexpr size_t kLongTextLimit = 512;
+
+void scan_long_texts(const std::string& xml, const std::string& file_label,
+                     std::vector<std::string>* warnings) {
+    // 只认 <string id="...">…<text>…</text>：id 取最近的 id=，文本取 <text> 内层
+    size_t pos = 0;
+    std::string current_id;
+    while (true) {
+        const size_t id_pos = xml.find("id=\"", pos);
+        const size_t text_pos = xml.find("<text>", pos);
+        if (text_pos == std::string::npos) break;
+        if (id_pos != std::string::npos && id_pos < text_pos) {
+            const size_t end = xml.find('"', id_pos + 4);
+            if (end != std::string::npos) current_id = xml.substr(id_pos + 4, end - id_pos - 4);
+        }
+        const size_t close = xml.find("</text>", text_pos);
+        if (close == std::string::npos) break;
+        const std::string body = xml.substr(text_pos + 6, close - text_pos - 6);
+        size_t cp = 0;
+        bool ascii = true;
+        for (unsigned char ch : body) {
+            if (ch < 0x80) { ++cp; } else if ((ch & 0xC0) != 0x80) { ++cp; ascii = false; }
+        }
+        (void)ascii;
+        const bool has_nl = body.find('\n') != std::string::npos;
+        const size_t limit = has_nl ? kLongTextLimit * 2 : kLongTextLimit;
+        if (cp > limit) {
+            std::string head = body.substr(0, 180);
+            for (char& ch : head) if (ch == '\n') ch = ' ';
+            warnings->push_back("长文本：" + file_label + "|" + current_id + "|" +
+                                std::to_string(cp) + "|" + head);
+        }
+        pos = close + 7;
+    }
+}
+
+}  // namespace
+
 LangPackBuildResult build_language_pack(const LangPackBuildOptions& options) {
     LangPackBuildResult out;
     const fs::path texts = core::path_from_utf8(options.texts_dir);
@@ -189,6 +232,7 @@ LangPackBuildResult build_language_pack(const LangPackBuildOptions& options) {
                 continue;
             }
             std::string xml = read_all(it->path());
+            scan_long_texts(xml, core::path_to_utf8(it->path().filename()), &out.warnings);
             if (normalize_empty_table(xml)) ++out.empty_tables;
             if (!write_all(dst, xml)) {
                 out.warnings.push_back("写不出去：" + core::path_to_utf8(dst));

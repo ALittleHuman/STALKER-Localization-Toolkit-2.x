@@ -25,6 +25,10 @@
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QFile>
+#include <QTextStream>
+#include <QMessageBox>
+#include <QStringConverter>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMetaObject>
@@ -1348,6 +1352,52 @@ void XmlPage::run_extract() {
     if (!result.ok) {
         status_->setText(QStringLiteral("提取失败：%1")
                              .arg(QString::fromStdString(result.error)));
+        return;
+    }
+    // ★★ 2026-10-28（用户）：「有出现一段文本没有换行过的，超过上限需要弹警告并且写日志，
+    //   好定位修改。」⇒ 引擎把长文本逐条放进 `warnings`（前缀「长文本：」）：
+    //     · 写日志到 `<输出>/_xrkit_long_texts.log`（带 文件|id|码位数|前 180 字节）；
+    //     · 弹一个**非模态**警告框（离屏/自检里不弹，免得门禁挂住）。
+    QStringList long_texts;
+    for (const std::string& warn : result.warnings) {
+        const QString line = utf8(warn);
+        if (line.startsWith(QStringLiteral("长文本："))) long_texts << line;
+    }
+    QString log_path;
+    if (!long_texts.isEmpty()) {
+        log_path = QDir(out).filePath(QStringLiteral("_xrkit_long_texts.log"));
+        QFile log(log_path);
+        if (log.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+            QTextStream stream(&log);
+            stream.setEncoding(QStringConverter::Utf8);
+            stream << "long_texts=" << long_texts.size() << " limit=512\n";
+            for (const QString& line : long_texts) {
+                stream << line.mid(QStringLiteral("长文本：").size()) << "\n";
+            }
+            log.close();
+        }
+        status_->setText(QStringLiteral("已提取：%1 个文本 XML、%2 个改写产物 ⇒ %3"
+                                        "（拒绝覆盖 %4 个）；⚠ %5 段超长无换行文本，见 %6")
+                             .arg(result.xml_written)
+                             .arg(result.rewritten_copied)
+                             .arg(QString::fromStdString(result.out_dir))
+                             .arg(result.skipped_existing)
+                             .arg(long_texts.size())
+                             .arg(log_path));
+        // 离屏（自检/门禁）不弹框：模态框会把 smoke 挂住
+        if (QGuiApplication::platformName() != QStringLiteral("offscreen")) {
+            QStringList preview = long_texts.mid(0, 5);
+            auto* box = new QMessageBox(this);
+            box->setIcon(QMessageBox::Warning);
+            box->setWindowTitle(QStringLiteral("有超长文本"));
+            box->setText(QStringLiteral("检到 %1 段**没有换行**且超过 512 字的正文。"
+                                        "\n请按日志定位原文并改成多行：\n%2")
+                             .arg(long_texts.size())
+                             .arg(log_path));
+            box->setDetailedText(preview.join(QChar('\n')));
+            box->setAttribute(Qt::WA_DeleteOnClose);
+            box->open();
+        }
         return;
     }
     status_->setText(QStringLiteral("已提取：%1 个文本 XML、%2 个改写产物 ⇒ %3（拒绝覆盖 %4 个）")

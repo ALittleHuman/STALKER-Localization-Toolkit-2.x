@@ -410,6 +410,11 @@ std::string ascii_lower(const std::string& s) {
 }
 
 
+// ★★ 2026-10-28（用户）：**没有换行**且超过这个码位数的正文 ⇒ 弹警告 + 写日志。
+//   为什么是"没有换行"：游戏 UI 按行折，一段没有换行的超长串会直接撑爆/被裁掉；
+//   有换行的长文本是作者有意分行（上限放宽到两倍）。
+constexpr size_t kLongTextLimit = 512;
+
 // ── 候选判定（1.x 同名函数）──────────────────────────────────────────
 bool looks_like_id(const std::string& text) {
     // ★ 2026-10-28：含**非 ASCII 自然语言字母**（含 CJK）就不是 id。
@@ -1229,6 +1234,20 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
             ++counter;
             st.chars += utf8_codepoint_count(inner);
             extracted.emplace_back(eid, inner);
+            {
+                // 长文本记账（零静默：弹警告 + 落日志都要能指到"哪个文件、哪条 id"）
+                const size_t cp = utf8_codepoint_count(inner);
+                const bool has_nl = inner.find('\n') != std::string::npos;
+                const size_t limit = has_nl ? kLongTextLimit * 2 : kLongTextLimit;
+                if (cp > limit) {
+                    std::string head;
+                    for (char ch : inner.substr(0, 360)) {
+                        head.push_back(ch == '\n' ? ' ' : ch);
+                    }
+                    st.long_texts.push_back(f.rel + "|" + eid + "|" + std::to_string(cp) +
+                                            "|" + head);
+                }
+            }
             repls.push_back(Repl{old_text, eid, repls.size()});
         }
 
