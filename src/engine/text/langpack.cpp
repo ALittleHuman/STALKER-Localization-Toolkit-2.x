@@ -127,9 +127,9 @@ void copy_tree(const fs::path& src, const fs::path& dst, bool overwrite, int& co
 namespace {
 
 // ★★ 2026-10-28（用户）：「有出现一段文本没有换行过的，超过上限需要弹警告并且写日志」。
-//   口径：**不含换行**且 > 512 码位（有换行的放宽到 1024）；日志形态
+//   口径：**不含换行**且 > 1024 码位（有换行的放宽到 2048）；日志形态
 //   `长文本：<文件>|<id>|<码位数>|<前 60 字符>` —— 用户拿这条去原文里定位修改。
-constexpr size_t kLongTextLimit = 512;
+constexpr size_t kLongTextLimit = 1024;   // 用户 2026-10-28：>512 不算超限
 
 void scan_long_texts(const std::string& xml, const std::string& file_label,
                      std::vector<std::string>* warnings) {

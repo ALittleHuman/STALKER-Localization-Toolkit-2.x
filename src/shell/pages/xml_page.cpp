@@ -1370,7 +1370,7 @@ void XmlPage::run_extract() {
         if (log.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
             QTextStream stream(&log);
             stream.setEncoding(QStringConverter::Utf8);
-            stream << "long_texts=" << long_texts.size() << " limit=512\n";
+            stream << "long_texts=" << long_texts.size() << " limit=1024\n";
             for (const QString& line : long_texts) {
                 stream << line.mid(QStringLiteral("长文本：").size()) << "\n";
             }
@@ -1390,7 +1390,7 @@ void XmlPage::run_extract() {
             auto* box = new QMessageBox(this);
             box->setIcon(QMessageBox::Warning);
             box->setWindowTitle(QStringLiteral("有超长文本"));
-            box->setText(QStringLiteral("检到 %1 段**没有换行**且超过 512 字的正文。"
+            box->setText(QStringLiteral("检到 %1 段**没有换行**且超过 1024 字的正文。"
                                         "\n请按日志定位原文并改成多行：\n%2")
                              .arg(long_texts.size())
                              .arg(log_path));

@@ -119,8 +119,9 @@ def main() -> int:
         #   短文本源 ⇒ `long=0` 且不生成日志。
         long_src = tmp / "src_long" / "scripts"
         long_src.mkdir(parents=True, exist_ok=True)
+        # 2000 字（>1024）⇒ 必须告警
         (long_src / "long.script").write_text(
-            'local t = "%s"\n' % ("Текст для проверки. " * 40).strip(), encoding="utf-8")
+            'local t = "%s"\n' % ("Текст для проверки. " * 100).strip(), encoding="utf-8")
         out_long = tmp / "out_long"
         rc, out = run([str(CLI), "--extract-text", str(long_src), str(out_long)])
         log_file = out_long / "_xrkit_long_texts.log"
@@ -132,6 +133,18 @@ def main() -> int:
                 fail("日志里没有「文件|id|长度」三段（实得 %r）" % body[:160])
         else:
             fail("超长文本没告警/没日志：rc=%d\n%s" % (rc, out[-400:]))
+
+        # ②-b 用户 2026-10-28：「>512 不需要告警」⇒ 800 字无换行必须 **long=0**。
+        mid_src = tmp / "src_mid" / "scripts"
+        mid_src.mkdir(parents=True, exist_ok=True)
+        (mid_src / "mid.script").write_text(
+            'local t = "%s"\n' % ("Текст для проверки. " * 40).strip(), encoding="utf-8")
+        out_mid = tmp / "out_mid"
+        rc, out = run([str(CLI), "--extract-text", str(mid_src), str(out_mid)])
+        if rc == 0 and "long=0" in out and not (out_mid / "_xrkit_long_texts.log").exists():
+            ok("800 字无换行：不告警（上限 1024，>512 不算超限）")
+        else:
+            fail("800 字却告警了（上限应已抬到 1024）：rc=%d\n%s" % (rc, out[-300:]))
 
         short_src = tmp / "src_short" / "scripts"
         short_src.mkdir(parents=True, exist_ok=True)

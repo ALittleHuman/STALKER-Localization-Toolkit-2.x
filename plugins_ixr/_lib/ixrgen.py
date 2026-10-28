@@ -184,7 +184,7 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
     # ★★ 2026-10-28（用户）：复制文本时顺带查**超长且没有换行**的正文 ——
     #   逐条记进 `long_texts`，最后落一份 `_xrkit_long_texts.log`（文件|id|码位数|前 180 字）。
     long_texts: list[str] = []
-    LONG_LIMIT = 512
+    LONG_LIMIT = 1024   # 用户 2026-10-28：>512 不算超限
 
     def scan_long(xml: Path) -> None:
         try:
