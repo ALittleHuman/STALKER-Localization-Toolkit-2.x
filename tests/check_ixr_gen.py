@@ -148,14 +148,24 @@ def main() -> int:
         #   文本与配置**不进产物** ⇒ 也就谈不上"被改"。
         if merged.is_file():
             stray = []
-            for sub in ("configs", "textures", "ixr_addons"):
+            for sub in ("textures", "ixr_addons"):
                 if (out / "gamedata" / sub).exists() or (out / sub).exists():
                     stray.append(sub)
             if not stray:
-                ok("默认只产字体：产物里没有 configs/textures/ixr_addons")
+                ok("产物不带 textures/ixr_addons（只带 fonts + texts）")
             else:
                 problems += 1
-                fail("默认模式抄了非字体目录：%s" % stray)
+                fail("产物抄了不该抄的目录：%s" % stray)
+            # ★ 2026-10-28：汉化包必须带文本（用户：「我汉化包呢」）
+            text_out = out / "gamedata" / "configs" / "text" / "rus"
+            src_text = pack / "gamedata" / "configs" / "text" / "rus" / "st_test.xml"
+            if src_text.is_file():
+                copied = text_out / "st_test.xml"
+                if copied.is_file() and copied.read_bytes() == src_text.read_bytes():
+                    ok("产物带文本：configs/text/rus/st_test.xml 逐字节一致")
+                else:
+                    problems += 1
+                    fail("产物里没有（或改动了）configs/text/rus/st_test.xml")
             # 参照包本身**逐字节未改**（这条比"输出里那份没改"更强）
             if (pack / "gamedata" / "configs" / "fonts.ltx").read_bytes() == ltx_before:
                 ok("参照包的 fonts.ltx 逐字节未改")
@@ -327,10 +337,10 @@ def main() -> int:
             # 2026-10-27 新口径：产物只有 gamedata/fonts ⇒ 输出里不该有 configs；
             #   "没被改"这条改成验**参照包原文件**（只许读）。
             if not out_ltx.exists():
-                ok("真包：产物里没有 configs（默认只产字体）")
+                ok("真包：产物里没有 configs/fonts.ltx（字体结构不改）")
             else:
                 problems += 1
-                fail("真包：产物里出现了 configs/fonts.ltx（默认模式不该抄）")
+                fail("真包：产物里出现了 configs/fonts.ltx（不该抄/改配置）")
             if (real / "gamedata" / "configs" / "fonts.ltx").read_bytes() == base_ltx:
                 ok("真包：参照包的 fonts.ltx 逐字节未改")
             else:
@@ -340,11 +350,11 @@ def main() -> int:
             if sample_text:
                 rel = sample_text[0].relative_to(real)
                 copied = out_real / rel
-                if not copied.exists() and sample_text[0].is_file():
-                    ok("真包：产物里没有文本（默认只产字体）")
+                if copied.is_file() and copied.read_bytes() == sample_text[0].read_bytes():
+                    ok("真包：产物带文本且逐字节一致（%s）" % rel.name)
                 else:
                     problems += 1
-                    fail("真包：产物里抄了文本 %s" % rel)
+                    fail("真包：产物缺文本（或改动）%s" % rel)
         else:
             print("!! 真包 ~NotoSansSC 不在（跳过真包夹具）")
             print("IXR-GEN: SKIP (real-packs-missing)")

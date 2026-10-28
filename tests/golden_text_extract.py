@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -315,6 +316,60 @@ def diff_trees(exp: dict, got: dict) -> list[str]:
     return problems
 
 
+
+CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
+TRANS_RE = re.compile(r'game\.translate_string\("([^"]+)"\)')
+
+
+def _texts_of(path: Path) -> set:
+    body = path.read_text(encoding="utf-8", errors="replace")
+    return {m.group(1) for m in re.finditer(r"<text>(.*?)</text>", body, re.S)}
+
+
+def _ids_of(path: Path) -> set:
+    body = path.read_text(encoding="utf-8", errors="replace")
+    return set(TRANS_RE.findall(body))
+
+
+def superset_ok(ref_dir: Path, ours_dir: Path) -> tuple:
+    """2026-10-28 新口径：**1.x 的产物必须是我们的子集**。
+
+    事实：用户要求「符合文本的格式就全部提取出来」⇒ 中文正文也会被抽，
+    与 1.x 的"只认西里尔"必然不同字节。这条替代"逐字节相等"：
+      · 基线里每个文本都在我们这里（内容一致，id 可以不同——顺序变了但翻译表等价）；
+      · 我们多出来的文本**必须含 CJK**（否则就是乱抽/乱码被当成正文）；
+      · 改写后的文件里，基线引用的 id 必须都在我们这边能找到对应文本。
+    返回 (ok, 说明)。
+    """
+    ref_files = {p.relative_to(ref_dir).as_posix(): p for p in ref_dir.rglob("*") if p.is_file()}
+    ours_files = {p.relative_to(ours_dir).as_posix(): p for p in ours_dir.rglob("*") if p.is_file()}
+    missing = [rel for rel in ref_files if rel not in ours_files]
+    if missing:
+        return False, "缺文件 %d 个：%s" % (len(missing), missing[:3])
+    ref_texts, ours_texts = set(), set()
+    for rel, path in ref_files.items():
+        # 只比对**文本表**（`*texts.xml`）：被改写的源文件里 `<text>` 已经换成 id，
+        # 混进来会把 id 当成"文本"，判据就自己骗自己了。
+        if path.suffix.lower() == ".xml" and "texts" in path.name.lower():
+            ref_texts |= _texts_of(path)
+            ours_texts |= _texts_of(ours_files[rel])
+    not_covered = ref_texts - ours_texts
+    if not_covered:
+        return False, "1.x 有 %d 条文本我们没抽到（例 %r）" % (
+            len(not_covered), sorted(not_covered)[:2])
+    extra = ours_texts - ref_texts
+    bad_extra = [x for x in extra if not CJK_RE.search(x)]
+    if bad_extra:
+        return False, "多出 %d 条**非中文**文本（乱抽？例 %r）" % (len(bad_extra), bad_extra[:2])
+    # 改写文件只比"有没有改写"（`translate_string` 出现），不比 id 编号：
+    # 口径增量会让 id 整体平移（多一条中文，后面的编号全变），拿它当契约必假红。
+    for rel, path in ref_files.items():
+        if path.suffix.lower() not in (".script", ".ltx"):
+            continue
+        if _ids_of(path) and not _ids_of(ours_files[rel]):
+            return False, "改写文件 %s 里没有 translate_string（改写链断了）" % rel
+    return True, "1.x 基线是子集，多出 %d 条中文（口径增量）" % len(extra)
+
 def main() -> int:
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -386,19 +441,35 @@ def main() -> int:
         got = tree_hashes(WORK / fixture_id / "ours")
         problems = diff_trees(exp["tree"], got)
         if problems:
-            failures += 1
-            print("  ✗ 产物树不一致 %d 处（基线 %d 个文件 / 候选 %d 个）"
-                  % (len(problems), len(exp["tree"]), len(got)))
-            for p in problems[:10]:
-                print("      %s" % p)
+            # ★★ 2026-10-28（用户口径）：中文正文也算正文 ⇒ 必然与 1.x 不同字节。
+            #   退回"1.x ⊂ ours"的判据（多出来的必须是中文，基线一条都不能丢）。
+            ok_super, why = superset_ok(WORK / fixture_id / "ref", WORK / fixture_id / "ours")
+            if ok_super:
+                print("  ok 口径增量：%s" % why)
+            else:
+                failures += 1
+                print("  ✗ 产物树不一致 %d 处（基线 %d 个文件 / 候选 %d 个）：%s"
+                      % (len(problems), len(exp["tree"]), len(got), why))
+                for p in problems[:10]:
+                    print("      %s" % p)
         else:
             print("  ✓ 产物树逐字节一致（%d 个文件）" % len(got))
-        # 统计口径也对一遍（条数/字符数；files 语义双方一致）
-        if (stats["strings"], stats["chars"]) != (exp["stats"]["strings"], exp["stats"]["chars"]):
+        # 统计口径：1.x 子集模式 ⇒ 候选必须 >= 基线（口径增量只许"多"，不许"少"）
+        base_stats = (exp["stats"]["strings"], exp["stats"]["chars"])
+        got_stats = (stats["strings"], stats["chars"])
+        allowance = bool(problems) and ok_super
+        if allowance:
+            if got_stats[0] >= base_stats[0] and got_stats[1] >= base_stats[1]:
+                print("  ok 统计：基线 strings=%d chars=%d ⊆ 候选 strings=%d chars=%d"
+                      % (base_stats + got_stats))
+            else:
+                failures += 1
+                print("  ✗ 统计缩水：基线 strings=%d chars=%d / 候选 strings=%d chars=%d"
+                      % (base_stats + got_stats))
+        elif got_stats != base_stats:
             failures += 1
             print("  ✗ 统计不一致：基线 strings=%d chars=%d / 候选 strings=%d chars=%d"
-                  % (exp["stats"]["strings"], exp["stats"]["chars"], stats["strings"],
-                     stats["chars"]))
+                  % (base_stats + got_stats))
         else:
             print("  ok strings=%d chars=%d %s" % (stats["strings"], stats["chars"], stats["tail"]))
 

@@ -197,6 +197,29 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
         src_fonts = src_gd / "fonts"
         if src_fonts.is_dir():
             shutil.copytree(src_fonts, out / "gamedata" / "fonts")
+        # ★★★ 2026-10-28（用户：「我汉化包呢？这是能直接打的吗？」）：
+        #   只换字体不叫汉化包 —— **文本也要进产物**（否则装上去还是俄文）。
+        #   文本来源＝`--text-root`（页面里就是「文本 XML」那一栏），落到包的 `<lang>` 文本目录，
+        #   逐字节复制（翻译件已经是成品，不许我们再加工）。
+        text_dirs = [Path(x) for x in (args.text_root or []) if Path(x).is_dir()]
+        if not text_dirs:
+            # 没指「文本 XML」⇒ 用参照包自带的文本（产物仍是完整包；用户要的是"能直接打"）
+            own = src_gd / "configs" / "text" / lang
+            if not own.is_dir():
+                own = src_gd / "text" / lang
+            if own.is_dir():
+                text_dirs = [own]
+        text_copied = 0
+        if text_dirs and not args.no_texts:
+            dst_texts = out / "gamedata" / "configs" / "text" / lang
+            dst_texts.mkdir(parents=True, exist_ok=True)
+            for root in text_dirs:
+                base = root / lang if (root / lang).is_dir() else root
+                for xml in sorted(base.rglob("*.xml")):
+                    target = dst_texts / xml.name
+                    shutil.copy2(xml, target)
+                    text_copied += 1
+            log("IXRGEN 文本：%d 个 XML ⇒ %s" % (text_copied, dst_texts))
     out_gd = out / "gamedata" if (out / "gamedata").is_dir() else out
     out_fonts = out_gd / "fonts" / lang
 
@@ -221,7 +244,8 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
     report = {"lang": lang, "pack": str(pack), "out": str(out), "sections": [],
               "fonts": [], "missing": 0, "charset": len(wanted),
               "added": 0, "skipped_sections": skipped_sections,
-              "plan_sections": plan_sections, "sizes": sorted(plan_sizes), "status": "ok"}
+              "plan_sections": plan_sections, "sizes": sorted(plan_sizes),
+              "texts": text_copied, "status": "ok"}
 
     for name in sorted(by_name):
         path = out_fonts / (name if name.lower().endswith(".ttf") else name + ".ttf")
@@ -256,6 +280,8 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description="IX-Ray 语言包生成（fonttools 外部助手）")
     ap.add_argument("--pack", required=True)
+    ap.add_argument("--no-texts", action="store_true",
+                    help="只产字体，不把「文本 XML」写进产物（默认会写，汉化包必须带文本）")
     ap.add_argument("--full-pack", action="store_true",
                     help="整包为基底（旧行为；默认只产字体，不抄 texts/textures/addons）")
     ap.add_argument("--font", required=True)

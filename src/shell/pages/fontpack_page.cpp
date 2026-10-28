@@ -568,8 +568,10 @@ FontPackPage::BuildOutcome FontPackPage::run_build(
                     outcome.ixr_added = obj.value(QStringLiteral("added")).toInt();
                     outcome.ixr_missing = obj.value(QStringLiteral("missing")).toInt();
                     for (const QJsonValue& value : obj.value(QStringLiteral("reports")).toArray()) {
+                        const QJsonObject one = value.toObject();
                         outcome.ixr_fonts +=
-                            value.toObject().value(QStringLiteral("fonts")).toArray().size();
+                            one.value(QStringLiteral("fonts")).toArray().size();
+                        outcome.ixr_texts += one.value(QStringLiteral("texts")).toInt();
                     }
                 }
             }
@@ -610,9 +612,10 @@ void FontPackPage::apply_result(const BuildOutcome& outcome) {
         if (result_label_ != nullptr) {
             result_label_->setText(
                 outcome.ok
-                    ? QStringLiteral("完成（IX-Ray 矢量）：字体 %1 个、新增字形 %2、缺字 %3"
-                                     "（产物只有 gamedata/fonts，文本与配置没动）")
+                    ? QStringLiteral("完成（IX-Ray 矢量）：字体 %1 个、文本 %2 个、"
+                                     "新增字形 %3、缺字 %4（产物可直接当模组用）")
                           .arg(outcome.ixr_fonts)
+                          .arg(outcome.ixr_texts)
                           .arg(outcome.ixr_added)
                           .arg(outcome.ixr_missing)
                     : QStringLiteral("失败：") + outcome.reason);

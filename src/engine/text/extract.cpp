@@ -282,6 +282,46 @@ bool is_ascii_letter(uint32_t cp) {
     return (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z');
 }
 
+// ★★★ 2026-10-28（用户口径）：「符合文本的格式就全部提取出来」——
+//   1.x 的启发式是"含西里尔/ASCII 字母才算正文"，中文正文（你好）**一条都进不来**。
+//   这里补一个"自然语言字母"判定：CJK / 假名 / 谚文 / 希腊 / 拉丁扩展 都算。
+bool is_text_letter(uint32_t cp) {
+    return is_rus_letter(cp) || is_ascii_letter(cp) ||
+           (cp >= 0x4E00 && cp <= 0x9FFF) ||    // CJK 统一表意
+           (cp >= 0x3400 && cp <= 0x4DBF) ||    // CJK 扩展 A
+           (cp >= 0xF900 && cp <= 0xFAFF) ||    // CJK 兼容
+           (cp >= 0x3040 && cp <= 0x30FF) ||    // 平假名 / 片假名
+           (cp >= 0xAC00 && cp <= 0xD7AF) ||    // 谚文音节
+           (cp >= 0x1100 && cp <= 0x11FF) ||    // 谚文字母
+           (cp >= 0x0370 && cp <= 0x03FF) ||    // 希腊
+           (cp >= 0x00C0 && cp <= 0x024F);      // 拉丁扩展
+}
+
+// 只有"非 ASCII 的自然语言字母"才算"这肯定是人写的正文"（CJK/西里尔/希腊/拉丁扩展）。
+// 为什么单列一个：ASCII 单token（`actor_bandit`、`hello`）在语料里绝大多数是**标识符**，
+// 不能因为"含 ASCII 字母"就当正文提取——那会把 id 全抽出来（本批实测踩过）。
+bool has_non_ascii_text_letter(const std::string& s) {
+    size_t i = 0;
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(s.data());
+    while (i < s.size()) {
+        uint32_t cp = 0;
+        if (!utf8_next(p, s.size(), i, cp)) return false;
+        if (cp > 0x7F && is_text_letter(cp)) return true;
+    }
+    return false;
+}
+
+bool has_text_letter(const std::string& s) {
+    size_t i = 0;
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(s.data());
+    while (i < s.size()) {
+        uint32_t cp = 0;
+        if (!utf8_next(p, s.size(), i, cp)) return false;
+        if (is_text_letter(cp)) return true;
+    }
+    return false;
+}
+
 bool has_rus_letter(const std::string& s) {
     size_t i = 0;
     const uint8_t* p = reinterpret_cast<const uint8_t*>(s.data());
@@ -372,13 +412,15 @@ std::string ascii_lower(const std::string& s) {
 
 // ── 候选判定（1.x 同名函数）──────────────────────────────────────────
 bool looks_like_id(const std::string& text) {
-    if (has_rus_letter(text)) return false;
+    // ★ 2026-10-28：含**非 ASCII 自然语言字母**（含 CJK）就不是 id。
+    //   ASCII 单 token 仍按 1.x 的判据（含 `_` 或无空格 ⇒ id）。
+    if (has_non_ascii_text_letter(text)) return false;
     if (text.find('_') != std::string::npos) return true;
     return text.find(' ') == std::string::npos;
 }
 
 bool looks_like_script(const std::string& text) {
-    if (has_rus_letter(text)) return false;
+    if (has_non_ascii_text_letter(text)) return false;
     if (text.find('=') != std::string::npos || text.find('@') != std::string::npos) return true;
     return re_looks_like_script_1().search(text) || re_looks_like_script_2().search(text);
 }
@@ -424,7 +466,7 @@ std::vector<std::string> script_texts(const std::string& text) {
                         ongoing.push_back(ch);
                         is_open = false;
                         quote_char = '\0';
-                        if (!re_match_sensitive().search(ongoing) && word_pattern_hit(ongoing)) {
+                        if (!re_match_sensitive().search(ongoing) && has_text_letter(ongoing)) {
                             line_matches.insert(ongoing);
                         }
                     }
