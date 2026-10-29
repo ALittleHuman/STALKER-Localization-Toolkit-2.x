@@ -16,6 +16,7 @@ add_library(xrkit_engine STATIC
   text/batch.cpp
   text/encodings.cpp
     text/langpack.cpp
+    text/ori.cpp
   text/extract.cpp
   xml/compare.cpp
   xml/dirdiff.cpp

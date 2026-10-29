@@ -1,0 +1,318 @@
+#include "xrkit/engine/text/ori.h"
+
+#include "xrkit/core/path.h"
+#include "xrkit/engine/fs/overlay.h"
+#include "xrkit/engine/text/extract.h"
+
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <set>
+#include <system_error>
+
+namespace xrkit::engine::text {
+namespace {
+
+namespace fs = std::filesystem;
+namespace efs = xrkit::engine::fs;
+
+bool is_dir(const fs::path& p) {
+    std::error_code ec;
+    return fs::is_directory(p, ec);
+}
+
+bool is_file(const fs::path& p) {
+    std::error_code ec;
+    return fs::is_regular_file(p, ec);
+}
+
+std::string lower(std::string s) {
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return s;
+}
+
+// 容器标记：目录里直接出现这些子目录之一 ⇒ 它是容器
+bool has_container_markers(const fs::path& dir) {
+    static const char* kMarkers[] = {"configs", "scripts", "gameplay", "fonts", "textures"};
+    std::error_code ec;
+    for (const char* marker : kMarkers) {
+        if (fs::is_directory(dir / marker, ec)) return true;
+    }
+    return false;
+}
+
+// 从 localization.ltx 读 `[string_table] language`
+std::string lang_from_ltx(const fs::path& ltx) {
+    if (!is_file(ltx)) return std::string();
+    std::ifstream in(ltx, std::ios::binary);
+    if (!in) return std::string();
+    std::string line;
+    bool in_section = false;
+    std::string found;
+    while (std::getline(in, line)) {
+        std::string s = line;
+        if (!s.empty() && s.back() == '\r') s.pop_back();
+        const size_t hash = s.find(';');
+        if (hash != std::string::npos) s = s.substr(0, hash);
+        while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
+        if (s.empty()) continue;
+        if (s.front() == '[') {
+            in_section = lower(s.substr(1, s.find(']') == std::string::npos ? std::string::npos
+                                                                          : s.find(']') - 1)) ==
+                         "string_table";
+            continue;
+        }
+        if (!in_section) continue;
+        const size_t eq = s.find('=');
+        if (eq == std::string::npos) continue;
+        std::string key = lower(s.substr(0, eq));
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+        if (key != "language") continue;
+        std::string value = s.substr(eq + 1);
+        while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) value.erase(0, 1);
+        while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) value.pop_back();
+        found = value;
+    }
+    return found;
+}
+
+// 容器里的语言：localization.ltx → configs/text/<x> 的目录名 → options.lang → rus
+std::string container_lang(const fs::path& container, const std::string& fallback) {
+    if (const std::string lang = lang_from_ltx(container / "configs" / "localization.ltx");
+        !lang.empty()) {
+        return lang;
+    }
+    std::error_code ec;
+    const fs::path texts = container / "configs" / "text";
+    if (is_dir(texts)) {
+        for (const auto& entry : fs::directory_iterator(texts, ec)) {
+            if (entry.is_directory(ec)) return core::path_to_utf8(entry.path().filename());
+        }
+    }
+    if (!fallback.empty()) return fallback;
+    return "rus";
+}
+
+// 整树复制（源只读；目标必须不存在或由调用方保证可写）
+uint64_t copy_tree_into(const fs::path& src, const fs::path& dst,
+                        std::vector<std::string>* warnings) {
+    efs::WalkReport report;
+    const std::vector<efs::TreeItem> items =
+        efs::collect_tree(core::path_to_utf8(src), &report);
+    for (const std::string& err : report.errors) {
+        if (warnings != nullptr) warnings->push_back("遍历：" + err);
+    }
+    uint64_t copied = 0;
+    std::error_code ec;
+    for (const efs::TreeItem& item : items) {
+        const fs::path target = dst / core::path_from_utf8(item.path);
+        if (item.is_dir) {
+            fs::create_directories(target, ec);
+            continue;
+        }
+        const fs::path rel = core::path_from_utf8(item.path);
+        fs::create_directories(target.parent_path(), ec);
+        ec.clear();
+        fs::copy_file(rel.is_absolute() ? rel : src / rel, target,
+                      fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            if (warnings != nullptr) {
+                warnings->push_back("复制失败：" + item.path + "（" + ec.message() + "）");
+            }
+            continue;
+        }
+        ++copied;
+    }
+    return copied;
+}
+
+// 单分支提取：把分支先摊到一个以 gameplay/ 或 scripts/ 结尾的临时目录，
+// 再交给 extract_dir（它按目录名判 kind）—— 这样 configs/ui 这类分支也能复用同一份内核。
+ExtractStats extract_branch(const fs::path& branch, ExtractKind kind, const fs::path& target,
+                            const fs::path& texts_out, const OriOptions& options,
+                            std::vector<std::string>* warnings) {
+    std::error_code ec;
+    const fs::path tmp = fs::temp_directory_path(ec) / "xrkit_ori_branch" /
+                         (kind == ExtractKind::Gameplay ? "gameplay" : "scripts");
+    fs::remove_all(tmp, ec);
+    fs::create_directories(tmp, ec);
+    copy_tree_into(branch, tmp, warnings);
+    ExtractOptions eopt;
+    eopt.prefix = options.prefix;
+    ExtractStats st = extract_dir(core::path_to_utf8(tmp), core::path_to_utf8(target),
+                                  core::path_to_utf8(texts_out), eopt);
+    for (const std::string& skip : st.skipped) {
+        if (warnings != nullptr) warnings->push_back("提取跳过：" + skip);
+    }
+    fs::remove_all(tmp, ec);
+    return st;
+}
+
+}  // namespace
+
+OriResult build_ori_tree(const OriOptions& options) {
+    OriResult out;
+    const fs::path src = core::path_from_utf8(options.source_dir);
+    const fs::path out_root = core::path_from_utf8(options.out_dir);
+    std::error_code ec;
+    if (!fs::exists(src, ec)) {
+        out.error = "源不存在：" + options.source_dir;
+        return out;
+    }
+
+    // 源是单文件 ⇒ 容器走它最近的祖先；这里先拒绝（本轮只支持目录，单文件下一轮）
+    if (is_file(src)) {
+        out.error = "本轮先只支持目录输入（单文件输入下一轮）：" + options.source_dir;
+        return out;
+    }
+
+    // ── 输入/输出边界（与 IXR 生成器同一口径：绝不删输入）─────────────────
+    const fs::path src_abs = fs::weakly_canonical(src, ec);
+    const fs::path out_abs = fs::weakly_canonical(out_root, ec);
+    if (src_abs == out_abs || out_abs.string().rfind(src_abs.string() + "/", 0) == 0 ||
+        src_abs.string().rfind(out_abs.string() + "/", 0) == 0) {
+        out.error = "拒绝：ori 与源目录重叠（" + options.out_dir + "）";
+        return out;
+    }
+    if (fs::exists(out_abs, ec)) {
+        // 目录遍历只走 `fs::collect_tree`（D2 锁：同类东西只有一套）
+        efs::WalkReport out_report;
+        const std::vector<efs::TreeItem> existing_items =
+            efs::collect_tree(core::path_to_utf8(out_abs), &out_report);
+        uint64_t existing = 0;
+        for (const efs::TreeItem& item : existing_items) {
+            if (!item.is_dir) ++existing;
+        }
+        if (existing > 0) {
+            if (!options.clean) {
+                out.error = "拒绝：ori 已有 " + std::to_string(existing) +
+                            " 个文件（确认清空请给 clean/--clean）";
+                return out;
+            }
+            fs::remove_all(out_abs, ec);
+        }
+    }
+    fs::create_directories(out_abs, ec);
+
+    // ── 容器发现：带标记的目录，且不取"已被更外层容器覆盖"的目录 ──────────
+    efs::WalkReport report;
+    const std::vector<efs::TreeItem> items = efs::collect_tree(options.source_dir, &report);
+    for (const std::string& err : report.errors) out.warnings.push_back("遍历：" + err);
+
+    std::vector<std::string> candidates;
+    if (has_container_markers(src)) candidates.push_back("");
+    for (const efs::TreeItem& item : items) {
+        if (!item.is_dir) continue;
+        const fs::path dir = src / core::path_from_utf8(item.path);
+        if (has_container_markers(dir)) candidates.push_back(item.path);
+    }
+    std::sort(candidates.begin(), candidates.end(),
+              [](const std::string& a, const std::string& b) {
+                  const auto depth = [](const std::string& s) {
+                      return std::count(s.begin(), s.end(), '/');
+                  };
+                  if (depth(a) != depth(b)) return depth(a) < depth(b);
+                  return a < b;
+              });
+    std::vector<std::string> containers;
+    for (const std::string& cand : candidates) {
+        bool covered = false;
+        for (const std::string& kept : containers) {
+            if (kept.empty()) { covered = true; break; }
+            if (cand == kept || cand.rfind(kept + "/", 0) == 0) { covered = true; break; }
+        }
+        if (!covered) containers.push_back(cand);
+    }
+    if (containers.empty()) {
+        out.error = "源里找不到容器（没有 configs/scripts/gameplay/fonts/textures）：" +
+                    options.source_dir;
+        return out;
+    }
+
+    // ── 每个容器：整树复制 → 提取 → 文本落盘 → 多语言复制 ──────────────────
+    for (const std::string& rel : containers) {
+        const fs::path container = rel.empty() ? src : src / core::path_from_utf8(rel);
+        const fs::path dst = rel.empty() ? out_abs : out_abs / core::path_from_utf8(rel);
+        OriContainer info;
+        info.rel = rel;
+        info.lang = container_lang(container, options.lang);
+        info.has_text = is_dir(container / "configs" / "text");
+        info.has_fonts = is_dir(container / "fonts") || is_file(container / "configs" / "fonts.ltx");
+        info.has_scripts = is_dir(container / "scripts");
+        info.has_gameplay = is_dir(container / "gameplay") ||
+                            is_dir(container / "configs" / "gameplay");
+        info.kind = info.has_fonts ? "ixr" : (is_dir(container / "textures" / "ui") ? "bitmap" : "none");
+
+        fs::create_directories(dst, ec);
+        out.files_copied += copy_tree_into(container, dst, &out.warnings);
+
+        const fs::path texts_out = dst / "configs" / "text" / core::path_from_utf8(info.lang);
+        fs::create_directories(texts_out, ec);
+
+        // scripts：改写后回写到容器内 `scripts/`（相对容器根）
+        if (is_dir(container / "scripts")) {
+            const ExtractStats st = extract_branch(container / "scripts", ExtractKind::Scripts,
+                                                   dst / "scripts", texts_out, options,
+                                                   &out.warnings);
+            if (!st.ok && !st.error.empty()) out.warnings.push_back("scripts：" + st.error);
+            info.extracted += st.strings;
+            info.rewritten += st.files;
+            info.texts += st.texts_xml_name.empty() ? 0 : 1;
+            out.extracted += st.strings;
+            out.rewritten += st.files;
+        }
+        // gameplay（容器根下的 gameplay 或 configs/gameplay）：统一落 `configs/gameplay`
+        for (const fs::path& branch : {container / "gameplay", container / "configs" / "gameplay"}) {
+            if (!is_dir(branch)) continue;
+            const ExtractStats st = extract_branch(branch, ExtractKind::Gameplay,
+                                                   dst / "configs" / "gameplay", texts_out,
+                                                   options, &out.warnings);
+            if (!st.ok && !st.error.empty()) out.warnings.push_back("gameplay：" + st.error);
+            info.extracted += st.strings;
+            info.rewritten += st.files;
+            info.texts += st.texts_xml_name.empty() ? 0 : 1;
+            out.extracted += st.strings;
+            out.rewritten += st.files;
+        }
+        // 容器根的 `gameplay/` 不是游戏读取路径（读的是 `configs/gameplay/`）：
+        // 提取完就把复制过来的那份删掉，免得同一份文本在 ori 里出现两次。
+        if (is_dir(dst / "gameplay")) {
+            std::error_code del_ec;
+            fs::remove_all(dst / "gameplay", del_ec);
+        }
+        // configs/ui、configs/scripts：本轮未提取，如实记账（下一轮补）
+        for (const char* extra : {"configs/ui", "configs/scripts"}) {
+            if (is_dir(container / extra)) {
+                out.warnings.push_back(std::string("本轮未提取（已原样保留）：") + rel + "/" + extra);
+            }
+        }
+
+        // 多语言：容器已有的其它语言目录也放一份（规划 4.4）
+        const fs::path text_root = container / "configs" / "text";
+        if (is_dir(text_root)) {
+            for (const auto& entry : fs::directory_iterator(text_root, ec)) {
+                if (!entry.is_directory(ec)) continue;
+                const std::string other = core::path_to_utf8(entry.path().filename());
+                if (other == info.lang) continue;
+                const fs::path other_texts = dst / "configs" / "text" / core::path_from_utf8(other);
+                fs::create_directories(other_texts, ec);
+                for (const auto& xml : fs::directory_iterator(texts_out, ec)) {
+                    if (!xml.is_regular_file(ec)) continue;
+                    fs::copy_file(xml.path(), other_texts / xml.path().filename(),
+                                  fs::copy_options::overwrite_existing, ec);
+                }
+            }
+        }
+        out.texts += info.texts;
+        out.containers.push_back(info);
+    }
+
+    out.out_dir = core::path_to_utf8(out_abs);
+    out.lang = out.containers.front().lang;
+    out.ok = true;
+    return out;
+}
+
+}  // namespace xrkit::engine::text

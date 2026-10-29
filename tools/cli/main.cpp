@@ -47,6 +47,7 @@
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/extract.h"
 #include "xrkit/engine/text/langpack.h"
+#include "xrkit/engine/text/ori.h"
 #include "xrkit/engine/text/sniff.h"
 #include "xrkit/engine/third_party_probe.h"
 #include "xrkit/engine/video/ffmpeg.h"
@@ -216,6 +217,8 @@ void print_usage() {
            "  --build-font-pack <SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录>\n"
            "  --langpack-scan <语言包目录>      只读识别：profile/lang/槽位/资源（IX-Ray 生成器「指定」模式的底座）\n"
            "  --font-sample <字体> <文本> <字号> <out.ppm>   文本样张（预览用；缺字计数）\n"
+           "  --ori-tree <源目录> <ori 目录> [--lang L] [--clean]\n"
+           "                                   整树复制 + 容器内提取 + ori/<容器>/...（文本提取最终规划）\n"
            "  --ixr-build <参照包> <字体> <输出目录> [--langs rus,eng | --all-langs --split-output]\n"
            "                                   生成 IX-Ray 矢量包（外部 fonttools 助手）\n"
            "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite]\n"
@@ -4897,6 +4900,53 @@ int run_cli(const std::vector<std::string>& args) {
                   << " xml=" << r.xml_written << " rewritten=" << r.rewritten_copied
                   << " empty_tables=" << r.empty_tables
                   << " skipped_existing=" << r.skipped_existing << "\n";
+        return kExitOk;
+    }
+
+    // ori 树（交接区最终规划 2026-10-29）：拖入源 ⇒ 整树复制 + 容器内提取 + ori/<容器>/...
+    if (action == "--ori-tree") {
+        if (operands.size() < 2) {
+            std::cerr << "ORI error reason=用法：--ori-tree <源目录> <ori 目录> [--lang L] [--clean]\n";
+            return kExitUsage;
+        }
+        xrkit::engine::text::OriOptions opt;
+        opt.source_dir = operands[0];
+        opt.out_dir = operands[1];
+        bool clean = false;
+        for (size_t i = 2; i < operands.size(); ++i) {
+            const std::string& a = operands[i];
+            if (a == "--lang" && i + 1 < operands.size()) {
+                opt.lang = operands[++i];
+            } else if (a == "--clean") {
+                clean = true;
+            } else {
+                std::cerr << "ORI error reason=未知参数 " << a << "\n";
+                return kExitUsage;
+            }
+        }
+        opt.clean = clean;
+        const xrkit::engine::text::OriResult result =
+            xrkit::engine::text::build_ori_tree(opt);
+        for (const std::string& warning : result.warnings) {
+            std::cout << "ORI warn " << warning << "\n";
+        }
+        if (!result.ok) {
+            std::cout << "ORI error reason=" << result.error << "\n";
+            return kExitFail;
+        }
+        for (const auto& container : result.containers) {
+            std::cout << "ORI container rel=" << (container.rel.empty() ? "." : container.rel)
+                      << " lang=" << container.lang << " kind=" << container.kind
+                      << " extracted=" << container.extracted
+                      << " rewritten=" << container.rewritten
+                      << " texts=" << container.texts << "\n";
+        }
+        std::cout << "ORI ok out=" << result.out_dir << " lang=" << result.lang
+                  << " containers=" << result.containers.size()
+                  << " files=" << result.files_copied
+                  << " extracted=" << result.extracted
+                  << " rewritten=" << result.rewritten
+                  << " texts=" << result.texts << "\n";
         return kExitOk;
     }
 

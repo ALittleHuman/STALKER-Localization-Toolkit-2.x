@@ -3476,6 +3476,28 @@ def step_font_sample(release: bool) -> None:
         fail("文本样张判据不通过（见上）")
 
 
+def step_ori_tree(release: bool) -> None:
+    """ori 树（交接区最终规划第 1 步）：容器发现 / 整树复制 / 提取改写 / 落点 / 只读。"""
+    say("[?] ori 树：容器发现 + 整树复制 + 提取改写 + 落点")
+    script = ROOT / "tests" / "check_ori_tree.py"
+    if not require_repo_file(script, "ori 树判据脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("ORI-TREE") or s.startswith("!!"):
+            say("  " + s)
+    if rc == 0:
+        ok("ori 树：容器/复制/提取/落点/只读/拒绝覆盖 全过")
+    elif rc == 2:
+        prereq("构建产物", "缺 xrkit_cli.exe", release)
+    else:
+        fail("ori 树判据不通过（见上）")
+
+
 def step_extract_charset(release: bool) -> None:
     """文本提取的字符集口径：中文正文要抽、标识符不许抽（用户 2026-10-28 口径）。"""
     say("[?] 文本提取：字符集口径（中文正文 / 标识符 / 改写链）")
@@ -7571,6 +7593,8 @@ STEPS = [
     ("ixr-product", step_ixr_product),
     # ★★ 2026-10-28：文本提取的字符集口径（中文正文/标识符）
     ("extract-charset", step_extract_charset),
+    # ★★ 2026-10-29（交接区最终规划）：ori 树
+    ("ori-tree", step_ori_tree),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
     ("version-identity", step_version_identity),

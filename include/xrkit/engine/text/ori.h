@@ -1,0 +1,57 @@
+#pragma once
+// xrkit::engine::text::ori —— **ori 树**构建（交接区《文本提取工具最终规划 2026-10-29》）。
+//
+// 口径（用户已拍板）：
+//   拖入一个模组根 / `gamedata` / `ixr_addons` / `configs` / 单文件，**空侧作为 `ori`**；
+//   工具自动识别「容器」，把整棵树复制进 `ori/<容器相对路径>/...`，再在容器内提取硬编码、
+//   改写、把文本 XML 落进 `<容器>/configs/text/<lang>`。
+//
+// 与旧链（`build_language_pack*`）的区别：
+//   · 输出根是 `ori`（模组根），**不再** `out/<lang>`；
+//   · `gameplay` 落 `configs/gameplay`，`scripts` 落 `scripts`（相对容器根）；
+//   · 语言取自容器自己的 `configs/localization.ltx`，**不写死 rus**；
+//   · 源只读，`ori` 非空默认拒绝（`clean=true` 才允许清空）。
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace xrkit::engine::text {
+
+struct OriOptions {
+    std::string source_dir;   // 模组根 / gamedata / ixr_addons / configs / 单文件
+    std::string out_dir;      // ori
+    std::string lang;         // 空 = 从 localization.ltx 推断
+    std::string prefix = "gs";
+    bool clean = false;       // 允许清空已有 ori（默认拒绝，防误删）
+};
+
+struct OriContainer {
+    std::string rel;                 // 相对 source 根（"" = 源本身就是容器）
+    std::string lang;                // 该容器的语言
+    std::string kind;                // ixr / bitmap / mixed / none
+    bool has_text = false;
+    bool has_fonts = false;
+    bool has_scripts = false;
+    bool has_gameplay = false;
+    uint64_t extracted = 0;          // 抽出的正文条数
+    uint64_t rewritten = 0;          // 改写文件数
+    uint64_t texts = 0;              // 写出的文本 XML 个数
+};
+
+struct OriResult {
+    bool ok = false;
+    std::string error;
+    std::string out_dir;
+    std::string lang;
+    std::vector<OriContainer> containers;
+    std::vector<std::string> warnings;   // 逐条：哪条分支没提取/为什么（零静默）
+    uint64_t files_copied = 0;
+    uint64_t rewritten = 0;
+    uint64_t texts = 0;
+    uint64_t extracted = 0;
+};
+
+OriResult build_ori_tree(const OriOptions& options);
+
+}  // namespace xrkit::engine::text

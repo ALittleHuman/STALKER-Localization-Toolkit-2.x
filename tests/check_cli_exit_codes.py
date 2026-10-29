@@ -56,7 +56,7 @@ LOOKBACK = 25
 #   按本判据自己的规矩：增删一处就必须重估口径并改本表（不是把判据放宽）。
 # 2026-10-27：`--font-sample` 缺操作数再 +1（50 → 51）。
 # 2026-10-27：`--ixr-build` 两处用法错误（缺操作数 / 未知参数）⇒ 53 → 55。
-FROZEN = {"USAGE": 55, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
+FROZEN = {"USAGE": 57, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
 
 PROBLEMS: list = []
 CASES = 0
