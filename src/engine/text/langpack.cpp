@@ -248,7 +248,19 @@ LangPackBuildResult build_language_pack(const LangPackBuildOptions& options) {
             out.warnings.push_back("提取产物目录不存在（跳过后半）：" + options.rewritten);
         } else {
             int copied = 0;
-            copy_tree(rew, out_dir, options.overwrite, copied, out.skipped_existing, out.warnings);
+            // ★★ 2026-10-29（交接区审计 T-P0-2）：STALKER 读的是 `gamedata/configs/gameplay/`，
+            //   `gameplay/` 平铺在根上游戏根本不认。这里按分支落点：
+            //     rew/scripts/**  → <out>/scripts/**
+            //     rew/gameplay/** → <out>/configs/gameplay/**
+            for (const char* branch : {"scripts", "gameplay"}) {
+                const fs::path src_branch = rew / branch;
+                if (!is_dir(src_branch)) continue;
+                const fs::path dst_branch = (std::string(branch) == "gameplay")
+                                                ? out_dir / "configs" / "gameplay"
+                                                : out_dir / "scripts";
+                copy_tree(src_branch, dst_branch, options.overwrite, copied,
+                          out.skipped_existing, out.warnings);
+            }
             out.rewritten_copied = copied;
         }
     }

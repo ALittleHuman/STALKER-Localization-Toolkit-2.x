@@ -66,11 +66,11 @@ def main() -> int:
             out / "rus" / "configs" / "text" / "rus" / "a.xml",
             out / "rus" / "configs" / "text" / "rus" / "empty.xml",
             out / "rus" / "scripts" / "a.script",
-            out / "rus" / "gameplay" / "x.xml",
+            out / "rus" / "configs" / "gameplay" / "x.xml",
         ]
         missing = [p for p in want if not p.is_file()]
         if not missing:
-            ok("标准语言包布局：configs/text/rus + scripts + gameplay 都在")
+            ok("标准语言包布局：configs/text/rus + scripts + configs/gameplay 都在")
         else:
             problems += 1
             fail("产物缺：%s" % ", ".join(str(p.relative_to(out)) for p in missing))
@@ -123,7 +123,7 @@ def main() -> int:
         out2 = tmp / "out_game"
         rc6, stdout6 = run([str(src2), "-", str(out2), "--extract"])
         game_ok = rc6 == 0 and "extracted_files=" in stdout6
-        rewritten = out2 / "rus" / "gameplay" / "x.xml"
+        rewritten = out2 / "rus" / "configs" / "gameplay" / "x.xml"
         texts = list((out2 / "rus" / "configs" / "text" / "rus").glob("*.xml"))
         if game_ok and rewritten.is_file() and "sgtat_" in rewritten.read_text(encoding="utf-8"):
             ok("--extract：gameplay 被改写成 ID 引用（sgtat_…）")
