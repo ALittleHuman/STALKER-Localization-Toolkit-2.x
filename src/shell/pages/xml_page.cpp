@@ -6,6 +6,7 @@
 #include "xrkit/engine/text/sniff.h"
 #include "xrkit/engine/fs/overlay.h"
 #include "xrkit/engine/text/langpack.h"
+#include "xrkit/engine/text/ori.h"
 #include "xrkit/engine/xml/dirdiff.h"
 
 #include "../pair_tree.h"
@@ -1300,10 +1301,11 @@ void XmlPage::run_extract() {
     const QString a = dir_a_edit_->text().trimmed();
     const QString b = dir_b_edit_->text().trimmed();
     if (a.isEmpty() || b.isEmpty()) {
-        status_->setText(QStringLiteral("请先选两个文件夹"));
+        status_->setText(QStringLiteral("请先选两个文件夹（一侧放源，另一侧留空当 ori）"));
         return;
     }
-    // 非空一侧 = 文本来源（另一侧只是"空壳"，用它触发模式）
+    // ★★ 2026-10-29（交接区最终规划）：**空侧 = ori**，非空侧 = 源；
+    //   不再"非空侧当文本根"，也不再写 `<out>/<lang>` 旧布局。
     const auto files_of = [](const QString& path) {
         xrkit::engine::fs::WalkReport report;
         const auto items = xrkit::engine::fs::collect_tree(
@@ -1314,97 +1316,51 @@ void XmlPage::run_extract() {
         }
         return files;
     };
-    const QString source = files_of(a) == 0 ? b : a;
+    const bool a_empty = files_of(a) == 0;
+    const bool b_empty = files_of(b) == 0;
+    if (a_empty == b_empty) {
+        status_->setText(QStringLiteral("提取要求**恰好一侧为空**（空侧当 ori）；现在是%1")
+                             .arg(a_empty ? QStringLiteral("两侧都空")
+                                          : QStringLiteral("两侧都非空")));
+        return;
+    }
+    const QString source = a_empty ? b : a;
+    const QString ori = a_empty ? a : b;
+
     const bool want_texts = texts_check_ != nullptr && texts_check_->isChecked();
     const bool want_rewritten = rewrite_check_ != nullptr && rewrite_check_->isChecked();
     if (!want_texts && !want_rewritten) {
         status_->setText(QStringLiteral("两个产物至少勾一个"));
         return;
     }
-    QString out = extract_out_edit_ != nullptr ? extract_out_edit_->text().trimmed() : QString();
-    if (out.isEmpty()) {
-        out = QDir(source).absolutePath() + QStringLiteral("/_langpack");
-    }
-    // ★★ 2026-10-27：勾了「改写脚本/配置」⇒ 走**完整链**（先按标准提取抽
-    //   scripts/gameplay，再按标准语言包摆盘）；只勾文本 ⇒ 直接摆盘。
-    xrkit::engine::text::LangPackBuildResult result;
-    if (want_rewritten) {
-        xrkit::engine::text::LangPackFromGameOptions gopt;
-        gopt.source_dir = source.toUtf8().toStdString();
-        gopt.out_root = out.toUtf8().toStdString();
-        gopt.lang = "rus";
-        gopt.include_texts = want_texts;
-        gopt.include_rewritten = true;
-        const xrkit::engine::text::LangPackFromGameResult g =
-            xrkit::engine::text::build_language_pack_from_game(gopt);
-        result = g.pack;
-        result.ok = g.ok;
-        if (!g.ok) result.error = g.error;
-    } else {
-        xrkit::engine::text::LangPackBuildOptions opt;
-        opt.texts_dir = source.toUtf8().toStdString();
-        opt.out_root = out.toUtf8().toStdString();
-        opt.include_texts = want_texts;
-        opt.include_rewritten = false;
-        opt.lang = "rus";
-        result = xrkit::engine::text::build_language_pack(opt);
-    }
+
+    xrkit::engine::text::OriOptions opt;
+    opt.source_dir = source.toUtf8().toStdString();
+    opt.out_dir = ori.toUtf8().toStdString();
+    const xrkit::engine::text::OriResult result = xrkit::engine::text::build_ori_tree(opt);
     if (!result.ok) {
         status_->setText(QStringLiteral("提取失败：%1")
                              .arg(QString::fromStdString(result.error)));
         return;
     }
-    // ★★ 2026-10-28（用户）：「有出现一段文本没有换行过的，超过上限需要弹警告并且写日志，
-    //   好定位修改。」⇒ 引擎把长文本逐条放进 `warnings`（前缀「长文本：」）：
-    //     · 写日志到 `<输出>/_xrkit_long_texts.log`（带 文件|id|码位数|前 180 字节）；
-    //     · 弹一个**非模态**警告框（离屏/自检里不弹，免得门禁挂住）。
-    QStringList long_texts;
-    for (const std::string& warn : result.warnings) {
-        const QString line = utf8(warn);
-        if (line.startsWith(QStringLiteral("长文本："))) long_texts << line;
+    QStringList warns;
+    for (const std::string& warn : result.warnings) warns << utf8(warn);
+    QString detail;
+    if (!warns.isEmpty()) {
+        detail = QStringLiteral("；warn %1 条：%2")
+                     .arg(warns.size())
+                     .arg(warns.mid(0, 3).join(QStringLiteral(" / ")));
     }
-    QString log_path;
-    if (!long_texts.isEmpty()) {
-        log_path = QDir(out).filePath(QStringLiteral("_xrkit_long_texts.log"));
-        QFile log(log_path);
-        if (log.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-            QTextStream stream(&log);
-            stream.setEncoding(QStringConverter::Utf8);
-            stream << "long_texts=" << long_texts.size() << " limit=1024\n";
-            for (const QString& line : long_texts) {
-                stream << line.mid(QStringLiteral("长文本：").size()) << "\n";
-            }
-            log.close();
-        }
-        status_->setText(QStringLiteral("已提取：%1 个文本 XML、%2 个改写产物 ⇒ %3"
-                                        "（拒绝覆盖 %4 个）；⚠ %5 段超长无换行文本，见 %6")
-                             .arg(result.xml_written)
-                             .arg(result.rewritten_copied)
-                             .arg(QString::fromStdString(result.out_dir))
-                             .arg(result.skipped_existing)
-                             .arg(long_texts.size())
-                             .arg(log_path));
-        // 离屏（自检/门禁）不弹框：模态框会把 smoke 挂住
-        if (QGuiApplication::platformName() != QStringLiteral("offscreen")) {
-            QStringList preview = long_texts.mid(0, 5);
-            auto* box = new QMessageBox(this);
-            box->setIcon(QMessageBox::Warning);
-            box->setWindowTitle(QStringLiteral("有超长文本"));
-            box->setText(QStringLiteral("检到 %1 段**没有换行**且超过 1024 字的正文。"
-                                        "\n请按日志定位原文并改成多行：\n%2")
-                             .arg(long_texts.size())
-                             .arg(log_path));
-            box->setDetailedText(preview.join(QChar('\n')));
-            box->setAttribute(Qt::WA_DeleteOnClose);
-            box->open();
-        }
-        return;
-    }
-    status_->setText(QStringLiteral("已提取：%1 个文本 XML、%2 个改写产物 ⇒ %3（拒绝覆盖 %4 个）")
-                         .arg(result.xml_written)
-                         .arg(result.rewritten_copied)
+    status_->setText(QStringLiteral("已生成 ori 树：容器 %1 个、整包 %2 个文件、"
+                                    "提取 %3 条、改写 %4 个、文本 %5 个、语言 %6 ⇒ %7%8")
+                         .arg(result.containers.size())
+                         .arg(result.files_copied)
+                         .arg(result.extracted)
+                         .arg(result.rewritten)
+                         .arg(result.texts)
+                         .arg(QString::fromStdString(result.lang))
                          .arg(QString::fromStdString(result.out_dir))
-                         .arg(result.skipped_existing));
+                         .arg(detail));
 }
 
 }  // namespace xrkit::shell
