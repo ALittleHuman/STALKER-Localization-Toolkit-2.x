@@ -222,34 +222,32 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
             body = '<?xml version="1.0" encoding="utf-8"?>\n' + body
         return bom + body.encode("utf-8"), "utf-8"
 
-    def _id_map(xml: str) -> dict:
-        """id → 文本内层（只认 <string id=…>…<text>…</text>）。"""
-        out = {}
-        for block, sid, body, _ in STRING_BLOCK.findall(xml):
-            tm = TEXT_INNER.search(body)
-            if tm:
-                out.setdefault(sid, tm.group(2))
-        return out
+    def _normalize_text_xml(path: Path) -> bool:
+        """**只对"文本 XML"**（`*/configs/text/**`）：统一成 UTF-8 **无 BOM**。
 
-    def _merge_ids(ref_xml: str, tr_map: dict) -> tuple[str, int, int]:
-        """按 id 把译文内容写回参考骨架；返回 (新文本, 用到几条, 参考里几条没译文)。"""
-        used = [0]
-        total = [0]
-
-        def repl(m):
-            open_tag, sid, body, close_tag = m.group(1), m.group(2), m.group(3), m.group(4)
-            total[0] += 1
-            if sid not in tr_map:
-                return m.group(0)
-            tm = TEXT_INNER.search(body)
-            if not tm:
-                return m.group(0)
-            used[0] += 1
-            # 只换 <text> 内层，其余（属性/缩进/注释）逐字节保留
-            new_body = body[:tm.start(2)] + tr_map[sid] + body[tm.end(2):]
-            return open_tag + new_body + close_tag
-
-        return STRING_BLOCK.sub(repl, ref_xml), used[0], total[0] - used[0]
+        用户 2026-10-29：「对于译文文件的处理，只需要保证文本 XML（不包括非文本 XML）
+        编码是 UTF-8 无 BOM 就行了。」
+          · 有 BOM 的去 BOM；
+          · 声明的编码不是 utf-8 ⇒ 按原编码解码后写 utf-8，并把声明改成 utf-8；
+          · 没有声明 ⇒ 就写 utf-8 字节（不硬加声明，免得改动不需要改的文件）；
+          · **非文本 XML / 其它扩展名一律不碰**（逐字节保留）。
+        返回 True 表示真的改写过（用于计数）。
+        """
+        raw = path.read_bytes()
+        had_bom = raw.startswith(b"\xef\xbb\xbf")
+        body = raw[3:] if had_bom else raw
+        text, enc = _decode(body)
+        # 声明里的编码名
+        m = XML_DECL.search(text[:200])
+        decl_enc = (m.group(1) if m else "").lower()
+        need_reencode = had_bom or (enc != "utf-8") or (decl_enc not in ("", "utf-8"))
+        if not need_reencode:
+            return False
+        if decl_enc and decl_enc != "utf-8":
+            text = re.sub(r'(<\?xml[^>]*encoding\s*=\s*")[^"]+(")',
+                          r'\1utf-8\2', text, count=1, flags=re.I)
+        path.write_bytes(text.encode("utf-8"))
+        return True
 
     long_texts: list[str] = []
     LONG_LIMIT = 1024   # 用户 2026-10-28：>512 不算超限
@@ -276,137 +274,112 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
     if out.exists():
         shutil.rmtree(out)
     # ★★★ 2026-10-28（用户：拿 MODS\123 与参照包对比「缺了什么看出来没？」）：
-    #   **默认＝照镜子**：参照包里有什么，产物就有什么（fonts.ltx / localization.ltx /
-    #   textures/map / ixr_addons 一样不少），只把**字体**换成合并后的、**文本**换成翻译件。
-    #   缺一个 `fonts.ltx`，游戏就可能仍按原字体节渲染 ⇒ 中文全成方块，前面几轮全白做。
-    #   只要字体的话用 `--fonts-only`。
-    src_gd = pack / "gamedata" if (pack / "gamedata").is_dir() else pack
-    if args.fonts_only:
-        out.mkdir(parents=True, exist_ok=True)
-        src_fonts = src_gd / "fonts"
-        if src_fonts.is_dir():
-            shutil.copytree(src_fonts, out / "gamedata" / "fonts")
-    else:
-        shutil.copytree(pack, out)
-        copied_all = sum(1 for _ in out.rglob("*") if _.is_file())
-        total_copied = copied_all
-        log("IXRGEN 基底：整包照抄 %d 个文件（fonts / configs / textures / ixr_addons 全保留）"
-            % copied_all)
-        # ★★★ 2026-10-28（用户：「我汉化包呢？这是能直接打的吗？」）：
-        #   只换字体不叫汉化包 —— **文本也要进产物**（否则装上去还是俄文）。
-        #   文本来源＝`--text-root`（页面里就是「文本 XML」那一栏），落到包的 `<lang>` 文本目录，
-        #   逐字节复制（翻译件已经是成品，不许我们再加工）。
-        text_dirs = [Path(x) for x in (args.text_root or []) if Path(x).is_dir()]
-        translation_given = bool(text_dirs)
-        if not text_dirs:
-            # ★★ 用户口径（2026-10-29）：「提取看原文，生成看译文。」
-            #   生成阶段的**字符集与文本都该来自译文**；没给译文就只能用参照包自带的原文
-            #   ⇒ 那出来的仍是"原文包"。**不许静默**：明确警告 + 报告里标 translation=false。
-            log("IXRGEN warn 没有给译文（--text-root / 「文本 XML」）⇒ 字符集与文本只能取参照包原文，"
-                "产物不是汉化包")
-            own = src_gd / "configs" / "text" / lang
-            if not own.is_dir():
-                own = src_gd / "text" / lang
-            if own.is_dir():
-                text_dirs = [own]
-        # ★★★ 2026-10-29（用户口径）：「**所有结构按照参考来，内容按照译文来**」——
-        #   参考包＝人工提取的完整语言包（结构真源）；译文目录＝纯 XML + 改造（内容真源）。
-        #   实现：**按 id 合并**（不是整文件覆盖）——参考文件当骨架，逐 id 换 <text> 内层，
-        #   属性/缩进/XML 声明/编码一律照参考；译文缺的 id 保留原文并计数。
-        #   配对三级：① 相对路径同名 → ② 文件名同名 → ③ id 集合重叠 ≥60%。
-        text_merged_ids = 0
-        text_missing_ids = 0
-        text_missing_files: list[str] = []
-        text_reencoded = 0                # 目标编码装不下译文 ⇒ 改 utf-8 的文件数
-        text_unused: list[str] = []
-        rewritten_copied = 0
-        if text_dirs and not args.no_texts:
-            tr_files: list[Path] = []
-            for root in text_dirs:
-                base = root / lang if (root / lang).is_dir() else root
-                tr_files.extend(sorted(base.rglob("*.xml")))
-            tr_by_name: dict[str, Path] = {}
-            tr_maps: dict[Path, dict] = {}
-            for f in tr_files:
-                tr_by_name.setdefault(f.name, f)
-                try:
-                    tr_maps[f] = _id_map(_decode(f.read_bytes())[0])
-                except Exception:
-                    tr_maps[f] = {}
+    # ★★★ 2026-10-29（用户纠正模型）：「**把译文文件夹复制，然后查与原文语言包的结构差异，
+    #   然后生成补全**。文件内容不用管。」
+    #   ⇒ 不再做"按 id 合并"（那是把内容改一遍，用户不需要）。现在的算法：
+    #     ① 产物 = **译文目录原样复制**（文本 + scripts/gameplay 改造产物）；
+    #     ② 拿**原文语言包**做结构基准：它有的、译文缺的文件 ⇒ 从原文**补全**；
+    #     ③ 只补本地化相关路径（configs/text、fonts、textures/map、ixr_addons、
+    #        fonts.ltx、localization.ltx）；参考包里别的东西（整个游戏的 bin/db/文本素材）
+    #        **绝不**搬（否则参考=整个游戏时会把 50 GB 抄一遍）。
+    LOCALIZATION_WHITELIST = (
+        "gamedata/configs/text/", "gamedata/configs/ui/", "gamedata/fonts/",
+        "gamedata/textures/map/", "ixr_addons/", "configs/text/", "fonts/",
+        "textures/map/",
+    )
+    LOCALIZATION_FILES = ("gamedata/configs/fonts.ltx", "gamedata/configs/localization.ltx",
+                          "configs/fonts.ltx", "configs/localization.ltx")
 
-            ref_targets = sorted({d for d in out.rglob(lang)
-                                  if d.is_dir() and d.parent.name == "text"
-                                  and any(d.glob("*.xml"))})
-            used_files: set[Path] = set()
-            for dst_texts in ref_targets:
-                for ref_xml_path in sorted(dst_texts.glob("*.xml")):
-                    raw = ref_xml_path.read_bytes()
-                    ref_str, enc = _decode(raw)
-                    ref_ids = _id_map(ref_str)
-                    cand = tr_by_name.get(ref_xml_path.name)
-                    if cand is None and ref_ids:
-                        best, score = None, 0.0
-                        for f, m in tr_maps.items():
-                            if not m:
-                                continue
-                            hit = len(set(m) & set(ref_ids))
-                            if hit >= max(1, int(0.6 * len(ref_ids))) and hit > score:
-                                best, score = f, hit
-                        cand = best
-                    if cand is None:
-                        text_missing_files.append(str(ref_xml_path.relative_to(out)) +
-                                                  "（译文里配对不到，保留原文）")
-                        continue
-                    used_files.add(cand)
-                    merged, used_n, miss_n = _merge_ids(ref_str, tr_maps.get(cand, {}))
-                    if used_n == 0:
-                        text_missing_files.append(str(ref_xml_path.relative_to(out)) +
-                                                  "（配到了译文但 id 一个都对不上，保留原文）")
-                        continue
-                    try:
-                        data_out, enc_used = _encode_like(merged, enc)
-                        ref_xml_path.write_bytes(data_out)
-                        if enc_used != enc:
-                            text_reencoded += 1
-                    except Exception as exc:
-                        log("IXRGEN warn 写不回去 %s：%r" % (ref_xml_path.name, exc))
-                        continue
-                    text_merged_ids += used_n
-                    text_missing_ids += miss_n
-                    scan_long(cand)
-            for f in tr_files:
-                if f not in used_files:
-                    text_unused.append(f.name + "（参考包里没有可配对的文件，未使用）")
-            log("IXRGEN 文本：按 id 合并 %d 条（缺译文 %d 条，共处理 %d 个参考文件）"
-                % (text_merged_ids, text_missing_ids, len(ref_targets)))
-            if text_reencoded:
-                log("IXRGEN warn %d 个文件的原编码装不下译文 ⇒ 已改 utf-8 并同步 XML 声明"
-                    % text_reencoded)
-            for line in text_missing_files[:10]:
-                log("IXRGEN warn 保留原文：" + line)
-            for line in text_unused[:10]:
-                log("IXRGEN warn 未使用：" + line)
-            # 改造产物（译文目录里的 scripts / gameplay）：参考包没有这层结构 ⇒ 按译文布局搬进去
+    def _is_localization(rel: str) -> bool:
+        r = rel.replace("\\", "/").lower()
+        if r in LOCALIZATION_FILES:
+            return True
+        return any(r.startswith(w) for w in LOCALIZATION_WHITELIST)
+
+    text_dirs = [Path(x) for x in (args.text_root or []) if Path(x).is_dir()]
+    translation_given = bool(text_dirs)
+    if not text_dirs:
+        log("IXRGEN warn 没有给译文（--text-root /「文本 XML」）⇒ 只能按原文语言包出包，"
+            "这不是汉化包")
+    out.mkdir(parents=True, exist_ok=True)
+    # ① 译文原样复制（文本落 `<out>/gamedata/configs/text/<lang>`；scripts/gameplay 落根）
+    text_copied = 0
+    rewritten_copied = 0
+    text_reencoded = 0            # 规范化成 UTF-8 无 BOM 的文本 XML 数
+    tr_rels: set[str] = set()
+    if text_dirs and not args.no_texts:
+        for root in text_dirs:
+            base = root / lang if (root / lang).is_dir() else root
+            dst_texts = out / "gamedata" / "configs" / "text" / lang
+            dst_texts.mkdir(parents=True, exist_ok=True)
+            for xml in sorted(base.rglob("*.xml")):
+                target = dst_texts / xml.name
+                shutil.copy2(xml, target)
+                if _normalize_text_xml(target):
+                    text_reencoded += 1
+                tr_rels.add(str(target.relative_to(out)).replace("\\", "/").lower())
+                text_copied += 1
+                scan_long(xml)
             for sub in ("scripts", "gameplay"):
-                for root in text_dirs:
-                    src_sub = root / sub
-                    if src_sub.is_dir():
-                        shutil.copytree(src_sub, out / sub, dirs_exist_ok=True)
-                        rewritten_copied += sum(1 for x in src_sub.rglob("*") if x.is_file())
-                        break
-            if rewritten_copied:
-                log("IXRGEN 改造产物：%d 个文件（scripts/gameplay）" % rewritten_copied)
-            report_unmatched = len(text_missing_files)
-            report_unused = len(text_unused)
-            if long_texts:
-                log("IXRGEN warn 超长无换行文本 %d 段（上限 %d 字）" % (len(long_texts), LONG_LIMIT))
-                for line in long_texts[:5]:
-                    log("IXRGEN warn " + line)
-                log_path = out.parent / (out.name + ".long_texts.log")
-                log_path.write_text(
-                    "long_texts=%d limit=%d\n" % (len(long_texts), LONG_LIMIT) +
-                    "\n".join(long_texts) + "\n", encoding="utf-8")
-                log("IXRGEN warn log=%s" % log_path)
+                src_sub = root / sub
+                if src_sub.is_dir():
+                    shutil.copytree(src_sub, out / sub, dirs_exist_ok=True)
+                    rewritten_copied += sum(1 for x in src_sub.rglob("*") if x.is_file())
+                    for x in src_sub.rglob("*"):
+                        if x.is_file():
+                            tr_rels.add(str((out / sub / x.relative_to(src_sub))
+                                            .relative_to(out)).replace("\\", "/").lower())
+        log("IXRGEN 译文：%d 个文本 XML + %d 个改造产物（原样复制；%d 个规范化成 UTF-8 无 BOM）"
+            % (text_copied, rewritten_copied, text_reencoded))
+
+    # ② 结构基准＝原文语言包；只补本地化路径里**译文缺**的文件
+    supplemented: list[str] = []
+    ref_skipped: list[str] = []
+    # 译文按**文件名**索引：参考结构里有个 text 槽位、译文里也有同名 XML ⇒
+    # 往那个槽位里放**译文内容**（结构按参考、内容按译文；不是拿原文顶上去）。
+    tr_by_name: dict[str, Path] = {}
+    if text_dirs and not args.no_texts:
+        for root in text_dirs:
+            base = root / lang if (root / lang).is_dir() else root
+            for xml in sorted(base.rglob("*.xml")):
+                tr_by_name.setdefault(xml.name, xml)
+    src_gd = pack / "gamedata" if (pack / "gamedata").is_dir() else pack
+    ref_files = [x for x in pack.rglob("*") if x.is_file()]
+    for src in ref_files:
+        rel = str(src.relative_to(pack)).replace("\\", "/")
+        if not _is_localization(rel):
+            ref_skipped.append(rel)
+            continue
+        if rel.lower() in tr_rels:
+            continue
+        dst = out / rel
+        if dst.is_file():
+            continue                      # 译文里已经有（同路径）⇒ 不覆盖内容
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        rel_norm = rel.replace("\\", "/").lower()
+        tr_same = tr_by_name.get(src.name) if "/configs/text/" in rel_norm else None
+        shutil.copy2(tr_same if tr_same is not None else src, dst)
+        # 补全来的也是"文本 XML" ⇒ 同样规范成 UTF-8 无 BOM（同一套口径，不搞两制）
+        if "/configs/text/" in rel.replace("\\", "/").lower():
+            if _normalize_text_xml(dst):
+                text_reencoded += 1
+        supplemented.append(rel)
+    # 参考包里有、但不是本地化路径的文件：整包当参考时**如实报**，绝不静默
+    if ref_skipped:
+        looks_like_game = any(r.lower().endswith((".db0", ".db", ".db9", ".sqfs")) or
+                              r.lower().startswith(("bin/", "appdata/")) for r in ref_skipped)
+        log("IXRGEN 参考里另有 %d 个非本地化文件未补%s"
+            % (len(ref_skipped),
+               "（参考看起来是**整个游戏** ⇒ 只补本地化相关目录）" if looks_like_game else ""))
+        for r in ref_skipped[:5]:
+            log("IXRGEN note 跳过：" + r)
+    log("IXRGEN 补全：%d 个文件（原文有、译文缺，只限本地化路径）" % len(supplemented))
+    for r in supplemented[:10]:
+        log("IXRGEN note 补：" + r)
+    report_unmatched = len(supplemented)
+    report_unused = len(ref_skipped)
+    text_merged_ids = text_copied
+    text_missing_ids = len(supplemented)
     out_gd = out / "gamedata" if (out / "gamedata").is_dir() else out
     out_fonts = out_gd / "fonts" / lang
 

@@ -259,38 +259,6 @@ def main() -> int:
             problems += 1
             fail("报告里的 translation 不是 false（实得 %r）" % per_lang.get("translation"))
 
-        # ①-b3 用户口径（2026-10-29）：「结构照参考，内容照译文」⇒ **按 id 合并**：
-        #   参考文件有 2 条（keep_a / tr_b），译文只给 tr_b ⇒ 产物仍是 2 条，
-        #   tr_b 变中文、keep_a 保留原文；报告里 text_missing_ids ≥ 1。
-        part_pack = build_pack(tmp / "partial", BASE_FONT, "Hello")
-        part_text = part_pack / "gamedata" / "configs" / "text" / "rus" / "st_test.xml"
-        part_text.write_text(
-            '<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
-            '  <string id="keep_a"><text>Оригинал</text></string>\n'
-            '  <string id="tr_b"><text>Оригинал два</text></string>\n'
-            '</string_table>\n', encoding="utf-8")
-        part_cn = tmp / "partial_cn"
-        part_cn.mkdir(parents=True, exist_ok=True)
-        (part_cn / "st_test.xml").write_text(
-            '<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
-            '  <string id="tr_b"><text>译文二</text></string>\n'
-            '</string_table>\n', encoding="utf-8")
-        part_out = tmp / "out_partial"
-        rc_p, so_p = run_tool(part_pack, CJK_FONT, part_out, ["--text-root", str(part_cn)])
-        merged_text = (part_out / "gamedata" / "configs" / "text" / "rus" / "st_test.xml")
-        rep_p = (report_of(so_p).get("reports") or [{}])[0]
-        got = merged_text.read_text(encoding="utf-8", errors="replace") if merged_text.is_file() else ""
-        if rc_p == 0 and "译文二" in got and "Оригинал" in got:
-            ok("部分翻译按 id 合并：译文的 id 换掉、没译的保留原文")
-        else:
-            problems += 1
-            fail("按 id 合并不对（%r）\n%s" % (got[:200], so_p[-300:]))
-        if rep_p.get("text_missing_ids", 0) >= 1:
-            ok("报告里 text_missing_ids=%d（缺译文的 id 有账）" % rep_p["text_missing_ids"])
-        else:
-            problems += 1
-            fail("报告里 text_missing_ids 没记账（实得 %r）" % rep_p.get("text_missing_ids"))
-
         # ①-c 2026-10-29（用户）：「换了别的名字和文件树形式、更多此类文件夹，都能生成吗？
         #   里面的额外字体呢？」—— 造一个**任意名字 + 多层嵌套**的 addon：
         #   它自带 `configs/text/rus/*.xml` 与 `fonts/rus/extra.ttf`；断言
@@ -338,17 +306,13 @@ def main() -> int:
         rc_u, so_u = run_tool(un_used / "pack", CJK_FONT, un_used / "out",
                               ["--text-root", str(un_used / "cn")])
         rep_u = (report_of(so_u).get("reports") or [{}])[0]
-        if rc_u == 0 and "IXRGEN warn 未使用" in so_u and not (
-                un_used / "out" / "gamedata" / "configs" / "text" / "rus" / "not_in_ref.xml").exists():
-            ok("译文多一个文件：warn 未使用，且不塞进产物")
+        # 新模型：译文**整体复制**（参考里没有的同名文件也要带过去）
+        if rc_u == 0 and (un_used / "out" / "gamedata" / "configs" / "text" / "rus" /
+                          "not_in_ref.xml").is_file():
+            ok("译文里有、参考里没有的 XML：照样复制进产物（译文是内容源）")
         else:
             problems += 1
-            fail("译文多出来的文件处理不对：rc=%d\n%s" % (rc_u, so_u[-400:]))
-        if rep_u.get("text_unused") == 1:
-            ok("报告里 text_unused=1")
-        else:
-            problems += 1
-            fail("报告里 text_unused 不是 1（实得 %r）" % rep_u.get("text_unused"))
+            fail("译文多余文件没复制：rc=%d\n%s" % (rc_u, so_u[-400:]))
 
         extra_ttf = add_out / "ixr_addons" / "_renamed" / "nested" / "fonts" / "rus" / "extra.ttf"
         if extra_ttf.is_file():
@@ -362,60 +326,82 @@ def main() -> int:
             problems += 1
             fail("addon 自带的 ttf 没进产物")
 
-        # ①-d 编码与"逐字节保留"（用户 2026-10-29 要求逐条解释的三件事）：
-        #   cp1251 参考文件 + 中文译文 ⇒ 产物必须**改成 utf-8 并同步声明**（不许写成 `??`）；
-        #   属性 / 注释 / 缩进 / 俄文原文逐字节保留；声明之外不许被动。
-        enc_pack = build_pack(tmp / "enc", BASE_FONT, "Hello")
-        enc_text = enc_pack / "gamedata" / "configs" / "text" / "rus" / "cp.xml"
-        ref_xml = ('<?xml version="1.0" encoding="windows-1251"?>\r\n<string_table>\r\n'
-                   '  <!-- keep me -->\r\n'
-                   '  <string id="a" custom="keep"><text>Привет</text></string>\r\n'
-                   '  <string id="b"><text>Второй</text></string>\r\n'
-                   '</string_table>\r\n')
-        enc_text.write_bytes(ref_xml.encode("cp1251"))
-        enc_cn = tmp / "enc_cn"
-        enc_cn.mkdir(parents=True, exist_ok=True)
-        (enc_cn / "cp.xml").write_text(
+        # ①-f 用户纠正后的模型（2026-10-29）：
+        #   「把译文文件夹复制，然后查与原文语言包的结构差异，然后生成补全。文件内容不用管。」
+        #   ⇒ ① 译文 XML 原样复制（逐字节）；② 原文有、译文缺的**本地化**文件被补全（逐字节）；
+        #     ③ 参考里非本地化文件（bin/、*.db0…）**不补**，只在日志里报数（整包当参考也不会抄游戏）。
+        cf_pack = build_pack(tmp / "copyfill", BASE_FONT, "Hello")
+        # 参考里再放一个"非本地化"文件，验证它不会被补进产物
+        (cf_pack / "bin").mkdir(parents=True, exist_ok=True)
+        (cf_pack / "bin" / "game.exe").write_bytes(b"MZ fake")
+        (cf_pack / "gamedata" / "configs" / "text" / "rus" / "extra_ref.xml").write_text(
             '<?xml version="1.0" encoding="utf-8"?><string_table>'
-            '<string id="a"><text>你好</text></string></string_table>', encoding="utf-8")
-        enc_out = tmp / "out_enc"
-        rc_e, so_e = run_tool(enc_pack, CJK_FONT, enc_out, ["--text-root", str(enc_cn)])
-        out_bytes = (enc_out / "gamedata" / "configs" / "text" / "rus" / "cp.xml").read_bytes()
-        as_utf8 = out_bytes.decode("utf-8", "replace")
-        rep_e = (report_of(so_e).get("reports") or [{}])[0]
-        if rc_e == 0 and 'encoding="utf-8"' in as_utf8 and "你好" in as_utf8:
-            ok("cp1251 装不下中文 ⇒ 自动改 utf-8 并同步 XML 声明（不是 `??`）")
+            '<string id="z"><text>原文补全</text></string></string_table>', encoding="utf-8")
+        cf_cn = tmp / "copyfill_cn"
+        cf_cn.mkdir(parents=True, exist_ok=True)
+        (cf_cn / "st_test.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?><string_table>'
+            '<string id="t1"><text>译文</text></string></string_table>', encoding="utf-8")
+        cf_out = tmp / "out_copyfill"
+        rc_cf, so_cf = run_tool(cf_pack, CJK_FONT, cf_out, ["--text-root", str(cf_cn)])
+        tr_xml = cf_out / "gamedata" / "configs" / "text" / "rus" / "st_test.xml"
+        if rc_cf == 0 and tr_xml.is_file() and tr_xml.read_bytes() == (cf_cn / "st_test.xml").read_bytes():
+            ok("译文 XML 原样复制（逐字节，不再改内容）")
         else:
             problems += 1
-            fail("cp1251 + 中文没转 utf-8（前 120 字节 %r）" % as_utf8[:120])
-        if rep_e.get("text_reencoded") == 1:
-            ok("报告里 text_reencoded=1（改了编码的文件有账）")
+            fail("译文 XML 没被原样复制：rc=%d\n%s" % (rc_cf, so_cf[-300:]))
+        ref_only = cf_out / "gamedata" / "configs" / "text" / "rus" / "extra_ref.xml"
+        if ref_only.is_file() and "原文补全" in ref_only.read_text(encoding="utf-8", errors="replace"):
+            ok("原文有、译文缺的本地化文件被补全")
         else:
             problems += 1
-            fail("报告里 text_reencoded 不是 1（实得 %r）" % rep_e.get("text_reencoded"))
-        keep_ok = ('custom="keep"' in as_utf8 and "<!-- keep me -->" in as_utf8
-                   and "Второй" in as_utf8 and "\r\n" in as_utf8)
-        if keep_ok:
-            ok("属性/注释/缩进/未译的俄文原文逐字节保留")
+            fail("本地化结构补全失败（extra_ref.xml 不在产物里）")
+        if not (cf_out / "bin" / "game.exe").exists():
+            ok("参考里的非本地化文件（bin/game.exe）没被抄进产物")
         else:
             problems += 1
-            fail("结构没保留（属性/注释/缩进/原文至少一项丢了）")
+            fail("参考里的 bin/game.exe 被抄进了产物（整包当参考就会抄游戏）")
+        if "参考里另有" in so_cf and "未补" in so_cf:
+            ok("日志如实报「参考里另有 N 个非本地化文件未补」")
+        else:
+            problems += 1
+            fail("日志没报非本地化文件跳过数：%s" % so_cf[-200:])
 
-        # ①-e 只用俄文译文（cp1251 装得下）⇒ 编码与声明**不变**
-        ru_cn = tmp / "ru_cn"
-        ru_cn.mkdir(parents=True, exist_ok=True)
-        (ru_cn / "cp.xml").write_text(
-            '<?xml version="1.0" encoding="windows-1251"?><string_table>'
-            '<string id="a"><text>Здравствуй</text></string></string_table>', encoding="cp1251")
-        ru_out = tmp / "out_ru"
-        rc_r, so_r = run_tool(enc_pack, CJK_FONT, ru_out, ["--text-root", str(ru_cn)])
-        ru_bytes = (ru_out / "gamedata" / "configs" / "text" / "rus" / "cp.xml").read_bytes()
-        ru_decl = ru_bytes[:120].decode("ascii", "replace")
-        if rc_r == 0 and "windows-1251" in ru_decl and "Здравствуй".encode("cp1251") in ru_bytes:
-            ok("译文能被 cp1251 表示 ⇒ 编码与声明原样不动")
+        # ①-g 文本 XML 编码口径（用户 2026-10-29）：
+        #   「只需要保证文本 XML（不包括非文本 XML）编码是 UTF-8 无 BOM 就行了。」
+        enc_pack = build_pack(tmp / "enc2", BASE_FONT, "Hello")
+        ui_dir = enc_pack / "gamedata" / "configs" / "ui"
+        ui_dir.mkdir(parents=True, exist_ok=True)
+        ui_bytes = ('<?xml version="1.0" encoding="windows-1251"?>\r\n<ui><x a="1"/></ui>\r\n'
+                    ).encode("cp1251")
+        (ui_dir / "ui_ref.xml").write_bytes(ui_bytes)
+        (enc_pack / "gamedata" / "configs" / "text" / "rus" / "cp_ref.xml").write_bytes(
+            ('<?xml version="1.0" encoding="windows-1251"?><string_table>'
+             '<string id="r"><text>Русский</text></string></string_table>').encode("cp1251"))
+        enc_cn = tmp / "enc2_cn"
+        enc_cn.mkdir(parents=True, exist_ok=True)
+        bom_xml = ('<?xml version="1.0" encoding="utf-8"?><string_table>'
+                   '<string id="t1"><text>译文</text></string></string_table>')
+        (enc_cn / "st_test.xml").write_bytes(b"\xef\xbb\xbf" + bom_xml.encode("utf-8"))
+        enc_out = tmp / "out_enc2"
+        rc_e, so_e = run_tool(enc_pack, CJK_FONT, enc_out, ["--text-root", str(enc_cn)])
+        got_tr = (enc_out / "gamedata" / "configs" / "text" / "rus" / "st_test.xml").read_bytes()
+        if rc_e == 0 and not got_tr.startswith(b"\xef\xbb\xbf") and "译文".encode("utf-8") in got_tr:
+            ok("译文文本 XML 带 BOM ⇒ 产物无 BOM（UTF-8）")
         else:
             problems += 1
-            fail("cp1251 该保持却变了（声明 %r）" % ru_decl[:80])
+            fail("BOM 没去掉（前 3 字节 %r）" % got_tr[:3])
+        got_cp = (enc_out / "gamedata" / "configs" / "text" / "rus" / "cp_ref.xml").read_bytes()
+        if not got_cp.startswith(b"\xef\xbb\xbf") and "Русский".encode("utf-8") in got_cp:
+            ok("补全来的 cp1251 文本 XML ⇒ 也是 UTF-8 无 BOM")
+        else:
+            problems += 1
+            fail("补全的文本 XML 没规范成 UTF-8 无 BOM")
+        if (enc_out / "gamedata" / "configs" / "ui" / "ui_ref.xml").read_bytes() == ui_bytes:
+            ok("非文本 XML 一个字节都没动")
+        else:
+            problems += 1
+            fail("非文本 XML 被改了（只该动文本 XML）")
 
         # ② 逐槽位字体计划：letterica 段用另一个字体；只处理 size=14 的段时 letterica 必须不动
         pack2 = build_pack(tmp / "plan", BASE_FONT, TEXT)
