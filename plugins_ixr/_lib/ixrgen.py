@@ -200,6 +200,28 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
                 continue
         return data.decode("utf-8", "replace"), "utf-8"
 
+    def _encode_like(merged: str, enc: str) -> tuple[bytes, str]:
+        """按参考文件编码写回；**译文里有目标编码表示不了的字符 ⇒ 改 utf-8 并同步声明**。
+
+        为什么不能直接 `encode(enc, "replace")`：cp1251 的参考文件 + 中文译文时，
+        「你好」会变成 `??`（实测踩过）——那是最坏的一种"静默损坏"。
+        返回 (字节, 实际编码)。
+        """
+        bom = b"\xef\xbb\xbf" if merged.startswith("\ufeff") else b""
+        body = merged[1:] if bom else merged
+        try:
+            return bom + body.encode(enc), enc
+        except UnicodeEncodeError:
+            pass
+        # 换 utf-8：声明里的 encoding 也要改，否则解析器按旧编码读
+        if XML_DECL.search(body[:200]):
+            body = XML_DECL.sub('<?xml version="1.0" encoding="utf-8"', body, count=1) \
+                if False else re.sub(r'(<\?xml[^>]*encoding\s*=\s*")[^"]+(")',
+                                     r'\1utf-8\2', body, count=1, flags=re.I)
+        else:
+            body = '<?xml version="1.0" encoding="utf-8"?>\n' + body
+        return bom + body.encode("utf-8"), "utf-8"
+
     def _id_map(xml: str) -> dict:
         """id → 文本内层（只认 <string id=…>…<text>…</text>）。"""
         out = {}
@@ -295,6 +317,7 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
         text_merged_ids = 0
         text_missing_ids = 0
         text_missing_files: list[str] = []
+        text_reencoded = 0                # 目标编码装不下译文 ⇒ 改 utf-8 的文件数
         text_unused: list[str] = []
         rewritten_copied = 0
         if text_dirs and not args.no_texts:
@@ -341,7 +364,10 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
                                                   "（配到了译文但 id 一个都对不上，保留原文）")
                         continue
                     try:
-                        ref_xml_path.write_bytes(merged.encode(enc, "replace"))
+                        data_out, enc_used = _encode_like(merged, enc)
+                        ref_xml_path.write_bytes(data_out)
+                        if enc_used != enc:
+                            text_reencoded += 1
                     except Exception as exc:
                         log("IXRGEN warn 写不回去 %s：%r" % (ref_xml_path.name, exc))
                         continue
@@ -353,6 +379,9 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
                     text_unused.append(f.name + "（参考包里没有可配对的文件，未使用）")
             log("IXRGEN 文本：按 id 合并 %d 条（缺译文 %d 条，共处理 %d 个参考文件）"
                 % (text_merged_ids, text_missing_ids, len(ref_targets)))
+            if text_reencoded:
+                log("IXRGEN warn %d 个文件的原编码装不下译文 ⇒ 已改 utf-8 并同步 XML 声明"
+                    % text_reencoded)
             for line in text_missing_files[:10]:
                 log("IXRGEN warn 保留原文：" + line)
             for line in text_unused[:10]:
@@ -406,6 +435,7 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
               "texts": locals().get("text_merged_ids", 0),
               "rewritten": locals().get("rewritten_copied", 0),
               "text_missing_ids": locals().get("text_missing_ids", 0),
+              "text_reencoded": locals().get("text_reencoded", 0),
               "copied": locals().get("total_copied", 0),
               "translation": locals().get("translation_given", False),
               "text_unmatched": locals().get("report_unmatched", 0),

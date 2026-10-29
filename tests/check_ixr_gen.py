@@ -362,6 +362,61 @@ def main() -> int:
             problems += 1
             fail("addon 自带的 ttf 没进产物")
 
+        # ①-d 编码与"逐字节保留"（用户 2026-10-29 要求逐条解释的三件事）：
+        #   cp1251 参考文件 + 中文译文 ⇒ 产物必须**改成 utf-8 并同步声明**（不许写成 `??`）；
+        #   属性 / 注释 / 缩进 / 俄文原文逐字节保留；声明之外不许被动。
+        enc_pack = build_pack(tmp / "enc", BASE_FONT, "Hello")
+        enc_text = enc_pack / "gamedata" / "configs" / "text" / "rus" / "cp.xml"
+        ref_xml = ('<?xml version="1.0" encoding="windows-1251"?>\r\n<string_table>\r\n'
+                   '  <!-- keep me -->\r\n'
+                   '  <string id="a" custom="keep"><text>Привет</text></string>\r\n'
+                   '  <string id="b"><text>Второй</text></string>\r\n'
+                   '</string_table>\r\n')
+        enc_text.write_bytes(ref_xml.encode("cp1251"))
+        enc_cn = tmp / "enc_cn"
+        enc_cn.mkdir(parents=True, exist_ok=True)
+        (enc_cn / "cp.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?><string_table>'
+            '<string id="a"><text>你好</text></string></string_table>', encoding="utf-8")
+        enc_out = tmp / "out_enc"
+        rc_e, so_e = run_tool(enc_pack, CJK_FONT, enc_out, ["--text-root", str(enc_cn)])
+        out_bytes = (enc_out / "gamedata" / "configs" / "text" / "rus" / "cp.xml").read_bytes()
+        as_utf8 = out_bytes.decode("utf-8", "replace")
+        rep_e = (report_of(so_e).get("reports") or [{}])[0]
+        if rc_e == 0 and 'encoding="utf-8"' in as_utf8 and "你好" in as_utf8:
+            ok("cp1251 装不下中文 ⇒ 自动改 utf-8 并同步 XML 声明（不是 `??`）")
+        else:
+            problems += 1
+            fail("cp1251 + 中文没转 utf-8（前 120 字节 %r）" % as_utf8[:120])
+        if rep_e.get("text_reencoded") == 1:
+            ok("报告里 text_reencoded=1（改了编码的文件有账）")
+        else:
+            problems += 1
+            fail("报告里 text_reencoded 不是 1（实得 %r）" % rep_e.get("text_reencoded"))
+        keep_ok = ('custom="keep"' in as_utf8 and "<!-- keep me -->" in as_utf8
+                   and "Второй" in as_utf8 and "\r\n" in as_utf8)
+        if keep_ok:
+            ok("属性/注释/缩进/未译的俄文原文逐字节保留")
+        else:
+            problems += 1
+            fail("结构没保留（属性/注释/缩进/原文至少一项丢了）")
+
+        # ①-e 只用俄文译文（cp1251 装得下）⇒ 编码与声明**不变**
+        ru_cn = tmp / "ru_cn"
+        ru_cn.mkdir(parents=True, exist_ok=True)
+        (ru_cn / "cp.xml").write_text(
+            '<?xml version="1.0" encoding="windows-1251"?><string_table>'
+            '<string id="a"><text>Здравствуй</text></string></string_table>', encoding="cp1251")
+        ru_out = tmp / "out_ru"
+        rc_r, so_r = run_tool(enc_pack, CJK_FONT, ru_out, ["--text-root", str(ru_cn)])
+        ru_bytes = (ru_out / "gamedata" / "configs" / "text" / "rus" / "cp.xml").read_bytes()
+        ru_decl = ru_bytes[:120].decode("ascii", "replace")
+        if rc_r == 0 and "windows-1251" in ru_decl and "Здравствуй".encode("cp1251") in ru_bytes:
+            ok("译文能被 cp1251 表示 ⇒ 编码与声明原样不动")
+        else:
+            problems += 1
+            fail("cp1251 该保持却变了（声明 %r）" % ru_decl[:80])
+
         # ② 逐槽位字体计划：letterica 段用另一个字体；只处理 size=14 的段时 letterica 必须不动
         pack2 = build_pack(tmp / "plan", BASE_FONT, TEXT)
         # 两份字体文件都在（build_pack 只造了 arial；补一个 letterica 段）
