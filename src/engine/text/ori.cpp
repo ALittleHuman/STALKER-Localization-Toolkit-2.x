@@ -49,11 +49,21 @@ std::string lang_from_ltx(const fs::path& ltx) {
     std::ifstream in(ltx, std::ios::binary);
     if (!in) return std::string();
     std::string line;
+    bool first_line = true;
     bool in_section = false;
     std::string found;
     while (std::getline(in, line)) {
         std::string s = line;
         if (!s.empty() && s.back() == '\r') s.pop_back();
+        if (first_line) {
+            // PowerShell/编辑器存出来的 UTF-8 常带 BOM；不去掉第一行 `[string_table]` 就认不出
+            if (s.size() >= 3 && static_cast<unsigned char>(s[0]) == 0xEF &&
+                static_cast<unsigned char>(s[1]) == 0xBB &&
+                static_cast<unsigned char>(s[2]) == 0xBF) {
+                s = s.substr(3);
+            }
+            first_line = false;
+        }
         const size_t hash = s.find(';');
         if (hash != std::string::npos) s = s.substr(0, hash);
         while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
@@ -132,7 +142,8 @@ uint64_t copy_tree_into(const fs::path& src, const fs::path& dst,
 // 再交给 extract_dir（它按目录名判 kind）—— 这样 configs/ui 这类分支也能复用同一份内核。
 ExtractStats extract_branch(const fs::path& branch, ExtractKind kind, const fs::path& target,
                             const fs::path& texts_out, const OriOptions& options,
-                            std::vector<std::string>* warnings) {
+                            std::vector<std::string>* warnings,
+                            const std::string& prefix_suffix = "") {
     std::error_code ec;
     const fs::path tmp = fs::temp_directory_path(ec) / "xrkit_ori_branch" /
                          (kind == ExtractKind::Gameplay ? "gameplay" : "scripts");
@@ -140,7 +151,7 @@ ExtractStats extract_branch(const fs::path& branch, ExtractKind kind, const fs::
     fs::create_directories(tmp, ec);
     copy_tree_into(branch, tmp, warnings);
     ExtractOptions eopt;
-    eopt.prefix = options.prefix;
+    eopt.prefix = options.prefix + prefix_suffix;
     ExtractStats st = extract_dir(core::path_to_utf8(tmp), core::path_to_utf8(target),
                                   core::path_to_utf8(texts_out), eopt);
     for (const std::string& skip : st.skipped) {
@@ -162,14 +173,33 @@ OriResult build_ori_tree(const OriOptions& options) {
         return out;
     }
 
-    // 源是单文件 ⇒ 容器走它最近的祖先；这里先拒绝（本轮只支持目录，单文件下一轮）
+    // 源是单文件 ⇒ 向上找**最近的容器**，按那棵容器整树生成（规划 4.5 / 6）
+    fs::path effective_src = src;
+    std::string single_file_rel;
     if (is_file(src)) {
-        out.error = "本轮先只支持目录输入（单文件输入下一轮）：" + options.source_dir;
-        return out;
+        fs::path parent = src.parent_path();
+        fs::path container = parent;
+        bool found = false;
+        while (!parent.empty()) {
+            if (has_container_markers(parent)) {
+                container = parent;
+                found = true;
+                break;
+            }
+            if (parent == parent.parent_path()) break;
+            parent = parent.parent_path();
+        }
+        if (!found) container = src.parent_path();   // 找不到容器 ⇒ 文件所在目录当最小容器
+        std::error_code rel_ec;
+        fs::path rel = fs::relative(src, container, rel_ec);
+        single_file_rel = rel_ec ? src.filename().string() : core::path_to_utf8(rel);
+        out.warnings.push_back("单文件输入：按最近容器 " + core::path_to_utf8(container) +
+                               " 生成整树（该文件相对路径 " + single_file_rel + "）");
+        effective_src = container;
     }
 
     // ── 输入/输出边界（与 IXR 生成器同一口径：绝不删输入）─────────────────
-    const fs::path src_abs = fs::weakly_canonical(src, ec);
+    const fs::path src_abs = fs::weakly_canonical(effective_src, ec);
     const fs::path out_abs = fs::weakly_canonical(out_root, ec);
     if (src_abs == out_abs || out_abs.string().rfind(src_abs.string() + "/", 0) == 0 ||
         src_abs.string().rfind(out_abs.string() + "/", 0) == 0) {
@@ -198,14 +228,15 @@ OriResult build_ori_tree(const OriOptions& options) {
 
     // ── 容器发现：带标记的目录，且不取"已被更外层容器覆盖"的目录 ──────────
     efs::WalkReport report;
-    const std::vector<efs::TreeItem> items = efs::collect_tree(options.source_dir, &report);
+    const std::vector<efs::TreeItem> items =
+        efs::collect_tree(core::path_to_utf8(effective_src), &report);
     for (const std::string& err : report.errors) out.warnings.push_back("遍历：" + err);
 
     std::vector<std::string> candidates;
-    if (has_container_markers(src)) candidates.push_back("");
+    if (has_container_markers(effective_src)) candidates.push_back("");
     for (const efs::TreeItem& item : items) {
         if (!item.is_dir) continue;
-        const fs::path dir = src / core::path_from_utf8(item.path);
+        const fs::path dir = effective_src / core::path_from_utf8(item.path);
         if (has_container_markers(dir)) candidates.push_back(item.path);
     }
     std::sort(candidates.begin(), candidates.end(),
@@ -233,7 +264,8 @@ OriResult build_ori_tree(const OriOptions& options) {
 
     // ── 每个容器：整树复制 → 提取 → 文本落盘 → 多语言复制 ──────────────────
     for (const std::string& rel : containers) {
-        const fs::path container = rel.empty() ? src : src / core::path_from_utf8(rel);
+        const fs::path container = rel.empty() ? effective_src
+                                              : effective_src / core::path_from_utf8(rel);
         const fs::path dst = rel.empty() ? out_abs : out_abs / core::path_from_utf8(rel);
         OriContainer info;
         info.rel = rel;
@@ -255,7 +287,7 @@ OriResult build_ori_tree(const OriOptions& options) {
         if (is_dir(container / "scripts")) {
             const ExtractStats st = extract_branch(container / "scripts", ExtractKind::Scripts,
                                                    dst / "scripts", texts_out, options,
-                                                   &out.warnings);
+                                                   &out.warnings, "sc");
             if (!st.ok && !st.error.empty()) out.warnings.push_back("scripts：" + st.error);
             info.extracted += st.strings;
             info.rewritten += st.files;
@@ -268,7 +300,7 @@ OriResult build_ori_tree(const OriOptions& options) {
             if (!is_dir(branch)) continue;
             const ExtractStats st = extract_branch(branch, ExtractKind::Gameplay,
                                                    dst / "configs" / "gameplay", texts_out,
-                                                   options, &out.warnings);
+                                                   options, &out.warnings, "gp");
             if (!st.ok && !st.error.empty()) out.warnings.push_back("gameplay：" + st.error);
             info.extracted += st.strings;
             info.rewritten += st.files;
@@ -282,11 +314,23 @@ OriResult build_ori_tree(const OriOptions& options) {
             std::error_code del_ec;
             fs::remove_all(dst / "gameplay", del_ec);
         }
-        // configs/ui、configs/scripts：本轮未提取，如实记账（下一轮补）
-        for (const char* extra : {"configs/ui", "configs/scripts"}) {
-            if (is_dir(container / extra)) {
-                out.warnings.push_back(std::string("本轮未提取（已原样保留）：") + rel + "/" + extra);
+        // configs/ui（XML）、configs/scripts（script/ltx）：同样提取，改写后按原相对路径回写
+        struct ExtraBranch { const char* rel; ExtractKind kind; };
+        for (const ExtraBranch& extra : {ExtraBranch{"configs/ui", ExtractKind::Gameplay},
+                                         ExtraBranch{"configs/scripts", ExtractKind::Scripts}}) {
+            const fs::path branch = container / extra.rel;
+            if (!is_dir(branch)) continue;
+            const std::string suffix = std::string(extra.rel) == "configs/ui" ? "ui" : "cs";
+            const ExtractStats st = extract_branch(branch, extra.kind, dst / extra.rel,
+                                                   texts_out, options, &out.warnings, suffix);
+            if (!st.ok && !st.error.empty()) {
+                out.warnings.push_back(std::string(extra.rel) + "：" + st.error);
             }
+            info.extracted += st.strings;
+            info.rewritten += st.files;
+            info.texts += st.texts_xml_name.empty() ? 0 : 1;
+            out.extracted += st.strings;
+            out.rewritten += st.files;
         }
 
         // 多语言：容器已有的其它语言目录也放一份（规划 4.4）

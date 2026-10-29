@@ -65,6 +65,14 @@ def make_mod_root(root: Path) -> None:
         '<?xml version="1.0" encoding="utf-8"?><string_table>'
         '<string id="d1"><text>你好，旅行者</text></string></string_table>', encoding="utf-8")
     (gd / "scripts" / "a.script").write_text('local t = "你好世界"\n', encoding="utf-8")
+    # 第二轮：configs/ui、configs/scripts、多语言目录
+    (gd / "configs" / "ui").mkdir(parents=True)
+    (gd / "configs" / "ui" / "ui_st.xml").write_text(
+        '<ui><text>你好，界面</text></ui>', encoding="utf-8")
+    (gd / "configs" / "scripts").mkdir(parents=True)
+    (gd / "configs" / "scripts" / "x.script").write_text(
+        'local t = "你好脚本"\n', encoding="utf-8")
+    (gd / "configs" / "text" / "eng").mkdir(parents=True)
     ad = root / "ixr_addons" / "~bodycam"
     (ad / "configs" / "text" / "rus").mkdir(parents=True)
     (ad / "gameplay").mkdir(parents=True)
@@ -128,7 +136,7 @@ def main() -> int:
             ok("scripts 改写为 translate_string(<id>)")
         else:
             fail("scripts 没被改写")
-        texts = sorted((ori / "gamedata" / "configs" / "text" / "rus").glob("gs_*.xml"))
+        texts = sorted((ori / "gamedata" / "configs" / "text" / "rus").glob("gs*.xml"))
         body = "".join(p.read_text(encoding="utf-8", errors="replace") for p in texts)
         if texts and "你好世界" in body and "你好，旅行者" in body:
             ok("提取出的中文正文都在文本表里（%d 个表）" % len(texts))
@@ -142,6 +150,45 @@ def main() -> int:
             ok("addon 容器：自己的 configs/gameplay + configs/text 都在")
         else:
             fail("addon 容器结构不全")
+
+        # ⑤-b 第二轮：configs/ui、configs/scripts 也要被提取，且各有自己的文本表
+        ui_out = ori / "gamedata" / "configs" / "ui" / "ui_st.xml"
+        ui_texts = list((ori / "gamedata" / "configs" / "text" / "rus").glob("gsui_*.xml"))
+        if ui_out.is_file() and "sgtat_" in ui_out.read_text(encoding="utf-8", errors="replace") and ui_texts:
+            ok("configs/ui：改写 + 独立文本表（gsui_*）")
+        else:
+            fail("configs/ui 没被提取/改写")
+        cs_out = ori / "gamedata" / "configs" / "scripts" / "x.script"
+        cs_texts = list((ori / "gamedata" / "configs" / "text" / "rus").glob("gscs_*.xml"))
+        if cs_out.is_file() and "translate_string" in cs_out.read_text(encoding="utf-8", errors="replace") and cs_texts:
+            ok("configs/scripts：改写 + 独立文本表（gscs_*）")
+        else:
+            fail("configs/scripts 没被提取/改写")
+
+        # ⑤-c 多语言：容器已有 eng 目录 ⇒ 文本表也复制进去
+        eng_texts = list((ori / "gamedata" / "configs" / "text" / "eng").glob("gs*.xml"))
+        if eng_texts:
+            ok("多语言目录：eng 也拿到文本表（%d 个）" % len(eng_texts))
+        else:
+            fail("多语言目录没复制")
+
+        # ⑤-d 单文件输入：按最近容器生成整树（不假装成功、也不拒绝）
+        single_src = src / "gamedata" / "configs" / "ui" / "ui_st.xml"
+        single_out = tmp / "ori_single"
+        src_rc, src_out = run([str(CLI), "--ori-tree", str(single_src), str(single_out)])
+        if src_rc == 0 and "单文件输入" in src_out:
+            ok("单文件输入：按最近容器生成整树（warn 里写明容器）")
+        else:
+            fail("单文件输入行为不对：rc=%d\n%s" % (src_rc, src_out[-300:]))
+
+        # ⑤-e `gamedata/configs` 子树输入：输出仍保留 gamedata 前缀
+        sub_out = tmp / "ori_sub"
+        sub_rc, sub_out_text = run([str(CLI), "--ori-tree", str(src / "gamedata" / "configs"),
+                                    str(sub_out)])
+        if sub_rc == 0 and ((sub_out / "scripts").is_dir() or (sub_out / "configs").is_dir()):
+            ok("子树输入（gamedata/configs）：只处理该子树（落点按容器根）")
+        else:
+            fail("子树输入不对：rc=%d" % sub_rc)
 
         # ⑥ 输入只读
         if snapshot(src) == before:
