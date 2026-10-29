@@ -403,6 +403,40 @@ def main() -> int:
             problems += 1
             fail("非文本 XML 被改了（只该动文本 XML）")
 
+        # ①-h `--out` 输入保护（交接区审计 P0-1/P0-4/P0-8/P0-11）：三种重叠都必须拒绝且**不删东西**
+        guard_pack = build_pack(tmp / "guard", BASE_FONT, "Hello")
+        before = sorted(p.relative_to(guard_pack).as_posix()
+                        for p in guard_pack.rglob("*") if p.is_file())
+        cases = [
+            ("out == pack", str(guard_pack)),
+            ("out 是 pack 的父目录", str(guard_pack.parent)),
+            ("out 在 pack 内部", str(guard_pack / "sub" / "out")),
+        ]
+        for label, out_arg in cases:
+            rc_g, so_g = run_tool(guard_pack, CJK_FONT, Path(out_arg))
+            if rc_g != 0 and "拒绝" in so_g:
+                ok("%s：拒绝且退出码非 0" % label)
+            else:
+                problems += 1
+                fail("%s 没被拒绝：rc=%d\n%s" % (label, rc_g, so_g[-300:]))
+        after = sorted(p.relative_to(guard_pack).as_posix()
+                       for p in guard_pack.rglob("*") if p.is_file())
+        if after == before:
+            ok("三次拒绝之后参照包一个文件都没少")
+        else:
+            problems += 1
+            fail("拒绝路径动了参照包（前 %d / 后 %d 个文件）" % (len(before), len(after)))
+        # 已有非空输出目录、没给 --force ⇒ 拒绝
+        busy_out = tmp / "busy_out"
+        busy_out.mkdir(parents=True, exist_ok=True)
+        (busy_out / "user_data.txt").write_text("keep me", encoding="utf-8")
+        rc_b, so_b = run_tool(guard_pack, CJK_FONT, busy_out)
+        if rc_b != 0 and "拒绝" in so_b and (busy_out / "user_data.txt").is_file():
+            ok("已有非空输出目录：没给 --force 就拒绝，用户文件还在")
+        else:
+            problems += 1
+            fail("非空输出目录被直接清空/接受了：rc=%d\n%s" % (rc_b, so_b[-300:]))
+
         # ② 逐槽位字体计划：letterica 段用另一个字体；只处理 size=14 的段时 letterica 必须不动
         pack2 = build_pack(tmp / "plan", BASE_FONT, TEXT)
         # 两份字体文件都在（build_pack 只造了 arial；补一个 letterica 段）

@@ -202,6 +202,19 @@ def register(api):
         multi_check = ui.checkbox(parent, "多语言：每个语言各出一份（--all-langs）", None)
         multi_check_holder = {"box": multi_check}
 
+        # ★★ 2026-10-29（交接区审计 P0-7）：插件以前**没有译文入口** ⇒ 生成的永远
+        #   是"换了字体的俄语包"。这里补「译文 XML 目录」，并作为 --text-root 传下去。
+        ui.label(parent, "译文 XML 目录（纯 XML + 改造产物；不填 = 只出字体包）")
+        trans_entry = ui.entry(parent, host.pref_get(SECTION, "text_root", ""), 60)
+
+        def pick_trans():
+            picked = ui.ask_directory("选择译文 XML 目录")
+            if picked:
+                ui.set_text(trans_entry, picked)
+                host.pref_set(SECTION, "text_root", picked)
+
+        ui.button(parent, "选译文目录…", pick_trans)
+
         out_entry = ui.entry(parent, host.pref_get(SECTION, "out", ""), 60)
         ui.label(parent, "输出目录")
 
@@ -236,12 +249,24 @@ def register(api):
                 json.dump({"sections": dict(state["plan"]), "sizes": sizes}, handle,
                           ensure_ascii=False)
             args = [helper, "--pack", root, "--font", font, "--out", out, "--plan", plan_path]
+            trans_root = ui.get_text(trans_entry).strip()
+            if trans_root:
+                args += ["--text-root", trans_root]
+            else:
+                ui.log_view_append(log, "⚠ 没填译文目录：产物只有字体、文本仍是原文（不是汉化包）")
             if sizes:
                 args += ["--sizes", ",".join(str(s) for s in sizes)]
             if multi_check_holder["box"] is not None and ui.checkbox_state(multi_check_holder["box"]):
                 args += ["--all-langs", "--split-output"]
             ui.log_view_append(log, "运行：" + " ".join([python] + args))
-            result = host.run_process(python, args, lambda line: ui.log_view_append(log, line))
+            # ★★ 2026-10-29（交接区审计 P0-10）：`run_process` 只收**一个 options 字典**；
+            #   修前写成 `run_process(python, args, cb)` ⇒ 点「生成」直接 TypeError，
+            #   助手从没被真正调用过（"插件能生成"这个说法在此之前是不成立的）。
+            result = host.run_process({
+                "program": python,
+                "args": args,
+                "on_stdout": lambda line: ui.log_view_append(log, line),
+            })
             if not result.get("started"):
                 ui.log_view_append(log, "起不来：%s" % result.get("stderr_tail", ""))
                 return

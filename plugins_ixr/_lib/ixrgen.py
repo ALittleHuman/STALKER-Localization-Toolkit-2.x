@@ -156,6 +156,9 @@ def merge_into(base_path: Path, cjk_source, cjk_cmap: dict, wanted: list[int]) -
     return len(need), missing
 
 
+_OWN_OUTS: set[str] = set()   # 本次运行自己清空/建出来的输出目录（多语言复用同一父目录）
+
+
 def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
     pack = Path(args.pack)
     out = (Path(args.out) / lang) if args.split_output else Path(args.out)
@@ -271,8 +274,46 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
                 long_texts.append("%s|%s|%d|%s" % (xml.name, sid or parent, cp,
                                                    body[:180].replace("\n", " ")))
 
-    if out.exists():
-        shutil.rmtree(out)
+    # ★★★ 2026-10-29（交接区审计 P0-1/P0-4/P0-8/P0-11）：`rmtree(out)` 前必须挡住
+    #   "out 与输入根重叠 / out 是空串或根目录 / out 是已有非空目录"——否则一次误选
+    #   就把参照包、译文、甚至整个盘清空。以下任何一条命中都**拒绝并说清**，不删任何东西。
+    def _norm(p_: Path) -> Path:
+        try:
+            return p_.resolve(strict=False)
+        except OSError:
+            return p_
+
+    # ★ 注意：要检查的是**本语言实际要写的目录**（split-output 时是 <out>/<lang>），
+    #   不是 args.out 原样 —— 修前拿父目录去判，多语言第二遍会被自己的第一遍挡住。
+    out_s = str(out)
+    if out_s in ("", ".", "..") or out_s.rstrip("\\/") == "":
+        return {"status": "error", "error": "拒绝：--out 不能是空、`.` 或根目录（会给错目录做 rmtree）"}
+    if len(Path(out_s).parts) == 1 and Path(out_s).drive:
+        return {"status": "error", "error": "拒绝：--out 不能是盘符根目录：" + out_s}
+    out_abs = _norm(Path(out_s))
+    guard_inputs = [("参照包", _norm(pack)), ("中文字体", _norm(Path(args.font)))]
+    for i, td in enumerate(args.text_root or []):
+        guard_inputs.append(("译文根 #%d" % (i + 1), _norm(Path(td))))
+    for label, root_abs in guard_inputs:
+        if out_abs == root_abs:
+            return {"status": "error",
+                    "error": "拒绝：--out 与%s是同一个目录（%s）" % (label, out_abs)}
+        if out_abs in root_abs.parents:
+            return {"status": "error",
+                    "error": "拒绝：--out 是%s的**祖先**（%s 包含 %s）" % (label, out_abs, root_abs)}
+        if root_abs in out_abs.parents:
+            return {"status": "error",
+                    "error": "拒绝：--out 位于%s**内部**（%s 在 %s 下）" % (label, out_abs, root_abs)}
+    out_preexisting_files = 0
+    if out_abs.exists() and str(out_abs) not in _OWN_OUTS:
+        out_preexisting_files = sum(1 for x in out_abs.rglob("*") if x.is_file())
+        if out_preexisting_files > 0 and not args.force:
+            return {"status": "error",
+                    "error": "拒绝：--out 已有 %d 个文件且没给 --force（防止误删用户目录）：%s"
+                             % (out_preexisting_files, out_abs)}
+    if out_abs.exists():
+        shutil.rmtree(out_abs)
+    _OWN_OUTS.add(str(out_abs))
     # ★★★ 2026-10-28（用户：拿 MODS\123 与参照包对比「缺了什么看出来没？」）：
     # ★★★ 2026-10-29（用户纠正模型）：「**把译文文件夹复制，然后查与原文语言包的结构差异，
     #   然后生成补全**。文件内容不用管。」
@@ -374,6 +415,18 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
         for r in ref_skipped[:5]:
             log("IXRGEN note 跳过：" + r)
     log("IXRGEN 补全：%d 个文件（原文有、译文缺，只限本地化路径）" % len(supplemented))
+    if long_texts:
+        log("IXRGEN warn 超长无换行文本 %d 段（上限 %d 字）" % (len(long_texts), LONG_LIMIT))
+        for line in long_texts[:5]:
+            log("IXRGEN warn " + line)
+        long_log_path = out.parent / (out.name + ".long_texts.log")
+        try:
+            long_log_path.write_text(
+                "long_texts=%d limit=%d\n" % (len(long_texts), LONG_LIMIT) +
+                "\n".join(long_texts) + "\n", encoding="utf-8")
+            log("IXRGEN warn log=%s" % long_log_path)
+        except OSError as exc:
+            log("IXRGEN warn 长文本日志写不出去：%r" % (exc,))
     for r in supplemented[:10]:
         log("IXRGEN note 补：" + r)
     report_unmatched = len(supplemented)
@@ -405,14 +458,13 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
               "fonts": [], "missing": 0, "charset": len(wanted),
               "added": 0, "skipped_sections": skipped_sections,
               "plan_sections": plan_sections, "sizes": sorted(plan_sizes),
-              "texts": locals().get("text_merged_ids", 0),
+              "texts": locals().get("text_copied", 0),
               "rewritten": locals().get("rewritten_copied", 0),
-              "text_missing_ids": locals().get("text_missing_ids", 0),
               "text_reencoded": locals().get("text_reencoded", 0),
-              "copied": locals().get("total_copied", 0),
-              "translation": locals().get("translation_given", False),
-              "text_unmatched": locals().get("report_unmatched", 0),
-              "text_unused": locals().get("report_unused", 0),
+              "copied": len([x for x in out.rglob("*") if x.is_file()]),
+              "translation": locals().get("text_copied", 0) > 0,
+              "supplemented": locals().get("report_unmatched", 0),
+              "ref_files_skipped": locals().get("report_unused", 0),
               "long_texts": len(long_texts), "status": "ok"}
 
     for name in sorted(by_name):
@@ -496,6 +548,8 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description="IX-Ray 语言包生成（fonttools 外部助手）")
     ap.add_argument("--pack", required=True)
+    ap.add_argument("--force", action="store_true",
+                    help="允许覆盖已有非空输出目录（默认拒绝，防止误删用户目录）")
     ap.add_argument("--no-extra-fonts", action="store_true",
                     help="不处理 addon 里自带的 ttf（默认会一并补字形）")
     ap.add_argument("--no-texts", action="store_true",
@@ -565,6 +619,13 @@ def main() -> int:
              "added": sum(r.get("added", 0) for r in reports),
              "missing": sum(r.get("missing", 0) for r in reports)}
     log("IXRGEN " + json.dumps(total, ensure_ascii=False))
+    # ★ 2026-10-29（审计 P1-6）：报告里有 error ⇒ 退出码非 0，门禁才能靠退出码判红。
+    #   缺字（missing>0）仍按 0 退出，但状态改成 `ok_with_missing`，页面/日志能看见。
+    if any(r.get("status") == "error" for r in reports):
+        return 1
+    for r in reports:
+        if r.get("missing", 0) > 0 and r.get("status") == "ok":
+            r["status"] = "ok_with_missing"
     return 0
 
 

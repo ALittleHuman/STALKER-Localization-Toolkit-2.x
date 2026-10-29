@@ -78,6 +78,7 @@ def run_cli(args: list[str], env_extra: dict) -> tuple[int, str]:
 
 
 def main() -> int:
+    problems = 0
     print("== IX-Ray 产品入口（--ixr-build）：C++ → fonttools 助手 ==")
     if not CLI.exists():
         print("!! 缺 %s" % CLI)
@@ -109,7 +110,6 @@ def main() -> int:
 
     launcher = stage_tools()
     env_extra = {"XRKIT_IXR_RUN": launcher, "XRKIT_IXR_PYTHON": sys.executable}
-    problems = 0
     tmp = Path(tempfile.mkdtemp(prefix="ixr_product_"))
     try:
         # ① 缺参数 ⇒ 退 3（用法错误）
