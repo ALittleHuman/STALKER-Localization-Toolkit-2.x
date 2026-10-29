@@ -5,6 +5,7 @@
 #include "xrkit/engine/text/extract.h"
 
 #include <algorithm>
+#include <utility>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -89,20 +90,25 @@ std::string lang_from_ltx(const fs::path& ltx) {
 }
 
 // 容器里的语言：localization.ltx → configs/text/<x> 的目录名 → options.lang → rus
-std::string container_lang(const fs::path& container, const std::string& fallback) {
+// 返回 (语言, 证据来源)。证据来源要如实报：这就是"扫描结果进生成"的最小合同
+// ——生成阶段不再自己 detect_langs，语言只可能来自这四种。
+std::pair<std::string, std::string> container_lang(const fs::path& container,
+                                                   const std::string& fallback) {
     if (const std::string lang = lang_from_ltx(container / "configs" / "localization.ltx");
         !lang.empty()) {
-        return lang;
+        return {lang, "localization.ltx"};
     }
     std::error_code ec;
     const fs::path texts = container / "configs" / "text";
     if (is_dir(texts)) {
         for (const auto& entry : fs::directory_iterator(texts, ec)) {
-            if (entry.is_directory(ec)) return core::path_to_utf8(entry.path().filename());
+            if (entry.is_directory(ec)) {
+                return {core::path_to_utf8(entry.path().filename()), "text_dir"};
+            }
         }
     }
-    if (!fallback.empty()) return fallback;
-    return "rus";
+    if (!fallback.empty()) return {fallback, "arg"};
+    return {"rus", "fallback"};
 }
 
 // 整树复制（源只读；目标必须不存在或由调用方保证可写）
@@ -269,7 +275,9 @@ OriResult build_ori_tree(const OriOptions& options) {
         const fs::path dst = rel.empty() ? out_abs : out_abs / core::path_from_utf8(rel);
         OriContainer info;
         info.rel = rel;
-        info.lang = container_lang(container, options.lang);
+        const auto lang_pair = container_lang(container, options.lang);
+        info.lang = lang_pair.first;
+        info.lang_source = lang_pair.second;
         info.has_text = is_dir(container / "configs" / "text");
         info.has_fonts = is_dir(container / "fonts") || is_file(container / "configs" / "fonts.ltx");
         info.has_scripts = is_dir(container / "scripts");
@@ -355,6 +363,7 @@ OriResult build_ori_tree(const OriOptions& options) {
 
     out.out_dir = core::path_to_utf8(out_abs);
     out.lang = out.containers.front().lang;
+    out.lang_source = out.containers.front().lang_source;
     out.ok = true;
     return out;
 }

@@ -29,6 +29,7 @@ struct OriOptions {
 struct OriContainer {
     std::string rel;                 // 相对 source 根（"" = 源本身就是容器）
     std::string lang;                // 该容器的语言
+    std::string lang_source;         // 语言证据：localization.ltx / text_dir / arg / fallback
     std::string kind;                // ixr / bitmap / mixed / none
     bool has_text = false;
     bool has_fonts = false;
@@ -44,6 +45,7 @@ struct OriResult {
     std::string error;
     std::string out_dir;
     std::string lang;
+    std::string lang_source;
     std::vector<OriContainer> containers;
     std::vector<std::string> warnings;   // 逐条：哪条分支没提取/为什么（零静默）
     uint64_t files_copied = 0;

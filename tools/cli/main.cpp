@@ -4936,7 +4936,9 @@ int run_cli(const std::vector<std::string>& args) {
         }
         for (const auto& container : result.containers) {
             std::cout << "ORI container rel=" << (container.rel.empty() ? "." : container.rel)
-                      << " lang=" << container.lang << " kind=" << container.kind
+                      << " lang=" << container.lang
+                      << " lang_source=" << container.lang_source
+                      << " kind=" << container.kind
                       << " extracted=" << container.extracted
                       << " rewritten=" << container.rewritten
                       << " texts=" << container.texts << "\n";

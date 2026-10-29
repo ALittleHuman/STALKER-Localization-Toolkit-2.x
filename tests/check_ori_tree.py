@@ -65,6 +65,15 @@ def make_mod_root(root: Path) -> None:
         '<?xml version="1.0" encoding="utf-8"?><string_table>'
         '<string id="d1"><text>你好，旅行者</text></string></string_table>', encoding="utf-8")
     (gd / "scripts" / "a.script").write_text('local t = "你好世界"\n', encoding="utf-8")
+    # 任意名字容器：abc/（规划 3：abc 等同构处理）
+    abc = root / "abc"
+    (abc / "configs" / "text" / "rus").mkdir(parents=True)
+    (abc / "configs" / "localization.ltx").parent.mkdir(parents=True, exist_ok=True)
+    (abc / "configs" / "localization.ltx").write_text(
+        "[string_table]\nlanguage = rus\n", encoding="utf-8")
+    (abc / "configs" / "text" / "rus" / "abc.xml").write_text(
+        '<string_table><string id="c"><text>abc 原文</text></string></string_table>',
+        encoding="utf-8")
     # 第二轮：configs/ui、configs/scripts、多语言目录
     (gd / "configs" / "ui").mkdir(parents=True)
     (gd / "configs" / "ui" / "ui_st.xml").write_text(
@@ -190,6 +199,24 @@ def main() -> int:
         else:
             fail("子树输入不对：rc=%d" % sub_rc)
 
+        # ⑤-f 任意名字容器 abc/ 也是容器；语言证据必须写清楚
+        if "rel=abc" in out:
+            ok("任意名字容器 abc/ 被识别")
+        else:
+            fail("abc/ 没被识别成容器：\n%s" % out[-400:])
+        if "lang_source=localization.ltx" in out:
+            ok("语言来自 localization.ltx（扫描证据进生成，不重猜源根）")
+        else:
+            fail("语言证据没写清（期望 lang_source=localization.ltx）")
+
+        # ⑤-g `gamedata` 根输入：输出仍以 gamedata 为容器根
+        gd_out = tmp / "ori_gd"
+        gd_rc, gd_text = run([str(CLI), "--ori-tree", str(src / "gamedata"), str(gd_out)])
+        if gd_rc == 0 and (gd_out / "configs" / "text" / "rus").is_dir():
+            ok("gamedata 根输入：ori/gamedata 的内容直接落在 ori 下")
+        else:
+            fail("gamedata 根输入不对：rc=%d" % gd_rc)
+
         # ⑥ 输入只读
         if snapshot(src) == before:
             ok("输入源一个字节都没变（只读）")
@@ -203,13 +230,14 @@ def main() -> int:
         else:
             fail("ori 非空却继续写：rc=%d" % again_rc)
 
-        # ⑧ 单文件输入：本轮如实拒绝（下一轮实现），不许假装成功
-        single_rc, single_out = run([str(CLI), "--ori-tree", str(src / "gamedata" / "scripts" / "a.script"),
-                                     str(tmp / "ori_single")])
-        if single_rc != 0 and "单文件" in single_out:
-            ok("单文件输入：如实拒绝（下一轮实现），没有假装成功")
+        # ⑧ 单文件输入（换一个新 ori，避免撞上"ori 非空"那条）：按最近容器成功生成
+        fresh_single = tmp / "ori_single2"
+        one_rc, one_out = run([str(CLI), "--ori-tree",
+                               str(src / "gamedata" / "scripts" / "a.script"), str(fresh_single)])
+        if one_rc == 0 and "单文件输入" in one_out and any(fresh_single.rglob("*.script")):
+            ok("单文件输入：按最近容器生成，容器内 .script 在 ori 里")
         else:
-            fail("单文件输入的行为不对：rc=%d\n%s" % (single_rc, single_out[-200:]))
+            fail("单文件输入行为不对：rc=%d\n%s" % (one_rc, one_out[-300:]))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
