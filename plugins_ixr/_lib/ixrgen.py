@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 import xml.etree.ElementTree as ET
@@ -183,6 +184,51 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
 
     # ★★ 2026-10-28（用户）：复制文本时顺带查**超长且没有换行**的正文 ——
     #   逐条记进 `long_texts`，最后落一份 `_xrkit_long_texts.log`（文件|id|码位数|前 180 字）。
+    # ── 按 id 合并的小工具（"结构照参考、内容照译文"）─────────────────────
+    STRING_BLOCK = re.compile(
+        r'(<string\b[^>]*?\bid\s*=\s*"([^"]+)"[^>]*>)(.*?)(</string>)', re.S)
+    TEXT_INNER = re.compile(r"(<text\b[^>]*>)(.*?)(</text>)", re.S)
+    XML_DECL = re.compile(r'<\?xml[^>]*encoding\s*=\s*"([^"]+)"', re.I)
+
+    def _decode(data: bytes) -> tuple[str, str]:
+        m = XML_DECL.search(data[:200].decode("ascii", "ignore"))
+        enc = (m.group(1) if m else "utf-8").lower()
+        for cand in (enc, "utf-8", "cp1251"):
+            try:
+                return data.decode(cand), cand
+            except Exception:
+                continue
+        return data.decode("utf-8", "replace"), "utf-8"
+
+    def _id_map(xml: str) -> dict:
+        """id → 文本内层（只认 <string id=…>…<text>…</text>）。"""
+        out = {}
+        for block, sid, body, _ in STRING_BLOCK.findall(xml):
+            tm = TEXT_INNER.search(body)
+            if tm:
+                out.setdefault(sid, tm.group(2))
+        return out
+
+    def _merge_ids(ref_xml: str, tr_map: dict) -> tuple[str, int, int]:
+        """按 id 把译文内容写回参考骨架；返回 (新文本, 用到几条, 参考里几条没译文)。"""
+        used = [0]
+        total = [0]
+
+        def repl(m):
+            open_tag, sid, body, close_tag = m.group(1), m.group(2), m.group(3), m.group(4)
+            total[0] += 1
+            if sid not in tr_map:
+                return m.group(0)
+            tm = TEXT_INNER.search(body)
+            if not tm:
+                return m.group(0)
+            used[0] += 1
+            # 只换 <text> 内层，其余（属性/缩进/注释）逐字节保留
+            new_body = body[:tm.start(2)] + tr_map[sid] + body[tm.end(2):]
+            return open_tag + new_body + close_tag
+
+        return STRING_BLOCK.sub(repl, ref_xml), used[0], total[0] - used[0]
+
     long_texts: list[str] = []
     LONG_LIMIT = 1024   # 用户 2026-10-28：>512 不算超限
 
@@ -241,48 +287,88 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
                 own = src_gd / "text" / lang
             if own.is_dir():
                 text_dirs = [own]
-        text_copied = 0
-        text_unmatched: list[str] = []
+        # ★★★ 2026-10-29（用户口径）：「**所有结构按照参考来，内容按照译文来**」——
+        #   参考包＝人工提取的完整语言包（结构真源）；译文目录＝纯 XML + 改造（内容真源）。
+        #   实现：**按 id 合并**（不是整文件覆盖）——参考文件当骨架，逐 id 换 <text> 内层，
+        #   属性/缩进/XML 声明/编码一律照参考；译文缺的 id 保留原文并计数。
+        #   配对三级：① 相对路径同名 → ② 文件名同名 → ③ id 集合重叠 ≥60%。
+        text_merged_ids = 0
+        text_missing_ids = 0
+        text_missing_files: list[str] = []
+        text_unused: list[str] = []
+        rewritten_copied = 0
         if text_dirs and not args.no_texts:
-            # ★★★ 2026-10-29（用户：「换了别的名字和文件树形式、更多此类文件夹，都能生成吗？
-            #   里面的额外字体呢？」）：文本替换**不再只认 gamedata/configs/text** ——
-            #   产物树里**每一个** `<某处>/configs/text/<lang>/` 都要换（addon 自带的那份也算）。
-            #   匹配按**文件名**：翻译源里同名的就换，没有的保留原文并逐条记账（零静默）。
-            by_name_xml: dict[str, Path] = {}
+            tr_files: list[Path] = []
             for root in text_dirs:
                 base = root / lang if (root / lang).is_dir() else root
-                for xml in sorted(base.rglob("*.xml")):
-                    by_name_xml.setdefault(xml.name, xml)
-            targets = [d for d in out.rglob(lang)
-                       if d.is_dir() and d.parent.name == "text"]
-            if not targets:
-                targets = [out / "gamedata" / "configs" / "text" / lang]
-                targets[0].mkdir(parents=True, exist_ok=True)
-            for dst_texts in targets:
-                for stale in dst_texts.glob("*.xml"):
-                    name = stale.name
-                    src = by_name_xml.get(name)
-                    if src is not None:
-                        shutil.copy2(src, stale)
-                        text_copied += 1
-                        scan_long(src)
-                    else:
-                        text_unmatched.append(
-                            str(stale.relative_to(out)) + "（翻译源里没有同名文件，保留原文）")
-            # 翻译源里有、但产物树里没有任何 text 目录接得住的文件 ⇒ 放到主 text 目录
-            main_texts = out / "gamedata" / "configs" / "text" / lang
-            placed = {p.name for d in targets for p in d.glob("*.xml")}
-            for name, xml in by_name_xml.items():
-                if name in placed:
-                    continue
-                main_texts.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(xml, main_texts / name)
-                text_copied += 1
-                scan_long(xml)
-            log("IXRGEN 文本：%d 个 XML 替换到 %d 个 text 目录" % (text_copied, len(targets)))
-            for line in text_unmatched[:10]:
-                log("IXRGEN warn 未替换：" + line)
-            report_unmatched = len(text_unmatched)
+                tr_files.extend(sorted(base.rglob("*.xml")))
+            tr_by_name: dict[str, Path] = {}
+            tr_maps: dict[Path, dict] = {}
+            for f in tr_files:
+                tr_by_name.setdefault(f.name, f)
+                try:
+                    tr_maps[f] = _id_map(_decode(f.read_bytes())[0])
+                except Exception:
+                    tr_maps[f] = {}
+
+            ref_targets = sorted({d for d in out.rglob(lang)
+                                  if d.is_dir() and d.parent.name == "text"
+                                  and any(d.glob("*.xml"))})
+            used_files: set[Path] = set()
+            for dst_texts in ref_targets:
+                for ref_xml_path in sorted(dst_texts.glob("*.xml")):
+                    raw = ref_xml_path.read_bytes()
+                    ref_str, enc = _decode(raw)
+                    ref_ids = _id_map(ref_str)
+                    cand = tr_by_name.get(ref_xml_path.name)
+                    if cand is None and ref_ids:
+                        best, score = None, 0.0
+                        for f, m in tr_maps.items():
+                            if not m:
+                                continue
+                            hit = len(set(m) & set(ref_ids))
+                            if hit >= max(1, int(0.6 * len(ref_ids))) and hit > score:
+                                best, score = f, hit
+                        cand = best
+                    if cand is None:
+                        text_missing_files.append(str(ref_xml_path.relative_to(out)) +
+                                                  "（译文里配对不到，保留原文）")
+                        continue
+                    used_files.add(cand)
+                    merged, used_n, miss_n = _merge_ids(ref_str, tr_maps.get(cand, {}))
+                    if used_n == 0:
+                        text_missing_files.append(str(ref_xml_path.relative_to(out)) +
+                                                  "（配到了译文但 id 一个都对不上，保留原文）")
+                        continue
+                    try:
+                        ref_xml_path.write_bytes(merged.encode(enc, "replace"))
+                    except Exception as exc:
+                        log("IXRGEN warn 写不回去 %s：%r" % (ref_xml_path.name, exc))
+                        continue
+                    text_merged_ids += used_n
+                    text_missing_ids += miss_n
+                    scan_long(cand)
+            for f in tr_files:
+                if f not in used_files:
+                    text_unused.append(f.name + "（参考包里没有可配对的文件，未使用）")
+            log("IXRGEN 文本：按 id 合并 %d 条（缺译文 %d 条，共处理 %d 个参考文件）"
+                % (text_merged_ids, text_missing_ids, len(ref_targets)))
+            for line in text_missing_files[:10]:
+                log("IXRGEN warn 保留原文：" + line)
+            for line in text_unused[:10]:
+                log("IXRGEN warn 未使用：" + line)
+            # 改造产物（译文目录里的 scripts / gameplay）：参考包没有这层结构 ⇒ 按译文布局搬进去
+            for sub in ("scripts", "gameplay"):
+                for root in text_dirs:
+                    src_sub = root / sub
+                    if src_sub.is_dir():
+                        shutil.copytree(src_sub, out / sub, dirs_exist_ok=True)
+                        rewritten_copied += sum(1 for x in src_sub.rglob("*") if x.is_file())
+                        break
+            if rewritten_copied:
+                log("IXRGEN 改造产物：%d 个文件（scripts/gameplay）" % rewritten_copied)
+            report_unmatched = len(text_missing_files)
+            report_unused = len(text_unused)
             if long_texts:
                 log("IXRGEN warn 超长无换行文本 %d 段（上限 %d 字）" % (len(long_texts), LONG_LIMIT))
                 for line in long_texts[:5]:
@@ -317,9 +403,13 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
               "fonts": [], "missing": 0, "charset": len(wanted),
               "added": 0, "skipped_sections": skipped_sections,
               "plan_sections": plan_sections, "sizes": sorted(plan_sizes),
-              "texts": text_copied, "copied": locals().get("total_copied", 0),
+              "texts": locals().get("text_merged_ids", 0),
+              "rewritten": locals().get("rewritten_copied", 0),
+              "text_missing_ids": locals().get("text_missing_ids", 0),
+              "copied": locals().get("total_copied", 0),
               "translation": locals().get("translation_given", False),
               "text_unmatched": locals().get("report_unmatched", 0),
+              "text_unused": locals().get("report_unused", 0),
               "long_texts": len(long_texts), "status": "ok"}
 
     for name in sorted(by_name):
@@ -361,8 +451,26 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
                  for n in all_names if n}
     extra_fonts = 0
     if not args.no_extra_fonts and not args.fonts_only:
+        def _skip_extra(path_: Path) -> bool:
+            """别把汉字灌进**别的语言**的字体树 / 编辑器字体（体积翻倍且没意义）。
+            addon 里的 ttf 一律照收（那才是用户问的"额外字体"）。"""
+            parts = [x.lower() for x in path_.relative_to(out).parts]
+            if "ixr_addons" in parts:
+                return False
+            if "fonts" in parts:
+                idx = parts.index("fonts")
+                if idx + 1 < len(parts):
+                    sub = parts[idx + 1]
+                    if sub in ("editors",):
+                        return True
+                    if sub != lang.lower():
+                        return True
+            return False
+
         for path in sorted(out.rglob("*.ttf")):
             if str(path) in processed:
+                continue
+            if _skip_extra(path):
                 continue
             try:
                 added, missing = merge_into(path, cjk_source, cjk_cmap, wanted)

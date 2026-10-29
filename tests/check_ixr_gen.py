@@ -162,6 +162,19 @@ def main() -> int:
             else:
                 problems += 1
                 fail("产物缺 %d 个参照包文件（例 %s）" % (len(missing), missing[:3]))
+            # ★ 结构只由参考包决定 ⇒ **不许多出文件**（译文里多出来的不许塞进产物）
+            extra = []
+            for out_file in out.rglob("*"):
+                if not out_file.is_file():
+                    continue
+                rel = out_file.relative_to(out)
+                if not (pack / rel).is_file():
+                    extra.append(str(rel))
+            if not extra:
+                ok("产物文件集合 == 参照包（结构只由参考包决定，不增不减）")
+            else:
+                problems += 1
+                fail("产物多出 %d 个参照包里没有的文件（例 %s）" % (len(extra), extra[:3]))
             ltx_src = pack / "gamedata" / "configs" / "fonts.ltx"
             ltx_out = out / "gamedata" / "configs" / "fonts.ltx"
             if ltx_src.is_file() and ltx_out.is_file() and ltx_src.read_bytes() == ltx_out.read_bytes():
@@ -246,6 +259,38 @@ def main() -> int:
             problems += 1
             fail("报告里的 translation 不是 false（实得 %r）" % per_lang.get("translation"))
 
+        # ①-b3 用户口径（2026-10-29）：「结构照参考，内容照译文」⇒ **按 id 合并**：
+        #   参考文件有 2 条（keep_a / tr_b），译文只给 tr_b ⇒ 产物仍是 2 条，
+        #   tr_b 变中文、keep_a 保留原文；报告里 text_missing_ids ≥ 1。
+        part_pack = build_pack(tmp / "partial", BASE_FONT, "Hello")
+        part_text = part_pack / "gamedata" / "configs" / "text" / "rus" / "st_test.xml"
+        part_text.write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
+            '  <string id="keep_a"><text>Оригинал</text></string>\n'
+            '  <string id="tr_b"><text>Оригинал два</text></string>\n'
+            '</string_table>\n', encoding="utf-8")
+        part_cn = tmp / "partial_cn"
+        part_cn.mkdir(parents=True, exist_ok=True)
+        (part_cn / "st_test.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
+            '  <string id="tr_b"><text>译文二</text></string>\n'
+            '</string_table>\n', encoding="utf-8")
+        part_out = tmp / "out_partial"
+        rc_p, so_p = run_tool(part_pack, CJK_FONT, part_out, ["--text-root", str(part_cn)])
+        merged_text = (part_out / "gamedata" / "configs" / "text" / "rus" / "st_test.xml")
+        rep_p = (report_of(so_p).get("reports") or [{}])[0]
+        got = merged_text.read_text(encoding="utf-8", errors="replace") if merged_text.is_file() else ""
+        if rc_p == 0 and "译文二" in got and "Оригинал" in got:
+            ok("部分翻译按 id 合并：译文的 id 换掉、没译的保留原文")
+        else:
+            problems += 1
+            fail("按 id 合并不对（%r）\n%s" % (got[:200], so_p[-300:]))
+        if rep_p.get("text_missing_ids", 0) >= 1:
+            ok("报告里 text_missing_ids=%d（缺译文的 id 有账）" % rep_p["text_missing_ids"])
+        else:
+            problems += 1
+            fail("报告里 text_missing_ids 没记账（实得 %r）" % rep_p.get("text_missing_ids"))
+
         # ①-c 2026-10-29（用户）：「换了别的名字和文件树形式、更多此类文件夹，都能生成吗？
         #   里面的额外字体呢？」—— 造一个**任意名字 + 多层嵌套**的 addon：
         #   它自带 `configs/text/rus/*.xml` 与 `fonts/rus/extra.ttf`；断言
@@ -272,6 +317,39 @@ def main() -> int:
         else:
             problems += 1
             fail("addon 里的文本没被替换：rc=%d\n%s" % (rc_a, so_a[-400:]))
+        # ②-b 结构/内容口径（用户 2026-10-29）：
+        #   译文里多一个参考包没有的 XML ⇒ 必须 warn「未使用」且**不进产物**。
+        un_used = tmp / "unused_case"
+        (un_used / "pack" / "gamedata" / "configs" / "text" / "rus").mkdir(parents=True)
+        (un_used / "pack" / "gamedata" / "configs" / "fonts.ltx").write_text(
+            "[font_default]\nname = arial\n", encoding="utf-8")
+        shutil.copytree(pack / "gamedata" / "fonts", un_used / "pack" / "gamedata" / "fonts",
+                        dirs_exist_ok=True)
+        (un_used / "pack" / "gamedata" / "configs" / "text" / "rus" / "in_ref.xml").write_text(
+            '<string_table><string id="a"><text>原文</text></string></string_table>',
+            encoding="utf-8")
+        (un_used / "cn").mkdir(parents=True)
+        (un_used / "cn" / "in_ref.xml").write_text(
+            '<string_table><string id="a"><text>译文</text></string></string_table>',
+            encoding="utf-8")
+        (un_used / "cn" / "not_in_ref.xml").write_text(
+            '<string_table><string id="b"><text>多余的</text></string></string_table>',
+            encoding="utf-8")
+        rc_u, so_u = run_tool(un_used / "pack", CJK_FONT, un_used / "out",
+                              ["--text-root", str(un_used / "cn")])
+        rep_u = (report_of(so_u).get("reports") or [{}])[0]
+        if rc_u == 0 and "IXRGEN warn 未使用" in so_u and not (
+                un_used / "out" / "gamedata" / "configs" / "text" / "rus" / "not_in_ref.xml").exists():
+            ok("译文多一个文件：warn 未使用，且不塞进产物")
+        else:
+            problems += 1
+            fail("译文多出来的文件处理不对：rc=%d\n%s" % (rc_u, so_u[-400:]))
+        if rep_u.get("text_unused") == 1:
+            ok("报告里 text_unused=1")
+        else:
+            problems += 1
+            fail("报告里 text_unused 不是 1（实得 %r）" % rep_u.get("text_unused"))
+
         extra_ttf = add_out / "ixr_addons" / "_renamed" / "nested" / "fonts" / "rus" / "extra.ttf"
         if extra_ttf.is_file():
             cm = set(TTFont(str(extra_ttf)).getBestCmap())
