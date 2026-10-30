@@ -4943,6 +4943,33 @@ int run_cli(const std::vector<std::string>& args) {
                       << " rewritten=" << container.rewritten
                       << " texts=" << container.texts << "\n";
         }
+        // ★★ 2026-10-29（第 5 轮 · 扫描→生成合同）：把这次生成用到的 Profile 原文吐出来，
+        //   下游后端（IXR / 位图 / 页面）只许消费这一行，**禁止**再自己 detect 语言或猜源根。
+        //   形状（稳定，可当契约）：
+        //   { lang, lang_source, out, containers:[{rel,lang,lang_source,kind,
+        //     has_text,has_fonts,has_scripts,has_gameplay,extracted,rewritten,texts}] }
+        {
+            std::cout << "ORI profile={\"lang\":\"" << result.lang
+                      << "\",\"lang_source\":\"" << result.lang_source
+                      << "\",\"out\":\"" << result.out_dir << "\",\"containers\":[";
+            bool first = true;
+            for (const auto& c : result.containers) {
+                if (!first) std::cout << ",";
+                first = false;
+                std::cout << "{\"rel\":\"" << (c.rel.empty() ? "." : c.rel)
+                          << "\",\"lang\":\"" << c.lang
+                          << "\",\"lang_source\":\"" << c.lang_source
+                          << "\",\"kind\":\"" << c.kind << "\""
+                          << ",\"has_text\":" << (c.has_text ? "true" : "false")
+                          << ",\"has_fonts\":" << (c.has_fonts ? "true" : "false")
+                          << ",\"has_scripts\":" << (c.has_scripts ? "true" : "false")
+                          << ",\"has_gameplay\":" << (c.has_gameplay ? "true" : "false")
+                          << ",\"extracted\":" << c.extracted
+                          << ",\"rewritten\":" << c.rewritten
+                          << ",\"texts\":" << c.texts << "}";
+            }
+            std::cout << "]}\n";
+        }
         std::cout << "ORI ok out=" << result.out_dir << " lang=" << result.lang
                   << " containers=" << result.containers.size()
                   << " files=" << result.files_copied

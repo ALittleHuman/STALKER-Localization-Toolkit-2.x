@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import subprocess
 import sys
@@ -216,6 +217,28 @@ def main() -> int:
             ok("gamedata 根输入：ori/gamedata 的内容直接落在 ori 下")
         else:
             fail("gamedata 根输入不对：rc=%d" % gd_rc)
+
+        # ⑤-h Profile 契约行：下游只许消费这一行（扫描证据进生成，不重猜）
+        profile = None
+        for line in out.splitlines():
+            if line.startswith("ORI profile="):
+                profile = json.loads(line[len("ORI profile="):])
+        if profile is not None:
+            ok("ORI profile 行可解析（lang=%s / lang_source=%s / 容器 %d）"
+               % (profile.get("lang"), profile.get("lang_source"),
+                  len(profile.get("containers") or [])))
+        else:
+            fail("没有 ORI profile 契约行（下游会自己重猜）")
+        if profile is not None:
+            rels = {c.get("rel") for c in profile.get("containers") or []}
+            if {"gamedata", "ixr_addons/~bodycam", "abc"} <= rels:
+                ok("Profile 里的容器集合 == 生成用的容器集合（gamedata / addon / abc）")
+            else:
+                fail("Profile 容器集合不对：%r" % sorted(rels))
+            if all(c.get("lang_source") for c in profile.get("containers") or []):
+                ok("每个容器都带 lang_source（语言证据不丢）")
+            else:
+                fail("有容器缺 lang_source")
 
         # ⑥ 输入只读
         if snapshot(src) == before:
