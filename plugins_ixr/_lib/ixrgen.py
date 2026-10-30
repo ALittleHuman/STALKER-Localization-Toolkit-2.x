@@ -657,7 +657,18 @@ def main() -> int:
         langs = [s.strip() for s in args.langs.split(",") if s.strip()]
     elif args.lang:
         langs = [args.lang]
-    else:
+    elif (pack / "_xrkit_profile.json").is_file():
+        # ★★ 2026-10-30：「扫描一次、后面全自动」—— 产物里带了 `_xrkit_profile.json`
+        #   就以它的语言为准（那是 `--ori-tree` 扫出来的证据），不再自己猜。
+        try:
+            prof = json.loads((pack / "_xrkit_profile.json").read_text(encoding="utf-8"))
+            langs = [prof["lang"]]
+            log("IXRGEN profile：采用产物内 profile 的语言 %s（证据 %s）"
+                % (prof["lang"], prof.get("lang_source", "?")))
+        except Exception as exc:
+            log("IXRGEN warn profile 读不出来，回落到自扫：%r" % (exc,))
+            langs = []
+    if not langs:
         lang = "rus"
         loc = gd / "configs" / "localization.ltx"
         if loc.is_file():

@@ -368,6 +368,28 @@ def main() -> int:
             problems += 1
             fail("日志没报非本地化文件跳过数：%s" % so_cf[-200:])
 
+        # ①-k 产物内 profile 的语言就是生成用的语言（扫描一次、后面全自动）
+        prof_pack = build_pack(tmp / "prof", BASE_FONT, "Hello")
+        (prof_pack / "_xrkit_profile.json").write_text(
+            '{"lang":"rus","lang_source":"localization.ltx","containers":[]}', encoding="utf-8")
+        prof_out = tmp / "out_prof"
+        rc_pf, so_pf = run_tool(prof_pack, CJK_FONT, prof_out, [])
+        if rc_pf == 0 and "IXRGEN profile：采用产物内 profile 的语言 rus" in so_pf:
+            ok("产物内 profile 的语言被采用（不重猜）")
+        else:
+            problems += 1
+            fail("没采用 profile 语言：rc=%d\n%s" % (rc_pf, so_pf[-300:]))
+        # 证据说 eng、包里只有 rus ⇒ 必须如实 skipped，不许悄悄换成 rus
+        bad_pack = build_pack(tmp / "profbad", BASE_FONT, "Hello")
+        (bad_pack / "_xrkit_profile.json").write_text(
+            '{"lang":"eng","lang_source":"localization.ltx","containers":[]}', encoding="utf-8")
+        rc_pb, so_pb = run_tool(bad_pack, CJK_FONT, tmp / "out_profbad", [])
+        if rc_pb == 0 and "IXRGEN 语言 eng" in so_pb and "Skipped" not in so_pb and "skipped" in so_pb.lower():
+            ok("profile 语言与包不符：如实 skipped（不会偷偷换语言）")
+        else:
+            problems += 1
+            fail("profile 不符时行为不对：rc=%d\n%s" % (rc_pb, so_pb[-300:]))
+
         # ①-j 纵向度量（审计 P1-5/P1-11）：低 ascent 的基础字体合并汉字后，
         #    hhea/OS-2/head 必须被放宽到包住新字形，否则汉字顶部会被裁。
         from fontTools.ttLib import TTFont as _TTFont
