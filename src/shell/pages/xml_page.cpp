@@ -259,10 +259,10 @@ XmlPage::XmlPage(QWidget* parent)
         QStringLiteral("检测到一侧为空：切到「提取文本」——产物是标准语言包（configs/text/<lang> + 改写后的脚本/配置）"));
     extract_hint_->setObjectName(QStringLiteral("xml_extract_hint"));
     extract_hint_->setWordWrap(true);
-    texts_check_ = new QCheckBox(QStringLiteral("文本 XML（含空表）"));
+    texts_check_ = new QCheckBox(QStringLiteral("文本 XML（ori 恒出，勾选仅旧版遗留）"));
     texts_check_->setObjectName(QStringLiteral("xml_extract_texts"));
     texts_check_->setChecked(true);
-    rewrite_check_ = new QCheckBox(QStringLiteral("改写后的脚本/配置"));
+    rewrite_check_ = new QCheckBox(QStringLiteral("改写脚本/配置（ori 恒出，勾选仅旧版遗留）"));
     rewrite_check_->setObjectName(QStringLiteral("xml_extract_rewritten"));
     rewrite_check_->setChecked(true);
     extract_out_edit_ = new QLineEdit;
@@ -1293,7 +1293,7 @@ void XmlPage::update_extract_mode() {
     if (filter_combo_ != nullptr) filter_combo_->setVisible(!show);
     if (show && status_ != nullptr) {
         status_->setText(QStringLiteral("一侧为空：已切到「提取文本」（模式下拉第三项）——"
-                                        "产出标准语言包，两个产物至少勾一个"));
+                                        "产出整棵 ori 树（文本 + 改写恒出，两个勾选仅旧版遗留）"));
     }
 }
 

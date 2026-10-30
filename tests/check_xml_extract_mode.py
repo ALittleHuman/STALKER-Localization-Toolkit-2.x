@@ -35,7 +35,7 @@ ANCHORS_CPP = [
     ("addItem(QStringLiteral(\"提取文本\")", "一侧为空时下拉真的多出第三项"),
     ("dir_a_edit_, &QLineEdit::textChanged", "浏览/粘贴也要触发判定"),
     ("start_button_->setVisible(!show)", "提取模式隐藏「开始比较」"),
-    ("文本 XML（含空表）", "两个复选框仍在（合并成单一按钮留到下一轮）"),
+    ("文本 XML（ori 恒出", "两个勾选已标成旧版遗留（ori 恒出文本+改写）"),
     ("提取失败", "同名文件拒绝覆盖要报出来"),
 ]
 ANCHORS_HDR = [
