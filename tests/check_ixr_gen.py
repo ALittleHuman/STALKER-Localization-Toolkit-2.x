@@ -368,6 +368,51 @@ def main() -> int:
             problems += 1
             fail("日志没报非本地化文件跳过数：%s" % so_cf[-200:])
 
+        # ①-j 纵向度量（审计 P1-5/P1-11）：低 ascent 的基础字体合并汉字后，
+        #    hhea/OS-2/head 必须被放宽到包住新字形，否则汉字顶部会被裁。
+        from fontTools.ttLib import TTFont as _TTFont
+        low_font = tmp / "low_ascent.ttf"
+        shutil.copy2(BASE_FONT, low_font)
+        _f = _TTFont(str(low_font))
+        _f["hhea"].ascent = 100
+        _f["hhea"].descent = -20
+        _f["OS/2"].sTypoAscender = 100
+        _f["OS/2"].sTypoDescender = -20
+        _f["OS/2"].usWinAscent = 100
+        _f["OS/2"].usWinDescent = 20
+        _f["head"].yMax = 100
+        _f["head"].yMin = -20
+        _f.save(str(low_font))
+        low_pack = build_pack(tmp / "lowmetrics", low_font, "Hello")
+        low_out = tmp / "out_lowmetrics"
+        rc_lm, so_lm = run_tool(low_pack, CJK_FONT, low_out, [])
+        merged = low_out / "gamedata" / "fonts" / "rus" / "arial.ttf"
+        if not merged.is_file():
+            problems += 1
+            fail("低 ascent 夹具：产物字体不存在")
+        else:
+            mf = _TTFont(str(merged))
+            ys = []
+            for _n in mf.getGlyphOrder():
+                _g = mf["glyf"][_n]
+                if getattr(_g, "numberOfContours", 0) > 0 and getattr(_g, "yMax", None) is not None:
+                    ys.append(int(_g.yMax))
+            need = max(ys) if ys else 0
+            got = [int(mf["hhea"].ascent), int(mf["OS/2"].usWinAscent),
+                   int(mf["OS/2"].sTypoAscender), int(mf["head"].yMax)]
+            if all(v >= need for v in got):
+                ok("纵向度量：hhea/OS-2/head 都放宽到包住最高字形（need=%d, got=%r）"
+                   % (need, got))
+            else:
+                problems += 1
+                fail("纵向度量没放宽：最高字形 %d，实得 %r" % (need, got))
+            if int(mf["hhea"].numberOfHMetrics) >= len(mf.getGlyphOrder()):
+                ok("hhea.numberOfHMetrics 与新字形数一致")
+            else:
+                problems += 1
+                fail("numberOfHMetrics=%d 小于字形数 %d"
+                     % (mf["hhea"].numberOfHMetrics, len(mf.getGlyphOrder())))
+
         # ①-i 参考包 addon 白名单收窄（审计 P1-2）：addon 里只有本地化子树可以补，
         #    addon 自带的 bin/、数据库、贴图**不许**被搬进产物。
         add_pack = build_pack(tmp / "addnl", BASE_FONT, "Hello")
