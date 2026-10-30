@@ -331,6 +331,17 @@ FontPackPage::FontPackPage(QWidget* parent)
         //   那一栏才是"要汉化的文本"。参照包只提供字体与 fonts.ltx（结构），
         //   字符集若只读参照包的 `configs/text/<lang>`，出来的永远是俄语字形集。
         ixr_text_at_start_ = xml_edit_ != nullptr ? xml_edit_->text().trimmed() : QString();
+            // ★★ 2026-10-30（审计 P1-34）：语言选择也在主线程快照 —— worker 读控件会被
+            //   线程契约判红（实测抓到 run_build 里读 lang_combo_->currentText）。
+            ixr_lang_at_start_.clear();
+            if (lang_combo_ != nullptr) {
+                const QString picked = lang_combo_->currentText().trimmed();
+                if (picked != QStringLiteral("自定义")) {
+                    ixr_lang_at_start_ = picked;
+                } else if (lang_edit_ != nullptr) {
+                    ixr_lang_at_start_ = lang_edit_->text().trimmed();
+                }
+            }
         if (game_combo_->currentData().toString() == QStringLiteral("IX-Ray") &&
             ixr_pack_at_start_.isEmpty()) {
             result_label_->setText(QStringLiteral("IX-Ray 需要「参照包」（能当模组打的整包目录）"));
@@ -545,6 +556,11 @@ FontPackPage::BuildOutcome FontPackPage::run_build(
         ixr.font = options.font_path;
         ixr.out = options.out_dir;
         ixr.text_root = ixr_text_at_start_.toStdString();
+        // ★★ 2026-10-30（交接区审计 P1-34）：页面上的语言选择以前**不传给生成器** ——
+        //   用户选 eng，IXR 仍按参照包的 primary lang 出包。这里把选择传下去：
+        //   选到具体语言 ⇒ `--langs <L>`；选「自定义」⇒ 用自定义框里的值；空 ⇒ 仍按包推断。
+        // worker 只读快照；空 = 让生成器按包推断
+        if (!ixr_lang_at_start_.isEmpty()) ixr.langs = ixr_lang_at_start_.toStdString();
         const xrkit::engine::font::IxrBuildResult result =
             xrkit::engine::font::ixr_build(ixr);
         outcome.ok = result.ok;
