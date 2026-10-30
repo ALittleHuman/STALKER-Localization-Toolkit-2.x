@@ -266,6 +266,21 @@ def main() -> int:
         else:
             fail("显式 --lang 没记成 arg：rc=%d" % ev3_rc)
 
+        # ⑤-j Profile 落盘到产物里：下游后端直接读 `ori/_xrkit_profile.json`，不必重扫
+        prof_file = ori / "_xrkit_profile.json"
+        if prof_file.is_file():
+            disk = json.loads(prof_file.read_text(encoding="utf-8"))
+            line = None
+            for l in out.splitlines():
+                if l.startswith("ORI profile="):
+                    line = json.loads(l[len("ORI profile="):])
+            if line is not None and disk == line:
+                ok("ori/_xrkit_profile.json 与 stdout 的 profile 完全一致（下游只需读这一份）")
+            else:
+                fail("落盘 profile 与 stdout 不一致")
+        else:
+            fail("ori/_xrkit_profile.json 没落盘（下游只能重扫）")
+
         # ⑥ 输入只读
         if snapshot(src) == before:
             ok("输入源一个字节都没变（只读）")

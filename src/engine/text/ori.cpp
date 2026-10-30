@@ -387,6 +387,19 @@ OriResult build_ori_tree(const OriOptions& options) {
     out.lang = out.containers.front().lang;
     out.lang_source = out.containers.front().lang_source;
     out.ok = true;
+    // ★★ 2026-10-30（交接区"扫描一次、后面全自动"）：Profile 落在**产物里**，
+    //   位图 / IXR / 页面直接读 `ori/_xrkit_profile.json`，不必再扫一遍源目录。
+    //   失败写不出来只 warn（不影响产物，但零静默）。
+    try {
+        std::ofstream profile_file(out_abs / "_xrkit_profile.json", std::ios::binary);
+        if (profile_file) {
+            profile_file << ori_profile_json(out) << "\n";
+        } else {
+            out.warnings.push_back("profile 落盘失败：ori/_xrkit_profile.json 写不出去");
+        }
+    } catch (...) {
+        out.warnings.push_back("profile 落盘异常：ori/_xrkit_profile.json");
+    }
     return out;
 }
 
