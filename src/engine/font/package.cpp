@@ -113,10 +113,43 @@ PackageResult build_package(const PackageOptions& opt) {
         }
     }
 
+    // ★★ 2026-10-30（交接区"扫描一次、后面全自动"）：产物里带了 `_xrkit_profile.json`
+    //   ⇒ 语言以它为准（`--ori-tree` 扫出来的证据），不许再按默认值自己猜。
+    //   查找顺序：<out>/_xrkit_profile.json → <out>/../_xrkit_profile.json（out 常是 ori/gamedata）。
+    //   这里只读 `"lang":"…"`；文件坏了就 warn 并保留页面给的语言（零静默）。
+    std::string lang_from_profile;   // 非空 ⇒ 覆盖页面语言（证据优先）
+    for (const char* candidate : {"", ".."}) {
+        const std::string dir = (std::string(candidate).empty())
+                                    ? opt.out_dir
+                                    : join(opt.out_dir, candidate);
+        const std::string prof = join(dir, "_xrkit_profile.json");
+        std::ifstream in(core::path_from_utf8(prof), std::ios::binary);
+        if (!in) continue;
+        std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const size_t key = body.find("\"lang\":\"");
+        if (key == std::string::npos) {
+            res.warnings.push_back("profile 里没有 lang 字段，沿用页面语言：" + opt.lang);
+            break;
+        }
+        const size_t begin = key + std::string("\"lang\":\"").size();
+        const size_t endq = body.find('"', begin);
+        if (endq == std::string::npos) break;
+        const std::string from_profile = body.substr(begin, endq - begin);
+        if (!from_profile.empty() && from_profile != opt.lang) {
+            res.warnings.push_back("语言采用产物内 profile：" + from_profile +
+                                   "（页面给的是 " + opt.lang + "）");
+            lang_from_profile = from_profile;
+        }
+        break;
+    }
+
+    // `opt` 是 const：用局部变量承载"证据优先"的语言，后面所有用到语言的地方都用它
+    const std::string lang = lang_from_profile.empty() ? opt.lang : lang_from_profile;
+
     const std::string out_gd = join(opt.out_dir, "gamedata");
     const std::string tex_dir = join(join(out_gd, "textures"), "ui");
     const std::string cfg_root = join(out_gd, game->cfg_dir);
-    const std::string text_dir = join(join(cfg_root, "text"), opt.lang);
+    const std::string text_dir = join(join(cfg_root, "text"), lang);
     std::error_code ec;
     std::filesystem::create_directories(core::path_from_utf8(tex_dir), ec);
     std::filesystem::create_directories(core::path_from_utf8(text_dir), ec);
@@ -218,7 +251,7 @@ PackageResult build_package(const PackageOptions& opt) {
     //   而 XML 那批用的是 `newline=""`（不翻译）。两者不一样，别写反了。
     std::string loc = game->localization_ltx;
     replace_all(loc, "_#LANG#", opt.suffix);
-    replace_all(loc, "#LANG#", opt.lang);
+    replace_all(loc, "#LANG#", lang);
     if (!write_text(join(cfg_root, "fonts.ltx"), to_windows_newlines(game->fonts_ltx)) ||
         !write_text(join(cfg_root, "localization.ltx"), to_windows_newlines(loc))) {
         res.error = "写不出 fonts.ltx / localization.ltx";
