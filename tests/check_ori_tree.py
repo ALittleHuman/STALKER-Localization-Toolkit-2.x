@@ -240,6 +240,32 @@ def main() -> int:
             else:
                 fail("有容器缺 lang_source")
 
+        # ⑤-i 语言证据三态（缺 ltx 时不许冒充 localization.ltx）：
+        #   · 有 configs/text/deu、没 ltx ⇒ lang_source=text_dir、lang=deu
+        #   · 只有 fonts/、没 text 也没 ltx ⇒ lang_source=fallback（给 --lang 则 arg）
+        ev = tmp / "ev_src"
+        (ev / "gamedata" / "configs" / "text" / "deu").mkdir(parents=True)
+        (ev / "gamedata" / "fonts" / "deu").mkdir(parents=True)
+        shutil.copy2(Path(r"C:\Windows\Fonts\arial.ttf"), ev / "gamedata" / "fonts" / "deu" / "a.ttf")
+        ev_rc, ev_out = run([str(CLI), "--ori-tree", str(ev), str(tmp / "ev_out")])
+        if ev_rc == 0 and "lang_source=text_dir" in ev_out and "lang=deu" in ev_out:
+            ok("缺 localization.ltx：语言证据 = text_dir，lang=deu（不冒充 ltx）")
+        else:
+            fail("缺 ltx 时语言证据不对：rc=%d\n%s" % (ev_rc, ev_out[-300:]))
+        ev2 = tmp / "ev2_src"
+        (ev2 / "gamedata" / "fonts" / "xxx").mkdir(parents=True)
+        shutil.copy2(Path(r"C:\Windows\Fonts\arial.ttf"), ev2 / "gamedata" / "fonts" / "xxx" / "a.ttf")
+        ev2_rc, ev2_out = run([str(CLI), "--ori-tree", str(ev2), str(tmp / "ev2_out")])
+        if ev2_rc == 0 and "lang_source=fallback" in ev2_out and "lang=rus" in ev2_out:
+            ok("完全没有语言证据：lang_source=fallback、lang=rus（兜底也要写清）")
+        else:
+            fail("无语言证据时兜底不对：rc=%d\n%s" % (ev2_rc, ev2_out[-300:]))
+        ev3_rc, ev3_out = run([str(CLI), "--ori-tree", str(ev2), str(tmp / "ev3_out"), "--lang", "pol"])
+        if ev3_rc == 0 and "lang_source=arg" in ev3_out and "lang=pol" in ev3_out:
+            ok("显式 --lang pol：lang_source=arg（参数也算证据，且会计账）")
+        else:
+            fail("显式 --lang 没记成 arg：rc=%d" % ev3_rc)
+
         # ⑥ 输入只读
         if snapshot(src) == before:
             ok("输入源一个字节都没变（只读）")
