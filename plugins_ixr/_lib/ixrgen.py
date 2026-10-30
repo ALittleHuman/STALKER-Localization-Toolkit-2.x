@@ -325,17 +325,25 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
     #        **绝不**搬（否则参考=整个游戏时会把 50 GB 抄一遍）。
     LOCALIZATION_WHITELIST = (
         "gamedata/configs/text/", "gamedata/configs/ui/", "gamedata/fonts/",
-        "gamedata/textures/map/", "ixr_addons/", "configs/text/", "fonts/",
-        "textures/map/",
+        "gamedata/textures/map/", "configs/text/", "fonts/", "textures/map/",
     )
+    # ★★ 2026-10-29（交接区审计 P1-2）：`ixr_addons/` 整棵进白名单太宽 —— 参考包是
+    #   整个游戏时，addon 里的 bin/、数据库、贴图也会被"补全"进产物。只认 addon 的
+    #   **本地化子树**（文本 / UI / 字体 / 两份 ltx），其余一律不搬（只报数）。
+    ADDON_LOCALIZATION_PARTS = ("/configs/text/", "/configs/ui/", "/fonts/")
     LOCALIZATION_FILES = ("gamedata/configs/fonts.ltx", "gamedata/configs/localization.ltx",
                           "configs/fonts.ltx", "configs/localization.ltx")
 
     def _is_localization(rel: str) -> bool:
-        r = rel.replace("\\", "/").lower()
-        if r in LOCALIZATION_FILES:
+        r = "/" + rel.replace("\\", "/").lower()
+        if r.lstrip("/") in LOCALIZATION_FILES:
             return True
-        return any(r.startswith(w) for w in LOCALIZATION_WHITELIST)
+        if any(r.lstrip("/").startswith(w) for w in LOCALIZATION_WHITELIST):
+            return True
+        if r.startswith("/ixr_addons/"):
+            return (any(part in r for part in ADDON_LOCALIZATION_PARTS) or
+                    r.endswith("/configs/fonts.ltx") or r.endswith("/configs/localization.ltx"))
+        return False
 
     text_dirs = [Path(x) for x in (args.text_root or []) if Path(x).is_dir()]
     translation_given = bool(text_dirs)

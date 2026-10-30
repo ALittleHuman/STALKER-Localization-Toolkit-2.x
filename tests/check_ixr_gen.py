@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "plugins_ixr" / "_lib" / "ixrgen.py"
@@ -366,6 +367,38 @@ def main() -> int:
         else:
             problems += 1
             fail("日志没报非本地化文件跳过数：%s" % so_cf[-200:])
+
+        # ①-i 参考包 addon 白名单收窄（审计 P1-2）：addon 里只有本地化子树可以补，
+        #    addon 自带的 bin/、数据库、贴图**不许**被搬进产物。
+        add_pack = build_pack(tmp / "addnl", BASE_FONT, "Hello")
+        addon = add_pack / "ixr_addons" / "someaddon"
+        (addon / "configs" / "text" / "rus").mkdir(parents=True)
+        (addon / "configs" / "text" / "rus" / "add.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?><string_table>'
+            '<string id="t"><text>addon 原文</text></string></string_table>', encoding="utf-8")
+        (addon / "fonts" / "rus").mkdir(parents=True)
+        shutil.copy2(BASE_FONT, addon / "fonts" / "rus" / "addon.ttf")
+        (addon / "bin").mkdir(parents=True)
+        (addon / "bin" / "addon.dll").write_bytes(b"MZ fake dll")
+        (addon / "scripts").mkdir(parents=True)
+        (addon / "scripts" / "x.script").write_bytes(b"local t = 'x'")
+        add_out = tmp / "out_addnl"
+        rc_a, so_a = run_tool(add_pack, CJK_FONT, add_out, [])
+        if rc_a == 0 and (add_out / "ixr_addons" / "someaddon" / "configs" / "text" / "rus" / "add.xml").is_file():
+            ok("参考 addon 的 configs/text 会被补全")
+        else:
+            problems += 1
+            fail("参考 addon 的文本没补：rc=%d" % rc_a)
+        if rc_a == 0 and not (add_out / "ixr_addons" / "someaddon" / "bin" / "addon.dll").exists():
+            ok("参考 addon 的 bin/*.dll 没被搬进产物（白名单收窄生效）")
+        else:
+            problems += 1
+            fail("参考 addon 的 bin/*.dll 被搬进产物了")
+        if rc_a == 0 and not (add_out / "ixr_addons" / "someaddon" / "scripts" / "x.script").exists():
+            ok("参考 addon 的 scripts/ 没被搬进产物")
+        else:
+            problems += 1
+            fail("参考 addon 的 scripts/ 被搬进产物了")
 
         # ①-g 文本 XML 编码口径（用户 2026-10-29）：
         #   「只需要保证文本 XML（不包括非文本 XML）编码是 UTF-8 无 BOM 就行了。」
