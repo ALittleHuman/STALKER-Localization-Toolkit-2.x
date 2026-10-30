@@ -39,6 +39,7 @@ struct PackageResult {
     int fonts_written = 0;
     int xml_written = 0;
     std::vector<std::string> warnings;  // 编码靠猜的 XML（"文件: 编码"）
+    std::string lang;  // 实际采用的语言（profile 可能覆盖页面给的值）
 };
 
 PackageResult build_package(const PackageOptions& opt);

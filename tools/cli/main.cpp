@@ -5092,7 +5092,8 @@ int run_cli(const std::vector<std::string>& args) {
         for (const std::string& w : r.warnings) {
             std::cout << "FONTPACK warn " << w << "\n";
         }
-        std::cout << "FONTPACK ok game=" << opt.game << " lang=" << opt.lang
+        std::cout << "FONTPACK ok game=" << opt.game << " lang="
+                     << (r.lang.empty() ? opt.lang : r.lang)
                   << " out=" << r.out_gamedata << " fonts=" << r.fonts_written
                   << " xml=" << r.xml_written << " warnings=" << r.warnings.size() << "\n";
         return kExitOk;

@@ -145,6 +145,7 @@ PackageResult build_package(const PackageOptions& opt) {
 
     // `opt` 是 const：用局部变量承载"证据优先"的语言，后面所有用到语言的地方都用它
     const std::string lang = lang_from_profile.empty() ? opt.lang : lang_from_profile;
+    res.lang = lang;
 
     const std::string out_gd = join(opt.out_dir, "gamedata");
     const std::string tex_dir = join(join(out_gd, "textures"), "ui");

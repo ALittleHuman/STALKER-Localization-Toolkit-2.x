@@ -302,6 +302,30 @@ def main() -> int:
             ok("单文件输入：按最近容器生成，容器内 .script 在 ori 里")
         else:
             fail("单文件输入行为不对：rc=%d\n%s" % (one_rc, one_out[-300:]))
+        # ⑤-k 位图链端到端：ori 里有 profile ⇒ 出包语言以 profile 为准（页面给的不算）
+        bmp_out = tmp / "bmp_ori"
+        bmp_out.mkdir(parents=True, exist_ok=True)
+        (bmp_out / "_xrkit_profile.json").write_text(
+            '{"lang":"eng","lang_source":"localization.ltx","containers":[]}', encoding="utf-8")
+        xml_dir = tmp / "bmp_xml"
+        xml_dir.mkdir(parents=True, exist_ok=True)
+        (xml_dir / "t.xml").write_text(
+            '<string_table><string id="a"><text>测试文本</text></string></string_table>',
+            encoding="utf-8")
+        rc_b, out_b = run([str(CLI), "--build-font-pack", "SoC", "chs", str(xml_dir),
+                           str(Path(r"C:\Windows\Fonts\simhei.ttf")), str(bmp_out)])
+        if rc_b == 0 and "lang=eng" in out_b and "语言采用产物内 profile" in out_b:
+            ok("位图链：ori 里的 profile(eng) 覆盖页面语言(chs)，且如实告警")
+        else:
+            fail("位图链没按 profile 走：rc=%d\n%s" % (rc_b, out_b[-400:]))
+        # 位图链的 SoC 模板用 `config/`（不是 `configs/`）——两种都认，只认"eng 存在"
+        bmp_eng = [bmp_out / "gamedata" / "config" / "text" / "eng",
+                   bmp_out / "gamedata" / "configs" / "text" / "eng"]
+        if any(d.is_dir() for d in bmp_eng):
+            ok("位图链产物落在 configs/text/eng（与 profile 一致）")
+        else:
+            fail("位图链产物没落在 eng 目录")
+
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
