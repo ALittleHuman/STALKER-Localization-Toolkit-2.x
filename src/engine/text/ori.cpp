@@ -169,6 +169,28 @@ ExtractStats extract_branch(const fs::path& branch, ExtractKind kind, const fs::
 
 }  // namespace
 
+std::string ori_profile_json(const OriResult& result) {
+    std::string out = "{\"lang\":\"" + result.lang + "\",\"lang_source\":\"" +
+                      result.lang_source + "\",\"out\":\"" + result.out_dir +
+                      "\",\"containers\":[";
+    bool first = true;
+    for (const OriContainer& c : result.containers) {
+        if (!first) out += ",";
+        first = false;
+        out += "{\"rel\":\"" + (c.rel.empty() ? std::string(".") : c.rel) +
+               "\",\"lang\":\"" + c.lang + "\",\"lang_source\":\"" + c.lang_source +
+               "\",\"kind\":\"" + c.kind + "\"" +
+               ",\"has_text\":" + (c.has_text ? "true" : "false") +
+               ",\"has_fonts\":" + (c.has_fonts ? "true" : "false") +
+               ",\"has_scripts\":" + (c.has_scripts ? "true" : "false") +
+               ",\"has_gameplay\":" + (c.has_gameplay ? "true" : "false") +
+               ",\"extracted\":" + std::to_string(c.extracted) +
+               ",\"rewritten\":" + std::to_string(c.rewritten) +
+               ",\"texts\":" + std::to_string(c.texts) + "}";
+    }
+    return out + "]}";
+}
+
 OriResult build_ori_tree(const OriOptions& options) {
     OriResult out;
     const fs::path src = core::path_from_utf8(options.source_dir);

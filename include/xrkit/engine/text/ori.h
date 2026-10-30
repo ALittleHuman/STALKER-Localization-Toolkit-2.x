@@ -56,4 +56,9 @@ struct OriResult {
 
 OriResult build_ori_tree(const OriOptions& options);
 
+// 生成用到的 Profile（**扫描证据的唯一出口**）。CLI 与页面都读这一份，不许各自再拼一遍。
+// 形状稳定：{"lang","lang_source","out","containers":[{rel,lang,lang_source,kind,
+//            has_text,has_fonts,has_scripts,has_gameplay,extracted,rewritten,texts}]}
+std::string ori_profile_json(const OriResult& result);
+
 }  // namespace xrkit::engine::text
