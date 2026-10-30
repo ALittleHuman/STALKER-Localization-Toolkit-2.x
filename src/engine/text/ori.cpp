@@ -242,8 +242,14 @@ OriResult build_ori_tree(const OriOptions& options) {
     // ── 输入/输出边界（与 IXR 生成器同一口径：绝不删输入）─────────────────
     const fs::path src_abs = fs::weakly_canonical(effective_src, ec);
     const fs::path out_abs = fs::weakly_canonical(out_root, ec);
-    if (src_abs == out_abs || out_abs.string().rfind(src_abs.string() + "/", 0) == 0 ||
-        src_abs.string().rfind(out_abs.string() + "/", 0) == 0) {
+    // ★★ 2026-10-30（交接区复审计 O-P0-2）：`weakly_canonical().string()` 在 Windows
+    //   是反斜杠，原来拼 '/' 做前缀比较永远匹配不上子目录关系。改用成分级 relative。
+    const bool overlap = (src_abs == out_abs) ||
+                         (fs::relative(out_abs, src_abs, ec).string().rfind("..", 0) != 0 &&
+                          !fs::relative(out_abs, src_abs, ec).empty()) ||
+                         (fs::relative(src_abs, out_abs, ec).string().rfind("..", 0) != 0 &&
+                          !fs::relative(src_abs, out_abs, ec).empty());
+    if (overlap) {
         out.error = "拒绝：ori 与源目录重叠（" + options.out_dir + "）";
         return out;
     }
@@ -288,6 +294,19 @@ OriResult build_ori_tree(const OriOptions& options) {
                   if (depth(a) != depth(b)) return depth(a) < depth(b);
                   return a < b;
               });
+    // ★★ 2026-10-30（复审计 O-P0-1）：选中"根"的名字不能丢 —— 拖 `gamedata` 必须出
+    //   `ori/gamedata/...`，拖 `ixr_addons` 必须出 `ori/ixr_addons/<addon>/...`。
+    const std::string src_name = core::path_to_utf8(effective_src.filename());
+    std::string out_prefix;
+    if (has_container_markers(effective_src)) {
+        out_prefix = src_name;
+        const std::string parent_name =
+            core::path_to_utf8(effective_src.parent_path().filename());
+        if (src_name == "configs" && parent_name == "gamedata") out_prefix = "gamedata/configs";
+    } else if (src_name == "ixr_addons" || src_name == "gamedata") {
+        out_prefix = src_name;
+    }
+
     std::vector<std::string> containers;
     for (const std::string& cand : candidates) {
         bool covered = false;
@@ -303,11 +322,16 @@ OriResult build_ori_tree(const OriOptions& options) {
         return out;
     }
 
+    uint64_t extract_failed = 0;
+
     // ── 每个容器：整树复制 → 提取 → 文本落盘 → 多语言复制 ──────────────────
     for (const std::string& rel : containers) {
         const fs::path container = rel.empty() ? effective_src
                                               : effective_src / core::path_from_utf8(rel);
-        const fs::path dst = rel.empty() ? out_abs : out_abs / core::path_from_utf8(rel);
+        const std::string dst_rel =
+            out_prefix.empty() ? rel
+                               : (rel.empty() ? out_prefix : out_prefix + "/" + rel);
+        const fs::path dst = dst_rel.empty() ? out_abs : out_abs / core::path_from_utf8(dst_rel);
         OriContainer info;
         info.rel = rel;
         const auto lang_pair = container_lang(container, options.lang);
@@ -315,7 +339,8 @@ OriResult build_ori_tree(const OriOptions& options) {
         info.lang_source = lang_pair.second;
         info.has_text = is_dir(container / "configs" / "text");
         info.has_fonts = is_dir(container / "fonts") || is_file(container / "configs" / "fonts.ltx");
-        info.has_scripts = is_dir(container / "scripts");
+        info.has_scripts = is_dir(container / "scripts") ||
+                           is_dir(container / "configs" / "scripts");
         info.has_gameplay = is_dir(container / "gameplay") ||
                             is_dir(container / "configs" / "gameplay");
         info.kind = info.has_fonts ? "ixr" : (is_dir(container / "textures" / "ui") ? "bitmap" : "none");
@@ -331,7 +356,10 @@ OriResult build_ori_tree(const OriOptions& options) {
             const ExtractStats st = extract_branch(container / "scripts", ExtractKind::Scripts,
                                                    dst / "scripts", texts_out, options,
                                                    &out.warnings, "sc");
-            if (!st.ok && !st.error.empty()) out.warnings.push_back("scripts：" + st.error);
+            if (!st.ok) {
+                if (!st.error.empty()) out.warnings.push_back("scripts：" + st.error);
+                ++extract_failed;
+            }
             info.extracted += st.strings;
             info.rewritten += st.files;
             info.texts += st.texts_xml_name.empty() ? 0 : 1;
@@ -339,12 +367,20 @@ OriResult build_ori_tree(const OriOptions& options) {
             out.rewritten += st.files;
         }
         // gameplay（容器根下的 gameplay 或 configs/gameplay）：统一落 `configs/gameplay`
+        // ★ 复审计：两分支原来共用 `gsgp_gameplay_texts.xml`，第二个直接覆盖第一个。
+        //   按"是否 configs 下"给不同后缀（根 gameplay = gpg，configs/gameplay = gpgc）。
+        int gameplay_branch_index = 0;
         for (const fs::path& branch : {container / "gameplay", container / "configs" / "gameplay"}) {
             if (!is_dir(branch)) continue;
+            const std::string gameplay_suffix =
+                gameplay_branch_index++ == 0 ? "gpg" : "gpgc";
             const ExtractStats st = extract_branch(branch, ExtractKind::Gameplay,
                                                    dst / "configs" / "gameplay", texts_out,
-                                                   options, &out.warnings, "gp");
-            if (!st.ok && !st.error.empty()) out.warnings.push_back("gameplay：" + st.error);
+                                                   options, &out.warnings, gameplay_suffix);
+            if (!st.ok) {
+                if (!st.error.empty()) out.warnings.push_back("gameplay：" + st.error);
+                ++extract_failed;
+            }
             info.extracted += st.strings;
             info.rewritten += st.files;
             info.texts += st.texts_xml_name.empty() ? 0 : 1;
@@ -368,6 +404,7 @@ OriResult build_ori_tree(const OriOptions& options) {
                                                    texts_out, options, &out.warnings, suffix);
             if (!st.ok && !st.error.empty()) {
                 out.warnings.push_back(std::string(extra.rel) + "：" + st.error);
+            ++extract_failed;
             }
             info.extracted += st.strings;
             info.rewritten += st.files;
@@ -396,6 +433,12 @@ OriResult build_ori_tree(const OriOptions& options) {
         out.containers.push_back(info);
     }
 
+    if (extract_failed > 0) {
+        // 复审计：分支提取失败还报 ok=true 等于骗人 —— 失败原因已经在 warnings 里逐条写
+        out.out_dir = core::path_to_utf8(out_abs);
+        out.error = "有 " + std::to_string(extract_failed) + " 个分支提取失败（见 warnings）";
+        return out;
+    }
     out.out_dir = core::path_to_utf8(out_abs);
     out.lang = out.containers.front().lang;
     out.lang_source = out.containers.front().lang_source;

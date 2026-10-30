@@ -195,8 +195,8 @@ def main() -> int:
         sub_out = tmp / "ori_sub"
         sub_rc, sub_out_text = run([str(CLI), "--ori-tree", str(src / "gamedata" / "configs"),
                                     str(sub_out)])
-        if sub_rc == 0 and ((sub_out / "scripts").is_dir() or (sub_out / "configs").is_dir()):
-            ok("子树输入（gamedata/configs）：只处理该子树（落点按容器根）")
+        if sub_rc == 0 and (sub_out / "gamedata" / "configs").is_dir():
+            ok("子树输入（gamedata/configs）：输出保留 gamedata/configs 前缀")
         else:
             fail("子树输入不对：rc=%d" % sub_rc)
 
@@ -213,8 +213,8 @@ def main() -> int:
         # ⑤-g `gamedata` 根输入：输出仍以 gamedata 为容器根
         gd_out = tmp / "ori_gd"
         gd_rc, gd_text = run([str(CLI), "--ori-tree", str(src / "gamedata"), str(gd_out)])
-        if gd_rc == 0 and (gd_out / "configs" / "text" / "rus").is_dir():
-            ok("gamedata 根输入：ori/gamedata 的内容直接落在 ori 下")
+        if gd_rc == 0 and (gd_out / "gamedata" / "configs" / "text" / "rus").is_dir():
+            ok("gamedata 根输入：输出保留 gamedata 前缀（ori/gamedata/...）")
         else:
             fail("gamedata 根输入不对：rc=%d" % gd_rc)
 
@@ -280,6 +280,29 @@ def main() -> int:
                 fail("落盘 profile 与 stdout 不一致")
         else:
             fail("ori/_xrkit_profile.json 没落盘（下游只能重扫）")
+
+        # ⑤-l 复审计 O-P0-1：独立 ixr_addons / gamedata\configs 输入也要保留前缀
+        ad_only = tmp / "ori_ad_only"
+        ad_rc, ad_out = run([str(CLI), "--ori-tree", str(src / "ixr_addons"), str(ad_only)])
+        if ad_rc == 0 and (ad_only / "ixr_addons" / "~bodycam" / "configs" / "text" / "rus").is_dir():
+            ok("ixr_addons 根输入：ori/ixr_addons/<addon>/... 前缀保留")
+        else:
+            fail("ixr_addons 根输入没保留前缀：rc=%d" % ad_rc)
+        cfg_only = tmp / "ori_cfg_only"
+        cfg_rc, cfg_out = run([str(CLI), "--ori-tree", str(src / "gamedata" / "configs"),
+                               str(cfg_only)])
+        if cfg_rc == 0 and (cfg_only / "gamedata" / "configs" / "text" / "rus").is_dir():
+            ok("gamedata/configs 子树输入：ori/gamedata/configs/... 前缀保留")
+        else:
+            fail("configs 子树输入前缀不对：rc=%d" % cfg_rc)
+
+        # ⑤-m 复审计 O-P0-2：ori 在源目录内部必须拒绝（Windows 反斜杠也要拦住）
+        inner_ori = src / "inner_ori"
+        in_rc, in_out = run([str(CLI), "--ori-tree", str(src), str(inner_ori)])
+        if in_rc != 0 and "拒绝" in in_out and not inner_ori.exists():
+            ok("ori 在源目录内部：拒绝且不建目录（Windows 路径也拦住）")
+        else:
+            fail("ori 在源内部没被拒：rc=%d" % in_rc)
 
         # ⑥ 输入只读
         if snapshot(src) == before:
