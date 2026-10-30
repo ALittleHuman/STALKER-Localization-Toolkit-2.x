@@ -1327,13 +1327,6 @@ void XmlPage::run_extract() {
     const QString source = a_empty ? b : a;
     const QString ori = a_empty ? a : b;
 
-    const bool want_texts = texts_check_ != nullptr && texts_check_->isChecked();
-    const bool want_rewritten = rewrite_check_ != nullptr && rewrite_check_->isChecked();
-    if (!want_texts && !want_rewritten) {
-        status_->setText(QStringLiteral("两个产物至少勾一个"));
-        return;
-    }
-
     xrkit::engine::text::OriOptions opt;
     opt.source_dir = source.toUtf8().toStdString();
     opt.out_dir = ori.toUtf8().toStdString();
