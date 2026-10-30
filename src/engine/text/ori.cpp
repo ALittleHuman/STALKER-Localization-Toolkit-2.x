@@ -169,12 +169,21 @@ ExtractStats extract_branch(const fs::path& branch, ExtractKind kind, const fs::
 
 }  // namespace
 
-std::string ori_profile_json(const OriResult& result) {
-    std::string out = "{\"lang\":\"" + result.lang + "\",\"lang_source\":\"" +
-                      result.lang_source + "\",\"out\":\"" + result.out_dir +
+OriProfile ori_profile_of(const OriResult& result) {
+    OriProfile profile;
+    profile.lang = result.lang;
+    profile.lang_source = result.lang_source;
+    profile.out_dir = result.out_dir;
+    profile.containers = result.containers;
+    return profile;
+}
+
+std::string ori_profile_json(const OriProfile& profile) {
+    std::string out = "{\"lang\":\"" + profile.lang + "\",\"lang_source\":\"" +
+                      profile.lang_source + "\",\"out\":\"" + profile.out_dir +
                       "\",\"containers\":[";
     bool first = true;
-    for (const OriContainer& c : result.containers) {
+    for (const OriContainer& c : profile.containers) {
         if (!first) out += ",";
         first = false;
         out += "{\"rel\":\"" + (c.rel.empty() ? std::string(".") : c.rel) +
@@ -189,6 +198,10 @@ std::string ori_profile_json(const OriResult& result) {
                ",\"texts\":" + std::to_string(c.texts) + "}";
     }
     return out + "]}";
+}
+
+std::string ori_profile_json(const OriResult& result) {
+    return ori_profile_json(ori_profile_of(result));
 }
 
 OriResult build_ori_tree(const OriOptions& options) {

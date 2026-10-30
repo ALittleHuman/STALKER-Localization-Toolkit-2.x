@@ -54,6 +54,25 @@ struct OriResult {
     uint64_t extracted = 0;
 };
 
+// ★★ 2026-10-30（交接区最终规划 ④）：**LangPackProfile 独立结构** ——
+//   三条后端（文本 / IXR / 位图）只消费它，生成阶段禁止再自己 detect 语言/猜源根。
+//   `OriResult` 是"这次生成干了什么"；`OriProfile` 是"证据是什么"，两者分开：
+//   前者可丢，后者要落盘（`ori/_xrkit_profile.json`）并传给下游。
+struct OriProfile {
+    std::string lang;
+    std::string lang_source;
+    std::string out_dir;
+    std::vector<OriContainer> containers;
+};
+
+// 从一次生成结果里抽出 Profile（失败时返回空 lang 的 Profile）
+OriProfile ori_profile_of(const OriResult& result);
+
+// 序列化（CLI、落盘、下游共用同一份）
+std::string ori_profile_json(const OriProfile& profile);
+// 兼容旧调用：等价于 ori_profile_json(ori_profile_of(result))
+std::string ori_profile_json(const OriResult& result);
+
 OriResult build_ori_tree(const OriOptions& options);
 
 // 生成用到的 Profile（**扫描证据的唯一出口**）。CLI 与页面都读这一份，不许各自再拼一遍。
