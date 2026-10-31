@@ -181,6 +181,42 @@ OriProfile ori_profile_of(const OriResult& result) {
     return profile;
 }
 
+// ★ 2026-10-31（BETA.46 复核 P1）：直接拖 `.../configs/text/rus` 时 `rus` 不是已知目录，
+//   前缀会退化成 `rus`；这里沿祖先链把已知目录一层层拼回来（`gamedata/configs/text/rus`）。
+// 本层或下一层是否有 *.xml（`configs/text` 这种"只有语言子目录"的形态要下探一层）
+bool has_xml_within(const fs::path& dir, int depth) {
+    std::error_code ec;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->is_regular_file(ec) && lower(it->path().extension().string()) == ".xml") return true;
+        if (depth > 0 && it->is_directory(ec) && has_xml_within(it->path(), depth - 1)) return true;
+    }
+    return false;
+}
+
+std::string prefix_from_known_ancestors(const fs::path& dir) {
+    static const char* kKnown[] = {"gamedata", "configs", "text",    "fonts",    "textures",
+                                   "scripts",  "gameplay", "ui",     "ixr_addons"};
+    const auto known = [](const std::string& name) {
+        for (const char* k : kKnown) {
+            if (name == k) return true;
+        }
+        return false;
+    };
+    std::vector<std::string> chain{core::path_to_utf8(dir.filename())};
+    for (fs::path parent = dir.parent_path();
+         !parent.empty() && known(core::path_to_utf8(parent.filename()));
+         parent = parent.parent_path()) {
+        chain.insert(chain.begin(), core::path_to_utf8(parent.filename()));
+        if (parent == parent.parent_path()) break;
+    }
+    std::string joined;
+    for (const std::string& part : chain) {
+        if (!joined.empty()) joined += "/";
+        joined += part;
+    }
+    return joined;
+}
+
 namespace {
 // ★ 2026-10-31（复审计 P1）：手拼 JSON 必须转义 —— 路径/语言里出现引号或控制字符时
 //   `_xrkit_profile.json` 会坏，下游解析直接失败。
@@ -357,13 +393,13 @@ OriResult build_ori_tree(const OriOptions& options) {
                 break;
             }
         }
-        if (!has_xml_directly) {
+        if (!has_xml_directly && !has_xml_within(effective_src, 1)) {
             out.error = "源里找不到容器（没有 configs/scripts/gameplay/fonts/textures，"
                         "也不是纯文本目录）：" + options.source_dir;
             return out;
         }
         containers.push_back("");
-        if (out_prefix.empty()) out_prefix = src_name;
+        if (out_prefix.empty()) out_prefix = prefix_from_known_ancestors(effective_src);
     }
 
     uint64_t extract_failed = 0;
@@ -418,13 +454,19 @@ OriResult build_ori_tree(const OriOptions& options) {
         // ★ 复审计 P1：容器本身就是 `configs`（或 `text`）时，不能再往里套一层
         //   `configs/text` —— 否则出现 `ori/gamedata/configs/configs/text/rus` 这种幻影目录。
         const std::string container_name = core::path_to_utf8(container.filename());
-        fs::path cfg_root = dst / "configs";
-        if (container_name == "configs") {
-            cfg_root = dst;
+        // ★ 2026-10-31：四态落点 —— 语言目录 / text 目录 / configs 目录 / 其它容器
+        const std::string container_parent =
+            core::path_to_utf8(container.parent_path().filename());
+        fs::path texts_out;
+        if (container_parent == "text") {
+            texts_out = dst;
         } else if (container_name == "text") {
-            cfg_root = dst.parent_path();
+            texts_out = dst / core::path_from_utf8(info.lang);
+        } else if (container_name == "configs") {
+            texts_out = dst / "text" / core::path_from_utf8(info.lang);
+        } else {
+            texts_out = dst / "configs" / "text" / core::path_from_utf8(info.lang);
         }
-        const fs::path texts_out = cfg_root / "text" / core::path_from_utf8(info.lang);
         fs::create_directories(texts_out, ec);
 
         // scripts：改写后回写到容器内 `scripts/`（相对容器根）

@@ -315,6 +315,25 @@ def main() -> int:
             ok("纯文本目录输入：能当容器复制（不再报找不到容器）")
         else:
             fail("纯文本目录输入仍失败：rc=%d\n%s" % (p_rc, p_out[-300:]))
+
+        # ⑤-o 2026-10-31 复核 P1：`configs/text` 常见形态是**只有语言子目录**（本层没有 xml），
+        #      这种既要能拖，产物前缀也必须是 gamedata/configs/text —— 不能退化成 ori/text。
+        lang_only = tmp / "lang_only" / "gamedata" / "configs" / "text"
+        (lang_only / "rus").mkdir(parents=True, exist_ok=True)
+        (lang_only / "rus" / "b.xml").write_text(
+            '<string_table><string id="q"><text>语言子目录</text></string></string_table>',
+            encoding="utf-8")
+        lo_ori = tmp / "ori_lang_only"
+        lo_rc, lo_out = run([str(CLI), "--ori-tree", str(lang_only), str(lo_ori)])
+        want = lo_ori / "gamedata" / "configs" / "text" / "rus" / "b.xml"
+        if lo_rc == 0 and want.is_file():
+            ok("纯文本目录（仅语言子目录）：能拖入且保留 gamedata/configs/text 前缀")
+        else:
+            got = (sorted(p.relative_to(lo_ori).as_posix()
+                          for p in lo_ori.rglob("*") if p.is_file())
+                   if lo_ori.exists() else [])
+            fail("纯文本目录（仅语言子目录）失败：rc=%d 实际=%s\n%s"
+                 % (lo_rc, got[:6], lo_out[-200:]))
         # kind：有 fonts.ltx、无 ttf ⇒ 不许标 ixr
         kd = tmp / "kind_src" / "gamedata"
         (kd / "configs").mkdir(parents=True)
@@ -327,6 +346,51 @@ def main() -> int:
             ok("kind：有 fonts.ltx 但没有 ttf ⇒ none（不再一有 ltx 就标 ixr）")
         else:
             fail("kind 误判：rc=%d\n%s" % (k_rc, k_out[-300:]))
+
+        # ⑤-o 直接拖 `configs/text/<lang>`：产物就在那一层，不许再套 configs/text
+        lang_dir = src / "gamedata" / "configs" / "text" / "rus"
+        ld_out = tmp / "ori_langdir"
+        ld_rc, ld_text = run([str(CLI), "--ori-tree", str(lang_dir), str(ld_out)])
+        want = ld_out / "gamedata" / "configs" / "text" / "rus" / "base.xml"
+        phantom = ld_out / "gamedata" / "configs" / "text" / "rus" / "configs"
+        if ld_rc == 0 and want.is_file() and not phantom.exists():
+            ok("拖 configs/text/rus：产物落 ori/gamedata/configs/text/rus，无幻影目录")
+        else:
+            fail("拖语言目录落点不对：rc=%d want=%s phantom=%s"
+                 % (ld_rc, want.is_file(), phantom.exists()))
+
+        # ⑤-p json_escape 反例：语言名里带制表符 ⇒ profile 仍是合法 JSON
+        esc_src = tmp / "esc_src" / "gamedata"
+        (esc_src / "fonts" / "rus").mkdir(parents=True)
+        shutil.copy2(Path(r"C:\Windows\Fonts\arial.ttf"), esc_src / "fonts" / "rus" / "a.ttf")
+        esc_out = tmp / "ori_escape"
+        esc_rc, esc_text = run([str(CLI), "--ori-tree", str(tmp / "esc_src"), str(esc_out),
+                                "--lang", "ru\tx"])
+        esc_prof = None
+        for line in esc_text.splitlines():
+            if line.startswith("ORI profile="):
+                try:
+                    esc_prof = json.loads(line[len("ORI profile="):])
+                except Exception as exc:
+                    esc_prof = ("bad", str(exc))
+        if esc_rc == 0 and isinstance(esc_prof, dict) and esc_prof.get("lang") == "ru\tx":
+            ok("json_escape：语言名带制表符时 profile 仍是合法 JSON")
+        else:
+            fail("json_escape 没兜住（%r）" % (esc_prof,))
+
+        # ⑤-q kind=mixed：ttf + textures/ui 同时存在
+        mix = tmp / "mix_src" / "gamedata"
+        (mix / "fonts" / "rus").mkdir(parents=True)
+        (mix / "textures" / "ui").mkdir(parents=True)
+        (mix / "configs").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(Path(r"C:\Windows\Fonts\arial.ttf"), mix / "fonts" / "rus" / "a.ttf")
+        (mix / "configs" / "localization.ltx").write_text(
+            "[string_table]\nlanguage = rus\n", encoding="utf-8")
+        mix_rc, mix_text = run([str(CLI), "--ori-tree", str(tmp / "mix_src"), str(tmp / "ori_mix")])
+        if mix_rc == 0 and "kind=mixed" in mix_text:
+            ok("kind=mixed：ttf + textures/ui 同时存在能判成 mixed")
+        else:
+            fail("kind=mixed 没判出来：rc=%d" % mix_rc)
 
         # ⑥ 输入只读
         if snapshot(src) == before:
