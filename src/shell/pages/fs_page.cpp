@@ -1256,11 +1256,10 @@ QTreeWidgetItem* FsPage::make_entry_item(const efs::MergeNode& node) {
                                    ? (state.second > 0 ? Qt::Checked : Qt::Unchecked)
                                    : (state.second == state.first ? Qt::Checked
                                                                   : Qt::PartiallyChecked));
-        // 有子节点就放一个占位子项（展开箭头才会出现；真的子项在展开时才建）
+        // ★★ 2026-10-31（注入审计 P-766）：不再塞**占位子项**（它是"空行/假子项"那一族的源头，
+        //   P-639/P-647），改用 `childIndicatorPolicy(ShowIndicator)` —— 与 FacadeTree 同一套。
         if (!node.children.empty()) {
-            auto* placeholder = new QTreeWidgetItem;
-            placeholder->setData(0, Qt::UserRole, QString());
-            item->addChild(placeholder);
+            item->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
         }
     } else {
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
@@ -1274,12 +1273,9 @@ void FsPage::populate_entry_children(QTreeWidgetItem* item) {
     if (item == nullptr || syncing_tree_) return;
     const QString path = item->data(0, Qt::UserRole).toString();
     if (path.isEmpty()) return;
-    // 已经建过真子项就不再建（占位子项的特征：它的 path 为空）
-    if (item->childCount() == 1 && item->child(0)->data(0, Qt::UserRole).toString().isEmpty()) {
-        item->removeChild(item->child(0));
-    } else if (item->childCount() > 0) {
-        return;
-    }
+    // ★ P-766：去重不再看"占位子项"，改看显式标记（UserRole+9 = 子项已建）
+    if (item->data(0, Qt::UserRole + 9).toInt() == 1) return;
+    if (item->childCount() > 0) return;
     const efs::MergeNode* node = tree_.find(path.toUtf8().toStdString());
     if (node == nullptr) return;
     syncing_tree_ = true;
@@ -1287,6 +1283,7 @@ void FsPage::populate_entry_children(QTreeWidgetItem* item) {
         if (!entry_visible(child)) continue;   // 搜索过滤（命中项 + 祖先链才显示）
         item->addChild(make_entry_item(child));
     }
+    item->setData(0, Qt::UserRole + 9, 1);
     syncing_tree_ = false;
 }
 
@@ -2025,8 +2022,21 @@ void FsPage::refresh_package_checks() {
                                                                              : Qt::PartiallyChecked));
         }
     };
+    // ★★ 2026-10-31（组节点三态行为锁抓出来的真 bug）：`paint_groups(node)` 只画**子孙**，
+    //   顶层分组节点自己**从来没被刷过** —— 「包内全选」后顶层组仍是未勾（层级关系/部分选中
+    //   问题的直接来源）。这里把顶层也画一遍。
     for (int i = 0; i < package_list_->topLevelItemCount(); ++i) {
-        paint_groups(package_list_->topLevelItem(i));
+        QTreeWidgetItem* top = package_list_->topLevelItem(i);
+        paint_groups(top);
+        if (top->data(0, Qt::UserRole).toInt() < 0) {   // 分组节点（源节点已单独刷过）
+            const Tally stat = tally(top);
+            if (stat.total > 0) {
+                top->setCheckState(0, stat.any == 0
+                                          ? Qt::Unchecked
+                                          : (stat.full == stat.total ? Qt::Checked
+                                                                     : Qt::PartiallyChecked));
+            }
+        }
     }
     rebuilding_package_list_ = false;
 }

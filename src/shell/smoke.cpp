@@ -4618,6 +4618,55 @@ SmokeResult run_smoke() {
                           .arg(g_item != nullptr ? static_cast<int>(g_item->checkState(0)) : -9));
             }
 
+            // ★★ 2026-10-31（注入审计 P-766 + 用户「层级关系/部分选中」）：**组节点三态行为锁**。
+            //   夹具：目录下两个包（p1: a/b，p2: c）⇒ 顶是分组节点。
+            //   ① 「包内全选」后**顶层组**必须 ✓（修前它从不被 paint ⇒ 恒 0，这条就是那类"层级关系"）；
+            //   ② 把 p2 源节点设回未勾（组内 1/2）⇒ 组必须 ■（修前 tally 把 ■ 当 ✓ 的同类）。
+            {
+                const QString gdir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_group_check"));
+                QDir(gdir).removeRecursively();
+                QDir().mkpath(gdir + QStringLiteral("/sub"));
+                const auto write_pack = [](const QString& path,
+                                           const std::vector<std::string>& names) {
+                    std::vector<efs::DbPackItem> items;
+                    for (const std::string& name : names) {
+                        efs::DbPackItem one;
+                        one.path = name;
+                        one.data = {'x'};
+                        items.push_back(one);
+                    }
+                    const std::vector<uint8_t> raw = efs::pack_db(items, *efs::format_key_to_db("xdb"));
+                    std::ofstream out(path.toStdString(), std::ios::binary | std::ios::trunc);
+                    out.write(reinterpret_cast<const char*>(raw.data()),
+                              static_cast<std::streamsize>(raw.size()));
+                };
+                write_pack(gdir + QStringLiteral("/p1.db0"), {"a.txt", "b.txt"});
+                write_pack(gdir + QStringLiteral("/sub/p2.db0"), {"c.txt"});
+                FsPage gpage;
+                gpage.resize(760, page_min_h());
+                gpage.show();
+                QApplication::processEvents();
+                gpage.add_paths({gdir});
+                QApplication::processEvents();
+                if (gpage.check_all_button() != nullptr) gpage.check_all_button()->click();
+                QApplication::processEvents();
+                QTreeWidget* glist = gpage.package_list();
+                QTreeWidgetItem* gnode = glist != nullptr ? glist->topLevelItem(0) : nullptr;
+                const Qt::CheckState g_before = gnode != nullptr ? gnode->checkState(0) : Qt::Unchecked;
+                QTreeWidgetItem* p2_item = find_package_source_node(glist, QStringLiteral("p2"));
+                if (p2_item != nullptr) p2_item->setCheckState(0, Qt::Unchecked);
+                QApplication::processEvents();
+                const Qt::CheckState g_after = gnode != nullptr ? gnode->checkState(0) : Qt::Unchecked;
+                check(g_before == Qt::Checked && p2_item != nullptr &&
+                          g_after == Qt::PartiallyChecked,
+                      QStringLiteral("组节点三态：全勾组 ✓（实测 %1）→ 勾掉 p2（找到=%2）⇒ 组 ■（实测 %3）")
+                          .arg(static_cast<int>(g_before))
+                          .arg(p2_item != nullptr ? 1 : 0)
+                          .arg(static_cast<int>(g_after)));
+                gpage.hide();
+                QDir(gdir).removeRecursively();
+            }
+
             // ★★ 2026-10-03 新增锁（用户：「**包的内容没有全部勾选的时候，包的勾选框也应当处于
             //   部分勾选的状态。**」）—— 判据：包内全勾 ⇒ 包节点 ✓；**勾掉其中一个条目 ⇒ 包节点 ■**。
             //   （把 `on_entry_item_changed` 里那句 `refresh_package_checks()` 去掉立刻红：卡在 ✓。）
