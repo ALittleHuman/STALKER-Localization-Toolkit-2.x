@@ -124,6 +124,21 @@ void FacadeTree::set_root(const std::vector<plug::UiFacade::TreeNodeSpec>& nodes
     for (const plug::UiFacade::TreeNodeSpec& node : nodes) add_node(nullptr, node);
     // 声明里带勾选的 ⇒ 先把祖先态算平（不然"父是勾的、子没勾"这种声明会自相矛盾）
     updating_ = true;
+    // ★ 2026-10-31：先**向下**把"父勾子没勾"压平，再向上重算（顺序反了会得到自相矛盾的三态）
+    for (QTreeWidgetItemIterator it(this); *it != nullptr; ++it) {
+        QTreeWidgetItem* item = *it;
+        if (item->checkState(0) != Qt::Checked) continue;
+        std::function<void(QTreeWidgetItem*)> walk = [&](QTreeWidgetItem* node) {
+            for (int i = 0; i < node->childCount(); ++i) {
+                QTreeWidgetItem* child = node->child(i);
+                if ((child->flags() & Qt::ItemIsUserCheckable) != 0) {
+                    child->setCheckState(0, Qt::Checked);
+                }
+                walk(child);
+            }
+        };
+        walk(item);
+    }
     for (QTreeWidgetItemIterator it(this); *it != nullptr; ++it) {
         if ((*it)->checkState(0) == Qt::Checked) refresh_ancestors((*it)->parent());
     }
@@ -135,10 +150,22 @@ void FacadeTree::set_children(const std::string& parent_key,
     QTreeWidgetItem* parent = item_of(parent_key);
     if (parent == nullptr) return;
     updating_ = true;
+    // ★★ 2026-10-31：记住父的勾选态，新子项要**继承**（懒建场景下父✓子空是用户报的
+    //   "层级关系出问题"的主因）。
+    const Qt::CheckState inherited = parent->checkState(0);
+    // ★ 只有"父✓"时子才被强迫✓；父未勾时保留子自己的声明（否则 1✓1✗ 的组会被压成全不勾）
+    const bool inherit_children = (parent->flags() & Qt::ItemIsUserCheckable) != 0 &&
+                                  inherited == Qt::Checked;
     // 重复填充同一行 ⇒ 先清掉旧的（插件在展开回调里可能被多次触发）
     const auto children = parent->takeChildren();
     for (QTreeWidgetItem* child : children) delete child;
-    for (const plug::UiFacade::TreeNodeSpec& node : nodes) add_node(parent, node);
+    for (const plug::UiFacade::TreeNodeSpec& node : nodes) {
+        QTreeWidgetItem* child = add_node(parent, node);
+        if (child != nullptr && inherit_children &&
+            (child->flags() & Qt::ItemIsUserCheckable) != 0) {
+            child->setCheckState(0, inherited);
+        }
+    }
     // 声明里带勾选的 ⇒ 让父辈态跟着变
     for (const plug::UiFacade::TreeNodeSpec& node : nodes) {
         QTreeWidgetItem* item = item_of(node.key);
@@ -248,9 +275,14 @@ void FacadeTree::refresh_ancestors(QTreeWidgetItem* item) {
     while (item != nullptr) {
         int checked = 0;
         int partial = 0;
-        const int total = item->childCount();
-        for (int i = 0; i < total; ++i) {
-            const Qt::CheckState state = item->child(i)->checkState(0);
+        int total = 0;
+        // ★★ 2026-10-31（用户：「勾选的谜之判定范围」）：只数**可勾选**的子项。
+        //   不可勾的子项默认是 Unchecked，旧实现把它算进 total ⇒ 父永远到不了 ✓。
+        for (int i = 0; i < item->childCount(); ++i) {
+            QTreeWidgetItem* child = item->child(i);
+            if ((child->flags() & Qt::ItemIsUserCheckable) == 0) continue;
+            ++total;
+            const Qt::CheckState state = child->checkState(0);
             if (state == Qt::Checked) ++checked;
             else if (state == Qt::PartiallyChecked) ++partial;
         }

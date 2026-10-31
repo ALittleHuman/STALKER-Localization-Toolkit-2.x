@@ -1991,33 +1991,38 @@ void FsPage::refresh_package_checks() {
                                             : (checked == files ? Qt::Checked
                                                                 : Qt::PartiallyChecked));
     });
-    // 分组节点三态：统计整棵子树里的**源节点**勾选情况
-    std::function<QPair<int, int>(QTreeWidgetItem*)> tally = [&](QTreeWidgetItem* node) -> QPair<int, int> {
-        int total = 0;
-        int checked = 0;
+    // 分组节点三态：统计整棵子树里的**源节点**勾选情况。
+    // ★★ 2026-10-31（用户：「勾选的谜之判定范围，层级关系和部分选中出问题」）：
+    //   旧实现把"部分勾选"的源也数成 checked（`checkState != Unchecked`），于是
+    //   一个半勾的源会让**整组显示成 ✓**。这里必须区分三态：全勾 / 有任何勾 / 全不勾。
+    struct Tally { int total; int full; int any; };
+    std::function<Tally(QTreeWidgetItem*)> tally = [&](QTreeWidgetItem* node) -> Tally {
+        Tally sum{0, 0, 0};
         for (int i = 0; i < node->childCount(); ++i) {
             QTreeWidgetItem* child = node->child(i);
             if (child->data(0, Qt::UserRole).toInt() >= 0) {
-                ++total;
-                if (child->checkState(0) != Qt::Unchecked) ++checked;
+                ++sum.total;
+                const Qt::CheckState state = child->checkState(0);
+                if (state == Qt::Checked) ++sum.full;
+                if (state != Qt::Unchecked) ++sum.any;
             }
-            const QPair<int, int> sub = tally(child);
-            total += sub.first;
-            checked += sub.second;
+            const Tally sub = tally(child);
+            sum.total += sub.total;
+            sum.full += sub.full;
+            sum.any += sub.any;
         }
-        return {total, checked};
+        return sum;
     };
     std::function<void(QTreeWidgetItem*)> paint_groups = [&](QTreeWidgetItem* node) {
         for (int i = 0; i < node->childCount(); ++i) {
             QTreeWidgetItem* child = node->child(i);
             paint_groups(child);
             if (child->data(0, Qt::UserRole).toInt() >= 0) continue;   // 源节点已刷过
-            const QPair<int, int> stat = tally(child);
-            if (stat.first == 0) continue;
-            child->setCheckState(0, stat.second == 0
-                                        ? Qt::Unchecked
-                                        : (stat.second == stat.first ? Qt::Checked
-                                                                     : Qt::PartiallyChecked));
+            const Tally stat = tally(child);
+            if (stat.total == 0) continue;
+            child->setCheckState(0, stat.any == 0 ? Qt::Unchecked
+                                                  : (stat.full == stat.total ? Qt::Checked
+                                                                             : Qt::PartiallyChecked));
         }
     };
     for (int i = 0; i < package_list_->topLevelItemCount(); ++i) {

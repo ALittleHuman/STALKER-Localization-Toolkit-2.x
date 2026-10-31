@@ -4567,6 +4567,57 @@ SmokeResult run_smoke() {
                 QDir(few).removeRecursively();
             }
 
+            // ★★ 2026-10-31（用户：「勾选的谜之判定范围，层级关系和部分选中出问题」）：
+            //   FacadeTree 三态两条硬锁 —— ①不可勾子项不许把父压成 ■；②父✓时懒建子必须继承 ✓。
+            {
+                FacadeTree tree;
+                plug::UiFacade::TreeNodeSpec parent;
+                parent.key = "p";
+                parent.cells = {"父", "1"};
+                parent.checkable = true;
+                parent.checked = true;
+                parent.has_children = false;
+                plug::UiFacade::TreeNodeSpec note;
+                note.key = "n";
+                note.cells = {"说明（不可勾）", ""};
+                note.checkable = false;
+                tree.set_root({parent, note});
+                QTreeWidgetItem* p_item = tree.item_of("p");
+                const int p_before = p_item != nullptr ? static_cast<int>(p_item->checkState(0)) : -9;
+                tree.set_children("p", {note});
+                QTreeWidgetItem* child = tree.item_of("n");
+                QTreeWidgetItem* p_after = tree.item_of("p");
+                check(child != nullptr && p_item != nullptr && p_after != nullptr &&
+                          p_after->checkState(0) == Qt::Checked,
+                      QStringLiteral("树三态：父✓+懒建不可勾子 ⇒ 父仍 ✓（set_children 前=%1，后=%2，子=%3）")
+                          .arg(p_before)
+                          .arg(p_after != nullptr ? static_cast<int>(p_after->checkState(0)) : -9)
+                          .arg(child != nullptr ? static_cast<int>(child->checkState(0)) : -9));
+
+                FacadeTree tree2;
+                plug::UiFacade::TreeNodeSpec g;
+                g.key = "g";
+                g.cells = {"组", ""};
+                g.checkable = true;
+                g.checked = false;
+                tree2.set_root({g});
+                plug::UiFacade::TreeNodeSpec c1;
+                c1.key = "g/1";
+                c1.cells = {"子1", ""};
+                c1.checkable = true;
+                c1.checked = true;
+                plug::UiFacade::TreeNodeSpec c2;
+                c2.key = "g/2";
+                c2.cells = {"子2", ""};
+                c2.checkable = true;
+                c2.checked = false;
+                tree2.set_children("g", {c1, c2});
+                QTreeWidgetItem* g_item = tree2.item_of("g");
+                check(g_item != nullptr && g_item->checkState(0) == Qt::PartiallyChecked,
+                      QStringLiteral("树三态：组内 1/2 ⇒ 组为 ■（实测 %1）")
+                          .arg(g_item != nullptr ? static_cast<int>(g_item->checkState(0)) : -9));
+            }
+
             // ★★ 2026-10-03 新增锁（用户：「**包的内容没有全部勾选的时候，包的勾选框也应当处于
             //   部分勾选的状态。**」）—— 判据：包内全勾 ⇒ 包节点 ✓；**勾掉其中一个条目 ⇒ 包节点 ■**。
             //   （把 `on_entry_item_changed` 里那句 `refresh_package_checks()` 去掉立刻红：卡在 ✓。）
