@@ -593,6 +593,7 @@ const EngineFacade kFontFacade = {
         out.ffprobe = native.ffprobe;
         out.ffmpeg_from_config = native.ffmpeg_from_config;
         out.ffprobe_from_config = native.ffprobe_from_config;
+        out.version = native.version;
         return out;
     },
     /* video_major_version：`ffmpeg -version` 输出里的主版本号 */

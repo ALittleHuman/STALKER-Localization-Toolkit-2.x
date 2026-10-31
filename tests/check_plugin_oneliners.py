@@ -33,6 +33,22 @@ def main() -> int:
     fontpack = (ROOT / "plugins" / "fontpack_page.py").read_text(encoding="utf-8", errors="replace")
     build = (ROOT / "tools" / "cli" / "build_cmd.cpp").read_text(encoding="utf-8", errors="replace")
 
+    # ★ P-739 剩余两步（复核指出的）：输入链必须通、未知版本必须 fail-closed
+    facade_impl = (ROOT / "src" / "engine" / "plugin" / "engine_facade_impl.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    py_host = (ROOT / "src" / "engine" / "plugin" / "py_host.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    ffmpeg_cpp = (ROOT / "src" / "engine" / "video" / "ffmpeg.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    if "out.version = native.version;" in facade_impl and 'out["version"] = paths.version;' in py_host:
+        ok("P-739：VideoPaths.version 已接到插件（以前恒缺字段 ⇒ 空串）")
+    else:
+        fail("P-739：VideoPaths.version 没接到插件（输入链仍断）")
+    if "major < 0 || major == 8" in ffmpeg_cpp:
+        ok("P-739/P-584：版本未知时 fail-closed（不再放行 8.x）")
+    else:
+        fail("P-739/P-584：version_rejected 仍只判 == 8（空串会放行）")
+
     if "if not engine.video_version_rejected(" not in video and "video_version_rejected(version_text)" in video:
         ok("P-739：版本闸门不再是空壳（rejected 决定是否继续）")
     else:

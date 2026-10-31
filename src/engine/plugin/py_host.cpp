@@ -1525,6 +1525,7 @@ public:
         out["ffprobe"] = paths.ffprobe;
         out["ffmpeg_from_config"] = paths.ffmpeg_from_config;
         out["ffprobe_from_config"] = paths.ffprobe_from_config;
+        out["version"] = paths.version;   // ★ P-739：版本闸门输入
         return out;
     }
     int video_major_version(const std::string& version_output) const {

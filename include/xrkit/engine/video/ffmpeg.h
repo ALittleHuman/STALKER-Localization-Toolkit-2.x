@@ -32,6 +32,8 @@ struct FfmpegPaths {
     std::string ffprobe;
     bool ffmpeg_from_config = false;
     bool ffprobe_from_config = false;
+    // ★ P-739：`ffmpeg -version` 首行（版本闸门输入）
+    std::string version;
 };
 
 // 8.1：只认两处。`config` 里的路径**必须真实存在**才算数。

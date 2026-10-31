@@ -398,6 +398,7 @@ struct VideoPaths {
     std::string ffprobe;
     bool ffmpeg_from_config = false;
     bool ffprobe_from_config = false;
+    std::string version;   // ★ P-739：ffmpeg -version 首行
 };
 
 struct VideoRequest {

@@ -1,5 +1,7 @@
 #include "xrkit/engine/video/ffmpeg.h"
 
+#include "xrkit/engine/process/run.h"
+
 #include "probe_decls.h"
 
 #include "xrkit/core/path.h"
@@ -65,6 +67,19 @@ FfmpegPaths find_ffmpeg(const std::string& app_dir, const FfmpegConfig& config) 
     out.found = !out.ffmpeg.empty();
     out.has_probe = !out.ffprobe.empty();
     return out;
+    // ★ P-739：取一次 `ffmpeg -version`（版本闸门输入）；起不来只让 version 为空，
+    //   不改变"找到/没找到"的结论。
+    if (out.found) {
+        process::RunOptions run_options;
+        run_options.program = out.ffmpeg;
+        run_options.args = {"-hide_banner", "-version"};
+        std::string captured;
+        run_options.on_stdout = [&captured](const std::string& line) {
+            if (captured.size() < 512) captured += line + "\n";
+        };
+        const process::RunResult rr = process::run(run_options);
+        if (rr.started && !captured.empty()) out.version = captured;
+    }
 }
 
 FfmpegPaths find_ffmpeg_default() {
@@ -112,7 +127,9 @@ int major_version(const std::string& version_output) {
 
 bool version_rejected(const std::string& version_output) {
     // 8.6：8.x 的 theora 编码器对 STALKER OGM 有 bug ⇒ 显式拒绝
-    return major_version(version_output) == 8;
+    // ★ P-739/P-584：认不出版本也拒绝（fail-closed）；修前空串会放行 8.x
+    const int major = major_version(version_output);
+    return major < 0 || major == 8;
 }
 
 const FfmpegPaths& FfmpegLocator::ensure() {
