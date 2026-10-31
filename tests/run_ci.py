@@ -3476,6 +3476,23 @@ def step_font_sample(release: bool) -> None:
         fail("文本样张判据不通过（见上）")
 
 
+def step_plugin_oneliners(release: bool) -> None:
+    """P-739 / P-745 / P-770 的一行级红锁（注入审计 session-ac61aa8a）。"""
+    say("[?] 一行级缺陷：P-739 / P-745 / P-770 红锁")
+    script = ROOT / "tests" / "check_plugin_oneliners.py"
+    if not require_repo_file(script, "一行级红锁脚本"):
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("PLUGIN-ONELINERS"):
+            say("  " + s)
+    if rc == 0:
+        ok("一行级：P-739 / P-745 / P-770 全绿")
+    else:
+        fail("一行级红锁不通过（见上）")
+
+
 def step_tree_filter(release: bool) -> None:
     """P-684 / P-767 / P-768 的静态红锁（注入审计 session-ac61aa8a）。"""
     say("[?] 树/提取：P-684 / P-767 / P-768 红锁")
@@ -7613,6 +7630,7 @@ STEPS = [
     # ★★ 2026-10-29（交接区最终规划）：ori 树
     ("ori-tree", step_ori_tree),
     ("tree-filter", step_tree_filter),
+    ("plugin-oneliners", step_plugin_oneliners),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
     ("version-identity", step_version_identity),

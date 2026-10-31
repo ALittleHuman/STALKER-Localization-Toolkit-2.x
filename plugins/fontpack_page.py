@@ -146,7 +146,10 @@ def register(api):
 
         def suffix_value():
             index = combo_at(suffix_combo, ["无", "_chs", "自定义"])
-            return ui.get_text(suffix_entry).strip() if index == len(SIZES) + 1 else SUFFIXES[index]
+            # ★★ 2026-10-31（注入审计 P-745）：`len(SIZES)+1`（=4）永假 ⇒ 选"自定义"时
+            #   `SUFFIXES[2]` IndexError。判断应当对着 **SUFFIXES**（自定义项在最后，下标 = len）。
+            custom = len(SUFFIXES)
+            return ui.get_text(suffix_entry).strip() if index >= custom else SUFFIXES[index]
 
         def on_generate():
             xml_dir = ui.get_text(xml_entry).strip()

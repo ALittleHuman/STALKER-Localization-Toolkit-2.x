@@ -408,8 +408,21 @@ def register(api):
                 ui.log("视频转换：" + state["last_error"])
                 refresh_display()
                 return
-            if not engine.video_version_rejected(host.pref_get(pref, "version", "ffmpeg version 6")):
-                pass
+            # ★★ 2026-10-31（注入审计 P-739）：原来是 `if not rejected(...): pass` —— 空壳，
+            #   ffmpeg 8.x 照样放行。现在：版本证据优先取探测结果，其次 pref；
+            #   被判定不受支持 ⇒ 记错误、刷新、**不转换**。
+            version_text = str(paths.get("version") or "").strip()
+            if version_text:
+                host.pref_set(pref, "version", version_text)
+            else:
+                version_text = host.pref_get(pref, "version", "")
+            if engine.video_version_rejected(version_text):
+                state["last_error"] = ("ffmpeg 版本不受支持（8.x 及以上）："
+                                       + (version_text or "无法识别版本"))
+                ui.set_text(progress_text, "失败：" + state["last_error"])
+                ui.log("视频转换：" + state["last_error"])
+                refresh_display()
+                return
             out = ui.get_text(output_entry).strip()
             if not out:
                 out = default_output_path()

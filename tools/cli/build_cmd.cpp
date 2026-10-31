@@ -268,7 +268,9 @@ fail_archive:;
         if (!xrkit::core::restore_version_store(backup, store_path, err)) {
             std::cout << "BUILDPKG error reason=回退失败：" << err << "\n";
             rc = 1;
-            goto fail_archive;
+            // ★★ 2026-10-31（注入审计 P-770）：原来这里 `goto fail_archive` ⇒ 回到失败块
+            //   再试一次回退，成了**自循环**（7 小时空转那条教训）。不再 goto：
+            //   记 rc=1 后继续往下走（header/.rc 回滚 + 失败归档），由失败块统一 return。
         }
         // ★★ 2026-10-07（H1-2）：`version.h` / `.rc` 也一起回滚 —— 否则"这次发包失败"
         //   会把发版序号留在源码里（下次门禁看到 version.h=N 而 tree 还是 N-1 ⇒ 红），
