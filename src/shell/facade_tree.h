@@ -84,7 +84,7 @@ private:
     QTreeWidgetItem* add_node(QTreeWidgetItem* parent,
                               const plug::UiFacade::TreeNodeSpec& node);
     void refresh_ancestors(QTreeWidgetItem* item);
-    void apply_filter_to(QTreeWidgetItem* item, const QString& needle, bool parent_visible);
+    void apply_filter_to(QTreeWidgetItem* item, const QString& needle);
     bool item_visible(const QTreeWidgetItem* item) const;
     void collect_visible(QTreeWidgetItem* item, std::vector<std::string>& out) const;
     void collect_by_state(QTreeWidgetItem* item, Qt::CheckState state,

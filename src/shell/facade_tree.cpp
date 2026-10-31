@@ -335,9 +335,10 @@ std::string FacadeTree::selected_key() const {
     return selected.isEmpty() ? std::string() : key_of(selected.first());
 }
 
-void FacadeTree::apply_filter_to(QTreeWidgetItem* item, const QString& needle,
-                                 bool parent_visible) {
+void FacadeTree::apply_filter_to(QTreeWidgetItem* item, const QString& needle) {
     if (item == nullptr) return;
+    // ★★ P-767：原来那个"父可见"形参是**死参数**（传了不用），已删除；
+    //   显示语义由 `self_match || child_match || needle.isEmpty()` 决定。
     bool self_match = needle.isEmpty();
     if (!self_match) {
         for (int column = 0; column < columnCount(); ++column) {
@@ -347,11 +348,12 @@ void FacadeTree::apply_filter_to(QTreeWidgetItem* item, const QString& needle,
             }
         }
     }
-    if (self_match) ++hits_;
+    // ★★ P-768：空串（=不过滤）时不能再"先累加再清零"——直接在源头不计数
+    if (self_match && !needle.isEmpty()) ++hits_;
     // 命中 ⇒ 显示；未命中但有命中的子孙 ⇒ 也得显示（不然找不到）
     bool child_match = false;
     for (int i = 0; i < item->childCount(); ++i) {
-        apply_filter_to(item->child(i), needle, parent_visible || self_match);
+        apply_filter_to(item->child(i), needle);
         if (!item->child(i)->isHidden()) child_match = true;
     }
     const bool visible = self_match || child_match || needle.isEmpty();
@@ -363,9 +365,9 @@ void FacadeTree::set_filter(const std::string& text) {
     hits_ = 0;
     const bool empty = filter_.isEmpty();
     for (int i = 0; i < topLevelItemCount(); ++i) {
-        apply_filter_to(topLevelItem(i), filter_, false);
+        apply_filter_to(topLevelItem(i), filter_);
     }
-    if (empty) hits_ = 0;   // 空串 = "不过滤"，命中数记 0（与界面上的"无搜索"一致）
+    (void)empty;   // 空串的 0 命中已在 apply_filter_to 里保证（不再靠事后清零）
 }
 
 

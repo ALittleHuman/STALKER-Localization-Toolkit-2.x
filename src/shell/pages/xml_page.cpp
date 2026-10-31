@@ -1256,9 +1256,19 @@ void XmlPage::update_extract_mode() {
     const QString b = dir_b_edit_->text().trimmed();
     bool show = false;
     if (!a.isEmpty() && !b.isEmpty()) {
+        // ★★ 2026-10-31（注入审计 P-684）：`WalkReport` 以前**构造完就扔** —— 遍历错误
+        //   （权限/坏链/读不到）被静默当成"空目录"。现在错误必须浮到状态行，且**不许**
+        //   把它当成"空"去切模式（未知 ≠ 空）。
+        struct EmptyProbe { bool ok = true; bool empty = true; QString error; };
         const auto empty_of = [](const QString& path) {
-            // 目录**不存在**也按空处理（用户常先把"目标"目录填进去，其实还没建）
-            if (!QDir(path).exists()) return true;
+            EmptyProbe probe;
+            const QFileInfo info(path);
+            if (!info.exists()) return probe;                 // 还没建 ⇒ 真为空
+            if (!info.isDir()) {
+                probe.ok = false;
+                probe.error = QStringLiteral("不是目录：%1").arg(path);
+                return probe;
+            }
             xrkit::engine::fs::WalkReport report;
             const std::string root = path.toUtf8().toStdString();
             const auto items = xrkit::engine::fs::collect_tree(root, &report);
@@ -1266,11 +1276,26 @@ void XmlPage::update_extract_mode() {
             for (const auto& item : items) {
                 if (!item.is_dir) ++files;
             }
-            return files == 0;
+            probe.empty = (files == 0);
+            if (!report.errors.empty()) {
+                probe.ok = false;
+                probe.error = utf8(report.errors.front());
+            }
+            return probe;
         };
-        const bool empty_a = empty_of(a);
-        const bool empty_b = empty_of(b);
-        show = (empty_a != empty_b);   // 恰好一边为空
+        const EmptyProbe pa = empty_of(a);
+        const EmptyProbe pb = empty_of(b);
+        walk_error_.clear();
+        if (!pa.ok || !pb.ok) {
+            walk_error_ = pa.ok ? pb.error : pa.error;
+            if (status_ != nullptr) {
+                status_->setText(QStringLiteral("判定失败（遍历/路径错误，不按“空目录”处理）：%1")
+                                     .arg(walk_error_));
+            }
+            show = false;
+        } else {
+            show = (pa.empty != pb.empty);   // 恰好一边为空
+        }
     }
     extract_mode_ = show;
     // ★★ 2026-10-27（用户：「下拉菜单也没有显示文本提取相关内容」）：
@@ -1306,7 +1331,10 @@ void XmlPage::run_extract() {
     }
     // ★★ 2026-10-29（交接区最终规划）：**空侧 = ori**，非空侧 = 源；
     //   不再"非空侧当文本根"，也不再写 `<out>/<lang>` 旧布局。
-    const auto files_of = [](const QString& path) {
+    // ★★ P-684：这里同样不许把"读不到"当成 0 个文件（否则会误判空侧、去覆盖 ori）
+    int walk_errors = 0;
+    QString walk_error_text;
+    const auto files_of = [&walk_errors, &walk_error_text](const QString& path) {
         xrkit::engine::fs::WalkReport report;
         const auto items = xrkit::engine::fs::collect_tree(
             path.toUtf8().toStdString(), &report);
@@ -1314,10 +1342,20 @@ void XmlPage::run_extract() {
         for (const auto& item : items) {
             if (!item.is_dir) ++files;
         }
+        if (!report.errors.empty()) {
+            ++walk_errors;
+            if (walk_error_text.isEmpty()) walk_error_text = utf8(report.errors.front());
+        }
         return files;
     };
     const bool a_empty = files_of(a) == 0;
     const bool b_empty = files_of(b) == 0;
+    if (walk_errors > 0) {
+        status_->setText(QStringLiteral("无法判定空侧：遍历有 %1 处错误（%2）")
+                             .arg(walk_errors)
+                             .arg(walk_error_text));
+        return;
+    }
     if (a_empty == b_empty) {
         status_->setText(QStringLiteral("提取要求**恰好一侧为空**（空侧当 ori）；现在是%1")
                              .arg(a_empty ? QStringLiteral("两侧都空")

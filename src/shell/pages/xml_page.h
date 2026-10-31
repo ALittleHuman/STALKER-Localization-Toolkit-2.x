@@ -161,6 +161,8 @@ private:
     void update_extract_mode();
     void run_extract();
     bool extract_mode_ = false;
+    // ★ P-684：最近一次空侧判定里的遍历错误（空 = 没有错误；非空 = 不许当"空目录"）
+    QString walk_error_;
     class QCheckBox* texts_check_ = nullptr;
     class QCheckBox* rewrite_check_ = nullptr;
     class QPushButton* extract_button_ = nullptr;

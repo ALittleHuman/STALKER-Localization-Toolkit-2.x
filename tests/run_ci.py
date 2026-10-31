@@ -3476,6 +3476,23 @@ def step_font_sample(release: bool) -> None:
         fail("文本样张判据不通过（见上）")
 
 
+def step_tree_filter(release: bool) -> None:
+    """P-684 / P-767 / P-768 的静态红锁（注入审计 session-ac61aa8a）。"""
+    say("[?] 树/提取：P-684 / P-767 / P-768 红锁")
+    script = ROOT / "tests" / "check_tree_filter_accounting.py"
+    if not require_repo_file(script, "树/提取红锁脚本"):
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("TREE-FILTER"):
+            say("  " + s)
+    if rc == 0:
+        ok("树/提取：三条红锁全绿")
+    else:
+        fail("树/提取三条红锁不通过（见上）")
+
+
 def step_ori_tree(release: bool) -> None:
     """ori 树（交接区最终规划第 1 步）：容器发现 / 整树复制 / 提取改写 / 落点 / 只读。"""
     say("[?] ori 树：容器发现 + 整树复制 + 提取改写 + 落点")
@@ -7595,6 +7612,7 @@ STEPS = [
     ("extract-charset", step_extract_charset),
     # ★★ 2026-10-29（交接区最终规划）：ori 树
     ("ori-tree", step_ori_tree),
+    ("tree-filter", step_tree_filter),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
     ("version-identity", step_version_identity),
