@@ -304,6 +304,30 @@ def main() -> int:
         else:
             fail("ori 在源内部没被拒：rc=%d" % in_rc)
 
+        # ⑤-n 复审计 P1：纯文本目录 / 只含 text 的 configs 子树也要能复制
+        pure = tmp / "pure_text"
+        (pure / "a.xml").parent.mkdir(parents=True, exist_ok=True)
+        (pure / "a.xml").write_text(
+            '<string_table><string id="p"><text>纯文本</text></string></string_table>',
+            encoding="utf-8")
+        p_rc, p_out = run([str(CLI), "--ori-tree", str(pure), str(tmp / "ori_pure")])
+        if p_rc == 0 and list((tmp / "ori_pure").rglob("a.xml")):
+            ok("纯文本目录输入：能当容器复制（不再报找不到容器）")
+        else:
+            fail("纯文本目录输入仍失败：rc=%d\n%s" % (p_rc, p_out[-300:]))
+        # kind：有 fonts.ltx、无 ttf ⇒ 不许标 ixr
+        kd = tmp / "kind_src" / "gamedata"
+        (kd / "configs").mkdir(parents=True)
+        (kd / "configs" / "fonts.ltx").write_text("[font_default]\nname = arial\n", encoding="utf-8")
+        (kd / "fonts" / "rus").mkdir(parents=True)
+        (kd / "configs" / "localization.ltx").write_text(
+            "[string_table]\nlanguage = rus\n", encoding="utf-8")
+        k_rc, k_out = run([str(CLI), "--ori-tree", str(tmp / "kind_src"), str(tmp / "ori_kind")])
+        if k_rc == 0 and "kind=none" in k_out:
+            ok("kind：有 fonts.ltx 但没有 ttf ⇒ none（不再一有 ltx 就标 ixr）")
+        else:
+            fail("kind 误判：rc=%d\n%s" % (k_rc, k_out[-300:]))
+
         # ⑥ 输入只读
         if snapshot(src) == before:
             ok("输入源一个字节都没变（只读）")

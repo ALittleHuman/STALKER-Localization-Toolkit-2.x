@@ -36,7 +36,10 @@ std::string lower(std::string s) {
 
 // 容器标记：目录里直接出现这些子目录之一 ⇒ 它是容器
 bool has_container_markers(const fs::path& dir) {
-    static const char* kMarkers[] = {"configs", "scripts", "gameplay", "fonts", "textures"};
+    // `text` 也算容器标记：`gamedata/configs` 这种"只含 text/ui 的中间层"以前会被拒
+    // （复审计 P1：纯文本/配置子树输入）。真正的纯文本目录（直接放 *.xml）走后面的兜底。
+    static const char* kMarkers[] = {"configs", "scripts", "gameplay", "fonts", "textures",
+                                     "text"};
     std::error_code ec;
     for (const char* marker : kMarkers) {
         if (fs::is_directory(dir / marker, ec)) return true;
@@ -178,17 +181,44 @@ OriProfile ori_profile_of(const OriResult& result) {
     return profile;
 }
 
+namespace {
+// ★ 2026-10-31（复审计 P1）：手拼 JSON 必须转义 —— 路径/语言里出现引号或控制字符时
+//   `_xrkit_profile.json` 会坏，下游解析直接失败。
+std::string json_escape(const std::string& in) {
+    std::string out;
+    out.reserve(in.size() + 8);
+    for (unsigned char c : in) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (c < 0x20) {
+                    char buf[7];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+                    out += buf;
+                } else {
+                    out += static_cast<char>(c);
+                }
+        }
+    }
+    return out;
+}
+}  // namespace
+
 std::string ori_profile_json(const OriProfile& profile) {
-    std::string out = "{\"lang\":\"" + profile.lang + "\",\"lang_source\":\"" +
+    std::string out = "{\"lang\":\"" + json_escape(profile.lang) + "\",\"lang_source\":\"" +
                       profile.lang_source + "\",\"out\":\"" + profile.out_dir +
                       "\",\"containers\":[";
     bool first = true;
     for (const OriContainer& c : profile.containers) {
         if (!first) out += ",";
         first = false;
-        out += "{\"rel\":\"" + (c.rel.empty() ? std::string(".") : c.rel) +
-               "\",\"lang\":\"" + c.lang + "\",\"lang_source\":\"" + c.lang_source +
-               "\",\"kind\":\"" + c.kind + "\"" +
+        out += "{\"rel\":\"" + json_escape(c.rel.empty() ? std::string(".") : c.rel) +
+               "\",\"lang\":\"" + json_escape(c.lang) + "\",\"lang_source\":\"" + c.lang_source +
+               "\",\"kind\":\"" + json_escape(c.kind) + "\"" +
                ",\"has_text\":" + (c.has_text ? "true" : "false") +
                ",\"has_fonts\":" + (c.has_fonts ? "true" : "false") +
                ",\"has_scripts\":" + (c.has_scripts ? "true" : "false") +
@@ -317,9 +347,23 @@ OriResult build_ori_tree(const OriOptions& options) {
         if (!covered) containers.push_back(cand);
     }
     if (containers.empty()) {
-        out.error = "源里找不到容器（没有 configs/scripts/gameplay/fonts/textures）：" +
-                    options.source_dir;
-        return out;
+        // ★ 复审计 P1：直接拖「纯文本目录」（`configs/text/<lang>` 这种）也被当容器处理。
+        bool has_xml_directly = false;
+        std::error_code xml_ec;
+        for (fs::directory_iterator it(effective_src, xml_ec), end; !xml_ec && it != end;
+             it.increment(xml_ec)) {
+            if (it->is_regular_file(xml_ec) && lower(it->path().extension().string()) == ".xml") {
+                has_xml_directly = true;
+                break;
+            }
+        }
+        if (!has_xml_directly) {
+            out.error = "源里找不到容器（没有 configs/scripts/gameplay/fonts/textures，"
+                        "也不是纯文本目录）：" + options.source_dir;
+            return out;
+        }
+        containers.push_back("");
+        if (out_prefix.empty()) out_prefix = src_name;
     }
 
     uint64_t extract_failed = 0;
@@ -343,12 +387,44 @@ OriResult build_ori_tree(const OriOptions& options) {
                            is_dir(container / "configs" / "scripts");
         info.has_gameplay = is_dir(container / "gameplay") ||
                             is_dir(container / "configs" / "gameplay");
-        info.kind = info.has_fonts ? "ixr" : (is_dir(container / "textures" / "ui") ? "bitmap" : "none");
+        // ★ 复审计 P1：不是"有 fonts.ltx 就是 ixr" —— 必须有真 ttf；两者都有 ⇒ mixed
+        bool has_ttf = false;
+        {
+            const fs::path fonts_dir = container / "fonts";
+            if (is_dir(fonts_dir)) {
+                // 遍历只走 collect_tree（D2 锁：同类遍历只有一套）
+                std::vector<std::string> ttf_names;
+                efs::WalkReport ttf_report;
+                for (const efs::TreeItem& item :
+                     efs::collect_tree(core::path_to_utf8(fonts_dir), &ttf_report)) {
+                    if (item.is_dir) continue;
+                    const std::string ext = lower(fs::path(item.path).extension().string());
+                    if (ext == ".ttf" || ext == ".otf") {
+                        has_ttf = true;
+                        break;
+                    }
+                }
+            }
+        }
+        const bool has_bitmap = is_dir(container / "textures" / "ui");
+        info.kind = (has_ttf && has_bitmap) ? "mixed"
+                    : has_ttf               ? "ixr"
+                    : has_bitmap            ? "bitmap"
+                                            : "none";
 
         fs::create_directories(dst, ec);
         out.files_copied += copy_tree_into(container, dst, &out.warnings);
 
-        const fs::path texts_out = dst / "configs" / "text" / core::path_from_utf8(info.lang);
+        // ★ 复审计 P1：容器本身就是 `configs`（或 `text`）时，不能再往里套一层
+        //   `configs/text` —— 否则出现 `ori/gamedata/configs/configs/text/rus` 这种幻影目录。
+        const std::string container_name = core::path_to_utf8(container.filename());
+        fs::path cfg_root = dst / "configs";
+        if (container_name == "configs") {
+            cfg_root = dst;
+        } else if (container_name == "text") {
+            cfg_root = dst.parent_path();
+        }
+        const fs::path texts_out = cfg_root / "text" / core::path_from_utf8(info.lang);
         fs::create_directories(texts_out, ec);
 
         // scripts：改写后回写到容器内 `scripts/`（相对容器根）
