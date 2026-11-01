@@ -216,6 +216,7 @@ void print_usage() {
            "                  [--backup] [--exclude <模式>]\n"
            "                  批量编码转换（与内置 convert 页同一个引擎实现；判据对拍用它）\n"
            "  --build-font-pack <SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录>\n"
+           "  --video-ffmpeg-probe [工具目录]    视频 ffmpeg 版本探测（打印 version_major / rejected）\n"
            "  --runtime-paths <工具目录>            依赖路由：[runtime] root / @APP@ 解析结果\n"
            "  --langpack-scan <语言包目录>      只读识别：profile/lang/槽位/资源（IX-Ray 生成器「指定」模式的底座）\n"
            "  --font-sample <字体> <文本> <字号> <out.ppm>   文本样张（预览用；缺字计数）\n"
@@ -4903,6 +4904,23 @@ int run_cli(const std::vector<std::string>& args) {
                   << " empty_tables=" << r.empty_tables
                   << " skipped_existing=" << r.skipped_existing << "\n";
         return kExitOk;
+    }
+
+    // 视频 ffmpeg 版本探测（P-739 的行为判据；复核要求"判据打在产物上"）
+    if (action == "--video-ffmpeg-probe") {
+        const std::string app_dir = operands.empty() ? "." : operands[0];
+        xrkit::engine::video::FfmpegConfig config;
+        config.path = xrkit::core::load_user_value("ffmpeg", "path");
+        config.probe = xrkit::core::load_user_value("ffmpeg", "probe");
+        const xrkit::engine::video::FfmpegPaths paths =
+            xrkit::engine::video::find_ffmpeg(app_dir, config);
+        const int major = xrkit::engine::video::major_version(paths.version);
+        const bool rejected = xrkit::engine::video::version_rejected(paths.version);
+        std::cout << "FFMPEGV found=" << (paths.found ? 1 : 0)
+                  << " path=" << paths.ffmpeg
+                  << " version_major=" << major
+                  << " rejected=" << (rejected ? 1 : 0) << "\n";
+        return paths.found && major > 0 ? kExitOk : kExitFail;
     }
 
     // 依赖路由（用户 2026-11-01）：打印 [runtime] 解析结果，自检与排障用

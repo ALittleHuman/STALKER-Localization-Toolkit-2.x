@@ -34,20 +34,35 @@ def main() -> int:
     build = (ROOT / "tools" / "cli" / "build_cmd.cpp").read_text(encoding="utf-8", errors="replace")
 
     # ★ P-739 剩余两步（复核指出的）：输入链必须通、未知版本必须 fail-closed
-    facade_impl = (ROOT / "src" / "engine" / "plugin" / "engine_facade_impl.cpp").read_text(
-        encoding="utf-8", errors="replace")
-    py_host = (ROOT / "src" / "engine" / "plugin" / "py_host.cpp").read_text(
-        encoding="utf-8", errors="replace")
-    ffmpeg_cpp = (ROOT / "src" / "engine" / "video" / "ffmpeg.cpp").read_text(
-        encoding="utf-8", errors="replace")
-    if "out.version = native.version;" in facade_impl and 'out["version"] = paths.version;' in py_host:
-        ok("P-739：VideoPaths.version 已接到插件（以前恒缺字段 ⇒ 空串）")
+    # ★★ 2026-11-01（复核要求）：改成**行为判据** —— 直接问程序"探测到的主版本是多少"。
+    #   死代码（探测写在 return 之后）会让 major=-1 ⇒ 这条必红。
+    cli = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
+    # 找一个**真的带 ffmpeg** 的目录：优先最新打包产物，其次仓库 bin/
+    probe_dir = None
+    dist = ROOT / "dist" / "2.0.0"
+    for cand in sorted(dist.glob("BETA/*/bin/ffmpeg.exe"), reverse=True) if dist.is_dir() else []:
+        probe_dir = cand.parent.parent
+        break
+    if probe_dir is None and (ROOT / "bin" / "ffmpeg.exe").is_file():
+        probe_dir = ROOT
+    if not cli.is_file() or probe_dir is None:
+        fail("P-739：缺 xrkit_cli.exe 或带 ffmpeg 的目录，无法做行为判据")
     else:
-        fail("P-739：VideoPaths.version 没接到插件（输入链仍断）")
-    if "major < 0 || major == 8" in ffmpeg_cpp:
-        ok("P-739/P-584：版本未知时 fail-closed（不再放行 8.x）")
-    else:
-        fail("P-739/P-584：version_rejected 仍只判 == 8（空串会放行）")
+        proc = subprocess.run([str(cli), "--video-ffmpeg-probe", str(probe_dir)],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        text = proc.stdout.decode("utf-8", errors="replace")
+        major = -2
+        for token in text.split():
+            if token.startswith("version_major="):
+                try:
+                    major = int(token.split("=", 1)[1])
+                except ValueError:
+                    pass
+        if proc.returncode == 0 and major > 0:
+            ok("P-739 行为：真 ffmpeg 的 version_major=%d（探测不是死代码）" % major)
+        else:
+            fail("P-739 行为：探测拿不到版本（major=%d，rc=%d）——死代码或找不到 ffmpeg"
+                 % (major, proc.returncode))
 
     if "if not engine.video_version_rejected(" not in video and "video_version_rejected(version_text)" in video:
         ok("P-739：版本闸门不再是空壳（rejected 决定是否继续）")

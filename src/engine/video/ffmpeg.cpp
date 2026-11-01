@@ -12,6 +12,8 @@
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <mutex>
+#include <map>
 
 namespace xrkit::engine::video {
 namespace {
@@ -82,10 +84,26 @@ FfmpegPaths find_ffmpeg(const std::string& app_dir, const FfmpegConfig& config) 
     }
     out.found = !out.ffmpeg.empty();
     out.has_probe = !out.ffprobe.empty();
-    return out;
     // ★ P-739：取一次 `ffmpeg -version`（版本闸门输入）；起不来只让 version 为空，
     //   不改变"找到/没找到"的结论。
     if (out.found) {
+        // ★ P-780（复核提醒）：探测会 spawn 一个进程，而插件 4 处 + 引擎默认路径都会调
+        //   find_ffmpeg ⇒ 按「路径 + 大小 + 写入时间」做进程内缓存，一个进程只探一次。
+        static std::mutex cache_mutex;
+        static std::map<std::string, std::string> version_cache;
+        std::error_code stat_ec;
+        const auto stamp = std::filesystem::last_write_time(core::path_from_utf8(out.ffmpeg), stat_ec);
+        const auto bytes = std::filesystem::file_size(core::path_from_utf8(out.ffmpeg), stat_ec);
+        const std::string cache_key = out.ffmpeg + "|" + std::to_string(stat_ec ? 0 : bytes) + "|" +
+                                     std::to_string(stat_ec ? 0 : static_cast<long long>(stamp.time_since_epoch().count()));
+        {
+            std::lock_guard<std::mutex> guard(cache_mutex);
+            const auto hit = version_cache.find(cache_key);
+            if (hit != version_cache.end()) {
+                out.version = hit->second;
+                return out;
+            }
+        }
         process::RunOptions run_options;
         run_options.program = out.ffmpeg;
         run_options.args = {"-hide_banner", "-version"};
@@ -95,7 +113,12 @@ FfmpegPaths find_ffmpeg(const std::string& app_dir, const FfmpegConfig& config) 
         };
         const process::RunResult rr = process::run(run_options);
         if (rr.started && !captured.empty()) out.version = captured;
+        {
+            std::lock_guard<std::mutex> guard(cache_mutex);
+            version_cache[cache_key] = out.version;
+        }
     }
+    return out;
 }
 
 FfmpegPaths find_ffmpeg_default() {
