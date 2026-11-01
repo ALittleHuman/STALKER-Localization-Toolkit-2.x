@@ -98,6 +98,9 @@ public:
     bool reference_ready() const { return reference_probed_; }
     // 编码器表扫描是否已有结论（含"扫不到"——降级理由在面板上可见）
     bool encoders_scanned() const { return encoders_scanned_; }
+    // ★ P-782：编码器扫描可**单独**触发（自检用；apply_file 会重置探测状态）。
+    //   真实 UI 只在落源文件时自动调用一次。
+    void start_encoder_scan();
 
     // 输出：默认名按 1.x `_auto_output` 推导；「选择…」是**保存文件**对话框
     QString default_output_path() const;
@@ -154,7 +157,6 @@ private:
     void refresh_buttons();
     void set_running_ui(bool running);
     void start_probe(const QString& path, ProbeTarget target);
-    void start_encoder_scan();
     void complete_encoder_scan(bool ok, const QString& reason);
     engine::video::TranscodeRequest build_request(const engine::video::FfmpegPaths& paths) const;
     QProcess* make_child_process();

@@ -608,6 +608,7 @@ const EngineFacade kFontFacade = {
         out.argv = native.argv;
         out.video_encoder = native.video_encoder;
         out.encoder_warning = native.encoder_warning;
+        out.error = native.error;
         out.audio_kept_on_probe_failure = native.audio_kept_on_probe_failure;
         out.duration = native.duration;
         out.scale_applied = native.scale_applied;

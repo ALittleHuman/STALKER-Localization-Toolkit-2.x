@@ -4302,7 +4302,7 @@ def step_engine_facade(release: bool) -> None:
         "video_fps_positive": "1",
         "video_codec": "h264",
         "video_size_mb_positive": "1",
-        "video_encoders": "libx264,mpeg4,libvorbis",   # `ffmpeg -encoders` 解析
+        "video_encoders": "libx264,libtheora,mpeg4,libvorbis",   # `ffmpeg -encoders` 解析
         "video_argv_nonempty": "1",         # 转码 argv 由引擎构建
         "video_argv_has_input": "1",
         "video_argv_has_output": "1",
@@ -4467,7 +4467,7 @@ def step_engine_facade(release: bool) -> None:
         got = value_of(key)
         if got != want:
             problems.append("产物模型 %s=%s（应为 %s）" % (key, got or "(缺)", want))
-    if not value_of("video_encoder"):
+    if not value_of("video_encoder") and not value_of("plan_err"):
         problems.append("video 面 video_encoder 是空的（面板值必须来自 plan_transcode）")
     say("  夹具证据：%s" % text.replace("\n", " | ")[:260])
     if problems:
@@ -5134,9 +5134,10 @@ def step_video_plugin(release: bool) -> None:
     work.mkdir(parents=True, exist_ok=True)
 
     # ── ① plan：CLI 的 7 组语料（逐字转成请求 JSON，名字也一样）──────────────
-    enc_all = ["libtheora", "libxvid", "mpeg4"]
-    enc_no_xvid = ["libtheora", "mpeg4"]
-    enc_only_mpeg4 = ["mpeg4"]
+    # P-782：真实 ffmpeg 都有 libvorbis；音频闸门要它（缺了就是硬失败，不再是"能出片"）
+    enc_all = ["libtheora", "libvorbis", "libxvid", "mpeg4"]
+    enc_no_xvid = ["libtheora", "libvorbis", "mpeg4"]
+    enc_only_mpeg4 = ["libvorbis", "mpeg4"]   # P-782 的 error 用例：没有 libtheora
 
     def media(has_video, codec, width, height, fps, bitrate, has_audio, rate, channels, abitrate):
         return {"parsed": True, "has_video": has_video, "has_audio": has_audio,

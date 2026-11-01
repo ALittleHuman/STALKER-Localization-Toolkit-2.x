@@ -102,6 +102,18 @@ def main() -> int:
         else:
             fail("缺件行为不对：rc=%d\n%s" % (rc, out[-300:]))
 
+        # ④b 反向：存在的显式绝对路径 ⇒ source=explicit（不是 root/app）
+        explicit_app = tmp / "explicit_app"
+        touch(explicit_app / "bin" / "ffmpeg.exe")
+        touch(explicit_app / "other" / "ff.exe")
+        write(explicit_app / "xrkit_user.ltx",
+              "[runtime]\nffmpeg = %s\n" % (explicit_app / "other" / "ff.exe"))
+        rc, out = run(explicit_app)
+        if norm("ffmpeg=%s source=explicit" % (explicit_app / "other" / "ff.exe")) in norm(out):
+            ok("显式绝对路径存在 ⇒ source=explicit（不是 root/app）")
+        else:
+            fail("显式绝对路径被当成别的来源：\n%s" % out[-300:])
+
         # ⑤ 相对 root 必须锚到 **app 目录**（不是当前工作目录）
         rel_app = tmp / "rel_app"
         touch(rel_app / "runtime" / "bin" / "ffmpeg.exe")

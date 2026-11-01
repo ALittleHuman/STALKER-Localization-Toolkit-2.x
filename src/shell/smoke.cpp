@@ -8310,7 +8310,8 @@ SmokeResult run_smoke() {
                 request.ffmpeg = paths.ffmpeg;
                 request.input = in_path.toUtf8().toStdString();
                 request.output = out_path.toUtf8().toStdString();
-                request.available_encoders = {"libtheora", "libxvid", "mpeg4"};
+                // P-782：音频闸门要 libvorbis（真实 ffmpeg 必有）
+                request.available_encoders = {"libtheora", "libvorbis", "libxvid", "mpeg4"};
                 QString error;
                 check(page.start_transcode(request, &error),
                       QStringLiteral("视频端到端：启动失败（%1）").arg(error));
@@ -9217,7 +9218,7 @@ SmokeResult run_smoke() {
               panel.contains(QStringLiteral("将缩放")) &&
               panel.contains(QStringLiteral("800 kbps")) &&
               (panel.contains(QStringLiteral("theora -> libtheora")) ||
-               panel.contains(QStringLiteral("theora -> mpeg4"))),
+                panel.contains(QStringLiteral("缺 libtheora"))),
           QStringLiteral("视频③：对比行要给出引擎的结论（含将缩放/将调整/编码器）"));
     check(panel.contains(QStringLiteral("  文件: intro.avi")) &&
               panel.count(QStringLiteral("  文件: ")) == 2,

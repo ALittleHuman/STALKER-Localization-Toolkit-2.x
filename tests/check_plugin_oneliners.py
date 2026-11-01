@@ -82,6 +82,22 @@ def main() -> int:
     else:
         fail("P-770：回退失败后仍有 goto fail_archive")
 
+    # ★ P-782 纯函数反向锁：OGM 只认 Theora —— 不依赖 ffmpeg、不依赖 golden，
+    #   一行断言把"回到 mpeg4/libxvid 回退"的路堵死。
+    src = (ROOT / "src" / "engine" / "video" / "transcode.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    pick_start = src.find("std::string pick_video_encoder(")
+    pick_end = src.find("\n}", pick_start)
+    pick_body = src[pick_start:pick_end] if pick_start >= 0 else ""
+    # 只看**代码行**（注释里写"libxvid / mpeg4"是在解释历史，不算回退）
+    code_lines = [ln for ln in pick_body.splitlines() if not ln.strip().startswith("//")]
+    code_body = "\n".join(code_lines)
+    if 'contains(available, "libtheora")' in code_body and "libxvid" not in code_body and \
+            "mpeg4" not in code_body:
+        ok("P-782 纯函数锁：pick_video_encoder 只认 libtheora（无 libxvid/mpeg4 回退）")
+    else:
+        fail("P-782 纯函数锁：pick_video_encoder 仍可能回退到 libxvid/mpeg4")
+
     for rel in ("plugins/video_page.py", "plugins/fontpack_page.py"):
         try:
             py_compile.compile(str(ROOT / rel), doraise=True)

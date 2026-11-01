@@ -215,6 +215,8 @@ def register(api):
                                  % (src_audio.get("channels", 0), plan["audio_channels"],
                                     "OK" if src_audio.get("channels") == ref_audio.get("channels")
                                     else "将调整"))
+                if plan.get("error"):
+                    lines.append("  ✗ " + plan["error"])
                 if plan["encoder_warning"]:
                     lines.append("  ⚠ 没有可用编码器表 ⇒ 回退内置 mpeg4（输出编码可能与参考不一致）")
                 lines.append("")
@@ -449,6 +451,13 @@ def register(api):
                     return
             ui.log("视频转换：开始 %s -> %s" % (state["source_path"], out))
             plan = engine.video_plan_transcode(request)
+            if plan.get("error"):
+                # ★ P-782：硬失败不许起跑（起跑前守卫）
+                state["last_error"] = plan["error"]
+                ui.set_text(progress_text, "失败：" + plan["error"])
+                ui.log("视频转换：" + plan["error"])
+                refresh_display()
+                return
             argv = png_argv(plan["argv"])
             ui.set_progress(progress, 0)
 

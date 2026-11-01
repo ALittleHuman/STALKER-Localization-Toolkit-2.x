@@ -66,12 +66,12 @@ std::string fps_text(double fps) {
 
 std::string pick_video_encoder(const std::string& reference_codec,
                                const std::vector<std::string>& available) {
-    const std::string preferred = preferred_encoder(reference_codec);
-    if (contains(available, preferred)) return preferred;
-    for (const char* fallback : {"libtheora", "libxvid", "mpeg4"}) {
-        if (contains(available, fallback)) return fallback;
-    }
-    return "mpeg4";  // 内置编码器总可用；调用方据此告警
+    // ★★ P-782：OGM/Ogg 只认 Theora。libxvid / 内置 mpeg4 是编码器可用但容器不接受，
+    //   `-c:v mpeg4 ... .ogm` 会产出坏文件；旧回退链终点偏偏是 mpeg4，且 encoder_warning
+    //   因为 mpeg4 总在而永不触发 ⇒ 坏文件 + 零告警。这里只返回 libtheora / 空。
+    //   参考 codec 只服务 encoder_warning，不参与能不能产。
+    (void)reference_codec;
+    return contains(available, "libtheora") ? std::string("libtheora") : std::string();
 }
 
 // ── ★ 2026-10-07（审计补充 F1-2 / F1-3）：输出目标的起跑前守卫 ────────────────
@@ -144,11 +144,21 @@ TranscodePlan plan_transcode(const TranscodeRequest& request) {
         }
     }
 
+    // ★ P-782：硬失败与软告警拆成两件事（旧 bool 同时表达两件，必然失真）。
+    const bool has_theora = contains(request.available_encoders, "libtheora");
+    const bool has_vorbis = contains(request.available_encoders, "libvorbis");
+    const bool audio_will_encode = !request.source.parsed || request.source.has_audio;
     plan.video_encoder = pick_video_encoder(ref_vcodec, request.available_encoders);
-    plan.encoder_warning = request.available_encoders.empty() ||
-                           (!contains(request.available_encoders, "libtheora") &&
-                            !contains(request.available_encoders, "libxvid") &&
-                            !contains(request.available_encoders, "mpeg4"));
+    // ★ P-782：错误**不提前 return** —— 面板仍要显示"本会怎么写"（scale/fps/码率），
+    //   起跑守卫由「argv 为空 + error 非空」共同决定（见函数末尾）。
+    if (!has_theora) {
+        plan.error = "本机 ffmpeg 没有 libtheora 编码器，无法产出 OGM（参考编码：" +
+                     (ref_vcodec.empty() ? std::string("未知") : ref_vcodec) + "）";
+    } else if (audio_will_encode && !has_vorbis) {
+        plan.error = "本机 ffmpeg 没有 libvorbis 编码器，无法产出 OGM 音频";
+    }
+    // 告警 = 输出编码与参考不一致（参考 theora ⇒ 不告警；参考 mpeg4/xvid ⇒ 告警）
+    plan.encoder_warning = preferred_encoder(ref_vcodec) != "libtheora";
 
     const MediaInfo& src = request.source;
     if (src.parsed && src.duration > 0) plan.duration = src.duration;
@@ -159,21 +169,14 @@ TranscodePlan plan_transcode(const TranscodeRequest& request) {
     cmd.push_back("-i");
     cmd.push_back(request.input);
 
-    // 视频编码
-    if (plan.video_encoder == "libxvid" || plan.video_encoder == "mpeg4") {
-        const long long bitrate = ref_vbitrate > 0 ? ref_vbitrate : 2500000;
-        plan.video_bitrate = bitrate;
-        cmd.insert(cmd.end(), {"-c:v", plan.video_encoder, "-b:v", number(bitrate), "-pix_fmt",
-                               "yuv420p"});
+    // 视频编码（P-782 之后恒为 libtheora；非 OGM 输出的分支要在这里重新加并在 error 里放行）
+    if (ref_vbitrate > 0) {
+        plan.video_bitrate = ref_vbitrate;
+        cmd.insert(cmd.end(),
+                   {"-c:v", "libtheora", "-b:v", number(ref_vbitrate), "-pix_fmt", "yuv420p"});
     } else {
-        if (ref_vbitrate > 0) {
-            plan.video_bitrate = ref_vbitrate;
-            cmd.insert(cmd.end(),
-                       {"-c:v", "libtheora", "-b:v", number(ref_vbitrate), "-pix_fmt", "yuv420p"});
-        } else {
-            cmd.insert(cmd.end(),
-                       {"-c:v", "libtheora", "-q:v", "7", "-pix_fmt", "yuv420p", "-g", "30"});
-        }
+        cmd.insert(cmd.end(),
+                   {"-c:v", "libtheora", "-q:v", "7", "-pix_fmt", "yuv420p", "-g", "30"});
     }
 
     // 缩放 / 帧率（1.x：源与参考同宽高 ⇒ 取消 scale；fps 差 < 0.01 ⇒ 取消 fps）
@@ -226,6 +229,9 @@ TranscodePlan plan_transcode(const TranscodeRequest& request) {
     cmd.push_back("-f");
     cmd.push_back("ogg");
     cmd.push_back(request.output);
+
+    // ★ P-782：硬失败 ⇒ argv 清空（调用方据此拒绝起跑）；面板值保留，便于解释原因。
+    if (!plan.error.empty()) plan.argv.clear();
     return plan;
 }
 

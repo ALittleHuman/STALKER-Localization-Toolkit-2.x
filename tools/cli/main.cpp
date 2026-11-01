@@ -3062,11 +3062,12 @@ int run_cli(const std::vector<std::string>& args) {
             request.source.video.height = item.src_h;
             request.source.video.fps = item.src_fps;
             if (item.encoder_set == 0) {
-                request.available_encoders = {"libtheora", "libxvid", "mpeg4"};
+                request.available_encoders = {"libtheora", "libvorbis", "libxvid", "mpeg4"};
             } else if (item.encoder_set == 1) {
-                request.available_encoders = {"libtheora", "mpeg4"};
+                request.available_encoders = {"libtheora", "libvorbis", "mpeg4"};
             } else {
-                request.available_encoders = {"mpeg4"};
+                // P-782 的 **error 用例**：没有 libtheora ⇒ 不该产出 argv
+                request.available_encoders = {"libvorbis", "mpeg4"};
             }
             const vid::TranscodePlan plan = vid::plan_transcode(request);
             std::string joined;
@@ -3075,6 +3076,11 @@ int run_cli(const std::vector<std::string>& args) {
                 joined += part;
             }
             std::cout << "PLAN\t" << item.name << "\t" << joined << "\n";
+            // ★ P-782：硬失败要能被判据看见。**独立一行**（追加、不改 PLANSUM），
+            //   这样没有 error 的既有 golden 逐字不变。
+            if (!plan.error.empty()) {
+                std::cout << "PLANERR\t" << item.name << "\t" << plan.error << "\n";
+            }
             // PLANSUM：界面「视频参数」面板读的那些值（scale/fps/码率/音频）。
             // 期望值由 `tests/golden_video_argv.py` **从 1.x 的 argv 反推**（不是我手写）⇒
             // 面板显示的东西与真正交给 ffmpeg 的东西不可能对不上。

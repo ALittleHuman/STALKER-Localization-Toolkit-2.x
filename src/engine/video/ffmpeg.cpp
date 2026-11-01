@@ -121,7 +121,10 @@ FfmpegPaths find_ffmpeg(const std::string& app_dir, const FfmpegConfig& config) 
             return std::chrono::steady_clock::now() > deadline;
         };
         const process::RunResult rr = process::run(run_options);
-        if (rr.started && !captured.empty()) out.version = captured;
+        // 取消/超时 ⇒ 半截 stdout 不算版本（下一轮会重试；失败也不入缓存）
+        if (rr.started && !rr.cancelled && !rr.cancel_timeout && !captured.empty()) {
+            out.version = captured;
+        }
         // ★ 复核 P781（(1)）：**失败/空结果不入缓存** —— 否则一次抖动（杀软扫描、并发占用、
         //   冷启动）会让整个进程生命周期都拿到空串，配上 fail-closed 就是"一次失败、全会话拒用"。
         if (!out.version.empty()) {

@@ -154,7 +154,12 @@ bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request, 
     const engine::video::TranscodePlan plan = engine::video::plan_transcode(request);
     duration_sec_ = plan.duration;
     if (plan.argv.empty()) {
-        if (error != nullptr) *error = QStringLiteral("空命令行");
+        // ★ P-782：空 argv 不是"没写参数"，而是**产不出 OGM**（缺 libtheora/libvorbis）。
+        const QString why = plan.error.empty()
+                                ? QStringLiteral("空命令行")
+                                : QString::fromStdString(plan.error);
+        if (error != nullptr) *error = why;
+        last_error_ = why;   // ★ P-782：页面必须能看到理由（不是只有出参）
         return false;
     }
     QStringList args;
@@ -687,7 +692,9 @@ QString VideoPage::info_panel_text() const {
         lines << QStringLiteral("══ 转换参数（匹配参考 OGM） ══");
         if (source_info_.has_video && reference_info_.has_video) {
             lines << QStringLiteral("  视频编码: %1 -> %2")
-                         .arg(utf8(rv.codec), utf8(plan.video_encoder));
+                         .arg(utf8(rv.codec),
+             plan.video_encoder.empty() ? QStringLiteral("（缺 libtheora，无法产出 OGM）")
+                                        : QString::fromStdString(plan.video_encoder));
             lines << QStringLiteral("  分辨率:   %1x%2 -> %3x%4  [%5]")
                          .arg(sv.width)
                          .arg(sv.height)

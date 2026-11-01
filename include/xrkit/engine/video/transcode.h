@@ -57,7 +57,10 @@ struct TranscodeRequest {
 struct TranscodePlan {
     std::vector<std::string> argv;
     std::string video_encoder;
-    bool encoder_warning = false;  // 一个可用编码器都没有 ⇒ 回退内置 mpeg4（要告警）
+    // ★ P-782：硬失败（非空 ⇒ 不能产出 OGM）。argv 为空，调用方不得起跑。
+    std::string error;
+    // ★ P-782：软告警 —— 能产出，但输出编码与参考不一致（参考 xvid/mpeg4、本机 theora）。
+    bool encoder_warning = false;  // 旧语义（有没有编码器）永假，已由 error 取代
     bool audio_kept_on_probe_failure = false;
     double duration = 0.0;
 

@@ -1545,6 +1545,7 @@ public:
         py::dict out;
         out["argv"] = strings_to_python(plan.argv);
         out["video_encoder"] = plan.video_encoder;
+        out["error"] = plan.error;   // ★ P-782：硬失败透给页面
         out["encoder_warning"] = plan.encoder_warning;
         out["audio_kept_on_probe_failure"] = plan.audio_kept_on_probe_failure;
         out["duration"] = plan.duration;

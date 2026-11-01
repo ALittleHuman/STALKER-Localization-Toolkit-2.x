@@ -413,6 +413,7 @@ struct VideoRequest {
 };
 
 struct VideoPlan {
+        std::string error;   // ★ P-782：非空 ⇒ 不能产出 OGM，页面不得起跑
     std::vector<std::string> argv;
     std::string video_encoder;
     bool encoder_warning = false;

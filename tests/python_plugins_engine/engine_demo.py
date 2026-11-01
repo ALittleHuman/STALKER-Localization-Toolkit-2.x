@@ -339,8 +339,10 @@ def register(api):
     mark("video_codec:%s" % media["video"]["codec"])
     mark("video_size_mb_positive:%d" % (1 if media["size_mb"] > 0 else 0))
 
+    # ★ P-782：夹具里必须有 libtheora —— 没有它现在就是**硬失败**（不是回退 mpeg4）
     encoders_text = ("Encoders:\n"
                      " V..... libx264              H.264 / AVC (codec h264)\n"
+                     " V..... libtheora            Theora\n"
                      " V..... mpeg4                MPEG-4 part 2\n"
                      " A..... libvorbis            Vorbis\n")
     encoders = engine.video_parse_encoders(encoders_text)

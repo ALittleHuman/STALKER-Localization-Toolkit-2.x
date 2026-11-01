@@ -36,6 +36,29 @@ def main() -> int:
 
     baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
     want = {row["case"]: row["argv"] for row in baseline["cases"]}
+
+    # ★★ P-782：**有意分歧**（1.x 的死路，2.0 明令不同）。基线是 1.x 实调产物，
+    #   不改它；在这里登记"2.0 的期望"，并说明理由。判据照样逐段比。
+    #   · mpeg4_ref_no_bitrate_src_noaudio：1.x 输出 `-c:v libxvid`（OGM 里不可播的死路）；
+    #     2.0 只出 Theora（P-782）。
+    #   · last_resort_only_mpeg4：只有 mpeg4、没有 libtheora ⇒ 2.0 **硬失败**（argv 为空）。
+    DIVERGENT_ARGV = {
+        "mpeg4_ref_no_bitrate_src_noaudio": [
+            "FFMPEG", "-y", "-i", "IN.avi", "-c:v", "libtheora", "-q:v", "7", "-pix_fmt",
+            "yuv420p", "-g", "30", "-an", "-f", "ogg", "OUT.ogm",
+        ],
+        # 硬失败：argv 为空（PLAN 行第二格为空 ⇒ 切成 []）
+        "last_resort_only_mpeg4": [],
+    }
+    DIVERGENT_SUMMARY = {
+        # 与上面 argv 一致（面板要报"真的写进命令行"的值）
+        "mpeg4_ref_no_bitrate_src_noaudio": "libtheora|scale=0|fps=0|vbr=0|abr=0|ar=0|ac=0|an=1|probe_warn=0",
+        # 硬失败 ⇒ argv 清空、页面显示 plan.error；但**面板值保留**（"本会怎么写"，
+        #   便于解释原因）⇒ 码率/音频这些值仍是引擎算出来的
+        "last_resort_only_mpeg4": "|scale=0|fps=0|vbr=800000|abr=128000|ar=44100|ac=2|an=0|probe_warn=0",
+    }
+    for name, argv in DIVERGENT_ARGV.items():
+        want[name] = argv
     # ★★ P17-101（审计 `02 F-09`）：**告警位的期望值来自基线的"输入事实"**，
     #   不是反推 argv、更不是照我们的实现写 —— 1.x 的判据是 `if src_info is None:`
     #   （`video_ogm_app.py:310`，只看探针成败、**不看有没有参考**）⇒
@@ -55,7 +78,8 @@ def main() -> int:
     for line in proc.stdout.decode("utf-8", "replace").splitlines():
         if line.startswith("PLAN\t"):
             _, name, joined = line.split("\t", 2)
-            got[name] = joined.split("\x1f")
+            # P-782：硬失败时 PLAN 第二格为空 ⇒ 是 []，不是 [""]
+            got[name] = joined.split("\x1f") if joined else []
         elif line.startswith("PLANSUM\t"):
             _, name, text = line.split("\t", 2)
             summaries[name] = text
@@ -115,7 +139,7 @@ def main() -> int:
             print("[%s] 我们的 CLI 没输出 PLANSUM" % name)
             failed += 1
             continue
-        expected = summary_from_argv(name, argv)
+        expected = DIVERGENT_SUMMARY.get(name) or summary_from_argv(name, argv)
         if summaries[name] != expected:
             failed += 1
             print("[%s] PLANSUM 与 1.x argv 反推的不一致" % name)
