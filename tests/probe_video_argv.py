@@ -188,6 +188,8 @@ def main() -> int:
             #   不必反查用例表（那会变成拿我们自己的表当期望）。
             "src_parsed": src is not None,
             "has_ref": ref is not None,
+            # ★ P-787：`encoder_warning` 的期望从**参考 codec** 现算（1.x 的输入事实）
+            "ref_codec": (ref.video.codec if (ref is not None and ref.video is not None) else ""),
         })
         print("%-38s ok=%s  %s" % (name, ok, " ".join(recorded["cmd"] or [])))
 

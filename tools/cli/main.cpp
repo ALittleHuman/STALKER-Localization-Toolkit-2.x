@@ -3093,6 +3093,10 @@ int run_cli(const std::vector<std::string>& args) {
                       //   修前这里没有它 ⇒ 位算错也没人会发现（"无参考 + 探针失败"那条路
                       //   1.x 必告警、我们静默，就是这么漏掉的）。
                       << "|probe_warn=" << (plan.audio_kept_on_probe_failure ? 1 : 0)
+                      // ★ P-787：encoder_warning 的新语义（与参考不一致）也要能被判据看见
+                      << "|enc_warn=" << (plan.encoder_warning ? 1 : 0)
+                      // ★ P-785：error 用例里"面板值仅供参考"这件事必须在格式上可分
+                      << "|err=" << (plan.error.empty() ? 0 : 1)
                       << "\n";
         }
         return kExitOk;

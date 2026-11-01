@@ -39,7 +39,8 @@ def main() -> int:
 
     # ★★ P-782：**有意分歧**（1.x 的死路，2.0 明令不同）。基线是 1.x 实调产物，
     #   不改它；在这里登记"2.0 的期望"，并说明理由。判据照样逐段比。
-    #   · mpeg4_ref_no_bitrate_src_noaudio：1.x 输出 `-c:v libxvid`（OGM 里不可播的死路）；
+    #   · mpeg4_ref_no_bitrate_src_noaudio：1.x 输出 `-c:v libxvid`，而基线里这条
+    #     `ok=false`、`message="输出文件不存在或为空"` —— **1.x 当场产不出文件**（不是"可能不可播"）；
     #     2.0 只出 Theora（P-782）。
     #   · last_resort_only_mpeg4：只有 mpeg4、没有 libtheora ⇒ 2.0 **硬失败**（argv 为空）。
     DIVERGENT_ARGV = {
@@ -52,10 +53,10 @@ def main() -> int:
     }
     DIVERGENT_SUMMARY = {
         # 与上面 argv 一致（面板要报"真的写进命令行"的值）
-        "mpeg4_ref_no_bitrate_src_noaudio": "libtheora|scale=0|fps=0|vbr=0|abr=0|ar=0|ac=0|an=1|probe_warn=0",
+        "mpeg4_ref_no_bitrate_src_noaudio": "libtheora|scale=0|fps=0|vbr=0|abr=0|ar=0|ac=0|an=1|probe_warn=0|enc_warn=1|err=0",
         # 硬失败 ⇒ argv 清空、页面显示 plan.error；但**面板值保留**（"本会怎么写"，
         #   便于解释原因）⇒ 码率/音频这些值仍是引擎算出来的
-        "last_resort_only_mpeg4": "|scale=0|fps=0|vbr=800000|abr=128000|ar=44100|ac=2|an=0|probe_warn=0",
+        "last_resort_only_mpeg4": "|scale=0|fps=0|vbr=800000|abr=128000|ar=44100|ac=2|an=0|probe_warn=0|enc_warn=0|err=1",
     }
     for name, argv in DIVERGENT_ARGV.items():
         want[name] = argv
@@ -64,6 +65,7 @@ def main() -> int:
     #   （`video_ogm_app.py:310`，只看探针成败、**不看有没有参考**）⇒
     #   期望 `probe_warn` = `0 if src_parsed else 1`。
     want_src_parsed = {row["case"]: bool(row.get("src_parsed", True)) for row in baseline["cases"]}
+    want_ref_codec = {row["case"]: row.get("ref_codec") for row in baseline["cases"]}
 
     proc = subprocess.run([str(CLI), "--video-plan"], stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT)
@@ -75,6 +77,7 @@ def main() -> int:
 
     got = {}
     summaries = {}
+    errors = {}
     for line in proc.stdout.decode("utf-8", "replace").splitlines():
         if line.startswith("PLAN\t"):
             _, name, joined = line.split("\t", 2)
@@ -83,9 +86,29 @@ def main() -> int:
         elif line.startswith("PLANSUM\t"):
             _, name, text = line.split("\t", 2)
             summaries[name] = text
+        elif line.startswith("PLANERR\t"):
+            _, name, reason = line.split("\t", 2)
+            errors[name] = reason
+
+    # ★ P-786：硬失败**必须**有理由行；非 error 用例**不许**有理由行。
+    #   只比"argv 为空"不够 —— 别的早退路径也可能让 argv 空（那就是假绿）。
+    EXPECT_ERROR = {"last_resort_only_mpeg4"}
 
     compared = 0
     failed = 0
+    for name in want:
+        has_err = name in errors
+        if name in EXPECT_ERROR:
+            if not has_err:
+                failed += 1
+                print("[%s] ★ 期望硬失败（PLANERR），但没输出理由行" % name)
+            elif "libtheora" not in errors[name]:
+                failed += 1
+                print("[%s] ★ PLANERR 理由没提 libtheora（无法归因）：%s" % (name, errors[name]))
+        elif has_err:
+            failed += 1
+            print("[%s] ★ 非 error 用例却输出了 PLANERR：%s" % (name, errors[name]))
+
     for name, expected in want.items():
         if name not in got:
             print("[%s] 我们的 CLI 没有输出这个用例" % name)
@@ -106,7 +129,8 @@ def main() -> int:
 
     extra = sorted(set(got) - set(want))
     if extra:
-        print("注意：我们多输出了 %s（基线里没有）" % extra)
+        failed += 1   # ★ P-783：基线里没有的用例 ⇒ 基线过期或夹具漂了，必须红
+        print("[★] 我们多输出了基线里没有的用例 %s（基线过期？）" % extra)
 
     # ── PLANSUM：界面「视频参数」面板读的那几个值的判据 ─────────────────────
     # 期望值**从 1.x 录下来的 argv 反推**（哪个开关真在命令行里 ⇒ 摘要该报什么），
@@ -129,10 +153,28 @@ def main() -> int:
         #   1.x 是 `if src_info is None:` 那一支必告警 ⇒ 期望 = "这一格的源探针失败了吗"。
         #   （不反推 argv、不查我们的用例表 —— 那两种都是"拿自己当期望"。）
         probe_warn_expected = 0 if want_src_parsed.get(name, True) else 1
+        # ★ P-787：enc_warn 的期望从**基线记的 ref_codec** 现算（不是查我们的实现）。
+        # ★ P-785：err=1 的用例里面板值仅供参考；判据只断言 err 位本身。
+        ref_codec = want_ref_codec.get(name)
+        if ref_codec is None:
+            raise SystemExit("基线过期：缺 ref_codec（重跑 tests/probe_video_argv.py --write）")
+        # ★ P-787：告警 = "1.x 会选 libxvid/mpeg4、本机只能出 Theora"。
+        #   1.x `CODEC_MAP` 恰好三行把 mpeg4/xvid/msmpeg4v3 映到 libxvid；其余（theora/空/h264 等）
+        #   1.x 本来就用 libtheora ⇒ 不告警。用**显式集合**而不是"非 theora 就告警"，
+        #   因为 h264 参考在 1.x 映射里同样落到 libtheora（夹具里有一格就是它）。
+        ENC_WARN_CASES = {"mpeg4_ref_no_bitrate_src_noaudio", "mpeg4_ref_fallback_noxvid"}
+        expected_from_codec = ref_codec in ("mpeg4", "xvid", "msmpeg4v3")
+        if expected_from_codec != (name in ENC_WARN_CASES):
+            raise SystemExit("[%s] 基线 ref_codec=%r 与告警集合不一致（基线或规则漂了）"
+                             % (name, ref_codec))
+        enc_warn_expected = 1 if name in ENC_WARN_CASES else 0
+        err_expected = 1 if name in EXPECT_ERROR else 0
         return ("%s|scale=%d|fps=%d|vbr=%s|abr=%s|ar=%s|ac=%s|an=%d|probe_warn=%d"
+                "|enc_warn=%d|err=%d"
                 % (encoder, 1 if "scale=" in vf else 0, 1 if "fps=" in vf else 0,
                    video_bitrate, audio_bitrate, sample_rate, channels,
-                   1 if "-an" in argv else 0, probe_warn_expected))
+                   1 if "-an" in argv else 0, probe_warn_expected,
+                   enc_warn_expected, err_expected))
 
     for name, argv in want.items():
         if name not in summaries:

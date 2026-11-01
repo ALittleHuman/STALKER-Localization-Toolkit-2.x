@@ -5972,8 +5972,10 @@ SmokeResult run_smoke() {
         const bool started = page.start_transcode(request, &error);
         check(!started && !error.isEmpty(),
               QStringLiteral("视频：起不来的 ffmpeg 必须**如实报错**（不崩不卡）"));
-        check(!page.transcode_running() && !page.last_error().isEmpty(),
-              QStringLiteral("视频：启动失败后态/理由要可见（实得 '%1'）").arg(page.last_error()));
+        check(!page.transcode_running() && !page.last_error().isEmpty() &&
+                  page.last_error().contains(QStringLiteral("libvorbis")),
+              QStringLiteral("视频：启动失败后态/理由要可见且**点名 libvorbis**（实得 '%1'）")
+                  .arg(page.last_error()));
         // 取消令牌：只有 reset 能清零；新一轮 start 会先 reset（1.x 语义）
         page.cancel_transcode();
         check(page.cancel_token().cancelled(), QStringLiteral("视频：cancel_transcode 应置位令牌"));
@@ -9217,12 +9219,36 @@ SmokeResult run_smoke() {
               panel.contains(QStringLiteral("320x240 -> 640x480")) &&
               panel.contains(QStringLiteral("将缩放")) &&
               panel.contains(QStringLiteral("800 kbps")) &&
-              (panel.contains(QStringLiteral("theora -> libtheora")) ||
-                panel.contains(QStringLiteral("缺 libtheora"))),
+               panel.contains(QStringLiteral("缺 libtheora")),
           QStringLiteral("视频③：对比行要给出引擎的结论（含将缩放/将调整/编码器）"));
     check(panel.contains(QStringLiteral("  文件: intro.avi")) &&
               panel.count(QStringLiteral("  文件: ")) == 2,
           QStringLiteral("视频③：源/参考各只出一行「文件:」（1.x 的面板形态）"));
+    // ③b（P-782 反向）：编码器表齐 ⇒ 必须报 theora -> libtheora，且不许出现"缺 libtheora"。
+    if (have_fake) {
+        SelfCheckVideoPage ok_page;
+        ok_page.paths.found = true;
+        ok_page.paths.has_probe = true;
+        ok_page.paths.ffmpeg = fake.toStdString();
+        ok_page.paths.ffprobe = fake.toStdString();
+        ok_page.start_encoder_scan();
+        {
+            QElapsedTimer clock;
+            clock.start();
+            while (!ok_page.encoders_scanned() && clock.elapsed() < 15000) {
+                QCoreApplication::processEvents();
+                QThread::msleep(10);
+            }
+        }
+        ok_page.apply_probe_result(src_file, VideoPage::ProbeTarget::Source, src_info, QString());
+        ok_page.apply_probe_result(ref_file, VideoPage::ProbeTarget::Reference, ref_info, QString());
+        const QString ok_panel = ok_page.info_panel_text();
+        check(ok_panel.contains(QStringLiteral("theora -> libtheora")) &&
+                  !ok_panel.contains(QStringLiteral("缺 libtheora")),
+              QStringLiteral("视频③b：编码器表齐 ⇒ theora -> libtheora（实得 %1）")
+                  .arg(ok_panel.left(120)));
+    }
+
     // 同尺寸同帧率 ⇒ 两条都该报 OK（阈值判据在引擎里，页面不许再判一遍）
     page.apply_probe_result(src_file, VideoPage::ProbeTarget::Source,
                             make_info(true, 640, 480, 25.0, 0, true, 2, 48000, 160000, 10.0),

@@ -35,7 +35,8 @@
       ],
       "message": "输出文件不存在或为空",
       "src_parsed": true,
-      "has_ref": true
+      "has_ref": true,
+      "ref_codec": "theora"
     },
     {
       "case": "theora_ref_no_bitrate_src_diff_noaudio",
@@ -72,7 +73,8 @@
       ],
       "message": "输出文件不存在或为空",
       "src_parsed": true,
-      "has_ref": true
+      "has_ref": true,
+      "ref_codec": "h264"
     },
     {
       "case": "mpeg4_ref_no_bitrate_src_noaudio",
@@ -100,7 +102,8 @@
       ],
       "message": "输出文件不存在或为空",
       "src_parsed": true,
-      "has_ref": true
+      "has_ref": true,
+      "ref_codec": "mpeg4"
     },
     {
       "case": "mpeg4_ref_fallback_noxvid",
@@ -136,7 +139,8 @@
       ],
       "message": "输出文件不存在或为空",
       "src_parsed": true,
-      "has_ref": true
+      "has_ref": true,
+      "ref_codec": "mpeg4"
     },
     {
       "case": "last_resort_only_mpeg4",
@@ -169,7 +173,8 @@
       ],
       "message": "输出文件不存在或为空",
       "src_parsed": true,
-      "has_ref": true
+      "has_ref": true,
+      "ref_codec": "theora"
     },
     {
       "case": "ffprobe_failed_keeps_audio",
@@ -206,7 +211,8 @@
       ],
       "message": "输出文件不存在或为空",
       "src_parsed": false,
-      "has_ref": true
+      "has_ref": true,
+      "ref_codec": "theora"
     },
     {
       "case": "no_reference_and_probe_failed",
@@ -243,7 +249,8 @@
       ],
       "message": "输出文件不存在或为空",
       "src_parsed": false,
-      "has_ref": false
+      "has_ref": false,
+      "ref_codec": ""
     },
     {
       "case": "no_reference_at_all",
@@ -280,7 +287,8 @@
       ],
       "message": "输出文件不存在或为空",
       "src_parsed": true,
-      "has_ref": false
+      "has_ref": false,
+      "ref_codec": ""
     },
     {
       "case": "ref_fps_24000_1001_src_same",
@@ -317,7 +325,8 @@
       ],
       "message": "输出文件不存在或为空",
       "src_parsed": true,
-      "has_ref": true
+      "has_ref": true,
+      "ref_codec": "theora"
     },
     {
       "case": "ref_fps_30000_1001_src_same",
@@ -354,7 +363,8 @@
       ],
       "message": "输出文件不存在或为空",
       "src_parsed": true,
-      "has_ref": true
+      "has_ref": true,
+      "ref_codec": "theora"
     }
   ]
 }

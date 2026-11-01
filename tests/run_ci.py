@@ -4309,6 +4309,8 @@ def step_engine_facade(release: bool) -> None:
         "video_scale_applied": "1",         # 参考 640x480 ⇒ 要缩放
         "video_fps_applied": "1",           # 参考 25fps ⇒ 要调帧率
         "video_audio_fields": "1",
+        "video_error": "0",                # P-782：这条夹具能产出（libtheora+libvorbis 都在）
+        "video_encwarn": "1",              # P-787：参考 mpeg4、输出 theora ⇒ 必须告警
         "video_conflict_source": "same_as_source",
         "video_conflict_reason_nonempty": "1",
         "video_conflict_reference": "same_as_reference",

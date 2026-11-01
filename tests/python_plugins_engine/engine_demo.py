@@ -369,6 +369,9 @@ def register(api):
     mark("video_argv_has_input:%d" % (1 if "-i" in plan["argv"] else 0))
     mark("video_argv_has_output:%d" % (1 if plan["argv"][-1] == "out.ogm" else 0))
     mark("video_encoder:%s" % plan["video_encoder"])
+    # ★ P-782/P-787：硬失败与"与参考不一致"的软告警都要能被判据看见
+    mark("video_error:%d" % (1 if plan.get("error") else 0))
+    mark("video_encwarn:%d" % (1 if plan["encoder_warning"] else 0))
     mark("video_scale_applied:%d" % (1 if plan["scale_applied"] else 0))
     mark("video_fps_applied:%d" % (1 if plan["fps_applied"] else 0))
     mark("video_audio_fields:%d"
