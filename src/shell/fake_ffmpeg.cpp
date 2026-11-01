@@ -60,6 +60,14 @@ int main(int argc, char** argv) {
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i) args.emplace_back(argv[i]);
 
+    // ★ 2026-11-01（复核）：`-version` 必须有自己的分支 —— 否则 `find_ffmpeg` 的版本探测
+    //   会走下面的兜底 `output = args.back()`，在本 CWD 造一个名为 `-version` 的文件。
+    if (has_flag(args, "-version")) {
+        const char* banner = "ffmpeg version 7.1.5 Copyright (c) 2000-2026 fake-fixture\n";
+        std::fwrite(banner, 1, std::strlen(banner), stdout);
+        std::fflush(stdout);
+        return 0;
+    }
     if (has_flag(args, "-encoders")) {
         std::fwrite(kEncoders, 1, std::strlen(kEncoders), stdout);
         std::fflush(stdout);

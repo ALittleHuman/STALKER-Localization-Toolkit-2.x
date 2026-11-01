@@ -9384,6 +9384,15 @@ SmokeResult run_smoke() {
         page.paths.has_probe = true;
         page.paths.ffmpeg = fake.toStdString();
         page.paths.ffprobe = fake.toStdString();
+        // ★★ 2026-11-01（复核）：上面这行 `page.paths = find_ffmpeg_default()`（:9182）曾把
+        //   **真实 ffmpeg 的 7.x 版本串**留在 version 里 ⇒ ⑦ 的"能起跑"其实依赖本机恰好有真 ffmpeg；
+        //   干净机器上 version 为空 ⇒ fail-closed 拒 ⇒ 这条会红。现在显式写死夹具版本。
+        result.notes.append(QStringLiteral("视频⑦ 诊断：注入前的 paths.version='%1'")
+                                 .arg(QString::fromStdString(page.paths.version)));
+        page.paths.version = "ffmpeg version 7.1.5 Copyright (c) 2000-2026 fake-fixture";
+        check(!page.paths.version.empty() &&
+                  !engine::video::version_rejected(page.paths.version),
+              QStringLiteral("视频⑦：闸门依赖 paths.version，夹具显式给 7.x（不靠环境）"));
         page.apply_file(src_file, false);  // 起编码器扫描（夹具的 `-encoders`）
         {
             QElapsedTimer clock;
