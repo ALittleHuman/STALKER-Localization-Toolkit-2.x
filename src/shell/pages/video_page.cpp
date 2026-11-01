@@ -158,7 +158,7 @@ bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request, 
     //   在 C++ 这条路上一路放行（插件页有、产品页没有 ⇒ 同一纪律两份、先腐坏一份）。
     //   文案与插件页同一句（"ffmpeg 版本不受支持（8.x 及以上）"）。
     {
-        const engine::video::FfmpegPaths paths_now = resolve_ffmpeg();
+        const engine::video::FfmpegPaths paths_now = ensure_ffmpeg();
         if (engine::video::version_rejected(paths_now.version)) {
             const QString why = QStringLiteral("ffmpeg 版本不受支持（8.x 及以上）：") +
                                 QString::fromStdString(paths_now.version).trimmed();
@@ -370,9 +370,13 @@ void VideoPage::handle_stderr_text(const QString& text) {
 // ffprobe / ffmpeg -encoders（异步；主线程只落地结论）
 // ═══════════════════════════════════════════════════════════════════════════
 
-engine::video::FfmpegPaths VideoPage::resolve_ffmpeg() {
-    locator_.ensure();
-    return locator_.paths();
+engine::video::FfmpegPaths VideoPage::resolve_ffmpeg() const {
+    return locator_.paths();   // 纯读：不触发探测（状态行/夹具都走这条）
+}
+
+engine::video::FfmpegPaths VideoPage::ensure_ffmpeg() {
+    locator_.ensure();         // "没有就探一次"只在这里发生
+    return resolve_ffmpeg();   // 纯读；不要再 ensure（否则递归）
 }
 
 QString VideoPage::ffmpeg_search_summary() const {
@@ -404,7 +408,11 @@ bool VideoPage::probe_result_is_stale(ProbeTarget target, const QString& path) c
         case ProbeTarget::Reference: current = reference_edit_ != nullptr ? reference_edit_->text().trimmed() : QString(); break;
         case ProbeTarget::Result: current = output_edit_ != nullptr ? output_edit_->text().trimmed() : QString(); break;
     }
-    return !current.isEmpty() && current != path;
+    if (current.isEmpty()) return false;
+    // 比较用规范化绝对路径：输入框里可能是 /，而输出路径是 native() 的反斜杠形式
+    const QString left = QFileInfo(current).absoluteFilePath();
+    const QString right = QFileInfo(path).absoluteFilePath();
+    return left != right;
 }
 
 void VideoPage::start_probe(const QString& path, ProbeTarget target) {
@@ -426,7 +434,7 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
         }
     }
     probe_note_.clear();   // 正常路径先清掉旧的降级说明
-    const engine::video::FfmpegPaths paths = resolve_ffmpeg();
+    const engine::video::FfmpegPaths paths = ensure_ffmpeg();
     if (paths.ffprobe.empty()) {
         // ★ P-798（复核）：降级条件是"**不可用**"，不只是"没找到"。
         if (paths.found) {
@@ -450,11 +458,11 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
         const ProbeTarget target = probe_target_;
         discard_process(probe_process_);
         // Result 不做过期判定：产物路径由转码决定，与输入框文本不是一回事（HA 复核）
-        if (target != ProbeTarget::Result && probe_result_is_stale(target, path)) return;
+        if (probe_result_is_stale(target, path)) return;
         if (status != QProcess::NormalExit || code != 0) {
             const QString why = QStringLiteral("ffprobe 返回码 %1：%2")
                                     .arg(code).arg(err.trimmed().left(120));
-            if (resolve_ffmpeg().found) {
+            if (ensure_ffmpeg().found) {
                 start_text_probe(path, target, why);
             } else {
                 apply_probe_result(path, target, engine::video::MediaInfo(), why);
@@ -466,7 +474,7 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
         if (!info.parsed) {
             const QString why = QStringLiteral("ffprobe 的输出不是合法 JSON（%1 字节）")
                                     .arg(out.toUtf8().size());
-            if (resolve_ffmpeg().found) {
+            if (ensure_ffmpeg().found) {
                 start_text_probe(path, target, why);
             } else {
                 apply_probe_result(path, target, engine::video::MediaInfo(), why);
@@ -488,7 +496,7 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
                     QStringLiteral("起不了 ffprobe（随后才报）：%1")
                         .arg(probe_process_ != nullptr ? probe_process_->errorString() : QString());
                 discard_process(probe_process_);
-                if (resolve_ffmpeg().found) {
+                if (ensure_ffmpeg().found) {
                     start_text_probe(path, target, reason);
                 } else {
                     apply_probe_result(path, target, engine::video::MediaInfo(), reason);
@@ -499,7 +507,7 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
         // ★ 2026-10-07（F1-1）：**先置空再断开** —— 否则这个对象随后派 `finished` 时，
         //   回调读的是成员 `probe_process_`（已经是 nullptr）⇒ 对 nullptr 解引用。
         discard_process(probe_process_);
-        if (resolve_ffmpeg().found) {
+        if (ensure_ffmpeg().found) {
             start_text_probe(path, target, reason);
         } else {
             apply_probe_result(path, target, engine::video::MediaInfo(), reason);
@@ -511,7 +519,7 @@ void VideoPage::start_text_probe(const QString& path, ProbeTarget target, const 
     // ★ P-798：`ffmpeg -i` 的 stderr 是**给人看的**，但比"什么都拿不到"强。
     //   逐行回调收集（不要 stderr_tail：它只留尾部，Stream # 行在前会被截掉）。
     //   退出码非 0 是正常的（真 ffmpeg 没有输出目标时也返回 1）⇒ 只看能否解析出流。
-    const engine::video::FfmpegPaths paths = resolve_ffmpeg();
+    const engine::video::FfmpegPaths paths = ensure_ffmpeg();
     if (text_probe_process_ != nullptr) {
         note_skip(QStringLiteral("上一份文件的降级探测还在跑 ⇒ 暂不解析 %1").arg(native(path)));
         return;
@@ -526,7 +534,7 @@ void VideoPage::start_text_probe(const QString& path, ProbeTarget target, const 
     connect(text_probe_process_, &QProcess::finished, this,
             [this, path, target](int code, QProcess::ExitStatus status) {
                 if (shutting_down_) return;
-                if (target != ProbeTarget::Result && probe_result_is_stale(target, path)) {
+                if (probe_result_is_stale(target, path)) {
                     discard_process(text_probe_process_);
                     return;
                 }
@@ -542,6 +550,8 @@ void VideoPage::start_text_probe(const QString& path, ProbeTarget target, const 
                     apply_probe_result(path, target, parsed.info, QString());
                     refresh_status();
                 } else {
+                    probe_note_ = QStringLiteral("降级失败：%1")
+                                      .arg(QString::fromStdString(parsed.error).left(80));
                     apply_probe_result(
                         path, target, engine::video::MediaInfo(),
                         QStringLiteral("ffprobe 与 ffmpeg -i 都拿不到参数（%1；%2）")
@@ -569,7 +579,7 @@ void VideoPage::start_text_probe(const QString& path, ProbeTarget target, const 
 
 void VideoPage::start_encoder_scan() {
     if (encoder_process_ != nullptr || encoders_scanned_) return;
-    const engine::video::FfmpegPaths paths = resolve_ffmpeg();
+    const engine::video::FfmpegPaths paths = ensure_ffmpeg();
     if (!paths.found) {
         // 找不到 ffmpeg ⇒ 编码器集合只能空着；**原因要可见**（用户红线）
         complete_encoder_scan(false, QStringLiteral("没找到 ffmpeg，编码器表没扫：") +
@@ -924,7 +934,7 @@ void VideoPage::request_transcode() {
         refresh_display();
         return;
     }
-    const engine::video::FfmpegPaths paths = resolve_ffmpeg();
+    const engine::video::FfmpegPaths paths = ensure_ffmpeg();
     if (!paths.found) {
         // 用户红线：找不到 ffmpeg 要**明确报**（含试过的路径），不能只灰着
         last_error_ = QStringLiteral("找不到 ffmpeg，无法转换。") + ffmpeg_search_summary();
@@ -1127,7 +1137,7 @@ QString VideoPage::status_text() const {
             // ★ 探测之前**不显示 ✗**（那就是在断言"没有"，而我们还没查）
             return QStringLiteral("未检测 ffmpeg");
         case engine::video::ProbeState::Found: {
-            const engine::video::FfmpegPaths& paths = locator_.paths();
+            const engine::video::FfmpegPaths paths = resolve_ffmpeg();
             QString text = QStringLiteral("✓ ffmpeg: ") + utf8(paths.ffmpeg);
             // HA 复核：缺 ffprobe != 读不出来（有 ffmpeg -i 降级）；只有降级也失败才是读不出来
             if (!paths.has_probe) {

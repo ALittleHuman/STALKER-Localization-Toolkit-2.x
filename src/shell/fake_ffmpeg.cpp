@@ -78,6 +78,11 @@ int main(int argc, char** argv) {
     //   会把**输入文件**当成输出 truncate（危险），fallback 路径也测不到。
     //   与真 ffmpeg 同契约：只打印信息、没有输出参数 ⇒ 返回 1。
     if (has_flag(args, "-i") && !has_flag(args, "-f")) {
+        // 测试用：`XRKIT_FAKE_FFMPEG_I_DELAY_MS` 造"探针在跑"的并发窗口
+        if (const char* delay = std::getenv("XRKIT_FAKE_FFMPEG_I_DELAY_MS")) {
+            const int ms = std::atoi(delay);
+            if (ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        }
         std::fwrite(kProbeInfo, 1, std::strlen(kProbeInfo), stderr);
         std::fflush(stderr);
         return 1;

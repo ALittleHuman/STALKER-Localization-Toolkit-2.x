@@ -9106,7 +9106,7 @@ SmokeResult run_smoke() {
         bool confirm_answer = false;
 
     protected:
-        evid::FfmpegPaths resolve_ffmpeg() override { return paths; }
+        evid::FfmpegPaths resolve_ffmpeg() const override { return paths; }
         bool confirm_overwrite(const QString& reason) override {
             ++confirm_calls;
             confirm_reason = reason;
@@ -9440,7 +9440,78 @@ SmokeResult run_smoke() {
             check(!tpage.probe_source_note().isEmpty() &&
                       tpage.probe_source_note().contains(QStringLiteral("降级")),
                   QStringLiteral("视频⑥b：降级必须可见（实得 '%1'）").arg(tpage.probe_source_note()));
+            check(tpage.info_panel_text().contains(QStringLiteral("降级")),
+                  QStringLiteral("视频⑥b：降级说明必须**上屏**（面板 %1）")
+                      .arg(tpage.info_panel_text().left(80)));
+            check(tpage.status_text().contains(QStringLiteral("降级")) &&
+                      !tpage.status_text().contains(QStringLiteral("读不出来")),
+                  QStringLiteral("视频⑥b：状态行必须说降级、不误报读不出来（实得 '%1'）")
+                      .arg(tpage.status_text()));
         }
+        // ⑥c（HA 复核）：无 ffprobe 时 Result 也必须走降级（"转换完成后解析产物"这条链）
+        {
+            SelfCheckVideoPage cpage;
+            cpage.paths.found = true;
+            cpage.paths.has_probe = false;
+            cpage.paths.ffprobe.clear();
+            cpage.paths.ffmpeg = fake.toStdString();
+            cpage.paths.version = "ffmpeg version 7.1.5 fake-fixture";
+            cpage.source_edit()->setText(src_file);
+            cpage.apply_file(src_file, false);
+            cpage.output_edit()->setText(vt.path() + QStringLiteral("/out_c.ogm"));
+            pump(300);
+            evid::TranscodeRequest crequest;
+            crequest.ffmpeg = fake.toStdString();
+            crequest.input = src_file.toUtf8().toStdString();
+            crequest.output = (vt.path() + QStringLiteral("/out_c.ogm")).toUtf8().toStdString();
+            crequest.has_reference = true;
+            crequest.reference = ref_info;
+            crequest.source = src_info;
+            crequest.available_encoders = {"libtheora", "libvorbis"};
+            QString cerror;
+            cpage.start_transcode(crequest, &cerror);
+            QElapsedTimer cclock;
+            cclock.start();
+            while (cclock.elapsed() < 20000) {
+                QCoreApplication::processEvents();
+                QThread::msleep(10);
+                if (cpage.info_panel_text().contains(QStringLiteral("本次转换结果"))) break;
+            }
+            check(cpage.info_panel_text().contains(QStringLiteral("本次转换结果")),
+                  QStringLiteral("视频⑥c：无 ffprobe 时产物结果也要上屏（面板 %1）")
+                      .arg(cpage.info_panel_text().left(80)));
+        }
+
+        // ⑥d（HA 复核）：latest wins —— A 在跑、立刻选 B ⇒ B 必须出结果（A 不许覆盖）
+        {
+            const QString a_file = vt.path() + QStringLiteral("/a_probe.avi");
+            const QString b_file = vt.path() + QStringLiteral("/b_probe.avi");
+            { std::ofstream out(a_file.toStdString(), std::ios::binary); out << "A"; }
+            { std::ofstream out(b_file.toStdString(), std::ios::binary); out << "B"; }
+            SelfCheckVideoPage lpage;
+            lpage.paths.found = true;
+            lpage.paths.has_probe = false;
+            lpage.paths.ffprobe.clear();
+            lpage.paths.ffmpeg = fake.toStdString();
+            lpage.paths.version = "ffmpeg version 7.1.5 fake-fixture";
+            qputenv("XRKIT_FAKE_FFMPEG_I_DELAY_MS", "500");
+            lpage.source_edit()->setText(a_file);
+            lpage.apply_file(a_file, false);
+            lpage.source_edit()->setText(b_file);
+            lpage.apply_file(b_file, false);
+            qputenv("XRKIT_FAKE_FFMPEG_I_DELAY_MS", "0");
+            QElapsedTimer lclock;
+            lclock.start();
+            while (!lpage.source_ready() && lclock.elapsed() < 15000) {
+                QCoreApplication::processEvents();
+                QThread::msleep(10);
+            }
+            check(lpage.source_ready() &&
+                      lpage.info_panel_text().contains(QStringLiteral("b_probe")),
+                  QStringLiteral("视频⑥d：快速换文件 ⇒ B 必须出结果（面板 %1）")
+                      .arg(lpage.info_panel_text().left(80)));
+        }
+
         // ⑦'（复核要求）：version 为空 ⇒ fail-closed 拒（与 8.x 拒绝分开）
         {
             SelfCheckVideoPage epage;

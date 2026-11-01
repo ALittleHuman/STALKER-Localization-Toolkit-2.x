@@ -149,7 +149,9 @@ public:
 protected:
     // ffmpeg/ffprobe 路径的**唯一**来源（默认＝locator 的惰性探测）。自检覆盖它，就能把
     // 夹具 exe 当 ffmpeg/ffprobe 用 ⇒ "按钮 → argv → 进程 → 进度 → 取消"这条链能真跑。
-    virtual engine::video::FfmpegPaths resolve_ffmpeg();
+    // 纯读（可被夹具 override ⇒ 状态行可测）；要"没有就探一次"的地方用 ensure_ffmpeg()
+    virtual engine::video::FfmpegPaths resolve_ffmpeg() const;
+    engine::video::FfmpegPaths ensure_ffmpeg();
     // 「找不到 ffmpeg」时要如实报出**试过哪些路径**（用户红线：不能只打一行泛泛的话）
     virtual QString ffmpeg_search_summary() const;
 

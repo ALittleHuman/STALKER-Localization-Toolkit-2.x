@@ -1,6 +1,6 @@
 {
   "dev": {
-    "checks": 949,
+    "checks": 953,
     "how": "开发树且 xrkit_fake_ffmpeg.exe 存在"
   },
   "packaged": {
