@@ -5004,7 +5004,7 @@ int run_cli(const std::vector<std::string>& args) {
             std::cout << "RUNTIME " << item.name << "="
                       << (dep.path.empty() ? "(missing)" : dep.path)
                       << " source=" << xrkit::core::runtime_source_name(dep.source)
-                      << (item.required ? "" : " optional=1") << "\n";
+                      << (item.required ? " required=1" : " required=0") << "\n";
             if (dep.path.empty()) {
                 if (item.required) ++missing_required; else ++missing_optional;
             }

@@ -84,6 +84,22 @@ def main() -> int:
         else:
             fail("@APP@ 没展开对：\n%s" % out[-400:])
 
+        # ③b ★ P-800：**删掉包内 bin\ffprobe.exe 之后的正常形态** ——
+        #   必需件齐、可选件（ffprobe）缺 ⇒ 退出码必须 0 且 optional_missing=1。
+        #   ②（全齐）与 ④（全缺）都覆盖不到这一格；它是"删 ffprobe 那天"的门禁。
+        # 独立夹具：必需件齐（ffmpeg/python/ixr_run/fontlib），只缺 ffprobe
+        pack_app = tmp / "pack_app"
+        touch(pack_app / "bin" / "ffmpeg.exe")
+        touch(pack_app / "python" / "python.exe")
+        touch(pack_app / "tools" / "ixr_run.py")
+        touch(pack_app / "tools" / "fontlib" / "x.txt")
+        write(pack_app / "xrkit_user.ltx", "[runtime]\nroot = @APP@\n")
+        rc, out = run(pack_app)
+        if rc == 0 and "optional_missing=1" in out and "missing=0" in out:
+            ok("可选件缺失（ffprobe）：退出码仍为 0，且 optional_missing=1 可见")
+        else:
+            fail("可选件缺失被当成失败（或计数不对）：rc=%d\n%s" % (rc, out[-400:]))
+
         # ① 单项显式优先于 root
         write(app / "xrkit_user.ltx",
               "[runtime]\nroot = @APP@\nffmpeg = ${root}/python/python.exe\n")

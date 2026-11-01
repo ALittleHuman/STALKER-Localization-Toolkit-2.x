@@ -150,6 +150,54 @@ def main() -> int:
             print("  ✓ VFR 样本 avg=%s r=%s（足够触发 tbr 陷阱）"
                   % (video["avg_frame_rate"], video["r_frame_rate"]))
 
+    # ── L1 边角（★ **合成 stderr，不是真机样本**；与上面的 L2 真样本分开列）──
+    #   ① avg 无效（只有 tbr）⇒ 必须回落 r_frame_rate；② 视频行没有 kb/s ⇒ has_vbr=0，
+    #   走 -q:v 7 而不是 -b:v 0；③ fps/tbr 都无效 ⇒ 0，且不崩。
+    import tempfile
+    synthetic = [
+        ("synthetic_avg_invalid_tbr_only",
+         "Input #0, avi, from 'x.avi':\n"
+         "  Duration: 00:00:02.00, start: 0.000000, bitrate: 900 kb/s\n"
+         "  Stream #0:0: Video: mpeg4, yuv420p, 320x240, 29.97 tbr, 30 tbn\n",
+         {"fps": 29.97, "has_vbr": "0"}),
+        ("synthetic_no_video_bitrate",
+         "Input #0, avi, from 'x.avi':\n"
+         "  Duration: 00:00:02.00, start: 0.000000, bitrate: 900 kb/s\n"
+         "  Stream #0:0: Video: mpeg4, yuv420p, 320x240, 25 fps, 25 tbr, 25 tbn\n",
+         {"vbr": "0", "has_vbr": "0"}),
+        ("synthetic_no_fps_no_tbr",
+         "Input #0, avi, from 'x.avi':\n"
+         "  Duration: 00:00:02.00, start: 0.000000, bitrate: 900 kb/s\n"
+         "  Stream #0:0: Video: mpeg4, yuv420p, 320x240, 30 tbn\n",
+         {"fps": 0.0, "has_vbr": "0"}),
+    ]
+    print("  ── L1 边角（合成 stderr，不是真机样本）──")
+    for name, text, expect in synthetic:
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as handle:
+            handle.write(text)
+            temp_path = Path(handle.name)
+        try:
+            proc = subprocess.run([str(CLI), "--video-probe-text", str(temp_path)],
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            line = next((ln for ln in proc.stdout.decode("utf-8", "replace").splitlines()
+                         if ln.startswith("PROBETEXT")), "")
+            got = parse_output(line)
+            bad = []
+            for key, want in expect.items():
+                if key == "fps":
+                    if abs(float(got.get("fps", 0)) - float(want)) > 0.01:
+                        bad.append(key)
+                elif got.get(key) != str(want):
+                    bad.append(key)
+            if bad or got.get("parsed") != "1":
+                problems.append("%s：%s 不符（got=%s）" % (name, ",".join(bad) or "parsed", line))
+                print("  ✗ %s（合成）" % name)
+            else:
+                print("  ✓ %s（合成：fps=%s vbr=%s has_vbr=%s）"
+                      % (name, got.get("fps"), got.get("vbr"), got.get("has_vbr")))
+        finally:
+            temp_path.unlink(missing_ok=True)
+
     if problems:
         print("\nVIDEO-PROBE-TEXT: FAIL（%d 处）" % len(problems))
         for item in problems:
