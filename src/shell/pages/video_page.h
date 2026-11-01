@@ -160,6 +160,8 @@ private:
     void set_running_ui(bool running);
     void start_probe(const QString& path, ProbeTarget target);
     void start_text_probe(const QString& path, ProbeTarget target, const QString& why);
+    // ★ 2026-11-01（HA 复核）：探针结果过期判定（两条路共用；Result 看输出框）
+    bool probe_result_is_stale(ProbeTarget target, const QString& path) const;
     void complete_encoder_scan(bool ok, const QString& reason);
     engine::video::TranscodeRequest build_request(const engine::video::FfmpegPaths& paths) const;
     QProcess* make_child_process();
