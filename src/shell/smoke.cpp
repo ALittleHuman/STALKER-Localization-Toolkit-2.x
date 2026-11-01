@@ -9339,7 +9339,7 @@ SmokeResult run_smoke() {
         if (!real.found || !real.has_probe) {
             result.notes.append(QStringLiteral(
                 "视频⑥：本机按口径定位不到 ffmpeg/ffprobe（只认 user.ltx 与程序目录）⇒ "
-                "真 ffprobe 链路跳过，属人工验收项"));
+                "ffprobe/ffmpeg -i 探测链跳过，属人工验收项"));
         } else {
             const QString dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_video_page"));
             QDir(dir).removeRecursively();
@@ -9364,7 +9364,7 @@ SmokeResult run_smoke() {
                     QThread::msleep(10);
                 }
                 check(real_page.source_ready(),
-                      QStringLiteral("视频⑥：真 ffprobe 走「选文件→探测」这条链（面板 %1）")
+                      QStringLiteral("视频⑥：真 ffprobe（或 ffmpeg -i 降级）走「选文件→探测」这条链（面板 %1）")
                           .arg(real_page.info_panel_text().left(60)));
                 const QString real_panel = real_page.info_panel_text();
                 check(real_panel.contains(QStringLiteral("320x240")) &&
@@ -9411,6 +9411,54 @@ SmokeResult run_smoke() {
         check(page.info_panel_text().contains(QStringLiteral("theora -> libtheora")),
               QStringLiteral("视频⑦：夹具编码器表在 ⇒ 面板报 libtheora（%1）")
                   .arg(page.info_panel_text().left(80)));
+        // ⑥b（P-798，复核要求）：**没有 ffprobe**（has_probe=false）时页面必须走
+        //   `ffmpeg -i` 降级，并把 MediaInfo 显示出来（不是"什么都没探测到"）。
+        {
+            SelfCheckVideoPage tpage;
+            tpage.paths.found = true;
+            tpage.paths.has_probe = false;
+            tpage.paths.ffprobe.clear();
+            tpage.paths.ffmpeg = fake.toStdString();
+            tpage.paths.version = "ffmpeg version 7.1.5 fake-fixture";
+            tpage.source_edit()->setText(src_file);
+            tpage.apply_file(src_file, false);
+            QElapsedTimer clock;
+            clock.start();
+            while (!tpage.source_ready() && clock.elapsed() < 15000) {
+                QCoreApplication::processEvents();
+                QThread::msleep(10);
+            }
+
+            // ���因（2026-11-01）：第一版只调 apply_file 没写 source_edit ⇒
+            //   info_panel_text 读的是**输入框文本**，面板当然只有占位符。
+            //   端到端链路：输入框文本 → 无 ffprobe ⇒ 降级 → 解析出 MedInfo 上屏。
+            check(tpage.source_ready() &&
+                      tpage.info_panel_text().contains(QStringLiteral("320x240")) &&
+                      tpage.info_panel_text().contains(QStringLiteral("theora")),
+                  QStringLiteral("视频⑥b：无 ffprobe ⇒ ffmpeg -i 降级探测出参数（面板 %1）")
+                      .arg(tpage.info_panel_text().left(80)));
+            check(!tpage.probe_source_note().isEmpty() &&
+                      tpage.probe_source_note().contains(QStringLiteral("降级")),
+                  QStringLiteral("视频⑥b：降级必须可见（实得 '%1'）").arg(tpage.probe_source_note()));
+        }
+        // ⑦'（复核要求）：version 为空 ⇒ fail-closed 拒（与 8.x 拒绝分开）
+        {
+            SelfCheckVideoPage epage;
+            epage.paths.found = true;
+            epage.paths.ffmpeg = "definitely-not-a-real-ffmpeg.exe";
+            epage.paths.version.clear();
+            evid::TranscodeRequest erequest;
+            erequest.ffmpeg = epage.paths.ffmpeg;
+            erequest.input = "in.avi";
+            erequest.output = "out.ogm";
+            erequest.available_encoders = {"libtheora", "libvorbis"};
+            QString eerror;
+            const bool estarted = epage.start_transcode(erequest, &eerror);
+            check(!estarted && epage.last_error().contains(QStringLiteral("版本不受支持")),
+                  QStringLiteral("视频⑦'：version 为空必须 fail-closed（实得 '%1'）")
+                      .arg(epage.last_error()));
+        }
+
         const QString out_file = vt.path() + QStringLiteral("/out.ogm");
         QFile::remove(out_file);
         page.output_edit()->setText(out_file);

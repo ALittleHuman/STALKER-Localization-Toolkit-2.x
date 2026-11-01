@@ -2,6 +2,7 @@
 
 #include "xrkit/core/path.h"
 #include "xrkit/core/theme.h"
+#include "xrkit/engine/video/probe_text.h"
 
 #include <QDialog>
 #include <QDir>
@@ -401,6 +402,11 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
     }
     const engine::video::FfmpegPaths paths = resolve_ffmpeg();
     if (paths.ffprobe.empty()) {
+        // ★ P-798（复核）：降级条件是"**不可用**"，不只是"没找到"。
+        if (paths.found) {
+            start_text_probe(path, target, QStringLiteral("没找到 ffprobe"));
+            return;
+        }
         apply_probe_result(path, target, engine::video::MediaInfo(),
                            QStringLiteral("没找到 ffprobe（") + ffmpeg_search_summary() +
                                QStringLiteral("；ffprobe 与 ffmpeg 可以分开放，但都要在程序目录"
@@ -418,18 +424,25 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
         const ProbeTarget target = probe_target_;
         discard_process(probe_process_);
         if (status != QProcess::NormalExit || code != 0) {
-            apply_probe_result(path, target, engine::video::MediaInfo(),
-                               QStringLiteral("ffprobe 返回码 %1：%2")
-                                   .arg(code)
-                                   .arg(err.trimmed().left(200)));
+            const QString why = QStringLiteral("ffprobe 返回码 %1：%2")
+                                    .arg(code).arg(err.trimmed().left(120));
+            if (resolve_ffmpeg().found) {
+                start_text_probe(path, target, why);
+            } else {
+                apply_probe_result(path, target, engine::video::MediaInfo(), why);
+            }
             return;
         }
         const engine::video::MediaInfo info =
             engine::video::parse_ffprobe_json(out.toUtf8().toStdString());
         if (!info.parsed) {
-            apply_probe_result(path, target, engine::video::MediaInfo(),
-                               QStringLiteral("ffprobe 的输出不是合法 JSON（%1 字节）")
-                                   .arg(out.toUtf8().size()));
+            const QString why = QStringLiteral("ffprobe 的输出不是合法 JSON（%1 字节）")
+                                    .arg(out.toUtf8().size());
+            if (resolve_ffmpeg().found) {
+                start_text_probe(path, target, why);
+            } else {
+                apply_probe_result(path, target, engine::video::MediaInfo(), why);
+            }
             return;
         }
         apply_probe_result(path, target, info, QString());
@@ -447,15 +460,79 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
                     QStringLiteral("起不了 ffprobe（随后才报）：%1")
                         .arg(probe_process_ != nullptr ? probe_process_->errorString() : QString());
                 discard_process(probe_process_);
-                apply_probe_result(path, target, engine::video::MediaInfo(), reason);
+                if (resolve_ffmpeg().found) {
+                    start_text_probe(path, target, reason);
+                } else {
+                    apply_probe_result(path, target, engine::video::MediaInfo(), reason);
+                }
             });
     if (!wait_for_start_probed(probe_process_)) {
         const QString reason = QStringLiteral("起不了 ffprobe：%1").arg(probe_process_->errorString());
         // ★ 2026-10-07（F1-1）：**先置空再断开** —— 否则这个对象随后派 `finished` 时，
         //   回调读的是成员 `probe_process_`（已经是 nullptr）⇒ 对 nullptr 解引用。
         discard_process(probe_process_);
-        apply_probe_result(path, target, engine::video::MediaInfo(), reason);
+        if (resolve_ffmpeg().found) {
+            start_text_probe(path, target, reason);
+        } else {
+            apply_probe_result(path, target, engine::video::MediaInfo(), reason);
+        }
     }
+}
+
+void VideoPage::start_text_probe(const QString& path, ProbeTarget target, const QString& why) {
+    // ★ P-798：`ffmpeg -i` 的 stderr 是**给人看的**，但比"什么都拿不到"强。
+    //   逐行回调收集（不要 stderr_tail：它只留尾部，Stream # 行在前会被截掉）。
+    //   退出码非 0 是正常的（真 ffmpeg 没有输出目标时也返回 1）⇒ 只看能否解析出流。
+    const engine::video::FfmpegPaths paths = resolve_ffmpeg();
+    if (text_probe_process_ != nullptr) {
+        note_skip(QStringLiteral("上一份文件的降级探测还在跑 ⇒ 暂不解析 %1").arg(native(path)));
+        return;
+    }
+    probe_note_ = QStringLiteral("ffprobe 不可用（%1）⇒ 已用 ffmpeg -i 降级").arg(why);
+    text_probe_text_.clear();
+    text_probe_process_ = make_child_process();
+    connect(text_probe_process_, &QProcess::readyReadStandardError, this, [this] {
+        if (shutting_down_) return;
+        text_probe_text_ += QString::fromUtf8(text_probe_process_->readAllStandardError());
+    });
+    connect(text_probe_process_, &QProcess::finished, this,
+            [this, path, target](int code, QProcess::ExitStatus status) {
+                if (shutting_down_) return;
+                text_probe_text_ += QString::fromUtf8(text_probe_process_->readAllStandardError());
+                discard_process(text_probe_process_);
+                Q_UNUSED(status);
+                Q_UNUSED(code);
+                QFileInfo file_info(path);
+                const engine::video::ProbeTextResult parsed =
+                    engine::video::parse_ffmpeg_i_stderr(text_probe_text_.toStdString(),
+                                                         file_info.size());
+                if (parsed.info.parsed) {
+                    apply_probe_result(path, target, parsed.info, QString());
+                    refresh_status();
+                } else {
+                    apply_probe_result(
+                        path, target, engine::video::MediaInfo(),
+                        QStringLiteral("ffprobe 与 ffmpeg -i 都拿不到参数（%1；%2）")
+                            .arg(probe_note_,
+                                 QString::fromStdString(parsed.error).left(120)));
+                }
+            });
+    connect(text_probe_process_, &QProcess::errorOccurred, this,
+            [this, path, target](QProcess::ProcessError err) {
+                if (shutting_down_ || err != QProcess::FailedToStart) return;
+                const QString reason = QStringLiteral("起不了 ffmpeg（降级探测）：%1")
+                                           .arg(text_probe_process_ != nullptr
+                                                    ? text_probe_process_->errorString()
+                                                    : QString());
+                discard_process(text_probe_process_);
+                apply_probe_result(path, target, engine::video::MediaInfo(), reason);
+            });
+    // ★ 注意：`ffmpeg -i` 是**立刻退出**的（没有输出目标时返回 1）⇒ 不能套用
+    //   `wait_for_start_probed` 的"起来了吗"判据（它会看到 NotRunning 就当起不来）。
+    //   成败只看 finished 回调里解析出的 stderr。
+    text_probe_process_->start(QString::fromStdString(paths.ffmpeg),
+                               QStringList{QStringLiteral("-hide_banner"), QStringLiteral("-nostdin"),
+                                           QStringLiteral("-i"), native(path)});
 }
 
 void VideoPage::start_encoder_scan() {

@@ -95,6 +95,8 @@ public:
     void apply_probe_result(const QString& path, ProbeTarget target,
                             const engine::video::MediaInfo& info, const QString& error);
     bool source_ready() const { return source_probed_; }
+    // ★ P-798：本次探测走的是哪条路（空 = 走 ffprobe；非空 = 降级说明）
+    QString probe_source_note() const { return probe_note_; }
     bool reference_ready() const { return reference_probed_; }
     // 编码器表扫描是否已有结论（含"扫不到"——降级理由在面板上可见）
     bool encoders_scanned() const { return encoders_scanned_; }
@@ -157,6 +159,7 @@ private:
     void refresh_buttons();
     void set_running_ui(bool running);
     void start_probe(const QString& path, ProbeTarget target);
+    void start_text_probe(const QString& path, ProbeTarget target, const QString& why);
     void complete_encoder_scan(bool ok, const QString& reason);
     engine::video::TranscodeRequest build_request(const engine::video::FfmpegPaths& paths) const;
     QProcess* make_child_process();
@@ -200,6 +203,10 @@ private:
     QString result_path_;
 
     QProcess* probe_process_ = nullptr;   // 1.x：同一时刻只允许一次探测（连点/连拖不堆线程）
+    // ★ P-798：ffprobe 不可用时的降级探针（`ffmpeg -hide_banner -nostdin -i`）
+    QProcess* text_probe_process_ = nullptr;
+    QString text_probe_text_;
+    QString probe_note_;   // 本次探测走的是哪条路（显示用；不许静默切换）
     ProbeTarget probe_target_ = ProbeTarget::Source;
     QString probe_path_;
     QString last_source_request_;      // 同一份文本只落一次地（textChanged 一次改动可能来两趟）

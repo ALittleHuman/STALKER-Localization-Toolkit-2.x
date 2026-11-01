@@ -28,6 +28,12 @@ void emit(const std::string& text) {
     std::fflush(stderr);
 }
 
+const char* kProbeInfo =
+    "Input #0, ogg, from 'IN.ogm':\n"
+    "  Duration: 00:00:01.00, start: 0.000000, bitrate: 373 kb/s\n"
+    "  Stream #0:0: Video: theora, yuv444p, 320x240 [SAR 1:1 DAR 4:3], 25 fps, 25 tbr, 25 tbn\n"
+    "  Stream #0:1: Audio: vorbis, 44100 Hz, mono, fltp, 80 kb/s\n";
+
 const char* kEncoders =
     "Encoders:\n"
     " V..... = Video\n"
@@ -67,6 +73,14 @@ int main(int argc, char** argv) {
         std::fwrite(banner, 1, std::strlen(banner), stdout);
         std::fflush(stdout);
         return 0;
+    }
+    // ★★ 2026-11-01（复核）：`-i` 必须有自己的分支 —— 修前落到兜底 `output = args.back()`
+    //   会把**输入文件**当成输出 truncate（危险），fallback 路径也测不到。
+    //   与真 ffmpeg 同契约：只打印信息、没有输出参数 ⇒ 返回 1。
+    if (has_flag(args, "-i") && !has_flag(args, "-f")) {
+        std::fwrite(kProbeInfo, 1, std::strlen(kProbeInfo), stderr);
+        std::fflush(stderr);
+        return 1;
     }
     if (has_flag(args, "-encoders")) {
         std::fwrite(kEncoders, 1, std::strlen(kEncoders), stdout);
