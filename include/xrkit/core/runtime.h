@@ -25,7 +25,7 @@ std::string expand_runtime_tokens(const std::string& value, const std::string& a
 std::string runtime_root(const std::string& app_dir);
 
 // 依赖来源（给报错/自检用）
-enum class RuntimeSource { Missing, Explicit, Root, AppDefault };
+enum class RuntimeSource { Missing, Explicit, ExplicitMissing, Root, AppDefault };
 const char* runtime_source_name(RuntimeSource source);
 
 struct RuntimeDep {

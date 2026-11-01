@@ -102,6 +102,38 @@ def main() -> int:
         else:
             fail("缺件行为不对：rc=%d\n%s" % (rc, out[-300:]))
 
+        # ⑤ 相对 root 必须锚到 **app 目录**（不是当前工作目录）
+        rel_app = tmp / "rel_app"
+        touch(rel_app / "runtime" / "bin" / "ffmpeg.exe")
+        write(rel_app / "xrkit_user.ltx", "[runtime]\nroot = runtime\n")
+        rc, out = run(rel_app)
+        if norm("ffmpeg=%s source=root" % (rel_app / "runtime" / "bin" / "ffmpeg.exe")) in norm(out):
+            ok("相对 root 锚到 app 目录（从别的 cwd 启动也找得到）")
+        else:
+            fail("相对 root 没锚到 app 目录：\n%s" % out[-300:])
+
+        # ⑥ 显式项写了但不存在 ⇒ 必须 explicit-missing 且退出码非 0（不许静默回退）
+        miss_app = tmp / "miss_app"
+        touch(miss_app / "bin" / "ffmpeg.exe")
+        write(miss_app / "xrkit_user.ltx",
+              "[runtime]\nffmpeg = ${root}/gone.exe\nroot = @APP@\n")
+        rc, out = run(miss_app)
+        if "source=explicit-missing" in out and rc != 0:
+            ok("显式项失效：明确报 explicit-missing，不静默回退到 root/app")
+        else:
+            fail("显式项失效被静默回退：rc=%d\n%s" % (rc, out[-300:]))
+
+        # ⑦ 正式版**不发** xrkit_user.ltx（避免覆盖用户设置）
+        dist = ROOT / "dist" / "2.0.0"
+        newest = sorted(dist.glob("BETA/*/")) if dist.is_dir() else []
+        if newest:
+            if not (newest[-1] / "xrkit_user.ltx").exists():
+                ok("正式版包内没有 xrkit_user.ltx（不覆盖用户设置）")
+            else:
+                fail("正式版包里仍带 xrkit_user.ltx：%s" % newest[-1].name)
+        else:
+            print("  · 没有 dist/2.0.0/BETA 产物，跳过发布语义检查")
+
         # 不许把开发路径写进正式版 —— 这条由 package.ps1 的泄漏检查兜（见路由文档）
         print("  · 开发路径泄漏检查在 scripts/package.ps1（打包时执行）")
     finally:

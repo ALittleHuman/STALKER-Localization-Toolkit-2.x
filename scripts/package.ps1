@@ -841,35 +841,15 @@ New-Item -ItemType Directory -Force -Path $preDir | Out-Null
 $pkgName = "{0}" -f $idx   # 只留序号；主版本/标记已经在上层目录里了（用户 2026-09-29 第 1 条）
 $pkgDir  = Join-Path $preDir $pkgName
 if (Test-Path $pkgDir) { Remove-Item -Recurse -Force $pkgDir }
-# ★★ 依赖路由（用户 2026-11-01）：正式版 `[runtime] root = @APP@`（运行时展开为工具目录）。
-#   只写 `[runtime]` 段；用户的其它段若也从 stage 来（正常不会，因为源文件被排除）就保留。
+# ★★ 依赖路由（复核 2026-11-01）：正式版**不发放** `xrkit_user.ltx` ——
+#   `root = @APP@` 与工具默认路径等价（find_ffmpeg 本来就落到 app/bin）；
+#   发放它会覆盖用户已有的主题 / 上次路径 / 字体设置。用户要外置 runtime，自己写这一行即可。
 $userLtx = Join-Path $stage 'xrkit_user.ltx'
-$runtimeBlock = @('[runtime]', 'root = @APP@')
-$kept = New-Object System.Collections.Generic.List[string]
 if (Test-Path -LiteralPath $userLtx) {
-    $inRuntime = $false
-    foreach ($line in (Get-Content -LiteralPath $userLtx -Encoding UTF8)) {
-        $trimmed = $line.Trim()
-        if ($trimmed.StartsWith('[')) {
-            $section = $trimmed.Trim('[', ']').Trim()
-            $inRuntime = ($section -eq 'runtime')
-            if ($inRuntime) { continue }
-        }
-        if ($inRuntime) { continue }
-        $kept.Add($line)
-    }
+    throw ("打包失败：包内出现 xrkit_user.ltx（会覆盖用户设置）。" +
+           "正式版不发这个文件；共享 runtime 的写法请写在用户自己的 xrkit_user.ltx 里。")
 }
-$outLines = New-Object System.Collections.Generic.List[string]
-$outLines.AddRange([string[]]$runtimeBlock)
-if ($kept.Count -gt 0) { $outLines.Add('') ; $outLines.AddRange($kept) }
-Set-Content -LiteralPath $userLtx -Value $outLines -Encoding UTF8
-# 泄漏检查：正式版设置里**不许**出现开发盘符路径（`D:\...` / `E:\...`）
-$leaks = Select-String -LiteralPath $userLtx -Pattern '[A-Za-z]:[\\/]' -ErrorAction SilentlyContinue
-if ($leaks) {
-    throw ("打包失败：xrkit_user.ltx 里出现开发路径（正式版只许 `@APP@`）：`n  " +
-           (($leaks | ForEach-Object { $_.Line.Trim() }) -join "`n  "))
-}
-Write-Host "  依赖路由：xrkit_user.ltx 写入 [runtime] root = @APP@（无开发盘符）"
+Write-Host "  依赖路由：不发放 xrkit_user.ltx（root 默认即 @APP@；用户自带文件优先）"
 
 Move-Item -LiteralPath $stage -Destination $pkgDir
 Write-Host "PACKAGE OK: $pkgDir"

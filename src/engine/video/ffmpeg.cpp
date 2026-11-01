@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <chrono>
 #include <mutex>
 #include <map>
 
@@ -91,11 +92,13 @@ FfmpegPaths find_ffmpeg(const std::string& app_dir, const FfmpegConfig& config) 
         //   find_ffmpeg ⇒ 按「路径 + 大小 + 写入时间」做进程内缓存，一个进程只探一次。
         static std::mutex cache_mutex;
         static std::map<std::string, std::string> version_cache;
-        std::error_code stat_ec;
-        const auto stamp = std::filesystem::last_write_time(core::path_from_utf8(out.ffmpeg), stat_ec);
-        const auto bytes = std::filesystem::file_size(core::path_from_utf8(out.ffmpeg), stat_ec);
-        const std::string cache_key = out.ffmpeg + "|" + std::to_string(stat_ec ? 0 : bytes) + "|" +
-                                     std::to_string(stat_ec ? 0 : static_cast<long long>(stamp.time_since_epoch().count()));
+        // ★ 复核 P781 小瑕疵：两次 fs 调用各用一个 error_code（共用会把失败状态互相覆盖）
+        std::error_code stamp_ec;
+        std::error_code size_ec;
+        const auto stamp = std::filesystem::last_write_time(core::path_from_utf8(out.ffmpeg), stamp_ec);
+        const auto bytes = std::filesystem::file_size(core::path_from_utf8(out.ffmpeg), size_ec);
+        const std::string cache_key = out.ffmpeg + "|" + std::to_string(size_ec ? 0 : bytes) + "|" +
+                                     std::to_string(stamp_ec ? 0 : static_cast<long long>(stamp.time_since_epoch().count()));
         {
             std::lock_guard<std::mutex> guard(cache_mutex);
             const auto hit = version_cache.find(cache_key);
@@ -111,9 +114,17 @@ FfmpegPaths find_ffmpeg(const std::string& app_dir, const FfmpegConfig& config) 
         run_options.on_stdout = [&captured](const std::string& line) {
             if (captured.size() < 512) captured += line + "\n";
         };
+        // ★ 复核 P781（(2)）：探测是**外来 exe**，必须硬上限，否则坏文件会让 UI 线程挂死。
+        //   `run()` 每 20 ms 问一次 should_stop ⇒ 用截止时刻实现 2 秒超时（零 API 改动）。
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        run_options.should_stop = [deadline] {
+            return std::chrono::steady_clock::now() > deadline;
+        };
         const process::RunResult rr = process::run(run_options);
         if (rr.started && !captured.empty()) out.version = captured;
-        {
+        // ★ 复核 P781（(1)）：**失败/空结果不入缓存** —— 否则一次抖动（杀软扫描、并发占用、
+        //   冷启动）会让整个进程生命周期都拿到空串，配上 fail-closed 就是"一次失败、全会话拒用"。
+        if (!out.version.empty()) {
             std::lock_guard<std::mutex> guard(cache_mutex);
             version_cache[cache_key] = out.version;
         }

@@ -64,6 +64,7 @@ std::string read_runtime_value(const std::string& app_dir, const std::string& ke
 const char* runtime_source_name(RuntimeSource source) {
     switch (source) {
         case RuntimeSource::Explicit: return "explicit";
+        case RuntimeSource::ExplicitMissing: return "explicit-missing";
         case RuntimeSource::Root: return "root";
         case RuntimeSource::AppDefault: return "app";
         case RuntimeSource::Missing: break;
@@ -92,7 +93,13 @@ std::string runtime_root(const std::string& app_dir) {
     const std::string raw = read_runtime_value(app_dir, "root");
     if (raw.empty()) return std::string();
     // root 自己也可能写 `@APP@`（正式版就是它）。
-    return expand_runtime_tokens(raw, app_dir, std::string());
+    std::string resolved = expand_runtime_tokens(raw, app_dir, std::string());
+    // ★★ 2026-11-01（复核 P1）：相对 root 锚到 app 目录（不能按当前工作目录解析）
+    const std::filesystem::path root_candidate = path_from_utf8(resolved);
+    if (!root_candidate.is_absolute()) {
+        resolved = (std::filesystem::path(path_from_utf8(app_dir)) / root_candidate).string();
+    }
+    return resolved;
 }
 
 RuntimeDep resolve_runtime_dep(const std::string& app_dir, const std::string& key,
@@ -109,6 +116,9 @@ RuntimeDep resolve_runtime_dep(const std::string& app_dir, const std::string& ke
             dep.source = RuntimeSource::Explicit;
             return dep;
         }
+        // ★★ 2026-11-01（复核 P1）：显式写了却不存在 ⇒ explicit-missing，不静默回退
+        dep.source = RuntimeSource::ExplicitMissing;
+        return dep;
         // 显式写了却不存在 ⇒ 不静默换别的（交给调用方报错）；
         // 但仍允许 ③ 的工具目录兜底，避免"用户指了旧路径"直接把功能打死。
     }
