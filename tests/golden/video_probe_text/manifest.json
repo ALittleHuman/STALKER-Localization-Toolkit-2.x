@@ -45,6 +45,19 @@
       "container_br": 213232,
       "has_audio": false,
       "dur": 1.0
+    },
+    {
+      "case": "vfr_h264_concat_30_10",
+      "video": "h264",
+      "audio": null,
+      "fps_r": "30/1",
+      "fps_avg": "20/1",
+      "fps_text": 20.0,
+      "stream_br": 111790,
+      "container_br": 114000,
+      "has_audio": false,
+      "dur": 4.0,
+      "note": "concat 30fps+10fps ⇒ avg=20 而 r=30；专门抓 tbr 陷阱"
     }
   ]
 }

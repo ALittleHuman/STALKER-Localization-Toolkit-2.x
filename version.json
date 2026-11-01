@@ -1,5 +1,5 @@
 {
-  "current": { "version": "2.0.0", "prerelease": "BETA", "index": 62 },
+  "current": { "version": "2.0.0", "prerelease": "BETA", "index": 63 },
   "tree": {
     "2.0.0": {
       "ALPHA": {
@@ -320,6 +320,7 @@
         "60": { "built": "2026-11-01 17:08:04", "commit": "f71c098", "artifacts": ["build\\logs\\build_pkg_60.log", "dist\\2.0.0\\BETA\\60"] },
         "61": { "built": "2026-11-01 17:32:58", "commit": "c6583c8", "artifacts": ["build\\logs\\build_pkg_61.log", "dist\\2.0.0\\BETA\\61"] },
         "62": { "built": "2026-11-01 17:57:20", "commit": "e9dbb7b", "artifacts": ["build\\logs\\build_pkg_62.log", "dist\\2.0.0\\BETA\\62"] },
+        "63": { "built": "2026-11-01 18:56:55", "commit": "9a872c3", "artifacts": ["build\\logs\\build_pkg_63.log", "dist\\2.0.0\\BETA\\63"] },
         "258": { "built": "2026-10-23 22:31:34", "commit": "2f143c3", "artifacts": ["build\\logs\\build_pkg_258.log", "dist\\2.0.0\\BETA\\258"] }
       }
     }

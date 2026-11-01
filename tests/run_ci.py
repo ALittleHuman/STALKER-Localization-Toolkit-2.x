@@ -3505,6 +3505,28 @@ def step_font_sample(release: bool) -> None:
         fail("文本样张判据不通过（见上）")
 
 
+def step_video_probe_text(release: bool) -> None:
+    """L2：`ffmpeg -i` stderr 解析 ⇄ ffprobe JSON（录制样本，逐字段 + 结构判据）。"""
+    say("[?] 视频降级探测 L2：ffmpeg -i stderr ⇄ ffprobe JSON")
+    script = ROOT / "tests" / "check_video_probe_text.py"
+    if not require_repo_file(script, "视频降级探测判据脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("VIDEO-PROBE-TEXT") or s.startswith("·"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("视频降级探测：5 组样本逐字段等价（含 VFR/tbr 陷阱）")
+    elif rc2 == 2:
+        prereq("视频降级探测样本", "缺样本或 CLI", release)
+    else:
+        fail("视频降级探测判据不通过（见上）")
+
+
 def step_runtime_routing(release: bool) -> None:
     """依赖路由：[runtime] root / @APP@ / 优先级 / 缺件报错。"""
     say("[?] 依赖路由：[runtime] root / @APP@ / 优先级")
@@ -7686,6 +7708,7 @@ STEPS = [
     ("tree-filter", step_tree_filter),
     ("plugin-oneliners", step_plugin_oneliners),
     ("runtime-routing", step_runtime_routing),
+    ("video-probe-text", step_video_probe_text),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
     ("version-identity", step_version_identity),

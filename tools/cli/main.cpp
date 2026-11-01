@@ -52,6 +52,7 @@
 #include "xrkit/engine/text/sniff.h"
 #include "xrkit/engine/third_party_probe.h"
 #include "xrkit/engine/video/ffmpeg.h"
+#include "xrkit/engine/video/probe_text.h"
 #include "xrkit/engine/video/transcode.h"
 #include "xrkit/engine/xml/compare.h"
 #include "xrkit/engine/xml/dirdiff.h"
@@ -217,7 +218,8 @@ void print_usage() {
            "                  [--backup] [--exclude <模式>]\n"
            "                  批量编码转换（与内置 convert 页同一个引擎实现；判据对拍用它）\n"
            "  --build-font-pack <SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录>\n"
-           "  --video-ffmpeg-probe [工具目录]    视频 ffmpeg 版本探测（打印 version_major / rejected）\n"
+           "  --video-probe-text <stderr文件> [size]  解析 `ffmpeg -i` stderr（降级探测 L1/L2 判据）\n"
+"  --video-ffmpeg-probe [工具目录]    视频 ffmpeg 版本探测（打印 version_major / rejected）\n"
            "  --runtime-paths <工具目录>            依赖路由：[runtime] root / @APP@ 解析结果\n"
            "  --langpack-scan <语言包目录>      只读识别：profile/lang/槽位/资源（IX-Ray 生成器「指定」模式的底座）\n"
            "  --font-sample <字体> <文本> <字号> <out.ppm>   文本样张（预览用；缺字计数）\n"
@@ -4916,6 +4918,46 @@ int run_cli(const std::vector<std::string>& args) {
                   << " empty_tables=" << r.empty_tables
                   << " skipped_existing=" << r.skipped_existing << "\n";
         return kExitOk;
+    }
+
+    // 视频降级探测：解析录制好的 `ffmpeg -i` stderr（L1/L2 判据用；不依赖本机 ffprobe）
+    if (action == "--video-probe-text") {
+        if (operands.empty()) {
+            std::cerr << "VIDEOPROBETEXT error reason=用法：--video-probe-text <stderr文件> [size_bytes]\n";
+            return kExitUsage;
+        }
+        std::string text;
+        {
+            std::ifstream in(operands[0], std::ios::binary);
+            if (!in) {
+                std::cerr << "VIDEOPROBETEXT error reason=读不到 " << operands[0] << "\n";
+                return kExitFail;
+            }
+            std::stringstream buffer;
+            buffer << in.rdbuf();
+            text = buffer.str();
+        }
+        long long size_bytes = -1;
+        if (operands.size() > 1) size_bytes = std::atoll(operands[1].c_str());
+        const xrkit::engine::video::ProbeTextResult result =
+            xrkit::engine::video::parse_ffmpeg_i_stderr(text, size_bytes);
+        std::cout << "PROBETEXT parsed=" << (result.info.parsed ? 1 : 0)
+                  << " has_video=" << (result.info.has_video ? 1 : 0)
+                  << " codec=" << result.info.video.codec
+                  << " w=" << result.info.video.width << " h=" << result.info.video.height
+                  << " fps=" << result.info.video.fps
+                  << " vbr=" << result.info.video.bitrate
+                  << " has_vbr=" << (result.has_video_bitrate ? 1 : 0)
+                  << " has_audio=" << (result.info.has_audio ? 1 : 0)
+                  << " acodec=" << result.info.audio.codec
+                  << " sr=" << result.info.audio.sample_rate
+                  << " ch=" << result.info.audio.channels
+                  << " abr=" << result.info.audio.bitrate
+                  << " has_abr=" << (result.has_audio_bitrate ? 1 : 0)
+                  << " dur=" << result.info.duration
+                  << " size_mb=" << result.info.size_mb
+                  << " error=" << result.error << "\n";
+        return result.info.parsed ? kExitOk : kExitFail;
     }
 
     // 视频 ffmpeg 版本探测（P-739 的行为判据；复核要求"判据打在产物上"）

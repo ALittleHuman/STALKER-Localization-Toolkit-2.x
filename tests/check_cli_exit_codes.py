@@ -56,7 +56,9 @@ LOOKBACK = 25
 #   按本判据自己的规矩：增删一处就必须重估口径并改本表（不是把判据放宽）。
 # 2026-10-27：`--font-sample` 缺操作数再 +1（50 → 51）。
 # 2026-10-27：`--ixr-build` 两处用法错误（缺操作数 / 未知参数）⇒ 53 → 55。
-FROZEN = {"USAGE": 57, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
+# ★ 2026-11-01：USAGE 57→58 —— 新增 `--video-probe-text` 缺操作数（用法错误族）；
+#   按本判据的口径，增删一处 rc=3 必须重估并改表，这里显式记账。
+FROZEN = {"USAGE": 58, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
 
 PROBLEMS: list = []
 CASES = 0

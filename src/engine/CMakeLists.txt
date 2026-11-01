@@ -23,6 +23,7 @@ add_library(xrkit_engine STATIC
   process/run.cpp
   video/ffmpeg.cpp
   video/transcode.cpp
+  video/probe_text.cpp
   plugin/registry.cpp
   plugin/loader.cpp
   # ★★ 插件改装 P2：CPython 宿主（`XRKIT_WITH_PYTHON` 未定义时编出**降级**实现：
