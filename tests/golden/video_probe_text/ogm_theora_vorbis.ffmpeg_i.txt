@@ -1,0 +1,9 @@
+Input #0, ogg, from 'C:\Users\ADMINI~1\AppData\Local\Temp\xrkit_l2\ogm_theora_vorbis.ogm':
+  Duration: 00:00:01.00, start: 0.000000, bitrate: 373 kb/s
+  Stream #0:0: Video: theora, yuv444p, 320x240 [SAR 1:1 DAR 4:3], 25 fps, 25 tbr, 25 tbn
+      Metadata:
+        encoder         : Lavc61.19.100 libtheora
+  Stream #0:1: Audio: vorbis, 44100 Hz, mono, fltp, 80 kb/s
+      Metadata:
+        encoder         : Lavc61.19.100 libvorbis
+At least one output file must be specified

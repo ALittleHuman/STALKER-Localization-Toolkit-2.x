@@ -1,0 +1,50 @@
+{
+  "note": "L0/L2 样本：由 7.1 essentials (BETA.61 包内 bin) 真跑生成；ffprobe JSON 与 ffmpeg -i stderr 同时录制",
+  "ffmpeg": "7.1 essentials (gyan.dev) via dist/2.0.0/BETA/61/bin",
+  "cases": [
+    {
+      "case": "mp4_h264_aac_24000_1001",
+      "video": "h264",
+      "audio": "aac",
+      "fps_r": "24000/1001",
+      "fps_text": 23.98,
+      "stream_br": 204751,
+      "container_br": 284240,
+      "has_audio": true,
+      "dur": 1.0
+    },
+    {
+      "case": "mov_h264_aac_30000_1001",
+      "video": "h264",
+      "audio": "aac",
+      "fps_r": "30000/1001",
+      "fps_text": 29.97,
+      "stream_br": 210732,
+      "container_br": 294256,
+      "has_audio": true,
+      "dur": 1.0
+    },
+    {
+      "case": "ogm_theora_vorbis",
+      "video": "theora",
+      "audio": "vorbis",
+      "fps_r": "25/1",
+      "fps_text": 25.0,
+      "stream_br": null,
+      "container_br": 373576,
+      "has_audio": true,
+      "dur": 1.0
+    },
+    {
+      "case": "video_no_audio",
+      "video": "h264",
+      "audio": null,
+      "fps_r": "25/1",
+      "fps_text": 25.0,
+      "stream_br": 205584,
+      "container_br": 213232,
+      "has_audio": false,
+      "dur": 1.0
+    }
+  ]
+}

@@ -139,6 +139,9 @@ def main() -> int:
             want(False, "G 打包失败（默认 rc=%d / dirs rc=%d）" % (rc_g1, rc_g2))
 
         # H（P-792，结构不变量 > 计数）：**同一棵树，两种喂法**的产品 sha256 必须相等 ——
+        #   ※ 这条**同时锁住目录元数据**：sha 对 mode/mtime/uid/gid 敏感 ⇒ 若有人让
+        #     `--pack-dirs` 的目录带上真实 mtime（很自然的"改进"），H1 立刻红——
+        #     而那恰恰会破坏与 tar2sqfs 的 sha 相等（规格：mode 0755 / mtime 0 / uid gid 0）。
         #   前提是树里**没有空目录**（非空目录的显式条目是冗余的：writer/tar2sqfs 都会为
         #   父目录合成 inode）。若不等 ⇒ 写侧对显式/隐式目录处理不一致（重复条目 /
         #   inode 编号被推后）——那是真缺陷。
