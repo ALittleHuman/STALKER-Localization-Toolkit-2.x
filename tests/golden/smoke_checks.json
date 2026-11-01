@@ -1,5 +1,11 @@
 {
-  "dev": 944,
-  "packaged": 915,
-  "note": "P-790：只禁下降。包内不带开发夹具（xrkit_fake_ffmpeg 等）⇒ 条数少 29；增长时手动更新本文件"
+  "dev": {
+    "checks": 944,
+    "how": "开发树且 xrkit_fake_ffmpeg.exe 存在"
+  },
+  "packaged": {
+    "checks": 915,
+    "how": "exe 在 dist/ 下，或开发树无夹具"
+  },
+  "note": "P-790/P-791：只禁下降；mode 判定依据随条目一起记，配错号会打印 how"
 }

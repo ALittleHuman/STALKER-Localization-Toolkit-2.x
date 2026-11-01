@@ -2390,8 +2390,19 @@ def step_shell_smoke(release: bool) -> None:
     _smoke_baseline = ROOT / "tests" / "golden" / "smoke_checks.json"
     if _smoke_baseline.exists():
         _base = json.loads(_smoke_baseline.read_text(encoding="utf-8"))
-        _mode = "packaged" if "dist" in str(SHELL_EXE).lower() else "dev"
-        _prev = int(_base.get(_mode, 0))
+        # ★ P-791：mode 不能"猜"。判定依据两条，且把依据打出来（配错号时能看见）：
+        #   ① exe 在 dist/ 下 ⇒ packaged；② 开发树但**夹具 exe 不存在** ⇒ 按 packaged 计
+        #      （少了开发夹具，条数天然少；否则 dev 基线会红得莫名其妙）。
+        _fake = SHELL_EXE.parent / "xrkit_fake_ffmpeg.exe"
+        if "dist" in str(SHELL_EXE).lower():
+            _mode, _how = "packaged", "exe 在 dist/ 下"
+        elif _fake.exists():
+            _mode, _how = "dev", "开发树且 xrkit_fake_ffmpeg.exe 存在"
+        else:
+            _mode, _how = "packaged", "开发树但开发夹具缺失（按包内口径计）"
+        _entry = _base.get(_mode, 0)
+        _prev = int(_entry.get("checks", 0) if isinstance(_entry, dict) else _entry)
+        say("  [shell-smoke] mode=%s（%s） 基线 checks=%d" % (_mode, _how, _prev))
         if checks_n < _prev:
             fail("外壳自检条数从 %d 降到 %d（mode=%s）—— 有判据被静默删了/没跑到；"
                  "若是有意精简，改 tests/golden/smoke_checks.json 并写明删了哪条"

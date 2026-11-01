@@ -138,6 +138,28 @@ def main() -> int:
         else:
             want(False, "G 打包失败（默认 rc=%d / dirs rc=%d）" % (rc_g1, rc_g2))
 
+        # H（P-792，结构不变量 > 计数）：**同一棵树，两种喂法**的产品 sha256 必须相等 ——
+        #   前提是树里**没有空目录**（非空目录的显式条目是冗余的：writer/tar2sqfs 都会为
+        #   父目录合成 inode）。若不等 ⇒ 写侧对显式/隐式目录处理不一致（重复条目 /
+        #   inode 编号被推后）——那是真缺陷。
+        #   反向：带空目录时两者 sha **必须不同**（否则"空目录真的进包"就是假的）。
+        import hashlib
+
+        def sha256_of(path: Path) -> str:
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+
+        rc1, _ = cli(["--pack-sqfs", str(base / "h_plain.sqfs"), str(plain)])
+        rc2, _ = cli(["--pack-sqfs", "--pack-dirs", str(base / "h_plain_dirs.sqfs"), str(plain)])
+        same = rc1 == 0 and rc2 == 0 and \
+            sha256_of(base / "h_plain.sqfs") == sha256_of(base / "h_plain_dirs.sqfs")
+        want(same, "H1 无空目录时：`--pack-dirs` 与默认产物 sha256 相等（显式条目是冗余的，不许改字节）")
+
+        rc3, _ = cli(["--pack-sqfs", str(base / "h_empty.sqfs"), str(with_empty)])
+        rc4, _ = cli(["--pack-sqfs", "--pack-dirs", str(base / "h_empty_dirs.sqfs"), str(with_empty)])
+        differ = rc3 == 0 and rc4 == 0 and \
+            sha256_of(base / "h_empty.sqfs") != sha256_of(base / "h_empty_dirs.sqfs")
+        want(differ, "H2 有空目录时：两者 sha256 必须不同（否则空目录进包是假的）")
+
         # E：DB 包**真的带着空目录**（本批判据第一次跑就推翻了审计的那条前提）
         out_dir = base / "out"
         rc, text = cli(["--unpack-package", str(base / "e.db0"), str(out_dir)])
