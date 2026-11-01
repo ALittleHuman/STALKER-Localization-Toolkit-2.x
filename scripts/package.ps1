@@ -63,7 +63,10 @@ function Get-PackageDest {
     param([string]$RelPath)
     $name = Split-Path $RelPath -Leaf
     $lower = $name.ToLowerInvariant()
-    if ($RelPath -match '(^|[\\/])(logs)([\\/]|$)' -or $lower -eq 'user.ltx') { return $null }
+    # 依赖路由（用户 2026-11-01）：`xrkit_user.ltx` 是**本机设置**，绝不随包复制——
+    # 正式版会在 stage 里新写一份（只含 `[runtime] root = @APP@`）。
+    if ($RelPath -match '(^|[\\/])(logs)([\\/]|$)' -or $lower -eq 'user.ltx' -or
+        $lower -eq 'xrkit_user.ltx') { return $null }
     if ($lower -eq 'xrkit_app.exe') { return '' }
     if ($lower -in @('ffmpeg.exe', 'ffprobe.exe', 'download_ffmpeg.py')) { return 'bin' }
     if ($lower -in @('readme.txt', 'version.txt', 'license.txt')) { return '' }
@@ -838,6 +841,36 @@ New-Item -ItemType Directory -Force -Path $preDir | Out-Null
 $pkgName = "{0}" -f $idx   # 只留序号；主版本/标记已经在上层目录里了（用户 2026-09-29 第 1 条）
 $pkgDir  = Join-Path $preDir $pkgName
 if (Test-Path $pkgDir) { Remove-Item -Recurse -Force $pkgDir }
+# ★★ 依赖路由（用户 2026-11-01）：正式版 `[runtime] root = @APP@`（运行时展开为工具目录）。
+#   只写 `[runtime]` 段；用户的其它段若也从 stage 来（正常不会，因为源文件被排除）就保留。
+$userLtx = Join-Path $stage 'xrkit_user.ltx'
+$runtimeBlock = @('[runtime]', 'root = @APP@')
+$kept = New-Object System.Collections.Generic.List[string]
+if (Test-Path -LiteralPath $userLtx) {
+    $inRuntime = $false
+    foreach ($line in (Get-Content -LiteralPath $userLtx -Encoding UTF8)) {
+        $trimmed = $line.Trim()
+        if ($trimmed.StartsWith('[')) {
+            $section = $trimmed.Trim('[', ']').Trim()
+            $inRuntime = ($section -eq 'runtime')
+            if ($inRuntime) { continue }
+        }
+        if ($inRuntime) { continue }
+        $kept.Add($line)
+    }
+}
+$outLines = New-Object System.Collections.Generic.List[string]
+$outLines.AddRange([string[]]$runtimeBlock)
+if ($kept.Count -gt 0) { $outLines.Add('') ; $outLines.AddRange($kept) }
+Set-Content -LiteralPath $userLtx -Value $outLines -Encoding UTF8
+# 泄漏检查：正式版设置里**不许**出现开发盘符路径（`D:\...` / `E:\...`）
+$leaks = Select-String -LiteralPath $userLtx -Pattern '[A-Za-z]:[\\/]' -ErrorAction SilentlyContinue
+if ($leaks) {
+    throw ("打包失败：xrkit_user.ltx 里出现开发路径（正式版只许 `@APP@`）：`n  " +
+           (($leaks | ForEach-Object { $_.Line.Trim() }) -join "`n  "))
+}
+Write-Host "  依赖路由：xrkit_user.ltx 写入 [runtime] root = @APP@（无开发盘符）"
+
 Move-Item -LiteralPath $stage -Destination $pkgDir
 Write-Host "PACKAGE OK: $pkgDir"
  

@@ -22,6 +22,7 @@
 #include "xrkit/core/sha256.h"
 #include "xrkit/core/theme.h"
 #include "xrkit/core/version.h"
+#include "xrkit/core/runtime.h"
 #include "xrkit/engine/engine.h"
 #include "xrkit/engine/fs/db.h"
 #include "xrkit/engine/fs/extract_tree.h"
@@ -215,6 +216,7 @@ void print_usage() {
            "                  [--backup] [--exclude <模式>]\n"
            "                  批量编码转换（与内置 convert 页同一个引擎实现；判据对拍用它）\n"
            "  --build-font-pack <SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录>\n"
+           "  --runtime-paths <工具目录>            依赖路由：[runtime] root / @APP@ 解析结果\n"
            "  --langpack-scan <语言包目录>      只读识别：profile/lang/槽位/资源（IX-Ray 生成器「指定」模式的底座）\n"
            "  --font-sample <字体> <文本> <字号> <out.ppm>   文本样张（预览用；缺字计数）\n"
            "  --ori-tree <源目录> <ori 目录> [--lang L] [--clean]\n"
@@ -4901,6 +4903,32 @@ int run_cli(const std::vector<std::string>& args) {
                   << " empty_tables=" << r.empty_tables
                   << " skipped_existing=" << r.skipped_existing << "\n";
         return kExitOk;
+    }
+
+    // 依赖路由（用户 2026-11-01）：打印 [runtime] 解析结果，自检与排障用
+    if (action == "--runtime-paths") {
+        const std::string app_dir = operands.empty() ? "." : operands[0];
+        const std::string root = xrkit::core::runtime_root(app_dir);
+        std::cout << "RUNTIME root=" << (root.empty() ? "(none)" : root) << "\n";
+        struct Item { const char* name; const char* key; const char* under_root; const char* under_app; };
+        const Item items[] = {
+            {"ffmpeg", "ffmpeg", "bin/ffmpeg.exe", "bin/ffmpeg.exe"},
+            {"ffprobe", "ffprobe", "bin/ffprobe.exe", "bin/ffprobe.exe"},
+            {"python", "python", "python/python.exe", "python/python.exe"},
+            {"ixr_run", "ixr_run", "tools/ixr_run.py", "tools/ixr_run.py"},
+            {"fontlib", "fontlib", "tools/fontlib", "tools/fontlib"},
+        };
+        int missing = 0;
+        for (const Item& item : items) {
+            const xrkit::core::RuntimeDep dep = xrkit::core::resolve_runtime_dep(
+                app_dir, item.key, item.under_root, item.under_app);
+            std::cout << "RUNTIME " << item.name << "="
+                      << (dep.path.empty() ? "(missing)" : dep.path)
+                      << " source=" << xrkit::core::runtime_source_name(dep.source) << "\n";
+            if (dep.path.empty()) ++missing;
+        }
+        std::cout << "RUNTIME ok missing=" << missing << "\n";
+        return missing == 0 ? kExitOk : kExitFail;
     }
 
     // ori 树（交接区最终规划 2026-10-29）：拖入源 ⇒ 整树复制 + 容器内提取 + ori/<容器>/...

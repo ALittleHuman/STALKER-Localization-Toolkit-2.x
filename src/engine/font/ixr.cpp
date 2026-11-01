@@ -1,6 +1,7 @@
 #include "xrkit/engine/font/ixr.h"
 
 #include "xrkit/core/path.h"
+#include "xrkit/core/runtime.h"
 #include "xrkit/core/theme.h"   // app_dir()
 #include "xrkit/engine/process/run.h"
 
@@ -34,6 +35,10 @@ IxrTools ixr_resolve_tools() {
     const std::string env_python = env_or_empty("XRKIT_IXR_PYTHON");
     if (!env_python.empty()) {
         tools.python = env_python;
+    } else if (const xrkit::core::RuntimeDep dep = xrkit::core::resolve_runtime_dep(
+                   core::path_to_utf8(app), "python", "python/python.exe", "python/python.exe");
+               !dep.path.empty()) {
+        tools.python = dep.path;   // ★ runtime 路由（迭代期共享 root / 正式版 @APP@）
     } else if (const fs::path packaged = app / "python" / "python.exe"; is_file(packaged)) {
         tools.python = core::path_to_utf8(packaged);
     } else {
@@ -44,6 +49,10 @@ IxrTools ixr_resolve_tools() {
     const std::string env_run = env_or_empty("XRKIT_IXR_RUN");
     if (!env_run.empty()) {
         tools.launcher = env_run;
+    } else if (const xrkit::core::RuntimeDep dep = xrkit::core::resolve_runtime_dep(
+                   core::path_to_utf8(app), "ixr_run", "tools/ixr_run.py", "tools/ixr_run.py");
+               !dep.path.empty()) {
+        tools.launcher = dep.path;   // ★ runtime 路由
     } else if (const fs::path packaged = app / "tools" / "ixr_run.py"; is_file(packaged)) {
         tools.launcher = core::path_to_utf8(packaged);
     } else {

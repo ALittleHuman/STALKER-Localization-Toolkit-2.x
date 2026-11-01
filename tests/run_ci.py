@@ -3476,6 +3476,28 @@ def step_font_sample(release: bool) -> None:
         fail("文本样张判据不通过（见上）")
 
 
+def step_runtime_routing(release: bool) -> None:
+    """依赖路由：[runtime] root / @APP@ / 优先级 / 缺件报错。"""
+    say("[?] 依赖路由：[runtime] root / @APP@ / 优先级")
+    script = ROOT / "tests" / "check_runtime_routing.py"
+    if not require_repo_file(script, "依赖路由判据脚本"):
+        return
+    if not CLI_EXE.exists():
+        prereq("构建产物 xrkit_cli.exe", "未构建", release)
+        return
+    rc, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("RUNTIME-ROUTING") or s.startswith("·"):
+            say("  " + s)
+    if rc == 0:
+        ok("依赖路由：root/@APP@/优先级/缺件 全过")
+    elif rc == 2:
+        prereq("构建产物", "缺 xrkit_cli.exe", release)
+    else:
+        fail("依赖路由判据不通过（见上）")
+
+
 def step_plugin_oneliners(release: bool) -> None:
     """P-739 / P-745 / P-770 的一行级红锁（注入审计 session-ac61aa8a）。"""
     say("[?] 一行级缺陷：P-739 / P-745 / P-770 红锁")
@@ -7631,6 +7653,7 @@ STEPS = [
     ("ori-tree", step_ori_tree),
     ("tree-filter", step_tree_filter),
     ("plugin-oneliners", step_plugin_oneliners),
+    ("runtime-routing", step_runtime_routing),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
     ("version-identity", step_version_identity),

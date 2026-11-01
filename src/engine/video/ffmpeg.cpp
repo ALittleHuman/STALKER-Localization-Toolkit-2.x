@@ -2,6 +2,8 @@
 
 #include "xrkit/engine/process/run.h"
 
+#include "xrkit/core/runtime.h"
+
 #include "probe_decls.h"
 
 #include "xrkit/core/path.h"
@@ -41,6 +43,13 @@ FfmpegPaths find_ffmpeg(const std::string& app_dir, const FfmpegConfig& config) 
     // ★★ 决策 4（用户 2026-10-18/19）：发行包按类别收拢 ⇒ ffmpeg/ffprobe 挪进 `bin\`。
     //   查找顺序保持"配置 → 根 → `bin\`"，**根目录优先**：老包（散在根）与临时手放的
     //   `ffmpeg.exe` 都还照旧能用；`bin\` 只是新增的**第二个自动落点**。
+    // ★★ 2026-11-01（用户：迭代期依赖路由到统一 runtime，正式版 root=@APP@）：
+    //   顺序 = `[ffmpeg] path/probe`（旧显式键，兼容）→ `[runtime]`（显式项 → root → 工具目录）。
+    //   **不搜 PATH**（旧纪律）。
+    const xrkit::core::RuntimeDep rt_ffmpeg = xrkit::core::resolve_runtime_dep(
+        app_dir, "ffmpeg", "bin/ffmpeg.exe", "bin/ffmpeg.exe");
+    const xrkit::core::RuntimeDep rt_probe = xrkit::core::resolve_runtime_dep(
+        app_dir, "ffprobe", "bin/ffprobe.exe", "bin/ffprobe.exe");
     const std::string bin_ffmpeg = join_exe(app_dir, "bin/ffmpeg.exe");
     const std::string bin_probe = join_exe(app_dir, "bin/ffprobe.exe");
     const bool local_ffmpeg_ok = is_file(local_ffmpeg);
@@ -51,6 +60,10 @@ FfmpegPaths find_ffmpeg(const std::string& app_dir, const FfmpegConfig& config) 
     if (manual_ffmpeg) {
         out.ffmpeg = config.path;
         out.ffmpeg_from_config = true;
+    } else if (!rt_ffmpeg.path.empty() &&
+               rt_ffmpeg.source != xrkit::core::RuntimeSource::AppDefault) {
+        // ★ runtime 路由（显式项 / root）优先
+        out.ffmpeg = rt_ffmpeg.path;
     } else if (local_ffmpeg_ok) {
         out.ffmpeg = local_ffmpeg;  // 自动找到的**不写盘**（8.7）
     } else if (bin_ffmpeg_ok) {
@@ -59,6 +72,9 @@ FfmpegPaths find_ffmpeg(const std::string& app_dir, const FfmpegConfig& config) 
     if (manual_probe) {
         out.ffprobe = config.probe;
         out.ffprobe_from_config = true;
+    } else if (!rt_probe.path.empty() &&
+               rt_probe.source != xrkit::core::RuntimeSource::AppDefault) {
+        out.ffprobe = rt_probe.path;   // ★ runtime 路由（显式 / root）
     } else if (local_probe_ok) {
         out.ffprobe = local_probe;
     } else if (bin_probe_ok) {
