@@ -9429,7 +9429,7 @@ SmokeResult run_smoke() {
                 QThread::msleep(10);
             }
 
-            // ���因（2026-11-01）：第一版只调 apply_file 没写 source_edit ⇒
+            // 根因（2026-11-01）：第一版只调 apply_file 没写 source_edit ⇒
             //   info_panel_text 读的是**输入框文本**，面板当然只有占位符。
             //   端到端链路：输入框文本 → 无 ffprobe ⇒ 降级 → 解析出 MedInfo 上屏。
             check(tpage.source_ready() &&

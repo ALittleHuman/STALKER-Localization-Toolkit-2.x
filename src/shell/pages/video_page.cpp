@@ -121,6 +121,7 @@ VideoPage::~VideoPage() {
         }
     };
     stop(probe_process_);
+    stop(text_probe_process_);   // P-798：降级探针同一套收尾
     stop(encoder_process_);
     stop(install_process_);
     if (process_ != nullptr) {
@@ -395,11 +396,13 @@ QString VideoPage::last_stderr_tail() const {
 
 void VideoPage::start_probe(const QString& path, ProbeTarget target) {
     if (path.isEmpty()) return;
-    if (probe_process_ != nullptr) {
+    // 共享 busy：降级探针在跑也算忙（否则快速换文件会并发两条探针）
+    if (probe_process_ != nullptr || text_probe_process_ != nullptr) {
         // 1.x 的并发保护（同一时刻只允许一次探测）；但**跳过要留痕**（用户红线：不能静默）
         note_skip(QStringLiteral("上一份文件的参数还在解析中 ⇒ 暂不解析 %1").arg(native(path)));
         return;
     }
+    probe_note_.clear();   // 正常路径先清掉旧的降级说明
     const engine::video::FfmpegPaths paths = resolve_ffmpeg();
     if (paths.ffprobe.empty()) {
         // ★ P-798（复核）：降级条件是"**不可用**"，不只是"没找到"。
@@ -498,6 +501,13 @@ void VideoPage::start_text_probe(const QString& path, ProbeTarget target, const 
     connect(text_probe_process_, &QProcess::finished, this,
             [this, path, target](int code, QProcess::ExitStatus status) {
                 if (shutting_down_) return;
+                const QString current = (target == ProbeTarget::Reference)
+                                            ? reference_edit_->text().trimmed()
+                                            : source_edit_->text().trimmed();
+                if (!current.isEmpty() && current != path) {
+                    discard_process(text_probe_process_);
+                    return;
+                }
                 text_probe_text_ += QString::fromUtf8(text_probe_process_->readAllStandardError());
                 discard_process(text_probe_process_);
                 Q_UNUSED(status);
@@ -1093,8 +1103,10 @@ QString VideoPage::status_text() const {
         case engine::video::ProbeState::Found: {
             const engine::video::FfmpegPaths& paths = locator_.paths();
             QString text = QStringLiteral("✓ ffmpeg: ") + utf8(paths.ffmpeg);
-            if (!paths.has_probe) text += QStringLiteral("（缺 ffprobe —— 视频信息读不出来）");
+            // HA 复核：缺 ffprobe != 读不出来（有 ffmpeg -i 降级）；只有降级也失败才是读不出来
+            if (!paths.has_probe) text += QStringLiteral("（缺 ffprobe —— 已用 ffmpeg -i 降级）");
             if (paths.ffmpeg_from_config) text += QStringLiteral("（user.ltx 手动指定）");
+            if (!probe_note_.isEmpty()) text += QStringLiteral("（") + probe_note_ + QStringLiteral("）");
             return text;
         }
         case engine::video::ProbeState::Missing:
