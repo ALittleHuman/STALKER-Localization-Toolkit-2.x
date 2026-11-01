@@ -59,7 +59,9 @@ struct TranscodePlan {
     std::string video_encoder;
     // ★ P-782：硬失败（非空 ⇒ 不能产出 OGM）。argv 为空，调用方不得起跑。
     std::string error;
-    // ★ P-782：软告警 —— 能产出，但输出编码与参考不一致（参考 xvid/mpeg4、本机 theora）。
+    // ★ P-782/P-789：软告警 —— 能产出，但**1.x CODEC_MAP 会为这个参考走 libxvid**
+    //   （mpeg4/xvid/msmpeg4v3），而 2.0 恒出 Theora。
+    //   ⚠ **不是**"任何编码不一致都告警"：参考 h264/未知 在 1.x 映射里同样落到 libtheora ⇒ 不告警。
     bool encoder_warning = false;  // 旧语义（有没有编码器）永假，已由 error 取代
     bool audio_kept_on_probe_failure = false;
     double duration = 0.0;

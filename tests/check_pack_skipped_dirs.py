@@ -115,6 +115,29 @@ def main() -> int:
              "D `--pack-sqfs --pack-dirs`（目录真的进包）⇒ 损失为 0",
              [l for l in text.splitlines() if "skipped_dirs" in l][:1])
 
+        # G（P-735 裁决 2026-11-01，**实测修正**）：默认产物里**没有空目录条目**，
+        #   但"有文件的目录"仍有 `d` 条目（实测：默认 dump 有 `d sub`、没有 `d empty`）——
+        #   ⇒ 判据不是"DIRTYPE 总计==0"（那是错的口径），而是"**空目录**不许被顺手塞进去"，
+        #   且 `--pack-dirs` 时必须出现 `empty`（两方向都在）。
+        rc_g1, _ = cli(["--pack-sqfs", str(base / "g_default.sqfs"), str(with_empty)])
+        rc_g2, _ = cli(["--pack-sqfs", "--pack-dirs", str(base / "g_dirs.sqfs"), str(with_empty)])
+        if rc_g1 == 0 and rc_g2 == 0:
+            rc_d1, dump1 = cli(["--dump", str(base / "g_default.sqfs")])
+            rc_d2, dump2 = cli(["--dump", str(base / "g_dirs.sqfs")])
+            def names(text, kind):
+                return [ln.split("\t")[1] for ln in text.splitlines()
+                        if ln[:2].lower() == kind + "\t" and "\t" in ln]
+            default_dirs = names(dump1, "d")
+            dirs_dirs = names(dump2, "d")
+            want(rc_d1 == 0 and rc_d2 == 0
+                 and not any(n.rstrip("/") == "empty" for n in default_dirs)
+                 and any(n.rstrip("/") == "empty" for n in dirs_dirs)
+                 and any(n.rstrip("/") == "sub" for n in default_dirs),
+                 "G 默认产物不含空目录条目（但保留非空目录 `sub`）、--pack-dirs 时才出现 `empty`",
+                 "默认 dirs=%s / --pack-dirs dirs=%s" % (default_dirs, dirs_dirs))
+        else:
+            want(False, "G 打包失败（默认 rc=%d / dirs rc=%d）" % (rc_g1, rc_g2))
+
         # E：DB 包**真的带着空目录**（本批判据第一次跑就推翻了审计的那条前提）
         out_dir = base / "out"
         rc, text = cli(["--unpack-package", str(base / "e.db0"), str(out_dir)])

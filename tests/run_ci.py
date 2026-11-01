@@ -2385,6 +2385,24 @@ def step_shell_smoke(release: bool) -> None:
     if rc != 0 or failed_n > 0:
         fail("外壳自检未通过（checks=%d failed=%d 退出码 %d，见上）" % (checks_n, failed_n, rc))
         return
+    # ★ P-790：**条数下限锁** —— failed=0 不代表"该跑的跑了"。915 vs 944 就是这个洞。
+    #   只禁下降（增长只提示，避免变成常红判据）。
+    _smoke_baseline = ROOT / "tests" / "golden" / "smoke_checks.json"
+    if _smoke_baseline.exists():
+        _base = json.loads(_smoke_baseline.read_text(encoding="utf-8"))
+        _mode = "packaged" if "dist" in str(SHELL_EXE).lower() else "dev"
+        _prev = int(_base.get(_mode, 0))
+        if checks_n < _prev:
+            fail("外壳自检条数从 %d 降到 %d（mode=%s）—— 有判据被静默删了/没跑到；"
+                 "若是有意精简，改 tests/golden/smoke_checks.json 并写明删了哪条"
+                 % (_prev, checks_n, _mode))
+            return
+        if checks_n > _prev:
+            say("  [shell-smoke] 条数增长 %d → %d（mode=%s）⇒ 请更新 "
+                "tests/golden/smoke_checks.json（只禁下降）" % (_prev, checks_n, _mode))
+    else:
+        say("  [shell-smoke] 缺条数基线 tests/golden/smoke_checks.json ⇒ 本轮不判下降")
+
     if nc_n > 0:
         prereq("外壳自检的未覆盖项（not_covered=%d）" % nc_n,
                "见输出里的 `NOT-COVERED` note（判据主体不存在或对照组不成立）；"

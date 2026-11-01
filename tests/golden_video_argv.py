@@ -158,10 +158,11 @@ def main() -> int:
         ref_codec = want_ref_codec.get(name)
         if ref_codec is None:
             raise SystemExit("基线过期：缺 ref_codec（重跑 tests/probe_video_argv.py --write）")
-        # ★ P-787：告警 = "1.x 会选 libxvid/mpeg4、本机只能出 Theora"。
-        #   1.x `CODEC_MAP` 恰好三行把 mpeg4/xvid/msmpeg4v3 映到 libxvid；其余（theora/空/h264 等）
-        #   1.x 本来就用 libtheora ⇒ 不告警。用**显式集合**而不是"非 theora 就告警"，
-        #   因为 h264 参考在 1.x 映射里同样落到 libtheora（夹具里有一格就是它）。
+        # ★ P-787/P-789：`enc_warn` 是 **2.0 的新定义**（参考属于 1.x `CODEC_MAP` 会走 libxvid
+        #   的那一族：mpeg4/xvid/msmpeg4v3，而 2.0 恒出 Theora）。**1.x 没有这个位**，
+        #   所以期望不可能从 1.x argv 反推（它那条 fallback 用例自己就选了 theora ⇒ 反推得 0，
+        #   与 2.0 定义冲突）⇒ 只能用"基线 ref_codec + 2.0 定义"算。
+        #   ※ 这份三元组与 transcode.cpp 的 kMap 是**同源两份**（P-789 已记；加新 codec 两处同改）。
         ENC_WARN_CASES = {"mpeg4_ref_no_bitrate_src_noaudio", "mpeg4_ref_fallback_noxvid"}
         expected_from_codec = ref_codec in ("mpeg4", "xvid", "msmpeg4v3")
         if expected_from_codec != (name in ENC_WARN_CASES):

@@ -126,7 +126,8 @@ bool is_squashfs_head(const std::string& path) {
 //   `pack_db` 的写侧支持目录条目，但两个前端的**收集**都只收文件 ⇒ "子树里一个文件都没有"的
 //   目录封包之后会**完全消失**（"有文件在下面"的目录只是没有显式条目，产物里还能靠路径推出来）。
 //   口径与 `overlay.cpp::collect_pack_files` 的 `skipped_empty_dirs` **同一份**：
-//   丢了就报数（零静默），**不**擅自把目录塞进包（那会改变 DB 包的产物字节，属口径变更）。
+//   丢了就报数（零静默），**不**擅自把目录塞进包（塞了会改 inode 编号顺序 ⇒ 与 tar2sqfs 1.3.2 产物 sha256 不等 ⇒
+//   违反 M1-5；真要让目录进包，用显式 `--pack-dirs`，属口径变更）。
 //   `entries` 里的 rel 必须是 '/' 分隔。
 int count_empty_dirs(const std::vector<std::pair<std::string, bool>>& entries) {
     std::set<std::string> with_files;
@@ -3093,7 +3094,8 @@ int run_cli(const std::vector<std::string>& args) {
                       //   修前这里没有它 ⇒ 位算错也没人会发现（"无参考 + 探针失败"那条路
                       //   1.x 必告警、我们静默，就是这么漏掉的）。
                       << "|probe_warn=" << (plan.audio_kept_on_probe_failure ? 1 : 0)
-                      // ★ P-787：encoder_warning 的新语义（与参考不一致）也要能被判据看见
+                      // ★ P-787/P-789：encoder_warning = "1.x CODEC_MAP 走 libxvid 的参考族"
+                      //   （mpeg4/xvid/msmpeg4v3）而 2.0 恒出 Theora；不是"任何编码不一致"。
                       << "|enc_warn=" << (plan.encoder_warning ? 1 : 0)
                       // ★ P-785：error 用例里"面板值仅供参考"这件事必须在格式上可分
                       << "|err=" << (plan.error.empty() ? 0 : 1)
