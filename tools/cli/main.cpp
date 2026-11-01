@@ -4982,25 +4982,36 @@ int run_cli(const std::vector<std::string>& args) {
         const std::string app_dir = operands.empty() ? "." : operands[0];
         const std::string root = xrkit::core::runtime_root(app_dir);
         std::cout << "RUNTIME root=" << (root.empty() ? "(none)" : root) << "\n";
-        struct Item { const char* name; const char* key; const char* under_root; const char* under_app; };
-        const Item items[] = {
-            {"ffmpeg", "ffmpeg", "bin/ffmpeg.exe", "bin/ffmpeg.exe"},
-            {"ffprobe", "ffprobe", "bin/ffprobe.exe", "bin/ffprobe.exe"},
-            {"python", "python", "python/python.exe", "python/python.exe"},
-            {"ixr_run", "ixr_run", "tools/ixr_run.py", "tools/ixr_run.py"},
-            {"fontlib", "fontlib", "tools/fontlib", "tools/fontlib"},
+        struct Item {
+            const char* name;
+            const char* key;
+            const char* under_root;
+            const char* under_app;
+            bool required;   // ★ P-798：ffprobe 是**可选**（缺它走 ffmpeg -i 降级）
         };
-        int missing = 0;
+        const Item items[] = {
+            {"ffmpeg", "ffmpeg", "bin/ffmpeg.exe", "bin/ffmpeg.exe", true},
+            {"ffprobe", "ffprobe", "bin/ffprobe.exe", "bin/ffprobe.exe", false},
+            {"python", "python", "python/python.exe", "python/python.exe", true},
+            {"ixr_run", "ixr_run", "tools/ixr_run.py", "tools/ixr_run.py", true},
+            {"fontlib", "fontlib", "tools/fontlib", "tools/fontlib", true},
+        };
+        int missing_required = 0;
+        int missing_optional = 0;
         for (const Item& item : items) {
             const xrkit::core::RuntimeDep dep = xrkit::core::resolve_runtime_dep(
                 app_dir, item.key, item.under_root, item.under_app);
             std::cout << "RUNTIME " << item.name << "="
                       << (dep.path.empty() ? "(missing)" : dep.path)
-                      << " source=" << xrkit::core::runtime_source_name(dep.source) << "\n";
-            if (dep.path.empty()) ++missing;
+                      << " source=" << xrkit::core::runtime_source_name(dep.source)
+                      << (item.required ? "" : " optional=1") << "\n";
+            if (dep.path.empty()) {
+                if (item.required) ++missing_required; else ++missing_optional;
+            }
         }
-        std::cout << "RUNTIME ok missing=" << missing << "\n";
-        return missing == 0 ? kExitOk : kExitFail;
+        std::cout << "RUNTIME ok missing=" << missing_required
+                  << " optional_missing=" << missing_optional << "\n";
+        return missing_required == 0 ? kExitOk : kExitFail;
     }
 
     // ori 树（交接区最终规划 2026-10-29）：拖入源 ⇒ 整树复制 + 容器内提取 + ori/<容器>/...

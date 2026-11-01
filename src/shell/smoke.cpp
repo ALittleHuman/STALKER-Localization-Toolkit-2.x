@@ -9178,6 +9178,23 @@ SmokeResult run_smoke() {
     const evid::MediaInfo ref_info = make_info(true, 640, 480, 25.0, 800000, true, 2, 44100, 128000, 12.0);
 
     SelfCheckVideoPage page;
+    // ★ P-799 行为锁：产品页必须自己执行版本闸门（不靠插件页）。
+    //   放在这里是因为 SelfCheckVideoPage 定义在下方；用独立实例，不干扰后续 UI 用例。
+    {
+        SelfCheckVideoPage vpage;
+        vpage.paths.found = true;
+        vpage.paths.ffmpeg = "definitely-not-a-real-ffmpeg.exe";
+        vpage.paths.version = "ffmpeg version 8.0.1 Copyright (c) 2000-2026";
+        evid::TranscodeRequest vrequest;
+        vrequest.ffmpeg = vpage.paths.ffmpeg;
+        vrequest.input = "in.avi";
+        vrequest.output = "out.ogm";
+        vrequest.available_encoders = {"libtheora", "libvorbis"};
+        QString verror;
+        const bool vstarted = vpage.start_transcode(vrequest, &verror);
+        check(!vstarted && vpage.last_error().contains(QStringLiteral("版本不受支持")),
+              QStringLiteral("视频：8.x 必须被**产品页**拒绝（实得 '%1'）").arg(vpage.last_error()));
+    }
     page.resize(820, page_min_h());
     page.show();
     QApplication::processEvents();

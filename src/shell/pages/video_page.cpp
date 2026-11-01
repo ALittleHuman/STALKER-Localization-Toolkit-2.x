@@ -151,6 +151,20 @@ bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request, 
     stderr_tail_.clear();
     output_path_ = native(utf8(request.output));
 
+    // ★★ P-799（2026-11-01 复核）：产品页**从来没有**版本闸门 —— 8.x 的 theora bug
+    //   在 C++ 这条路上一路放行（插件页有、产品页没有 ⇒ 同一纪律两份、先腐坏一份）。
+    //   文案与插件页同一句（"ffmpeg 版本不受支持（8.x 及以上）"）。
+    {
+        const engine::video::FfmpegPaths paths_now = resolve_ffmpeg();
+        if (engine::video::version_rejected(paths_now.version)) {
+            const QString why = QStringLiteral("ffmpeg 版本不受支持（8.x 及以上）：") +
+                                QString::fromStdString(paths_now.version).trimmed();
+            if (error != nullptr) *error = why;
+            last_error_ = why;
+            return false;
+        }
+    }
+
     const engine::video::TranscodePlan plan = engine::video::plan_transcode(request);
     duration_sec_ = plan.duration;
     if (plan.argv.empty()) {

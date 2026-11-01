@@ -71,7 +71,7 @@ def main() -> int:
         # ② root 指向共享 runtime（迭代期）
         write(app / "xrkit_user.ltx", "[runtime]\nroot = %s\n" % rt)
         rc, out = run(app)
-        if rc == 0 and "source=root" in out and str(rt) in out:
+        if rc == 0 and "source=root" in out and str(rt) in out and "optional_missing=0" in out:
             ok("root 指向共享 runtime：5 项全部 source=root")
         else:
             fail("root 路由不对：rc=%d\n%s" % (rc, out[-400:]))
@@ -97,7 +97,7 @@ def main() -> int:
         empty = tmp / "empty_app"
         empty.mkdir()
         rc, out = run(empty)
-        if rc != 0 and "(missing) source=missing" in out:
+        if rc != 0 and "(missing) source=missing" in out and "optional_missing=1" in out:
             ok("全缺：明确报 missing，退出码非 0（不静默、不搜 PATH）")
         else:
             fail("缺件行为不对：rc=%d\n%s" % (rc, out[-300:]))
