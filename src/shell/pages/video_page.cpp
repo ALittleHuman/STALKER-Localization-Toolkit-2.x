@@ -125,7 +125,6 @@ VideoPage::~VideoPage() {
     stop(text_probe_process_);   // P-798：降级探针同一套收尾
     discard_process(text_probe_process_);
     stop(encoder_process_);
-    stop(install_process_);
     if (process_ != nullptr) {
         const bool running = process_->state() != QProcess::NotRunning;
         stop(process_);
@@ -139,7 +138,6 @@ VideoPage::~VideoPage() {
     }
     discard_process(probe_process_);
     discard_process(encoder_process_);
-    discard_process(install_process_);
     discard_process(process_);
 }
 
@@ -1250,14 +1248,12 @@ QWidget* VideoPage::request_setup() {
     dialog->setModal(false);  // 8.3：**非阻塞**（不 grab、不等窗口）
     auto* layout = new QVBoxLayout(dialog);
     layout->addWidget(new QLabel(
-        QStringLiteral("没找到 ffmpeg。可以自动安装（项目自带的 download_ffmpeg.py / 随包自带的 "
-                       "ffmpeg.exe），也可以手动指定 ffmpeg.exe / ffprobe.exe 的位置。")));
+        QStringLiteral("没找到 ffmpeg。请把 ffmpeg.exe 放到程序目录，或用「手动选择」指定 "
+                       "ffmpeg.exe / ffprobe.exe 的位置。")));
     auto* buttons = new QHBoxLayout;
-    // 8.3：**三个**按钮 —— 自动安装 / 手动选择 / 稍后
-    auto* install = new QPushButton(QStringLiteral("自动安装"));
+    // ★ 2026-11-02（HA/DSH 裁）：自动安装退役 ⇒ 两按钮
     auto* choose = new QPushButton(QStringLiteral("手动选择"));
     auto* later = new QPushButton(QStringLiteral("稍后"));
-    buttons->addWidget(install);
     buttons->addWidget(choose);
     buttons->addWidget(later);
     buttons->addStretch(1);
@@ -1265,7 +1261,6 @@ QWidget* VideoPage::request_setup() {
     QObject::connect(later, &QPushButton::clicked, dialog, &QWidget::hide);
     // 8.4：自动安装**只能挂在按钮上**（绝不在构造期/后台偷偷装）；按钮要**真做事**
     //（随包自带 ⇒ 指到它并重新探测；只有脚本 ⇒ 真跑脚本；都没有 ⇒ 如实报不可用）
-    QObject::connect(install, &QPushButton::clicked, this, [this] { run_auto_install(); });
     QObject::connect(choose, &QPushButton::clicked, this, [this, dialog] {
         const QString picked = QFileDialog::getOpenFileName(
             this, QStringLiteral("选择 ffmpeg.exe"), QString(), QStringLiteral("ffmpeg (ffmpeg*.exe)"));
@@ -1282,124 +1277,6 @@ QWidget* VideoPage::request_setup() {
     return dialog_;
 }
 
-QString VideoPage::auto_install() {
-    // 8.4 + 用户口径"依赖自带"：**先看随包自带的那一份**，再看项目自带的下载脚本；
-    // 两者都没有就如实报（不联网、不静默自救）。
-    const QString app_dir = utf8(xrkit::core::app_dir());
-    const QString bundled = QDir(app_dir).filePath(QStringLiteral("ffmpeg.exe"));
-    if (QFileInfo::exists(bundled)) {
-        return QStringLiteral("随包自带的 ffmpeg 已在程序目录：") + native(bundled) +
-               QStringLiteral("（点击本按钮会重新探测并直接用它）");
-    }
-    // ★★ 决策 4：脚本随包进 `bin\`（老包还在根）⇒ 两处都找，**根优先**
-    const QString script = [&app_dir] {
-        const QString at_root = QDir(app_dir).filePath(QStringLiteral("download_ffmpeg.py"));
-        if (QFile::exists(at_root)) return at_root;
-        const QString in_bin =
-            QDir(app_dir).filePath(QStringLiteral("bin/download_ffmpeg.py"));
-        return QFile::exists(in_bin) ? in_bin : at_root;
-    }();
-    if (QFileInfo::exists(script)) {
-        return QStringLiteral("程序目录里有 ") + native(script) +
-               QStringLiteral("（点击本按钮会运行它下载 ffmpeg 7.x 到程序目录，它会拒绝 8.x）");
-    }
-    return QStringLiteral("自动安装不可用：程序目录里既没有自带的 ffmpeg.exe，也没有 "
-                          "download_ffmpeg.py（不联网、不静默自救）。") +
-           ffmpeg_search_summary();
-}
-
-void VideoPage::run_auto_install() {
-    // 8.4：自动安装**只由这个按钮**触发。三条路都**真做事**、且结论可见。
-    if (install_process_ != nullptr) {
-        // ★ 2026-10-07（F3）：上一趟还在跑 ⇒ 不许再起一个（否则成员被覆盖、前一个没人收）。
-        if (status_ != nullptr) status_->setText(QStringLiteral("自动安装已经在跑，等它结束再看结论"));
-        return;
-    }
-    const QString message = auto_install();
-    last_auto_install_ = message;
-    const QString app_dir = utf8(xrkit::core::app_dir());
-    // ★★ 决策 4：脚本随包进 `bin\`（老包还在根）⇒ 两处都找，**根优先**
-    const QString script = [&app_dir] {
-        const QString at_root = QDir(app_dir).filePath(QStringLiteral("download_ffmpeg.py"));
-        if (QFile::exists(at_root)) return at_root;
-        const QString in_bin =
-            QDir(app_dir).filePath(QStringLiteral("bin/download_ffmpeg.py"));
-        return QFile::exists(in_bin) ? in_bin : at_root;
-    }();
-    if (QFileInfo::exists(QDir(app_dir).filePath(QStringLiteral("ffmpeg.exe")))) {
-        locator_.invalidate();
-        const bool found = detect();
-        if (status_ != nullptr) {
-            status_->setText(message + (found ? QStringLiteral("（已重新探测：✓）")
-                                              : QStringLiteral("（已重新探测：还是没认它）")));
-        }
-        last_auto_install_ = status_ != nullptr ? status_->text() : message;
-        return;
-    }
-    if (QFileInfo::exists(script)) {
-        // 真跑脚本（Python 缺失 / 启动失败都如实报）。脚本自己把 exe 下到**它所在目录**
-        //（= 程序目录），跑完我们再重新探测一次。
-        // ★ 2026-10-07（审计补充 F3）：它是**成员**（不再是局部对象）⇒ 走 `~VideoPage`
-        //   里同一个 `stop()`（先 disconnect 再 kill/wait），回调也有 `shutting_down_` 守卫
-        //   —— 修前这个子进程析构不停、回调还会碰已经析构的 `status_`。
-        QProcess* downloader = new_child_process(this);
-        install_process_ = downloader;
-        if (status_ != nullptr) status_->setText(message + QStringLiteral("（正在下载…）"));
-        connect(downloader, &QProcess::finished, this,
-                [this, downloader](int code, QProcess::ExitStatus) {
-                    if (shutting_down_) return;  // 窗口/页面已在收尾：绝不碰控件
-                    const QString out = QString::fromUtf8(downloader->readAllStandardOutput());
-                    const QString err = QString::fromUtf8(downloader->readAllStandardError());
-                    // ★ F1-1：走同一个"放弃对象"实现（先置空再断开再 deleteLater）。
-                    if (install_process_ == downloader) discard_process(install_process_);
-                    else downloader->deleteLater();
-                    locator_.invalidate();
-                    const bool found = detect();
-                    const QString tail = (out + err).trimmed().right(300);
-                    if (status_ != nullptr) {
-                        status_->setText(QStringLiteral("download_ffmpeg.py 退出码 %1；重新探测：%2"
-                                                        "；输出末尾：%3")
-                                             .arg(code)
-                                             .arg(found ? QStringLiteral("✓") : QStringLiteral("✗"))
-                                             .arg(tail.isEmpty() ? QStringLiteral("(无输出)") : tail));
-                    }
-                    log_to_host(QStringLiteral("视频转换：自动安装结束 —— 退出码 %1").arg(code));
-                });
-        downloader->start(QStringLiteral("python"), QStringList{native(script)});
-        // ★★ P17-7（03 F-06）：晚一拍的启动失败也要有理由（见 `wait_for_start_probed`）
-        connect(downloader, &QProcess::errorOccurred, this,
-                [this, downloader](QProcess::ProcessError err) {
-                    if (shutting_down_ || err != QProcess::FailedToStart) return;
-                    const QString reason = downloader->errorString();
-                    if (install_process_ == downloader) discard_process(install_process_);
-                    else downloader->deleteLater();
-                    if (status_ != nullptr) {
-                        status_->setText(
-                            QStringLiteral("自动安装失败：起不了 python（%1）。可以手动指定 "
-                                           "ffmpeg.exe，或把 ffmpeg.exe 放进程序目录。")
-                                .arg(reason));
-                    }
-                    log_to_host(QStringLiteral("视频转换：自动安装失败 —— ") + reason);
-                });
-        if (!wait_for_start_probed(downloader)) {
-            const QString reason = downloader->errorString();
-            // 同 F1-1：走同一个"放弃对象"实现（先置空再断开）。
-            if (install_process_ == downloader) discard_process(install_process_);
-            else downloader->deleteLater();
-            if (status_ != nullptr) {
-                status_->setText(QStringLiteral("自动安装失败：起不了 python（%1）。可以手动指定 "
-                                                "ffmpeg.exe，或把 ffmpeg.exe 放进程序目录。")
-                                     .arg(reason));
-            }
-            log_to_host(QStringLiteral("视频转换：自动安装失败 —— ") + reason);
-        }
-        return;
-    }
-    if (status_ != nullptr) status_->setText(message);
-    log_to_host(QStringLiteral("视频转换：自动安装不可用 —— ") + message.left(120));
-}
-
-// ★ 2026-10-04 用户第 2 条：三个"选择"调用点的起点判据（与按钮 lambda 里那一行同源）
 DialogStart VideoPage::source_dialog_start() const {
     return dialog_start_for(source_edit_->text(), QStringList(), false);
 }

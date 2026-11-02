@@ -53,6 +53,12 @@ def main() -> int:
             fail("bin\\ffmpeg.exe = %.2f MB > %.0f MB —— 打包回退到了全量 exe？"
                  % (mb, MAX_MB))
 
+    for banned in ("download_ffmpeg.py",):
+        if (pkg / "bin" / banned).exists() or (pkg / banned).exists():
+            fail("包内出现 %s（自动安装已退役）" % banned)
+        else:
+            ok("包内无 %s" % banned)
+
     if (pkg / "bin" / "ffprobe.exe").exists():
         fail("包内出现 bin\\ffprobe.exe（P-798 已定为不随包）")
     else:

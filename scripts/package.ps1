@@ -405,7 +405,7 @@ foreach ($lic in @('LICENSE.txt', 'BUILD.txt')) {
 Write-Host "  随包许可：third_party\ffmpeg\LICENSE.txt + BUILD.txt"
 
 # 自动安装按钮的真身（程序目录里没有自带件时，页面用得上它）
-Copy-Item -LiteralPath (Join-Path $root 'scripts\download_ffmpeg.py') -Destination $binDir
+# ★ 2026-11-02：自动安装退役 ⇒ `download_ffmpeg.py` **不再进包**（内置 minimal ffmpeg 后冗余）
 
 Write-Host "== windeployqt（铺 Qt 运行时；不铺翻译/示例）=="
 # ★★ P17-128（复审计 P2-1 同族的发行链缺口）：**这里得包一层 `Continue`** ——
@@ -468,7 +468,7 @@ $pluginLine
 自带：ffmpeg.exe（**自建 minimal 7.1.5，只含 OGM 转码所需**：mp4/mov/matroska/avi/ogg 解封装、
       libtheora/libvorbis 编码、theora/vorbis/h264/mpeg4/aac/mp3 解码；视频页不填路径也能直接用；
       **不再自带 ffprobe** —— 探测走 ffmpeg -i 降级，
-      用户可自备 bin\ffprobe.exe 或 [ffmpeg] probe）+ download_ffmpeg.py（缺件时重下）。
+      用户可自备 bin\ffprobe.exe 或 [ffmpeg] probe）。
 不含：NLC 解密插件（发行版）、实验性引擎补丁。
 自检：命令行跑 `xrkit_app.exe --smoke`（离屏，ASCII 输出）可核对包是否完整。
       本包 `platforms\` **同时**带 `qwindows.dll` 与 `qoffscreen.dll`：`--smoke`/`--layout-report`

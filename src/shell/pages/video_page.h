@@ -66,12 +66,8 @@ public:
     bool set_manual(const QString& ffmpeg, const QString& ffprobe, QString* error);
     // 8.3：三按钮小窗（**非阻塞**）。返回对话框指针，便于自检核对按钮数与非阻塞性
     QWidget* request_setup();
-    // 8.4：自动安装只能挂在按钮上（**按钮**走 run_auto_install；本函数给"结论"文本）
-    QString auto_install();
-    void run_auto_install();
     int probe_count() const { return locator_.probe_count(); }
     QPushButton* detect_button() const { return detect_button_; }
-    QString auto_install_message() const { return last_auto_install_; }
 
     // ── 用户 2026-10-04（第 1/2 条）：三个输入行各自的"选择"起点判据 ──
     DialogStart source_dialog_start() const;
@@ -223,15 +219,8 @@ private:
     std::vector<std::string> available_encoders_;
     QString encoder_note_;                // 编码器扫描失败/降级的可见原因
 
-    // ★ 2026-10-07（审计补充 F3）：`download_ffmpeg.py` 那条自动安装子进程。
-    //   修前它是**局部** `new_child_process(this)`：析构不停（`~VideoPage` 只收
-    //   probe/encoder/transcode 三个）、回调也没有 `shutting_down_` 守卫 ⇒
-    //   关窗后回调仍会碰已析构的 `status_`。现在它是成员、走析构里同一个 `stop()`。
-    QProcess* install_process_ = nullptr;
-
     bool pending_transcode_ = false;
     bool shutting_down_ = false;
-    QString last_auto_install_;
 
     QProcess* process_ = nullptr;
     QString output_path_;                 // **真在写**的那个输出（取消时删的就是它）

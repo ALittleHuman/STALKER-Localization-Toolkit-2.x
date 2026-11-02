@@ -42,6 +42,13 @@ def check(header: Path, impl: Path, struct_name: str, marker: str) -> bool:
     #   ⇒ 78 项错位。判据要适配代码，不是让代码迁就判据（P-366）。
     inits = re.findall(r"/\*\s*([A-Za-z_]\w*)", seg)
 
+    # ★ 2026-11-02（DSH 复核）：只靠"ASCII 开头"挡不住英文散文注释
+    #   （`/* note: xxx */ value` 里的 note 照样会被当字段名）。
+    #   根治：init 里的名字必须是 **header 的字段名**，散文名直接报"未知名字"。
+    unknown = [n for n in inits if n not in set(fields)]
+    if unknown:
+        print("  ✗ 初始化里出现 header 没有的名字：%s" % ", ".join(unknown[:6]))
+        return False
     print("== %s（%s）" % (struct_name, impl.name))
     print("   结构体 %d 项 / 初始化 %d 项" % (len(fields), len(inits)))
     bad = []

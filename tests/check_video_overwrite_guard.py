@@ -125,7 +125,7 @@ def run_engine_cases() -> None:
 
 # ── ⑤ F1-1：置空子进程成员只许出现在"放弃对象"的唯一实现里（纯文本分析器，可自证）──
 
-PROCESS_MEMBERS = ("process_", "probe_process_", "encoder_process_", "install_process_")
+PROCESS_MEMBERS = ("process_", "probe_process_", "encoder_process_", "text_probe_process_")
 NULL_OUT = re.compile(r"\b(%s)\s*=\s*nullptr\s*;" % "|".join(PROCESS_MEMBERS))
 DISCARD = "VideoPage::discard_process"
 

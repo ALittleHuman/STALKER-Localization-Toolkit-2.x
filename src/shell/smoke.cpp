@@ -9083,19 +9083,11 @@ SmokeResult run_smoke() {
             const QList<QPushButton*> buttons = dialog->findChildren<QPushButton*>();
             QStringList labels;
             for (QPushButton* button : buttons) labels << button->text();
-            check(labels.size() == 3 && labels.contains(QStringLiteral("自动安装")) &&
+            check(labels.size() == 2 &&
                       labels.contains(QStringLiteral("手动选择")) &&
                       labels.contains(QStringLiteral("稍后")),
                   QStringLiteral("⑧8.3 三个按钮齐（%1）").arg(labels.join(QStringLiteral("/"))));
         }
-        // 8.4：自动安装缺件时如实报（不联网、不静默自救）；用户口径"依赖自带"之后，程序目录里
-        //      可能已经有随包自带的 ffmpeg.exe ⇒ 那也是一条**如实结论**
-        const QString install = page.auto_install();
-        check(install.contains(QStringLiteral("download_ffmpeg.py")) ||
-                  install.contains(QStringLiteral("自带")) ||
-                  install.contains(QStringLiteral("不可用")) ||
-                  install.contains(QStringLiteral("ffmpeg 8.x")),
-              QStringLiteral("⑧8.4 自动安装按钮给出如实结论（%1）").arg(install.left(48)));
         // 8.7：手动指定不存在的文件必须被拒（且不写盘）
         QString error;
         const QString ghost = QDir::temp().filePath(QStringLiteral("xrkit_nope_ffmpeg.exe"));
@@ -9852,22 +9844,21 @@ SmokeResult run_smoke() {
                       .arg(state_text.left(90)));
         }
 
-        // ⑪ 自动安装按钮**不再是空壳**：点一下要真做事、结论可见
-        QWidget* setup = bare.request_setup();
-        QPushButton* install_button = nullptr;
-        if (setup != nullptr) {
-            for (QPushButton* candidate : setup->findChildren<QPushButton*>()) {
-                if (candidate->text() == QStringLiteral("自动安装")) install_button = candidate;
+        // ⑪（2026-11-02 退役）：**设置小窗里不再有「自动安装」**，但手动选择还在。
+    {
+        VideoPage page;
+        QWidget* dialog = page.request_setup();
+        QStringList labels;
+        if (dialog != nullptr) {
+            for (QPushButton* button : dialog->findChildren<QPushButton*>()) {
+                labels << button->text();
             }
         }
-        check(install_button != nullptr, QStringLiteral("视频⑪：设置小窗里有「自动安装」"));
-        if (install_button != nullptr) install_button->click();
-        const QString after = bare.status_label() != nullptr ? bare.status_label()->text() : QString();
-        check(!after.trimmed().isEmpty() &&
-                  (after.contains(QStringLiteral("自动安装")) ||
-                   after.contains(QStringLiteral("自带")) ||
-                   after.contains(QStringLiteral("download_ffmpeg.py"))),
-              QStringLiteral("视频⑪：点「自动安装」要给出**结论**（%1）").arg(after.left(70)));
+        check(!labels.contains(QStringLiteral("自动安装")) &&
+                  labels.contains(QStringLiteral("手动选择")),
+              QStringLiteral("视频⑪：自动安装已退役、手动选择仍在（%1）")
+                  .arg(labels.join(QStringLiteral("/"))));
+    }
     }
 }
 
