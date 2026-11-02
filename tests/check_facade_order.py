@@ -37,8 +37,10 @@ def check(header: Path, impl: Path, struct_name: str, marker: str) -> bool:
     code = impl.read_text(encoding="utf-8")
     seg = code[code.find(marker):]
     seg = seg[:seg.find("\n};")]
-    # ★ 注释形态两种：`/* name */` 与 `/* name：说明 */`
-    inits = re.findall(r"/\*\s*(\w+)", seg)
+    # ★ 只认"字段名式"注释：`/* name */` 或 `/* name：说明 */`，name 必须是 ASCII 标识符。
+    #   2026-11-02（DSH）：原来用 `\w+`，中文散文注释（如"能力清单：…"）也会被当成字段名
+    #   ⇒ 78 项错位。判据要适配代码，不是让代码迁就判据（P-366）。
+    inits = re.findall(r"/\*\s*([A-Za-z_]\w*)", seg)
 
     print("== %s（%s）" % (struct_name, impl.name))
     print("   结构体 %d 项 / 初始化 %d 项" % (len(fields), len(inits)))
