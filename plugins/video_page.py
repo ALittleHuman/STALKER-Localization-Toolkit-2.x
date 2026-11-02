@@ -302,6 +302,7 @@ def register(api):
             if not path:
                 return
             paths = ffmpeg_paths()
+            state["probe_note"] = ""   # HA 复核：新一轮探测先清掉旧 note（否则换到有 ffprobe 的文件仍显示降级）
             # ★ P-798（2026-11-02）：降级条件是"**不可用**"，不只是"没找到"。
             #   有 ffmpeg 就先用 `ffmpeg -i` 探；两者都不可用才报错。
             probe_text_mode = False
@@ -380,6 +381,7 @@ def register(api):
                     if rr.get("started") and info.get("parsed"):
                         state["probe_note"] = "ffprobe 不可用（%s）⇒ 已用 ffmpeg -i 降级" % why
                         return info, ""
+                    state["probe_note"] = "降级失败：ffmpeg -i 也拿不到参数（%s）" % why
                     return None, "ffprobe 与 ffmpeg -i 都拿不到参数（%s）" % why
 
                 result = host.run_process({

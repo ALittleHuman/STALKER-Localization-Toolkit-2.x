@@ -115,6 +115,20 @@ def main() -> int:
     else:
         fail("D 裸线程判定：%s" % ", ".join(bare[:6]))
 
+    # E：TextPage 是**测试专用**（HA/DSH 2026-11-02 裁决）：注释必须写死，工厂不许注册它。
+    text_h = (ROOT / "src" / "shell" / "pages" / "text_page.h")
+    factory = (ROOT / "src" / "shell" / "pages" / "page_factory.cpp")
+    if text_h.is_file() and "测试专用，不是产品页" in text_h.read_text(encoding="utf-8", errors="replace"):
+        ok("E TextPage 标了「测试专用，不是产品页」")
+    else:
+        fail("E TextPage 没标测试专用（注释会腐烂，将来会被当产品页接回）")
+    if factory.is_file():
+        body = factory.read_text(encoding="utf-8", errors="replace")
+        if "TextPage" not in body:
+            ok("E page_factory 没有注册 TextPage（不会造第二份提取入口）")
+        else:
+            fail("E page_factory 里出现了 TextPage（测试页被接回产品）")
+
     if PROBLEMS:
         print("SHELL-STATIC-GUARDS: FAIL（%d 处）" % len(PROBLEMS))
         return 1
