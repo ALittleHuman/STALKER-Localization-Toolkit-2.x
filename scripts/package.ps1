@@ -455,7 +455,9 @@ $pluginLine
       插件加载失败不会阻塞启动，问题会显示在启动后的日志栏里。
 运行日志（logs\log_*.txt）里既有引擎行、也有界面上出现的每一行；没有「导出日志」按钮 ——
 落盘文件已含全部内容，导出是重复实现。需要发日志时直接附上这个文件。
-自带：ffmpeg.exe（视频页不填路径也能直接用；**不再自带 ffprobe** —— 探测走 ffmpeg -i 降级，
+自带：ffmpeg.exe（**自建 minimal 7.1.5，只含 OGM 转码所需**：mp4/mov/matroska/avi/ogg 解封装、
+      libtheora/libvorbis 编码、theora/vorbis/h264/mpeg4/aac/mp3 解码；视频页不填路径也能直接用；
+      **不再自带 ffprobe** —— 探测走 ffmpeg -i 降级，
       用户可自备 bin\ffprobe.exe 或 [ffmpeg] probe）+ download_ffmpeg.py（缺件时重下）。
 不含：NLC 解密插件（发行版）、实验性引擎补丁。
 自检：命令行跑 `xrkit_app.exe --smoke`（离屏，ASCII 输出）可核对包是否完整。
