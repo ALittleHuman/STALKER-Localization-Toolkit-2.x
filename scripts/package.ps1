@@ -323,22 +323,28 @@ $depDirs += (Join-Path $root 'third_party\ffmpeg')
 $depDirs += (Join-Path $root 'deps\ffmpeg')
 $depDirs += 'E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit'
 $depSrc = $null
+# ★★ 2026-11-02（P-798）：**包内不再带 ffprobe.exe** —— 探测走 `ffmpeg -i` 降级。
+#   有 ffprobe 的用户可自备（`[ffmpeg] probe` 或 `bin\ffprobe.exe`），两条路都认。
+#   ⇒ 依赖源只要求 ffmpeg.exe；ffprobe 有就顺手带上（便于对照），没有不算错。
 foreach ($dir in $depDirs) {
-    if ((Test-Path (Join-Path $dir 'ffmpeg.exe')) -and (Test-Path (Join-Path $dir 'ffprobe.exe'))) {
+    if (Test-Path (Join-Path $dir 'ffmpeg.exe')) {
         $depSrc = $dir
         break
     }
 }
 if (-not $depSrc) {
-    throw ("ffmpeg.exe / ffprobe.exe not found. Looked in: " + ($depDirs -join '; ') +
-           ". Put both in the same directory and set XRKIT_FFMPEG_DIR, or pass a directory there.")
+    throw ("ffmpeg.exe not found. Looked in: " + ($depDirs -join '; ') +
+           ". Put ffmpeg.exe in one of them and set XRKIT_FFMPEG_DIR, or pass a directory there.")
 }
 Write-Host "  自带依赖来源: $depSrc"
 # ★★ 决策 4：ffmpeg/ffprobe 进 `bin\`（`find_ffmpeg` 已认这个落点；根目录优先的老口径不变）
 $binDir = Join-Path $stage 'bin'
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 Copy-Item -LiteralPath (Join-Path $depSrc 'ffmpeg.exe') -Destination $binDir
-Copy-Item -LiteralPath (Join-Path $depSrc 'ffprobe.exe') -Destination $binDir
+# P-798：ffprobe **不进包**（省 ~98 MB）；用户自备时可放在 bin\ 或 [ffmpeg] probe。
+if (Test-Path (Join-Path $depSrc 'ffprobe.exe')) {
+    Write-Host "  注意：依赖源里有 ffprobe.exe，但按 P-798 **不随包带**（探测走 ffmpeg -i 降级）"
+}
 # ★★ 2026-10-15（P17-123）：**这条守卫原来自己把 ffmpeg 掉死** ——
 #   `& ffmpeg -version 2>&1 | Select-Object -First 1` 拿到首行就**掉断上游管道**
 #   ⇒ ffmpeg 被终止 ⇒ `$LASTEXITCODE` 变成 -1（终止码）⇒ 下一行误报「起不来」。
