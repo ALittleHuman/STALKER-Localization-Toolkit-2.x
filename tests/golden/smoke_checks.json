@@ -1,10 +1,10 @@
 {
   "dev": {
-    "checks": 957,
+    "checks": 958,
     "how": "开发树且 xrkit_fake_ffmpeg.exe 存在"
   },
   "packaged": {
-    "checks": 919,
+    "checks": 920,
     "how": "exe 在 dist/ 下，或开发树无夹具"
   },
   "note": "P-790/P-791：只禁下降；P-799 增加 8.x 产品页拒收一条 ⇒ dev 944→945"

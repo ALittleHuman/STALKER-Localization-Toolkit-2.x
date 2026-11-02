@@ -98,6 +98,17 @@ def main() -> int:
     else:
         fail("P-782 纯函数锁：pick_video_encoder 仍可能回退到 libxvid/mpeg4")
 
+    # ★ P-798：插件页必须有 ffprobe 降级，且**解析走门面**（不许在插件里再写一份 -i 解析）
+    vp = (ROOT / "plugins" / "video_page.py").read_text(encoding="utf-8", errors="replace")
+    if "video_parse_ffmpeg_i" in vp and "ffmpeg -i 也拿不到参数" in vp:
+        ok("P-798 插件页：有 ffmpeg -i 降级且解析走 video_parse_ffmpeg_i")
+    else:
+        fail("P-798 插件页：缺降级分支或没有走门面解析")
+    if "-hide_banner" in vp and '"-nostdin"' in vp:
+        ok("P-798 插件页：降级探测用 -hide_banner -nostdin（与产品页同形）")
+    else:
+        fail("P-798 插件页：降级探测参数不对")
+
     for rel in ("plugins/video_page.py", "plugins/fontpack_page.py"):
         try:
             py_compile.compile(str(ROOT / rel), doraise=True)

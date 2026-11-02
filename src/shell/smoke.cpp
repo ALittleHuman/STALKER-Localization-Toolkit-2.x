@@ -5971,6 +5971,27 @@ SmokeResult run_smoke() {
     // ⑫12.1/12.5：**插件注册的比较模式要出现在 XML 页的同一个下拉里**
         // ★★ 决策 1（C ABI 退净）：这一块整段删除（它用 `PluginApiAdapter` / `load_plugin` 测 C 插件）。
 
+    // ★ fake_ffmpeg 的 `-i && !-f` 是隐式契约：转码 argv 必须带 `-f ogg`，
+    //   否则夹具会把"转码"当"信息探测"、悄悄返回 1。这里把契约显式断言。
+    {
+        namespace vidf = xrkit::engine::video;
+        vidf::TranscodeRequest freq;
+        freq.ffmpeg = "FFMPEG";
+        freq.input = "IN.avi";
+        freq.output = "OUT.ogm";
+        freq.source.parsed = true;
+        freq.source.has_video = true;
+        freq.source.has_audio = true;
+        freq.available_encoders = {"libtheora", "libvorbis"};
+        const vidf::TranscodePlan fplan = vidf::plan_transcode(freq);
+        const bool has_f = std::find(fplan.argv.begin(), fplan.argv.end(),
+                                     std::string("-f")) != fplan.argv.end();
+        const bool has_ogg = std::find(fplan.argv.begin(), fplan.argv.end(),
+                                       std::string("ogg")) != fplan.argv.end();
+        check(has_f && has_ogg && !fplan.argv.empty(),
+              QStringLiteral("视频：转码 argv 必须含 `-f ogg`（fake 的 -i/-f 判据靠它）"));
+    }
+
     // 视频转码接线（用户 2026-09-26：完整移植）—— argv 由引擎算，页面只起进程/报错
     {
         namespace vid = xrkit::engine::video;
