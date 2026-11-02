@@ -3505,6 +3505,23 @@ def step_font_sample(release: bool) -> None:
         fail("文本样张判据不通过（见上）")
 
 
+def step_shell_static_guards(release: bool) -> None:
+    """外壳静态锁：resolve 调用点 / ensure 自递归 / `//` 注释续行。"""
+    say("[?] 外壳静态锁：resolve 调用点 / 自递归 / 注释续行")
+    script = ROOT / "tests" / "check_shell_static_guards.py"
+    if not require_repo_file(script, "外壳静态锁脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("SHELL-STATIC-GUARDS"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("外壳静态锁全过")
+    else:
+        fail("外壳静态锁不通过（见上）")
+
+
 def step_video_probe_text(release: bool) -> None:
     """L2：`ffmpeg -i` stderr 解析 ⇄ ffprobe JSON（录制样本，逐字段 + 结构判据）。"""
     say("[?] 视频降级探测 L2：ffmpeg -i stderr ⇄ ffprobe JSON")
@@ -7709,6 +7726,7 @@ STEPS = [
     ("plugin-oneliners", step_plugin_oneliners),
     ("runtime-routing", step_runtime_routing),
     ("video-probe-text", step_video_probe_text),
+    ("shell-static-guards", step_shell_static_guards),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
     ("version-identity", step_version_identity),

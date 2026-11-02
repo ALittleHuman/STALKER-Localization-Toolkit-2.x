@@ -375,7 +375,12 @@ engine::video::FfmpegPaths VideoPage::resolve_ffmpeg() const {
 }
 
 engine::video::FfmpegPaths VideoPage::ensure_ffmpeg() {
-    locator_.ensure();         // "没有就探一次"只在这里发生
+    // 夹具已给定结论（paths.found）⇒ 不再碰真实 locator（否则 ⑥b 依赖本机有 ffmpeg）
+    {
+        const engine::video::FfmpegPaths injected = resolve_ffmpeg();
+        if (injected.found) return injected;
+    }
+    locator_.ensure();
     return resolve_ffmpeg();   // 纯读；不要再 ensure（否则递归）
 }
 
@@ -1132,6 +1137,18 @@ VideoPage::VideoPage(QWidget* parent)
 }
 
 QString VideoPage::status_text() const {
+    // 先看结论（夹具可注入）；没找到才问 locator 是"没探过"还是"真没有"
+    const engine::video::FfmpegPaths resolved = resolve_ffmpeg();
+    if (resolved.found) {
+        QString text = QStringLiteral("✓ ffmpeg: ") + utf8(resolved.ffmpeg);
+        if (!resolved.has_probe) {
+            text += probe_note_.isEmpty()
+                        ? QStringLiteral("（缺 ffprobe；将用 ffmpeg -i 降级）")
+                        : QStringLiteral("（") + probe_note_ + QStringLiteral("）");
+        }
+        if (resolved.ffmpeg_from_config) text += QStringLiteral("（user.ltx 手动指定）");
+        return text;
+    }
     switch (locator_.state()) {
         case engine::video::ProbeState::NotProbed:
             // ★ 探测之前**不显示 ✗**（那就是在断言"没有"，而我们还没查）

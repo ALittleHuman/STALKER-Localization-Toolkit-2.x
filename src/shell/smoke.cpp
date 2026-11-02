@@ -3658,7 +3658,7 @@ SmokeResult run_smoke() {
                   summary.contains(QDir::toNativeSeparators(out_root)),
               QStringLiteral("① 解包结论要报出真实落盘目录（%1）").arg(summary.left(60)));
 
-        // ★★ 2026-10-03 **新增锁**（用户定案的产物布局口径，原话）：「如果就拖入 `E:\...\IWP\database\
+        // ★★ 2026-10-03 **新增锁**（用户定案的产物布局口径，原话）：「如果就拖入 `E:/.../IWP/database/
         //   config` 的 `configs`，那么**解包出来是一个 `configs` 文件夹**（和 `gamedata.db*`/`sq*`
         //   解出 `gamedata` 一样），**不包含 `database` 和 `config`**。」；我追问"包内路径本身就带一层
         //   `configs/` 会不会变成 `configs/configs`"他定案：**「这个案例，就解出来一个 configs。」**
@@ -9469,7 +9469,8 @@ SmokeResult run_smoke() {
             crequest.source = src_info;
             crequest.available_encoders = {"libtheora", "libvorbis"};
             QString cerror;
-            cpage.start_transcode(crequest, &cerror);
+            check(cpage.start_transcode(crequest, &cerror),
+                  QStringLiteral("视频⑥c：无 ffprobe 时转码要能起跑（%1）").arg(cerror));
             QElapsedTimer cclock;
             cclock.start();
             while (cclock.elapsed() < 20000) {
