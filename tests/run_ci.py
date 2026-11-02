@@ -3534,6 +3534,25 @@ def step_ui_facade_primitives(release: bool) -> None:
         fail("stk_ui 静态锁不通过（见上）")
 
 
+def step_ffmpeg_min(release: bool) -> None:
+    """自建 minimal ffmpeg 的验收（staging；没编过就跳过，不红）。"""
+    say("[?] 自建 minimal ffmpeg（staging 验收）")
+    script = ROOT / "tests" / "check_ffmpeg_min.py"
+    if not require_repo_file(script, "minimal ffmpeg 验收脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("FFMPEG-MIN"):
+            say("  " + s)
+    if rc2 == 2:
+        say("  · 跳过：build/ffmpeg_min/ffmpeg.exe 不存在（未编过）")
+    elif rc2 == 0:
+        ok("minimal ffmpeg 验收全过")
+    else:
+        fail("minimal ffmpeg 验收不通过（见上）")
+
+
 def step_shell_static_guards(release: bool) -> None:
     """外壳静态锁：resolve 调用点 / ensure 自递归 / `//` 注释续行。"""
     say("[?] 外壳静态锁：resolve 调用点 / 自递归 / 注释续行")
@@ -7756,6 +7775,7 @@ STEPS = [
     ("runtime-routing", step_runtime_routing),
     ("video-probe-text", step_video_probe_text),
     ("shell-static-guards", step_shell_static_guards),
+    ("ffmpeg-min", step_ffmpeg_min),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。

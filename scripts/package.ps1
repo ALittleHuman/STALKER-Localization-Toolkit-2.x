@@ -275,6 +275,18 @@ if (-not (Test-Path $ixrFontSrc)) {
 Copy-Item -LiteralPath $ixrRunSrc -Destination $ixrTools -Force
 Copy-Item -LiteralPath $ixrGenSrc -Destination $ixrTools -Force
 Copy-Item -LiteralPath $ixrFontSrc -Destination (Join-Path $ixrFontlib 'fontTools') -Recurse -Force
+# ★ 2026-11-02：**运行期不需要 C 源码与 __pycache__**（后者与 `.py` 是同一批模块的第二份）。
+#   vendored fontTools 里 5.88 MB 的 `.c` + 5.38 MB 的 `__pycache__` 都是打包错误，不是功能。
+$ixrStagedFontTools = Join-Path $ixrFontlib 'fontTools'
+$prunedC = 0
+Get-ChildItem -LiteralPath $ixrStagedFontTools -Recurse -File -Filter *.c | ForEach-Object {
+    Remove-Item -LiteralPath $_.FullName -Force
+    $prunedC++
+}
+Get-ChildItem -LiteralPath $ixrStagedFontTools -Recurse -Directory -Filter __pycache__ | ForEach-Object {
+    Remove-Item -LiteralPath $_.FullName -Recurse -Force
+}
+if ($prunedC -gt 0) { Write-Host ("  剥掉 fontTools 的 C 源码 {0} 个（运行期不需要）" -f $prunedC) }
 $ixrCount = @(Get-ChildItem -LiteralPath $ixrTools -Recurse -File).Count
 Write-Host ("  IX-Ray 生成器：{0} 个文件（启动器 + 助手 + vendored fontTools，来源 vendor\fonttools）" -f $ixrCount)
 
@@ -319,6 +331,8 @@ if ($isDev) {
 #   版本守卫照 ⑧8.6：ffmpeg **8.x 拒收**（8.x 的 theora 编码器对 STALKER OGM 有 bug）。
 $depDirs = @()
 if ($env:XRKIT_FFMPEG_DIR) { $depDirs += $env:XRKIT_FFMPEG_DIR }
+# 自建 minimal 优先（`scripts\build_ffmpeg_min.sh` 产物；缺了回退旧来源）
+$depDirs += (Join-Path $root 'build\ffmpeg_min')
 $depDirs += (Join-Path $root 'third_party\ffmpeg')
 $depDirs += (Join-Path $root 'deps\ffmpeg')
 $depDirs += 'E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit'
