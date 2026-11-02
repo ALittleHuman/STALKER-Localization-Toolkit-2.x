@@ -1150,6 +1150,12 @@ QString VideoPage::status_text() const {
                         : QStringLiteral("（") + probe_note_ + QStringLiteral("）");
         }
         if (resolved.ffmpeg_from_config) text += QStringLiteral("（user.ltx 手动指定）");
+        // ★ 2026-11-02：参考**应当**是 OGM。不是 .ogm 时提示一句（不拒绝）：降级探测下
+        //   拿不到流码率时会走 `-q:v 7`，码率匹配可能退化。
+        const QString ref = reference_edit_ != nullptr ? reference_edit_->text().trimmed() : QString();
+        if (!ref.isEmpty() && !ref.endsWith(QStringLiteral(".ogm"), Qt::CaseInsensitive)) {
+            text += QStringLiteral("（参考不是 OGM：码率匹配可能退化，将走 -q:v 7）");
+        }
         return text;
     }
     switch (locator_.state()) {

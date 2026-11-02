@@ -9043,8 +9043,8 @@ SmokeResult run_smoke() {
     // ⑫12.1/12.4：插件槽位要**渲染出来**（工具栏菜单项 → 页面的操作栏按钮）
         // ★★ 决策 1（C ABI 退净）：这一块整段删除（它用 `PluginApiAdapter` / `load_plugin` 测 C 插件）。
 
-    // ⑧ 视频转换页（M2-6f）：8.2 构造期不探测 / 8.3 三按钮小窗非阻塞 /
-    // 8.5 状态三态（探测前不显示 ✗）/ 8.4 自动安装挂按钮上且缺件如实报。
+    // ⑧ 视频转换页（M2-6f）：8.2 **构造期即扫**（用户 2026-11-02 改口径）/ 8.3 三按钮小窗非阻塞 /
+    // 8.5 状态两态（✓ 就绪 / ✗ 没找到，构造后不再有"未检测"）/ 8.4 自动安装挂按钮上且缺件如实报。
     {
         namespace evid = xrkit::engine::video;
         VideoPage page;
@@ -9495,6 +9495,10 @@ SmokeResult run_smoke() {
             ipage.paths.has_probe = false;
             ipage.paths.ffmpeg = fake.toStdString();
             ipage.paths.version = "ffmpeg version 7.1.5 fake-fixture";
+            ipage.reference_edit()->setText(QStringLiteral("D:/tmp/ref.mp4"));
+            check(ipage.status_text().contains(QStringLiteral("参考不是 OGM")),
+                  QStringLiteral("视频：参考不是 .ogm 要提示（%1）").arg(ipage.status_text()));
+            ipage.reference_edit()->clear();
             check(ipage.status_text().contains(QStringLiteral("✓")),
                   QStringLiteral("视频：构造后就绪（状态行 %1）").arg(ipage.status_text()));
         }

@@ -1,11 +1,11 @@
 {
   "dev": {
-    "checks": 959,
+    "checks": 960,
     "how": "开发树且 xrkit_fake_ffmpeg.exe 存在"
   },
   "packaged": {
     "checks": 912,
-    "how": "exe 在 dist/ 下，或开发树无夹具；P-798 起包内不带 ffprobe（降级路径）"
+    "how": "exe 在 dist/ 下，或开发树无夹具；packaged 912：差 8 条依赖包内 ffprobe（P-798 起包内不带 ffprobe，这 8 条不可达，不是不该跑）"
   },
   "note": "P-790/P-791：只禁下降；P-799 增加 8.x 产品页拒收一条 ⇒ dev 944→945"
 }

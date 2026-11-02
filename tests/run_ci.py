@@ -2400,6 +2400,18 @@ def step_shell_smoke(release: bool) -> None:
             _mode, _how = "dev", "开发树且 xrkit_fake_ffmpeg.exe 存在"
         else:
             _mode, _how = "packaged", "开发树但开发夹具缺失（按包内口径计）"
+        # ★ 2026-11-02（用户转达 DSH）：降基线必须把"为什么低"写进文件 ——
+        #   否则半年后没人分得清这 8 条是"不该跑"还是"跑不了"。
+        _dev_n = int((_base.get("dev") or {}).get("checks", 0)
+                     if isinstance(_base.get("dev"), dict) else _base.get("dev", 0) or 0)
+        _pkg_how = str((_base.get("packaged") or {}).get("how", "")
+                       if isinstance(_base.get("packaged"), dict) else "")
+        _pkg_n = int((_base.get("packaged") or {}).get("checks", 0)
+                     if isinstance(_base.get("packaged"), dict) else _base.get("packaged", 0) or 0)
+        if _dev_n > _pkg_n and len(_pkg_how) < 20:
+            fail("packaged 基线（%d）低于 dev（%d），但 `packaged.how` 没写原因 —— "
+                 "降基线必须写明少的那些条是什么（例：差 N 条依赖包内 ffprobe）"
+                 % (_pkg_n, _dev_n))
         _entry = _base.get(_mode, 0)
         _prev = int(_entry.get("checks", 0) if isinstance(_entry, dict) else _entry)
         say("  [shell-smoke] mode=%s（%s） 基线 checks=%d" % (_mode, _how, _prev))

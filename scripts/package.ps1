@@ -323,9 +323,9 @@ $depDirs += (Join-Path $root 'third_party\ffmpeg')
 $depDirs += (Join-Path $root 'deps\ffmpeg')
 $depDirs += 'E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit'
 $depSrc = $null
-# ★★ 2026-11-02（P-798）：**包内不再带 ffprobe.exe** —— 探测走 `ffmpeg -i` 降级。
+# ★★ 2026-11-02（P-798）：**包内不再带 ffprobe.exe** —— 探测走 ffmpeg -i 降级。
 #   有 ffprobe 的用户可自备（`[ffmpeg] probe` 或 `bin\ffprobe.exe`），两条路都认。
-#   ⇒ 依赖源只要求 ffmpeg.exe；ffprobe 有就顺手带上（便于对照），没有不算错。
+#   ⇒ 依赖源只要求 ffmpeg.exe；**ffprobe 不进包**（见下面 Copy 段只拷 ffmpeg）。
 foreach ($dir in $depDirs) {
     if (Test-Path (Join-Path $dir 'ffmpeg.exe')) {
         $depSrc = $dir
@@ -441,8 +441,8 @@ $pluginLine
       插件加载失败不会阻塞启动，问题会显示在启动后的日志栏里。
 运行日志（logs\log_*.txt）里既有引擎行、也有界面上出现的每一行；没有「导出日志」按钮 ——
 落盘文件已含全部内容，导出是重复实现。需要发日志时直接附上这个文件。
-自带：ffmpeg.exe / ffprobe.exe（视频页不填路径也能直接用；ffprobe 沿用 1.x 自带那份，
-      实测可用，不为它做版本守卫）+ download_ffmpeg.py（缺件时重下）。
+自带：ffmpeg.exe（视频页不填路径也能直接用；**不再自带 ffprobe** —— 探测走 ffmpeg -i 降级，
+      用户可自备 bin\ffprobe.exe 或 [ffmpeg] probe）+ download_ffmpeg.py（缺件时重下）。
 不含：NLC 解密插件（发行版）、实验性引擎补丁。
 自检：命令行跑 `xrkit_app.exe --smoke`（离屏，ASCII 输出）可核对包是否完整。
       本包 `platforms\` **同时**带 `qwindows.dll` 与 `qoffscreen.dll`：`--smoke`/`--layout-report`
