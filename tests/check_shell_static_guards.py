@@ -77,19 +77,43 @@ def main() -> int:
     else:
         fail("C 注释续行风险：%s" % ", ".join(bad[:6]))
 
-    # D：不许裸调 QCoreApplication::instance()->thread()（无 app 时是空指针解引用）
-    #    只允许在"on_main_thread()/helper"体内（先判 instance() 非空）。
+    # D：线程判定必须"先判空再比"。
+    #   禁区一：裸 `instance()->thread()`（无 app 时空指针解引用）—— 一律红；
+    #   禁区二：`app->thread()` —— 只有当**同一行或往上 6 行内**出现过该变量的判空
+    #   （`app == nullptr` / `app != nullptr` / `if (!app` / `if (app`）才放行。
+    #   （DSH：原白名单只要出现 "app->thread()" 就放行，`auto* app = instance(); app->thread()`
+    #    会静默通过。）
+    def null_checked(lines, idx, var="app"):
+        window = lines[max(0, idx - 6): idx + 1]
+        needles = ("%s == nullptr" % var, "%s != nullptr" % var,
+                   "if (!%s" % var, "if (%s" % var)
+        return any(any(n in line for n in needles) for line in window)
+
     bare = []
     for base in (ROOT / "src" / "shell", ROOT / "src" / "engine"):
         for path in base.rglob("*.cpp"):
-            for idx, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-                if "instance()->thread()" in line and "instance() !=" not in line and \
-                        "app->thread()" not in line and "instance() ==" not in line:
-                    bare.append("%s:%d" % (path.relative_to(ROOT), idx))
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            in_block_comment = False
+            for idx, line in enumerate(lines):
+                stripped = line.lstrip()
+                if in_block_comment:
+                    if "*/" in line:
+                        in_block_comment = False
+                    continue   # 块注释里提到不算
+                if stripped.startswith("/*"):
+                    if "*/" not in line:
+                        in_block_comment = True
+                    continue
+                if stripped.startswith("//"):
+                    continue
+                if "instance()->thread()" in line:
+                    bare.append("%s:%d" % (path.relative_to(ROOT), idx + 1))
+                elif "app->thread()" in line and not null_checked(lines, idx):
+                    bare.append("%s:%d" % (path.relative_to(ROOT), idx + 1))
     if not bare:
-        ok("D 没有裸调 QCoreApplication::instance()->thread()")
+        ok("D 线程判定都先判空（无裸 instance()->thread()、app->thread() 有判空窗口）")
     else:
-        fail("D 裸调 instance()->thread()（无 app 时空指针）：%s" % ", ".join(bare[:6]))
+        fail("D 裸线程判定：%s" % ", ".join(bare[:6]))
 
     if PROBLEMS:
         print("SHELL-STATIC-GUARDS: FAIL（%d 处）" % len(PROBLEMS))

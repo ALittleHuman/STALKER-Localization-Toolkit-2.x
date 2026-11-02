@@ -150,6 +150,46 @@ def main() -> int:
             print("  ✓ VFR 样本 avg=%s r=%s（足够触发 tbr 陷阱）"
                   % (video["avg_frame_rate"], video["r_frame_rate"]))
 
+    # ── 插件门面路径（运行期）：`--py-plugin-call` 走 video_parse_ffmpeg_i ──
+    print("  ── 插件门面（video_page.py probe_text）──")
+    for row in cases:
+        name = row["case"]
+        stderr_file = SAMPLES / (name + ".ffmpeg_i.txt")
+        json_file = SAMPLES / (name + ".ffprobe.json")
+        if not stderr_file.is_file() or not json_file.is_file():
+            continue
+        expected = expected_from_json(json.loads(json_file.read_text(encoding="utf-8")))
+        payload = json.dumps({"mode": "probe_text", "stderr_path": str(stderr_file),
+                              "size_bytes": stderr_file.stat().st_size}, ensure_ascii=False)
+        proc = subprocess.run([str(CLI), "--py-plugin-call", str(ROOT / "plugins"),
+                               "--plugin", "video_page.py", payload],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        text = proc.stdout.decode("utf-8", "replace")
+        lines = []
+        for ln in text.splitlines():
+            if ln.strip().startswith("PYPLUGINCALL") and " result=" in ln:
+                try:
+                    lines = json.loads(ln.split(" result=", 1)[1]).get("lines", [])
+                except ValueError:
+                    lines = []
+        fields = {}
+        for ln in lines:
+            parts = ln.split("\t")
+            if len(parts) == 3 and parts[0] == "PROBETEXT":
+                fields[parts[1]] = parts[2]
+        ok_plugin = (fields.get("parsed") == "1" and
+                     fields.get("video.codec") == expected.get("codec", "") and
+                     int(fields.get("video.width", 0)) == expected.get("w", 0) and
+                     int(fields.get("video.height", 0)) == expected.get("h", 0) and
+                     abs(float(fields.get("video.fps", 0)) - expected.get("fps", 0)) <= FPS_TOL and
+                     (fields.get("has_audio") == ("1" if expected["has_audio"] else "0")))
+        if ok_plugin:
+            print("  ✓ 插件 %s（codec=%s fps=%s）"
+                  % (name, fields.get("video.codec"), fields.get("video.fps")))
+        else:
+            problems.append("%s：插件门面解析不一致（%s）" % (name, fields))
+            print("  ✗ 插件 %s" % name)
+
     # ── L1 边角（★ **合成 stderr，不是真机样本**；与上面的 L2 真样本分开列）──
     #   ① avg 无效（只有 tbr）⇒ 必须回落 r_frame_rate；② 视频行没有 kb/s ⇒ has_vbr=0，
     #   走 -q:v 7 而不是 -b:v 0；③ fps/tbr 都无效 ⇒ 0，且不崩。

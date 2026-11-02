@@ -31,6 +31,8 @@ class TaskShell;
 class VirtualList;
 class ScrollViewport;
 
+// ★ 2026-11-02（HA 裁）：本页**不是产品页**（产品入口是「文本工具」页的提取模式），
+//   仅作 smoke 的提取/滚动测试夹具。删它要先把 smoke 迁到 XmlPage 的提取模式。
 class TextPage : public PageBase {
 public:
     explicit TextPage(QWidget* parent = nullptr);

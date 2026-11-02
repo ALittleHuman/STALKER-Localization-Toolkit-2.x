@@ -92,6 +92,24 @@ def headless(api, args):
                  "PROBE\taudio.sample_rate\t%d" % int(audio.get("sample_rate", 0)),
                  "PROBE\taudio.bitrate\t%d" % int(audio.get("bitrate", 0))]
         return {"lines": lines}
+    if mode == "probe_text":
+        # 运行期验证：插件把 `ffmpeg -i` stderr 交给引擎门面解析（不在插件里写第二份）。
+        with open(args["stderr_path"], "r", encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+        info = engine.video_parse_ffmpeg_i(text, int(args.get("size_bytes", -1)))
+        video = info.get("video", {})
+        audio = info.get("audio", {})
+        return {"lines": ["PROBETEXT	parsed	%d" % (1 if info.get("parsed") else 0),
+                          "PROBETEXT	has_video	%d" % (1 if info.get("has_video") else 0),
+                          "PROBETEXT	has_audio	%d" % (1 if info.get("has_audio") else 0),
+                          "PROBETEXT	duration	%.6f" % float(info.get("duration", 0.0)),
+                          "PROBETEXT	video.codec	%s" % video.get("codec", ""),
+                          "PROBETEXT	video.width	%d" % int(video.get("width", 0)),
+                          "PROBETEXT	video.height	%d" % int(video.get("height", 0)),
+                          "PROBETEXT	video.fps	%.6f" % float(video.get("fps", 0.0)),
+                          "PROBETEXT	audio.codec	%s" % audio.get("codec", ""),
+                          "PROBETEXT	audio.sample_rate	%d" % int(audio.get("sample_rate", 0)),
+                          "PROBETEXT	audio.channels	%d" % int(audio.get("channels", 0))]}
     if mode == "encoders":
         with open(args["text_path"], "r", encoding="utf-8", errors="replace") as handle:
             names = engine.video_parse_encoders(handle.read())
@@ -141,7 +159,7 @@ def register(api):
         "source_probed": False, "reference_probed": False,
         "encoders": [], "encoders_scanned": False, "encoder_note": "",
         "last_error": "", "skips": [], "result_info": {}, "result_path": "",
-        "result_error": "",
+        "result_error": "", "probe_note": "",
     }
 
     def build():
@@ -168,6 +186,9 @@ def register(api):
 
         def refresh_display():
             lines = []
+            if state.get("probe_note"):
+                lines.append("探测：%s" % state["probe_note"])
+                lines.append("")
             for title, path, probed, info, error in (
                     ("参考 OGM", state["reference_path"] or ui.get_text(reference_entry).strip(),
                      state["reference_probed"], state["reference_info"], state["reference_error"]),
@@ -343,34 +364,61 @@ def register(api):
                         scan_encoders()
                     message("参数解析收工")
                     return
+                def probe_with_ffmpeg_i(why):
+                    """ffprobe 不可用 ⇒ 用 ffmpeg -i 降级；解析走门面（插件里不写第二份）。"""
+                    stderr_lines = []
+                    rr = host.run_process({
+                        "program": paths["ffmpeg"],
+                        "args": ["-hide_banner", "-nostdin", "-i", path],
+                        "on_stderr": stderr_lines.append,
+                    })
+                    try:
+                        size = os.path.getsize(path)
+                    except OSError:
+                        size = -1
+                    info = engine.video_parse_ffmpeg_i("\n".join(stderr_lines), size)
+                    if rr.get("started") and info.get("parsed"):
+                        state["probe_note"] = "ffprobe 不可用（%s）⇒ 已用 ffmpeg -i 降级" % why
+                        return info, ""
+                    return None, "ffprobe 与 ffmpeg -i 都拿不到参数（%s）" % why
+
                 result = host.run_process({
                     "program": paths["ffprobe"],
                     "args": ["-v", "quiet", "-print_format", "json", "-show_streams",
                              "-show_format", path],
                     "on_stdout": lines.append,
                 })
+                fail_reason = ""
+                info = None
                 if not result.get("started"):
-                    note = "起不了 ffprobe：%s" % result.get("error", "")
+                    fail_reason = "起不了 ffprobe：%s" % result.get("error", "")
                 elif not result.get("normal_exit") or result.get("exit_code") != 0:
-                    note = "ffprobe 返回码 %s：%s" % (result.get("exit_code"),
-                                                  result.get("stderr_tail", "").strip())
+                    fail_reason = "ffprobe 返回码 %s" % result.get("exit_code")
                 else:
                     info = engine.video_parse_ffprobe("\n".join(lines))
                     if not info.get("parsed"):
-                        note = "ffprobe 的输出不是合法 JSON"
+                        fail_reason = "ffprobe 的输出不是合法 JSON"
+                        info = None
+                if fail_reason:
+                    # ★ 四条件降级：起不来 / 返回码非 0 / 非法 JSON / （has_probe=false 已在上面处理）
+                    if paths.get("found"):
+                        info, note = probe_with_ffmpeg_i(fail_reason)
                     else:
-                        note = ""
-                        if is_reference:
-                            state["reference_info"] = info
-                            state["reference_path"] = path
-                            state["reference_probed"] = True
-                            state["reference_error"] = ""
-                        else:
-                            state["source_info"] = info
-                            state["source_path"] = path
-                            state["source_probed"] = True
-                            state["source_error"] = ""
-                        host.pref_set(pref, "source" if not is_reference else "reference", path)
+                        note = "%s（且没有 ffmpeg）" % fail_reason
+                else:
+                    note = ""
+                if info is not None:
+                    if is_reference:
+                        state["reference_info"] = info
+                        state["reference_path"] = path
+                        state["reference_probed"] = True
+                        state["reference_error"] = ""
+                    else:
+                        state["source_info"] = info
+                        state["source_path"] = path
+                        state["source_probed"] = True
+                        state["source_error"] = ""
+                    host.pref_set(pref, "source" if not is_reference else "reference", path)
                 if note:
                     what = "参考 OGM" if is_reference else "源文件"
                     if is_reference:
