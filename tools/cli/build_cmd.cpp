@@ -148,14 +148,12 @@ int run_build_package(const std::vector<std::string>& operands) {
         std::cout << "BUILDPKG error reason=备份失败：" << err << "\n";
         return kFail;
     }
-    store.current_version = want_version;
-    store.current_prerelease = want_prerelease;
-    store.current_index = want_index;
-    if (!xrkit::core::save_version_store(store_path, store, err)) {
-        std::cout << "BUILDPKG error reason=写回失败：" << err << "\n";
-        return kFail;
-    }
-    const std::string full = store.full_version();
+    // ★★ P-806（2026-11-02）：**current 不再在这里落盘**。
+    //   修前"取消/被杀"会留下 `current=75` 但产物没落地 ⇒ 包选择回退到旧包、门禁红，
+    //   只能手工 git checkout 三件套复原（有副作用）。改成"产物落地、校验通过之后"再写 current
+    //   （见函数末尾 `store.append(...)` 之前）；中途失败/取消 ⇒ version.json 从未前进。
+    const std::string full = want_version + (want_prerelease.empty() ? "" : " " + want_prerelease) +
+                             "." + std::to_string(want_index);
 
     // ── ★★ 2026-10-07（审计补充 H1-2，用户拍板"候选 A"）：版本号的**派生写回** ──────────
     //   真来源 = `version.json` 的 tree（最后一次成功发包）；`version.h` 是它的派生。
@@ -438,6 +436,11 @@ fail_archive:;
     }
 
     store.append(want_version, want_prerelease, want_index, rec);
+    // ★ P-806：current 与 tree 在同一次写里前进（产物已落地并校验过），
+    //   中途取消/失败 ⇒ 这里根本走不到 ⇒ current 不会指向不存在的包。
+    store.current_version = want_version;
+    store.current_prerelease = want_prerelease;
+    store.current_index = want_index;
     if (!xrkit::core::save_version_store(store_path, store, err)) {
         std::cout << "BUILDPKG error reason=写构建史失败：" << err << "\n";
         return kFail;
