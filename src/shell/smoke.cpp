@@ -9052,21 +9052,24 @@ SmokeResult run_smoke() {
         page.show();
         QApplication::processEvents();
 
-        // 8.2/8.5：构造完**一次都没探**，状态是"未检测"（不是 ✗）
-        check(page.probe_count() == 0,
-              QStringLiteral("⑧8.2 构造期不探测（实测探了 %1 次）").arg(page.probe_count()));
-        check(page.status_text().contains(QStringLiteral("未检测")) &&
-                  !page.status_text().contains(QStringLiteral("✗")),
-              QStringLiteral("⑧8.5 探测之前不显示 ✗（%1）").arg(page.status_text()));
+        // 8.2/8.5（用户 2026-11-02 改口径）：**构造即扫自带 ffmpeg**，不再停在"未检测"。
+        //   扫到 ⇒ 状态行直接 ✓ 就绪；扫不到 ⇒ ✗ 没找到（两种都算"已落定"）。
+        check(page.probe_count() == 1,
+              QStringLiteral("⑧8.2 构造期扫一次（实测 %1 次）").arg(page.probe_count()));
+        check(!page.status_text().contains(QStringLiteral("未检测")),
+              QStringLiteral("⑧8.5 构造后不再是「未检测」（%1）").arg(page.status_text()));
+        if (page.probe_state() == evid::ProbeState::Found) {
+            check(page.status_text().contains(QStringLiteral("✓")),
+                  QStringLiteral("⑧8.5 扫到就绪（%1）").arg(page.status_text()));
+        } else {
+            check(page.status_text().contains(QStringLiteral("✗")),
+                  QStringLiteral("⑧8.5 扫不到如实说没找到（%1）").arg(page.status_text()));
+        }
 
-        // 8.2：探测失败也置位（再调不会重探）
-        page.detect();
-        const int after = page.probe_count();
-        check(after == 1, QStringLiteral("⑧8.2 第一次探测记了 1 次（实测 %1）").arg(after));
+        // 8.2：结论被记住（再调不会重探）
         page.detect();
         check(page.probe_count() == 1,
-              QStringLiteral("⑧8.2 探测失败也被记住（再调不重探，实测 %1 次）")
-                  .arg(page.probe_count()));
+              QStringLiteral("⑧8.2 已有结论不再重探（实测 %1 次）").arg(page.probe_count()));
         check(page.probe_state() == evid::ProbeState::Missing ||
                   page.probe_state() == evid::ProbeState::Found,
               QStringLiteral("⑧8.5 探测后状态落定"));
@@ -9485,6 +9488,17 @@ SmokeResult run_smoke() {
                   QStringLiteral("视频⑥b：状态行必须说降级、不误报读不出来（实得 '%1'）")
                       .arg(tpage.status_text()));
         }
+        // 构造即探测（用户 2026-11-02）：不许一进来就"未检测 ffmpeg"。
+        {
+            SelfCheckVideoPage ipage;
+            ipage.paths.found = true;
+            ipage.paths.has_probe = false;
+            ipage.paths.ffmpeg = fake.toStdString();
+            ipage.paths.version = "ffmpeg version 7.1.5 fake-fixture";
+            check(ipage.status_text().contains(QStringLiteral("✓")),
+                  QStringLiteral("视频：构造后就绪（状态行 %1）").arg(ipage.status_text()));
+        }
+
         // ⑥c（HA 复核）：无 ffprobe 时 Result 也必须走降级（"转换完成后解析产物"这条链）
         {
             SelfCheckVideoPage cpage;

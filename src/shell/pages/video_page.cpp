@@ -1132,6 +1132,9 @@ VideoPage::VideoPage(QWidget* parent)
     convert_button_->setEnabled(false);
     QObject::connect(convert_button_, &QPushButton::clicked, this, [this] { request_transcode(); });
 
+    // ★ 用户 2026-11-02：**启动即扫自带 ffmpeg**，不要停在"未检测 ffmpeg"。
+    //   `ensure_ffmpeg()` 只在没有注入结论时碰 locator（夹具路径不受影响）。
+    ensure_ffmpeg();
     refresh_status();
     refresh_buttons();
 }
