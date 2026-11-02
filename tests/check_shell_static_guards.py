@@ -77,6 +77,20 @@ def main() -> int:
     else:
         fail("C 注释续行风险：%s" % ", ".join(bad[:6]))
 
+    # D：不许裸调 QCoreApplication::instance()->thread()（无 app 时是空指针解引用）
+    #    只允许在"on_main_thread()/helper"体内（先判 instance() 非空）。
+    bare = []
+    for base in (ROOT / "src" / "shell", ROOT / "src" / "engine"):
+        for path in base.rglob("*.cpp"):
+            for idx, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+                if "instance()->thread()" in line and "instance() !=" not in line and \
+                        "app->thread()" not in line and "instance() ==" not in line:
+                    bare.append("%s:%d" % (path.relative_to(ROOT), idx))
+    if not bare:
+        ok("D 没有裸调 QCoreApplication::instance()->thread()")
+    else:
+        fail("D 裸调 instance()->thread()（无 app 时空指针）：%s" % ", ".join(bare[:6]))
+
     if PROBLEMS:
         print("SHELL-STATIC-GUARDS: FAIL（%d 处）" % len(PROBLEMS))
         return 1

@@ -82,6 +82,7 @@ private:
     QVector<int> sizes_;       // 沿轴方向的尺寸
     bool dragging_ = false;
     int drag_sash_ = -1;
+    int drag_grab_ = 0;   // P-760：按下点相对 sash 的偏移（否则松手会跳）
     int preview_ = -1;
     int debounce_ms_ = 120;
     int timer_id_ = 0;

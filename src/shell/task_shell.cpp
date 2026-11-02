@@ -15,6 +15,13 @@
 namespace xrkit::shell {
 
 namespace {
+
+// P-755：无 Q(Core)Application 时 instance() 为空 ⇒ 直接解引用会崩。
+bool on_main_thread() {
+    const QCoreApplication* app = QCoreApplication::instance();
+    return app != nullptr && QThread::currentThread() == app->thread();
+}
+
 std::function<void()>& worker_finished_hook_storage();
 }  // namespace
 
@@ -236,7 +243,7 @@ void TaskShell::request_cancel(const QString& reason) {
     // 理由**立刻**可见（不等 worker 回来）：状态栏就是用户看的那个地方。
     status_text_ = cancel_reason_;
     status_->setText(cancel_reason_);
-    const bool on_main = QThread::currentThread() == QCoreApplication::instance()->thread();
+    const bool on_main = on_main_thread();
     std::lock_guard<std::mutex> lock(mutex_);
     events_.push_back({'c', n, on_main});
 }
@@ -246,7 +253,7 @@ void TaskShell::apply_progress(int percent) {
     const int value = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
     last_progress_ = value;
     bar_->setValue(value);
-    const bool on_main = QThread::currentThread() == QCoreApplication::instance()->thread();
+    const bool on_main = on_main_thread();
     std::lock_guard<std::mutex> lock(mutex_);
     events_.push_back({'p', value, on_main});
 }
@@ -261,7 +268,7 @@ void TaskShell::set_finish_handler(std::function<void()> handler) {
 }
 
 void TaskShell::apply_message(QString text) {
-    const bool on_main = QThread::currentThread() == QCoreApplication::instance()->thread();
+    const bool on_main = on_main_thread();
     {
         std::lock_guard<std::mutex> lock(mutex_);
         events_.push_back({'m', 0, on_main});
@@ -274,7 +281,7 @@ void TaskShell::apply_message(QString text) {
 
 void TaskShell::apply_error(QString text) {
     error_text_ = text;
-    const bool on_main = QThread::currentThread() == QCoreApplication::instance()->thread();
+    const bool on_main = on_main_thread();
     {
         std::lock_guard<std::mutex> lock(mutex_);
         events_.push_back({'e', 0, on_main});
@@ -307,7 +314,7 @@ void TaskShell::apply_finish(QString final_status) {
     if (next.isEmpty()) next = idle_status_.isEmpty() ? QStringLiteral("就绪") : idle_status_;
     status_text_ = next;
     status_->setText(next);
-    const bool on_main = QThread::currentThread() == QCoreApplication::instance()->thread();
+    const bool on_main = on_main_thread();
     {
         std::lock_guard<std::mutex> lock(mutex_);
         events_.push_back({'f', 0, on_main});

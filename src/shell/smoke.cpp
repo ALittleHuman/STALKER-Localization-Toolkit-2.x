@@ -2054,6 +2054,22 @@ SmokeResult run_smoke() {
         check(split->clamp_count() == clamps_before + 1, QStringLiteral("松手只重排一次"));
         check(!split->dragging(), QStringLiteral("松手后不在拖动态"));
 
+        // P-760：**按下点不在 sash 正中**时不许跳 —— 抓取偏移要被记住并换算。
+        {
+            const int here = split->sash_pos(0);
+            check(split->begin_drag(here + 10), QStringLiteral("P-760：在 sash 旁边也能开始拖"));
+            const int grabbed = split->preview_pos();
+            split->update_drag(here + 10);
+            check(split->preview_pos() == grabbed && grabbed == here,
+                  QStringLiteral("P-760：按下不跳（预览仍 %1，sash %2）")
+                      .arg(split->preview_pos()).arg(here));
+            split->update_drag(here + 40);
+            check(split->preview_pos() == here + 30,
+                  QStringLiteral("P-760：拖动量按抓取偏移换算（预览 %1，期望 %2）")
+                      .arg(split->preview_pos()).arg(here + 30));
+            split->end_drag(false);
+        }
+
         // 2.4 clamp：拖到极右 ⇒ 前一个 pane 保住 minsize，后面的先挨饿
         split->begin_drag(split->sash_pos(0));
         split->update_drag(1000);

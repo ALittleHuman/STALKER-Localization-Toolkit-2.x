@@ -3505,6 +3505,23 @@ def step_font_sample(release: bool) -> None:
         fail("文本样张判据不通过（见上）")
 
 
+def step_ui_facade_primitives(release: bool) -> None:
+    """stk_ui 函数级静态锁：9 个造控件必须走 table()->；alive 语义写明。"""
+    say("[?] stk_ui 函数级静态锁（9 造控件 + alive 语义）")
+    script = ROOT / "tests" / "check_ui_facade_primitives.py"
+    if not require_repo_file(script, "stk_ui 静态锁脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("✓") or s.startswith("✗") or s.startswith("UI-FACADE-PRIMITIVES"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("stk_ui 函数级静态锁全过")
+    else:
+        fail("stk_ui 静态锁不通过（见上）")
+
+
 def step_shell_static_guards(release: bool) -> None:
     """外壳静态锁：resolve 调用点 / ensure 自递归 / `//` 注释续行。"""
     say("[?] 外壳静态锁：resolve 调用点 / 自递归 / 注释续行")
@@ -7727,6 +7744,7 @@ STEPS = [
     ("runtime-routing", step_runtime_routing),
     ("video-probe-text", step_video_probe_text),
     ("shell-static-guards", step_shell_static_guards),
+    ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
     ("version-identity", step_version_identity),

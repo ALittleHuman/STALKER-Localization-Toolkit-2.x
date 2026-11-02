@@ -177,7 +177,9 @@ stk_widget* ui_text_view(stk_host*, stk_widget* parent, int height, int mono) {
 }
 
 int ui_alive(stk_host*, stk_widget* widget) {
-    // 探针口径：句柄还指向一个活着的对象（QPointer 语义的轻量版）——宿主统一记账
+    // ⚠ **不可用于判存活**：这里只回答"句柄非空"。
+    //   实现是 reinterpret_cast ⇒ QWidget 被销毁后指针值不变，本函数仍返回 1。
+    //   真正需要存活判定时请用 api.ui.* 的返回值/异常（93 面内部用的是真 QPointer）。
     return widget != nullptr && unwrap(widget) != nullptr ? 1 : 0;
 }
 

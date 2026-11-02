@@ -49,6 +49,13 @@
 namespace xrkit::shell {
 namespace {
 
+// P-678：无 QApplication 时 instance() 为空 ⇒ 判空后再比线程。
+bool on_main_thread() {
+    const QCoreApplication* app = QCoreApplication::instance();
+    return app != nullptr && QThread::currentThread() == app->thread();
+}
+
+
 namespace exml = xrkit::engine::xml;
 namespace etxt = xrkit::engine::text;
 
@@ -496,7 +503,7 @@ std::string XmlPage::current_mode_key() const {
     //   把模式 key 快照进 `mode_key_at_task_start_`（见那边的注释与「开始比较」按钮），
     //   worker 读快照；主线程路径（自检直调 / 切模式）照旧读下拉。
     if (!mode_key_at_task_start_.isEmpty() &&
-        QThread::currentThread() != QCoreApplication::instance()->thread()) {
+        !on_main_thread()) {
         return mode_key_at_task_start_.toUtf8().toStdString();
     }
     return mode_combo_->currentData().toString().toUtf8().toStdString();
@@ -621,7 +628,7 @@ int XmlPage::compare_dirs(const QString& dir_a, const QString& dir_b, const QStr
     (void)spec_this_round;
 
     // 收尾一律**排队回主线程**（工作线程里不碰控件；见审计 3-5 那段血账）
-    const bool on_main = QThread::currentThread() == QCoreApplication::instance()->thread();
+    const bool on_main = on_main_thread();
     if (on_main) {
         refresh_rows();
         refresh_stats_label();

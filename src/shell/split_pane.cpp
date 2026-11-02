@@ -225,14 +225,17 @@ bool SplitPane::begin_drag(int pos) {
     if (index < 0) return false;
     dragging_ = true;
     drag_sash_ = index;
-    preview_ = pos;
+    // P-760：记住"按下点 - 当前 sash 位置"。拖动期预览/落点都按偏移换算，
+    // 否则一按下就把 sash 拽到鼠标处、松手再跳一下。
+    drag_grab_ = pos - sash_pos(index);
+    preview_ = sash_pos(index);
     update();  // 只重画预览，**不改几何**（2.1）
     return true;
 }
 
 void SplitPane::update_drag(int pos) {
     if (!dragging_) return;
-    preview_ = pos;
+    preview_ = pos - drag_grab_;   // P-760：按抓取偏移换算，不再直接贴鼠标
     update();  // 拖动期只有重绘
 }
 
@@ -242,6 +245,7 @@ void SplitPane::end_drag(bool commit) {
     const int target = preview_;
     dragging_ = false;
     drag_sash_ = -1;
+    drag_grab_ = 0;
     preview_ = -1;
     if (commit && index >= 0 && index + 1 < static_cast<int>(sizes_.size())) {
         // **松手一次重排**（2.1）：sash 只分隔**相邻两个 pane** ⇒ 差额就在这两格之间搬，

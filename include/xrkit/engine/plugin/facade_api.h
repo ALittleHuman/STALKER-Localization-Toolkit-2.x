@@ -58,6 +58,8 @@ typedef struct stk_ui {
     /* 11 */ void (*set_state)(stk_host* h, stk_widget* widget, int state);
     /* 12 */ stk_widget* (*text_view)(stk_host* h, stk_widget* parent, int height, int mono);
     /* 13 */ int (*alive)(stk_host* h, stk_widget* widget);
+    /* ⚠ alive 只能回答"句柄非空"，**不可用于判存活**：实现是 reinterpret_cast，
+       QWidget 被销毁后指针不变 ⇒ 除纯空指针外恒真。要判存活请改用 api.ui.* 的返回/异常。 */
     /* 14 */ int (*ask_yes_no)(stk_host* h, const char* title, const char* message);
     /* 15 */ const char* (*ask_open_file)(stk_host* h, const char* title);
     /* 16 */ const char* (*ask_save_file)(stk_host* h, const char* title);
