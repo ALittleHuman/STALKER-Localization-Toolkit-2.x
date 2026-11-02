@@ -394,6 +394,16 @@ if ($ffMajor -ne 7) {
           "download_ffmpeg.py 的口径也是恰好 7.x）"
 }
 Write-Host "  版本守卫通过：自带 ffmpeg 是 7.x"
+# ★ 2026-11-02（DSH 许可结案）：随包带 ffmpeg 的许可证与构建说明（零成本合规动作）
+$licDir = Join-Path $stage 'third_party\ffmpeg'
+New-Item -ItemType Directory -Force -Path $licDir | Out-Null
+foreach ($lic in @('LICENSE.txt', 'BUILD.txt')) {
+    $licSrc = Join-Path $root ('third_party\ffmpeg\' + $lic)
+    if (-not (Test-Path $licSrc)) { throw ("缺 third_party\ffmpeg\{0}（LGPL 合规件不能少）" -f $lic) }
+    Copy-Item -LiteralPath $licSrc -Destination $licDir -Force
+}
+Write-Host "  随包许可：third_party\ffmpeg\LICENSE.txt + BUILD.txt"
+
 # 自动安装按钮的真身（程序目录里没有自带件时，页面用得上它）
 Copy-Item -LiteralPath (Join-Path $root 'scripts\download_ffmpeg.py') -Destination $binDir
 

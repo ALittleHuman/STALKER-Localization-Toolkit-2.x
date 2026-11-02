@@ -40,8 +40,8 @@ cd "FFmpeg-$SRC_VER"
     --enable-protocol=file \
     --enable-demuxer=avi,mov,matroska,ogg,wav,mp3 \
     --enable-muxer=ogg \
-    --enable-decoder=h264,hevc,mpeg4,mjpeg,theora,vorbis,aac,mp3,ac3,eac3,pcm_s16le \
-    --enable-parser=h264,hevc,mpeg4video,mjpeg,aac,theora,vorbis \
+    --enable-decoder=h264,hevc,mpeg4,mjpeg,theora,vorbis,aac,mp3,ac3,eac3,pcm_s16le,vp8,vp9,opus,mpeg2video \
+    --enable-parser=h264,hevc,mpeg4video,mjpeg,aac,theora,vorbis,vp8,vp9,opus \
     --enable-encoder=libtheora,libvorbis \
     --enable-filter=scale,fps,format,aresample,aformat,setpts \
     --enable-swscale \

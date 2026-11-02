@@ -2408,10 +2408,17 @@ def step_shell_smoke(release: bool) -> None:
                        if isinstance(_base.get("packaged"), dict) else "")
         _pkg_n = int((_base.get("packaged") or {}).get("checks", 0)
                      if isinstance(_base.get("packaged"), dict) else _base.get("packaged", 0) or 0)
-        if _dev_n > _pkg_n and len(_pkg_how) < 20:
-            fail("packaged 基线（%d）低于 dev（%d），但 `packaged.how` 没写原因 —— "
-                 "降基线必须写明少的那些条是什么（例：差 N 条依赖包内 ffprobe）"
-                 % (_pkg_n, _dev_n))
+        if _dev_n > _pkg_n:
+            # ★ 2026-11-02（HA 复核）：光看"字数 ≥ 20"挡不住假说明 ⇒ 说明里的"差 N"必须等于实际差。
+            import re as _re
+            _decl = _re.search(r"差\s*(\d+)", _pkg_how)
+            _actual = _dev_n - _pkg_n
+            if _decl is None:
+                fail("packaged 基线（%d）低于 dev（%d），但 `packaged.how` 没写「差 N」—— "
+                     "降基线必须写明差多少、差在哪（实际差 %d）" % (_pkg_n, _dev_n, _actual))
+            elif int(_decl.group(1)) != _actual:
+                fail("packaged.how 写「差 %s」，实际差 %d —— 说明与数字不符"
+                     % (_decl.group(1), _actual))
         _entry = _base.get(_mode, 0)
         _prev = int(_entry.get("checks", 0) if isinstance(_entry, dict) else _entry)
         say("  [shell-smoke] mode=%s（%s） 基线 checks=%d" % (_mode, _how, _prev))
@@ -3532,6 +3539,23 @@ def step_ui_facade_primitives(release: bool) -> None:
         ok("stk_ui 函数级静态锁全过")
     else:
         fail("stk_ui 静态锁不通过（见上）")
+
+
+def step_package_ffmpeg(release: bool) -> None:
+    """包内 ffmpeg 断言：≤8 MB / 无 ffprobe / 许可件在（堵回退假绿）。"""
+    say("[?] 包内 ffmpeg 断言（体积 / 无 ffprobe / 许可）")
+    script = ROOT / "tests" / "check_package_ffmpeg.py"
+    if not require_repo_file(script, "包内 ffmpeg 断言脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("PKG-FFMPEG"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("包内 ffmpeg 断言全过")
+    else:
+        fail("包内 ffmpeg 断言不通过（见上）")
 
 
 def step_ffmpeg_min(release: bool) -> None:
@@ -7776,6 +7800,7 @@ STEPS = [
     ("video-probe-text", step_video_probe_text),
     ("shell-static-guards", step_shell_static_guards),
     ("ffmpeg-min", step_ffmpeg_min),
+    ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
