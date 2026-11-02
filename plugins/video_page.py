@@ -62,6 +62,81 @@ def short_id_of(name):
     return ""
 
 
+def probe_file_core(state, path, is_reference, paths, run_process, parse_ffprobe, parse_ffmpeg_i):
+    """探测的唯一决策逻辑：UI worker 与 headless 运行期判据共用一份（P-174）。"""
+    state["probe_note"] = ""
+
+    def apply(info, note):
+        if info is not None:
+            if is_reference:
+                state["reference_info"] = info
+                state["reference_path"] = path
+                state["reference_probed"] = True
+                state["reference_error"] = ""
+            else:
+                state["source_info"] = info
+                state["source_path"] = path
+                state["source_probed"] = True
+                state["source_error"] = ""
+        if note:
+            if is_reference:
+                state["reference_probed"] = False
+                state["reference_path"] = ""
+                state["reference_error"] = note
+            else:
+                state["source_probed"] = False
+                state["source_path"] = ""
+                state["source_error"] = note
+        return info, note
+
+    if not paths.get("has_probe") and not paths.get("found"):
+        return apply(None, "没找到 ffprobe/ffmpeg")
+
+    def via_ffmpeg_i(why):
+        lines = []
+        rr = run_process({"program": paths["ffmpeg"],
+                          "args": ["-hide_banner", "-nostdin", "-i", path],
+                          "on_stderr": lines.append})
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = -1
+        info = parse_ffmpeg_i("\n".join(lines), size)
+        if rr.get("started") and info.get("parsed"):
+            state["probe_note"] = "ffprobe 不可用（%s）⇒ 已用 ffmpeg -i 降级" % why
+            return info, ""
+        state["probe_note"] = "降级失败：ffmpeg -i 也拿不到参数（%s）" % why
+        return None, "ffprobe 与 ffmpeg -i 都拿不到参数（%s）" % why
+
+    if not paths.get("has_probe"):
+        return apply(*via_ffmpeg_i("没找到 ffprobe"))
+
+    lines = []
+    result = run_process({"program": paths["ffprobe"],
+                          "args": ["-v", "quiet", "-print_format", "json",
+                                   "-show_streams", "-show_format", path],
+                          "on_stdout": lines.append})
+    fail_reason = ""
+    info = None
+    if not result.get("started"):
+        fail_reason = "起不了 ffprobe：%s" % result.get("error", "")
+    elif not result.get("normal_exit") or result.get("exit_code") != 0:
+        fail_reason = "ffprobe 返回码 %s" % result.get("exit_code")
+    else:
+        info = parse_ffprobe("\n".join(lines))
+        if not info.get("parsed"):
+            fail_reason = "ffprobe 的输出不是合法 JSON"
+            info = None
+    if fail_reason:
+        if paths.get("found"):
+            info, note = via_ffmpeg_i(fail_reason)
+        else:
+            note = "%s（且没有 ffmpeg）" % fail_reason
+    else:
+        note = ""
+    return apply(info, note)
+
+
 def headless(api, args):
     """**无界面入口**（门禁用）：把引擎结论按 CLI 的**行格式**打出来，供逐行对拍。
 
@@ -110,6 +185,42 @@ def headless(api, args):
                           "PROBETEXT	audio.codec	%s" % audio.get("codec", ""),
                           "PROBETEXT	audio.sample_rate	%d" % int(audio.get("sample_rate", 0)),
                           "PROBETEXT	audio.channels	%d" % int(audio.get("channels", 0))]}
+    if mode == "probe_file":
+        # 运行期判据：用**模拟响应**驱动 probe_file_core 的四条件（不执行外部程序）。
+        state = {"source_path": "", "reference_path": "", "output_path": "",
+                 "source_info": {}, "reference_info": {},
+                 "source_error": "", "reference_error": "",
+                 "source_probed": False, "reference_probed": False,
+                 "probe_note": ""}
+        paths = args.get("paths") or {}
+        ffmpeg_resp = args.get("ffmpeg_resp") or {}
+        ffprobe_resp = args.get("ffprobe_resp") or {}
+        calls = []
+
+        def fake_run(request):
+            calls.append(request.get("program", ""))
+            if request.get("program") == paths.get("ffprobe"):
+                if "on_stdout" in request:
+                    for line in (ffprobe_resp.get("stdout") or "").splitlines():
+                        request["on_stdout"](line)
+                return {k: v for k, v in ffprobe_resp.items() if k != "stdout"}
+            if "on_stderr" in request:
+                for line in (ffmpeg_resp.get("stderr") or "").splitlines():
+                    request["on_stderr"](line)
+            return {k: v for k, v in ffmpeg_resp.items() if k != "stderr"}
+
+        probe_file_core(state, args["path"], bool(args.get("is_reference")),
+                        paths, fake_run, engine.video_parse_ffprobe,
+                        engine.video_parse_ffmpeg_i)
+        info = state["source_info"] if not args.get("is_reference") else state["reference_info"]
+        return {"lines": ["PROBEFILE\tprobed\t%d" % (
+                              1 if (state["source_probed"] or state["reference_probed"]) else 0),
+                          "PROBEFILE\tcodec\t%s" % (info.get("video", {}).get("codec", "")),
+                          "PROBEFILE\twidth\t%d" % int(info.get("video", {}).get("width", 0)),
+                          "PROBEFILE\tprobe_note\t%s" % state.get("probe_note", ""),
+                          "PROBEFILE\tnote\t%s" % (state["source_error"]
+                                                    or state["reference_error"] or ""),
+                          "PROBEFILE\tcalls\t%s" % ",".join(calls)]}
     if mode == "encoders":
         with open(args["text_path"], "r", encoding="utf-8", errors="replace") as handle:
             names = engine.video_parse_encoders(handle.read())
@@ -320,123 +431,19 @@ def register(api):
                 state["probe_note"] = "缺 ffprobe ⇒ 已用 ffmpeg -i 降级"
 
             def worker(progress_sink, message):
-                lines = []
-                if probe_text_mode:
-                    # `ffmpeg -i` 的信息在 stderr；退出码非 0 是正常的，只看能否解析出流。
-                    result = host.run_process({
-                        "program": paths["ffmpeg"],
-                        "args": ["-hide_banner", "-nostdin", "-i", path],
-                        "on_stderr": lines.append,
-                    })
-                    text = "\n".join(lines)
-                    try:
-                        size = os.path.getsize(path)
-                    except OSError:
-                        size = -1
-                    info = engine.video_parse_ffmpeg_i(text, size)
-                    if result.get("started") and info.get("parsed"):
-                        note = ""
-                        if is_reference:
-                            state["reference_info"] = info
-                            state["reference_path"] = path
-                            state["reference_probed"] = True
-                            state["reference_error"] = ""
-                        else:
-                            state["source_info"] = info
-                            state["source_path"] = path
-                            state["source_probed"] = True
-                            state["source_error"] = ""
-                        host.pref_set(pref, "source" if not is_reference else "reference", path)
-                    else:
-                        note = "ffmpeg -i 也拿不到参数（%s）" % (
-                            result.get("error") or "stderr 无法解析")
-                    if note:
-                        what = "参考 OGM" if is_reference else "源文件"
-                        if is_reference:
-                            state["reference_probed"] = False
-                            state["reference_error"] = note
-                        else:
-                            state["source_probed"] = False
-                            state["source_error"] = note
-                        message("%s 参数解析失败 —— %s" % (what, note))
-                    else:
-                        message("参数解析完成（降级路径）")
-                    if not state["encoders_scanned"]:
-                        scan_encoders()
-                    message("参数解析收工")
-                    return
-                def probe_with_ffmpeg_i(why):
-                    """ffprobe 不可用 ⇒ 用 ffmpeg -i 降级；解析走门面（插件里不写第二份）。"""
-                    stderr_lines = []
-                    rr = host.run_process({
-                        "program": paths["ffmpeg"],
-                        "args": ["-hide_banner", "-nostdin", "-i", path],
-                        "on_stderr": stderr_lines.append,
-                    })
-                    try:
-                        size = os.path.getsize(path)
-                    except OSError:
-                        size = -1
-                    info = engine.video_parse_ffmpeg_i("\n".join(stderr_lines), size)
-                    if rr.get("started") and info.get("parsed"):
-                        state["probe_note"] = "ffprobe 不可用（%s）⇒ 已用 ffmpeg -i 降级" % why
-                        return info, ""
-                    state["probe_note"] = "降级失败：ffmpeg -i 也拿不到参数（%s）" % why
-                    return None, "ffprobe 与 ffmpeg -i 都拿不到参数（%s）" % why
-
-                result = host.run_process({
-                    "program": paths["ffprobe"],
-                    "args": ["-v", "quiet", "-print_format", "json", "-show_streams",
-                             "-show_format", path],
-                    "on_stdout": lines.append,
-                })
-                fail_reason = ""
-                info = None
-                if not result.get("started"):
-                    fail_reason = "起不了 ffprobe：%s" % result.get("error", "")
-                elif not result.get("normal_exit") or result.get("exit_code") != 0:
-                    fail_reason = "ffprobe 返回码 %s" % result.get("exit_code")
-                else:
-                    info = engine.video_parse_ffprobe("\n".join(lines))
-                    if not info.get("parsed"):
-                        fail_reason = "ffprobe 的输出不是合法 JSON"
-                        info = None
-                if fail_reason:
-                    # ★ 四条件降级：起不来 / 返回码非 0 / 非法 JSON / （has_probe=false 已在上面处理）
-                    if paths.get("found"):
-                        info, note = probe_with_ffmpeg_i(fail_reason)
-                    else:
-                        note = "%s（且没有 ffmpeg）" % fail_reason
-                else:
-                    note = ""
+                info, note = probe_file_core(state, path, is_reference, paths,
+                                             host.run_process,
+                                             engine.video_parse_ffprobe,
+                                             engine.video_parse_ffmpeg_i)
                 if info is not None:
-                    if is_reference:
-                        state["reference_info"] = info
-                        state["reference_path"] = path
-                        state["reference_probed"] = True
-                        state["reference_error"] = ""
-                    else:
-                        state["source_info"] = info
-                        state["source_path"] = path
-                        state["source_probed"] = True
-                        state["source_error"] = ""
                     host.pref_set(pref, "source" if not is_reference else "reference", path)
                 if note:
                     what = "参考 OGM" if is_reference else "源文件"
-                    if is_reference:
-                        state["reference_probed"] = False
-                        state["reference_path"] = ""
-                        state["reference_error"] = note
-                    else:
-                        state["source_probed"] = False
-                        state["source_path"] = ""
-                        state["source_error"] = note
                     message("%s 参数解析失败 —— %s" % (what, note))
                 else:
-                    message("参数解析完成")
+                    message("参数解析完成（%s）" % (state["probe_note"] or "ffprobe"))
                 if not state["encoders_scanned"]:
                     scan_encoders()
-                # ★ 线程契约：worker 里不碰控件 —— 刷新界面交给回主线程的回调
                 message("参数解析收工")
 
             if not ui.task_run(panel, "解析 %s" % path.rsplit("/", 1)[-1], worker):

@@ -190,6 +190,52 @@ def main() -> int:
             problems.append("%s：插件门面解析不一致（%s）" % (name, fields))
             print("  ✗ 插件 %s" % name)
 
+    # ── 插件页 probe_file 的**四条件**（运行期；模拟响应，不执行外部程序）──
+    print("  ── 插件 probe_file 四条件（无 ffprobe / 起不来 / 返回码 / 非法 JSON）──")
+    sample_text = (SAMPLES / "ogm_theora_vorbis.ffmpeg_i.txt").read_text(
+        encoding="utf-8", errors="replace")
+    good_ffmpeg = {"started": True, "normal_exit": True, "exit_code": 1, "stderr": sample_text}
+    bad_json = {"started": True, "normal_exit": True, "exit_code": 0, "stdout": "not json"}
+    start_fail = {"started": False, "error": "no such file"}
+    exit_fail = {"started": True, "normal_exit": True, "exit_code": 2, "stdout": ""}
+    conditions = [
+        ("no_probe", {"found": True, "has_probe": False, "ffmpeg": "FFMPEG", "ffprobe": "FFPROBE"},
+         None, good_ffmpeg),
+        ("probe_start_fail", {"found": True, "has_probe": True, "ffmpeg": "FFMPEG", "ffprobe": "FFPROBE"},
+         start_fail, good_ffmpeg),
+        ("probe_exit_nonzero", {"found": True, "has_probe": True, "ffmpeg": "FFMPEG", "ffprobe": "FFPROBE"},
+         exit_fail, good_ffmpeg),
+        ("probe_bad_json", {"found": True, "has_probe": True, "ffmpeg": "FFMPEG", "ffprobe": "FFPROBE"},
+         bad_json, good_ffmpeg),
+    ]
+    for name, paths, ffprobe_resp, ffmpeg_resp in conditions:
+        payload = json.dumps({"mode": "probe_file", "path": str(stderr_file),
+                              "paths": paths, "ffprobe_resp": ffprobe_resp or {},
+                              "ffmpeg_resp": ffmpeg_resp}, ensure_ascii=False)
+        proc = subprocess.run([str(CLI), "--py-plugin-call", str(ROOT / "plugins"),
+                               "--plugin", "video_page.py", payload],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        text = proc.stdout.decode("utf-8", "replace")
+        fields = {}
+        for ln in text.splitlines():
+            if ln.strip().startswith("PYPLUGINCALL") and " result=" in ln:
+                try:
+                    for line in json.loads(ln.split(" result=", 1)[1]).get("lines", []):
+                        parts = line.split("\t")
+                        if len(parts) == 3 and parts[0] == "PROBEFILE":
+                            fields[parts[1]] = parts[2]
+                except ValueError:
+                    pass
+        ok_case = (fields.get("probed") == "1" and
+                   fields.get("codec") == "theora" and
+                   "降级" in fields.get("probe_note", "") and
+                   "FFMPEG" in fields.get("calls", ""))
+        if ok_case:
+            print("  ✓ 插件 %s（note=%s）" % (name, fields.get("probe_note")))
+        else:
+            problems.append("%s：插件四条件未降级（%s）" % (name, fields))
+            print("  ✗ 插件 %s" % name)
+
     # ── L1 边角（★ **合成 stderr，不是真机样本**；与上面的 L2 真样本分开列）──
     #   ① avg 无效（只有 tbr）⇒ 必须回落 r_frame_rate；② 视频行没有 kb/s ⇒ has_vbr=0，
     #   走 -q:v 7 而不是 -b:v 0；③ fps/tbr 都无效 ⇒ 0，且不崩。
