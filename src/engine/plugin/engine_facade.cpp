@@ -40,6 +40,7 @@ const char* const kMethodNames[] = {
     // ★★ P12a：video 页那一组（第五页迁移）
     "video_find_ffmpeg", "video_major_version", "video_version_rejected",
     "video_plan_transcode", "video_check_output_conflict", "video_parse_ffprobe",
+    "video_parse_ffmpeg_i",
     "video_parse_encoders", "video_progress_from_line",
     // ★★ P14-0a：fs 面第一批（第六页迁移）
     "fs_formats", "fs_format_to_db", "fs_format_is_sqfs", "fs_format_is_auto",
@@ -100,6 +101,7 @@ bool has_impl(const EngineFacade& facade, const std::string& name) {
     if (name == "video_plan_transcode") return static_cast<bool>(facade.video_plan_transcode);
     if (name == "video_check_output_conflict") return static_cast<bool>(facade.video_check_output_conflict);
     if (name == "video_parse_ffprobe") return static_cast<bool>(facade.video_parse_ffprobe);
+    if (name == "video_parse_ffmpeg_i") return static_cast<bool>(facade.video_parse_ffmpeg_i);
     if (name == "video_parse_encoders") return static_cast<bool>(facade.video_parse_encoders);
     if (name == "video_progress_from_line") return static_cast<bool>(facade.video_progress_from_line);
     if (name == "fs_formats") return static_cast<bool>(facade.fs_formats);

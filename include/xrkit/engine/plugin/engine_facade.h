@@ -704,6 +704,9 @@ struct EngineFacade {
     std::function<VideoPlan(const VideoRequest&)> video_plan_transcode;
     std::function<VideoOutputCheck(const VideoRequest&)> video_check_output_conflict;
     std::function<VideoMediaInfo(const std::string& json)> video_parse_ffprobe;
+    // ★ P-798：无 ffprobe 时的降级解析（`ffmpeg -i` stderr；解析只在引擎）
+    std::function<VideoMediaInfo(const std::string& text, long long file_size_bytes)>
+        video_parse_ffmpeg_i;
     std::function<std::vector<std::string>(const std::string& output)> video_parse_encoders;
     std::function<VideoProgress(const std::string& line, double duration_sec)>
         video_progress_from_line;

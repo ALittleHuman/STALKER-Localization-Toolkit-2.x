@@ -188,6 +188,7 @@ EXPECT_ENGINE = {
     "video_plan_transcode": "构建转码 argv 与面板要显示的每个值",
     "video_check_output_conflict": "输出撞车（源/参考/已存在）+ 引擎给的理由",
     "video_parse_ffprobe": "ffprobe JSON → 媒体信息",
+    "video_parse_ffmpeg_i": "`ffmpeg -i` stderr → 媒体信息（无 ffprobe 的降级路径）",
     "video_parse_encoders": "`ffmpeg -encoders` → 编码器集合",
     "video_progress_from_line": "进度行 → 百分比（上限 99.5）",
     # ★★ P14-0a：fs 面第一批（第六页迁移用的纯函数那组）

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 # NON-PRODUCT-FIXTURE: 本文件是**插件 API 能力验证夹具**（非产品）——产品实现是 C++ 内置六页；不许当第二真源（P17-81）
 """**第五页迁移：视频转换**（原 C++ `video_page` 的插件版）。
 
@@ -280,18 +281,68 @@ def register(api):
             if not path:
                 return
             paths = ffmpeg_paths()
+            # ★ P-798（2026-11-02）：降级条件是"**不可用**"，不只是"没找到"。
+            #   有 ffmpeg 就先用 `ffmpeg -i` 探；两者都不可用才报错。
+            probe_text_mode = False
             if not paths.get("has_probe"):
-                message = "没找到 ffprobe（%s）。" % search_summary(paths)
-                if is_reference:
-                    state["reference_error"] = message
-                else:
-                    state["source_error"] = message
-                ui.log("视频转换：%s" % message)
-                refresh_display()
-                return
+                if not paths.get("found"):
+                    message = "没找到 ffprobe/ffmpeg（%s）。" % search_summary(paths)
+                    if is_reference:
+                        state["reference_error"] = message
+                    else:
+                        state["source_error"] = message
+                    ui.log("视频转换：%s" % message)
+                    refresh_display()
+                    return
+                probe_text_mode = True
+                state["probe_note"] = "缺 ffprobe ⇒ 已用 ffmpeg -i 降级"
 
             def worker(progress_sink, message):
                 lines = []
+                if probe_text_mode:
+                    # `ffmpeg -i` 的信息在 stderr；退出码非 0 是正常的，只看能否解析出流。
+                    result = host.run_process({
+                        "program": paths["ffmpeg"],
+                        "args": ["-hide_banner", "-nostdin", "-i", path],
+                        "on_stderr": lines.append,
+                    })
+                    text = "\n".join(lines)
+                    try:
+                        size = os.path.getsize(path)
+                    except OSError:
+                        size = -1
+                    info = engine.video_parse_ffmpeg_i(text, size)
+                    if result.get("started") and info.get("parsed"):
+                        note = ""
+                        if is_reference:
+                            state["reference_info"] = info
+                            state["reference_path"] = path
+                            state["reference_probed"] = True
+                            state["reference_error"] = ""
+                        else:
+                            state["source_info"] = info
+                            state["source_path"] = path
+                            state["source_probed"] = True
+                            state["source_error"] = ""
+                        host.pref_set(pref, "source" if not is_reference else "reference", path)
+                    else:
+                        note = "ffmpeg -i 也拿不到参数（%s）" % (
+                            result.get("error") or "stderr 无法解析")
+                    if note:
+                        what = "参考 OGM" if is_reference else "源文件"
+                        if is_reference:
+                            state["reference_probed"] = False
+                            state["reference_error"] = note
+                        else:
+                            state["source_probed"] = False
+                            state["source_error"] = note
+                        message("%s 参数解析失败 —— %s" % (what, note))
+                    else:
+                        message("参数解析完成（降级路径）")
+                    if not state["encoders_scanned"]:
+                        scan_encoders()
+                    message("参数解析收工")
+                    return
                 result = host.run_process({
                     "program": paths["ffprobe"],
                     "args": ["-v", "quiet", "-print_format", "json", "-show_streams",

@@ -1573,6 +1573,11 @@ public:
         if (facade == nullptr) return py::none();
         return video_media_to_python(facade->video_parse_ffprobe(json));
     }
+    py::object video_parse_ffmpeg_i(const std::string& text, long long file_size_bytes) const {
+        const EngineFacade* facade = available("video_parse_ffmpeg_i");
+        if (facade == nullptr) return py::none();
+        return video_media_to_python(facade->video_parse_ffmpeg_i(text, file_size_bytes));
+    }
     py::object video_parse_encoders(const std::string& output) const {
         const EngineFacade* facade = available("video_parse_encoders");
         if (facade == nullptr) return py::none();
@@ -3285,6 +3290,8 @@ void ensure_api_module() {
                  py::arg("request"))
             .def("video_parse_ffprobe", &PyEngine::video_parse_ffprobe, py::arg("json"))
             .def("video_parse_encoders", &PyEngine::video_parse_encoders, py::arg("output"))
+        .def("video_parse_ffmpeg_i", &PyEngine::video_parse_ffmpeg_i,
+             py::arg("text"), py::arg("file_size_bytes") = -1)
             .def("video_progress_from_line", &PyEngine::video_progress_from_line, py::arg("line"),
                  py::arg("duration_sec"))
             // ★★ P14-0a：fs 面第一批

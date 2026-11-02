@@ -24,6 +24,7 @@
 #include "xrkit/engine/xml/compare.h"
 #include "xrkit/engine/xml/dirdiff.h"
 #include "xrkit/engine/video/ffmpeg.h"
+#include "xrkit/engine/video/probe_text.h"
 #include "xrkit/engine/video/transcode.h"
 #include "xrkit/engine/fs/extract_tree.h"
 #include "xrkit/engine/fs/overlay.h"
@@ -632,6 +633,10 @@ const EngineFacade kFontFacade = {
     /* video_parse_ffprobe：ffprobe JSON → 媒体信息 */
     [](const std::string& json) {
         return video_media_to_facade(evideo::parse_ffprobe_json(json));
+    },
+    /* video_parse_ffmpeg_i：`ffmpeg -i` stderr → 媒体信息（降级路径；解析只在引擎） */
+    [](const std::string& text, long long file_size_bytes) {
+        return video_media_to_facade(evideo::parse_ffmpeg_i_stderr(text, file_size_bytes).info);
     },
     /* video_parse_encoders：`ffmpeg -encoders` 输出 → 编码器集合 */
     [](const std::string& output) { return evideo::parse_encoder_list(output); },
