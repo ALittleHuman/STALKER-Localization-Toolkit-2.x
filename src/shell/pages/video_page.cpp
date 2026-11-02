@@ -3,6 +3,7 @@
 #include "xrkit/core/path.h"
 #include "xrkit/core/theme.h"
 #include "xrkit/engine/video/probe_text.h"
+#include "xrkit/engine/video/capabilities.h"
 
 #include <QDialog>
 #include <QDir>
@@ -793,6 +794,11 @@ QString VideoPage::info_panel_text() const {
                 lines << QStringLiteral("  文件: %1").arg(QFileInfo(path).fileName());
             }
             lines << QStringLiteral("  ⚠ 参数未探测到：%1").arg(error);
+        lines << QStringLiteral("  支持的容器：%1").arg(utf8(engine::video::containers_text()));
+        lines << QStringLiteral("  视频编码：%1").arg(
+            utf8(engine::video::join_dot(engine::video::supported_video_codecs())));
+        lines << QStringLiteral("  音频编码：%1").arg(
+            utf8(engine::video::join_dot(engine::video::supported_audio_codecs())));
         } else {
             lines << media_lines(path, info);  // 里面已经含"文件/大小/时长/视频/音频"那几行
         }
@@ -1038,7 +1044,7 @@ VideoPage::VideoPage(QWidget* parent)
     body_layout()->addWidget(row(QStringLiteral("源文件："), source_edit_, [this] {
         const QString picked = ask_open_file(
             QStringLiteral("选择源视频文件"),
-            QStringLiteral("视频文件 (*.mp4 *.mov *.avi *.mkv *.webm *.m4v);;所有文件 (*.*)"),
+            video_filter(),
             resolve_dialog_start(source_dialog_start()));
         if (!picked.isEmpty()) source_edit_->setText(native(picked));
     }));
@@ -1137,6 +1143,15 @@ VideoPage::VideoPage(QWidget* parent)
     ensure_ffmpeg();
     refresh_status();
     refresh_buttons();
+}
+
+QString VideoPage::video_filter() {
+    // ★ 单一来源：过滤器从 engine::video 的能力清单生成（不许再抄字面量）
+    QStringList patterns;
+    for (const std::string& ext : engine::video::supported_containers()) {
+        patterns << QStringLiteral("*.") + utf8(ext);
+    }
+    return QStringLiteral("视频文件 (%1);;所有文件 (*.*)").arg(patterns.join(QLatin1Char(' ')));
 }
 
 QString VideoPage::status_text() const {

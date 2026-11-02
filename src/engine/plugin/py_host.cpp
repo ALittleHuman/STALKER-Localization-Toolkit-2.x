@@ -1578,6 +1578,27 @@ public:
         if (facade == nullptr) return py::none();
         return video_media_to_python(facade->video_parse_ffmpeg_i(text, file_size_bytes));
     }
+    py::list video_capabilities_containers() const {
+        py::list out;
+        if (const EngineFacade* f = available("video_capabilities_containers")) {
+            for (const auto& v : f->video_capabilities_containers()) out.append(v);
+        }
+        return out;
+    }
+    py::list video_capabilities_video_codecs() const {
+        py::list out;
+        if (const EngineFacade* f = available("video_capabilities_video_codecs")) {
+            for (const auto& v : f->video_capabilities_video_codecs()) out.append(v);
+        }
+        return out;
+    }
+    py::list video_capabilities_audio_codecs() const {
+        py::list out;
+        if (const EngineFacade* f = available("video_capabilities_audio_codecs")) {
+            for (const auto& v : f->video_capabilities_audio_codecs()) out.append(v);
+        }
+        return out;
+    }
     py::object video_parse_encoders(const std::string& output) const {
         const EngineFacade* facade = available("video_parse_encoders");
         if (facade == nullptr) return py::none();
@@ -3290,6 +3311,9 @@ void ensure_api_module() {
                  py::arg("request"))
             .def("video_parse_ffprobe", &PyEngine::video_parse_ffprobe, py::arg("json"))
             .def("video_parse_encoders", &PyEngine::video_parse_encoders, py::arg("output"))
+        .def("video_capabilities_containers", &PyEngine::video_capabilities_containers)
+        .def("video_capabilities_video_codecs", &PyEngine::video_capabilities_video_codecs)
+        .def("video_capabilities_audio_codecs", &PyEngine::video_capabilities_audio_codecs)
         .def("video_parse_ffmpeg_i", &PyEngine::video_parse_ffmpeg_i,
              py::arg("text"), py::arg("file_size_bytes") = -1)
             .def("video_progress_from_line", &PyEngine::video_progress_from_line, py::arg("line"),

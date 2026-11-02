@@ -42,6 +42,8 @@ const char* const kMethodNames[] = {
     "video_plan_transcode", "video_check_output_conflict", "video_parse_ffprobe",
     "video_parse_ffmpeg_i",
     "video_parse_encoders", "video_progress_from_line",
+    "video_capabilities_containers", "video_capabilities_video_codecs",
+    "video_capabilities_audio_codecs",
     // ★★ P14-0a：fs 面第一批（第六页迁移）
     "fs_formats", "fs_format_to_db", "fs_format_is_sqfs", "fs_format_is_auto",
     "fs_is_package_name", "fs_pack_ext_for", "fs_package_folder_name",
@@ -103,6 +105,12 @@ bool has_impl(const EngineFacade& facade, const std::string& name) {
     if (name == "video_parse_ffprobe") return static_cast<bool>(facade.video_parse_ffprobe);
     if (name == "video_parse_ffmpeg_i") return static_cast<bool>(facade.video_parse_ffmpeg_i);
     if (name == "video_parse_encoders") return static_cast<bool>(facade.video_parse_encoders);
+    if (name == "video_capabilities_containers")
+        return static_cast<bool>(facade.video_capabilities_containers);
+    if (name == "video_capabilities_video_codecs")
+        return static_cast<bool>(facade.video_capabilities_video_codecs);
+    if (name == "video_capabilities_audio_codecs")
+        return static_cast<bool>(facade.video_capabilities_audio_codecs);
     if (name == "video_progress_from_line") return static_cast<bool>(facade.video_progress_from_line);
     if (name == "fs_formats") return static_cast<bool>(facade.fs_formats);
     if (name == "fs_format_to_db") return static_cast<bool>(facade.fs_format_to_db);

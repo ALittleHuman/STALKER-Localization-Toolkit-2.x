@@ -25,6 +25,7 @@
 #include "xrkit/engine/xml/dirdiff.h"
 #include "xrkit/engine/video/ffmpeg.h"
 #include "xrkit/engine/video/probe_text.h"
+#include "xrkit/engine/video/capabilities.h"
 #include "xrkit/engine/video/transcode.h"
 #include "xrkit/engine/fs/extract_tree.h"
 #include "xrkit/engine/fs/overlay.h"
@@ -640,6 +641,12 @@ const EngineFacade kFontFacade = {
     },
     /* video_parse_encoders：`ffmpeg -encoders` 输出 → 编码器集合 */
     [](const std::string& output) { return evideo::parse_encoder_list(output); },
+        /* video_capabilities_containers：支持的输入容器（唯一来源 capabilities.h） */
+        []() { return evideo::supported_containers(); },
+        /* video_capabilities_video_codecs：支持的视频编码（同上） */
+        []() { return evideo::supported_video_codecs(); },
+        /* video_capabilities_audio_codecs：支持的音频编码（同上） */
+        []() { return evideo::supported_audio_codecs(); },
     /* video_progress_from_line：进度行 → 百分比（上限 99.5，口径在引擎） */
     [](const std::string& line, double duration_sec) {
         const evideo::ProgressSample sample = evideo::progress_from_line(line, duration_sec);

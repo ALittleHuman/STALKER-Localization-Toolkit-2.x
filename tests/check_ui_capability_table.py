@@ -190,6 +190,9 @@ EXPECT_ENGINE = {
     "video_parse_ffprobe": "ffprobe JSON → 媒体信息",
     "video_parse_ffmpeg_i": "`ffmpeg -i` stderr → 媒体信息（无 ffprobe 的降级路径）",
     "video_parse_encoders": "`ffmpeg -encoders` → 编码器集合",
+    "video_capabilities_containers": "支持的输入容器（唯一来源）",
+    "video_capabilities_video_codecs": "支持的视频编码（唯一来源）",
+    "video_capabilities_audio_codecs": "支持的音频编码（唯一来源）",
     "video_progress_from_line": "进度行 → 百分比（上限 99.5）",
     # ★★ P14-0a：fs 面第一批（第六页迁移用的纯函数那组）
     "fs_formats": "格式表（下拉取值 + 可见名 + is_sqfs/is_auto）",

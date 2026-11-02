@@ -708,6 +708,10 @@ struct EngineFacade {
     std::function<VideoMediaInfo(const std::string& text, long long file_size_bytes)>
         video_parse_ffmpeg_i;
     std::function<std::vector<std::string>(const std::string& output)> video_parse_encoders;
+    // ★ 输入能力清单（单一来源：engine::video 的 capabilities.h）
+    std::function<std::vector<std::string>()> video_capabilities_containers;
+    std::function<std::vector<std::string>()> video_capabilities_video_codecs;
+    std::function<std::vector<std::string>()> video_capabilities_audio_codecs;
     std::function<VideoProgress(const std::string& line, double duration_sec)>
         video_progress_from_line;
 

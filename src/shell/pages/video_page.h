@@ -151,6 +151,7 @@ protected:
     // 夹具 exe 当 ffmpeg/ffprobe 用 ⇒ "按钮 → argv → 进程 → 进度 → 取消"这条链能真跑。
     // 纯读（可被夹具 override ⇒ 状态行可测）；**这里不许 ensure**（会把夹具 override 架空，
     // 状态行又变成依赖本机环境）；要"没有就探一次"的地方用 ensure_ffmpeg()
+    static QString video_filter();
     virtual engine::video::FfmpegPaths resolve_ffmpeg() const;
     engine::video::FfmpegPaths ensure_ffmpeg();
     // 「找不到 ffmpeg」时要如实报出**试过哪些路径**（用户红线：不能只打一行泛泛的话）

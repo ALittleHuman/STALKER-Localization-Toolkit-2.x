@@ -129,6 +129,19 @@ def main() -> int:
         else:
             fail("E page_factory 里出现了 TextPage（测试页被接回产品）")
 
+    # F：容器/编码清单只许来自 engine/video/capabilities.h（P-174：同一纪律写两份，先腐坏一份）
+    page_cpp = (ROOT / "src" / "shell" / "pages" / "video_page.cpp").read_text(
+        encoding="utf-8", errors="replace")
+    plugin_py = (ROOT / "plugins" / "video_page.py").read_text(encoding="utf-8", errors="replace")
+    if "video_filter()" in page_cpp and "*.mp4" not in page_cpp:
+        ok("F 产品页过滤器由能力清单生成（没有第二份扩展名字面量）")
+    else:
+        fail("F 产品页还在硬写扩展名列表（应走 video_filter() + capabilities.h）")
+    if "containers_text()" in page_cpp and "video_capabilities_containers()" in plugin_py:
+        ok("F 错误文案的产品页/插件页都引用同一份能力清单")
+    else:
+        fail("F 错误文案没有引用能力清单（产品页 containers_text / 插件 video_capabilities_*）")
+
     if PROBLEMS:
         print("SHELL-STATIC-GUARDS: FAIL（%d 处）" % len(PROBLEMS))
         return 1

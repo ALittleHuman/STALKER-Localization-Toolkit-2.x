@@ -315,6 +315,12 @@ def register(api):
                     lines.append("  文件: %s" % name)
                     lines.append("  ⚠ 参数未探测到：%s"
                                  % (error or "正在解析（还没出结论）"))
+                    lines.append("  支持的容器：%s"
+                                 % " · ".join(engine.video_capabilities_containers()))
+                    lines.append("  视频编码：%s"
+                                 % " · ".join(engine.video_capabilities_video_codecs()))
+                    lines.append("  音频编码：%s"
+                                 % " · ".join(engine.video_capabilities_audio_codecs()))
                 lines.append("")
 
             if state["source_probed"] and state["reference_probed"]:

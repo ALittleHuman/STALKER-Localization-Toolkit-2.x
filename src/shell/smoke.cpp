@@ -9503,6 +9503,35 @@ SmokeResult run_smoke() {
                   QStringLiteral("视频：构造后就绪（状态行 %1）").arg(ipage.status_text()));
         }
 
+        // 不支持容器：文案必须**说清支持什么**（fail-closed，不静默）
+        {
+            const QString flv = vt.path() + QStringLiteral("/bad_container.flv");
+            { std::ofstream out(flv.toStdString(), std::ios::binary); out << "FLV"; }
+            SelfCheckVideoPage upage;
+            upage.paths.found = true;
+            upage.paths.has_probe = true;
+            upage.paths.ffmpeg = fake.toStdString();
+            upage.paths.ffprobe = fake.toStdString();
+            upage.paths.version = "ffmpeg version 7.1.5 fake-fixture";
+            qputenv("XRKIT_FAKE_FFMPEG_MODE", "fail");
+            upage.source_edit()->setText(flv);
+            upage.apply_file(flv, false);
+            QElapsedTimer uclock;
+            uclock.start();
+            while (!upage.source_ready() &&
+                   !upage.info_panel_text().contains(QStringLiteral("参数未探测到")) &&
+                   uclock.elapsed() < 15000) {
+                QCoreApplication::processEvents();
+                QThread::msleep(10);
+            }
+            qputenv("XRKIT_FAKE_FFMPEG_MODE", "");
+            check(upage.info_panel_text().contains(QStringLiteral("支持的容器")) &&
+                      upage.info_panel_text().contains(QStringLiteral("mp4")) &&
+                      upage.info_panel_text().contains(QStringLiteral("webm")),
+                  QStringLiteral("视频：读不出来时列支持清单（%1）")
+                      .arg(upage.info_panel_text().left(120)));
+        }
+
         // ⑥c（HA 复核）：无 ffprobe 时 Result 也必须走降级（"转换完成后解析产物"这条链）
         {
             SelfCheckVideoPage cpage;
