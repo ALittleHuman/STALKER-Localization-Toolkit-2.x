@@ -305,8 +305,14 @@ public:
     explicit PyServices(std::string owner) : owner_(std::move(owner)) {}
 
     void register_service(const std::string& name, py::object fn) {
+        if (owner_.empty()) {
+            throw std::runtime_error("服务注册被拒：owner 为空（加载失败/内置上下文不允许注册）：" + name);
+        }
         if (name.find('.') == std::string::npos) {
             throw std::runtime_error("服务名必须带命名空间（例：net.http_get/1）：" + name);
+        }
+        if (name.rfind('/') == std::string::npos) {
+            throw std::runtime_error("服务名必须带版本（例：net.http_get/1）：" + name);
         }
         if (!PyCallable_Check(fn.ptr())) {
             throw std::runtime_error("服务处理函数不可调用：" + name);
@@ -326,6 +332,20 @@ public:
             std::lock_guard<std::mutex> lock(table.mutex);
             auto it = table.map.find(name);
             if (it == table.map.end()) {
+                // 版本不同 ≠ 没人提供：按 base 名找现有版本，报"不兼容"而不是"不可用"
+                const std::string base = name.substr(0, name.rfind('/'));
+                std::vector<std::string> others;
+                for (const auto& kv : table.map) {
+                    if (kv.first.compare(0, base.size(), base) == 0 &&
+                        kv.first.size() > base.size() && kv.first[base.size()] == '/') {
+                        others.push_back(kv.first);
+                    }
+                }
+                if (!others.empty()) {
+                    std::string have;
+                    for (const auto& o : others) have += (have.empty() ? "" : ", ") + o;
+                    throw std::runtime_error("服务版本不兼容：需要 " + name + "，已有 " + have);
+                }
                 throw std::runtime_error("服务不可用（没有提供者）：" + name);
             }
             fn = it->second.fn;   // 复制后在锁外调用
