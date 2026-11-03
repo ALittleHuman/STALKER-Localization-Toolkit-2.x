@@ -270,47 +270,79 @@ UiHandle handle_of_widget(const py::object& widget_or_none);
 
 // ── 跨插件服务（api.services）──────────────────────────────────────────────
 // 规则（docs/2.0.0-跨插件服务契约.md）：名字必须带命名空间；重复注册报错；
-// 调用实时查找（不缓存 callable）；同线程同步执行；未注册 ⇒ 抛明确异常。
-struct ServiceTable {
-    std::map<std::string, py::object> map;
+// 调用实时查找（不缓存 callable）；**按 owner 归属，插件回滚/禁用即注销**；
+// 同线程同步执行（锁内只查表复制，调用在锁外，避免重入死锁）。
+struct ServiceEntry {
+    std::string owner;
+    py::object fn;
 };
 
+struct ServiceTable {
+    std::mutex mutex;
+    std::map<std::string, ServiceEntry> map;
+};
+
+// ★ 刻意泄漏、永不析构：静态对象会在 Py_FinalizeEx 之后才析构，那时 py::object 已失效。
 inline ServiceTable& service_table() {
-    static ServiceTable table;
-    return table;
+    static ServiceTable* table = new ServiceTable();
+    return *table;
+}
+
+void unregister_services(const std::string& owner) {
+    auto& table = service_table();
+    std::lock_guard<std::mutex> lock(table.mutex);
+    for (auto it = table.map.begin(); it != table.map.end();) {
+        if (it->second.owner == owner) {
+            it = table.map.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 class PyServices {
 public:
+    explicit PyServices(std::string owner) : owner_(std::move(owner)) {}
+
     void register_service(const std::string& name, py::object fn) {
         if (name.find('.') == std::string::npos) {
-            throw std::runtime_error("服务名必须带命名空间（例：net.http_get）：" + name);
+            throw std::runtime_error("服务名必须带命名空间（例：net.http_get/1）：" + name);
         }
         if (!PyCallable_Check(fn.ptr())) {
             throw std::runtime_error("服务处理函数不可调用：" + name);
         }
         auto& table = service_table();
+        std::lock_guard<std::mutex> lock(table.mutex);
         if (table.map.count(name) != 0) {
             throw std::runtime_error("服务已被注册（不静默覆盖）：" + name);
         }
-        table.map.emplace(name, std::move(fn));
+        table.map.emplace(name, ServiceEntry{owner_, std::move(fn)});
     }
 
     py::object call(const std::string& name, py::args args) const {
-        auto& table = service_table();
-        auto it = table.map.find(name);
-        if (it == table.map.end()) {
-            throw std::runtime_error("服务不可用（没有提供者）：" + name);
+        py::object fn;
+        {
+            auto& table = service_table();
+            std::lock_guard<std::mutex> lock(table.mutex);
+            auto it = table.map.find(name);
+            if (it == table.map.end()) {
+                throw std::runtime_error("服务不可用（没有提供者）：" + name);
+            }
+            fn = it->second.fn;   // 复制后在锁外调用
         }
-        py::object fn = it->second;   // 每次重新取：不缓存 callable
         return fn(*args);
     }
 
     std::vector<std::string> available() const {
         std::vector<std::string> names;
-        for (const auto& kv : service_table().map) names.push_back(kv.first);
+        auto& table = service_table();
+        std::lock_guard<std::mutex> lock(table.mutex);
+        for (const auto& kv : table.map) names.push_back(kv.first);
         return names;
     }
+
+private:
+    std::string owner_;
 };
 
 class PyPluginApi {
@@ -3631,7 +3663,8 @@ void ensure_api_module() {
             .def_property_readonly("host",
                                    [](const PyPluginApi& api) { return PyHost(api.owner()); })
             // ★ 2026-11-03（用户口径）：跨插件服务**宿主自带**；联网插件提供 net.* 服务
-            .def_property_readonly("services", [](const PyPluginApi&) { return PyServices(); })
+            .def_property_readonly("services",
+                                   [](const PyPluginApi& api) { return PyServices(api.owner()); })
             .def("log", &PyPluginApi::log, py::arg("message"))
             .def("register_command", &PyPluginApi::register_command, py::arg("action_id"),
                  py::arg("label"), py::arg("handler"), py::arg("when") = py::none())
@@ -3833,6 +3866,11 @@ void shutdown_python() {
             main_thread_state() = nullptr;
             status.gil_released = false;
         }
+        {
+            auto& table = service_table();
+            std::lock_guard<std::mutex> lock(table.mutex);
+            table.map.clear();   // finalize 前清掉 py::object，避免退出期析构失效对象
+        }
         const int rc = Py_FinalizeEx();
         status.initialized = false;
         status.version.clear();
@@ -4014,6 +4052,7 @@ std::vector<RegistrationError> load_python_plugins_impl(
             // ★ 先**按 owner 回滚**再记账：半个插件的注册留在表里＝指向坏插件的回调
             //   （C ABI 那条 S1-2 的血账，这里同一套口径、同一个实现）。
             const size_t undone = registry.rollback_plugin(owner);
+            unregister_services(owner);   // 服务也要按 owner 清，否则禁用的插件还在被调用
             const std::string message =
                 failure + "（已按 owner 回滚 " + std::to_string(undone) + " 条注册）";
             errors.push_back({owner, message});
