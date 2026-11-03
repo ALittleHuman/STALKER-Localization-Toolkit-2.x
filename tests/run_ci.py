@@ -3558,6 +3558,23 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_plugin_services(release: bool) -> None:
+    """跨插件服务契约（api.services）：provide/call/重复/缺失/命名空间。"""
+    say("[?] 跨插件服务 api.services（宿主自带）")
+    script = ROOT / "tests" / "check_plugin_services.py"
+    if not require_repo_file(script, "跨插件服务判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("PLUGIN-SERVICES"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("跨插件服务契约全过")
+    else:
+        fail("跨插件服务契约不通过（见上）")
+
+
 def step_ffmpeg_min(release: bool) -> None:
     """自建 minimal ffmpeg 的验收（staging；没编过就跳过，不红）。"""
     say("[?] 自建 minimal ffmpeg（staging 验收）")
@@ -7800,6 +7817,7 @@ STEPS = [
     ("video-probe-text", step_video_probe_text),
     ("shell-static-guards", step_shell_static_guards),
     ("ffmpeg-min", step_ffmpeg_min),
+    ("plugin-services", step_plugin_services),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),

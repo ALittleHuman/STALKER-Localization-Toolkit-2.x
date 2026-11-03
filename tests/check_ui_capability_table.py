@@ -24,6 +24,7 @@ CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 # Api：插件身份 + 注册面 + 控件门面入口
 EXPECT_API = {
     "api_version": "契约版本（规格 §五「API 表版本化」）",
+    "services": "跨插件服务（register/call/available；宿主自带）",
     "plugin_file": "插件文件名（owner；也是命令 id 前缀）",
     "plugin_dir": "插件所在目录（夹具据此落标记文件）",
     "ui": "★控件门面（L1/L2 的入口；表外无门）",

@@ -268,6 +268,51 @@ CommandHandler wrap_python_handler(py::object callable, const std::string& label
 //   定义在下面（先声明后定义，同一个匿名命名空间里没问题）。
 UiHandle handle_of_widget(const py::object& widget_or_none);
 
+// ── 跨插件服务（api.services）──────────────────────────────────────────────
+// 规则（docs/2.0.0-跨插件服务契约.md）：名字必须带命名空间；重复注册报错；
+// 调用实时查找（不缓存 callable）；同线程同步执行；未注册 ⇒ 抛明确异常。
+struct ServiceTable {
+    std::map<std::string, py::object> map;
+};
+
+inline ServiceTable& service_table() {
+    static ServiceTable table;
+    return table;
+}
+
+class PyServices {
+public:
+    void register_service(const std::string& name, py::object fn) {
+        if (name.find('.') == std::string::npos) {
+            throw std::runtime_error("服务名必须带命名空间（例：net.http_get）：" + name);
+        }
+        if (!PyCallable_Check(fn.ptr())) {
+            throw std::runtime_error("服务处理函数不可调用：" + name);
+        }
+        auto& table = service_table();
+        if (table.map.count(name) != 0) {
+            throw std::runtime_error("服务已被注册（不静默覆盖）：" + name);
+        }
+        table.map.emplace(name, std::move(fn));
+    }
+
+    py::object call(const std::string& name, py::args args) const {
+        auto& table = service_table();
+        auto it = table.map.find(name);
+        if (it == table.map.end()) {
+            throw std::runtime_error("服务不可用（没有提供者）：" + name);
+        }
+        py::object fn = it->second;   // 每次重新取：不缓存 callable
+        return fn(*args);
+    }
+
+    std::vector<std::string> available() const {
+        std::vector<std::string> names;
+        for (const auto& kv : service_table().map) names.push_back(kv.first);
+        return names;
+    }
+};
+
 class PyPluginApi {
 public:
     PyPluginApi(Registry* registry, std::string owner, std::string plugin_dir)
@@ -3569,6 +3614,10 @@ void ensure_api_module() {
             // ★★ 2026-10-26：P3 图片预览（读不到文件 ⇒ 返回 None，调用侧据此报错）
             .def("image", &PyUi::image, py::arg("parent"), py::arg("path"),
                  py::arg("width") = 0, py::arg("height") = 0);
+        py::class_<PyServices>(m, "Services")
+            .def("register", &PyServices::register_service, py::arg("name"), py::arg("handler"))
+            .def("call", &PyServices::call, py::arg("name"))
+            .def("available", &PyServices::available);
         py::class_<PyPluginApi>(m, "Api")
             .def_property_readonly("plugin_file", &PyPluginApi::owner)
             .def_property_readonly("plugin_dir", &PyPluginApi::plugin_dir)
@@ -3581,6 +3630,8 @@ void ensure_api_module() {
             // ★ P7b：宿主服务门面（`api.host.*`：偏好读写 / exe 目录 / 系统字体目录）
             .def_property_readonly("host",
                                    [](const PyPluginApi& api) { return PyHost(api.owner()); })
+            // ★ 2026-11-03（用户口径）：跨插件服务**宿主自带**；联网插件提供 net.* 服务
+            .def_property_readonly("services", [](const PyPluginApi&) { return PyServices(); })
             .def("log", &PyPluginApi::log, py::arg("message"))
             .def("register_command", &PyPluginApi::register_command, py::arg("action_id"),
                  py::arg("label"), py::arg("handler"), py::arg("when") = py::none())
