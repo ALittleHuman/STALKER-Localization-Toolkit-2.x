@@ -16,6 +16,7 @@
 #include "xrkit/engine/process/run.h"   // ★ P17-11（01 F-04）：命令行引号判据要 `run()` / 拼命令行
 #include "xrkit/engine/text/encoding.h"
 #include "hub.h"
+#include "release_page.h"
 #include "dialog_start.h"
 #include "drop_filter.h"
 #include "font_picker.h"
@@ -748,6 +749,21 @@ SmokeResult run_smoke() {
         {"", "", "toolchain_py", "汉化产线"},
     };
     Hub hub;
+
+    // ① 「查看最新版本（打开发布页）」：入口存在 + URL 固定 HTTPS（只开浏览器，不联网）
+    {
+        bool found_release = false;
+        for (QAction* action : hub.findChildren<QAction*>()) {
+            if (action->text() == QStringLiteral("查看最新版本（打开发布页）")) {
+                found_release = true;
+            }
+        }
+        check(found_release, QStringLiteral("① 菜单里有「查看最新版本（打开发布页）」"));
+        const QString url = QString::fromUtf8(xrkit::shell::kReleasePageUrl);
+        check(url.startsWith(QStringLiteral("https://")) &&
+                  url.endsWith(QStringLiteral("/releases")),
+              QStringLiteral("① 发布页 URL 固定 HTTPS（%1）").arg(url));
+    }
     const int slot_count = static_cast<int>(sizeof(kSlots) / sizeof(kSlots[0]));
     const int extra_count = static_cast<int>(sizeof(kExtraPages) / sizeof(kExtraPages[0]));
     check(slot_count == builtin_page_count(),

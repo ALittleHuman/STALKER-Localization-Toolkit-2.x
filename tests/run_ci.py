@@ -3558,6 +3558,23 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_host_offline(release: bool) -> None:
+    """宿主离线：无网络栈 API；发布页入口只开浏览器。"""
+    say("[?] 宿主离线判据（无网络栈 / 发布页只开浏览器）")
+    script = ROOT / "tests" / "check_host_offline.py"
+    if not require_repo_file(script, "宿主离线判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("HOST-OFFLINE"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("宿主离线判据全过")
+    else:
+        fail("宿主离线判据不通过（见上）")
+
+
 def step_plugin_metadata(release: bool) -> None:
     """`--py-plugins` 元数据（provides/requires/imports，ast 静态读）。"""
     say("[?] 插件元数据（provides/requires/imports）")
@@ -7836,6 +7853,7 @@ STEPS = [
     ("ffmpeg-min", step_ffmpeg_min),
     ("plugin-services", step_plugin_services),
     ("plugin-metadata", step_plugin_metadata),
+    ("host-offline", step_host_offline),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),

@@ -1,4 +1,5 @@
 #include "hub.h"
+#include "release_page.h"
 
 #include "log_box.h"
 #include "plugin_ui.h"
@@ -33,7 +34,9 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QTabBar>
+#include <QDesktopServices>
 #include <QMenu>
+#include <QUrl>
 #include <QMenuBar>
 #include <QPushButton>
 #include <QStringConverter>
@@ -278,6 +281,14 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
 
     // ★ 用户 2026-09-30：「上面除了主题之外，再增加一个调整 UI 控件大小（当然，包括里面的字体）
     //   的下拉菜单。」⇒ 视图菜单里加「界面大小」子菜单（立即生效；字体与控件一起缩放）。
+    // ★ 2026-11-03（用户给了发布页 URL；HA/DSH 裁）：**只打开浏览器，不做检测**。
+    //   文案必须写"打开发布页"——叫"检测版本"会让用户等一个永远不会来的提示。
+    QMenu* help_menu = menuBar()->addMenu(QStringLiteral("帮助"));
+    QAction* release_page = help_menu->addAction(QStringLiteral("查看最新版本（打开发布页）"));
+    connect(release_page, &QAction::triggered, this, [] {
+        QDesktopServices::openUrl(QUrl(QString::fromUtf8(xrkit::shell::kReleasePageUrl)));
+    });
+
     QMenu* size_menu = view_menu->addMenu(QStringLiteral("界面大小"));
     {
         for (const xrkit::shell::UiSizeChoice& item : xrkit::shell::ui_size_choices()) {
