@@ -42,6 +42,8 @@ def main() -> int:
         ("requires=net.http_get/1", "字面量 requires 可见"),
         ("PLUGIN name=c_dynamic provides=? ", "动态构造 ⇒ 输出 ?（不猜）"),
         ("note=PLUGIN_INFO 不是字面量", "动态构造给出可读原因"),
+        ("PLUGIN name=d_imports provides=- requires=- imports=ctypes,os",
+         "imports 静态可见（不执行插件）"),
     ]
     for needle, label in checks:
         if needle in text:
