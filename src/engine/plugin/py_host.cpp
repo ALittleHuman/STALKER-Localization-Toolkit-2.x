@@ -4362,88 +4362,83 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
              " value=" + std::to_string(registry.residue_for(e.plugin).registrations()));
     }
     // ★ 2026-11-03（DSH）：`--py-plugins` 输出每个插件的 provides/requires/imports ——
-    //   **用 ast 静态读 PLUGIN_INFO 字面量，不 import 插件**（import 会执行顶层代码，
-    //   那是 P-16-2a 的旧病）。动态构造 ⇒ 输出 `?`，不猜。
+    //   **用 ast 静态读 PLUGIN_INFO 字面量，不 import 插件**（import 会执行顶层代码 = P-16-2a 旧病）。
+    //   拼接/判空全部在 Python 侧做完，C++ 只读字符串（修：早前在 C++ 里迭代 py::object 会 0xC0000409）。
     std::vector<std::string> lines_out;
     {
         py::gil_scoped_acquire gil;
         py::dict g = py::module_::import("builtins").attr("__dict__");
         py::exec(R"PY(
-import ast
+import ast, os
 
-def _xrkit_plugin_info(path):
+def _join(value):
+    if value is None:
+        return "-"
+    if isinstance(value, (list, tuple, set)):
+        items = [str(v) for v in value if str(v)]
+        return ",".join(items) if items else "-"
+    text = str(value).strip()
+    return text if text else "-"
+
+def _meta(path):
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             tree = ast.parse(fh.read())
     except Exception:
-        return None
+        return {"name": os.path.splitext(os.path.basename(path))[0], "provides": "-",
+                "requires": "-", "imports": "-", "note": "无法解析"}
+    info = None
+    dynamic = False
     for node in tree.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "PLUGIN_INFO":
-                    try:
-                        value = ast.literal_eval(node.value)
-                    except Exception:
-                        return {"__dynamic__": 1}
-                    return value if isinstance(value, dict) else {"__dynamic__": 1}
-    return None
-
-def _xrkit_imports(path):
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            tree = ast.parse(fh.read())
-    except Exception:
-        return ""
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "PLUGIN_INFO" for t in node.targets):
+            try:
+                value = ast.literal_eval(node.value)
+            except Exception:
+                dynamic = True
+                break
+            info = value if isinstance(value, dict) else None
+            dynamic = info is None
+            break
     names = []
     for node in tree.body:
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                names.append(alias.name)
+            names.extend(a.name for a in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             names.append(node.module)
-    return ",".join(sorted(set(names)))
+    out = {
+        "name": os.path.splitext(os.path.basename(path))[0],
+        "provides": "-",
+        "requires": "-",
+        "imports": ",".join(sorted(set(names))) or "-",
+        "note": "",
+    }
+    if dynamic:
+        out["provides"] = "?"
+        out["requires"] = "?"
+        out["note"] = "PLUGIN_INFO 不是字面量（无法静态读取）"
+    elif info is None:
+        out["note"] = "无 PLUGIN_INFO"
+    else:
+        out["provides"] = _join(info.get("provides"))
+        out["requires"] = _join(info.get("requires"))
+    return out
 )PY", g);
-
-        const auto join_list = [](py::object value) -> std::string {
-            if (value.is_none()) return "-";
-            std::string out;
-            for (py::handle item : value) {
-                if (!out.empty()) out += ",";
-                out += py::str(item).cast<std::string>();
-            }
-            return out.empty() ? "-" : out;
-        };
-
         std::error_code ec;
         for (const auto& entry : std::filesystem::directory_iterator(plugin_dir, ec)) {
             if (!entry.is_regular_file() || entry.path().extension() != ".py") continue;
-            const std::string path = entry.path().string();
-            const std::string name = entry.path().stem().string();
-            py::object info = g["_xrkit_plugin_info"](path);
-            std::string provides = "-", required = "-", note;
-            if (info.is_none()) {
-                note = "无 PLUGIN_INFO";
-            } else {
-                py::dict dict = info.cast<py::dict>();
-                if (dict.contains("__dynamic__")) {
-                    provides = "?";
-                    required = "?";
-                    note = "PLUGIN_INFO 不是字面量（无法静态读取）";
-                } else {
-                    provides = join_list(dict.contains("provides") ? dict["provides"] : py::none());
-                    required = join_list(dict.contains("requires") ? dict["requires"] : py::none());
-                }
-            }
-            const std::string imports =
-                g["_xrkit_imports"](path).cast<std::string>();
-            std::string line = "PLUGIN name=" + name + " provides=" + provides +
-                               " requires=" + required + " imports=" +
-                               (imports.empty() ? "-" : imports);
-            if (!note.empty()) line += " note=" + note;
-            lines_out.push_back(line);
-            if (required != "-" && required != "?") {
-                lines_out.push_back("PLUGIN warn name=" + name + " requires=" + required +
-                     " note=由插件自行检查提供者是否存在（加载期不强制）");
+            py::dict meta = g["_meta"](entry.path().string()).cast<py::dict>();
+            const std::string line = "PLUGIN name=" + py::str(meta["name"]).cast<std::string>() +
+                                     " provides=" + py::str(meta["provides"]).cast<std::string>() +
+                                     " requires=" + py::str(meta["requires"]).cast<std::string>() +
+                                     " imports=" + py::str(meta["imports"]).cast<std::string>();
+            const std::string note = py::str(meta["note"]).cast<std::string>();
+            lines_out.push_back(note.empty() ? line : line + " note=" + note);
+            const std::string req = py::str(meta["requires"]).cast<std::string>();
+            if (req != "-" && req != "?") {
+                lines_out.push_back("PLUGIN warn name=" + py::str(meta["name"]).cast<std::string>() +
+                                    " requires=" + req +
+                                    " note=由插件自行检查提供者是否存在（加载期不强制）");
             }
         }
     }

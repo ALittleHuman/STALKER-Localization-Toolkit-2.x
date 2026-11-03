@@ -1,5 +1,7 @@
 # NON-PRODUCT-FIXTURE: 消费者示例（不随包）
 """消费者示例：不自己写 HTTP，只调 net.http_get/1。"""
+PLUGIN_INFO = {"name": "consumer_example", "requires": ["net.http_get/1"]}
+
 
 
 def register(api):

@@ -3558,6 +3558,23 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_plugin_metadata(release: bool) -> None:
+    """`--py-plugins` 元数据（provides/requires/imports，ast 静态读）。"""
+    say("[?] 插件元数据（provides/requires/imports）")
+    script = ROOT / "tests" / "check_plugin_metadata.py"
+    if not require_repo_file(script, "插件元数据判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("PLUGIN-METADATA"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("插件元数据输出全过")
+    else:
+        fail("插件元数据不通过（见上）")
+
+
 def step_plugin_services(release: bool) -> None:
     """跨插件服务契约（api.services）：provide/call/重复/缺失/命名空间。"""
     say("[?] 跨插件服务 api.services（宿主自带）")
@@ -7818,6 +7835,7 @@ STEPS = [
     ("shell-static-guards", step_shell_static_guards),
     ("ffmpeg-min", step_ffmpeg_min),
     ("plugin-services", step_plugin_services),
+    ("plugin-metadata", step_plugin_metadata),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),
