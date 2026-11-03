@@ -4,6 +4,8 @@
 依赖：plugins/_sdk/http_winhttp.py（ctypes + 系统 winhttp；不需要 _ssl.pyd）。
 其他插件只写 api.services.call("net.http_get/1", url, timeout=5)，不重复实现 HTTP。
 """
+PLUGIN_INFO = {"name": "net_http", "provides": ["net.http_get/1"],}
+
 import os
 import sys
 
