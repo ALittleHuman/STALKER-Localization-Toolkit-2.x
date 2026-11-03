@@ -67,6 +67,26 @@ def main() -> int:
     else:
         ok("没有「检查更新」这类误导文案")
 
+    # ★ 2026-11-03（DSH）：SDK 里有 winhttp ⇒ 包内就不能有 plugins_net（否则两条口径互打脸）
+    sdk = ROOT / "plugins" / "_sdk"
+    sdk_has_winhttp = sdk.is_dir() and any(
+        "winhttp" in f.read_text(encoding="utf-8", errors="replace").lower()
+        for f in sdk.glob("*.py"))
+    if sdk_has_winhttp:
+        sys.path.insert(0, str(ROOT / "tests"))
+        from package_select import resolve_current_package
+        pkg, _m, _i, reason = resolve_current_package()
+        if pkg is None:
+            fail("SDK 有 winhttp，但找不到当前包（无法证明 base 包无联网面）")
+        else:
+            stray = list(pkg.rglob("net_http.py")) + [d for d in pkg.rglob("plugins_net") if d.is_dir()]
+            if stray:
+                fail("SDK 有 winhttp 且包内出现 plugins_net/net_http.py（%s）" % reason)
+            else:
+                ok("SDK 的 winhttp 只作示例：包内无 plugins_net/net_http.py")
+    else:
+        ok("plugins/_sdk 没有 winhttp（无需检查包内）")
+
     if PROBLEMS:
         print("HOST-OFFLINE: FAIL（%d 处）" % len(PROBLEMS))
         return 1

@@ -285,8 +285,14 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     //   文案必须写"打开发布页"——叫"检测版本"会让用户等一个永远不会来的提示。
     QMenu* help_menu = menuBar()->addMenu(QStringLiteral("帮助"));
     QAction* release_page = help_menu->addAction(QStringLiteral("查看最新版本（打开发布页）"));
-    connect(release_page, &QAction::triggered, this, [] {
-        QDesktopServices::openUrl(QUrl(QString::fromUtf8(xrkit::shell::kReleasePageUrl)));
+    connect(release_page, &QAction::triggered, this, [this] {
+        const QString url = QString::fromUtf8(xrkit::shell::kReleasePageUrl);
+        if (!QDesktopServices::openUrl(QUrl(url))) {
+            // 域环境/无默认浏览器/杀软拦 ShellExecute 都真实存在 ⇒ 失败必须可读、可复制
+            const QString message = QStringLiteral("打不开浏览器，请手动访问：") + url;
+            if (status_label_ != nullptr) status_label_->setText(message);
+            log_line(message);
+        }
     });
 
     QMenu* size_menu = view_menu->addMenu(QStringLiteral("界面大小"));
