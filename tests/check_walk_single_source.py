@@ -59,6 +59,9 @@ ALLOWED = (
     "src/engine/font/charset.cpp",
     "src/engine/xml/dirdiff.cpp",
     "tools/cli/main.cpp",
+    # 2026-11-04：打包失败归档的**磁盘占用统计**（只读、只用于"FAIL 太大请清理"提示），
+    # 不是候选收集；它遍历 dist/FAIL 而不是用户数据，出错语义不影响任何页面的台账。
+    "tools/cli/build_cmd.cpp",
 )
 EXTRACT = ROOT / "src" / "engine" / "text" / "extract.cpp"
 BATCH = ROOT / "src" / "engine" / "text" / "batch.cpp"

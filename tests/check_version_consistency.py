@@ -82,6 +82,31 @@ def main() -> int:
     (ok if refused else fail)("同号重打被拒（rc=%d）" % p2.returncode)
     (ok if before == after else fail)("拒重打时三件套一个字节都没动")
 
+    # ① 当前包里不许留 INCOMPLETE / .pending（留了 ⇒ 下轮会被当半成品挪走）
+    leftovers = []
+    if pkg_dir.is_dir():
+        if (pkg_dir / "INCOMPLETE").exists():
+            leftovers.append("INCOMPLETE")
+        pend = pkg_dir.parent / (".pending-%d" % idx)
+        if pend.exists():
+            leftovers.append(pend.name)
+    (ok if not leftovers else fail)("当前包内没有 INCOMPLETE/.pending（%s）" % (leftovers or "无"))
+
+    # ② dist/FAIL 里的"像包的目录"不许被选为当前包（DSH 的反向判据）
+    sys.path.insert(0, str(ROOT / "tests"))
+    from package_select import resolve_current_package
+    fake = ROOT / "dist" / "FAIL" / "_probe" / "xrkit_app.exe"
+    fake.parent.mkdir(parents=True, exist_ok=True)
+    fake.write_bytes(b"MZ")
+    pkg2, _ver, _idx, reason2 = resolve_current_package()
+    picked_fail = pkg2 is not None and "FAIL" in pkg2.as_posix()
+    (ok if not picked_fail else fail)("FAIL/ 下的假包不会被选为当前包（%s）" % reason2)
+    fake.unlink()
+    try:
+        fake.parent.rmdir()
+    except OSError:
+        pass
+
     bad = []
     for vdir in (ROOT / "dist").glob("*/*/*"):
         if not vdir.is_dir():

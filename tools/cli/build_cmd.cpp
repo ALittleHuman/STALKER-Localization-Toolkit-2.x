@@ -166,29 +166,40 @@ int run_build_package(const std::vector<std::string>& operands) {
     //       按用户口径"**只有发版提交把这几份一起带上**"。
     // ★ 2026-11-04（HA/DSH）：同号重打守卫 + **半成品可识别可重打**。
     //   事故形态：打包被强杀（P-806 的 Stop-Job）⇒ 清理代码没机会跑 ⇒ 目录留下。
-    //   BETA.106 的"序号已存在 ⇒ 拒绝"会把这种序号**永久堵死**。所以：
-    //   · 目录里有 INCOMPLETE 标记 ⇒ 视为半成品 ⇒ 挪到 FAIL/<序号>-<时间戳>/ 后继续打；
-    //   · 没有标记 ⇒ 真·已打过 ⇒ 拒绝（不许悄悄覆盖）。
+    //   · 意图文件 `.pending-<序号>` **先写**（放在父目录）⇒ 强杀在"建目录之前/之后"都认得出；
+    //   · 目录里的 `INCOMPLETE` 覆盖"目录已建、marker 未写"的窗（双保险）；
+    //   · 有标记 ⇒ 半成品 ⇒ 挪到 FAIL/stale_<序号>_<pid>_<时间戳>/ 留现场后继续；
+    //   · 没标记且"长得像真包"（version.txt + exe）⇒ 拒绝重打；不像 ⇒ 也按半成品处理。
     const std::string pkg_dir_rel = (std::filesystem::path("dist") / want_version / want_prerelease /
                                      std::to_string(want_index)).generic_string();
     const std::string marker_rel = pkg_dir_rel + "/INCOMPLETE";
+    const std::string pending_rel = (std::filesystem::path("dist") / want_version / want_prerelease /
+                                     (".pending-" + std::to_string(want_index))).generic_string();
     {
         namespace stdfs = std::filesystem;
         std::error_code ec;
-        if (stdfs::exists(pkg_dir_rel, ec)) {
-            if (!stdfs::exists(marker_rel, ec)) {
-                std::cout << "BUILDPKG error reason=序号已存在，拒绝重打：" << pkg_dir_rel
-                          << "（没有 INCOMPLETE 标记 ⇒ 视为已发布的包；要重打请换序号)\n";
-                return kFail;
-            }
-            // 半成品：挪到 FAIL/ 留现场（同卷 rename，原子；不删证据）
-            char stamp[32] = {};
+        const auto stamp_now = [] {
+            char stamp[48] = {};
             std::time_t now = std::time(nullptr);
             std::tm tm_buf{};
             localtime_s(&tm_buf, &now);
-            std::strftime(stamp, sizeof(stamp), "%Y-%m-%d_%H_%M_%S", &tm_buf);
+            std::strftime(stamp, sizeof(stamp), "%Y-%m-%d_%H-%M-%S", &tm_buf);
+            return std::string(stamp);
+        };
+        const bool has_pending = stdfs::exists(pending_rel, ec);
+        const bool has_marker = stdfs::exists(marker_rel, ec);
+        const bool looks_real = stdfs::exists(pkg_dir_rel + "/version.txt", ec) &&
+                                stdfs::exists(pkg_dir_rel + "/xrkit_app.exe", ec);
+        const bool dir_exists = stdfs::exists(pkg_dir_rel, ec);
+        if (dir_exists && !has_marker && !has_pending && looks_real) {
+            std::cout << "BUILDPKG error reason=序号已存在，拒绝重打：" << pkg_dir_rel
+                      << "（有 version.txt+exe 且无 INCOMPLETE/.pending ⇒ 视为已发布的包）\n";
+            return kFail;
+        }
+        if (dir_exists && (has_marker || has_pending || !looks_real)) {
             const stdfs::path stale = stdfs::path("dist") / "FAIL" /
-                                      ("stale_" + std::to_string(want_index) + "_" + stamp);
+                                      ("stale_" + std::to_string(want_index) + "_" +
+                                       std::to_string(GetCurrentProcessId()) + "_" + stamp_now());
             stdfs::create_directories(stale.parent_path(), ec);
             stdfs::rename(pkg_dir_rel, stale, ec);
             if (ec) {
@@ -197,33 +208,58 @@ int run_build_package(const std::vector<std::string>& operands) {
                 return kFail;
             }
             std::cout << "BUILDPKG stale-moved " << stale.generic_string()
-                      << "（识别到 INCOMPLETE，已留现场）\n";
+                      << "（识别到半成品标记，已留现场）\n";
         }
-        // 本次新建 + 立刻落 INCOMPLETE（强杀也能识别）
+        // 意图文件：**先写它**，再建目录（强杀也不会堵序号）
+        stdfs::create_directories(stdfs::path(pending_rel).parent_path(), ec);
+        {
+            std::ofstream pending(pending_rel, std::ios::binary);
+            pending << "pending build " << want_index << "\n";
+        }
         stdfs::create_directories(pkg_dir_rel, ec);
         std::ofstream marker(marker_rel, std::ios::binary);
         marker << "INCOMPLETE build " << want_index << "\n";
     }
+    // FAIL/ 是"证据"，但证据会涨到吃满盘 ⇒ 超上限只提示，不自动删
+    {
+        namespace stdfs = std::filesystem;
+        std::error_code ec;
+        const stdfs::path fail_root = stdfs::path("dist") / "FAIL";
+        std::size_t count = 0;
+        unsigned long long total = 0;
+        if (stdfs::is_directory(fail_root, ec)) {
+            for (const auto& e : stdfs::directory_iterator(fail_root, ec)) {
+                if (!e.is_directory(ec)) continue;
+                ++count;
+                for (const auto& sub : stdfs::recursive_directory_iterator(e.path(), ec)) {
+                    if (sub.is_regular_file(ec)) total += sub.file_size(ec);
+                }
+            }
+        }
+        if (count > 5 || total > 500ull * 1024 * 1024) {
+            std::cout << "BUILDPKG note FAIL 归档已有 " << count << " 项 / "
+                      << (total / (1024 * 1024)) << " MB，请手动清理：dist/FAIL/\n";
+        }
+    }
 
-    const std::string header_path = "include/xrkit/core/version.h";
-    const std::string rc_path = "assets/xrkit_winres.rc";
-    const std::string want_prerelease_full =
-        want_prerelease.empty() ? std::string() : want_prerelease + "." + std::to_string(want_index);
     // 留原字节（回滚用）：读不到原文件 ⇒ 明确失败（不去猜）
     std::string header_before;
     std::string rc_before;
     {
-        std::ifstream header_in(header_path, std::ios::binary);
-        std::ifstream rc_in(rc_path, std::ios::binary);
+        std::ifstream header_in("include/xrkit/core/version.h", std::ios::binary);
+        std::ifstream rc_in("assets/xrkit_winres.rc", std::ios::binary);
         if (!header_in || !rc_in) {
-            std::cout << "BUILDPKG error reason=读不到 " << header_path << " 或 " << rc_path
-                      << "（写回与回滚都需要它们）\n";
+            std::cout << "BUILDPKG error reason=读不到 version.h 或 .rc（写回与回滚都需要它们）\n";
             return kFail;
         }
         header_before.assign(std::istreambuf_iterator<char>(header_in),
                              std::istreambuf_iterator<char>());
         rc_before.assign(std::istreambuf_iterator<char>(rc_in), std::istreambuf_iterator<char>());
     }
+    const std::string header_path = "include/xrkit/core/version.h";
+    const std::string rc_path = "assets/xrkit_winres.rc";
+    const std::string want_prerelease_full =
+        want_prerelease.empty() ? std::string() : want_prerelease + "." + std::to_string(want_index);
     if (!xrkit::core::save_version_header(header_path, want_prerelease_full, want_index, err)) {
         std::cout << "BUILDPKG error reason=写回 version.h 失败：" << err << "\n";
         return kFail;
@@ -301,8 +337,12 @@ int run_build_package(const std::vector<std::string>& operands) {
             if (rc == 0) {
                 std::error_code mark_ec;
                 std::filesystem::remove(marker_rel, mark_ec);
-                if (mark_ec) {
-                    std::cout << "BUILDPKG error reason=删不掉 INCOMPLETE 标记：" << marker_rel << "\n";
+                std::error_code pend_ec;
+                std::filesystem::remove(pending_rel, pend_ec);
+                if (mark_ec || pend_ec) {
+                    // ★ 2026-11-04（HA）：包是好的但标记删不掉 ⇒ 下次会被当半成品挪走 ⇒ 必须判红
+                    std::cout << "BUILDPKG error reason=删不掉标记（INCOMPLETE/.pending）："
+                              << marker_rel << " / " << pending_rel << "\n";
                     rc = 1;
                 }
             }
