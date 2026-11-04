@@ -530,8 +530,18 @@ bool save_version_header(const std::string& path, const std::string& prerelease,
     if (!replace_value_line(text, kPrereleaseLine, "\"" + prerelease + "\"", error)) return false;
     if (!replace_value_line(text, kBuildCountLine, std::to_string(build_count), error)) return false;
     if (text == before) {
-        error = "写回没有改变任何字节（形态对不上？）—— " + path;
-        return false;
+        // ★ 2026-11-04（HA/DSH）：**幂等不是错误**。BETA.103 那次"current 前进、version.h 同值"
+        //   就是在这里被当成失败 ⇒ 回滚判"没写过" ⇒ 序号被吃掉、只能靠"直接打下一号"绕过。
+        //   同值 = 目标状态已达成 ⇒ 直接返回成功（写后读回校验照跑）。
+        //   纪律：不靠"字节有没有变"推断意图（同 P-770 goto 自循环那一族）。
+        std::string got_prerelease;
+        int got_index = -1;
+        if (!load_version_header(path, got_prerelease, got_index, error)) return false;
+        if (got_prerelease != prerelease || got_index != build_count) {
+            error = "version.h 已是目标值但读回不一致 —— " + path;
+            return false;
+        }
+        return true;
     }
     // ③ **原子写**（同目录 .part → rename；半写的 version.h 会编出坏版本串）：
     const std::vector<uint8_t> bytes(text.begin(), text.end());

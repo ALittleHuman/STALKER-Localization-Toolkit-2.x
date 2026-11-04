@@ -164,6 +164,21 @@ int run_build_package(const std::vector<std::string>& operands) {
     //   并且把"要写的字节"分成两步（先算后写），任一步失败都回到失败前 ⇒ **序号不被吃掉**。
     //   注：这是**发版**路径；`version.h` 与 `version.json`（以及 .rc）因此变脏，
     //       按用户口径"**只有发版提交把这几份一起带上**"。
+    // ★ 2026-11-04（HA/DSH）：**同一个序号不许打第二次**。
+    //   修前 BETA.103 的缝：current 前进而 version.h 同值 ⇒ 写回判"没改变" ⇒ 只能"直接打 104"绕过，
+    //   绕过就会留下两个中间态目录（dist/BETA/103 半成品 + 104）。这里先挡，失败不留脏：
+    {
+        namespace stdfs = std::filesystem;
+        std::error_code ec;
+        const stdfs::path existing = stdfs::path("dist") / want_version / want_prerelease /
+                                     std::to_string(want_index);
+        if (!want_prerelease.empty() && stdfs::exists(existing, ec)) {
+            std::cout << "BUILDPKG error reason=序号已存在，拒绝重打：" << existing.generic_string()
+                      << "（半成品请删掉或换序号，不许两个同号）\n";
+            return kFail;
+        }
+    }
+
     const std::string header_path = "include/xrkit/core/version.h";
     const std::string rc_path = "assets/xrkit_winres.rc";
     const std::string want_prerelease_full =

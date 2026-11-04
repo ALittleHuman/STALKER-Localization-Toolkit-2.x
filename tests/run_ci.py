@@ -3558,6 +3558,23 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_version_consistency(release: bool) -> None:
+    """版本身份四路一致 + 同号重打拒绝 + 半成品检测（HA/DSH 2026-11-04）。"""
+    say("[?] 版本身份四路一致 / 拒重打 / 半成品")
+    script = ROOT / "tests" / "check_version_consistency.py"
+    if not require_repo_file(script, "版本身份判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("VERSION-CONSISTENCY"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("版本身份四路一致、同号重打被拒、无半成品")
+    else:
+        fail("版本身份判据不通过（见上）")
+
+
 def step_track(release: bool) -> None:
     """追更 CLI 第 2 步：--track（只对 modified 的 xml 跑 text 对比）。"""
     say("[?] 追更 CLI：--track")
@@ -7890,6 +7907,7 @@ STEPS = [
     ("host-offline", step_host_offline),
     ("snapshot-diff", step_snapshot_diff),
     ("track", step_track),
+    ("version-consistency", step_version_consistency),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),
