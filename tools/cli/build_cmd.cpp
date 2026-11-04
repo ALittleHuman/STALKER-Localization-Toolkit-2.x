@@ -164,25 +164,45 @@ int run_build_package(const std::vector<std::string>& operands) {
     //   并且把"要写的字节"分成两步（先算后写），任一步失败都回到失败前 ⇒ **序号不被吃掉**。
     //   注：这是**发版**路径；`version.h` 与 `version.json`（以及 .rc）因此变脏，
     //       按用户口径"**只有发版提交把这几份一起带上**"。
-    // ★ 2026-11-04（HA/DSH）：失败时不许留半成品目录（原子发布的最小子集）。
-    //   目标目录在打包前必须不存在（重打会被下面的守卫拦）；一旦本次打包失败，
-    //   就把这个"本次新建的目录"整个删掉 ⇒ "半成品目录"这个类别不会出现。
+    // ★ 2026-11-04（HA/DSH）：同号重打守卫 + **半成品可识别可重打**。
+    //   事故形态：打包被强杀（P-806 的 Stop-Job）⇒ 清理代码没机会跑 ⇒ 目录留下。
+    //   BETA.106 的"序号已存在 ⇒ 拒绝"会把这种序号**永久堵死**。所以：
+    //   · 目录里有 INCOMPLETE 标记 ⇒ 视为半成品 ⇒ 挪到 FAIL/<序号>-<时间戳>/ 后继续打；
+    //   · 没有标记 ⇒ 真·已打过 ⇒ 拒绝（不许悄悄覆盖）。
     const std::string pkg_dir_rel = (std::filesystem::path("dist") / want_version / want_prerelease /
                                      std::to_string(want_index)).generic_string();
-
-    // ★ 2026-11-04（HA/DSH）：**同一个序号不许打第二次**。
-    //   修前 BETA.103 的缝：current 前进而 version.h 同值 ⇒ 写回判"没改变" ⇒ 只能"直接打 104"绕过，
-    //   绕过就会留下两个中间态目录（dist/BETA/103 半成品 + 104）。这里先挡，失败不留脏：
+    const std::string marker_rel = pkg_dir_rel + "/INCOMPLETE";
     {
         namespace stdfs = std::filesystem;
         std::error_code ec;
-        const stdfs::path existing = stdfs::path("dist") / want_version / want_prerelease /
-                                     std::to_string(want_index);
-        if (!want_prerelease.empty() && stdfs::exists(existing, ec)) {
-            std::cout << "BUILDPKG error reason=序号已存在，拒绝重打：" << existing.generic_string()
-                      << "（半成品请删掉或换序号，不许两个同号）\n";
-            return kFail;
+        if (stdfs::exists(pkg_dir_rel, ec)) {
+            if (!stdfs::exists(marker_rel, ec)) {
+                std::cout << "BUILDPKG error reason=序号已存在，拒绝重打：" << pkg_dir_rel
+                          << "（没有 INCOMPLETE 标记 ⇒ 视为已发布的包；要重打请换序号)\n";
+                return kFail;
+            }
+            // 半成品：挪到 FAIL/ 留现场（同卷 rename，原子；不删证据）
+            char stamp[32] = {};
+            std::time_t now = std::time(nullptr);
+            std::tm tm_buf{};
+            localtime_s(&tm_buf, &now);
+            std::strftime(stamp, sizeof(stamp), "%Y-%m-%d_%H_%M_%S", &tm_buf);
+            const stdfs::path stale = stdfs::path("dist") / "FAIL" /
+                                      ("stale_" + std::to_string(want_index) + "_" + stamp);
+            stdfs::create_directories(stale.parent_path(), ec);
+            stdfs::rename(pkg_dir_rel, stale, ec);
+            if (ec) {
+                std::cout << "BUILDPKG error reason=半成品挪不动（" << ec.message()
+                          << "）：" << pkg_dir_rel << " —— 请手动删除后重打\n";
+                return kFail;
+            }
+            std::cout << "BUILDPKG stale-moved " << stale.generic_string()
+                      << "（识别到 INCOMPLETE，已留现场）\n";
         }
+        // 本次新建 + 立刻落 INCOMPLETE（强杀也能识别）
+        stdfs::create_directories(pkg_dir_rel, ec);
+        std::ofstream marker(marker_rel, std::ios::binary);
+        marker << "INCOMPLETE build " << want_index << "\n";
     }
 
     const std::string header_path = "include/xrkit/core/version.h";
@@ -278,6 +298,14 @@ int run_build_package(const std::vector<std::string>& operands) {
             cmd2 += log;
             cmd2 += "\" 2>&1";
             rc = run_windowless_utf8(cmd2);
+            if (rc == 0) {
+                std::error_code mark_ec;
+                std::filesystem::remove(marker_rel, mark_ec);
+                if (mark_ec) {
+                    std::cout << "BUILDPKG error reason=删不掉 INCOMPLETE 标记：" << marker_rel << "\n";
+                    rc = 1;
+                }
+            }
         }
     }
 
@@ -311,13 +339,28 @@ fail_archive:;
                       << (h_ok && rc_ok && match ? "ok" : "FAIL")
                       << " prerelease=" << got_prerelease << " build=" << got_index << "\n";
         }
-        // ★ 2026-11-04：本次新建的包目录**整个删掉**（失败不许留半成品）
+        // ★ 2026-11-04（HA/DSH）：失败**不删证据**，挪到 FAIL/ 留现场；
+        //   挪不动就大声说"半成品仍在，请手动删"（下一轮会被 version-consistency 判据抓到）。
         {
-            std::error_code rm_ec;
-            if (std::filesystem::exists(pkg_dir_rel, rm_ec)) {
-                std::filesystem::remove_all(pkg_dir_rel, rm_ec);
-                std::cout << "BUILDPKG cleanup " << (rm_ec ? "FAIL" : "ok") << " " << pkg_dir_rel
-                          << (rm_ec ? "：" + rm_ec.message() : "") << "\n";
+            namespace stdfs = std::filesystem;
+            std::error_code ec;
+            if (stdfs::exists(pkg_dir_rel, ec)) {
+                char stamp[32] = {};
+                std::time_t now = std::time(nullptr);
+                std::tm tm_buf{};
+                localtime_s(&tm_buf, &now);
+                std::strftime(stamp, sizeof(stamp), "%Y-%m-%d_%H_%M_%S", &tm_buf);
+                const stdfs::path dest = stdfs::path("dist") / "FAIL" /
+                                         ("build_" + std::to_string(want_index) + "_" + stamp);
+                stdfs::create_directories(dest.parent_path(), ec);
+                stdfs::rename(pkg_dir_rel, dest, ec);
+                if (ec) {
+                    std::cout << "BUILDPKG cleanup FAIL " << pkg_dir_rel
+                              << " —— 半成品仍在（" << ec.message() << "），请手动删除"
+                              << "；下轮 version-consistency 会判红\n";
+                } else {
+                    std::cout << "BUILDPKG cleanup ok moved-to=" << dest.generic_string() << "\n";
+                }
             }
         }
         // ④ 失败流（用户 2026-09-24 口述 spec）：失败件进 dist\FAIL\、**加构建时间戳重命名**；
