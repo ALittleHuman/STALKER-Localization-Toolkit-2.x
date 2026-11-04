@@ -2763,6 +2763,7 @@ namespace {
 struct TrackFileInfo {
     std::string kind;
     unsigned long long size = 0;
+    long long mtime = 0;   // 复用缓存的判据之一（size+mtime 都相等才复用旧 sha256）
     std::string sha256;
 };
 
@@ -2788,7 +2789,121 @@ bool collect_manifest(const std::filesystem::path& root,
         for (auto& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
         info.kind = (ext == ".xml") ? "xml" : (ext.rfind(".db", 0) == 0 ? "db" : "other");
         info.size = static_cast<unsigned long long>(fs::file_size(entry.path(), ec));
+        {
+            std::error_code time_ec;
+            const auto write_time = fs::last_write_time(entry.path(), time_ec);
+            if (!time_ec) {
+                const auto sys_time = std::chrono::time_point_cast<std::chrono::seconds>(
+                    write_time - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
+                info.mtime = static_cast<long long>(sys_time.time_since_epoch().count());
+            }
+        }
         info.sha256 = sha;
+        out[rel_key] = info;
+    }
+    const fs::path jsgme_path = root / "JSGME.ini";
+    if (fs::is_regular_file(jsgme_path, ec)) {
+        std::ifstream in(jsgme_path);
+        std::string line;
+        while (std::getline(in, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            if (!line.empty()) jsgme.push_back(line);
+        }
+    }
+    return true;
+}
+
+struct BaselineCacheEntry {
+    unsigned long long size = 0;
+    long long mtime = 0;
+    std::string sha256;
+};
+
+// 读 --snapshot 产出的 json（只读我们自己的形状：每行一个 file 对象 + 一行 root_fingerprint）
+bool load_baseline_json(const std::string& path, std::map<std::string, BaselineCacheEntry>& files,
+                        std::string& abs_root, std::size_t& count, unsigned long long& bytes,
+                        std::string& err) {
+    std::ifstream in(path);
+    if (!in) { err = "读不了 baseline：" + path; return false; }
+    const std::regex entry(
+        R"re("rel":\s*"([^"]+)".*?"size":\s*(\d+),\s*"mtime":\s*(-?\d+),\s*"sha256":\s*"([0-9a-f]+)")re");
+    const std::regex fp(
+        R"re("root_fingerprint":\s*\{[^}]*"abs":\s*"([^"]*)",\s*"files":\s*(\d+),\s*"bytes":\s*(\d+))re");
+    std::string line;
+    bool got_fp = false;
+    while (std::getline(in, line)) {
+        std::smatch m;
+        if (std::regex_search(line, m, entry)) {
+            BaselineCacheEntry e;
+            e.size = std::stoull(m[2].str());
+            e.mtime = std::stoll(m[3].str());
+            e.sha256 = m[4].str();
+            files[m[1].str()] = e;
+        }
+        if (!got_fp && std::regex_search(line, m, fp)) {
+            abs_root = m[1].str();
+            count = static_cast<std::size_t>(std::stoull(m[2].str()));
+            bytes = std::stoull(m[3].str());
+            got_fp = true;
+        }
+    }
+    if (files.empty() || !got_fp) { err = "baseline 缺 files/root_fingerprint（不是 --snapshot 产物？）：" + path; return false; }
+    return true;
+}
+
+// 带缓存的旧树收集：size+mtime 都相等才复用旧 sha256；rehash 时全部重算并**校验缓存 sha**
+bool collect_manifest_cached(const std::filesystem::path& root,
+                            const std::map<std::string, BaselineCacheEntry>& cache, bool rehash,
+                            bool verify_cached_sha,
+                            std::map<std::string, TrackFileInfo>& out,
+                            std::vector<std::string>& jsgme, std::string& err) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_directory(root, ec)) { err = "不是目录：" + root.string(); return false; }
+    for (const auto& entry : fs::recursive_directory_iterator(root, ec)) {
+        if (!entry.is_regular_file(ec)) continue;
+        const fs::path rel = fs::relative(entry.path(), root, ec);
+        const std::string rel_key = rel.generic_string();
+        if (rel_key == "JSGME.ini") continue;
+        TrackFileInfo info;
+        const auto dot = rel_key.find_last_of('.');
+        std::string ext = dot == std::string::npos ? "" : rel_key.substr(dot);
+        for (auto& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        info.kind = (ext == ".xml") ? "xml" : (ext.rfind(".db", 0) == 0 ? "db" : "other");
+        info.size = static_cast<unsigned long long>(fs::file_size(entry.path(), ec));
+        {
+            std::error_code time_ec;
+            const auto write_time = fs::last_write_time(entry.path(), time_ec);
+            if (!time_ec) {
+                const auto sys_time = std::chrono::time_point_cast<std::chrono::seconds>(
+                    write_time - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
+                info.mtime = static_cast<long long>(sys_time.time_since_epoch().count());
+            }
+        }
+        const auto it = cache.find(rel_key);
+        if (!rehash && it != cache.end() &&
+            (it->second.size != info.size || it->second.mtime != info.mtime)) {
+            // 旧树在快照之后被动过 ⇒ 不许静默用旧 sha（HA/DSH：这会把"旧快照过期"变成静默比错）
+            err = "old_root 与 baseline 快照不一致（文件 " + rel_key + "）：快照 size=" +
+                  std::to_string(it->second.size) + " mtime=" + std::to_string(it->second.mtime) +
+                  "，现 size=" + std::to_string(info.size) + " mtime=" + std::to_string(info.mtime) +
+                  "；确认旧树没动过，或加 --rehash 全部重算";
+            return false;
+        }
+        if (!rehash && it != cache.end() && it->second.size == info.size &&
+            it->second.mtime == info.mtime) {
+            info.sha256 = it->second.sha256;   // 命中缓存
+        } else {
+            std::string hash_error;
+            info.sha256 = xrkit::core::sha256_file(entry.path().string(), hash_error);
+            if (info.sha256.empty()) { err = "算哈希失败 " + rel_key + "：" + hash_error; return false; }
+        }
+        if (verify_cached_sha && it != cache.end() && it->second.sha256 != info.sha256) {
+            // --rehash 不采用缓存值（已按现算结果继续）；但"缓存与现算不一致"必须可见
+            std::cout << "TRACK warn baseline 的 sha256 与现算不一致（文件 " << rel_key << "）：缓存 "
+                      << it->second.sha256.substr(0, 12) << " vs 现算 "
+                      << info.sha256.substr(0, 12) << " —— 已按现算结果继续（--rehash）\n";
+        }
         out[rel_key] = info;
     }
     const fs::path jsgme_path = root / "JSGME.ini";
@@ -4194,8 +4309,21 @@ int run_cli(const std::vector<std::string>& args) {
         // 追更第 2 步：manifest 预筛 + 文本级对比（**只对 .xml**；其它类型明确说"只到文件级"）。
         // 复用现有 compare_text / parse_text_by_id，不造第二套 diff；有变化也返回 0。
         if (operands.size() < 3) {
-            std::cerr << "TRACK error reason=用法：--track <baseline 目录> <current 目录> <out 目录>\n";
+            std::cerr << "TRACK error reason=用法：--track <baseline 目录> <current 目录> <out 目录>"
+                         " [--baseline <旧快照.json>] [--rehash]\n";
             return kExitUsage;
+        }
+        std::string baseline_json;
+        bool rehash = false;
+        for (std::size_t i = 3; i < operands.size(); ++i) {
+            if (operands[i] == "--baseline" && i + 1 < operands.size()) {
+                baseline_json = operands[++i];
+            } else if (operands[i] == "--rehash") {
+                rehash = true;
+            } else {
+                std::cerr << "TRACK error reason=未知参数 " << operands[i] << "\n";
+                return kExitUsage;
+            }
         }
         namespace fs = std::filesystem;
         const fs::path base_root = fs::path(operands[0]);
@@ -4209,8 +4337,52 @@ int run_cli(const std::vector<std::string>& args) {
         std::map<std::string, TrackFileInfo> base_files, cur_files;
         std::vector<std::string> base_jsgme, cur_jsgme;
         std::string err;
-        if (!collect_manifest(base_root, base_files, base_jsgme, err) ||
-            !collect_manifest(cur_root, cur_files, cur_jsgme, err)) {
+        bool base_ok = false;
+        if (baseline_json.empty()) {
+            base_ok = collect_manifest(base_root, base_files, base_jsgme, err);
+        } else {
+            // ★ 加速器：json 只复用旧 sha256；**old_root 必需**（不然 old 文本无处可取）
+            std::error_code dir_ec;
+            if (!std::filesystem::is_directory(base_root, dir_ec)) {
+                std::cerr << "TRACK error reason=缺少旧树（不是目录）：" << operands[0]
+                          << " —— 没有 old_root 就无法输出 old 文本\n";
+                return kExitFail;
+            }
+            std::map<std::string, BaselineCacheEntry> cache;
+            std::string cached_abs;
+            std::size_t cached_count = 0;
+            unsigned long long cached_bytes = 0;
+            if (!load_baseline_json(baseline_json, cache, cached_abs, cached_count, cached_bytes, err)) {
+                std::cerr << "TRACK error reason=" << err << "\n";
+                return kExitFail;
+            }
+            // 指纹：绝对路径 + 文件数 + 总字节数（路径没变但内容整体换了也要变）
+            std::error_code fp_ec;
+            const std::string abs_root = std::filesystem::absolute(base_root, fp_ec).generic_string();
+            std::size_t live_count = 0;
+            unsigned long long live_bytes = 0;
+            for (const auto& e : std::filesystem::recursive_directory_iterator(base_root, fp_ec)) {
+                if (!e.is_regular_file(fp_ec)) continue;
+                const std::string rel = std::filesystem::relative(e.path(), base_root, fp_ec).generic_string();
+                if (rel == "JSGME.ini") continue;
+                ++live_count;
+                live_bytes += static_cast<unsigned long long>(std::filesystem::file_size(e.path(), fp_ec));
+            }
+            const bool fp_match = (abs_root == cached_abs && live_count == cached_count &&
+                                   live_bytes == cached_bytes);
+            if (!fp_match && !rehash) {
+                std::cerr << "TRACK error reason=baseline 指纹不符（旧树变了或挪了位置）：现 "
+                          << abs_root << " files=" << live_count << " bytes=" << live_bytes
+                          << "，快照 " << cached_abs << " files=" << cached_count
+                          << " bytes=" << cached_bytes << "\n";
+                return kExitFail;
+            }
+            // 指纹相符（旧树没动）时，rehash 顺便校验缓存里的 sha 是否可信
+            base_ok = collect_manifest_cached(base_root, cache, rehash,
+                                              /*verify_cached_sha=*/rehash && fp_match,
+                                              base_files, base_jsgme, err);
+        }
+        if (!base_ok || !collect_manifest(cur_root, cur_files, cur_jsgme, err)) {
             std::cerr << "TRACK error reason=" << err << "\n";
             return kExitFail;
         }
@@ -4396,12 +4568,22 @@ if (action == "--snapshot") {
         json << "{\n  \"schema\": 1,\n  \"root\": \"\",\n  \"jsgme_lines\": [";
         for (std::size_t i = 0; i < jsgme.size(); ++i)
             json << (i ? ", " : "") << "\"" << json_escape(jsgme[i]) << "\"";
-        json << "],\n  \"files\": [\n";
+        json << "],\n";
+        {
+            // root 指纹：绝对路径 + 文件数 + 总字节数（路径没变但内容整体换了也要变）
+            unsigned long long total_bytes = 0;
+            for (const auto& [rel, info] : files) total_bytes += info.size;
+            std::error_code abs_ec;
+            const std::string abs_root = fs::absolute(root, abs_ec).generic_string();
+            json << "  \"root_fingerprint\": {\"abs\": \"" << json_escape(abs_root)
+                 << "\", \"files\": " << files.size() << ", \"bytes\": " << total_bytes << "},\n";
+        }
+        json << "  \"files\": [\n";
         std::size_t written = 0;
         for (const auto& [rel, info] : files) {
             json << (written ? ",\n" : "") << "    {\"rel\": \"" << json_escape(rel)
                  << "\", \"kind\": \"" << info.kind << "\", \"size\": " << info.size
-                 << ", \"sha256\": \"" << info.sha256 << "\"}";
+                 << ", \"mtime\": " << info.mtime << ", \"sha256\": \"" << info.sha256 << "\"}";
             ++written;
         }
         json << "\n  ]\n}\n";

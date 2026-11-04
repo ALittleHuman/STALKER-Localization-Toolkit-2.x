@@ -60,7 +60,8 @@ LOOKBACK = 25
 #   按本判据的口径，增删一处 rc=3 必须重估并改表，这里显式记账。
 # ★ 2026-11-03：USAGE 58→60→61 —— 新增 `--snapshot` / `--diff-snapshot` 缺操作数（用法错误族）；
 #   按本判据口径增删一处 rc=3 必须重估并记账。
-FROZEN = {"USAGE": 61, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
+# ★ 2026-11-04：USAGE 61→62 —— `--track` 的未知参数（--baseline/--rehash 之外的）
+FROZEN = {"USAGE": 62, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
 
 PROBLEMS: list = []
 CASES = 0

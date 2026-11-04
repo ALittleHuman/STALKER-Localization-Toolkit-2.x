@@ -3558,6 +3558,23 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_baseline(release: bool) -> None:
+    """追更加速器：--baseline / --rehash（size+mtime 复用、指纹、旧树变更报错）。"""
+    say("[?] 追更加速器：--baseline / --rehash")
+    script = ROOT / "tests" / "check_baseline.py"
+    if not require_repo_file(script, "追更加速器判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("BASELINE"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("追更加速器全过（复用条件/指纹/旧树变更/逃生口）")
+    else:
+        fail("追更加速器判据不通过（见上）")
+
+
 def step_version_consistency(release: bool) -> None:
     """版本身份四路一致 + 同号重打拒绝 + 半成品检测（HA/DSH 2026-11-04）。"""
     say("[?] 版本身份四路一致 / 拒重打 / 半成品")
@@ -7908,6 +7925,7 @@ STEPS = [
     ("snapshot-diff", step_snapshot_diff),
     ("track", step_track),
     ("version-consistency", step_version_consistency),
+    ("baseline", step_baseline),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),
