@@ -67,6 +67,8 @@
 #include <cmath>
 #include <chrono>
 #include <filesystem>
+#include <sstream>
+#include <regex>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -274,6 +276,8 @@ void print_usage() {
            "  --xml-stats <目录> [--mode m]                XML 统计模式（行数/ID；与 Python 口径对拍）\n"
            "  --xml-compare <a.xml> <b.xml> [--mode m]     XML 单文件对比（与 1.x 口径对拍）\n"
            "  --xml-compare-dirs <目录A> <目录B> [--mode m]  XML 目录对比（逐行/CSV/详情）\n"
+           "  --snapshot <根目录> <out.json>          追更：文件级 manifest（rel/size/sha256 + JSGME 行序）\n"
+           "  --diff-snapshot <旧.json> <新.json>      追更：只比 manifest（added/removed/modified）\n"
            "  --xml-text <输入> <输出>                     XML 文本规范化（判据用）\n"
            "  --xml-csv-probe <输入> <输出>                 XML CSV 渲染探针（对拍用）\n"
            "  --patch-identify <exe>                       二进制补丁**判定半**（与 1.x 金标准逐条对拍）\n"
@@ -4124,6 +4128,153 @@ int run_cli(const std::vector<std::string>& args) {
     }
 
     // XML 统计模式的**比较**探针：两侧同相对路径
+    if (action == "--snapshot") {
+        // 追更第一步：**文件级 manifest**（相对路径 + 大小 + sha256 + JSGME 行序）。
+        // 不做文本解析 —— 文本差异交给 --xml-compare-dirs --mode text（不造第二套 diff）。
+        if (operands.size() < 2) {
+            std::cerr << "SNAPSHOT error reason=用法：--snapshot <根目录> <out.json>\n";
+            return kExitUsage;
+        }
+        namespace fs = std::filesystem;
+        const fs::path root = fs::path(operands[0]);
+        const fs::path out = fs::path(operands[1]);
+        std::error_code ec;
+        if (!fs::is_directory(root, ec)) {
+            std::cerr << "SNAPSHOT error reason=不是目录：" << operands[0] << "\n";
+            return kExitFail;
+        }
+        std::vector<std::pair<std::string, fs::path>> files;
+        for (const auto& entry : fs::recursive_directory_iterator(root, ec)) {
+            if (!entry.is_regular_file(ec)) continue;
+            fs::path rel = fs::relative(entry.path(), root, ec);
+            std::string rel_key = rel.generic_string();
+            if (fs::equivalent(entry.path(), out, ec)) continue;   // 输出文件自己不算
+            // JSGME.ini 单独记在 jsgme_lines（保留行序），不重复算成普通文件
+            if (rel_key == "JSGME.ini") continue;
+            files.emplace_back(rel_key, entry.path());
+        }
+        std::sort(files.begin(), files.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        const auto escape = [](const std::string& s) {
+            std::string o;
+            for (char c : s) {
+                if (c == '"' || c == '\\') { o += '\\'; o += c; }
+                else if (c == '\n') { o += "\\n"; }
+                else { o += c; }
+            }
+            return o;
+        };
+        const auto kind_of = [](const std::string& rel) -> std::string {
+            const auto dot = rel.find_last_of('.');
+            std::string ext = dot == std::string::npos ? "" : rel.substr(dot);
+            for (auto& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            if (ext == ".xml") return "xml";
+            if (ext == ".db" || ext == ".db0" || ext == ".db9" || ext.rfind(".db", 0) == 0) return "db";
+            if (ext == ".ltx" || ext == ".ini") return "text";
+            return "other";
+        };
+        std::ostringstream json;
+        json << "{\n  \"schema\": 1,\n  \"root\": \"\",\n";
+        // JSGME.ini：只记**原始行序**（不同版本覆盖顺序会影响最终文本，顺序要保留）
+        std::vector<std::string> jsgme;
+        const fs::path jsgme_path = root / "JSGME.ini";
+        if (fs::is_regular_file(jsgme_path, ec)) {
+            std::ifstream in(jsgme_path);
+            std::string line;
+            while (std::getline(in, line)) {
+                while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+                if (!line.empty()) jsgme.push_back(line);
+            }
+        }
+        json << "  \"jsgme_lines\": [";
+        for (std::size_t i = 0; i < jsgme.size(); ++i) {
+            json << (i ? ", " : "") << "\"" << escape(jsgme[i]) << "\"";
+        }
+        json << "],\n  \"files\": [\n";
+        std::size_t written = 0;
+        for (const auto& [rel_key, abs] : files) {
+            std::string err;
+            const std::string sha = xrkit::core::sha256_file(abs.string(), err);
+            if (sha.empty()) {
+                std::cerr << "SNAPSHOT error reason=算哈希失败 " << rel_key << "：" << err << "\n";
+                return kExitFail;
+            }
+            std::error_code size_ec;
+            const auto size = fs::file_size(abs, size_ec);
+            json << (written ? ",\n" : "") << "    {\"rel\": \"" << escape(rel_key)
+                 << "\", \"kind\": \"" << kind_of(rel_key) << "\", \"size\": "
+                 << (size_ec ? 0 : static_cast<unsigned long long>(size))
+                 << ", \"sha256\": \"" << sha << "\"}";
+            ++written;
+        }
+        json << "\n  ]\n}\n";
+        if (write_cli_output(operands[1], json.str()) != CliWriteStatus::Ok) {
+            std::cerr << "SNAPSHOT error reason=写不了 " << operands[1] << "\n";
+            return kExitFail;
+        }
+        std::cout << "SNAPSHOT ok files=" << files.size() << " jsgme=" << jsgme.size()
+                  << " out=" << operands[1] << "\n";
+        return kExitOk;
+    }
+
+    if (action == "--diff-snapshot") {
+        // 追更第二步：**只比 manifest**（文件级 added/removed/modified），不读内容。
+        if (operands.size() < 2) {
+            std::cerr << "SNAPDIFF error reason=用法：--diff-snapshot <旧.json> <新.json>\n";
+            return kExitUsage;
+        }
+        const auto load = [](const std::string& path,
+                             std::map<std::string, std::string>& out_sha,
+                             std::vector<std::string>& out_jsgme,
+                             std::string& err) {
+            std::ifstream in(path);
+            if (!in) { err = "读不了 " + path; return false; }
+            std::string line;
+            static const std::regex entry(
+                R"re("rel":\s*"([^"]+)".*?"sha256":\s*"([0-9a-f]+)")re");
+            bool in_jsgme = false;
+            while (std::getline(in, line)) {
+                if (line.find("\"jsgme_lines\"") != std::string::npos) in_jsgme = true;
+                std::smatch m;
+                if (std::regex_search(line, m, entry)) out_sha[m[1].str()] = m[2].str();
+                if (in_jsgme) {
+                    static const std::regex js(R"re("([^"]*)")re");
+                    auto begin = std::sregex_iterator(line.begin(), line.end(), js);
+                    for (auto it = begin; it != std::sregex_iterator(); ++it) {
+                        const std::string v = (*it)[1].str();
+                        if (v == "jsgme_lines") continue;
+                        out_jsgme.push_back(v);
+                    }
+                    if (line.find(']') != std::string::npos) in_jsgme = false;
+                }
+            }
+            return true;
+        };
+        std::map<std::string, std::string> old_sha, new_sha;
+        std::vector<std::string> old_jsgme, new_jsgme;
+        std::string err;
+        if (!load(operands[0], old_sha, old_jsgme, err) || !load(operands[1], new_sha, new_jsgme, err)) {
+            std::cerr << "SNAPDIFF error reason=" << err << "\n";
+            return kExitFail;
+        }
+        std::size_t added = 0, removed = 0, modified = 0;
+        for (const auto& [rel, sha] : new_sha) {
+            auto it = old_sha.find(rel);
+            if (it == old_sha.end()) { ++added; std::cout << "SNAPDIFF added " << rel << "\n"; }
+            else if (it->second != sha) { ++modified; std::cout << "SNAPDIFF modified " << rel << "\n"; }
+        }
+        for (const auto& [rel, sha] : old_sha) {
+            if (new_sha.find(rel) == new_sha.end()) { ++removed; std::cout << "SNAPDIFF removed " << rel << "\n"; }
+        }
+        std::size_t jsgme_changed = (old_jsgme == new_jsgme) ? 0 : 1;
+        if (jsgme_changed) std::cout << "SNAPDIFF jsgme_changed\n";
+        std::cout << "SNAPDIFF ok added=" << added << " removed=" << removed
+                  << " modified=" << modified << " jsgme_changed=" << jsgme_changed
+                  << " changed=" << ((added + removed + modified + jsgme_changed) ? 1 : 0) << "\n";
+        // 退出码：**不改**现有语义（2 = 跳过）⇒ 有变化也返回 0，看 changed= 行
+        return kExitOk;
+    }
+
     if (action == "--xml-compare-dirs") {
         if (operands.size() < 2) {
             std::cerr << "XMLDIRS error reason=用法：--xml-compare-dirs <A 目录> <B 目录> "

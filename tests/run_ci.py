@@ -3558,6 +3558,23 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_snapshot_diff(release: bool) -> None:
+    """追更 CLI 第 1 步：snapshot / diff-snapshot（文件级 manifest）。"""
+    say("[?] 追更 CLI：--snapshot / --diff-snapshot")
+    script = ROOT / "tests" / "check_snapshot_diff.py"
+    if not require_repo_file(script, "追更 CLI 判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("SNAPSHOT-DIFF"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("追更 CLI（文件级）全过")
+    else:
+        fail("追更 CLI 判据不通过（见上）")
+
+
 def step_host_offline(release: bool) -> None:
     """宿主离线：无网络栈 API；发布页入口只开浏览器。"""
     say("[?] 宿主离线判据（无网络栈 / 发布页只开浏览器）")
@@ -7854,6 +7871,7 @@ STEPS = [
     ("plugin-services", step_plugin_services),
     ("plugin-metadata", step_plugin_metadata),
     ("host-offline", step_host_offline),
+    ("snapshot-diff", step_snapshot_diff),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),
