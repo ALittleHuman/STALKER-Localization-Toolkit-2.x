@@ -4204,7 +4204,7 @@ int run_cli(const std::vector<std::string>& args) {
         std::error_code ec;
         fs::create_directories(out_dir / "changed", ec);
 
-        std::cout << "TRACK caps text=xml others=manifest-only (.ltx/.script/.txt 只报文件级变化)\n";
+        std::cout << "TRACK caps text=xml others=manifest-only (.ltx/.script/.txt 只报文件级变化) note=ltx 含 UI 文本、script 含对话，均未做条目级（TODO）\n";
 
         std::map<std::string, TrackFileInfo> base_files, cur_files;
         std::vector<std::string> base_jsgme, cur_jsgme;

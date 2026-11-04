@@ -164,6 +164,12 @@ int run_build_package(const std::vector<std::string>& operands) {
     //   并且把"要写的字节"分成两步（先算后写），任一步失败都回到失败前 ⇒ **序号不被吃掉**。
     //   注：这是**发版**路径；`version.h` 与 `version.json`（以及 .rc）因此变脏，
     //       按用户口径"**只有发版提交把这几份一起带上**"。
+    // ★ 2026-11-04（HA/DSH）：失败时不许留半成品目录（原子发布的最小子集）。
+    //   目标目录在打包前必须不存在（重打会被下面的守卫拦）；一旦本次打包失败，
+    //   就把这个"本次新建的目录"整个删掉 ⇒ "半成品目录"这个类别不会出现。
+    const std::string pkg_dir_rel = (std::filesystem::path("dist") / want_version / want_prerelease /
+                                     std::to_string(want_index)).generic_string();
+
     // ★ 2026-11-04（HA/DSH）：**同一个序号不许打第二次**。
     //   修前 BETA.103 的缝：current 前进而 version.h 同值 ⇒ 写回判"没改变" ⇒ 只能"直接打 104"绕过，
     //   绕过就会留下两个中间态目录（dist/BETA/103 半成品 + 104）。这里先挡，失败不留脏：
@@ -304,6 +310,15 @@ fail_archive:;
             std::cout << "BUILDPKG rollback-header "
                       << (h_ok && rc_ok && match ? "ok" : "FAIL")
                       << " prerelease=" << got_prerelease << " build=" << got_index << "\n";
+        }
+        // ★ 2026-11-04：本次新建的包目录**整个删掉**（失败不许留半成品）
+        {
+            std::error_code rm_ec;
+            if (std::filesystem::exists(pkg_dir_rel, rm_ec)) {
+                std::filesystem::remove_all(pkg_dir_rel, rm_ec);
+                std::cout << "BUILDPKG cleanup " << (rm_ec ? "FAIL" : "ok") << " " << pkg_dir_rel
+                          << (rm_ec ? "：" + rm_ec.message() : "") << "\n";
+            }
         }
         // ④ 失败流（用户 2026-09-24 口述 spec）：失败件进 dist\FAIL\、**加构建时间戳重命名**；
         //    **没产出任何文件 ⇒ 不建目录**（日志直接放 FAIL\ 下）；日志名与文件夹名一致。
