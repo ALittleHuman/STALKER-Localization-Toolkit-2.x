@@ -58,9 +58,9 @@ LOOKBACK = 25
 # 2026-10-27：`--ixr-build` 两处用法错误（缺操作数 / 未知参数）⇒ 53 → 55。
 # ★ 2026-11-01：USAGE 57→58 —— 新增 `--video-probe-text` 缺操作数（用法错误族）；
 #   按本判据的口径，增删一处 rc=3 必须重估并改表，这里显式记账。
-# ★ 2026-11-03：USAGE 58→60 —— 新增 `--snapshot` / `--diff-snapshot` 缺操作数（用法错误族）；
+# ★ 2026-11-03：USAGE 58→60→61 —— 新增 `--snapshot` / `--diff-snapshot` 缺操作数（用法错误族）；
 #   按本判据口径增删一处 rc=3 必须重估并记账。
-FROZEN = {"USAGE": 60, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
+FROZEN = {"USAGE": 61, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
 
 PROBLEMS: list = []
 CASES = 0

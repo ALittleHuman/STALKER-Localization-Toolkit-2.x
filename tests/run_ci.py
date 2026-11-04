@@ -3558,6 +3558,23 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_track(release: bool) -> None:
+    """追更 CLI 第 2 步：--track（只对 modified 的 xml 跑 text 对比）。"""
+    say("[?] 追更 CLI：--track")
+    script = ROOT / "tests" / "check_track.py"
+    if not require_repo_file(script, "追更 --track 判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("TRACK"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("追更 --track 全过")
+    else:
+        fail("追更 --track 判据不通过（见上）")
+
+
 def step_snapshot_diff(release: bool) -> None:
     """追更 CLI 第 1 步：snapshot / diff-snapshot（文件级 manifest）。"""
     say("[?] 追更 CLI：--snapshot / --diff-snapshot")
@@ -7872,6 +7889,7 @@ STEPS = [
     ("plugin-metadata", step_plugin_metadata),
     ("host-offline", step_host_offline),
     ("snapshot-diff", step_snapshot_diff),
+    ("track", step_track),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),

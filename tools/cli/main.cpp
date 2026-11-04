@@ -278,6 +278,7 @@ void print_usage() {
            "  --xml-compare-dirs <目录A> <目录B> [--mode m]  XML 目录对比（逐行/CSV/详情）\n"
            "  --snapshot <根目录> <out.json>          追更：文件级 manifest（rel/size/sha256 + JSGME 行序）\n"
            "  --diff-snapshot <旧.json> <新.json>      追更：只比 manifest（added/removed/modified）\n"
+           "  --track <baseline目录> <current目录> <out目录>  追更：manifest 预筛 + 只对 modified 的 xml 跑文本对比\n"
            "  --xml-text <输入> <输出>                     XML 文本规范化（判据用）\n"
            "  --xml-csv-probe <输入> <输出>                 XML CSV 渲染探针（对拍用）\n"
            "  --patch-identify <exe>                       二进制补丁**判定半**（与 1.x 金标准逐条对拍）\n"
@@ -2754,6 +2755,64 @@ inline CliWriteStatus write_cli_output(const std::string& path_utf8, std::string
 
 }  // namespace
 
+
+namespace {
+// 追更用：一次遍历收集 manifest（rel -> kind/size/sha256）+ JSGME 行序。
+// 与 --snapshot 的遍历同义；两边都改时先改这里（差一处就会有"两个 manifest"）。
+struct TrackFileInfo {
+    std::string kind;
+    unsigned long long size = 0;
+    std::string sha256;
+};
+
+bool collect_manifest(const std::filesystem::path& root,
+                      std::map<std::string, TrackFileInfo>& out,
+                      std::vector<std::string>& jsgme, std::string& err,
+                      const std::filesystem::path& exclude = {}) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_directory(root, ec)) { err = "不是目录：" + root.string(); return false; }
+    for (const auto& entry : fs::recursive_directory_iterator(root, ec)) {
+        if (!entry.is_regular_file(ec)) continue;
+        const fs::path rel = fs::relative(entry.path(), root, ec);
+        const std::string rel_key = rel.generic_string();
+        if (rel_key == "JSGME.ini") continue;
+        if (!exclude.empty() && fs::equivalent(entry.path(), exclude, ec)) continue;
+        std::string hash_error;
+        const std::string sha = xrkit::core::sha256_file(entry.path().string(), hash_error);
+        if (sha.empty()) { err = "算哈希失败 " + rel_key + "：" + hash_error; return false; }
+        TrackFileInfo info;
+        const auto dot = rel_key.find_last_of('.');
+        std::string ext = dot == std::string::npos ? "" : rel_key.substr(dot);
+        for (auto& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        info.kind = (ext == ".xml") ? "xml" : (ext.rfind(".db", 0) == 0 ? "db" : "other");
+        info.size = static_cast<unsigned long long>(fs::file_size(entry.path(), ec));
+        info.sha256 = sha;
+        out[rel_key] = info;
+    }
+    const fs::path jsgme_path = root / "JSGME.ini";
+    if (fs::is_regular_file(jsgme_path, ec)) {
+        std::ifstream in(jsgme_path);
+        std::string line;
+        while (std::getline(in, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            if (!line.empty()) jsgme.push_back(line);
+        }
+    }
+    return true;
+}
+
+std::string json_escape(const std::string& s) {
+    std::string o;
+    for (char c : s) {
+        if (c == '"' || c == '\\') { o += '\\'; o += c; }
+        else if (c == '\n') { o += "\\n"; }
+        else { o += c; }
+    }
+    return o;
+}
+}  // namespace
+
 int run_cli(const std::vector<std::string>& args) {
     bool verbose = false;
     bool pack_dirs = false;
@@ -4128,7 +4187,117 @@ int run_cli(const std::vector<std::string>& args) {
     }
 
     // XML 统计模式的**比较**探针：两侧同相对路径
-    if (action == "--snapshot") {
+    if (action == "--track") {
+        // 追更第 2 步：manifest 预筛 + **只对 modified 的 .xml** 跑现有 compare_text（text 口径）。
+        // 不造第二套 diff；不碰 UI；有变化也返回 0（2 是"跳过"）。
+        if (operands.size() < 3) {
+            std::cerr << "TRACK error reason=用法：--track <baseline 目录> <current 目录> <out 目录>\n";
+            return kExitUsage;
+        }
+        namespace fs = std::filesystem;
+        const fs::path base_root = fs::path(operands[0]);
+        const fs::path cur_root = fs::path(operands[1]);
+        const fs::path out_dir = fs::path(operands[2]);
+        std::error_code ec;
+        fs::create_directories(out_dir / "changed", ec);
+        std::map<std::string, TrackFileInfo> base_files, cur_files;
+        std::vector<std::string> base_jsgme, cur_jsgme;
+        std::string err;
+        if (!collect_manifest(base_root, base_files, base_jsgme, err) ||
+            !collect_manifest(cur_root, cur_files, cur_jsgme, err)) {
+            std::cerr << "TRACK error reason=" << err << "\n";
+            return kExitFail;
+        }
+        std::vector<std::string> added, removed, modified;
+        for (const auto& [rel, info] : cur_files) {
+            auto it = base_files.find(rel);
+            if (it == base_files.end()) added.push_back(rel);
+            else if (it->second.sha256 != info.sha256) modified.push_back(rel);
+        }
+        for (const auto& [rel, info] : base_files) {
+            if (cur_files.find(rel) == cur_files.end()) removed.push_back(rel);
+        }
+        const bool jsgme_changed = (base_jsgme != cur_jsgme);
+        std::size_t changed_files = 0, changed_entries = 0;
+        std::ostringstream report;
+        report << "{\n  \"schema\": 1,\n  \"jsgme_changed\": " << (jsgme_changed ? 1 : 0)
+               << ",\n  \"added\": [";
+        for (std::size_t i = 0; i < added.size(); ++i)
+            report << (i ? ", " : "") << "\"" << json_escape(added[i]) << "\"";
+        report << "],\n  \"removed\": [";
+        for (std::size_t i = 0; i < removed.size(); ++i)
+            report << (i ? ", " : "") << "\"" << json_escape(removed[i]) << "\"";
+        report << "],\n  \"files\": [\n";
+        std::size_t written = 0;
+        for (const std::string& rel : modified) {
+            std::ifstream old_in(base_root / fs::path(rel), std::ios::binary);
+            std::ifstream new_in(cur_root / fs::path(rel), std::ios::binary);
+            std::ostringstream ob, nb;
+            ob << old_in.rdbuf();
+            nb << new_in.rdbuf();
+            const bool is_xml = cur_files[rel].kind == "xml";
+            std::size_t diff_texts = 0, only_old = 0, only_new = 0;
+            std::string tsv;
+            if (is_xml) {
+                const xrkit::engine::xml::XmlCompareResult cmp =
+                    xrkit::engine::xml::compare_text(rel, ob.str(), nb.str(), "", "");
+                diff_texts = cmp.text_diff.size();
+                only_old = cmp.only_a.size();
+                only_new = cmp.only_b.size();
+                for (const auto& row : cmp.text_diff) {
+                    tsv += "changed\t" + row[0] + "\t" + row[1] + "\t" + row[2] + "\n";
+                    report << (written ? ",\n" : "") << "    {\"rel\": \"" << json_escape(rel)
+                           << "\", \"id\": \"" << json_escape(row[0]) << "\", \"status\": \"changed\","
+                           << " \"old\": \"" << json_escape(row[1]) << "\", \"new\": \""
+                           << json_escape(row[2]) << "\"}";
+                    ++written;
+                }
+                for (const auto& id : cmp.only_a) {
+                    tsv += "removed\t" + id + "\n";
+                    report << (written ? ",\n" : "") << "    {\"rel\": \"" << json_escape(rel)
+                           << "\", \"id\": \"" << json_escape(id) << "\", \"status\": \"removed\"}";
+                    ++written;
+                }
+                for (const auto& id : cmp.only_b) {
+                    tsv += "added\t" + id + "\n";
+                    report << (written ? ",\n" : "") << "    {\"rel\": \"" << json_escape(rel)
+                           << "\", \"id\": \"" << json_escape(id) << "\", \"status\": \"added\"}";
+                    ++written;
+                }
+                if (!tsv.empty()) {
+                    std::string name = rel;
+                    for (auto& ch : name) if (ch == '/') ch = '_';
+                    if (write_cli_output((out_dir / "changed" / (name + ".tsv")).string(), tsv) !=
+                        CliWriteStatus::Ok) {
+                        std::cerr << "TRACK error reason=写不了 changed/" << name << ".tsv\n";
+                        return kExitFail;
+                    }
+                }
+            } else {
+                report << (written ? ",\n" : "") << "    {\"rel\": \"" << json_escape(rel)
+                       << "\", \"status\": \"modified\"}";
+                ++written;
+            }
+            if (diff_texts + only_old + only_new > 0) ++changed_files;
+            changed_entries += diff_texts + only_old + only_new;
+            std::cout << "TRACK file " << rel << " text=" << diff_texts
+                      << " only_old=" << only_old << " only_new=" << only_new << "\n";
+        }
+        report << "\n  ]\n}\n";
+        if (write_cli_output((out_dir / "report.json").string(), report.str()) != CliWriteStatus::Ok) {
+            std::cerr << "TRACK error reason=写不了 " << (out_dir / "report.json").string() << "\n";
+            return kExitFail;
+        }
+        const bool any = !added.empty() || !removed.empty() || !modified.empty() || jsgme_changed;
+        std::cout << "TRACK ok added=" << added.size() << " removed=" << removed.size()
+                  << " modified=" << modified.size() << " changed_files=" << changed_files
+                  << " changed_entries=" << changed_entries
+                  << " jsgme_changed=" << (jsgme_changed ? 1 : 0)
+                  << " changed=" << (any ? 1 : 0) << "\n";
+        return kExitOk;
+    }
+
+if (action == "--snapshot") {
         // 追更第一步：**文件级 manifest**（相对路径 + 大小 + sha256 + JSGME 行序）。
         // 不做文本解析 —— 文本差异交给 --xml-compare-dirs --mode text（不造第二套 diff）。
         if (operands.size() < 2) {
