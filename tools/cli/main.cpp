@@ -55,6 +55,7 @@
 #include "xrkit/engine/video/probe_text.h"
 #include "xrkit/engine/video/transcode.h"
 #include "xrkit/engine/xml/compare.h"
+#include "xrkit/engine/font/xml_bytes.h"
 #include "xrkit/engine/xml/dirdiff.h"
 #include "xrkit/engine/patch/patch.h"
 
@@ -2807,6 +2808,8 @@ std::string json_escape(const std::string& s) {
     for (char c : s) {
         if (c == '"' || c == '\\') { o += '\\'; o += c; }
         else if (c == '\n') { o += "\\n"; }
+        else if (c == '\t') { o += "\\t"; }
+        else if (c == '\r') { o += "\\r"; }
         else { o += c; }
     }
     return o;
@@ -4188,8 +4191,8 @@ int run_cli(const std::vector<std::string>& args) {
 
     // XML 统计模式的**比较**探针：两侧同相对路径
     if (action == "--track") {
-        // 追更第 2 步：manifest 预筛 + **只对 modified 的 .xml** 跑现有 compare_text（text 口径）。
-        // 不造第二套 diff；不碰 UI；有变化也返回 0（2 是"跳过"）。
+        // 追更第 2 步：manifest 预筛 + 文本级对比（**只对 .xml**；其它类型明确说"只到文件级"）。
+        // 复用现有 compare_text / parse_text_by_id，不造第二套 diff；有变化也返回 0。
         if (operands.size() < 3) {
             std::cerr << "TRACK error reason=用法：--track <baseline 目录> <current 目录> <out 目录>\n";
             return kExitUsage;
@@ -4200,6 +4203,9 @@ int run_cli(const std::vector<std::string>& args) {
         const fs::path out_dir = fs::path(operands[2]);
         std::error_code ec;
         fs::create_directories(out_dir / "changed", ec);
+
+        std::cout << "TRACK caps text=xml others=manifest-only (.ltx/.script/.txt 只报文件级变化)\n";
+
         std::map<std::string, TrackFileInfo> base_files, cur_files;
         std::vector<std::string> base_jsgme, cur_jsgme;
         std::string err;
@@ -4208,6 +4214,31 @@ int run_cli(const std::vector<std::string>& args) {
             std::cerr << "TRACK error reason=" << err << "\n";
             return kExitFail;
         }
+
+        const auto read_bytes = [](const fs::path& path, std::vector<uint8_t>& out) {
+            std::ifstream in(path, std::ios::binary);
+            if (!in) return false;
+            out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            return true;
+        };
+        const auto decode = [](const std::vector<uint8_t>& raw, std::string& text) {
+            std::string enc;
+            bool trusted = false;
+            if (!xrkit::engine::font::decode_xml_bytes(raw, text, enc, trusted)) return false;
+            return trusted;
+        };
+        // TSV 里字段必须转义：文件名/原文里的 tab、换行会把列错开
+        const auto tsv_escape = [](const std::string& s) {
+            std::string o;
+            for (char c : s) {
+                if (c == '\t') o += "\\t";
+                else if (c == '\n') o += "\\n";
+                else if (c == '\r') o += "\\r";
+                else o += c;
+            }
+            return o;
+        };
+
         std::vector<std::string> added, removed, modified;
         for (const auto& [rel, info] : cur_files) {
             auto it = base_files.find(rel);
@@ -4218,70 +4249,118 @@ int run_cli(const std::vector<std::string>& args) {
             if (cur_files.find(rel) == cur_files.end()) removed.push_back(rel);
         }
         const bool jsgme_changed = (base_jsgme != cur_jsgme);
+
         std::size_t changed_files = 0, changed_entries = 0;
         std::ostringstream report;
-        report << "{\n  \"schema\": 1,\n  \"jsgme_changed\": " << (jsgme_changed ? 1 : 0)
-               << ",\n  \"added\": [";
-        for (std::size_t i = 0; i < added.size(); ++i)
-            report << (i ? ", " : "") << "\"" << json_escape(added[i]) << "\"";
-        report << "],\n  \"removed\": [";
-        for (std::size_t i = 0; i < removed.size(); ++i)
-            report << (i ? ", " : "") << "\"" << json_escape(removed[i]) << "\"";
-        report << "],\n  \"files\": [\n";
+        report << "{\n  \"schema\": 1,\n  \"caps\": {\"text\": \"xml\", \"others\": \"manifest-only\"},\n"
+               << "  \"jsgme_changed\": " << (jsgme_changed ? 1 : 0) << ",\n";
+        const auto json_list = [&report](const char* key, const std::vector<std::string>& items,
+                                         bool last) {
+            report << "  \"" << key << "\": [";
+            for (std::size_t i = 0; i < items.size(); ++i)
+                report << (i ? ", " : "") << "\"" << json_escape(items[i]) << "\"";
+            report << "]" << (last ? "\n" : ",\n");
+        };
+        json_list("added", added, false);
+        json_list("removed", removed, false);
+        json_list("modified", modified, true);
+        report << "  ,\"entries\": [\n";
         std::size_t written = 0;
-        for (const std::string& rel : modified) {
-            std::ifstream old_in(base_root / fs::path(rel), std::ios::binary);
-            std::ifstream new_in(cur_root / fs::path(rel), std::ios::binary);
-            std::ostringstream ob, nb;
-            ob << old_in.rdbuf();
-            nb << new_in.rdbuf();
-            const bool is_xml = cur_files[rel].kind == "xml";
-            std::size_t diff_texts = 0, only_old = 0, only_new = 0;
+        const auto emit_entry = [&](const std::string& rel, const std::string& id,
+                                    const std::string& status, const std::string& old_text,
+                                    const std::string& new_text, std::string& tsv) {
+            report << (written ? ",\n" : "") << "    {\"rel\": \"" << json_escape(rel)
+                   << "\", \"id\": \"" << json_escape(id) << "\", \"status\": \"" << status << "\"";
+            if (!old_text.empty()) report << ", \"old\": \"" << json_escape(old_text) << "\"";
+            if (!new_text.empty()) report << ", \"new\": \"" << json_escape(new_text) << "\"";
+            report << "}";
+            ++written;
+            tsv += status + "\t" + tsv_escape(rel) + "\t" + tsv_escape(id) + "\t" +
+                   tsv_escape(old_text) + "\t" + tsv_escape(new_text) + "\n";
+        };
+
+        // added XML：文件里所有 id 都是"新增文本"
+        for (const std::string& rel : added) {
+            if (cur_files[rel].kind != "xml") continue;
+            std::vector<uint8_t> raw;
+            std::string text;
+            if (!read_bytes(cur_root / fs::path(rel), raw) || !decode(raw, text)) continue;
+            const xrkit::engine::xml::XmlTextSide side =
+                xrkit::engine::xml::parse_text_by_id(text, "utf-8");
+            if (!side.ok) continue;
             std::string tsv;
-            if (is_xml) {
-                const xrkit::engine::xml::XmlCompareResult cmp =
-                    xrkit::engine::xml::compare_text(rel, ob.str(), nb.str(), "", "");
-                diff_texts = cmp.text_diff.size();
-                only_old = cmp.only_a.size();
-                only_new = cmp.only_b.size();
-                for (const auto& row : cmp.text_diff) {
-                    tsv += "changed\t" + row[0] + "\t" + row[1] + "\t" + row[2] + "\n";
-                    report << (written ? ",\n" : "") << "    {\"rel\": \"" << json_escape(rel)
-                           << "\", \"id\": \"" << json_escape(row[0]) << "\", \"status\": \"changed\","
-                           << " \"old\": \"" << json_escape(row[1]) << "\", \"new\": \""
-                           << json_escape(row[2]) << "\"}";
-                    ++written;
+            for (const auto& [id, val] : side.id_text) emit_entry(rel, id, "added", "", val, tsv);
+            if (!tsv.empty()) {
+                std::string name = rel;
+                for (auto& ch : name) if (ch == '/') ch = '_';
+                if (write_cli_output((out_dir / "changed" / (name + ".tsv")).string(), tsv) !=
+                    CliWriteStatus::Ok) {
+                    std::cerr << "TRACK error reason=写不了 changed/" << name << ".tsv\n";
+                    return kExitFail;
                 }
-                for (const auto& id : cmp.only_a) {
-                    tsv += "removed\t" + id + "\n";
-                    report << (written ? ",\n" : "") << "    {\"rel\": \"" << json_escape(rel)
-                           << "\", \"id\": \"" << json_escape(id) << "\", \"status\": \"removed\"}";
-                    ++written;
-                }
-                for (const auto& id : cmp.only_b) {
-                    tsv += "added\t" + id + "\n";
-                    report << (written ? ",\n" : "") << "    {\"rel\": \"" << json_escape(rel)
-                           << "\", \"id\": \"" << json_escape(id) << "\", \"status\": \"added\"}";
-                    ++written;
-                }
-                if (!tsv.empty()) {
-                    std::string name = rel;
-                    for (auto& ch : name) if (ch == '/') ch = '_';
-                    if (write_cli_output((out_dir / "changed" / (name + ".tsv")).string(), tsv) !=
-                        CliWriteStatus::Ok) {
-                        std::cerr << "TRACK error reason=写不了 changed/" << name << ".tsv\n";
-                        return kExitFail;
-                    }
-                }
-            } else {
-                report << (written ? ",\n" : "") << "    {\"rel\": \"" << json_escape(rel)
-                       << "\", \"status\": \"modified\"}";
-                ++written;
             }
-            if (diff_texts + only_old + only_new > 0) ++changed_files;
-            changed_entries += diff_texts + only_old + only_new;
-            std::cout << "TRACK file " << rel << " text=" << diff_texts
-                      << " only_old=" << only_old << " only_new=" << only_new << "\n";
+            changed_entries += side.id_text.size();
+            if (!side.id_text.empty()) ++changed_files;
+            std::cout << "TRACK file " << rel << " added_ids=" << side.id_text.size() << "\n";
+        }
+        // removed XML：旧文件里所有 id 都是"删除文本"
+        for (const std::string& rel : removed) {
+            if (base_files[rel].kind != "xml") continue;
+            std::vector<uint8_t> raw;
+            std::string text;
+            if (!read_bytes(base_root / fs::path(rel), raw) || !decode(raw, text)) continue;
+            const xrkit::engine::xml::XmlTextSide side =
+                xrkit::engine::xml::parse_text_by_id(text, "utf-8");
+            if (!side.ok) continue;
+            std::string tsv;
+            for (const auto& [id, val] : side.id_text) emit_entry(rel, id, "removed", val, "", tsv);
+            if (!tsv.empty()) {
+                std::string name = rel;
+                for (auto& ch : name) if (ch == '/') ch = '_';
+                if (write_cli_output((out_dir / "changed" / (name + ".tsv")).string(), tsv) !=
+                    CliWriteStatus::Ok) {
+                    std::cerr << "TRACK error reason=写不了 changed/" << name << ".tsv\n";
+                    return kExitFail;
+                }
+            }
+            changed_entries += side.id_text.size();
+            if (!side.id_text.empty()) ++changed_files;
+            std::cout << "TRACK file " << rel << " removed_ids=" << side.id_text.size() << "\n";
+        }
+        // modified XML：逐 id 比文本（复用 compare_text；编码走探测链后统一 UTF-8）
+        for (const std::string& rel : modified) {
+            if (cur_files[rel].kind != "xml") {
+                std::cout << "TRACK file " << rel << " modified(manifest-only)\n";
+                continue;
+            }
+            std::vector<uint8_t> raw_old, raw_new;
+            std::string old_text, new_text;
+            if (!read_bytes(base_root / fs::path(rel), raw_old) ||
+                !read_bytes(cur_root / fs::path(rel), raw_new) ||
+                !decode(raw_old, old_text) || !decode(raw_new, new_text)) {
+                std::cout << "TRACK file " << rel << " text=decode-failed\n";
+                continue;
+            }
+            const xrkit::engine::xml::XmlCompareResult cmp =
+                xrkit::engine::xml::compare_text(rel, old_text, new_text, "utf-8", "utf-8");
+            std::string tsv;
+            for (const auto& row : cmp.text_diff) emit_entry(rel, row[0], "changed", row[1], row[2], tsv);
+            for (const auto& id : cmp.only_a) emit_entry(rel, id, "removed", "", "", tsv);
+            for (const auto& id : cmp.only_b) emit_entry(rel, id, "added", "", "", tsv);
+            if (!tsv.empty()) {
+                std::string name = rel;
+                for (auto& ch : name) if (ch == '/') ch = '_';
+                if (write_cli_output((out_dir / "changed" / (name + ".tsv")).string(), tsv) !=
+                    CliWriteStatus::Ok) {
+                    std::cerr << "TRACK error reason=写不了 changed/" << name << ".tsv\n";
+                    return kExitFail;
+                }
+            }
+            const std::size_t n = cmp.text_diff.size() + cmp.only_a.size() + cmp.only_b.size();
+            changed_entries += n;
+            if (n > 0) ++changed_files;
+            std::cout << "TRACK file " << rel << " text=" << cmp.text_diff.size()
+                      << " only_old=" << cmp.only_a.size() << " only_new=" << cmp.only_b.size() << "\n";
         }
         report << "\n  ]\n}\n";
         if (write_cli_output((out_dir / "report.json").string(), report.str()) != CliWriteStatus::Ok) {
@@ -4298,8 +4377,7 @@ int run_cli(const std::vector<std::string>& args) {
     }
 
 if (action == "--snapshot") {
-        // 追更第一步：**文件级 manifest**（相对路径 + 大小 + sha256 + JSGME 行序）。
-        // 不做文本解析 —— 文本差异交给 --xml-compare-dirs --mode text（不造第二套 diff）。
+        // 追更第一步：**文件级 manifest**（与 --track 共用 collect_manifest，只有一份遍历）。
         if (operands.size() < 2) {
             std::cerr << "SNAPSHOT error reason=用法：--snapshot <根目录> <out.json>\n";
             return kExitUsage;
@@ -4307,73 +4385,23 @@ if (action == "--snapshot") {
         namespace fs = std::filesystem;
         const fs::path root = fs::path(operands[0]);
         const fs::path out = fs::path(operands[1]);
-        std::error_code ec;
-        if (!fs::is_directory(root, ec)) {
-            std::cerr << "SNAPSHOT error reason=不是目录：" << operands[0] << "\n";
+        std::map<std::string, TrackFileInfo> files;
+        std::vector<std::string> jsgme;
+        std::string err;
+        if (!collect_manifest(root, files, jsgme, err, out)) {
+            std::cerr << "SNAPSHOT error reason=" << err << "\n";
             return kExitFail;
         }
-        std::vector<std::pair<std::string, fs::path>> files;
-        for (const auto& entry : fs::recursive_directory_iterator(root, ec)) {
-            if (!entry.is_regular_file(ec)) continue;
-            fs::path rel = fs::relative(entry.path(), root, ec);
-            std::string rel_key = rel.generic_string();
-            if (fs::equivalent(entry.path(), out, ec)) continue;   // 输出文件自己不算
-            // JSGME.ini 单独记在 jsgme_lines（保留行序），不重复算成普通文件
-            if (rel_key == "JSGME.ini") continue;
-            files.emplace_back(rel_key, entry.path());
-        }
-        std::sort(files.begin(), files.end(),
-                  [](const auto& a, const auto& b) { return a.first < b.first; });
-        const auto escape = [](const std::string& s) {
-            std::string o;
-            for (char c : s) {
-                if (c == '"' || c == '\\') { o += '\\'; o += c; }
-                else if (c == '\n') { o += "\\n"; }
-                else { o += c; }
-            }
-            return o;
-        };
-        const auto kind_of = [](const std::string& rel) -> std::string {
-            const auto dot = rel.find_last_of('.');
-            std::string ext = dot == std::string::npos ? "" : rel.substr(dot);
-            for (auto& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-            if (ext == ".xml") return "xml";
-            if (ext == ".db" || ext == ".db0" || ext == ".db9" || ext.rfind(".db", 0) == 0) return "db";
-            if (ext == ".ltx" || ext == ".ini") return "text";
-            return "other";
-        };
         std::ostringstream json;
-        json << "{\n  \"schema\": 1,\n  \"root\": \"\",\n";
-        // JSGME.ini：只记**原始行序**（不同版本覆盖顺序会影响最终文本，顺序要保留）
-        std::vector<std::string> jsgme;
-        const fs::path jsgme_path = root / "JSGME.ini";
-        if (fs::is_regular_file(jsgme_path, ec)) {
-            std::ifstream in(jsgme_path);
-            std::string line;
-            while (std::getline(in, line)) {
-                while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
-                if (!line.empty()) jsgme.push_back(line);
-            }
-        }
-        json << "  \"jsgme_lines\": [";
-        for (std::size_t i = 0; i < jsgme.size(); ++i) {
-            json << (i ? ", " : "") << "\"" << escape(jsgme[i]) << "\"";
-        }
+        json << "{\n  \"schema\": 1,\n  \"root\": \"\",\n  \"jsgme_lines\": [";
+        for (std::size_t i = 0; i < jsgme.size(); ++i)
+            json << (i ? ", " : "") << "\"" << json_escape(jsgme[i]) << "\"";
         json << "],\n  \"files\": [\n";
         std::size_t written = 0;
-        for (const auto& [rel_key, abs] : files) {
-            std::string err;
-            const std::string sha = xrkit::core::sha256_file(abs.string(), err);
-            if (sha.empty()) {
-                std::cerr << "SNAPSHOT error reason=算哈希失败 " << rel_key << "：" << err << "\n";
-                return kExitFail;
-            }
-            std::error_code size_ec;
-            const auto size = fs::file_size(abs, size_ec);
-            json << (written ? ",\n" : "") << "    {\"rel\": \"" << escape(rel_key)
-                 << "\", \"kind\": \"" << kind_of(rel_key) << "\", \"size\": "
-                 << (size_ec ? 0 : static_cast<unsigned long long>(size))
-                 << ", \"sha256\": \"" << sha << "\"}";
+        for (const auto& [rel, info] : files) {
+            json << (written ? ",\n" : "") << "    {\"rel\": \"" << json_escape(rel)
+                 << "\", \"kind\": \"" << info.kind << "\", \"size\": " << info.size
+                 << ", \"sha256\": \"" << info.sha256 << "\"}";
             ++written;
         }
         json << "\n  ]\n}\n";
@@ -4386,7 +4414,7 @@ if (action == "--snapshot") {
         return kExitOk;
     }
 
-    if (action == "--diff-snapshot") {
+if (action == "--diff-snapshot") {
         // 追更第二步：**只比 manifest**（文件级 added/removed/modified），不读内容。
         if (operands.size() < 2) {
             std::cerr << "SNAPDIFF error reason=用法：--diff-snapshot <旧.json> <新.json>\n";
