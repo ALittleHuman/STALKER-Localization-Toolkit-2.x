@@ -10,9 +10,11 @@
 
 #include "xrkit/core/sha256.h"
 
+#include "xrkit/core/path.h"
+
 #include <array>
-#include <cstdio>
 #include <cstring>
+#include <fstream>
 
 namespace xrkit::core {
 namespace {
@@ -116,23 +118,21 @@ std::string sha256_hex(const uint8_t* data, size_t size) {
 
 std::string sha256_file(const std::string& path, std::string& error) {
     error.clear();
-    std::FILE* f = nullptr;
-#ifdef _MSC_VER
-    if (fopen_s(&f, path.c_str(), "rb") != 0) f = nullptr;
-#else
-    f = std::fopen(path.c_str(), "rb");
-#endif
-    if (f == nullptr) {
+    // ★ P0-1（2026-11-05）：`path` 是 **UTF-8**；`fopen` 按 ANSI 代码页打开 ⇒ 中文/西里尔路径打不开。
+    //   统一走 `std::filesystem::path`（Windows 上是宽字符）⇒ 所有调用方都不用各自处理。
+    std::ifstream in(path_from_utf8(path), std::ios::binary);
+    if (!in) {
         error = "打不开文件：" + path;
         return {};
     }
     Sha256 s;
     std::vector<uint8_t> chunk(1u << 20);
-    size_t got = 0;
-    while ((got = std::fread(chunk.data(), 1, chunk.size(), f)) > 0) s.update(chunk.data(), got);
-    const bool bad = std::ferror(f) != 0;
-    std::fclose(f);
-    if (bad) {
+    while (in) {
+        in.read(reinterpret_cast<char*>(chunk.data()), static_cast<std::streamsize>(chunk.size()));
+        const std::streamsize got = in.gcount();
+        if (got > 0) s.update(chunk.data(), static_cast<size_t>(got));
+    }
+    if (in.bad()) {
         error = "读文件失败：" + path;
         return {};
     }

@@ -3558,6 +3558,23 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_p0_fixes(release: bool) -> None:
+    """P0 修复判据：中文路径 / --only BOM / 零命中退出码 / XML 必现算。"""
+    say("[?] P0：中文路径 / BOM / 零命中 / XML 必现算")
+    script = ROOT / "tests" / "check_cli_p0_fixes.py"
+    if not require_repo_file(script, "P0 修复判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("P0-FIXES"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("P0 修复全过")
+    else:
+        fail("P0 修复判据不通过（见上）")
+
+
 def step_baseline(release: bool) -> None:
     """追更加速器：--baseline / --rehash（size+mtime 复用、指纹、旧树变更报错）。"""
     say("[?] 追更加速器：--baseline / --rehash")
@@ -7926,6 +7943,7 @@ STEPS = [
     ("track", step_track),
     ("version-consistency", step_version_consistency),
     ("baseline", step_baseline),
+    ("p0-fixes", step_p0_fixes),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),

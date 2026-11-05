@@ -2773,7 +2773,7 @@ bool collect_manifest(const std::filesystem::path& root,
                       const std::filesystem::path& exclude = {}) {
     namespace fs = std::filesystem;
     std::error_code ec;
-    if (!fs::is_directory(root, ec)) { err = "不是目录：" + root.string(); return false; }
+    if (!fs::is_directory(root, ec)) { err = "不是目录：" + path_to_utf8(root); return false; }
     for (const auto& entry : fs::recursive_directory_iterator(root, ec)) {
         if (!entry.is_regular_file(ec)) continue;
         const fs::path rel = fs::relative(entry.path(), root, ec);
@@ -2781,7 +2781,7 @@ bool collect_manifest(const std::filesystem::path& root,
         if (rel_key == "JSGME.ini") continue;
         if (!exclude.empty() && fs::equivalent(entry.path(), exclude, ec)) continue;
         std::string hash_error;
-        const std::string sha = xrkit::core::sha256_file(entry.path().string(), hash_error);
+        const std::string sha = xrkit::core::sha256_file(path_to_utf8(entry.path()), hash_error);
         if (sha.empty()) { err = "算哈希失败 " + rel_key + "：" + hash_error; return false; }
         TrackFileInfo info;
         const auto dot = rel_key.find_last_of('.');
@@ -2823,7 +2823,7 @@ struct BaselineCacheEntry {
 bool load_baseline_json(const std::string& path, std::map<std::string, BaselineCacheEntry>& files,
                         std::string& abs_root, std::size_t& count, unsigned long long& bytes,
                         std::string& err) {
-    std::ifstream in(path);
+    std::ifstream in(path_from_utf8(path));
     if (!in) { err = "读不了 baseline：" + path; return false; }
     const std::regex entry(
         R"re("rel":\s*"([^"]+)".*?"size":\s*(\d+),\s*"mtime":\s*(-?\d+),\s*"sha256":\s*"([0-9a-f]+)")re");
@@ -2859,7 +2859,7 @@ bool collect_manifest_cached(const std::filesystem::path& root,
                             std::vector<std::string>& jsgme, std::string& err) {
     namespace fs = std::filesystem;
     std::error_code ec;
-    if (!fs::is_directory(root, ec)) { err = "不是目录：" + root.string(); return false; }
+    if (!fs::is_directory(root, ec)) { err = "不是目录：" + path_to_utf8(root); return false; }
     for (const auto& entry : fs::recursive_directory_iterator(root, ec)) {
         if (!entry.is_regular_file(ec)) continue;
         const fs::path rel = fs::relative(entry.path(), root, ec);
@@ -2881,7 +2881,10 @@ bool collect_manifest_cached(const std::filesystem::path& root,
             }
         }
         const auto it = cache.find(rel_key);
-        if (!rehash && it != cache.end() &&
+        // ★ 2026-11-05（HA）：**XML 一律现算**。追更的核心是 XML；"size+mtime 都没变但内容变了"
+        //   在"复制保留 mtime / SetFileTime 还原"的流程里真实存在 ⇒ 省这点哈希不值得冒漏报风险。
+        const bool force_hash = rehash || info.kind == "xml";
+        if (!force_hash && it != cache.end() &&
             (it->second.size != info.size || it->second.mtime != info.mtime)) {
             // 旧树在快照之后被动过 ⇒ 不许静默用旧 sha（HA/DSH：这会把"旧快照过期"变成静默比错）
             err = "old_root 与 baseline 快照不一致（文件 " + rel_key + "）：快照 size=" +
@@ -2890,12 +2893,12 @@ bool collect_manifest_cached(const std::filesystem::path& root,
                   "；确认旧树没动过，或加 --rehash 全部重算";
             return false;
         }
-        if (!rehash && it != cache.end() && it->second.size == info.size &&
+        if (!force_hash && it != cache.end() && it->second.size == info.size &&
             it->second.mtime == info.mtime) {
             info.sha256 = it->second.sha256;   // 命中缓存
         } else {
             std::string hash_error;
-            info.sha256 = xrkit::core::sha256_file(entry.path().string(), hash_error);
+            info.sha256 = xrkit::core::sha256_file(path_to_utf8(entry.path()), hash_error);
             if (info.sha256.empty()) { err = "算哈希失败 " + rel_key + "：" + hash_error; return false; }
         }
         if (verify_cached_sha && it != cache.end() && it->second.sha256 != info.sha256) {
@@ -3720,8 +3723,19 @@ int run_cli(const std::vector<std::string>& args) {
                 return kExitFail;
             }
             std::string line;
+            bool first_line = true;
             while (std::getline(in, line)) {
                 if (!line.empty() && line.back() == '\r') line.pop_back();
+                // ★ P0-2：清单里的 UTF-8 BOM（PowerShell `-Encoding UTF8` 会写）必须剥掉，
+                //   否则首行路径带 \xEF\xBB\xBF ⇒ 一条都匹配不上。
+                if (first_line) {
+                    first_line = false;
+                    if (line.size() >= 3 && static_cast<unsigned char>(line[0]) == 0xEF &&
+                        static_cast<unsigned char>(line[1]) == 0xBB &&
+                        static_cast<unsigned char>(line[2]) == 0xBF) {
+                        line.erase(0, 3);
+                    }
+                }
                 if (line.empty()) continue;
                 options.only.push_back(line);
             }
@@ -3924,15 +3938,18 @@ int run_cli(const std::vector<std::string>& args) {
         //   "一个包都没排上"来做到"只看计划、不落盘"，所以这条**不改退出码**：
         //   退出码仍由 `failed` 决定，与既有真机反向锁的契约一致）。
         //   ★ 引擎侧"对不上的逐条记 failures"才是硬判据（见 `check_unpack_only_semantics.py`）。
-        if (!only_paths.empty() && files == 0) {
-            std::cout << "UNPACK-PKG note reason=--only 清单一条都没命中（清单 " << only_paths.size()
-                      << " 条，plan " << plan.size() << " 个包都没排上）—— 本次没有产物写出\n";
+        const bool only_zero_hit = !only_paths.empty() && files == 0 && failed == 0;
+        if (only_zero_hit) {
+            // ★ P0-2：零产物不许 exit=0（"清单读进去了但一条都没命中"是失败，不是成功）
+            std::cout << "UNPACK-PKG error reason=--only 清单一条都没命中（清单 "
+                      << only_paths.size() << " 条，plan " << plan.size()
+                      << " 个包都没排上）—— 本次没有产物写出；检查路径前缀/BOM/编码\n";
         }
         std::cout << "UNPACK-PKG ok sources=" << plan.size() << " done=" << done << " files=" << files
                   << " dirs=" << dirs << " bytes=" << bytes << " dups=" << dups
                   << " overwritten=" << overwritten
                   << " failed=" << failed << "\n";
-        return failed == 0 ? kExitOk : kExitFail;
+        return (failed == 0 && !only_zero_hit) ? kExitOk : kExitFail;
     }
 
     // 有损编解码探针（Python `errors="replace"` 的逐字节对拍用）。
@@ -4326,9 +4343,11 @@ int run_cli(const std::vector<std::string>& args) {
             }
         }
         namespace fs = std::filesystem;
-        const fs::path base_root = fs::path(operands[0]);
-        const fs::path cur_root = fs::path(operands[1]);
-        const fs::path out_dir = fs::path(operands[2]);
+        // ★ P0-1：`fs::path(std::string)` 按**系统 ANSI 代码页**解释 ⇒ 中文/西里尔路径坏；
+        //   必须走 path_from_utf8()（argv 已经是 wmain 转好的 UTF-8）。
+        const fs::path base_root = path_from_utf8(operands[0]);
+        const fs::path cur_root = path_from_utf8(operands[1]);
+        const fs::path out_dir = path_from_utf8(operands[2]);
         std::error_code ec;
         fs::create_directories(out_dir / "changed", ec);
 
@@ -4456,7 +4475,7 @@ int run_cli(const std::vector<std::string>& args) {
             if (cur_files[rel].kind != "xml") continue;
             std::vector<uint8_t> raw;
             std::string text;
-            if (!read_bytes(cur_root / fs::path(rel), raw) || !decode(raw, text)) continue;
+            if (!read_bytes(cur_root / path_from_utf8(rel), raw) || !decode(raw, text)) continue;
             const xrkit::engine::xml::XmlTextSide side =
                 xrkit::engine::xml::parse_text_by_id(text, "utf-8");
             if (!side.ok) continue;
@@ -4465,7 +4484,7 @@ int run_cli(const std::vector<std::string>& args) {
             if (!tsv.empty()) {
                 std::string name = rel;
                 for (auto& ch : name) if (ch == '/') ch = '_';
-                if (write_cli_output((out_dir / "changed" / (name + ".tsv")).string(), tsv) !=
+                if (write_cli_output(path_to_utf8(out_dir / "changed" / (name + ".tsv")), tsv) !=
                     CliWriteStatus::Ok) {
                     std::cerr << "TRACK error reason=写不了 changed/" << name << ".tsv\n";
                     return kExitFail;
@@ -4480,7 +4499,7 @@ int run_cli(const std::vector<std::string>& args) {
             if (base_files[rel].kind != "xml") continue;
             std::vector<uint8_t> raw;
             std::string text;
-            if (!read_bytes(base_root / fs::path(rel), raw) || !decode(raw, text)) continue;
+            if (!read_bytes(base_root / path_from_utf8(rel), raw) || !decode(raw, text)) continue;
             const xrkit::engine::xml::XmlTextSide side =
                 xrkit::engine::xml::parse_text_by_id(text, "utf-8");
             if (!side.ok) continue;
@@ -4489,7 +4508,7 @@ int run_cli(const std::vector<std::string>& args) {
             if (!tsv.empty()) {
                 std::string name = rel;
                 for (auto& ch : name) if (ch == '/') ch = '_';
-                if (write_cli_output((out_dir / "changed" / (name + ".tsv")).string(), tsv) !=
+                if (write_cli_output(path_to_utf8(out_dir / "changed" / (name + ".tsv")), tsv) !=
                     CliWriteStatus::Ok) {
                     std::cerr << "TRACK error reason=写不了 changed/" << name << ".tsv\n";
                     return kExitFail;
@@ -4507,8 +4526,8 @@ int run_cli(const std::vector<std::string>& args) {
             }
             std::vector<uint8_t> raw_old, raw_new;
             std::string old_text, new_text;
-            if (!read_bytes(base_root / fs::path(rel), raw_old) ||
-                !read_bytes(cur_root / fs::path(rel), raw_new) ||
+            if (!read_bytes(base_root / path_from_utf8(rel), raw_old) ||
+                !read_bytes(cur_root / path_from_utf8(rel), raw_new) ||
                 !decode(raw_old, old_text) || !decode(raw_new, new_text)) {
                 std::cout << "TRACK file " << rel << " text=decode-failed\n";
                 continue;
@@ -4522,7 +4541,7 @@ int run_cli(const std::vector<std::string>& args) {
             if (!tsv.empty()) {
                 std::string name = rel;
                 for (auto& ch : name) if (ch == '/') ch = '_';
-                if (write_cli_output((out_dir / "changed" / (name + ".tsv")).string(), tsv) !=
+                if (write_cli_output(path_to_utf8(out_dir / "changed" / (name + ".tsv")), tsv) !=
                     CliWriteStatus::Ok) {
                     std::cerr << "TRACK error reason=写不了 changed/" << name << ".tsv\n";
                     return kExitFail;
@@ -4535,8 +4554,8 @@ int run_cli(const std::vector<std::string>& args) {
                       << " only_old=" << cmp.only_a.size() << " only_new=" << cmp.only_b.size() << "\n";
         }
         report << "\n  ]\n}\n";
-        if (write_cli_output((out_dir / "report.json").string(), report.str()) != CliWriteStatus::Ok) {
-            std::cerr << "TRACK error reason=写不了 " << (out_dir / "report.json").string() << "\n";
+        if (write_cli_output(path_to_utf8(out_dir / "report.json"), report.str()) != CliWriteStatus::Ok) {
+            std::cerr << "TRACK error reason=写不了 " << path_to_utf8(out_dir / "report.json") << "\n";
             return kExitFail;
         }
         const bool any = !added.empty() || !removed.empty() || !modified.empty() || jsgme_changed;
@@ -4555,8 +4574,8 @@ if (action == "--snapshot") {
             return kExitUsage;
         }
         namespace fs = std::filesystem;
-        const fs::path root = fs::path(operands[0]);
-        const fs::path out = fs::path(operands[1]);
+        const fs::path root = path_from_utf8(operands[0]);
+        const fs::path out = path_from_utf8(operands[1]);
         std::map<std::string, TrackFileInfo> files;
         std::vector<std::string> jsgme;
         std::string err;
