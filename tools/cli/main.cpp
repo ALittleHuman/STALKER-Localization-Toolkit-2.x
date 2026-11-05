@@ -354,7 +354,8 @@ void print_usage() {
            "                                   整树复制 + 容器内提取 + ori/<容器>/...（文本提取最终规划）\n"
            "  --ixr-build <参照包> <字体> <输出目录> [--langs rus,eng | --all-langs --split-output]\n"
            "                                   生成 IX-Ray 矢量包（外部 fonttools 助手）\n"
-           "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite]\n"
+           "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite] [--pack-layout]\n"
+           "                                              选项 pack-layout：产出 gamedata/configs/text/<lang>/ 标准布局\n"
            "                                   装配标准语言包（空表写成 <string_table></string_table>）\n"
            "                    [--suffix s] [--offset n] [--no-full-cyrillic]\n"
            "                                              出整棵 gamedata 汉化包（与 1.x 对拍）\n"
@@ -5556,6 +5557,8 @@ if (action == "--diff-snapshot") {
         for (size_t i = 3; i < operands.size(); ++i) {
             if (operands[i] == "--lang" && i + 1 < operands.size()) {
                 opt.lang = operands[++i];
+            } else if (operands[i] == "--pack-layout") {
+                opt.pack_layout = true;
             } else if (operands[i] == "--overwrite") {
                 opt.overwrite = true;
             } else if (operands[i] == "--no-texts") {
@@ -5578,6 +5581,7 @@ if (action == "--diff-snapshot") {
             gopt.include_texts = opt.include_texts;
             gopt.include_rewritten = opt.include_rewritten;
             gopt.overwrite = opt.overwrite;
+            gopt.pack_layout = opt.pack_layout;
             const xrkit::engine::text::LangPackFromGameResult g =
                 xrkit::engine::text::build_language_pack_from_game(gopt);
             if (!g.ok) {

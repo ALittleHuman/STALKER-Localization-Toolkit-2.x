@@ -25,6 +25,10 @@ struct LangPackBuildOptions {
     bool include_texts = true;      // ① 文本 XML（含空表）
     bool include_rewritten = true;  // ② 改写后的 scripts/configs
     bool overwrite = false;         // 同名文件：true=覆盖，false=拒绝并记账
+    // ★ 2026-11-05（CoP 107 交接 P1-3）：`--pack-layout` —— 直接产出**标准语言包布局**：
+    //   <out_root>/gamedata/configs/text/<lang>/*.xml、<out_root>/gamedata/scripts/…
+    //   修前落盘是 <out_root>/<lang>/configs/text/<lang>/…（多一层），与"复制进游戏就生效"不符。
+    bool pack_layout = false;
 };
 
 struct LangPackBuildResult {
@@ -51,6 +55,7 @@ struct LangPackFromGameOptions {
     bool include_texts = true;
     bool include_rewritten = true;
     bool overwrite = false;
+    bool pack_layout = false;   // 见 LangPackBuildOptions::pack_layout
 };
 
 struct LangPackFromGameResult {

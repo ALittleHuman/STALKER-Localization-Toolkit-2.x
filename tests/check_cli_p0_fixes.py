@@ -91,6 +91,23 @@ def main() -> int:
             "④ 同 size/mtime 换内容的 XML 不许用旧 sha（rc=%d, %s）"
             % (rc6, out6.strip().splitlines()[-1] if out6.strip() else ""))
 
+    # ⑤ 编码别名 + ⑥ --pack-layout（P1-3 / P1-4；用独立临时目录）
+    with tempfile.TemporaryDirectory(prefix="p1_") as td2s:
+        td2 = Path(td2s)
+        raw = td2 / "cp.bin"
+        raw.write_bytes(bytes([0xCF, 0xF0, 0xE8, 0xE2, 0xE5, 0xF2]))   # "Привет" in cp1251
+        rc7, out7 = run("--codec-lossy", "decode", "cp1251", raw, td2 / "cp.txt")
+        (ok if rc7 == 0 and "CODEC ok" in out7 else fail)(
+            "⑤ cp1251 别名可用（rc=%d, %s）" % (rc7, out7.strip()[:120]))
+
+        lp = td2 / "lp"
+        (lp / "text" / "rus").mkdir(parents=True)
+        (lp / "text" / "rus" / "a.xml").write_text(XML_A, encoding="utf-8")
+        rc8, out8 = run("--langpack-build", lp / "text" / "rus", "-", lp / "pack", "--pack-layout")
+        want = lp / "pack" / "gamedata" / "configs" / "text" / "rus" / "a.xml"
+        (ok if rc8 == 0 and want.is_file() else fail)(
+            "⑥ --pack-layout 产出 gamedata/configs/text/rus/a.xml（rc=%d）" % rc8)
+
     if PROBLEMS:
         print("P0-FIXES: FAIL（%d 处）" % len(PROBLEMS))
         return 1

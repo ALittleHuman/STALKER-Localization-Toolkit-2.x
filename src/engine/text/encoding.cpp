@@ -958,9 +958,37 @@ std::vector<std::pair<uint32_t, std::string>> codec_encode_table(int which) {
     return out;
 }
 
-bool decode_strict(const std::string& encoding, const uint8_t* data, size_t size,
+// ★ 2026-11-05（CoP 107 交接 P1-4）：编码名别名。
+//   真实用户/Python 习惯写 `cp1251`，而我们的表名是 `windows-1251` —— 修前直接报
+//   "未知编码：cp1251"，用户得去猜。这里做**单一处**归一（大小写/空白/别名），
+//   解码与编码两侧都走它 ⇒ 不会再出现"decode 认、encode 不认"。
+std::string canonical_encoding_name(const std::string& raw) {
+    std::string n;
+    for (char c : raw) {
+        if (c == ' ' || c == '\t') continue;
+        n += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    struct Alias {
+        const char* from;
+        const char* to;
+    };
+    static const Alias kAliases[] = {
+        {"cp1251", "windows-1251"}, {"cp1252", "windows-1252"},
+        {"cp936", "gbk"},           {"cp950", "big5"},
+        {"cp932", "shift_jis"},     {"cp949", "euc-kr"},
+        {"shift-jis", "shift_jis"}, {"utf8", "utf-8"},
+        {"utf-8-sig2", "utf-8-sig"},
+    };
+    for (const Alias& a : kAliases) {
+        if (n == a.from) return a.to;
+    }
+    return n;
+}
+
+bool decode_strict(const std::string& encoding_raw, const uint8_t* data, size_t size,
                    std::string& text, std::string& err) {
     err.clear();
+    const std::string encoding = canonical_encoding_name(encoding_raw);
     if (encoding == kUtf8 || encoding == kUtf8Sig) {
         size_t off = 0;
         if (encoding == kUtf8Sig && size >= 3 && data[0] == 0xEF && data[1] == 0xBB &&
