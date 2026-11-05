@@ -167,6 +167,17 @@ New-Item -ItemType Directory -Force -Path (Join-Path $stage 'plugins') | Out-Nul
 Write-Host "== 复制主程序 =="
 Copy-Item -LiteralPath $exe.FullName -Destination $stage
 
+# ★★ 2026-11-05（DSH 干净目录测试抓到）：**CLI 也必须随包**。
+#   修前包里只有 xrkit_app.exe ⇒ 封测用户/AI 拿不到 `xrkit_cli.exe`，
+#   而"追更"这条能力只有 CLI 有（--snapshot/--track）⇒ 等于封测拿不到核心能力。
+#   依赖与主程序同源（python3XX.dll/zip 已扁平铺在包根）⇒ 直接放根目录即可。
+Write-Host "== 复制 CLI（追更/脚本入口） =="
+$cli = Join-Path $root 'build\msvc-release\tools\cli\xrkit_cli.exe'
+if (-not (Test-Path $cli)) {
+    throw "找不到 xrkit_cli.exe（先跑 scripts\build.ps1 -Preset msvc-release）"
+}
+Copy-Item -LiteralPath $cli -Destination $stage
+
 # ★★ 插件改装 P2a/P2c（2026-10-07）：**CPython 运行期 + 标准库都随包**。
 #   引擎链接了 `python3XX.lib`（插件＝`.py`，宿主在引擎层）：
 #     · 缺 `python3XX.dll` ⇒ **主程序根本起不来**（不是"插件不可用"）；

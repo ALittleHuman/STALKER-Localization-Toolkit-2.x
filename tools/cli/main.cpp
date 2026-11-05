@@ -3249,8 +3249,34 @@ int run_cli(const std::vector<std::string>& args) {
             return kExitOk;
         }
         if (a == "--version") {
-            std::cout << xrkit::core::version_string() << " build=" << xrkit::core::kBuildCount
-                      << "\n";
+            // ★ 2026-11-05（DSH 干净目录测试）：**发行包里的 CLI 以包版本为准**。
+            //   原因：打包动作是 CLI 自己在跑，它无法在过程中重编自己（LNK1104）⇒ 包内 CLI
+            //   的编译期版本会比包小一版。发行包里有 `version.txt` ⇒ 以它为准（同包同身份）；
+            //   没有该文件（开发树/被单独拷走）⇒ 退回编译期版本。
+            std::string shown_version = xrkit::core::version_string();
+            int shown_build = xrkit::core::kBuildCount;
+            {
+                std::error_code ec;
+                // 找**exe 同目录**的 version.txt（不是 cwd）：发行包里 CLI 与 version.txt 并排
+                const std::filesystem::path vt =
+                    xrkit::core::path_from_utf8(xrkit::core::app_dir()) / "version.txt";
+                if (std::filesystem::exists(vt, ec)) {
+                    std::ifstream in(vt, std::ios::binary);
+                    std::string line;
+                    std::string vline;
+                    int idx = -1;
+                    while (std::getline(in, line)) {
+                        if (line.rfind("version=", 0) == 0) vline = line.substr(8);
+                        if (line.rfind("index=", 0) == 0) idx = std::atoi(line.c_str() + 6);
+                    }
+                    while (!vline.empty() && (vline.back() == '\r' || vline.back() == ' ')) vline.pop_back();
+                    if (!vline.empty()) {
+                        shown_version = vline;
+                        if (idx >= 0) shown_build = idx;
+                    }
+                }
+            }
+            std::cout << shown_version << " build=" << shown_build << "\n";
             return kExitOk;
         }
         if (a.size() > 1 && a[0] == '-' && action.empty()) {

@@ -63,7 +63,10 @@ def main() -> int:
             if f.suffix not in (".cpp", ".h", ".hpp"):
                 continue
             uses += f.read_text(encoding="utf-8", errors="replace").count("path_from_utf8(")
-    (ok if uses >= 10 else fail)("`path_from_utf8(` 仍在广泛使用（%d 处）—— 不是把调用点删了糊弄" % uses)
+    # ★ 下界而不是精确值（DSH 2026-11-05）：精确计数会随正常增删常红，
+    #   常红最后一定被改成 >=1 或删掉。下界表达的是"别把这条路删空"。
+    (ok if uses >= 200 else fail)(
+        "`path_from_utf8(` 仍在广泛使用（%d 处，下界 200）—— 不是把调用点删了糊弄" % uses)
     if PROBLEMS:
         print("FS-PATH-LOCK: FAIL（%d 处）" % len(PROBLEMS))
         return 1

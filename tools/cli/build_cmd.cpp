@@ -307,6 +307,13 @@ int run_build_package(const std::vector<std::string>& operands) {
 
 #ifdef _WIN32
     int rc = run_windowless_utf8(cmd);  // 无控制台窗口（用户要求：不要打开 cmd）
+    // ★★ 2026-11-05（DSH 干净目录测试）：包内 CLI 的版本可能与包不同。
+    //   原因：`--build-package` 是 **CLI 自己**在跑；先 bump 版本号、再重编 CLI 会撞上
+    //   "正在运行的 exe 被自己占用"（实测 LNK1104）。⇒ 这里不做自重编，只把事实说出来：
+    //   包内 CLI 是上一次 `build.ps1 -Preset msvc-release` 的产物（版本可能比包小 1）。
+    //   要同版：先 `scripts\build.ps1 -Preset msvc-release`，再打包。
+    std::cout << "BUILDPKG warn 包内 CLI 版本可能落后一版（它无法在打包过程中重编自己；"
+                 "要同版请先 build msvc-release）\n";
 #else
     // 本项目只出 Windows 包（scripts/*.ps1 都是 PowerShell）⇒ 非 Windows 不做等价实现，
     // 直接失败。（保留 std::system 会让"无控制台窗口"静态锁永远红 —— 它就是拦这个的。）
