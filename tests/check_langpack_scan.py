@@ -29,6 +29,9 @@ _GAME_ROOTS = [
     Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat"),
 ]
 _PACK_NAMES = ["NotoSansSC", "HPSimplifiedHans-Light", "HPSimplifiedHans-Regular"]
+# ★ 2026-11-05：MODS 下还有 `汉化\_sync_backup\汉化包\<同名>` 的**备份目录**（CoP 107 更新时产生），
+#   它不是发布形态（缺 fonts.ltx）⇒ 扫描真包时必须跳过，否则会把备份误判成 cis。
+_SKIP_MARKERS = ("_sync_backup",)
 
 
 def real_packs() -> list:
@@ -38,9 +41,13 @@ def real_packs() -> list:
             if not mods.is_dir():
                 continue
             for name in _PACK_NAMES:
-                for cand in (mods / name, mods / ("~" + name)):
+                # ★ 2026-11-05：优先用 `~<名>`（未被 MODS 覆盖的原始发布包）。
+                #   MODS\<名> 可能已被更新器改写过（实测 NotoSansSC 被 107 更新剥成无字体形态，
+                #   识别成 cis 是对的）⇒ 真包夹具只认"原始形态"，否则判据会随用户 mod 状态漂。
+                for cand in (mods / ("~" + name), mods / name):
                     if cand.is_dir():
                         found.append(cand)
+                        break
     # 去重（按 resolve）
     seen, unique = set(), []
     for p in found:
