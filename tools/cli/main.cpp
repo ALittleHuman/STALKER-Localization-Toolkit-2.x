@@ -225,7 +225,8 @@ static const char* const kRecipes =
     "  · --only 清单：别带 BOM（新版已剥；旧版会静默零命中）\n"
     "  · 编码名：用 windows-1251，不是 cp1251\n"
     "  · --track 默认只做 .xml 的条目级；.ltx/.script/.txt 只报文件级\n"
-    "  · 不做 --strip-prefix：--pack-layout 已覆盖\"剥前缀再摆盘\"；不提供第二条路径\n";
+    "  · 不做 --strip-prefix：--pack-layout 已覆盖\"剥前缀再摆盘\"；不提供第二条路径\n"
+    "  · 追更的页面等价入口：文本工具页的「XML 对比」——模式要切「ID 文本对比」（默认 stats 不比文本）\n";
 
 const ActionSpec* find_action_spec(const std::string& name) {
     for (const ActionSpec& s : kActionSpecs) {
@@ -4918,6 +4919,13 @@ if (action == "--diff-snapshot") {
                       << " consistent=" << (row.result.consistent ? 1 : 0)
                       << " untrusted="
                       << ((row.result.untrusted_a || row.result.untrusted_b) ? 1 : 0) << "\n";
+        }
+        // ★ 2026-11-05（DSH/HA 封测防漏）：默认 stats **只比 ID 集合与文件数**，不比文本内容。
+        //   用户点"比较"看到"没变化"就会漏掉纯文本改动（实验证过：改 1 条文本、text_diff=0）。
+        //   这里显式说出来 —— 提示不算契约，但必须可见。
+        if (opt.mode_key.empty() || opt.mode_key == "stats") {
+            std::cout << "XMLDIRS note 本模式只比 ID 集合与文件数，不比文本内容；"
+                         "要找文本改动请切「ID 文本对比」（--mode text）\n";
         }
         std::cout << "XMLDIRS ok total=" << report.total
                   << " rows=" << report.rows.size()

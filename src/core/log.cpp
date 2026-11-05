@@ -82,7 +82,7 @@ PruneResult prune_log_files(const std::string& dir, int keep, const std::string&
     PruneResult res;
     if (dir.empty() || keep <= 0) return res;
     std::error_code ec;
-    std::filesystem::path root = std::filesystem::path(dir);
+    std::filesystem::path root = xrkit::core::path_from_utf8(dir);
     if (!std::filesystem::is_directory(root, ec)) return res;
 
     struct Item {
@@ -178,7 +178,13 @@ SessionSweep sweep_previous_session(const std::string& dir) {
     const std::string log_path = nl == std::string::npos ? std::string() : text.substr(0, nl);
     const std::string state = nl == std::string::npos ? std::string() : text.substr(nl + 1);
     std::error_code ec;
-    if (state.rfind("finished", 0) == 0) {
+    bool finished = state.rfind("finished", 0) == 0;
+    if (!finished && !log_path.empty()) {
+        // 兜底：看日志尾行（见 mark_session_finished 的注释）
+        const std::string log_text = read_small_file(xrkit::core::path_from_utf8(log_path));
+        finished = log_text.find("[FINISHED]") != std::string::npos;
+    }
+    if (finished) {
         // 上一轮正常退出 ⇒ 重置（删掉它那份日志）
         if (!log_path.empty() && std::filesystem::exists(log_path, ec)) {
             std::filesystem::remove(xrkit::core::path_from_utf8(log_path), ec);
@@ -211,8 +217,17 @@ void mark_session_finished(const std::string& dir) {
     const std::filesystem::path marker = xrkit::core::path_from_utf8(dir) / ".session";
     std::string text = read_small_file(marker);
     const std::size_t nl = text.find('\n');
+    const std::string log_path = nl == std::string::npos ? std::string() : text.substr(0, nl);
     if (nl != std::string::npos) text = text.substr(0, nl + 1) + "finished\n";
     write_small_file(marker, text);
+    // ★ 2026-11-05（DSH）：**日志尾部**再落一条 finished —— 只靠 .session 会有假阳性：
+    //   崩溃若发生在"写 started 之后、正常退出之前"，下次会把一份其实正常的日志标成 abnormal。
+    //   兜底判据：.session 缺失或状态不是 finished 时，再看日志尾行有没有 `[FINISHED]`。
+    if (!log_path.empty()) {
+        std::ofstream tail(xrkit::core::path_from_utf8(log_path),
+                           std::ios::app | std::ios::binary);
+        if (tail) tail << "[FINISHED] 正常退出\n";
+    }
 }
 
 }  // namespace xrkit::core

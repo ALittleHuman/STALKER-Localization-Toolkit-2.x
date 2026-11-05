@@ -3575,6 +3575,23 @@ def step_action_spec(release: bool) -> None:
         fail("帮助结构化判据不通过（见上）")
 
 
+def step_fs_path_lock(release: bool) -> None:
+    """静态锁：`fs::path(窄字符串)` 绝迹（同一个坑咬了两次）。"""
+    say("[fs-path-lock] fs::path(窄字符串) 必须绝迹")
+    script = ROOT / "tests" / "check_fs_path_lock.py"
+    if not require_repo_file(script, "fs::path 静态锁"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("FS-PATH-LOCK"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("没有 fs::path(窄字符串) 残留")
+    else:
+        fail("fs::path(窄字符串) 又出现了（见上）")
+
+
 def step_p0_fixes(release: bool) -> None:
     """P0 修复判据：中文路径 / --only BOM / 零命中退出码 / XML 必现算。"""
     say("[?] P0：中文路径 / BOM / 零命中 / XML 必现算")
@@ -7961,6 +7978,7 @@ STEPS = [
     ("version-consistency", step_version_consistency),
     ("baseline", step_baseline),
     ("p0-fixes", step_p0_fixes),
+    ("fs-path-lock", step_fs_path_lock),
     ("action-spec", step_action_spec),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),

@@ -84,6 +84,16 @@ def main() -> int:
         _, out4 = run("--diff-snapshot", td / "old.json", td / "new2.json")
         (ok if "modified=2" in out4 else fail)("空白改动在文件级也算 modified（%s）" % out4.strip().splitlines()[-1])
 
+    # DSH 封测防漏：默认 stats 必须明说"只比 ID 集合，不比文本"
+    with tempfile.TemporaryDirectory(prefix="xmlnote_") as td2s:
+        td2 = Path(td2s)
+        (td2 / "a").mkdir(); (td2 / "b").mkdir()
+        (td2 / "a" / "x.xml").write_text('<string_table><string id="a"><text>A</text></string></table>', encoding="utf-8")
+        (td2 / "b" / "x.xml").write_text('<string_table><string id="a"><text>B</text></string></table>', encoding="utf-8")
+        rc, out = run("--xml-compare-dirs", td2 / "a", td2 / "b")
+        (ok if "只比 ID 集合" in out and "ID 文本对比" in out else fail)(
+            "stats 模式有防漏提示（只比 ID / 请切文本对比）")
+
     if PROBLEMS:
         print("SNAPSHOT-DIFF: FAIL（%d 处）" % len(PROBLEMS))
         return 1

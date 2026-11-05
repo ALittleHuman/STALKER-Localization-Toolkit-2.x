@@ -690,7 +690,7 @@ void cleanup_run_dir() {
     const std::string& dir = run_dir_slot();
     if (dir.empty()) return;
     std::error_code ec;
-    std::filesystem::remove_all(std::filesystem::path(dir), ec);
+    std::filesystem::remove_all(core::path_from_utf8(dir), ec);
 }
 
 #if defined(_WIN32)
