@@ -83,6 +83,8 @@ struct TextSample {
     int width = 0;
     int height = 0;
     int missing = 0;   // 画不出来的码位数（不是"字体里有没有"——.notdef 空白也算缺）
+    // ★ 2026-11-05（P2-6）：缺的是**哪些字**（只报数字不可行动）。去重、按出现顺序。
+    std::vector<uint32_t> missing_chars;
     std::string error;
 };
 

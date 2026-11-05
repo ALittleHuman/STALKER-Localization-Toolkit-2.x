@@ -682,7 +682,14 @@ TextSample render_text_sample(const std::string& font_path, const std::string& u
         raster_glyph(face, index, r);
         // ★ 只有 `index == 0`（字体里根本没有这个码位）才算缺字；
         //   空格之类本来就没墨迹，不能算缺（修前把空格记成 1 个缺字 —— 假红）。
-        if (index == 0) ++out.missing;
+        if (index == 0) {
+        ++out.missing;
+        // ★ P2-6：只报数字不可行动 —— 把"缺哪个码位"带出去（去重，保持出现顺序）
+        if (std::find(out.missing_chars.begin(), out.missing_chars.end(), cp) ==
+            out.missing_chars.end()) {
+            out.missing_chars.push_back(cp);
+        }
+    }
         int advance = r.advance >> 6;
         if (advance <= 0) advance = pixel_size / 2 + 1;
         cells.push_back({cp, advance, pen});

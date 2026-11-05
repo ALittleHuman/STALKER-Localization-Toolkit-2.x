@@ -224,7 +224,8 @@ static const char* const kRecipes =
     "  · 路径含中文/西里尔：BETA.114 起已修；旧版会报\"不是目录\"\n"
     "  · --only 清单：别带 BOM（新版已剥；旧版会静默零命中）\n"
     "  · 编码名：用 windows-1251，不是 cp1251\n"
-    "  · --track 默认只做 .xml 的条目级；.ltx/.script/.txt 只报文件级\n";
+    "  · --track 默认只做 .xml 的条目级；.ltx/.script/.txt 只报文件级\n"
+    "  · 不做 --strip-prefix：--pack-layout 已覆盖\"剥前缀再摆盘\"；不提供第二条路径\n";
 
 const ActionSpec* find_action_spec(const std::string& name) {
     for (const ActionSpec& s : kActionSpecs) {
@@ -5825,6 +5826,21 @@ if (action == "--diff-snapshot") {
         }
         std::cout << "SAMPLE ok width=" << s.width << " height=" << s.height
                   << " missing=" << s.missing << " out=" << operands[3] << "\n";
+        if (s.missing > 0) {
+            // ★ P2-6（2026-11-05）：只给"缺 37 个"不够 —— 列出具体码位 + 可行动建议
+            std::cout << "SAMPLE missing_chars=";
+            const std::size_t show = std::min<std::size_t>(s.missing_chars.size(), 32);
+            for (std::size_t i = 0; i < show; ++i) {
+                if (i) std::cout << ",";
+                std::cout << "U+" << std::hex << std::uppercase << s.missing_chars[i]
+                          << std::dec;
+            }
+            if (s.missing_chars.size() > show) std::cout << "…(+" << (s.missing_chars.size() - show) << ")";
+            std::cout << "\n";
+            std::cout << "SAMPLE advice=所选字体缺 " << s.missing
+                      << " 个字形，界面会显示方块/空白；换一款覆盖这些字符的字体，"
+                         "或用字库合并（A 路线）补字形，或缩小字符集\n";
+        }
         return kExitOk;
     }
 

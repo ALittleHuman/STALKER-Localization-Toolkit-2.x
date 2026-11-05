@@ -95,6 +95,13 @@ def main() -> int:
             problems += 1
             fail("无中文字体的缺字计数不对：rc=%d\n%s" % (rc2, stdout2[-300:]))
 
+        # ②b 缺字必须**可行动**（P2-6：只给数字不合格）
+        if "SAMPLE advice=" in stdout2 and "U+4F60" in stdout2:
+            ok("缺字可行动：列出具体码位（U+4F60…）+ 换字体/补字形建议")
+        else:
+            problems += 1
+            fail("缺字只给了数字，没有码位/建议：\n%s" % stdout2[-300:])
+
         # ③ 打不开的字体 ⇒ 退 1 且说理由（零静默）
         rc3, stdout3 = run_sample(tmp / "nope.ttf", "你好", 28, tmp / "nope.ppm")
         if rc3 == 1 and "SAMPLE error reason=" in stdout3:

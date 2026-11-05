@@ -1427,8 +1427,25 @@ bool encode_strict(const std::string& encoding_raw, const std::string& text,
         return true;
     }
     // ★ 2026-11-05（P1-4 补）：gbk / gb2312 的**编码**侧此前没有分支 ⇒ cp936 别名归一后
-    //   仍报"未知编码"。GB18030 是 GBK 的超集，用它编码是兼容选择（能表示即成功）。
-    if (encoding == kGbk || encoding == kGb2312) return gb18030_encode(text, out, err);
+    //   仍报"未知编码"。GB18030 是 GBK 的超集，但**不能静默兜底**：
+    //   GBK 范围外的字会被写成 4 字节 GB18030 序列，文件对外还自称 gbk ⇒
+    //   游戏/1.x 的 Python gbk codec 读不了（DSH 2026-11-05）。所以：
+    //   · 先按 GB18030 编；一旦出现 4 字节序列 ⇒ 报错，不写盘；
+    //   · GBK 的两字节第二字节范围是 0x40–0xFE（不含 0x7F），永远不可能是 0x30–0x39
+    //     ⇒ "首字节 0x81–0xFE + 次字节 0x30–0x39" 就是 GB18030 四字节序列的可靠判据。
+    if (encoding == kGbk || encoding == kGb2312) {
+        std::vector<uint8_t> tmp;
+        if (!gb18030_encode(text, tmp, err)) return false;
+        for (size_t i = 0; i + 1 < tmp.size(); ++i) {
+            if (tmp[i] >= 0x81 && tmp[i] <= 0xFE && tmp[i + 1] >= 0x30 && tmp[i + 1] <= 0x39) {
+                err = std::string("字符不在 ") + encoding +
+                      " 范围内（会写成 GB18030 四字节序列）—— 拒绝静默降级";
+                return false;
+            }
+        }
+        out = tmp;
+        return true;
+    }
     err = "未知编码：" + encoding;
     return false;
 }

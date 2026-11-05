@@ -106,6 +106,12 @@ def main() -> int:
                           td2 / "cp3.bin")
         (ok if rc7c == 0 and "encoding=gbk" in out7c else fail)(
             "⑤ encode strict cp936 ⇒ 归一为 gbk（rc=%d, %s）" % (rc7c, out7c.strip()[:100]))
+        # ⑤b GBK 范围外的字（U+3400）在 strict 下必须**报错**，不许写成 GB18030 四字节
+        oob = td2 / "oob.txt"
+        oob.write_text("\u3400", encoding="utf-8")
+        rc7d, out7d = run("--codec-lossy", "encode", "gbk", oob, "strict", td2 / "oob.bin")
+        (ok if rc7d != 0 and "不在 gbk 范围内" in out7d else fail)(
+            "⑤b gbk strict 拒绝 GBK 范围外字符（rc=%d, %s）" % (rc7d, out7d.strip()[:120]))
 
         lp = td2 / "lp"
         (lp / "text" / "rus").mkdir(parents=True)
