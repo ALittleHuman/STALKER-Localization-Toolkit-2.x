@@ -39,9 +39,46 @@ set(violations "")
 foreach(f ${XRKIT_SCAN})
   file(READ "${f}" content)
 
-  # 先剥掉注释，免得"注释里提到 Qt 头名"被误判（例：说明性注释）
-  string(REGEX REPLACE "/\\*([^*]|\\*[^/])*\\*/" "" content "${content}")
-  string(REGEX REPLACE "//[^\n]*" "" content "${content}")
+  # 先剥掉注释，免得"注释里提到 Qt 头名"被误判（例：说明性注释）。
+  # ★★ 2026-11-05（0xC00000FD 归因）：修前这里是两条**整文件**正则
+  #   （`/\*...\*/` 与 `//[^\n]*`）。CMake 的 regex 是递归实现：
+  #   对 389 KB 的 `tools/cli/main.cpp` 做这两条 ⇒ **cmake 自己 STATUS_STACK_OVERFLOW**，
+  #   构建在 J5 步失败、且没有任何错误文本（只有 exit=0xC00000FD）。
+  #   实测复现：`cmake -P` 只读 main.cpp + 这两条正则 ⇒ 必崩。
+  #   ⇒ 改成**逐行**处理（每行一条短正则），不再让 regex 递归整文件。
+  string(REPLACE "\n" ";" _xrkit_lines "${content}")
+  set(_xrkit_stripped "")
+  set(_xrkit_in_block 0)
+  foreach(_xrkit_line ${_xrkit_lines})
+    if(_xrkit_in_block)
+      string(FIND "${_xrkit_line}" "*/" _xrkit_end)
+      if(NOT _xrkit_end EQUAL -1)
+        math(EXPR _xrkit_end "${_xrkit_end} + 2")
+        string(SUBSTRING "${_xrkit_line}" ${_xrkit_end} -1 _xrkit_line)
+        set(_xrkit_in_block 0)
+      else()
+        set(_xrkit_line "")
+      endif()
+    endif()
+    string(FIND "${_xrkit_line}" "/*" _xrkit_start)
+    if(NOT _xrkit_start EQUAL -1)
+      string(FIND "${_xrkit_line}" "*/" _xrkit_end)
+      if(_xrkit_end EQUAL -1)
+        string(SUBSTRING "${_xrkit_line}" 0 ${_xrkit_start} _xrkit_line)
+        set(_xrkit_in_block 1)
+      else()
+        math(EXPR _xrkit_end "${_xrkit_end} + 2")
+        string(LENGTH "${_xrkit_line}" _xrkit_len)
+        math(EXPR _xrkit_tail "${_xrkit_len} - ${_xrkit_end}")
+        string(SUBSTRING "${_xrkit_line}" 0 ${_xrkit_start} _xrkit_head)
+        string(SUBSTRING "${_xrkit_line}" ${_xrkit_end} ${_xrkit_tail} _xrkit_tail_text)
+        set(_xrkit_line "${_xrkit_head}${_xrkit_tail_text}")
+      endif()
+    endif()
+    string(REGEX REPLACE "//.*$" "" _xrkit_line "${_xrkit_line}")
+    string(APPEND _xrkit_stripped "${_xrkit_line}\n")
+  endforeach()
+  set(content "${_xrkit_stripped}")
 
   # 三种 Qt 包含形态：模块式 <QtCore/QString>、类式 <QString>、**小写私名式 <qstring.h>**。
   # ★★ 补充 H/§5.7（B 批）：修前只有前两种 —— `#include <qstring.h>` / `<qglobal.h>` 这类

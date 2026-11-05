@@ -150,9 +150,133 @@ int count_empty_dirs(const std::vector<std::pair<std::string, bool>>& entries) {
     return empty;
 }
 
+// ═══ 动作规格表（单一真源：--help / --help <动作> / --actions --json 都从它渲染）═══
+struct ActionSpec {
+    const char* name;
+    const char* summary;
+    const char* args;
+    const char* reads;
+    const char* writes;
+    const char* exits;
+    const char* tech;
+    const char* caps;
+    const char* example;
+    const char* related;
+};
+
+const ActionSpec kActionSpecs[] = {
+    {"--snapshot", "文件级 manifest（追更第一步）",
+     "<根目录> <out.json>", "根目录（只读）", "out.json",
+     "0=成功｜1=出错｜3=用法错误",
+     "rel/kind/size/mtime/sha256 + JSGME 行序；无时间戳 ⇒ 两次跑逐字节一致",
+     "全文件类型；不做文本解析",
+     "xrkit_cli --snapshot old/ old.json", "--diff-snapshot, --track"},
+    {"--diff-snapshot", "只比 manifest（追更第二步）",
+     "<旧.json> <新.json>", "两份 json（只读）", "无（只打印）",
+     "0=成功（有变化也 0）｜1=出错｜3=用法错误",
+     "added/removed/modified/jsgme_changed/changed；不读文件内容",
+     "文件级；文本变化看 --track",
+     "xrkit_cli --diff-snapshot old.json new.json", "--snapshot, --track"},
+    {"--track", "追更新：文件级预筛 + 条目级文本对比",
+     "<baseline_dir> <current_dir> <out_dir> [--baseline old.json] [--rehash]",
+     "baseline_dir（只读）· current_dir（只读）· old.json（可选，只复用旧 sha）",
+     "out_dir/report.json · out_dir/changed/*.tsv",
+     "0=成功（有变化也 0）｜1=出错｜3=用法错误",
+     "复用 engine::xml::compare_text（text 口径，不另造 diff）；XML 永远现算；--baseline 的 size+mtime 双条件+root 指纹；--rehash 忽略缓存",
+     "仅 .xml 有条目级；.ltx/.script/.txt 只到文件级（运行时打 caps 行）",
+     "xrkit_cli --track old/ new/ out/ --baseline old.json",
+     "--snapshot, --diff-snapshot, --xml-compare-dirs"},
+    {"--xml-compare-dirs", "XML 目录对比（逐行/CSV/详情）",
+     "<目录A> <目录B> [--mode stats|text] [--enc-a X] [--enc-b Y]",
+     "两个目录（只读）", "无（只打印）",
+     "0=成功｜1=出错｜3=用法错误",
+     "默认 stats 只比 ID 集合与文件数；找文本改动必须 --mode text",
+     "只比 .xml；其它类型不在扫描范围",
+     "xrkit_cli --xml-compare-dirs old/ new/ --mode text",
+     "--track, --extract-text"},
+    {"--extract-text", "把译文树的文本抽成对照表",
+     "<源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]",
+     "源目录（只读）", "输出目录",
+     "0=成功｜1=出错｜3=用法错误",
+     "容器/散装都走同一套扫描；输出每行原文与译文对照",
+     "文本 XML；非文本 XML 不处理",
+     "xrkit_cli --extract-text gamedata/ out/",
+     "--langpack-scan"},
+    {"--langpack-scan", "认出语言包的语言槽与资源",
+     "<汉化包或目录>", "包/目录（只读）", "无（只打印）",
+     "0=成功｜1=出错｜3=用法错误",
+     "识别 gamedata/configs/text/<lang> 槽位与字体/贴图资源",
+     "不解包、不改文件",
+     "xrkit_cli --langpack-scan 汉化包/",
+     "--extract-text"},
+};
+
+static const char* const kRecipes =
+    "【追更新】（全程只读源；产物落临时目录）\n"
+    "  1) --snapshot <旧根> old.json\n"
+    "  2) --snapshot <新根> new.json\n"
+    "  3) --diff-snapshot old.json new.json              ← 先看哪些文件变了\n"
+    "  4) --track <旧根> <新根> out --baseline old.json  ← 再看每个文件哪几条文本变了\n"
+    "  5) --langpack-scan <汉化包>                       ← 认语言槽/资源\n"
+    "  6) --xml-compare-dirs <旧> <新> --mode text       ← 双原校对（必须 text）\n"
+    "\n"
+    "【坑位】\n"
+    "  · 路径含中文/西里尔：BETA.114 起已修；旧版会报\"不是目录\"\n"
+    "  · --only 清单：别带 BOM（新版已剥；旧版会静默零命中）\n"
+    "  · 编码名：用 windows-1251，不是 cp1251\n"
+    "  · --track 默认只做 .xml 的条目级；.ltx/.script/.txt 只报文件级\n";
+
+const ActionSpec* find_action_spec(const std::string& name) {
+    for (const ActionSpec& s : kActionSpecs) {
+        if (name == s.name) return &s;
+    }
+    return nullptr;
+}
+
+std::string json_escape_basic(const std::string& s) {
+    std::string o;
+    for (char c : s) {
+        if (c == '"' || c == '\\') { o += '\\'; o += c; }
+        else if (c == '\n') o += "\\n";
+        else o += c;
+    }
+    return o;
+}
+
+void print_actions_json() {
+    std::cout << "{\"schema\":1,\"actions\":[";
+    bool first = true;
+    for (const ActionSpec& s : kActionSpecs) {
+        if (!first) std::cout << ",";
+        first = false;
+        std::cout << "{\"name\":\"" << json_escape_basic(s.name)
+                  << "\",\"summary\":\"" << json_escape_basic(s.summary)
+                  << "\",\"args\":\"" << json_escape_basic(s.args)
+                  << "\",\"reads\":\"" << json_escape_basic(s.reads)
+                  << "\",\"writes\":\"" << json_escape_basic(s.writes)
+                  << "\",\"exit\":\"" << json_escape_basic(s.exits)
+                  << "\",\"tech\":\"" << json_escape_basic(s.tech)
+                  << "\",\"caps\":\"" << json_escape_basic(s.caps)
+                  << "\",\"example\":\"" << json_escape_basic(s.example)
+                  << "\",\"related\":\"" << json_escape_basic(s.related) << "\"}";
+    }
+    std::cout << "],\"schema_note\":\"spec 逐步扩：未列出的动作仍可直接用，但还没有结构元数据\"}\n";
+}
+
+void print_action_detail(const ActionSpec& s) {
+    std::cout << s.name << " " << s.args << "\n"
+              << "  做什么   " << s.summary << "\n"
+              << "  读       " << s.reads << "\n"
+              << "  写       " << s.writes << "\n"
+              << "  退出码   " << s.exits << "\n"
+              << "  技术特性 " << s.tech << "\n"
+              << "  能力边界 " << s.caps << "\n"
+              << "  示例     " << s.example << "\n"
+              << "  相关     " << s.related << "\n";
+}
 void print_usage() {
     std::cout
-        << "xrkit_cli —— STALKER 汉化工具集 2.0 引擎命令行\n"
+        << kRecipes << "\n" << "xrkit_cli —— STALKER 汉化工具集 2.0 引擎命令行\n"
            "\n"
            "用法: xrkit_cli <动作> [选项]\n"
            "\n"
@@ -3038,7 +3162,25 @@ int run_cli(const std::vector<std::string>& args) {
             return kExitUsage;
         }
         if (a == "-h" || a == "--help") {
+            // `--help <动作>` ⇒ 单动作 schema；不带参数 ⇒ 任务视图索引
+            if (i + 1 < args.size()) {
+                const ActionSpec* spec = find_action_spec(args[i + 1]);
+                if (spec != nullptr) {
+                    print_action_detail(*spec);
+                    return kExitOk;
+                }
+                // `--help --full` 留待后续；明确说清而不是静默给全量
+                if (args[i + 1] != "--full") {
+                    std::cout << "HELP warn reason=没有 " << args[i + 1]
+                              << " 的结构化说明（走全量索引）\n";
+                }
+            }
             print_usage();
+            return kExitOk;
+        }
+        if (a == "--actions") {
+            // 机器可读的能力清单（给 AI/脚本全枚举用，不靠名字联想）
+            print_actions_json();
             return kExitOk;
         }
         if (a == "--version") {

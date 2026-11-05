@@ -3558,6 +3558,23 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_action_spec(release: bool) -> None:
+    """帮助结构化：spec 表 / recipes / --actions --json（DSH 2026-11-05）。"""
+    say("[?] 帮助结构化：spec 表 / recipes / --actions")
+    script = ROOT / "tests" / "check_action_spec.py"
+    if not require_repo_file(script, "帮助结构化判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗", "·")) or s.startswith("ACTION-SPEC"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("帮助结构化判据全过")
+    else:
+        fail("帮助结构化判据不通过（见上）")
+
+
 def step_p0_fixes(release: bool) -> None:
     """P0 修复判据：中文路径 / --only BOM / 零命中退出码 / XML 必现算。"""
     say("[?] P0：中文路径 / BOM / 零命中 / XML 必现算")
@@ -7944,6 +7961,7 @@ STEPS = [
     ("version-consistency", step_version_consistency),
     ("baseline", step_baseline),
     ("p0-fixes", step_p0_fixes),
+    ("action-spec", step_action_spec),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),
