@@ -156,6 +156,8 @@ private:
     QPlainTextEdit* log_view_ = nullptr;
     LogBox* log_box_ = nullptr;
     QPushButton* log_clear_ = nullptr;
+    QPushButton* log_keep_ = nullptr;
+    bool owns_session_ = false;   // 本进程第一个 Hub 负责日志会话标记   // 「保留本次日志」（用户口径：也可手动留存）
     QPushButton* log_toggle_ = nullptr;
     QWidget* log_panel_ = nullptr;
     QLabel* status_label_ = nullptr;

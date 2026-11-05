@@ -492,6 +492,68 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         fs::remove(p, ec);
     });
 
+    reg.add("log: 正常退出才重置、崩溃保留（用户 2026-11-05）", [](CheckContext& ctx) {
+        int step = 0;
+        try {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path dir = fs::temp_directory_path(ec) / "xrkit_selftest_session";
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        const auto write_marker = [&dir](const std::string& log, const std::string& state) {
+            std::ofstream out(dir / ".session", std::ios::binary | std::ios::trunc);
+            out << log << "\n" << state << "\n";
+            out.flush();
+        };
+        const auto make_log = [&dir](const char* name) {
+            const fs::path p = dir / name;
+            std::ofstream out(p, std::ios::binary);
+            out << "marker\n";
+            return xrkit::core::path_to_utf8(p);
+        };
+
+        // A：上一轮正常退出 ⇒ 重置（删掉那份日志）
+        step = 1;
+        {
+            const std::string log = make_log("a.txt");
+            write_marker(log, "finished");
+            const xrkit::core::SessionSweep sweep =
+                xrkit::core::sweep_previous_session(xrkit::core::path_to_utf8(dir));
+            check(ctx, !sweep.previous_crashed, "正常退出被当成崩溃");
+            check(ctx, !sweep.removed_log.empty() &&
+                           !fs::exists(xrkit::core::path_from_utf8(log), ec),
+                  "正常退出的旧日志没被重置");
+        }
+        // B：上一轮没走到正常退出 ⇒ 改名保留
+        step = 2;
+        {
+            const std::string log = make_log("b.txt");
+            write_marker(log, "started");
+            const xrkit::core::SessionSweep sweep =
+                xrkit::core::sweep_previous_session(xrkit::core::path_to_utf8(dir));
+            check(ctx, sweep.previous_crashed, "崩溃现场没被识别");
+            check(ctx, !sweep.kept_log.empty() &&
+                           fs::exists(xrkit::core::path_from_utf8(sweep.kept_log), ec),
+                  "崩溃现场没被保留");
+            check(ctx, !fs::exists(xrkit::core::path_from_utf8(log), ec),
+                  "原日志还在（应已改名）");
+        }
+        // C：mark_started 后 mark_finished ⇒ 下一轮按"正常退出"处理
+        step = 3;
+        {
+            const std::string log = make_log("c.txt");
+            xrkit::core::mark_session_started(xrkit::core::path_to_utf8(dir), log);
+            xrkit::core::mark_session_finished(xrkit::core::path_to_utf8(dir));
+            const xrkit::core::SessionSweep sweep =
+                xrkit::core::sweep_previous_session(xrkit::core::path_to_utf8(dir));
+            check(ctx, !sweep.previous_crashed, "started→finished 之后仍被判成崩溃");
+        }
+        fs::remove_all(dir, ec);
+        } catch (const std::exception& e) {
+            check(ctx, false, "case " + std::to_string(step) + " 抛异常: " + e.what());
+        }
+    });
+
     reg.add("check: 注册表按登记顺序执行", [](CheckContext& ctx) {
         static std::string trace;
         trace.clear();

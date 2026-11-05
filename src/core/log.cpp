@@ -135,4 +135,84 @@ PruneResult prune_log_files(const std::string& dir, int keep, const std::string&
     return res;
 }
 
+namespace {
+
+std::string read_small_file(const std::filesystem::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) return {};
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+bool write_small_file(const std::filesystem::path& p, const std::string& text) {
+    std::ofstream out(p, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    out << text;
+    return static_cast<bool>(out);
+}
+
+std::string unique_path_for(const std::filesystem::path& want) {
+    // ★ 不能用 `.string()`：它按 ACP 窄化，文件名里有中文（`_异常退出`）会抛
+    //   "No mapping for the Unicode character…"（自检实测）。
+    if (!std::filesystem::exists(want)) return xrkit::core::path_to_utf8(want);
+    const std::string stem = xrkit::core::path_to_utf8(want.stem());
+    const std::string ext = xrkit::core::path_to_utf8(want.extension());
+    for (int i = 2; i < 1000; ++i) {
+        const auto cand = want.parent_path() / xrkit::core::path_from_utf8(
+                                                 stem + "_" + std::to_string(i) + ext);
+        if (!std::filesystem::exists(cand)) return xrkit::core::path_to_utf8(cand);
+    }
+    return xrkit::core::path_to_utf8(want);
+}
+
+}  // namespace
+
+SessionSweep sweep_previous_session(const std::string& dir) {
+    SessionSweep out;
+    const std::filesystem::path base = xrkit::core::path_from_utf8(dir);
+    const std::filesystem::path marker = base / ".session";
+    if (!std::filesystem::exists(marker)) return out;
+    out.had_marker = true;
+    const std::string text = read_small_file(marker);
+    // 格式：第一行 log 路径，第二行 state
+    const std::size_t nl = text.find('\n');
+    const std::string log_path = nl == std::string::npos ? std::string() : text.substr(0, nl);
+    const std::string state = nl == std::string::npos ? std::string() : text.substr(nl + 1);
+    std::error_code ec;
+    if (state.rfind("finished", 0) == 0) {
+        // 上一轮正常退出 ⇒ 重置（删掉它那份日志）
+        if (!log_path.empty() && std::filesystem::exists(log_path, ec)) {
+            std::filesystem::remove(xrkit::core::path_from_utf8(log_path), ec);
+            if (!ec) out.removed_log = log_path;
+        }
+    } else if (!log_path.empty() && std::filesystem::exists(log_path, ec)) {
+        // 上一轮没走到正常退出 ⇒ 按命名规则保留
+        out.previous_crashed = true;
+        const std::filesystem::path src = xrkit::core::path_from_utf8(log_path);
+        const auto dest = unique_path_for(
+            src.parent_path() /
+            xrkit::core::path_from_utf8(xrkit::core::path_to_utf8(src.stem()) + "_abnormal_exit" +
+                                        xrkit::core::path_to_utf8(src.extension())));
+        std::filesystem::rename(src, dest, ec);
+        if (!ec) out.kept_log = xrkit::core::path_to_utf8(dest);
+    }
+    std::filesystem::remove(marker, ec);
+    return out;
+}
+
+void mark_session_started(const std::string& dir, const std::string& log_path) {
+    std::error_code ec;
+    std::filesystem::create_directories(xrkit::core::path_from_utf8(dir), ec);
+    const bool ok = write_small_file(xrkit::core::path_from_utf8(dir) / ".session",
+                                     log_path + "\nstarted\n");
+    if (!ok) xrkit::core::log(Level::Warn, "SESSION warn：写不了 .session（" + dir + "）");
+}
+
+void mark_session_finished(const std::string& dir) {
+    const std::filesystem::path marker = xrkit::core::path_from_utf8(dir) / ".session";
+    std::string text = read_small_file(marker);
+    const std::size_t nl = text.find('\n');
+    if (nl != std::string::npos) text = text.substr(0, nl + 1) + "finished\n";
+    write_small_file(marker, text);
+}
+
 }  // namespace xrkit::core

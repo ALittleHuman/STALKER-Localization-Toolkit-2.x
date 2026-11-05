@@ -39,4 +39,26 @@ struct PruneResult {
 };
 PruneResult prune_log_files(const std::string& dir, int keep, const std::string& protect_path);
 
+
+// ★ 2026-11-05（用户口径）：**日志按"正常退出才重置"管理**。
+//   修前：每次启动都开新文件、旧文件按"保留 50 份"轮转 —— 崩溃那次的日志和正常那次的
+//   混在一起，想看"上次为什么崩"要先猜哪一份。
+//   现在：
+//     · `sweep_previous_session(dir)`：读 `<dir>/.session`（上一轮留下的）；
+//         - 上一轮**正常退出**（finished）⇒ 删掉它那份日志（= 重置）；
+//         - 上一轮**没标记**（= 崩溃/强杀）⇒ 把那份日志重命名成 `<原名>_abnormal_exit.txt` **保留**，
+//           写在返回值里，由上层提示"上次异常退出，日志已保留：…"；
+//     · `mark_session_started(dir, log_path)`：本轮开始（写 `.session`，state=started）；
+//     · `mark_session_finished(dir)`：正常退出（state=finished）。
+//   命名规则：`<原名>_abnormal_exit.txt`；同一秒重复 ⇒ 加 `_2`、`_3`。
+struct SessionSweep {
+    bool had_marker = false;
+    bool previous_crashed = false;     // true = 上一轮没走到正常退出
+    std::string kept_log;              // 保留（改名）后的路径；空 = 没有可保留的
+    std::string removed_log;           // 正常退出而被重置掉的那份
+};
+SessionSweep sweep_previous_session(const std::string& dir);
+void mark_session_started(const std::string& dir, const std::string& log_path);
+void mark_session_finished(const std::string& dir);
+
 }  // namespace xrkit::core

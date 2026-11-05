@@ -209,6 +209,25 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     log_panel_layout->setContentsMargins(px(8), px(4), px(8), px(4));
     log_panel_layout->setSpacing(px(6));
     log_panel_layout->addWidget(log_box_, 1);
+    log_keep_ = new QPushButton(QStringLiteral("保留本次日志"));
+    log_keep_->setObjectName(QStringLiteral("log_keep"));
+    QObject::connect(log_keep_, &QPushButton::clicked, this, [this] {
+        // ★ 用户口径：「也可以手动选择留存日志」——复制成 `_保留`，不改正在写的文件
+        const QString src = log_file_path_;
+        if (src.isEmpty() || !QFile::exists(src)) return;
+        const QFileInfo info(src);
+        const QString dest = info.dir().filePath(
+            info.completeBaseName() + QStringLiteral("_保留.") + info.suffix());
+        if (QFile::exists(dest)) QFile::remove(dest);
+        if (QFile::copy(src, dest)) {
+            log_line(QStringLiteral("已手动保留本次日志：%1")
+                         .arg(QDir::toNativeSeparators(dest)));
+        } else {
+            log_line(QStringLiteral("保留日志失败（拷贝不动）：%1")
+                         .arg(QDir::toNativeSeparators(dest)));
+        }
+    });
+    log_panel_layout->addWidget(log_keep_, 0);
     log_panel_layout->addWidget(log_clear_, 0);
     log_panel_->setVisible(false);  // 默认折叠
 
@@ -217,6 +236,23 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     {
         const QString log_dir = hub_log_dir();
         QDir().mkpath(log_dir);
+        // ★ 2026-11-05（用户口径）：**正常退出才重置日志**。
+        //   上一轮正常退出 ⇒ 删掉那份（重置）；上一轮崩溃/强杀 ⇒ 改名 `<原名>_异常退出.txt` 保留。
+        // ★ 会话逻辑**每个进程只做一次**：smoke/测试会构造多个 Hub，
+        //   每个 Hub 都去"扫上一轮 + 改名日志"会把正在写的文件抢来抢去（实测崩溃）。
+        static bool session_owner_taken = false;
+        const bool session_owner = !session_owner_taken;
+        if (session_owner) session_owner_taken = true;
+        owns_session_ = session_owner;
+        const bool session_tracking =
+            session_owner && qEnvironmentVariableIsEmpty("XRKIT_NO_LOG_SESSION");
+        const bool session_sweep =
+            session_tracking && qEnvironmentVariableIsEmpty("XRKIT_NO_LOG_SWEEP");
+        const bool session_mark =
+            session_tracking && qEnvironmentVariableIsEmpty("XRKIT_NO_LOG_MARK");
+        const xrkit::core::SessionSweep sweep =
+            session_sweep ? xrkit::core::sweep_previous_session(log_dir.toStdString())
+                          : xrkit::core::SessionSweep{};
         const QString stamp =
             QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
         QString clash;
@@ -224,6 +260,15 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
         // ★★ C-13（用户 2026-10-19）：`set_log_file` 必须**提到第一条 `log_line` 之前** ——
         //   以前"运行日志落点冲突"那条是在挂文件**之前**说的，所以它自己进不了文件（丢一条）。
         xrkit::core::set_log_file(log_file_path_.toStdString());
+        if (session_mark) {
+            xrkit::core::mark_session_started(log_dir.toStdString(), log_file_path_.toStdString());
+        }
+        if (sweep.previous_crashed) {
+            log_line(QStringLiteral("上次没有正常退出；崩溃现场日志已保留：%1")
+                         .arg(QDir::toNativeSeparators(QString::fromStdString(sweep.kept_log))));
+        } else if (!sweep.removed_log.empty()) {
+            log_line(QStringLiteral("上次正常退出，旧日志已重置（保留策略：崩溃才留）"));
+        }
         // ★ 同秒已有同名运行日志 ⇒ 本次换了落点：**说出来**（否则用户会以为在看重名的那一份）
         if (!clash.isEmpty()) log_line(QStringLiteral("运行日志落点：%1").arg(clash));
         // ★ 落点**永远**打一条（不只冲突时）：用户与自检都要能看到"这一次的日志写去了哪"
@@ -390,6 +435,12 @@ void Hub::apply_ui_size(double scale, QString* problem) {
 }
 
 Hub::~Hub() {
+    // ★ 2026-11-05：正常退出标记（下一轮启动据此决定「重置」还是「保留崩溃现场」）
+    // 只有"会话所有者"（本进程第一个 Hub）在析构时写正常退出标记
+    if (owns_session_ && qEnvironmentVariableIsEmpty("XRKIT_NO_LOG_SESSION") &&
+        qEnvironmentVariableIsEmpty("XRKIT_NO_LOG_MARK")) {
+        xrkit::core::mark_session_finished(hub_log_dir().toStdString());
+    }
     // ★★ 2026-10-21：把进程级 sink 收回 —— 否则插件后续 `api.ui.log_append` 会打到已析构的 this。
     clear_qt_ui_facade_log_sink(this);
     // 引擎读入口的活动注册表钩子只有**指针**：本对象一死，`registry_` 也跟着死。
