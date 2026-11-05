@@ -51,6 +51,10 @@ struct DecodeResult {
 };
 
 // 单个编码的严格解码。失败返回 false（err 带原因），**不产生部分结果**。
+// ★ 2026-11-05（P1-4）：编码名归一（别名/大小写/空白）。解码与编码两侧共用这一处；
+//   对外输出（`CODEC ok encoding=` 等）也用 canonical 名，输入别名只作为输入。
+std::string canonical_encoding_name(const std::string& raw);
+
 bool decode_strict(const std::string& encoding, const uint8_t* data, size_t size,
                    std::string& text, std::string& err);
 

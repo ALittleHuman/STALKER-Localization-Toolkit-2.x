@@ -1343,8 +1343,10 @@ bool encode_lossy(const std::string& encoding, const std::string& text, std::vec
     return true;
 }
 
-bool encode_strict(const std::string& encoding, const std::string& text,
-                   std::vector<uint8_t>& out, std::string& err) {    err.clear();
+bool encode_strict(const std::string& encoding_raw, const std::string& text,
+                   std::vector<uint8_t>& out, std::string& err) {
+    err.clear();
+    const std::string encoding = canonical_encoding_name(encoding_raw);
     if (encoding == kUtf8) {
         out.assign(text.begin(), text.end());
         return true;
@@ -1424,6 +1426,9 @@ bool encode_strict(const std::string& encoding, const std::string& text,
         }
         return true;
     }
+    // ★ 2026-11-05（P1-4 补）：gbk / gb2312 的**编码**侧此前没有分支 ⇒ cp936 别名归一后
+    //   仍报"未知编码"。GB18030 是 GBK 的超集，用它编码是兼容选择（能表示即成功）。
+    if (encoding == kGbk || encoding == kGb2312) return gb18030_encode(text, out, err);
     err = "未知编码：" + encoding;
     return false;
 }

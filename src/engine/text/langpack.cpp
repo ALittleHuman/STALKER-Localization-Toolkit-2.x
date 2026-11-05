@@ -212,9 +212,15 @@ LangPackBuildResult build_language_pack(const LangPackBuildOptions& options) {
 
     // ★ 2026-11-05（P1-3 `--pack-layout`）：标准布局 = <out_root>/gamedata/…；
     //   默认仍是 <out_root>/<lang>/…（保持既有调用方行为）。
-    const fs::path out_dir = options.pack_layout
-                                 ? (core::path_from_utf8(options.out_root) / "gamedata")
-                                 : (core::path_from_utf8(options.out_root) / lang);
+    fs::path out_dir;
+    if (options.pack_layout) {
+        const fs::path root = core::path_from_utf8(options.out_root);
+        // ★ 边界（HA）：输出根本身已经是 `…/gamedata` ⇒ 不许再拼一层（避免 gamedata/gamedata）
+        const std::string leaf = core::path_to_utf8(root.filename());
+        out_dir = (leaf == "gamedata") ? root : (root / "gamedata");
+    } else {
+        out_dir = core::path_from_utf8(options.out_root) / lang;
+    }
     out.out_dir = core::path_to_utf8(out_dir);
     out.lang = lang;
     std::error_code ec;

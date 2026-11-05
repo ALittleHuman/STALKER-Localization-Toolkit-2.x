@@ -97,8 +97,15 @@ def main() -> int:
         raw = td2 / "cp.bin"
         raw.write_bytes(bytes([0xCF, 0xF0, 0xE8, 0xE2, 0xE5, 0xF2]))   # "Привет" in cp1251
         rc7, out7 = run("--codec-lossy", "decode", "cp1251", raw, td2 / "cp.txt")
-        (ok if rc7 == 0 and "CODEC ok" in out7 else fail)(
-            "⑤ cp1251 别名可用（rc=%d, %s）" % (rc7, out7.strip()[:120]))
+        (ok if rc7 == 0 and "encoding=windows-1251" in out7 else fail)(
+            "⑤ decode cp1251 ⇒ 归一为 windows-1251（rc=%d）" % rc7)
+        rc7b, out7b = run("--codec-lossy", "encode", "cp1251", td2 / "cp.txt", td2 / "cp2.bin")
+        (ok if rc7b == 0 and "encoding=windows-1251" in out7b else fail)(
+            "⑤ encode cp1251 也认（rc=%d）" % rc7b)
+        rc7c, out7c = run("--codec-lossy", "encode", "cp936", td2 / "cp.txt", "strict",
+                          td2 / "cp3.bin")
+        (ok if rc7c == 0 and "encoding=gbk" in out7c else fail)(
+            "⑤ encode strict cp936 ⇒ 归一为 gbk（rc=%d, %s）" % (rc7c, out7c.strip()[:100]))
 
         lp = td2 / "lp"
         (lp / "text" / "rus").mkdir(parents=True)
@@ -107,6 +114,13 @@ def main() -> int:
         want = lp / "pack" / "gamedata" / "configs" / "text" / "rus" / "a.xml"
         (ok if rc8 == 0 and want.is_file() else fail)(
             "⑥ --pack-layout 产出 gamedata/configs/text/rus/a.xml（rc=%d）" % rc8)
+        # 边界：输出根已经是 …/gamedata ⇒ 不许再拼一层
+        gd = td2 / "already" / "gamedata"
+        gd.mkdir(parents=True)
+        rc9, out9 = run("--langpack-build", lp / "text" / "rus", "-", gd, "--pack-layout")
+        double = gd / "gamedata"
+        (ok if rc9 == 0 and not double.exists() and (gd / "configs" / "text" / "rus" / "a.xml").is_file()
+         else fail)("⑥b 输出根已是 gamedata ⇒ 不产生双层（rc=%d）" % rc9)
 
     if PROBLEMS:
         print("P0-FIXES: FAIL（%d 处）" % len(PROBLEMS))

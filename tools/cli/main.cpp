@@ -4175,7 +4175,8 @@ int run_cli(const std::vector<std::string>& args) {
             std::cout << "CODEC error reason=写失败（" << operands[out_arg] << "）\n";
             return kExitFail;
         }
-        std::cout << "CODEC ok mode=" << (strict ? "strict" : "lossy") << " encoding=" << encoding
+        std::cout << "CODEC ok mode=" << (strict ? "strict" : "lossy") << " encoding="
+                  << xrkit::engine::text::canonical_encoding_name(encoding)
                   << " bytes=" << out.size() << "\n";
         return kExitOk;
     }
