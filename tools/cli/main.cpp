@@ -3249,34 +3249,10 @@ int run_cli(const std::vector<std::string>& args) {
             return kExitOk;
         }
         if (a == "--version") {
-            // ★ 2026-11-05（DSH 干净目录测试）：**发行包里的 CLI 以包版本为准**。
-            //   原因：打包动作是 CLI 自己在跑，它无法在过程中重编自己（LNK1104）⇒ 包内 CLI
-            //   的编译期版本会比包小一版。发行包里有 `version.txt` ⇒ 以它为准（同包同身份）；
-            //   没有该文件（开发树/被单独拷走）⇒ 退回编译期版本。
-            std::string shown_version = xrkit::core::version_string();
-            int shown_build = xrkit::core::kBuildCount;
-            {
-                std::error_code ec;
-                // 找**exe 同目录**的 version.txt（不是 cwd）：发行包里 CLI 与 version.txt 并排
-                const std::filesystem::path vt =
-                    xrkit::core::path_from_utf8(xrkit::core::app_dir()) / "version.txt";
-                if (std::filesystem::exists(vt, ec)) {
-                    std::ifstream in(vt, std::ios::binary);
-                    std::string line;
-                    std::string vline;
-                    int idx = -1;
-                    while (std::getline(in, line)) {
-                        if (line.rfind("version=", 0) == 0) vline = line.substr(8);
-                        if (line.rfind("index=", 0) == 0) idx = std::atoi(line.c_str() + 6);
-                    }
-                    while (!vline.empty() && (vline.back() == '\r' || vline.back() == ' ')) vline.pop_back();
-                    if (!vline.empty()) {
-                        shown_version = vline;
-                        if (idx >= 0) shown_build = idx;
-                    }
-                }
-            }
-            std::cout << shown_version << " build=" << shown_build << "\n";
+            // ★ 只报**二进制自己的**构建号（不读任何外部文件）。
+            //   发行包与二进制可能差一版：那不是 --version 该掩盖的事 —— 用 --exe-version 区分。
+            std::cout << xrkit::core::version_string() << " build=" << xrkit::core::kBuildCount
+                      << "\n";
             return kExitOk;
         }
         if (a.size() > 1 && a[0] == '-' && action.empty()) {
@@ -3619,6 +3595,41 @@ int run_cli(const std::vector<std::string>& args) {
         std::cout << "\n";
         return kExitOk;
     }
+    if (action == "--write-version") {
+        // python 解析：与 build_cmd 同口径（PATH 上的 python 可能是 WindowsApps 占位符）
+        const auto py_prefix = []() -> std::string {
+            if (const char* env = std::getenv("XRKIT_PYTHON"); env != nullptr && *env != '\0') {
+                return std::string("\"") + env + "\"";
+            }
+            return "python";
+        };
+        // ★ 2026-11-06：把 bump 与打包**分到两个进程**（CLI 不能在打包过程中重编自己）。
+        //   驱动脚本顺序：--write-version ⇒ 编译两档 ⇒ --build-package --prebuilt。
+        if (operands.size() < 3) {
+            std::cerr << "BUILDPKG error reason=用法：--write-version <版本> <标记> <序号>\n";
+            return kExitUsage;
+        }
+        const std::string ver = operands[0];
+        const std::string pre = operands[1];
+        const int idx = std::atoi(operands[2].c_str());
+        // version.h 的 kPrerelease 只要 "<标记>.<序号>"（不含主版本号；.rc 的 ProductVersion 会拼上主版本）
+        const std::string full = pre.empty() ? std::to_string(idx) : pre + "." + std::to_string(idx);
+        (void)ver;
+        std::string err;
+        if (!xrkit::core::save_version_header("include/xrkit/core/version.h", full, idx, err)) {
+            std::cerr << "BUILDPKG error reason=写 version.h 失败：" << err << "\n";
+            return kExitFail;
+        }
+        const int gen_rc = std::system(
+            ("chcp 65001 >nul && " + py_prefix() + " tools\\gen_winres.py >nul 2>&1").c_str());
+        if (gen_rc != 0) {
+            std::cerr << "BUILDPKG error reason=重生成 .rc 失败（gen_winres.py）\n";
+            return kExitFail;
+        }
+        std::cout << "BUILDPKG wrote-version " << full << " build=" << idx << "\n";
+        return kExitOk;
+    }
+
     if (action == "--version-store") {
         if (operands.empty()) {
             std::cerr << "VERSIONSTORE error reason=用法：--version-store <version.json> [set <版本> <标记>]\n";

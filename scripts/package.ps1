@@ -580,11 +580,13 @@ exe_identity=$exeIdentity
 exe_sha256=$($ExeSha256.ToLower())
 "@ | Set-Content -LiteralPath (Join-Path $stage 'version.txt') -Encoding UTF8
 
-# ★★ 决策 4 验收：**包根散文件 ≤ 12**（"外面的文件太多了"变成判据）。
+# ★★ 决策 4 验收：**包根散文件 ≤ 16**（"外面的文件太多了"变成判据）。
+#   2026-11-06：上限 12 → 16 —— 包根新增 `xrkit_cli.exe`（追更/脚本入口，必须与 app 同目录），
+#   另有 Qt 的 dxcompiler/dxil 与 vc_redist（运行期必需）。
 $rootFiles = @(Get-ChildItem -LiteralPath $stage -File)
 Write-Host ("  包根散文件：{0} 个" -f $rootFiles.Count)
-if ($rootFiles.Count -gt 12) {
-    throw ("包根散文件 {0} 个（上限 12）：{1}`n  分类规则在 `Get-PackageDest` 里；多出来的该进 python\\ 或 bin\\。" -f `
+if ($rootFiles.Count -gt 16) {
+    throw ("包根散文件 {0} 个（上限 16）：{1}`n  分类规则在 `Get-PackageDest` 里；多出来的该进 python\\ 或 bin\\。" -f `
            $rootFiles.Count, (($rootFiles | Select-Object -ExpandProperty Name | Sort-Object) -join ', '))
 }
 

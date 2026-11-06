@@ -134,6 +134,17 @@ int run_build_package(const std::vector<std::string>& operands) {
     const std::string want_version = operands[1];
     const std::string want_prerelease = operands[2];
     const int want_index = std::atoi(operands[3].c_str());
+    // ★ 2026-11-06：`--prebuilt` —— 版本号与两档产物**已由驱动脚本准备好**，
+    //   本动作只做"算 sha + 打包 + 收尾"，不再自己编译（CLI 不能在打包过程中重编自己）。
+    bool prebuilt = false;
+    for (std::size_t i = 4; i < operands.size(); ++i) {
+        if (operands[i] == "--prebuilt") {
+            prebuilt = true;
+        } else {
+            std::cerr << "BUILDPKG error reason=未知参数 " << operands[i] << "\n";
+            return kUsage;
+        }
+    }
 
     xrkit::core::VersionStore store;
     std::string err;
@@ -306,8 +317,13 @@ int run_build_package(const std::vector<std::string>& operands) {
     std::cout.flush();
 
 #ifdef _WIN32
-    int rc = run_windowless_utf8(cmd);  // 无控制台窗口（用户要求：不要打开 cmd）
-    // ★★ 2026-11-05（DSH 干净目录测试）：包内 CLI 的版本可能与包不同。
+    int rc = 0;
+    if (!prebuilt) {
+        rc = run_windowless_utf8(cmd);  // 无控制台窗口（用户要求：不要打开 cmd）
+    } else {
+        std::cout << "BUILDPKG prebuilt 跳过编译（产物已由驱动脚本准备好）\n";
+    }
+    // （旧警告已由 --write-version + --prebuilt 驱动取代；这里不再猜测版本。）
     //   原因：`--build-package` 是 **CLI 自己**在跑；先 bump 版本号、再重编 CLI 会撞上
     //   "正在运行的 exe 被自己占用"（实测 LNK1104）。⇒ 这里不做自重编，只把事实说出来：
     //   包内 CLI 是上一次 `build.ps1 -Preset msvc-release` 的产物（版本可能比包小 1）。

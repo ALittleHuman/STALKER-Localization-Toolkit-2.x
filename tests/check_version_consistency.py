@@ -107,6 +107,31 @@ def main() -> int:
     except OSError:
         pass
 
+    # ⑦ 包内容完整性 + 包内 CLI 身份（DSH：干净目录那条固化成判据）
+    sys.path.insert(0, str(ROOT / "tests"))
+    from package_select import resolve_current_package
+    pkg3, _v3, _i3, _r3 = resolve_current_package()
+    if pkg3 is None:
+        fail("找不到当前包（无法验证包内容完整性）")
+    else:
+        must = ["xrkit_app.exe", "xrkit_cli.exe", "bin/ffmpeg.exe",
+                "third_party/ffmpeg/LICENSE.txt"]
+        missing = [m for m in must if not (pkg3 / m).is_file()]
+        (ok if not missing else fail)("包内必备件齐全（缺 %s）" % (missing or "无"))
+        cli = pkg3 / "xrkit_cli.exe"
+        vt2 = pkg3 / "version.txt"
+        if cli.is_file() and vt2.is_file():
+            text2 = vt2.read_text(encoding="utf-8", errors="replace")
+            m4 = re.search(r"index=(\d+)", text2)
+            want2 = int(m4.group(1)) if m4 else -1
+            p3 = subprocess.run([str(cli), "--version"], stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+            out3 = p3.stdout.decode("utf-8", "replace")
+            m5 = re.search(r"build=(\d+)", out3)
+            got2 = int(m5.group(1)) if m5 else -1
+            (ok if p3.returncode == 0 and got2 == want2 else fail)(
+                "包内 CLI 版本 == version.txt（cli=%d, 包=%d）" % (got2, want2))
+
     bad = []
     for vdir in (ROOT / "dist").glob("*/*/*"):
         if not vdir.is_dir():
