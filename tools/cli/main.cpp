@@ -355,7 +355,8 @@ void print_usage() {
            "                  [--backup] [--exclude <模式>]\n"
            "                  批量编码转换（与内置 convert 页同一个引擎实现；判据对拍用它）\n"
            "  --font-pack --ref <参照包|builtin> --text-root <译文根> --font <TTF> --out <目录>\n"
-           "                     [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn]\n"
+           "                     [--game SoC|ClS|CoP] [--langs rus] [--suffix s] [--offset n]\n"
+           "                     [--only-size 11,14] [--on-missing fail|warn] [--require-full-cyrillic]\n"
            "                     汉化包生成的**主入口**：--ref 目录 ⇒ 扫参照（矢量）；--ref builtin ⇒ 内置模板（位图）\n"
             "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite] [--pack-layout]\n"
             "                                              选项 pack-layout：产出 gamedata/configs/text/<lang>/ 标准布局\n"
@@ -5919,13 +5920,13 @@ if (action == "--diff-snapshot") {
     }
 
     if (action == "--font-pack") {
-        // ★ 2026-11-06（最小统一 · 单入口）：**按段表来源选 writer**，不再靠动作名猜。
-        //   --ref <参照包目录>  ⇒ 扫描参照 fonts.ltx（source=ref）⇒ 矢量 writer（IXR）
-        //   --ref builtin       ⇒ 内置模板（source=builtin）⇒ 位图 writer（SoC/ClS/CoP）
+        // ★ 2026-11-06（HA 打回点 ①）：**只调统一引擎入口** `build_font_pack`；
+        //   本分支不直接碰 build_package / ixr_build。
         std::map<std::string, std::string> kv;
         bool require_full_cyrillic = false;
         bool missing_warn = false;
         std::string on_missing = "fail";
+        std::vector<int> only_sizes;
         for (std::size_t i = 0; i < operands.size(); ++i) {
             const std::string& a = operands[i];
             if (a == "--require-full-cyrillic") {
@@ -5937,8 +5938,8 @@ if (action == "--diff-snapshot") {
             } else {
                 std::cerr << "FONTPACK error reason=用法：--font-pack --ref <参照包|builtin> "
                              "--text-root <译文根> --font <TTF> --out <目录> "
-                             "[--game SoC|ClS|CoP] [--lang rus] [--langs rus] "
-                             "[--on-missing fail|warn] [--require-full-cyrillic]\n";
+                             "[--game SoC|ClS|CoP] [--langs rus] [--suffix s] [--offset n] "
+                             "[--only-size 11,14] [--on-missing fail|warn] [--require-full-cyrillic]\n";
                 return kExitUsage;
             }
         }
@@ -5947,87 +5948,72 @@ if (action == "--diff-snapshot") {
             return kExitUsage;
         }
         missing_warn = (on_missing == "warn");
-        const std::string ref = kv.count("ref") ? kv["ref"] : std::string();
-        const std::string text_root = kv.count("text-root") ? kv["text-root"] : std::string();
-        const std::string font = kv.count("font") ? kv["font"] : std::string();
-        const std::string out = kv.count("out") ? kv["out"] : std::string();
-        if (ref.empty() || font.empty() || out.empty()) {
+        xrkit::engine::font::FontPackRequest req;
+        req.ref = kv.count("ref") ? kv["ref"] : std::string();
+        req.text_root = kv.count("text-root") ? kv["text-root"] : std::string();
+        req.font = kv.count("font") ? kv["font"] : std::string();
+        req.out = kv.count("out") ? kv["out"] : std::string();
+        req.game = kv.count("game") ? kv["game"] : "CoP";
+        // ★ `--langs` 是统一名（单个语言也接受）；`--lang` 保留为同义别名
+        req.langs = kv.count("langs") ? kv["langs"] : (kv.count("lang") ? kv["lang"] : "");
+        req.lang = req.langs.empty() ? "rus" : req.langs;
+        if (!req.langs.empty() && req.langs.find(',') == std::string::npos) {
+            req.lang = req.langs;
+        }
+        req.missing_warn = missing_warn;
+        req.require_full_cyrillic = require_full_cyrillic;
+        req.suffix = kv.count("suffix") ? kv["suffix"] : std::string();
+        req.offset = kv.count("offset") ? std::atoi(kv["offset"].c_str()) : 0;
+        if (kv.count("only-size")) {
+            std::string s = kv["only-size"];
+            std::size_t start_pos = 0;
+            while (start_pos <= s.size()) {
+                const std::size_t comma = s.find(',', start_pos);
+                const std::string item =
+                    s.substr(start_pos, comma == std::string::npos ? std::string::npos
+                                                                   : comma - start_pos);
+                if (!item.empty()) only_sizes.push_back(std::atoi(item.c_str()));
+                if (comma == std::string::npos) break;
+                start_pos = comma + 1;
+            }
+        }
+        req.only_sizes = only_sizes;
+        if (req.ref.empty() || req.font.empty() || req.out.empty()) {
             std::cerr << "FONTPACK error reason=用法：--font-pack 需要 --ref / --font / --out"
                          "（builtin 路径还需要 --text-root）\n";
             return kExitUsage;
         }
-        // ★ 字符集来自**同一份核心**（extract_chars），两条 writer 都基于它 ⇒
-        //   同一文本根必然同 count；这里先报出来，便于对拍与排障。
-        {
-            xrkit::engine::font::CharsetResult cs;
-            if (!text_root.empty() &&
-                xrkit::engine::font::extract_chars(text_root, /*full_cyrillic=*/true, cs)) {
-                std::cout << "CHARSET count=" << cs.chars.size()
-                          << " files=" << cs.files_scanned << "\n";
-            }
-        }
-        const bool use_ref = (ref != "builtin");
-        if (!use_ref && text_root.empty()) {
+        req.use_ref = (req.ref != "builtin");
+        if (!req.use_ref && req.text_root.empty()) {
             std::cerr << "FONTPACK error reason=用法：--ref builtin 需要 --text-root <译文根>\n";
             return kExitUsage;
         }
-        if (use_ref) {
-            // ① 参照包：段表来自扫描 ⇒ 矢量 writer
-            xrkit::engine::font::IxrBuildOptions opt;
-            opt.pack = ref;
-            opt.font = font;
-            opt.out = out;
-            opt.text_root = text_root;
-            opt.langs = kv.count("langs") ? kv["langs"] : (kv.count("lang") ? kv["lang"] : "");
-            std::cout << "SEGMENTS source=ref n="
-                      << xrkit::engine::font::ref_segment_count(ref) << "\n";
-            const xrkit::engine::font::IxrBuildResult result =
-                xrkit::engine::font::ixr_build(opt);
-            if (!result.ok) {
-                std::cout << "FONTPACK error reason=" << result.error << "\n";
-                return kExitFail;
-            }
-            std::cout << "FONTPACK ok writer=vector out=" << out
-                      << "\n";
-            return kExitOk;
-        }
-        // ② 内置模板：段表来自模板 ⇒ 位图 writer
-        xrkit::engine::font::PackageOptions opt;
-        opt.game = kv.count("game") ? kv["game"] : "CoP";
-        opt.lang = kv.count("lang") ? kv["lang"] : "rus";
-        opt.xml_dir = text_root;
-        opt.font_path = font;
-        opt.out_dir = out;
-        opt.missing_warn = missing_warn;
-        opt.require_full_cyrillic = require_full_cyrillic;
-        // 位图 writer 的既有可选参数（与旧动作对等，便于迁移）
-        if (kv.count("suffix")) opt.suffix = kv["suffix"];
-        if (kv.count("offset")) opt.offset = std::atoi(kv["offset"].c_str());
-        if (kv.count("only-size")) {
-            std::string s = kv["only-size"];
-            std::size_t start = 0;
-            while (start <= s.size()) {
-                const std::size_t comma = s.find(',', start);
-                const std::string item = s.substr(start, comma == std::string::npos ? std::string::npos
-                                                                                   : comma - start);
-                if (!item.empty()) opt.only_sizes.push_back(std::atoi(item.c_str()));
-                if (comma == std::string::npos) break;
-                start = comma + 1;
-            }
-        }
-        std::cout << "SEGMENTS source=builtin n="
-                  << xrkit::engine::font::template_segment_count(opt.game) << "\n";
-        const xrkit::engine::font::PackageResult r2 = xrkit::engine::font::build_package(opt);
-        if (!r2.ok) {
-            std::cout << "FONTPACK error reason=" << r2.error << "\n";
+        const xrkit::engine::font::FontPackOutcome res =
+            xrkit::engine::font::build_font_pack(req);
+        std::cout << "CHARSET count=" << res.charset_count << "\n";
+        std::cout << "SEGMENTS source=" << (res.segments_from_ref ? "ref" : "builtin")
+                  << " n=" << res.segments << "\n";
+        if (!res.ok) {
+            std::cout << "FONTPACK error reason=" << res.error << "\n";
             return kExitFail;
         }
-        for (const std::string& warn : r2.warnings) std::cout << "FONTPACK warn " << warn << "\n";
-        std::cout << "FONTPACK ok writer=bitmap out=" << r2.out_gamedata << " lang=" << r2.lang
-                  << " fonts=" << r2.fonts_written << " xml=" << r2.xml_written
-                  << " warnings=" << r2.warnings.size() << "\n";
-        if (r2.lang != opt.lang) {
-            std::cout << "FONTPACK note 语言采用产物内 profile：lang=" << r2.lang << "\n";
+        if (res.vector_path) {
+            std::cout << "FONTPACK ok writer=vector out=" << req.out << "\n";
+            if (!res.vector_result.stdout_tail.empty()) {
+                std::cout << res.vector_result.stdout_tail;
+                if (res.vector_result.stdout_tail.back() != '\n') std::cout << "\n";
+            }
+            return kExitOk;
+        }
+        for (const std::string& warn : res.bitmap.warnings) {
+            std::cout << "FONTPACK warn " << warn << "\n";
+        }
+        std::cout << "FONTPACK ok writer=bitmap out=" << res.bitmap.out_gamedata
+                  << " lang=" << res.bitmap.lang << " fonts=" << res.bitmap.fonts_written
+                  << " xml=" << res.bitmap.xml_written << " warnings=" << res.bitmap.warnings.size()
+                  << "\n";
+        if (res.bitmap.lang != req.lang) {
+            std::cout << "FONTPACK note 语言采用产物内 profile：lang=" << res.bitmap.lang << "\n";
         }
         return kExitOk;
     }

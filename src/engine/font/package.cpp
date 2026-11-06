@@ -1,4 +1,5 @@
 #include "xrkit/engine/font/package.h"
+#include "xrkit/engine/font/ixr.h"
 
 #include "xrkit/core/path.h"
 #include "xrkit/engine/font/charset.h"
@@ -109,6 +110,56 @@ int template_segment_count(const std::string& game) {
     const GameTemplate* t = find_game(game);
     if (t == nullptr) return -1;
     return static_cast<int>(parse_segments(t->fonts_ltx).size());
+}
+
+FontPackOutcome build_font_pack(const FontPackRequest& request) {
+    FontPackOutcome out;
+    out.vector_path = request.use_ref;
+    // ① 字符集：**统一核心**（两条 writer 都用它）
+    if (!request.text_root.empty()) {
+        CharsetResult cs;
+        if (extract_chars(request.text_root, /*full_cyrillic=*/true, cs)) {
+            out.charset_count = cs.chars.size();
+        }
+    }
+    // ② 段表：**统一解析器**（内置模板与参照包同一份）
+    out.segments = request.use_ref ? ref_segment_count(request.ref)
+                                   : template_segment_count(request.game);
+    out.segments_from_ref = request.use_ref;
+    if (out.segments < 0) {
+        out.error = request.use_ref
+                        ? ("参照包缺 gamedata/configs/fonts.ltx（或不含任何段）：" + request.ref)
+                        : ("未知游戏版本：" + request.game);
+        return out;
+    }
+    // ③ 分流到 writer（只有这一处）
+    if (request.use_ref) {
+        IxrBuildOptions opt;
+        opt.pack = request.ref;
+        opt.font = request.font;
+        opt.out = request.out;
+        opt.text_root = request.text_root;
+        opt.langs = request.langs.empty() ? request.lang : request.langs;
+        out.vector_result = ixr_build(opt);
+        out.ok = out.vector_result.ok;
+        if (!out.ok) out.error = out.vector_result.error;
+        return out;
+    }
+    PackageOptions opt;
+    opt.game = request.game;
+    opt.lang = request.lang;
+    opt.xml_dir = request.text_root;
+    opt.font_path = request.font;
+    opt.out_dir = request.out;
+    opt.missing_warn = request.missing_warn;
+    opt.require_full_cyrillic = request.require_full_cyrillic;
+    opt.suffix = request.suffix;
+    opt.offset = request.offset;
+    opt.only_sizes = request.only_sizes;
+    out.bitmap = build_package(opt);
+    out.ok = out.bitmap.ok;
+    if (!out.ok) out.error = out.bitmap.error;
+    return out;
 }
 
 PackageResult build_package(const PackageOptions& opt) {

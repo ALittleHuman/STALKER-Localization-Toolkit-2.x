@@ -15,6 +15,8 @@
 //   · 任一字号失败 → **把已写出的 gamedata 整个删掉**（否则用户看到半成品以为成功）。
 
 #include <string>
+
+#include "xrkit/engine/font/ixr.h"
 #include <vector>
 
 namespace xrkit::engine::font {
@@ -61,5 +63,38 @@ int template_segment_count(const std::string& game);
 // 参照包（`<pack>/gamedata/configs/fonts.ltx`）的段数 —— **与内置模板同一个解析器**；
 // 读不到返回 -1。addon 覆盖层的段不在这里（那是加载顺序的职责）。
 int ref_segment_count(const std::string& pack_dir);
+
+// ★★ 2026-11-06（HA 打回点 ①）：**唯一统一入口** —— GUI 与 CLI 都只许调它。
+//   规则：`use_ref` 决定 writer（true=矢量/扫描参照；false=位图/内置模板），
+//   **游戏名只用来决定默认值**（页面把 IX-Ray 映射成 use_ref=true + ref=快照），
+//   不决定调用路径。writer 实现仍是两个，但"选哪条"只有这里一处。
+struct FontPackRequest {
+    bool use_ref = false;          // true ⇒ 扫描 ref 的 fonts.ltx（矢量）；false ⇒ 内置模板（位图）
+    std::string ref;               // 参照包目录（use_ref 时必填）
+    std::string text_root;         // 译文根（矢量可选；位图必填）
+    std::string font;
+    std::string out;
+    std::string game = "CoP";      // 位图模板档
+    std::string lang = "rus";      // 语言（`--langs` 与它同义；单个也接受）
+    std::string langs;             // 矢量：`rus,eng`；空 = 用包内 primary
+    bool missing_warn = false;     // 语料缺字降级为警告
+    bool require_full_cyrillic = false;
+    std::string suffix;
+    int offset = 0;
+    std::vector<int> only_sizes;
+};
+
+struct FontPackOutcome {
+    bool ok = false;
+    bool vector_path = false;
+    std::string error;
+    int segments = 0;              // 段数（来源见 segments_from_ref）
+    bool segments_from_ref = false;
+    std::size_t charset_count = 0; // 字符数（来自统一字符集核心）
+    PackageResult bitmap;          // 位图路径结果
+    IxrBuildResult vector_result;  // 矢量路径结果
+};
+
+FontPackOutcome build_font_pack(const FontPackRequest& request);
 
 }  // namespace xrkit::engine::font

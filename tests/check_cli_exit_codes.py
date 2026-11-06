@@ -62,6 +62,13 @@ LOOKBACK = 25
 #   按本判据口径增删一处 rc=3 必须重估并记账。
 # ★ 2026-11-04：USAGE 61→62 —— `--track` 的未知参数（--baseline/--rehash 之外的）
 FROZEN = {"USAGE": 62, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
+# ★ 2026-11-06（HA 收紧）：**台账只许增加**。减少必须在下表写理由，
+#   否则"重估"会掩盖新加的遗漏（与 smoke_checks 的"只降不升"同一口径）。
+USAGE_HISTORY = (53, 55, 61, 62, 66)   # 历史冻结值（只追加）
+USAGE_DECREASES = {
+    62: "2026-11-06 --build-font-pack / --ixr-build 退役（两条分支里的用法错误随分支删除），"
+        "新入口 --font-pack 的用法错误仍各记一处",
+}
 
 PROBLEMS: list = []
 CASES = 0
@@ -198,6 +205,15 @@ def main() -> int:
 
     want(not unknown, "A 每一处 rc=3 都能按**理由文案**归族（新加的必须归族，否则这张表过期）",
          ("未归族 %d 处：%s" % (len(unknown), unknown[:3])) if unknown else "")
+    # ★ 台账只许增加：比历史最高值低 ⇒ 必须在 USAGE_DECREASES 里写明理由
+    peak = max(USAGE_HISTORY)
+    if FROZEN["USAGE"] < peak:
+        want(FROZEN["USAGE"] in USAGE_DECREASES,
+             "B2 台账减少必须写理由（当前 %d < 历史峰值 %d）" % (FROZEN["USAGE"], peak),
+             "未在 USAGE_DECREASES 里登记")
+    else:
+        want(True, "B2 台账只增不减（当前 %d，历史峰值 %d）" % (FROZEN["USAGE"], peak), "")
+
     want(counts == FROZEN, "B 三族处数等于冻结值（增删一处就必须重估口径并改本表）",
          "实得 %s，冻结 %s" % (counts, FROZEN))
 

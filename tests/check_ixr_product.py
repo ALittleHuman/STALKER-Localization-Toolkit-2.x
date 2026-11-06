@@ -97,9 +97,9 @@ def main() -> int:
     src = (ROOT / "src" / "shell" / "pages" / "fontpack_page.cpp").read_text(
         encoding="utf-8", errors="replace")
     wiring = [
-        ("ixr.text_root = ixr_text_at_start_", "页面把「文本 XML」传给引擎（字符集来源）"),
+        ("ixr_text_at_start_.toStdString()", "页面把「文本 XML」传给引擎（字符集来源）"),
         ("ixr_text_at_start_ = xml_edit_", "快照在主线程做（worker 不许读控件）"),
-        ("ixr.pack = ixr_pack_at_start_", "参照包也是快照"),
+        ("ixr_pack_at_start_.toStdString()", "参照包也是快照"),
     ]
     for needle, why in wiring:
         if needle in src:

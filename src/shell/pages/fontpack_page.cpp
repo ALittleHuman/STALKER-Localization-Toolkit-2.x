@@ -546,73 +546,79 @@ engine::font::PackageOptions FontPackPage::prepare(const QString& xml_dir, const
 FontPackPage::BuildOutcome FontPackPage::run_build(
     const engine::font::PackageOptions& options) const {
     BuildOutcome outcome;
-    // ★★ 2026-10-27：IX-Ray（矢量）—— 走外部 fonttools 助手（`engine::font::ixr_build`）。
-    //   与位图出包**并列**的一条路：不判字形（助手自己会报缺字数），不做"先判后建"的目录守卫
-    //   （助手先 copy 整包再改字体；失败时它自己删临时产物）。
-    if (options.game == "IX-Ray") {
-        outcome.ixr = true;
-        xrkit::engine::font::IxrBuildOptions ixr;
-        ixr.pack = ixr_pack_at_start_.toStdString();
-        ixr.font = options.font_path;
-        ixr.out = options.out_dir;
-        ixr.text_root = ixr_text_at_start_.toStdString();
-        // ★★ 2026-10-30（交接区审计 P1-34）：页面上的语言选择以前**不传给生成器** ——
-        //   用户选 eng，IXR 仍按参照包的 primary lang 出包。这里把选择传下去：
-        //   选到具体语言 ⇒ `--langs <L>`；选「自定义」⇒ 用自定义框里的值；空 ⇒ 仍按包推断。
-        // worker 只读快照；空 = 让生成器按包推断
-        if (!ixr_lang_at_start_.isEmpty()) ixr.langs = ixr_lang_at_start_.toStdString();
-        const xrkit::engine::font::IxrBuildResult result =
-            xrkit::engine::font::ixr_build(ixr);
-        outcome.ok = result.ok;
-        outcome.result.ok = result.ok;
-        if (!result.ok) {
-            outcome.result.error = result.error;
-            outcome.reason = utf8(result.error);
-            outcome.ixr_log = utf8(result.stdout_tail) + utf8(result.stderr_tail);
-        } else {
-            // 助手报告在 stdout 的 `IXRGEN {...}` 里 —— **按 JSON 解析**（不是数子串：
-            //   子串统计既脆、又会被线程契约的静态判据误当成"碰控件"）。
-            const QString all = utf8(result.stdout_tail);
-            const int marker = all.indexOf(QStringLiteral("IXRGEN {"));
-            if (marker >= 0) {
-                const int line_end = all.indexOf(QChar('\n'), marker);
-                const QString json_text = all.mid(
-                    marker + 7, line_end < 0 ? -1 : line_end - marker - 7).trimmed();
-                QJsonParseError parse_error{};
-                const QJsonDocument doc = QJsonDocument::fromJson(json_text.toUtf8(), &parse_error);
-                if (parse_error.error == QJsonParseError::NoError && doc.isObject()) {
-                    const QJsonObject obj = doc.object();
-                    outcome.ixr_added = obj.value(QStringLiteral("added")).toInt();
-                    outcome.ixr_missing = obj.value(QStringLiteral("missing")).toInt();
-                    for (const QJsonValue& value : obj.value(QStringLiteral("reports")).toArray()) {
-                        const QJsonObject one = value.toObject();
-                        outcome.ixr_fonts +=
-                            one.value(QStringLiteral("fonts")).toArray().size();
-                        outcome.ixr_texts += one.value(QStringLiteral("texts")).toInt();
-                        outcome.ixr_copied += one.value(QStringLiteral("copied")).toInt();
-                    }
+    // ★★ 2026-11-06（HA 打回点 ①）：页面**不许**直接调 build_package / ixr_build。
+    //   游戏名只决定**默认来源**：IX-Ray ⇒ 参照包快照（矢量）；原版三作 ⇒ 内置模板（位图）。
+    //   选哪条 writer 由引擎的统一入口 `engine::font::build_font_pack()` 决定（唯一一处）。
+    engine::font::FontPackRequest request;
+    request.ref = ixr_pack_at_start_.isEmpty() ? std::string("builtin")
+                                              : ixr_pack_at_start_.toStdString();
+    request.use_ref = (request.ref != "builtin");
+    request.text_root = request.use_ref ? ixr_text_at_start_.toStdString() : options.xml_dir;
+    request.font = options.font_path;
+    request.out = options.out_dir;
+    request.game = options.game == "IX-Ray" ? std::string("CoP") : options.game;
+    request.lang = options.lang;
+    if (request.use_ref && !ixr_lang_at_start_.isEmpty()) {
+        request.langs = ixr_lang_at_start_.toStdString();
+    }
+    request.suffix = options.suffix;
+    request.offset = options.offset;
+    request.only_sizes = options.only_sizes;
+    request.missing_warn = false;
+    request.require_full_cyrillic = options.require_full_cyrillic;
+
+    // 位图路径保留"先判后建"（缺字形/检测失败 ⇒ 拒绝，不建任何目录）
+    if (!request.use_ref) {
+        outcome.check = check_font(utf8(request.font));
+        if (outcome.check.state == engine::font::CjkFontState::Missing ||
+            outcome.check.state == engine::font::CjkFontState::Unknown) {
+            outcome.refused = true;
+            refused_count_.fetch_add(1);
+            outcome.reason =
+                QStringLiteral("拒绝生成：%1（缺字形或字体不可用；没有创建任何目录）")
+                    .arg(utf8(engine::font::cjk_state_mark(outcome.check.state)));
+            return outcome;
+        }
+    }
+
+    const engine::font::FontPackOutcome built = engine::font::build_font_pack(request);
+    outcome.ixr = built.vector_path;
+    outcome.ok = built.ok;
+    if (built.vector_path) {
+        outcome.result.ok = built.ok;
+        if (!built.ok) {
+            outcome.result.error = built.error;
+            outcome.reason = utf8(built.error);
+            outcome.ixr_log = utf8(built.vector_result.stdout_tail) +
+                              utf8(built.vector_result.stderr_tail);
+            return outcome;
+        }
+        // 助手报告在 stdout 的 `IXRGEN {...}` 里 —— 按 JSON 解析
+        const QString all = utf8(built.vector_result.stdout_tail);
+        const int marker = all.indexOf(QStringLiteral("IXRGEN {"));
+        if (marker >= 0) {
+            const int line_end = all.indexOf(QChar('\n'), marker);
+            const QString json_text =
+                all.mid(marker + 7, line_end < 0 ? -1 : line_end - marker - 7).trimmed();
+            QJsonParseError parse_error{};
+            const QJsonDocument doc = QJsonDocument::fromJson(json_text.toUtf8(), &parse_error);
+            if (parse_error.error == QJsonParseError::NoError && doc.isObject()) {
+                const QJsonObject obj = doc.object();
+                outcome.ixr_added = obj.value(QStringLiteral("added")).toInt();
+                outcome.ixr_missing = obj.value(QStringLiteral("missing")).toInt();
+                for (const QJsonValue& value : obj.value(QStringLiteral("reports")).toArray()) {
+                    const QJsonObject one = value.toObject();
+                    outcome.ixr_fonts += one.value(QStringLiteral("fonts")).toArray().size();
+                    outcome.ixr_texts += one.value(QStringLiteral("texts")).toInt();
+                    outcome.ixr_copied += one.value(QStringLiteral("copied")).toInt();
                 }
             }
         }
         return outcome;
     }
-    // 11.9：**先判后建** —— 缺字形/检测失败直接拒绝，且**不建任何目录**。
-    // （`font_unrenderable` 只告警不拒绝：那条路在引擎的 build_package 里以 warning 体现。）
-    // 判据**只有** `check_font` 那一份（引擎的 `classify_cjk_font`），页面不自己再判一遍。
-    outcome.check = check_font(utf8(options.font_path));
-    if (outcome.check.state == engine::font::CjkFontState::Missing ||
-        outcome.check.state == engine::font::CjkFontState::Unknown) {
-        outcome.refused = true;
-        // 原子量：worker 里递增（修前是裸 `int` ⇒ 数据竞争）
-        refused_count_.fetch_add(1);
-        outcome.reason = QStringLiteral("拒绝生成：%1（缺字形或字体不可用；没有创建任何目录）")
-                             .arg(utf8(engine::font::cjk_state_mark(outcome.check.state)));
-        return outcome;
-    }
-    outcome.result = engine::font::build_package(options);
-    outcome.ok = outcome.result.ok;
+    outcome.result = built.bitmap;
     if (!outcome.ok) {
-        outcome.reason = utf8(outcome.result.error);
+        outcome.reason = utf8(built.bitmap.error);
         return outcome;
     }
     outcome.fallback_used = !outcome.check.fallbacks.empty();

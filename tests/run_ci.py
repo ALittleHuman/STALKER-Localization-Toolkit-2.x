@@ -3558,6 +3558,23 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_font_pack_single_entry(release: bool) -> None:
+    """汉化包生成：页面层只许调统一入口（HA 打回点 ①）。"""
+    say("[?] 汉化包生成：调用路径单一入口")
+    script = ROOT / "tests" / "check_font_pack_single_entry.py"
+    if not require_repo_file(script, "单入口判据"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("FONT-PACK-SINGLE"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("页面只调 build_font_pack()")
+    else:
+        fail("页面仍在绕统一入口（见上）")
+
+
 def step_segments_single(release: bool) -> None:
     """段表解析单一来源（最小统一 ⑤：writer 里不许再抄一份 fonts.ltx 解析）。"""
     say("[?] 段表解析单一来源")
@@ -8017,6 +8034,7 @@ STEPS = [
     ("action-spec", step_action_spec),
     ("font-pack-unified", step_font_pack_unified),
     ("segments-single", step_segments_single),
+    ("font-pack-single-entry", step_font_pack_single_entry),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),
