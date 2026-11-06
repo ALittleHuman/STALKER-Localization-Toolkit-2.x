@@ -86,6 +86,25 @@ std::vector<std::string> parse_segments(const std::string& ltx_text) {
     return out;
 }
 
+int ref_segment_count(const std::string& pack_dir) {
+    const std::filesystem::path p =
+        core::path_from_utf8(pack_dir) / "gamedata" / "configs" / "fonts.ltx";
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(p, ec)) return -1;
+    const std::vector<uint8_t> raw = [&] {
+        std::ifstream in(p, std::ios::binary);
+        return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)),
+                                    std::istreambuf_iterator<char>());
+    }();
+    std::string text;
+    std::string enc;
+    bool trusted = false;
+    if (!decode_xml_bytes(raw, text, enc, trusted)) {
+        text.assign(raw.begin(), raw.end());   // 退一步：原样按字节解析（ltx 是 ASCII 结构）
+    }
+    return static_cast<int>(parse_segments(text).size());
+}
+
 int template_segment_count(const std::string& game) {
     const GameTemplate* t = find_game(game);
     if (t == nullptr) return -1;

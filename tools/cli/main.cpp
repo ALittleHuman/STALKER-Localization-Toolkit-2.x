@@ -5980,7 +5980,7 @@ if (action == "--diff-snapshot") {
             opt.text_root = text_root;
             opt.langs = kv.count("langs") ? kv["langs"] : (kv.count("lang") ? kv["lang"] : "");
             std::cout << "SEGMENTS source=ref n="
-                      << xrkit::engine::font::scan_lang_pack(ref).font_slots.size() << "\n";
+                      << xrkit::engine::font::ref_segment_count(ref) << "\n";
             const xrkit::engine::font::IxrBuildResult result =
                 xrkit::engine::font::ixr_build(opt);
             if (!result.ok) {

@@ -58,5 +58,8 @@ PackageResult build_package(const PackageOptions& opt);
 std::vector<std::string> parse_segments(const std::string& ltx_text);
 // 内置模板（SoC/ClS/CoP）的段数；未知游戏返回 -1。
 int template_segment_count(const std::string& game);
+// 参照包（`<pack>/gamedata/configs/fonts.ltx`）的段数 —— **与内置模板同一个解析器**；
+// 读不到返回 -1。addon 覆盖层的段不在这里（那是加载顺序的职责）。
+int ref_segment_count(const std::string& pack_dir);
 
 }  // namespace xrkit::engine::font
