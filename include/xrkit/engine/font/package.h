@@ -49,4 +49,11 @@ struct PackageResult {
 
 PackageResult build_package(const PackageOptions& opt);
 
+// ★ 2026-11-06（最小统一·段表归一）：从 fonts.ltx 文本解析**段名序列**。
+//   · 内置模板与参照包 `configs/fonts.ltx` 走**同一个**解析器 ⇒ 两者产出同一结构；
+//   · 调用方据此打印 `SEGMENTS source=builtin|ref n=N`，并可在 writer 之外做校验。
+std::vector<std::string> parse_segments(const std::string& ltx_text);
+// 内置模板（SoC/ClS/CoP）的段数；未知游戏返回 -1。
+int template_segment_count(const std::string& game);
+
 }  // namespace xrkit::engine::font

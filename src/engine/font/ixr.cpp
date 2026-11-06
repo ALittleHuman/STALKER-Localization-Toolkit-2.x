@@ -42,7 +42,11 @@ IxrTools ixr_resolve_tools() {
     } else if (const fs::path packaged = app / "python" / "python.exe"; is_file(packaged)) {
         tools.python = core::path_to_utf8(packaged);
     } else {
-        tools.python = "python";
+        // ★ 2026-11-06（DSH）：**不许回落到 PATH 上的 python** —— Windows 上那常是
+        //   WindowsApps 占位符（exit 9009），错误还发生在生成器里，很难归因。
+        tools.error = "找不到包内 python（试过：XRKIT_IXR_PYTHON、<exe>/python/python.exe、"
+                      "runtime 路由）—— 发行包应自带；开发态请显式设置 XRKIT_IXR_PYTHON";
+        return tools;
     }
 
     // ② 启动器：显式环境变量 → 包内 tools/ixr_run.py

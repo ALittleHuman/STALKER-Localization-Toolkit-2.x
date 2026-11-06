@@ -65,6 +65,33 @@ void replace_all(std::string& text, const std::string& from, const std::string& 
 
 }  // namespace
 
+std::vector<std::string> parse_segments(const std::string& ltx_text) {
+    std::vector<std::string> out;
+    std::size_t pos = 0;
+    while (pos < ltx_text.size()) {
+        std::size_t eol = ltx_text.find('\n', pos);
+        if (eol == std::string::npos) eol = ltx_text.size();
+        std::string line = ltx_text.substr(pos, eol - pos);
+        pos = eol + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) {
+            line.pop_back();
+        }
+        std::size_t i = 0;
+        while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+        if (i >= line.size() || line[i] != '[') continue;
+        const std::size_t close = line.find(']', i);
+        if (close == std::string::npos || close == i + 1) continue;
+        out.push_back(line.substr(i + 1, close - i - 1));
+    }
+    return out;
+}
+
+int template_segment_count(const std::string& game) {
+    const GameTemplate* t = find_game(game);
+    if (t == nullptr) return -1;
+    return static_cast<int>(parse_segments(t->fonts_ltx).size());
+}
+
 PackageResult build_package(const PackageOptions& opt) {
     PackageResult res;
     const GameTemplate* game = find_game(opt.game);

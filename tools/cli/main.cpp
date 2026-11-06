@@ -5865,6 +5865,18 @@ if (action == "--diff-snapshot") {
     if (action == "--ixr-build") {
         std::cout << "IXRGEN hint 本动作=矢量（扫描参照包 fonts.ltx + fontTools 改 TTF）；"
                      "原版 SoC/ClS/CoP 的位图包请用 --build-font-pack\n";
+        {
+            // 段表来源可见：扫描参照包（与 --langpack-scan 同一份 scan_lang_pack）
+            // 本动作的操作数是**位置参数**：<参照包> <字体> <输出目录>
+            const std::string pack = (!operands.empty() && !operands[0].empty() &&
+                                      operands[0][0] != '-')
+                                         ? operands[0]
+                                         : std::string();
+            if (!pack.empty()) {
+                const auto model = xrkit::engine::font::scan_lang_pack(pack);
+                std::cout << "SEGMENTS source=ref n=" << model.font_slots.size() << "\n";
+            }
+        }
         if (operands.size() < 3) {
             std::cerr << "IXR error reason=用法：--ixr-build <参照包> <字体> <输出目录> "
                          "[--langs L | --all-langs --split-output] [--plan f] [--sizes 14,16]\n";
@@ -5981,6 +5993,12 @@ if (action == "--diff-snapshot") {
         //   直接换上会让 font_default/letterica 等段找不到定义。这里在入口就把话说清。
         std::cout << "FONTPACK hint 本动作=位图+内置段表模板（SoC/ClS/CoP）；"
                      "IX-Ray 模组请用 --ixr-build（扫描参照包 fonts.ltx）\n";
+        {
+            const int seg = xrkit::engine::font::template_segment_count(operands[0]);
+            if (seg >= 0) {
+                std::cout << "SEGMENTS source=builtin n=" << seg << "\n";
+            }
+        }
         if (operands.size() < 5) {
             std::cerr << "FONTPACK error reason=用法：--build-font-pack <SoC|ClS|CoP> <语言> "
                          "<xml目录> <字体> <输出目录> [--suffix s] [--offset n] "
