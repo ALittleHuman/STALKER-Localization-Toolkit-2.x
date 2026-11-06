@@ -3558,6 +3558,23 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_font_pack_unified(release: bool) -> None:
+    """最小统一：--font-pack 段表来源 / writer / 缺字策略 / 状态隔离。"""
+    say("[?] 最小统一：--font-pack（段表/writer/缺字策略）")
+    script = ROOT / "tests" / "check_font_pack_unified.py"
+    if not require_repo_file(script, "最小统一判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗", "·")) or s.startswith("FONT-PACK-UNIFIED"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("--font-pack 统一判据全过")
+    else:
+        fail("--font-pack 统一判据不通过（见上）")
+
+
 def step_action_spec(release: bool) -> None:
     """帮助结构化：spec 表 / recipes / --actions --json（DSH 2026-11-05）。"""
     say("[?] 帮助结构化：spec 表 / recipes / --actions")
@@ -7980,6 +7997,7 @@ STEPS = [
     ("p0-fixes", step_p0_fixes),
     ("fs-path-lock", step_fs_path_lock),
     ("action-spec", step_action_spec),
+    ("font-pack-unified", step_font_pack_unified),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),

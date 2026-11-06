@@ -6065,6 +6065,9 @@ if (action == "--diff-snapshot") {
         opt.out_dir = out;
         opt.missing_warn = missing_warn;
         opt.require_full_cyrillic = require_full_cyrillic;
+        // 位图 writer 的既有可选参数（与旧动作对等，便于迁移）
+        if (kv.count("suffix")) opt.suffix = kv["suffix"];
+        if (kv.count("offset")) opt.offset = std::atoi(kv["offset"].c_str());
         std::cout << "SEGMENTS source=builtin n="
                   << xrkit::engine::font::template_segment_count(opt.game) << "\n";
         const xrkit::engine::font::PackageResult r2 = xrkit::engine::font::build_package(opt);
