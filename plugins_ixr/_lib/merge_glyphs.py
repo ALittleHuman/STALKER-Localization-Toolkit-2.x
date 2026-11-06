@@ -28,6 +28,16 @@ import json
 import sys
 from pathlib import Path
 
+# ★ 2026-11-06：发行包里的 python 有 `._pth`（隔离模式，不读 PYTHONPATH）⇒ 本脚本自己把
+#   vendored fontTools 插进 sys.path（与 ixr_run.py 同一约定：../fontlib 或 ./fontlib）。
+import sys as _sys
+from pathlib import Path as _Path
+
+_here = _Path(__file__).resolve().parent
+for _cand in (_here, _here / "fontlib", _here.parent / "fontlib"):
+    if (_cand / "fontTools").is_dir() and str(_cand) not in _sys.path:
+        _sys.path.insert(0, str(_cand))
+
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import Glyph  # noqa: F401  (类型参考)
 
@@ -43,7 +53,7 @@ def parse_charset(path: Path) -> list[int]:
     cps: list[int] = []
     seen: set[int] = set()
     for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        s = raw.strip()
+        s = raw.strip().lstrip("\ufeff").strip()
         if not s or s.startswith("#"):
             continue
         try:
