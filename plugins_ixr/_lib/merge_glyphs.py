@@ -23,6 +23,7 @@ target**，并且：
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 from pathlib import Path
@@ -74,7 +75,10 @@ def _copy_glyph(dst: TTFont, src: TTFont, src_name: str, new_name: str,
         return
     sglyf = src["glyf"]
     dglyf = dst["glyf"]
-    glyph = sglyf[src_name]
+    # ★ 2026-11-06（实测缺陷 ①）：必须**深拷贝** —— 原先是源字体的同一个对象，
+    #   下面 `comp.glyphName = …` / `comp.x = …` 是**原地改源对象**，任何"复用已加载源"
+    #   的重构都会立刻串字体。
+    glyph = copy.deepcopy(sglyf[src_name])
     # 先递归拷组件（复合字形），再写自己 —— 否则组件名指向的是源字体里不存在的名字
     if glyph.isComposite():
         for comp in glyph.components:
@@ -84,6 +88,14 @@ def _copy_glyph(dst: TTFont, src: TTFont, src_name: str, new_name: str,
                 _copy_glyph(dst, src, dep, dep_name, order, order_set, copied, scale)
         for comp in glyph.components:
             comp.glyphName = copied[comp.glyphName]
+            if scale != 1.0:
+                # ★ 2026-11-06（实测缺陷 ①）：组件**偏移**与 2×2 变换也必须按 upem 缩放，
+                #   否则跨 upem（如 2048 → 1000）时附加符会飞出去（Adieresis 的两点浮到右上）。
+                comp.x = int(round(comp.x * scale))
+                comp.y = int(round(comp.y * scale))
+                if hasattr(comp, "transform") and comp.transform is not None:
+                    a, b, c, d = comp.transform
+                    comp.transform = (a * scale, b * scale, c * scale, d * scale)
     dglyf.glyphs[new_name] = glyph
     order.append(new_name)
     order_set.add(new_name)
@@ -141,19 +153,34 @@ def merge(target_path: Path, source_path: Path, cps: list[int], out_path: Path) 
             if not sub.isUnicode():
                 continue
             for cp, name in added.items():
+                # ★ 2026-11-06（实测缺陷 ②）：format 4 的码位上界是 0xFFFF ——
+                #   往 format 4 里写星平面码位（CJK 扩展 B / emoji）会 OverflowError，
+                #   整次合并直接崩。星平面只许进 format 12/13。
+                if sub.format == 4 and cp > 0xFFFF:
+                    continue
+                if sub.format in (0, 6) and cp > 0xFF:
+                    continue
                 sub.cmap[cp] = name
         # hmtx：新字形的度量已在 _copy_glyph 里写入（老字形一个都没动）
         # head.modified 固定 ⇒ 幂等
         dst["head"].modified = FIXED_MODIFIED
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    dst.save(str(out_path))
     if added:
+        # ★ 2026-11-06（硬化）：先写临时文件再 rename —— 中途失败不会把包内字体写坏。
+        tmp_out = out_path.with_suffix(out_path.suffix + ".tmp")
+        dst.save(str(tmp_out))
         # 重新读一次，确保 head.modified 是固定值（fontTools 某些路径会写当前时间）
-        check = TTFont(str(out_path), fontNumber=0, recalcBBoxes=False, recalcTimestamp=False)
+        check = TTFont(str(tmp_out), fontNumber=0, recalcBBoxes=False, recalcTimestamp=False)
         if int(check["head"].modified) != FIXED_MODIFIED:
             check["head"].modified = FIXED_MODIFIED
-            check.save(str(out_path))
+            check.save(str(tmp_out))
+        if out_path.exists():
+            out_path.unlink()
+        tmp_out.replace(out_path)
+    else:
+        # 没有可补的字形 ⇒ **原样复制**（不做 save 往返：否则字节会变，'只增不改' 就不成立了）
+        out_path.write_bytes(Path(target_path).read_bytes())
 
     return {
         "ok": True,

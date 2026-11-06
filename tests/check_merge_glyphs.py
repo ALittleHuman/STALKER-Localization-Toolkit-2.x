@@ -204,6 +204,80 @@ def main() -> int:
         else:
             print("  · ⑤b 跳过：缺 CLI / 启动器 / seguisym")
 
+        # ⑤c 跨 upem 的复合字形：组件**偏移与变换**必须按 scale 缩放（缺陷 ① 的靶子）
+        small = Path(r"C:\Windows\Fonts\NotoSansSC-VF.ttf")   # upem=1000
+        big = Path(r"C:\Windows\Fonts\segoeui.ttf")           # upem=2048
+        if small.is_file() and big.is_file():
+            sf = TTFont(str(small), fontNumber=0, recalcBBoxes=False, recalcTimestamp=False)
+            bf = TTFont(str(big), fontNumber=0, recalcBBoxes=False, recalcTimestamp=False)
+            s_cmap = sf.getBestCmap() or {}
+            b_cmap = bf.getBestCmap() or {}
+            b_glyf = bf["glyf"]
+            pick = None
+            for cp, name in b_cmap.items():
+                if cp in s_cmap:
+                    continue
+                try:
+                    if b_glyf[name].isComposite():
+                        pick = (cp, name)
+                        break
+                except Exception:
+                    continue
+            if pick is None:
+                print("  · ⑤c 跳过：segoeui 里找不到 target 缺的复合字形")
+            else:
+                cp_c, sname = pick
+                out5 = td / "upem.ttf"
+                rc5, log5 = run_merge(small, big, [cp_c], out5)
+                if rc5 == 0 and out5.is_file():
+                    of = TTFont(str(out5), fontNumber=0, recalcBBoxes=False,
+                                recalcTimestamp=False)
+                    scale2 = of["head"].unitsPerEm / bf["head"].unitsPerEm
+                    nm2 = (of.getBestCmap() or {}).get(cp_c)
+                    src_glyph = b_glyf[sname]
+                    bad2 = []
+                    if nm2 is None:
+                        bad2.append("无映射")
+                    else:
+                        og = of["glyf"][nm2]
+                        if not og.isComposite():
+                            bad2.append("不是复合")
+                        else:
+                            for s_comp, o_comp in zip(src_glyph.components, og.components):
+                                wx, wy = int(round(s_comp.x * scale2)), int(round(s_comp.y * scale2))
+                                if (o_comp.x, o_comp.y) != (wx, wy):
+                                    bad2.append("U+%04X 偏移 (%d,%d)!=(%d,%d)"
+                                                % (cp_c, o_comp.x, o_comp.y, wx, wy))
+                    (ok if not bad2 else fail)(
+                        "⑤c 跨 upem 复合偏移按 scale 缩放（U+%04X，scale=%.4f，坏：%s）"
+                        % (cp_c, scale2, bad2[:2] or "无"))
+                else:
+                    fail("⑤c 跨 upem 合并失败 rc=%d" % rc5)
+        else:
+            print("  · ⑤c 跳过：缺 1000/2048 upem 样张")
+
+        # ⑤d 星平面码位（>0xFFFF）不许崩（缺陷 ② 的靶子：format 4 溢出）
+        astral_src = td / "astral_src.ttf"
+        base = TTFont(str(TARGET), fontNumber=0, recalcBBoxes=False, recalcTimestamp=False)
+        picked_name = (base.getGlyphOrder() or ["space"])[-1]
+        wrote12 = False
+        for sub in base["cmap"].tables:
+            if sub.format == 12 and sub.isUnicode():
+                sub.cmap[0x20000] = picked_name
+                wrote12 = True
+        if wrote12:
+            base.save(str(astral_src))
+            out6 = td / "astral_out.ttf"
+            rc6, log6 = run_merge(TARGET, astral_src, [0x20000], out6)
+            if rc6 != 0 or not out6.is_file():
+                fail("⑤d 星平面合并崩了（rc=%d）" % rc6)
+            else:
+                of2 = TTFont(str(out6), fontNumber=0, recalcBBoxes=False, recalcTimestamp=False)
+                ok12 = any(sub.format == 12 and sub.cmap.get(0x20000) for sub in of2["cmap"].tables)
+                (ok if ok12 else fail)("⑤d 星平面码位进 format 12（不崩）")
+        else:
+            print("  · ⑤d 跳过：target 没有 format 12 子表")
+
         # ⑥⑦⑧ 幂等 / 可复现
         same = out1.is_file() and out2.is_file() and out3.is_file() and \
             sha(out1) == sha(out2) == sha(out3)
