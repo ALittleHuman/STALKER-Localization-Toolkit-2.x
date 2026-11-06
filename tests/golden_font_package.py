@@ -132,8 +132,10 @@ def main() -> int:
             if d.exists():
                 shutil.rmtree(d)
             d.mkdir(parents=True)
-        proc = subprocess.run([str(CLI), "--build-font-pack", game, "chs", str(xml_dir),
-                               str(font_path), str(ours_dir), "--suffix", "_chs"],
+        proc = subprocess.run([str(CLI), "--font-pack", "--ref", "builtin", "--game", game,
+                               "--lang", "chs", "--text-root", str(xml_dir),
+                               "--font", str(font_path), "--out", str(ours_dir),
+                               "--suffix", "_chs"],
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         if proc.returncode != 0:
             failures += 1
@@ -178,8 +180,10 @@ def main() -> int:
         if guard_dir.exists():
             shutil.rmtree(guard_dir)
         guard_dir.mkdir(parents=True)
-        proc = subprocess.run([str(CLI), "--build-font-pack", "SoC", "chs", str(xml_dir),
-                               str(guard_font), str(guard_dir), "--suffix", "_chs"],
+        proc = subprocess.run([str(CLI), "--font-pack", "--ref", "builtin", "--game", "SoC",
+                               "--lang", "chs", "--text-root", str(xml_dir),
+                               "--font", str(guard_font), "--out", str(guard_dir),
+                               "--suffix", "_chs"],
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         ours_rejected = proc.returncode != 0 and not (guard_dir / "gamedata").exists()
         ref_dir = WORK / "guard_ref"

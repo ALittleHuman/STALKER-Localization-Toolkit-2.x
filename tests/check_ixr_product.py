@@ -113,8 +113,8 @@ def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="ixr_product_"))
     try:
         # ① 缺参数 ⇒ 退 3（用法错误）
-        rc, out = run_cli(["--ixr-build"], env_extra)
-        if rc == 3 and "IXR error reason=用法" in out:
+        rc, out = run_cli(["--font-pack"], env_extra)
+        if rc == 3 and "FONTPACK error reason=用法" in out:
             ok("缺参数：退码 3 且给用法")
         else:
             problems += 1
@@ -129,10 +129,10 @@ def main() -> int:
             '<?xml version="1.0" encoding="utf-8"?><string_table>'
             '<string id="a"><text>你好汉化</text></string></string_table>', encoding="utf-8")
         out_dir = tmp / "out"
-        rc, out = run_cli(["--ixr-build", str(pack), str(CJK), str(out_dir),
-                           "--text-root", str(cn_dir)], env_extra)
+        rc, out = run_cli(["--font-pack", "--ref", str(pack), "--font", str(CJK),
+                           "--out", str(out_dir), "--text-root", str(cn_dir)], env_extra)
         merged = out_dir / "gamedata" / "fonts" / "rus" / "arial.ttf"
-        if rc == 0 and "IXR ok" in out and merged.is_file():
+        if rc == 0 and ("FONTPACK ok" in out or "IXR ok" in out) and merged.is_file():
             ok("真跑：rc=0、IXR ok、输出字体存在")
         else:
             problems += 1
@@ -158,8 +158,8 @@ def main() -> int:
             '<?xml version="1.0" encoding="utf-8"?><string_table>'
             '<string id="a"><text>你好汉化</text></string></string_table>', encoding="utf-8")
         out_cn = tmp / "out_cn"
-        rc, out = run_cli(["--ixr-build", str(pack), str(CJK), str(out_cn),
-                           "--text-root", str(cn_dir)], env_extra)
+        rc, out = run_cli(["--font-pack", "--ref", str(pack), "--font", str(CJK),
+                           "--out", str(out_cn), "--text-root", str(cn_dir)], env_extra)
         merged_cn = out_cn / "gamedata" / "fonts" / "rus" / "arial.ttf"
         if rc == 0 and merged_cn.is_file():
             from fontTools.ttLib import TTFont
@@ -173,16 +173,18 @@ def main() -> int:
             fail("带 --text-root 的生成失败：rc=%d" % rc)
 
         # ③ 零静默：参照包不存在 ⇒ 退 1 且带出助手的话
-        rc, out = run_cli(["--ixr-build", str(tmp / "nope"), str(CJK), str(tmp / "o2")],
+        rc, out = run_cli(["--font-pack", "--ref", str(tmp / "nope"), "--font", str(CJK),
+                           "--out", str(tmp / "o2")],
                           env_extra)
-        if rc == 1 and "IXR error reason=" in out and "IXRGEN error reason=" in out:
+        if rc == 1 and "FONTPACK error reason=" in out:
             ok("坏参照包：退 1，助手的话被带出来（零静默）")
         else:
             problems += 1
             fail("坏参照包的行为不对：rc=%d\n%s" % (rc, out[-400:]))
 
         # ④ 工具链缺件 ⇒ 退 1 且说清
-        rc, out = run_cli(["--ixr-build", str(pack), str(CJK), str(tmp / "o3")],
+        rc, out = run_cli(["--font-pack", "--ref", str(pack), "--font", str(CJK),
+                           "--out", str(tmp / "o3")],
                           {"XRKIT_IXR_RUN": str(tmp / "nope_run.py"),
                            "XRKIT_IXR_PYTHON": sys.executable})
         if rc == 1 and "启动器不存在" in out:

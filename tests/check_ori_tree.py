@@ -423,8 +423,10 @@ def main() -> int:
         (xml_dir / "t.xml").write_text(
             '<string_table><string id="a"><text>测试文本</text></string></string_table>',
             encoding="utf-8")
-        rc_b, out_b = run([str(CLI), "--build-font-pack", "SoC", "chs", str(xml_dir),
-                           str(Path(r"C:\Windows\Fonts\simhei.ttf")), str(bmp_out)])
+        rc_b, out_b = run([str(CLI), "--font-pack", "--ref", "builtin", "--game", "SoC",
+                           "--lang", "chs", "--text-root", str(xml_dir),
+                           "--font", str(Path(r"C:\Windows\Fonts\simhei.ttf")),
+                           "--out", str(bmp_out)])
         if rc_b == 0 and "lang=eng" in out_b and "语言采用产物内 profile" in out_b:
             ok("位图链：ori 里的 profile(eng) 覆盖页面语言(chs)，且如实告警")
         else:

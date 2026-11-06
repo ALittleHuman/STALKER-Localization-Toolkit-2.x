@@ -4922,8 +4922,9 @@ def step_fontpack_plugin(release: bool) -> None:
         '</string_table>\n', encoding="utf-8")
     ref_out = work / "ref"
     plug_out = work / "plug"
-    rc_ref, out_ref = run([str(CLI_EXE), "--build-font-pack", "SoC", "chs", str(xml_dir),
-                           font, str(ref_out), "--only-size", "11"], timeout=900)
+    rc_ref, out_ref = run([str(CLI_EXE), "--font-pack", "--ref", "builtin", "--game", "SoC",
+                           "--lang", "chs", "--text-root", str(xml_dir), "--font", font,
+                           "--out", str(ref_out), "--only-size", "11"], timeout=900)
     payload = json.dumps({"game": "SoC", "lang": "chs", "xml_dir": str(xml_dir),
                           "font_path": font, "out_dir": str(plug_out),
                           "only_sizes": [11]}, ensure_ascii=False)

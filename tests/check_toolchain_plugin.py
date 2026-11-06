@@ -189,8 +189,9 @@ def check_font_panel(cli: Path, problems: list) -> tuple:
 
     ref_out = work / "ref"
     plug_out = work / "plug"
-    ref = subprocess.run([str(cli), "--build-font-pack", "SoC", "chs", str(xml_dir), font,
-                          str(ref_out), "--only-size", "11"],
+    ref = subprocess.run([str(cli), "--font-pack", "--ref", "builtin", "--game", "SoC",
+                          "--lang", "chs", "--text-root", str(xml_dir), "--font", font,
+                          "--out", str(ref_out), "--only-size", "11"],
                          capture_output=True, text=True, encoding="utf-8", errors="replace",
                          timeout=900)
     payload = {"action": "font_regions", "game": "SoC", "lang": "chs", "xml_dir": str(xml_dir),
@@ -273,7 +274,8 @@ def check_pipeline_panel(cli: Path, problems: list) -> tuple:
     ref_run = [
         [str(cli), "--extract-text", str(src), str(ref_out), "--prefix", "p16c",
          "--id-prefix", "sgtat_p16c_0", "--clean"],
-        [str(cli), "--build-font-pack", "SoC", "chs", str(ref_out), font, str(ref_out),
+        [str(cli), "--font-pack", "--ref", "builtin", "--game", "SoC", "--lang", "chs",
+         "--text-root", str(ref_out), "--font", font, "--out", str(ref_out),
          "--only-size", "11"],
     ]
     for cmd in ref_run:

@@ -201,23 +201,7 @@ const ActionSpec kActionSpecs[] = {
      "--ref 目录 ⇒ 扫描参照 fonts.ltx（source=ref，矢量 writer）；--ref builtin ⇒ 内置模板（source=builtin，位图 writer）；缺字策略 --on-missing",
      "IXR 必须给参照包（无内置模板）；SoC/ClS/CoP 可用 builtin",
      "xrkit_cli --font-pack --ref builtin --game CoP --text-root xml --font 字体.ttf --out 输出",
-     "--langpack-scan, --build-font-pack, --ixr-build"},
-    {"--build-font-pack", "位图字体包（内置段表模板；SoC/ClS/CoP）",
-     "<SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录> [--suffix s] [--offset n]",
-     "xml 目录（只读）· 字体文件（只读）", "输出目录（DDS + ini + fonts.ltx）",
-     "0=成功｜1=出错｜3=用法错误",
-     "内置段表模板 + FreeType 渲染；缺字先判后建（缺字不出包）",
-     "段表固定为内置模板；**IX-Ray 模组不要用这条**（段表对不上）",
-     "xrkit_cli --build-font-pack CoP rus 文本目录 字体.ttf 输出",
-     "--ixr-build"},
-    {"--ixr-build", "IX-Ray 矢量字体包（扫描参照包段表 + 改 TTF）",
-     "--pack <参照包目录> --font <TTF> --out <目录> [--text-root <译文根>] [--langs rus] [--sizes ...]",
-     "参照包（只读）· 字体（只读）· 译文根（可选）", "输出目录（整包镜像 + 补字 TTF + 文本）",
-     "0=成功｜1=出错｜3=用法错误",
-     "扫描参照包 gamedata/configs/fonts.ltx 得段表；写 TTF 走 fontTools（外部/内嵌 Python）",
-     "参照包必须是目录且含 fonts.ltx + fonts/<lang>/*.ttf；缺字只报数仍出包",
-     "xrkit_cli --ixr-build --pack 参照包 --font 字体.ttf --out 输出 --text-root 译文根 --langs rus",
-     "--build-font-pack, --langpack-scan"},
+     "--langpack-scan, --font-sample"},
     {"--extract-text", "把译文树的文本抽成对照表",
      "<源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]",
      "源目录（只读）", "输出目录",
@@ -373,22 +357,9 @@ void print_usage() {
            "  --font-pack --ref <参照包|builtin> --text-root <译文根> --font <TTF> --out <目录>\n"
            "                     [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn]\n"
            "                     汉化包生成的**主入口**：--ref 目录 ⇒ 扫参照（矢量）；--ref builtin ⇒ 内置模板（位图）\n"
-"  --build-font-pack <SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录>\n"
-           "  --video-probe-text <stderr文件> [size]  解析 `ffmpeg -i` stderr（降级探测 L1/L2 判据）\n"
-"  --video-ffmpeg-probe [工具目录]    视频 ffmpeg 版本探测（打印 version_major / rejected）\n"
-           "  --runtime-paths <工具目录>            依赖路由：[runtime] root / @APP@ 解析结果\n"
-           "  --langpack-scan <语言包目录>      只读识别：profile/lang/槽位/资源（IX-Ray 生成器「指定」模式的底座）\n"
-           "  --font-sample <字体> <文本> <字号> <out.ppm>   文本样张（预览用；缺字计数）\n"
-           "  --ori-tree <源目录> <ori 目录> [--lang L] [--clean]\n"
-           "                                   整树复制 + 容器内提取 + ori/<容器>/...（文本提取最终规划）\n"
-           "  --ixr-build <参照包> <字体> <输出目录> [--langs rus,eng | --all-langs --split-output]\n"
-           "                                   生成 IX-Ray 矢量包（外部 fonttools 助手）\n"
-           "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite] [--pack-layout]\n"
-           "                                              选项 pack-layout：产出 gamedata/configs/text/<lang>/ 标准布局\n"
-           "                                   装配标准语言包（空表写成 <string_table></string_table>）\n"
-           "                    [--suffix s] [--offset n] [--require-full-cyrillic]\n"
-           "                                              选项 require-full-cyrillic：基线西里尔缺失也硬失败（默认关）\n"
-           "                                              出整棵 gamedata 汉化包（与 1.x 对拍）\n"
+            "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite] [--pack-layout]\n"
+            "                                              选项 pack-layout：产出 gamedata/configs/text/<lang>/ 标准布局\n"
+            "                                              装配标准语言包（空表写成 <string_table></string_table>）\n"
            // ★★ 2026-10-05（小件 ①）：`--build-package` **实现早已存在**（`tools/cli/build_cmd.cpp`，
            //   `run_cli()` 里的分派也在），但帮助的动作表里**漏写了这一条** ⇒ `--help` 上
            //   看不见它。用户口径是"CLI 是能力全集"，能力清单里漏一条就是"这功能好像没有"。
@@ -442,6 +413,13 @@ void print_usage() {
            "  --patch-apply <输入exe> <补丁> <输出exe> [--force]\n"
            "                                              二进制补丁**写盘半**（产物逐字节 == 参照；\n"
            "                                              输出=输入/已存在未 --force 一律拒绝）\n"
+           "  --video-probe-text <stderr文件> [size]  解析 `ffmpeg -i` stderr（降级探测 L1/L2 判据）\n"
+           "  --video-ffmpeg-probe [工具目录]    视频 ffmpeg 版本探测（打印 version_major / rejected）\n"
+           "  --runtime-paths <工具目录>            依赖路由：[runtime] root / @APP@ 解析结果\n"
+           "  --langpack-scan <语言包目录>      只读识别：profile/lang/槽位/资源（IX-Ray 生成器「指定」模式的底座）\n"
+           "  --font-sample <字体> <文本> <字号> <out.ppm>   文本样张（预览用；缺字计数）\n"
+           "  --ori-tree <源目录> <ori 目录> [--lang L] [--clean]\n"
+           "                                   整树复制 + 容器内提取 + ori/<容器>/...（文本提取最终规划）\n"
            "  --version       打印版本\n"
            "  --help, -h      本帮助\n"
            "选项:\n"
@@ -5873,64 +5851,6 @@ if (action == "--diff-snapshot") {
     }
 
     // IX-Ray 矢量包（外部 fonttools 助手；产品入口与页面共用一份）
-    if (action == "--ixr-build") {
-        std::cout << "IXRGEN hint 本动作=矢量（扫描参照包 fonts.ltx + fontTools 改 TTF）；"
-                     "原版 SoC/ClS/CoP 的位图包请用 --build-font-pack\n";
-        {
-            // 段表来源可见：扫描参照包（与 --langpack-scan 同一份 scan_lang_pack）
-            // 本动作的操作数是**位置参数**：<参照包> <字体> <输出目录>
-            const std::string pack = (!operands.empty() && !operands[0].empty() &&
-                                      operands[0][0] != '-')
-                                         ? operands[0]
-                                         : std::string();
-            if (!pack.empty()) {
-                const auto model = xrkit::engine::font::scan_lang_pack(pack);
-                std::cout << "SEGMENTS source=ref n=" << model.font_slots.size() << "\n";
-            }
-        }
-        if (operands.size() < 3) {
-            std::cerr << "IXR error reason=用法：--ixr-build <参照包> <字体> <输出目录> "
-                         "[--langs L | --all-langs --split-output] [--plan f] [--sizes 14,16]\n";
-            return kExitUsage;
-        }
-        xrkit::engine::font::IxrBuildOptions opt;
-        opt.pack = operands[0];
-        opt.font = operands[1];
-        opt.out = operands[2];
-        for (size_t i = 3; i < operands.size(); ++i) {
-            const std::string& a = operands[i];
-            if (a == "--langs" && i + 1 < operands.size()) {
-                opt.langs = operands[++i];
-            } else if (a == "--all-langs") {
-                opt.all_langs = true;
-            } else if (a == "--split-output") {
-                opt.split_output = true;
-            } else if (a == "--text-root" && i + 1 < operands.size()) {
-                opt.text_root = operands[++i];
-            } else if (a == "--plan" && i + 1 < operands.size()) {
-                opt.plan = operands[++i];
-            } else if (a == "--sizes" && i + 1 < operands.size()) {
-                opt.sizes = operands[++i];
-            } else {
-                std::cerr << "IXR error reason=未知参数 " << a << "\n";
-                return kExitUsage;
-            }
-        }
-        const xrkit::engine::font::IxrBuildResult result =
-            xrkit::engine::font::ixr_build(opt);
-        if (!result.ok) {
-            if (!result.stdout_tail.empty()) std::cout << result.stdout_tail;
-            if (!result.stderr_tail.empty()) std::cout << result.stderr_tail;
-            std::cout << "IXR error reason=" << result.error << "\n";
-            return kExitFail;
-        }
-        // 助手自己会打印 `IXRGEN {...}`；这里只补一条机器行（含实际用的解释器，便于排障）
-        std::cout << result.stdout_tail;
-        std::cout << "IXR ok python=" << result.python << " launcher=" << result.launcher
-                  << " out=" << opt.out << "\n";
-        return kExitOk;
-    }
-
     if (action == "--font-sample") {
         if (operands.size() < 4) {
             std::cerr << "SAMPLE error reason=用法：--font-sample <字体> <文本> <字号> <out.ppm>\n";
@@ -6031,11 +5951,16 @@ if (action == "--diff-snapshot") {
         const std::string text_root = kv.count("text-root") ? kv["text-root"] : std::string();
         const std::string font = kv.count("font") ? kv["font"] : std::string();
         const std::string out = kv.count("out") ? kv["out"] : std::string();
-        if (ref.empty() || text_root.empty() || font.empty() || out.empty()) {
-            std::cerr << "FONTPACK error reason=用法：--font-pack 需要 --ref / --text-root / --font / --out\n";
+        if (ref.empty() || font.empty() || out.empty()) {
+            std::cerr << "FONTPACK error reason=用法：--font-pack 需要 --ref / --font / --out"
+                         "（builtin 路径还需要 --text-root）\n";
             return kExitUsage;
         }
         const bool use_ref = (ref != "builtin");
+        if (!use_ref && text_root.empty()) {
+            std::cerr << "FONTPACK error reason=用法：--ref builtin 需要 --text-root <译文根>\n";
+            return kExitUsage;
+        }
         if (use_ref) {
             // ① 参照包：段表来自扫描 ⇒ 矢量 writer
             xrkit::engine::font::IxrBuildOptions opt;
@@ -6068,6 +5993,18 @@ if (action == "--diff-snapshot") {
         // 位图 writer 的既有可选参数（与旧动作对等，便于迁移）
         if (kv.count("suffix")) opt.suffix = kv["suffix"];
         if (kv.count("offset")) opt.offset = std::atoi(kv["offset"].c_str());
+        if (kv.count("only-size")) {
+            std::string s = kv["only-size"];
+            std::size_t start = 0;
+            while (start <= s.size()) {
+                const std::size_t comma = s.find(',', start);
+                const std::string item = s.substr(start, comma == std::string::npos ? std::string::npos
+                                                                                   : comma - start);
+                if (!item.empty()) opt.only_sizes.push_back(std::atoi(item.c_str()));
+                if (comma == std::string::npos) break;
+                start = comma + 1;
+            }
+        }
         std::cout << "SEGMENTS source=builtin n="
                   << xrkit::engine::font::template_segment_count(opt.game) << "\n";
         const xrkit::engine::font::PackageResult r2 = xrkit::engine::font::build_package(opt);
@@ -6076,75 +6013,15 @@ if (action == "--diff-snapshot") {
             return kExitFail;
         }
         for (const std::string& warn : r2.warnings) std::cout << "FONTPACK warn " << warn << "\n";
-        std::cout << "FONTPACK ok writer=bitmap out=" << r2.out_gamedata << " fonts=" << r2.fonts_written
-                  << " xml=" << r2.xml_written << " warnings=" << r2.warnings.size() << "\n";
+        std::cout << "FONTPACK ok writer=bitmap out=" << r2.out_gamedata << " lang=" << r2.lang
+                  << " fonts=" << r2.fonts_written << " xml=" << r2.xml_written
+                  << " warnings=" << r2.warnings.size() << "\n";
+        if (r2.lang != opt.lang) {
+            std::cout << "FONTPACK note 语言采用产物内 profile：lang=" << r2.lang << "\n";
+        }
         return kExitOk;
     }
 
-    if (action == "--build-font-pack") {
-        // ★ 2026-11-06（用户：GUI 看不出来、CLI 致命）：这条是**位图 + 内置段表模板**（SoC/ClS/CoP），
-        //   不是 IX-Ray 那条"扫描参照包 fonts.ltx"的路。选错会得到一个段数更少的包（例如 15 段 vs 36 段），
-        //   直接换上会让 font_default/letterica 等段找不到定义。这里在入口就把话说清。
-        std::cout << "FONTPACK hint 本动作=位图+内置段表模板（SoC/ClS/CoP）；"
-                     "IX-Ray 模组请用 --ixr-build（扫描参照包 fonts.ltx）\n";
-        {
-            const int seg = xrkit::engine::font::template_segment_count(operands[0]);
-            if (seg >= 0) {
-                std::cout << "SEGMENTS source=builtin n=" << seg << "\n";
-            }
-        }
-        if (operands.size() < 5) {
-            std::cerr << "FONTPACK error reason=用法：--build-font-pack <SoC|ClS|CoP> <语言> "
-                         "<xml目录> <字体> <输出目录> [--suffix s] [--offset n] "
-                         "[--no-full-cyrillic]\n";
-            return kExitUsage;
-        }
-        xrkit::engine::font::PackageOptions opt;
-        opt.game = operands[0];
-        opt.lang = operands[1];
-        opt.xml_dir = operands[2];
-        opt.font_path = operands[3];
-        opt.out_dir = operands[4];
-        for (size_t i = 5; i < operands.size(); ++i) {
-            if (operands[i] == "--suffix" && i + 1 < operands.size()) {
-                opt.suffix = operands[++i];
-            } else if (operands[i] == "--offset" && i + 1 < operands.size()) {
-                opt.offset = std::atoi(operands[++i].c_str());
-            } else if (operands[i] == "--require-full-cyrillic") {
-                // 基线全集也硬失败（默认关闭；只在"我要绝对完整"时开）
-                opt.require_full_cyrillic = true;
-            } else if (operands[i] == "--no-full-cyrillic") {
-                // ★ 2026-11-06：full_cyrillic 已内置 ⇒ 不接受关闭（否则用户以为能跳过西里尔校验）
-                std::cerr << "FONTPACK error reason=用法：--no-full-cyrillic 已取消"
-                             "（完整西里尔是内置校验，缺字形直接不出包）\n";
-                return kExitUsage;
-            } else if (operands[i] == "--only-size" && i + 1 < operands.size()) {
-                opt.only_sizes.push_back(std::atoi(operands[++i].c_str()));
-            } else {
-                std::cerr << "FONTPACK error reason=未知参数 " << operands[i] << "\n";
-                return kExitUsage;
-            }
-        }
-        const xrkit::engine::font::PackageResult r =
-            xrkit::engine::font::build_package(opt);
-        if (!r.ok) {
-            std::cout << "FONTPACK error reason=" << r.error << "\n";
-            return kExitFail;
-        }
-        for (const std::string& w : r.warnings) {
-            std::cout << "FONTPACK warn " << w << "\n";
-        }
-        std::cout << "FONTPACK ok game=" << opt.game << " lang="
-                     << (r.lang.empty() ? opt.lang : r.lang)
-                  << " out=" << r.out_gamedata << " fonts=" << r.fonts_written
-                  << " xml=" << r.xml_written << " warnings=" << r.warnings.size() << "\n";
-        return kExitOk;
-    }
-
-    // 主题令牌检查（M2 前置；数据层在 core，**不碰 Qt**）。
-    // 锚点：① 两套模式都能给出全部颜色角色、且都是 #RRGGBB；② 字体角色齐全；
-    //       ③ `px()` 的 HiDPI 缩放口径；④ user.ltx 的"读→改一项→整体写回、保留其它段"
-    //       （在内存里跑，绝不碰真实 user.ltx）。
     if (action == "--themecheck") {
         int checks = 0;
         int failed = 0;
@@ -6702,6 +6579,21 @@ if (action == "--diff-snapshot") {
         return kExitOk;
     }
 
+    static const char* const kRetiredActions[] = {"--build-font-pack", "--ixr-build"};
+    bool retired = false;
+    for (const char* name : kRetiredActions) {
+        if (action == name) retired = true;
+    }
+    if (retired) {
+        // ★ 2026-11-06（最小统一）：旧入口**硬失败 + 指引**，不留别名。
+        std::cerr << "FONTPACK error reason=" << action
+                  << " 已由 --font-pack 取代：\n"
+                     "  --font-pack --ref builtin --game <SoC|ClS|CoP> --lang <lang>"
+                     " --text-root <xml> --font <TTF> --out <目录>   （位图）\n"
+                     "  --font-pack --ref <参照包> --text-root <译文根> --font <TTF>"
+                     " --out <目录> [--langs rus]                    （矢量）\n";
+        return kExitFail;
+    }
     std::cerr << "未知动作: " << action << "\n";
     print_usage();
     return kExitUsage;
