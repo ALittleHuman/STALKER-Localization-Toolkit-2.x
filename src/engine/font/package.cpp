@@ -123,10 +123,19 @@ PackageResult build_package(const PackageOptions& opt) {
                 list += buf;
             }
             if (req_miss.size() > 32) list += "…(+" + std::to_string(req_miss.size() - 32) + ")";
+            if (opt.require_full_cyrillic) {
+                res.error = "所选字体缺 " + std::to_string(req_miss.size()) +
+                            " 个基线必需字形（西里尔/特殊字符）：" + list +
+                            "。已按 --require-full-cyrillic 要求全量覆盖 ⇒ 不出包；"
+                            "请换含西里尔的字体（Noto Sans / GoNotoKurrent）或用 IX-Ray 矢量包补字形";
+                return res;
+            }
             res.warnings.push_back("所选字体缺 " + std::to_string(req_miss.size()) +
                                    " 个基线必需字形（西里尔/特殊字符）：" + list +
-                                   "。俄文/特殊符号出现时会显示空白；要覆盖请换含西里尔的字体"
-                                   "（如 Noto Sans / GoNotoKurrent）或用 IX-Ray 矢量包补字形");
+                                   "。⚠ 当前语料未用到这些字；但游戏若**动态显示**俄文"
+                                   "（歌名/车辆型号/硬编码 UI），仍会显示空白。"
+                                   "要完整覆盖：换含西里尔的字体（Noto Sans / GoNotoKurrent）、"
+                                   "用 IX-Ray 矢量包补字形，或加 --require-full-cyrillic 强制校验");
         }
     }
 

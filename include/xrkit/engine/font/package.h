@@ -30,6 +30,9 @@ struct PackageOptions {
     // ★ 2026-11-06（用户拍板）：full_cyrillic **内置，不再是选项**。
     //   字段保留只为兼容既有调用方；引擎一律按 true 处理（完整西里尔 + 必需字符必测）。
     bool full_cyrillic = true;   // 已忽略（恒 true）
+    // ★ 2026-11-06（HA/DSH）：**基线全集**缺失默认只警告；显式要求"全量覆盖"时才硬失败。
+    //   语料里真实出现的字缺失始终硬失败（那是"确定会坏"），与此开关无关。
+    bool require_full_cyrillic = false;
     // 只做这些槽位（空 = 全部 10 档）。门禁分片跑时用得上。
     std::vector<int> only_sizes;
 };

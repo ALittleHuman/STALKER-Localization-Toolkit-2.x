@@ -375,7 +375,8 @@ void print_usage() {
            "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite] [--pack-layout]\n"
            "                                              选项 pack-layout：产出 gamedata/configs/text/<lang>/ 标准布局\n"
            "                                   装配标准语言包（空表写成 <string_table></string_table>）\n"
-           "                    [--suffix s] [--offset n]\n"
+           "                    [--suffix s] [--offset n] [--require-full-cyrillic]\n"
+           "                                              选项 require-full-cyrillic：基线西里尔缺失也硬失败（默认关）\n"
            "                                              出整棵 gamedata 汉化包（与 1.x 对拍）\n"
            // ★★ 2026-10-05（小件 ①）：`--build-package` **实现早已存在**（`tools/cli/build_cmd.cpp`，
            //   `run_cli()` 里的分派也在），但帮助的动作表里**漏写了这一条** ⇒ `--help` 上
@@ -5997,6 +5998,9 @@ if (action == "--diff-snapshot") {
                 opt.suffix = operands[++i];
             } else if (operands[i] == "--offset" && i + 1 < operands.size()) {
                 opt.offset = std::atoi(operands[++i].c_str());
+            } else if (operands[i] == "--require-full-cyrillic") {
+                // 基线全集也硬失败（默认关闭；只在"我要绝对完整"时开）
+                opt.require_full_cyrillic = true;
             } else if (operands[i] == "--no-full-cyrillic") {
                 // ★ 2026-11-06：full_cyrillic 已内置 ⇒ 不接受关闭（否则用户以为能跳过西里尔校验）
                 std::cerr << "FONTPACK error reason=用法：--no-full-cyrillic 已取消"
