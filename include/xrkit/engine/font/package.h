@@ -33,6 +33,9 @@ struct PackageOptions {
     // ★ 2026-11-06（HA/DSH）：**基线全集**缺失默认只警告；显式要求"全量覆盖"时才硬失败。
     //   语料里真实出现的字缺失始终硬失败（那是"确定会坏"），与此开关无关。
     bool require_full_cyrillic = false;
+    // ★ 2026-11-06（最小统一）：语料缺字的策略。fail（默认）= 不出包；warn = 警告并继续。
+    //   基线缺字**始终只警告**（两线口径，见 f08a1d2）。
+    bool missing_warn = false;
     // 只做这些槽位（空 = 全部 10 档）。门禁分片跑时用得上。
     std::vector<int> only_sizes;
 };

@@ -123,7 +123,7 @@ PackageResult build_package(const PackageOptions& opt) {
     //    `.notdef` 方框却照样报"完成" —— 这里直接拒绝，且不留半成品 gamedata。
     {
         const std::vector<uint32_t> miss = font_missing_chars(opt.font_path, cs.chars);
-        if (!miss.empty()) {
+        if (!miss.empty() && !opt.missing_warn) {
             std::string list;
             for (size_t i = 0; i < miss.size() && i < 12; ++i) {
                 // ★ U+XXXX 必须是十六进制（修前打印十进制，读起来像另一个码位）
@@ -134,6 +134,20 @@ PackageResult build_package(const PackageOptions& opt) {
             res.error = "所选字体画不出这些字符（图集会全部变成同一个方框）：" + list +
                         "—— 请改用 msyh / simsun / simhei 等含中日韩字形的字体";
             return res;
+        }
+        if (!miss.empty() && opt.missing_warn) {
+            // --on-missing warn：语料缺字降级为警告（抓取/预览用），但仍然**说出来**
+            std::string list;
+            for (std::size_t i = 0; i < miss.size() && i < 32; ++i) {
+                if (i) list += ",";
+                char buf[16] = {};
+                std::snprintf(buf, sizeof(buf), "U+%04X", static_cast<unsigned>(miss[i]));
+                list += buf;
+            }
+            if (miss.size() > 32) list += "…(+" + std::to_string(miss.size() - 32) + ")";
+            res.warnings.push_back("MISSING used=" + std::to_string(miss.size()) +
+                                   " 个语料用字在所选字体里画不出：" + list +
+                                   "；已按 --on-missing warn 继续出包（这些字会显示方框）");
         }
         const std::vector<uint32_t> req = required_chars();
         const std::vector<uint32_t> req_miss = font_unrenderable(opt.font_path, req);

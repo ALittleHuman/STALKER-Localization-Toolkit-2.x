@@ -194,6 +194,14 @@ const ActionSpec kActionSpecs[] = {
      "只比 .xml；其它类型不在扫描范围",
      "xrkit_cli --xml-compare-dirs old/ new/ --mode text",
      "--track, --extract-text"},
+    {"--font-pack", "汉化包生成主入口（按段表来源选 writer）",
+     "--ref <参照包|builtin> --text-root <译文根> --font <TTF> --out <目录> [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn] [--require-full-cyrillic]",
+     "参照包（--ref 目录时，只读）· 译文根（只读）· 字体（只读）", "输出目录",
+     "0=成功｜1=出错｜3=用法错误",
+     "--ref 目录 ⇒ 扫描参照 fonts.ltx（source=ref，矢量 writer）；--ref builtin ⇒ 内置模板（source=builtin，位图 writer）；缺字策略 --on-missing",
+     "IXR 必须给参照包（无内置模板）；SoC/ClS/CoP 可用 builtin",
+     "xrkit_cli --font-pack --ref builtin --game CoP --text-root xml --font 字体.ttf --out 输出",
+     "--langpack-scan, --build-font-pack, --ixr-build"},
     {"--build-font-pack", "位图字体包（内置段表模板；SoC/ClS/CoP）",
      "<SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录> [--suffix s] [--offset n]",
      "xml 目录（只读）· 字体文件（只读）", "输出目录（DDS + ini + fonts.ltx）",
@@ -362,7 +370,10 @@ void print_usage() {
            "  --convert-batch <源> <输出目录> <源编码> <目标编码> [--ext .xml] [--no-recursive]\n"
            "                  [--backup] [--exclude <模式>]\n"
            "                  批量编码转换（与内置 convert 页同一个引擎实现；判据对拍用它）\n"
-           "  --build-font-pack <SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录>\n"
+           "  --font-pack --ref <参照包|builtin> --text-root <译文根> --font <TTF> --out <目录>\n"
+           "                     [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn]\n"
+           "                     汉化包生成的**主入口**：--ref 目录 ⇒ 扫参照（矢量）；--ref builtin ⇒ 内置模板（位图）\n"
+"  --build-font-pack <SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录>\n"
            "  --video-probe-text <stderr文件> [size]  解析 `ffmpeg -i` stderr（降级探测 L1/L2 判据）\n"
 "  --video-ffmpeg-probe [工具目录]    视频 ffmpeg 版本探测（打印 version_major / rejected）\n"
            "  --runtime-paths <工具目录>            依赖路由：[runtime] root / @APP@ 解析结果\n"
@@ -5984,6 +5995,86 @@ if (action == "--diff-snapshot") {
             return kExitSkip;   // 2：认不出四档（"没出错、但不是正常路径"，与 --sniff 低置信同口径）
         }
         std::cout << "LANGPACK ok profile=" << xrkit::engine::font::profile_name(m.profile) << "\n";
+        return kExitOk;
+    }
+
+    if (action == "--font-pack") {
+        // ★ 2026-11-06（最小统一 · 单入口）：**按段表来源选 writer**，不再靠动作名猜。
+        //   --ref <参照包目录>  ⇒ 扫描参照 fonts.ltx（source=ref）⇒ 矢量 writer（IXR）
+        //   --ref builtin       ⇒ 内置模板（source=builtin）⇒ 位图 writer（SoC/ClS/CoP）
+        std::map<std::string, std::string> kv;
+        bool require_full_cyrillic = false;
+        bool missing_warn = false;
+        std::string on_missing = "fail";
+        for (std::size_t i = 0; i < operands.size(); ++i) {
+            const std::string& a = operands[i];
+            if (a == "--require-full-cyrillic") {
+                require_full_cyrillic = true;
+            } else if (a == "--on-missing" && i + 1 < operands.size()) {
+                on_missing = operands[++i];
+            } else if (a.rfind("--", 0) == 0 && i + 1 < operands.size()) {
+                kv[a.substr(2)] = operands[++i];
+            } else {
+                std::cerr << "FONTPACK error reason=用法：--font-pack --ref <参照包|builtin> "
+                             "--text-root <译文根> --font <TTF> --out <目录> "
+                             "[--game SoC|ClS|CoP] [--lang rus] [--langs rus] "
+                             "[--on-missing fail|warn] [--require-full-cyrillic]\n";
+                return kExitUsage;
+            }
+        }
+        if (on_missing != "fail" && on_missing != "warn") {
+            std::cerr << "FONTPACK error reason=用法：--on-missing 只接受 fail|warn\n";
+            return kExitUsage;
+        }
+        missing_warn = (on_missing == "warn");
+        const std::string ref = kv.count("ref") ? kv["ref"] : std::string();
+        const std::string text_root = kv.count("text-root") ? kv["text-root"] : std::string();
+        const std::string font = kv.count("font") ? kv["font"] : std::string();
+        const std::string out = kv.count("out") ? kv["out"] : std::string();
+        if (ref.empty() || text_root.empty() || font.empty() || out.empty()) {
+            std::cerr << "FONTPACK error reason=用法：--font-pack 需要 --ref / --text-root / --font / --out\n";
+            return kExitUsage;
+        }
+        const bool use_ref = (ref != "builtin");
+        if (use_ref) {
+            // ① 参照包：段表来自扫描 ⇒ 矢量 writer
+            xrkit::engine::font::IxrBuildOptions opt;
+            opt.pack = ref;
+            opt.font = font;
+            opt.out = out;
+            opt.text_root = text_root;
+            opt.langs = kv.count("langs") ? kv["langs"] : (kv.count("lang") ? kv["lang"] : "");
+            std::cout << "SEGMENTS source=ref n="
+                      << xrkit::engine::font::scan_lang_pack(ref).font_slots.size() << "\n";
+            const xrkit::engine::font::IxrBuildResult result =
+                xrkit::engine::font::ixr_build(opt);
+            if (!result.ok) {
+                std::cout << "FONTPACK error reason=" << result.error << "\n";
+                return kExitFail;
+            }
+            std::cout << "FONTPACK ok writer=vector out=" << out
+                      << "\n";
+            return kExitOk;
+        }
+        // ② 内置模板：段表来自模板 ⇒ 位图 writer
+        xrkit::engine::font::PackageOptions opt;
+        opt.game = kv.count("game") ? kv["game"] : "CoP";
+        opt.lang = kv.count("lang") ? kv["lang"] : "rus";
+        opt.xml_dir = text_root;
+        opt.font_path = font;
+        opt.out_dir = out;
+        opt.missing_warn = missing_warn;
+        opt.require_full_cyrillic = require_full_cyrillic;
+        std::cout << "SEGMENTS source=builtin n="
+                  << xrkit::engine::font::template_segment_count(opt.game) << "\n";
+        const xrkit::engine::font::PackageResult r2 = xrkit::engine::font::build_package(opt);
+        if (!r2.ok) {
+            std::cout << "FONTPACK error reason=" << r2.error << "\n";
+            return kExitFail;
+        }
+        for (const std::string& warn : r2.warnings) std::cout << "FONTPACK warn " << warn << "\n";
+        std::cout << "FONTPACK ok writer=bitmap out=" << r2.out_gamedata << " fonts=" << r2.fonts_written
+                  << " xml=" << r2.xml_written << " warnings=" << r2.warnings.size() << "\n";
         return kExitOk;
     }
 
