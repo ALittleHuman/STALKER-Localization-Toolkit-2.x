@@ -556,7 +556,9 @@ FontPackPage::BuildOutcome FontPackPage::run_build(
     request.text_root = request.use_ref ? ixr_text_at_start_.toStdString() : options.xml_dir;
     request.font = options.font_path;
     request.out = options.out_dir;
-    request.game = options.game == "IX-Ray" ? std::string("CoP") : options.game;
+    // ★ 2026-11-06（复核意见）：矢量路径**不读 game** ⇒ 显式置空，别把 "IX-Ray" 静默归一成 "CoP"
+    //   （否则哪天矢量路径开始读 game，会拿到一个并非用户选择的档位）。
+    request.game = request.use_ref ? std::string() : options.game;
     request.lang = options.lang;
     if (request.use_ref && !ixr_lang_at_start_.isEmpty()) {
         request.langs = ixr_lang_at_start_.toStdString();

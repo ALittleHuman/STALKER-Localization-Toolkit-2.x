@@ -76,6 +76,12 @@ def main() -> int:
             print("  · 参照包不在（跳 ②③）")
         else:
             (ok if "SEGMENTS source=ref n=36" in out2 else fail)("② 参照包 ⇒ 段数 36（扫描真的生效）")
+            # ②a 矢量路径不读 game：喂一个非法档位也必须照常（段表来自参照包）
+            rc_g, out_g = run("--font-pack", "--ref", PACKS[0], "--game", "Bogus",
+                              "--text-root", xml, "--font", CJK, "--out", td / "v_bogus",
+                              "--langs", "rus")
+            (ok if "SEGMENTS source=ref n=36" in out_g else fail)(
+                "②a 矢量路径忽略 --game（喂 Bogus 仍 source=ref n=36）")
             # ②b 同一文本根 ⇒ CHARSET count 相同（字符集来自同一份核心）
             import re as _re
             m1 = _re.search(r"CHARSET count=(\d+)", out1)

@@ -123,6 +123,8 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
         }
     }
     // ② 段表：**统一解析器**（内置模板与参照包同一份）
+    // ★ 矢量路径**不读 game**：段表来自参照包；`game` 只在位图路径（内置模板）才有意义。
+    //   调用方（页面/CLI）在 use_ref=true 时应当传空 game —— 传了也会被忽略（见下）。
     out.segments = request.use_ref ? ref_segment_count(request.ref)
                                    : template_segment_count(request.game);
     out.segments_from_ref = request.use_ref;
