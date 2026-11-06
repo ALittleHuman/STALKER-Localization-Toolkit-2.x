@@ -40,7 +40,7 @@ $vt = Get-Content (Join-Path $pkg 'version.txt') -ErrorAction Stop
 $idxLine = ($vt | Where-Object { $_ -like 'index=*' })
 $wantIdx = ($idxLine -split '=')[1]
 $cliOut = & (Join-Path $pkg 'xrkit_cli.exe') --version
-$appOut = (& (Join-Path $pkg 'xrkit_app.exe') --exe-version (Join-Path $pkg 'xrkit_app.exe'))
+$appOut = (& $cli --exe-version (Join-Path $pkg 'xrkit_app.exe'))
 if ($cliOut -notmatch ("build=" + $wantIdx)) { throw "包内 CLI 版本与 version.txt 不一致：$cliOut vs index=$wantIdx" }
 if ($appOut -notmatch ("numeric=" + '\.' + $wantIdx)) { throw "包内 app 版本与 version.txt 不一致：$appOut" }
 Write-Host "RELEASE ok index=$wantIdx cli=$cliOut"
