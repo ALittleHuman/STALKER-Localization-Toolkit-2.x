@@ -5956,6 +5956,16 @@ if (action == "--diff-snapshot") {
                          "（builtin 路径还需要 --text-root）\n";
             return kExitUsage;
         }
+        // ★ 字符集来自**同一份核心**（extract_chars），两条 writer 都基于它 ⇒
+        //   同一文本根必然同 count；这里先报出来，便于对拍与排障。
+        {
+            xrkit::engine::font::CharsetResult cs;
+            if (!text_root.empty() &&
+                xrkit::engine::font::extract_chars(text_root, /*full_cyrillic=*/true, cs)) {
+                std::cout << "CHARSET count=" << cs.chars.size()
+                          << " files=" << cs.files_scanned << "\n";
+            }
+        }
         const bool use_ref = (ref != "builtin");
         if (!use_ref && text_root.empty()) {
             std::cerr << "FONTPACK error reason=用法：--ref builtin 需要 --text-root <译文根>\n";

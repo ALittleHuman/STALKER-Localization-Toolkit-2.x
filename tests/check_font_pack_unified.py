@@ -76,6 +76,13 @@ def main() -> int:
             print("  · 参照包不在（跳 ②③）")
         else:
             (ok if "SEGMENTS source=ref n=36" in out2 else fail)("② 参照包 ⇒ 段数 36（扫描真的生效）")
+            # ②b 同一文本根 ⇒ CHARSET count 相同（字符集来自同一份核心）
+            import re as _re
+            m1 = _re.search(r"CHARSET count=(\d+)", out1)
+            m2 = _re.search(r"CHARSET count=(\d+)", out2)
+            same_cs = bool(m1 and m2 and m1.group(1) == m2.group(1))
+            (ok if same_cs else fail)("②b 两路 CHARSET count 相同（%s vs %s）" %
+                                      (m1.group(1) if m1 else "?", m2.group(1) if m2 else "?"))
             # ③ 状态隔离：再跑一次 builtin，产物与第一次逐字节相同
             rc3, out3 = run("--font-pack", "--ref", "builtin", "--game", "CoP", "--lang", "rus",
                             "--text-root", xml, "--font", CJK, "--out", td / "b2")

@@ -3558,6 +3558,23 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_segments_single(release: bool) -> None:
+    """段表解析单一来源（最小统一 ⑤：writer 里不许再抄一份 fonts.ltx 解析）。"""
+    say("[?] 段表解析单一来源")
+    script = ROOT / "tests" / "check_segments_single_source.py"
+    if not require_repo_file(script, "段表单源判据"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("SEGMENTS-SINGLE"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("段表解析只有 parse_segments 一份")
+    else:
+        fail("段表解析又出现分叉（见上）")
+
+
 def step_font_pack_unified(release: bool) -> None:
     """最小统一：--font-pack 段表来源 / writer / 缺字策略 / 状态隔离。"""
     say("[?] 最小统一：--font-pack（段表/writer/缺字策略）")
@@ -7999,6 +8016,7 @@ STEPS = [
     ("fs-path-lock", step_fs_path_lock),
     ("action-spec", step_action_spec),
     ("font-pack-unified", step_font_pack_unified),
+    ("segments-single", step_segments_single),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),
