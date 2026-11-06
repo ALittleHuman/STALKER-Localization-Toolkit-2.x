@@ -160,6 +160,50 @@ def main() -> int:
          fail)("⑤ 复合字形组件指向 target 内（检查 %d 个，坏：%s）"
                % (composite_checked, bad_comp[:3] or "无"))
 
+        # ⑤b 端到端：--font-pack 矢量路径的 --merge-glyphs（U+2400 是 seguisym 的复合字形）
+        cli = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
+        launcher = ROOT / "plugins_ixr" / "_lib" / "ixr_run.py"
+        segui = Path(r"C:\Windows\Fonts\seguisym.ttf")
+        if cli.is_file() and launcher.is_file() and segui.is_file():
+            pack = td / "pack"
+            (pack / "gamedata" / "configs" / "text" / "rus").mkdir(parents=True, exist_ok=True)
+            (pack / "gamedata" / "fonts" / "rus").mkdir(parents=True, exist_ok=True)
+            (pack / "gamedata" / "configs" / "fonts.ltx").write_text(
+                "[ui_font_arial_14]\nshader\t\t\t= font\ntexture\t\t\t= ui\\ui_font_11\n",
+                encoding="utf-8")
+            (pack / "gamedata" / "fonts" / "rus" / "arial.ttf").write_bytes(TARGET.read_bytes())
+            (pack / "gamedata" / "configs" / "text" / "rus" / "a.xml").write_text(
+                '<string_table><string id="a"><text>Привет</text></string></string_table>',
+                encoding="utf-8")
+            cn = td / "cn"
+            cn.mkdir()
+            (cn / "a.xml").write_text(
+                '<string_table><string id="a"><text>汉化\u2400</text></string></string_table>',
+                encoding="utf-8")
+            import os as _os
+            env2 = dict(_os.environ)
+            env2["XRKIT_IXR_RUN"] = str(launcher)
+            env2["XRKIT_IXR_PYTHON"] = sys.executable
+            env2["PYTHONIOENCODING"] = "utf-8"
+            env2["PYTHONUTF8"] = "1"
+            proc = subprocess.run([str(cli), "--font-pack", "--ref", str(pack),
+                                   "--text-root", str(cn), "--font", str(SOURCE),
+                                   "--out", str(td / "vout"), "--langs", "rus",
+                                   "--merge-glyphs", str(segui)],
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env2)
+            log2 = proc.stdout.decode("utf-8", "replace")
+            merged_font = td / "vout" / "gamedata" / "fonts" / "rus" / "arial.ttf"
+            if proc.returncode == 0 and merged_font.is_file():
+                mf = TTFont(str(merged_font), fontNumber=0)
+                nm = (mf.getBestCmap() or {}).get(0x2400)
+                okc = nm is not None and mf["glyf"][nm].isComposite() and all(
+                    c.glyphName in set(mf.getGlyphOrder()) for c in mf["glyf"][nm].components)
+                (ok if okc else fail)("⑤b 端到端：--merge-glyphs 把 U+2400（复合）并进包内字体，组件已重映射")
+            else:
+                fail("⑤b 端到端 --merge-glyphs 失败 rc=%d\n%s" % (proc.returncode, log2[-400:]))
+        else:
+            print("  · ⑤b 跳过：缺 CLI / 启动器 / seguisym")
+
         # ⑥⑦⑧ 幂等 / 可复现
         same = out1.is_file() and out2.is_file() and out3.is_file() and \
             sha(out1) == sha(out2) == sha(out3)

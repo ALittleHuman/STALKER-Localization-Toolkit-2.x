@@ -96,6 +96,17 @@ def main() -> int:
                     tree_hash(td / "b1") == tree_hash(td / "b2"))
             (ok if same else fail)("③ 跑完 ref 后 builtin 产物逐字节相同（状态隔离）")
 
+        # ⑤ 入口：--merge-glyphs 只对矢量有效；位图传了必须**明确报错**
+        rc_m, out_m = run("--font-pack", "--ref", "builtin", "--game", "CoP", "--langs", "rus",
+                          "--text-root", xml, "--font", CJK, "--out", td / "mrg_bad",
+                          "--merge-glyphs", CJK)
+        (ok if rc_m == 3 and "只对矢量路径有效" in out_m else fail)(
+            "⑤ 位图路径传 --merge-glyphs ⇒ rc=3 + 明确理由（实得 rc=%d）" % rc_m)
+        rc_h, out_h = run("--help")
+        (ok if "--merge-glyphs" in out_h else fail)("⑤ --help 列出 --merge-glyphs（仅矢量有效）")
+        rc_a, out_a = run("--actions")
+        (ok if "--merge-glyphs" in out_a else fail)("⑤ --actions 的 spec 含 --merge-glyphs")
+
         # ④ 缺字策略：arial（无 CJK）对中文语料
         (xml / "b.xml").write_text(
             '<string_table><string id="b"><text>汉化</text></string></string_table>', encoding="utf-8")

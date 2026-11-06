@@ -276,8 +276,9 @@ $ixrFontlib = Join-Path $ixrTools 'fontlib'
 New-Item -ItemType Directory -Force -Path $ixrFontlib | Out-Null
 $ixrRunSrc = Join-Path $root 'plugins_ixr\_lib\ixr_run.py'
 $ixrGenSrc = Join-Path $root 'plugins_ixr\_lib\ixrgen.py'
+$ixrMergeSrc = Join-Path $root 'plugins_ixr\_lib\merge_glyphs.py'
 $ixrFontSrc = Join-Path $root 'vendor\fonttools\fontTools'
-foreach ($f in @($ixrRunSrc, $ixrGenSrc)) {
+foreach ($f in @($ixrRunSrc, $ixrGenSrc, $ixrMergeSrc)) {
     if (-not (Test-Path $f)) { throw ("IX-Ray 生成器缺件：{0}（页面的 IX-Ray 选项要靠它）" -f $f) }
 }
 if (-not (Test-Path $ixrFontSrc)) {
@@ -285,6 +286,7 @@ if (-not (Test-Path $ixrFontSrc)) {
 }
 Copy-Item -LiteralPath $ixrRunSrc -Destination $ixrTools -Force
 Copy-Item -LiteralPath $ixrGenSrc -Destination $ixrTools -Force
+Copy-Item -LiteralPath $ixrMergeSrc -Destination $ixrTools -Force
 Copy-Item -LiteralPath $ixrFontSrc -Destination (Join-Path $ixrFontlib 'fontTools') -Recurse -Force
 # ★ 2026-11-02：**运行期不需要 C 源码与 __pycache__**（后者与 `.py` 是同一批模块的第二份）。
 #   vendored fontTools 里 5.88 MB 的 `.c` + 5.38 MB 的 `__pycache__` 都是打包错误，不是功能。

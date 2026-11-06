@@ -29,6 +29,9 @@ struct IxrBuildOptions {
     std::string text_root;
     std::string plan;      // 逐槽位字体计划 JSON（可空）
     std::string sizes;     // 分区字号档（逗号分隔，可空）
+    // ★ 2026-11-06（A-min）：额外源字体 —— 把 target 缺的字形**按字形级**合并进去
+    //   （只补缺字、不动老字形；复合字形递归重映射）。仅矢量路径有效。
+    std::string merge_glyphs;
 };
 
 struct IxrBuildResult {

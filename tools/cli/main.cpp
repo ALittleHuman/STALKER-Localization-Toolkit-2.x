@@ -195,11 +195,11 @@ const ActionSpec kActionSpecs[] = {
      "xrkit_cli --xml-compare-dirs old/ new/ --mode text",
      "--track, --extract-text"},
     {"--font-pack", "汉化包生成主入口（按段表来源选 writer）",
-     "--ref <参照包|builtin> --text-root <译文根> --font <TTF> --out <目录> [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn] [--require-full-cyrillic]",
+     "--ref <参照包|builtin> --text-root <译文根> --font <TTF> --out <目录> [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn] [--require-full-cyrillic] [--merge-glyphs <源TTF>]",
      "参照包（--ref 目录时，只读）· 译文根（只读）· 字体（只读）", "输出目录",
      "0=成功｜1=出错｜3=用法错误",
      "--ref 目录 ⇒ 扫描参照 fonts.ltx（source=ref，矢量 writer）；--ref builtin ⇒ 内置模板（source=builtin，位图 writer）；缺字策略 --on-missing",
-     "IXR 必须给参照包（无内置模板）；SoC/ClS/CoP 可用 builtin",
+     "IXR 必须给参照包（无内置模板）；SoC/ClS/CoP 可用 builtin；--merge-glyphs 仅矢量有效（位图传了报错）",
      "xrkit_cli --font-pack --ref builtin --game CoP --text-root xml --font 字体.ttf --out 输出",
      "--langpack-scan, --font-sample"},
     {"--extract-text", "把译文树的文本抽成对照表",
@@ -357,6 +357,7 @@ void print_usage() {
            "  --font-pack --ref <参照包|builtin> --text-root <译文根> --font <TTF> --out <目录>\n"
            "                     [--game SoC|ClS|CoP] [--langs rus] [--suffix s] [--offset n]\n"
            "                     [--only-size 11,14] [--on-missing fail|warn] [--require-full-cyrillic]\n"
+           "                     [--merge-glyphs <源TTF>]  仅矢量路径：把源字体缺的字形合并进 target（只增不改）\n"
            "                     汉化包生成的**主入口**：--ref 目录 ⇒ 扫参照（矢量）；--ref builtin ⇒ 内置模板（位图）\n"
             "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite] [--pack-layout]\n"
             "                                              选项 pack-layout：产出 gamedata/configs/text/<lang>/ 标准布局\n"
@@ -5978,12 +5979,20 @@ if (action == "--diff-snapshot") {
             }
         }
         req.only_sizes = only_sizes;
+        req.merge_glyphs = kv.count("merge-glyphs") ? kv["merge-glyphs"] : std::string();
         if (req.ref.empty() || req.font.empty() || req.out.empty()) {
             std::cerr << "FONTPACK error reason=用法：--font-pack 需要 --ref / --font / --out"
                          "（builtin 路径还需要 --text-root）\n";
             return kExitUsage;
         }
         req.use_ref = (req.ref != "builtin");
+        // ★ 2026-11-06（A-min）：--merge-glyphs 只对矢量路径有效；位图路径必须**明确报错**，
+        //   不许静默无效（这正是刚修过的"静默归一"同类问题）。
+        if (!req.use_ref && !req.merge_glyphs.empty()) {
+            std::cerr << "FONTPACK error reason=用法：--merge-glyphs 只对矢量路径有效"
+                         "（需要 --ref <参照包>）；位图路径不消费额外源字体\n";
+            return kExitUsage;
+        }
         if (!req.use_ref && req.text_root.empty()) {
             std::cerr << "FONTPACK error reason=用法：--ref builtin 需要 --text-root <译文根>\n";
             return kExitUsage;

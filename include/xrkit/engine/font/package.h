@@ -28,6 +28,7 @@ struct PackageOptions {
     std::string font_path;
     std::string out_dir;
     int offset = 0;
+    std::string merge_glyphs;      // 额外源字体（仅矢量路径；位图路径必须报错）
     std::string suffix;
     // ★ 2026-11-06（用户拍板）：full_cyrillic **内置，不再是选项**。
     //   字段保留只为兼容既有调用方；引擎一律按 true 处理（完整西里尔 + 必需字符必测）。
@@ -79,6 +80,7 @@ struct FontPackRequest {
     std::string langs;             // 矢量：`rus,eng`；空 = 用包内 primary
     bool missing_warn = false;     // 语料缺字降级为警告
     bool require_full_cyrillic = false;
+    std::string merge_glyphs;      // 额外源字体（仅矢量路径；位图路径必须报错）
     std::string suffix;
     int offset = 0;
     std::vector<int> only_sizes;

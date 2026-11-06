@@ -216,6 +216,24 @@ def merge_into(base_path: Path, cjk_source, cjk_cmap: dict, wanted: list[int]) -
 _OWN_OUTS: set[str] = set()   # 本次运行自己清空/建出来的输出目录（多语言复用同一父目录）
 
 
+def merge_extra_glyphs(target_path: Path, source_ttf: str, wanted: list[int]) -> dict:
+    """A-min：把**额外源字体**里 target 缺的字形合并进来（只增不改、复合递归重映射）。
+
+    复用 `merge_glyphs.py`（与独立入口/判据同一份实现），避免第二套合并逻辑。
+    """
+    import sys as _sys
+
+    here = str(Path(__file__).resolve().parent)
+    if here not in _sys.path:
+        _sys.path.insert(0, here)
+    import merge_glyphs as _mg
+
+    report = _mg.merge(Path(target_path), Path(source_ttf), sorted(set(wanted)),
+                       Path(target_path))
+    return {"added": report["added"], "missing": report["missing_in_source"],
+            "copied": report["copied_glyphs"]}
+
+
 def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
     pack = Path(args.pack)
     out = (Path(args.out) / lang) if args.split_output else Path(args.out)
@@ -557,6 +575,17 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
         report["missing"] += len(missing)
         report["fonts"].append({"name": path.name, "added": added, "missing": len(missing),
                                 "missing_list": ["U+%04X" % cp for cp in missing[:20]]})
+        if getattr(args, "merge_glyphs", ""):
+            try:
+                extra = merge_extra_glyphs(path, args.merge_glyphs, wanted)
+                report["added"] += extra["added"]
+                report["merge_glyphs"] = report.get("merge_glyphs", 0) + extra["added"]
+            except SystemExit as exc:
+                log("IXRGEN error reason=--merge-glyphs 失败：%s" % (exc,))
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log("IXRGEN error reason=--merge-glyphs 失败（%s）：%s" % (path.name, exc))
+                raise
         for sec_name in by_name[name]:
             report["sections"].append({"name": sec_name, "font": name, "status": "ok"})
 
@@ -601,6 +630,10 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
             extra_fonts += 1
             report["added"] += added
             report["missing"] += len(missing)
+            if getattr(args, "merge_glyphs", ""):
+                extra = merge_extra_glyphs(path, args.merge_glyphs, wanted)
+                report["added"] += extra["added"]
+                report["merge_glyphs"] = report.get("merge_glyphs", 0) + extra["added"]
             report["fonts"].append({"name": str(path.relative_to(out)), "added": added,
                                     "missing": len(missing),
                                     "missing_list": ["U+%04X" % cp for cp in missing[:20]]})
@@ -634,6 +667,8 @@ def main() -> int:
     ap.add_argument("--charset-scope", default="used", choices=["used", "common"])
     ap.add_argument("--plan", default="")
     ap.add_argument("--sizes", default="")
+    ap.add_argument("--merge-glyphs", default="",
+                    help="额外源字体：把 target 缺的字形按字形级合并（只增不改）")
     args = ap.parse_args()
 
     pack = Path(args.pack)

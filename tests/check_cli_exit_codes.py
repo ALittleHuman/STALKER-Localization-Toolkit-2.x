@@ -61,13 +61,15 @@ LOOKBACK = 25
 # ★ 2026-11-03：USAGE 58→60→61 —— 新增 `--snapshot` / `--diff-snapshot` 缺操作数（用法错误族）；
 #   按本判据口径增删一处 rc=3 必须重估并记账。
 # ★ 2026-11-04：USAGE 61→62 —— `--track` 的未知参数（--baseline/--rehash 之外的）
-FROZEN = {"USAGE": 62, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
+FROZEN = {"USAGE": 63, "GUARD_EXISTS": 10, "GUARD_CONFIRM": 1}
 # ★ 2026-11-06（HA 收紧）：**台账只许增加**。减少必须在下表写理由，
 #   否则"重估"会掩盖新加的遗漏（与 smoke_checks 的"只降不升"同一口径）。
-USAGE_HISTORY = (53, 55, 61, 62, 66)   # 历史冻结值（只追加）
+USAGE_HISTORY = (53, 55, 61, 62, 63, 66)   # 历史冻结值（只追加）
 USAGE_DECREASES = {
     62: "2026-11-06 --build-font-pack / --ixr-build 退役（两条分支里的用法错误随分支删除），"
         "新入口 --font-pack 的用法错误仍各记一处",
+    63: "2026-11-06 A-min：--merge-glyphs 在位图路径明确报错（新增一处 rc=3）；"
+        "相对峰值 66 仍低 3 —— 差额来自上一条的退役",
 }
 
 PROBLEMS: list = []
