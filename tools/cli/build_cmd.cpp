@@ -114,6 +114,33 @@ static std::string python_prefix() {
     return cached;
 }
 
+
+int run_write_version(const std::vector<std::string>& operands) {
+    if (operands.size() < 3) {
+        std::cerr << "BUILDPKG error reason=用法：--write-version <版本> <标记> <序号>\n";
+        return kUsage;
+    }
+    const std::string pre = operands[1];
+    const int idx = std::atoi(operands[2].c_str());
+    // version.h 的 kPrerelease 只要 "<标记>.<序号>"
+    const std::string full = pre.empty() ? std::to_string(idx) : pre + "." + std::to_string(idx);
+    std::string err;
+    if (!xrkit::core::save_version_header("include/xrkit/core/version.h", full, idx, err)) {
+        std::cerr << "BUILDPKG error reason=写 version.h 失败：" << err << "\n";
+        return kFail;
+    }
+    // ★ 用无窗口启动器（`std::system` 会弹控制台，静态锁也不许）
+    const std::string cmd = "chcp 65001 >nul && " + python_prefix() +
+                            " tools\\gen_winres.py >nul 2>&1";
+    const int gen_rc = run_windowless_utf8(cmd);
+    if (gen_rc != 0) {
+        std::cerr << "BUILDPKG error reason=重生成 .rc 失败（gen_winres.py）\n";
+        return kFail;
+    }
+    std::cout << "BUILDPKG wrote-version " << full << " build=" << idx << "\n";
+    return kOk;
+}
+
 int run_build_package(const std::vector<std::string>& operands) {
     if (operands.size() < 4) {
         std::cerr << "BUILDPKG error reason=用法：--build-package <version.json> <版本> <标记> <序号>\n";

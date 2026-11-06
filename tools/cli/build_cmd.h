@@ -22,5 +22,7 @@ namespace xrkit_cli {
 
 // 返回值直接用 CLI 的退出码约定：0=OK / 1=FAIL / 2=SKIP / 3=用法错误
 int run_build_package(const std::vector<std::string>& operands);
+// 只写版本号（version.h / .rc），不打包 —— 与打包分进程，见 scripts/release.ps1
+int run_write_version(const std::vector<std::string>& operands);
 
 }  // namespace xrkit_cli

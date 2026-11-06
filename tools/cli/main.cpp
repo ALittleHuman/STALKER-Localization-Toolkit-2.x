@@ -395,6 +395,7 @@ void print_usage() {
            //   LZHUF、版本号读写等一整族入口。本项目自己的注释就写着「能力清单里漏一条就是
            //   '这功能好像没有'」（见上面 `--build-package` 那段）。判据（run_ci 的 cli 步）：
            //   `--help` 的输出里必须出现**每一个** `action == "--xxx"` 的动作名（两半都对账）。
+           "  --write-version <版本> <标记> <序号>   只写 version.h/.rc（发包驱动用；不打包）\n"
            "  --version-store [--set] [--list] ...\n"
            "                  版本号存储（读/写/列举；只读模式不带 --set）\n"
            "  --exe-version [文件]                        现读 exe 的 VERSIONINFO（判据用）\n  --sha256 <文件>                             算文件 SHA-256（打包链唯一哈希实现）\n"
@@ -3596,38 +3597,7 @@ int run_cli(const std::vector<std::string>& args) {
         return kExitOk;
     }
     if (action == "--write-version") {
-        // python 解析：与 build_cmd 同口径（PATH 上的 python 可能是 WindowsApps 占位符）
-        const auto py_prefix = []() -> std::string {
-            if (const char* env = std::getenv("XRKIT_PYTHON"); env != nullptr && *env != '\0') {
-                return std::string("\"") + env + "\"";
-            }
-            return "python";
-        };
-        // ★ 2026-11-06：把 bump 与打包**分到两个进程**（CLI 不能在打包过程中重编自己）。
-        //   驱动脚本顺序：--write-version ⇒ 编译两档 ⇒ --build-package --prebuilt。
-        if (operands.size() < 3) {
-            std::cerr << "BUILDPKG error reason=用法：--write-version <版本> <标记> <序号>\n";
-            return kExitUsage;
-        }
-        const std::string ver = operands[0];
-        const std::string pre = operands[1];
-        const int idx = std::atoi(operands[2].c_str());
-        // version.h 的 kPrerelease 只要 "<标记>.<序号>"（不含主版本号；.rc 的 ProductVersion 会拼上主版本）
-        const std::string full = pre.empty() ? std::to_string(idx) : pre + "." + std::to_string(idx);
-        (void)ver;
-        std::string err;
-        if (!xrkit::core::save_version_header("include/xrkit/core/version.h", full, idx, err)) {
-            std::cerr << "BUILDPKG error reason=写 version.h 失败：" << err << "\n";
-            return kExitFail;
-        }
-        const int gen_rc = std::system(
-            ("chcp 65001 >nul && " + py_prefix() + " tools\\gen_winres.py >nul 2>&1").c_str());
-        if (gen_rc != 0) {
-            std::cerr << "BUILDPKG error reason=重生成 .rc 失败（gen_winres.py）\n";
-            return kExitFail;
-        }
-        std::cout << "BUILDPKG wrote-version " << full << " build=" << idx << "\n";
-        return kExitOk;
+        return xrkit_cli::run_write_version(operands);
     }
 
     if (action == "--version-store") {
