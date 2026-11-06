@@ -73,7 +73,8 @@ PackageResult build_package(const PackageOptions& opt) {
         return res;
     }
     CharsetResult cs;
-    if (!extract_chars(opt.xml_dir, opt.full_cyrillic, cs)) {
+    // ★ full_cyrillic 内置：完整西里尔 + 必需字符一律纳入（不再读 opt.full_cyrillic）
+    if (!extract_chars(opt.xml_dir, /*full_cyrillic=*/true, cs)) {
         res.error = cs.error.empty() ? ("xml 目录不存在：" + opt.xml_dir) : cs.error;
         return res;
     }
@@ -98,7 +99,10 @@ PackageResult build_package(const PackageOptions& opt) {
         if (!miss.empty()) {
             std::string list;
             for (size_t i = 0; i < miss.size() && i < 12; ++i) {
-                list += "U+" + std::to_string(miss[i]) + " ";
+                // ★ U+XXXX 必须是十六进制（修前打印十进制，读起来像另一个码位）
+                char buf[16] = {};
+                std::snprintf(buf, sizeof(buf), "U+%04X", static_cast<unsigned>(miss[i]));
+                list += std::string(buf) + " ";
             }
             res.error = "所选字体画不出这些字符（图集会全部变成同一个方框）：" + list +
                         "—— 请改用 msyh / simsun / simhei 等含中日韩字形的字体";
@@ -107,9 +111,22 @@ PackageResult build_package(const PackageOptions& opt) {
         const std::vector<uint32_t> req = required_chars();
         const std::vector<uint32_t> req_miss = font_unrenderable(opt.font_path, req);
         if (!req_miss.empty()) {
+            // ★ 2026-11-06：full_cyrillic 内置后，缺必需字形**升级为可见警告**（不回退成静默）：
+            //   · 语料里真实出现的字缺了 ⇒ 上面的 `miss` 检查已经硬失败（不出包）；
+            //   · 这里 `required_chars()` 是**基线全集**（ASCII/西里尔块/桥接/生僻补集）——
+            //     字体不含西里尔时它必然非空，若一律硬失败，会误伤"中文语料 + 无西里尔字体"的既有产物。
+            std::string list;
+            for (std::size_t i = 0; i < req_miss.size() && i < 32; ++i) {
+                if (i) list += ",";
+                char buf[16] = {};
+                std::snprintf(buf, sizeof(buf), "U+%04X", static_cast<unsigned>(req_miss[i]));
+                list += buf;
+            }
+            if (req_miss.size() > 32) list += "…(+" + std::to_string(req_miss.size() - 32) + ")";
             res.warnings.push_back("所选字体缺 " + std::to_string(req_miss.size()) +
-                                   " 个必需字形（西里尔/特殊字符，简繁替换也补不了）："
-                                   "正文里出现这些字符时会显示空白");
+                                   " 个基线必需字形（西里尔/特殊字符）：" + list +
+                                   "。俄文/特殊符号出现时会显示空白；要覆盖请换含西里尔的字体"
+                                   "（如 Noto Sans / GoNotoKurrent）或用 IX-Ray 矢量包补字形");
         }
     }
 

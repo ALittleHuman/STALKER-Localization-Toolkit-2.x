@@ -27,7 +27,9 @@ struct PackageOptions {
     std::string out_dir;
     int offset = 0;
     std::string suffix;
-    bool full_cyrillic = true;
+    // ★ 2026-11-06（用户拍板）：full_cyrillic **内置，不再是选项**。
+    //   字段保留只为兼容既有调用方；引擎一律按 true 处理（完整西里尔 + 必需字符必测）。
+    bool full_cyrillic = true;   // 已忽略（恒 true）
     // 只做这些槽位（空 = 全部 10 档）。门禁分片跑时用得上。
     std::vector<int> only_sizes;
 };

@@ -195,7 +195,7 @@ const ActionSpec kActionSpecs[] = {
      "xrkit_cli --xml-compare-dirs old/ new/ --mode text",
      "--track, --extract-text"},
     {"--build-font-pack", "位图字体包（内置段表模板；SoC/ClS/CoP）",
-     "<SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录> [--suffix s] [--offset n] [--no-full-cyrillic]",
+     "<SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录> [--suffix s] [--offset n]",
      "xml 目录（只读）· 字体文件（只读）", "输出目录（DDS + ini + fonts.ltx）",
      "0=成功｜1=出错｜3=用法错误",
      "内置段表模板 + FreeType 渲染；缺字先判后建（缺字不出包）",
@@ -375,7 +375,7 @@ void print_usage() {
            "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite] [--pack-layout]\n"
            "                                              选项 pack-layout：产出 gamedata/configs/text/<lang>/ 标准布局\n"
            "                                   装配标准语言包（空表写成 <string_table></string_table>）\n"
-           "                    [--suffix s] [--offset n] [--no-full-cyrillic]\n"
+           "                    [--suffix s] [--offset n]\n"
            "                                              出整棵 gamedata 汉化包（与 1.x 对拍）\n"
            // ★★ 2026-10-05（小件 ①）：`--build-package` **实现早已存在**（`tools/cli/build_cmd.cpp`，
            //   `run_cli()` 里的分派也在），但帮助的动作表里**漏写了这一条** ⇒ `--help` 上
@@ -5998,7 +5998,10 @@ if (action == "--diff-snapshot") {
             } else if (operands[i] == "--offset" && i + 1 < operands.size()) {
                 opt.offset = std::atoi(operands[++i].c_str());
             } else if (operands[i] == "--no-full-cyrillic") {
-                opt.full_cyrillic = false;
+                // ★ 2026-11-06：full_cyrillic 已内置 ⇒ 不接受关闭（否则用户以为能跳过西里尔校验）
+                std::cerr << "FONTPACK error reason=用法：--no-full-cyrillic 已取消"
+                             "（完整西里尔是内置校验，缺字形直接不出包）\n";
+                return kExitUsage;
             } else if (operands[i] == "--only-size" && i + 1 < operands.size()) {
                 opt.only_sizes.push_back(std::atoi(operands[++i].c_str()));
             } else {

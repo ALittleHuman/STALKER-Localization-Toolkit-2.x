@@ -118,10 +118,21 @@ bool read_file_bytes(const std::string& path, std::vector<uint8_t>& out, std::st
 bool decode_xml_bytes(const std::vector<uint8_t>& raw, std::string& text, std::string& enc,
                       bool& trusted) {
     const std::string declared = declared_encoding(raw);
-    enc = text::sniff_encoding(raw).encoding;
     const size_t skip = is_bom_utf8(raw) ? 3 : 0;
     std::string out;
     std::string err;
+    // ★★ 2026-11-06（实测 bug）：UTF-8 是**自校验**的 —— 一段字节若能严格解成 UTF-8，
+    //   就不该被 sniff 猜到 GBK（纯西里尔 UTF-8 文件曾被判成 GBK，字符集里冒出 U+5C51 之类的
+    //   汉字，随后"缺字形"报错，真实原因却是解码错）。
+    //   规则：没有声明、或声明就是 utf-8/utf8 时，**UTF-8 优先**；声明了别的编码才尊重声明。
+    const bool decl_utf8 = declared.empty() || declared == "utf-8" || declared == "utf8";
+    if (decl_utf8 && text::decode_strict("utf-8", raw.data() + skip, raw.size() - skip, out, err)) {
+        text = out;
+        enc = "utf-8";
+        trusted = true;
+        return true;
+    }
+    enc = text::sniff_encoding(raw).encoding;
     if (text::decode_strict(enc, raw.data() + skip, raw.size() - skip, out, err)) {
         text = out;
         trusted = encoding_trusted(enc, declared);
