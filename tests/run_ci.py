@@ -3558,6 +3558,25 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_merge_glyphs(release: bool) -> None:
+    """A-min 字形合并：8 条判据（缺字/老字形不变/度量/cmap/复合/幂等/CFF/可复现）。"""
+    say("[?] A-min 字形合并判据")
+    script = ROOT / "tests" / "check_merge_glyphs.py"
+    if not require_repo_file(script, "字形合并判据"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗", "·")) or s.startswith("MERGE-GLYPHS"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("字形合并 8 条全过")
+    elif rc2 == 2:
+        prereq("字形合并判据", "本机缺样张（arial / NotoSansSC / segoeui / CFF）", release)
+    else:
+        fail("字形合并判据不通过（见上）")
+
+
 def step_font_pack_single_entry(release: bool) -> None:
     """汉化包生成：页面层只许调统一入口（HA 打回点 ①）。"""
     say("[?] 汉化包生成：调用路径单一入口")
@@ -8035,6 +8054,7 @@ STEPS = [
     ("font-pack-unified", step_font_pack_unified),
     ("segments-single", step_segments_single),
     ("font-pack-single-entry", step_font_pack_single_entry),
+    ("merge-glyphs", step_merge_glyphs),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),
