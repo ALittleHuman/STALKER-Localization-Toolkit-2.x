@@ -194,6 +194,22 @@ const ActionSpec kActionSpecs[] = {
      "只比 .xml；其它类型不在扫描范围",
      "xrkit_cli --xml-compare-dirs old/ new/ --mode text",
      "--track, --extract-text"},
+    {"--build-font-pack", "位图字体包（内置段表模板；SoC/ClS/CoP）",
+     "<SoC|ClS|CoP> <语言> <xml目录> <字体> <输出目录> [--suffix s] [--offset n] [--no-full-cyrillic]",
+     "xml 目录（只读）· 字体文件（只读）", "输出目录（DDS + ini + fonts.ltx）",
+     "0=成功｜1=出错｜3=用法错误",
+     "内置段表模板 + FreeType 渲染；缺字先判后建（缺字不出包）",
+     "段表固定为内置模板；**IX-Ray 模组不要用这条**（段表对不上）",
+     "xrkit_cli --build-font-pack CoP rus 文本目录 字体.ttf 输出",
+     "--ixr-build"},
+    {"--ixr-build", "IX-Ray 矢量字体包（扫描参照包段表 + 改 TTF）",
+     "--pack <参照包目录> --font <TTF> --out <目录> [--text-root <译文根>] [--langs rus] [--sizes ...]",
+     "参照包（只读）· 字体（只读）· 译文根（可选）", "输出目录（整包镜像 + 补字 TTF + 文本）",
+     "0=成功｜1=出错｜3=用法错误",
+     "扫描参照包 gamedata/configs/fonts.ltx 得段表；写 TTF 走 fontTools（外部/内嵌 Python）",
+     "参照包必须是目录且含 fonts.ltx + fonts/<lang>/*.ttf；缺字只报数仍出包",
+     "xrkit_cli --ixr-build --pack 参照包 --font 字体.ttf --out 输出 --text-root 译文根 --langs rus",
+     "--build-font-pack, --langpack-scan"},
     {"--extract-text", "把译文树的文本抽成对照表",
      "<源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]",
      "源目录（只读）", "输出目录",
@@ -5846,6 +5862,8 @@ if (action == "--diff-snapshot") {
 
     // IX-Ray 矢量包（外部 fonttools 助手；产品入口与页面共用一份）
     if (action == "--ixr-build") {
+        std::cout << "IXRGEN hint 本动作=矢量（扫描参照包 fonts.ltx + fontTools 改 TTF）；"
+                     "原版 SoC/ClS/CoP 的位图包请用 --build-font-pack\n";
         if (operands.size() < 3) {
             std::cerr << "IXR error reason=用法：--ixr-build <参照包> <字体> <输出目录> "
                          "[--langs L | --all-langs --split-output] [--plan f] [--sizes 14,16]\n";
@@ -5957,6 +5975,11 @@ if (action == "--diff-snapshot") {
     }
 
     if (action == "--build-font-pack") {
+        // ★ 2026-11-06（用户：GUI 看不出来、CLI 致命）：这条是**位图 + 内置段表模板**（SoC/ClS/CoP），
+        //   不是 IX-Ray 那条"扫描参照包 fonts.ltx"的路。选错会得到一个段数更少的包（例如 15 段 vs 36 段），
+        //   直接换上会让 font_default/letterica 等段找不到定义。这里在入口就把话说清。
+        std::cout << "FONTPACK hint 本动作=位图+内置段表模板（SoC/ClS/CoP）；"
+                     "IX-Ray 模组请用 --ixr-build（扫描参照包 fonts.ltx）\n";
         if (operands.size() < 5) {
             std::cerr << "FONTPACK error reason=用法：--build-font-pack <SoC|ClS|CoP> <语言> "
                          "<xml目录> <字体> <输出目录> [--suffix s] [--offset n] "
