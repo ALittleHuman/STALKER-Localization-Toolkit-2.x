@@ -1416,13 +1416,32 @@ void XmlPage::run_extract() {
                 return;
             }
             // ★ 2026-11-07（用户："为什么不是所有语言都提取出来"）：字面量表**每个语言目录各一份**
+            // ★ 2026-11-08（用户："要通用，全是扫出来的"）：不假设 `gamedata/` 前缀 ——
+            //   在输出树里找**所有** `…/configs/text/<lang>` 目录，语言名从目录名来。
             QStringList text_dirs;
-            const QDir gtext(QDir(out_root).filePath(QStringLiteral("gamedata/configs/text")));
-            for (const QString& lang_dir : gtext.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
-                text_dirs << gtext.filePath(lang_dir);
+            {
+                QDirIterator it(out_root, QDir::Dirs | QDir::NoDotAndDotDot,
+                                QDirIterator::Subdirectories);
+                while (it.hasNext()) {
+                    const QString dir = it.next();
+                    const QFileInfo fi(dir);
+                    if (fi.fileName() != QStringLiteral("configs")) continue;
+                    const QDir cfg(dir);
+                    for (const QString& lang_dir :
+                         cfg.entryList({QStringLiteral("text")}, QDir::Dirs)) {
+                        Q_UNUSED(lang_dir);
+                        const QDir text_dir(cfg.filePath(QStringLiteral("text")));
+                        for (const QString& lang :
+                             text_dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+                            text_dirs << text_dir.filePath(lang);
+                        }
+                    }
+                }
             }
             if (text_dirs.isEmpty()) {
-                const QString fallback = gtext.filePath(QStringLiteral("rus"));
+                // 兜底：源里完全没有文本目录（只有 scripts/gameplay）时落一份
+                const QString fallback =
+                    QDir(out_root).filePath(QStringLiteral("gamedata/configs/text/rus"));
                 QDir().mkpath(fallback);
                 text_dirs << fallback;
             }

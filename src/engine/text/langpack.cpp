@@ -369,42 +369,40 @@ namespace xrkit::engine::text {
 
 namespace {
 
-bool collect_keep(const std::string& rel, const std::vector<std::string>& langs, bool include_map) {
-    const auto lang_ok = [&langs](const std::string& name) {
-        return langs.empty() ||
-               std::find(langs.begin(), langs.end(), name) != langs.end();
+// 结构规则（不认模组名）：
+//   root = "……/configs" 之前的那段前缀（可以是空串）
+//   收：<root>/configs/text/<lang>/**、<root>/configs/{fonts,localization}.ltx、<root>/fonts/**
+//   语言名从路径里**扫出来**；langs 非空时只收命中的语言。
+bool collect_keep(const std::string& rel, const std::vector<std::string>& langs,
+                  const std::set<std::string>& roots) {
+    const auto path_prefix = [](const std::string& p, const std::string& marker,
+                                std::string* rest) -> std::string {
+        const std::size_t at = p.find(marker);
+        if (at == std::string::npos) return std::string("\x01");
+        if (rest != nullptr) *rest = p.substr(at + marker.size());
+        return p.substr(0, at);
     };
-    // gamedata/configs/text/<lang>/...
-    const std::string text = "gamedata/configs/text/";
-    if (rel.rfind(text, 0) == 0) {
-        const std::size_t slash = rel.find('/', text.size());
-        if (slash != std::string::npos && lang_ok(rel.substr(text.size(), slash - text.size()))) {
+    std::string rest_text;
+    const std::string root_text = path_prefix(rel, "configs/text/", &rest_text);
+    if (root_text != std::string("\x01")) {
+        const std::size_t slash = rest_text.find('/');
+        const std::string lang = slash == std::string::npos ? rest_text
+                                                           : rest_text.substr(0, slash);
+        if (lang.empty()) return false;
+        if (langs.empty()) return true;
+        return std::find(langs.begin(), langs.end(), lang) != langs.end();
+    }
+    for (const char* lt : {"configs/fonts.ltx", "configs/localization.ltx"}) {
+        const std::string m = lt;
+        if (rel.size() >= m.size() && rel.compare(rel.size() - m.size(), m.size(), m) == 0) {
             return true;
         }
     }
-    if (rel.rfind("gamedata/fonts/", 0) == 0) return true;
-    if (rel == "gamedata/configs/fonts.ltx" || rel == "gamedata/configs/localization.ltx") {
-        return true;
-    }
-    if (include_map) {
-        if (rel.rfind("gamedata/textures/map/", 0) == 0) return true;
-        if (rel.rfind("gamedata/textures/ui_new_game_map", 0) == 0) return true;
-    }
-    // ixr_addons/<name>/configs/text/<lang>/... 与字体
-    const std::string addon = "ixr_addons/";
-    if (rel.rfind(addon, 0) == 0) {
-        const std::size_t slash = rel.find('/', addon.size());
-        if (slash == std::string::npos) return false;
-        const std::string rest = rel.substr(slash + 1);
-        const std::string atext = "configs/text/";
-        if (rest.rfind(atext, 0) == 0) {
-            const std::size_t s2 = rest.find('/', atext.size());
-            if (s2 != std::string::npos && lang_ok(rest.substr(atext.size(), s2 - atext.size()))) {
-                return true;
-            }
-        }
-        if (rest.rfind("fonts/", 0) == 0) return true;
-        if (rest == "configs/fonts.ltx" || rest == "configs/localization.ltx") return true;
+    std::string rest_fonts;
+    const std::string root_fonts = path_prefix(rel, "fonts/", &rest_fonts);
+    if (root_fonts != std::string("\x01")) {
+        // ★ 只收"与某个 configs 同根"的 fonts（避免把无关目录里的字体也收进来）
+        return roots.find(root_fonts) != roots.end();
     }
     return false;
 }
@@ -434,9 +432,15 @@ LangPackCollectResult collect_language_pack(const LangPackCollectOptions& option
     const std::vector<xrkit::engine::fs::TreeItem> items = xrkit::engine::fs::collect_tree(core::path_to_utf8(src), &report);
     for (const std::string& err : report.errors) out.warnings.push_back("遍历：" + err);
     fs::create_directories(dst, ec);
+    // 先扫出所有 "…/configs" 的根（路径前缀），fonts 规则靠它
+    std::set<std::string> roots;
+    for (const xrkit::engine::fs::TreeItem& item : items) {
+        const std::size_t at = item.path.find("configs/");
+        if (at != std::string::npos) roots.insert(item.path.substr(0, at));
+    }
     for (const xrkit::engine::fs::TreeItem& item : items) {
         if (item.is_dir) continue;
-        if (!collect_keep(item.path, options.langs, options.include_map)) continue;
+        if (!collect_keep(item.path, options.langs, roots)) continue;
         const fs::path target = dst / core::path_from_utf8(item.path);
         if (fs::exists(target, ec) && !options.overwrite) {
             ++out.skipped_existing;

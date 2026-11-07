@@ -359,8 +359,8 @@ void print_usage() {
            "                     [--only-size 11,14] [--on-missing fail|warn] [--require-full-cyrillic]\n"
            "                     [--merge-glyphs <源TTF>]  仅矢量路径：把源字体缺的字形合并进 target（只增不改）\n"
            "                     汉化包生成的**主入口**：--ref 目录 ⇒ 扫参照（矢量）；--ref builtin ⇒ 内置模板（位图）\n"
-            "  --langpack-collect <松散树> <输出根> [--lang rus,eng] [--include-map] [--overwrite]\n"
-           "                                              从已解包树收敛语言包（默认**所有语言**、不含地图纹理）\n"
+            "  --langpack-collect <松散树> <输出根> [--lang rus,eng] [--overwrite]\n"
+           "                                              从已解包树收敛语言包（结构规则扫描；默认所有语言）\n"
            "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite] [--pack-layout]\n"
             "                                              选项 pack-layout：产出 gamedata/configs/text/<lang>/ 标准布局\n"
             "                                              装配标准语言包（空表写成 <string_table></string_table>）\n"
@@ -5663,8 +5663,6 @@ if (action == "--diff-snapshot") {
                     if (comma == std::string::npos) break;
                     start = comma + 1;
                 }
-            } else if (a == "--include-map") {
-                opt.include_map = true;
             } else if (a == "--overwrite") {
                 opt.overwrite = true;
             } else {
