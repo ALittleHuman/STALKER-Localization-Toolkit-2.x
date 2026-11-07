@@ -1454,8 +1454,14 @@ void XmlPage::run_extract() {
                 const QString dir = QDir(base).filePath(sub);
                 if (!QDir(dir).exists()) continue;
                 any = true;
+                // ★ 2026-11-08（按 doc:82 的语言包布局）：
+                //   scripts  → <mod>/gamedata/scripts/
+                //   gameplay → <mod>/gamedata/configs/gameplay/
+                const QString sub_out = sub == QStringLiteral("gameplay")
+                                            ? QStringLiteral("gamedata/configs/gameplay")
+                                            : QStringLiteral("gamedata/scripts");
                 const QString target = want_rewritten
-                                           ? QDir(out_root).filePath(QStringLiteral("gamedata/") + sub)
+                                           ? QDir(out_root).filePath(sub_out)
                                            : QDir(QDir::tempPath()).filePath(
                                                  QStringLiteral("xrkit_extract_discard/") + sub);
                 QDir().mkpath(target);

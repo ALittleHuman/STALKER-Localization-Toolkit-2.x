@@ -408,7 +408,15 @@ if ($ffMajor -ne 7) {
 }
 Write-Host "  版本守卫通过：自带 ffmpeg 是 7.x"
 # ★ 2026-11-02（DSH 许可结案）：随包带 ffmpeg 的许可证与构建说明（零成本合规动作）
-$licDir = Join-Path $stage 'third_party\ffmpeg'
+# ★ 2026-11-08：JSGME 最小包随工具发（把语言包装进游戏用）
+$jsgmeSrc = Join-Path $root 'third_party\jsgme'
+if (Test-Path $jsgmeSrc) {
+    $jsgmeDst = Join-Path $stage 'third_party\jsgme'
+    New-Item -ItemType Directory -Force -Path $jsgmeDst | Out-Null
+    Copy-Item -Path (Join-Path $jsgmeSrc '*') -Destination $jsgmeDst -Recurse -Force
+    Write-Host "  JSGME 最小包已入包（third_party\jsgme）"
+}
+$licDir = Join-Path $stage 'third_party\ffmpeg' 
 New-Item -ItemType Directory -Force -Path $licDir | Out-Null
 foreach ($lic in @('LICENSE.txt', 'BUILD.txt')) {
     $licSrc = Join-Path $root ('third_party\ffmpeg\' + $lic)
