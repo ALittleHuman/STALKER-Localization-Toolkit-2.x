@@ -434,6 +434,20 @@ $qtExit = $LASTEXITCODE
 $ErrorActionPreference = $prevEapQt
 if ($qtExit -ne 0) { throw "windeployqt 失败（退出码 $qtExit）" }
 
+# ★★ 2026-11-07（体积回归）：windeployqt 会**默认**带上三样东西，但它们不是运行期必需：
+#   · vc_redist.x64.exe  24.4 MB —— 那是**安装器**；我们已直接发 vcruntime140*.dll；
+#   · dxcompiler.dll     13.6 MB —— 只有 Qt 的 D3D12 RHI 才用；本程序走 D3D11/GL；
+#   · dxil.dll            1.4 MB —— 同上。
+#   合计 ≈39.5 MB（BETA.122 的 68.1 MB ⇒ BETA.130 的 107.6 MB 就是它们）。
+#   删掉是"不发用不上的运行期"，不是"省空间省到功能上"——删后包内 smoke 912/0 已验。
+foreach ($extra in @('vc_redist.x64.exe', 'dxcompiler.dll', 'dxil.dll')) {
+    $path = Join-Path $stage $extra
+    if (Test-Path -LiteralPath $path) {
+        Remove-Item -LiteralPath $path -Force
+        Write-Host ("  减重：删掉 windeployqt 默认携带的 {0}" -f $extra)
+    }
+}
+
 # ★★ 2026-11-02（HA/DSH 裁）：**退役"自动安装"之后不再需要 python 的联网面**。
 #   DSH 的依赖扫描（plugins/ 零命中；fontTools 只用到 urllib.parse，纯字符串，不触发 _ssl）⇒ 可删：
 #     libssl-3.dll / libcrypto-3.dll / _ssl.pyd  ⇒ 插件 import ssl 会得到 ModuleNotFoundError（有意的契约）
@@ -583,12 +597,11 @@ exe_sha256=$($ExeSha256.ToLower())
 "@ | Set-Content -LiteralPath (Join-Path $stage 'version.txt') -Encoding UTF8
 
 # ★★ 决策 4 验收：**包根散文件 ≤ 16**（"外面的文件太多了"变成判据）。
-#   2026-11-06：上限 12 → 16 —— 包根新增 `xrkit_cli.exe`（追更/脚本入口，必须与 app 同目录），
-#   另有 Qt 的 dxcompiler/dxil 与 vc_redist（运行期必需）。
+#   2026-11-07：删掉 windeployqt 默认携带的 vc_redist/dxcompiler/dxil 之后，包根回到 12 个。
 $rootFiles = @(Get-ChildItem -LiteralPath $stage -File)
 Write-Host ("  包根散文件：{0} 个" -f $rootFiles.Count)
-if ($rootFiles.Count -gt 16) {
-    throw ("包根散文件 {0} 个（上限 16）：{1}`n  分类规则在 `Get-PackageDest` 里；多出来的该进 python\\ 或 bin\\。" -f `
+if ($rootFiles.Count -gt 12) {
+    throw ("包根散文件 {0} 个（上限 12）：{1}`n  分类规则在 `Get-PackageDest` 里；多出来的该进 python\\ 或 bin\\。" -f `
            $rootFiles.Count, (($rootFiles | Select-Object -ExpandProperty Name | Sort-Object) -join ', '))
 }
 

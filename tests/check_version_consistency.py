@@ -117,6 +117,10 @@ def main() -> int:
         must = ["xrkit_app.exe", "xrkit_cli.exe", "bin/ffmpeg.exe",
                 "third_party/ffmpeg/LICENSE.txt"]
         missing = [m for m in must if not (pkg3 / m).is_file()]
+        forbidden = ["vc_redist.x64.exe", "dxcompiler.dll", "dxil.dll"]
+        present = [f for f in forbidden if (pkg3 / f).is_file()]
+        (ok if not present else fail)(("包内不应带 windeployqt 默认携带物（体积回归：%s）")
+                                      % (present or "无"))
         (ok if not missing else fail)("包内必备件齐全（缺 %s）" % (missing or "无"))
         cli = pkg3 / "xrkit_cli.exe"
         vt2 = pkg3 / "version.txt"
