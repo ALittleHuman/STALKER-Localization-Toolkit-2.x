@@ -358,6 +358,9 @@ void print_usage() {
            "                     [--game SoC|ClS|CoP] [--langs rus] [--suffix s] [--offset n]\n"
            "                     [--only-size 11,14] [--on-missing fail|warn] [--require-full-cyrillic]\n"
            "                     [--merge-glyphs <源TTF>]  仅矢量路径：把源字体缺的字形合并进 target（只增不改）\n"
+           "                     [--jsgme] [--jsgme-category 汉化] [--jsgme-name rus]\n"
+           "                     成品按 JSGME 结构摆：<out>/MODS/<分类>/<名>/{gamedata,ixr_addons}，\n"
+           "                     并把 JSGME.exe/.lng 复制到 <out>/（提取不做这件事）\n"
            "                     汉化包生成的**主入口**：--ref 目录 ⇒ 扫参照（矢量）；--ref builtin ⇒ 内置模板（位图）\n"
             "  --langpack-collect <松散树> <输出根> [--lang rus,eng] [--overwrite]\n"
            "                                              从已解包树收敛语言包（结构规则扫描；默认所有语言）\n"
@@ -3133,6 +3136,51 @@ std::string json_escape(const std::string& s) {
     return o;
 }
 }  // namespace
+
+static int wrap_jsgme_layout(const std::string& out_root, const std::string& category,
+                             const std::string& name) {
+    // <out>/MODS/<category>/<name>/{gamedata,ixr_addons,…}；并把 JSGME.exe/.lng 放到 <out>/
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path out = xrkit::core::path_from_utf8(out_root);
+    const fs::path mods = out / "MODS";
+    const fs::path mod = category.empty() ? (mods / xrkit::core::path_from_utf8(name))
+                                          : (mods / xrkit::core::path_from_utf8(category) /
+                                             xrkit::core::path_from_utf8(name));
+    fs::create_directories(mod, ec);
+    int moved = 0;
+    for (const char* top : {"gamedata", "ixr_addons", "localization"}) {
+        const fs::path src = out / top;
+        if (!fs::exists(src, ec)) continue;
+        const fs::path dst = mod / top;
+        fs::remove_all(dst, ec);
+        fs::rename(src, dst, ec);
+        if (ec) {
+            std::cerr << "FONTPACK error reason=JSGME 摆盘失败：" << top << "（" << ec.message()
+                      << "）\n";
+            return kExitFail;
+        }
+        ++moved;
+    }
+    // JSGME 最小包随工具发在场（third_party/jsgme）；能找到就复制到 <out>/
+    const fs::path app = xrkit::core::path_from_utf8(xrkit::core::app_dir());
+    for (const fs::path& cand : {app / "third_party" / "jsgme",
+                                 app / ".." / "third_party" / "jsgme",
+                                 app / ".." / ".." / "third_party" / "jsgme",
+                                 app / ".." / ".." / ".." / "third_party" / "jsgme",
+                                 app / ".." / ".." / ".." / ".." / "third_party" / "jsgme"}) {
+        if (!fs::is_directory(cand, ec)) continue;
+        for (const char* f : {"JSGME.exe", "JSGME.lng"}) {
+            const fs::path src = cand / f;
+            if (!fs::exists(src, ec)) continue;
+            fs::copy_file(src, out / f, fs::copy_options::overwrite_existing, ec);
+        }
+        break;
+    }
+    std::cout << "FONTPACK jsgme mod=MODS/" << (category.empty() ? "" : category + "/") << name
+              << " top=" << moved << "\n";
+    return kExitOk;
+}
 
 int run_cli(const std::vector<std::string>& args) {
     bool verbose = false;
@@ -5977,6 +6025,7 @@ if (action == "--diff-snapshot") {
         return kExitOk;
     }
 
+
     if (action == "--font-pack") {
         // ★ 2026-11-06（HA 打回点 ①）：**只调统一引擎入口** `build_font_pack`；
         //   本分支不直接碰 build_package / ixr_build。
@@ -5989,6 +6038,9 @@ if (action == "--diff-snapshot") {
             const std::string& a = operands[i];
             if (a == "--require-full-cyrillic") {
                 require_full_cyrillic = true;
+            } else if (a == "--jsgme") {
+                // 无值开关：成品按 JSGME 结构摆盘（提取不做这件事）
+                kv["jsgme"] = "1";
             } else if (a == "--on-missing" && i + 1 < operands.size()) {
                 on_missing = operands[++i];
             } else if (a.rfind("--", 0) == 0 && i + 1 < operands.size()) {
@@ -6037,6 +6089,13 @@ if (action == "--diff-snapshot") {
         }
         req.only_sizes = only_sizes;
         req.merge_glyphs = kv.count("merge-glyphs") ? kv["merge-glyphs"] : std::string();
+        // ★ 2026-11-08（用户：JSGME 是"汉化包生成"的事）：把成品包摆成 JSGME 结构
+        const bool jsgme = kv.count("jsgme") != 0 || kv.count("jsgme-name") != 0;
+        const std::string jsgme_category = kv.count("jsgme-category") ? kv["jsgme-category"]
+                                                                     : std::string("汉化");
+        const std::string jsgme_name = kv.count("jsgme-name")
+                                           ? kv["jsgme-name"]
+                                           : (req.langs.empty() ? req.lang : req.langs);
         if (req.ref.empty() || req.font.empty() || req.out.empty()) {
             std::cerr << "FONTPACK error reason=用法：--font-pack 需要 --ref / --font / --out"
                          "（builtin 路径还需要 --text-root）\n";
@@ -6064,6 +6123,10 @@ if (action == "--diff-snapshot") {
             return kExitFail;
         }
         if (res.vector_path) {
+            if (jsgme) {
+                const int jsgme_rc = wrap_jsgme_layout(req.out, jsgme_category, jsgme_name);
+                if (jsgme_rc != kExitOk) return jsgme_rc;
+            }
             std::cout << "FONTPACK ok writer=vector out=" << req.out << "\n";
             if (!res.vector_result.stdout_tail.empty()) {
                 std::cout << res.vector_result.stdout_tail;
@@ -6074,7 +6137,11 @@ if (action == "--diff-snapshot") {
         for (const std::string& warn : res.bitmap.warnings) {
             std::cout << "FONTPACK warn " << warn << "\n";
         }
-        std::cout << "FONTPACK ok writer=bitmap out=" << res.bitmap.out_gamedata
+        if (jsgme) {
+            const int jsgme_rc = wrap_jsgme_layout(req.out, jsgme_category, jsgme_name);
+            if (jsgme_rc != kExitOk) return jsgme_rc;
+        }
+        std::cout << "FONTPACK ok writer=bitmap out=" << (jsgme ? req.out : res.bitmap.out_gamedata)
                   << " lang=" << res.bitmap.lang << " fonts=" << res.bitmap.fonts_written
                   << " xml=" << res.bitmap.xml_written << " warnings=" << res.bitmap.warnings.size()
                   << "\n";

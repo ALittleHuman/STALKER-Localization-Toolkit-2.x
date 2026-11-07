@@ -1415,6 +1415,13 @@ void XmlPage::run_extract() {
                 post_status(QStringLiteral("提取只接受已解包的松散目录（需含 gamedata/configs 或 configs）"));
                 return;
             }
+            // ★ 2026-11-08（用户："原来落哪里，提取就落哪里"）：输出**沿用源的相对前缀**
+            //   （源是 `…/gamedata/configs` ⇒ 输出 `gamedata/…`；源是 `…/configs` ⇒ 输出不带 gamedata）。
+            const QString rel_prefix =
+                QDir(src_dir.filePath(QStringLiteral("gamedata/configs"))).absolutePath() ==
+                        QDir(base).absolutePath()
+                    ? QStringLiteral("gamedata/")
+                    : QString();
             // ★ 2026-11-07（用户："为什么不是所有语言都提取出来"）：字面量表**每个语言目录各一份**
             // ★ 2026-11-08（用户："要通用，全是扫出来的"）：不假设 `gamedata/` 前缀 ——
             //   在输出树里找**所有** `…/configs/text/<lang>` 目录，语言名从目录名来。
@@ -1441,7 +1448,7 @@ void XmlPage::run_extract() {
             if (text_dirs.isEmpty()) {
                 // 兜底：源里完全没有文本目录（只有 scripts/gameplay）时落一份
                 const QString fallback =
-                    QDir(out_root).filePath(QStringLiteral("gamedata/configs/text/rus"));
+                    QDir(out_root).filePath(rel_prefix + QStringLiteral("configs/text/rus"));
                 QDir().mkpath(fallback);
                 text_dirs << fallback;
             }
@@ -1458,8 +1465,8 @@ void XmlPage::run_extract() {
                 //   scripts  → <mod>/gamedata/scripts/
                 //   gameplay → <mod>/gamedata/configs/gameplay/
                 const QString sub_out = sub == QStringLiteral("gameplay")
-                                            ? QStringLiteral("gamedata/configs/gameplay")
-                                            : QStringLiteral("gamedata/scripts");
+                                            ? rel_prefix + QStringLiteral("configs/gameplay")
+                                            : rel_prefix + QStringLiteral("scripts");
                 const QString target = want_rewritten
                                            ? QDir(out_root).filePath(sub_out)
                                            : QDir(QDir::tempPath()).filePath(

@@ -96,6 +96,18 @@ def main() -> int:
                     tree_hash(td / "b1") == tree_hash(td / "b2"))
             (ok if same else fail)("③ 跑完 ref 后 builtin 产物逐字节相同（状态隔离）")
 
+        # ⑥ JSGME 摆盘：--jsgme ⇒ <out>/MODS/<分类>/<名>/gamedata + JSGME.exe 在 <out>/
+        rc_j, out_j = run("--font-pack", "--ref", "builtin", "--game", "CoP", "--langs", "rus",
+                          "--text-root", xml, "--font", CJK, "--out", td / "jsgme",
+                          "--jsgme")
+        js_out = td / "jsgme"
+        mod = js_out / "MODS" / "汉化" / "rus" / "gamedata"
+        (ok if rc_j == 0 and mod.is_dir() else fail)(
+            "⑥ --jsgme ⇒ MODS/汉化/rus/gamedata（rc=%d）" % rc_j)
+        (ok if (js_out / "JSGME.exe").is_file() else fail)("⑥ JSGME.exe 复制到输出根")
+        (ok if not (js_out / "gamedata").exists() else fail)("⑥ 顶层 gamedata 已移入 MODS")
+        (ok if any(p.suffix == ".dds" for p in mod.rglob("*")) else fail)("⑥ 字体产物在 MODS 内")
+
         # ⑤ 入口：--merge-glyphs 只对矢量有效；位图传了必须**明确报错**
         rc_m, out_m = run("--font-pack", "--ref", "builtin", "--game", "CoP", "--langs", "rus",
                           "--text-root", xml, "--font", CJK, "--out", td / "mrg_bad",
