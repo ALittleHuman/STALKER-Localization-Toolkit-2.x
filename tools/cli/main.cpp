@@ -5812,6 +5812,9 @@ if (action == "--diff-snapshot") {
                 opt.lang = operands[++i];
             } else if (a == "--clean") {
                 clean = true;
+            } else if (a == "--texts-only") {
+                // ★ 2026-11-07：只抽文本（不复制整树）—— 判据用它钉住"提取不是解包"
+                opt.texts_only = true;
             } else {
                 std::cerr << "ORI error reason=未知参数 " << a << "\n";
                 return kExitUsage;

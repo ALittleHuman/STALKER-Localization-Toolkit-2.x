@@ -104,11 +104,18 @@ std::pair<std::string, std::string> container_lang(const fs::path& container,
     std::error_code ec;
     const fs::path texts = container / "configs" / "text";
     if (is_dir(texts)) {
+        // ★ 2026-11-07：语言判定**不许靠遍历顺序**。规则：
+        //   `localization.ltx` 已在上方优先；这里先找 `rus`（本工程的主语言，也是原版语言），
+        //   没有再取**排序后第一个**（确定性），最后才是 fallback。
+        std::vector<std::string> names;
         for (const auto& entry : fs::directory_iterator(texts, ec)) {
-            if (entry.is_directory(ec)) {
-                return {core::path_to_utf8(entry.path().filename()), "text_dir"};
-            }
+            if (entry.is_directory(ec)) names.push_back(core::path_to_utf8(entry.path().filename()));
         }
+        std::sort(names.begin(), names.end());
+        for (const std::string& n : names) {
+            if (n == "rus") return {n, "text_dir"};
+        }
+        if (!names.empty()) return {names.front(), "text_dir"};
     }
     if (!fallback.empty()) return {fallback, "arg"};
     return {"rus", "fallback"};
@@ -449,7 +456,12 @@ OriResult build_ori_tree(const OriOptions& options) {
                                             : "none";
 
         fs::create_directories(dst, ec);
-        out.files_copied += copy_tree_into(container, dst, &out.warnings);
+        if (!options.texts_only) {
+            out.files_copied += copy_tree_into(container, dst, &out.warnings);
+        } else {
+            // ★ 提取模式：**不复制整树**（用户口径：提取就是提取文本，不是解包）
+            out.warnings.push_back("提取模式：不做整树复制（只产文本与被改写的脚本/配置）");
+        }
 
         // ★ 复审计 P1：容器本身就是 `configs`（或 `text`）时，不能再往里套一层
         //   `configs/text` —— 否则出现 `ori/gamedata/configs/configs/text/rus` 这种幻影目录。
@@ -533,7 +545,7 @@ OriResult build_ori_tree(const OriOptions& options) {
 
         // 多语言：容器已有的其它语言目录也放一份（规划 4.4）
         const fs::path text_root = container / "configs" / "text";
-        if (is_dir(text_root)) {
+        if (!options.texts_only && is_dir(text_root)) {
             for (const auto& entry : fs::directory_iterator(text_root, ec)) {
                 if (!entry.is_directory(ec)) continue;
                 const std::string other = core::path_to_utf8(entry.path().filename());
@@ -542,8 +554,14 @@ OriResult build_ori_tree(const OriOptions& options) {
                 fs::create_directories(other_texts, ec);
                 for (const auto& xml : fs::directory_iterator(texts_out, ec)) {
                     if (!xml.is_regular_file(ec)) continue;
-                    fs::copy_file(xml.path(), other_texts / xml.path().filename(),
-                                  fs::copy_options::overwrite_existing, ec);
+                    // ★ 2026-11-07：只补"我们产出的字面量表"，**且目标不存在才补**。
+                    //   修前：把 texts_out 里所有文件（含原版 st_*.xml）覆盖式抄到其它语言目录
+                    //   ⇒ 实测把 rus 的俄文用 eng 覆盖（92 个文件），是本次灾难的直接原因。
+                    const std::string fname = core::path_to_utf8(xml.path().filename());
+                    if (fname.find("_texts.xml") == std::string::npos) continue;
+                    const fs::path target_file = other_texts / xml.path().filename();
+                    if (fs::exists(target_file, ec)) continue;
+                    fs::copy_file(xml.path(), target_file, fs::copy_options::none, ec);
                 }
             }
         }

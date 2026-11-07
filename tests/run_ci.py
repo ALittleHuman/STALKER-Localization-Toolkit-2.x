@@ -3558,6 +3558,23 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_ori_texts_only(release: bool) -> None:
+    """提取文本：不覆盖译文 / --texts-only 不复制整树。"""
+    say("[?] 提取文本：不覆盖译文 / 不复制整树")
+    script = ROOT / "tests" / "check_ori_texts_only.py"
+    if not require_repo_file(script, "提取文本判据"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("ORI-TEXTS"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("提取文本判据全过")
+    else:
+        fail("提取文本判据不通过（见上）")
+
+
 def step_merge_glyphs(release: bool) -> None:
     """A-min 字形合并：8 条判据（缺字/老字形不变/度量/cmap/复合/幂等/CFF/可复现）。"""
     say("[?] A-min 字形合并判据")
@@ -8055,6 +8072,7 @@ STEPS = [
     ("segments-single", step_segments_single),
     ("font-pack-single-entry", step_font_pack_single_entry),
     ("merge-glyphs", step_merge_glyphs),
+    ("ori-texts-only", step_ori_texts_only),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),

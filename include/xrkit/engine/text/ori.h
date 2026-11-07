@@ -19,6 +19,9 @@
 namespace xrkit::engine::text {
 
 struct OriOptions {
+    // ★ 2026-11-07（用户：提取就该提取文本）：只抽文本 + 只回写被改写的脚本，
+    //   **不做整树复制**、**不做多语言复制**。XML 页的「提取文本」用这个。
+    bool texts_only = false;
     std::string source_dir;   // 模组根 / gamedata / ixr_addons / configs / 单文件
     std::string out_dir;      // ori
     std::string lang;         // 空 = 从 localization.ltx 推断

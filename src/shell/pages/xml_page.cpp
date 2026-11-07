@@ -263,7 +263,7 @@ XmlPage::XmlPage(QWidget* parent)
     // ── ★★ 2026-10-27：第三模式「提取文本」的选项行（默认隐藏；一侧为空时出现）──────
     auto* extract_row = new QHBoxLayout;
     extract_hint_ = new QLabel(
-        QStringLiteral("检测到一侧为空：切到「提取文本」——产物是标准语言包（configs/text/<lang> + 改写后的脚本/配置）"));
+        QStringLiteral("检测到一侧为空：切到「提取文本」——只抽文本（configs/text/<lang>），不复制整树"));
     extract_hint_->setObjectName(QStringLiteral("xml_extract_hint"));
     extract_hint_->setWordWrap(true);
     texts_check_ = new QCheckBox(QStringLiteral("文本 XML（ori 恒出，勾选仅旧版遗留）"));
@@ -1324,8 +1324,7 @@ void XmlPage::update_extract_mode() {
     if (start_button_ != nullptr) start_button_->setVisible(!show);
     if (filter_combo_ != nullptr) filter_combo_->setVisible(!show);
     if (show && status_ != nullptr) {
-        status_->setText(QStringLiteral("一侧为空：已切到「提取文本」（模式下拉第三项）——"
-                                        "产出整棵 ori 树（文本 + 改写恒出，两个勾选仅旧版遗留）"));
+        status_->setText(QStringLiteral("一侧为空：已切到「提取文本」——只抽文本，不复制整树"));
     }
 }
 
@@ -1375,6 +1374,10 @@ void XmlPage::run_extract() {
     xrkit::engine::text::OriOptions opt;
     opt.source_dir = source.toUtf8().toStdString();
     opt.out_dir = ori.toUtf8().toStdString();
+    // ★★ 2026-11-07（用户："文本提取，而不是干些谁都不知道在干嘛的事情"）：
+    //   这里以前调 build_ori_tree ⇒ **整树复制**（18.8 GB）+ 多语言覆盖 + profile。
+    //   现在只抽文本：不复制整树、不复制多语言、不碰源。
+    opt.texts_only = true;
     const xrkit::engine::text::OriResult result = xrkit::engine::text::build_ori_tree(opt);
     if (!result.ok) {
         status_->setText(QStringLiteral("提取失败：%1")
