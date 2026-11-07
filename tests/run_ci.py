@@ -3558,6 +3558,25 @@ def step_package_ffmpeg(release: bool) -> None:
         fail("包内 ffmpeg 断言不通过（见上）")
 
 
+def step_langpack_collect(release: bool) -> None:
+    """语言包收敛：以真实参照包为金标准（逐字节）。"""
+    say("[?] 语言包收敛：以参照包为金标准")
+    script = ROOT / "tests" / "check_langpack_collect.py"
+    if not require_repo_file(script, "语言包收敛判据"):
+        return
+    rc2, out = run([sys.executable, str(script)])
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("LANGPACK-COLLECT"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("语言包收敛与参照包逐字节一致")
+    elif rc2 == 2:
+        prereq("语言包收敛判据", "本机缺参照包/CLI", release)
+    else:
+        fail("语言包收敛判据不通过（见上）")
+
+
 def step_ori_texts_only(release: bool) -> None:
     """提取文本：不覆盖译文 / --texts-only 不复制整树。"""
     say("[?] 提取文本：不覆盖译文 / 不复制整树")
@@ -8073,6 +8092,7 @@ STEPS = [
     ("font-pack-single-entry", step_font_pack_single_entry),
     ("merge-glyphs", step_merge_glyphs),
     ("ori-texts-only", step_ori_texts_only),
+    ("langpack-collect", step_langpack_collect),
     ("pkg-ffmpeg", step_package_ffmpeg),
     ("ui-facade-primitives", step_ui_facade_primitives),
     ("release-criterion", step_release_criterion),

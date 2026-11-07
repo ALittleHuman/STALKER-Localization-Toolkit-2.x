@@ -363,3 +363,82 @@ LangPackFromGameResult build_language_pack_from_game(const LangPackFromGameOptio
 }
 
 }  // namespace xrkit::engine::text
+
+
+namespace xrkit::engine::text {
+
+namespace {
+
+bool collect_keep(const std::string& rel, const std::string& lang) {
+    const std::string text_prefix = "gamedata/configs/text/" + lang + "/";
+    if (rel.rfind(text_prefix, 0) == 0) return true;
+    if (rel.rfind("gamedata/fonts/", 0) == 0) return true;
+    if (rel == "gamedata/configs/fonts.ltx" || rel == "gamedata/configs/localization.ltx") {
+        return true;
+    }
+    if (rel.rfind("gamedata/textures/map/", 0) == 0) return true;
+    if (rel.rfind("gamedata/textures/ui_new_game_map", 0) == 0) return true;
+    // ixr_addons/<name>/configs/text/<lang>/... 与字体
+    const std::string addon = "ixr_addons/";
+    if (rel.rfind(addon, 0) == 0) {
+        const std::size_t slash = rel.find('/', addon.size());
+        if (slash == std::string::npos) return false;
+        const std::string rest = rel.substr(slash + 1);
+        if (rest.rfind("configs/text/" + lang + "/", 0) == 0) return true;
+        if (rest.rfind("fonts/", 0) == 0) return true;
+        if (rest == "configs/fonts.ltx" || rest == "configs/localization.ltx") return true;
+    }
+    return false;
+}
+
+}  // namespace
+
+LangPackCollectResult collect_language_pack(const LangPackCollectOptions& options) {
+    LangPackCollectResult out;
+    std::error_code ec;
+    const fs::path src = fs::weakly_canonical(core::path_from_utf8(options.source_root), ec);
+    if (!is_dir(src)) {
+        out.error = "源目录不存在（提取只管松散文件；容器请自行解包）：" + options.source_root;
+        return out;
+    }
+    const fs::path dst = fs::weakly_canonical(core::path_from_utf8(options.out_root), ec);
+    const auto inside = [](const fs::path& a, const fs::path& b) {
+        std::error_code e;
+        const fs::path rel = fs::relative(a, b, e);
+        return !e && rel.string().rfind("..", 0) != 0 && !rel.empty();
+    };
+    if (dst == src || inside(src, dst) || inside(dst, src)) {
+        out.error = "拒绝：语言包输出目录与源目录重叠（源只读）";
+        return out;
+    }
+
+    xrkit::engine::fs::WalkReport report;
+    const std::vector<xrkit::engine::fs::TreeItem> items = xrkit::engine::fs::collect_tree(core::path_to_utf8(src), &report);
+    for (const std::string& err : report.errors) out.warnings.push_back("遍历：" + err);
+    fs::create_directories(dst, ec);
+    for (const xrkit::engine::fs::TreeItem& item : items) {
+        if (item.is_dir) continue;
+        if (!collect_keep(item.path, options.lang)) continue;
+        const fs::path target = dst / core::path_from_utf8(item.path);
+        if (fs::exists(target, ec) && !options.overwrite) {
+            ++out.skipped_existing;
+            out.warnings.push_back("已存在，跳过：" + item.path);
+            continue;
+        }
+        fs::create_directories(target.parent_path(), ec);
+        fs::copy_file(src / core::path_from_utf8(item.path), target,
+                      options.overwrite ? fs::copy_options::overwrite_existing
+                                        : fs::copy_options::none, ec);
+        if (ec) {
+            out.warnings.push_back("复制失败：" + item.path + "（" + ec.message() + "）");
+            continue;
+        }
+        ++out.copied;
+    }
+    out.out_root = core::path_to_utf8(dst);
+    out.ok = out.copied > 0;
+    if (!out.ok) out.error = "没有可收敛的语言包内容（检查 <lang> 与目录布局）";
+    return out;
+}
+
+}  // namespace xrkit::engine::text

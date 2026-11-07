@@ -359,7 +359,9 @@ void print_usage() {
            "                     [--only-size 11,14] [--on-missing fail|warn] [--require-full-cyrillic]\n"
            "                     [--merge-glyphs <源TTF>]  仅矢量路径：把源字体缺的字形合并进 target（只增不改）\n"
            "                     汉化包生成的**主入口**：--ref 目录 ⇒ 扫参照（矢量）；--ref builtin ⇒ 内置模板（位图）\n"
-            "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite] [--pack-layout]\n"
+            "  --langpack-collect <松散树> <输出根> [--lang rus] [--overwrite]\n"
+           "                                              从已解包树收敛语言包（不抽字面量/不解包）\n"
+           "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite] [--pack-layout]\n"
             "                                              选项 pack-layout：产出 gamedata/configs/text/<lang>/ 标准布局\n"
             "                                              装配标准语言包（空表写成 <string_table></string_table>）\n"
            // ★★ 2026-10-05（小件 ①）：`--build-package` **实现早已存在**（`tools/cli/build_cmd.cpp`，
@@ -5630,6 +5632,41 @@ if (action == "--diff-snapshot") {
     }
 
     // 标准语言包装配（XML 校对第三模式「提取文本」的落点）
+    if (action == "--langpack-collect") {
+        // ★ 2026-11-07：从**已解包的松散树**收敛出语言包（不抽字面量、不解包、不碰源）
+        if (operands.size() < 2) {
+            std::cerr << "LANGPACK-COLLECT error reason=用法：--langpack-collect <源松散树> <输出根> "
+                         "[--lang rus] [--overwrite]\n";
+            return kExitUsage;
+        }
+        xrkit::engine::text::LangPackCollectOptions opt;
+        opt.source_root = operands[0];
+        opt.out_root = operands[1];
+        for (std::size_t i = 2; i < operands.size(); ++i) {
+            const std::string& a = operands[i];
+            if (a == "--lang" && i + 1 < operands.size()) {
+                opt.lang = operands[++i];
+            } else if (a == "--overwrite") {
+                opt.overwrite = true;
+            } else {
+                std::cerr << "LANGPACK-COLLECT error reason=未知参数 " << a << "\n";
+                return kExitUsage;
+            }
+        }
+        const xrkit::engine::text::LangPackCollectResult res =
+            xrkit::engine::text::collect_language_pack(opt);
+        for (const std::string& warn : res.warnings) {
+            std::cout << "LANGPACK-COLLECT warn " << warn << "\n";
+        }
+        if (!res.ok) {
+            std::cout << "LANGPACK-COLLECT error reason=" << res.error << "\n";
+            return kExitFail;
+        }
+        std::cout << "LANGPACK-COLLECT ok out=" << res.out_root << " files=" << res.copied
+                  << " skipped=" << res.skipped_existing << "\n";
+        return kExitOk;
+    }
+
     if (action == "--langpack-build") {
         if (operands.size() < 3) {
             std::cerr << "LANGPACK-BUILD error reason=用法：--langpack-build <文本目录> "

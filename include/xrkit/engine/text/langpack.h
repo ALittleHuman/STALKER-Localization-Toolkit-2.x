@@ -69,4 +69,31 @@ struct LangPackFromGameResult {
 
 LangPackFromGameResult build_language_pack_from_game(const LangPackFromGameOptions& options);
 
+// ★★ 2026-11-07（用户口径：提取只管松散文件；语言包是**收敛**，不是解包/抽字面量）：
+//   从一棵**已解包的松散树**里把"语言包该有的东西"按原相对路径收敛出来：
+//     gamedata/configs/text/<lang>/**
+//     gamedata/fonts/**（含 eng/rus/editors）
+//     gamedata/configs/fonts.ltx、gamedata/configs/localization.ltx
+//     gamedata/textures/map/**、gamedata/textures/ui_new_game_map_*
+//     ixr_addons/<任意>/configs/text/<lang>/**、ixr_addons/<任意>/fonts/**
+//   其余（scripts/gameplay/anims/sounds/meshes/其它语言）**一律不拷**。
+//   逐字节复制、不改写、不覆盖已有（除非 overwrite）。
+struct LangPackCollectOptions {
+    std::string source_root;   // 已解包的松散树根
+    std::string out_root;      // 输出根（与源重叠会被拒绝）
+    std::string lang = "rus";
+    bool overwrite = false;
+};
+
+struct LangPackCollectResult {
+    bool ok = false;
+    std::string error;
+    std::string out_root;
+    uint64_t copied = 0;
+    uint64_t skipped_existing = 0;
+    std::vector<std::string> warnings;
+};
+
+LangPackCollectResult collect_language_pack(const LangPackCollectOptions& options);
+
 }  // namespace xrkit::engine::text
