@@ -6,6 +6,7 @@
 #include "xrkit/engine/text/sniff.h"
 #include "xrkit/engine/fs/overlay.h"
 #include "xrkit/engine/text/langpack.h"
+#include "xrkit/engine/text/extract.h"
 #include "xrkit/engine/text/ori.h"
 #include "xrkit/engine/xml/dirdiff.h"
 
@@ -1371,37 +1372,66 @@ void XmlPage::run_extract() {
     const QString source = a_empty ? b : a;
     const QString ori = a_empty ? a : b;
 
-    xrkit::engine::text::OriOptions opt;
-    opt.source_dir = source.toUtf8().toStdString();
-    opt.out_dir = ori.toUtf8().toStdString();
-    // ★★ 2026-11-07（用户："文本提取，而不是干些谁都不知道在干嘛的事情"）：
-    //   这里以前调 build_ori_tree ⇒ **整树复制**（18.8 GB）+ 多语言覆盖 + profile。
-    //   现在只抽文本：不复制整树、不复制多语言、不碰源。
-    opt.texts_only = true;
-    const xrkit::engine::text::OriResult result = xrkit::engine::text::build_ori_tree(opt);
-    if (!result.ok) {
-        status_->setText(QStringLiteral("提取失败：%1")
-                             .arg(QString::fromStdString(result.error)));
+    // ★★ 2026-11-07（用户）：**提取只处理松散文件**；解包、覆盖、加载优先级都是用户自己的事
+    //   （工具搞不清 overlay 顺序，硬做只会出错）。所以这里：
+    //     · 不再解包容器； · 不复制整树； · 不碰源目录；
+    //   只对已解包的 `configs/scripts`、`configs/gameplay` 抽字面量文本。
+    const QDir src_dir(source);
+    QString base;
+    if (QDir(src_dir.filePath(QStringLiteral("gamedata/configs"))).exists()) {
+        base = src_dir.filePath(QStringLiteral("gamedata/configs"));
+    } else if (QDir(src_dir.filePath(QStringLiteral("configs"))).exists()) {
+        base = src_dir.filePath(QStringLiteral("configs"));
+    } else {
+        status_->setText(
+            QStringLiteral("提取只接受**已解包的松散目录**（需含 gamedata/configs 或 configs，"
+                           "里面有 scripts/ 或 gameplay/）。容器请自行解包——"
+                           "覆盖与加载优先级由你决定，工具不替你猜。"));
         return;
     }
-    QStringList warns;
-    for (const std::string& warn : result.warnings) warns << utf8(warn);
-    QString detail;
-    if (!warns.isEmpty()) {
-        detail = QStringLiteral("；warn %1 条：%2")
-                     .arg(warns.size())
-                     .arg(warns.mid(0, 3).join(QStringLiteral(" / ")));
+    const QString out_root = ori;
+    xrkit::engine::text::ExtractOptions extract_options;
+    int strings = 0;
+    int written = 0;
+    bool any_branch = false;
+    QStringList notes;
+    for (const QString& sub : {QStringLiteral("scripts"), QStringLiteral("gameplay")}) {
+        const QString dir = QDir(base).filePath(sub);
+        if (!QDir(dir).exists()) continue;
+        any_branch = true;
+        const xrkit::engine::text::ExtractStats st = xrkit::engine::text::extract_dir(
+            dir.toUtf8().toStdString(),
+            QDir(out_root).filePath(sub).toUtf8().toStdString(),
+            out_root.toUtf8().toStdString(), extract_options);
+        if (!st.ok) {
+            status_->setText(QStringLiteral("提取失败（%1）：%2").arg(sub, utf8(st.error)));
+            return;
+        }
+        strings += static_cast<int>(st.strings);
+        written += static_cast<int>(st.files);
+        // 零静默：0 条也说出来
+        notes << QStringLiteral("%1：%2 条、改写 %3 个")
+                     .arg(sub)
+                     .arg(st.strings)
+                     .arg(st.files);
+        if (!st.skipped.empty()) {
+            notes << QStringLiteral("%1 跳过 %2 处（首条：%3）")
+                         .arg(sub)
+                         .arg(st.skipped.size())
+                         .arg(utf8(st.skipped.front()));
+        }
     }
-    status_->setText(QStringLiteral("已生成 ori 树：容器 %1 个、整包 %2 个文件、"
-                                    "提取 %3 条、改写 %4 个、文本 %5 个、语言 %6 ⇒ %7%8")
-                         .arg(result.containers.size())
-                         .arg(result.files_copied)
-                         .arg(result.extracted)
-                         .arg(result.rewritten)
-                         .arg(result.texts)
-                         .arg(QString::fromStdString(result.lang))
-                         .arg(QString::fromStdString(result.out_dir))
-                         .arg(detail));
+    if (!any_branch) {
+        status_->setText(QStringLiteral("目录里没有 scripts/ 或 gameplay/，没有可提取的文本：%1")
+                             .arg(base));
+        return;
+    }
+    status_->setText(QStringLiteral("已提取文本：字面量 %1 条、改写 %2 个文件 ⇒ %3（%4）")
+                         .arg(strings)
+                         .arg(written)
+                         .arg(QDir::toNativeSeparators(out_root),
+                              notes.join(QStringLiteral("；"))));
+
 }
 
 }  // namespace xrkit::shell

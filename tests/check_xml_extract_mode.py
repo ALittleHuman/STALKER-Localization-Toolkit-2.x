@@ -28,7 +28,7 @@ ANCHORS_CPP = [
     ("xml_extract_hint", "一侧为空的提示行"),
     ("QStringLiteral(\"提取文本\")", "「提取文本」按钮"),
     ("xrkit::engine::fs::collect_tree", "空目录判定走唯一一份遍历"),
-    ("xrkit::engine::text::build_ori_tree", "产物由引擎装配（页面不自己摆盘）"),
+    ("xrkit::engine::text::extract_dir", "提取走引擎（页面不自己摆盘；2026-11-07 起不再解包）"),
     ("恰好一侧为空", "勾了改写 ⇒ 走完整链（提取 + 摆盘）"),
     ("filter_combo_->setVisible(!show)", "提取模式隐藏「筛选」"),
     ("QStringLiteral(\"extract\")", "模式下拉第三项「提取文本」的 data 键"),
