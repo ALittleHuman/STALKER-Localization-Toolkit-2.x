@@ -74,6 +74,56 @@ def detect_langs(pack: Path) -> list[str]:
     return sorted(d.name for d in fonts.iterdir() if d.is_dir())
 
 
+def _addon_of(rel: str) -> str:
+    parts = rel.replace("\\", "/").split("/")
+    if parts and parts[0].lower() == "ixr_addons" and len(parts) > 2:
+        return parts[1].lower()
+    return ""
+
+
+def _text_tail(rel: str) -> str:
+    low = rel.replace("\\", "/").lower()
+    at = low.find("configs/text/")
+    return (rel.replace("\\", "/")[at:] if at >= 0 else "").lower()
+
+
+def merge_text_by_id(ref_text: str, tr_text: str) -> str:
+    """结构按参考、内容按译文：参考的 id 全保留，译文同名 id 覆盖。"""
+    import re as _re
+
+    entry_re = re.compile(r'<string\s+id="([^"]+)"\s*>(.*?)</string>', re.S)
+    tr_map = {}
+    tr_order = []
+    for m in entry_re.finditer(tr_text):
+        if m.group(1) not in tr_map:
+            tr_order.append(m.group(1))
+        tr_map[m.group(1)] = m.group(2)
+
+    ref_ids = set()
+    def _repl(m):
+        sid, body = m.group(1), m.group(2)
+        ref_ids.add(sid)
+        if sid in tr_map:
+            return '<string id="%s">%s</string>' % (sid, tr_map[sid])
+        return m.group(0)
+
+    merged = entry_re.sub(_repl, ref_text)
+    # ★ 2026-11-08（实测缺陷：丢条 120→119）：译文里**独有**的 id 也要补进去
+    #   （否则"参考有、译文没有"之外的第三种情况 —— 参考缺、译文有 —— 会被静默丢掉）。
+    extra = []
+    for sid in tr_order:
+        if sid in ref_ids:
+            continue
+        extra.append('<string id="%s">%s</string>' % (sid, tr_map[sid]))
+    if extra:
+        at = merged.rfind("</string_table>")
+        if at < 0:
+            merged += "\n".join(extra)
+        else:
+            merged = merged[:at] + "\n".join(extra) + "\n" + merged[at:]
+    return merged
+
+
 def collect_charset(pack: Path, lang: str, text_roots: list[Path], scope: str) -> set[str]:
     chars: set[str] = set()
 
@@ -437,7 +487,14 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
             dst_texts = out / "gamedata" / "configs" / "text" / lang
             dst_texts.mkdir(parents=True, exist_ok=True)
             for xml in sorted(base.rglob("*.xml")):
-                target = dst_texts / xml.name
+                # ★ 2026-11-08（实测缺陷：跨路径同名串位）：保留相对路径 ——
+                #   `ixr_addons/<x>/configs/text/<lang>/…` 与 `gamedata/…` 不能挤进同一目录。
+                rel_from_root = xml.relative_to(root).as_posix()
+                low_rel = rel_from_root.lower()
+                target = (out / rel_from_root
+                          if low_rel.startswith(("gamedata/", "ixr_addons/"))
+                          else (dst_texts / xml.name))
+                target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(xml, target)
                 if _normalize_text_xml(target):
                     text_reencoded += 1
@@ -462,11 +519,25 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
     # 译文按**文件名**索引：参考结构里有个 text 槽位、译文里也有同名 XML ⇒
     # 往那个槽位里放**译文内容**（结构按参考、内容按译文；不是拿原文顶上去）。
     tr_by_name: dict[str, Path] = {}
+    tr_by_key: dict[tuple[str, str], Path] = {}
+    tr_by_name_addon: dict[tuple[str, str], Path] = {}
+    tr_flat_names: set[str] = set()
     if text_dirs and not args.no_texts:
         for root in text_dirs:
             base = root / lang if (root / lang).is_dir() else root
             for xml in sorted(base.rglob("*.xml")):
                 tr_by_name.setdefault(xml.name, xml)
+                rel_from_root = xml.relative_to(root).as_posix()
+                low = rel_from_root.lower()
+                addon = _addon_of(rel_from_root)
+                if "configs/text/" in low:
+                    tail = _text_tail(rel_from_root)
+                else:
+                    tail = "configs/text/%s/%s" % (lang, xml.name.lower())
+                tr_by_key.setdefault((addon, tail), xml)
+                tr_by_name_addon.setdefault((addon, xml.name.lower()), xml)
+                if not low.startswith(("gamedata/", "ixr_addons/")):
+                    tr_flat_names.add(xml.name.lower())
     src_gd = pack / "gamedata" if (pack / "gamedata").is_dir() else pack
     ref_files = [x for x in pack.rglob("*") if x.is_file()]
     for src in ref_files:
@@ -481,10 +552,37 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
             continue                      # 译文里已经有（同路径）⇒ 不覆盖内容
         dst.parent.mkdir(parents=True, exist_ok=True)
         rel_norm = rel.replace("\\", "/").lower()
-        tr_same = tr_by_name.get(src.name) if "/configs/text/" in rel_norm else None
-        shutil.copy2(tr_same if tr_same is not None else src, dst)
+        is_text = "/configs/text/" in rel_norm
+        tr_same = None
+        if is_text:
+            key = (_addon_of(rel), _text_tail(rel))
+            tr_same = tr_by_key.get(key)
+            if tr_same is None and key[0] == "":
+                tr_same = tr_by_key.get(("", key[1]))
+            if tr_same is None:
+                # ★ 2026-11-08（实测缺陷：跨路径串位）：兜底也**只允许同 addon 段**，
+                #   绝不拿 `ixr_addons/<x>/` 的同名文件去填 `gamedata/`（反之亦然）。
+                tr_same = tr_by_name_addon.get((key[0], src.name.lower()))
+            if tr_same is None and src.name.lower() in tr_flat_names:
+                # 译文根是"裸 text 目录"（没有 gamedata/ixr_addons 前缀）⇒ 按文件名合理
+                tr_same = tr_by_name.get(src.name)
+        if is_text and tr_same is not None:
+            # ★ 结构按参考、内容按译文，**逐 ID 合并**（译文缺的 id 不丢）
+            def _read_any(path: Path) -> str:
+                raw = path.read_bytes()
+                for enc in ("utf-8-sig", "windows-1251", "gbk"):
+                    try:
+                        return raw.decode(enc)
+                    except UnicodeDecodeError:
+                        continue
+                return raw.decode("utf-8", errors="replace")
+            merged = merge_text_by_id(_read_any(src), _read_any(tr_same))
+            dst.write_bytes(merged.encode("utf-8"))
+        else:
+            shutil.copy2(tr_same if tr_same is not None else src, dst)
         # 补全来的也是"文本 XML" ⇒ 同样规范成 UTF-8 无 BOM（同一套口径，不搞两制）
-        if "/configs/text/" in rel.replace("\\", "/").lower():
+        low_rel2 = rel.replace("\\", "/").lower()
+        if "/configs/text/" in low_rel2:
             if _normalize_text_xml(dst):
                 text_reencoded += 1
         supplemented.append(rel)
