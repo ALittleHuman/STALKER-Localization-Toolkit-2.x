@@ -1,13 +1,19 @@
 # -*- coding: utf-8 -*-
 """语言包收敛判据（--langpack-collect）：以**真实参照包**为金标准。
 
-参照包：MODS/汉化/rus（231 文件）。
-断言：对参照包自身跑一次 collect ⇒ 输出与参照包 **逐字节相同**（路径全集 + 内容）。
-另加：源树里塞噪声（scripts/gameplay/anims/text/eng）⇒ 输出**不许**包含它们。
+口径（2026-11-07 用户两条）：
+  ① 所有语言都收：`configs/text/<lang>` 有几种收几种（不再钉死 rus）；
+  ② 地图纹理不是语言包通用件：默认**不收**，`--include-map` 才收。
+
+断言：
+  · 默认：输出 == 参照包去掉 `gamedata/textures/**`，且额外塞的 text/eng **要被收**；
+  · `--include-map`：输出 == 参照包全部（231）+ text/eng；
+  · scripts/anims 噪声永远不进。
 """
 from __future__ import annotations
 
 import hashlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -36,8 +42,14 @@ def files(root: Path):
     return {p.relative_to(root).as_posix(): p for p in root.rglob("*") if p.is_file()}
 
 
+def run_collect(src: Path, out: Path, *extra) -> tuple[int, str]:
+    p = subprocess.run([str(CLI), "--langpack-collect", str(src), str(out), *extra],
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    return p.returncode, p.stdout.decode("utf-8", "replace")
+
+
 def main() -> int:
-    print("== 语言包收敛：以参照包为金标准 ==")
+    print("== 语言包收敛：全语言 / 默认不收地图 ==")
     if not CLI.is_file():
         print("LANGPACK-COLLECT skip 缺 CLI")
         return 2
@@ -47,37 +59,48 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="lpc_") as td:
         td = Path(td)
         src = td / "src"
-        # 参照包 + 噪声
-        import shutil
         shutil.copytree(REF, src)
+        # 噪声：scripts/anims + 另一种语言
         (src / "gamedata" / "scripts").mkdir(parents=True, exist_ok=True)
         (src / "gamedata" / "scripts" / "a.script").write_text("-- noise\n", encoding="utf-8")
         (src / "gamedata" / "anims").mkdir(parents=True, exist_ok=True)
         (src / "gamedata" / "anims" / "x.anm").write_bytes(b"\x00noise")
-        (src / "gamedata" / "configs" / "text" / "eng").mkdir(parents=True, exist_ok=True)
-        (src / "gamedata" / "configs" / "text" / "eng" / "st_x.xml").write_text(
-            "<string_table></string_table>", encoding="utf-8")
+        eng_dir = src / "gamedata" / "configs" / "text" / "eng"
+        eng_dir.mkdir(parents=True, exist_ok=True)
+        (eng_dir / "st_x.xml").write_text("<string_table></string_table>", encoding="utf-8")
+
+        ref = files(REF)
+        expected_default = {r: p for r, p in ref.items()
+                            if not r.startswith("gamedata/textures/")}
+        expected_default["gamedata/configs/text/eng/st_x.xml"] = eng_dir / "st_x.xml"
 
         out = td / "out"
-        p = subprocess.run([str(CLI), "--langpack-collect", str(src), str(out), "--lang", "rus"],
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        log = p.stdout.decode("utf-8", "replace")
-        if p.returncode != 0:
-            fail("collect 失败 rc=%d\n%s" % (p.returncode, log[-300:]))
-            print("LANGPACK-COLLECT: FAIL")
-            return 1
-        ref, got = files(REF), files(out)
-        only_ref = sorted(set(ref) - set(got))
-        only_got = sorted(set(got) - set(ref))
-        (ok if not only_ref else fail)("与参照包路径齐全（缺 %d：%s）"
-                                       % (len(only_ref), only_ref[:3]))
-        (ok if not only_got else fail)("没有多余文件（多 %d：%s）"
-                                       % (len(only_got), only_got[:3]))
-        changed = [r for r in ref if r in got and sha(ref[r]) != sha(got[r])]
-        (ok if not changed else fail)("逐字节相同（不同 %d：%s）" % (len(changed), changed[:3]))
-        noise = [r for r in got if r.startswith(("gamedata/scripts/", "gamedata/anims/"))
-                 or "/text/eng/" in r]
-        (ok if not noise else fail)("噪声没被收敛进来（%s）" % (noise[:3] or "无"))
+        rc, log = run_collect(src, out)
+        if rc != 0:
+            fail("默认 collect 失败 rc=%d\n%s" % (rc, log[-300:]))
+        else:
+            got = files(out)
+            (ok if not (set(expected_default) - set(got)) else fail)(
+                "默认：参照包（去地图）+ 多语言都收齐（缺 %d）"
+                % len(set(expected_default) - set(got)))
+            (ok if not (set(got) - set(expected_default)) else fail)(
+                "默认：没有多收（多 %s）" % sorted(set(got) - set(expected_default))[:3])
+            changed = [r for r in expected_default if r in got and sha(expected_default[r]) != sha(got[r])]
+            (ok if not changed else fail)("默认：逐字节相同（不同 %d）" % len(changed))
+            (ok if not any(r.startswith("gamedata/textures/") for r in got) else fail)(
+                "默认：**不含地图纹理**")
+
+        out2 = td / "out_map"
+        rc2, log2 = run_collect(src, out2, "--include-map")
+        if rc2 != 0:
+            fail("--include-map 失败 rc=%d\n%s" % (rc2, log2[-300:]))
+        else:
+            got2 = files(out2)
+            expected_all = dict(ref)
+            expected_all["gamedata/configs/text/eng/st_x.xml"] = eng_dir / "st_x.xml"
+            (ok if set(got2) == set(expected_all) else fail)(
+                "--include-map：与参照包全部一致（缺 %d / 多 %d）"
+                % (len(set(expected_all) - set(got2)), len(set(got2) - set(expected_all))))
 
     if PROBLEMS:
         print("LANGPACK-COLLECT: FAIL（%d 处）" % len(PROBLEMS))

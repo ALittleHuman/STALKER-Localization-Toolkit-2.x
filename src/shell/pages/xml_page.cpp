@@ -1395,7 +1395,7 @@ void XmlPage::run_extract() {
             xrkit::engine::text::LangPackCollectOptions copt;
             copt.source_root = source.toUtf8().toStdString();
             copt.out_root = out_root.toUtf8().toStdString();
-            copt.lang = "rus";
+            // 不指定 langs ⇒ 自动收所有语言（text/<lang> 有几个收几个）
             const xrkit::engine::text::LangPackCollectResult collected =
                 xrkit::engine::text::collect_language_pack(copt);
             if (collected.ok) {
@@ -1415,8 +1415,18 @@ void XmlPage::run_extract() {
                 post_status(QStringLiteral("提取只接受已解包的松散目录（需含 gamedata/configs 或 configs）"));
                 return;
             }
-            const QString texts_out = QDir(out_root).filePath(
-                QStringLiteral("gamedata/configs/text/rus"));
+            // ★ 2026-11-07（用户："为什么不是所有语言都提取出来"）：字面量表**每个语言目录各一份**
+            QStringList text_dirs;
+            const QDir gtext(QDir(out_root).filePath(QStringLiteral("gamedata/configs/text")));
+            for (const QString& lang_dir : gtext.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+                text_dirs << gtext.filePath(lang_dir);
+            }
+            if (text_dirs.isEmpty()) {
+                const QString fallback = gtext.filePath(QStringLiteral("rus"));
+                QDir().mkpath(fallback);
+                text_dirs << fallback;
+            }
+            const QString texts_out = text_dirs.front();
             QDir().mkpath(texts_out);
             int strings = 0;
             int rewritten = 0;
@@ -1451,6 +1461,20 @@ void XmlPage::run_extract() {
                 if (should_stop()) {
                     post_status(QStringLiteral("已取消：停在文件边界（%1 条已出）").arg(strings));
                     return;
+                }
+            }
+            // 字面量表复制到其它语言目录（每语言一份；已存在不覆盖）
+            if (any && text_dirs.size() > 1) {
+                for (int i = 1; i < text_dirs.size(); ++i) {
+                    QDir().mkpath(text_dirs[i]);
+                    const QDir src_texts(texts_out);
+                    for (const QString& name : src_texts.entryList({QStringLiteral("*_texts.xml")},
+                                                                  QDir::Files)) {
+                        const QString dst_file = QDir(text_dirs[i]).filePath(name);
+                        if (!QFile::exists(dst_file)) {
+                            QFile::copy(src_texts.filePath(name), dst_file);
+                        }
+                    }
                 }
             }
             progress(100);

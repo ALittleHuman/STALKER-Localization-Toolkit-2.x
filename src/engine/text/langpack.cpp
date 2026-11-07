@@ -369,22 +369,40 @@ namespace xrkit::engine::text {
 
 namespace {
 
-bool collect_keep(const std::string& rel, const std::string& lang) {
-    const std::string text_prefix = "gamedata/configs/text/" + lang + "/";
-    if (rel.rfind(text_prefix, 0) == 0) return true;
+bool collect_keep(const std::string& rel, const std::vector<std::string>& langs, bool include_map) {
+    const auto lang_ok = [&langs](const std::string& name) {
+        return langs.empty() ||
+               std::find(langs.begin(), langs.end(), name) != langs.end();
+    };
+    // gamedata/configs/text/<lang>/...
+    const std::string text = "gamedata/configs/text/";
+    if (rel.rfind(text, 0) == 0) {
+        const std::size_t slash = rel.find('/', text.size());
+        if (slash != std::string::npos && lang_ok(rel.substr(text.size(), slash - text.size()))) {
+            return true;
+        }
+    }
     if (rel.rfind("gamedata/fonts/", 0) == 0) return true;
     if (rel == "gamedata/configs/fonts.ltx" || rel == "gamedata/configs/localization.ltx") {
         return true;
     }
-    if (rel.rfind("gamedata/textures/map/", 0) == 0) return true;
-    if (rel.rfind("gamedata/textures/ui_new_game_map", 0) == 0) return true;
+    if (include_map) {
+        if (rel.rfind("gamedata/textures/map/", 0) == 0) return true;
+        if (rel.rfind("gamedata/textures/ui_new_game_map", 0) == 0) return true;
+    }
     // ixr_addons/<name>/configs/text/<lang>/... 与字体
     const std::string addon = "ixr_addons/";
     if (rel.rfind(addon, 0) == 0) {
         const std::size_t slash = rel.find('/', addon.size());
         if (slash == std::string::npos) return false;
         const std::string rest = rel.substr(slash + 1);
-        if (rest.rfind("configs/text/" + lang + "/", 0) == 0) return true;
+        const std::string atext = "configs/text/";
+        if (rest.rfind(atext, 0) == 0) {
+            const std::size_t s2 = rest.find('/', atext.size());
+            if (s2 != std::string::npos && lang_ok(rest.substr(atext.size(), s2 - atext.size()))) {
+                return true;
+            }
+        }
         if (rest.rfind("fonts/", 0) == 0) return true;
         if (rest == "configs/fonts.ltx" || rest == "configs/localization.ltx") return true;
     }
@@ -418,7 +436,7 @@ LangPackCollectResult collect_language_pack(const LangPackCollectOptions& option
     fs::create_directories(dst, ec);
     for (const xrkit::engine::fs::TreeItem& item : items) {
         if (item.is_dir) continue;
-        if (!collect_keep(item.path, options.lang)) continue;
+        if (!collect_keep(item.path, options.langs, options.include_map)) continue;
         const fs::path target = dst / core::path_from_utf8(item.path);
         if (fs::exists(target, ec) && !options.overwrite) {
             ++out.skipped_existing;

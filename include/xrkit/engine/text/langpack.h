@@ -81,8 +81,13 @@ LangPackFromGameResult build_language_pack_from_game(const LangPackFromGameOptio
 struct LangPackCollectOptions {
     std::string source_root;   // 已解包的松散树根
     std::string out_root;      // 输出根（与源重叠会被拒绝）
-    std::string lang = "rus";
+    // ★ 2026-11-07（用户："为什么不是所有语言都提取出来"）：空 = **自动收所有语言**
+    //   （`configs/text/<lang>` 里出现的每个语言目录都收一份，addons 同理）。
+    std::vector<std::string> langs;   // 非空 = 只收这些语言
     bool overwrite = false;
+    // ★ 2026-11-07（用户："textures 里的地图整出来干嘛"）：默认**不收**地图纹理；
+    //   只有显式开启才收（那是汉化交付物里的地图改图，不是语言包通用件）。
+    bool include_map = false;
 };
 
 struct LangPackCollectResult {
