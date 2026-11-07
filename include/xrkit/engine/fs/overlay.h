@@ -265,6 +265,9 @@ struct WalkReport {
 // 递归收集 root 下的条目，**目录如实带 is_dir**（1.x 在 App 侧写死 False）。
 // 顺序 = 相对路径的 UTF-8 字节序（确定性，便于对拍）。
 // `report` 非空 ⇒ 顺便把台账填好（可空，老调用点行为不变）。
+bool has_any_file(const std::string& root, int max_entries = 1,
+                  std::string* error = nullptr);
+
 std::vector<TreeItem> collect_tree(const std::string& root, WalkReport* report = nullptr);
 
 }  // namespace xrkit::engine::fs

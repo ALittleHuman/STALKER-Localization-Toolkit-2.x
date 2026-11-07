@@ -14,6 +14,7 @@
 #include "../task_shell.h"
 
 #include <QClipboard>
+#include <QTimer>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QCheckBox>
@@ -312,8 +313,13 @@ XmlPage::XmlPage(QWidget* parent)
     QObject::connect(dir_a_edit_, &QLineEdit::editingFinished, this, [this] { update_extract_mode(); });
     QObject::connect(dir_b_edit_, &QLineEdit::editingFinished, this, [this] { update_extract_mode(); });
     // 浏览按钮是程序化 setText（不触发 editingFinished）⇒ 再挂 textChanged
-    QObject::connect(dir_a_edit_, &QLineEdit::textChanged, this, [this](const QString&) { update_extract_mode(); });
-    QObject::connect(dir_b_edit_, &QLineEdit::textChanged, this, [this](const QString&) { update_extract_mode(); });
+    QObject::connect(dir_a_edit_, &QLineEdit::textChanged, this, [this](const QString&) {
+        // ★ 2026-11-07（用户：拖入大目录卡很久）：防抖 —— 连续 setText/拖放只扫一次
+        QTimer::singleShot(300, this, [this] { update_extract_mode(); });
+    });
+    QObject::connect(dir_b_edit_, &QLineEdit::textChanged, this, [this](const QString&) {
+        QTimer::singleShot(300, this, [this] { update_extract_mode(); });
+    });
 
     QObject::connect(filter_combo_, &QComboBox::currentTextChanged, this,
                      [this](const QString&) { refresh_rows(); });
@@ -1277,17 +1283,15 @@ void XmlPage::update_extract_mode() {
                 probe.error = QStringLiteral("不是目录：%1").arg(path);
                 return probe;
             }
-            xrkit::engine::fs::WalkReport report;
-            const std::string root = path.toUtf8().toStdString();
-            const auto items = xrkit::engine::fs::collect_tree(root, &report);
-            int files = 0;
-            for (const auto& item : items) {
-                if (!item.is_dir) ++files;
-            }
-            probe.empty = (files == 0);
-            if (!report.errors.empty()) {
+            // ★ 2026-11-07（用户：拖入大目录卡很久）：只判"有没有文件"就停，
+            //   不再为一个空判定把整棵树收进 vector（18 GB 目录会卡死 UI）。
+            std::string walk_error;
+            const bool has_file = xrkit::engine::fs::has_any_file(
+                path.toUtf8().toStdString(), 1, &walk_error);
+            probe.empty = !has_file;
+            if (!walk_error.empty()) {
                 probe.ok = false;
-                probe.error = utf8(report.errors.front());
+                probe.error = utf8(walk_error);
             }
             return probe;
         };
@@ -1330,108 +1334,134 @@ void XmlPage::update_extract_mode() {
 }
 
 void XmlPage::run_extract() {
+    if (task_ != nullptr && task_->running()) {
+        status_->setText(QStringLiteral("已有任务在跑，等它结束再提取"));
+        return;
+    }
     const QString a = dir_a_edit_->text().trimmed();
     const QString b = dir_b_edit_->text().trimmed();
     if (a.isEmpty() || b.isEmpty()) {
-        status_->setText(QStringLiteral("请先选两个文件夹（一侧放源，另一侧留空当 ori）"));
+        status_->setText(QStringLiteral("请先选两个文件夹（一侧放源，另一侧留空当输出）"));
         return;
     }
-    // ★★ 2026-10-29（交接区最终规划）：**空侧 = ori**，非空侧 = 源；
-    //   不再"非空侧当文本根"，也不再写 `<out>/<lang>` 旧布局。
-    // ★★ P-684：这里同样不许把"读不到"当成 0 个文件（否则会误判空侧、去覆盖 ori）
-    int walk_errors = 0;
-    QString walk_error_text;
-    const auto files_of = [&walk_errors, &walk_error_text](const QString& path) {
-        xrkit::engine::fs::WalkReport report;
-        const auto items = xrkit::engine::fs::collect_tree(
-            path.toUtf8().toStdString(), &report);
-        int files = 0;
-        for (const auto& item : items) {
-            if (!item.is_dir) ++files;
-        }
-        if (!report.errors.empty()) {
-            ++walk_errors;
-            if (walk_error_text.isEmpty()) walk_error_text = utf8(report.errors.front());
-        }
-        return files;
-    };
-    const bool a_empty = files_of(a) == 0;
-    const bool b_empty = files_of(b) == 0;
-    if (walk_errors > 0) {
-        status_->setText(QStringLiteral("无法判定空侧：遍历有 %1 处错误（%2）")
-                             .arg(walk_errors)
-                             .arg(walk_error_text));
-        return;
-    }
-    if (a_empty == b_empty) {
-        status_->setText(QStringLiteral("提取要求**恰好一侧为空**（空侧当 ori）；现在是%1")
-                             .arg(a_empty ? QStringLiteral("两侧都空")
-                                          : QStringLiteral("两侧都非空")));
-        return;
-    }
-    const QString source = a_empty ? b : a;
-    const QString ori = a_empty ? a : b;
-
-    // ★★ 2026-11-07（用户）：**提取只处理松散文件**；解包、覆盖、加载优先级都是用户自己的事
-    //   （工具搞不清 overlay 顺序，硬做只会出错）。所以这里：
-    //     · 不再解包容器； · 不复制整树； · 不碰源目录；
-    //   只对已解包的 `configs/scripts`、`configs/gameplay` 抽字面量文本。
-    const QDir src_dir(source);
-    QString base;
-    if (QDir(src_dir.filePath(QStringLiteral("gamedata/configs"))).exists()) {
-        base = src_dir.filePath(QStringLiteral("gamedata/configs"));
-    } else if (QDir(src_dir.filePath(QStringLiteral("configs"))).exists()) {
-        base = src_dir.filePath(QStringLiteral("configs"));
-    } else {
-        status_->setText(
-            QStringLiteral("提取只接受**已解包的松散目录**（需含 gamedata/configs 或 configs，"
-                           "里面有 scripts/ 或 gameplay/）。容器请自行解包——"
-                           "覆盖与加载优先级由你决定，工具不替你猜。"));
-        return;
-    }
-    const QString out_root = ori;
-    xrkit::engine::text::ExtractOptions extract_options;
-    int strings = 0;
-    int written = 0;
-    bool any_branch = false;
-    QStringList notes;
-    for (const QString& sub : {QStringLiteral("scripts"), QStringLiteral("gameplay")}) {
-        const QString dir = QDir(base).filePath(sub);
-        if (!QDir(dir).exists()) continue;
-        any_branch = true;
-        const xrkit::engine::text::ExtractStats st = xrkit::engine::text::extract_dir(
-            dir.toUtf8().toStdString(),
-            QDir(out_root).filePath(sub).toUtf8().toStdString(),
-            out_root.toUtf8().toStdString(), extract_options);
-        if (!st.ok) {
-            status_->setText(QStringLiteral("提取失败（%1）：%2").arg(sub, utf8(st.error)));
-            return;
-        }
-        strings += static_cast<int>(st.strings);
-        written += static_cast<int>(st.files);
-        // 零静默：0 条也说出来
-        notes << QStringLiteral("%1：%2 条、改写 %3 个")
-                     .arg(sub)
-                     .arg(st.strings)
-                     .arg(st.files);
-        if (!st.skipped.empty()) {
-            notes << QStringLiteral("%1 跳过 %2 处（首条：%3）")
-                         .arg(sub)
-                         .arg(st.skipped.size())
-                         .arg(utf8(st.skipped.front()));
-        }
-    }
-    if (!any_branch) {
-        status_->setText(QStringLiteral("目录里没有 scripts/ 或 gameplay/，没有可提取的文本：%1")
-                             .arg(base));
-        return;
-    }
-    status_->setText(QStringLiteral("已提取文本：字面量 %1 条、改写 %2 个文件 ⇒ %3（%4）")
-                         .arg(strings)
-                         .arg(written)
-                         .arg(QDir::toNativeSeparators(out_root),
-                              notes.join(QStringLiteral("；"))));
-
+    // worker 不许读控件 ⇒ 复选框状态在主线程快照
+    const bool want_rewritten = rewrite_check_ != nullptr && rewrite_check_->isChecked();
+    set_compare_controls_enabled(false);
+    const bool started = task_->run(
+        QStringLiteral("提取文本"), [this, a, b, want_rewritten](const ProgressSink& progress,
+                                                               const MessageSink& message) {
+            const auto should_stop = [this]() {
+                return task_ != nullptr && task_->cancel_requested();
+            };
+            const auto post_status = [this](const QString& text) {
+                // 从 worker 回主线程改页面状态行（排队；不直接碰控件）
+                QMetaObject::invokeMethod(
+                    this, [this, text] { status_->setText(text); }, Qt::QueuedConnection);
+            };
+            progress(0);
+            // ① 空判定：与比较同一份 collect_tree（遍历错误必须报，不许当成"空"）
+            int walk_errors = 0;
+            QString walk_error_text;
+            const auto files_of = [&walk_errors, &walk_error_text](const QString& path) {
+                xrkit::engine::fs::WalkReport report;
+                const auto items = xrkit::engine::fs::collect_tree(
+                    path.toUtf8().toStdString(), &report);
+                int files = 0;
+                for (const auto& item : items) {
+                    if (!item.is_dir) ++files;
+                }
+                if (!report.errors.empty()) {
+                    ++walk_errors;
+                    if (walk_error_text.isEmpty()) walk_error_text = utf8(report.errors.front());
+                }
+                return files;
+            };
+            const bool a_empty = files_of(a) == 0;
+            const bool b_empty = files_of(b) == 0;
+            if (walk_errors > 0) {
+                post_status(QStringLiteral("无法判定空侧：遍历有 %1 处错误（%2）")
+                                .arg(walk_errors)
+                                .arg(walk_error_text));
+                return;
+            }
+            if (a_empty == b_empty) {
+                post_status(QStringLiteral("提取要求**恰好一侧为空**（空侧当输出）；现在是%1")
+                                .arg(a_empty ? QStringLiteral("两侧都空") : QStringLiteral("两侧都非空")));
+                return;
+            }
+            const QString source = a_empty ? b : a;
+            const QString out_root = a_empty ? a : b;
+            // ② 语言包收敛：已有的 configs/text/<lang>、fonts、fonts.ltx、地图…按原相对路径搬
+            xrkit::engine::text::LangPackCollectOptions copt;
+            copt.source_root = source.toUtf8().toStdString();
+            copt.out_root = out_root.toUtf8().toStdString();
+            copt.lang = "rus";
+            const xrkit::engine::text::LangPackCollectResult collected =
+                xrkit::engine::text::collect_language_pack(copt);
+            if (collected.ok) {
+                message("语言包收敛：" + std::to_string(collected.copied) + " 个文件");
+            } else {
+                message("语言包收敛跳过：" + collected.error);
+            }
+            progress(25);
+            // ③ 抽字面量 → <out>/gamedata/configs/text/rus/；被改写的脚本按勾选决定落不落
+            QString base;
+            const QDir src_dir(source);
+            if (QDir(src_dir.filePath(QStringLiteral("gamedata/configs"))).exists()) {
+                base = src_dir.filePath(QStringLiteral("gamedata/configs"));
+            } else if (QDir(src_dir.filePath(QStringLiteral("configs"))).exists()) {
+                base = src_dir.filePath(QStringLiteral("configs"));
+            } else {
+                post_status(QStringLiteral("提取只接受已解包的松散目录（需含 gamedata/configs 或 configs）"));
+                return;
+            }
+            const QString texts_out = QDir(out_root).filePath(
+                QStringLiteral("gamedata/configs/text/rus"));
+            QDir().mkpath(texts_out);
+            int strings = 0;
+            int rewritten = 0;
+            bool any = false;
+            for (const QString& sub : {QStringLiteral("scripts"), QStringLiteral("gameplay")}) {
+                const QString dir = QDir(base).filePath(sub);
+                if (!QDir(dir).exists()) continue;
+                any = true;
+                const QString target = want_rewritten
+                                           ? QDir(out_root).filePath(QStringLiteral("gamedata/") + sub)
+                                           : QDir(QDir::tempPath()).filePath(
+                                                 QStringLiteral("xrkit_extract_discard/") + sub);
+                QDir().mkpath(target);
+                xrkit::engine::text::ExtractOptions eopt;
+                eopt.should_stop = should_stop;
+                eopt.progress = [&progress](uint64_t done, uint64_t total) {
+                    if (total > 0) {
+                        progress(25 + static_cast<int>(70 * done / total));
+                    }
+                };
+                const xrkit::engine::text::ExtractStats st = xrkit::engine::text::extract_dir(
+                    dir.toUtf8().toStdString(), target.toUtf8().toStdString(),
+                    texts_out.toUtf8().toStdString(), eopt);
+                if (!st.ok) {
+                    post_status(QStringLiteral("提取失败（%1）：%2").arg(sub, utf8(st.error)));
+                    return;
+                }
+                strings += static_cast<int>(st.strings);
+                rewritten += static_cast<int>(st.files);
+                message(sub.toStdString() + "：" + std::to_string(st.strings) + " 条，改写 " +
+                        std::to_string(st.files) + " 个");
+                if (should_stop()) {
+                    post_status(QStringLiteral("已取消：停在文件边界（%1 条已出）").arg(strings));
+                    return;
+                }
+            }
+            progress(100);
+            post_status(any ? QStringLiteral("语言包已生成：%1（%2 个文件、字面量 %3 条、改写 %4 个）")
+                                  .arg(QDir::toNativeSeparators(out_root))
+                                  .arg(collected.copied)
+                                  .arg(strings)
+                                  .arg(rewritten)
+                            : QStringLiteral("目录里没有 scripts/ 或 gameplay/：%1").arg(base));
+        });
+    if (!started) set_compare_controls_enabled(true);
 }
 
 }  // namespace xrkit::shell

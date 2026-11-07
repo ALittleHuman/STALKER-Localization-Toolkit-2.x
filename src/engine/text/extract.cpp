@@ -1158,7 +1158,12 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
     std::vector<std::pair<std::string, std::string>> extracted;  // (id, 原文) 保序
     uint64_t counter = 0;
 
+    uint64_t done_files = 0;
+    const uint64_t total_files = files.size();
     for (const Found& f : files) {
+        // ★ 2026-11-07（用户：进度条一直不动）：**每个文件边界报一次**（含跳过/取消）
+        ++done_files;
+        if (options.progress) options.progress(done_files, total_files);
         // ★ 2026-10-06（用户红线：取消要真停 + 留痕 + 理由可见）：**只在文件边界停** ——
         //   停下来时已写出的每个文件都是完整的（绝不写半个文件）；计数如实反映"停下前
         //   已经落盘的那部分"，由前端把 `cancelled` + 计数一起报出来（不许报成"完成"）。

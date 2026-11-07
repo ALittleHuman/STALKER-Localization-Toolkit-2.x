@@ -37,6 +37,9 @@ struct ExtractOptions {
     //   "停是停了，但产物半截" 比不停更糟）。默认空 ⇒ 行为与旧版逐字节相同。
     //   引擎**不依赖 Qt**：这里用 std::function（前端把"取消请求位"包成 lambda）。
     std::function<bool()> should_stop;
+    // ★ 2026-11-07（用户：进度条一直不动）：可选的进度回调，**只在文件边界**调用。
+    //   (已完成文件数, 总文件数)；总数为 0 表示"未知总量"（调用方按不定进度显示）。
+    std::function<void(uint64_t done, uint64_t total)> progress;
 };
 
 struct ExtractStats {

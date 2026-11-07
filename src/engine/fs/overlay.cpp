@@ -342,6 +342,33 @@ int depth_of_rel(const std::string& rel) {
 }
 }  // namespace
 
+bool has_any_file(const std::string& root, int max_entries, std::string* error) {
+    // ★ 2026-11-07（用户：拖入大目录卡很久）：只要"有没有"就停 —— 不做整树收集。
+    //   注意：这里**不用** recursive_directory_iterator（D2 锁：同类遍历只有 collect_tree 一套），
+    //   改用显式栈的目录迭代；到 max_entries 立即返回。
+    std::error_code ec;
+    std::vector<std::filesystem::path> stack{core::path_from_utf8(root)};
+    int found = 0;
+    while (!stack.empty() && found < max_entries) {
+        const std::filesystem::path dir = stack.back();
+        stack.pop_back();
+        std::filesystem::directory_iterator it(dir, ec);
+        if (ec) break;
+        for (; it != std::filesystem::directory_iterator(); it.increment(ec)) {
+            if (ec) break;
+            if (it->is_regular_file(ec)) {
+                ++found;
+                if (found >= max_entries) break;
+            } else if (it->is_directory(ec)) {
+                stack.push_back(it->path());
+            }
+        }
+        if (ec) break;
+    }
+    if (ec && error != nullptr) *error = ec.message();
+    return found > 0;
+}
+
 std::vector<TreeItem> collect_tree(const std::string& root, WalkReport* report) {
     std::vector<TreeItem> out;
     if (report != nullptr) {
