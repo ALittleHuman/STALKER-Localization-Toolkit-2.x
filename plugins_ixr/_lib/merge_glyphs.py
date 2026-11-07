@@ -104,8 +104,15 @@ def _copy_glyph(dst: TTFont, src: TTFont, src_name: str, new_name: str,
                 comp.x = int(round(comp.x * scale))
                 comp.y = int(round(comp.y * scale))
                 if hasattr(comp, "transform") and comp.transform is not None:
-                    a, b, c, d = comp.transform
-                    comp.transform = (a * scale, b * scale, c * scale, d * scale)
+                    # ★ 2026-11-07（自查缺陷 ③）：fontTools 的 transform 是 **2×2 嵌套**：
+                    #   `[[a, b], [c, d]]`（4.67 实测）。原先按 4 个标量解包 ⇒
+                    #   "not enough values to unpack (expected 4, got 2)" —— 带旋转/缩放的组件直接崩。
+                    tr = comp.transform
+                    if len(tr) == 2 and hasattr(tr[0], "__len__"):
+                        comp.transform = [[tr[0][0] * scale, tr[0][1] * scale],
+                                          [tr[1][0] * scale, tr[1][1] * scale]]
+                    else:
+                        comp.transform = tuple(float(v) * scale for v in tr)
     dglyf.glyphs[new_name] = glyph
     order.append(new_name)
     order_set.add(new_name)

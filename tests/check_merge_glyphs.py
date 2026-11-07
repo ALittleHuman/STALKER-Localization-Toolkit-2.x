@@ -278,6 +278,93 @@ def main() -> int:
         else:
             print("  · ⑤d 跳过：target 没有 format 12 子表")
 
+        # ⑤e 带**变换矩阵**的复合字形（跨 upem）：矩阵必须逐元素缩放
+        sym = Path(r"C:\Windows\Fonts\seguisym.ttf")
+        if sym.is_file():
+            out7 = td / "tr.ttf"
+            rc7b, _ = run_merge(small, sym, [0x2768], out7) if small.is_file() else (1, "")
+            if rc7b == 0 and out7.is_file():
+                sf2 = TTFont(str(sym), fontNumber=0, recalcBBoxes=False, recalcTimestamp=False)
+                of3 = TTFont(str(out7), fontNumber=0, recalcBBoxes=False, recalcTimestamp=False)
+                sc2 = sf2.getBestCmap().get(0x2768)
+                oc2 = (of3.getBestCmap() or {}).get(0x2768)
+                bad3 = []
+                if sc2 is None or oc2 is None:
+                    bad3.append("无映射")
+                else:
+                    scale3 = of3["head"].unitsPerEm / sf2["head"].unitsPerEm
+                    for a, b in zip(sf2["glyf"][sc2].components, of3["glyf"][oc2].components):
+                        want = [[v * scale3 for v in row] for row in a.transform]
+                        got = [list(row) for row in b.transform]
+                        for i in (0, 1):
+                            for j in (0, 1):
+                                if abs(got[i][j] - want[i][j]) > 1e-2:
+                                    bad3.append("矩阵[%d][%d] %s!=%s"
+                                                % (i, j, got[i][j], want[i][j]))
+                (ok if not bad3 else fail)("⑤e 变换矩阵按 scale 缩放（坏：%s）" % (bad3[:2] or "无"))
+            else:
+                fail("⑤e 变换复合合并失败 rc=%s" % rc7b)
+        else:
+            print("  · ⑤e 跳过：缺 seguisym.ttf")
+
+        # ⑤f 嵌套复合（组件本身还是复合字形）—— 用合成样张，稳定可复现
+        try:
+            import copy as _copy
+            from fontTools.ttLib.tables._g_l_y_f import GlyphComponent
+
+            nest_src = td / "nest_src.ttf"
+            nb = TTFont(str(TARGET), fontNumber=0, recalcBBoxes=False, recalcTimestamp=False)
+            nglyf = nb["glyf"]
+            order_n = list(nb.getGlyphOrder())
+            # nest0 = A 的复合；nest1 = nest0 的复合 ⇒ 两层
+            for lvl, dep in ((0, "A"), (1, "nest0")):
+                g = _copy.deepcopy(nglyf["Adieresis"])
+                g.components = []
+                comp = GlyphComponent()
+                comp.glyphName = dep
+                comp.x = 0
+                comp.y = 0
+                comp.flags = 0x0004
+                g.components.append(comp)
+                g.numberOfContours = -1
+                name = "nest%d" % lvl
+                nglyf.glyphs[name] = g
+                order_n.append(name)
+                nb["hmtx"].metrics[name] = nb["hmtx"]["A"]
+            nb.setGlyphOrder(order_n)
+            nb["maxp"].numGlyphs = len(order_n)
+            # ★ 所有 Unicode 子表都要挂（getBestCmap 优先用 format 12；只挂 format 4 会被忽略）
+            for sub in nb["cmap"].tables:
+                if sub.isUnicode():
+                    sub.cmap[0xE000] = "nest1"
+            nb.save(str(nest_src))
+
+            out8 = td / "nest_out.ttf"
+            rc8, log8 = run_merge(small, nest_src, [0xE000], out8)
+            if rc8 == 0 and out8.is_file():
+                nf = TTFont(str(out8), fontNumber=0, recalcBBoxes=False, recalcTimestamp=False)
+                nname = (nf.getBestCmap() or {}).get(0xE000)
+                ng = nf["glyf"][nname] if nname else None
+                bad4 = []
+                if ng is None or not ng.isComposite():
+                    bad4.append("顶层不是复合")
+                else:
+                    dep_name = ng.components[0].glyphName
+                    if dep_name not in set(nf.getGlyphOrder()):
+                        bad4.append("组件缺失：" + dep_name)
+                    elif not nf["glyf"][dep_name].isComposite():
+                        bad4.append("嵌套层被摊平：" + dep_name)
+                    else:
+                        deep_dep = nf["glyf"][dep_name].components[0].glyphName
+                        if deep_dep not in set(nf.getGlyphOrder()):
+                            bad4.append("第二层缺失：" + deep_dep)
+                (ok if not bad4 else fail)("⑤f 嵌套复合递归拷贝（合成 nest1→nest0→A，坏：%s）"
+                                          % (bad4[:2] or "无"))
+            else:
+                fail("⑤f 嵌套复合合并失败 rc=%s" % rc8)
+        except Exception as exc:  # noqa: BLE001
+            fail("⑤f 嵌套复合判据跑不起来：%r" % (exc,))
+
         # ⑥⑦⑧ 幂等 / 可复现
         same = out1.is_file() and out2.is_file() and out3.is_file() and \
             sha(out1) == sha(out2) == sha(out3)
