@@ -5727,8 +5727,17 @@ if (action == "--diff-snapshot") {
             std::cout << "LANGPACK-COLLECT error reason=" << res.error << "\n";
             return kExitFail;
         }
+        std::string langs;
+        for (const std::string& one : res.langs) {
+            if (!langs.empty()) langs += ",";
+            langs += one;
+        }
         std::cout << "LANGPACK-COLLECT ok out=" << res.out_root << " files=" << res.copied
-                  << " skipped=" << res.skipped_existing << "\n";
+                  << " skipped=" << res.skipped_existing << " langs=" << langs << "\n";
+        if (res.langs.size() <= 1) {
+            std::cout << "LANGPACK-COLLECT note 源里只扫到 " << res.langs.size()
+                      << " 种语言（要多种语言，请把**游戏根/包含它的树**当源）\n";
+        }
         return kExitOk;
     }
 

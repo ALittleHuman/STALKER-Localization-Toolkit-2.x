@@ -1398,8 +1398,17 @@ void XmlPage::run_extract() {
             // 不指定 langs ⇒ 自动收所有语言（text/<lang> 有几个收几个）
             const xrkit::engine::text::LangPackCollectResult collected =
                 xrkit::engine::text::collect_language_pack(copt);
+            QString langs_text;
+            for (const std::string& one : collected.langs) {
+                if (!langs_text.isEmpty()) langs_text += QStringLiteral(",");
+                langs_text += utf8(one);
+            }
             if (collected.ok) {
-                message("语言包收敛：" + std::to_string(collected.copied) + " 个文件");
+                message("语言包收敛：" + std::to_string(collected.copied) + " 个文件；语言=" +
+                        langs_text.toStdString());
+                if (collected.langs.size() <= 1) {
+                    message("提示：源里只扫到 1 种语言（要多种语言，请把包含它们的游戏根当源）");
+                }
             } else {
                 message("语言包收敛跳过：" + collected.error);
             }

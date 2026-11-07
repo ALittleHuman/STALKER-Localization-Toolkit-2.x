@@ -100,6 +100,9 @@ struct LangPackCollectResult {
     std::string out_root;
     uint64_t copied = 0;
     uint64_t skipped_existing = 0;
+    // ★ 2026-11-08（用户："为什么还是只有 rus"）：把**扫到的语言**如实报出来 ——
+    //   源里只有一种语言时，输出就只有一种；这不是漏收。
+    std::vector<std::string> langs;
     std::vector<std::string> warnings;
 };
 

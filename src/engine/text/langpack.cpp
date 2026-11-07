@@ -455,8 +455,21 @@ LangPackCollectResult collect_language_pack(const LangPackCollectOptions& option
             out.warnings.push_back("复制失败：" + item.path + "（" + ec.message() + "）");
             continue;
         }
+        // 记录扫到的语言（`…/configs/text/<lang>/…`）
+        const std::size_t at = item.path.find("configs/text/");
+        if (at != std::string::npos) {
+            const std::string rest = item.path.substr(at + std::string("configs/text/").size());
+            const std::size_t slash = rest.find('/');
+            if (slash != std::string::npos) {
+                const std::string lang = rest.substr(0, slash);
+                if (std::find(out.langs.begin(), out.langs.end(), lang) == out.langs.end()) {
+                    out.langs.push_back(lang);
+                }
+            }
+        }
         ++out.copied;
     }
+    std::sort(out.langs.begin(), out.langs.end());
     out.out_root = core::path_to_utf8(dst);
     out.ok = out.copied > 0;
     if (!out.ok) out.error = "没有可收敛的语言包内容（检查 <lang> 与目录布局）";
