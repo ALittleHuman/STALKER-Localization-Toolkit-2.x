@@ -358,7 +358,7 @@ void print_usage() {
            "                     [--game SoC|ClS|CoP] [--langs rus] [--suffix s] [--offset n]\n"
            "                     [--only-size 11,14] [--on-missing fail|warn] [--require-full-cyrillic]\n"
            "                     [--merge-glyphs <源TTF>]  仅矢量路径：把源字体缺的字形合并进 target（只增不改）\n"
-           "                     [--jsgme] [--jsgme-category 汉化] [--jsgme-name rus]\n"
+           "                     [--jsgme] [--jsgme-category <分类>] [--jsgme-name <名>]\n"
            "                     成品按 JSGME 结构摆：<out>/MODS/<分类>/<名>/{gamedata,ixr_addons}，\n"
            "                     并把 JSGME.exe/.lng 复制到 <out>/（提取不做这件事）\n"
            "                     汉化包生成的**主入口**：--ref 目录 ⇒ 扫参照（矢量）；--ref builtin ⇒ 内置模板（位图）\n"
@@ -6100,8 +6100,10 @@ if (action == "--diff-snapshot") {
         req.merge_glyphs = kv.count("merge-glyphs") ? kv["merge-glyphs"] : std::string();
         // ★ 2026-11-08（用户：JSGME 是"汉化包生成"的事）：把成品包摆成 JSGME 结构
         const bool jsgme = kv.count("jsgme") != 0 || kv.count("jsgme-name") != 0;
+        // ★ 2026-11-08（用户："工具必须完全独立"）：**不默认任何分类名**；
+        //   不传 --jsgme-category ⇒ MODS/<名>/…（没有分类这一层）。
         const std::string jsgme_category = kv.count("jsgme-category") ? kv["jsgme-category"]
-                                                                     : std::string("汉化");
+                                                                     : std::string();
         const std::string jsgme_name = kv.count("jsgme-name")
                                            ? kv["jsgme-name"]
                                            : (req.langs.empty() ? req.lang : req.langs);

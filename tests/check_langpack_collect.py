@@ -1,21 +1,17 @@
 # -*- coding: utf-8 -*-
-"""语言包收敛判据（--langpack-collect）：**结构规则 + 参照包金标准**。
+"""语言包收敛判据（--langpack-collect）—— **规则判据，不拿参考包当答案**。
 
-用户口径（2026-11-07/08）：
-  ① 所有语言都收（语言名从路径扫出来，不钉死 rus）；
-  ② 没有任何模组特异内容：保留清单不认 `gamedata/` / `ixr_addons/` / 地图；
-     只按结构规则 —— 任意前缀下的 `configs/text/<lang>`、`configs/{fonts,localization}.ltx`、
-     与某个 `configs` 同根的 `fonts/**`。
+规则（来自口径，不是从样本反推）：
+  收：任意前缀的 …/configs/text/<lang>/**、…/configs/{fonts,localization}.ltx、
+      与某个 configs **同根**的 …/fonts/**
+  不收：scripts / gameplay / anims / textures / meshes / sounds …
+  语言名从路径扫出来；--lang 可过滤；源里没有语言时明确失败。
 
-断言：
-  · 参照包 B：默认输出 == B 去掉 `gamedata/textures/**`（逐字节）；多语言 eng 也要收；
-  · 通用性：非 `gamedata/` 前缀（`mods/foo/configs/text/eng/...`）同样能收；
-  · 噪声：scripts/anims/textures 永远不进。
+判据全部用**合成树**；真实参考包只打印一条“对照”信息，不影响 PASS/FAIL。
 """
 from __future__ import annotations
 
 import hashlib
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,7 +19,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
-REF = Path("E:/Software/Games/STALKER/Games/Chronicles of Pripyat/Chronicles of Pripyat/MODS/汉化/rus")
 PROBLEMS = []
 
 
@@ -44,66 +39,99 @@ def files(root: Path):
     return {p.relative_to(root).as_posix(): p for p in root.rglob("*") if p.is_file()}
 
 
-def run_collect(src: Path, out: Path) -> tuple[int, str]:
-    p = subprocess.run([str(CLI), "--langpack-collect", str(src), str(out)],
+def run(src: Path, out: Path, *extra) -> tuple[int, str]:
+    p = subprocess.run([str(CLI), "--langpack-collect", str(src), str(out), *extra],
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return p.returncode, p.stdout.decode("utf-8", "replace")
 
 
 def main() -> int:
-    print("== 语言包收敛：结构规则 / 全语言 / 无模组特异 ==")
+    print("== 语言包收敛：规则判据（合成树） ==")
     if not CLI.is_file():
         print("LANGPACK-COLLECT skip 缺 CLI")
-        return 2
-    if not REF.is_dir():
-        print("LANGPACK-COLLECT skip 缺参照包")
         return 2
     with tempfile.TemporaryDirectory(prefix="lpc_") as td:
         td = Path(td)
         src = td / "src"
-        shutil.copytree(REF, src)
-        (src / "gamedata" / "scripts").mkdir(parents=True, exist_ok=True)
-        (src / "gamedata" / "scripts" / "a.script").write_text("-- noise\n", encoding="utf-8")
-        (src / "gamedata" / "anims").mkdir(parents=True, exist_ok=True)
-        (src / "gamedata" / "anims" / "x.anm").write_bytes(b"\x00noise")
-        eng_dir = src / "gamedata" / "configs" / "text" / "eng"
-        eng_dir.mkdir(parents=True, exist_ok=True)
-        (eng_dir / "st_x.xml").write_text("<string_table></string_table>", encoding="utf-8")
-        # 通用性夹具：非 gamedata 前缀
-        generic = src / "mods" / "foo"
-        (generic / "configs" / "text" / "eng").mkdir(parents=True)
-        (generic / "configs" / "text" / "eng" / "g.xml").write_text(
-            "<string_table></string_table>", encoding="utf-8")
-        (generic / "configs" / "fonts.ltx").write_text("[fonts]\n", encoding="utf-8")
-        (generic / "fonts" / "eng").mkdir(parents=True)
-        (generic / "fonts" / "eng" / "f.ttf").write_bytes(b"ttf")
-        (generic / "scripts").mkdir(parents=True)
-        (generic / "scripts" / "s.script").write_text("-- noise\n", encoding="utf-8")
+        def put(rel: str, data: bytes = b"<string_table/>") -> Path:
+            p = src / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(data)
+            return p
 
-        ref = files(REF)
-        expected = {r: p for r, p in ref.items() if not r.startswith("gamedata/textures/")}
-        expected["gamedata/configs/text/eng/st_x.xml"] = eng_dir / "st_x.xml"
-        expected["mods/foo/configs/text/eng/g.xml"] = generic / "configs/text/eng/g.xml"
-        expected["mods/foo/configs/fonts.ltx"] = generic / "configs/fonts.ltx"
-        expected["mods/foo/fonts/eng/f.ttf"] = generic / "fonts/eng/f.ttf"
+        # 两份不同前缀的语言树 + 各种噪声
+        put("gamedata/configs/text/rus/rus_a.xml")
+        put("gamedata/configs/text/eng/eng_a.xml")
+        put("gamedata/configs/fonts.ltx", b"[fonts]\n")
+        put("gamedata/configs/localization.ltx", b"[string_table]\n")
+        put("gamedata/fonts/rus/f.ttf", b"ttf")
+        put("mods/foo/configs/text/eng/foo.xml")
+        put("mods/foo/configs/fonts.ltx", b"[fonts]\n")
+        put("mods/foo/fonts/eng/g.ttf", b"ttf")
+        # 噪声：都不是语言包
+        put("gamedata/scripts/s.script", b"-- x\n")
+        put("gamedata/gameplay/x.xml")
+        put("gamedata/anims/x.anm", b"\x00")
+        put("gamedata/textures/map/m.dds", b"dds")
+        put("gamedata/sounds/s.ogg", b"ogg")
+        put("stray/not_configs/fonts/x.ttf", b"ttf")   # 没有同根 configs ⇒ 不收
+
+        expected = {
+            "gamedata/configs/text/rus/rus_a.xml",
+            "gamedata/configs/text/eng/eng_a.xml",
+            "gamedata/configs/fonts.ltx",
+            "gamedata/configs/localization.ltx",
+            "gamedata/fonts/rus/f.ttf",
+            "mods/foo/configs/text/eng/foo.xml",
+            "mods/foo/configs/fonts.ltx",
+            "mods/foo/fonts/eng/g.ttf",
+        }
 
         out = td / "out"
-        rc, log = run_collect(src, out)
+        rc, log = run(src, out)
         if rc != 0:
             fail("collect 失败 rc=%d\n%s" % (rc, log[-300:]))
-            print("LANGPACK-COLLECT: FAIL")
-            return 1
-        got = files(out)
-        (ok if not (set(expected) - set(got)) else fail)(
-            "缺文件 %d：%s" % (len(set(expected) - set(got)),
-                             sorted(set(expected) - set(got))[:3]))
-        (ok if not (set(got) - set(expected)) else fail)(
-            "多收 %s" % sorted(set(got) - set(expected))[:3])
-        changed = [r for r in expected if r in got and sha(expected[r]) != sha(got[r])]
-        (ok if not changed else fail)("逐字节相同（不同 %d）" % len(changed))
-        (ok if not any(r.startswith("gamedata/textures/") for r in got) else fail)(
-            "不含地图纹理（textures 不是语言包通用件）")
-        (ok if not any("/scripts/" in r for r in got) else fail)("不含 scripts")
+        else:
+            got = files(out)
+            (ok if set(got) == expected else fail)(
+                "只收规则内的文件（缺 %s / 多 %s）"
+                % (sorted(expected - set(got))[:3], sorted(set(got) - expected)[:3]))
+            changed = [r for r in expected if r in got and sha(src / r) != sha(got[r])]
+            (ok if not changed else fail)("逐字节相同（不同 %d）" % len(changed))
+            (ok if "gamedata/textures/map/m.dds" not in got else fail)("textures 不收")
+            (ok if "gamedata/scripts/s.script" not in got else fail)("scripts 不收")
+            (ok if "stray/not_configs/fonts/x.ttf" not in got else fail)(
+                "没有同根 configs 的 fonts 不收")
+
+        # --lang 过滤（只影响 configs/text/<lang>；字体不按语言过滤）
+        out_eng = td / "out_eng"
+        rc2, log2 = run(src, out_eng, "--lang", "eng")
+        if rc2 == 0:
+            got2 = files(out_eng)
+            has_eng = "gamedata/configs/text/eng/eng_a.xml" in got2
+            no_rus = "gamedata/configs/text/rus/rus_a.xml" not in got2
+            (ok if has_eng and no_rus else fail)("--lang eng 只收 eng 文本")
+        else:
+            fail("--lang eng 失败 rc=%d\n%s" % (rc2, log2[-200:]))
+
+        # 空源：明确失败
+        empty = td / "empty"
+        empty.mkdir()
+        rc3, log3 = run(empty, td / "out_empty")
+        (ok if rc3 != 0 and "没有可收敛" in log3 else fail)("空源 ⇒ 明确失败（rc=%d）" % rc3)
+
+        # 输出落在源内：拒绝
+        rc4, log4 = run(src, src / "inner")
+        (ok if rc4 != 0 else fail)("输出与源重叠 ⇒ 拒绝（rc=%d）" % rc4)
+
+        # 参考包只做**对照**，不参与判据
+        ref = Path("E:/Software/Games/STALKER/Games/Chronicles of Pripyat/Chronicles of Pripyat/MODS/\u6c49\u5316/rus")
+        if ref.is_dir():
+            ref_files = files(ref)
+            print("  · 对照参考包（仅报告，不影响判定）：参照 %d 个文件；其中"
+                  " `gamedata/textures/**` %d 个按规则不收"
+                  % (len(ref_files),
+                     sum(1 for r in ref_files if r.startswith("gamedata/textures/"))))
 
     if PROBLEMS:
         print("LANGPACK-COLLECT: FAIL（%d 处）" % len(PROBLEMS))

@@ -1455,11 +1455,10 @@ void XmlPage::run_extract() {
                 }
             }
             if (text_dirs.isEmpty()) {
-                // 兜底：源里完全没有文本目录（只有 scripts/gameplay）时落一份
-                const QString fallback =
-                    QDir(out_root).filePath(rel_prefix + QStringLiteral("configs/text/rus"));
-                QDir().mkpath(fallback);
-                text_dirs << fallback;
+                // ★ 2026-11-08（用户："工具必须完全独立"）：不发明语言目录。
+                post_status(QStringLiteral("源里没有 configs/text/<语言> 目录：抽不出语言包"
+                                           "（只有 scripts/gameplay 时请先确认源的结构）"));
+                return;
             }
             const QString texts_out = text_dirs.front();
             QDir().mkpath(texts_out);

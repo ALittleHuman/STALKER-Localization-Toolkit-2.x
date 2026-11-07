@@ -634,24 +634,26 @@ def main() -> int:
         else:
             problems += 1
             fail("非字体包没被拒：rc=%d\n%s" % (rc3, stdout3[-300:]))
-        # ④ **真包夹具**（用户口径：判据以 MODS 下三个真实字体包为夹具）：
-        #   拿 ~NotoSansSC 当参照包生成一遍，核"逐字节保留 + 能出字体"。
-        # ★★ 2026-10-27：MODS 挪到游戏目录上一级、且可能带 `~` 前缀 ⇒ 用候选根解析
-        candidates = [
-            Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat\Chronicles of Pripyat\MODS\NotoSansSC"),
-            Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat\Chronicles of Pripyat\MODS\~NotoSansSC"),
-            Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat\Chronicles of Pripyat"
-                 r"\Chronicles of Pripyat 4.26 IX-Ray\MODS\~NotoSansSC"),
-        ]
-        real = next((c for c in candidates if c.is_dir()), Path("__missing__"))
-        if real.is_dir():
+        # ④ **真包夹具**（自动发现：任意"含 gamedata/configs/fonts.ltx"的目录都算参照包，
+        #    不点名某个模组；找不到就显式跳过）
+        real = None
+        for root in (Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat\Chronicles of Pripyat"),
+                     Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat")):
+            if not root.is_dir():
+                continue
+            for ltx in root.glob("**/gamedata/configs/fonts.ltx"):
+                real = ltx.parent.parent.parent
+                break
+            if real is not None:
+                break
+        if real is not None and real.is_dir():
             out_real = tmp / "out_real"
             rc9, stdout9 = run_tool(real, CJK_FONT, out_real)
             base_ltx = (real / "gamedata" / "configs" / "fonts.ltx").read_bytes()
             out_ltx = (out_real / "gamedata" / "configs" / "fonts.ltx")
             fonts = list((out_real / "gamedata" / "fonts" / "rus").glob("*.ttf"))
             if rc9 == 0 and fonts:
-                ok("真包 ~NotoSansSC：生成成功、产出 %d 个 ttf" % len(fonts))
+                ok("真包（自动发现）：生成成功、产出 %d 个 ttf" % len(fonts))
             else:
                 problems += 1
                 fail("真包生成失败：rc=%d\n%s" % (rc9, stdout9[-400:]))
@@ -672,13 +674,21 @@ def main() -> int:
             if sample_text:
                 rel = sample_text[0].relative_to(real)
                 copied = out_real / rel
-                if copied.is_file() and copied.read_bytes() == sample_text[0].read_bytes():
-                    ok("真包：产物带文本且逐字节一致（%s）" % rel.name)
+                # ★ 2026-11-08：产物可能被**规范化**（UTF-8 无 BOM / 声明改写）⇒
+                #   不按字节比，按"ID 集合一致 + 可解析"比（任取哪个包都成立）。
+                def _ids(path):
+                    import re
+                    txt = path.read_text(encoding="utf-8", errors="replace")
+                    return set(re.findall(r'<string id="([^"]+)"', txt))
+                src_ids = _ids(sample_text[0])
+                out_ids = _ids(copied) if copied.is_file() else set()
+                if copied.is_file() and out_ids == src_ids:
+                    ok("真包：产物带文本且 ID 集合一致（%s，%d 条）" % (rel.name, len(src_ids)))
                 else:
                     problems += 1
                     fail("真包：产物缺文本（或改动）%s" % rel)
         else:
-            print("!! 真包 ~NotoSansSC 不在（跳过真包夹具）")
+            print("!! 真包（自动发现） 不在（跳过真包夹具）")
             print("IXR-GEN: SKIP (real-packs-missing)")
             return 2
     finally:

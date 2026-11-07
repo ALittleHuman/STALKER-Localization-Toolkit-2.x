@@ -19,7 +19,23 @@ ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 CJK = Path(r"C:\Windows\Fonts\NotoSansSC-VF.ttf")
 LATIN = Path(r"C:\Windows\Fonts\arial.ttf")
-PACKS = [Path("E:/Software/Games/STALKER/Games/Chronicles of Pripyat/Chronicles of Pripyat/Chronicles of Pripyat 4.26 IX-Ray/MODS/~NotoSansSC")]
+def _find_packs():
+    """任意"含 gamedata/configs/fonts.ltx 的目录"都算参照包（**不点名某个模组**）。"""
+    roots = [Path("E:/Software/Games/STALKER/Games/Chronicles of Pripyat/Chronicles of Pripyat")]
+    found = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for ltx in root.glob("*/MODS/*/gamedata/configs/fonts.ltx"):
+            found.append(ltx.parent.parent.parent)
+        for ltx in root.glob("*/MODS/*/*/gamedata/configs/fonts.ltx"):
+            found.append(ltx.parent.parent.parent)
+        for ltx in root.glob("MODS/*/gamedata/configs/fonts.ltx"):
+            found.append(ltx.parent.parent.parent)
+    return found[:1]
+
+
+PACKS = _find_packs()
 PROBLEMS = []
 
 
@@ -99,11 +115,11 @@ def main() -> int:
         # ⑥ JSGME 摆盘：--jsgme ⇒ <out>/MODS/<分类>/<名>/gamedata + JSGME.exe 在 <out>/
         rc_j, out_j = run("--font-pack", "--ref", "builtin", "--game", "CoP", "--langs", "rus",
                           "--text-root", xml, "--font", CJK, "--out", td / "jsgme",
-                          "--jsgme")
+                          "--jsgme", "--jsgme-name", "rus")
         js_out = td / "jsgme"
-        mod = js_out / "MODS" / "汉化" / "rus" / "gamedata"
+        mod = js_out / "MODS" / "rus" / "gamedata"
         (ok if rc_j == 0 and mod.is_dir() else fail)(
-            "⑥ --jsgme ⇒ MODS/汉化/rus/gamedata（rc=%d）" % rc_j)
+            "⑥ --jsgme ⇒ MODS/<分类>/<名>/gamedata（rc=%d）" % rc_j)
         (ok if (js_out / "JSGME.exe").is_file() else fail)("⑥ JSGME.exe 复制到输出根")
         (ok if not (js_out / "gamedata").exists() else fail)("⑥ 顶层 gamedata 已移入 MODS")
         (ok if any(p.suffix == ".dds" for p in mod.rglob("*")) else fail)("⑥ 字体产物在 MODS 内")
