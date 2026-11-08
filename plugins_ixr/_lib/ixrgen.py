@@ -259,6 +259,14 @@ def merge_into(base_path: Path, cjk_source, cjk_cmap: dict, wanted: list[int]) -
         except Exception as exc:
             log("IXRGEN warn OS/2 度量没同步：%r" % (exc,))
 
+    # ★★ 2026-11-08（外部复核：同样输入跑两次，34 个 .ttf 不同）：fontTools 默认在
+    #   compile 时把 `head.modified` 写成 `time.time()` ⇒ 产物不可复现（逐字节对拍永远红）。
+    #   治本：关掉 recalcTimestamp，并把 modified 钉成固定值（与 merge_glyphs 同一个常量）。
+    try:
+        dst.recalcTimestamp = False
+        dst["head"].modified = 3786825600   # 2020-01-01 00:00:00 UTC，固定常量
+    except Exception as exc:   # 字体没有 head（理论不会）⇒ 如实报，不静默
+        log("IXRGEN warn head.modified 没钉住：%r" % (exc,))
     dst.save(str(base_path))
     return len(need), missing
 

@@ -634,6 +634,25 @@ def main() -> int:
         else:
             problems += 1
             fail("非字体包没被拒：rc=%d\n%s" % (rc3, stdout3[-300:]))
+        # ③b **可复现**（外部复核：同样输入跑两次，34 个 .ttf 不同 —— fontTools 把
+        #   head.modified 写成当前时间）⇒ 同样输入两次必须**逐字节相同**。
+        out_r1 = tmp / "out_repro1"
+        out_r2 = tmp / "out_repro2"
+        rc_r1, _ = run_tool(pack2, CJK_FONT, out_r1)
+        rc_r2, _ = run_tool(pack2, CJK_FONT, out_r2)
+        def _hashes(root):
+            import hashlib
+            return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                    for p in root.rglob("*") if p.is_file()}
+        h1, h2 = _hashes(out_r1), _hashes(out_r2)
+        diff = [k for k in h1 if h1.get(k) != h2.get(k)]
+        if rc_r1 == 0 and rc_r2 == 0 and h1 == h2:
+            ok("可复现：同样输入两次产物逐字节相同（%d 个文件）" % len(h1))
+        else:
+            problems += 1
+            fail("可复现失败：rc=%d/%d 文件 %d/%d 不同 %d %s"
+                 % (rc_r1, rc_r2, len(h1), len(h2), len(diff), diff[:3]))
+
         # ④ **真包夹具**（自动发现：任意"含 gamedata/configs/fonts.ltx"的目录都算参照包，
         #    不点名某个模组；找不到就显式跳过）
         real = None
