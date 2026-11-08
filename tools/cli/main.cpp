@@ -6161,11 +6161,11 @@ if (action == "--diff-snapshot") {
                 std::cout << "\n";
                 std::cout << "FONTPACK !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n";
                 std::cout << "FONTPACK !!! 缺字 " << res.missing << " 个";
-                if (!res.missing_list.empty()) {
+                if (!res.missing_cps.empty()) {
                     std::cout << "：";
-                    for (std::size_t i = 0; i < res.missing_list.size() && i < 20; ++i) {
+                    for (std::size_t i = 0; i < res.missing_cps.size() && i < 20; ++i) {
                         if (i != 0) std::cout << ",";
-                        std::cout << res.missing_list[i];
+                        std::cout << res.missing_cps[i];
                     }
                     if (res.missing > 20) std::cout << " …";
                 }

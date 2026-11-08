@@ -149,9 +149,9 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
         out.ok = out.vector_result.ok;
         if (!out.ok) out.error = out.vector_result.error;
         // 缺字账目：从 `IXRGEN {...}` 报告里取。
-        // ★ 报告里**每个字体**都有 `"missing"/"missing_list"`（第一个常常是 0），
+        // ★ 报告里**每个字体**都有 `"missing"/"missing_cps"`（第一个常常是 0），
         //   顶层汇总的 `"missing"` 在最后 ⇒ 取**最后一个** `"missing":`；缺字清单则是
-        //   所有 `missing_list` 的并集（去重）。
+        //   所有 `missing_cps` 的并集（去重）。
         if (out.ok) {
             const std::string& tail = out.vector_result.stdout_tail;
             const std::size_t at = tail.rfind("\"missing\":");
@@ -166,7 +166,7 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
                 out.missing = n;
             }
             std::size_t pos = 0;
-            while ((pos = tail.find("\"missing_list\":", pos)) != std::string::npos) {
+            while ((pos = tail.find("\"missing_cps\":", pos)) != std::string::npos) {
                 const std::size_t open = tail.find('[', pos);
                 const std::size_t close = open == std::string::npos ? std::string::npos
                                                                    : tail.find(']', open);
@@ -179,10 +179,10 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
                     if (q2 == std::string::npos || q2 > close) break;
                     const std::string one = tail.substr(q1 + 1, q2 - q1 - 1);
                     if (one.rfind("U+", 0) == 0 &&
-                        std::find(out.missing_list.begin(), out.missing_list.end(), one) ==
-                            out.missing_list.end() &&
-                        out.missing_list.size() < 64) {
-                        out.missing_list.push_back(one);
+                        std::find(out.missing_cps.begin(), out.missing_cps.end(), one) ==
+                            out.missing_cps.end() &&
+                        out.missing_cps.size() < 64) {
+                        out.missing_cps.push_back(one);
                     }
                     i = q2 + 1;
                 }

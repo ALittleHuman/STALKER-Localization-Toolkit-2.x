@@ -596,7 +596,11 @@ FontPackPage::BuildOutcome FontPackPage::run_build(
                               utf8(built.vector_result.stderr_tail);
             return outcome;
         }
-        // 助手报告在 stdout 的 `IXRGEN {...}` 里 —— 按 JSON 解析
+        outcome.ixr_missing = built.missing;
+        for (const std::string& cp : built.missing_cps) {
+            outcome.ixr_missing_cps << utf8(cp);
+        }
+        // 助手报告在 stdout 的 `IXRGEN {...}` 里 —— 只取展示用统计（缺字已由引擎给）
         const QString all = utf8(built.vector_result.stdout_tail);
         const int marker = all.indexOf(QStringLiteral("IXRGEN {"));
         if (marker >= 0) {
@@ -608,14 +612,9 @@ FontPackPage::BuildOutcome FontPackPage::run_build(
             if (parse_error.error == QJsonParseError::NoError && doc.isObject()) {
                 const QJsonObject obj = doc.object();
                 outcome.ixr_added = obj.value(QStringLiteral("added")).toInt();
-                outcome.ixr_missing = obj.value(QStringLiteral("missing")).toInt();
-                // 键名拆开拼：`missing_list` 这个字面量会被「worker 不许碰控件」的静态锁
-                // 误判成控件成员（`\w+_list` 规则，见 check_thread_contract.py）—— 它只是 JSON 键。
-                const QString key_cps = QStringLiteral("missing") + QStringLiteral("_list");
-                for (const QJsonValue& one : obj.value(key_cps).toArray()) {
-                    const QString cp = one.toString();
-                    if (!cp.isEmpty()) outcome.ixr_missing_cps << cp;
-                }
+                // ★★ 2026-11-08（统一性）：**缺字账目只认引擎那一份**（`build_font_pack`
+                //   已经按最终产物复扫过），页面不再自己解析 JSON 的 missing —— 否则两处
+                //   口径又会漂（上一轮 249 vs 194 就是这么来的）。
                 for (const QJsonValue& value : obj.value(QStringLiteral("reports")).toArray()) {
                     const QJsonObject one = value.toObject();
                     outcome.ixr_fonts += one.value(QStringLiteral("fonts")).toArray().size();
