@@ -108,6 +108,9 @@ IxrBuildResult ixr_build(const IxrBuildOptions& options) {
         run.args.push_back("--sizes");
         run.args.push_back(options.sizes);
     }
+    if (options.force) run.args.push_back("--force");
+    run.args.push_back("--on-missing");
+    run.args.push_back(options.missing_warn ? "warn" : "fail");
     if (!options.merge_glyphs.empty()) {
         run.args.push_back("--merge-glyphs");
         run.args.push_back(options.merge_glyphs);

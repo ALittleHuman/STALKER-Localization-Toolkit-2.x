@@ -358,7 +358,7 @@ void print_usage() {
            "                     [--game SoC|ClS|CoP] [--langs rus] [--suffix s] [--offset n]\n"
            "                     [--only-size 11,14] [--on-missing fail|warn] [--require-full-cyrillic]\n"
            "                     [--merge-glyphs <源TTF>]  仅矢量路径：把源字体缺的字形合并进 target（只增不改）\n"
-           "                     [--jsgme] [--jsgme-category <分类>] [--jsgme-name <名>]\n"
+           "                     [--force] [--jsgme] [--jsgme-category <分类>] [--jsgme-name <名>]\n"
            "                     成品按 JSGME 结构摆：<out>/MODS/<分类>/<名>/{gamedata,ixr_addons}，\n"
            "                     并把 JSGME.exe/.lng 复制到 <out>/（提取不做这件事）\n"
            "                     汉化包生成的**主入口**：--ref 目录 ⇒ 扫参照（矢量）；--ref builtin ⇒ 内置模板（位图）\n"
@@ -6047,6 +6047,8 @@ if (action == "--diff-snapshot") {
             const std::string& a = operands[i];
             if (a == "--require-full-cyrillic") {
                 require_full_cyrillic = true;
+            } else if (a == "--force") {
+                kv["force"] = "1";
             } else if (a == "--jsgme") {
                 // 无值开关：成品按 JSGME 结构摆盘（提取不做这件事）
                 kv["jsgme"] = "1";
@@ -6098,6 +6100,7 @@ if (action == "--diff-snapshot") {
         }
         req.only_sizes = only_sizes;
         req.merge_glyphs = kv.count("merge-glyphs") ? kv["merge-glyphs"] : std::string();
+        req.force = kv.count("force") != 0;
         // ★ 2026-11-08（用户：JSGME 是"汉化包生成"的事）：把成品包摆成 JSGME 结构
         const bool jsgme = kv.count("jsgme") != 0 || kv.count("jsgme-name") != 0;
         // ★ 2026-11-08（用户："工具必须完全独立"）：**不默认任何分类名**；
@@ -6131,6 +6134,19 @@ if (action == "--diff-snapshot") {
                   << " n=" << res.segments << "\n";
         if (!res.ok) {
             std::cout << "FONTPACK error reason=" << res.error << "\n";
+            // ★ 2026-11-08（外部复核：失败原因被吞）：把内层最后一条 `IXRGEN error reason=` 转发出来
+            {
+                const std::string tail = res.vector_result.stdout_tail + "\n" +
+                                         res.vector_result.stderr_tail;
+                const std::size_t at = tail.rfind("IXRGEN error reason=");
+                if (at != std::string::npos) {
+                    std::size_t end = tail.find('\n', at);
+                    std::cout << "FONTPACK error inner="
+                              << tail.substr(at, end == std::string::npos ? std::string::npos
+                                                                          : end - at)
+                              << "\n";
+                }
+            }
             return kExitFail;
         }
         if (res.vector_path) {

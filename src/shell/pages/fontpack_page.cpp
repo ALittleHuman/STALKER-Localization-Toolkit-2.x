@@ -567,7 +567,7 @@ FontPackPage::BuildOutcome FontPackPage::run_build(
     request.suffix = options.suffix;
     request.offset = options.offset;
     request.only_sizes = options.only_sizes;
-    request.missing_warn = false;
+    request.missing_warn = true;   // 缺字不阻断（弹窗告知处置）
     request.require_full_cyrillic = options.require_full_cyrillic;
 
     // 位图路径保留"先判后建"（缺字形/检测失败 ⇒ 拒绝，不建任何目录）

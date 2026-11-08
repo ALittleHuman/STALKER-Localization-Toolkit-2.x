@@ -148,6 +148,34 @@ def main() -> int:
              else fail)("⑦ 缺字（warn 档）⇒ rc=0 且 CLI 强提示 + 三条处置（rc=%d / 有提示=%d）"
                         % (rc_w, 1 if "!!! 缺字" in out_w else 0))
 
+        # ⑧ 矢量路径也要执行 `--on-missing fail`；失败要转发内层原因；`--force` 可重跑
+        if not gone:
+            wx = td / "om_xml"
+            wx.mkdir(parents=True, exist_ok=True)
+            (wx / "a.xml").write_text(
+                '<string_table><string id="a"><text>\u4f60\u597d \u20bd</text></string>'
+                '</string_table>', encoding="utf-8")
+            rc_f, out_f = run("--font-pack", "--ref", PACKS[0], "--text-root", wx,
+                              "--font", CJK, "--out", td / "om_fail", "--langs", "rus",
+                              "--on-missing", "fail")
+            (ok if rc_f != 0 and not (td / "om_fail").exists() else fail)(
+                "⑧ fail 档（矢量）：缺字 ⇒ 不出包（rc=%d / 目录存在=%d）"
+                % (rc_f, 1 if (td / "om_fail").exists() else 0))
+            (ok if "error inner=" in out_f and "on-missing fail" in out_f else fail)(
+                "⑧ 失败要转发内层原因（IXRGEN error reason）")
+            rc_w2, out_w2 = run("--font-pack", "--ref", PACKS[0], "--text-root", wx,
+                                "--font", CJK, "--out", td / "om_warn", "--langs", "rus",
+                                "--on-missing", "warn")
+            rc_f2, out_f2 = run("--font-pack", "--ref", PACKS[0], "--text-root", wx,
+                                "--font", CJK, "--out", td / "om_warn", "--langs", "rus",
+                                "--on-missing", "warn")
+            rc_f3, out_f3 = run("--font-pack", "--ref", PACKS[0], "--text-root", wx,
+                                "--font", CJK, "--out", td / "om_warn", "--langs", "rus",
+                                "--on-missing", "warn", "--force")
+            (ok if rc_w2 == 0 and rc_f2 != 0 and rc_f3 == 0 else fail)(
+                "⑧ --force：首次成功、重跑拒绝、带 --force 再成功（%d/%d/%d）"
+                % (rc_w2, rc_f2, rc_f3))
+
         # ⑤ 入口：--merge-glyphs 只对矢量有效；位图传了必须**明确报错**
         rc_m, out_m = run("--font-pack", "--ref", "builtin", "--game", "CoP", "--langs", "rus",
                           "--text-root", xml, "--font", CJK, "--out", td / "mrg_bad",

@@ -32,6 +32,9 @@ struct IxrBuildOptions {
     // ★ 2026-11-06（A-min）：额外源字体 —— 把 target 缺的字形**按字形级**合并进去
     //   （只补缺字、不动老字形；复合字形递归重映射）。仅矢量路径有效。
     std::string merge_glyphs;
+    // ★ 2026-11-08：`--force`（输出目录非空也覆盖）+ 缺字策略（fail 时生成器**不出包**）
+    bool force = false;
+    bool missing_warn = false;
 };
 
 struct IxrBuildResult {

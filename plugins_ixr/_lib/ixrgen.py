@@ -309,6 +309,33 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
         pack, lang, [Path(p) for p in (args.text_root or [])], args.charset_scope)
         if ord(c) > 0x20})
 
+    # ★★ 2026-11-08（外部复核：矢量路径的 --on-missing fail 不生效）：
+    #   在**写任何输出之前**按最终覆盖能力预扫一遍；fail 且仍有缺字 ⇒ 直接不出包。
+    if getattr(args, "on_missing", "warn") == "fail":
+        cover = set(cjk_cmap)
+        if getattr(args, "merge_glyphs", ""):
+            try:
+                cover |= set(TTFont(args.merge_glyphs, fontNumber=0).getBestCmap() or {})
+            except Exception as exc:  # noqa: BLE001
+                log("IXRGEN warn 预扫读不到 --merge-glyphs 源字体：%r" % (exc,))
+        lacking = {}
+        total = 0
+        for one_font in sorted(pack.rglob("*.ttf")):
+            try:
+                cmap = set(TTFont(str(one_font), fontNumber=0).getBestCmap() or {})
+            except Exception:
+                continue
+            miss = [cp for cp in wanted if cp not in cmap and cp not in cover]
+            if miss:
+                lacking[str(one_font.relative_to(pack))] = miss
+                total += len(miss)
+        if total:
+            sample = next(iter(lacking.values()))[:5]
+            raise SystemExit(
+                "IXRGEN error reason=--on-missing fail：%d 个字体仍缺 %d 个字符（例 %s）；"
+                "加 --on-missing warn 可继续（或换字体/--merge-glyphs 补齐）"
+                % (len(lacking), total, ", ".join("U+%04X" % cp for cp in sample)))
+
     plan_sections: dict[str, str] = {}
     plan_sizes: set[int] = set()
     if args.plan:
@@ -783,6 +810,8 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description="IX-Ray 语言包生成（fonttools 外部助手）")
     ap.add_argument("--pack", required=True)
+    ap.add_argument("--on-missing", choices=("fail", "warn"), default="warn",
+                    help="缺字策略：fail=不出包（默认由 --font-pack 传入）；warn=继续")
     ap.add_argument("--force", action="store_true",
                     help="允许覆盖已有非空输出目录（默认拒绝，防止误删用户目录）")
     ap.add_argument("--no-extra-fonts", action="store_true",

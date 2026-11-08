@@ -80,6 +80,8 @@ struct FontPackRequest {
     std::string langs;             // 矢量：`rus,eng`；空 = 用包内 primary
     bool missing_warn = false;     // 语料缺字降级为警告
     bool require_full_cyrillic = false;
+    // ★ 2026-11-08（外部复核）：`--force` 透传给生成器（输出目录非空时允许覆盖）
+    bool force = false;
     std::string merge_glyphs;      // 额外源字体（仅矢量路径；位图路径必须报错）
     std::string suffix;
     int offset = 0;

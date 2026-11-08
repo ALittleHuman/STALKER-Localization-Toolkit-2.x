@@ -143,6 +143,8 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
         opt.text_root = request.text_root;
         opt.langs = request.langs.empty() ? request.lang : request.langs;
         opt.merge_glyphs = request.merge_glyphs;
+        opt.force = request.force;
+        opt.missing_warn = request.missing_warn;
         out.vector_result = ixr_build(opt);
         out.ok = out.vector_result.ok;
         if (!out.ok) out.error = out.vector_result.error;
