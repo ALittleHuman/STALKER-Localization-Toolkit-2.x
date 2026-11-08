@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 import sys
 import tempfile
@@ -49,8 +50,14 @@ def fail(m):
 
 
 def run(*args):
+    # 开发树里矢量路径需要显式解释器/启动器（发行包自带，才不需要）
+    env = os.environ.copy()
+    launcher = ROOT / "plugins_ixr" / "_lib" / "ixr_run.py"
+    if launcher.is_file():
+        env.setdefault("XRKIT_IXR_PYTHON", sys.executable)
+        env.setdefault("XRKIT_IXR_RUN", str(launcher))
     p = subprocess.run([str(CLI)] + [str(a) for a in args],
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
     return p.returncode, p.stdout.decode("utf-8", "replace")
 
 
@@ -123,6 +130,23 @@ def main() -> int:
         (ok if (js_out / "JSGME.exe").is_file() else fail)("⑥ JSGME.exe 复制到输出根")
         (ok if not (js_out / "gamedata").exists() else fail)("⑥ 顶层 gamedata 已移入 MODS")
         (ok if any(p.suffix == ".dds" for p in mod.rglob("*")) else fail)("⑥ 字体产物在 MODS 内")
+
+        # ⑦ 缺字必须**强烈提示**且给出处置办法（用户 2026-11-08：
+        #    "缺字不要紧，要紧的是缺了字怎么办"）—— 用一个明显缺西里尔的字体（arial）。
+        if not gone:
+            # 用一个**字体确实没有**的字符（U+20BD ₽）：NotoSansSC 没有它 ⇒ 必然缺字
+            warn_xml = td / "warn_xml"
+            warn_xml.mkdir(parents=True, exist_ok=True)
+            (warn_xml / "w.xml").write_text(
+                '<string_table><string id="a"><text>\u4f60\u597d \u20bd</text></string>'
+                '</string_table>', encoding="utf-8")
+            rc_w, out_w = run("--font-pack", "--ref", PACKS[0], "--text-root", warn_xml,
+                              "--font", CJK, "--out", td / "warn", "--langs", "rus",
+                              "--on-missing", "warn")
+            (ok if rc_w == 0 and "!!! 缺字" in out_w and "怎么办" in out_w and
+                   "--merge-glyphs" in out_w
+             else fail)("⑦ 缺字（warn 档）⇒ rc=0 且 CLI 强提示 + 三条处置（rc=%d / 有提示=%d）"
+                        % (rc_w, 1 if "!!! 缺字" in out_w else 0))
 
         # ⑤ 入口：--merge-glyphs 只对矢量有效；位图传了必须**明确报错**
         rc_m, out_m = run("--font-pack", "--ref", "builtin", "--game", "CoP", "--langs", "rus",

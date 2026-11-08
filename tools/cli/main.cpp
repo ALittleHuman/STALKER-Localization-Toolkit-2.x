@@ -6139,6 +6139,31 @@ if (action == "--diff-snapshot") {
                 if (jsgme_rc != kExitOk) return jsgme_rc;
             }
             std::cout << "FONTPACK ok writer=vector out=" << req.out << "\n";
+            // ★★ 2026-11-08（用户："缺字不要紧，要紧的是缺了字怎么办"）：缺字必须**强烈提示**，
+            //    并把三条处置写清楚（不是只报个数字）。
+            if (res.missing > 0) {
+                std::cout << "\n";
+                std::cout << "FONTPACK !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n";
+                std::cout << "FONTPACK !!! 缺字 " << res.missing << " 个";
+                if (!res.missing_list.empty()) {
+                    std::cout << "：";
+                    for (std::size_t i = 0; i < res.missing_list.size() && i < 20; ++i) {
+                        if (i != 0) std::cout << ",";
+                        std::cout << res.missing_list[i];
+                    }
+                    if (res.missing > 20) std::cout << " …";
+                }
+                std::cout << "\n";
+                std::cout << "FONTPACK !!! 影响：这几个字在游戏里会显示成空白/方块"
+                             "（含动态俄文、歌名、车辆型号等硬编码 UI）\n";
+                std::cout << "FONTPACK !!! 怎么办（任选其一）：\n";
+                std::cout << "FONTPACK !!!   1) 换字体：--font <含这些字的 TTF>\n";
+                std::cout << "FONTPACK !!!   2) 合并字形：--merge-glyphs <源 TTF>（只增不改）\n";
+                std::cout << "FONTPACK !!!   3) 缩字符集：改 --text-root 里的文本，别用这些字\n";
+                std::cout << "FONTPACK !!! 本次包**已生成**（缺字不阻断）；"
+                             "要强制完整西里尔加 --require-full-cyrillic（缺则不出包）\n";
+                std::cout << "FONTPACK !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n";
+            }
             if (!res.vector_result.stdout_tail.empty()) {
                 std::cout << res.vector_result.stdout_tail;
                 if (res.vector_result.stdout_tail.back() != '\n') std::cout << "\n";

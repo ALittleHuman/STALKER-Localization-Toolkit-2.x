@@ -95,6 +95,10 @@ struct FontPackOutcome {
     std::size_t charset_count = 0; // 字符数（来自统一字符集核心）
     PackageResult bitmap;          // 位图路径结果
     IxrBuildResult vector_result;  // 矢量路径结果
+    // ★ 2026-11-08（用户："缺字不要紧，要紧的是缺了字怎么办"）：
+    //   缺字账目从助手报告里**解析到引擎**，CLI 强烈提示 / GUI 弹窗都用这一份。
+    int missing = 0;                        // 缺字总数
+    std::vector<std::string> missing_list;  // U+XXXX（最多留 64 个）
 };
 
 FontPackOutcome build_font_pack(const FontPackRequest& request);

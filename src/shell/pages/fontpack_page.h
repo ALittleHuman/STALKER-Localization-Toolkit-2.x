@@ -82,6 +82,7 @@ public:
     bool ixr = false;                    // IX-Ray（矢量）走外部 fonttools 助手
     int ixr_added = 0;
     int ixr_missing = 0;
+    QStringList ixr_missing_cps;    // U+XXXX（弹窗/状态里点名）
     int ixr_fonts = 0;                   // 产出的字体个数（报告里每个字体一条）
         int ixr_texts = 0;
         int ixr_copied = 0;                   // 写进产物的文本 XML 个数

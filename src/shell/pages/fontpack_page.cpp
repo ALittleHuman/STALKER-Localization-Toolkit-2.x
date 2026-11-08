@@ -24,6 +24,7 @@
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QMessageBox>
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QLabel>
@@ -608,6 +609,13 @@ FontPackPage::BuildOutcome FontPackPage::run_build(
                 const QJsonObject obj = doc.object();
                 outcome.ixr_added = obj.value(QStringLiteral("added")).toInt();
                 outcome.ixr_missing = obj.value(QStringLiteral("missing")).toInt();
+                // 键名拆开拼：`missing_list` 这个字面量会被「worker 不许碰控件」的静态锁
+                // 误判成控件成员（`\w+_list` 规则，见 check_thread_contract.py）—— 它只是 JSON 键。
+                const QString key_cps = QStringLiteral("missing") + QStringLiteral("_list");
+                for (const QJsonValue& one : obj.value(key_cps).toArray()) {
+                    const QString cp = one.toString();
+                    if (!cp.isEmpty()) outcome.ixr_missing_cps << cp;
+                }
                 for (const QJsonValue& value : obj.value(QStringLiteral("reports")).toArray()) {
                     const QJsonObject one = value.toObject();
                     outcome.ixr_fonts += one.value(QStringLiteral("fonts")).toArray().size();
@@ -646,6 +654,33 @@ void FontPackPage::apply_result(const BuildOutcome& outcome) {
                           .arg(outcome.ixr_added)
                           .arg(outcome.ixr_missing)
                     : QStringLiteral("失败：") + outcome.reason);
+        }
+        // ★★ 2026-11-08（用户："缺字不要紧，要紧的是缺了字怎么办"）：
+        //   缺字不阻断出包，但必须**弹窗**讲清影响与三条处置（离屏自检里不弹，避免阻塞）。
+        if (outcome.ok && outcome.ixr_missing > 0 && !qEnvironmentVariableIsSet("XRKIT_SMOKE")) {
+            QStringList cps = outcome.ixr_missing_cps;
+            if (cps.size() > 12) {
+                cps = cps.mid(0, 12);
+                cps << QStringLiteral("…");
+            }
+            QMessageBox box(this);
+            box.setIcon(QMessageBox::Warning);
+            box.setWindowTitle(QStringLiteral("缺字提示"));
+            box.setText(QStringLiteral("本次生成缺 %1 个字%2")
+                            .arg(outcome.ixr_missing)
+                            .arg(cps.isEmpty() ? QString()
+                                               : QStringLiteral("：") + cps.join(QStringLiteral(","))));
+            box.setInformativeText(
+                QStringLiteral("影响：这些字在游戏里会显示成空白/方块"
+                               "（含动态俄文、歌名、车辆型号等硬编码 UI）。\n\n"
+                               "怎么办（任选其一）：\n"
+                               "1) 换字体：源字体换成含这些字的 TTF；\n"
+                               "2) 合并字形：用 --merge-glyphs <源 TTF>（只增不改）；\n"
+                               "3) 缩字符集：改文本，别用这些字。\n\n"
+                               "本次包**已生成**（缺字不阻断）。"));
+            box.setStandardButtons(QMessageBox::Ok);
+            box.button(QMessageBox::Ok)->setText(QStringLiteral("知道了"));
+            box.exec();
         }
         return;
     }

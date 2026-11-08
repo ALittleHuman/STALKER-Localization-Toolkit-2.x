@@ -68,6 +68,8 @@ int main(int argc, char** argv) {
         return probe_rc;
     }
     const bool smoke = args.contains(QStringLiteral("--smoke"));
+    // ★ 2026-11-08：离屏自检不弹缺字对话框（否则门禁卡在模态框上）
+    if (smoke) qputenv("XRKIT_SMOKE", "1");
     // ★ 屏幕自适应诊断：打印「启动时按当前屏幕算出来的缩放与窗口尺寸」然后退出。
     //   为什么要有它：离屏自检只验了纯函数；这条分支验的是**真实启动路径**
     //   （QScreen 逻辑 DPI → snap → set_ui_scale → 窗口尺寸），可配合 QT_SCALE_FACTOR 实测。
