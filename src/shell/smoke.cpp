@@ -3449,8 +3449,10 @@ SmokeResult run_smoke() {
             //   （把 `shelled * 2 > entry_paths.size()` 改回"任一条不带壳就 false" ⇒ 立刻红。）
             const std::string mixed =
                 efs2::unpack_target_dir(root, "E:/x/ai.db", {"ai", "readme.md", "ai/alife/x.efd"});
-            check(carry == root && carry_bare == root && plain == "E:/out/gamedata" &&
-                      empty == "E:/out/gamedata" && carry.find("/.") == std::string::npos &&
+            // ★★ 2026-11-08（用户口径，最终）：**壳不保留** —— 落点永远是输出根，
+            //   条目里的路径就是落点（"解压到当前位置"）。旧口径 `<根>/<包名>` 已作废。
+            check(carry == root && carry_bare == root && plain == root &&
+                      empty == root && carry.find("/.") == std::string::npos &&
                       mixed == root,
                   QStringLiteral("落点② 自带壳不叠第二层（%1）/ **裸壳目录项也算自带壳**（%2，真机形状）/ "
                                  "不带壳＝<根>/<包名>（%3）/ 空条目也叠（%4）/ 绝不出现 <根>/.（会被 "
@@ -3510,8 +3512,8 @@ SmokeResult run_smoke() {
             // 文件内容 2 字节，而且盘上只有**一份**（第二条记录是后写覆盖前写）
             const qint64 landed = QFileInfo(QString::fromStdString(dup_target) +
                                             QStringLiteral("/dupdir/a.txt")).size();
-            const bool landed_at_shell =
-                dup_target == (dup_target_root + QStringLiteral("/dup")).toStdString();
+            // ★ 2026-11-08：壳不保留 ⇒ 落点就是输出根
+            const bool landed_at_shell = dup_target == dup_target_root.toStdString();
             QString dup_tree;
             {
                 QDirIterator it(dup_root, QDir::AllEntries | QDir::NoDotAndDotDot,
@@ -3649,13 +3651,13 @@ SmokeResult run_smoke() {
         // ★★ 2026-10-05（#2）：右栏＝**解包产物预览** ⇒ 这一包（`gamedata.db0`）的条目全挂在
         //   包名壳 `gamedata/` 下 ⇒ 查大小要按**落点路径**查（原来按包内原始路径，是"没有壳"
         //   时代的形态）。**判据本身（大小进模型）一个字没改。**
-        check(page.node_size(QStringLiteral("gamedata/a.txt")) == 2 &&
-                  page.node_size(QStringLiteral("gamedata/dir/keep.txt")) == 1 &&
-                  page.node_size(QStringLiteral("gamedata/dir")) == 0,
+        check(page.node_size(QStringLiteral("a.txt")) == 2 &&
+                  page.node_size(QStringLiteral("dir/keep.txt")) == 1 &&
+                  page.node_size(QStringLiteral("dir")) == 0,
               QStringLiteral("④ 条目大小进模型：壳下 a.txt=2 / dir/keep.txt=1 / 目录=0（实测 %1/%2/%3）")
-                  .arg(page.node_size(QStringLiteral("gamedata/a.txt")))
-                  .arg(page.node_size(QStringLiteral("gamedata/dir/keep.txt")))
-                  .arg(page.node_size(QStringLiteral("gamedata/dir"))));
+                  .arg(page.node_size(QStringLiteral("a.txt")))
+                  .arg(page.node_size(QStringLiteral("dir/keep.txt")))
+                  .arg(page.node_size(QStringLiteral("dir"))));
         const QString resolved = page.resolve_output_dir();
         check(QDir::cleanPath(resolved) == QDir::cleanPath(pk_dir) &&
                   QDir::cleanPath(page.out_edit()->text()) == QDir::cleanPath(pk_dir),
@@ -3674,8 +3676,8 @@ SmokeResult run_smoke() {
         page.out_edit()->setText(out_root);
         QString summary;
         const int written = page.unpack_all(&summary);
-        const QString out_a = out_root + QStringLiteral("/gamedata/a.txt");
-        const QString out_b = out_root + QStringLiteral("/gamedata/dir/keep.txt");
+        const QString out_a = out_root + QStringLiteral("/a.txt");
+        const QString out_b = out_root + QStringLiteral("/dir/keep.txt");
         QFile fa(out_a);
         QFile fb(out_b);
         bool a_ok = fa.open(QIODevice::ReadOnly) && fa.readAll() == QByteArray("AA");
@@ -3751,7 +3753,7 @@ SmokeResult run_smoke() {
         // 父目录 dir/ 不含 "keep" 所以不显示（我第一版按"父目录也跟着来"写成 2，是我想多了）
         // 过滤后：树里只留匹配项（含它的祖先链），且**命中必须看得见**
         check(page.entry_built_file_count() == 1 &&
-                  page.find_entry_item(QStringLiteral("gamedata/dir/keep.txt")) != nullptr,
+                  page.find_entry_item(QStringLiteral("dir/keep.txt")) != nullptr,
               QStringLiteral("① 搜索过滤：只留匹配项且它可见（已建文件项 %1）")
                   .arg(page.entry_built_file_count()));
         page.search_edit()->clear();
@@ -4115,11 +4117,11 @@ SmokeResult run_smoke() {
                   QStringLiteral("③ 进度与「结束」都要经任务壳回主线程（p=%1 f=%2）")
                       .arg(saw_progress ? 1 : 0)
                       .arg(saw_finish_on_main ? 1 : 0));
-            QFile async_file(async_out + QStringLiteral("/gamedata/a.txt"));
+            QFile async_file(async_out + QStringLiteral("/a.txt"));
             const bool same_bytes =
                 async_file.open(QIODevice::ReadOnly) && async_file.readAll() == QByteArray("AA");
             check(same_bytes,
-                  QStringLiteral("③ 异步解包的产物与同步一致（<输出>/gamedata/a.txt == AA）"));
+                  QStringLiteral("③ 异步解包的产物与同步一致（<输出>/a.txt == AA）"));
             async_page.hide();
         }
         }   // ★ `if (async_wired)` 收尾：把"解包走任务壳"这一段的**控制流守卫**关掉，
@@ -4199,14 +4201,14 @@ SmokeResult run_smoke() {
             //   （原判据"顶层 = dir/ 与 a.txt"是"没有壳"时代的形态；懒建口径不变。）
             //   ★ "展开前文件项"＝**0**：懒建下顶层只有那个壳目录（原来的 1 是因为
             //     `a.txt` 曾经是顶层项）。这一格**照样钉住**（壳没了 ⇒ 顶层变 2 ⇒ 红）。
-            const bool seven_expanded = drop_page.expand_entry(QStringLiteral("gamedata"));
-            const bool seven_deep = seven_expanded && drop_page.expand_entry(QStringLiteral("gamedata/dir"));
-            check(drop_page.entry_top_level_count() == 1 && seven_expanded && seven_deep &&
-                      drop_page.find_entry_item(QStringLiteral("gamedata/dir/keep.txt")) != nullptr,
-                  QStringLiteral("⑦ 拖进来的包要进**树**（顶层 %1 / 展开壳 %2 / 壳下 keep.txt %3）")
+            // ★ 2026-11-08：**壳不保留** ⇒ 顶层就是 `a.txt` + `dir/` 两项，直接展开 `dir/`
+            const bool seven_expanded = drop_page.expand_entry(QStringLiteral("dir"));
+            check(drop_page.entry_top_level_count() == 2 && seven_expanded &&
+                      drop_page.find_entry_item(QStringLiteral("dir/keep.txt")) != nullptr,
+                  QStringLiteral("⑦ 拖进来的包要进**树**（顶层 %1 / 展开 dir %2 / dir 下 keep.txt %3）")
                       .arg(drop_page.entry_top_level_count())
-                      .arg(seven_expanded && seven_deep ? 1 : 0)
-                      .arg(drop_page.find_entry_item(QStringLiteral("gamedata/dir/keep.txt")) != nullptr
+                      .arg(seven_expanded ? 1 : 0)
+                      .arg(drop_page.find_entry_item(QStringLiteral("dir/keep.txt")) != nullptr
                                ? 1
                                : 0));
 
@@ -4433,25 +4435,24 @@ SmokeResult run_smoke() {
                 //   ★ 要改成"不叠第二层"，得让**包名**也叫 `gamedata.db0` —— 那是另一条夹具
                 //     （#2 预览② 的"自带壳"反向锁）。这里保持原文件名，只把**期望的落点路径**
                 //     改对：这正是"预览 = 解包产物"这条口径本身。
-                dir_page.expand_entry(QStringLiteral("configs"));
-                dir_page.expand_entry(QStringLiteral("configs/gamedata"));
-                dir_page.expand_entry(QStringLiteral("configs/gamedata/loose"));
+                dir_page.expand_entry(QStringLiteral("gamedata"));
+                dir_page.expand_entry(QStringLiteral("gamedata/loose"));
                 QApplication::processEvents();
                 // 右栏＝解包产物预览：**包内文件在、松散文件不在**（散装层已取消）
                 check(dir_page.entry_top_level_count() > 0 &&
                           dir_page.find_entry_item(QStringLiteral("configs/gamedata/loose/readme.txt")) ==
                               nullptr &&
-                          dir_page.find_entry_item(QStringLiteral("configs/gamedata/from_package.txt")) !=
+                          dir_page.find_entry_item(QStringLiteral("gamedata/from_package.txt")) !=
                               nullptr,
                       QStringLiteral("树③ 右栏＝解包产物预览：**包内文件在、松散文件不在**"
                                      "（顶层 %1 / 松散文件 %2 / 包内文件 %3，期望 >0/0/1）")
                           .arg(dir_page.entry_top_level_count())
                           .arg(dir_page.find_entry_item(
-                                   QStringLiteral("configs/gamedata/loose/readme.txt")) != nullptr
+                                   QStringLiteral("gamedata/loose/readme.txt")) != nullptr
                                    ? 1
                                    : 0)
                           .arg(dir_page.find_entry_item(
-                                   QStringLiteral("configs/gamedata/from_package.txt")) != nullptr
+                                   QStringLiteral("gamedata/from_package.txt")) != nullptr
                                    ? 1
                                    : 0));
                 // ★ 新增（"散装层取消"的可判红形式）：**松散文件不许进左树**（左树只有"文件夹 + 7 种包"）
@@ -4471,17 +4472,16 @@ SmokeResult run_smoke() {
                         const int loaded_now = dir_page.load_selected();
                         QApplication::processEvents();
                         // ★ 这一包的文件在**第三层**（`configs/gamedata/…`）⇒ 懒建要逐级展开
-                        dir_page.expand_entry(QStringLiteral("configs"));
-                        dir_page.expand_entry(QStringLiteral("configs/gamedata"));
+                        dir_page.expand_entry(QStringLiteral("gamedata"));
                         QApplication::processEvents();
                         check(loaded_now == 0 && dir_page.loaded_source_count() == 1 &&
                                   dir_page.find_entry_item(
-                                      QStringLiteral("configs/gamedata/from_package.txt")) != nullptr,
+                                      QStringLiteral("gamedata/from_package.txt")) != nullptr,
                               QStringLiteral("树③ 已加载的包不会重复加载（本次加载 %1 / 已加载 %2 / 包内文件 %3）")
                                   .arg(loaded_now)
                                   .arg(dir_page.loaded_source_count())
                                   .arg(dir_page.find_entry_item(
-                                           QStringLiteral("configs/gamedata/from_package.txt")) != nullptr
+                                           QStringLiteral("gamedata/from_package.txt")) != nullptr
                                            ? 1
                                            : 0));
                     }
@@ -4503,18 +4503,14 @@ SmokeResult run_smoke() {
                 //   （原来直接看顶层，是"没有壳"时代的形态）。**排序口径本身没变。**
                 //   ★ 子项是**懒建**的：不先展开壳，`childCount()` 恒为 0（实测"壳下实际"是空串
                 //     —— 那是假红，不是排序错）。
-                const bool sort_expanded = sort_page.expand_entry(QStringLiteral("s"));
                 QApplication::processEvents();
-                QTreeWidgetItem* sort_root = sort_page.entry_tree()->topLevelItem(0);
                 QStringList top;
-                if (sort_root != nullptr) {
-                    for (int i = 0; i < sort_root->childCount(); ++i) {
-                        top << sort_root->child(i)->text(0);
-                    }
+                sort_page.entry_tree()->expandAll();
+                QApplication::processEvents();
+                for (int i = 0; i < sort_page.entry_tree()->topLevelItemCount(); ++i) {
+                    top << sort_page.entry_tree()->topLevelItem(i)->text(0);
                 }
-                check(sort_expanded && sort_root != nullptr &&
-                          sort_root->text(0) == QStringLiteral("s/") &&
-                          top.size() == 4 && top[0] == QStringLiteral("b/") &&
+                check(top.size() == 4 && top[0] == QStringLiteral("b/") &&
                           top[1] == QStringLiteral("c/") && top[2] == QStringLiteral("a.txt") &&
                           top[3] == QStringLiteral("z.txt"),
                       QStringLiteral("排序：文件夹在前、文件在后，各自按名（壳下实际 %1）")
@@ -4719,16 +4715,14 @@ SmokeResult run_smoke() {
                 // ★ 2026-10-05（#2）：条目在包名壳下 ⇒ 路径是 `part_a/x.txt`，而且右栏是**懒建**的
                 //   （"包内全选"不会顺手把子项建出来）⇒ 先展开壳再找，否则拿到 nullptr、
                 //   勾不动任何东西（实测"勾掉一个条目后仍 ✓" —— 那是**假红**）。
-                const bool part_expanded = part_page.expand_entry(QStringLiteral("part_a"));
                 QApplication::processEvents();
-                QTreeWidgetItem* one_entry = part_page.find_entry_item(QStringLiteral("part_a/x.txt"));
+                QTreeWidgetItem* one_entry = part_page.find_entry_item(QStringLiteral("x.txt"));
                 if (one_entry != nullptr) one_entry->setCheckState(0, Qt::Unchecked);
                 QApplication::processEvents();
-                check(part_expanded && pkg_node != nullptr && before == Qt::Checked &&
+                check(pkg_node != nullptr && one_entry != nullptr && before == Qt::Checked &&
                           pkg_node->checkState(0) == Qt::PartiallyChecked,
-                      QStringLiteral("包的三态：全勾时 ✓（实测 %1）、展开壳 %2、勾掉一个条目后 ■（实测 %3）")
+                      QStringLiteral("包的三态：全勾时 ✓（实测 %1）、勾掉一个条目后 ■（实测 %3）")
                           .arg(static_cast<int>(before))
-                          .arg(part_expanded ? 1 : 0)
                           .arg(pkg_node != nullptr ? static_cast<int>(pkg_node->checkState(0)) : -1));
                 part_page.hide();
             }
@@ -5010,21 +5004,20 @@ SmokeResult run_smoke() {
                 QApplication::processEvents();
                 // ★ 2026-10-05（#2）：右栏＝**解包产物预览** ⇒ 条目全挂在包名壳 `s/` 下，
                 //   展开也要从壳那一层起（懒建**逐级**：每展开一层才建下一层的子项）。
-                tri_page.expand_entry(QStringLiteral("s"));
-                tri_page.expand_entry(QStringLiteral("s/meshes"));
-                tri_page.expand_entry(QStringLiteral("s/meshes/actors"));
-                tri_page.expand_entry(QStringLiteral("s/meshes/actors/actor_models"));
+                tri_page.expand_entry(QStringLiteral("meshes"));
+                tri_page.expand_entry(QStringLiteral("meshes/actors"));
+                tri_page.expand_entry(QStringLiteral("meshes/actors/actor_models"));
                 QApplication::processEvents();
                 QTreeWidgetItem* deep = tri_page.find_entry_item(
-                    QStringLiteral("s/meshes/actors/actor_models/green_stalker_10.ogf"));
+                    QStringLiteral("meshes/actors/actor_models/green_stalker_10.ogf"));
                 if (deep == nullptr) {
                     check(false, QStringLiteral("三态传播：判据自己要能跑到 —— 找不到最内层文件项"));
                 } else {
                     deep->setCheckState(0, Qt::Checked);   // 触发 itemChanged ⇒ 回灌模型
                 }
                 QApplication::processEvents();
-                QTreeWidgetItem* mid = tri_page.find_entry_item(QStringLiteral("s/meshes/actors"));
-                QTreeWidgetItem* top = tri_page.find_entry_item(QStringLiteral("s/meshes"));
+                QTreeWidgetItem* mid = tri_page.find_entry_item(QStringLiteral("meshes/actors"));
+                QTreeWidgetItem* top = tri_page.find_entry_item(QStringLiteral("meshes"));
                 const Qt::CheckState mid_state = mid != nullptr ? mid->checkState(0) : Qt::Unchecked;
                 const Qt::CheckState top_state = top != nullptr ? top->checkState(0) : Qt::Unchecked;
                 check(top_state == Qt::PartiallyChecked,
@@ -11529,11 +11522,10 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
         bool has_shell = false;
         bool root_leak = false;
         for (const efs::EntryInfo& e : shown) {
-            if (e.path == "xr/gamemtl.xr") has_shell = true;
-            if (e.path == "gamemtl.xr") root_leak = true;
+            if (e.path == "gamemtl.xr") has_shell = true;
         }
-        check(has_shell && !root_leak,
-              QStringLiteral("#2 预览① 不带壳的包：落点规则的下一条路径＝`xr/gamemtl.xr`"
+        check(has_shell && shown.size() == 1,
+              QStringLiteral("#2 预览① 无壳：条目路径原样（gamemtl.xr，不再叠包名层）"
                              "（实测 %1 条 / 根级泄漏 %2）")
                   .arg(shown.size())
                   .arg(root_leak ? 1 : 0));
@@ -11583,18 +11575,12 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
         //   不展开就找 `xr/gamemtl.xr` 必然是 nullptr（实测：加包 1 / 找到 0 / 根级 0 —— 假红）。
         //   ★ 这一句**不放松判据**：`gamemtl.xr`（根级）那一条照样必须找不到（壳没生效就红），
         //     而"展开成功"本身也进了判据（`shell_expanded`）—— 壳不在了这一步就红。
-        const bool shell_expanded = shell_page.expand_entry(QStringLiteral("xr"));
-        QApplication::processEvents();
         const bool shell_visible =
-            added == 1 && shell_expanded &&
-            shell_page.find_entry_item(QStringLiteral("xr/gamemtl.xr")) != nullptr &&
-            shell_page.find_entry_item(QStringLiteral("gamemtl.xr")) == nullptr;
+            added == 1 && shell_page.find_entry_item(QStringLiteral("gamemtl.xr")) != nullptr;
         check(shell_visible,
-              QStringLiteral("#2 预览③ 右栏树上显示的是**解包后的路径** `xr/gamemtl.xr`"
-                             "（加包 %1 个 / 展开壳 %2 / 找到 xr/gamemtl.xr=%3 / 根级 gamemtl.xr=%4）")
+              QStringLiteral("#2 预览③ 右栏树上显示的是**解包后的路径** `gamemtl.xr`"
+                             "（加包 %1 个 / 找到 gamemtl.xr=%2）")
                   .arg(added)
-                  .arg(shell_expanded ? 1 : 0)
-                  .arg(shell_page.find_entry_item(QStringLiteral("xr/gamemtl.xr")) != nullptr ? 1 : 0)
                   .arg(shell_page.find_entry_item(QStringLiteral("gamemtl.xr")) != nullptr ? 1 : 0));
         shell_page.hide();
         QDir(shell_dir).removeRecursively();
@@ -11624,11 +11610,10 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
         tri2.show();
         QApplication::processEvents();
         // 展开到能看见叶子（懒建：逐级展开）
-        tri2.expand_entry(QStringLiteral("gamedata"));
-        tri2.expand_entry(QStringLiteral("gamedata/config"));
-        tri2.expand_entry(QStringLiteral("gamedata/config/text"));
-        tri2.expand_entry(QStringLiteral("gamedata/scripts"));
-        tri2.expand_entry(QStringLiteral("gamedata/scripts/addon"));
+        tri2.expand_entry(QStringLiteral("config"));
+        tri2.expand_entry(QStringLiteral("config/text"));
+        tri2.expand_entry(QStringLiteral("scripts"));
+        tri2.expand_entry(QStringLiteral("scripts/addon"));
         QApplication::processEvents();
 
         const auto state_of = [&](const QString& path) -> Qt::CheckState {
@@ -11636,26 +11621,23 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
             return it != nullptr ? it->checkState(0) : Qt::Unchecked;
         };
         // 前提：夹具要能跑到（找得到那几个节点）
-        check(tri2.find_entry_item(QStringLiteral("gamedata/config/text")) != nullptr &&
-                  tri2.find_entry_item(QStringLiteral("gamedata/config")) != nullptr,
+        check(tri2.find_entry_item(QStringLiteral("config/text")) != nullptr &&
+                  tri2.find_entry_item(QStringLiteral("config")) != nullptr,
               QStringLiteral("#3 前提：目录链建出来了（config/text=%1 / config=%2）")
-                  .arg(tri2.find_entry_item(QStringLiteral("gamedata/config/text")) != nullptr ? 1 : 0)
-                  .arg(tri2.find_entry_item(QStringLiteral("gamedata/config")) != nullptr ? 1 : 0));
+                  .arg(tri2.find_entry_item(QStringLiteral("config/text")) != nullptr ? 1 : 0)
+                  .arg(tri2.find_entry_item(QStringLiteral("config")) != nullptr ? 1 : 0));
 
         // ① 勾 `config/text/`（目录）⇒ 它的两个文件全勾 ⇒ 父 `config/` 必须**部分勾选**
         //    （`config/` 下面还有 `root.ltx` 没勾 ⇒ 不是全勾）
-        if (QTreeWidgetItem* text_dir = tri2.find_entry_item(QStringLiteral("gamedata/config/text"))) {
+        if (QTreeWidgetItem* text_dir = tri2.find_entry_item(QStringLiteral("config/text"))) {
             text_dir->setCheckState(0, Qt::Checked);   // 触发 itemChanged ⇒ 回灌模型
         }
         QApplication::processEvents();
-        check(state_of(QStringLiteral("gamedata/config/text")) == Qt::Checked &&
-                  state_of(QStringLiteral("gamedata/config")) == Qt::PartiallyChecked &&
-                  state_of(QStringLiteral("gamedata")) == Qt::PartiallyChecked,
-              QStringLiteral("#3 ① 子全勾 ⇒ 父 ■（text=%1 / config=%2 / 壳=%3；"
-                             "修前 config 卡在 □）")
-                  .arg(static_cast<int>(state_of(QStringLiteral("gamedata/config/text"))))
-                  .arg(static_cast<int>(state_of(QStringLiteral("gamedata/config"))))
-                  .arg(static_cast<int>(state_of(QStringLiteral("gamedata")))));
+        check(state_of(QStringLiteral("config/text")) == Qt::Checked &&
+                  state_of(QStringLiteral("config")) == Qt::PartiallyChecked,
+              QStringLiteral("#3 ① 子全勾 ⇒ 父 ■（text=%1 / config=%2；修前 config 卡在 □）")
+                  .arg(static_cast<int>(state_of(QStringLiteral("config/text"))))
+                  .arg(static_cast<int>(state_of(QStringLiteral("config")))));
         // ② **源行**必须立刻跟随成 ■（`scripts/addon/*` 还没勾，所以这一包不是全勾）
         {
             QTreeWidgetItem* src = find_package_source_node(tri2.package_list(),
@@ -11665,26 +11647,26 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
                       .arg(src != nullptr ? static_cast<int>(src->checkState(0)) : -1));
         }
         // ③ `scripts/addon/*` 两个文件全勾 ⇒ 那一支的父目录 ✓；config 支不变（仍 ■）
-        if (QTreeWidgetItem* one = tri2.find_entry_item(QStringLiteral("gamedata/scripts/addon/x.script"))) {
+        if (QTreeWidgetItem* one = tri2.find_entry_item(QStringLiteral("scripts/addon/x.script"))) {
             one->setCheckState(0, Qt::Checked);
         }
-        if (QTreeWidgetItem* two = tri2.find_entry_item(QStringLiteral("gamedata/scripts/addon/y.script"))) {
+        if (QTreeWidgetItem* two = tri2.find_entry_item(QStringLiteral("scripts/addon/y.script"))) {
             two->setCheckState(0, Qt::Checked);
         }
         QApplication::processEvents();
-        check(state_of(QStringLiteral("gamedata/scripts/addon")) == Qt::Checked &&
-                  state_of(QStringLiteral("gamedata/scripts")) == Qt::Checked &&
-                  state_of(QStringLiteral("gamedata/config")) == Qt::PartiallyChecked,
+        check(state_of(QStringLiteral("scripts/addon")) == Qt::Checked &&
+                  state_of(QStringLiteral("scripts")) == Qt::Checked &&
+                  state_of(QStringLiteral("config")) == Qt::PartiallyChecked,
               QStringLiteral("#3 ③ 另一支全勾 ⇒ 那一支 ✓、config 支仍 ■（addon=%1 / scripts=%2 / config=%3）")
-                  .arg(static_cast<int>(state_of(QStringLiteral("gamedata/scripts/addon"))))
-                  .arg(static_cast<int>(state_of(QStringLiteral("gamedata/scripts"))))
-                  .arg(static_cast<int>(state_of(QStringLiteral("gamedata/config")))));
+                  .arg(static_cast<int>(state_of(QStringLiteral("scripts/addon"))))
+                  .arg(static_cast<int>(state_of(QStringLiteral("scripts"))))
+                  .arg(static_cast<int>(state_of(QStringLiteral("config")))));
         // ④ 源行：这一包里 4/5 勾 ⇒ 仍 ■；再把 `config/root.ltx` 勾上 ⇒ 全勾 ⇒ 源行 ✓
         {
             QTreeWidgetItem* src = find_package_source_node(tri2.package_list(),
                                                             QStringLiteral("gamedata.db0"));
             const Qt::CheckState mid = src != nullptr ? src->checkState(0) : Qt::Unchecked;
-            if (QTreeWidgetItem* rest = tri2.find_entry_item(QStringLiteral("gamedata/config/root.ltx"))) {
+            if (QTreeWidgetItem* rest = tri2.find_entry_item(QStringLiteral("config/root.ltx"))) {
                 rest->setCheckState(0, Qt::Checked);
             }
             QApplication::processEvents();
@@ -11700,12 +11682,12 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
                                                             QStringLiteral("gamedata.db0"));
             if (src != nullptr) src->setCheckState(0, Qt::Unchecked);
             QApplication::processEvents();
-            check(state_of(QStringLiteral("gamedata/config")) == Qt::Unchecked &&
-                      state_of(QStringLiteral("gamedata/scripts/addon")) == Qt::Unchecked &&
+            check(state_of(QStringLiteral("config")) == Qt::Unchecked &&
+                      state_of(QStringLiteral("scripts/addon")) == Qt::Unchecked &&
                       tri2.checked_file_count() == 0,
                   QStringLiteral("#3 ⑤ 源行取消 ⇒ 自上而下全清（config=%1 / addon=%2 / 勾选数=%3）")
-                      .arg(static_cast<int>(state_of(QStringLiteral("gamedata/config"))))
-                      .arg(static_cast<int>(state_of(QStringLiteral("gamedata/scripts/addon"))))
+                      .arg(static_cast<int>(state_of(QStringLiteral("config"))))
+                      .arg(static_cast<int>(state_of(QStringLiteral("scripts/addon"))))
                       .arg(tri2.checked_file_count()));
         }
         // ⑥ **多来源合并节点也要三态自洽**：第二个包在同一路径下再加一个文件 ⇒
@@ -11713,19 +11695,18 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
         tri2.add_source(QStringLiteral("extra.db0"),
                         {efs::EntryInfo{std::string("config/text/c.ltx"), false, 10}});
         QApplication::processEvents();
-        tri2.expand_entry(QStringLiteral("gamedata"));
-        tri2.expand_entry(QStringLiteral("gamedata/config"));
-        tri2.expand_entry(QStringLiteral("gamedata/config/text"));
+        tri2.expand_entry(QStringLiteral("config"));
+        tri2.expand_entry(QStringLiteral("config/text"));
         QApplication::processEvents();
-        if (QTreeWidgetItem* text_dir = tri2.find_entry_item(QStringLiteral("gamedata/config/text"))) {
+        if (QTreeWidgetItem* text_dir = tri2.find_entry_item(QStringLiteral("config/text"))) {
             text_dir->setCheckState(0, Qt::Checked);
         }
         QApplication::processEvents();
-        check(state_of(QStringLiteral("gamedata/config/text")) == Qt::Checked &&
-                  state_of(QStringLiteral("gamedata/config")) == Qt::PartiallyChecked,
+        check(state_of(QStringLiteral("config/text")) == Qt::Checked &&
+                  state_of(QStringLiteral("config")) == Qt::PartiallyChecked,
               QStringLiteral("#3 ⑥ 多来源合并节点三态自洽（text=%1 / config=%2）")
-                  .arg(static_cast<int>(state_of(QStringLiteral("gamedata/config/text"))))
-                  .arg(static_cast<int>(state_of(QStringLiteral("gamedata/config")))));
+                  .arg(static_cast<int>(state_of(QStringLiteral("config/text"))))
+                  .arg(static_cast<int>(state_of(QStringLiteral("config")))));
         tri2.hide();
     }
 

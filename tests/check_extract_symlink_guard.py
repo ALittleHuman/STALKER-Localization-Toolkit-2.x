@@ -127,11 +127,9 @@ def main() -> int:
         #    ★ 本判据第一版把 junction 建在 `<根>/fx` 而夹具镜像叫 `fixture`
         #      ⇒ 解包落在 `<根>/fixture`，**根本不是同一条路径**（症状自相矛盾：
         #      既没拒绝、外部目录也没变）。查清后按"名＝壳名"重写。
-        shell = image.name
-        for suffix in (".sqfs", ".db", ".db0"):
-            if shell.lower().endswith(suffix):
-                shell = shell[: -len(suffix)]
-                break
+        # ★ 2026-11-08（用户口径：包名壳不保留）⇒ 落点父目录链上的第一段是**条目自己的顶层目录**
+        #   （夹具：`gamedata/a.xml` ⇒ junction 名必须叫 `gamedata`）。
+        shell = "gamedata"
         outside = tmp / "outside"
         outside.mkdir()
         (outside / "untouched.txt").write_text("别动我\n", encoding="utf-8")
@@ -145,7 +143,7 @@ def main() -> int:
         rc, out = run_local(cli, ["--unpack-package", str(image), str(root2)])
         after = tree_of(outside)
         want(rc != 0 and "failed=0" not in out,
-             "② 落点父目录链上是 junction（名＝包壳「%s」）⇒ 拒写这一条" % shell,
+             "② 落点父目录链上是 junction（名＝条目顶层「%s」）⇒ 拒写这一条" % shell,
              "rc=%d" % rc)
         want("failed=1" in out or "fail " in out,
              "② 拒写要**记进台账**（零静默：`fail …` / `failed=1` 必须出现）")

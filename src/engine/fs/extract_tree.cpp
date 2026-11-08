@@ -712,14 +712,16 @@ bool paths_carry_shell(const std::vector<std::string>& entry_paths, const std::s
 
 std::string unpack_target_dir(const std::string& out_root, const std::string& package_path,
                               const std::vector<std::string>& entry_paths) {
-    const std::string shell = package_folder_name(package_path);
-    if (shell.empty()) return out_root;                              // 算不出壳 ⇒ 直接把根当落点
-    if (paths_carry_shell(entry_paths, shell)) return out_root;      // 自带壳 ⇒ 不再叠一层
-    std::string root = out_root;
-    while (!root.empty() && (root.back() == '/' || root.back() == '\\')) root.pop_back();
-    if (root.empty()) return shell;
-    // ★ 这里**只拼目录名**：绝不生成 `<root>/.` 那种写法（`safe_out_path` 会把它当越界拒掉，真机踩过）。
-    return root + "/" + shell;
+    // ★★ 2026-11-08（用户口径，最终）：**db 只是文件夹的壳，壳本身不保留** ——
+    //   解包＝"解压到当前位置"：条目里写的路径就是落点，绝不把包名当成一层目录。
+    //   · `gamedata.db` 这类"从最上级整包打"的包，条目自带 `gamedata/…` ⇒ 原样落；
+    //   · `levels/pripyat/jupiter.db` 这种"某个文件夹打的包"，条目是 `levels/jupiter/…`
+    //     ⇒ 也原样落，**不会**再套一层 `jupiter/`；
+    //   · 一个文件一个包（`build.lights.db` 条目就是 `build.lights`）⇒ 原样落。
+    //   旧实现按"包名壳"补一层（`<out>/<包名>/…`），正是"原来的结构建不回去"的来源：删掉。
+    (void)package_path;
+    (void)entry_paths;
+    return out_root;
 }
 
 std::vector<UnpackTarget> plan_unpack_targets(

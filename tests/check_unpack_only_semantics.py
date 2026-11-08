@@ -76,20 +76,19 @@ def main() -> int:
         rc, out = run(["--dump", str(pack)])
         want(rc == 0 and "a.txt" in out, "--dump 能列出条目", out.strip()[:200])
 
-        # 落点：`--unpack-package` 把包内路径摊到 <out>/<包名去扩展名>/
+        # ★ 2026-11-08（用户口径：壳不保留）⇒ 落点路径 == 镜像内路径
         out_root = work / "out_shell"
         out_root.mkdir()
         only = work / "only_shell.txt"
-        # 落点路径 = 包名壳 + 镜像内路径（正是页面 `preview_entries_in_layout` 产出的形状）
-        shell = "bare"
-        only.write_text(shell + "/a.txt\n" + shell + "/sub/b.txt\n", encoding="utf-8")
+        shell = ""
+        only.write_text("a.txt\nsub/b.txt\n", encoding="utf-8")
         rc, out = run(["--unpack-package", str(pack), str(out_root), "--only", str(only)])
         written = field(out, "files")
         want(written == "2",
              "\u2460 勾 2 项落点路径 ⇒ files_written == 2（修前 = 0：静默 0 产物）",
              "实测 files=%s；输出=%s" % (written, out.strip()[:300]))
-        got_a = out_root / shell / "a.txt"
-        got_b = out_root / shell / "sub" / "b.txt"
+        got_a = out_root / "a.txt"
+        got_b = out_root / "sub" / "b.txt"
         want(got_a.exists() and got_a.read_bytes() == b"AAAA\n",
              "\u2462 落点产物 a.txt 与源逐字节一致", str(got_a))
         want(got_b.exists() and got_b.read_bytes() == b"BBBBBB\n",
@@ -111,7 +110,7 @@ def main() -> int:
         out_root3 = work / "out_bad"
         out_root3.mkdir()
         only3 = work / "only_bad.txt"
-        only3.write_text("nope/zzz.txt\n" + shell + "/no_such_entry.txt\n", encoding="utf-8")
+        only3.write_text("nope/zzz.txt\nno_such_entry.txt\n", encoding="utf-8")
         rc, out = run(["--unpack-package", str(pack), str(out_root3), "--only", str(only3)])
         want("一条都没命中" in out,
              "\u2462 对不上的清单 ⇒ 打出台账原因（零静默；修前只有 files=0 一行）",
