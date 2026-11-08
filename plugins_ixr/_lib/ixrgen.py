@@ -709,6 +709,10 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
         def _skip_extra(path_: Path) -> bool:
             """别把汉字灌进**别的语言**的字体树 / 编辑器字体（体积翻倍且没意义）。
             addon 里的 ttf 一律照收（那才是用户问的"额外字体"）。"""
+            # ★ 2026-11-08（外部复核：`--merge-glyphs` 只覆盖 fonts/rus，eng/editors 没处理）：
+            #   用户**显式**给了源字体 ⇒ 所有 ttf 都要补（含 eng/editors），不再按"别灌汉字"跳过。
+            if getattr(args, "merge_glyphs", ""):
+                return False
             parts = [x.lower() for x in path_.relative_to(out).parts]
             if "ixr_addons" in parts:
                 return False
@@ -746,6 +750,33 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
         if extra_fonts:
             log("IXRGEN 额外字体：%d 个（addon 里的 ttf）也补了字形" % extra_fonts)
     report["extra_fonts"] = extra_fonts
+
+    # ★★ 2026-11-08（外部复核：横幅 249 vs 实际 194）：`missing` 之前是**合并前**算的，
+    #   而且跳过的 eng/editors 根本没进账。这里对**产物里每一个 ttf 重新扫一遍**，
+    #   用最终文件说话（含 eng/editors / addon / 未处理过的字体）。
+    added_by_name = {}
+    for entry in report["fonts"]:
+        one = str(entry.get("name", ""))
+        added_by_name[one] = int(entry.get("added", 0))
+        added_by_name[one.split("/")[-1]] = int(entry.get("added", 0))
+    final_fonts = []
+    total_missing = 0
+    for path in sorted(out.rglob("*.ttf")):
+        try:
+            cmap = TTFont(str(path), fontNumber=0, recalcBBoxes=False,
+                          recalcTimestamp=False).getBestCmap() or {}
+        except Exception as exc:  # noqa: BLE001
+            log("IXRGEN warn 复扫字体失败（%s）：%r" % (path.name, exc))
+            continue
+        miss = [cp for cp in wanted if cp not in cmap]
+        rel = path.relative_to(out).as_posix()
+        final_fonts.append({"name": rel, "added": added_by_name.get(rel, added_by_name.get(path.name, 0)),
+                            "missing": len(miss),
+                            "missing_list": ["U+%04X" % cp for cp in miss[:20]]})
+        total_missing += len(miss)
+    report["fonts"] = final_fonts
+    report["missing"] = total_missing
+    report["fonts_scanned"] = len(final_fonts)
     return report
 
 

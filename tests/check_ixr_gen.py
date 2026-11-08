@@ -634,6 +634,39 @@ def main() -> int:
         else:
             problems += 1
             fail("非字体包没被拒：rc=%d\n%s" % (rc3, stdout3[-300:]))
+        # ③a **--merge-glyphs 覆盖全字体**（外部复核：只补 fonts/rus，eng/editors 没处理）
+        merge_src = Path(r"C:\Windows\Fonts\msyh.ttc")
+        if merge_src.is_file():
+            cover = build_pack(tmp / "merge_cover", BASE_FONT, "\u4f60\u597d")
+            for sub in ("eng", "editors"):
+                d = cover / "gamedata" / "fonts" / sub
+                d.mkdir(parents=True, exist_ok=True)
+                (d / "arial.ttf").write_bytes(
+                    (cover / "gamedata" / "fonts" / "rus" / "arial.ttf").read_bytes())
+            # 字符集要含「汉」⇒ 给一份中文文本当 --text-root（否则默认只按基线西里尔扫）
+            cover_text = tmp / "merge_cover_texts"
+            cover_text.mkdir(parents=True, exist_ok=True)
+            (cover_text / "c.xml").write_text(
+                '<?xml version="1.0" encoding="utf-8"?><string_table>'
+                '<string id="a"><text>\u4f60\u597d</text></string></string_table>',
+                encoding="utf-8")
+            out_cover = tmp / "out_cover"
+            rc_c, _ = run_tool(cover, CJK_FONT, out_cover,
+                               ["--merge-glyphs", str(merge_src),
+                                "--text-root", str(cover_text)])
+            got = []
+            for sub in ("eng", "editors"):
+                one = out_cover / "gamedata" / "fonts" / sub / "arial.ttf"
+                got.append(one.is_file() and 0x4F60 in set(TTFont(str(one)).getBestCmap()))
+            if rc_c == 0 and all(got):
+                ok("--merge-glyphs 覆盖全字体：fonts/eng、fonts/editors 也补进了「你」")
+            else:
+                problems += 1
+                fail("--merge-glyphs 没覆盖 eng/editors：rc=%d eng=%d editors=%d"
+                     % (rc_c, got[0], got[1] if len(got) > 1 else 0))
+        else:
+            print("!! 缺 msyh.ttc（跳过 --merge-glyphs 全字体覆盖夹具）")
+
         # ③b **可复现**（外部复核：同样输入跑两次，34 个 .ttf 不同 —— fontTools 把
         #   head.modified 写成当前时间）⇒ 同样输入两次必须**逐字节相同**。
         out_r1 = tmp / "out_repro1"
