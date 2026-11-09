@@ -214,7 +214,7 @@ def selfcheck() -> tuple:
 
 
 def main() -> int:
-    print("== P17-98/P17-99：插件日志缓冲的线程安全 ＋ 注册表线程约定 ＋ C ABI sink 零静默 ==")
+    print("== P17-98：插件日志缓冲的线程安全 ＋ 注册表线程约定（C ABI sink 已随 P17-184 退净）==")
     print()
     print("-- 反例自证 --")
     self_ok, results = selfcheck()
@@ -231,15 +231,14 @@ def main() -> int:
     print("   ✓ 反例自证 %d/%d" % (len(results), len(results)))
     print()
 
-    for path in (PY_HOST, REGISTRY_H, COMPARE_H, ABI_HOST, DESIGN_DOC):
+    # ★ 2026-11-09：**C ABI 已按 P17-184 退净**（`abi_host.cpp` 等随链删除）⇒ 这里不再要求该文件存在、
+    #   也不再对真实源码跑 sink 契约；`audit_sink_contract` 仅保留在反例自证里作历史锁（防有人把它当活代码恢复）。
+    for path in (PY_HOST, REGISTRY_H, COMPARE_H, DESIGN_DOC):
         if not path.is_file():
             print("PLG-THREADSAFE fail 仓库自带文件缺失：%s" % path)
             return 1
     problems = audit_log_buffer(PY_HOST.read_text(encoding="utf-8", errors="replace"))
     problems += audit_registry_contract(REGISTRY_H.read_text(encoding="utf-8", errors="replace"))
-    problems += audit_sink_contract(COMPARE_H.read_text(encoding="utf-8", errors="replace"),
-                                   ABI_HOST.read_text(encoding="utf-8", errors="replace"),
-                                   DESIGN_DOC.read_text(encoding="utf-8", errors="replace"))
     print("-- 实测 --")
     if problems:
         for item in problems:
@@ -250,10 +249,10 @@ def main() -> int:
     print("   ✓ 日志缓冲：写走 `append_plugin_log_line`（锁 + 上限）、读+清空走 `take_python_log_lines`（同锁 swap）")
     print("   ✓ 裸访问器 `plugin_log_buffer()` 已消失；`api.log` 不再直接动那个 vector")
     print("   ✓ 注册表线程约定已成字据（写只在主线程／读可在工作线程／要并发写先加锁）")
-    print("   ✓ C ABI sink：`ids_a`/`ids_b` 从插件报的 ID 数出来；不认识的键记进 `unhandled_keys`（零静默）")
-    print("   ✓ 口径已落在 `docs/2.0.0-设计口径.md` §4.5（`row_kind` 不落位／不许静默丢／ID 数按插件报的算）")
+    print("   · C ABI 链已按 P17-184 退净（`abi_host.cpp` 随链删除）⇒ sink 契约不再对真实源码断言，")
+    print("     只在反例自证里保留历史锁（见上 8/8）")
     print()
-    print("PLG-THREADSAFE ok 日志缓冲有锁、注册表有字据、ABI sink 无静默丢（审计 05 PLG-08 / 05 PLG-04）")
+    print("PLG-THREADSAFE ok 日志缓冲有锁、注册表有字据（C ABI 已退净 ⇒ sink 契约随代码退场；审计 05 PLG-08）")
     return 0
 
 

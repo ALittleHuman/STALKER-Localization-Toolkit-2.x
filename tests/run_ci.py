@@ -1590,7 +1590,10 @@ def step_extract_guard(release: bool) -> None:
         fail("文本提取守卫判红锁有断言不成立（见上）")
 
 
-def step_plugin_init_rollback(release: bool) -> None:
+# ★ 2026-11-09（F4435）：**退役**——判据脚本 `tests/check_plugin_init_rollback.py` 已在
+#   `d71c136`（P17-183 批：C ABI 退净第一刀）随 C ABI 链一起删除；本函数保留原文仅作历史，
+#   不再进 STEPS（下面的「定义即登记」自检只认 `step_*`，`_retired_` 前缀被有意排除）。
+def _retired_step_plugin_init_rollback(release: bool) -> None:
     """判红锁：插件 `init` 返回 0 ⇒ 必须**按 owner 回滚**它这次 init 期间的注册（S1-2）。
 
     为什么要有这一步：插件在 init 期间是"成功一条进一条"地写注册表的（官方夹具的写法就是
@@ -5360,7 +5363,9 @@ def step_official_pages(release: bool) -> None:
         fail("官方页契约不成立（见上）—— 插件化「六页对等」那一条没有判据就只是口号")
 
 
-def step_abi_closure(release: bool) -> None:
+# ★ 2026-11-09（F4435）：**退役**——`tests/check_plugin_abi_closure.py` 已在 C ABI 退净批（P17-183/184）
+#   随 `struct stk_ui` 契约表一起删除；保留原文仅作历史，不再进 STEPS。
+def _retired_step_abi_closure(release: bool) -> None:
     """插件改装 P16-0b：`struct stk_ui` 的 16 方法 ↔ 契约表 `kUiMethods[]` **逐名同序**。
 
     为什么单开一步：此前全仓只有生成器自报的 `EXPECTED_UI_METHODS = 16`（管契约表**自己的**条数），
@@ -8079,6 +8084,8 @@ STEPS = [
     ("ffmpeg-min", step_ffmpeg_min),
     ("plugin-services", step_plugin_services),
     ("plugin-metadata", step_plugin_metadata),
+    # ★ 2026-11-09（F4435）：本步（P17-98 日志缓冲锁/注册表字据）此前只定义、**从未登记** ⇒ 判据从不运行。
+    ("plugin-contract", step_plugin_contract),
     ("host-offline", step_host_offline),
     ("snapshot-diff", step_snapshot_diff),
     ("track", step_track),
@@ -8099,6 +8106,17 @@ STEPS = [
     # ★★ 2026-10-07（H1-2）：版本号一份真来源（tree → version.h → .rc → 包内 exe）。
     ("version-identity", step_version_identity),
 ]
+
+
+# ★★ 2026-11-09（F4435）：**定义即登记**。修前有 3 个 `def step_*` 从未进 STEPS
+#   （`step_plugin_init_rollback` / `step_plugin_contract` / `step_abi_closure`）——
+#   其中 `plugin-contract` 指向的判据其实一直是红的（引用 P17-184 已删的 `abi_host.cpp`），
+#   却因为"没人调用"而让门禁保持绿。现在：任何 `step_*` 函数没进 STEPS ⇒ 门禁启动即 FAIL。
+#   退役步骤请改名 `_retired_step_*`（本文件的 `step_plugin_init_rollback`/`step_abi_closure` 已如此）。
+def _orphan_steps() -> list:
+    registered = {fn for _, fn in STEPS}
+    return sorted(name for name, value in globals().items()
+                  if name.startswith("step_") and callable(value) and value not in registered)
 
 
 # ★★ P17-130（用户 2026-10-16 裁定）：**门禁不许改版本状态**。
@@ -8249,6 +8267,13 @@ def main() -> int:
     say("STALKER 工具集 2.x 门禁   档位=%s   仓库=%s" % (mode, ROOT))
     say("=" * 66)
 
+    # ★ 2026-11-09（F4435）：步骤表自检必须**先于**任何步骤执行 —— 漏登记的步骤等于没验收。
+    _orphans = _orphan_steps()
+    if _orphans:
+        say("门禁自检 FAIL：以下 `step_*` 只定义、未登记进 STEPS（F4435）：%s" % "、".join(_orphans))
+        say("RESULT: FAIL（步骤表不闭合）")
+        return 1
+
     # ★★ P17-130：**先给版本状态拍快照**（收尾恢复 + 断言，见 `_restore_and_assert_version_json`）
     _snapshot_version_json()
 
@@ -8327,6 +8352,11 @@ def main() -> int:
 
     if release and UNCOVERED:
         say("release 档：未覆盖清单非空 → 整体 FAIL")
+        FAILURES += 1
+    elif any(item.startswith("全部 ") and "均未执行" in item for item in UNCOVERED):
+        # ★ 2026-11-09（F4436）：`--fast` 下 `--only` 拼错/旧步骤名曾得到 PASS（未覆盖只记录）。
+        #   "一个步骤都没跑"不是“跳过外部前提”，必须红。
+        say("`--only` 一个步骤都没匹配上 → 整体 FAIL（修前 --fast 会假绿，F4436）")
         FAILURES += 1
 
     # ★★ P17-130：**收尾恢复 + 断言版本状态**（用户 2026-10-16 裁定）。
