@@ -1427,11 +1427,11 @@ def step_db_name_cp1251_lock(release: bool) -> None:
 
 
 def step_unpack_rules(release: bool) -> None:
-    """真机判红锁：解包**落点**（包名壳：VESSEL 不叠第二层壳 + 反向两条仍叠壳）与
-    **报数口径**（`IWP\\database\\maps\\fake_start.db` 报数==盘上真实；`--dump` 仍报包内记录数）。
+    """真机判红锁：解包**落点**（包名壳：多根包不叠第二层壳 + 反向两条仍叠壳）与
+    **报数口径**（地图包 `maps/fake_start.db` 报数==盘上真实；`--dump` 仍报包内记录数）。
 
     为什么单独一步（而不是塞进 golden-db）：这两条是 2026-10-04 用户口径下**已查实**的缺陷，
-    现场在真机包上（VESSEL 的 `readme.md` 掀翻量词、maps 的条目表重复登记），合成夹具造不出来
+    现场在真机包上（多根包的 `readme.md` 掀翻量词、maps 的条目表重复登记），合成夹具造不出来
     （`pack_db` 不会自己写重复记录，smoke 里那条是**手工塞两条同路径记录**才复现的）。
     退出码：0=三组锁全绿，1=有断言不成立，2=真机样本缺失（外部前提，按档位判定）。
     """
@@ -1450,7 +1450,7 @@ def step_unpack_rules(release: bool) -> None:
     if rc == 0:
         ok("解包落点与报数口径三组真机锁全绿")
     elif rc == 2:
-        prereq("真机解包样本（VESSEL / IWP maps / Golden Sphere）", "缺样本（见上）", release)
+        prereq("真机解包样本（多根包 / 地图包 / 关卡包）", "缺样本（见上）", release)
     else:
         fail("解包落点/报数口径的真机锁不成立（见上）")
 

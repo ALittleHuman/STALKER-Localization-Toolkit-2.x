@@ -4,16 +4,16 @@ r"""真机判红锁：解包**落点**（包名壳判定）与**报数口径**�
 
 本批（2026-10-04）修的两条**已查实**缺陷，证据在：
   · 壳规则审计报告（原版反编译行号 + 258 包形态全量表）
-  · IWP 逐包对比报告（`dup_evidence.txt` / `independent_lzhuf_verify.tsv`）
+  · 地图包 逐包对比报告（`dup_evidence.txt` / `independent_lzhuf_verify.tsv`）
 
 ① 落点：**壳不保留**（2026-11-08 用户口径；2026-11-09 按解包内核参照
    `E:\Software\Tools\Ghidra\Projects\Converter\converter.exe` 实测复证：`-unpack -xdb -dir <out>`
    对条目 `levels/a.txt` 落 `<out>\levels\a.txt`，把包改名 `gamedata.db_levels` 结果相同 ⇒ **不建包名壳**）。
-   ⇒ 所有包的落点都必须**等于输出根**（不得再叠 `<包名>/`）；VESSEL `configs\ai.db` 的
+   ⇒ 所有包的落点都必须**等于输出根**（不得再叠 `<包名>/`）；多根包 `configs\ai.db` 的
    `<根>/ai/alife/` 有、`<根>/ai/ai/` 没有；`gamedata.db_levels` / `jupiter.db` 等也一律落根。
    修前这里写的是"无关顶段必须仍然叠壳"，与内核参照相反，已按实测改正。
 
-② 报数：32 个 `IWP\database\maps\*.db` 的**包内条目表把除根记录外的每条记录登记了两遍**
+② 报数：32 个 `地图包\database\maps\*.db` 的**包内条目表把除根记录外的每条记录登记了两遍**
    （同路径/同 offset ⇒ 同一份数据，独立解码已证实重复在包内，不是 dump 的 bug）⇒ 报数曾是
    盘上真相的 2 倍 −1。现在 `--unpack-package` 的 `entries=/files=/dirs=/bytes=` 走**最终产物**
    口径；**`--dump` 保持"忠实报包内记录数"**（协议层，另有用途）——两者分工见 CLI 源码注释。
@@ -46,16 +46,16 @@ import samples  # noqa: E402
 GAMES = samples.ROOTS[0]
 # ★ 2026-11-09（用户口径）：源码只用**通用别名**；真机模组名/路径在
 #   `tests/samples.local.json`（工作区，gitignore）或 `XRKIT_SAMPLES_CONFIG`。
-VESSEL_AI = samples.find_alias("unpack.vessel_ai")
-IWP_MAPS = samples.find_alias("unpack.iwp_maps")
-IWP_FAKE_START = IWP_MAPS / "fake_start.db"
-IWP_JUPITER = IWP_MAPS / "jupiter.db"
+MULTI_AI = samples.find_alias("unpack.vessel_ai")
+MAPS_DIR = samples.find_alias("unpack.iwp_maps")
+MAPS_FAKE_START = MAPS_DIR / "fake_start.db"
+MAPS_JUPITER = MAPS_DIR / "jupiter.db"
 GS_LEVELS = samples.find_alias("unpack.golden_levels")
 
 # 真机上**查实过**的硬数字（改回旧口径立刻对不上）
-VESSEL_README_BYTES = 8148
-VESSEL_FILES = 25
-VESSEL_BYTES = 22308
+MULTI_README_BYTES = 8148
+MULTI_FILES = 25
+MULTI_BYTES = 22308
 FAKE_START_ENTRIES = 15       # 产物口径（去重后）
 FAKE_START_RECORDS = 29       # 包内记录数（与 --dump 同口径）
 FAKE_START_FILES = 13
@@ -142,28 +142,28 @@ def want(cond, label, detail=""):
 
 
 def check_vessel(tmp):
-    """判红锁②（落点）：VESSEL `configs\\ai.db` ⇒ `<根>/ai/alife` 有、`<根>/ai/ai` **没有**。"""
+    """判红锁②（落点）：多根包 `configs\\ai.db` ⇒ `<根>/ai/alife` 有、`<根>/ai/ai` **没有**。"""
     out = tmp / "vessel"
-    rc, text = run_cli(["--unpack-package", VESSEL_AI, out])
+    rc, text = run_cli(["--unpack-package", MULTI_AI, out])
     target, entries, records = plan_target(text)
     ok_line = summary_ok(text)
-    want(rc == 0, "VESSEL ai.db 解包退出码 0", "exit=%d\n%s" % (rc, text.strip()[:300]))
+    want(rc == 0, "多根包 ai.db 解包退出码 0", "exit=%d\n%s" % (rc, text.strip()[:300]))
     want(norm_path(target) == norm_path(out),
          "落点＝输出根**不叠第二层壳**（target=%s）" % target)
     want((out / "ai" / "alife").is_dir(), "产物有 <根>/ai/alife/")
     want(not (out / "ai" / "ai").exists(), "产物**没有** <根>/ai/ai/（改前的现场）")
     readme = out / "readme.md"
-    want(readme.is_file() and readme.stat().st_size == VESSEL_README_BYTES,
+    want(readme.is_file() and readme.stat().st_size == MULTI_README_BYTES,
          "根级 readme.md 落对了（%s B，期望 %d）" % (readme.stat().st_size if readme.is_file() else "-",
-                                                 VESSEL_README_BYTES))
+                                                 MULTI_README_BYTES))
     disk_files, disk_bytes = disk_stats(out)
-    want(ok_line is not None and ok_line.get("files") == disk_files == VESSEL_FILES,
+    want(ok_line is not None and ok_line.get("files") == disk_files == MULTI_FILES,
          "报数 files==盘上真实（报 %s / 盘 %d / 期望 %d）"
-         % ((ok_line or {}).get("files"), disk_files, VESSEL_FILES))
-    want(ok_line is not None and ok_line.get("bytes") == disk_bytes == VESSEL_BYTES,
+         % ((ok_line or {}).get("files"), disk_files, MULTI_FILES))
+    want(ok_line is not None and ok_line.get("bytes") == disk_bytes == MULTI_BYTES,
          "报数 bytes==盘上真实（报 %s / 盘 %d / 期望 %d）"
-         % ((ok_line or {}).get("bytes"), disk_bytes, VESSEL_BYTES))
-    print("    VESSEL ai.db：entries=%s records=%s files=%s bytes=%s（盘上 %d 文件 / %d B）"
+         % ((ok_line or {}).get("bytes"), disk_bytes, MULTI_BYTES))
+    print("    多根包 ai.db：entries=%s records=%s files=%s bytes=%s（盘上 %d 文件 / %d B）"
           % (entries, records, (ok_line or {}).get("files"), (ok_line or {}).get("bytes"),
              disk_files, disk_bytes))
 
@@ -171,11 +171,11 @@ def check_vessel(tmp):
 def check_fake_start(tmp):
     """判红锁③（报数）：`maps\\fake_start.db` 报数 == 盘上真实（13 个文件 / 2,225,844 B）。"""
     out = tmp / "fake_start"
-    rc, text = run_cli(["--unpack-package", IWP_FAKE_START, out])
+    rc, text = run_cli(["--unpack-package", MAPS_FAKE_START, out])
     target, entries, records = plan_target(text)
     ok_line = summary_ok(text)
     disk_files, disk_bytes = disk_stats(out)
-    want(rc == 0, "IWP fake_start.db 解包退出码 0", "exit=%d\n%s" % (rc, text.strip()[:300]))
+    want(rc == 0, "地图包 fake_start.db 解包退出码 0", "exit=%d\n%s" % (rc, text.strip()[:300]))
     want(entries == FAKE_START_ENTRIES and records == FAKE_START_RECORDS,
          "计划行两个口径分开报（entries=%s 期望 %d / records=%s 期望 %d）"
          % (entries, FAKE_START_ENTRIES, records, FAKE_START_RECORDS))
@@ -194,7 +194,7 @@ def check_fake_start(tmp):
          "重复记录如实报出（dups=%s / 期望 %d）"
          % ((ok_line or {}).get("dups"), FAKE_START_DUPS))
     # 协议层**不去重**：`--dump` 必须仍然报包内记录数（29），这是分工的另一半
-    rc_dump, dump_text = run_cli(["--dump", IWP_FAKE_START])
+    rc_dump, dump_text = run_cli(["--dump", MAPS_FAKE_START])
     dump_line = [ln for ln in dump_text.splitlines() if ln.startswith("DUMP ok")]
     want(rc_dump == 0 and dump_line and " entries=%d" % FAKE_START_RECORDS in dump_line[0],
          "`--dump` 保持**忠实报包内记录数**（协议层不去重）", dump_line[0] if dump_line else "")
@@ -214,7 +214,7 @@ def check_reverse(tmp):
     phantom.write_text("__no_such_entry__\n", encoding="utf-8")
     out = tmp / "reverse"
     out.mkdir(parents=True, exist_ok=True)   # 让 samefile 能判"短名/长名同一目录"
-    for pkg, shell in ((GS_LEVELS, "gamedata"), (IWP_JUPITER, "jupiter")):
+    for pkg, shell in ((GS_LEVELS, "gamedata"), (MAPS_JUPITER, "jupiter")):
         rc, text = run_cli(["--unpack-package", pkg, out, "--only", phantom])
         target, entries, records = plan_target(text)
         ok_line = summary_ok(text)
@@ -243,7 +243,7 @@ def main():
         print("!! 找不到 CLI：%s" % CLI)
         return 2
 
-    required = [VESSEL_AI, IWP_FAKE_START, IWP_JUPITER, GS_LEVELS]
+    required = [MULTI_AI, MAPS_FAKE_START, MAPS_JUPITER, GS_LEVELS]
     missing = [str(p) for p in required if not p.is_file()]
     if missing:
         print("!! 缺真机样本（外部前提，按档位判定）：")
@@ -253,9 +253,9 @@ def main():
 
     tmp = Path(tempfile.mkdtemp(prefix="xrkit_unpack_lock_"))
     try:
-        print("[①落点] VESSEL `configs\\ai.db`（裸壳项 + 一条根级 readme.md + 一堆 ai/…）")
+        print("[①落点] 多根包 `configs\\ai.db`（裸壳项 + 一条根级 readme.md + 一堆 ai/…）")
         check_vessel(tmp)
-        print("[②报数] IWP `maps\\fake_start.db`（包内条目表每条登记两遍）")
+        print("[②报数] 地图包 `maps\\fake_start.db`（包内条目表每条登记两遍）")
         check_fake_start(tmp)
         print("[③反向] 所有包（含顶段与包名无关的）落点都必须＝输出根（壳不保留）")
         check_reverse(tmp)
@@ -267,7 +267,7 @@ def main():
         for p in PROBLEMS:
             print("           " + p)
         return 1
-    print("UNPACK-LOCK ok 落点（一律输出根、不叠包名壳；VESSEL 无 ai/ai）与报数"
+    print("UNPACK-LOCK ok 落点（一律输出根、不叠包名壳；多根包 无 ai/ai）与报数"
           "（fake_start 报数==盘上真实、--dump 仍报记录数）全绿")
     return 0
 

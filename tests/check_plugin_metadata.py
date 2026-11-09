@@ -36,20 +36,33 @@ def main() -> int:
     p = subprocess.run([str(CLI), "--py-plugins", str(FIXTURES)],
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     text = p.stdout.decode("utf-8", "replace")
+    lines = [ln for ln in text.splitlines() if ln.startswith("PLUGIN name=")]
+
+    def line_for(name: str) -> str:
+        for ln in lines:
+            if ("name=%s " % name) in (ln + " "):
+                return ln
+        return ""
+
     checks = [
-        ("PLUGIN name=a_provider provides=net.http_get/1", "字面量 provides 可见"),
-        ("PLUGIN name=b_consumer", "每个顶层 .py 都有一行 PLUGIN"),
-        ("requires=net.http_get/1", "字面量 requires 可见"),
-        ("PLUGIN name=c_dynamic provides=? ", "动态构造 ⇒ 输出 ?（不猜）"),
-        ("note=PLUGIN_INFO 不是字面量", "动态构造给出可读原因"),
-        ("PLUGIN name=d_imports provides=- requires=- imports=ctypes,os",
-         "imports 静态可见（不执行插件）"),
+        ("provides=net.http_get/1" in line_for("net_http"),
+         "字面量 provides 可见", "net_http 的 PLUGIN 行"),
+        (bool(line_for("consumer")), "每个顶层 .py 都有一行 PLUGIN", "consumer"),
+        ("requires=net.http_get/1" in text, "字面量 requires 可见", ""),
+        ("provides=?" in line_for("c_dynamic"), "动态构造 ⇒ 输出 ?（不猜）", "c_dynamic"),
+        ("note=PLUGIN_INFO 不是字面量" in line_for("c_dynamic"),
+         "动态构造给出可读原因", "c_dynamic"),
+        ("imports=ctypes,os" in line_for("imports_demo"),
+         "imports 静态可见（不执行插件）", "imports_demo"),
+        # ★ 2026-11-09：清单结构化字段（管理器读这些；与 --json 同源）
+        ("id=" in line_for("net_http") and "depends=" in line_for("net_http"),
+         "清单字段 id/depends 可见", line_for("net_http")[:80]),
     ]
-    for needle, label in checks:
-        if needle in text:
-            ok(label)
+    for cond, label, detail in checks:
+        if cond:
+            ok(label + (("（%s）" % detail) if detail and not cond else ""))
         else:
-            fail("%s（输出里没有「%s」）" % (label, needle))
+            fail("%s（%s）" % (label, detail or "输出里没有对应行"))
     if PROBLEMS:
         print("PLUGIN-METADATA: FAIL（%d 处）" % len(PROBLEMS))
         return 1
