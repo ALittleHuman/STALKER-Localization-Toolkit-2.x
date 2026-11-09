@@ -1471,7 +1471,34 @@ void XmlPage::run_extract() {
                                            "（只有 scripts/gameplay 时请先确认源的结构）"));
                 return;
             }
-            const QString texts_out = text_dirs.front();
+            // ★ 2026-11-09：多语言时不再取遍历到的第一个（顺序未定义）——
+            //   先读 `localization.ltx` 的 language；没有就按语言名排序取第一个（确定性），
+            //   并把选择结果写进日志（零静默）。
+            QString chosen_lang;
+            {
+                QFile ltx(QDir(base).filePath(QStringLiteral("localization.ltx")));
+                if (ltx.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                    const QString content = QString::fromUtf8(ltx.readAll());
+                    const QRegularExpression re(
+                        QStringLiteral("language\\s*=\\s*([A-Za-z0-9_-]+)"));
+                    const auto m = re.match(content);
+                    if (m.hasMatch()) chosen_lang = m.captured(1);
+                }
+            }
+            text_dirs.sort();
+            QStringList ordered;
+            if (!chosen_lang.isEmpty()) {
+                for (const QString& dir : text_dirs) {
+                    if (QFileInfo(dir).fileName() == chosen_lang) ordered << dir;
+                }
+            }
+            for (const QString& dir : text_dirs) {
+                if (!ordered.contains(dir)) ordered << dir;
+            }
+            const QString texts_out = ordered.front();
+            message("提取语言：" + QFileInfo(texts_out).fileName().toStdString() +
+                    (chosen_lang.isEmpty() ? "（未找到 localization.ltx，按目录名排序取第一）"
+                                           : "（取自 localization.ltx）"));
             QDir().mkpath(texts_out);
             int strings = 0;
             int rewritten = 0;

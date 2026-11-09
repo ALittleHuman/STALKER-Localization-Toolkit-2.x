@@ -434,6 +434,12 @@ OriResult build_ori_tree(const OriOptions& options) {
         const auto lang_pair = container_lang(container, options.lang);
         info.lang = lang_pair.first;
         info.lang_source = lang_pair.second;
+        // ★ 2026-11-09：无证据时不再静默按 rus —— 明确告知用户可显式指定语言。
+        if (info.lang_source == "fallback") {
+            out.warnings.push_back("容器 " + (rel.empty() ? std::string(".") : rel) +
+                                   "：无法确定语言（无 localization.ltx / text 目录），"
+                                   "暂按 " + info.lang + "；可用 --lang 指定");
+        }
         info.has_text = is_dir(container / cfg_name / "text");
         info.has_fonts = is_dir(container / "fonts") || is_file(container / cfg_name / "fonts.ltx");
         info.has_scripts = is_dir(container / "scripts") ||

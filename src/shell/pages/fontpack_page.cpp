@@ -204,6 +204,24 @@ FontPackPage::FontPackPage(QWidget* parent)
             for (const std::string& line : model.evidence) {
                 text += QStringLiteral("｜") + QString::fromStdString(line);
             }
+            // ★ 2026-11-09：语言下拉**从扫描结果生成**（不再只有固定的 eng/rus/chs）。
+            if (lang_combo_ != nullptr) {
+                QStringList langs;
+                if (!model.lang.empty()) langs << QString::fromStdString(model.lang);
+                if (!model.text_dir.empty()) {
+                    langs << QFileInfo(QString::fromStdString(model.text_dir)).fileName();
+                }
+                langs.removeAll(QString());
+                langs.removeDuplicates();
+                for (const QString& lang : langs) {
+                    if (lang_combo_->findData(lang) < 0) lang_combo_->addItem(lang, lang);
+                }
+                if (!model.lang.empty() && lang_combo_->findData(
+                                                QString::fromStdString(model.lang)) >= 0) {
+                    lang_combo_->setCurrentIndex(
+                        lang_combo_->findData(QString::fromStdString(model.lang)));
+                }
+            }
             if (state_label_ != nullptr) state_label_->setText(text);
         });
         scan_layout->addWidget(scan_button, 0);
@@ -231,7 +249,7 @@ FontPackPage::FontPackPage(QWidget* parent)
     for (const char* game : {"SoC", "ClS", "CoP", "IX-Ray"}) {
         game_combo_->addItem(utf8(game), utf8(game));
     }
-    // 1.x `:71-82`：加载语言 = eng/rus/chs/**自定义**（自定义才显示输入框）
+    // 1.x `:71-82`：加载语言初始给 eng/rus/chs；**扫描后从参照包追加实际语言**（自定义才显示输入框）
     lang_combo_ = new QComboBox;
     lang_combo_->setObjectName(QStringLiteral("font_lang"));
     for (const char* lang : {"eng", "rus", "chs"}) lang_combo_->addItem(utf8(lang), utf8(lang));

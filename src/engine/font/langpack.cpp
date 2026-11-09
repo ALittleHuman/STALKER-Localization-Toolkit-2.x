@@ -176,7 +176,9 @@ LangPackModel scan_lang_pack(const std::string& root) {
     }
 
     // ③ lang：localization.ltx 的 [string_table] language
-    model.lang = "rus";
+    // ★ 2026-11-09：**不再静默默认 rus** —— 没有 localization.ltx 就留空，
+    //   由页面/用户显式选择（证据来源另记一条，零静默）。
+    model.lang.clear();
     if (const fs::path loc = config_dir / "localization.ltx"; is_file(loc)) {
         for (const auto& sec : parse_ltx(read_text(loc))) {
             if (lower(sec.name) != "string_table") continue;
@@ -204,14 +206,22 @@ LangPackModel scan_lang_pack(const std::string& root) {
     }
 
     // ⑤ 资源证据：矢量 fonts/<lang>/*.ttf vs 位图 textures/ui/ui_font_*.dds
-    const fs::path ttf_dir = base / "fonts" / model.lang;
-    model.ttf_count = count_ext(ttf_dir, ".ttf");
-    if (model.ttf_count > 0) model.ttf_dir = core::path_to_utf8(ttf_dir);
+    // ★ 2026-11-09：lang 未知时**不拼空目录**（`fonts/` 根不是语言目录）。
+    if (!model.lang.empty()) {
+        const fs::path ttf_dir = base / "fonts" / model.lang;
+        model.ttf_count = count_ext(ttf_dir, ".ttf");
+        if (model.ttf_count > 0) model.ttf_dir = core::path_to_utf8(ttf_dir);
+    }
     model.dds_count = count_ui_font_dds(base);
 
     // ⑥ 文本目录（布局跟着包走：configs/text/<lang>）
-    const fs::path text_dir = config_dir / "text" / model.lang;
-    if (is_dir(text_dir)) model.text_dir = core::path_to_utf8(text_dir);
+    if (!model.lang.empty()) {
+        const fs::path text_dir = config_dir / "text" / model.lang;
+        if (is_dir(text_dir)) model.text_dir = core::path_to_utf8(text_dir);
+    } else {
+        model.evidence.push_back(
+            "未识别语言（没有 localization.ltx）：请在页面上选择「加载语言」");
+    }
 
     // ⑦ 判定（顺序写死：矢量优先；位图内部按 shader，再按配置目录）
     bool any_name = false;
