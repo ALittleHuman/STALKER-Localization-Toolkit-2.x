@@ -1,31 +1,47 @@
 # -*- coding: utf-8 -*-
-"""**真机样本的唯一定位器**（2026-10-24 收敛）。
+"""**真机样本的唯一定位器**（2026-11-09：样本信息全部移出源码）。
 
-为什么要有它
-------------
-修前每个判据脚本各自写死绝对路径（`E:\\Software\\Games\\STALKER\\Games\\…`）。
-2026-10-24 真机样本被整理到 `E:\\Software\\Tools\\Transition\\DB双向验证套件\\samples\\原件\\`
-⇒ 四个门禁步骤（语料 / DB 语料 / 真机解包 / 真语料文本）全部退化成"样本缺失"，
-而**样本其实都在**，只是路径不同 —— 判据"看起来红"，红的却是"位置变了"。
-
-口径
-----
-· 根按优先级：`XRKIT_SAMPLES`（环境变量，一台机器一个根）→ 旧 `Games` → `Transition…\\原件`；
-· 脚本只写**相对片段**（`VESSEL/S.T.A.L.K.E.R. VESSEL/…`），由 `find()` 逐根拼；
-· 找不到时返回"第一个根 + 片段"的路径（让报错**点名**到底在找什么，而不是空字符串）。
+口径（用户 2026-11-09）
+----------------------
+· **源码里只允许出现通用别名**（如 `unpack.vessel_ai`），不许出现真机模组名/绝对路径；
+· 真实样本名 → 相对片段/绝对根的映射放在**工作区**配置文件：
+  `tests/samples.local.json`（已 gitignore）或 `XRKIT_SAMPLES_CONFIG` 指向的 JSON；
+· 根优先级：`XRKIT_SAMPLES`（环境变量）→ 配置文件 `roots`；都没有时用一个占位根
+  （`find()` 返回该占位路径，判据会明确报"样本缺失"，不是空字符串）。
+· 配置文件格式：
+  {
+    "roots": ["D:/samples", "E:/..."],
+    "aliases": {"unpack.vessel_ai": "VESSEL/<真机名>/database/configs/ai.db",
+                "text.real_scripts": "Golden Sphere/gamedata/scripts"}
+  }
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
+HERE = Path(__file__).resolve().parent
+CONFIG = Path(os.environ.get("XRKIT_SAMPLES_CONFIG", str(HERE / "samples.local.json")))
+
 ROOTS: list[Path] = []
+ALIASES: dict[str, str] = {}
+
 if os.environ.get("XRKIT_SAMPLES"):
     ROOTS.append(Path(os.environ["XRKIT_SAMPLES"]))
-ROOTS.extend([
-    Path(r"E:\Software\Games\STALKER\Games"),
-    Path(r"E:\Software\Tools\Transition\DB双向验证套件\samples\原件"),
-])
+
+if CONFIG.is_file():
+    try:
+        data = json.loads(CONFIG.read_text(encoding="utf-8-sig"))
+    except Exception:  # noqa: BLE001 - 坏配置按"没配"处理，判据自己会报样本缺失
+        data = {}
+    for root in data.get("roots", []) or []:
+        if str(root).strip():
+            ROOTS.append(Path(str(root)))
+    ALIASES = {str(k): str(v) for k, v in (data.get("aliases") or {}).items()}
+
+if not ROOTS:
+    ROOTS = [Path("samples")]
 
 
 def find(*parts: str) -> Path:
@@ -35,6 +51,14 @@ def find(*parts: str) -> Path:
         if cand.exists():
             return cand
     return ROOTS[0].joinpath(*parts)
+
+
+def find_alias(name: str) -> Path:
+    """按**通用别名**取样本（映射在 samples.local.json；源码不出现真机名/路径）。"""
+    rel = ALIASES.get(name)
+    if not rel:
+        return ROOTS[0] / name
+    return find(*Path(rel).parts)
 
 
 def find_any(*candidates: tuple) -> Path:

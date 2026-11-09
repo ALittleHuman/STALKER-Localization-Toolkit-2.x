@@ -33,16 +33,17 @@ ROOT = HERE.parent
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 BASELINE = HERE / "golden" / "text_extract.json"
 WORK = ROOT / "build" / "golden_text_extract"
-TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+# ★ 2026-11-09（用户口径）：1.x 参照路径也走样本别名（工作区配置），源码不写死。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
+
+TOOLKIT_1X = samples.find_alias("toolkit.1x")
 
 # 真语料：gameplay 全取；scripts 取 `gamedata\scripts`（468 个 .script，实测 446 个能提到文本）
 #   ★ 别用 `gamedata\config\scripts`：那 3695 个里 3693 个是纯 logic 的 .ltx（一条都提不到），
 #     只有 2 个 .script 有文本 —— 拿它当语料等于只测"原样写回"（实测踩过）。
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import samples  # noqa: E402
-
-REAL_GAMEPLAY = samples.find("Golden Sphere", "gamedata", "config", "gameplay")
-REAL_SCRIPTS = samples.find("Golden Sphere", "gamedata", "scripts")
+REAL_GAMEPLAY = samples.find_alias("text.real_gameplay")
+REAL_SCRIPTS = samples.find_alias("text.real_scripts")
 SCRIPT_SAMPLE = 60
 
 FIXED_TS = 1700000000

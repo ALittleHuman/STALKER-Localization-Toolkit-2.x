@@ -44,11 +44,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import samples  # noqa: E402
 
 GAMES = samples.ROOTS[0]
-VESSEL_AI = samples.find("VESSEL", "S.T.A.L.K.E.R. VESSEL", "database", "configs", "ai.db")
-IWP_MAPS = samples.find_any(("IWP", "database", "maps"), ("IWP_database", "maps"))
+# ★ 2026-11-09（用户口径）：源码只用**通用别名**；真机模组名/路径在
+#   `tests/samples.local.json`（工作区，gitignore）或 `XRKIT_SAMPLES_CONFIG`。
+VESSEL_AI = samples.find_alias("unpack.vessel_ai")
+IWP_MAPS = samples.find_alias("unpack.iwp_maps")
 IWP_FAKE_START = IWP_MAPS / "fake_start.db"
 IWP_JUPITER = IWP_MAPS / "jupiter.db"
-GS_LEVELS = samples.find("Golden Sphere", "gamedata.db_levels")
+GS_LEVELS = samples.find_alias("unpack.golden_levels")
 
 # 真机上**查实过**的硬数字（改回旧口径立刻对不上）
 VESSEL_README_BYTES = 8148
@@ -96,6 +98,26 @@ def summary_ok(text):
 
 def norm_path(p):
     return os.path.normcase(os.path.normpath(str(p).replace("/", os.sep)))
+
+
+def long_path(p):
+    """Windows：把 8.3 短名（ADMINI~1）换成长期名；非 Windows/失败原样返回。"""
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(32768)
+        n = ctypes.windll.kernel32.GetLongPathNameW(str(p), buf, 32768)
+        return buf.value if n else str(p)
+    except Exception:  # noqa: BLE001
+        return str(p)
+
+
+def same_path(a, b):
+    """同一路径判定：优先 samefile（Windows 8.3 短名与长名是同一目录，
+    只做字符串 normpath 会误判）；不存在时用长期名比较。"""
+    try:
+        return os.path.samefile(str(a), str(b))
+    except OSError:
+        return norm_path(long_path(a)) == norm_path(long_path(b))
 
 
 def disk_stats(root):
@@ -191,12 +213,17 @@ def check_reverse(tmp):
     phantom = tmp / "phantom_only.txt"
     phantom.write_text("__no_such_entry__\n", encoding="utf-8")
     out = tmp / "reverse"
+    out.mkdir(parents=True, exist_ok=True)   # 让 samefile 能判"短名/长名同一目录"
     for pkg, shell in ((GS_LEVELS, "gamedata"), (IWP_JUPITER, "jupiter")):
         rc, text = run_cli(["--unpack-package", pkg, out, "--only", phantom])
         target, entries, records = plan_target(text)
         ok_line = summary_ok(text)
-        want(rc == 0 and norm_path(target) == norm_path(out),
-             "%s ⇒ 落点＝输出根（**不**叠 <根>/%s；target=%s）" % (pkg.name, shell, target))
+        want(same_path(target, out),
+             "%s ⇒ 落点＝输出根（**不**叠 <根>/%s；target=%s out=%s）"
+             % (pkg.name, shell, target, out))
+        # ★ 2026-11-09：`--only` 一条都不命中 ⇒ 明确拒绝（rc=1），不再"假装成功"。
+        want(rc == 1 and "一条都没命中" in text,
+             "%s ⇒ 不存在的 --only ⇒ 明确拒绝（rc=%s）" % (pkg.name, rc))
         # 反向锁只看计划 ⇒ 一个文件都不许落盘（`--only` 只给了包内不存在的条目）
         want(ok_line is not None and ok_line.get("done") == 0 and ok_line.get("files") == 0,
              "%s ⇒ 只看计划、不落盘（done=%s files=%s）"

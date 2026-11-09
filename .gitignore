@@ -72,3 +72,6 @@ plugins_ixr/ixr_marker.txt
 
 # IXR 插件运行期生成的计划文件
 plugins_ixr/_lib/last_plan.json
+
+# 真机样本映射（只在本机/工作区，不进源码）
+tests/samples.local.json

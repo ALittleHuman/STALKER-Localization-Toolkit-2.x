@@ -19,6 +19,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 PROBLEMS = []
 
 
@@ -124,8 +126,8 @@ def main() -> int:
         rc4, log4 = run(src, src / "inner")
         (ok if rc4 != 0 else fail)("输出与源重叠 ⇒ 拒绝（rc=%d）" % rc4)
 
-        # 参考包只做**对照**，不参与判据
-        ref = Path("E:/Software/Games/STALKER/Games/Chronicles of Pripyat/Chronicles of Pripyat/MODS/\u6c49\u5316/rus")
+        # 参考包只做**对照**，不参与判据（真机名/路径在工作区 samples.local.json）
+        ref = samples.find_alias("langpack.rus_ref")
         if ref.is_dir():
             ref_files = files(ref)
             print("  · 对照参考包（仅报告，不影响判定）：参照 %d 个文件；其中"
