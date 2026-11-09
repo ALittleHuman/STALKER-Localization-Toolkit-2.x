@@ -612,6 +612,13 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
                         continue
                 return raw.decode("utf-8", errors="replace")
             merged = merge_text_by_id(_read_any(src), _read_any(tr_same))
+            # ★★ 2026-11-09（F3914 实测缺陷：合并 → 二次解码 → 乱码固化）：
+            #   `merge_text_by_id` 保留了参考文件的 `<?xml … encoding="windows-1251"?>` 声明，
+            #   而这里固定写 **UTF-8 字节** ⇒ 紧接着的 `_normalize_text_xml` 会**按声明用 1251 解码**
+            #   UTF-8 字节，产出 mojibake 再写回（实测 `你好` → `дЅ еҐЅ`，最终文件永久丢失中文）。
+            #   修法：写字节**之前**先把声明改成 utf-8 —— 字节与声明必须同源。
+            merged = re.sub(r'(<\?xml[^>]*encoding\s*=\s*")([^"]+)(")',
+                            r"\1utf-8\3", merged, count=1)
             dst.write_bytes(merged.encode("utf-8"))
         else:
             shutil.copy2(tr_same if tr_same is not None else src, dst)

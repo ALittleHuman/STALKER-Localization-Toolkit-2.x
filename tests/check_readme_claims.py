@@ -103,6 +103,17 @@ def main() -> int:
          "有默认落点=%s 有来源=%s" % ("默认落点" in readme, "来源" in readme))
     want(re.search(r"不会自动安装|不会自动安装或修改", readme) is not None,
          "B2 交付 README 必须写出「不会自动安装或修改游戏文件」（这是准确的那一半）")
+    # ★ 2026-11-09（F3772）：模板曾把**游戏**的 `user.ltx` 说成“唯一的自动写盘位置/用户设置”；
+    #   产品实际写 `xrkit_user.ltx`（`user.ltx` 只在有我们的键时迁移一次、**从不写**）。
+    #   规则：提到 `user.ltx` 时必须同时出现 `xrkit_user.ltx`，且不许把它说成我们的设置/写盘位置。
+    bare_user = re.search(r"(?<!xrkit_)user\.ltx", readme) is not None
+    if bare_user:
+        want("xrkit_user.ltx" in readme,
+             "F1 模板提到 `user.ltx` 时必须同时点名 `xrkit_user.ltx`（H-02）")
+        bad = (re.search(r"用户设置[^。\n]{0,12}(?<!xrkit_)user\.ltx", readme) is not None
+               or re.search(r"自动写盘位置[^。\n]{0,24}(?<!xrkit_)user\.ltx", readme) is not None)
+        want(not bad,
+             "F2 模板不许把 `user.ltx` 说成「用户设置/自动写盘位置」（产品写 `xrkit_user.ltx`）")
 
     sec = spec_section(spec)
     want(bool(sec), "C0 规格里能找到「安装与回退」那一节")
