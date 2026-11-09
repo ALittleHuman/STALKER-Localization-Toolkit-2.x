@@ -17,7 +17,7 @@ import tempfile
 import time
 from pathlib import Path
 
-ROOT = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit_2.x")
+ROOT = Path(__file__).resolve().parent.parent   # ★ 2026-11-09：相对本文件推导，不写死本机路径
 EXE = ROOT / "build" / "msvc-shell" / "src" / "shell" / "xrkit_app.exe"
 OUT = ROOT / "build" / "logs" / "p5_probe"
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 12

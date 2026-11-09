@@ -227,7 +227,7 @@ std::vector<UnpackTarget> plan_unpack_targets(
 //
 // 规则（与 `extract_package` 的落盘顺序逐字对应：`safe_out_path(target, entry.path)`）：
 //   ★★ 2026-11-09（F2740，按解包内核参照实测修正）：**壳不保留 ⇒ 预览＝条目原样**。
-//   参照 `E:\Software\Tools\Ghidra\Projects\Converter\converter.exe`（Ghidra 导出即其反编译）实测：
+//   参照 **Ghidra `Converter` 工程导出的反编译源码**（`converter.exe.c`）实测：
 //   `converter.exe -unpack -xdb -dir <out> test.db`（条目 `levels/a.txt`、`readme.md`）⇒
 //   `<out>\levels\a.txt`、`<out>\readme.md`；把包改名 `gamedata.db_levels` 再跑结果相同 ——
 //   **不建包名壳**。这与 `unpack_target_dir` 的 2026-11-08 口径（"解压到当前位置"）一致。

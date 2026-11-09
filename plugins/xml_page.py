@@ -92,7 +92,7 @@ def headless(api, args):
     # ★★ P17-10（审计 02 F-05）：收尾行与 CLI **逐字同形**（含 `errors=N`）——
     #   引擎把 `DirDiffReport::errors` 透了上来，这里只排版；两侧必须同形，门禁逐行对拍。
     errors = list(report.get("errors") or [])
-    # ★ 2026-11-05（DSH 封测防漏）：stats 只比 ID 集合/文件数 ⇒ 必须明说（与 CLI 逐行同形）
+    # ★ 2026-11-05（封测防漏）：stats 只比 ID 集合/文件数 ⇒ 必须明说（与 CLI 逐行同形）
     mode = "stats"
     for i, a in enumerate(args):
         if a == "--mode" and i + 1 < len(args):

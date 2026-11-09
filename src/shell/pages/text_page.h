@@ -1,5 +1,5 @@
 #pragma once
-// ★ 2026-11-02（HA/DSH 裁）：**测试专用，不是产品页** —— 产品入口是「文本工具」页的提取模式；
+// ★ 2026-11-02 决策：**测试专用，不是产品页** —— 产品入口是「文本工具」页的提取模式；
 //   本页只作 smoke 的提取/滚动测试夹具，不许在 page_factory 注册。删它要先把 smoke 迁走。
 // xrkit::shell —— 文本提取页（M2-6d）。
 //
@@ -33,7 +33,7 @@ class TaskShell;
 class VirtualList;
 class ScrollViewport;
 
-// ★ 2026-11-02（HA 裁）：本页**不是产品页**（产品入口是「文本工具」页的提取模式），
+// ★ 2026-11-02 决策：本页**不是产品页**（产品入口是「文本工具」页的提取模式），
 //   仅作 smoke 的提取/滚动测试夹具。删它要先把 smoke 迁到 XmlPage 的提取模式。
 class TextPage : public PageBase {
 public:

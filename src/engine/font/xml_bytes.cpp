@@ -20,7 +20,7 @@ bool is_bom_utf8(const std::vector<uint8_t>& raw) {
 
 namespace {
 
-// 2026-09-27（Hana 第二次审计 §四-2）：1.x 用的是 `re.I`（**大小写不敏感**），我们原先用
+// 2026-09-27（第三方第二次审计 §四-2）：1.x 用的是 `re.I`（**大小写不敏感**），我们原先用
 // 大小写敏感的 `find` ⇒ "头文件注释说不敏感 / 实现敏感 / 与 1.x 不一致"三处不符。
 // 合法 XML 恒小写，触发面窄，但既然写着"不敏感"就必须真的不敏感 —— 统一走这个匹配。
 size_t find_ci(const std::string& hay, const std::string& needle, size_t from) {

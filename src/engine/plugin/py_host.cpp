@@ -4361,7 +4361,7 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
         emit("PYPLUGINS residue plugin=" + e.plugin +
              " value=" + std::to_string(registry.residue_for(e.plugin).registrations()));
     }
-    // ★ 2026-11-03（DSH）：`--py-plugins` 输出每个插件的 provides/requires/imports ——
+    // ★ 2026-11-03（审计）：`--py-plugins` 输出每个插件的 provides/requires/imports ——
     //   **用 ast 静态读 PLUGIN_INFO 字面量，不 import 插件**（import 会执行顶层代码 = P-16-2a 旧病）。
     //   拼接/判空全部在 Python 侧做完，C++ 只读字符串（修：早前在 C++ 里迭代 py::object 会 0xC0000409）。
     std::vector<std::string> lines_out;

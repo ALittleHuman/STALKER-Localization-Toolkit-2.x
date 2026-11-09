@@ -21,6 +21,36 @@ from ctypes import wintypes
 
 _winhttp = ctypes.WinDLL("winhttp", use_last_error=True)
 
+# ★★ 2026-11-09（实测缺陷：`WinHttpConnect 失败：6`）：**不声明 restype/argtypes 时，
+#   ctypes 默认把返回值当 32 位 int** ⇒ 64 位下 HINTERNET（指针）被截断成无效句柄
+#   ⇒ WinHttpConnect 拿到坏 session 直接 ERROR_INVALID_HANDLE(6)。本机对 127.0.0.1
+#   的最小复现即此错；声明原型后同一调用返回 `HELLO-FROM-LOCAL-SERVER`。
+_HANDLE = wintypes.HANDLE
+_DWORD = wintypes.DWORD
+_LPCWSTR = wintypes.LPCWSTR
+_winhttp.WinHttpOpen.restype = _HANDLE
+_winhttp.WinHttpOpen.argtypes = [_LPCWSTR, _DWORD, _LPCWSTR, _LPCWSTR, _DWORD]
+_winhttp.WinHttpSetTimeouts.restype = wintypes.BOOL
+_winhttp.WinHttpSetTimeouts.argtypes = [_HANDLE, ctypes.c_int, ctypes.c_int,
+                                        ctypes.c_int, ctypes.c_int]
+_winhttp.WinHttpSetOption.restype = wintypes.BOOL
+_winhttp.WinHttpSetOption.argtypes = [_HANDLE, _DWORD, ctypes.c_void_p, _DWORD]
+_winhttp.WinHttpConnect.restype = _HANDLE
+_winhttp.WinHttpConnect.argtypes = [_HANDLE, _LPCWSTR, wintypes.WORD, _DWORD]
+_winhttp.WinHttpOpenRequest.restype = _HANDLE
+_winhttp.WinHttpOpenRequest.argtypes = [_HANDLE, _LPCWSTR, _LPCWSTR, _LPCWSTR, _LPCWSTR,
+                                        ctypes.POINTER(_LPCWSTR), _DWORD]
+_winhttp.WinHttpSendRequest.restype = wintypes.BOOL
+_winhttp.WinHttpSendRequest.argtypes = [_HANDLE, _LPCWSTR, _DWORD, ctypes.c_void_p, _DWORD,
+                                        _DWORD, ctypes.c_size_t]
+_winhttp.WinHttpReceiveResponse.restype = wintypes.BOOL
+_winhttp.WinHttpReceiveResponse.argtypes = [_HANDLE, ctypes.c_void_p]
+_winhttp.WinHttpReadData.restype = wintypes.BOOL
+_winhttp.WinHttpReadData.argtypes = [_HANDLE, ctypes.c_void_p, _DWORD,
+                                     ctypes.POINTER(_DWORD)]
+_winhttp.WinHttpCloseHandle.restype = wintypes.BOOL
+_winhttp.WinHttpCloseHandle.argtypes = [_HANDLE]
+
 WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY = 4
 WINHTTP_FLAG_SECURE = 0x00800000
 WINHTTP_OPTION_REDIRECT_POLICY = 110

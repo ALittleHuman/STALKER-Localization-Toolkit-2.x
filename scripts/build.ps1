@@ -1,4 +1,4 @@
-﻿#requires -Version 5.1
+#requires -Version 5.1
 <#
   2.x 构建入口。
 
@@ -26,8 +26,9 @@ $root      = Split-Path -Parent $PSScriptRoot
 $buildRoot = Join-Path $root 'build'
 $envFile   = Join-Path $buildRoot 'msvc_env.txt'
 
-$vs     = 'E:\Software\Tools\Visual Studio\2022\BuildTools'
-$qt     = 'E:\Software\Tools\Qt\6.8.3\msvc2022_64'
+# ★ 2026-11-09：工具链路径**不写死** —— `XRKIT_VS`/`XRKIT_QT` 可覆盖（换机器不用改脚本）。
+$vs     = if ($env:XRKIT_VS) { $env:XRKIT_VS } else { 'E:\Software\Tools\Visual Studio\2022\BuildTools' }
+$qt     = if ($env:XRKIT_QT) { $env:XRKIT_QT } else { 'E:\Software\Tools\Qt\6.8.3\msvc2022_64' }
 $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
 
 New-Item -ItemType Directory -Force -Path $buildRoot | Out-Null

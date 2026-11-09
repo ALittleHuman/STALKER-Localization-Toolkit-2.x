@@ -1251,7 +1251,7 @@ QWidget* VideoPage::request_setup() {
         QStringLiteral("没找到 ffmpeg。请把 ffmpeg.exe 放到程序目录，或用「手动选择」指定 "
                        "ffmpeg.exe / ffprobe.exe 的位置。")));
     auto* buttons = new QHBoxLayout;
-    // ★ 2026-11-02（HA/DSH 裁）：自动安装退役 ⇒ 两按钮
+    // ★ 2026-11-02（决策）：自动安装退役 ⇒ 两按钮
     auto* choose = new QPushButton(QStringLiteral("手动选择"));
     auto* later = new QPushButton(QStringLiteral("稍后"));
     buttons->addWidget(choose);

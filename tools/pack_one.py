@@ -43,7 +43,10 @@ def main() -> int:
         print("找不到 CLI：%s（先跑 tests/run_ci.py --fast 的 [1] 构建步骤）" % cli)
         return 2
     env = dict(os.environ)
-    env["PATH"] = r"C:\Users\Administrator01\AppData\Local\Python\bin;" + env.get("PATH", "")
+    # ★ 2026-11-09：不再写死本机 Python 目录 —— 用**当前解释器所在目录**（换机器/换 venv 都对）。
+    py_dir = os.path.dirname(sys.executable)
+    if py_dir:
+        env["PATH"] = py_dir + os.pathsep + env.get("PATH", "")
     # ★★ 2026-10-23：把**本启动器自己的解释器**告诉打包链（`--build-package` 要跑
     #   `tools/gen_winres.py`）。PATH 上的 `python` 在本机是 WindowsApps 的占位别名
     #   （返回 9009）⇒ 光改 PATH 不可靠；显式给 `XRKIT_PYTHON` 才是单一真值。

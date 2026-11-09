@@ -87,9 +87,10 @@ QWidget* make_placeholder(const PageSpec& spec) {
     font.setPointSizeF(font.pointSizeF() + 3.0);
     font.setBold(true);
     title->setFont(font);
-    auto* note = new QLabel(QStringLiteral("页 id: %1 —— 业务内容按 M2-6 逐片接入"
-                                           "（外壳已把布局/主题/日志壳就位）")
-                                .arg(QString::fromStdString(spec.id)));
+    // ★ 2026-11-09（用户口径：**精简描述性水印**）：占位页只留一句最短提示，
+    //   不再把"页 id / M2-6 逐片接入 / 外壳已把布局主题日志壳就位"这类开发口径印给用户。
+    auto* note = new QLabel(QStringLiteral("本页尚未接入"));
+    note->setObjectName(QStringLiteral("page_placeholder_note"));
     note->setWordWrap(true);
     layout->addWidget(title);
     layout->addWidget(note);
@@ -170,7 +171,7 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
         registry_.register_compare_mode(xml::kBuiltinPlugin, std::move(mode));
     }
 
-    // ── 方案一（Hana 重排）：顶部标签条 + 内容区。六页照旧，只是导航从左侧列表
+    // ── 方案一（界面重排）：顶部标签条 + 内容区。六页照旧，只是导航从左侧列表
     //   改成顶部标签（横向铺开、当前页高亮），把左右宽度都还给内容区。
     // ★★ P1：**页的装配推迟到构造末尾**（本函数最后一段）—— 那时日志栏/状态栏已经存在，
     //   `attach_services` 交给页的机制才不是空壳。
@@ -328,7 +329,7 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
 
     // ★ 用户 2026-09-30：「上面除了主题之外，再增加一个调整 UI 控件大小（当然，包括里面的字体）
     //   的下拉菜单。」⇒ 视图菜单里加「界面大小」子菜单（立即生效；字体与控件一起缩放）。
-    // ★ 2026-11-03（用户给了发布页 URL；HA/DSH 裁）：**只打开浏览器，不做检测**。
+    // ★ 2026-11-03（用户给了发布页 URL；决策）：**只打开浏览器，不做检测**。
     //   文案必须写"打开发布页"——叫"检测版本"会让用户等一个永远不会来的提示。
     QMenu* help_menu = menuBar()->addMenu(QStringLiteral("帮助"));
     QAction* release_page = help_menu->addAction(QStringLiteral("查看最新版本（打开发布页）"));

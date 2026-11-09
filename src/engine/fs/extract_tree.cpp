@@ -741,7 +741,7 @@ std::vector<UnpackTarget> plan_unpack_targets(
 
 // ── ★★ 2026-10-05：**解包产物预览**（右栏）＝落点规则的**同一份真值**（见头文件说明）──
 // ★★ 2026-11-09（F2740，按解包内核参照实测修正）：**壳不保留**。
-//   参照 `E:\Software\Tools\Ghidra\Projects\Converter\converter.exe`（Ghidra 导出源码即其反编译）实测：
+//   参照 **Ghidra `Converter` 工程导出的反编译源码**（`converter.exe.c`）实测：
 //     `converter.exe -unpack -xdb -dir <out> test.db`（条目 `levels/a.txt`、`readme.md`）⇒
 //     `<out>\levels\a.txt`、`<out>\readme.md` —— **不建包名壳**；把包改名为
 //     `gamedata.db_levels` 再跑，结果相同（仍落 `<out>\levels\...`）。

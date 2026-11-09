@@ -47,7 +47,8 @@ $shell = Join-Path $root 'build\msvc-shell'
 #   于是"同一个 exe 里有没有 `plugins\` 决定它跑哪一份实现"这件事（P17-78 的致命项）消失：
 #   **开发包与发行包默认都跑内置六页**（各自的包内自检都会断言这件事）。
 #     （同一次运行里既取包内插件计数、又断"插件页真的生效"）—— 见下面"包内自检"那一段的口径。
-$qt    = 'E:\Software\Tools\Qt\6.8.3\msvc2022_64'
+# ★ 2026-11-09：工具链路径可覆盖（`XRKIT_QT`），不把它当唯一真值。
+$qt    = if ($env:XRKIT_QT) { $env:XRKIT_QT } else { 'E:\Software\Tools\Qt\6.8.3\msvc2022_64' }
 
 # ══ 决策 4：**分类规则**（计划与真打包共用这一份，不许写第二套）════════════════
 #   口径（用户 2026-10-18/19）：
@@ -167,7 +168,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $stage 'plugins') | Out-Nul
 Write-Host "== 复制主程序 =="
 Copy-Item -LiteralPath $exe.FullName -Destination $stage
 
-# ★★ 2026-11-05（DSH 干净目录测试抓到）：**CLI 也必须随包**。
+# ★★ 2026-11-05（审计 干净目录测试抓到）：**CLI 也必须随包**。
 #   修前包里只有 xrkit_app.exe ⇒ 封测用户/AI 拿不到 `xrkit_cli.exe`，
 #   而"追更"这条能力只有 CLI 有（--snapshot/--track）⇒ 等于封测拿不到核心能力。
 #   依赖与主程序同源（python3XX.dll/zip 已扁平铺在包根）⇒ 直接放根目录即可。
@@ -348,7 +349,7 @@ if ($env:XRKIT_FFMPEG_DIR) { $depDirs += $env:XRKIT_FFMPEG_DIR }
 $depDirs += (Join-Path $root 'build\ffmpeg_min')
 $depDirs += (Join-Path $root 'third_party\ffmpeg')
 $depDirs += (Join-Path $root 'deps\ffmpeg')
-$depDirs += 'E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit'
+if ($env:XRKIT_TOOLKIT_1X) { $depDirs += $env:XRKIT_TOOLKIT_1X }   # ★ 2026-11-09：1.x 路径可覆盖
 $depSrc = $null
 # ★★ 2026-11-02（P-798）：**包内不再带 ffprobe.exe** —— 探测走 ffmpeg -i 降级。
 #   有 ffprobe 的用户可自备（`[ffmpeg] probe` 或 `bin\ffprobe.exe`），两条路都认。
@@ -407,7 +408,7 @@ if ($ffMajor -ne 7) {
           "download_ffmpeg.py 的口径也是恰好 7.x）"
 }
 Write-Host "  版本守卫通过：自带 ffmpeg 是 7.x"
-# ★ 2026-11-02（DSH 许可结案）：随包带 ffmpeg 的许可证与构建说明（零成本合规动作）
+# ★ 2026-11-02（审计 许可结案）：随包带 ffmpeg 的许可证与构建说明（零成本合规动作）
 # ★ 2026-11-08：JSGME 最小包随工具发（把语言包装进游戏用）
 $jsgmeSrc = Join-Path $root 'third_party\jsgme'
 if (Test-Path $jsgmeSrc) {
@@ -456,8 +457,8 @@ foreach ($extra in @('vc_redist.x64.exe', 'dxcompiler.dll', 'dxil.dll')) {
     }
 }
 
-# ★★ 2026-11-02（HA/DSH 裁）：**退役"自动安装"之后不再需要 python 的联网面**。
-#   DSH 的依赖扫描（plugins/ 零命中；fontTools 只用到 urllib.parse，纯字符串，不触发 _ssl）⇒ 可删：
+# ★★ 2026-11-02（决策）：**退役"自动安装"之后不再需要 python 的联网面**。
+#   依赖扫描（plugins/ 零命中；fontTools 只用到 urllib.parse，纯字符串，不触发 _ssl）⇒ 可删：
 #     libssl-3.dll / libcrypto-3.dll / _ssl.pyd  ⇒ 插件 import ssl 会得到 ModuleNotFoundError（有意的契约）
 #     sqlite3.dll / _sqlite3.pyd                 ⇒ Python 侧零命中
 #     Qt6Network.dll / tls\                      ⇒ 全仓 QNetwork* 零命中（检测更新将来走 WinHTTP 系统组件）

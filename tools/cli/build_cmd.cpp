@@ -202,7 +202,7 @@ int run_build_package(const std::vector<std::string>& operands) {
     //   并且把"要写的字节"分成两步（先算后写），任一步失败都回到失败前 ⇒ **序号不被吃掉**。
     //   注：这是**发版**路径；`version.h` 与 `version.json`（以及 .rc）因此变脏，
     //       按用户口径"**只有发版提交把这几份一起带上**"。
-    // ★ 2026-11-04（HA/DSH）：同号重打守卫 + **半成品可识别可重打**。
+    // ★ 2026-11-04（审计）：同号重打守卫 + **半成品可识别可重打**。
     //   事故形态：打包被强杀（P-806 的 Stop-Job）⇒ 清理代码没机会跑 ⇒ 目录留下。
     //   · 意图文件 `.pending-<序号>` **先写**（放在父目录）⇒ 强杀在"建目录之前/之后"都认得出；
     //   · 目录里的 `INCOMPLETE` 覆盖"目录已建、marker 未写"的窗（双保险）；
@@ -429,7 +429,7 @@ fail_archive:;
                       << (h_ok && rc_ok && match ? "ok" : "FAIL")
                       << " prerelease=" << got_prerelease << " build=" << got_index << "\n";
         }
-        // ★ 2026-11-04（HA/DSH）：失败**不删证据**，挪到 FAIL/ 留现场；
+        // ★ 2026-11-04（审计）：失败**不删证据**，挪到 FAIL/ 留现场；
         //   挪不动就大声说"半成品仍在，请手动删"（下一轮会被 version-consistency 判据抓到）。
         {
             namespace stdfs = std::filesystem;

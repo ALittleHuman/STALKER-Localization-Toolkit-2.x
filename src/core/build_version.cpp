@@ -530,7 +530,7 @@ bool save_version_header(const std::string& path, const std::string& prerelease,
     if (!replace_value_line(text, kPrereleaseLine, "\"" + prerelease + "\"", error)) return false;
     if (!replace_value_line(text, kBuildCountLine, std::to_string(build_count), error)) return false;
     if (text == before) {
-        // ★ 2026-11-04（HA/DSH）：**幂等不是错误**。BETA.103 那次"current 前进、version.h 同值"
+        // ★ 2026-11-04（审计）：**幂等不是错误**。BETA.103 那次"current 前进、version.h 同值"
         //   就是在这里被当成失败 ⇒ 回滚判"没写过" ⇒ 序号被吃掉、只能靠"直接打下一号"绕过。
         //   同值 = 目标状态已达成 ⇒ 直接返回成功（写后读回校验照跑）。
         //   纪律：不靠"字节有没有变"推断意图（同 P-770 goto 自循环那一族）。

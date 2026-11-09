@@ -32,7 +32,7 @@ OUT = ROOT / "src" / "core" / "theme_tables.inc"
 #     `gen_font_templates.py:36`、`gen_plugin_contract.py:27`）—— 上一批改了那三个、**漏了这个**，
 #     而判据的名单里也**没有它**（复审计 `P1-3` 的第二半：判据只查串、且名单漏项）。
 TOOLKIT_1X = Path(os.environ.get("XRKIT_TOOLKIT_1X")
-                  or r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+                  or (ROOT.parent / "STALKER_Toolkit"))   # ★ 2026-11-09：相对推导，不写死本机路径
 THEME_PY = TOOLKIT_1X / "toolkit_theme.py"
 
 

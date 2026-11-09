@@ -1868,8 +1868,13 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         check(ctx, bogus.state == fnt::CjkFontState::Unknown,
               "打不开的字体应判 unknown（与缺字形分开）");
 
-        const char* msyh = "E:/Software/Games/STALKER/Localization/Tools/otherTools/"
-                           "CN_Pack_Generator/msyh.ttf";
+        // ★ 2026-11-09：测试字体路径**不许写死本机**——用 `XRKIT_TEST_CJK_FONT` 覆盖，
+        //   默认取 Windows 自带的 msyh（Win8+ 是 msyh.ttc；更老的系统才是 msyh.ttf）。
+        const char* env_msyh = std::getenv("XRKIT_TEST_CJK_FONT");
+        const std::string msyh_holder = (env_msyh != nullptr && *env_msyh != '\0')
+                                            ? std::string(env_msyh)
+                                            : std::string("C:/Windows/Fonts/msyh.ttc");
+        const char* msyh = msyh_holder.c_str();
         const char* jpan = "C:/Windows/Fonts/hpsimplifiedjpan-regular.ttf";
         const char* latin = "C:/Windows/Fonts/arial.ttf";
 
@@ -2132,7 +2137,7 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         check(ctx, !token.cancelled(), "只有 reset() 能清零（1.x convert() 不清零）");
     });
 
-    // XML 声明改写要**大小写不敏感**（1.x 用 re.I；Hana 第二次审计 §四-2）
+    // XML 声明改写要**大小写不敏感**（1.x 用 re.I；第三方第二次审计 §四-2）
     reg.add("font: XML 声明改写（大写声明/大写 ENCODING 也要认）", [](CheckContext& ctx) {
         namespace ef = xrkit::engine::font;
         const std::string upper =
@@ -2278,7 +2283,7 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         std::filesystem::remove_all(work, ec);
     });
 
-    // ★ 原子写的**路径编码安全**（2026-09-25 HanaAgent 审计查出的【高】缺陷的锁）：
+    // ★ 原子写的**路径编码安全**（2026-09-25 第三方审计查出的【高】缺陷的锁）：
     //   临时文件路径若经 `Path::string()`（CP_ACP）转窄串，ACP 表示不了的字符会变成 `?`
     //   ⇒ 打不开、原子写失败。这里用**ACP 表示不了的字符（韩文）**真写一次：旧代码必红。
     //   ★ 样本选择有讲究：**西里尔在 GBK(936) 里是有映射的**（GB2312 收俄文字母）⇒ 拿"俄文
@@ -3090,7 +3095,7 @@ bool collect_manifest_cached(const std::filesystem::path& root,
         const bool force_hash = rehash || info.kind == "xml";
         if (!force_hash && it != cache.end() &&
             (it->second.size != info.size || it->second.mtime != info.mtime)) {
-            // 旧树在快照之后被动过 ⇒ 不许静默用旧 sha（HA/DSH：这会把"旧快照过期"变成静默比错）
+            // 旧树在快照之后被动过 ⇒ 不许静默用旧 sha（审计：这会把"旧快照过期"变成静默比错）
             err = "old_root 与 baseline 快照不一致（文件 " + rel_key + "）：快照 size=" +
                   std::to_string(it->second.size) + " mtime=" + std::to_string(it->second.mtime) +
                   "，现 size=" + std::to_string(info.size) + " mtime=" + std::to_string(info.mtime) +
@@ -5006,7 +5011,7 @@ if (action == "--diff-snapshot") {
                       << " untrusted="
                       << ((row.result.untrusted_a || row.result.untrusted_b) ? 1 : 0) << "\n";
         }
-        // ★ 2026-11-05（DSH/HA 封测防漏）：默认 stats **只比 ID 集合与文件数**，不比文本内容。
+        // ★ 2026-11-05（封测防漏）：默认 stats **只比 ID 集合与文件数**，不比文本内容。
         //   用户点"比较"看到"没变化"就会漏掉纯文本改动（实验证过：改 1 条文本、text_diff=0）。
         //   这里显式说出来 —— 提示不算契约，但必须可见。
         if (opt.mode_key.empty() || opt.mode_key == "stats") {

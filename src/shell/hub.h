@@ -122,7 +122,7 @@ public:
     // 合并导出。失败 ⇒ **返回 false 且 `error` 非空**（零静默：写不出去必须说得出来）。
     // 最近一次导出失败的理由（空 = 没失败过）——供自检直接读
     LogBox* log_box() const { return log_box_; }
-    // ★ 方案一（Hana 重排）：导航改顶部标签条，日志改底部可折叠抽屉
+    // ★ 方案一（界面重排）：导航改顶部标签条，日志改底部可折叠抽屉
     QPushButton* log_toggle() const { return log_toggle_; }
     QWidget* log_panel() const { return log_panel_; }
     QLabel* status_label() const { return status_label_; }

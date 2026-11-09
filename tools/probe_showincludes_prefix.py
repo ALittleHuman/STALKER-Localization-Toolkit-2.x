@@ -30,8 +30,23 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ENV_FILE = ROOT / "build" / "msvc_env.txt"
-DEFAULT_VS_ROOT = Path(os.environ.get(
-    "XRKIT_VS", r"E:\Software\Tools\Visual Studio\2022\BuildTools"))
+# ★ 2026-11-09：VS 根不写死 —— `XRKIT_VS` → 常见安装目录探测 → 旧默认（最后兜底）。
+def _default_vs_root() -> Path:
+    env = os.environ.get("XRKIT_VS")
+    if env:
+        return Path(env)
+    for base in (r"C:\Program Files\Microsoft Visual Studio\2022",
+                 r"C:\Program Files (x86)\Microsoft Visual Studio\2022"):
+        root = Path(base)
+        if not root.is_dir():
+            continue
+        for cand in sorted(root.glob("*")):
+            if (cand / "VC" / "Auxiliary" / "Build" / "vcvars64.bat").is_file():
+                return cand
+    return Path(r"E:\Software\Tools\Visual Studio\2022\BuildTools")
+
+
+DEFAULT_VS_ROOT = _default_vs_root()
 MARKER = "xrkit_probe_marker.h"
 
 

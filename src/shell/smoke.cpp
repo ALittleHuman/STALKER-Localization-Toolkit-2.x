@@ -1299,7 +1299,7 @@ SmokeResult run_smoke() {
           QStringLiteral("日志栏只读"));
     hub.log_line(QStringLiteral("smoke"));
     {
-        // ★ 方案一（Hana 重排）：日志从标题栏改成底部折叠按钮
+        // ★ 方案一（界面重排）：日志从标题栏改成底部折叠按钮
         check(hub.log_toggle() != nullptr && !hub.log_toggle()->text().isEmpty(),
               QStringLiteral("日志折叠按钮存在（实测 %1）")
                   .arg(hub.log_toggle() != nullptr ? hub.log_toggle()->text() : QStringLiteral("(无)")));
@@ -2169,7 +2169,7 @@ SmokeResult run_smoke() {
               QStringLiteral("4.1 日志栏有自己的条子"));
         check(qobject_cast<ScrollViewport*>(hub.centralWidget()) == nullptr,
               QStringLiteral("4.1 Hub 中央区不是窗口级视口（无窗口级滚动条）"));
-        // ★ 方案一（Hana 重排）：日志默认折叠，点折叠按钮才展开；不再用两栏 minsize
+        // ★ 方案一（界面重排）：日志默认折叠，点折叠按钮才展开；不再用两栏 minsize
         //   用 isHidden() 而非 isVisible()：离屏下 Hub 没 show，isVisible() 恒 false（父窗隐藏）
         check(hub.log_panel() != nullptr && hub.log_panel()->isHidden(),
               QStringLiteral("日志面板默认折叠"));
@@ -6319,8 +6319,8 @@ SmokeResult run_smoke() {
                 bool any_text = false;
                 for (QLabel* l : page_widget->findChildren<QLabel*>()) {
                     if (!l->text().isEmpty()) any_text = true;
-                    if (l->text().contains(QStringLiteral("业务内容按 M2-6")) ||
-                        l->text().contains(QStringLiteral("逐片接入"))) {
+                    if (l->text().contains(QStringLiteral("本页尚未接入")) ||
+                        l->text().contains(QStringLiteral("尚未接入"))) {
                         placeholder = QStringLiteral("1");
                         break;
                     }
@@ -9879,8 +9879,10 @@ SmokeResult run_smoke() {
         page.show();
         QApplication::processEvents();
 
-        const QString msyh = QStringLiteral(
-            "E:/Software/Games/STALKER/Localization/Tools/otherTools/CN_Pack_Generator/msyh.ttf");
+        // ★ 2026-11-09：测试字体路径**不许写死本机**（`XRKIT_TEST_CJK_FONT` 覆盖；默认系统 msyh）
+        const QString msyh = qEnvironmentVariableIsSet("XRKIT_TEST_CJK_FONT")
+                                 ? qEnvironmentVariable("XRKIT_TEST_CJK_FONT")
+                                 : QStringLiteral("C:/Windows/Fonts/msyh.ttc");
         const QString jpan = QStringLiteral("C:/Windows/Fonts/hpsimplifiedjpan-regular.ttf");
         const QString latin = QStringLiteral("C:/Windows/Fonts/arial.ttf");
         const auto exists = [](const QString& path) { return QFileInfo::exists(path); };

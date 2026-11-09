@@ -220,7 +220,7 @@ void mark_session_finished(const std::string& dir) {
     const std::string log_path = nl == std::string::npos ? std::string() : text.substr(0, nl);
     if (nl != std::string::npos) text = text.substr(0, nl + 1) + "finished\n";
     write_small_file(marker, text);
-    // ★ 2026-11-05（DSH）：**日志尾部**再落一条 finished —— 只靠 .session 会有假阳性：
+    // ★ 2026-11-05（审计）：**日志尾部**再落一条 finished —— 只靠 .session 会有假阳性：
     //   崩溃若发生在"写 started 之后、正常退出之前"，下次会把一份其实正常的日志标成 abnormal。
     //   兜底判据：.session 缺失或状态不是 finished 时，再看日志尾行有没有 `[FINISHED]`。
     if (!log_path.empty()) {
