@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
   2.0.0 打包（M3 第一步）：把 msvc-shell 的产物做成一个**可回退**的发行包。
 
