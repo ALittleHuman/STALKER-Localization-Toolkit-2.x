@@ -26,6 +26,9 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 for _stream in (sys.stdout, sys.stderr):
     try:
@@ -99,7 +102,8 @@ def golden_counts_to_cli(counts: dict) -> dict:
 
 def compare_sample(sample: dict, cli: Path) -> tuple:
     """返回 (问题列表, 比较项数, 是否样本缺件)。"""
-    exe = Path(sample["path"])
+    raw = Path(sample["path"])
+    exe = raw if raw.is_absolute() else samples.find_alias(sample["path"])
     if not exe.exists():
         return ([], 0, True)
     run = subprocess.run([str(cli), "--patch-identify", str(exe), str(SITES)],

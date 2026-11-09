@@ -58,7 +58,10 @@ def find_alias(name: str) -> Path:
     rel = ALIASES.get(name)
     if not rel:
         return ROOTS[0] / name
-    return find(*Path(rel).parts)
+    path = Path(rel)
+    if path.is_absolute():
+        return path
+    return find(*path.parts)
 
 
 def find_any(*candidates: tuple) -> Path:
