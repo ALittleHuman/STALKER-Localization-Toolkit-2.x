@@ -230,7 +230,8 @@ static const char* const kRecipes =
     "\n"
     "【坑位】\n"
     "  · 路径含中文/西里尔：BETA.114 起已修；旧版会报\"不是目录\"\n"
-    "  · --only 清单：别带 BOM（新版已剥；旧版会静默零命中）\n"
+    "  · --only 清单：每行一个**包内路径**（正斜杠、大小写敏感）；UTF-8 BOM 会剥，`\\` 会转 `/`，\n"
+    "    前导 `./` 会去掉；空清单 = 拒绝（不等于全部）。最稳妥：直接复制 `--dump` 输出的路径。\n"
     "  · 编码名：用 windows-1251，不是 cp1251\n"
     "  · --track 默认只做 .xml 的条目级；.ltx/.script/.txt 只报文件级\n"
     "  · 不做 --strip-prefix：--pack-layout 已覆盖\"剥前缀再摆盘\"；不提供第二条路径\n"
@@ -3978,6 +3979,43 @@ int run_cli(const std::vector<std::string>& args) {
         return kExitOk;
     }
 
+    // ★★ 2026-11-09（F4432/F4433）：`--only` 清单的**唯一读法**（两个解包入口共用）。
+    //   修前的事实：① 只有 `--unpack-tree` 剥 UTF-8 BOM，`--unpack-package` 不剥
+    //   （PowerShell `-Encoding UTF8` 写的清单 ⇒ 首行带 BOM ⇒ 零命中，而 `--help` 说"新版已剥"）；
+    //   ② 反斜杠与 `./` 都不归一 ⇒ Windows 用户从资源管理器复制的 `levels\a.txt` 一条都匹配不上。
+    //   这里统一：剥 BOM、去行尾 `\r`、跳过空行、`\`→`/`、去掉前导 `./`（大小写仍**敏感**，
+    //   与包内路径一致 —— 从 `--dump` 复制最稳妥）。
+    auto read_only_list = [](const std::string& path, std::vector<std::string>* out) -> bool {
+        out->clear();
+        std::ifstream in(xrkit::core::path_from_utf8(path), std::ios::binary);
+        if (!in) return false;
+        std::string line;
+        bool first_line = true;
+        while (std::getline(in, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (first_line) {
+                first_line = false;
+                if (line.size() >= 3 && static_cast<unsigned char>(line[0]) == 0xEF &&
+                    static_cast<unsigned char>(line[1]) == 0xBB &&
+                    static_cast<unsigned char>(line[2]) == 0xBF) {
+                    line.erase(0, 3);
+                }
+            }
+            // 去首尾空白（清单里常见的行尾空格）
+            const size_t b = line.find_first_not_of(" \t");
+            if (b == std::string::npos) continue;
+            const size_t e = line.find_last_not_of(" \t");
+            line = line.substr(b, e - b + 1);
+            for (char& ch : line) {
+                if (ch == '\\') ch = '/';
+            }
+            while (line.size() >= 2 && line[0] == '.' && line[1] == '/') line.erase(0, 2);
+            if (line.empty()) continue;
+            out->push_back(line);
+        }
+        return true;
+    };
+
     // 整树导出（M2-6b1，对照表 ⑥6.7~6.10/6.14）。**不开外部 exe** 是 2.0 的硬口径
     // （1.x 靠 rdsquashfs --unpack-path / --cat，超时与"把整包收进内存"都栽过）。
     if (action == "--unpack-tree") {
@@ -3989,30 +4027,11 @@ int run_cli(const std::vector<std::string>& args) {
         xrkit::engine::fs::ExtractTreeOptions options;
         options.verify_readback = verify_readback;   // 默认 false ⇒ 边写边算哈希
         if (!only_list.empty() && !extract_all) {
-            std::ifstream in(xrkit::core::path_from_utf8(only_list), std::ios::binary);
-            if (!in) {
+            if (!read_only_list(only_list, &options.only)) {
                 std::cout << "UNPACK error reason=读不到清单文件：" << only_list << "\n";
                 return kExitFail;
             }
-            std::string line;
-            bool first_line = true;
-            while (std::getline(in, line)) {
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                // ★ P0-2：清单里的 UTF-8 BOM（PowerShell `-Encoding UTF8` 会写）必须剥掉，
-                //   否则首行路径带 \xEF\xBB\xBF ⇒ 一条都匹配不上。
-                if (first_line) {
-                    first_line = false;
-                    if (line.size() >= 3 && static_cast<unsigned char>(line[0]) == 0xEF &&
-                        static_cast<unsigned char>(line[1]) == 0xBB &&
-                        static_cast<unsigned char>(line[2]) == 0xBF) {
-                        line.erase(0, 3);
-                    }
-                }
-                if (line.empty()) continue;
-                options.only.push_back(line);
-            }
-            // 6.10：**空清单 ≠ 全部**。1.x 的 `if not files:` 把两者混在一起，
-            // 于是"什么都没勾"会退化成整镜像导出并被记为成功 —— 2.0 显式拒绝。
+            // 6.10：**空清单 ≠ 全部**（空清单的拒绝由引擎 `extract_tree` 统一给出）。
             options.selection = xrkit::engine::fs::Selection::Listed;
         }
         const xrkit::engine::fs::ExtractTreeResult res =
@@ -4106,15 +4125,17 @@ int run_cli(const std::vector<std::string>& args) {
         // ② `--only` 清单读一次（空清单**不等于**全部 —— 与 `--unpack-tree` 同一口径）
         std::vector<std::string> only_paths;
         if (!only_list.empty() && !extract_all) {
-            std::ifstream in(xrkit::core::path_from_utf8(only_list), std::ios::binary);
-            if (!in) {
+            if (!read_only_list(only_list, &only_paths)) {
                 std::cout << "UNPACK-PKG error reason=读不到清单文件：" << only_list << "\n";
                 return kExitFail;
             }
-            std::string line;
-            while (std::getline(in, line)) {
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                if (!line.empty()) only_paths.push_back(line);
+            // ★★ 2026-11-09（F1898）：空清单在 `--unpack-tree` 侧会被引擎以
+            //   "选中集为空：拒绝执行" 拒绝，本入口修前却把它当"全选"（静默解整包）。
+            //   两个入口同一语义：空清单 = 拒绝，不落盘。
+            if (only_paths.empty()) {
+                std::cout << "UNPACK-PKG error reason=选中集为空：拒绝执行（与 --unpack-tree 同口径；"
+                             "1.x 会因此退化成整包导出，2.0 不再把空清单当「全部」）\n";
+                return kExitFail;
             }
         }
         // ③ 多源 ⇒ 落点（**引擎那一份**）；条目表用于判断"包内是否已自带同名壳"
