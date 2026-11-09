@@ -21,17 +21,16 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
-REF_BIN = Path(os.environ.get(
-    "XRKIT_SQFS_BIN",
-    r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit\deps"
-    r"\squashfs-tools-ng-1.3.2-mingw64\bin"))
-IMAGE = Path(os.environ.get(
-    "XRKIT_METACROSS_IMAGE",
-    r"E:\Software\Games\STALKER\Games\NLC Improved\NLC Improved [OBT]\gamedata.sqzy_patch"))
+REF_BIN = Path(os.environ.get("XRKIT_SQFS_BIN", ""))
+IMAGE = (Path(os.environ["XRKIT_METACROSS_IMAGE"])
+         if os.environ.get("XRKIT_METACROSS_IMAGE")
+         else samples.find_alias("mod.nlc_sqzy"))
 MEMBER = "textures/verg/masks/hud_sci_1_5.dds"
 
 

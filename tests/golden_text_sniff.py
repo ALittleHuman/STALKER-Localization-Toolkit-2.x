@@ -36,6 +36,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -45,12 +47,12 @@ WORK = ROOT / "build" / "golden_text_sniff"
 TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
 
 REAL_ROOTS = [
-    Path(r"E:\Software\Games\STALKER\Games\Golden Sphere\gamedata\config\gameplay"),
-    Path(r"E:\Software\Games\STALKER\Games\Golden Sphere\gamedata\config\scripts"),
-    Path(r"E:\Software\Games\STALKER\Localization\Gamedata\A.R.E.A\Original\configs\gameplay"),
-    Path(r"E:\Software\Games\STALKER\Localization\Gamedata\A.R.E.A\Original\configs\scripts"),
+    samples.find_alias("text.gs_gameplay"),
+    samples.find_alias("text.gs_config_scripts"),
+    samples.find_alias("text.area_gameplay"),
+    samples.find_alias("text.area_scripts"),
     Path(r"E:\Software\Games\STALKER\Original\SoC_Source\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS"),
-    Path(r"E:\Software\Games\STALKER\Games\Golden Sphere\gamedata\scripts"),
+    samples.find_alias("text.gs_scripts"),
 ]
 PER_ROOT = 20
 

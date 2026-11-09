@@ -21,12 +21,14 @@ import json
 import sys
 import time
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "tests" / "golden" / "manifest.json"
 
 # 真机样本根（2026-09-24 实测：已从 E:\Human 迁到 Games\ 下）
-NLC = Path(r"E:\Software\Games\STALKER\Games\NLC Improved\NLC Improved [OBT]")
+NLC = samples.find_alias("mod.nlc_root")
 # ★★ 2026-10-24：真机样本被整理到 `Transition\DB双向验证套件\samples\原件\` 下
 #   （旧的 `Games\关卡包` 已不在）⇒ 用**多根解析**，两个位置都认，
 #   并允许 `XRKIT_SAMPLES` 环境变量整体覆盖（一台机器一个根，不靠改代码）。
@@ -47,7 +49,7 @@ def _find_rel(rel: str) -> Path:
     return SAMPLE_ROOTS[0] / rel
 
 
-GS = _find_rel("Golden Sphere")
+GS = samples.find_alias("mod.golden_root")
 SOC = Path(r"E:\Software\Games\STALKER\Original\SoC_Source\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS")
 
 # 语料选择原则：覆盖每一类**解析路径**，而不是把硬盘上的包全抄一遍。
