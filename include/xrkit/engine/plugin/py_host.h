@@ -96,6 +96,33 @@ struct PyLoadSummary {
     size_t registrations = 0;  // 这些插件合计注册进 `Registry` 的条数
 };
 
+// ── ★★ 2026-11-09：**插件前置（模组依赖）缺失 ⇒ 自动禁用** ─────────────────────
+// 清单字段（`PLUGIN_INFO`，全部可选，缺省见下）：
+//   id       稳定唯一键（缺省 = 文件名去 `.py`、小写）。**改名不改它**。
+//   version  版本串（缺省 "0"；比较按点分数字，非数字段退化为字符串比）。
+//   repo     仓库地址 —— **只作展示/更新来源，绝不用于依赖判定**（改名/转移/镜像都会变）。
+//   depends  {前置 id: 版本范围}，必需前置；`{"a.mod": ">=1.2,<2"}`。
+//   provides 本插件额外声明的 id（虚拟包/别名），`replaces` 声明"取代的旧 id"（改名迁移）。
+// 判定口径：先在**所有已成功导入**的插件里建 id/provides/replaces 索引，再按 depends 递归解析
+// （缺 id、版本不满足、前置自身被禁用、循环依赖 ⇒ 本插件禁用并记录**缺什么**）；
+// 禁用 = **不调用 register(api)**（一条注册都不留），启动后由插件管理器统一展示。
+struct PluginMissingDep {
+    std::string id;      // 缺的前置 id
+    std::string range;   // 清单里要求的版本范围（原样）
+    std::string detail;  // "未安装" / "已安装 x.y，不满足要求" / "前置自身被禁用" / "循环依赖"
+};
+struct PluginDisabledInfo {
+    std::string owner;   // 文件名（注册 owner）
+    std::string id;      // 清单 id（缺省 = 文件名去扩展名）
+    std::string name;    // 显示名（缺省 = id）
+    std::string version; // 清单 version（缺省 "0"）
+    std::string repo;    // 清单 repo（可空；只展示）
+    std::vector<PluginMissingDep> missing;
+};
+// 本轮加载里被自动禁用的插件（每次 `load_python_plugins_from_dir` 开始时清空）。
+std::vector<PluginDisabledInfo> disabled_python_plugins();
+void clear_disabled_python_plugins();
+
 std::vector<RegistrationError> load_python_plugins_from_dir(const std::string& dir, Registry& registry,
                                                             PyLoadSummary* summary = nullptr);
 // 进程内已成功加载的 Python 插件数（探针用）。

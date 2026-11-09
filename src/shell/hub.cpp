@@ -29,6 +29,10 @@
 #include <QDateTime>
 #include <QDir>
 #include <QDockWidget>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QGroupBox>
+#include <QTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -1131,6 +1135,9 @@ void Hub::load_plugins(const QString& plugin_dir) {
     dump_plugin_files(dir);
     xrkit::plugin::load_all_plugins_from_dir(dir.toUtf8().toStdString(), registry_);
     plugin_errors_ = registry_.registration_errors();
+    // ★ 2026-11-09（用户口径）：缺前置的插件已在引擎侧**自动禁用**（未调 register）；
+    //   这里取回清单，启动完成后统一弹「插件管理器」说明（见 show_plugin_manager）。
+    disabled_plugins_ = xrkit::plugin::disabled_python_plugins();
 
     // ★★ C-12（第三方只读审计 2026-10-18）：这里原来有个 `int loaded = 0;` —— **死变量**
     //   （下面一行 `++loaded` 之后再也不读）。删掉，别让读者以为它在计什么数。
@@ -1146,7 +1153,73 @@ void Hub::load_plugins(const QString& plugin_dir) {
     }
     log_line(plugin_notice_);
     if (status_label_ != nullptr && !plugin_errors_.empty()) status_label_->setText(plugin_notice_);
+    if (!disabled_plugins_.empty()) {
+        log_line(QStringLiteral("插件：%1 个因缺前置被自动禁用（详见插件管理器）")
+                     .arg(disabled_plugins_.size()));
+        // ★ 启动完成后再弹（构造期 exec() 会卡住窗口初始化；离屏自检不弹）。
+        if (qEnvironmentVariableIsEmpty("XRKIT_SMOKE")) {
+            QTimer::singleShot(0, this, [this]() { show_plugin_manager(); });
+        }
+    }
     render_plugin_slots();
+}
+
+// ★★ 2026-11-09（用户口径）：**插件管理器**（缺前置说明）——一次启动只弹一次。
+//   要求：所有缺前置的插件放在**同一个框**里、逐条区分；**不出现滚动条**（不套 QScrollArea，
+//   用 QGroupBox + 自动换行 QLabel；条目多时对话框长高，不滚动）。
+void Hub::show_plugin_manager() {
+    if (disabled_plugins_.empty()) return;
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("插件管理器"));
+    dlg.setModal(true);
+    auto* layout = new QVBoxLayout(&dlg);
+    auto* head = new QLabel(
+        QStringLiteral("以下插件因缺少前置已自动禁用（本次启动不会加载）："), &dlg);
+    head->setWordWrap(true);
+    layout->addWidget(head);
+
+    for (const xrkit::plugin::PluginDisabledInfo& info : disabled_plugins_) {
+        const QString title = QString::fromStdString(
+            info.name.empty() ? info.id : info.name);
+        auto* box = new QGroupBox(title, &dlg);
+        auto* box_layout = new QVBoxLayout(box);
+        auto* meta = new QLabel(
+            QStringLiteral("id：%1　版本：%2　文件：%3")
+                .arg(QString::fromStdString(info.id),
+                     QString::fromStdString(info.version),
+                     QString::fromStdString(info.owner)),
+            box);
+        meta->setWordWrap(true);
+        box_layout->addWidget(meta);
+        QStringList lines;
+        for (const xrkit::plugin::PluginMissingDep& miss : info.missing) {
+            lines << QStringLiteral("缺少前置：<b>%1</b>（要求 %2）—— %3")
+                         .arg(QString::fromStdString(miss.id),
+                              QString::fromStdString(miss.range),
+                              QString::fromStdString(miss.detail));
+        }
+        auto* missing = new QLabel(lines.join(QStringLiteral("<br>")), box);
+        missing->setTextFormat(Qt::RichText);
+        missing->setWordWrap(true);
+        box_layout->addWidget(missing);
+        if (!info.repo.empty()) {
+            auto* repo = new QLabel(
+                QStringLiteral("来源：<a href=\"%1\">%1</a>")
+                    .arg(QString::fromStdString(info.repo)),
+                box);
+            repo->setTextFormat(Qt::RichText);
+            repo->setOpenExternalLinks(true);
+            repo->setWordWrap(true);
+            box_layout->addWidget(repo);
+        }
+        layout->addWidget(box);
+    }
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok, &dlg);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    layout->addWidget(buttons);
+    dlg.resize(xrkit::core::px(620), dlg.sizeHint().height());
+    dlg.exec();
 }
 
 }  // namespace xrkit::shell

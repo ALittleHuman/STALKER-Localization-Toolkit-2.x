@@ -3803,6 +3803,29 @@ def step_host_offline(release: bool) -> None:
         fail("宿主离线判据不通过（见上）")
 
 
+def step_plugin_deps(release: bool) -> None:
+    """★ 2026-11-09（用户口径）：**缺前置的插件启动期自动禁用**，且清单可被插件管理器结构化读。
+
+    口径：稳定 `id` + `version` + `depends`（id→版本范围）+ `provides`/`replaces`；
+    `repo` 只作元数据（改名/转移/镜像都会让 URL 变，**依赖判定只认 id**）。
+    缺 id / 版本不满足 / 前置自身被禁用 / 循环依赖 ⇒ 插件不调 `register(api)`（一条注册都不留），
+    启动后由「插件管理器」把**所有**这类插件与缺失项放在同一个框里说明（不出现滚动条）。
+    """
+    say("[plugin-deps] 缺前置的插件自动禁用 + --py-plugins --json 结构化清单")
+    script = ROOT / "tests" / "check_plugin_deps.py"
+    if not require_repo_file(script, "插件依赖核对器"):
+        return
+    rc2, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("PLUGIN-DEPS") or s.startswith("✓ ") or s.startswith("✗ "):
+            say("  " + s[:170])
+    if rc2 == 0:
+        ok("插件前置：缺前置/版本不满足/循环依赖均自动禁用；JSON 清单可供管理器读")
+    else:
+        fail("插件前置/自动禁用清单不成立（见上）")
+
+
 def step_plugin_metadata(release: bool) -> None:
     """`--py-plugins` 元数据（provides/requires/imports，ast 静态读）。"""
     say("[?] 插件元数据（provides/requires/imports）")
@@ -8083,6 +8106,7 @@ STEPS = [
     ("shell-static-guards", step_shell_static_guards),
     ("ffmpeg-min", step_ffmpeg_min),
     ("plugin-services", step_plugin_services),
+    ("plugin-deps", step_plugin_deps),
     ("plugin-metadata", step_plugin_metadata),
     # ★ 2026-11-09（F4435）：本步（P17-98 日志缓冲锁/注册表字据）此前只定义、**从未登记** ⇒ 判据从不运行。
     ("plugin-contract", step_plugin_contract),

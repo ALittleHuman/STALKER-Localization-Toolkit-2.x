@@ -13,6 +13,7 @@
 
 #include "page_host.h"
 #include "xrkit/core/theme.h"
+#include "xrkit/engine/plugin/py_host.h"
 #include "xrkit/engine/plugin/registry.h"
 
 #include <vector>
@@ -85,6 +86,8 @@ public:
     }
     // 启动时的插件提示（读几行、非空说明有插件问题）——Hub 会把它打日志 + 写状态栏
     QString plugin_notice() const { return plugin_notice_; }
+    // ★ 2026-11-09：启动时因缺前置被自动禁用的插件数（插件管理器据此决定是否弹窗）。
+    int disabled_plugin_count() const { return static_cast<int>(disabled_plugins_.size()); }
     // 探针：加载插件时是否把外壳的 `api.ui`（Qt 16 方法）装上了
     bool plugin_ui_installed() const { return plugin_ui_installed_; }
     // ⑫12.4/12.1：把插件槽位**渲染出来**（工具栏菜单项先做）——
@@ -167,6 +170,10 @@ private:
     std::vector<xrkit::plugin::RegistrationError> plugin_errors_;
     QString plugin_notice_;
     bool plugin_ui_installed_ = false;
+    // ★ 2026-11-09（用户口径）：启动时因缺前置被自动禁用的插件；启动完成后弹一次「插件管理器」，
+    //   把**所有**这类插件与缺失项放在同一个框里逐条说明（不出现滚动条）。
+    std::vector<xrkit::plugin::PluginDisabledInfo> disabled_plugins_;
+    void show_plugin_manager();
     int plugin_slots_rendered_ = 0;
     int plugin_pages_added_ = 0;   // 当前**可见**的插件页数（owner != kBuiltinPageOwner）
     // ★ P1：三份数组**同长同序**（标签条下标 = 页栈下标 = 这里的下标），自检会交叉核对。

@@ -25,6 +25,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <mutex>
+#include <optional>
+#include <unordered_map>
 #include <stdexcept>
 
 #ifdef XRKIT_WITH_PYTHON
@@ -3959,6 +3961,29 @@ bool is_plugin_py_name(const std::string& filename) {
 //   `modules_out` 非空时把 (owner, module) 交出来：探针要按 owner 找插件的无界面入口，
 //   而加载器**有意不把模块放进 `sys.modules`**（插件之间不许靠 import 互相串）⇒
 //   探针没法靠模块名去 `sys.modules` 里找（实测取证：`modules=` 是空的）。
+namespace {
+namespace disabled_detail {
+std::mutex& mutex() {
+    static std::mutex m;
+    return m;
+}
+std::vector<PluginDisabledInfo>& storage() {
+    static std::vector<PluginDisabledInfo> v;
+    return v;
+}
+}  // namespace disabled_detail
+}  // namespace
+
+std::vector<PluginDisabledInfo> disabled_python_plugins() {
+    std::lock_guard<std::mutex> lock(disabled_detail::mutex());
+    return disabled_detail::storage();
+}
+
+void clear_disabled_python_plugins() {
+    std::lock_guard<std::mutex> lock(disabled_detail::mutex());
+    disabled_detail::storage().clear();
+}
+
 std::vector<RegistrationError> load_python_plugins_impl(
     const std::string& dir, Registry& registry, PyLoadSummary* summary,
     std::vector<std::pair<std::string, py::object>>* modules_out);
@@ -3973,6 +3998,7 @@ std::vector<RegistrationError> load_python_plugins_impl(
     std::vector<std::pair<std::string, py::object>>* modules_out) {
     std::vector<RegistrationError> errors;
     PyLoadSummary local;
+    clear_disabled_python_plugins();
     PyLoadSummary& acc = summary != nullptr ? *summary : local;
 
     // ① 扫目录：**不依赖 Python**（没有宿主时也要能如实说出"有几个 .py 没被加载"）
@@ -4019,11 +4045,175 @@ std::vector<RegistrationError> load_python_plugins_impl(
     py::object spec_from = py::module_::import("importlib.util").attr("spec_from_file_location");
     py::object module_from_spec = py::module_::import("importlib.util").attr("module_from_spec");
 
+    // ★★ 2026-11-09（用户口径）：**缺前置的插件自动禁用**。两遍加载：
+    //   ① 全部 import、收 `PLUGIN_INFO` 清单（不 register —— 依赖可能声明在后面才加载的文件上）；
+    //   ② 按 `depends`（id + 版本范围）递归解析（provides/replaces 也认），缺/不满足/链上有禁用 ⇒ 禁用；
+    //   ③ 只对启用的插件调 `register(api)`，失败仍按 owner 回滚（旧口径不变）。
+    struct Manifest {
+        std::string owner;
+        std::string path;
+        std::string id;
+        std::string name;
+        std::string version;
+        std::string repo;
+        std::vector<std::pair<std::string, std::string>> depends;
+        std::vector<std::string> provides;
+        std::vector<std::string> replaces;
+        py::object module;
+        std::string failure;
+    };
+    const auto lower_copy = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        return s;
+    };
+    const auto trim_copy = [](std::string s) {
+        const std::size_t b = s.find_first_not_of(" \t\r\n");
+        if (b == std::string::npos) return std::string();
+        const std::size_t e = s.find_last_not_of(" \t\r\n");
+        return s.substr(b, e - b + 1);
+    };
+    const auto stem_of = [&](const std::string& owner) {
+        const std::size_t dot = owner.find_last_of('.');
+        return lower_copy(dot == std::string::npos ? owner : owner.substr(0, dot));
+    };
+    const auto read_str = [](const py::dict& d, const char* key) -> std::string {
+        if (d.contains(key) == 0) return std::string();
+        try {
+            return py::str(d[key]).cast<std::string>();
+        } catch (...) {
+            return std::string();
+        }
+    };
+    const auto read_list = [](const py::dict& d, const char* key) {
+        std::vector<std::string> out;
+        if (d.contains(key) == 0) return out;
+        try {
+            const py::object value = py::reinterpret_borrow<py::object>(d[key]);
+            if (py::isinstance<py::str>(value) != 0) {
+                const std::string s = value.cast<std::string>();
+                if (!s.empty()) out.push_back(s);
+            } else if (py::isinstance<py::iterable>(value) != 0) {
+                for (py::handle item : py::reinterpret_borrow<py::iterable>(value)) {
+                    const std::string s = py::str(item).cast<std::string>();
+                    if (!s.empty()) out.push_back(s);
+                }
+            }
+        } catch (...) {
+        }
+        return out;
+    };
+    const auto read_deps = [](const py::dict& d, const char* key) {
+        std::vector<std::pair<std::string, std::string>> out;
+        if (d.contains(key) == 0) return out;
+        try {
+            const py::object value = py::reinterpret_borrow<py::object>(d[key]);
+            if (py::isinstance<py::dict>(value) == 0) return out;
+            const py::dict deps = py::reinterpret_borrow<py::dict>(value);
+            for (auto item : deps) {
+                const std::string id = py::str(item.first).cast<std::string>();
+                std::string range = py::str(item.second).cast<std::string>();
+                if (range.empty()) range = "*";
+                if (!id.empty()) out.emplace_back(id, range);
+            }
+        } catch (...) {
+        }
+        return out;
+    };
+
+    // 版本比较（点分数字；非数字段忽略，缺失位补 0）。
+    const auto version_parts = [](const std::string& v) {
+        std::vector<long long> out;
+        long long cur = 0;
+        bool any = false;
+        for (char ch : v) {
+            if (ch >= '0' && ch <= '9') {
+                cur = cur * 10 + (ch - '0');
+                any = true;
+            } else if (ch == '.') {
+                out.push_back(any ? cur : 0);
+                cur = 0;
+                any = false;
+            } else {
+                break;
+            }
+        }
+        out.push_back(any ? cur : 0);
+        return out;
+    };
+    const auto version_cmp = [&](const std::string& a, const std::string& b) {
+        std::vector<long long> pa = version_parts(a);
+        std::vector<long long> pb = version_parts(b);
+        const std::size_t n = std::max(pa.size(), pb.size());
+        pa.resize(n, 0);
+        pb.resize(n, 0);
+        for (std::size_t i = 0; i < n; ++i) {
+            if (pa[i] < pb[i]) return -1;
+            if (pa[i] > pb[i]) return 1;
+        }
+        return 0;
+    };
+    const auto satisfies_one = [&](const std::string& version, std::string clause) {
+        clause = trim_copy(clause);
+        if (clause.empty() || clause == "*") return true;
+        if (!clause.empty() && clause[0] == '~') {
+            const std::string base = trim_copy(clause.substr(1));
+            std::vector<long long> parts = version_parts(base);
+            const long long major = parts.empty() ? 0 : parts[0];
+            return version_cmp(version, base) >= 0 &&
+                   version_cmp(version, std::to_string(major + 1) + ".0.0") < 0;
+        }
+        std::string op;
+        for (const char* cand : {">=", "<=", "==", "!=", ">", "<", "="}) {
+            const std::string s(cand);
+            if (clause.rfind(s, 0) == 0) {
+                op = s;
+                clause = trim_copy(clause.substr(s.size()));
+                break;
+            }
+        }
+        if (op.empty()) op = "==";
+        const int cmp = version_cmp(version, clause);
+        if (op == ">=") return cmp >= 0;
+        if (op == ">") return cmp > 0;
+        if (op == "<=") return cmp <= 0;
+        if (op == "<") return cmp < 0;
+        if (op == "!=") return cmp != 0;
+        return cmp == 0;
+    };
+    const auto version_satisfies = [&](const std::string& version, const std::string& range) {
+        std::string cur;
+        std::vector<std::string> parts;
+        for (char ch : range) {
+            if (ch == ',') {
+                parts.push_back(cur);
+                cur.clear();
+            } else {
+                cur += ch;
+            }
+        }
+        parts.push_back(cur);
+        for (const std::string& part : parts) {
+            if (!satisfies_one(version, part)) return false;
+        }
+        return true;
+    };
+
+    std::vector<Manifest> manifests;
+    manifests.reserve(files.size());
+
+    // ① 全部 import + 收清单（**不 register**）
     for (const std::string& file : files) {
         const std::string owner = base_name(file);
         plugin::trace_event("load_start", "file=" + owner);
         const std::string module_name = "xrkit_plugin_" + sanitize_module_name(owner);
-        std::string failure;
+        Manifest m;
+        m.owner = owner;
+        m.path = file;
+        m.id = stem_of(owner);
+        m.name = m.id;
+        m.version = "0";
         try {
             py::object spec = spec_from(module_name, file);
             if (spec.is_none()) {
@@ -4031,13 +4221,6 @@ std::vector<RegistrationError> load_python_plugins_impl(
             }
             py::object module = module_from_spec(spec);
             spec.attr("loader").attr("exec_module")(module);
-            if (modules_out != nullptr) modules_out->emplace_back(owner, module);
-            // ★★ P7b（上一轮答"插件间兼容性"时承诺的判据）：**插件声明它按哪一版插件 API 写的**。
-            //   声明 `PLUGIN_API = <int>`（缺省＝按当前版本）。**比宿主新 ⇒ 拒绝加载**（并留痕）：
-            //   那种插件会调用宿主还不认识的能力，"进去之后调一半才炸"比"当场拒绝"难查得多；
-            //   比宿主旧 ⇒ 照常加载（宿主契约只增不删，老插件必须还能跑）。
-            //   ★ 检查放在 `register(api)` **之前** ⇒ 拒绝时**一条注册都不会留下**（不需要回滚，
-            //   但下面那条回滚路径照旧兜底）。
             if (py::hasattr(module, "PLUGIN_API") != 0) {
                 py::object declared = module.attr("PLUGIN_API");
                 if (py::isinstance<py::int_>(declared) == 0) {
@@ -4050,14 +4233,155 @@ std::vector<RegistrationError> load_python_plugins_impl(
                         std::to_string(kPyHostApiVersion) + "（拒绝加载：请升级宿主或改用旧接口）");
                 }
             }
-            if (py::hasattr(module, "register") == 0) {
+            if (py::hasattr(module, "PLUGIN_INFO") != 0) {
+                const py::object info_obj = module.attr("PLUGIN_INFO");
+                if (py::isinstance<py::dict>(info_obj) != 0) {
+                    const py::dict info = py::reinterpret_borrow<py::dict>(info_obj);
+                    const std::string id = trim_copy(read_str(info, "id"));
+                    const std::string name = trim_copy(read_str(info, "name"));
+                    const std::string version = trim_copy(read_str(info, "version"));
+                    const std::string repo = trim_copy(read_str(info, "repo"));
+                    if (!id.empty()) m.id = lower_copy(id);
+                    m.name = name.empty() ? m.id : name;
+                    if (!version.empty()) m.version = version;
+                    if (!repo.empty()) m.repo = repo;
+                    m.provides = read_list(info, "provides");
+                    m.replaces = read_list(info, "replaces");
+                    m.depends = read_deps(info, "depends");
+                    if (m.depends.empty()) m.depends = read_deps(info, "requires");   // 兼容字典形态
+                }
+            }
+            m.module = module;
+        } catch (const py::error_already_set& err) {
+            m.failure = err.what();
+        } catch (const std::exception& err) {
+            m.failure = err.what();
+        }
+        if (!m.failure.empty()) {
+            const std::size_t undone = registry.rollback_plugin(owner);
+            unregister_services(owner);
+            const std::string message =
+                m.failure + "（已按 owner 回滚 " + std::to_string(undone) + " 条注册）";
+            errors.push_back({owner, message});
+            registry.add_error(owner, message);
+            core::log(core::Level::Warn, "Python 插件加载失败：" + owner + "：" + m.failure);
+            plugin::trace_event("load", "file=" + owner + " ret=error error=" + m.failure);
+        }
+        manifests.push_back(std::move(m));
+    }
+
+    // ② 索引（id / provides / replaces；先到先得）
+    std::unordered_map<std::string, std::size_t> by_key;
+    for (std::size_t i = 0; i < manifests.size(); ++i) {
+        const Manifest& m = manifests[i];
+        if (!m.failure.empty()) continue;
+        const auto add = [&](const std::string& raw) {
+            const std::string key = lower_copy(trim_copy(raw));
+            if (key.empty()) return;
+            if (by_key.find(key) == by_key.end()) by_key.emplace(key, i);
+        };
+        add(m.id);
+        for (const std::string& p : m.provides) add(p);
+        for (const std::string& r : m.replaces) add(r);
+    }
+    const auto find_provider = [&](const std::string& id) -> int {
+        const auto it = by_key.find(lower_copy(trim_copy(id)));
+        return it == by_key.end() ? -1 : static_cast<int>(it->second);
+    };
+
+    // ③ 递归解析（0=未定 1=启用 2=禁用；循环依赖按禁用处置）
+    std::vector<int> state(manifests.size(), 0);
+    std::function<bool(std::size_t, std::vector<std::size_t>&)> can_enable;
+    can_enable = [&](std::size_t idx, std::vector<std::size_t>& stack) -> bool {
+        if (!manifests[idx].failure.empty()) return false;
+        if (state[idx] == 1) return true;
+        if (state[idx] == 2) return false;
+        for (std::size_t s : stack) {
+            if (s == idx) {
+                state[idx] = 2;
+                return false;
+            }
+        }
+        stack.push_back(idx);
+        bool ok = true;
+        for (const auto& dep : manifests[idx].depends) {
+            const int prov = find_provider(dep.first);
+            if (prov < 0) {
+                ok = false;
+                break;
+            }
+            if (!can_enable(static_cast<std::size_t>(prov), stack)) {
+                ok = false;
+                break;
+            }
+            if (!version_satisfies(manifests[static_cast<std::size_t>(prov)].version, dep.second)) {
+                ok = false;
+                break;
+            }
+        }
+        stack.pop_back();
+        state[idx] = ok ? 1 : 2;
+        return ok;
+    };
+    std::vector<PluginDisabledInfo> disabled;
+    for (std::size_t i = 0; i < manifests.size(); ++i) {
+        if (!manifests[i].failure.empty()) continue;
+        std::vector<std::size_t> stack;
+        if (can_enable(i, stack)) continue;
+        PluginDisabledInfo info;
+        info.owner = manifests[i].owner;
+        info.id = manifests[i].id;
+        info.name = manifests[i].name;
+        info.version = manifests[i].version;
+        info.repo = manifests[i].repo;
+        for (const auto& dep : manifests[i].depends) {
+            const int prov = find_provider(dep.first);
+            PluginMissingDep miss;
+            miss.id = dep.first;
+            miss.range = dep.second;
+            if (prov < 0) {
+                miss.detail = "未安装";
+            } else if (state[static_cast<std::size_t>(prov)] != 1) {
+                miss.detail = "前置自身被禁用（或缺它的前置/循环依赖）";
+            } else if (!version_satisfies(manifests[static_cast<std::size_t>(prov)].version, dep.second)) {
+                miss.detail = "已安装 " + manifests[static_cast<std::size_t>(prov)].version +
+                              "，不满足要求";
+            } else {
+                continue;
+            }
+            info.missing.push_back(std::move(miss));
+        }
+        if (info.missing.empty()) {
+            info.missing.push_back({"<依赖链>", "*", "循环依赖或链上有被禁用的插件"});
+        }
+        core::log(core::Level::Warn,
+                  "Python 插件已禁用（缺前置）：" + info.owner + "（id=" + info.id + "）");
+        for (const PluginMissingDep& miss : info.missing) {
+            core::log(core::Level::Warn, "    缺少前置：" + miss.id + " " + miss.range + " —— " +
+                                             miss.detail);
+        }
+        plugin::trace_event("load", "file=" + info.owner + " ret=disabled missing=" + info.missing.front().id);
+        disabled.push_back(std::move(info));
+    }
+    {
+        std::lock_guard<std::mutex> lock(disabled_detail::mutex());
+        disabled_detail::storage() = disabled;
+    }
+
+    // ④ 只 register 启用的（失败仍按 owner 回滚）
+    for (std::size_t i = 0; i < manifests.size(); ++i) {
+        Manifest& m = manifests[i];
+        if (!m.failure.empty() || state[i] != 1) continue;
+        std::string failure;
+        try {
+            if (py::hasattr(m.module, "register") == 0) {
                 throw std::runtime_error("插件没有导出 register(api)（第一版 API 表要求它）");
             }
-            py::object register_fn = module.attr("register");
+            py::object register_fn = m.module.attr("register");
             if (PyCallable_Check(register_fn.ptr()) == 0) {
                 throw std::runtime_error("register 不是可调用对象");
             }
-            PyPluginApi* raw = new PyPluginApi(&registry, owner, dir);
+            PyPluginApi* raw = new PyPluginApi(&registry, m.owner, dir);
             py::object api = py::cast(raw, py::return_value_policy::take_ownership);
             py::object result = register_fn(api);
             if (py::isinstance<py::bool_>(result) != 0 && result.cast<bool>() == false) {
@@ -4069,24 +4393,24 @@ std::vector<RegistrationError> load_python_plugins_impl(
             failure = err.what();
         }
         if (!failure.empty()) {
-            // ★ 先**按 owner 回滚**再记账：半个插件的注册留在表里＝指向坏插件的回调
-            //   （C ABI 那条 S1-2 的血账，这里同一套口径、同一个实现）。
-            const size_t undone = registry.rollback_plugin(owner);
-            unregister_services(owner);   // 服务也要按 owner 清，否则禁用的插件还在被调用
+            const std::size_t undone = registry.rollback_plugin(m.owner);
+            unregister_services(m.owner);
             const std::string message =
                 failure + "（已按 owner 回滚 " + std::to_string(undone) + " 条注册）";
-            errors.push_back({owner, message});
-            registry.add_error(owner, message);
-            core::log(core::Level::Warn, "Python 插件加载失败：" + owner + "：" + failure);
-            plugin::trace_event("load", "file=" + owner + " ret=error error=" + failure);
+            errors.push_back({m.owner, message});
+            registry.add_error(m.owner, message);
+            core::log(core::Level::Warn, "Python 插件加载失败：" + m.owner + "：" + failure);
+            plugin::trace_event("load", "file=" + m.owner + " ret=error error=" + failure);
             continue;
         }
+        if (modules_out != nullptr) modules_out->emplace_back(m.owner, m.module);
         ++acc.loaded;
-        acc.registrations += registry.residue_for(owner).registrations();
+        acc.registrations += registry.residue_for(m.owner).registrations();
         ++loaded_python_plugins();
-        core::log(core::Level::Info, "Python 插件已加载：" + owner);
-        plugin::trace_event("load", "file=" + owner + " ret=ok");
+        core::log(core::Level::Info, "Python 插件已加载：" + m.owner + "（id=" + m.id + "）");
+        plugin::trace_event("load", "file=" + m.owner + " ret=ok");
     }
+
     return errors;
 #endif
 }
@@ -4136,6 +4460,7 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
     bool want_plugins = false;
     bool want_ui = false;
     bool want_plugin_call = false;
+    bool want_json = false;
     std::string want_plugin_call_json;
     std::string want_plugin_call_plugin;
     std::string home;
@@ -4148,6 +4473,10 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
         }
         if (a == "--py-plugins") {
             want_plugins = true;
+            continue;
+        }
+        if (a == "--json") {
+            want_json = true;
             continue;
         }
         if (a == "--ui-facade") {
@@ -4361,6 +4690,21 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
         emit("PYPLUGINS residue plugin=" + e.plugin +
              " value=" + std::to_string(registry.residue_for(e.plugin).registrations()));
     }
+    // ★ 2026-11-09：缺前置被自动禁用的插件（插件管理器读这几行；零静默）。
+    {
+        const std::vector<PluginDisabledInfo> disabled = disabled_python_plugins();
+        emit("PYPLUGINS disabled=" + std::to_string(disabled.size()));
+        for (const PluginDisabledInfo& d : disabled) {
+            std::string missing;
+            for (const PluginMissingDep& m : d.missing) {
+                if (!missing.empty()) missing += ";";
+                missing += m.id + "(" + m.range + ")=" + m.detail;
+            }
+            emit("PYPLUGINS disabled plugin=" + d.owner + " id=" + d.id + " name=" + d.name +
+                 " version=" + d.version + " repo=" + (d.repo.empty() ? "-" : d.repo) +
+                 " missing=" + one_line(missing));
+        }
+    }
     // ★ 2026-11-03（审计）：`--py-plugins` 输出每个插件的 provides/requires/imports ——
     //   **用 ast 静态读 PLUGIN_INFO 字面量，不 import 插件**（import 会执行顶层代码 = P-16-2a 旧病）。
     //   拼接/判空全部在 Python 侧做完，C++ 只读字符串（修：早前在 C++ 里迭代 py::object 会 0xC0000409）。
@@ -4380,13 +4724,38 @@ def _join(value):
     text = str(value).strip()
     return text if text else "-"
 
+def _dep_map(value):
+    if not isinstance(value, dict):
+        return {}
+    out = {}
+    for k, v in value.items():
+        s = str(v).strip()
+        out[str(k)] = s if s else "*"
+    return out
+
+def _dep_text(value):
+    deps = _dep_map(value)
+    return ",".join("%s(%s)" % (k, v) for k, v in deps.items()) if deps else "-"
+
+def _str_list(value):
+    if isinstance(value, (list, tuple, set)):
+        return [str(v) for v in value if str(v)]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
 def _meta(path):
+    base = os.path.splitext(os.path.basename(path))[0]
+    out = {"file": os.path.basename(path), "id": "", "name": base, "version": "", "repo": "",
+           "provides": "-", "requires": "-", "depends_text": "-", "replaces": "-",
+           "depends": {}, "provides_list": [], "replaces_list": [],
+           "imports": "-", "note": ""}
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
             tree = ast.parse(fh.read())
     except Exception:
-        return {"name": os.path.splitext(os.path.basename(path))[0], "provides": "-",
-                "requires": "-", "imports": "-", "note": "无法解析"}
+        out["note"] = "无法解析"
+        return out
     info = None
     dynamic = False
     for node in tree.body:
@@ -4406,41 +4775,61 @@ def _meta(path):
             names.extend(a.name for a in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             names.append(node.module)
-    out = {
-        "name": os.path.splitext(os.path.basename(path))[0],
-        "provides": "-",
-        "requires": "-",
-        "imports": ",".join(sorted(set(names))) or "-",
-        "note": "",
-    }
+    out["imports"] = ",".join(sorted(set(names))) or "-"
     if dynamic:
         out["provides"] = "?"
         out["requires"] = "?"
         out["note"] = "PLUGIN_INFO 不是字面量（无法静态读取）"
-    elif info is None:
+        return out
+    if info is None:
         out["note"] = "无 PLUGIN_INFO"
-    else:
-        out["provides"] = _join(info.get("provides"))
-        out["requires"] = _join(info.get("requires"))
+        return out
+    out["id"] = str(info.get("id", "") or "")
+    out["name"] = str(info.get("name", "") or base)
+    out["version"] = str(info.get("version", "") or "")
+    out["repo"] = str(info.get("repo", "") or "")
+    out["provides_list"] = _str_list(info.get("provides"))
+    out["replaces_list"] = _str_list(info.get("replaces"))
+    out["provides"] = ",".join(out["provides_list"]) or "-"
+    out["replaces"] = ",".join(out["replaces_list"]) or "-"
+    out["requires"] = _join(info.get("requires"))
+    out["depends"] = _dep_map(info.get("depends"))
+    out["depends_text"] = _dep_text(info.get("depends"))
     return out
 )PY", g);
+        std::string json_text;
+        py::list items_json;
         std::error_code ec;
         for (const auto& entry : std::filesystem::directory_iterator(plugin_dir, ec)) {
             if (!entry.is_regular_file() || entry.path().extension() != ".py") continue;
             py::dict meta = g["_meta"](entry.path().string()).cast<py::dict>();
-            const std::string line = "PLUGIN name=" + py::str(meta["name"]).cast<std::string>() +
-                                     " provides=" + py::str(meta["provides"]).cast<std::string>() +
-                                     " requires=" + py::str(meta["requires"]).cast<std::string>() +
-                                     " imports=" + py::str(meta["imports"]).cast<std::string>();
-            const std::string note = py::str(meta["note"]).cast<std::string>();
+            const auto field = [&](const char* key) {
+                return py::str(meta[key]).cast<std::string>();
+            };
+            const std::string name = field("name");
+            const std::string id = field("id");
+            const std::string version = field("version");
+            const std::string repo = field("repo");
+            const std::string provides = field("provides");
+            const std::string requires_text = field("requires");
+            const std::string depends = field("depends_text");
+            const std::string replaces = field("replaces");
+            const std::string imports = field("imports");
+            const std::string line = "PLUGIN name=" + name + " id=" + id + " version=" + version +
+                                     " repo=" + (repo.empty() ? "-" : repo) +
+                                     " provides=" + provides + " requires=" + requires_text +
+                                     " depends=" + depends + " replaces=" + replaces +
+                                     " imports=" + imports;
+            const std::string note = field("note");
             lines_out.push_back(note.empty() ? line : line + " note=" + note);
-            const std::string req = py::str(meta["requires"]).cast<std::string>();
-            if (req != "-" && req != "?") {
-                lines_out.push_back("PLUGIN warn name=" + py::str(meta["name"]).cast<std::string>() +
-                                    " requires=" + req +
-                                    " note=由插件自行检查提供者是否存在（加载期不强制）");
-            }
+            items_json.append(meta);
         }
+        if (want_json) {
+            py::str dumped = py::module_::import("json").attr("dumps")(
+                items_json, py::arg("ensure_ascii") = false);
+            json_text = dumped.cast<std::string>();
+        }
+        if (!json_text.empty()) lines_out.push_back("PYPLUGINS-JSON " + json_text);
     }
     for (const std::string& pl : lines_out) emit(pl);
 

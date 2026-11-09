@@ -10104,6 +10104,29 @@ SmokeResult run_smoke() {
         }
         QDir(empty_dir).removeRecursively();
         QDir(bad_dir).removeRecursively();
+
+        // ★ 2026-11-09（用户口径）：缺前置的插件**启动期自动禁用**（不调 register，不算加载失败），
+        //   并把清单交给插件管理器（离屏自检不弹窗，只断"禁用清单到了 Hub"）。
+        const QString deps_dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_plugins_deps"));
+        QDir(deps_dir).removeRecursively();
+        QDir().mkpath(deps_dir);
+        {
+            std::ofstream out((deps_dir + QStringLiteral("/needs_missing.py")).toStdString(),
+                              std::ios::binary | std::ios::trunc);
+            out << "PLUGIN_INFO = {\"id\": \"demo.missing_dep\", \"version\": \"1.0\", "
+                   "\"depends\": {\"demo.absent\": \">=1\"}}\n"
+                   "def register(api):\n"
+                   "    raise RuntimeError('缺前置的插件不许 register')\n";
+        }
+        {
+            Hub deps_page(nullptr, deps_dir);
+            check(deps_page.disabled_plugin_count() == 1,
+                  QStringLiteral("插件前置：缺前置的插件必须被自动禁用（实得 %1）")
+                      .arg(deps_page.disabled_plugin_count()));
+            check(deps_page.plugin_errors().empty(),
+                  QStringLiteral("插件前置：禁用不是加载失败，不该进 registration_errors"));
+        }
+        QDir(deps_dir).removeRecursively();
     }
 
     // ⑬ ★★ Windows 版本资源（VERSIONINFO）——用户 2026-10-04 口径：exe "完全没有元数据、也没有签名"
