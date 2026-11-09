@@ -11497,13 +11497,14 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
                   .arg(c_selected, sel_rule, c_accent));
     }
 
-    // ★★ 2026-10-05（用户报告 #2）右栏＝**解包产物预览**，必须体现「**包名壳**」。
+    // ★★ 2026-10-05（用户报告 #2）右栏＝**解包产物预览**，必须体现「**真实落点**」。
     //
     // 用户原话（2026-10-03）：「**这是一个解包的工具，而右边罗列的是包的内容，换句话说就是
     //   解包产物的预览。**」；本批原话：「`…\IWP\新建文件夹`还是那样。」
-    // ⇒ 判据：把**同一份落点规则**用在预览上 —— `IWP\database\config\xr.db` 的条目
-    //   `gamemtl.xr` 在右栏必须显示成 `xr/gamemtl.xr`（修前显示根级 `gamemtl.xr`）。
-    //   反向：**自带壳**的包（`ai.db` 的条目已经 `ai/…`）**不叠第二层**（仍是 `ai/…`）。
+    // ⇒ 判据：把**同一份落点规则**用在预览上 —— 2026-11-09 起落点是"**壳不保留**"
+    //   （按解包内核参照 `converter.exe` 实测复证：`-unpack -xdb` 直接落 `-dir` 根），
+    //   所以 `xr.db` 的条目 `gamemtl.xr` 在右栏**就是** `gamemtl.xr`；
+    //   自带壳的 `ai.db`（条目已 `ai/…`）同样原样（无 `ai/ai/`）。
     // ★ 判红办法：把 `rebuild_tree()` 里那句 `efs::preview_entries_in_layout(...)` 换回
     //   `entries_[i]`（＝"原始包内路径"）⇒ 下面两条立刻红。
     //
@@ -11545,7 +11546,7 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
               QStringLiteral("#2 预览② 自带壳的包**不叠第二层**（原样 ai/alife/x.efd=%1 / 叠了 ai/ai=%2）")
                   .arg(original ? 1 : 0)
                   .arg(doubled ? 1 : 0));
-        // ③ 真页面：右栏树上**看得见**那层壳（不是只有引擎函数对）
+        // ③ 真页面：右栏树上**看得见**解包后的路径（不是只有引擎函数对）
         const QString shell_dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_shell_preview"));
         QDir(shell_dir).removeRecursively();
         QDir().mkpath(shell_dir + QStringLiteral("/database/config"));

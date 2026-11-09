@@ -226,31 +226,29 @@ std::vector<UnpackTarget> plan_unpack_targets(
 // 但"预览怎么拼出那条路径"如果写在外壳里，就又变成"同一条规则两个实现"（CLI 复现不了）。
 //
 // 规则（与 `extract_package` 的落盘顺序逐字对应：`safe_out_path(target, entry.path)`）：
-//   ① `unpack_target_dir(...)` 相对 `out_root` 那一段（＝包名壳；**不带壳时为空**）
-//      就是**前缀**；② 前缀非空 ⇒ 条目路径前面拼 `前缀 + '/'`。
-//   ★ 自带壳的包（`ai.db` 的条目已经是 `ai/…`）⇒ 前缀为空 ⇒ **条目路径原样**（不叠第二层）。
-//   ★ **目录项也补**：否则右栏的目录树缺中间层（`xr/a/b.txt` 的 `xr`、`xr/a` 建不出来）。
-//   ★ 签名里**没有输出根**（有意的）：`unpack_target_dir` 的返回相对根那一段只可能是
-//     "**空**" 或 "**壳**"（`resolve_output_root` 已经把根归一过了），所以预览与"解包到哪"
-//     无关 —— 也就不需要为了预览去回填/推算用户的"解包到"输入框（不留副作用）。
-//
-// 返回表的顺序：先是补出来的那批目录（祖先在前），再是 `entries` 原序。
+//   ★★ 2026-11-09（F2740，按解包内核参照实测修正）：**壳不保留 ⇒ 预览＝条目原样**。
+//   参照 `E:\Software\Tools\Ghidra\Projects\Converter\converter.exe`（Ghidra 导出即其反编译）实测：
+//   `converter.exe -unpack -xdb -dir <out> test.db`（条目 `levels/a.txt`、`readme.md`）⇒
+//   `<out>\levels\a.txt`、`<out>\readme.md`；把包改名 `gamedata.db_levels` 再跑结果相同 ——
+//   **不建包名壳**。这与 `unpack_target_dir` 的 2026-11-08 口径（"解压到当前位置"）一致。
+//   ⇒ 右栏预览直接返回 `entries` 原序（不再补壳层、也不再补目录项；目录由页面按路径前缀懒建）。
+//   ★ 历史（已作废）：修前按 `pattern_shell_prefix()` 补 `包名/`，导致右栏显示比真正写盘多一层。
+
 std::vector<EntryInfo> preview_entries_in_layout(const std::string& package_path,
                                                  const std::vector<EntryInfo>& entries);
 
 // ── ★★ 2026-10-06（审计处理批·1-4 / S1-7）：`only` 的**匹配规则**（唯一一份）──────────
 //
 // 病根：同一条"勾选项 ↔ 包里条目"的比对写了两份、两边不同源 ——
-//   · 页面（`fs_page.cpp:1493-1496`）把 `tree_.flatten()` 的 `node->path` 塞进 `only`，
-//     而那棵树是 `preview_entries_in_layout()` 的产物 ⇒ 那是**落点相对路径**（带包名壳）；
+//   · 页面（`fs_page.cpp`）把树的 `node->path` 塞进 `only`，那是**落点相对路径**；
 //   · 引擎（与 `tools/cli/main.cpp` 的 `--unpack-package` 预过滤）比的是**镜像内路径**；
 //   ⇒ 不自带壳的包**一条都命中不了**，界面"解包：0 个文件"、CLI 退 0，一个字不说。
 //
 // 现在把规则收到引擎一处，两边**都调它**：
-//   ① `want` 与**落点路径**（`preview_entries_in_layout` 算出来的"包名壳 + 镜像内路径"）
-//      相等 ⇒ 命中；② 与**镜像内路径**（1.x `--cat` 与既有 CLI 调用点的写法）相等 ⇒ 也命中。
-// 壳的算法与 `preview_entries_in_layout()` 同源（同一个 `unpack_target_dir` 减哨兵根）。
-// `package_path` = 包文件路径（只用来算壳，不需要包真的存在）。
+//   ① `want` 与**落点路径**相等 ⇒ 命中；② 与**镜像内路径**相等 ⇒ 也命中。
+//   ★ 2026-11-09（F2740）：落点已"不保留包名壳" ⇒ 预览给的就是镜像内路径；这里仍**兼容**
+//     旧式的"包名壳 + 条目"写法（历史清单/旧页面缓存），两种写法都收，不再产生歧义。
+// `package_path` = 包文件路径（只用来算兼容壳，不需要包真的存在）。
 bool selection_matches(const std::string& package_path,
                        const std::vector<std::string>& entry_paths,
                        const std::string& want);

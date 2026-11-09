@@ -6,12 +6,12 @@ r"""真机判红锁：解包**落点**（包名壳判定）与**报数口径**�
   · 壳规则审计报告（原版反编译行号 + 258 包形态全量表）
   · IWP 逐包对比报告（`dup_evidence.txt` / `independent_lzhuf_verify.tsv`）
 
-① 落点：`paths_carry_shell` 的量词曾是"**全部**条目都带壳" ⇒ 9 个 VESSEL 真机包每个**恰含一条**
-   根级 `readme.md`(8148 B)、其余条目全在 `壳/…` 下 ⇒ 被判"不带壳" ⇒ 解出 `ai/ai/alife/…`
-   （违背用户口径「这个案例，就解出来一个 configs。」）。现在量词是"**过半**带壳"。
-   反向锁（防改过头）：条目顶段与包名壳**无关**的包必须仍然叠壳 ——
-   `Golden Sphere\gamedata.db_levels`（壳 `gamedata`、条目全 `levels/…`）与
-   `IWP\database\maps\jupiter.db`（壳 `jupiter`、条目全 `levels/…`）。
+① 落点：**壳不保留**（2026-11-08 用户口径；2026-11-09 按解包内核参照
+   `E:\Software\Tools\Ghidra\Projects\Converter\converter.exe` 实测复证：`-unpack -xdb -dir <out>`
+   对条目 `levels/a.txt` 落 `<out>\levels\a.txt`，把包改名 `gamedata.db_levels` 结果相同 ⇒ **不建包名壳**）。
+   ⇒ 所有包的落点都必须**等于输出根**（不得再叠 `<包名>/`）；VESSEL `configs\ai.db` 的
+   `<根>/ai/alife/` 有、`<根>/ai/ai/` 没有；`gamedata.db_levels` / `jupiter.db` 等也一律落根。
+   修前这里写的是"无关顶段必须仍然叠壳"，与内核参照相反，已按实测改正。
 
 ② 报数：32 个 `IWP\database\maps\*.db` 的**包内条目表把除根记录外的每条记录登记了两遍**
    （同路径/同 offset ⇒ 同一份数据，独立解码已证实重复在包内，不是 dump 的 bug）⇒ 报数曾是
@@ -157,8 +157,8 @@ def check_fake_start(tmp):
     want(entries == FAKE_START_ENTRIES and records == FAKE_START_RECORDS,
          "计划行两个口径分开报（entries=%s 期望 %d / records=%s 期望 %d）"
          % (entries, FAKE_START_ENTRIES, records, FAKE_START_RECORDS))
-    want(norm_path(target) == norm_path(out / "fake_start"),
-         "落点＝<根>/fake_start（条目顶段 `levels` 与壳无关 ⇒ 照常叠壳；target=%s）" % target)
+    want(norm_path(target) == norm_path(out),
+         "落点＝输出根（**不叠包名壳**，与解包内核参照一致；target=%s）" % target)
     want(ok_line is not None and ok_line.get("files") == disk_files == FAKE_START_FILES,
          "报数 files==盘上真实文件数（报 %s / 盘 %d / 期望 %d）"
          % ((ok_line or {}).get("files"), disk_files, FAKE_START_FILES))
@@ -183,7 +183,11 @@ def check_fake_start(tmp):
 
 
 def check_reverse(tmp):
-    """判红锁①的反向锁：与包名壳无关的条目 ⇒ **必须仍然叠壳**（防"过半"改成"存在"就过头）。"""
+    """反向锁：**所有**包（含条目顶段与包名无关的）落点都必须＝输出根（壳不保留）。
+
+    2026-11-09（F2740）：修前这里要求"仍然叠壳 out/<包名>"，与解包内核参照
+    （converter.exe 实测：`-unpack -xdb` 直接落 `-dir` 根）相反；现已按参照改正。
+    """
     phantom = tmp / "phantom_only.txt"
     phantom.write_text("__no_such_entry__\n", encoding="utf-8")
     out = tmp / "reverse"
@@ -191,8 +195,8 @@ def check_reverse(tmp):
         rc, text = run_cli(["--unpack-package", pkg, out, "--only", phantom])
         target, entries, records = plan_target(text)
         ok_line = summary_ok(text)
-        want(rc == 0 and norm_path(target) == norm_path(out / shell),
-             "%s ⇒ 仍然叠壳 <根>/%s（target=%s）" % (pkg.name, shell, target))
+        want(rc == 0 and norm_path(target) == norm_path(out),
+             "%s ⇒ 落点＝输出根（**不**叠 <根>/%s；target=%s）" % (pkg.name, shell, target))
         # 反向锁只看计划 ⇒ 一个文件都不许落盘（`--only` 只给了包内不存在的条目）
         want(ok_line is not None and ok_line.get("done") == 0 and ok_line.get("files") == 0,
              "%s ⇒ 只看计划、不落盘（done=%s files=%s）"
@@ -226,7 +230,7 @@ def main():
         check_vessel(tmp)
         print("[②报数] IWP `maps\\fake_start.db`（包内条目表每条登记两遍）")
         check_fake_start(tmp)
-        print("[③反向] 条目顶段与包名壳无关 ⇒ 仍叠壳")
+        print("[③反向] 所有包（含顶段与包名无关的）落点都必须＝输出根（壳不保留）")
         check_reverse(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -236,7 +240,7 @@ def main():
         for p in PROBLEMS:
             print("           " + p)
         return 1
-    print("UNPACK-LOCK ok 落点（VESSEL 不叠第二层壳 + 反向两条仍叠壳）与报数"
+    print("UNPACK-LOCK ok 落点（一律输出根、不叠包名壳；VESSEL 无 ai/ai）与报数"
           "（fake_start 报数==盘上真实、--dump 仍报记录数）全绿")
     return 0
 

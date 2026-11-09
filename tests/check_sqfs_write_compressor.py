@@ -124,7 +124,8 @@ def main() -> int:
             want(rc == 0 and "DUMP ok" in out, "B2 gzip 镜像 `--dump` 能读", "rc=%s" % rc)
             outdir = tmp / "extracted"
             rc, out = run(["--unpack-package", str(img_gz), str(outdir)])
-            # `--unpack-package` 会按包名建一层目录 ⇒ **递归找**，别写死层级
+            # ★ 2026-11-09（F2740）：落点**不再**按包名建一层（壳不保留；解包内核参照 converter.exe
+    #   实测也是直接落 `-dir` 根）⇒ 产物就在 outdir 下，按需递归找即可，别写死层级。
             found = sorted(outdir.rglob("a.txt")) if outdir.is_dir() else []
             ok_rt = rc == 0 and bool(found) and found[0].read_bytes() == (tree / "a.txt").read_bytes()
             want(ok_rt, "B3 gzip 镜像**解包往返逐字节一致**",

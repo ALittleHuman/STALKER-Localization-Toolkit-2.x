@@ -740,50 +740,18 @@ std::vector<UnpackTarget> plan_unpack_targets(
 }
 
 // ── ★★ 2026-10-05：**解包产物预览**（右栏）＝落点规则的**同一份真值**（见头文件说明）──
+// ★★ 2026-11-09（F2740，按解包内核参照实测修正）：**壳不保留**。
+//   参照 `E:\Software\Tools\Ghidra\Projects\Converter\converter.exe`（Ghidra 导出源码即其反编译）实测：
+//     `converter.exe -unpack -xdb -dir <out> test.db`（条目 `levels/a.txt`、`readme.md`）⇒
+//     `<out>\levels\a.txt`、`<out>\readme.md` —— **不建包名壳**；把包改名为
+//     `gamedata.db_levels` 再跑，结果相同（仍落 `<out>\levels\...`）。
+//   这与 `unpack_target_dir` 的 2026-11-08 口径一致（"解压到当前位置"）。
+//   修前本函数仍按 `pattern_shell_prefix()` 补 `包名/` ⇒ 右栏显示的落点比**真正写盘**多一层，
+//   自相矛盾（也违背本函数自己的注释"与落点规则同源"）。现在：条目路径**原样**返回。
 std::vector<EntryInfo> preview_entries_in_layout(const std::string& package_path,
                                                  const std::vector<EntryInfo>& entries) {
-    std::vector<std::string> raw;
-    raw.reserve(entries.size());
-    for (const EntryInfo& e : entries) raw.push_back(e.path);
-
-    // 这一段就是**包名壳**（自带壳的包 ⇒ 空串）。算法在 `pattern_shell_prefix()` ——
-    // ★ 2026-10-06（1-4）：原来这里**自己抄了一遍**壳的算法，而"解包选中"的匹配又要用壳
-    //   ⇒ 同一个事实两份实现正是本批要收的口径病根。现在两处都调那一个函数。
-    const std::string prefix = pattern_shell_prefix(package_path, raw);
-    if (prefix.empty()) return entries;   // 自带壳 / 算不出壳 ⇒ 条目路径原样（**不叠第二层**）
-
-    std::vector<EntryInfo> out;
-    out.reserve(entries.size() + 8);
-    // ★ 目录项也要补（否则右栏建不出中间层）。用集合去重，避免与包内已有的同名目录项重复。
-    std::set<std::string> made_dirs;
-    auto add_dir = [&](const std::string& path) {
-        if (path.empty()) return;
-        if (!made_dirs.insert(path).second) return;
-        out.emplace_back(path, /*d=*/true, /*s=*/0);
-    };
-    // 壳自己那一层
-    add_dir(prefix);
-    const std::string lead = prefix + "/";
-    for (const EntryInfo& e : entries) {
-        if (e.path.empty()) continue;
-        // 逐级补祖先目录（条目自己带 `a/b/c` 时中间那几层也要在）
-        std::string acc = prefix;
-        std::string seg;
-        for (size_t i = 0; i <= e.path.size(); ++i) {
-            const char c = i < e.path.size() ? e.path[i] : '/';
-            if (c == '/' || c == '\\') {
-                if (!seg.empty()) {
-                    acc += "/" + seg;
-                    add_dir(acc);
-                    seg.clear();
-                }
-            } else {
-                seg += c;
-            }
-        }
-        out.emplace_back(lead + e.path, e.is_dir, e.size);
-    }
-    return out;
+    (void)package_path;
+    return entries;
 }
 
 // ★ 2026-10-06（1-4）：把"勾选项 ↔ 包里条目"的比对**唯一一份**暴露出去 ——

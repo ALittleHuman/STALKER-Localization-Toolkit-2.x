@@ -4,8 +4,8 @@ r"""判红锁：`only`（"解包选中"）**语义只许一份** + 命中不了�
 
 病根（审计原文 §1 第 4 条 / 判据 §7 的 1-4）：
   · 页面（`fs_page.cpp:1493-1496`）把 `tree_.flatten()` 的 `node->path` 塞进 `only`，而那棵树是
-    `preview_entries_in_layout()` 的产物 ⇒ 那是**落点相对路径**（带包名壳）；
-  · 引擎比的是 `listed.entries` 的**镜像内路径** ⇒ **两条不同源的路径在比大小**；
+    `preview_entries_in_layout()` 的产物 ⇒ 那是**落点相对路径**（2026-11-09 起＝**条目原样**，壳不保留）；
+  · 引擎比的是 `listed.entries` 的**镜像内路径** ⇒ 修前两条不同源的路径在比大小（现在两者同源；
   · 更糟的是 DB 分支命中不了时 `continue` 而**不计 failures、不计 written** ⇒
     `files_written=0`、`failures` 空、`ok=true` —— 界面"解包：0 个文件"、CLI 退 0，一个字不说。
 
