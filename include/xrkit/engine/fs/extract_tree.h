@@ -115,7 +115,7 @@ struct ExtractTreeResult {
     // ★★ 2026-10-04（判红锁②）：三个计数一律走**最终产物**口径 —— 同一个落点被多条记录占据时
     //   只算**一次**（后写覆盖前写 ⇒ 产物没有变多）。用户口径：右栏＝**解包产物的预览**，
     //   所以"报出来的数"必须等于"盘上真有的东西"，不是包内记录条数。
-    //   现场：`IWP\database\maps\fake_start.db` 包内 26 条文件记录 / 实际落盘 13 个文件、
+    //   现场：`地图包\database\maps\fake_start.db` 包内 26 条文件记录 / 实际落盘 13 个文件、
     //   4,451,688 B / 实际 2,225,844 B（改前报数正好是真实值的 2 倍 −1）。
     uint64_t files_written = 0;
     uint64_t dirs_created = 0;
@@ -164,7 +164,7 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
 
 // ── 解包落点（用户 2026-10-03 口径；★GUI 与 CLI **必须共用这一份**）────────────────────
 //
-// 用户口径原话：「如果就拖入 `E:\...\IWP\database\config` 的 `configs`，那么**解包出来是一个
+// 用户口径原话：「如果就拖入 `E:\...\地图包\database\config` 的 `configs`，那么**解包出来是一个
 // `configs` 文件夹**（和 `gamedata.db*`/`sq*` 解出 `gamedata` 一样），**不包含 `database` 和
 // `config`**。」追问"包内路径本身就带一层 `configs/` 会不会变成 `configs/configs`"后定案：
 // **「这个案例，就解出来一个 configs。」**
@@ -181,18 +181,18 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
 std::string package_folder_name(const std::string& package_path);
 
 // 包内路径是否**已经自带**这一层同名壳：**过半**条目的第一段等于 shell ⇒ true。
-//   ★ 2026-10-04（判红锁①）：量词由"**全部**条目都带壳"改成"**过半**带壳"。真机 9 个 VESSEL 包
+//   ★ 2026-10-04（判红锁①）：量词由"**全部**条目都带壳"改成"**过半**带壳"。真机 9 个 多根包 包
 //     每个**恰好含一条**根级 `readme.md`(8148 B)、其余条目全在 `壳/…` 下 ⇒ "全部"量词把它们判成
 //     "不带壳" ⇒ 解出 `ai/ai/alife/…`（违背用户口径「这个案例，就解出来一个 configs。」）。
-//     `IWP\database\config\configs.db`（27/27 带壳，多一条 `a.txt` 就翻转）就是同族不稳的现场。
+//     `地图包\database\config\configs.db`（27/27 带壳，多一条 `a.txt` 就翻转）就是同族不稳的现场。
 //   · 裸壳项（`p == shell`，那条"自己那一层"的目录条目）计为带壳；
-//   · **不用**"存在裸壳目录项"当判据 —— `IWP\database\resource\meshes.db1` / `textures.db1` 是
+//   · **不用**"存在裸壳目录项"当判据 —— `地图包\database\resource\meshes.db1` / `textures.db1` 是
 //     纯带壳但 `bare_shell=0`，那样会回归。
 //（空条目表 ⇒ false，与"不知道 ⇒ 照常规叠一层"一致；1.x 的空表兜底语义不变。）
 bool paths_carry_shell(const std::vector<std::string>& entry_paths, const std::string& shell);
 
 // 条目路径表**去重后**的条数（同一路径只算一条；`\` 与大小写按 Windows 口径归一）。
-// ★ 为什么需要：`IWP\database\maps\*.db` 的 HEADER 表把**除根记录外的每条记录登记了两遍**
+// ★ 为什么需要：`地图包\database\maps\*.db` 的 HEADER 表把**除根记录外的每条记录登记了两遍**
 //   （同路径、同 offset、同 size ⇒ 同一份数据，已用不依赖工具的独立解码证实"重复在包内"）。
 //   ⇒ 包内记录数是产物数的 2 倍 −1。**分工**：协议层（`--dump`）报**包内记录数**（忠实、不去重，
 //   它有独立用途）；产物层（`--unpack-package` 的 `plan` 行 / UI 计数）报**产物口径**。

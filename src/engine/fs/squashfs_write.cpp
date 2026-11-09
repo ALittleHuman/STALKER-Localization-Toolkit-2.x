@@ -685,7 +685,7 @@ bool Packer::write_fragment_block(std::string& err) {
     // ★ fragment 块必须**也记进块账本**：参照实现里数据块与 fragment 块共用同一张
     //   `wr->blocks` 记录（write_data_block 对 FRAGMENT_BLOCK 同样 store_block_location）。
     //   漏掉它，数据块去重命中后的"截断到上一个记录末尾"就会把刚写下的 fragment 块删掉
-    //   （frag 表还指着它）—— 真机抽验（NLC sqz_wasteland）就是这么被抓出来的：
+    //   （frag 表还指着它）—— 真机抽验（加密包 sqz_wasteland）就是这么被抓出来的：
     //   镜像小 700 KB、碎片去重从 206 掉到 136。
     blocks_.push_back(BlockRec{location, size_field, sum});
     blocks_by_sum_[sum].push_back(blocks_.size() - 1);

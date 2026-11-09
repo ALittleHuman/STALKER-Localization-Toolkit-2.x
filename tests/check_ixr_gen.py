@@ -17,6 +17,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -689,8 +691,8 @@ def main() -> int:
         # ④ **真包夹具**（自动发现：任意"含 gamedata/configs/fonts.ltx"的目录都算参照包，
         #    不点名某个模组；找不到就显式跳过）
         real = None
-        for root in (Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat\Chronicles of Pripyat"),
-                     Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat")):
+        for root in (samples.find_alias("mod.cop_root"),
+                     samples.find_alias("mod.cop_parent")):
             if not root.is_dir():
                 continue
             for ltx in root.glob("**/gamedata/configs/fonts.ltx"):

@@ -2222,7 +2222,7 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
               "ASCII/西里尔/西欧/译文汉字都不许被误剔");
     });
 
-    // ⑫12.1 decryptor 消费端（用户 2026-09-26：NLC 解密是外部插件；工具内不放逻辑）
+    // ⑫12.1 decryptor 消费端（用户 2026-09-26：加密包 解密是外部插件；工具内不放逻辑）
     reg.add("plugin: decryptor 消费端（加载 DB 前问插件）", [](CheckContext& ctx) {
         namespace plug = xrkit::plugin;
         namespace core = xrkit::core;
@@ -3883,7 +3883,7 @@ int run_cli(const std::vector<std::string>& args) {
         // ★ 2026-09-30 用户第四轮 ⑦：DB 列条目走 **seek 式**（只读块头 + 尾部条目表）。
         //   旧写法 `read_all` 把整文件读进内存 ⇒ 1900 MB 的包 8,063 ms；顺带把
         //   "1.9 GB 读不进来"那条旧观察也一并消掉（那次是**路径写错**：实际文件在
-        //   `IWP\database\patch\` 下，`read_all` 打不开 ⇒ 返回空 ⇒ 报了"读不到文件或文件为空"）。
+        //   `地图包\database\patch\` 下，`read_all` 打不开 ⇒ 返回空 ⇒ 报了"读不到文件或文件为空"）。
         const xrkit::engine::fs::DbListing res = xrkit::engine::fs::list_db_seek(target, fmt);
         if (!res.ok) {
             std::cout << "DUMP error reason=" << res.error << "\n";
@@ -4168,7 +4168,7 @@ int run_cli(const std::vector<std::string>& args) {
         //     · `entries=` = **产物口径**（同路径的多条记录只算一条）—— 它和后一行
         //       `files=/dirs=/bytes=`、以及右栏"解包产物预览"是同一把尺子；
         //     · `records=` = **包内记录数**（忠实、不去重）—— 与 `--dump` 的 `entries=` 同口径。
-        //   为什么必须分开报：`IWP\database\maps\*.db` 的 HEADER 表把除根记录外的每条记录登记了
+        //   为什么必须分开报：`地图包\database\maps\*.db` 的 HEADER 表把除根记录外的每条记录登记了
         //   两遍（同路径/同 offset ⇒ 同一份数据，独立解码已证实重复在包内）⇒ 报"记录数"会正好是
         //   盘上真相的 2 倍 −1。**`--dump` 保持忠实报记录数**（它是协议层工具，另有用途）。
         uint64_t files = 0, dirs = 0, bytes = 0, failed = 0, done = 0, dups = 0, overwritten = 0;

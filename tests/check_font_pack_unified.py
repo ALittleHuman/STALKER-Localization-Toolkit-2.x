@@ -15,6 +15,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
@@ -22,7 +24,7 @@ CJK = Path(r"C:\Windows\Fonts\NotoSansSC-VF.ttf")
 LATIN = Path(r"C:\Windows\Fonts\arial.ttf")
 def _find_packs():
     """任意"含 gamedata/configs/fonts.ltx 的目录"都算参照包（**不点名某个模组**）。"""
-    roots = [Path("E:/Software/Games/STALKER/Games/Chronicles of Pripyat/Chronicles of Pripyat")]
+    roots = [samples.find_alias("mod.cop_root")]
     found = []
     for root in roots:
         if not root.is_dir():

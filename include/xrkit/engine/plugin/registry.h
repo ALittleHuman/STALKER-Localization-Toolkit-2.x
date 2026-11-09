@@ -313,7 +313,7 @@ private:
     std::vector<RegistrationError> errors_;
 };
 
-// ⑫12.1 的 **decryptor 消费端**（用户 2026-09-26 决策：NLC 解密是外部闭源插件，
+// ⑫12.1 的 **decryptor 消费端**（用户 2026-09-26 决策：加密包 解密是外部闭源插件，
 // 走 `register_decryptor`/`find_decryptor`，工具内**不放任何解密逻辑、无模组名分支**）：
 // 加载 DB 之前问一遍插件解密器 ——
 //   · 没有解密器命中 ⇒ `ok=true, used_plugin=false, path=原路径`（行为与不做这件事完全一致）；

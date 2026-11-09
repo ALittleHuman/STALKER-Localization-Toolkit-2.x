@@ -3442,7 +3442,7 @@ SmokeResult run_smoke() {
                 efs2::unpack_target_dir(root, "E:/x/configs.db", {"configs", "configs/ai_tweaks/x.ltx"});
             const std::string plain = efs2::unpack_target_dir(root, "E:/x/gamedata.db0", {"levels/a"});
             const std::string empty = efs2::unpack_target_dir(root, "E:/x/gamedata.db0", {});
-            // ★★ 2026-10-04 **判红锁①**（缺陷①：量词"全部"⇒"过半"）：真机 9 个 VESSEL 包的形状 ——
+            // ★★ 2026-10-04 **判红锁①**（缺陷①：量词"全部"⇒"过半"）：真机 9 个 多根包 包的形状 ——
             //   裸壳项 `ai` + **一条根级 `readme.md`** + 一堆 `ai/…`。旧量词（"**全部**条目都带壳"）
             //   被 `readme.md` 一条掀翻 ⇒ 判"不带壳" ⇒ 解出 `ai/ai/alife/…`，违背用户口径
             //   「这个案例，就解出来一个 configs。」⇒ 新量词"**过半**带壳"必须判"自带壳"＝落点即输出根。
@@ -3456,7 +3456,7 @@ SmokeResult run_smoke() {
                       mixed == root,
                   QStringLiteral("落点② 自带壳不叠第二层（%1）/ **裸壳目录项也算自带壳**（%2，真机形状）/ "
                                  "不带壳＝<根>/<包名>（%3）/ 空条目也叠（%4）/ 绝不出现 <根>/.（会被 "
-                                 "safe_out_path 拒）/ **过半带壳就算自带壳**（%5：VESSEL 形状 = 裸壳项 + "
+                                 "safe_out_path 拒）/ **过半带壳就算自带壳**（%5：多根包形状 = 裸壳项 + "
                                  "一条根级 readme.md + 一堆 壳/…）")
                       .arg(QString::fromStdString(carry), QString::fromStdString(carry_bare),
                            QString::fromStdString(plain), QString::fromStdString(empty),
@@ -3464,7 +3464,7 @@ SmokeResult run_smoke() {
         }
         // ★★ 2026-10-04 **判红锁②**（缺陷②：报数与"解包产物预览"口径不符）—— 合成一枚
         //   **条目表重复登记**的 DB 包：`pack_db` 不查重，同一条路径给两条记录 ⇒ 包内两条、
-        //   盘上一份（后写覆盖前写）—— 正是真机 `IWP\database\maps\*.db` 的形状（除根记录外的
+        //   盘上一份（后写覆盖前写）—— 正是真机 `地图包\database\maps\*.db` 的形状（除根记录外的
         //   每条记录登记两遍；独立解码已证实重复在包内，不是 dump 的 bug）。
         //   判据：计数走**最终产物**口径（files=1 / bytes=2 / dirs=1），并如实报出重复记录数。
         //   （把计数改回"每处理一条记录就 +1" ⇒ files=2 / bytes=4 / dups=0 ⇒ 立刻红。）
@@ -3692,7 +3692,7 @@ SmokeResult run_smoke() {
                   summary.contains(QDir::toNativeSeparators(out_root)),
               QStringLiteral("① 解包结论要报出真实落盘目录（%1）").arg(summary.left(60)));
 
-        // ★★ 2026-10-03 **新增锁**（用户定案的产物布局口径，原话）：「如果就拖入 `E:/.../IWP/database/
+        // ★★ 2026-10-03 **新增锁**（用户定案的产物布局口径，原话）：「如果就拖入 `E:/.../地图包/database/
         //   config` 的 `configs`，那么**解包出来是一个 `configs` 文件夹**（和 `gamedata.db*`/`sq*`
         //   解出 `gamedata` 一样），**不包含 `database` 和 `config`**。」；我追问"包内路径本身就带一层
         //   `configs/` 会不会变成 `configs/configs`"他定案：**「这个案例，就解出来一个 configs。」**
@@ -4302,7 +4302,7 @@ SmokeResult run_smoke() {
                 if (drop_page.drop_filter() != nullptr) drop_page.drop_filter()->dispatch(&drop2);
                 QApplication::processEvents();
                 // ★★ 2026-10-03 口径**有意改写**（用户原话「**只要拖入包或者文件夹就加载上去**」；
-                //   并实测「`IWP\database` 加载时长零点几秒，完全不影响」）⇒
+                //   并实测「`地图包\database` 加载时长零点几秒，完全不影响」）⇒
                 //   旧期望「+1 源 / **+0** 已加载」来自 2026-10-02 的"扫出来的只入列表不加载"，**已作废**。
                 check(drop_page.source_count() == before + 1 &&
                           drop_page.loaded_source_count() == loaded_before + 1,
@@ -4517,7 +4517,7 @@ SmokeResult run_smoke() {
                           .arg(top.join(QStringLiteral("|"))));
                 sort_page.hide();
             }
-            // ★ 用户 2026-09-30：「E:\...\IWP\database 整个文件夹拖进去会卡死」——实测该目录是
+            // ★ 用户 2026-09-30：「E:\...\地图包\database 整个文件夹拖进去会卡死」——实测该目录是
             //   **57 个包 / 18.9 GB**。
             //   ★★ 2026-10-03 口径改写：旧期望「已加载 1」来自"目录＝散装层源（拖进来的那层加载）"；
             //   现在**文件夹不贡献任何条目** ⇒ 拖目录**一个都不加载**，9 个包全进列表。
@@ -4547,7 +4547,7 @@ SmokeResult run_smoke() {
                 // ★★ 2026-10-03 口径**改写**：这条旧锁原本钉的是"**包多也不加载**"（9 个包 ⇒ 0 加载），
                 //   依据是 2026-10-02 的"扫出来的只入列表"＋担心一次解 18.9 GB。
                 //   用户已改口径并给了实测：**「只要拖入包或者文件夹就加载上去」**、
-                //   **「实测 `IWP\database` 加载时长零点几秒，完全不影响」**
+                //   **「实测 `地图包\database` 加载时长零点几秒，完全不影响」**
                 //   ⇒ 现在断的是**反面**：9 个包**全部加载**（且不许再出现任何数量阈值/分档）。
                 check(many_page.loaded_source_count() == 9 && many_page.source_count() == 9,
                       QStringLiteral("包多也**全部加载**（无阈值、无分档）：目录里的 9 个包"
@@ -8533,7 +8533,7 @@ SmokeResult run_smoke() {
         std::filesystem::remove_all(work, ec);
     }
 
-    // ⑫12.1 decryptor 消费端（用户 2026-09-26：NLC 解密是外部插件；fs 页加载前必须问）
+    // ⑫12.1 decryptor 消费端（用户 2026-09-26：加密包 解密是外部插件；fs 页加载前必须问）
     {
         namespace plug = xrkit::plugin;
         FsPage page;
@@ -9020,7 +9020,7 @@ SmokeResult run_smoke() {
                                       QString::fromUtf8(process.readAllStandardOutput()));
             };
 
-            // ① **默认（不带 --plugins）照旧放行** —— 这就是"NLC 那一类"在本机的现状：
+            // ① **默认（不带 --plugins）照旧放行** —— 这就是"加密包 那一类"在本机的现状：
             //    CLI 的 plugins/ 常为空 ⇒ 有注册表但无解密器 ⇒ 与 GUI 现状一致（不许被这次改动打破）
             {
                 const auto [rc, out] = run_cli(cli, {QStringLiteral("--dump"), enc_db});
@@ -11525,7 +11525,7 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
     // ★★ 2026-10-05（用户报告 #2）右栏＝**解包产物预览**，必须体现「**真实落点**」。
     //
     // 用户原话（2026-10-03）：「**这是一个解包的工具，而右边罗列的是包的内容，换句话说就是
-    //   解包产物的预览。**」；本批原话：「`…\IWP\新建文件夹`还是那样。」
+    //   解包产物的预览。**」；本批原话：「`…\地图包\新建文件夹`还是那样。」
     // ⇒ 判据：把**同一份落点规则**用在预览上 —— 2026-11-09 起落点是"**壳不保留**"
     //   （按解包内核参照 `converter.exe` 实测复证：`-unpack -xdb` 直接落 `-dir` 根），
     //   所以 `xr.db` 的条目 `gamemtl.xr` 在右栏**就是** `gamemtl.xr`；
@@ -11544,7 +11544,7 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
         // ① 同一份落点规则算出来的**相对路径**（不是另写一遍字符串拼接）
         const std::vector<efs::EntryInfo> raw = {efs::EntryInfo{std::string("gamemtl.xr"), false, 5}};
         const std::vector<efs::EntryInfo> shown =
-            efs::preview_entries_in_layout("E:/IWP/database/config/xr.db", raw);
+            efs::preview_entries_in_layout("xrkit_smoke_placeholder.db", raw);
         bool has_shell = false;
         bool root_leak = false;
         for (const efs::EntryInfo& e : shown) {

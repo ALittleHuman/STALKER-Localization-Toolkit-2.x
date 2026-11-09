@@ -530,7 +530,7 @@ bool seek_header_chunk(std::ifstream& in, uint64_t file_size, std::vector<uint8_
     // ① 标准档案：第一个块头就在文件开头 ⇒ 直接走链，一个多余字节都不读
     if (walk_chain_from(in, file_size, 0, header, comp)) return true;
 
-    // ② 有些包在块链之前带一段**文本前导**（实测 `IWP\database\patch\xpatch_textures.db0`
+    // ② 有些包在块链之前带一段**文本前导**（实测 `地图包\database\patch\xpatch_textures.db0`
     //    开头是 `[header]\r\nauto_load = true…`）⇒ 旧路径靠"逐字节回退扫描"找到真正的块头。
     //    这里把那次扫描限制在开头 4 MB 里（前导是几百字节级），并且只在**候选位置**上
     //    试走链（合法块头要求前 4 字节的 cid∈{0,1}、后 4 字节是合理的 sz）——**有界**，

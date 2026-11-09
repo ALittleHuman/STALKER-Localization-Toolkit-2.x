@@ -14,6 +14,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -23,7 +25,7 @@ CORPUS = HERE / "golden" / "text_decode.json"
 # 2026-10-05 那一批量化用的真机整镜像（14,147,584 B / 14,861 条目 / 解出 102,074,692 B）。
 # 它不在 manifest 里（它不是"黄金语料基准"，是**性能锁**的样本）⇒ 找不到就 SKIP，不进未覆盖清单。
 # 换机器/换样本：设 `XRKIT_BENCH_UNPACK_IMAGE`。
-NS_OGSR = Path(r"E:\Software\Games\STALKER\Games\NS OGSR\NS OGSR")
+NS_OGSR = samples.find_alias("mod.ogsm_root")
 
 # 门禁只守"防数量级回归"的宽松上界（口径文档 §判据）
 # `unpack_ms` 口径：200 条 `--only` 走完整解包路径。

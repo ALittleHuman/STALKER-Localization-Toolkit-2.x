@@ -689,12 +689,12 @@ std::string package_folder_name(const std::string& package_path) {
 bool paths_carry_shell(const std::vector<std::string>& entry_paths, const std::string& shell) {
     if (entry_paths.empty() || shell.empty()) return false;   // 空表 ⇒ 照常规叠一层（1.x 兜底）
     // ★★ 2026-10-04 **真机**抓到的坑（判红锁①）：量词**不是**"全部"，是"**过半**"。
-    //   9 个 VESSEL 真机包每个**恰好含一条**根级 `readme.md`(8148 B)、其余条目全在 `壳/…` 下
+    //   9 个 多根包 真机包每个**恰好含一条**根级 `readme.md`(8148 B)、其余条目全在 `壳/…` 下
     //   ⇒ 旧的"全部带壳才算自带壳"把它们判成"不带壳" ⇒ 解出 `ai/ai/alife/…`（违背用户口径
     //   「这个案例，就解出来一个 configs。」）。一个 8 KB 的说明文件就能掀翻整个判定。
     //   ★ 裸壳项（`p == shell`，即"它自己那一层"的目录条目）**算带壳**；
-    //     `IWP\database\config\configs.db` 的第一条就是裸 `configs`（2026-10-04 的坑）。
-    //   ★ **不要**改用"存在裸壳目录项"当判据 —— `IWP\database\resource\meshes.db1` /
+    //     `地图包\database\config\configs.db` 的第一条就是裸 `configs`（2026-10-04 的坑）。
+    //   ★ **不要**改用"存在裸壳目录项"当判据 —— `地图包\database\resource\meshes.db1` /
     //     `textures.db1` 是**纯带壳但 bare_shell=0**（条目全 `壳/…`，没有裸壳项），那样会回归。
     size_t shelled = 0;
     for (const std::string& p : entry_paths) {

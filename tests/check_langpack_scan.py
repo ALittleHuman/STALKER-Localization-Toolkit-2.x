@@ -17,6 +17,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
@@ -24,9 +26,8 @@ CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 # ★★ 2026-10-27（用户把 MODS 挪到了游戏目录的**上一级**，且有开关前缀 `~`）：
 #   真包夹具改成"按候选根 + 两种前缀"解析，找不到才记缺样本（不再写死一条绝对路径）。
 _GAME_ROOTS = [
-    Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat\Chronicles of Pripyat"
-         r"\Chronicles of Pripyat 4.26 IX-Ray"),
-    Path(r"E:\Software\Games\STALKER\Games\Chronicles of Pripyat"),
+    samples.find_alias("mod.cop_ixray"),
+    samples.find_alias("mod.cop_parent"),
 ]
 _PACK_NAMES = ["NotoSansSC", "HPSimplifiedHans-Light", "HPSimplifiedHans-Regular"]
 # ★ 2026-11-05：MODS 下还有 `汉化\_sync_backup\汉化包\<同名>` 的**备份目录**（CoP 107 更新时产生），

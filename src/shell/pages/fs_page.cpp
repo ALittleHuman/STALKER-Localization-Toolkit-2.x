@@ -80,14 +80,14 @@ void drop_placeholder(QTreeWidgetItem* item) {
 }
 
 // ═══ 包列表的"文件树"折叠（2026-10-02）═════════════════════════════════════
-// 用户原话：「这玩意，一把 `E:\...\IWP\database` 拖进去就这样。**左边的包列表的结构也应该
+// 用户原话：「这玩意，一把 `E:\...\地图包\database` 拖进去就这样。**左边的包列表的结构也应该
 // 是一个文件树**，而且**拖入文件夹的一些逻辑也要修复一下，和单个包文件那种结构的逻辑统一**。」
 // —— 原来 58 个包**平铺**成一列、还夹着一行 `database [已加载] 0 B`。
 // 口径：
 //   · **锚点 = 所有源路径的公共祖先目录**；目录型源取它的**父目录**参与比较 ⇒ 这个目录自己会成为
 //     树里的一个节点（例：源＝`…\database`(目录) + `…\database\ai.db` ⇒ 树＝`database/` → `ai.db`）。
-//   · 只拖一个 `…\Golden Sphere\gamedata.db_base` ⇒ 锚点就是 `…\Golden Sphere`，树里只有
-//     `gamedata.db_base` 一个根节点（**不画** `Golden Sphere` 之类的祖先）。
+//   · 只拖一个 `…\关卡包\gamedata.db_base` ⇒ 锚点就是 `…\关卡包`，树里只有
+//     `gamedata.db_base` 一个根节点（**不画** `关卡包` 之类的祖先）。
 //   · 同一层：**目录在前、文件在后**，各自按名（不区分大小写）。
 struct PkgTreeNode {
     QString name;           // 单段名字（不加尾斜杠，画的时候按 `is_dir` 补）
@@ -136,7 +136,7 @@ std::vector<PkgTreeNode> pkg_build_nodes(const QStringList& paths) {
     //   · 所有源**都直接躺在 anchor 里**（没有源落在更深的子目录）⇒ **anchor 自己不画**，
     //     文件就是根节点 ⇒ 保住"只拖一个包时，树里就一个根节点、**不画**它的祖先目录"。
     //   · 否则（有源落在子目录里）⇒ **anchor 自己成为一个分组节点**，源挂在它下面 ⇒
-    //     拖 `IWP\database`（57 个包分布在 config/ maps/ mods/ patch/ resource/ sound/）时
+    //     拖 `地图包\database`（57 个包分布在 config/ maps/ mods/ patch/ resource/ sound/）时
     //     根＝`database/`（**分组**节点：`src=-1`、可勾选三态、不显大小、无 ✕）。
     bool all_direct = true;
     for (const QString& parent : parents) {
@@ -884,7 +884,7 @@ int FsPage::add_paths(const QStringList& paths) {
         if (QFileInfo(gated).isDir()) {
             const int scanned = scan_dir(gated);
             // ★★ 2026-10-03 用户口径（原话）：「勾文件夹要不要顺带加载**肯定要加载**。**只要拖入包或者
-            //   文件夹就加载上去**。如果拖入 `IWP\database` 一类的文件夹，**直接加载就可以，右边就是
+            //   文件夹就加载上去**。如果拖入 `地图包\database` 一类的文件夹，**直接加载就可以，右边就是
             //   预览文件结构、大小、名称等的。这样可以选择性解包。**」
             //   ⇒ 目录里的包**全部加载**（撤销 2026-10-02 的"扫出来的只入列表"）；用户实测零点几秒，
             //     而且 DB 读盘已是 seek 式 ⇒ 每个包只读"块头 + 尾部条目表"。
@@ -1055,9 +1055,9 @@ void FsPage::rebuild_tree() {
         // ★★ 2026-10-05（用户报告 #2「右栏预览未体现「包名壳」」）：右栏＝**解包产物预览**
         //   （用户 2026-10-03 原话：「**这是一个解包的工具，而右边罗列的是包的内容，换句话说
         //   就是解包产物的预览。**」）⇒ 每一条显示的路径必须**恰好等于**它真正会被写到的
-        //   落点相对路径。修前这里直接喂**包内原始路径** ⇒ `IWP\database\config\xr.db` 的
+        //   落点相对路径。修前这里直接喂**包内原始路径** ⇒ `地图包\database\config\xr.db` 的
         //   条目显示成根级 `gamemtl.xr`，而实际解出来是 `xr\gamemtl.xr`（用户原话：
-        //   「`…\IWP\新建文件夹`还是那样。」）。
+        //   「`…\地图包\新建文件夹`还是那样。」）。
         //   ★ 拼法**只此一份**：引擎 `efs::preview_entries_in_layout`（与 `unpack_target_dir`
         //     同源）—— 谁把"加壳"写回页面里，就等于又造了第二份落点规则。
         //   ★ 自带壳的包（`ai.db` 的条目已经 `ai/…`）⇒ 该函数直接原样返回，**不叠第二层**。
@@ -1552,7 +1552,7 @@ std::vector<FsPage::UnpackJob> FsPage::plan_unpack(bool checked_only, QString* o
         if (!sources_[i].loaded) continue;
         UnpackJob job;
         job.image = sources_[i].path.toUtf8().toStdString();
-        // ★★ 2026-10-03 用户口径（原话）：「如果就拖入 `E:\...\IWP\database\config` 的 `configs`，
+        // ★★ 2026-10-03 用户口径（原话）：「如果就拖入 `E:\...\地图包\database\config` 的 `configs`，
         //   那么**解包出来是一个 `configs` 文件夹**（和 `gamedata.db*`/`sq*` 解出 `gamedata` 一样），
         //   **不包含 `database` 和 `config`**。」；追问"包内路径本身就带一层 `configs/` 会不会变成
         //   `configs/configs`"他定案：**「这个案例，就解出来一个 configs。」**
