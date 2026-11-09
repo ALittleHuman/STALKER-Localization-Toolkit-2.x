@@ -51,15 +51,14 @@ REAL_ROOTS = [
     samples.find_alias("text.gs_config_scripts"),
     samples.find_alias("text.area_gameplay"),
     samples.find_alias("text.area_scripts"),
-    Path(r"E:\Software\Games\STALKER\Original\SoC_Source\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS"),
+    samples.find_alias("sample.soc_source"),
     samples.find_alias("text.gs_scripts"),
 ]
 PER_ROOT = 20
 
 # ★ 用户那份西语真语料（109 个 xml，真值 cp1252，其中 65 个**谎报** windows-1251）。
 #   它不是"1.x 对拍"样本（1.x 在这批上就是错的），所以走独立硬判据。
-SPA_ROOT = Path(r"E:\Software\Games\STALKER\Games\STALKER Wind of Time KamteK Edition"
-                r"\KamteK\KamteK Addonpack\configs\text\spa - 副本")
+SPA_ROOT = samples.find_alias("sample.stalker_wind")
 
 RUS = "Привет, сталкер!"
 CJK = "你好，潜行者"

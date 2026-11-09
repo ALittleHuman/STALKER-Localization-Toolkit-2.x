@@ -18,11 +18,13 @@ import json
 import re
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 from typing import Optional
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-REF_APP = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit\apps\video_ogm_app.py")
+REF_APP = samples.find_alias("toolkit.1x_apps_video")
 BASELINE = HERE / "golden" / "video_argv.json"
 
 

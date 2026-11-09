@@ -31,8 +31,7 @@ WORK = ROOT / "build" / "golden_font_package"
 
 TOOLKIT_1X = samples.find_alias("toolkit.1x")
 FONT_PACK_PY = TOOLKIT_1X / "font_pack" / "font_pack.py"
-DEFAULT_FONT = Path(r"E:\Software\Games\STALKER\Localization\Tools\otherTools"
-                    r"\CN_Pack_Generator\msyh.ttf")
+DEFAULT_FONT = samples.find_alias("font.msyh")
 REAL_XML = ROOT / "build" / "golden_text_extract" / "real-gameplay" / "ours"
 GAMES = ("SoC", "ClS", "CoP")
 

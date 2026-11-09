@@ -30,6 +30,8 @@ import struct
 import subprocess
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 from PIL import ImageFont
 
@@ -38,8 +40,7 @@ ROOT = HERE.parent
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 WORK = ROOT / "build" / "golden_font_raster"
 
-DEFAULT_FONT = Path(r"E:\Software\Games\STALKER\Localization\Tools\otherTools"
-                    r"\CN_Pack_Generator\msyh.ttf")
+DEFAULT_FONT = samples.find_alias("font.msyh")
 SIZES = (11, 13, 15, 17)  # 覆盖 S=1 与 x2 两档
 
 # 系统字体里**带内嵌位图 strike** 的那几个（字号取实测命中的 strike 尺寸）

@@ -36,7 +36,7 @@ REAL_ROOTS = [
     samples.find_alias("text.gs_gameplay"),
     samples.find_alias("text.gs_config_scripts"),
     samples.find_alias("text.area_gameplay"),
-    Path(r"E:\Software\Games\STALKER\Original\SoC_Source\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS"),
+    samples.find_alias("sample.soc_source"),
 ]
 
 # 与 1.x 逐字一致的 ID 正则与"剥开头声明"的正则

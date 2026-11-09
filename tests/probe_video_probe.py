@@ -22,11 +22,13 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 OUT_DIR = HERE / "golden" / "video_probe"
-REF_TOOLKIT = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+REF_TOOLKIT = samples.find_alias("toolkit.1x")
 
 
 def find_deps(explicit: str | None) -> tuple[Path, Path]:

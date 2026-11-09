@@ -46,7 +46,7 @@ REAL_ROOTS = [
     samples.find_alias("text.gs_config_scripts"),
     samples.find_alias("text.area_gameplay"),
     samples.find_alias("text.area_scripts"),
-    Path(r"E:\Software\Games\STALKER\Original\SoC_Source\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS"),
+    samples.find_alias("sample.soc_source"),
     samples.find_alias("text.gs_scripts"),
 ]
 PER_ROOT = 30

@@ -39,7 +39,10 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TESTS = ROOT / "tests"
 SCRIPT = TESTS / "golden_sqfs_pack_real.py"
-TOOLKIT_1X = pathlib.Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+import sys
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import samples  # noqa: E402
+TOOLKIT_1X = samples.find_alias("toolkit.1x")
 
 PROBLEMS = []
 CHECKS = 0

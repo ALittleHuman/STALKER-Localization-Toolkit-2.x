@@ -34,11 +34,9 @@ WORK = ROOT / "build" / "golden_font_render"
 
 TOOLKIT_1X = samples.find_alias("toolkit.1x")
 FONT_PACK_PY = TOOLKIT_1X / "font_pack" / "font_pack.py"
-DEFAULT_FONT = Path(r"E:\Software\Games\STALKER\Localization\Tools\otherTools"
-                    r"\CN_Pack_Generator\msyh.ttf")
+DEFAULT_FONT = samples.find_alias("font.msyh")
 # 原版工具成品的字符集（3428 个码位、"整套汉化"量级）—— 用来压大画布路径（1024→2048）
-BIG_INI = Path(r"E:\Software\Games\STALKER\Localization\Tools\Tool\汉化包生成工具2024"
-               r"\gamedata\textures\ui\ui_font_11_chs.ini")
+BIG_INI = samples.find_alias("tool.big_ini")
 
 # S=1 档（11/13/15，不经重采样）与 x2 档（16/17/18，走 Pillow 的 LANCZOS）
 S1_SIZES = (11, 13, 15)
