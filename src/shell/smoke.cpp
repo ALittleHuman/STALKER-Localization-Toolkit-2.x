@@ -1304,6 +1304,16 @@ SmokeResult run_smoke() {
               QStringLiteral("日志折叠按钮存在（实测 %1）")
                   .arg(hub.log_toggle() != nullptr ? hub.log_toggle()->text() : QStringLiteral("(无)")));
         check(hub.log_clear_button() != nullptr, QStringLiteral("日志面板要有清空按钮"));
+        check(hub.log_keep_button() != nullptr, QStringLiteral("日志面板要有保留按钮"));
+        // ★ 2026-11-09（用户截图）：两个按钮**竖排**（不水平排，省横向空间）。
+        auto* log_buttons = hub.log_panel() != nullptr
+                                ? hub.log_panel()->findChild<QVBoxLayout*>(
+                                      QStringLiteral("log_buttons"))
+                                : nullptr;
+        check(log_buttons != nullptr && log_buttons->count() == 2,
+              QStringLiteral("日志两个按钮要在同一个竖排布局里（不水平排）"));
+        check(hub.findChild<QAction*>(QStringLiteral("plugin_manager_action")) != nullptr,
+              QStringLiteral("菜单里要有插件管理器入口"));
         hub.log_line(QStringLiteral("待清空 A"));
         if (hub.log_box() != nullptr) hub.log_box()->flush();
         const int before = hub.log_box() != nullptr ? hub.log_box()->blockCount() : 0;

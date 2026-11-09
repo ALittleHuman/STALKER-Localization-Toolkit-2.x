@@ -232,8 +232,14 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
                          .arg(QDir::toNativeSeparators(dest)));
         }
     });
-    log_panel_layout->addWidget(log_keep_, 0);
-    log_panel_layout->addWidget(log_clear_, 0);
+    // ★ 2026-11-09（用户截图反馈）：两个按钮**不要水平排**（太费横向空间）⇒ 竖排一列。
+    auto* log_buttons = new QVBoxLayout;
+    log_buttons->setObjectName(QStringLiteral("log_buttons"));
+    log_buttons->setContentsMargins(0, 0, 0, 0);
+    log_buttons->setSpacing(px(4));
+    log_buttons->addWidget(log_keep_);
+    log_buttons->addWidget(log_clear_);
+    log_panel_layout->addLayout(log_buttons, 0);
     log_panel_->setVisible(false);  // 默认折叠
 
     // ★★ 2026-10-06（③）：**把本次运行的详细日志落盘**（改动前 `set_log_file` 零命中 ⇒
@@ -336,6 +342,13 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     // ★ 2026-11-03（用户给了发布页 URL；决策）：**只打开浏览器，不做检测**。
     //   文案必须写"打开发布页"——叫"检测版本"会让用户等一个永远不会来的提示。
     QMenu* help_menu = menuBar()->addMenu(QStringLiteral("帮助"));
+    // ★ 2026-11-09（用户："我没有找到插件管理器的入口"）：给一个**常驻入口**（对话框原先只在
+    //   "有插件缺前置"时自动弹一次，没有菜单项 ⇒ 用户找不到）。
+    QMenu* tools_menu = menuBar()->addMenu(QStringLiteral("工具"));
+    QAction* plugin_manager_action = tools_menu->addAction(QStringLiteral("插件管理器…"));
+    plugin_manager_action->setObjectName(QStringLiteral("plugin_manager_action"));
+    connect(plugin_manager_action, &QAction::triggered, this,
+            [this]() { show_plugin_manager(); });
     QAction* release_page = help_menu->addAction(QStringLiteral("查看最新版本（打开发布页）"));
     QAction* copy_link = help_menu->addAction(QStringLiteral("复制发布页链接"));
     connect(copy_link, &QAction::triggered, this, [this] {
@@ -1168,15 +1181,24 @@ void Hub::load_plugins(const QString& plugin_dir) {
 //   要求：所有缺前置的插件放在**同一个框**里、逐条区分；**不出现滚动条**（不套 QScrollArea，
 //   用 QGroupBox + 自动换行 QLabel；条目多时对话框长高，不滚动）。
 void Hub::show_plugin_manager() {
-    if (disabled_plugins_.empty()) return;
     QDialog dlg(this);
     dlg.setWindowTitle(QStringLiteral("插件管理器"));
     dlg.setModal(true);
     auto* layout = new QVBoxLayout(&dlg);
-    auto* head = new QLabel(
-        QStringLiteral("以下插件因缺少前置已自动禁用（本次启动不会加载）："), &dlg);
-    head->setWordWrap(true);
-    layout->addWidget(head);
+    if (disabled_plugins_.empty()) {
+        // ★ 2026-11-09：菜单入口常驻 ⇒ 没有禁用项时也要有内容（不能点了没反应）。
+        auto* idle = new QLabel(
+            QStringLiteral("本次启动没有被自动禁用的插件。\n已加载 Python 插件：%1 个")
+                .arg(static_cast<int>(xrkit::plugin::loaded_python_plugin_count())),
+            &dlg);
+        idle->setWordWrap(true);
+        layout->addWidget(idle);
+    } else {
+        auto* head = new QLabel(
+            QStringLiteral("以下插件因缺少前置已自动禁用（本次启动不会加载）："), &dlg);
+        head->setWordWrap(true);
+        layout->addWidget(head);
+    }
 
     for (const xrkit::plugin::PluginDisabledInfo& info : disabled_plugins_) {
         const QString title = QString::fromStdString(

@@ -104,6 +104,7 @@ public:
     PageBase* page_at(int index) const;
     QPlainTextEdit* log_view() const { return log_view_; }
     QPushButton* log_clear_button() const { return log_clear_; }
+    QPushButton* log_keep_button() const { return log_keep_; }
     // ★ 2026-10-06（③）：「导出」按钮（1.x `:390`）—— 把内存日志 + 落盘详细日志**合并**
     //   写一份 `<log_dir>/log_YYYYmmdd_HHMMSS.txt`。
     // 本次运行 `core::set_log_file` 挂上的那个文件（空 = 没挂上 ⇒ 日志没有文件可查）
