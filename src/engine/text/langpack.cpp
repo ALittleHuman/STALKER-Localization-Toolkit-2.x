@@ -3,6 +3,7 @@
 #include "xrkit/core/path.h"
 #include "xrkit/engine/fs/overlay.h"
 #include "xrkit/engine/text/extract.h"   // 遍历只有一套：fs::collect_tree()
+#include "xrkit/engine/text/layout.h"    // config/configs 唯一探测（SoC 用 config）
 
 #include <algorithm>
 #include <cctype>
@@ -333,6 +334,11 @@ LangPackFromGameResult build_language_pack_from_game(const LangPackFromGameOptio
     // ② 源里若自带文本目录，也一起收（语言包可能已经是"文本 + 字体"形态）
     fs::path lang_texts = src / "configs" / "text" / options.lang;
     if (!is_dir(lang_texts)) lang_texts = src / "text" / options.lang;
+    if (!is_dir(lang_texts)) {
+        // ★ 2026-11-09：配置目录名不写死 —— SoC 用 config（单数）。
+        const std::string cfg = config_dir_name(src);
+        if (!cfg.empty()) lang_texts = src / cfg / "text" / options.lang;
+    }
     if (is_dir(lang_texts)) {
         for (fs::directory_iterator it(lang_texts, ec), end; !ec && it != end; it.increment(ec)) {
             if (!is_file(it->path())) continue;

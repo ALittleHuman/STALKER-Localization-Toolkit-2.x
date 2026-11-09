@@ -5801,7 +5801,47 @@ if (action == "--diff-snapshot") {
             xrkit::engine::text::LangPackFromGameOptions gopt;
             gopt.source_dir = operands[0];
             gopt.out_root = operands[2];
-            gopt.lang = opt.lang.empty() ? "rus" : opt.lang;
+            // ★ 2026-11-09：**不再静默按 rus** —— 显式 `--lang` 优先；否则从
+            //   `text/<lang>`（直接给了语言目录）或源里唯一的 `configs|config/text/<lang>` 推断；
+            //   多语言/找不到 ⇒ 明确报错，让用户选。
+            std::string lang = opt.lang;
+            if (lang.empty()) {
+                namespace fs = std::filesystem;
+                const fs::path src = fs::path(operands[0]);
+                const std::string parent = src.parent_path().filename().string();
+                if (parent == "text") lang = src.filename().string();
+            }
+            if (lang.empty()) {
+                namespace fs = std::filesystem;
+                std::vector<std::string> found;
+                for (const char* sub : {"configs/text", "config/text",
+                                        "gamedata/configs/text", "gamedata/config/text"}) {
+                    std::error_code ec;
+                    const fs::path dir = fs::path(operands[0]) / sub;
+                    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+                        if (it->is_directory(ec)) found.push_back(it->path().filename().string());
+                    }
+                    if (!found.empty()) break;
+                }
+                std::sort(found.begin(), found.end());
+                found.erase(std::unique(found.begin(), found.end()), found.end());
+                if (found.size() == 1) {
+                    lang = found.front();
+                } else if (found.size() > 1) {
+                    std::cout << "LANGPACK-BUILD error reason=源里有多语言（";
+                    for (std::size_t i = 0; i < found.size(); ++i) {
+                        std::cout << (i ? "," : "") << found[i];
+                    }
+                    std::cout << "），请用 --lang 指定\n";
+                    return kExitFail;
+                }
+            }
+            if (lang.empty()) {
+                std::cout << "LANGPACK-BUILD error reason=无法确定语言（没有唯一的 "
+                             "text/<lang> 目录）：请用 --lang 指定\n";
+                return kExitFail;
+            }
+            gopt.lang = lang;
             gopt.include_texts = opt.include_texts;
             gopt.include_rewritten = opt.include_rewritten;
             gopt.overwrite = opt.overwrite;
@@ -6103,7 +6143,12 @@ if (action == "--diff-snapshot") {
         req.game = kv.count("game") ? kv["game"] : "CoP";
         // ★ `--langs` 是统一名（单个语言也接受）；`--lang` 保留为同义别名
         req.langs = kv.count("langs") ? kv["langs"] : (kv.count("lang") ? kv["lang"] : "");
-        req.lang = req.langs.empty() ? "rus" : req.langs;
+        if (req.langs.empty()) {
+            std::cout << "FONT-PACK error reason=缺 --langs/--lang：无证据不猜语言"
+                         "（页面会从扫描结果给下拉；CLI 请显式指定）\n";
+            return kExitUsage;
+        }
+        req.lang = req.langs;
         if (!req.langs.empty() && req.langs.find(',') == std::string::npos) {
             req.lang = req.langs;
         }

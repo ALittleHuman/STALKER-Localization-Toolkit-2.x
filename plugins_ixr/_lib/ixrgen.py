@@ -877,13 +877,21 @@ def main() -> int:
             log("IXRGEN warn profile 读不出来，回落到自扫：%r" % (exc,))
             langs = []
     if not langs:
-        lang = "rus"
+        # ★ 2026-11-09：不再静默按 rus —— 证据优先：localization.ltx → 唯一的 text/<lang> 目录；
+        #   两者都没有就留空，让下面那条「包内没有可识别的语言目录」把选择权交回用户。
+        lang = ""
         loc = gd / "configs" / "localization.ltx"
         if loc.is_file():
             sec = parse_ltx(loc).get("string_table", {})
             if sec and sec["kv"].get("language"):
                 lang = sec["kv"]["language"]
-        langs = [lang]
+        if not lang:
+            text_root = gd / "configs" / "text"
+            names = sorted(p.name for p in text_root.glob("*") if p.is_dir()) \
+                if text_root.is_dir() else []
+            if len(names) == 1:
+                lang = names[0]
+        langs = [lang] if lang else []
     if not langs:
         log("IXRGEN error reason=包内没有可识别的语言目录（fonts/<lang>）")
         return 1

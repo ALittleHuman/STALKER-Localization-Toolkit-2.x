@@ -121,7 +121,7 @@ def main() -> int:
             '<?xml version="1.0" encoding="utf-8"?><gameplay><text>Привет мир</text></gameplay>',
             encoding="utf-8")
         out2 = tmp / "out_game"
-        rc6, stdout6 = run([str(src2), "-", str(out2), "--extract"])
+        rc6, stdout6 = run([str(src2), "-", str(out2), "--extract", "--lang", "rus"])
         game_ok = rc6 == 0 and "extracted_files=" in stdout6
         rewritten = out2 / "rus" / "configs" / "gameplay" / "x.xml"
         texts = list((out2 / "rus" / "configs" / "text" / "rus").glob("*.xml"))
