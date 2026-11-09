@@ -373,8 +373,23 @@ namespace {
 //   root = "……/configs" 之前的那段前缀（可以是空串）
 //   收：<root>/configs/text/<lang>/**、<root>/configs/{fonts,localization}.ltx、<root>/fonts/**
 //   语言名从路径里**扫出来**；langs 非空时只收命中的语言。
-bool collect_keep(const std::string& rel, const std::vector<std::string>& langs,
+// ★ 2026-11-09：配置目录名统一走 `config_dir_name`（configs 优先，SoC 用 config）。
+//   为复用原有"前缀/后缀"匹配逻辑，先把路径里的 `config/` 规范化成 `configs/` **仅用于匹配**；
+//   复制/落盘仍用原始 `item.path`（保住 `config/...` 的原始布局）。
+std::string normalize_cfg_dir(const std::string& p) {
+    std::string out = p;
+    if (out.rfind("config/", 0) == 0) out = "configs/" + out.substr(7);
+    const std::string marker = "/config/";
+    for (std::size_t at = out.find(marker); at != std::string::npos;
+         at = out.find(marker, at + 8)) {
+        out.replace(at, 8, "/configs/");
+    }
+    return out;
+}
+
+bool collect_keep(const std::string& rel_raw, const std::vector<std::string>& langs,
                   const std::set<std::string>& roots) {
+    const std::string rel = normalize_cfg_dir(rel_raw);
     const auto path_prefix = [](const std::string& p, const std::string& marker,
                                 std::string* rest) -> std::string {
         const std::size_t at = p.find(marker);
@@ -432,11 +447,12 @@ LangPackCollectResult collect_language_pack(const LangPackCollectOptions& option
     const std::vector<xrkit::engine::fs::TreeItem> items = xrkit::engine::fs::collect_tree(core::path_to_utf8(src), &report);
     for (const std::string& err : report.errors) out.warnings.push_back("遍历：" + err);
     fs::create_directories(dst, ec);
-    // 先扫出所有 "…/configs" 的根（路径前缀），fonts 规则靠它
+    // 先扫出所有 "…/configs"（或 config）的根（路径前缀），fonts 规则靠它
     std::set<std::string> roots;
     for (const xrkit::engine::fs::TreeItem& item : items) {
-        const std::size_t at = item.path.find("configs/");
-        if (at != std::string::npos) roots.insert(item.path.substr(0, at));
+        const std::string norm = normalize_cfg_dir(item.path);
+        const std::size_t at = norm.find("configs/");
+        if (at != std::string::npos) roots.insert(norm.substr(0, at));
     }
     for (const xrkit::engine::fs::TreeItem& item : items) {
         if (item.is_dir) continue;
@@ -455,10 +471,11 @@ LangPackCollectResult collect_language_pack(const LangPackCollectOptions& option
             out.warnings.push_back("复制失败：" + item.path + "（" + ec.message() + "）");
             continue;
         }
-        // 记录扫到的语言（`…/configs/text/<lang>/…`）
-        const std::size_t at = item.path.find("configs/text/");
+        // 记录扫到的语言（`…/configs/text/<lang>/…` 或 `…/config/text/<lang>/…`）
+        const std::string norm_item = normalize_cfg_dir(item.path);
+        const std::size_t at = norm_item.find("configs/text/");
         if (at != std::string::npos) {
-            const std::string rest = item.path.substr(at + std::string("configs/text/").size());
+            const std::string rest = norm_item.substr(at + std::string("configs/text/").size());
             const std::size_t slash = rest.find('/');
             if (slash != std::string::npos) {
                 const std::string lang = rest.substr(0, slash);

@@ -1416,21 +1416,29 @@ void XmlPage::run_extract() {
             // ③ 抽字面量 → <out>/gamedata/configs/text/rus/；被改写的脚本按勾选决定落不落
             QString base;
             const QDir src_dir(source);
+            // ★ 2026-11-09：SoC 用 `config`（单数），CoP/ClS/IXR 用 `configs` —— 两种都认。
             if (QDir(src_dir.filePath(QStringLiteral("gamedata/configs"))).exists()) {
                 base = src_dir.filePath(QStringLiteral("gamedata/configs"));
+            } else if (QDir(src_dir.filePath(QStringLiteral("gamedata/config"))).exists()) {
+                base = src_dir.filePath(QStringLiteral("gamedata/config"));
             } else if (QDir(src_dir.filePath(QStringLiteral("configs"))).exists()) {
                 base = src_dir.filePath(QStringLiteral("configs"));
+            } else if (QDir(src_dir.filePath(QStringLiteral("config"))).exists()) {
+                base = src_dir.filePath(QStringLiteral("config"));
             } else {
-                post_status(QStringLiteral("提取只接受已解包的松散目录（需含 gamedata/configs 或 configs）"));
+                post_status(QStringLiteral("提取只接受已解包的松散目录（需含 gamedata/configs|config 或 configs|config）"));
                 return;
             }
             // ★ 2026-11-08（用户："原来落哪里，提取就落哪里"）：输出**沿用源的相对前缀**
             //   （源是 `…/gamedata/configs` ⇒ 输出 `gamedata/…`；源是 `…/configs` ⇒ 输出不带 gamedata）。
             const QString rel_prefix =
-                QDir(src_dir.filePath(QStringLiteral("gamedata/configs"))).absolutePath() ==
-                        QDir(base).absolutePath()
+                (QDir(src_dir.filePath(QStringLiteral("gamedata/configs"))).absolutePath() ==
+                     QDir(base).absolutePath() ||
+                 QDir(src_dir.filePath(QStringLiteral("gamedata/config"))).absolutePath() ==
+                     QDir(base).absolutePath())
                     ? QStringLiteral("gamedata/")
                     : QString();
+            const QString cfg_name = QFileInfo(base).fileName();   // "configs" 或 "config"
             // ★ 2026-11-07（用户："为什么不是所有语言都提取出来"）：字面量表**每个语言目录各一份**
             // ★ 2026-11-08（用户："要通用，全是扫出来的"）：不假设 `gamedata/` 前缀 ——
             //   在输出树里找**所有** `…/configs/text/<lang>` 目录，语言名从目录名来。
@@ -1441,7 +1449,10 @@ void XmlPage::run_extract() {
                 while (it.hasNext()) {
                     const QString dir = it.next();
                     const QFileInfo fi(dir);
-                    if (fi.fileName() != QStringLiteral("configs")) continue;
+                    if (fi.fileName() != QStringLiteral("configs") &&
+                        fi.fileName() != QStringLiteral("config")) {
+                        continue;
+                    }
                     const QDir cfg(dir);
                     for (const QString& lang_dir :
                          cfg.entryList({QStringLiteral("text")}, QDir::Dirs)) {
@@ -1469,11 +1480,11 @@ void XmlPage::run_extract() {
                 const QString dir = QDir(base).filePath(sub);
                 if (!QDir(dir).exists()) continue;
                 any = true;
-                // ★ 2026-11-08（按 doc:82 的语言包布局）：
+                // ★ 2026-11-09：布局跟着源的配置目录名走（SoC 是 config/gameplay）。
                 //   scripts  → <mod>/gamedata/scripts/
-                //   gameplay → <mod>/gamedata/configs/gameplay/
+                //   gameplay → <mod>/gamedata/<cfg_name>/gameplay/
                 const QString sub_out = sub == QStringLiteral("gameplay")
-                                            ? rel_prefix + QStringLiteral("configs/gameplay")
+                                            ? rel_prefix + cfg_name + QStringLiteral("/gameplay")
                                             : rel_prefix + QStringLiteral("scripts");
                 const QString target = want_rewritten
                                            ? QDir(out_root).filePath(sub_out)

@@ -3,6 +3,7 @@
 #include "xrkit/core/path.h"
 #include "xrkit/engine/fs/overlay.h"
 #include "xrkit/engine/text/extract.h"
+#include "xrkit/engine/text/layout.h"
 
 #include <algorithm>
 #include <utility>
@@ -38,7 +39,7 @@ std::string lower(std::string s) {
 bool has_container_markers(const fs::path& dir) {
     // `text` 也算容器标记：`gamedata/configs` 这种"只含 text/ui 的中间层"以前会被拒
     // （复审计 P1：纯文本/配置子树输入）。真正的纯文本目录（直接放 *.xml）走后面的兜底。
-    static const char* kMarkers[] = {"configs", "scripts", "gameplay", "fonts", "textures",
+    static const char* kMarkers[] = {"configs", "config", "scripts", "gameplay", "fonts", "textures",
                                      "text"};
     std::error_code ec;
     for (const char* marker : kMarkers) {
@@ -97,25 +98,29 @@ std::string lang_from_ltx(const fs::path& ltx) {
 // ——生成阶段不再自己 detect_langs，语言只可能来自这四种。
 std::pair<std::string, std::string> container_lang(const fs::path& container,
                                                    const std::string& fallback) {
-    if (const std::string lang = lang_from_ltx(container / "configs" / "localization.ltx");
-        !lang.empty()) {
-        return {lang, "localization.ltx"};
-    }
-    std::error_code ec;
-    const fs::path texts = container / "configs" / "text";
-    if (is_dir(texts)) {
-        // ★ 2026-11-07：语言判定**不许靠遍历顺序**。规则：
-        //   `localization.ltx` 已在上方优先；这里先找 `rus`（本工程的主语言，也是原版语言），
-        //   没有再取**排序后第一个**（确定性），最后才是 fallback。
-        std::vector<std::string> names;
-        for (const auto& entry : fs::directory_iterator(texts, ec)) {
-            if (entry.is_directory(ec)) names.push_back(core::path_to_utf8(entry.path().filename()));
+    // ★ 2026-11-09：配置目录名按 `configs`/`config` 探测（SoC 用 config），不再写死 configs。
+    const std::string cfg = config_dir_name(container);
+    if (!cfg.empty()) {
+        if (const std::string lang = lang_from_ltx(container / cfg / "localization.ltx");
+            !lang.empty()) {
+            return {lang, "localization.ltx"};
         }
-        std::sort(names.begin(), names.end());
-        for (const std::string& n : names) {
-            if (n == "rus") return {n, "text_dir"};
+        std::error_code ec;
+        const fs::path texts = container / cfg / "text";
+        if (is_dir(texts)) {
+            // 规则：localization.ltx 优先；其次先找 rus（原版语言），没有再排序取第一个（确定性）。
+            std::vector<std::string> names;
+            for (const auto& entry : fs::directory_iterator(texts, ec)) {
+                if (entry.is_directory(ec)) {
+                    names.push_back(core::path_to_utf8(entry.path().filename()));
+                }
+            }
+            std::sort(names.begin(), names.end());
+            for (const std::string& n : names) {
+                if (n == "rus") return {n, "text_dir"};
+            }
+            if (!names.empty()) return {names.front(), "text_dir"};
         }
-        if (!names.empty()) return {names.front(), "text_dir"};
     }
     if (!fallback.empty()) return {fallback, "arg"};
     return {"rus", "fallback"};
@@ -375,7 +380,9 @@ OriResult build_ori_tree(const OriOptions& options) {
         out_prefix = src_name;
         const std::string parent_name =
             core::path_to_utf8(effective_src.parent_path().filename());
-        if (src_name == "configs" && parent_name == "gamedata") out_prefix = "gamedata/configs";
+        if ((src_name == "configs" || src_name == "config") && parent_name == "gamedata") {
+            out_prefix = "gamedata/" + src_name;
+        }
     } else if (src_name == "ixr_addons" || src_name == "gamedata") {
         out_prefix = src_name;
     }
@@ -401,7 +408,7 @@ OriResult build_ori_tree(const OriOptions& options) {
             }
         }
         if (!has_xml_directly && !has_xml_within(effective_src, 1)) {
-            out.error = "源里找不到容器（没有 configs/scripts/gameplay/fonts/textures，"
+            out.error = "源里找不到容器（没有 configs|config/scripts/gameplay/fonts/textures，"
                         "也不是纯文本目录）：" + options.source_dir;
             return out;
         }
@@ -421,15 +428,18 @@ OriResult build_ori_tree(const OriOptions& options) {
         const fs::path dst = dst_rel.empty() ? out_abs : out_abs / core::path_from_utf8(dst_rel);
         OriContainer info;
         info.rel = rel;
+        // ★ 2026-11-09：本容器的配置目录名（configs 或 config）。
+        const std::string cfg = config_dir_name(container);
+        const std::string cfg_name = cfg.empty() ? "configs" : cfg;
         const auto lang_pair = container_lang(container, options.lang);
         info.lang = lang_pair.first;
         info.lang_source = lang_pair.second;
-        info.has_text = is_dir(container / "configs" / "text");
-        info.has_fonts = is_dir(container / "fonts") || is_file(container / "configs" / "fonts.ltx");
+        info.has_text = is_dir(container / cfg_name / "text");
+        info.has_fonts = is_dir(container / "fonts") || is_file(container / cfg_name / "fonts.ltx");
         info.has_scripts = is_dir(container / "scripts") ||
-                           is_dir(container / "configs" / "scripts");
+                           is_dir(container / cfg_name / "scripts");
         info.has_gameplay = is_dir(container / "gameplay") ||
-                            is_dir(container / "configs" / "gameplay");
+                            is_dir(container / cfg_name / "gameplay");
         // ★ 复审计 P1：不是"有 fonts.ltx 就是 ixr" —— 必须有真 ttf；两者都有 ⇒ mixed
         bool has_ttf = false;
         {
@@ -474,10 +484,10 @@ OriResult build_ori_tree(const OriOptions& options) {
             texts_out = dst;
         } else if (container_name == "text") {
             texts_out = dst / core::path_from_utf8(info.lang);
-        } else if (container_name == "configs") {
+        } else if ((container_name == "configs" || container_name == "config")) {
             texts_out = dst / "text" / core::path_from_utf8(info.lang);
         } else {
-            texts_out = dst / "configs" / "text" / core::path_from_utf8(info.lang);
+            texts_out = dst / cfg_name / "text" / core::path_from_utf8(info.lang);
         }
         fs::create_directories(texts_out, ec);
 
@@ -500,12 +510,12 @@ OriResult build_ori_tree(const OriOptions& options) {
         // ★ 复审计：两分支原来共用 `gsgp_gameplay_texts.xml`，第二个直接覆盖第一个。
         //   按"是否 configs 下"给不同后缀（根 gameplay = gpg，configs/gameplay = gpgc）。
         int gameplay_branch_index = 0;
-        for (const fs::path& branch : {container / "gameplay", container / "configs" / "gameplay"}) {
+        for (const fs::path& branch : {container / "gameplay", container / cfg_name / "gameplay"}) {
             if (!is_dir(branch)) continue;
             const std::string gameplay_suffix =
                 gameplay_branch_index++ == 0 ? "gpg" : "gpgc";
             const ExtractStats st = extract_branch(branch, ExtractKind::Gameplay,
-                                                   dst / "configs" / "gameplay", texts_out,
+                                                   dst / cfg_name / "gameplay", texts_out,
                                                    options, &out.warnings, gameplay_suffix);
             if (!st.ok) {
                 if (!st.error.empty()) out.warnings.push_back("gameplay：" + st.error);
@@ -524,13 +534,14 @@ OriResult build_ori_tree(const OriOptions& options) {
             fs::remove_all(dst / "gameplay", del_ec);
         }
         // configs/ui（XML）、configs/scripts（script/ltx）：同样提取，改写后按原相对路径回写
-        struct ExtraBranch { const char* rel; ExtractKind kind; };
-        for (const ExtraBranch& extra : {ExtraBranch{"configs/ui", ExtractKind::Gameplay},
-                                         ExtraBranch{"configs/scripts", ExtractKind::Scripts}}) {
-            const fs::path branch = container / extra.rel;
+        struct ExtraBranch { std::string rel; ExtractKind kind; };
+        for (const ExtraBranch& extra : {ExtraBranch{cfg_name + "/ui", ExtractKind::Gameplay},
+                                         ExtraBranch{cfg_name + "/scripts", ExtractKind::Scripts}}) {
+            const fs::path branch = container / core::path_from_utf8(extra.rel);
             if (!is_dir(branch)) continue;
-            const std::string suffix = std::string(extra.rel) == "configs/ui" ? "ui" : "cs";
-            const ExtractStats st = extract_branch(branch, extra.kind, dst / extra.rel,
+            const std::string suffix = extra.rel == cfg_name + "/ui" ? "ui" : "cs";
+            const ExtractStats st = extract_branch(branch, extra.kind,
+                                                   dst / core::path_from_utf8(extra.rel),
                                                    texts_out, options, &out.warnings, suffix);
             if (!st.ok && !st.error.empty()) {
                 out.warnings.push_back(std::string(extra.rel) + "：" + st.error);
@@ -544,13 +555,13 @@ OriResult build_ori_tree(const OriOptions& options) {
         }
 
         // 多语言：容器已有的其它语言目录也放一份（规划 4.4）
-        const fs::path text_root = container / "configs" / "text";
+        const fs::path text_root = container / cfg_name / "text";
         if (!options.texts_only && is_dir(text_root)) {
             for (const auto& entry : fs::directory_iterator(text_root, ec)) {
                 if (!entry.is_directory(ec)) continue;
                 const std::string other = core::path_to_utf8(entry.path().filename());
                 if (other == info.lang) continue;
-                const fs::path other_texts = dst / "configs" / "text" / core::path_from_utf8(other);
+                const fs::path other_texts = dst / cfg_name / "text" / core::path_from_utf8(other);
                 fs::create_directories(other_texts, ec);
                 for (const auto& xml : fs::directory_iterator(texts_out, ec)) {
                     if (!xml.is_regular_file(ec)) continue;
