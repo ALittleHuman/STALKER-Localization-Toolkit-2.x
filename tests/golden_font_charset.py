@@ -34,13 +34,15 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 WORK = ROOT / "build" / "golden_font_charset"
 
-TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+TOOLKIT_1X = samples.find_alias("toolkit.1x")
 FONT_PACK_PY = TOOLKIT_1X / "font_pack" / "font_pack.py"
 REAL_XML_DIRS = [
     ROOT / "build" / "golden_text_extract" / "real-gameplay" / "ours",

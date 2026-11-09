@@ -47,11 +47,13 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 
-CV = Path(r"E:\Software\Tools\Transition\DB双向验证套件\tools\converter.exe")
+CV = samples.find_alias("tool.converter")
 CV_TIMEOUT = 60
 
 FMT = "2215"

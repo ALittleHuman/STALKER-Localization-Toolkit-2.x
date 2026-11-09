@@ -32,12 +32,7 @@ NLC = samples.find_alias("mod.nlc_root")
 # ★★ 2026-10-24：真机样本被整理到 `Transition\DB双向验证套件\samples\原件\` 下
 #   （旧的 `Games\关卡包` 已不在）⇒ 用**多根解析**，两个位置都认，
 #   并允许 `XRKIT_SAMPLES` 环境变量整体覆盖（一台机器一个根，不靠改代码）。
-SAMPLE_ROOTS = [
-    Path(r"E:\Software\Games\STALKER\Games"),
-    Path(r"E:\Software\Tools\Transition\DB双向验证套件\samples\原件"),
-]
-if os.environ.get("XRKIT_SAMPLES"):
-    SAMPLE_ROOTS.insert(0, Path(os.environ["XRKIT_SAMPLES"]))
+SAMPLE_ROOTS = list(samples.ROOTS)   # 根只在工作区 samples.local.json / XRKIT_SAMPLES
 
 
 def _find_rel(rel: str) -> Path:
@@ -50,14 +45,14 @@ def _find_rel(rel: str) -> Path:
 
 
 GS = samples.find_alias("mod.golden_root")
-SOC = Path(r"E:\Software\Games\STALKER\Original\SoC_Source\S.T.A.L.K.E.R. Shadow of Chernobyl_RUS")
+SOC = samples.find_alias("sample.soc_source")
 
 # 语料选择原则：覆盖每一类**解析路径**，而不是把硬盘上的包全抄一遍。
 CORPUS = [
     {"id": "enc-xrengine", "path": NLC / "bin_x64" / "xrEngine.exe",
      "why": "引擎补丁目标（原版）；与 xrEngine_patched.exe 逐字节对拍是最硬判据"},
     {"id": "enc-xrengine-patched",
-     "path": Path(r"E:\Software\Tools\Ghidra\Projects\NLC Improved\Exported\xrEngine_patched.exe"),
+     "path": samples.find_alias("tool.ghidra_xrengine_patched"),
      "why": "已确认正确的补丁结果：与它逐字节对拍是最硬判据"},
     {"id": "enc-sq-base", "path": NLC / "gamedata.sq_base",
      "why": "NLC 加密包（ZZZZ 头 + XOR 流密码）：通用解密挂钩 + 解密后按 hsqs 处理"},

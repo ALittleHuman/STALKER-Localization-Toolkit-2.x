@@ -53,6 +53,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -62,7 +64,7 @@ from collect_golden import CORPUS  # noqa: E402
 
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 WORK = ROOT / "build" / "golden_sqfs_pack_real"
-TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+TOOLKIT_1X = samples.find_alias("toolkit.1x")
 RDSQUASHFS = (TOOLKIT_1X / "deps" / "squashfs-tools-ng-1.3.2-mingw64" / "bin"
               / "rdsquashfs.exe")
 

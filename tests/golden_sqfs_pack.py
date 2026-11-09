@@ -34,6 +34,8 @@ import sys
 import tarfile
 import tempfile
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -41,7 +43,7 @@ CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 BASELINE_DIR = HERE / "golden" / "sqfs_pack"
 WORK = ROOT / "build" / "golden_sqfs_pack"
 
-TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+TOOLKIT_1X = samples.find_alias("toolkit.1x")
 TAR2SQFS = (TOOLKIT_1X / "deps" / "squashfs-tools-ng-1.3.2-mingw64" / "bin" / "tar2sqfs.exe")
 RDSQUASHFS = TAR2SQFS.with_name("rdsquashfs.exe")
 

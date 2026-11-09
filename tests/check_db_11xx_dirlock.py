@@ -39,12 +39,14 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 
 # 官方 cv（DB 参照）——用套件里的**权威副本**。缺件时 `[①]` 记 note 跳过（不判红）。
-CV = Path(r"E:\Software\Tools\Transition\DB双向验证套件\tools\converter.exe")
+CV = samples.find_alias("tool.converter")
 # cv 解 11xx 时栈溢出发生在读条目阶段，实测约 21 s 才崩 ⇒ 超时必须给足，
 # 否则超时（-1）会掩盖"崩溃"这个真正的判据。
 CV_TIMEOUT = 60

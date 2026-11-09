@@ -26,13 +26,15 @@ import subprocess
 import sys
 import unicodedata
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 WORK = ROOT / "build" / "golden_font_metrics"
 
-TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+TOOLKIT_1X = samples.find_alias("toolkit.1x")
 FONT_PACK_PY = TOOLKIT_1X / "font_pack" / "font_pack.py"
 
 MAX_REPORT = 6  # 每节最多打印几条差异（不然一个错表能刷出几万行）

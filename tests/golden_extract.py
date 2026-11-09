@@ -20,6 +20,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -28,7 +30,7 @@ sys.path.insert(0, str(HERE))
 from collect_golden import CORPUS  # noqa: E402
 from golden_sqfs import SQFS_IDS  # noqa: E402
 
-TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+TOOLKIT_1X = samples.find_alias("toolkit.1x")
 BASELINE_DIR = HERE / "golden" / "extract"
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 

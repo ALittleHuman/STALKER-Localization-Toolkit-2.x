@@ -44,7 +44,7 @@ ROOT = HERE.parent
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 BASELINE = HERE / "golden" / "text_sniff.json"
 WORK = ROOT / "build" / "golden_text_sniff"
-TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+TOOLKIT_1X = samples.find_alias("toolkit.1x")
 
 REAL_ROOTS = [
     samples.find_alias("text.gs_gameplay"),

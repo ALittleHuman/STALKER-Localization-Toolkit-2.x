@@ -29,6 +29,8 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import samples  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILD_DIR = ROOT / "build" / "msvc-release"
@@ -45,7 +47,7 @@ CMAKE = VS_ROOT / "Common7" / "IDE" / "CommonExtensions" / "Microsoft" / "CMake"
 NINJA_DIR = VS_ROOT / "Common7" / "IDE" / "CommonExtensions" / "Microsoft" / "CMake" / "Ninja"
 
 # 1.x 参照仓库（字库数据表、黄金语料的生成方）。与 tests/golden_*.py 的路径口径一致。
-TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+TOOLKIT_1X = samples.find_alias("toolkit.1x")
 
 UNCOVERED: list[str] = []
 LEDGERS: list[str] = []

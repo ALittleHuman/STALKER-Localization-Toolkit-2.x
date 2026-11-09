@@ -2,7 +2,7 @@
 """P17-122 判据：注入/不注入两种情形，引擎的行为必须分开。"""
 import json, subprocess, sys, tempfile
 from pathlib import Path
-ROOT = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit_2.x")
+ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 PLUGINS = ROOT / "tests" / "python_plugins_confirm"
 bad = 0

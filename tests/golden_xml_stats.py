@@ -28,7 +28,7 @@ import samples  # noqa: E402
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
-TOOLKIT_1X = Path(r"E:\Software\Games\STALKER\Localization\Tools\STALKER_Toolkit")
+TOOLKIT_1X = samples.find_alias("toolkit.1x")
 BASELINE = HERE / "golden" / "xml_stats.json"
 PER_ROOT = 20
 
