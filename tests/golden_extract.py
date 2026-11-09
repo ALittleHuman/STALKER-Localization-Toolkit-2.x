@@ -7,7 +7,7 @@
 
     python tests/golden_extract.py --write             # 生成基线（用 1.x）
     python tests/golden_extract.py                     # 对拍（跑 2.x CLI）
-    python tests/golden_extract.py --id nlc-sqz-wasteland --per-image 8
+    python tests/golden_extract.py --id enc-sqz-wasteland --per-image 8
 """
 
 from __future__ import annotations

@@ -10,7 +10,7 @@
       "mtime": 1632416080
     },
     {
-      "id": "nlc-sq-base",
+      "id": "enc-sq-base",
       "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sq_base",
       "why": "NLC 加密包（ZZZZ 头 + XOR 流密码）：通用解密挂钩 + 解密后按 hsqs 处理",
       "size_bytes": 17694732,
@@ -18,7 +18,7 @@
       "mtime": 1783226564
     },
     {
-      "id": "nlc-sq-levels",
+      "id": "enc-sq-levels",
       "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sq_levels",
       "why": "明文 SquashFS（3209 项）",
       "size_bytes": 2410831872,
@@ -26,7 +26,7 @@
       "mtime": 1751901744
     },
     {
-      "id": "nlc-sq-meshes",
+      "id": "enc-sq-meshes",
       "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sq_meshes",
       "why": "明文 SquashFS（4104 项）；列路径 0.07s 那族",
       "size_bytes": 2050744320,
@@ -34,7 +34,7 @@
       "mtime": 1752415228
     },
     {
-      "id": "nlc-sq-sounds",
+      "id": "enc-sq-sounds",
       "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sq_sounds",
       "why": "明文 SquashFS（较小）",
       "size_bytes": 1007878144,
@@ -42,7 +42,7 @@
       "mtime": 1752414620
     },
     {
-      "id": "nlc-sq-textures",
+      "id": "enc-sq-textures",
       "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sq_textures",
       "why": "明文 SquashFS 最大包（19641 项）：虚拟化与吞吐压测基准",
       "size_bytes": 8321224704,
@@ -50,7 +50,7 @@
       "mtime": 1752416172
     },
     {
-      "id": "nlc-sqz-autumn",
+      "id": "enc-sqz-autumn",
       "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\Текстурные дополнения\\gamedata.sqz_autumn",
       "why": "带西里尔目录名的样本（路径/编码口径）",
       "size_bytes": 248397824,
@@ -58,7 +58,7 @@
       "mtime": 1752148518
     },
     {
-      "id": "nlc-sqz-wasteland",
+      "id": "enc-sqz-wasteland",
       "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\Текстурные дополнения\\gamedata.sqz_wasteland",
       "why": "同上，第二个样本",
       "size_bytes": 131710976,
@@ -66,7 +66,7 @@
       "mtime": 1752148360
     },
     {
-      "id": "nlc-sqzy-patch",
+      "id": "enc-sqzy-patch",
       "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\gamedata.sqzy_patch",
       "why": "明文 SquashFS 大包（1065 项那一族）；同名文件合并语义的现场来源",
       "size_bytes": 2320744448,
@@ -74,7 +74,7 @@
       "mtime": 1784442923
     },
     {
-      "id": "nlc-xrengine",
+      "id": "enc-xrengine",
       "path": "E:\\Software\\Games\\STALKER\\Games\\NLC Improved\\NLC Improved [OBT]\\bin_x64\\xrEngine.exe",
       "why": "引擎补丁目标（原版）；与 xrEngine_patched.exe 逐字节对拍是最硬判据",
       "size_bytes": 21806592,
@@ -82,7 +82,7 @@
       "mtime": 1783190246
     },
     {
-      "id": "nlc-xrengine-patched",
+      "id": "enc-xrengine-patched",
       "path": "E:\\Software\\Tools\\Ghidra\\Projects\\NLC Improved\\Exported\\xrEngine_patched.exe",
       "why": "已确认正确的补丁结果：与它逐字节对拍是最硬判据",
       "size_bytes": 21806592,

@@ -7,7 +7,7 @@
 
     python tests/golden_sqfs.py --write                 # 生成/更新基线（用 1.x）
     python tests/golden_sqfs.py                         # 对拍（跑 2.x CLI）
-    python tests/golden_sqfs.py --id nlc-sqz-wasteland # 只跑一个
+    python tests/golden_sqfs.py --id enc-sqz-wasteland # 只跑一个
 """
 
 from __future__ import annotations
@@ -29,13 +29,13 @@ CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
 
 # 这些是明文 SquashFS（加密的 sq_base 走插件解密路径，不在这一组）
 SQFS_IDS = [
-    "nlc-sqz-wasteland",
-    "nlc-sqz-autumn",
-    "nlc-sq-sounds",
-    "nlc-sq-meshes",
-    "nlc-sqzy-patch",
-    "nlc-sq-levels",
-    "nlc-sq-textures",
+    "enc-sqz-wasteland",
+    "enc-sqz-autumn",
+    "enc-sq-sounds",
+    "enc-sq-meshes",
+    "enc-sqzy-patch",
+    "enc-sq-levels",
+    "enc-sq-textures",
 ]
 
 

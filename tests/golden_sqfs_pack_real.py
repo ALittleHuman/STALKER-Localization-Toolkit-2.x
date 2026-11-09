@@ -8,7 +8,7 @@
 206 掉到 136、被删块上的文件读出来是垃圾（`fragflush` 夹具就是照这个缺陷补的）。
 
     python tests/golden_sqfs_pack_real.py                 # 默认取 corpus 里最小的明文镜像
-    python tests/golden_sqfs_pack_real.py --id nlc-sqzy-patch
+    python tests/golden_sqfs_pack_real.py --id enc-sqzy-patch
     python tests/golden_sqfs_pack_real.py --sample 150    # 只抽前 150 个文件（省时间）
 
 ★★ 2026-10-06（A 批）：判据**先验选择**，两条都是"真判据"，第三态才是"未覆盖"
@@ -67,7 +67,7 @@ RDSQUASHFS = (TOOLKIT_1X / "deps" / "squashfs-tools-ng-1.3.2-mingw64" / "bin"
               / "rdsquashfs.exe")
 
 # 明文、体积可控的镜像（加密的 sq_base 走插件路径，不在这条链路上）
-REAL_IDS = ["nlc-sqz-autumn", "nlc-sqz-wasteland", "nlc-sqzy-patch"]
+REAL_IDS = ["enc-sqz-autumn", "enc-sqz-wasteland", "enc-sqzy-patch"]
 
 # ── 参照侧（1.x `sqfs_pack`）能力模型：声明式预算，不是运行期试探 ──────────────
 # 口径来源：`file_system/stalker_fs.py::sqfs_pack` 的实现（2026-10-06 读源码 + 实测定标）：

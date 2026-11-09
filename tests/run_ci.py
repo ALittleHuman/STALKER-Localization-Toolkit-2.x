@@ -1678,7 +1678,7 @@ def step_golden_sqfs_pack_real(release: bool) -> None:
     if not CLI_EXE.exists():
         prereq("构建产物 xrkit_cli.exe", "未构建", release)
         return
-    argv = [sys.executable, str(script), "--id", "nlc-sqz-autumn"]
+    argv = [sys.executable, str(script), "--id", "enc-sqz-autumn"]
     if not release:
         argv += ["--sample", "200"]
     rc, out = run(argv, timeout=3600)
