@@ -188,6 +188,9 @@ struct BatchOutcome {
     int success = 0;
     int skipped = 0;
     int failed = 0;
+    // ★ 2026-11-10（用户）：短文本 + 声明/统计冲突 ⇒ 先挂起，整批跑完按多数编码回填。
+    int deferred = 0;
+    std::string deferred_encoding;   // 回填时选中的编码（空=没有挂起）
     int backed_up = 0;
     int backup_existed = 0;
     int backup_failed = 0;

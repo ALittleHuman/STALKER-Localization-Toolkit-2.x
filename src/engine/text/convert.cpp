@@ -229,6 +229,16 @@ ConvertOutcome convert_bytes(const std::vector<uint8_t>& raw_in, const std::stri
     out.step = sniffed.step;
     out.step_label = sniff_result_label(sniffed);  // ⑨9.7：标签来自判定，不是复算
     out.source_encoding = sniffed.encoding;
+    // ★ 2026-11-10（用户）：短文本 + 声明/统计冲突 ⇒ **先记录并跳过**（不确认、不解码、不写盘）。
+    //   批处理跑完其余文件后，再按“同字节编码多数”回填；单文件调用方看到这个标记应如实报告。
+    if (manual_src == false && sniffed.short_ambiguous) {
+        out.defer_encoding = true;
+        out.defer_reason = sniffed.reason;
+        out.flags_label = sniff_flags_label(sniffed);
+        out.confidence = sniffed.confidence;
+        out.low_confidence = true;
+        return out;
+    }
     // 零静默：判定的"不确定部分"（低置信 / 否决声明）必须原样带到界面与日志，
     // 文案只有 sniff.cpp 一份（页面不许自己拼）。
     out.flags_label = sniff_flags_label(sniffed);

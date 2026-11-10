@@ -316,10 +316,18 @@ SniffResult sniff_encoding(const std::vector<uint8_t>& raw, const std::string& o
         xml_declaration_encoding(raw, decl) && !normalize_name(decl).empty() &&
         bytes_fit_encoding(raw, normalize_name(decl));
     const std::string decl_enc = has_decl ? normalize_name(decl) : std::string();
+    res.declared_encoding = decl_enc;
 
     const SingleByteStat st = single_byte_stat(raw);
     res.stat_evidence = st.evidence;
     res.stat_score = st.score;
+    // ★ 2026-11-10（用户）：短文本统计不可靠，声明与统计冲突时先挂起，交给批处理
+    //   按整批多数编码回填；这里只标记事实，不改变 encoding（单文件仍按原链走）。
+    res.short_ambiguous =
+        has_decl && in_single_byte_family(decl_enc) && st.evidence > 0 &&
+        st.evidence < 8 &&
+        ((st.decisive && st.encoding != decl_enc) ||
+         (!st.decisive && decl_enc == kWindows1252 && st.score > 0.0));
 
     if (st.decisive) {
         res.confidence = stat_confidence(st);

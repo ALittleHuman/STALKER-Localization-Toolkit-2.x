@@ -1508,6 +1508,69 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
                       "需要确认时**不许**写任何产物（不替用户选）");
             }
 
+            // ★ 2026-11-10（用户）：短文本 + 声明/统计冲突 ⇒ 先挂起，整批结束后按
+            //   “同字节编码多数”回填。夹具：2 个长 cp1251 + 1 个短 cp1251（声明谎报 1252）。
+            {
+                const fsys::path dsrc = root / "defer_src";
+                const fsys::path dout = root / "defer_out";
+                fsys::create_directories(dsrc, ec);
+                const std::string ru_long =
+                    "Привет, сталкер! Это достаточно длинный текст для статистики.";
+                std::vector<uint8_t> ru_bytes;
+                std::string enc_err;
+                check(ctx, xrkit::engine::text::encode_strict(
+                               "windows-1251", ru_long, ru_bytes, enc_err),
+                      "延迟夹具：长文本 cp1251 编码失败");
+                for (const char* name : {"normal1.xml", "normal2.xml"}) {
+                    std::ofstream f(dsrc / name, std::ios::binary);
+                    f << "<string_table><string id='n'><text>";
+                    f.write(reinterpret_cast<const char*>(ru_bytes.data()),
+                            static_cast<std::streamsize>(ru_bytes.size()));
+                    f << "</text></string></string_table>";
+                }
+                std::vector<uint8_t> short_bytes;
+                check(ctx, xrkit::engine::text::encode_strict(
+                               "windows-1251", "Опыт", short_bytes, enc_err),
+                      "延迟夹具：短文本 cp1251 编码失败");
+                {
+                    std::ofstream f(dsrc / "short.xml", std::ios::binary);
+                    f << "<?xml version='1.0' encoding='windows-1252'?>\n"
+                         "<string_table><string id='s'><text>";
+                    f.write(reinterpret_cast<const char*>(short_bytes.data()),
+                            static_cast<std::streamsize>(short_bytes.size()));
+                    f << "</text></string></string_table>";
+                }
+                etxt::set_encoding_confirm(
+                    [](const etxt::EncodingConfirmRequest&, std::string*) {
+                        return etxt::EncodingConfirmOutcome::Confirmed;
+                    });
+                etxt::BatchOptions dbo;
+                dbo.source = dsrc.string();
+                dbo.output_dir = dout.string();
+                dbo.extensions = {".xml"};
+                dbo.source_encoding = "auto";
+                dbo.target_encoding = "utf-8";
+                dbo.backup = false;
+                etxt::BatchHooks dbh;
+                int dlog = 0;
+                dbh.message = [&](const std::string&) { ++dlog; };
+                const etxt::BatchOutcome deferred = etxt::convert_batch(dbo, dbh);
+                etxt::set_encoding_confirm(nullptr);
+                check(ctx, deferred.deferred == 1 &&
+                               deferred.deferred_encoding == "windows-1251" &&
+                               deferred.success == 3 && deferred.failed == 0,
+                      "短文件延迟判定不对（deferred=" + std::to_string(deferred.deferred) +
+                          " enc=" + deferred.deferred_encoding + " success=" +
+                          std::to_string(deferred.success) + " failed=" +
+                          std::to_string(deferred.failed) + "）");
+                std::ifstream short_out(dout / "short.xml", std::ios::binary);
+                const std::string short_body((std::istreambuf_iterator<char>(short_out)),
+                                             std::istreambuf_iterator<char>());
+                check(ctx, short_body.find("Опыт") != std::string::npos,
+                      "短文件回填后正文不对（未按 1251 解码）");
+                check(ctx, dlog >= 6, "延迟判定没有逐条留痕");
+            }
+
             // 反面：源路径不存在 ⇒ 退出码 2 + 报错（不许静默成功）
             bo.source = (root / "e2e_missing").string();
             const etxt::BatchOutcome bad = etxt::convert_batch(bo, bh);
@@ -1688,10 +1751,13 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
             exml::parse_text_by_id("<r><s id=\"a\"><text>x</text></s>", "utf-8");
         check(ctx, !broken.trusted && !broken.warning.empty(),
               "标签没闭合却没被判成不可信");
-        // 注释体里含 `--`：ElementTree 会抛 ⇒ 1.x 判不可信；我们**不许比它更宽**
+        // ★ 2026-11-10（用户实测）：游戏 XML 的注释里大量 `--`；不再照 ElementTree
+        //   把整份判不可信（真实 23/81 个文件会被静默丢成 0 条）。
         const exml::XmlTextSide bad_comment =
             exml::parse_text_by_id("<!-- a -- b --><r><s id=\"a\"><text>x</text></s></r>", "utf-8");
-        check(ctx, !bad_comment.trusted, "注释体含 -- 时应判不可信（照 ElementTree）");
+        check(ctx, bad_comment.ok && bad_comment.trusted &&
+                       bad_comment.id_text.count("a") != 0,
+              "注释体含 -- 时应容错并保留正文（不再整份判不可信）");
 
         // 比较：同 id 文本不同 ⇒ text_diff；只在一侧 ⇒ only_*
         const std::string other =

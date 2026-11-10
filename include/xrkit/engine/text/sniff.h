@@ -59,6 +59,10 @@ struct SniffResult {
     bool override_decl = false;   // 统计否决了 XML 声明 ⇒ **必须可见**
     uint64_t stat_evidence = 0;   // "鲁棒"步参与裁决的高位字节数（证据量）
     double stat_score = 0.0;      // 每个高位字节的平均对数似然比：正=像俄语(1251)，负=像西欧(1252)
+    // ★ 2026-11-10（用户）：短文件 + 声明与统计冲突 ⇒ 本文件**不立即裁决**，
+    //   由批处理先跳过、等整批跑完再按多数编码回填。这里只给事实，不改 encoding。
+    std::string declared_encoding;  // 字节可证实的 XML 声明（没有则为空）
+    bool short_ambiguous = false;   // 短文本证据不足且声明/统计冲突
 };
 
 // 9.7 的修正：1.x 那行"定案步骤"标签（`多字节(utf-8)`）是 convert_app **复算**的

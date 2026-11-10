@@ -95,6 +95,10 @@ struct ConvertOutcome {
     //   没有窗口可弹时（CLI/headless）调用方必须把 `confirm_question` 与诊断**原样报出**
     //   并**非零退出**；`data` 为空（**一个字节都没写**）。
     bool needs_confirm = false;
+    // ★ 2026-11-10（用户）：短文本 + 声明/统计冲突 ⇒ 批处理先记录并跳过，
+    //   等整批跑完再按同字节编码多数回填。
+    bool defer_encoding = false;
+    std::string defer_reason;
     std::string confirm_question;   // 问句原文（`needs_confirm` 时非空）
     std::string confirm_diagnostics;// 诊断原文（step / 理由 / 标记 / 置信度，逐行）
     SniffStep step = SniffStep::Default;

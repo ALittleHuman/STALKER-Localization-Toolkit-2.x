@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 
 namespace xrkit::engine::text {
@@ -644,22 +645,31 @@ BatchOutcome convert_batch(const BatchOptions& opt, const BatchHooks& hooks) {
         return out;
     }
 
-    for (const CollectedFile& file : files) {
-        // ★ **文件边界**轮询取消：停在这里，已转换的文件都是完整的（不写半个）。
+    std::vector<CollectedFile> deferred_files;
+    std::map<std::string, int> single_counts;
+    const auto is_single_byte_encoding = [](const std::string& e) {
+        return e == "windows-1251" || e == "windows-1252" || e == "latin-1" ||
+               e == "iso-8859-1";
+    };
+
+    // ★ 2026-11-10（用户）：短文本 + 声明/统计冲突的文件先挂起；整批跑完后按
+    //   “同字节编码中最多的一种”回填（没有单字节证据 ⇒ 多字节无法确认 ⇒ UTF-8）。
+    const auto process_file = [&](const CollectedFile& file, const std::string& forced_enc,
+                                  bool resolving) -> bool {
         if (hooks.should_stop && hooks.should_stop()) {
             out.cancelled = true;
             out.stop_reason = "已取消：在文件边界停下（已处理 " + std::to_string(out.processed) +
                               " / " + std::to_string(out.candidates) + " 个文件，失败 " +
                               std::to_string(out.failed) + " 个；已转换的产物都已完整落盘）";
             say(out.stop_reason);
-            break;
+            return true;
         }
         if (hooks.gate && !hooks.gate()) {
             out.cancelled = true;
             out.stop_reason = "已取消：在文件边界停下（已处理 " + std::to_string(out.processed) +
                               " / " + std::to_string(out.candidates) + " 个文件）";
             say(out.stop_reason);
-            break;
+            return true;
         }
         const std::string name = basename_of(file.rel);
 
@@ -681,8 +691,6 @@ BatchOutcome convert_batch(const BatchOptions& opt, const BatchHooks& hooks) {
 
         std::string target;
         if (!opt.output_dir.empty()) {
-            // 1.x：目录模式保留**相对结构**（`out/output_dir/<rel>`）。扁平化会让不同
-            // 子目录的同名文件互相覆盖 —— 那是静默丢产物，必须是相对结构。
             target = join_path(opt.output_dir, file.rel);
             const stdfs::path parent = xrkit::core::path_from_utf8(target).parent_path();
             std::error_code mk;
@@ -691,32 +699,38 @@ BatchOutcome convert_batch(const BatchOptions& opt, const BatchHooks& hooks) {
                 ++out.failed;
                 ++out.processed;
                 say("[失败] " + name + " | 建输出目录失败：" + mk.message());
-                continue;
+                return false;
             }
         }
 
         ConvertOptions co;
-        co.source_encoding = opt.source_encoding;
+        co.source_encoding = forced_enc.empty() ? opt.source_encoding : forced_enc;
         co.target_encoding = opt.target_encoding;
         co.to_output_dir = !opt.output_dir.empty();
         const ConvertOutcome r = convert_file(file.full, target, co);
-        // ★★ T-08（第三方只读审计 2026-10-18）：**用户在编码确认里取消 ⇒ 停整批**。
-        //   修前：`Cancelled` 只让这一份 `ok=false`，批处理把它算作"失败一个"然后**继续**下一个
-        //   ⇒ 500 个文件要取消 500 次（审计原文：「不是停止整批」）。
-        //   现在靠 `ConvertOutcome::user_cancelled`（一等公民，不看文案）在**文件边界**停下，
-        //   并把"已处理 N / 共 M、后面的一个都没转"如实报出来（零静默）。
+
+        if (r.defer_encoding && !resolving) {
+            deferred_files.push_back(file);
+            ++out.deferred;
+            ++out.processed;
+            say("[延迟] " + name + " | 短文本且声明/统计冲突，先跳过，整批结束后按多数编码回填");
+            if (hooks.progress) hooks.progress(out.processed, out.candidates);
+            return false;
+        }
+        if (r.defer_encoding && resolving) {
+            ++out.failed;
+            say("[失败] " + name + " | 回填后仍无法判定编码");
+            return false;
+        }
         if (r.user_cancelled) {
             out.cancelled = true;
             out.stop_reason = "已取消：你在编码确认里点了取消（已处理 " +
                               std::to_string(out.processed) + " / " +
                               std::to_string(out.candidates) + " 个文件；**后面的一个都没转**）";
             say(out.stop_reason);
-            break;
+            return true;
         }
         if (r.needs_confirm) {
-            // ★★ P17-87（§四·9）：**没有窗口可弹 ⇒ 不许猜** —— 当场停下，把问句与诊断
-            //   原样交出去（调用方负责报出 + 非零退出）。**这一份与后面的都不转**（不替用户选）。
-            //   ★ 不把它算进 `failed`：它不是"转换失败"，是"需要用户先决定"（退码 3）。
             out.needs_confirm = true;
             out.confirm_path = file.full;
             out.confirm_question = r.confirm_question;
@@ -724,7 +738,7 @@ BatchOutcome convert_batch(const BatchOptions& opt, const BatchHooks& hooks) {
             say("[需要确认] " + name + " | " + r.step_label +
                 "（没有窗口可弹 ⇒ 已停下，未转换任何文件）");
             out.stop_reason = "需要用户确认编码：" + name;
-            break;
+            return true;
         }
         if (!r.ok) {
             ++out.failed;
@@ -733,7 +747,10 @@ BatchOutcome convert_batch(const BatchOptions& opt, const BatchHooks& hooks) {
         } else {
             ++out.success;
         }
-        // 零静默（2026-10-06 用户口径③）：判定的**不确定部分**逐条上屏。
+        if (!resolving && r.ok && !r.source_encoding.empty() &&
+            is_single_byte_encoding(r.source_encoding)) {
+            ++single_counts[r.source_encoding];
+        }
         if (r.low_confidence) ++out.low_confidence;
         if (r.override_decl) ++out.override_decl;
         if (r.used_mismatch) ++out.used_mismatch;
@@ -742,9 +759,39 @@ BatchOutcome convert_batch(const BatchOptions& opt, const BatchHooks& hooks) {
         if (r.skipped) line += " | 已是目标编码";
         line += " → " + opt.target_encoding;
         if (!r.ok) line += " | 失败：" + r.error;
+        if (resolving) line += " | 回填=" + forced_enc;
         say(line);
-        ++out.processed;
+        if (!resolving) ++out.processed;
         if (hooks.progress) hooks.progress(out.processed, out.candidates);
+        return false;
+    };
+
+    for (const CollectedFile& file : files) {
+        if (process_file(file, std::string(), false)) break;
+    }
+
+    if (!deferred_files.empty() && !out.cancelled) {
+        std::string chosen;
+        int best = 0;
+        for (const auto& kv : single_counts) {
+            if (kv.second > best ||
+                (kv.second == best && kv.first == "windows-1251" && chosen != "windows-1251")) {
+                best = kv.second;
+                chosen = kv.first;
+            }
+        }
+        if (chosen.empty()) chosen = "utf-8";
+        out.deferred_encoding = chosen;
+        say("延迟判定：" + std::to_string(deferred_files.size()) +
+            " 个短文件；整批同字节编码多数=" +
+            (best > 0 ? chosen : std::string("无（多字节无法确认）")) +
+            " ⇒ 统一按 " + chosen + " 回填");
+        for (const CollectedFile& file : deferred_files) {
+            if (process_file(file, chosen, true)) break;
+        }
+    } else if (!deferred_files.empty() && out.cancelled) {
+        say("延迟判定：已取消，仍有 " + std::to_string(deferred_files.size()) +
+            " 个短文件未回填");
     }
 
     out.duration = format_duration(seconds_since(started));

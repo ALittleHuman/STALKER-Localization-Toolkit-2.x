@@ -54,6 +54,13 @@ QString scan_line_of(const etxt::BatchOutcome& outcome) {
     text += QStringLiteral("，备份区跳过 %1").arg(c.skipped_backup);
     if (c.skipped_depth > 0) text += QStringLiteral("，只扫顶层挡掉 %1").arg(c.skipped_depth);
     if (!c.errors.empty()) text += QStringLiteral("，遍历错误 %1").arg(c.errors.size());
+    if (outcome.deferred > 0) {
+        text += QStringLiteral("，延迟判定 %1（回填 %2）")
+                    .arg(outcome.deferred)
+                    .arg(outcome.deferred_encoding.empty()
+                             ? QStringLiteral("-")
+                             : utf8(outcome.deferred_encoding));
+    }
     return text;
 }
 
