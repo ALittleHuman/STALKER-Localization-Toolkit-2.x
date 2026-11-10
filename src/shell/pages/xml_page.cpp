@@ -1518,12 +1518,16 @@ void XmlPage::run_extract() {
                     names.sort();
                     lang = names.first();
                 }
-                if (lang.isEmpty()) lang = QStringLiteral("rus");
+                if (lang.isEmpty()) {
+                    post_status(QStringLiteral("无法确定输出语言：源里没有 configs/text/<语言>，"
+                                               "也没有 localization.ltx；请保留一个语言目录再提取"));
+                    return;
+                }
                 texts_out = QDir(out_root).filePath(rel_prefix + cfg_name +
                                                     QStringLiteral("/text/") + lang);
                 text_dirs << texts_out;
                 message("只抽硬编码文本：文本表落 " + QDir::toNativeSeparators(texts_out).toStdString() +
-                        (chosen_lang.isEmpty() ? "（源里无 localization.ltx，默认 rus）"
+                        (chosen_lang.isEmpty() ? "（源里无 localization.ltx，按目录名排序取第一）"
                                                : "（取自 localization.ltx）"));
             }
             QDir().mkpath(texts_out);
