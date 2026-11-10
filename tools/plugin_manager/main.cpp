@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -47,8 +48,10 @@ QString app_dir() { return QCoreApplication::applicationDirPath(); }
 QString find_cli() {
     const QString env = qEnvironmentVariable("XRKIT_CLI");
     if (!env.isEmpty() && QFileInfo::exists(env)) return env;
-    // 包内：与本 exe 同目录；开发树：从 exe 目录逐级向上找 `xrkit_cli.exe` 与
-    // `tools/cli/xrkit_cli.exe`（不写死构建目录名）。
+    // 包内：与本 exe 同目录（Qt DLL 也在这一层）。
+    const QString same_dir = app_dir() + QStringLiteral("/xrkit_cli.exe");
+    if (QFileInfo::exists(same_dir)) return QFileInfo(same_dir).absoluteFilePath();
+    // 开发树：从 exe 目录逐级向上找 `xrkit_cli.exe` 与 `tools/cli/xrkit_cli.exe`。
     QDir dir(app_dir());
     for (int level = 0; level < 8; ++level) {
         const QStringList candidates = {
@@ -66,7 +69,15 @@ QString find_cli() {
     return QString();
 }
 
-QString default_plugins_dir() { return app_dir() + QStringLiteral("/plugins"); }
+QString default_plugins_dir() {
+    // 包内管理器在 `tools\`，插件目录在上一级；开发树 exe 在构建目录里则用 exe 同级。
+    QString base = app_dir();
+    const QFileInfo info(base);
+    if (info.fileName().compare(QStringLiteral("tools"), Qt::CaseInsensitive) == 0) {
+        base = info.absolutePath();
+    }
+    return base + QStringLiteral("/plugins");
+}
 
 int version_cmp(const QString& a, const QString& b) {
     const auto parts = [](const QString& v) {
@@ -402,7 +413,14 @@ int main(int argc, char** argv) {
             disable_id = args[++i];
         }
     }
-    if (plugins_dir.isEmpty()) plugins_dir = default_plugins_dir();
+    // ★ 2026-11-10：`applicationDirPath()` 只有在 QCoreApplication 建好之后才有效。
+    //   无界面模式（--scan-json/--disable/--enable）先建 QCoreApplication；GUI 模式建 QApplication。
+    const bool headless_mode = scan_json || !disable_file.isEmpty() || !enable_file.isEmpty();
+    std::unique_ptr<QCoreApplication> core_app;
+    if (headless_mode) {
+        core_app = std::make_unique<QCoreApplication>(argc, argv);
+        if (plugins_dir.isEmpty()) plugins_dir = default_plugins_dir();
+    }
     if (!disable_file.isEmpty() || !enable_file.isEmpty()) {
         // 无界面启停（自动化/脚本用）；GUI 里是同样的读写路径。
         const QString file = disable_file.isEmpty() ? enable_file : disable_file;
@@ -447,6 +465,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     QApplication app(argc, argv);
+    if (plugins_dir.isEmpty()) plugins_dir = default_plugins_dir();
     ManagerWindow window(plugins_dir, reason);
     window.show();
     return app.exec();

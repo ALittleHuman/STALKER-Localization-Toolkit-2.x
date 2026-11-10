@@ -1314,11 +1314,12 @@ SmokeResult run_smoke() {
               QStringLiteral("日志两个按钮要在同一个竖排布局里（不水平排）"));
         check(hub.findChild<QAction*>(QStringLiteral("plugin_manager_action")) != nullptr,
               QStringLiteral("菜单里要有插件管理器入口"));
-        // ★ 2026-11-10：入口打开的是**独立进程**；本体旁边必须有这个 exe。
-        check(QFileInfo(QCoreApplication::applicationDirPath() +
-                        QStringLiteral("/xrkit_plugin_manager.exe"))
-                  .exists(),
-              QStringLiteral("独立插件管理器 exe 要在本体旁边"));
+        // ★ 2026-11-10：入口打开的是**独立进程**；本体旁边（或 tools\）必须有这个 exe。
+        const QString app_dir = QCoreApplication::applicationDirPath();
+        const bool pm_present =
+            QFileInfo(app_dir + QStringLiteral("/xrkit_plugin_manager.exe")).exists() ||
+            QFileInfo(app_dir + QStringLiteral("/tools/xrkit_plugin_manager.exe")).exists();
+        check(pm_present, QStringLiteral("独立插件管理器 exe 要在本体旁边（或 tools\\）"));
         hub.log_line(QStringLiteral("待清空 A"));
         if (hub.log_box() != nullptr) hub.log_box()->flush();
         const int before = hub.log_box() != nullptr ? hub.log_box()->blockCount() : 0;
