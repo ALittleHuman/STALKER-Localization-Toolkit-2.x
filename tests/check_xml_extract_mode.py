@@ -41,6 +41,7 @@ ANCHORS_CPP = [
     ("filter_label_->setVisible(!show)", "提取模式连同「筛选」标签一起隐藏"),
     ("checks_row->addWidget(texts_check_", "复选框单独成行（在输出目录上方）"),
     ("extract_wrap->setStyleSheet", "提取行透明背景（不出现黑底）"),
+    ("out_override.isEmpty()", "输出根留空时用空的一侧"),
     ("extract_button_->setEnabled(true)", "两框都不勾也可提取（硬编码文本表始终生成）"),
     ("提取失败", "同名文件拒绝覆盖要报出来"),
 ]

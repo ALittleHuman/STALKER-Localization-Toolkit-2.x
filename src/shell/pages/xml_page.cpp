@@ -282,10 +282,10 @@ XmlPage::XmlPage(QWidget* parent)
     rewrite_check_->setToolTip(QStringLiteral("勾选=改写后的脚本/配置写进输出；不勾=只出文本表"));
     extract_out_edit_ = new QLineEdit;
     extract_out_edit_->setObjectName(QStringLiteral("xml_extract_out"));
-    extract_out_edit_->setPlaceholderText(QStringLiteral("默认：非空一侧的上一级（可改）"));
+    extract_out_edit_->setPlaceholderText(QStringLiteral("留空 = 用空的一侧作为输出根"));
     extract_out_edit_->setToolTip(
-        QStringLiteral("语言包、文本表和改写后的 scripts/config 都写到这个目录；"
-                       "留空则用非空一侧的上一级目录。"));
+        QStringLiteral("语言包、文本表和改写后的 scripts/config 都写到这个目录；\n"
+                       "留空 = 用空的一侧（页面里那个空文件夹）作为输出根。"));
     auto* extract_browse = new QPushButton(QStringLiteral("选择…"));   // 与全站路径行同一文案
     extract_browse->setObjectName(QStringLiteral("xml_extract_browse"));
     QObject::connect(extract_browse, &QPushButton::clicked, this, [this] {
@@ -1364,11 +1364,12 @@ void XmlPage::run_extract() {
     // worker 不许读控件 ⇒ 复选框状态在主线程快照
     const bool want_rewritten = rewrite_check_ != nullptr && rewrite_check_->isChecked();
     const bool want_texts = texts_check_ != nullptr && texts_check_->isChecked();
+    const QString out_override = extract_out_edit_->text().trimmed();
     set_compare_controls_enabled(false);
     const bool started = task_->run(
         QStringLiteral("提取文本"),
-        [this, a, b, want_rewritten, want_texts](const ProgressSink& progress,
-                                                 const MessageSink& message) {
+        [this, a, b, want_rewritten, want_texts, out_override](const ProgressSink& progress,
+                                                              const MessageSink& message) {
             const auto should_stop = [this]() {
                 return task_ != nullptr && task_->cancel_requested();
             };
@@ -1408,7 +1409,8 @@ void XmlPage::run_extract() {
                 return;
             }
             const QString source = a_empty ? b : a;
-            const QString out_root = a_empty ? a : b;
+            const QString out_root =
+                out_override.isEmpty() ? (a_empty ? a : b) : out_override;
 
             // ★ 业务编排只有引擎一份（CLI/GUI 共用）；页面只负责空侧判定/展示。
             xrkit::engine::text::ExtractPackOptions opt;
