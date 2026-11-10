@@ -291,6 +291,10 @@ XmlPage::XmlPage(QWidget* parent)
     extract_wrap->setVisible(false);
     // 放在模式行与结果区之间（索引 3）；不占结果区/进度条的位置。
     body_layout()->insertWidget(3, extract_wrap);
+    // insertWidget 会把原 index=3 的 stretch 留给新控件；显式把拉伸还给结果表/详情分栏，
+    // 否则隐藏的复选框行拿走了 stretch，底部会空出一大块。
+    body_layout()->setStretchFactor(extract_wrap, 0);
+    body_layout()->setStretchFactor(split_, 1);
     extract_wrap_ = extract_wrap;
     // ★ 2026-11-10（用户）：**硬编码文本表始终生成** ⇒ 两个框都不勾也可以提取
     //   （只出 `*_texts.xml`，不复制语言包、不写改写产物）。两个框是独立多选：
