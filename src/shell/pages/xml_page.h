@@ -215,6 +215,7 @@ private:
     QComboBox* enc_b_combo_ = nullptr;
     QComboBox* mode_combo_ = nullptr;
     QComboBox* filter_combo_ = nullptr;
+    class QLabel* filter_label_ = nullptr;
     QCheckBox* align_check_ = nullptr;   // mod 覆盖树对齐
     // ★★ 2026-10-26（THREAD-CONTRACT 判据）：worker 不许碰控件 ⇒ 起线程**之前**把勾选值快照下来
     bool align_at_task_start_ = true;

@@ -123,7 +123,8 @@ XmlPage::XmlPage(QWidget* parent)
     opt_row->addWidget(new QLabel(QStringLiteral("比较模式：")), 0);
     opt_row->addWidget(mode_combo_, 0);
     opt_row->addSpacing(xrkit::core::px(12));
-    opt_row->addWidget(new QLabel(QStringLiteral("筛选：")), 0);
+    filter_label_ = new QLabel(QStringLiteral("筛选："));
+    opt_row->addWidget(filter_label_, 0);
     opt_row->addWidget(filter_combo_, 0);
     opt_row->addStretch(1);
     body_layout()->addLayout(opt_row);
@@ -264,7 +265,8 @@ XmlPage::XmlPage(QWidget* parent)
     opt_row->addWidget(align_check_, 0);
 
     // ── ★★ 2026-10-27：第三模式「提取文本」的选项行（默认隐藏；一侧为空时出现）──────
-    auto* extract_row = new QHBoxLayout;
+    auto* checks_row = new QHBoxLayout;
+    auto* out_row = new QHBoxLayout;
     extract_hint_ = new QLabel(
         QStringLiteral("检测到一侧为空：切到「提取文本」——硬编码文本表始终生成；"
                        "下面两个选项分别决定「复制语言包」与「写回脚本/配置」"));
@@ -280,7 +282,10 @@ XmlPage::XmlPage(QWidget* parent)
     rewrite_check_->setToolTip(QStringLiteral("勾选=改写后的脚本/配置写进输出；不勾=只出文本表"));
     extract_out_edit_ = new QLineEdit;
     extract_out_edit_->setObjectName(QStringLiteral("xml_extract_out"));
-    extract_out_edit_->setPlaceholderText(QStringLiteral("输出根目录（默认：非空一侧的上一级）"));
+    extract_out_edit_->setPlaceholderText(QStringLiteral("默认：非空一侧的上一级（可改）"));
+    extract_out_edit_->setToolTip(
+        QStringLiteral("语言包、文本表和改写后的 scripts/config 都写到这个目录；"
+                       "留空则用非空一侧的上一级目录。"));
     auto* extract_browse = new QPushButton(QStringLiteral("选择…"));   // 与全站路径行同一文案
     extract_browse->setObjectName(QStringLiteral("xml_extract_browse"));
     QObject::connect(extract_browse, &QPushButton::clicked, this, [this] {
@@ -291,16 +296,23 @@ XmlPage::XmlPage(QWidget* parent)
                 : QDir::toNativeSeparators(extract_out_edit_->text().trimmed()));
         if (!picked.isEmpty()) extract_out_edit_->setText(QDir::toNativeSeparators(picked));
     });
-    extract_row->addWidget(texts_check_, 0);
-    extract_row->addWidget(rewrite_check_, 0);
-    extract_row->addWidget(extract_out_edit_, 1);
-    extract_row->addWidget(extract_browse, 0);
+    // 复选框在上、输出目录在下：先选“做什么”，再选“写到哪”。
+    checks_row->addWidget(texts_check_, 0);
+    checks_row->addWidget(rewrite_check_, 0);
+    checks_row->addStretch(1);
+    out_row->addWidget(new QLabel(QStringLiteral("输出到：")), 0);
+    out_row->addWidget(extract_out_edit_, 1);
+    out_row->addWidget(extract_browse, 0);
     auto* extract_wrap = new QWidget;
     extract_wrap->setObjectName(QStringLiteral("xml_extract_row"));
+    // 不填背景：QWidget 默认会用窗口色（深色主题下就是一块黑底），这里只要透明。
+    extract_wrap->setAutoFillBackground(false);
+    extract_wrap->setStyleSheet(QStringLiteral("background: transparent;"));
     auto* extract_box = new QVBoxLayout(extract_wrap);
     extract_box->setContentsMargins(0, 0, 0, 0);
     extract_box->addWidget(extract_hint_, 0);
-    extract_box->addLayout(extract_row);
+    extract_box->addLayout(checks_row);
+    extract_box->addLayout(out_row);
     extract_wrap->setVisible(false);
     body_layout()->addWidget(extract_wrap, 0);
     extract_wrap_ = extract_wrap;
@@ -1332,6 +1344,7 @@ void XmlPage::update_extract_mode() {
     if (extract_button_ != nullptr) extract_button_->setVisible(show);
     if (start_button_ != nullptr) start_button_->setVisible(!show);
     if (filter_combo_ != nullptr) filter_combo_->setVisible(!show);
+    if (filter_label_ != nullptr) filter_label_->setVisible(!show);
     if (show && status_ != nullptr) {
         status_->setText(QStringLiteral("一侧为空：已切到「提取文本」——只抽文本，不复制整树"));
     }

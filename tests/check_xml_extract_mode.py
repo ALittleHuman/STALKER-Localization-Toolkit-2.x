@@ -38,6 +38,9 @@ ANCHORS_CPP = [
     ("复制语言包（文本 XML/字体/localization）", "语言包复制是独立选项（不勾可只抽硬编码）"),
     ("opt.copy_language_pack = want_texts", "页面把语言包复选框传给共享编排"),
     ("opt.write_rewritten = want_rewritten", "页面把改写复选框传给共享编排"),
+    ("filter_label_->setVisible(!show)", "提取模式连同「筛选」标签一起隐藏"),
+    ("checks_row->addWidget(texts_check_", "复选框单独成行（在输出目录上方）"),
+    ("extract_wrap->setStyleSheet", "提取行透明背景（不出现黑底）"),
     ("extract_button_->setEnabled(true)", "两框都不勾也可提取（硬编码文本表始终生成）"),
     ("提取失败", "同名文件拒绝覆盖要报出来"),
 ]
