@@ -265,17 +265,18 @@ XmlPage::XmlPage(QWidget* parent)
     // ── ★★ 2026-10-27：第三模式「提取文本」的选项行（默认隐藏；一侧为空时出现）──────
     auto* extract_row = new QHBoxLayout;
     extract_hint_ = new QLabel(
-        QStringLiteral("检测到一侧为空：切到「提取文本」——只抽文本（configs/text/<lang>），不复制整树"));
+        QStringLiteral("检测到一侧为空：切到「提取文本」——硬编码文本表始终生成；"
+                       "下面两个选项分别决定「复制语言包」与「写回脚本/配置」"));
     extract_hint_->setObjectName(QStringLiteral("xml_extract_hint"));
     extract_hint_->setWordWrap(true);
-    texts_check_ = new QCheckBox(QStringLiteral("文本 XML（始终输出）"));
+    texts_check_ = new QCheckBox(QStringLiteral("复制语言包（文本 XML/字体/localization）"));
     texts_check_->setObjectName(QStringLiteral("xml_extract_texts"));
     texts_check_->setChecked(true);
-    texts_check_->setEnabled(false);   // ★ 2026-11-10：文本表是提取的**必然产物**，不是选项
-    rewrite_check_ = new QCheckBox(
-        QStringLiteral("改写脚本/配置（勾选才写入输出；不勾仅出文本表）"));
+    texts_check_->setToolTip(QStringLiteral("勾选=连同语言包一起复制；不勾=只抽脚本/配置里的硬编码文本"));
+    rewrite_check_ = new QCheckBox(QStringLiteral("改写脚本/配置（写入输出）"));
     rewrite_check_->setObjectName(QStringLiteral("xml_extract_rewritten"));
     rewrite_check_->setChecked(true);
+    rewrite_check_->setToolTip(QStringLiteral("勾选=改写后的脚本/配置写进输出；不勾=只出文本表"));
     extract_out_edit_ = new QLineEdit;
     extract_out_edit_->setObjectName(QStringLiteral("xml_extract_out"));
     extract_out_edit_->setPlaceholderText(QStringLiteral("输出根目录（默认：非空一侧的上一级）"));
@@ -302,12 +303,12 @@ XmlPage::XmlPage(QWidget* parent)
     extract_wrap->setVisible(false);
     body_layout()->addWidget(extract_wrap, 0);
     extract_wrap_ = extract_wrap;
-    // 两个复选框至少勾一个 ⇒ 「提取文本」才可用；两边都改勾选也允许（那时按钮禁用并说理由）
+    // ★ 2026-11-10（用户）：**硬编码文本表始终生成** ⇒ 两个框都不勾也可以提取
+    //   （只出 `*_texts.xml`，不复制语言包、不写改写产物）。两个框是独立多选：
+    //   ① 复制语言包（文本/字体/localization） ② 改写脚本/配置写入输出。
     const auto refresh_extract_button = [this] {
         if (extract_button_ == nullptr) return;
-        const bool any = (texts_check_ != nullptr && texts_check_->isChecked()) ||
-                         (rewrite_check_ != nullptr && rewrite_check_->isChecked());
-        extract_button_->setEnabled(any);
+        extract_button_->setEnabled(true);
     };
     QObject::connect(texts_check_, &QCheckBox::toggled, this, refresh_extract_button);
     QObject::connect(rewrite_check_, &QCheckBox::toggled, this, refresh_extract_button);
@@ -1348,9 +1349,10 @@ void XmlPage::run_extract() {
     }
     // worker 不许读控件 ⇒ 复选框状态在主线程快照
     const bool want_rewritten = rewrite_check_ != nullptr && rewrite_check_->isChecked();
+    const bool want_texts = texts_check_ != nullptr && texts_check_->isChecked();
     set_compare_controls_enabled(false);
     const bool started = task_->run(
-        QStringLiteral("提取文本"), [this, a, b, want_rewritten](const ProgressSink& progress,
+        QStringLiteral("提取文本"), [this, a, b, want_rewritten, want_texts](const ProgressSink& progress,
                                                                const MessageSink& message) {
             const auto should_stop = [this]() {
                 return task_ != nullptr && task_->cancel_requested();
@@ -1393,26 +1395,30 @@ void XmlPage::run_extract() {
             }
             const QString source = a_empty ? b : a;
             const QString out_root = a_empty ? a : b;
-            // ② 语言包收敛：已有的 configs/text/<lang>、fonts、fonts.ltx、地图…按原相对路径搬
-            xrkit::engine::text::LangPackCollectOptions copt;
-            copt.source_root = source.toUtf8().toStdString();
-            copt.out_root = out_root.toUtf8().toStdString();
-            // 不指定 langs ⇒ 自动收所有语言（text/<lang> 有几个收几个）
-            const xrkit::engine::text::LangPackCollectResult collected =
-                xrkit::engine::text::collect_language_pack(copt);
-            QString langs_text;
-            for (const std::string& one : collected.langs) {
-                if (!langs_text.isEmpty()) langs_text += QStringLiteral(",");
-                langs_text += utf8(one);
-            }
-            if (collected.ok) {
-                message("语言包收敛：" + std::to_string(collected.copied) + " 个文件；语言=" +
-                        langs_text.toStdString());
-                if (collected.langs.size() <= 1) {
-                    message("提示：源里只扫到 1 种语言（要多种语言，请把包含它们的游戏根当源）");
+            // ② 语言包收敛：**可选**（用户 2026-11-10：只抽硬编码文本时不要复制整包）
+            xrkit::engine::text::LangPackCollectResult collected;
+            if (want_texts) {
+                xrkit::engine::text::LangPackCollectOptions copt;
+                copt.source_root = source.toUtf8().toStdString();
+                copt.out_root = out_root.toUtf8().toStdString();
+                // 不指定 langs ⇒ 自动收所有语言（text/<lang> 有几个收几个）
+                collected = xrkit::engine::text::collect_language_pack(copt);
+                QString langs_text;
+                for (const std::string& one : collected.langs) {
+                    if (!langs_text.isEmpty()) langs_text += QStringLiteral(",");
+                    langs_text += utf8(one);
+                }
+                if (collected.ok) {
+                    message("语言包收敛：" + std::to_string(collected.copied) + " 个文件；语言=" +
+                            langs_text.toStdString());
+                    if (collected.langs.size() <= 1) {
+                        message("提示：源里只扫到 1 种语言（要多种语言，请把包含它们的游戏根当源）");
+                    }
+                } else {
+                    message("语言包收敛跳过：" + collected.error);
                 }
             } else {
-                message("语言包收敛跳过：" + collected.error);
+                message("跳过语言包复制：只抽硬编码文本（不复制 text/fonts/localization）");
             }
             progress(25);
             // ③ 抽字面量 → <out>/gamedata/configs/text/rus/；被改写的脚本按勾选决定落不落
@@ -1441,12 +1447,11 @@ void XmlPage::run_extract() {
                     ? QStringLiteral("gamedata/")
                     : QString();
             const QString cfg_name = QFileInfo(base).fileName();   // "configs" 或 "config"
-            // ★ 2026-11-07（用户："为什么不是所有语言都提取出来"）：字面量表**每个语言目录各一份**
             // ★ 2026-11-08（用户："要通用，全是扫出来的"）：不假设 `gamedata/` 前缀 ——
-            //   在输出树里找**所有** `…/configs/text/<lang>` 目录，语言名从目录名来。
-            QStringList text_dirs;
-            {
-                QDirIterator it(out_root, QDir::Dirs | QDir::NoDotAndDotDot,
+            //   在树里找**所有** `…/configs/text/<lang>`（或 config），语言名从目录名来。
+            const auto find_text_dirs = [](const QString& root) {
+                QStringList dirs;
+                QDirIterator it(root, QDir::Dirs | QDir::NoDotAndDotDot,
                                 QDirIterator::Subdirectories);
                 while (it.hasNext()) {
                     const QString dir = it.next();
@@ -1456,26 +1461,16 @@ void XmlPage::run_extract() {
                         continue;
                     }
                     const QDir cfg(dir);
-                    for (const QString& lang_dir :
-                         cfg.entryList({QStringLiteral("text")}, QDir::Dirs)) {
-                        Q_UNUSED(lang_dir);
-                        const QDir text_dir(cfg.filePath(QStringLiteral("text")));
-                        for (const QString& lang :
-                             text_dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
-                            text_dirs << text_dir.filePath(lang);
-                        }
+                    if (!cfg.exists(QStringLiteral("text"))) continue;
+                    const QDir text_dir(cfg.filePath(QStringLiteral("text")));
+                    for (const QString& lang :
+                         text_dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+                        dirs << text_dir.filePath(lang);
                     }
                 }
-            }
-            if (text_dirs.isEmpty()) {
-                // ★ 2026-11-08（用户："工具必须完全独立"）：不发明语言目录。
-                post_status(QStringLiteral("源里没有 configs/text/<语言> 目录：抽不出语言包"
-                                           "（只有 scripts/gameplay 时请先确认源的结构）"));
-                return;
-            }
-            // ★ 2026-11-09：多语言时不再取遍历到的第一个（顺序未定义）——
-            //   先读 `localization.ltx` 的 language；没有就按语言名排序取第一个（确定性），
-            //   并把选择结果写进日志（零静默）。
+                return dirs;
+            };
+            // ★ 2026-11-09：多语言时先读 `localization.ltx` 的 language；没有就按目录名排序。
             QString chosen_lang;
             {
                 QFile ltx(QDir(base).filePath(QStringLiteral("localization.ltx")));
@@ -1487,20 +1482,50 @@ void XmlPage::run_extract() {
                     if (m.hasMatch()) chosen_lang = m.captured(1);
                 }
             }
-            text_dirs.sort();
-            QStringList ordered;
-            if (!chosen_lang.isEmpty()) {
-                for (const QString& dir : text_dirs) {
-                    if (QFileInfo(dir).fileName() == chosen_lang) ordered << dir;
+            QStringList text_dirs;
+            QString texts_out;
+            if (want_texts) {
+                text_dirs = find_text_dirs(out_root);
+                if (text_dirs.isEmpty()) {
+                    // ★ 2026-11-08（用户："工具必须完全独立"）：不发明语言目录。
+                    post_status(QStringLiteral("源里没有 configs/text/<语言> 目录：抽不出语言包"
+                                               "（只有 scripts/gameplay 时请先确认源的结构）"));
+                    return;
                 }
+                text_dirs.sort();
+                QStringList ordered;
+                if (!chosen_lang.isEmpty()) {
+                    for (const QString& dir : text_dirs) {
+                        if (QFileInfo(dir).fileName() == chosen_lang) ordered << dir;
+                    }
+                }
+                for (const QString& dir : text_dirs) {
+                    if (!ordered.contains(dir)) ordered << dir;
+                }
+                texts_out = ordered.front();
+                message("提取语言：" + QFileInfo(texts_out).fileName().toStdString() +
+                        (chosen_lang.isEmpty() ? "（未找到 localization.ltx，按目录名排序取第一）"
+                                               : "（取自 localization.ltx）"));
+            } else {
+                // 只抽硬编码文本：不复制语言包，但文本表仍要落一个语言目录。
+                const QStringList source_text_dirs = find_text_dirs(source);
+                QString lang = chosen_lang;
+                if (lang.isEmpty() && !source_text_dirs.isEmpty()) {
+                    QStringList names;
+                    for (const QString& dir : source_text_dirs) {
+                        names << QFileInfo(dir).fileName();
+                    }
+                    names.sort();
+                    lang = names.first();
+                }
+                if (lang.isEmpty()) lang = QStringLiteral("rus");
+                texts_out = QDir(out_root).filePath(rel_prefix + cfg_name +
+                                                    QStringLiteral("/text/") + lang);
+                text_dirs << texts_out;
+                message("只抽硬编码文本：文本表落 " + QDir::toNativeSeparators(texts_out).toStdString() +
+                        (chosen_lang.isEmpty() ? "（源里无 localization.ltx，默认 rus）"
+                                               : "（取自 localization.ltx）"));
             }
-            for (const QString& dir : text_dirs) {
-                if (!ordered.contains(dir)) ordered << dir;
-            }
-            const QString texts_out = ordered.front();
-            message("提取语言：" + QFileInfo(texts_out).fileName().toStdString() +
-                    (chosen_lang.isEmpty() ? "（未找到 localization.ltx，按目录名排序取第一）"
-                                           : "（取自 localization.ltx）"));
             QDir().mkpath(texts_out);
             int strings = 0;
             int rewritten = 0;
