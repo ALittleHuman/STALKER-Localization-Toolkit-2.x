@@ -268,10 +268,12 @@ XmlPage::XmlPage(QWidget* parent)
         QStringLiteral("检测到一侧为空：切到「提取文本」——只抽文本（configs/text/<lang>），不复制整树"));
     extract_hint_->setObjectName(QStringLiteral("xml_extract_hint"));
     extract_hint_->setWordWrap(true);
-    texts_check_ = new QCheckBox(QStringLiteral("文本 XML（ori 恒出，勾选仅旧版遗留）"));
+    texts_check_ = new QCheckBox(QStringLiteral("文本 XML（始终输出）"));
     texts_check_->setObjectName(QStringLiteral("xml_extract_texts"));
     texts_check_->setChecked(true);
-    rewrite_check_ = new QCheckBox(QStringLiteral("改写脚本/配置（ori 恒出，勾选仅旧版遗留）"));
+    texts_check_->setEnabled(false);   // ★ 2026-11-10：文本表是提取的**必然产物**，不是选项
+    rewrite_check_ = new QCheckBox(
+        QStringLiteral("改写脚本/配置（勾选才写入输出；不勾仅出文本表）"));
     rewrite_check_->setObjectName(QStringLiteral("xml_extract_rewritten"));
     rewrite_check_->setChecked(true);
     extract_out_edit_ = new QLineEdit;
