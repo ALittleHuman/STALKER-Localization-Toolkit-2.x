@@ -215,6 +215,18 @@ def main() -> int:
         else:
             fail("多源追加失败：rc=%d/%d" % (rc1, rc2))
 
+        # ★ 2026-11-10（用户 CLI 实测）：目录名合法但没有可提取文本 ⇒ 不许 `TEXT ok files=0`。
+        empty_scripts = tmp / "empty_src" / "scripts"
+        empty_scripts.mkdir(parents=True)
+        (empty_scripts / "only_config.ltx").write_text(
+            "[logic]\nactive = ph_idle@open\n", encoding="utf-8")
+        rc_empty, out_empty = run([str(CLI), "--extract-text", str(empty_scripts),
+                                   str(tmp / "out_empty")])
+        if rc_empty != 0 and "TEXT error reason=未找到可提取的源文件/文本" in out_empty:
+            ok("空成果：files=0 时返回非 0 并说明原因（不再 TEXT ok）")
+        else:
+            fail("空成果仍报 ok：rc=%d 输出=%r" % (rc_empty, out_empty[-300:]))
+
         # ★ 2026-11-10：页面必须同时扫根 `scripts/` 与 `configs/scripts/`，
         #   否则真机样例根 scripts 的 334 条文本会被整批漏掉。
         xml_src = (ROOT / "src" / "shell" / "pages" / "xml_page.cpp").read_text(

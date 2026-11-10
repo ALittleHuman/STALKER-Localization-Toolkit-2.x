@@ -6941,7 +6941,9 @@ if (action == "--diff-snapshot") {
                 std::cout << "TEXT warn log-write-failed=" << path_to_utf8(log_path) << "\n";
             }
         }
-        std::cout << (st.ok ? "TEXT ok " : "TEXT fail ")
+        const bool nothing_extracted =
+            st.ok && !st.cancelled && st.files == 0 && st.strings == 0;
+        std::cout << (st.ok && !nothing_extracted ? "TEXT ok " : "TEXT fail ")
                   << "kind=" << type_dir << " files=" << st.files
                   << " strings=" << st.strings << " chars=" << st.chars
                   << " notext=" << st.no_text_files
@@ -6951,6 +6953,15 @@ if (action == "--diff-snapshot") {
                   << " long=" << st.long_texts.size()
                   << " xml=" << (st.texts_xml_name.empty() ? "-" : st.texts_xml_name)
                   << " ms=" << static_cast<long long>(st.elapsed_ms) << "\n";
+        if (nothing_extracted) {
+            // ★ 2026-11-10（用户 CLI 实测）：目录名合法但里面没有可提取的源文件/文本时，
+            //   不能报 `TEXT ok files=0`（会让人以为提取完成）。明确失败并给理由。
+            std::cout << "TEXT error reason=未找到可提取的源文件/文本：" << source
+                      << "（目录名虽是 " << type_dir
+                      << "，但里面没有可提取的 .script/.ltx/.xml 文本；"
+                         "检查是否选错了层，例如真正的 scripts 在源根而不是 configs/scripts）\n";
+            return kExitFail;
+        }
         if (!st.ok) {
             std::cout << "TEXT error reason=" << st.error << "\n";
             return kExitFail;
