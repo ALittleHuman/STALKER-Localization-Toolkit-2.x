@@ -209,7 +209,9 @@ ConvertOutcome convert_bytes(const std::vector<uint8_t>& raw_in, const std::stri
         raw = raw_in;
     }
 
-    // 手动指定了源编码 ⇒ 用户已经决定过，BOM 不越权（与 `decode_bytes` 的 `manual` 分支一致）。
+    // 手动指定只压过“声明/统计”，**不压过** BOM 与严格 UTF-8 多字节 —— 这是有意的：
+    // 编码混杂（UTF-8 + windows-1251/1252）时，物理证据必须先赢，否则手动选择会把
+    // 文件里的 UTF-8 段也按单字节解掉。
     const std::string manual_probe = lower_ascii(strip(options.source_encoding));
     const bool manual_src = !manual_probe.empty() && manual_probe != "auto";
     SniffResult sniffed;

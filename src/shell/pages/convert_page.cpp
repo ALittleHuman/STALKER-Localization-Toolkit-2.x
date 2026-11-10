@@ -310,7 +310,22 @@ ConvertPage::ConvertPage(QWidget* parent)
             status_->setText(QStringLiteral("请先选源路径"));
             return;
         }
-        run_batch(source, output_edit_->text().trimmed());
+        const QString out_dir = output_edit_->text().trimmed();
+        // ★ 2026-11-10（用户）：原地转换且没勾备份 ⇒ 必须先弹窗，不能直接覆盖源文件。
+        if (out_dir.isEmpty() &&
+            (backup_box_ == nullptr || !backup_box_->isChecked())) {
+            const auto answer = QMessageBox::warning(
+                this, QStringLiteral("未备份警告"),
+                QStringLiteral("输出目录为空，且没有勾选「备份到 源目录\\backup」。\n\n"
+                               "这会在原文件上直接改写，且没有备份可恢复。\n"
+                               "确定继续转换吗？"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (answer != QMessageBox::Yes) {
+                status_->setText(QStringLiteral("已取消：原地转换未备份"));
+                return;
+            }
+        }
+        run_batch(source, out_dir);
     });
 
     refresh_rows();
