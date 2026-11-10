@@ -11296,27 +11296,25 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
         }
 
         // ★ 2026-11-10：字号改多选（标准始终生成；额外档位 ⇒ 补丁）
-        check(page.size_button() != nullptr && page.size_menu() != nullptr,
-              QStringLiteral("D2-字体 字号入口存在（多选菜单）"));
+        check(page.size_combo() != nullptr,
+              QStringLiteral("D2-字体 字号入口存在（多选下拉）"));
+        check(page.size_combo() != nullptr &&
+                  page.size_combo()->mode() ==
+                      xrkit::shell::MultiSelectComboBox::Mode::Multi,
+              QStringLiteral("D2-字体 字号下拉是 Multi 模式（同一实现，不另造控件）"));
         check(page.size_offsets().empty(),
               QStringLiteral("D2-字体 默认只生成标准档（没有额外补丁）"));
-        if (page.size_menu() != nullptr) {
-            for (QAction* act : page.size_menu()->actions()) {
-                if (act->data().toInt() == 3) act->setChecked(true);
-            }
+        if (page.size_combo() != nullptr) {
+            page.size_combo()->setChoiceChecked(3, true);
             const std::vector<int> offs = page.size_offsets();
             check(offs.size() == 1 && offs[0] == 3,
                   QStringLiteral("D2-字体 +3 勾选 ⇒ 补丁档位 {3}（实得 %1 项）")
                       .arg(offs.size()));
-            for (QAction* act : page.size_menu()->actions()) {
-                if (act->data().toInt() == 3) act->setChecked(false);
-            }
+            page.size_combo()->setChoiceChecked(3, false);
             check(page.size_offsets().empty(),
                   QStringLiteral("D2-字体 取消勾选 ⇒ 回到只标准"));
             // ★ 2026-11-10：**扫描参照包不得重置字号多选**（位图档）。
-            for (QAction* act : page.size_menu()->actions()) {
-                if (act->data().toInt() == 3) act->setChecked(true);
-            }
+            page.size_combo()->setChoiceChecked(3, true);
             const QString scan_pack =
                 QDir::temp().filePath(QStringLiteral("xrkit_smoke_font_scan"));
             QDir(scan_pack).removeRecursively();
@@ -11335,9 +11333,7 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
             check(after_scan.size() == 1 && after_scan[0] == 3,
                   QStringLiteral("D2-字体 扫描参照包后仍保留 +3 档（实得 %1 项）")
                       .arg(after_scan.size()));
-            for (QAction* act : page.size_menu()->actions()) {
-                if (act->data().toInt() == 3) act->setChecked(false);
-            }
+            page.size_combo()->setChoiceChecked(3, false);
             QDir(scan_pack).removeRecursively();
             // ★ 2026-11-10（UI 真跑一遍）：多选 +3 ⇒ base + 一个只含字体纹理的补丁。
             const QString test_font = QStringLiteral("C:/Windows/Fonts/msyh.ttc");
@@ -11357,9 +11353,7 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
                                   "</string></string_table>");
                     }
                 }
-                for (QAction* act : page.size_menu()->actions()) {
-                    if (act->data().toInt() == 3) act->setChecked(true);
-                }
+                page.size_combo()->setChoiceChecked(3, true);
                 const engine::font::PackageOptions fmt_opts =
                     page.prepare(patch_xml, test_font, patch_out);
                 const FontPackPage::BuildOutcome fmt_outcome = page.run_build(fmt_opts);
@@ -11370,28 +11364,26 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
                                     "/_patches/font+3/gamedata/textures/ui/ui_font_11.dds"))
                           .exists(),
                       QStringLiteral("D2-字体 补丁产物落在 _patches/font+3/textures/ui"));
-                for (QAction* act : page.size_menu()->actions()) {
-                    if (act->data().toInt() == 3) act->setChecked(false);
-                }
+                page.size_combo()->setChoiceChecked(3, false);
                 QDir(patch_xml).removeRecursively();
                 QDir(patch_out).removeRecursively();
             }
             // ★ 2026-11-10：IX-Ray 矢量字号**显式不支持**（不静默丢档位）。
-            if (page.game_combo() != nullptr && page.size_button() != nullptr) {
+            if (page.game_combo() != nullptr && page.size_combo() != nullptr) {
                 const int ixr_index = page.game_combo()->findText(QStringLiteral("IX-Ray"));
                 if (ixr_index >= 0) {
                     page.game_combo()->setCurrentIndex(ixr_index);
                     QApplication::processEvents();
-                    check(page.size_button()->isEnabled() &&
-                              page.size_button()->toolTip().contains(QStringLiteral("fonts.ltx")),
+                    check(page.size_combo()->isEnabled() &&
+                              page.size_combo()->toolTip().contains(QStringLiteral("fonts.ltx")),
                           QStringLiteral("D2-字体 IX-Ray 下字号可用且提示「只改 fonts.ltx 的 size」"
                                          "（enabled=%1 tip=%2）")
-                              .arg(page.size_button()->isEnabled())
-                              .arg(page.size_button()->toolTip()));
+                              .arg(page.size_combo()->isEnabled())
+                              .arg(page.size_combo()->toolTip()));
                     page.game_combo()->setCurrentIndex(
                         page.game_combo()->findText(QStringLiteral("CoP")));
                     QApplication::processEvents();
-                    check(page.size_button()->isEnabled(),
+                    check(page.size_combo()->isEnabled(),
                           QStringLiteral("D2-字体 切回位图档 ⇒ 字号入口恢复"));
                 }
             }

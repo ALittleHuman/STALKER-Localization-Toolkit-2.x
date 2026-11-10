@@ -122,7 +122,7 @@ PageBase::PageBase(const QString& page_id, const QString& title, QWidget* parent
     body_layout_->setSpacing(xrkit::core::px(6));
     auto* body_outer = new QVBoxLayout(body_);
     body_outer->setContentsMargins(0, 0, 0, 0);
-    body_outer->addWidget(card_);
+    body_outer->addWidget(card_, 1);
     viewport_->set_body(body_);
 
     // ── 规则 2：操作栏**先放且贴底**。它是页的直接子控件、**不在视口里**，

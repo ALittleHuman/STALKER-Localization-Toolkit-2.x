@@ -25,6 +25,7 @@
 #include "page_base.h"
 
 #include "../dialog_start.h"
+#include "../multi_combo.h"
 
 #include "xrkit/engine/font/metrics.h"
 #include "xrkit/engine/font/package.h"
@@ -114,8 +115,7 @@ public:
     QLineEdit* lang_edit() const { return lang_edit_; }
     QComboBox* suffix_combo() const { return suffix_combo_; }
     QLineEdit* suffix_edit() const { return suffix_edit_; }
-    QToolButton* size_button() const { return size_button_; }
-    QMenu* size_menu() const { return size_menu_; }
+    MultiSelectComboBox* size_combo() const { return size_combo_; }
     QLabel* state_label() const { return state_label_; }
     QLabel* result_label() const { return result_label_; }
     TaskShell* task() const { return task_; }
@@ -167,8 +167,7 @@ private:
     QLineEdit* lang_edit_ = nullptr;
     QComboBox* suffix_combo_ = nullptr;
     QLineEdit* suffix_edit_ = nullptr;
-    QToolButton* size_button_ = nullptr;
-    QMenu* size_menu_ = nullptr;
+    MultiSelectComboBox* size_combo_ = nullptr;
     QCheckBox* cyrillic_box_ = nullptr;
     QPushButton* open_out_button_ = nullptr;
     QLabel* state_label_ = nullptr;

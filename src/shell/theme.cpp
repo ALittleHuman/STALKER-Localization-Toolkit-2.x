@@ -354,6 +354,12 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                // 列表：项高一致、hover 可见、选中用**灰底** + 亮文本（不刷蓝）
                "QListWidget, QListView, QTreeView { background: @{surface}; border: 1px solid @{border};"
                "  border-radius: @{r3}; outline: none; }"
+               // ★ 2026-11-10（用户 FS 截图：列表中间一大块黑底）：viewport 是独立子控件，
+               //   泛化的 `QWidget { background: bg }` 会把它涂成窗口底色（#1e2124），
+               //   盖过 QTreeView 的 surface ⇒ 列表空区看起来是黑块。把 viewport 钉回 surface。
+               "QListView::viewport, QTreeView::viewport { background: @{surface}; }"
+               "QTreeView QWidget#qt_scrollarea_viewport,"
+               " QListView QWidget#qt_scrollarea_viewport { background: @{surface}; }"
                "QListWidget::item, QListView::item, QTreeView::item { padding: @{pad4} @{pad8};"
                "  border-radius: @{r2}; }"
                "QListWidget::item:hover, QListView::item:hover, QTreeView::item:hover"

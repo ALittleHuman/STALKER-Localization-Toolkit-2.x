@@ -251,9 +251,9 @@ FontPackPage::FontPackPage(QWidget* parent)
                      [this](const QString&) {
                          const bool ixr = game_combo_->currentData().toString() ==
                                           QStringLiteral("IX-Ray");
-                         if (size_button_ != nullptr) {
-                             size_button_->setEnabled(true);
-                             size_button_->setToolTip(
+                         if (size_combo_ != nullptr) {
+                             size_combo_->setEnabled(true);
+                             size_combo_->setToolTip(
                                  ixr ? QStringLiteral("IX-Ray 字号补丁只改 configs/fonts.ltx 的 size"
                                                       "（TTF 是矢量，不重烘；文本不动）")
                                      : QStringLiteral("标准始终生成；勾选额外档位会生成只含字体纹理的补丁"));
@@ -282,29 +282,20 @@ FontPackPage::FontPackPage(QWidget* parent)
     suffix_edit_->setPlaceholderText(QStringLiteral("自定义"));
     suffix_edit_->setMaximumWidth(xrkit::core::px(120));
     suffix_edit_->setVisible(false);
-    // ★ 2026-11-10（用户）：字号改**多选**；标准（0）始终生成，额外档位生成独立补丁。
-    //   小字体用负 offset（-2/-1），大字体 +3/+5/+7/+9；补丁只含字体纹理。
-    size_button_ = new QToolButton;
-    size_button_->setObjectName(QStringLiteral("font_size_multi"));
-    size_button_->setPopupMode(QToolButton::InstantPopup);
-    size_button_->setToolTip(QStringLiteral("标准始终生成；勾选额外档位会生成只含字体纹理的补丁"));
-    size_menu_ = new QMenu(size_button_);
-    {
-        QAction* standard = size_menu_->addAction(QStringLiteral("标准（始终生成）"));
-        standard->setCheckable(true);
-        standard->setChecked(true);
-        standard->setEnabled(false);
-        for (int offset : {-5, -3, 3, 5, 7, 9}) {
-            QAction* act = size_menu_->addAction(
-                offset > 0 ? QStringLiteral("大 +%1").arg(offset)
-                           : QStringLiteral("小 %1").arg(offset));
-            act->setCheckable(true);
-            act->setData(offset);
-            QObject::connect(act, &QAction::toggled, this,
-                             [this](bool) { update_size_button_text(); });
-        }
+    // ★ 2026-11-10：字号改多选；与其它下拉**同一个 QComboBox 实现**，只是 mode=Multi。
+    //   标准（0）始终生成，额外档位生成独立补丁；小字体负 offset，大字体正 offset。
+    size_combo_ = new MultiSelectComboBox;
+    size_combo_->setObjectName(QStringLiteral("font_size_multi"));
+    size_combo_->setMode(MultiSelectComboBox::Mode::Multi);
+    size_combo_->setToolTip(QStringLiteral("标准始终生成；勾选额外档位会生成只含字体纹理的补丁"));
+    size_combo_->addChoice(QStringLiteral("标准（始终生成）"), 0, true, false);
+    for (int offset : {-5, -3, 3, 5, 7, 9}) {
+        size_combo_->addChoice(offset > 0 ? QStringLiteral("大 +%1").arg(offset)
+                                         : QStringLiteral("小 %1").arg(offset),
+                               offset);
     }
-    size_button_->setMenu(size_menu_);
+    QObject::connect(size_combo_, &MultiSelectComboBox::checkedChanged, this,
+                     [this] { update_size_button_text(); });
     update_size_button_text();
     cyrillic_box_ = new QCheckBox(QStringLiteral("包含完整西里尔"));
     cyrillic_box_->setObjectName(QStringLiteral("font_full_cyrillic"));
@@ -316,7 +307,7 @@ FontPackPage::FontPackPage(QWidget* parent)
     opt_row->addWidget(lang_combo_, 0);
     opt_row->addWidget(lang_edit_, 0);
     opt_row->addWidget(new QLabel(QStringLiteral("字号：")), 0);
-    opt_row->addWidget(size_button_, 0);
+    opt_row->addWidget(size_combo_, 0);
     opt_row->addWidget(new QLabel(QStringLiteral("后缀：")), 0);
     opt_row->addWidget(suffix_combo_, 0);
     opt_row->addWidget(suffix_edit_, 0);
@@ -460,23 +451,17 @@ void FontPackPage::sync_suffix_edit() {
 
 std::vector<int> FontPackPage::size_offsets() const {
     std::vector<int> out;
-    if (size_menu_ == nullptr) return out;
-    for (QAction* act : size_menu_->actions()) {
-        if (act->data().isNull() || !act->isChecked()) continue;
-        out.push_back(act->data().toInt());
+    if (size_combo_ == nullptr) return out;
+    for (const QVariant& value : size_combo_->checkedData()) {
+        const int off = value.toInt();
+        if (off != 0) out.push_back(off);
     }
     std::sort(out.begin(), out.end());
     return out;
 }
 
 void FontPackPage::update_size_button_text() {
-    if (size_button_ == nullptr) return;
-    QStringList parts;
-    parts << QStringLiteral("标准");
-    for (int off : size_offsets()) {
-        parts << (off > 0 ? QStringLiteral("+%1").arg(off) : QString::number(off));
-    }
-    size_button_->setText(QStringLiteral("字号：") + parts.join(QStringLiteral("/")));
+    if (size_combo_ != nullptr) size_combo_->refreshDisplay();
 }
 
 QDialog* FontPackPage::open_font_picker() {
