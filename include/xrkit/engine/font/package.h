@@ -44,6 +44,8 @@ struct PackageOptions {
     // ★ 2026-11-10：**字号补丁模式** —— 只写 `<out>/gamedata/textures/ui/*.dds|.ini`，
     //   不写 text/scripts/fonts.ltx/localization.ltx（叠加在标准包上使用）。
     bool patch_only = false;
+    // ★ 2026-11-10（页面驱动）：额外字号档位；每个 offset 生成一个字号补丁。
+    std::vector<int> patch_offsets;
 };
 
 struct PackageResult {

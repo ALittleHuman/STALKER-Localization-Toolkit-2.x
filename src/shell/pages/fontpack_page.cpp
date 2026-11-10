@@ -11,6 +11,7 @@
 #include "../task_shell.h"
 
 #include <QApplication>
+#include <QAction>
 #include <QCheckBox>
 #include <QColor>
 #include <QComboBox>
@@ -24,6 +25,7 @@
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QMenu>
 #include <QMessageBox>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -35,11 +37,13 @@
 #include <QScrollArea>
 #include <QSet>
 #include <QTimer>
+#include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <filesystem>
 #include <algorithm>
+#include <string>
 #include <cmath>
 #include <memory>
 
@@ -232,14 +236,6 @@ FontPackPage::FontPackPage(QWidget* parent)
         // ★★ 2026-10-27（用户）：「扫描是对全局生效的」—— 参照包行与扫描按钮**始终可见**，
         //   不跟 IX-Ray 绑定；扫描结果会**自动判断** SoC/ClS/CoP/IX-Ray 并切下拉。
         pack_row->setVisible(true);
-        QObject::connect(game_combo_, &QComboBox::currentTextChanged, this,
-                         [this](const QString&) {
-                             const bool ixr = game_combo_->currentData().toString() ==
-                                              QStringLiteral("IX-Ray");
-                             // 位图专属的两个选项在 IX-Ray 下没意义 ⇒ 置灰（不隐藏，免得用户找不到）
-                             if (size_combo_ != nullptr) size_combo_->setEnabled(!ixr);
-                             if (cyrillic_box_ != nullptr) cyrillic_box_->setEnabled(!ixr);
-                         });
     }
     game_combo_ = new QComboBox;
     game_combo_->setObjectName(QStringLiteral("font_game"));
@@ -249,6 +245,21 @@ FontPackPage::FontPackPage(QWidget* parent)
     for (const char* game : {"SoC", "ClS", "CoP", "IX-Ray"}) {
         game_combo_->addItem(utf8(game), utf8(game));
     }
+    // ★ 2026-11-10（实测缺陷）：这段 connect 原来写在 `game_combo_` 创建**之前** ⇒
+    //   `QObject::connect(nullptr, …)` 静默失败 ⇒ 切 IX-Ray 时字号/西里尔从未置灰。
+    QObject::connect(game_combo_, &QComboBox::currentTextChanged, this,
+                     [this](const QString&) {
+                         const bool ixr = game_combo_->currentData().toString() ==
+                                          QStringLiteral("IX-Ray");
+                         if (size_button_ != nullptr) {
+                             size_button_->setEnabled(!ixr);
+                             size_button_->setToolTip(
+                                 ixr ? QStringLiteral("IX-Ray 矢量字号暂不支持（字号补丁只对位图；"
+                                                      "矢量字号在 fonts.ltx 的 size）")
+                                     : QStringLiteral("标准始终生成；勾选额外档位会生成只含字体纹理的补丁"));
+                         }
+                         if (cyrillic_box_ != nullptr) cyrillic_box_->setEnabled(!ixr);
+                     });
     // 1.x `:71-82`：加载语言初始给 eng/rus/chs；**扫描后从参照包追加实际语言**（自定义才显示输入框）
     lang_combo_ = new QComboBox;
     lang_combo_->setObjectName(QStringLiteral("font_lang"));
@@ -271,11 +282,30 @@ FontPackPage::FontPackPage(QWidget* parent)
     suffix_edit_->setPlaceholderText(QStringLiteral("自定义"));
     suffix_edit_->setMaximumWidth(xrkit::core::px(120));
     suffix_edit_->setVisible(false);
-    // 1.x `:84-89`：尺寸档位（标准 = 0，其余是 `PackageOptions::offset`）
-    size_combo_ = new QComboBox;
-    size_combo_->setObjectName(QStringLiteral("font_size"));
-    size_combo_->addItem(QStringLiteral("标准"), 0);
-    for (int offset : {3, 5, 7, 9}) size_combo_->addItem(QStringLiteral("+%1").arg(offset), offset);
+    // ★ 2026-11-10（用户）：字号改**多选**；标准（0）始终生成，额外档位生成独立补丁。
+    //   小字体用负 offset（-2/-1），大字体 +3/+5/+7/+9；补丁只含字体纹理。
+    size_button_ = new QToolButton;
+    size_button_->setObjectName(QStringLiteral("font_size_multi"));
+    size_button_->setPopupMode(QToolButton::InstantPopup);
+    size_button_->setToolTip(QStringLiteral("标准始终生成；勾选额外档位会生成只含字体纹理的补丁"));
+    size_menu_ = new QMenu(size_button_);
+    {
+        QAction* standard = size_menu_->addAction(QStringLiteral("标准（始终生成）"));
+        standard->setCheckable(true);
+        standard->setChecked(true);
+        standard->setEnabled(false);
+        for (int offset : {-2, -1, 3, 5, 7, 9}) {
+            QAction* act = size_menu_->addAction(
+                offset > 0 ? QStringLiteral("大 +%1").arg(offset)
+                           : QStringLiteral("小 %1").arg(offset));
+            act->setCheckable(true);
+            act->setData(offset);
+            QObject::connect(act, &QAction::toggled, this,
+                             [this](bool) { update_size_button_text(); });
+        }
+    }
+    size_button_->setMenu(size_menu_);
+    update_size_button_text();
     cyrillic_box_ = new QCheckBox(QStringLiteral("包含完整西里尔"));
     cyrillic_box_->setObjectName(QStringLiteral("font_full_cyrillic"));
     cyrillic_box_->setChecked(true);
@@ -285,8 +315,8 @@ FontPackPage::FontPackPage(QWidget* parent)
     opt_row->addWidget(new QLabel(QStringLiteral("语言：")), 0);
     opt_row->addWidget(lang_combo_, 0);
     opt_row->addWidget(lang_edit_, 0);
-    opt_row->addWidget(new QLabel(QStringLiteral("尺寸：")), 0);
-    opt_row->addWidget(size_combo_, 0);
+    opt_row->addWidget(new QLabel(QStringLiteral("字号：")), 0);
+    opt_row->addWidget(size_button_, 0);
     opt_row->addWidget(new QLabel(QStringLiteral("后缀：")), 0);
     opt_row->addWidget(suffix_combo_, 0);
     opt_row->addWidget(suffix_edit_, 0);
@@ -428,9 +458,25 @@ void FontPackPage::sync_suffix_edit() {
     if (!custom) suffix_edit_->clear();
 }
 
-int FontPackPage::size_offset() const {
-    if (size_combo_ == nullptr) return 0;
-    return size_combo_->currentData().toInt();
+std::vector<int> FontPackPage::size_offsets() const {
+    std::vector<int> out;
+    if (size_menu_ == nullptr) return out;
+    for (QAction* act : size_menu_->actions()) {
+        if (act->data().isNull() || !act->isChecked()) continue;
+        out.push_back(act->data().toInt());
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+void FontPackPage::update_size_button_text() {
+    if (size_button_ == nullptr) return;
+    QStringList parts;
+    parts << QStringLiteral("标准");
+    for (int off : size_offsets()) {
+        parts << (off > 0 ? QStringLiteral("+%1").arg(off) : QString::number(off));
+    }
+    size_button_->setText(QStringLiteral("字号：") + parts.join(QStringLiteral("/")));
 }
 
 QDialog* FontPackPage::open_font_picker() {
@@ -549,7 +595,9 @@ engine::font::PackageOptions FontPackPage::options_for(const QString& xml_dir,
         options.suffix = suffix_combo_->currentData().toString().toUtf8().toStdString();
     }
     // 1.x `:692`：`offset = int(off_txt[1:]) if off_txt.startswith("+") else 0`
-    options.offset = size_offset();
+    // ★ 2026-11-10：base 永远标准档（0）；额外档位进 patch_offsets（多选）。
+    options.offset = 0;
+    options.patch_offsets = size_offsets();
     options.full_cyrillic = cyrillic_box_->isChecked();
     return options;
 }
@@ -562,7 +610,32 @@ engine::font::PackageOptions FontPackPage::prepare(const QString& xml_dir, const
 
 // ★★ P17-1：**worker 可调**的那一步 —— 只做引擎的事（判字形 + 出包），一个字都不碰控件。
 //   因此它可以在工作线程里跑（重活就该在这儿跑），而"画到控件上"留给主线程的 apply_result。
+// ★ 2026-11-10（用户）：base 标准包 + 每个选中档位一个字号补丁。
+//   补丁只含字体纹理（引擎 patch_only）；任一失败 ⇒ 整体失败（base 已产出，理由里点名档位）。
 FontPackPage::BuildOutcome FontPackPage::run_build(
+    const engine::font::PackageOptions& options) const {
+    BuildOutcome base = run_build_one(options);
+    if (!base.ok || base.refused || base.ixr || options.patch_offsets.empty()) return base;
+    for (int off : options.patch_offsets) {
+        engine::font::PackageOptions one = options;
+        one.patch_only = true;
+        one.offset = off;
+        one.patch_offsets.clear();
+        one.out_dir = options.out_dir + "/_patches/font" + (off >= 0 ? "+" : "") +
+                      std::to_string(off);
+        BuildOutcome patch = run_build_one(one);
+        if (!patch.ok) {
+            base.ok = false;
+            base.reason = QStringLiteral("字号补丁 %1 生成失败：%2").arg(off).arg(patch.reason);
+            return base;
+        }
+        ++base.patch_count;
+        base.patch_dirs << utf8(patch.result.out_gamedata);
+    }
+    return base;
+}
+
+FontPackPage::BuildOutcome FontPackPage::run_build_one(
     const engine::font::PackageOptions& options) const {
     BuildOutcome outcome;
     // ★★ 2026-11-06（HA 打回点 ①）：页面**不许**直接调 build_package / ixr_build。
@@ -585,6 +658,7 @@ FontPackPage::BuildOutcome FontPackPage::run_build(
     request.suffix = options.suffix;
     request.offset = options.offset;
     request.only_sizes = options.only_sizes;
+    request.patch_only = options.patch_only;
     request.missing_warn = true;   // 缺字不阻断（弹窗告知处置）
     request.require_full_cyrillic = options.require_full_cyrillic;
 
@@ -702,7 +776,7 @@ void FontPackPage::apply_result(const BuildOutcome& outcome) {
         return;
     }
     if (result_label_ != nullptr) {
-        result_label_->setText(
+        QString text =
             outcome.result.ok
                 ? QStringLiteral("完成：字体 %1 个、XML %2 个%3")
                       .arg(outcome.result.fonts_written)
@@ -710,7 +784,11 @@ void FontPackPage::apply_result(const BuildOutcome& outcome) {
                       .arg(outcome.result.warnings.empty()
                                ? QString()
                                : QStringLiteral("（%1 条告警）").arg(outcome.result.warnings.size()))
-                : QStringLiteral("失败：") + utf8(outcome.result.error));
+                : QStringLiteral("失败：") + utf8(outcome.result.error);
+        if (outcome.result.ok && outcome.patch_count > 0) {
+            text += QStringLiteral("；字号补丁 %1 个（_patches/…）").arg(outcome.patch_count);
+        }
+        result_label_->setText(text);
     }
     if (outcome.fallback_used && state_label_ != nullptr) {
         state_label_->setText(state_label_->text() + QStringLiteral("（已按繁体回退生成）"));

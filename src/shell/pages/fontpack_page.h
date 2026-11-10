@@ -36,6 +36,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <vector>
 
 class QCheckBox;
 class QComboBox;
@@ -43,7 +44,9 @@ class QDialog;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QMenu;
 class QPushButton;
+class QToolButton;
 
 namespace xrkit::shell {
 
@@ -87,10 +90,14 @@ public:
         int ixr_texts = 0;
         int ixr_copied = 0;                   // 写进产物的文本 XML 个数
     QString ixr_log;                     // 助手输出尾巴（失败时贴出来）
+    // ★ 2026-11-10：字号补丁（base 成功后再逐档生成；任一失败 ⇒ ok=false）
+    int patch_count = 0;
+    QStringList patch_dirs;              // `<out>/_patches/font±N`
     };
     engine::font::PackageOptions prepare(const QString& xml_dir, const QString& font_path,
                                          const QString& out_dir) const;
     BuildOutcome run_build(const engine::font::PackageOptions& options) const;
+    BuildOutcome run_build_one(const engine::font::PackageOptions& options) const;
     void apply_result(const BuildOutcome& outcome);
 
     // worker 里算完的结果 ⇒ 交给主线程收尾回调（见 TaskShell::set_finish_handler）
@@ -107,7 +114,8 @@ public:
     QLineEdit* lang_edit() const { return lang_edit_; }
     QComboBox* suffix_combo() const { return suffix_combo_; }
     QLineEdit* suffix_edit() const { return suffix_edit_; }
-    QComboBox* size_combo() const { return size_combo_; }
+    QToolButton* size_button() const { return size_button_; }
+    QMenu* size_menu() const { return size_menu_; }
     QLabel* state_label() const { return state_label_; }
     QLabel* result_label() const { return result_label_; }
     TaskShell* task() const { return task_; }
@@ -123,8 +131,10 @@ public:
     bool remember_font(const QString& path, QString* problem);
     // 「打开输出目录」（1.x `:649-659`：目录无效 / 打开失败都要有反馈）
     bool open_output(QString* problem);
-    // 尺寸档位（1.x `off_var`：标准/+3/+5/+7/+9 ⇒ `PackageOptions::offset`）
-    int size_offset() const;
+    // 字号档位（1.x `off_var`：标准/+3/+5/+7/+9 ⇒ `PackageOptions::offset`）
+    // ★ 2026-11-10：改**多选**；返回额外档位（0 不在内，标准始终生成）。
+    std::vector<int> size_offsets() const;
+    void update_size_button_text();
 
     // ★ 2026-10-04（用户第 1/2 条）：拖放区域清单 + 三个"选择"调用点的起点判据
     //   （字体 ← 文本 XML 所在的上一级；输出目录 ← 文本 XML 目录）
@@ -157,7 +167,8 @@ private:
     QLineEdit* lang_edit_ = nullptr;
     QComboBox* suffix_combo_ = nullptr;
     QLineEdit* suffix_edit_ = nullptr;
-    QComboBox* size_combo_ = nullptr;
+    QToolButton* size_button_ = nullptr;
+    QMenu* size_menu_ = nullptr;
     QCheckBox* cyrillic_box_ = nullptr;
     QPushButton* open_out_button_ = nullptr;
     QLabel* state_label_ = nullptr;

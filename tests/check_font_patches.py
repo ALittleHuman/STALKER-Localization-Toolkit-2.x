@@ -121,6 +121,13 @@ def main() -> int:
         changed = [name for name in expected if sha(base_tex / name) != sha(patch_tex / name)]
         want(len(changed) == 20, "标准包与 +3 补丁确实不同（档位生效）",
              "%d 个不同" % len(changed))
+
+        # 页面接线（UI 多选 → PackageOptions.patch_offsets → run_build 逐档补丁）
+        ui_src = (ROOT / "src" / "shell" / "pages" / "fontpack_page.cpp").read_text(
+            encoding="utf-8")
+        want("patch_offsets = size_offsets()" in ui_src,
+             "页面把多选档位写进 patch_offsets")
+        want("_patches/font" in ui_src, "页面补丁落点 _patches/font±N")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
