@@ -17,6 +17,7 @@ MultiSelectComboBox::MultiSelectComboBox(QWidget* parent) : QComboBox(parent) {
         lineEdit()->setReadOnly(true);
         lineEdit()->setFrame(false);
         lineEdit()->setFocusPolicy(Qt::NoFocus);
+        lineEdit()->installEventFilter(this);
     }
     view()->setSelectionMode(QAbstractItemView::NoSelection);
     view()->viewport()->installEventFilter(this);
@@ -110,7 +111,10 @@ QString MultiSelectComboBox::summary() const {
     for (int row = 0; row < model_->rowCount(); ++row) {
         const QStandardItem* item = model_->item(row);
         if (item != nullptr && item->checkState() == Qt::Checked) {
-            parts << item->text();
+            QString label = item->text();
+            // 显示用短名：完整项名留给弹出列表，避免把控件撑宽/截断。
+            if (label.startsWith(QStringLiteral("标准"))) label = QStringLiteral("标准");
+            parts << label;
         }
     }
     if (parts.isEmpty()) return QStringLiteral("未选择");
@@ -133,6 +137,15 @@ void MultiSelectComboBox::toggleAt(const QModelIndex& index) {
 }
 
 bool MultiSelectComboBox::eventFilter(QObject* watched, QEvent* event) {
+    // editable QComboBox 的文字区是 QLineEdit：点文字只会聚焦，不会弹下拉。
+    // 多选模式点文字/空白也应展开，只有箭头走 Qt 默认路径。
+    if (mode_ == Mode::Multi && watched == lineEdit() &&
+        (event->type() == QEvent::MouseButtonPress ||
+         event->type() == QEvent::MouseButtonRelease)) {
+        showPopup();
+        event->accept();
+        return true;
+    }
     if (mode_ != Mode::Multi || watched != view()->viewport()) {
         return QComboBox::eventFilter(watched, event);
     }

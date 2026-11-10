@@ -287,6 +287,7 @@ FontPackPage::FontPackPage(QWidget* parent)
     size_combo_ = new MultiSelectComboBox;
     size_combo_->setObjectName(QStringLiteral("font_size_multi"));
     size_combo_->setMode(MultiSelectComboBox::Mode::Multi);
+    size_combo_->setMinimumWidth(xrkit::core::px(170));
     size_combo_->setToolTip(QStringLiteral("标准始终生成；勾选额外档位会生成只含字体纹理的补丁"));
     size_combo_->addChoice(QStringLiteral("标准（始终生成）"), 0, true, false);
     for (int offset : {-5, -3, 3, 5, 7, 9}) {

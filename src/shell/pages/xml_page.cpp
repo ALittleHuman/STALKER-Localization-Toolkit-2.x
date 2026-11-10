@@ -139,6 +139,7 @@ XmlPage::XmlPage(QWidget* parent)
     //   ⇒ 结果表与明细栏放进竖向 QSplitter（总览行在分栏**下面**，始终可见）。
     split_ = new QSplitter(Qt::Vertical);
     split_->setObjectName(QStringLiteral("xml_split"));
+    split_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     split_->setChildrenCollapsible(false);
     split_->addWidget(result_tree_);
     body_layout()->addWidget(split_, 1);
