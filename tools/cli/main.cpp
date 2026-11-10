@@ -6789,7 +6789,7 @@ if (action == "--diff-snapshot") {
     if (action == "--extract-text") {
         if (operands.size() < 2) {
             std::cerr << "TEXT error reason=用法：--extract-text <源目录(gameplay|scripts)> <输出目录>"
-                         " [--prefix p] [--id-prefix p] [--clean]\n";
+                         " [--prefix p] [--id-prefix p] [--clean] [--append-texts]\n";
             return kExitUsage;
         }
         const std::string& source = operands[0];
@@ -6808,6 +6808,10 @@ if (action == "--diff-snapshot") {
         if (!text_prefix.empty()) opt.prefix = text_prefix;
         opt.id_prefix = text_id_prefix;
         opt.clean = clean;
+        // ★ 2026-11-10：多源（根 scripts/ + configs/scripts/）追加到同一份文本表。
+        for (std::size_t i = 2; i < operands.size(); ++i) {
+            if (operands[i] == "--append-texts") opt.append_texts = true;
+        }
         const xrkit::engine::text::ExtractStats st =
             xrkit::engine::text::extract_dir(source, path_to_utf8(target_sub), target, opt);
         // ★★ S1-1（零静默）：**台账先印、结论后判** —— 修前 `!st.ok` 直接 return，
@@ -6850,6 +6854,7 @@ if (action == "--diff-snapshot") {
         std::cout << (st.ok ? "TEXT ok " : "TEXT fail ")
                   << "kind=" << type_dir << " files=" << st.files
                   << " strings=" << st.strings << " chars=" << st.chars
+                  << " notext=" << st.no_text_files
                   << " skipped=" << st.skipped.size()
                   << " replskip=" << st.repl_skipped.size()
                   << " writefail=" << st.write_failures

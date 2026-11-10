@@ -1502,40 +1502,73 @@ void XmlPage::run_extract() {
             QDir().mkpath(texts_out);
             int strings = 0;
             int rewritten = 0;
+            int no_text = 0;
             bool any = false;
-            for (const QString& sub : {QStringLiteral("scripts"), QStringLiteral("gameplay")}) {
-                const QString dir = QDir(base).filePath(sub);
-                if (!QDir(dir).exists()) continue;
+            // ★ 2026-11-10（用户："提取出来的内容对吗？"）：源根下可能同时有
+            //   `scripts/*.script`（游戏脚本）与 `<cfg>/scripts/*.ltx`（配置脚本）。
+            //   旧实现只扫 `base/scripts`（= configs/scripts），根 scripts 的文本全漏。
+            //   现在两处都扫；配置脚本的文本 XML **追加**到同一份 scripts 表（id 前缀区分）。
+            struct ExtractJob {
+                QString dir;
+                QString target_sub;
+                QString label;
+                QString id_prefix;
+                bool append = false;
+            };
+            std::vector<ExtractJob> jobs;
+            const QString root_scripts = QDir(src_dir).filePath(QStringLiteral("scripts"));
+            const QString cfg_scripts = QDir(base).filePath(QStringLiteral("scripts"));
+            bool have_scripts_table = false;
+            if (QDir(root_scripts).exists()) {
+                jobs.push_back({root_scripts, rel_prefix + QStringLiteral("scripts"),
+                                QStringLiteral("scripts"), QString(), false});
+                have_scripts_table = true;
+            }
+            if (QDir(cfg_scripts).exists() &&
+                QDir(cfg_scripts).absolutePath() != QDir(root_scripts).absolutePath()) {
+                jobs.push_back({cfg_scripts,
+                                rel_prefix + cfg_name + QStringLiteral("/scripts"),
+                                QStringLiteral("configs/scripts"),
+                                have_scripts_table ? QStringLiteral("sgtat_cfg_sc_0") : QString(),
+                                have_scripts_table});
+                have_scripts_table = true;
+            }
+            const QString gameplay_dir = QDir(base).filePath(QStringLiteral("gameplay"));
+            if (QDir(gameplay_dir).exists()) {
+                jobs.push_back({gameplay_dir,
+                                rel_prefix + cfg_name + QStringLiteral("/gameplay"),
+                                QStringLiteral("gameplay"), QString(), false});
+            }
+            for (const ExtractJob& job : jobs) {
                 any = true;
-                // ★ 2026-11-09：布局跟着源的配置目录名走（SoC 是 config/gameplay）。
-                //   scripts  → <mod>/gamedata/scripts/
-                //   gameplay → <mod>/gamedata/<cfg_name>/gameplay/
-                const QString sub_out = sub == QStringLiteral("gameplay")
-                                            ? rel_prefix + cfg_name + QStringLiteral("/gameplay")
-                                            : rel_prefix + QStringLiteral("scripts");
-                const QString target = want_rewritten
-                                           ? QDir(out_root).filePath(sub_out)
-                                           : QDir(QDir::tempPath()).filePath(
-                                                 QStringLiteral("xrkit_extract_discard/") + sub);
+                const QString target =
+                    want_rewritten
+                        ? QDir(out_root).filePath(job.target_sub)
+                        : QDir(QDir::tempPath())
+                              .filePath(QStringLiteral("xrkit_extract_discard/") + job.label);
                 QDir().mkpath(target);
                 xrkit::engine::text::ExtractOptions eopt;
                 eopt.should_stop = should_stop;
+                eopt.id_prefix = job.id_prefix.toStdString();
+                eopt.append_texts = job.append;
                 eopt.progress = [&progress](uint64_t done, uint64_t total) {
                     if (total > 0) {
                         progress(25 + static_cast<int>(70 * done / total));
                     }
                 };
                 const xrkit::engine::text::ExtractStats st = xrkit::engine::text::extract_dir(
-                    dir.toUtf8().toStdString(), target.toUtf8().toStdString(),
+                    job.dir.toUtf8().toStdString(), target.toUtf8().toStdString(),
                     texts_out.toUtf8().toStdString(), eopt);
                 if (!st.ok) {
-                    post_status(QStringLiteral("提取失败（%1）：%2").arg(sub, utf8(st.error)));
+                    post_status(QStringLiteral("提取失败（%1）：%2").arg(job.label, utf8(st.error)));
                     return;
                 }
                 strings += static_cast<int>(st.strings);
                 rewritten += static_cast<int>(st.files);
-                message(sub.toStdString() + "：" + std::to_string(st.strings) + " 条，改写 " +
-                        std::to_string(st.files) + " 个");
+                no_text += static_cast<int>(st.no_text_files);
+                message(job.label.toStdString() + "：" + std::to_string(st.strings) +
+                        " 条，改写 " + std::to_string(st.files) + " 个，无文本跳过 " +
+                        std::to_string(st.no_text_files) + " 个");
                 if (should_stop()) {
                     post_status(QStringLiteral("已取消：停在文件边界（%1 条已出）").arg(strings));
                     return;
@@ -1556,11 +1589,13 @@ void XmlPage::run_extract() {
                 }
             }
             progress(100);
-            post_status(any ? QStringLiteral("语言包已生成：%1（%2 个文件、字面量 %3 条、改写 %4 个）")
+            post_status(any ? QStringLiteral("语言包已生成：%1（%2 个文件、字面量 %3 条、改写 %4 个、"
+                                             "无文本跳过 %5 个）")
                                   .arg(QDir::toNativeSeparators(out_root))
                                   .arg(collected.copied)
                                   .arg(strings)
                                   .arg(rewritten)
+                                  .arg(no_text)
                             : QStringLiteral("目录里没有 scripts/ 或 gameplay/：%1").arg(base));
         });
     if (!started) set_compare_controls_enabled(true);

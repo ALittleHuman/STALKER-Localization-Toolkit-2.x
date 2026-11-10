@@ -66,7 +66,13 @@ def main() -> int:
         gp.mkdir(parents=True)
         sc.mkdir(parents=True)
         (gp / "a.xml").write_text(XML_CN, encoding="utf-8")
+        # ★ 2026-11-10（用户）：没有文本的文件**不许复制**到输出目录
+        (gp / "no_text.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
+            '<string id="x"><text></text></string>\n</string_table>\n', encoding="utf-8")
         (sc / "a.script").write_text(SCRIPT, encoding="utf-8")
+        (sc / "no_text.ltx").write_text(
+            "[logic]\nactive = ph_idle@open\ntips = actor_inventory_box_use\n", encoding="utf-8")
 
         # ① gameplay：中文 XML 正文要抽
         rc, out = run([str(CLI), "--extract-text", str(gp), str(tmp / "out_gp")])
@@ -79,6 +85,14 @@ def main() -> int:
                 fail("gameplay：中文正文没被抽出（实得 %r）" % got)
         else:
             fail("gameplay 提取失败：rc=%d\n%s" % (rc, out[-400:]))
+        if not (tmp / "out_gp" / "no_text.xml").exists():
+            ok("gameplay：没有文本的 XML 没被复制到输出")
+        else:
+            fail("gameplay：没有文本的 no_text.xml 仍被复制了")
+        if "notext=1" in out:
+            ok("gameplay：no-text 计数=1")
+        else:
+            fail("gameplay：没有 notext=1 台账（%r）" % out.splitlines()[-1:])
 
         # ② scripts：中文/西里尔都抽，标识符不抽
         rc, out = run([str(CLI), "--extract-text", str(sc), str(tmp / "out_sc")])
@@ -100,6 +114,14 @@ def main() -> int:
                 fail("scripts：标识符被抽出来了（会把 id 全灌进文本表）")
         else:
             fail("scripts 提取失败：rc=%d\n%s" % (rc, out[-400:]))
+        if not (tmp / "out_sc" / "scripts" / "no_text.ltx").exists():
+            ok("scripts：没有文本的 .ltx 没被复制到输出")
+        else:
+            fail("scripts：没有文本的 no_text.ltx 仍被复制了")
+        if "notext=1" in out:
+            ok("scripts：no-text 计数=1")
+        else:
+            fail("scripts：没有 notext=1 台账（%r）" % out.splitlines()[-1:])
 
         # ③ 改写后的脚本：字面量换成 translate_string(<id>) 且 id 在 XML 里
         rewritten = tmp / "out_sc" / "scripts" / "a.script"
@@ -155,6 +177,37 @@ def main() -> int:
             ok("短文本：不告警、不写日志（判据不是恒红）")
         else:
             fail("短文本却告警/写日志：rc=%d\n%s" % (rc, out[-300:]))
+
+        # ⑤ 多源合并：根 scripts + configs/scripts 的文本表追加到同一份 XML
+        ap1 = tmp / "ap1" / "scripts"
+        ap2 = tmp / "ap2" / "scripts"
+        ap1.mkdir(parents=True)
+        ap2.mkdir(parents=True)
+        (ap1 / "a.script").write_text('local a = "Hello world"\n', encoding="utf-8")
+        (ap2 / "b.script").write_text('local b = "Second text"\n', encoding="utf-8")
+        ap_out = tmp / "ap_out"
+        rc1, _ = run([str(CLI), "--extract-text", str(ap1), str(ap_out)])
+        rc2, _ = run([str(CLI), "--extract-text", str(ap2), str(ap_out),
+                      "--append-texts", "--id-prefix", "sgtat_cfg_sc_0"])
+        ap_xml = ap_out / "gs_scripts_texts.xml"
+        if rc1 == 0 and rc2 == 0 and ap_xml.is_file():
+            body = ap_xml.read_text(encoding="utf-8", errors="replace")
+            ids = re.findall(r'<string id="([^"]+)"', body)
+            if len(ids) == 2 and len(set(ids)) == 2 and "Hello world" in body and "Second text" in body:
+                ok("多源追加：两条文本合并到同一份 XML，id 不冲突")
+            else:
+                fail("多源追加结果不对：ids=%r" % ids)
+        else:
+            fail("多源追加失败：rc=%d/%d" % (rc1, rc2))
+
+        # ★ 2026-11-10：页面必须同时扫根 `scripts/` 与 `configs/scripts/`，
+        #   否则真机样例根 scripts 的 334 条文本会被整批漏掉。
+        xml_src = (ROOT / "src" / "shell" / "pages" / "xml_page.cpp").read_text(
+            encoding="utf-8")
+        if "root_scripts" in xml_src and "append_texts" in xml_src:
+            ok("页面：根 scripts + configs/scripts 都扫，文本表追加合并")
+        else:
+            fail("页面：没有覆盖根 scripts / 追加文本表")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

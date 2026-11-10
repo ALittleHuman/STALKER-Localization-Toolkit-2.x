@@ -1261,6 +1261,14 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
             if (a.old_text.size() != b.old_text.size()) return a.old_text.size() > b.old_text.size();
             return a.order < b.order;
         });
+        if (repls.empty()) {
+            // ★ 2026-11-10（用户）：这个文件没有抽到任何文本 ⇒ **不复制/不改写**。
+            //   1.x/旧实现会把 `body = out_text` 原样写进输出（真机样例 2189 个 .ltx 里
+            //   1220 个逐字节没变，却全被记成"改写"）。
+            ++st.no_text_files;
+            continue;
+        }
+
         std::string body = out_text;
         for (const Repl& r : repls) {
             // ★ 本批：`.ltx` 不再走裸全局替换 —— 见 `replace_all_protected`：
@@ -1309,9 +1317,29 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
     // "这是部分结果"由前端按 `cancelled` + 计数如实报出（见 ExtractStats::cancelled）。
     if (!extracted.empty()) {
         const std::string name = prefix + "_" + type_dir + "_texts.xml";
-        const std::string body = to_windows_newlines(generate_text_xml_body(extracted));
+        std::string body = to_windows_newlines(generate_text_xml_body(extracted));
         const std::filesystem::path xml_path =
             std::filesystem::path(core::path_from_utf8(xml_out_dir)) / core::path_from_utf8(name);
+        // ★ 2026-11-10：多源（scripts/ + configs/scripts/）合并到同一份文本表。
+        if (options.append_texts) {
+            std::ifstream old_file(xml_path, std::ios::binary);
+            if (old_file) {
+                std::string existing((std::istreambuf_iterator<char>(old_file)),
+                                     std::istreambuf_iterator<char>());
+                const std::string open_tag = "<string_table>";
+                const std::string close_tag = "</string_table>";
+                const std::size_t old_close = existing.rfind(close_tag);
+                const std::size_t new_open = body.find(open_tag);
+                const std::size_t new_close = body.rfind(close_tag);
+                if (old_close != std::string::npos && new_open != std::string::npos &&
+                    new_close != std::string::npos) {
+                    existing.insert(old_close,
+                                    body.substr(new_open + open_tag.size(),
+                                                new_close - (new_open + open_tag.size())));
+                    body = existing;
+                }
+            }
+        }
         if (!write_bytes(to_utf8(xml_path), body, err)) {
             st.error = err;
             return st;

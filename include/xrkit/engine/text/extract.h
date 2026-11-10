@@ -32,6 +32,10 @@ struct ExtractOptions {
     std::string id_prefix;
     // 先清目标目录里的 gameplay/scripts 与 {prefix}_*_texts.xml（1.x UI 里默认勾选）
     bool clean = false;
+    // ★ 2026-11-10：多源合并（例如游戏根 `scripts/` + `configs/scripts/`）时，
+    //   第二次提取把条目**追加**到同一份 `{prefix}_scripts_texts.xml`，不覆盖第一份。
+    //   调用方必须给不同的 `id_prefix`，避免 id 冲突。
+    bool append_texts = false;
     // ★ 2026-10-06（用户红线：取消要**真停**）：可选的停止谓词。**只在文件边界轮询**
     //   ⇒ 停下来时已写出的产物都是**完整的单文件产物**，绝不写半个文件（零静默的反面：
     //   "停是停了，但产物半截" 比不停更糟）。默认空 ⇒ 行为与旧版逐字节相同。
@@ -49,6 +53,10 @@ struct ExtractStats {
     uint64_t files = 0;
     uint64_t strings = 0;
     uint64_t chars = 0;
+    // ★ 2026-11-10（用户）：**没有抽到任何文本的文件不复制到输出目录**。
+    //   以前 `files` 把"逐字节原样复制"也算成改写（真机样例 2265 个里 1220 个其实没动）。
+    //   这里单独记账，`files` 只统计**真的写了改写内容**的文件。
+    uint64_t no_text_files = 0;
     std::vector<std::string> skipped;  // 「相对路径：原因」，对应 1.x 的 log_detail
     // ★★ S1-1（2026-10-06 只读审计·零静默）：**产物写不出去**的文件数（编码失败 / 写盘失败）。
     //   修前这两条路只往 `skipped` 里塞一条、`ok` 仍是 true ⇒ 调用方按 `ok` 判退码时表现为
