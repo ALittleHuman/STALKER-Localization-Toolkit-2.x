@@ -520,6 +520,15 @@ XmlSideStats parse_stats_text(const std::string& text, const std::string& encodi
     stats.encoding = encoding;
     stats.lines = split_lines(text);
     collect_ids(strip_leading_declaration(text), stats.id_counts);
+    // ★ 2026-11-10（用户：并入行数/ID 模式，不单独做入口）：结构只取
+    //   “声明有没有 / 顶层元素个数 / 唯一根名”，不要求符合标准 XML。
+    stats.decl_present = strip_leading_declaration(text).size() != text.size();
+    XmlElementNode root;
+    std::string structure_error;
+    stats.structure_ok = scan_elements(text, root, structure_error);
+    stats.structure_error = structure_error;
+    stats.root_count = root.children.size();
+    if (stats.root_count == 1) stats.root_name = root.children.front().name;
     return stats;
 }
 
@@ -614,8 +623,37 @@ XmlCompareResult compare_stats(const std::string& rel, const std::string& text_a
               [](const std::array<std::string, 3>& x, const std::array<std::string, 3>& y) {
                   return x[0] < y[0];
               });
+    // ★ 2026-11-10：结构签名（声明/顶层元素名/数量）不同 ⇒ 即使行数/ID 全对也算不一致。
+    const bool structure_same =
+        a.structure_ok && b.structure_ok && a.decl_present == b.decl_present &&
+        a.root_count == b.root_count && a.root_name == b.root_name;
+    if (!structure_same) {
+        result.structure_diff = true;
+        if (!a.structure_ok || !b.structure_ok) {
+            result.structure_detail =
+                "结构无法解析：A=" + (a.structure_ok ? "ok" : a.structure_error) +
+                "，B=" + (b.structure_ok ? "ok" : b.structure_error);
+        } else {
+            std::string detail;
+            if (a.decl_present != b.decl_present) {
+                detail += std::string("声明 A=") + (a.decl_present ? "有" : "无") + " / B=" +
+                          (b.decl_present ? "有" : "无") + "；";
+            }
+            if (a.root_count != b.root_count) {
+                detail += "顶层元素数 A=" + std::to_string(a.root_count) + " / B=" +
+                          std::to_string(b.root_count) + "；";
+            }
+            if (a.root_name != b.root_name) {
+                detail += "根 A=" + (a.root_name.empty() ? "无" : a.root_name) + " / B=" +
+                          (b.root_name.empty() ? "无" : b.root_name) + "；";
+            }
+            if (!detail.empty() && detail.back() == ';') detail.pop_back();
+            result.structure_detail = "结构不一致：" + detail;
+        }
+    }
     result.consistent = result.lines_a == result.lines_b && result.only_a.empty() &&
-                        result.only_b.empty() && result.count_diff.empty();
+                        result.only_b.empty() && result.count_diff.empty() &&
+                        !result.structure_diff;
     return result;
 }
 
@@ -632,6 +670,9 @@ std::string inline_detail(const XmlCompareResult& result, const std::string& nam
         if (!out.empty()) out += "；";
         out += part;
     };
+    if (result.structure_diff && !result.structure_detail.empty()) {
+        append(result.structure_detail);
+    }
     if (!result.only_a.empty()) append("仅 " + na + " 有 " + std::to_string(result.only_a.size()));
     if (!result.only_b.empty()) append("仅 " + nb + " 有 " + std::to_string(result.only_b.size()));
     if (!result.count_diff.empty()) {

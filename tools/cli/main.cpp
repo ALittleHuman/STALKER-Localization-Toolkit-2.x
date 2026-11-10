@@ -5112,6 +5112,7 @@ if (action == "--diff-snapshot") {
                       << " lines_a=" << row.result.lines_a << " lines_b=" << row.result.lines_b
                       << " ids_a=" << row.result.ids_a << " ids_b=" << row.result.ids_b
                       << " count_diff=" << row.result.count_diff.size()
+                      << " structure=" << (row.result.structure_diff ? 1 : 0)
                       << " text_diff=" << row.result.text_diff.size()
                       << " only_a=" << row.result.only_a.size()
                       << " only_b=" << row.result.only_b.size()
@@ -5169,7 +5170,8 @@ if (action == "--diff-snapshot") {
                   << " lines_a=" << result.lines_a << " lines_b=" << result.lines_b
                   << " ids_a=" << result.ids_a << " ids_b=" << result.ids_b
                   << " only_a=" << result.only_a.size() << " only_b=" << result.only_b.size()
-                  << " count_diff=" << result.count_diff.size() << "\n";
+                  << " count_diff=" << result.count_diff.size()
+                  << " structure=" << (result.structure_diff ? 1 : 0) << "\n";
         return kExitOk;
     }
 

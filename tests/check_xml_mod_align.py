@@ -145,6 +145,28 @@ def main() -> int:
         check(drow is not None and drow.get("untrusted") == "0" and
               int(drow.get("ids_a", "0")) == 2 and int(drow.get("ids_b", "0")) == 2,
               "④ 注释含 --：untrusted=0、ids_a=ids_b=2", str(drow))
+
+        # ★ 2026-11-10（用户：结构校验并入“行数/ID 统计”，不单独入口）：
+        #   行数/ID 全对、但译文删了声明/根标签 ⇒ 必须 structure=1、consistent=0。
+        fa = tmp / "F" / "configs" / "text" / "rus"
+        fb = tmp / "G" / "configs" / "text" / "rus"
+        fa.mkdir(parents=True)
+        fb.mkdir(parents=True)
+        full = ('<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
+                '  <string id="s1"><text>one</text></string>\n'
+                '  <string id="s2"><text>two</text></string>\n'
+                '</string_table>\n')
+        broken = ('  <string id="s1"><text>one</text></string>\n'
+                  '  <string id="s2"><text>two</text></string>\n')
+        (fa / "root.xml").write_text(full, encoding="utf-8")
+        (fb / "root.xml").write_text(broken, encoding="utf-8")
+        rc4, out4 = run(["--xml-compare-dirs", str(tmp / "F"), str(tmp / "G"),
+                         "--mode", "stats"])
+        srows = [r for r in rows_of(out4) if r.get("rel", "").endswith("root.xml")]
+        srow = srows[0] if srows else None
+        check(rc4 == 0 and srow is not None and srow.get("kind") == "diff" and
+              srow.get("structure") == "1" and srow.get("consistent") == "0",
+              "⑤ 删声明/根：行数/ID 模式直接报 structure=1、consistent=0", str(srow))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

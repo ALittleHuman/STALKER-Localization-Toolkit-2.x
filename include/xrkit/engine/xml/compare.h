@@ -74,6 +74,12 @@ struct XmlSideStats {
     uint64_t lines = 0;
     std::map<std::string, uint64_t> id_counts;
     std::string encoding;  // 实际用的编码名
+    // ★ 2026-11-10（用户：行数/ID 模式要顺带查结构，不再单独入口）
+    bool decl_present = false;
+    uint64_t root_count = 0;      // 顶层元素个数（片段可以 >0；完整文件应为 1）
+    std::string root_name;        // 唯一顶层元素名；多顶层/片段为空
+    bool structure_ok = false;    // 容错扫描能否理解完整结构
+    std::string structure_error;
 };
 
 // 一段文本 → 行数 + ID 计数（ID 统计**忽略 XML 声明**，与 1.x 一致）
@@ -93,6 +99,9 @@ struct XmlCompareResult {
     std::vector<std::string> only_b;
     std::vector<std::array<std::string, 3>> count_diff;  // (id, A 次数, B 次数)
     std::vector<std::array<std::string, 3>> text_diff;   // (id, A 文本, B 文本)
+    // ★ 2026-11-10：行数/ID 模式顺带比较结构（声明/顶层元素名/数量）。
+    bool structure_diff = false;
+    std::string structure_detail;
     std::map<std::string, std::string> id_text_a;        // 明细里要看原文（文本模式）
     std::map<std::string, std::string> id_text_b;
     // ★★ P17-99（审计 `05 PLG-04`）：C ABI 比较模式**回传了我们不认识的 sink 键**时逐条记在这里

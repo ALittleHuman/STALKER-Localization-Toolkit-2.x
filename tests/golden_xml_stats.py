@@ -256,7 +256,18 @@ def main() -> int:
 
     failures: list[str] = []
     compared = 0
+    comment_dash = 0
     records: list[dict] = []
+
+    def has_comment_dash(path: Path) -> bool:
+        # 2026-11-10（用户）：X-Ray 容忍 `<!-- ---- -->`；2.x 也容忍，1.x 参照会
+        # 把整份判 0 条。这类差异登记为**有意口径差异**，不算回归。
+        raw = path.read_bytes()
+        for match in re.finditer(rb"<!--(.*?)-->", raw, re.S):
+            if b"--" in match.group(1):
+                return True
+        return False
+
     with tempfile.TemporaryDirectory(prefix="xrkit_xmlstats_") as tmp:
         work = Path(tmp)
         for name, raw in sorted(synth.items()):
@@ -270,8 +281,11 @@ def main() -> int:
                 continue
             compared += 1
             if (got_lines, got_ids) != (lines, ids):
-                failures.append("%s：参照 lines=%d ids=%d / 候选 lines=%d ids=%d"
-                                % (name, lines, ids, got_lines, got_ids))
+                if has_comment_dash(path):
+                    comment_dash += 1
+                else:
+                    failures.append("%s：参照 lines=%d ids=%d / 候选 lines=%d ids=%d"
+                                    % (name, lines, ids, got_lines, got_ids))
             records.append({"id": name, "lines": lines, "ids": ids})
 
         for path in real:
@@ -283,8 +297,11 @@ def main() -> int:
                 continue
             compared += 1
             if (got_lines, got_ids) != (lines, ids):
-                failures.append("%s：参照 lines=%d ids=%d / 候选 lines=%d ids=%d"
-                                % (path.name, lines, ids, got_lines, got_ids))
+                if has_comment_dash(path):
+                    comment_dash += 1
+                else:
+                    failures.append("%s：参照 lines=%d ids=%d / 候选 lines=%d ids=%d"
+                                    % (path.name, lines, ids, got_lines, got_ids))
 
         # ── 文本模式（ID 文本对比）：参照 = 1.x 源码按 AST 摘出来直接跑 ──
         text_ns = load_1x_text_mode()
@@ -298,7 +315,10 @@ def main() -> int:
                 continue
             compared += 1
             if got != want:
-                failures.append("文本模式 %s：参照 %s / 候选 %s" % (name, want, got))
+                if has_comment_dash(path_a) or has_comment_dash(path_b):
+                    comment_dash += 1
+                else:
+                    failures.append("文本模式 %s：参照 %s / 候选 %s" % (name, want, got))
 
         # 真语料上也走几对（同一文件比同一文件：必须判"一致"且 ID 数相同）
         for path in real[:12]:
@@ -310,7 +330,10 @@ def main() -> int:
                 continue
             compared += 1
             if got != want:
-                failures.append("文本模式 %s：参照 %s / 候选 %s" % (path.name, want, got))
+                if has_comment_dash(path):
+                    comment_dash += 1
+                else:
+                    failures.append("文本模式 %s：参照 %s / 候选 %s" % (path.name, want, got))
 
         # ── 10.5 CSV 渲染：参照 = Python `csv.writer`（excel 方言）+ 前置 BOM ──
         csv_out = work / "probe.csv"
@@ -363,6 +386,8 @@ def main() -> int:
         print("  ✗ %s" % item)
     if len(failures) > 10:
         print("  …（还有 %d 条）" % (len(failures) - 10))
+    print("  口径差异：注释含 -- 的样本 %d 个（2.x 容忍、1.x 判 0 条，登记为有意差异）"
+          % comment_dash)
     print("GOLDEN-XML-STATS: %s (compared=%d failed=%d)"
           % ("FAIL" if failures else "PASS", compared, len(failures)))
     return 1 if failures else 0
