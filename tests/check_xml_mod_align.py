@@ -123,6 +123,28 @@ def main() -> int:
         # ③ ID 个数：只在一侧的行要报真实计数（修前恒为 0）
         check(only is not None and int(only.get("ids_b", "0")) == 1,
               "③ 仅 B 的行：ids_b=1（真实计数，修前是 0）", str(only))
+
+        # ★ 2026-11-10（用户实测）：注释体里含 `--` 的 XML 不许被整份判 untrusted。
+        #   真实语料 23/81 个文件使用 `<!-- ---------------------------- -->`。
+        da = tmp / "D" / "configs" / "text" / "rus"
+        db = tmp / "E" / "configs" / "text" / "rus"
+        da.mkdir(parents=True)
+        db.mkdir(parents=True)
+        dash = ('<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
+                '<!-- ---------------------------- -->\n'
+                '  <string id="d1"><text>v1</text></string>\n'
+                '  <string id="d2"><text>v2</text></string>\n'
+                '</string_table>\n')
+        (da / "dash.xml").write_text(dash, encoding="utf-8")
+        (db / "dash.xml").write_text(dash, encoding="utf-8")
+        rc3, out3 = run(["--xml-compare-dirs", str(tmp / "D"), str(tmp / "E")])
+        dash_rows = [r for r in rows_of(out3) if r.get("rel", "").endswith("dash.xml")]
+        drow = dash_rows[0] if dash_rows else None
+        check(rc3 == 0 and drow is not None and drow.get("kind") == "same",
+              "④ 注释含 -- 的 XML 照常比较（不是 untrusted/整份丢弃）", str(drow))
+        check(drow is not None and drow.get("untrusted") == "0" and
+              int(drow.get("ids_a", "0")) == 2 and int(drow.get("ids_b", "0")) == 2,
+              "④ 注释含 --：untrusted=0、ids_a=ids_b=2", str(drow))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

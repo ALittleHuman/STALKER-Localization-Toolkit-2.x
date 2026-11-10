@@ -514,9 +514,25 @@ private:
                     button_build_->setEnabled(true);
                     reload();  // 成功 ⇒ 构建史 +1；失败 ⇒ 版本已回退，界面同步回真值
                 });
-        process_->start(cli, QStringList{QStringLiteral("--build-package"),
-                                         QString::fromStdString(store_path_), version, pre,
-                                         QString::number(index)});
+        // ★ 2026-11-10（用户实测：包内 CLI 落后一版）：GUI 也必须走 release.ps1。
+        //   直接 `--build-package` 会撞上"CLI 自身版本 ≠ 目标版本"的守卫（且会把旧 CLI 打进包）。
+        const QString release_script =
+            QFileInfo(cli).dir().filePath(QStringLiteral("../../../../scripts/release.ps1"));
+        if (!QFileInfo::exists(release_script)) {
+            log_line(QStringLiteral("找不到 release.ps1：%1").arg(release_script));
+            status_->setText(QStringLiteral("构建失败：找不到 scripts\\release.ps1"));
+            button_build_->setEnabled(true);
+            delete process_;
+            process_ = nullptr;
+            return;
+        }
+        process_->start(QStringLiteral("powershell"),
+                        QStringList{QStringLiteral("-NoProfile"),
+                                    QStringLiteral("-ExecutionPolicy"), QStringLiteral("Bypass"),
+                                    QStringLiteral("-File"), release_script,
+                                    QStringLiteral("-Index"), QString::number(index),
+                                    QStringLiteral("-Version"), version,
+                                    QStringLiteral("-Mark"), pre});
     }
 
     QComboBox* combo_version_ = nullptr;

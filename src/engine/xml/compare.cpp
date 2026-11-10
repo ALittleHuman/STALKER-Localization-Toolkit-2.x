@@ -243,13 +243,11 @@ bool scan_elements(const std::string& text, XmlElementNode& root, std::string& e
                 error = "注释没有结束";
                 return false;
             }
-            // XML 不允许注释体里出现 `--`；ElementTree 会直接抛 ⇒ 1.x 判"解析失败
-            // （结果不可信）"。我们照做：**不许比 1.x 更宽**，否则坏文件会被静默判成"没差异"。
-            const std::string body = text.substr(i + 4, end - (i + 4));
-            if (body.find("--") != std::string::npos) {
-                error = "注释体里含 --（XML 非法）";
-                return false;
-            }
+            // ★ 2026-11-10（用户实测）：游戏 XML 的注释里大量出现
+            //   `<!-- ---------------------------- -->`。严格 XML 规定注释体不许含 `--`，
+            //   但 STALKER 的成品文件就这么写；按 XML 标准整份判"不可信"会把 216 条内容
+            //   静默丢成 0（23/81 个文件中招，且 `--xml-compare-dirs` 还报 consistent）。
+            //   注释内容**不参与**文本/ID 比较 ⇒ 这里按"跳过注释"容错，不再因 `--` 判失败。
             i = end + 3;
             continue;
         }

@@ -66,6 +66,13 @@ def main() -> int:
         gp.mkdir(parents=True)
         sc.mkdir(parents=True)
         (gp / "a.xml").write_text(XML_CN, encoding="utf-8")
+        # ★ 2026-11-10（用户实测）：声明 windows-1251 的 gameplay XML 必须按声明解，
+        #   不许被 GB18030 误判成 ќпытный / Ћпытный 之类残渣。
+        cp1251_text = "Опытный сталкер. Детальная информация отсутствует."
+        (gp / "cp1251.xml").write_bytes(
+            ('<?xml version="1.0" encoding="windows-1251"?>\n<string_table>'
+             '<string id="c1"><text>%s</text></string></string_table>' % cp1251_text
+             ).encode("cp1251"))
         # ★ 2026-11-10（用户）：没有文本的文件**不许复制**到输出目录
         (gp / "no_text.xml").write_text(
             '<?xml version="1.0" encoding="utf-8"?>\n<string_table>\n'
@@ -93,6 +100,14 @@ def main() -> int:
             ok("gameplay：no-text 计数=1")
         else:
             fail("gameplay：没有 notext=1 台账（%r）" % out.splitlines()[-1:])
+        # ★ cp1251 声明必须被尊重（否则会出现 ќпытный 这类 Mac/GB 残渣）
+        if xml_gp.is_file():
+            gp_text = xml_gp.read_text(encoding="utf-8", errors="replace")
+            if cp1251_text in gp_text and "ќ" not in gp_text:
+                ok("gameplay：windows-1251 声明按声明解码（无 ќ 残渣）")
+            else:
+                fail("gameplay：cp1251 解码残渣（含 ќ=%s / 命中正确文本=%s）"
+                     % ("ќ" in gp_text, cp1251_text in gp_text))
 
         # ② scripts：中文/西里尔都抽，标识符不抽
         rc, out = run([str(CLI), "--extract-text", str(sc), str(tmp / "out_sc")])

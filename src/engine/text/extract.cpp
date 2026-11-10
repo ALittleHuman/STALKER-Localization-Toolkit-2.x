@@ -1078,9 +1078,82 @@ std::string validate_request(const ExtractRequest& request) {
     return {};
 }
 
+// ★ 2026-11-10（用户实测：同一句俄文出现 ќпытный / Ћпытный / ѓетальна¤ 等残渣）：
+//   `read_text_file` 的六编码链不读 XML 声明，cp1251 的字节可能先被 GB18030 解成别的
+//   字符（C++ 侧与 Python 的严格性有差异）。提取 XML 时**先尊重文件自己的 encoding 声明**，
+//   声明解不了再退回原来的六编码链；脚本/ltx 没有声明，仍走原链。
+DecodeResult read_extract_text(const std::string& path) {
+    std::ifstream in(core::path_from_utf8(path), std::ios::binary);
+    if (!in) {
+        DecodeResult res;
+        res.error = "打不开文件：" + path;
+        return res;
+    }
+    std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+    const size_t head_len = std::min<size_t>(raw.size(), 512);
+    const std::string head(reinterpret_cast<const char*>(raw.data()), head_len);
+    const size_t bom_skip =
+        (raw.size() >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF) ? 3 : 0;
+    // ★ 2026-11-10（用户实测）：有的 gameplay XML 声明写 windows-1251，字节其实是 UTF-8
+    //   （严格 UTF-8 能解）⇒ 先按 UTF-8 解，避免把正确 UTF-8 再按 cp1251 解成
+    //   `РћРїС‹С‚...` 这种二次残渣；UTF-8 解不了才看声明。
+    {
+        std::string utf8_text;
+        std::string utf8_err;
+        if (decode_strict("utf-8", raw.data() + bom_skip, raw.size() - bom_skip, utf8_text,
+                          utf8_err)) {
+            DecodeResult res;
+            res.ok = true;
+            res.text = std::move(utf8_text);
+            res.encoding = "utf-8";
+            res.chars = utf8_codepoint_count(res.text);
+            normalize_newlines(res.text);
+            return res;
+        }
+    }
+    const size_t xml = head.find("<?xml");
+    if (xml != std::string::npos) {
+        const size_t enc = head.find("encoding", xml);
+        if (enc != std::string::npos) {
+            const size_t eq = head.find('=', enc);
+            if (eq != std::string::npos) {
+                size_t q = eq + 1;
+                while (q < head.size() && (head[q] == ' ' || head[q] == '\t')) ++q;
+                if (q < head.size() && (head[q] == '"' || head[q] == '\'')) {
+                    const char quote = head[q++];
+                    const size_t close = head.find(quote, q);
+                    if (close != std::string::npos && close > q) {
+                        const std::string declared = head.substr(q, close - q);
+                        const size_t skip =
+                            (raw.size() >= 3 && raw[0] == 0xEF && raw[1] == 0xBB &&
+                             raw[2] == 0xBF)
+                                ? 3
+                                : 0;
+                        std::string text;
+                        std::string err;
+                        if (decode_strict(declared, raw.data() + skip, raw.size() - skip, text,
+                                          err)) {
+                            DecodeResult res;
+                            res.ok = true;
+                            res.text = std::move(text);
+                            res.encoding = declared;
+                            res.chars = utf8_codepoint_count(res.text);
+                            normalize_newlines(res.text);
+                            return res;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    DecodeResult res = decode_text_chain(raw);
+    if (res.ok) normalize_newlines(res.text);
+    return res;
+}
+
 ExtractStats extract_dir(const std::string& source_dir, const std::string& target_dir,
-                         const std::string& xml_out_dir, const ExtractOptions& options) {
-    ExtractStats st;
+                         const std::string& xml_out_dir, const ExtractOptions& options) {    ExtractStats st;
     const auto t0 = std::chrono::steady_clock::now();
 
     std::string err;
@@ -1186,7 +1259,7 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
         //   ⇒ 非 ASCII 路径**只许转换一次**：直接用 `Found::rel_utf8`（下面那个字段），
         //     或直接用 `item.source_path`，**不再经过任何 `path_to_utf8`**。
         const std::string src_path = f.source_utf8;
-        const DecodeResult dec = read_text_file(src_path);
+        const DecodeResult dec = read_extract_text(src_path);
         if (!dec.ok) {
             st.skipped.push_back(f.rel + "：" + dec.error);
             continue;

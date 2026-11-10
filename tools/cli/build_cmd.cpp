@@ -193,6 +193,21 @@ int run_build_package(const std::vector<std::string>& operands) {
     const std::string full = want_version + (want_prerelease.empty() ? "" : " " + want_prerelease) +
                              "." + std::to_string(want_index);
 
+    // ★ 2026-11-10（用户实测 BETA.168/171 包内 CLI 落后一版）：
+    //   `--build-package` 是 CLI 自己；直接调用时它还是**旧版本**，却会把旧 CLI 打进包。
+    //   版本资源必须与包目标一致，否则**拒绝打包**（不再只 warn）。
+    //   正确路径：`scripts\release.ps1`（先 --write-version → 重编两档 → --prebuilt）。
+    {
+        const std::string self_version = xrkit::core::version_string();
+        if (self_version != full) {
+            std::cout << "BUILDPKG error reason=CLI 自身版本不匹配（self=" << self_version
+                      << " / target=" << full
+                      << "）⇒ 拒绝把旧 CLI 打进包；请用 scripts\\release.ps1 发包"
+                         "（先 --write-version、重编 msvc-shell+msvc-release，再 --build-package --prebuilt）\n";
+            return kFail;
+        }
+    }
+
     // ── ★★ 2026-10-07（审计补充 H1-2，用户拍板"候选 A"）：版本号的**派生写回** ──────────
     //   真来源 = `version.json` 的 tree（最后一次成功发包）；`version.h` 是它的派生。
     //   写在这里的原因：exe 的资源（`assets/xrkit_winres.rc` ← `gen_winres.py` ← `version.h`）
@@ -348,15 +363,8 @@ int run_build_package(const std::vector<std::string>& operands) {
     if (!prebuilt) {
         rc = run_windowless_utf8(cmd);  // 无控制台窗口（用户要求：不要打开 cmd）
     } else {
-        std::cout << "BUILDPKG prebuilt 跳过编译（产物已由驱动脚本准备好）\n";
+        std::cout << "BUILDPKG prebuilt 跳过编译（产物已由 release.ps1 准备好；版本已校验）\n";
     }
-    // （旧警告已由 --write-version + --prebuilt 驱动取代；这里不再猜测版本。）
-    //   原因：`--build-package` 是 **CLI 自己**在跑；先 bump 版本号、再重编 CLI 会撞上
-    //   "正在运行的 exe 被自己占用"（实测 LNK1104）。⇒ 这里不做自重编，只把事实说出来：
-    //   包内 CLI 是上一次 `build.ps1 -Preset msvc-release` 的产物（版本可能比包小 1）。
-    //   要同版：先 `scripts\build.ps1 -Preset msvc-release`，再打包。
-    std::cout << "BUILDPKG warn 包内 CLI 版本可能落后一版（它无法在打包过程中重编自己；"
-                 "要同版请先 build msvc-release）\n";
 #else
     // 本项目只出 Windows 包（scripts/*.ps1 都是 PowerShell）⇒ 非 Windows 不做等价实现，
     // 直接失败。（保留 std::system 会让"无控制台窗口"静态锁永远红 —— 它就是拦这个的。）
