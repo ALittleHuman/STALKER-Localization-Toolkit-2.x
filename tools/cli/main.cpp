@@ -1569,6 +1569,30 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
                 check(ctx, short_body.find("Опыт") != std::string::npos,
                       "短文件回填后正文不对（未按 1251 解码）");
                 check(ctx, dlog >= 6, "延迟判定没有逐条留痕");
+
+                // 没有任何“正常文件”可提供单字节多数 ⇒ 延迟文件仍按 1251（不是 UTF-8）。
+                const fsys::path only_src = root / "defer_only_src";
+                const fsys::path only_out = root / "defer_only_out";
+                fsys::create_directories(only_src, ec);
+                {
+                    std::ofstream f(only_src / "short.xml", std::ios::binary);
+                    f << "<?xml version='1.0' encoding='windows-1252'?>\n"
+                         "<string_table><string id='s'><text>";
+                    f.write(reinterpret_cast<const char*>(short_bytes.data()),
+                            static_cast<std::streamsize>(short_bytes.size()));
+                    f << "</text></string></string_table>";
+                }
+                etxt::BatchOptions only_bo = dbo;
+                only_bo.source = only_src.string();
+                only_bo.output_dir = only_out.string();
+                const etxt::BatchOutcome only_deferred = etxt::convert_batch(only_bo, dbh);
+                check(ctx, only_deferred.deferred == 1 &&
+                               only_deferred.deferred_encoding == "windows-1251" &&
+                               only_deferred.success == 1,
+                      "无单字节样本时延迟文件没有回填 1251（deferred=" +
+                          std::to_string(only_deferred.deferred) + " enc=" +
+                          only_deferred.deferred_encoding + " success=" +
+                          std::to_string(only_deferred.success) + "）");
             }
 
             // 反面：源路径不存在 ⇒ 退出码 2 + 报错（不许静默成功）

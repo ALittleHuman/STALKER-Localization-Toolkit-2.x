@@ -780,11 +780,15 @@ BatchOutcome convert_batch(const BatchOptions& opt, const BatchHooks& hooks) {
                 chosen = kv.first;
             }
         }
-        if (chosen.empty()) chosen = "utf-8";
+        // ★ 2026-11-10（用户澄清）：只有“多字节编码无法确认”才无脑 UTF-8。
+        //   能进入延迟队列的文件都是**单字节家族**（sniff 的 short_ambiguous 限定
+        //   windows-1251/1252/latin-1）；没有单字节样本时按毛子模组多数默认 1251，
+        //   不能把单字节短文件丢给 UTF-8。
+        if (chosen.empty()) chosen = "windows-1251";
         out.deferred_encoding = chosen;
         say("延迟判定：" + std::to_string(deferred_files.size()) +
             " 个短文件；整批同字节编码多数=" +
-            (best > 0 ? chosen : std::string("无（多字节无法确认）")) +
+            (best > 0 ? chosen : std::string("无单字节样本 ⇒ 默认 windows-1251")) +
             " ⇒ 统一按 " + chosen + " 回填");
         for (const CollectedFile& file : deferred_files) {
             if (process_file(file, chosen, true)) break;
