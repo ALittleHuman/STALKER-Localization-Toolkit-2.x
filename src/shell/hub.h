@@ -27,6 +27,11 @@ class QLabel;
 namespace xrkit::shell {
 
 class LogBox;
+
+// ★ 2026-11-10（P0-2）：**纯函数**决定“要不要唤起独立插件管理器 + 原因”（空=不唤起）。
+//   判据直接调它覆盖 4 种组合；Hub 只用它，不再自己拼条件。
+QString plugin_manager_launch_reason(bool previous_crashed, int plugin_errors,
+                                     int auto_disabled);
 class PageBase;
 // ★ 2026-10-06（审计 3-8）：这里原来还有一个 `class SplitPane;` 的前向声明，**全文件没人用**
 //   —— 而它正是"`SplitPane` 是死代码"那条静态锁（`tests/run_ci.py` 的 `shell-smoke` 步）

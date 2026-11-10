@@ -365,6 +365,8 @@ bool write_fixture_safely(const QString& path, const QByteArray& source) {
 
 SmokeResult run_smoke() {
     SmokeResult result;
+    // ★ 2026-11-10（P0-2）：管理器唤起只记 dry-run 日志（不真起进程，离屏可验分支）。
+    qputenv("XRKIT_PLUGIN_MANAGER_DRY_RUN", "1");
     // ★ 2026-10-22（用户口径）：每轮开始**删掉两份 trace**，避免跨轮残留。
     if (qEnvironmentVariableIsSet("XRKIT_PAGE_TRACE") &&
         qEnvironmentVariable("XRKIT_PAGE_TRACE") == QStringLiteral("1")) {
@@ -1320,6 +1322,15 @@ SmokeResult run_smoke() {
             QFileInfo(app_dir + QStringLiteral("/xrkit_plugin_manager.exe")).exists() ||
             QFileInfo(app_dir + QStringLiteral("/tools/xrkit_plugin_manager.exe")).exists();
         check(pm_present, QStringLiteral("独立插件管理器 exe 要在本体旁边（或 tools\\）"));
+        // ★ 2026-11-10（P0-2）：唤起条件抽成纯函数，4 种组合逐一判。
+        check(plugin_manager_launch_reason(false, 0, 0).isEmpty(),
+              QStringLiteral("管理器条件：无触发时不该唤起"));
+        check(plugin_manager_launch_reason(true, 0, 0).contains(QStringLiteral("上次未正常退出")),
+              QStringLiteral("管理器条件：上次未正常退出要唤起"));
+        check(plugin_manager_launch_reason(false, 2, 0).contains(QStringLiteral("插件加载失败")),
+              QStringLiteral("管理器条件：插件加载失败要唤起"));
+        check(plugin_manager_launch_reason(false, 0, 3).contains(QStringLiteral("缺前置")),
+              QStringLiteral("管理器条件：缺前置自动禁用要唤起"));
         hub.log_line(QStringLiteral("待清空 A"));
         if (hub.log_box() != nullptr) hub.log_box()->flush();
         const int before = hub.log_box() != nullptr ? hub.log_box()->blockCount() : 0;
@@ -10113,6 +10124,11 @@ SmokeResult run_smoke() {
             check(loud.log_view() != nullptr &&
                       loud.log_view()->toPlainText().contains(QStringLiteral("插件问题")),
                   QStringLiteral("⑫12.4 问题要打进日志栏（启动即可见）"));
+            check(loud.log_view() != nullptr &&
+                      loud.log_view()->toPlainText().contains(
+                          QStringLiteral("PLUGIN-MANAGER dry-run reason=")) &&
+                      loud.log_view()->toPlainText().contains(QStringLiteral("插件加载失败")),
+                  QStringLiteral("⑫12.4 插件加载失败要走独立管理器唤起路径（dry-run 记录）"));
             check(loud.plugin_ui_installed(),
                   QStringLiteral("⑫12.2 加载插件时必须把外壳的 api.ui 装上"));
             check(loud.page_count() == builtin_page_count(),

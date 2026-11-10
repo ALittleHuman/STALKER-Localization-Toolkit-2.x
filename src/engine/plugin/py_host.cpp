@@ -303,6 +303,13 @@ void unregister_services(const std::string& owner) {
     }
 }
 
+// ★ 2026-11-10（P1-6）：`requires` 的启动期检查用（只读 service 表，不加锁外引用）。
+bool service_has_provider(const std::string& name) {
+    auto& table = service_table();
+    std::lock_guard<std::mutex> lock(table.mutex);
+    return table.map.count(name) != 0;
+}
+
 class PyServices {
 public:
     explicit PyServices(std::string owner) : owner_(std::move(owner)) {}
@@ -4079,6 +4086,7 @@ std::vector<RegistrationError> load_python_plugins_impl(
         std::vector<std::pair<std::string, std::string>> depends;
         std::vector<std::string> provides;
         std::vector<std::string> replaces;
+        std::vector<std::string> service_requires;   // ★ P1-6：PLUGIN_INFO.requires（服务名）
         py::object module;
         std::string failure;
     };
@@ -4269,6 +4277,15 @@ std::vector<RegistrationError> load_python_plugins_impl(
                     m.replaces = read_list(info, "replaces");
                     m.depends = read_deps(info, "depends");
                     if (m.depends.empty()) m.depends = read_deps(info, "requires");   // 兼容字典形态
+                    if (info.contains("requires") != 0) {
+                        const py::object req =
+                            py::reinterpret_borrow<py::object>(info["requires"]);
+                        if (py::isinstance<py::list>(req) != 0 ||
+                            py::isinstance<py::tuple>(req) != 0 ||
+                            py::isinstance<py::str>(req) != 0) {
+                            m.service_requires = read_list(info, "requires");
+                        }
+                    }
                 }
             }
             m.module = module;
@@ -4429,6 +4446,22 @@ std::vector<RegistrationError> load_python_plugins_impl(
         ++loaded_python_plugins();
         core::log(core::Level::Info, "Python 插件已加载：" + m.owner + "（id=" + m.id + "）");
         plugin::trace_event("load", "file=" + m.owner + " ret=ok");
+    }
+
+    // ★ 2026-11-10（P1-6，契约 §7.5）：`requires`（跨插件服务）在**加载完成后**检查一次；
+    //   没有提供者 ⇒ 一条可见 Warn（不阻塞加载；服务调用时仍会再报一次"没有提供者"）。
+    for (std::size_t i = 0; i < manifests.size(); ++i) {
+        const Manifest& m = manifests[i];
+        if (!m.failure.empty() || state[i] != 1) continue;
+        for (const std::string& svc : m.service_requires) {
+            if (service_has_provider(svc)) continue;
+            PyLoadSummary::ServiceWarning warning;
+            warning.owner = m.owner;
+            warning.service = svc;
+            warning.message = "插件 " + m.owner + " 需要服务 " + svc + "，当前没有提供者";
+            core::log(core::Level::Warn, warning.message);
+            acc.service_warnings.push_back(std::move(warning));
+        }
     }
 
     return errors;
@@ -4817,11 +4850,16 @@ def _scan(dir_path):
          " loaded=" + std::to_string(summary.loaded) +
          " registrations=" + std::to_string(summary.registrations) +
          " skipped_disabled=" + std::to_string(summary.skipped_disabled) +
+         " service_warnings=" + std::to_string(summary.service_warnings.size()) +
          " errors=" + std::to_string(errors.size()));
     for (const DisabledPluginEntry& entry : read_disabled_plugins(plugin_dir)) {
         emit("PYPLUGINS disabled_by_file file=" + entry.file +
              " id=" + (entry.id.empty() ? "-" : entry.id) +
              " reason=" + one_line(entry.reason));
+    }
+    for (const PyLoadSummary::ServiceWarning& warning : summary.service_warnings) {
+        emit("PYPLUGINS warn service plugin=" + warning.owner + " service=" + warning.service +
+             " message=" + one_line(warning.message));
     }
     for (const RegistrationError& e : errors) {
         emit("PYPLUGINS error plugin=" + e.plugin + " reason=" + one_line(e.message));

@@ -60,6 +60,27 @@ namespace xml = xrkit::engine::xml;
 namespace xrkit::shell {
 namespace {
 
+// ★ 2026-11-10（P0-2）：条件只在这里拼；Hub 与判据共用（避免"源码改了、判据没跟上"）。
+QString join_reasons(const QStringList& reasons) {
+    return reasons.join(QStringLiteral("\n"));
+}
+
+}  // namespace
+
+QString plugin_manager_launch_reason(bool previous_crashed, int plugin_errors,
+                                     int auto_disabled) {
+    QStringList reasons;
+    if (previous_crashed) reasons << QStringLiteral("上次未正常退出（可能由插件导致）");
+    if (plugin_errors > 0) {
+        reasons << QStringLiteral("插件加载失败：%1 个（详见日志）").arg(plugin_errors);
+    }
+    if (auto_disabled > 0) {
+        reasons << QStringLiteral("缺前置被自动禁用：%1 个").arg(auto_disabled);
+    }
+    return join_reasons(reasons);
+}
+namespace {
+
 // ★★ P1：内置六页的**声明清单搬去了 `pages/page_factory.cpp`**（它属于页模块，不属于 Hub）。
 //   这里只剩"造不出来时的兜底页" —— 留着它是因为"页建不出来"必须能被看见，
 //   而不是变成一片空白（零静默）。
@@ -1146,8 +1167,9 @@ void Hub::load_plugins(const QString& plugin_dir) {
     plugin_dir_ = dir;
     // ★ 2026-11-10（用户）：上次没正常退出 ⇒ **先**唤起独立插件管理器再加载插件。
     //   它是独立进程：随后插件把本体拖崩/卡死，管理器仍在，用户可禁用坏插件。
-    if (previous_crashed_) {
-        launch_plugin_manager(QStringLiteral("上次未正常退出（可能由插件导致）"));
+    {
+        const QString crash_reason = plugin_manager_launch_reason(previous_crashed_, 0, 0);
+        if (!crash_reason.isEmpty()) launch_plugin_manager(crash_reason);
     }
     // ⑫12.2：把外壳实现的 `api.ui`（Qt 16 方法）交给插件 —— 插件的面板/按钮
     // 才真能造出控件；`stk_widget*` 仍是不透明句柄，插件不碰 Qt 类型。
@@ -1182,16 +1204,11 @@ void Hub::load_plugins(const QString& plugin_dir) {
     }
     // ★ 2026-11-10：插件加载失败/被自动禁用 ⇒ 唤起**独立进程**插件管理器；
     //   程序缺失时回退到进程内对话框（离屏自检两者都不弹）。
-    if (!plugin_errors_.empty() || !disabled_plugins_.empty()) {
-        QString reason;
-        if (!plugin_errors_.empty()) {
-            reason = QStringLiteral("插件加载失败：%1 个（详见日志）").arg(plugin_errors_.size());
-        }
-        if (!disabled_plugins_.empty()) {
-            if (!reason.isEmpty()) reason += QStringLiteral("\n");
-            reason += QStringLiteral("缺前置被自动禁用：%1 个").arg(disabled_plugins_.size());
-        }
-        if (!launch_plugin_manager(reason) && !disabled_plugins_.empty() &&
+    {
+        const QString reason = plugin_manager_launch_reason(
+            false, static_cast<int>(plugin_errors_.size()),
+            static_cast<int>(disabled_plugins_.size()));
+        if (!reason.isEmpty() && !launch_plugin_manager(reason) && !disabled_plugins_.empty() &&
             qEnvironmentVariableIsEmpty("XRKIT_SMOKE")) {
             QTimer::singleShot(0, this, [this]() { show_plugin_manager(); });
         }
@@ -1217,6 +1234,13 @@ QString Hub::plugin_manager_path() const {
 
 bool Hub::launch_plugin_manager(const QString& reason, bool force) {
     if (!force && plugin_manager_launched_) return true;
+    // ★ 2026-11-10（P0-2）：门禁/自检只记一行，不真起进程（可判红“条件真的走到了”）。
+    if (!qEnvironmentVariableIsEmpty("XRKIT_PLUGIN_MANAGER_DRY_RUN")) {
+        log_line(QStringLiteral("PLUGIN-MANAGER dry-run reason=%1 dir=%2")
+                     .arg(reason, QDir::toNativeSeparators(plugin_dir_)));
+        plugin_manager_launched_ = true;
+        return true;
+    }
     if (!qEnvironmentVariableIsEmpty("XRKIT_SMOKE")) return false;  // 离屏自检不弹
     if (!qEnvironmentVariableIsEmpty("XRKIT_NO_PLUGIN_MANAGER")) return false;
     const QString exe = plugin_manager_path();

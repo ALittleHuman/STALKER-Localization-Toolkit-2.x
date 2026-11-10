@@ -44,9 +44,9 @@ def want(cond: bool, label: str, detail: str = "") -> bool:
     return False
 
 
-def run(program: Path, argv: list[str]) -> tuple[int, str]:
+def run(program: Path, argv: list[str], env: dict | None = None) -> tuple[int, str]:
     proc = subprocess.run([str(program)] + argv, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT)
+                          stderr=subprocess.STDOUT, env=env or os.environ)
     return proc.returncode, proc.stdout.decode("utf-8", "replace")
 
 
@@ -105,13 +105,48 @@ def main() -> int:
         rc, out = run(CLI, ["--py-plugins", str(plugins)])
         want("errors=1" in out, "重新启用后坏插件才会被 import（对照）", out.splitlines()[:2])
 
+        # ★ P0-1：静态扫描不可用（CLI/CPython 起不来）⇒ 退化为文件名列表，仍可禁用坏插件。
+        fallback_dir = work / "plugins_noscan"
+        fallback_dir.mkdir()
+        (fallback_dir / "break.py").write_text(
+            "PLUGIN_INFO = {\"id\": \"demo.break\", \"version\": \"1.0\"}\n"
+            "raise RuntimeError('import 就崩')\n", encoding="utf-8")
+        no_scan = dict(os.environ)
+        no_scan["XRKIT_PLUGIN_MANAGER_NO_SCAN"] = "1"
+        rc, out = run(MANAGER, ["--scan-json", "--plugins", str(fallback_dir)], env=no_scan)
+        want(rc == 0, "扫描不可用时管理器仍退出 0（可救场）", "rc=%d\n%s" % (rc, out[-300:]))
+        fallback_line = [ln for ln in out.splitlines() if ln.startswith("PYPLUGINSCAN-JSON ")]
+        fallback_files = set()
+        fallback_note = ""
+        if fallback_line:
+            try:
+                fallback_items = json.loads(fallback_line[0][len("PYPLUGINSCAN-JSON "):])
+                fallback_files = {str(it.get("file")) for it in fallback_items}
+                fallback_note = " ".join(str(it.get("note", "")) for it in fallback_items)
+            except Exception as exc:  # noqa: BLE001
+                want(False, "降级 JSON 可解析", repr(exc))
+        want("break.py" in fallback_files, "降级清单含文件名", sorted(fallback_files))
+        want("静态扫描不可用" in fallback_note, "降级项明确标注「无法静态解析」", fallback_note[:80])
+        want("scan=unavailable" in out, "有 scan=unavailable 告警", out[-160:])
+        rc, out = run(MANAGER, ["--disable", "break.py", "--plugins", str(fallback_dir)],
+                      env=no_scan)
+        want(rc == 0, "降级模式下仍能禁用", "rc=%d\n%s" % (rc, out[-200:]))
+        rc, out = run(CLI, ["--py-plugins", str(fallback_dir)])
+        want("skipped_disabled=1" in out and "errors=0" in out,
+             "降级禁用后宿主 import 前跳过", out.splitlines()[:2])
+
         hub_src = (ROOT / "src" / "shell" / "hub.cpp").read_text(encoding="utf-8")
         want("QProcess::startDetached" in hub_src and "launch_plugin_manager" in hub_src,
              "本体用独立进程唤起管理器（QProcess::startDetached）")
         want("previous_crashed_" in hub_src and "launch_plugin_manager" in hub_src,
              "本体在「上次未正常退出」时唤起管理器")
+        want("plugin_manager_launch_reason" in hub_src,
+             "唤起条件抽成纯函数（plugin_manager_launch_reason）")
+        want("XRKIT_PLUGIN_MANAGER_DRY_RUN" in hub_src,
+             "有 dry-run 开关供门禁验证分支")
         mgr_src = (ROOT / "tools" / "plugin_manager" / "main.cpp").read_text(encoding="utf-8")
         want("--py-plugins-scan" in mgr_src, "管理器只做静态扫描（--py-plugins-scan）")
+        want("fallback_items" in mgr_src, "扫描失败退化为文件名列表（fallback_items）")
         want("--disable" in mgr_src and "--enable" in mgr_src, "管理器有启停入口")
     finally:
         shutil.rmtree(work, ignore_errors=True)

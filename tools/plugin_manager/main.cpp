@@ -146,6 +146,10 @@ struct ScanItem {
 };
 
 bool run_scan(const QString& plugins_dir, QString* json_line, QString* error) {
+    if (!qEnvironmentVariableIsEmpty("XRKIT_PLUGIN_MANAGER_NO_SCAN")) {
+        *error = QStringLiteral("静态扫描被 XRKIT_PLUGIN_MANAGER_NO_SCAN 禁用（判据夹具）");
+        return false;
+    }
     const QString cli = find_cli();
     if (cli.isEmpty()) {
         *error = QStringLiteral("找不到 xrkit_cli.exe（无法静态扫描；可设 XRKIT_CLI）");
@@ -237,6 +241,23 @@ QString status_of(const ScanItem& item, const QVector<ScanItem>& all,
     return QStringLiteral("已启用");
 }
 
+// ★ 2026-11-10（P0-1）：扫描不可用（CLI 缺失 / CPython 起不来 / 解析失败）时的**退化清单**：
+//   只按文件名列出 `.py`，仍然允许启用/禁用 —— 这正是"坏插件把 Python 搞挂"时管理器要能救场的场景。
+QVector<ScanItem> fallback_items(const QString& plugins_dir) {
+    QVector<ScanItem> out;
+    const QDir dir(plugins_dir);
+    for (const QString& name : dir.entryList({QStringLiteral("*.py")}, QDir::Files, QDir::Name)) {
+        ScanItem item;
+        item.file = name;
+        item.id = QString();           // 无法静态解析 ⇒ id 未知（详情里显式说明）
+        item.name = name;
+        item.version = QStringLiteral("-");
+        item.note = QStringLiteral("静态扫描不可用：仅按文件名列出（仍可禁用/启用）");
+        out.push_back(item);
+    }
+    return out;
+}
+
 class ManagerWindow : public QWidget {
 public:
     ManagerWindow(QString plugins_dir, QString reason)
@@ -246,10 +267,11 @@ public:
 
         banner_ = new QLabel(this);
         banner_->setWordWrap(true);
-        banner_->setText(reason.isEmpty()
-                             ? QStringLiteral("插件目录：%1").arg(QDir::toNativeSeparators(plugins_dir_))
-                             : QStringLiteral("%1\n插件目录：%2")
-                                   .arg(reason, QDir::toNativeSeparators(plugins_dir_)));
+        base_banner_ = reason.isEmpty()
+                           ? QStringLiteral("插件目录：%1").arg(QDir::toNativeSeparators(plugins_dir_))
+                           : QStringLiteral("%1\n插件目录：%2")
+                                 .arg(reason, QDir::toNativeSeparators(plugins_dir_));
+        banner_->setText(base_banner_);
         layout->addWidget(banner_);
 
         auto* buttons = new QHBoxLayout;
@@ -304,13 +326,22 @@ private:
     void refresh() {
         QString json, error;
         items_.clear();
-        if (!run_scan(plugins_dir_, &json, &error)) {
-            detail_->setPlainText(error);
-            table_->setRowCount(0);
-            return;
+        bool scanned = run_scan(plugins_dir_, &json, &error);
+        if (scanned) {
+            items_ = parse_items(json, disabled_, &error);
+            if (!error.isEmpty()) {
+                scanned = false;   // JSON 也读不了 ⇒ 退化为文件名列表
+            }
         }
-        items_ = parse_items(json, disabled_, &error);
-        if (!error.isEmpty()) detail_->setPlainText(error);
+        if (!scanned) {
+            items_ = fallback_items(plugins_dir_);
+            banner_->setText(base_banner_ +
+                             QStringLiteral("\n⚠ 静态扫描不可用：%1\n"
+                                            "已退化为文件名列表（仍可禁用/启用）")
+                                 .arg(error));
+        } else {
+            banner_->setText(base_banner_);
+        }
         disabled_ = {};
         for (const auto& entry : xrkit::plugin::read_disabled_plugins(plugins_dir_.toStdString())) {
             disabled_.push_back(entry);
@@ -325,6 +356,7 @@ private:
             table_->setItem(row, 4, new QTableWidgetItem(status_of(item, items_, disabled_)));
         }
         table_->resizeColumnsToContents();
+        if (!scanned) detail_->setPlainText(error);
     }
 
     void show_detail() {
@@ -380,6 +412,7 @@ private:
     QVector<ScanItem> items_;
     QVector<xrkit::plugin::DisabledPluginEntry> disabled_;
     QLabel* banner_ = nullptr;
+    QString base_banner_;
     QTableWidget* table_ = nullptr;
     QTextEdit* detail_ = nullptr;
 };
@@ -454,10 +487,28 @@ int main(int argc, char** argv) {
     if (scan_json) {
         QString json, error;
         if (!run_scan(plugins_dir, &json, &error)) {
-            fprintf(stderr, "PLUGIN-MANAGER error reason=%s\n", error.toUtf8().constData());
-            return 1;
+            // ★ P0-1：扫描不可用也输出**文件名清单**（exit 0）—— 调用方仍能禁用坏插件。
+            QJsonArray arr;
+            for (const ScanItem& item : fallback_items(plugins_dir)) {
+                QJsonObject obj;
+                obj.insert(QStringLiteral("file"), item.file);
+                obj.insert(QStringLiteral("id"), QString());
+                obj.insert(QStringLiteral("name"), item.name);
+                obj.insert(QStringLiteral("version"), QString());
+                obj.insert(QStringLiteral("repo"), QString());
+                obj.insert(QStringLiteral("provides"), QJsonArray());
+                obj.insert(QStringLiteral("depends"), QJsonObject());
+                obj.insert(QStringLiteral("replaces"), QJsonArray());
+                obj.insert(QStringLiteral("imports"), QJsonArray());
+                obj.insert(QStringLiteral("note"), item.note);
+                arr.append(obj);
+            }
+            const QByteArray compact = QJsonDocument(arr).toJson(QJsonDocument::Compact);
+            printf("PYPLUGINSCAN-JSON %s\n", compact.constData());
+            printf("PLUGIN-MANAGER warn scan=unavailable reason=%s\n", error.toUtf8().constData());
+        } else {
+            printf("PYPLUGINSCAN-JSON %s\n", json.toUtf8().constData());
         }
-        printf("PYPLUGINSCAN-JSON %s\n", json.toUtf8().constData());
         for (const auto& entry : xrkit::plugin::read_disabled_plugins(plugins_dir.toStdString())) {
             printf("PLUGIN-MANAGER disabled file=%s id=%s reason=%s\n", entry.file.c_str(),
                    entry.id.c_str(), entry.reason.c_str());

@@ -97,6 +97,13 @@ struct PyLoadSummary {
     // ★ 2026-11-10：按 `<插件目录>/plugins.disabled` 在 **import 之前**跳过的文件数
     //   （独立插件管理器写入；坏插件根本不会执行）。
     size_t skipped_disabled = 0;
+    // ★ 2026-11-10（P1-6）：`PLUGIN_INFO.requires`（跨插件服务）没有提供者时的**可见告警**。
+    struct ServiceWarning {
+        std::string owner;
+        std::string service;
+        std::string message;
+    };
+    std::vector<ServiceWarning> service_warnings;
 };
 
 // ── ★★ 2026-11-09：**插件前置（模组依赖）缺失 ⇒ 自动禁用** ─────────────────────

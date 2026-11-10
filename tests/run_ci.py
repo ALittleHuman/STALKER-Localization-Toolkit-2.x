@@ -3805,6 +3805,29 @@ def step_host_offline(release: bool) -> None:
         fail("宿主离线判据不通过（见上）")
 
 
+def step_plugin_requires(release: bool) -> None:
+    r"""★ 2026-11-10（P1-6）：`PLUGIN_INFO.requires`（跨插件服务）的**启动期可见告警**。
+
+    契约 §7.5 承诺：`requires` 缺失 ⇒ 启动日志一条可见警告。判据
+    `tests/check_plugin_requires_warning.py`：provider 注册 `demo.svc/1`，
+    consumer 依赖它（**不许**告警），missing 依赖 `demo.absent/1`（**必须**告警）；
+    缺服务不阻塞加载（loaded=3 / errors=0 / service_warnings=1）。
+    """
+    say("[plugin-requires] 服务依赖 requires：缺提供者 ⇒ 启动期可见告警")
+    script = ROOT / "tests" / "check_plugin_requires_warning.py"
+    if not require_repo_file(script, "requires 告警判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓ ", "✗ ", "PLUGIN-REQUIRES", "!!")):
+            say("  " + s[:170])
+    if rc2 == 0:
+        ok("requires：缺服务启动期告警、有提供者不告警、不阻塞加载")
+    else:
+        fail("requires 启动期告警不成立（见上）")
+
+
 def step_plugin_manager(release: bool) -> None:
     r"""★ 2026-11-10（用户）：**独立进程的插件管理器**（本体崩了它也能开）。
 
@@ -8165,6 +8188,7 @@ STEPS = [
     ("plugin-deps", step_plugin_deps),
     ("net-plugin", step_net_plugin),
     ("plugin-manager", step_plugin_manager),
+    ("plugin-requires", step_plugin_requires),
     ("plugin-metadata", step_plugin_metadata),
     # ★ 2026-11-09（F4435）：本步（P17-98 日志缓冲锁/注册表字据）此前只定义、**从未登记** ⇒ 判据从不运行。
     ("plugin-contract", step_plugin_contract),
