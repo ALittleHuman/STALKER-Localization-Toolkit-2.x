@@ -266,10 +266,10 @@ XmlPage::XmlPage(QWidget* parent)
 
     // ── ★★ 2026-10-27：第三模式「提取文本」的选项行（默认隐藏；一侧为空时出现）──────
     auto* checks_row = new QHBoxLayout;
-    auto* out_row = new QHBoxLayout;
     extract_hint_ = new QLabel(
-        QStringLiteral("检测到一侧为空：切到「提取文本」——硬编码文本表始终生成；"
-                       "下面两个选项分别决定「复制语言包」与「写回脚本/配置」"));
+        QStringLiteral("检测到一侧为空：切到「提取文本」——输出直接建在空的一侧（完整树），"
+                       "不再另选输出根；硬编码文本表始终生成；下面两个选项分别决定"
+                       "「复制语言包」与「写回脚本/配置」"));
     extract_hint_->setObjectName(QStringLiteral("xml_extract_hint"));
     extract_hint_->setWordWrap(true);
     texts_check_ = new QCheckBox(QStringLiteral("复制语言包（文本 XML/字体/localization）"));
@@ -280,29 +280,10 @@ XmlPage::XmlPage(QWidget* parent)
     rewrite_check_->setObjectName(QStringLiteral("xml_extract_rewritten"));
     rewrite_check_->setChecked(true);
     rewrite_check_->setToolTip(QStringLiteral("勾选=改写后的脚本/配置写进输出；不勾=只出文本表"));
-    extract_out_edit_ = new QLineEdit;
-    extract_out_edit_->setObjectName(QStringLiteral("xml_extract_out"));
-    extract_out_edit_->setPlaceholderText(QStringLiteral("留空 = 用空的一侧作为输出根"));
-    extract_out_edit_->setToolTip(
-        QStringLiteral("语言包、文本表和改写后的 scripts/config 都写到这个目录；\n"
-                       "留空 = 用空的一侧（页面里那个空文件夹）作为输出根。"));
-    auto* extract_browse = new QPushButton(QStringLiteral("选择…"));   // 与全站路径行同一文案
-    extract_browse->setObjectName(QStringLiteral("xml_extract_browse"));
-    QObject::connect(extract_browse, &QPushButton::clicked, this, [this] {
-        const QString picked = QFileDialog::getExistingDirectory(
-            this, QStringLiteral("选择输出目录"),
-            extract_out_edit_->text().trimmed().isEmpty()
-                ? QDir::homePath()
-                : QDir::toNativeSeparators(extract_out_edit_->text().trimmed()));
-        if (!picked.isEmpty()) extract_out_edit_->setText(QDir::toNativeSeparators(picked));
-    });
-    // 复选框在上、输出目录在下：先选“做什么”，再选“写到哪”。
+    // 复选框在上、输出目录固定为空的一侧：先选“做什么”，完整树就是输出。
     checks_row->addWidget(texts_check_, 0);
     checks_row->addWidget(rewrite_check_, 0);
     checks_row->addStretch(1);
-    out_row->addWidget(new QLabel(QStringLiteral("输出到：")), 0);
-    out_row->addWidget(extract_out_edit_, 1);
-    out_row->addWidget(extract_browse, 0);
     auto* extract_wrap = new QWidget;
     extract_wrap->setObjectName(QStringLiteral("xml_extract_row"));
     // 不填背景：QWidget 默认会用窗口色（深色主题下就是一块黑底），这里只要透明。
@@ -312,7 +293,6 @@ XmlPage::XmlPage(QWidget* parent)
     extract_box->setContentsMargins(0, 0, 0, 0);
     extract_box->addWidget(extract_hint_, 0);
     extract_box->addLayout(checks_row);
-    extract_box->addLayout(out_row);
     extract_wrap->setVisible(false);
     body_layout()->addWidget(extract_wrap, 0);
     extract_wrap_ = extract_wrap;
@@ -1364,12 +1344,11 @@ void XmlPage::run_extract() {
     // worker 不许读控件 ⇒ 复选框状态在主线程快照
     const bool want_rewritten = rewrite_check_ != nullptr && rewrite_check_->isChecked();
     const bool want_texts = texts_check_ != nullptr && texts_check_->isChecked();
-    const QString out_override = extract_out_edit_->text().trimmed();
     set_compare_controls_enabled(false);
     const bool started = task_->run(
         QStringLiteral("提取文本"),
-        [this, a, b, want_rewritten, want_texts, out_override](const ProgressSink& progress,
-                                                              const MessageSink& message) {
+        [this, a, b, want_rewritten, want_texts](const ProgressSink& progress,
+                                                 const MessageSink& message) {
             const auto should_stop = [this]() {
                 return task_ != nullptr && task_->cancel_requested();
             };
@@ -1409,8 +1388,8 @@ void XmlPage::run_extract() {
                 return;
             }
             const QString source = a_empty ? b : a;
-            const QString out_root =
-                out_override.isEmpty() ? (a_empty ? a : b) : out_override;
+            // 空的一侧就是输出根：完整树直接建在那里，不再让用户另选。
+            const QString out_root = a_empty ? a : b;
 
             // ★ 业务编排只有引擎一份（CLI/GUI 共用）；页面只负责空侧判定/展示。
             xrkit::engine::text::ExtractPackOptions opt;
