@@ -8,6 +8,7 @@ add_library(xrkit_core STATIC
   sha256.cpp
   xlsx.cpp
   case_fold.cpp
+  plugin_disabled.cpp
   theme.cpp
     runtime.cpp)
 

@@ -93,7 +93,7 @@ if (-not (Test-Path (Join-Path $qt 'bin\windeployqt.exe'))) { throw "找不到 w
 #   但修前这段"清进程"排在 PlanOnly 分支之前 ⇒ 只跑个计划也可能**杀掉用户正在用的
 #   xrkit_app / ffmpeg / ffprobe**。⇒ 整段收进 `if (-not $PlanOnly)`。
 if (-not $PlanOnly) {
-$busy = @(Get-Process xrkit_app, xrkit_cli, ffmpeg, ffprobe -ErrorAction SilentlyContinue |
+$busy = @(Get-Process xrkit_app, xrkit_cli, xrkit_plugin_manager, ffmpeg, ffprobe -ErrorAction SilentlyContinue |
           Where-Object { $_.Id -ne $PID })
 if ($busy.Count -gt 0) {
     # 用户口径（2026-10-20）：「要么明确拒绝并提示先关掉，要么**停止并写日志**」。
@@ -178,6 +178,14 @@ if (-not (Test-Path $cli)) {
     throw "找不到 xrkit_cli.exe（先跑 scripts\build.ps1 -Preset msvc-release）"
 }
 Copy-Item -LiteralPath $cli -Destination $stage
+
+# ★ 2026-11-10（用户）：**独立插件管理器**随包 —— 本体崩了/被插件拖死时也能打开它禁用坏插件。
+Write-Host "== 复制独立插件管理器 =="
+$pm = Join-Path $root 'build\msvc-shell\src\shell\xrkit_plugin_manager.exe'
+if (-not (Test-Path $pm)) {
+    throw "找不到 xrkit_plugin_manager.exe（先跑 scripts\build.ps1 -Preset msvc-shell）"
+}
+Copy-Item -LiteralPath $pm -Destination $stage
 
 # ★★ 插件改装 P2a/P2c（2026-10-07）：**CPython 运行期 + 标准库都随包**。
 #   引擎链接了 `python3XX.lib`（插件＝`.py`，宿主在引擎层）：

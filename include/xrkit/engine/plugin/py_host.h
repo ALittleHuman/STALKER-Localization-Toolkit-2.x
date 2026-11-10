@@ -94,6 +94,9 @@ struct PyLoadSummary {
     size_t files = 0;          // 扫到的 `*.py` 个数
     size_t loaded = 0;         // `register(api)` 正常跑完的插件数
     size_t registrations = 0;  // 这些插件合计注册进 `Registry` 的条数
+    // ★ 2026-11-10：按 `<插件目录>/plugins.disabled` 在 **import 之前**跳过的文件数
+    //   （独立插件管理器写入；坏插件根本不会执行）。
+    size_t skipped_disabled = 0;
 };
 
 // ── ★★ 2026-11-09：**插件前置（模组依赖）缺失 ⇒ 自动禁用** ─────────────────────

@@ -32,6 +32,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QGroupBox>
+#include <QProcess>
 #include <QTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -275,6 +276,7 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
             xrkit::core::mark_session_started(log_dir.toStdString(), log_file_path_.toStdString());
         }
         if (sweep.previous_crashed) {
+            previous_crashed_ = true;
             log_line(QStringLiteral("上次没有正常退出；崩溃现场日志已保留：%1")
                          .arg(QDir::toNativeSeparators(QString::fromStdString(sweep.kept_log))));
         } else if (!sweep.removed_log.empty()) {
@@ -347,8 +349,10 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     QMenu* tools_menu = menuBar()->addMenu(QStringLiteral("工具"));
     QAction* plugin_manager_action = tools_menu->addAction(QStringLiteral("插件管理器…"));
     plugin_manager_action->setObjectName(QStringLiteral("plugin_manager_action"));
-    connect(plugin_manager_action, &QAction::triggered, this,
-            [this]() { show_plugin_manager(); });
+    connect(plugin_manager_action, &QAction::triggered, this, [this]() {
+        // ★ 2026-11-10：手动入口优先**独立进程**；管理器程序缺失才回退进程内对话框。
+        if (!launch_plugin_manager(QStringLiteral("手动打开"), true)) show_plugin_manager();
+    });
     QAction* release_page = help_menu->addAction(QStringLiteral("查看最新版本（打开发布页）"));
     QAction* copy_link = help_menu->addAction(QStringLiteral("复制发布页链接"));
     connect(copy_link, &QAction::triggered, this, [this] {
@@ -1139,6 +1143,12 @@ void Hub::load_plugins(const QString& plugin_dir) {
     const QString dir = plugin_dir.isEmpty()
                             ? QDir(xrkit::core::app_dir().c_str()).filePath(QStringLiteral("plugins"))
                             : plugin_dir;
+    plugin_dir_ = dir;
+    // ★ 2026-11-10（用户）：上次没正常退出 ⇒ **先**唤起独立插件管理器再加载插件。
+    //   它是独立进程：随后插件把本体拖崩/卡死，管理器仍在，用户可禁用坏插件。
+    if (previous_crashed_) {
+        launch_plugin_manager(QStringLiteral("上次未正常退出（可能由插件导致）"));
+    }
     // ⑫12.2：把外壳实现的 `api.ui`（Qt 16 方法）交给插件 —— 插件的面板/按钮
     // 才真能造出控件；`stk_widget*` 仍是不透明句柄，插件不碰 Qt 类型。
     // ★★ 决策 1（C ABI 退净）：不再有 `qt_plugin_ui()` 这个入参 —— 唯一入口只认目录。
@@ -1169,12 +1179,64 @@ void Hub::load_plugins(const QString& plugin_dir) {
     if (!disabled_plugins_.empty()) {
         log_line(QStringLiteral("插件：%1 个因缺前置被自动禁用（详见插件管理器）")
                      .arg(disabled_plugins_.size()));
-        // ★ 启动完成后再弹（构造期 exec() 会卡住窗口初始化；离屏自检不弹）。
-        if (qEnvironmentVariableIsEmpty("XRKIT_SMOKE")) {
+    }
+    // ★ 2026-11-10：插件加载失败/被自动禁用 ⇒ 唤起**独立进程**插件管理器；
+    //   程序缺失时回退到进程内对话框（离屏自检两者都不弹）。
+    if (!plugin_errors_.empty() || !disabled_plugins_.empty()) {
+        QString reason;
+        if (!plugin_errors_.empty()) {
+            reason = QStringLiteral("插件加载失败：%1 个（详见日志）").arg(plugin_errors_.size());
+        }
+        if (!disabled_plugins_.empty()) {
+            if (!reason.isEmpty()) reason += QStringLiteral("\n");
+            reason += QStringLiteral("缺前置被自动禁用：%1 个").arg(disabled_plugins_.size());
+        }
+        if (!launch_plugin_manager(reason) && !disabled_plugins_.empty() &&
+            qEnvironmentVariableIsEmpty("XRKIT_SMOKE")) {
             QTimer::singleShot(0, this, [this]() { show_plugin_manager(); });
         }
     }
     render_plugin_slots();
+}
+
+// ★ 2026-11-10（用户）：独立插件管理器 —— 路径解析（环境变量可覆盖；包内与开发树都找）。
+QString Hub::plugin_manager_path() const {
+    const QString env = qEnvironmentVariable("XRKIT_PLUGIN_MANAGER");
+    if (!env.isEmpty() && QFileInfo::exists(env)) return env;
+    const QString base = QString::fromStdString(xrkit::core::app_dir());
+    const QStringList candidates = {
+        base + QStringLiteral("/xrkit_plugin_manager.exe"),
+        base + QStringLiteral("/tools/xrkit_plugin_manager.exe"),
+        base + QStringLiteral("/../xrkit_plugin_manager.exe"),
+    };
+    for (const QString& path : candidates) {
+        if (QFileInfo::exists(path)) return QFileInfo(path).absoluteFilePath();
+    }
+    return QString();
+}
+
+bool Hub::launch_plugin_manager(const QString& reason, bool force) {
+    if (!force && plugin_manager_launched_) return true;
+    if (!qEnvironmentVariableIsEmpty("XRKIT_SMOKE")) return false;  // 离屏自检不弹
+    if (!qEnvironmentVariableIsEmpty("XRKIT_NO_PLUGIN_MANAGER")) return false;
+    const QString exe = plugin_manager_path();
+    if (exe.isEmpty()) {
+        log_line(QStringLiteral("插件管理器程序不存在（xrkit_plugin_manager.exe）—— 回退内置对话框"));
+        return false;
+    }
+    QStringList args;
+    if (!plugin_dir_.isEmpty()) args << QStringLiteral("--plugins") << plugin_dir_;
+    if (!reason.isEmpty()) args << QStringLiteral("--reason") << reason;
+    if (!QProcess::startDetached(exe, args)) {
+        log_line(QStringLiteral("插件管理器启动失败：%1").arg(QDir::toNativeSeparators(exe)));
+        return false;
+    }
+    plugin_manager_launched_ = true;
+    log_line(QStringLiteral("已打开独立插件管理器：%1%2")
+                 .arg(QDir::toNativeSeparators(exe),
+                      reason.isEmpty() ? QString()
+                                       : QStringLiteral("（%1）").arg(reason)));
+    return true;
 }
 
 // ★★ 2026-11-09（用户口径）：**插件管理器**（缺前置说明）——一次启动只弹一次。

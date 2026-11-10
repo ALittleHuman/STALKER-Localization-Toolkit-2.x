@@ -107,3 +107,16 @@ set_target_properties(xrkit_build_gui PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 # 构建器也链了 xrkit_shell → xrkit_engine → CPython ⇒ 同样要 DLL 在旁（P2）
 xrkit_attach_python_runtime(xrkit_build_gui)
+
+# ★ 2026-11-10（用户）：**独立进程的插件管理器** —— 本体崩了/被插件拖死，它照样能开。
+#   只做静态清单（调 `xrkit_cli --py-plugins-scan`，不 import 插件）＋启停；
+#   因此只链 xrkit_core（禁用清单实现）与 Qt Widgets，**不链 xrkit_shell/engine**。
+qt_add_executable(xrkit_plugin_manager "${CMAKE_SOURCE_DIR}/tools/plugin_manager/main.cpp")
+target_sources(xrkit_plugin_manager PRIVATE "${CMAKE_SOURCE_DIR}/assets/app.rc")
+target_sources(xrkit_plugin_manager PRIVATE "${CMAKE_SOURCE_DIR}/assets/xrkit_winres.rc")
+target_compile_definitions(xrkit_plugin_manager PRIVATE XRKIT_WINRES_GUI)
+target_link_libraries(xrkit_plugin_manager PRIVATE xrkit_core xrkit_flags Qt6::Widgets)
+set_target_properties(xrkit_plugin_manager PROPERTIES
+  OUTPUT_NAME "xrkit_plugin_manager"
+  WIN32_EXECUTABLE TRUE
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

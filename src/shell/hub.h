@@ -175,6 +175,13 @@ private:
     //   把**所有**这类插件与缺失项放在同一个框里逐条说明（不出现滚动条）。
     std::vector<xrkit::plugin::PluginDisabledInfo> disabled_plugins_;
     void show_plugin_manager();
+    // ★ 2026-11-10（用户）：独立的插件管理器进程。`force=true`（手动菜单）每次新开；
+    //   `false`（崩溃/插件问题自动唤起）一次启动最多一次。
+    bool launch_plugin_manager(const QString& reason, bool force = false);
+    QString plugin_manager_path() const;
+    QString plugin_dir_;
+    bool previous_crashed_ = false;
+    bool plugin_manager_launched_ = false;
     int plugin_slots_rendered_ = 0;
     int plugin_pages_added_ = 0;   // 当前**可见**的插件页数（owner != kBuiltinPageOwner）
     // ★ P1：三份数组**同长同序**（标签条下标 = 页栈下标 = 这里的下标），自检会交叉核对。

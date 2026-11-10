@@ -1,4 +1,5 @@
 #include "xrkit/engine/plugin/py_host.h"
+#include "xrkit/core/plugin_disabled.h"
 
 // ★ P3：控件门面（`api.ui.*` 的实现入口）—— 引擎层只持有外壳注入的表
 #include "xrkit/engine/plugin/widget_facade.h"
@@ -4019,7 +4020,26 @@ std::vector<RegistrationError> load_python_plugins_impl(
     }
     std::sort(files.begin(), files.end());
     acc.files = files.size();
-    if (files.empty()) return errors;   // 目录里没有 .py ⇒ 一条都不记（不制造噪声）
+    // ★ 2026-11-10（独立插件管理器）：按 `<dir>/plugins.disabled` 在 **import 之前**跳过。
+    //   坏插件根本不会执行 ⇒ 管理器把它禁用后，宿主下一次启动不会被它拖死。
+    {
+        const std::vector<DisabledPluginEntry> disabled_entries = read_disabled_plugins(dir);
+        if (!disabled_entries.empty()) {
+            std::vector<std::string> kept;
+            kept.reserve(files.size());
+            for (const std::string& file : files) {
+                const std::string name = base_name(file);
+                if (is_file_disabled(disabled_entries, name)) {
+                    ++acc.skipped_disabled;
+                    core::log(core::Level::Info, "插件按禁用清单跳过：" + name);
+                    continue;
+                }
+                kept.push_back(file);
+            }
+            files.swap(kept);
+        }
+    }
+    if (files.empty()) return errors;   // 目录里没有 .py（或全被禁用）⇒ 一条都不记（不制造噪声）
 
 #ifndef XRKIT_WITH_PYTHON
     const std::string why = python_status().reason;
@@ -4458,6 +4478,7 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
     };
     bool want_host = false;
     bool want_plugins = false;
+    bool want_scan = false;
     bool want_ui = false;
     bool want_plugin_call = false;
     bool want_json = false;
@@ -4473,6 +4494,10 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
         }
         if (a == "--py-plugins") {
             want_plugins = true;
+            continue;
+        }
+        if (a == "--py-plugins-scan") {
+            want_scan = true;
             continue;
         }
         if (a == "--json") {
@@ -4509,13 +4534,121 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
         if (!a.empty() && a[0] == '-') continue;   // 其余开关不由本探针管
         if (dir.empty()) dir = a;                   // 第一个操作数 = 插件目录
     }
-    if (!want_host && !want_plugins && !want_ui && !want_plugin_call) {
+    if (!want_host && !want_plugins && !want_ui && !want_plugin_call && !want_scan) {
         emit("PYHOST error reason=用法：--python-host | --py-plugins [目录] | --ui-facade | "
-             "--py-plugin-call [目录] [JSON]");
+             "--py-plugin-call [目录] [JSON] | --py-plugins-scan [目录]");
         return 3;
     }
 
 #ifdef XRKIT_WITH_PYTHON
+    if (want_scan) {
+        // ★ 2026-11-10（独立插件管理器）：**纯静态清单扫描** —— 只 ast.parse，
+        //   **绝不 import/执行插件**。坏插件（顶层就 raise/死循环）也能被列出来，
+        //   管理器据此决定禁用谁；宿主不需要参与。
+        const std::string plugin_dir = dir.empty() ? (xrkit::core::app_dir() + "/plugins") : dir;
+        const PyHostStatus host = init_python(home);
+        emit(std::string("PYPLUGINSCAN host=") +
+             (host.initialized ? "ok" : (host.enabled ? "failed" : "disabled")) +
+             " version=" + (host.version.empty() ? "-" : host.version) + " dir=" + plugin_dir);
+        if (!host.enabled) {
+            emit("PYPLUGINSCAN reason=" + host.reason);
+            return 2;
+        }
+        if (!host.initialized) {
+            emit("PYPLUGINSCAN reason=" + one_line(host.reason));
+            return 1;
+        }
+        py::gil_scoped_acquire gil;
+        py::dict g = py::module_::import("builtins").attr("__dict__");
+        py::exec(R"PY(
+import ast, json, os
+
+def _str(info, key):
+    v = info.get(key, "")
+    return str(v).strip() if v is not None else ""
+
+def _list(info, key):
+    v = info.get(key)
+    if isinstance(v, (list, tuple, set)):
+        return [str(x) for x in v if str(x)]
+    if isinstance(v, str) and v.strip():
+        return [v.strip()]
+    return []
+
+def _deps(info, key):
+    v = info.get(key)
+    if not isinstance(v, dict):
+        return {}
+    return {str(k): (str(x).strip() or "*") for k, x in v.items()}
+
+def _meta(path):
+    base = os.path.splitext(os.path.basename(path))[0]
+    out = {"file": os.path.basename(path), "id": base, "name": base, "version": "",
+           "repo": "", "provides": [], "depends": {}, "replaces": [],
+           "imports": [], "note": ""}
+    try:
+        with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
+            tree = ast.parse(fh.read())
+    except Exception as exc:
+        out["note"] = "无法解析：%s" % (exc,)
+        return out
+    names = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            names.extend(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.append(node.module)
+    out["imports"] = sorted(set(names))
+    info = None
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "PLUGIN_INFO" for t in node.targets):
+            try:
+                value = ast.literal_eval(node.value)
+            except Exception:
+                out["note"] = "PLUGIN_INFO 不是字面量（无法静态读取）"
+                return out
+            info = value if isinstance(value, dict) else None
+            if info is None:
+                out["note"] = "PLUGIN_INFO 不是字典"
+            break
+    if not out["note"] and info is not None:
+        out["id"] = _str(info, "id") or base
+        out["name"] = _str(info, "name") or out["id"]
+        out["version"] = _str(info, "version")
+        out["repo"] = _str(info, "repo")
+        out["provides"] = _list(info, "provides")
+        out["replaces"] = _list(info, "replaces")
+        out["depends"] = _deps(info, "depends") or _deps(info, "requires")
+    elif info is None and not out["note"]:
+        out["note"] = "无 PLUGIN_INFO（按文件名）"
+    return out
+
+def _scan(dir_path):
+    items = []
+    for name in sorted(os.listdir(dir_path)):
+        if not name.lower().endswith(".py"):
+            continue
+        items.append(_meta(os.path.join(dir_path, name)))
+    return items
+)PY", g);
+        py::list items;
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(plugin_dir, ec)) {
+            if (!entry.is_regular_file() || entry.path().extension() != ".py") continue;
+            items.append(g["_meta"](entry.path().string()));
+        }
+        py::str dumped = py::module_::import("json").attr("dumps")(
+            items, py::arg("ensure_ascii") = false);
+        emit("PYPLUGINSCAN-JSON " + dumped.cast<std::string>());
+        for (const DisabledPluginEntry& entry : read_disabled_plugins(plugin_dir)) {
+            emit("PYPLUGINSCAN disabled_by_file file=" + entry.file +
+                 " id=" + (entry.id.empty() ? "-" : entry.id) +
+                 " reason=" + one_line(entry.reason));
+        }
+        return 0;
+    }
+
     if (want_ui) {
         // ★★ P3 **能力表探针**：把 `xrkit` 模块里**实际暴露**的名字逐条打出来 ——
         //   判据（`tests/check_ui_capability_table.py`）拿它与**预期表**逐条对账，
@@ -4683,7 +4816,13 @@ int run_python_host_probe(const std::vector<std::string>& args, const LineSink& 
     emit("PYPLUGINS files=" + std::to_string(summary.files) +
          " loaded=" + std::to_string(summary.loaded) +
          " registrations=" + std::to_string(summary.registrations) +
+         " skipped_disabled=" + std::to_string(summary.skipped_disabled) +
          " errors=" + std::to_string(errors.size()));
+    for (const DisabledPluginEntry& entry : read_disabled_plugins(plugin_dir)) {
+        emit("PYPLUGINS disabled_by_file file=" + entry.file +
+             " id=" + (entry.id.empty() ? "-" : entry.id) +
+             " reason=" + one_line(entry.reason));
+    }
     for (const RegistrationError& e : errors) {
         emit("PYPLUGINS error plugin=" + e.plugin + " reason=" + one_line(e.message));
         // ★ 回滚判据的可见面：坏插件这次注册进表的东西**必须为 0**（按 owner 逐容器报账）。

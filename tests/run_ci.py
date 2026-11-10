@@ -3805,6 +3805,36 @@ def step_host_offline(release: bool) -> None:
         fail("宿主离线判据不通过（见上）")
 
 
+def step_plugin_manager(release: bool) -> None:
+    r"""★ 2026-11-10（用户）：**独立进程的插件管理器**（本体崩了它也能开）。
+
+    判据（`tests/check_plugin_manager.py`）：
+      · 管理器 `--scan-json` 是纯静态扫描 —— 夹具插件**顶层就 raise** 也必须被列出
+        （证明管理器不 import 插件）；
+      · `--disable/--enable` 写 `plugins.disabled`；宿主 `--py-plugins` 在 import **之前**跳过
+        （禁用后 `skipped_disabled=1 errors=0`，重新启用才报 import 错误）；
+      · 静态锁：本体用 `QProcess::startDetached` 唤起独立 exe、启动时看 `previous_crashed_`；
+        管理器只调 `--py-plugins-scan`。
+    """
+    say("[plugin-manager] 独立插件管理器：静态扫描 + 禁用清单 + 本体唤起")
+    script = ROOT / "tests" / "check_plugin_manager.py"
+    if not require_repo_file(script, "插件管理器判据脚本"):
+        return
+    manager = ROOT / "build" / "msvc-shell" / "src" / "shell" / "xrkit_plugin_manager.exe"
+    if not manager.is_file():
+        prereq("xrkit_plugin_manager.exe（msvc-shell 构建）", "缺管理器产物", release)
+        return
+    rc2, out = run([sys.executable, str(script)], timeout=300)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓ ", "✗ ", "PLUGIN-MANAGER", "!!")):
+            say("  " + s[:170])
+    if rc2 == 0:
+        ok("插件管理器：独立进程、静态扫描不 import、禁用清单在 import 前生效")
+    else:
+        fail("插件管理器判据不成立（见上）")
+
+
 def step_net_plugin(release: bool) -> None:
     r"""★ 2026-11-09（用户："开始搞联网插件"）：**单文件联网插件**端到端（离线）。
 
@@ -8134,6 +8164,7 @@ STEPS = [
     ("plugin-services", step_plugin_services),
     ("plugin-deps", step_plugin_deps),
     ("net-plugin", step_net_plugin),
+    ("plugin-manager", step_plugin_manager),
     ("plugin-metadata", step_plugin_metadata),
     # ★ 2026-11-09（F4435）：本步（P17-98 日志缓冲锁/注册表字据）此前只定义、**从未登记** ⇒ 判据从不运行。
     ("plugin-contract", step_plugin_contract),
