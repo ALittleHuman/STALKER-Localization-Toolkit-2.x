@@ -166,7 +166,6 @@ private:
     class QCheckBox* texts_check_ = nullptr;
     class QCheckBox* rewrite_check_ = nullptr;
     class QPushButton* extract_button_ = nullptr;
-    class QLabel* extract_hint_ = nullptr;
     class QWidget* extract_wrap_ = nullptr;
     class QPushButton* start_button_ = nullptr;
 

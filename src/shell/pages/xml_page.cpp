@@ -265,13 +265,8 @@ XmlPage::XmlPage(QWidget* parent)
     opt_row->addWidget(align_check_, 0);
 
     // ── ★★ 2026-10-27：第三模式「提取文本」的选项行（默认隐藏；一侧为空时出现）──────
+    // ★ 2026-11-10（用户）：不再写任何说明文字；复选框直接放在模式行下面、结果区上面。
     auto* checks_row = new QHBoxLayout;
-    extract_hint_ = new QLabel(
-        QStringLiteral("检测到一侧为空：切到「提取文本」——输出直接建在空的一侧（完整树），"
-                       "不再另选输出根；硬编码文本表始终生成；下面两个选项分别决定"
-                       "「复制语言包」与「写回脚本/配置」"));
-    extract_hint_->setObjectName(QStringLiteral("xml_extract_hint"));
-    extract_hint_->setWordWrap(true);
     texts_check_ = new QCheckBox(QStringLiteral("复制语言包（文本 XML/字体/localization）"));
     texts_check_->setObjectName(QStringLiteral("xml_extract_texts"));
     texts_check_->setChecked(true);
@@ -291,10 +286,10 @@ XmlPage::XmlPage(QWidget* parent)
     extract_wrap->setStyleSheet(QStringLiteral("background: transparent;"));
     auto* extract_box = new QVBoxLayout(extract_wrap);
     extract_box->setContentsMargins(0, 0, 0, 0);
-    extract_box->addWidget(extract_hint_, 0);
     extract_box->addLayout(checks_row);
     extract_wrap->setVisible(false);
-    body_layout()->addWidget(extract_wrap, 0);
+    // 放在模式行与结果区之间（索引 3）；不占结果区/进度条的位置。
+    body_layout()->insertWidget(3, extract_wrap);
     extract_wrap_ = extract_wrap;
     // ★ 2026-11-10（用户）：**硬编码文本表始终生成** ⇒ 两个框都不勾也可以提取
     //   （只出 `*_texts.xml`，不复制语言包、不写改写产物）。两个框是独立多选：
@@ -1325,9 +1320,6 @@ void XmlPage::update_extract_mode() {
     if (start_button_ != nullptr) start_button_->setVisible(!show);
     if (filter_combo_ != nullptr) filter_combo_->setVisible(!show);
     if (filter_label_ != nullptr) filter_label_->setVisible(!show);
-    if (show && status_ != nullptr) {
-        status_->setText(QStringLiteral("一侧为空：已切到「提取文本」——只抽文本，不复制整树"));
-    }
 }
 
 void XmlPage::run_extract() {
