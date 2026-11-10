@@ -342,7 +342,15 @@ ConvertOutcome convert_bytes(const std::vector<uint8_t>& raw_in, const std::stri
         if (text.size() >= 3 && text.compare(0, 3, "\xEF\xBB\xBF") == 0) text.erase(0, 3);
     };
 
+    bool source_matches_target = false;
     if (sniffed.encoding == target) {
+        // “源已是目标编码”不能只看名字：默认 UTF-8/强制 UTF-8 落到非 UTF-8 字节时
+        // 名字相同但字节无效，直接跳过会把 cp1251 原样复制成“UTF-8”。严格验一遍。
+        std::string valid_text;
+        std::string valid_err;
+        source_matches_target = decode_strict(target, raw.data(), raw.size(), valid_text, valid_err);
+    }
+    if (source_matches_target && !sniffed.low_confidence) {
         // ── 源已是目标编码 ──
         out.skipped = true;
         out.used_encoding = sniffed.encoding;

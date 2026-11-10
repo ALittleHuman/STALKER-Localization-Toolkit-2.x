@@ -384,12 +384,13 @@ SniffResult sniff_encoding(const std::vector<uint8_t>& raw, const std::string& o
         return res;
     }
 
-    // 6. 默认 —— ★ 这是**纯猜**：必须可见（零静默红线）
+    // 6. 默认 —— ★ 2026-11-10（用户口径）：**无法确认就无脑 UTF-8**（不是 cp1251）。
+    //    这是纯猜必须可见；但落点统一 UTF-8（低置信仍弹确认）。
     res.step = SniffStep::Default;
-    res.encoding = kWindows1251;
+    res.encoding = kUtf8;
     res.confidence = 0.0;
     res.low_confidence = true;
-    res.reason = "无声明、统计无决定性 ⇒ 默认 windows-1251（低置信：" +
+    res.reason = "无声明、统计无决定性 ⇒ 无法确认，默认 UTF-8（低置信：" +
                  fmt_score(st.score) + "，证据 " + std::to_string(st.evidence) + " 字节）";
     return res;
 }

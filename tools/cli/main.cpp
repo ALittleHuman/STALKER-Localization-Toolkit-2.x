@@ -1587,9 +1587,9 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
                 only_bo.output_dir = only_out.string();
                 const etxt::BatchOutcome only_deferred = etxt::convert_batch(only_bo, dbh);
                 check(ctx, only_deferred.deferred == 1 &&
-                               only_deferred.deferred_encoding == "windows-1251" &&
+                               only_deferred.deferred_encoding == "utf-8" &&
                                only_deferred.success == 1,
-                      "无单字节样本时延迟文件没有回填 1251（deferred=" +
+                      "无单字节样本时延迟文件没有按“无法确认 ⇒ UTF-8”回填（deferred=" +
                           std::to_string(only_deferred.deferred) + " enc=" +
                           only_deferred.deferred_encoding + " success=" +
                           std::to_string(only_deferred.success) + "）");
