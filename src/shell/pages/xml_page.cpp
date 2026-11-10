@@ -7,6 +7,7 @@
 #include "xrkit/engine/fs/overlay.h"
 #include "xrkit/engine/text/langpack.h"
 #include "xrkit/engine/text/extract.h"
+#include "xrkit/engine/text/extract_pack.h"
 #include "xrkit/engine/text/ori.h"
 #include "xrkit/engine/xml/dirdiff.h"
 
@@ -1352,13 +1353,13 @@ void XmlPage::run_extract() {
     const bool want_texts = texts_check_ != nullptr && texts_check_->isChecked();
     set_compare_controls_enabled(false);
     const bool started = task_->run(
-        QStringLiteral("提取文本"), [this, a, b, want_rewritten, want_texts](const ProgressSink& progress,
-                                                               const MessageSink& message) {
+        QStringLiteral("提取文本"),
+        [this, a, b, want_rewritten, want_texts](const ProgressSink& progress,
+                                                 const MessageSink& message) {
             const auto should_stop = [this]() {
                 return task_ != nullptr && task_->cancel_requested();
             };
             const auto post_status = [this](const QString& text) {
-                // 从 worker 回主线程改页面状态行（排队；不直接碰控件）
                 QMetaObject::invokeMethod(
                     this, [this, text] { status_->setText(text); }, Qt::QueuedConnection);
             };
@@ -1395,239 +1396,45 @@ void XmlPage::run_extract() {
             }
             const QString source = a_empty ? b : a;
             const QString out_root = a_empty ? a : b;
-            // ② 语言包收敛：**可选**（用户 2026-11-10：只抽硬编码文本时不要复制整包）
-            xrkit::engine::text::LangPackCollectResult collected;
-            if (want_texts) {
-                xrkit::engine::text::LangPackCollectOptions copt;
-                copt.source_root = source.toUtf8().toStdString();
-                copt.out_root = out_root.toUtf8().toStdString();
-                // 不指定 langs ⇒ 自动收所有语言（text/<lang> 有几个收几个）
-                collected = xrkit::engine::text::collect_language_pack(copt);
-                QString langs_text;
-                for (const std::string& one : collected.langs) {
-                    if (!langs_text.isEmpty()) langs_text += QStringLiteral(",");
-                    langs_text += utf8(one);
-                }
-                if (collected.ok) {
-                    message("语言包收敛：" + std::to_string(collected.copied) + " 个文件；语言=" +
-                            langs_text.toStdString());
-                    if (collected.langs.size() <= 1) {
-                        message("提示：源里只扫到 1 种语言（要多种语言，请把包含它们的游戏根当源）");
-                    }
-                } else {
-                    message("语言包收敛跳过：" + collected.error);
-                }
-            } else {
-                message("跳过语言包复制：只抽硬编码文本（不复制 text/fonts/localization）");
-            }
-            progress(25);
-            // ③ 抽字面量 → <out>/gamedata/configs/text/rus/；被改写的脚本按勾选决定落不落
-            QString base;
-            const QDir src_dir(source);
-            // ★ 2026-11-09：SoC 用 `config`（单数），CoP/ClS/IXR 用 `configs` —— 两种都认。
-            if (QDir(src_dir.filePath(QStringLiteral("gamedata/configs"))).exists()) {
-                base = src_dir.filePath(QStringLiteral("gamedata/configs"));
-            } else if (QDir(src_dir.filePath(QStringLiteral("gamedata/config"))).exists()) {
-                base = src_dir.filePath(QStringLiteral("gamedata/config"));
-            } else if (QDir(src_dir.filePath(QStringLiteral("configs"))).exists()) {
-                base = src_dir.filePath(QStringLiteral("configs"));
-            } else if (QDir(src_dir.filePath(QStringLiteral("config"))).exists()) {
-                base = src_dir.filePath(QStringLiteral("config"));
-            } else {
-                post_status(QStringLiteral("提取只接受已解包的松散目录（需含 gamedata/configs|config 或 configs|config）"));
+
+            // ★ 业务编排只有引擎一份（CLI/GUI 共用）；页面只负责空侧判定/展示。
+            xrkit::engine::text::ExtractPackOptions opt;
+            opt.source_root = source.toUtf8().toStdString();
+            opt.out_root = out_root.toUtf8().toStdString();
+            opt.copy_language_pack = want_texts;
+            opt.write_rewritten = want_rewritten;
+            opt.should_stop = should_stop;
+            opt.progress = [&progress](int pct) { progress(pct); };
+            opt.message = [&message](const std::string& text) { message(text); };
+            const xrkit::engine::text::ExtractPackResult result =
+                xrkit::engine::text::extract_language_pack(opt);
+            if (result.cancelled) {
+                post_status(QStringLiteral("已取消：停在文件边界（%1 条已出、%2 个已改写）")
+                                .arg(result.strings)
+                                .arg(result.files));
                 return;
             }
-            // ★ 2026-11-08（用户："原来落哪里，提取就落哪里"）：输出**沿用源的相对前缀**
-            //   （源是 `…/gamedata/configs` ⇒ 输出 `gamedata/…`；源是 `…/configs` ⇒ 输出不带 gamedata）。
-            const QString rel_prefix =
-                (QDir(src_dir.filePath(QStringLiteral("gamedata/configs"))).absolutePath() ==
-                     QDir(base).absolutePath() ||
-                 QDir(src_dir.filePath(QStringLiteral("gamedata/config"))).absolutePath() ==
-                     QDir(base).absolutePath())
-                    ? QStringLiteral("gamedata/")
-                    : QString();
-            const QString cfg_name = QFileInfo(base).fileName();   // "configs" 或 "config"
-            // ★ 2026-11-08（用户："要通用，全是扫出来的"）：不假设 `gamedata/` 前缀 ——
-            //   在树里找**所有** `…/configs/text/<lang>`（或 config），语言名从目录名来。
-            const auto find_text_dirs = [](const QString& root) {
-                QStringList dirs;
-                QDirIterator it(root, QDir::Dirs | QDir::NoDotAndDotDot,
-                                QDirIterator::Subdirectories);
-                while (it.hasNext()) {
-                    const QString dir = it.next();
-                    const QFileInfo fi(dir);
-                    if (fi.fileName() != QStringLiteral("configs") &&
-                        fi.fileName() != QStringLiteral("config")) {
-                        continue;
-                    }
-                    const QDir cfg(dir);
-                    if (!cfg.exists(QStringLiteral("text"))) continue;
-                    const QDir text_dir(cfg.filePath(QStringLiteral("text")));
-                    for (const QString& lang :
-                         text_dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
-                        dirs << text_dir.filePath(lang);
-                    }
-                }
-                return dirs;
-            };
-            // ★ 2026-11-09：多语言时先读 `localization.ltx` 的 language；没有就按目录名排序。
-            QString chosen_lang;
-            {
-                QFile ltx(QDir(base).filePath(QStringLiteral("localization.ltx")));
-                if (ltx.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                    const QString content = QString::fromUtf8(ltx.readAll());
-                    const QRegularExpression re(
-                        QStringLiteral("language\\s*=\\s*([A-Za-z0-9_-]+)"));
-                    const auto m = re.match(content);
-                    if (m.hasMatch()) chosen_lang = m.captured(1);
-                }
+            if (!result.ok) {
+                post_status(QStringLiteral("提取失败：%1").arg(utf8(result.error)));
+                return;
             }
-            QStringList text_dirs;
-            QString texts_out;
-            if (want_texts) {
-                text_dirs = find_text_dirs(out_root);
-                if (text_dirs.isEmpty()) {
-                    // ★ 2026-11-08（用户："工具必须完全独立"）：不发明语言目录。
-                    post_status(QStringLiteral("源里没有 configs/text/<语言> 目录：抽不出语言包"
-                                               "（只有 scripts/gameplay 时请先确认源的结构）"));
-                    return;
-                }
-                text_dirs.sort();
-                QStringList ordered;
-                if (!chosen_lang.isEmpty()) {
-                    for (const QString& dir : text_dirs) {
-                        if (QFileInfo(dir).fileName() == chosen_lang) ordered << dir;
-                    }
-                }
-                for (const QString& dir : text_dirs) {
-                    if (!ordered.contains(dir)) ordered << dir;
-                }
-                texts_out = ordered.front();
-                message("提取语言：" + QFileInfo(texts_out).fileName().toStdString() +
-                        (chosen_lang.isEmpty() ? "（未找到 localization.ltx，按目录名排序取第一）"
-                                               : "（取自 localization.ltx）"));
-            } else {
-                // 只抽硬编码文本：不复制语言包，但文本表仍要落一个语言目录。
-                const QStringList source_text_dirs = find_text_dirs(source);
-                QString lang = chosen_lang;
-                if (lang.isEmpty() && !source_text_dirs.isEmpty()) {
-                    QStringList names;
-                    for (const QString& dir : source_text_dirs) {
-                        names << QFileInfo(dir).fileName();
-                    }
-                    names.sort();
-                    lang = names.first();
-                }
-                if (lang.isEmpty()) {
-                    post_status(QStringLiteral("无法确定输出语言：源里没有 configs/text/<语言>，"
-                                               "也没有 localization.ltx；请保留一个语言目录再提取"));
-                    return;
-                }
-                texts_out = QDir(out_root).filePath(rel_prefix + cfg_name +
-                                                    QStringLiteral("/text/") + lang);
-                text_dirs << texts_out;
-                message("只抽硬编码文本：文本表落 " + QDir::toNativeSeparators(texts_out).toStdString() +
-                        (chosen_lang.isEmpty() ? "（源里无 localization.ltx，按目录名排序取第一）"
-                                               : "（取自 localization.ltx）"));
-            }
-            QDir().mkpath(texts_out);
-            int strings = 0;
-            int rewritten = 0;
-            int no_text = 0;
-            bool any = false;
-            // ★ 2026-11-10（用户："提取出来的内容对吗？"）：源根下可能同时有
-            //   `scripts/*.script`（游戏脚本）与 `<cfg>/scripts/*.ltx`（配置脚本）。
-            //   旧实现只扫 `base/scripts`（= configs/scripts），根 scripts 的文本全漏。
-            //   现在两处都扫；配置脚本的文本 XML **追加**到同一份 scripts 表（id 前缀区分）。
-            struct ExtractJob {
-                QString dir;
-                QString target_sub;
-                QString label;
-                QString id_prefix;
-                bool append = false;
-            };
-            std::vector<ExtractJob> jobs;
-            const QString root_scripts = QDir(src_dir).filePath(QStringLiteral("scripts"));
-            const QString cfg_scripts = QDir(base).filePath(QStringLiteral("scripts"));
-            bool have_scripts_table = false;
-            if (QDir(root_scripts).exists()) {
-                jobs.push_back({root_scripts, rel_prefix + QStringLiteral("scripts"),
-                                QStringLiteral("scripts"), QString(), false});
-                have_scripts_table = true;
-            }
-            if (QDir(cfg_scripts).exists() &&
-                QDir(cfg_scripts).absolutePath() != QDir(root_scripts).absolutePath()) {
-                jobs.push_back({cfg_scripts,
-                                rel_prefix + cfg_name + QStringLiteral("/scripts"),
-                                QStringLiteral("configs/scripts"),
-                                have_scripts_table ? QStringLiteral("sgtat_cfg_sc_0") : QString(),
-                                have_scripts_table});
-                have_scripts_table = true;
-            }
-            const QString gameplay_dir = QDir(base).filePath(QStringLiteral("gameplay"));
-            if (QDir(gameplay_dir).exists()) {
-                jobs.push_back({gameplay_dir,
-                                rel_prefix + cfg_name + QStringLiteral("/gameplay"),
-                                QStringLiteral("gameplay"), QString(), false});
-            }
-            for (const ExtractJob& job : jobs) {
-                any = true;
-                const QString target =
-                    want_rewritten
-                        ? QDir(out_root).filePath(job.target_sub)
-                        : QDir(QDir::tempPath())
-                              .filePath(QStringLiteral("xrkit_extract_discard/") + job.label);
-                QDir().mkpath(target);
-                xrkit::engine::text::ExtractOptions eopt;
-                eopt.should_stop = should_stop;
-                eopt.id_prefix = job.id_prefix.toStdString();
-                eopt.append_texts = job.append;
-                eopt.progress = [&progress](uint64_t done, uint64_t total) {
-                    if (total > 0) {
-                        progress(25 + static_cast<int>(70 * done / total));
-                    }
-                };
-                const xrkit::engine::text::ExtractStats st = xrkit::engine::text::extract_dir(
-                    job.dir.toUtf8().toStdString(), target.toUtf8().toStdString(),
-                    texts_out.toUtf8().toStdString(), eopt);
-                if (!st.ok) {
-                    post_status(QStringLiteral("提取失败（%1）：%2").arg(job.label, utf8(st.error)));
-                    return;
-                }
-                strings += static_cast<int>(st.strings);
-                rewritten += static_cast<int>(st.files);
-                no_text += static_cast<int>(st.no_text_files);
-                message(job.label.toStdString() + "：" + std::to_string(st.strings) +
-                        " 条，改写 " + std::to_string(st.files) + " 个，无文本跳过 " +
-                        std::to_string(st.no_text_files) + " 个");
-                if (should_stop()) {
-                    post_status(QStringLiteral("已取消：停在文件边界（%1 条已出）").arg(strings));
-                    return;
-                }
-            }
-            // 字面量表复制到其它语言目录（每语言一份；已存在不覆盖）
-            if (any && text_dirs.size() > 1) {
-                for (int i = 1; i < text_dirs.size(); ++i) {
-                    QDir().mkpath(text_dirs[i]);
-                    const QDir src_texts(texts_out);
-                    for (const QString& name : src_texts.entryList({QStringLiteral("*_texts.xml")},
-                                                                  QDir::Files)) {
-                        const QString dst_file = QDir(text_dirs[i]).filePath(name);
-                        if (!QFile::exists(dst_file)) {
-                            QFile::copy(src_texts.filePath(name), dst_file);
-                        }
-                    }
-                }
+            if (result.empty) {
+                post_status(result.jobs == 0
+                                ? QStringLiteral("目录里没有 scripts/ 或 gameplay/：%1")
+                                      .arg(QDir::toNativeSeparators(source))
+                                : QStringLiteral("未找到可提取的源文件/文本：%1（目录名虽合法，但内容里没有"
+                                                 "可提取的 .script/.ltx/.xml 文本）")
+                                      .arg(QDir::toNativeSeparators(source)));
+                return;
             }
             progress(100);
-            post_status(any ? QStringLiteral("语言包已生成：%1（%2 个文件、字面量 %3 条、改写 %4 个、"
-                                             "无文本跳过 %5 个）")
-                                  .arg(QDir::toNativeSeparators(out_root))
-                                  .arg(collected.copied)
-                                  .arg(strings)
-                                  .arg(rewritten)
-                                  .arg(no_text)
-                            : QStringLiteral("目录里没有 scripts/ 或 gameplay/：%1").arg(base));
+            post_status(QStringLiteral("语言包已生成：%1（%2 个文件、字面量 %3 条、改写 %4 个、"
+                                       "无文本跳过 %5 个）")
+                            .arg(QDir::toNativeSeparators(out_root))
+                            .arg(result.copied)
+                            .arg(result.strings)
+                            .arg(result.files)
+                            .arg(result.no_text));
         });
     if (!started) set_compare_controls_enabled(true);
 }

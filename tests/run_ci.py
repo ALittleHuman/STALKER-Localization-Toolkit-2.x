@@ -3908,6 +3908,27 @@ def step_net_plugin(release: bool) -> None:
         fail("联网插件端到端不成立（见上）")
 
 
+def step_extract_pack(release: bool) -> None:
+    r"""★ 2026-11-10：CLI/GUI 共用的提取编排 `--extract-pack`。
+
+    判据 `tests/check_extract_pack.py`：根 scripts / configs/scripts / gameplay 三源一次跑完；
+    无文本文件不复制；语言包复制可选；空成果返回非 0（不再是 `TEXT ok files=0`）。
+    """
+    say("[extract-pack] 提取编排：三源、无文本跳过、空成果非 0")
+    script = ROOT / "tests" / "check_extract_pack.py"
+    if not require_repo_file(script, "extract-pack 判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓ ", "✗ ", "EXTRACT-PACK", "!!")):
+            say("  " + s[:170])
+    if rc2 == 0:
+        ok("提取编排：三源、无文本跳过、空成果非 0")
+    else:
+        fail("提取编排不成立（见上）")
+
+
 def step_plugin_deps(release: bool) -> None:
     """★ 2026-11-09（用户口径）：**缺前置的插件启动期自动禁用**，且清单可被插件管理器结构化读。
 
@@ -8212,6 +8233,7 @@ STEPS = [
     ("ffmpeg-min", step_ffmpeg_min),
     ("plugin-services", step_plugin_services),
     ("plugin-deps", step_plugin_deps),
+    ("extract-pack", step_extract_pack),
     ("net-plugin", step_net_plugin),
     ("plugin-manager", step_plugin_manager),
     ("plugin-requires", step_plugin_requires),

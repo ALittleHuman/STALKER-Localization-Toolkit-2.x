@@ -47,6 +47,7 @@
 #include "xrkit/engine/text/convert.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/extract.h"
+#include "xrkit/engine/text/extract_pack.h"
 #include "xrkit/engine/text/langpack.h"
 #include "xrkit/engine/text/ori.h"
 #include "xrkit/engine/text/sniff.h"
@@ -208,6 +209,13 @@ const ActionSpec kActionSpecs[] = {
      "IXR 必须给参照包（无内置模板）；SoC/ClS/CoP 可用 builtin；--merge-glyphs 仅矢量有效（位图传了报错）",
      "xrkit_cli --font-pack --ref builtin --game CoP --text-root xml --font 字体.ttf --out 输出",
      "--langpack-scan, --font-sample"},
+    {"--extract-pack", "提取编排：根 scripts + configs/scripts + gameplay（CLI/GUI 同一份）",
+     "<源根> <输出根> [--no-language-pack] [--no-rewritten]",
+     "源根（只读）", "输出根", "0=成功｜1=出错｜3=用法错误",
+     "语言包收集/文本表合并/无文本跳过都由引擎统一实现；空成果退 1",
+     "源根需含 configs|config；单目录低层入口仍是 --extract-text",
+     "xrkit_cli --extract-pack gd_18 lang_18",
+     "--extract-text, --langpack-build"},
     {"--extract-text", "把译文树的文本抽成对照表",
      "<源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]",
      "源目录（只读）", "输出目录",
@@ -6876,6 +6884,44 @@ if (action == "--diff-snapshot") {
     // 文本提取（M1-6）：gameplay / scripts 一个分支。类型**只看源目录自己的名字**，
     // 与 1.x 的 `_resolve_source_types` 同口径（不向下查找、不要选上层目录）。
     // 产物 = 改写后的源文件树 + 文本 XML；对拍判据是"整棵产物树逐字节一致"。
+    // ★ 2026-11-10：提取文本的**业务编排**（根 scripts + configs/scripts + gameplay、
+    //   语言包收集、文本表合并）只有引擎一份；CLI/GUI 共用。
+    if (action == "--extract-pack") {
+        if (operands.size() < 2) {
+            std::cerr << "EXTRACTPACK error reason=用法：--extract-pack <源根> <输出根> "
+                         "[--no-language-pack] [--no-rewritten]\n";
+            return kExitUsage;
+        }
+        xrkit::engine::text::ExtractPackOptions opt;
+        opt.source_root = operands[0];
+        opt.out_root = operands[1];
+        for (std::size_t i = 2; i < operands.size(); ++i) {
+            if (operands[i] == "--no-language-pack") opt.copy_language_pack = false;
+            else if (operands[i] == "--no-rewritten") opt.write_rewritten = false;
+            else {
+                std::cerr << "EXTRACTPACK error reason=未知参数 " << operands[i] << "\n";
+                return kExitUsage;
+            }
+        }
+        opt.message = [](const std::string& text) { std::cout << "EXTRACTPACK note " << text << "\n"; };
+        opt.progress = [](int pct) { std::cout << "EXTRACTPACK progress=" << pct << "\n"; };
+        const xrkit::engine::text::ExtractPackResult result =
+            xrkit::engine::text::extract_language_pack(opt);
+        if (!result.ok) {
+            std::cout << "EXTRACTPACK error reason=" << result.error << "\n";
+            return kExitFail;
+        }
+        std::cout << "EXTRACTPACK ok source=" << opt.source_root << " out=" << opt.out_root
+                  << " lang=" << result.lang << " files=" << result.files
+                  << " strings=" << result.strings << " notext=" << result.no_text
+                  << " copied=" << result.copied << " jobs=" << result.jobs << "\n";
+        if (result.empty) {
+            std::cout << "EXTRACTPACK error reason=未找到可提取的源文件/文本\n";
+            return kExitFail;
+        }
+        return kExitOk;
+    }
+
     if (action == "--extract-text") {
         if (operands.size() < 2) {
             std::cerr << "TEXT error reason=用法：--extract-text <源目录(gameplay|scripts)> <输出目录>"
