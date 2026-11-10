@@ -136,6 +136,10 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
     }
     // ③ 分流到 writer（只有这一处）
     if (request.use_ref) {
+        if (request.patch_only) {
+            out.error = "矢量字号补丁暂不支持（IX-Ray 的字号在 fonts.ltx 的 size，需实测后再发）";
+            return out;
+        }
         IxrBuildOptions opt;
         opt.pack = request.ref;
         opt.font = request.font;
@@ -202,6 +206,7 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
     opt.suffix = request.suffix;
     opt.offset = request.offset;
     opt.only_sizes = request.only_sizes;
+    opt.patch_only = request.patch_only;
     out.bitmap = build_package(opt);
     out.ok = out.bitmap.ok;
     if (!out.ok) out.error = out.bitmap.error;
@@ -336,7 +341,9 @@ PackageResult build_package(const PackageOptions& opt) {
     const std::string text_dir = join(join(cfg_root, "text"), lang);
     std::error_code ec;
     std::filesystem::create_directories(core::path_from_utf8(tex_dir), ec);
-    std::filesystem::create_directories(core::path_from_utf8(text_dir), ec);
+    if (!opt.patch_only) {
+        std::filesystem::create_directories(core::path_from_utf8(text_dir), ec);
+    }
     if (ec) {
         res.error = "建目录失败：" + ec.message();
         return res;
@@ -371,6 +378,13 @@ PackageResult build_package(const PackageOptions& opt) {
             return res;
         }
         ++res.fonts_written;
+    }
+
+    if (opt.patch_only) {
+        // ★ 2026-11-10：字号补丁 = **只有字体纹理/INI**，绝不写文本、脚本、fonts.ltx。
+        res.ok = true;
+        res.out_gamedata = out_gd;
+        return res;
     }
 
     // ── XML：只扫**顶层**（1.x `sorted(os.listdir(xml_dir))`，与 extract_chars 的递归不同），

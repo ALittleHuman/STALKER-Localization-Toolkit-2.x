@@ -41,6 +41,9 @@ struct PackageOptions {
     bool missing_warn = false;
     // 只做这些槽位（空 = 全部 10 档）。门禁分片跑时用得上。
     std::vector<int> only_sizes;
+    // ★ 2026-11-10：**字号补丁模式** —— 只写 `<out>/gamedata/textures/ui/*.dds|.ini`，
+    //   不写 text/scripts/fonts.ltx/localization.ltx（叠加在标准包上使用）。
+    bool patch_only = false;
 };
 
 struct PackageResult {
@@ -86,6 +89,9 @@ struct FontPackRequest {
     std::string suffix;
     int offset = 0;
     std::vector<int> only_sizes;
+    // ★ 2026-11-10：**字号补丁模式**（位图）：只渲染字体纹理/INI，不写文本与配置。
+    //   矢量（IX-Ray）暂不支持补丁模式（字号在 fonts.ltx 的 size，尚未实测）。
+    bool patch_only = false;
 };
 
 struct FontPackOutcome {

@@ -195,7 +195,7 @@ const ActionSpec kActionSpecs[] = {
      "xrkit_cli --xml-compare-dirs old/ new/ --mode text",
      "--track, --extract-text"},
     {"--font-pack", "汉化包生成主入口（按段表来源选 writer）",
-     "--ref <参照包|builtin> --text-root <译文根> --font <TTF> --out <目录> [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn] [--require-full-cyrillic] [--merge-glyphs <源TTF>]",
+     "--ref <参照包|builtin> --text-root <译文根> --font <TTF> --out <目录> [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn] [--require-full-cyrillic] [--merge-glyphs <源TTF>] [--patch-offsets 3,-1]",
      "参照包（--ref 目录时，只读）· 译文根（只读）· 字体（只读）", "输出目录",
      "0=成功｜1=出错｜3=用法错误",
      "--ref 目录 ⇒ 扫描参照 fonts.ltx（source=ref，矢量 writer）；--ref builtin ⇒ 内置模板（source=builtin，位图 writer）；缺字策略 --on-missing",
@@ -358,6 +358,7 @@ void print_usage() {
            "  --font-pack --ref <参照包|builtin> --text-root <译文根> --font <TTF> --out <目录>\n"
            "                     [--game SoC|ClS|CoP] [--langs rus] [--suffix s] [--offset n]\n"
            "                     [--only-size 11,14] [--on-missing fail|warn] [--require-full-cyrillic]\n"
+           "                     [--patch-offsets 3,-1]  位图：base 标准包 + 每个档位一个字号补丁（只含 DDS/INI）\n"
            "                     [--merge-glyphs <源TTF>]  仅矢量路径：把源字体缺的字形合并进 target（只增不改）\n"
            "                     [--force] [--jsgme] [--jsgme-category <分类>] [--jsgme-name <名>]\n"
            "                     成品按 JSGME 结构摆：<out>/MODS/<分类>/<名>/{gamedata,ixr_addons}，\n"
@@ -6112,6 +6113,7 @@ if (action == "--diff-snapshot") {
         bool missing_warn = false;
         std::string on_missing = "fail";
         std::vector<int> only_sizes;
+        std::vector<int> patch_offsets;
         for (std::size_t i = 0; i < operands.size(); ++i) {
             const std::string& a = operands[i];
             if (a == "--require-full-cyrillic") {
@@ -6129,7 +6131,8 @@ if (action == "--diff-snapshot") {
                 std::cerr << "FONTPACK error reason=用法：--font-pack --ref <参照包|builtin> "
                              "--text-root <译文根> --font <TTF> --out <目录> "
                              "[--game SoC|ClS|CoP] [--langs rus] [--suffix s] [--offset n] "
-                             "[--only-size 11,14] [--on-missing fail|warn] [--require-full-cyrillic]\n";
+                             "[--only-size 11,14] [--on-missing fail|warn] [--require-full-cyrillic] "
+                             "[--patch-offsets 3,-1]\n";
                 return kExitUsage;
             }
         }
@@ -6173,6 +6176,19 @@ if (action == "--diff-snapshot") {
             }
         }
         req.only_sizes = only_sizes;
+        if (kv.count("patch-offsets")) {
+            std::string s = kv["patch-offsets"];
+            std::size_t start_pos = 0;
+            while (start_pos <= s.size()) {
+                const std::size_t comma = s.find(',', start_pos);
+                const std::string item =
+                    s.substr(start_pos, comma == std::string::npos ? std::string::npos
+                                                                   : comma - start_pos);
+                if (!item.empty()) patch_offsets.push_back(std::atoi(item.c_str()));
+                if (comma == std::string::npos) break;
+                start_pos = comma + 1;
+            }
+        }
         req.merge_glyphs = kv.count("merge-glyphs") ? kv["merge-glyphs"] : std::string();
         req.force = kv.count("force") != 0;
         // ★ 2026-11-08（用户：JSGME 是"汉化包生成"的事）：把成品包摆成 JSGME 结构
@@ -6200,6 +6216,74 @@ if (action == "--diff-snapshot") {
         if (!req.use_ref && req.text_root.empty()) {
             std::cerr << "FONTPACK error reason=用法：--ref builtin 需要 --text-root <译文根>\n";
             return kExitUsage;
+        }
+        // ★ 2026-11-10（用户）：**标准包 + 字号补丁**。补丁只含字体纹理/INI；
+        //   base 永远是标准档（offset=0），每个额外档位一个补丁目录。
+        if (!patch_offsets.empty()) {
+            if (req.use_ref) {
+                std::cerr << "FONTPACK error reason=矢量字号补丁暂不支持（IX-Ray 字号在 fonts.ltx 的 size，未实测）\n";
+                return kExitUsage;
+            }
+            if (jsgme) {
+                std::cerr << "FONTPACK error reason=--patch-offsets 暂不支持与 --jsgme 同用\n";
+                return kExitUsage;
+            }
+            if (req.offset != 0) {
+                std::cerr << "FONTPACK error reason=--patch-offsets 模式下 base 固定标准档，别同时给 --offset\n";
+                return kExitUsage;
+            }
+            if (!req.only_sizes.empty()) {
+                std::cerr << "FONTPACK error reason=字号补丁必须覆盖全部 10 个槽位，不能与 --only-size 同用\n";
+                return kExitUsage;
+            }
+            std::vector<int> wanted;
+            for (int off : patch_offsets) {
+                if (off == 0) {
+                    std::cerr << "FONTPACK error reason=补丁档位不能是 0（0 就是标准 base）\n";
+                    return kExitUsage;
+                }
+                if (std::find(wanted.begin(), wanted.end(), off) == wanted.end()) {
+                    wanted.push_back(off);
+                }
+            }
+            xrkit::engine::font::FontPackRequest base = req;
+            base.offset = 0;
+            base.patch_only = false;
+            const xrkit::engine::font::FontPackOutcome base_res =
+                xrkit::engine::font::build_font_pack(base);
+            std::cout << "CHARSET count=" << base_res.charset_count << "\n";
+            std::cout << "SEGMENTS source=" << (base_res.segments_from_ref ? "ref" : "builtin")
+                      << " n=" << base_res.segments << "\n";
+            if (!base_res.ok) {
+                std::cout << "FONTPACK error reason=" << base_res.error << "\n";
+                return kExitFail;
+            }
+            for (const std::string& warn : base_res.bitmap.warnings) {
+                std::cout << "FONTPACK warn " << warn << "\n";
+            }
+            std::cout << "FONTPACK ok writer=bitmap out=" << base_res.bitmap.out_gamedata
+                      << " lang=" << base_res.bitmap.lang
+                      << " fonts=" << base_res.bitmap.fonts_written
+                      << " xml=" << base_res.bitmap.xml_written
+                      << " warnings=" << base_res.bitmap.warnings.size() << "\n";
+            for (int off : wanted) {
+                xrkit::engine::font::FontPackRequest patch_req = req;
+                patch_req.patch_only = true;
+                patch_req.offset = off;
+                patch_req.out = req.out + "/_patches/font" + (off >= 0 ? "+" : "") +
+                            std::to_string(off);
+                const xrkit::engine::font::FontPackOutcome patch_res =
+                    xrkit::engine::font::build_font_pack(patch_req);
+                if (!patch_res.ok) {
+                    std::cout << "FONTPACK patch error offset=" << off
+                              << " reason=" << patch_res.error << "\n";
+                    return kExitFail;
+                }
+                std::cout << "FONTPACK patch offset=" << off
+                          << " out=" << patch_res.bitmap.out_gamedata
+                          << " fonts=" << patch_res.bitmap.fonts_written << "\n";
+            }
+            return kExitOk;
         }
         const xrkit::engine::font::FontPackOutcome res =
             xrkit::engine::font::build_font_pack(req);

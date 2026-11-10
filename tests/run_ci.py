@@ -3652,6 +3652,32 @@ def step_segments_single(release: bool) -> None:
         fail("段表解析又出现分叉（见上）")
 
 
+def step_font_patches(release: bool) -> None:
+    r"""★ 2026-11-10（用户）：**标准字体包 + 字号补丁**（补丁只含字体纹理）。
+
+    判据（`tests/check_font_patches.py`）：
+      · base 是完整标准包（text + fonts.ltx/localization.ltx + 10 槽位 DDS/INI）；
+      · 每个选中档位一个 `<out>/_patches/font±N/`，**只含** 20 个字体文件（DDS+INI 成对），
+        不含 text/scripts/fonts.ltx/localization.ltx；
+      · 补丁叠加 base 与“同 offset 整包”的字体文件逐字节一致。
+    """
+    say("[font-patches] 字号补丁：base 标准包 + 补丁只含字体纹理（叠加等价）")
+    script = ROOT / "tests" / "check_font_patches.py"
+    if not require_repo_file(script, "字号补丁判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)], timeout=900)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓ ", "✗ ", "FONT-PATCHES", "!!")):
+            say("  " + s[:170])
+    if rc2 == 0:
+        ok("字号补丁：base 标准包、补丁只含字体纹理、叠加逐字节等价")
+    elif rc2 == 2:
+        prereq("测试字体（C:/Windows/Fonts/msyh.ttc 或 XRKIT_TEST_FONT）", "缺字体", release)
+    else:
+        fail("字号补丁不成立（见上）")
+
+
 def step_font_pack_unified(release: bool) -> None:
     """最小统一：--font-pack 段表来源 / writer / 缺字策略 / 状态隔离。"""
     say("[?] 最小统一：--font-pack（段表/writer/缺字策略）")
@@ -8201,6 +8227,7 @@ STEPS = [
     ("fs-path-lock", step_fs_path_lock),
     ("action-spec", step_action_spec),
     ("font-pack-unified", step_font_pack_unified),
+    ("font-patches", step_font_patches),
     ("segments-single", step_segments_single),
     ("font-pack-single-entry", step_font_pack_single_entry),
     ("merge-glyphs", step_merge_glyphs),
