@@ -11382,9 +11382,9 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
                 if (ixr_index >= 0) {
                     page.game_combo()->setCurrentIndex(ixr_index);
                     QApplication::processEvents();
-                    check(!page.size_button()->isEnabled() &&
-                              page.size_button()->toolTip().contains(QStringLiteral("矢量")),
-                          QStringLiteral("D2-字体 IX-Ray 下字号置灰且提示「矢量字号暂不支持」"
+                    check(page.size_button()->isEnabled() &&
+                              page.size_button()->toolTip().contains(QStringLiteral("fonts.ltx")),
+                          QStringLiteral("D2-字体 IX-Ray 下字号可用且提示「只改 fonts.ltx 的 size」"
                                          "（enabled=%1 tip=%2）")
                               .arg(page.size_button()->isEnabled())
                               .arg(page.size_button()->toolTip()));

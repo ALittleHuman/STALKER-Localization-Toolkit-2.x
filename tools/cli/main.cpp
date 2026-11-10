@@ -194,6 +194,12 @@ const ActionSpec kActionSpecs[] = {
      "只比 .xml；其它类型不在扫描范围",
      "xrkit_cli --xml-compare-dirs old/ new/ --mode text",
      "--track, --extract-text"},
+    {"--font-size-patch", "IX-Ray 矢量字号补丁（只改 fonts.ltx 的 size）",
+     "<参照包> <offset> <输出目录>",
+     "参照包（只读）", "输出目录", "0=成功｜1=出错｜3=用法错误",
+     "只改显式 `size = N`；继承段跟随父段；TTF 是矢量，不重烘",
+     "仅 IX-Ray 矢量 fonts.ltx；位图字号补丁走 --font-pack --patch-offsets",
+     "xrkit_cli --font-size-patch <参照包> -3 <输出目录>", "--font-pack"},
     {"--font-pack", "汉化包生成主入口（按段表来源选 writer）",
      "--ref <参照包|builtin> --text-root <译文根> --font <TTF> --out <目录> [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn] [--require-full-cyrillic] [--merge-glyphs <源TTF>] [--patch-offsets 3,-1]",
      "参照包（--ref 目录时，只读）· 译文根（只读）· 字体（只读）", "输出目录",
@@ -6105,6 +6111,26 @@ if (action == "--diff-snapshot") {
     }
 
 
+    if (action == "--font-size-patch") {
+        if (operands.size() != 3) {
+            std::cerr << "FONTSIZEPATCH error reason=用法：--font-size-patch <参照包> <offset> <输出目录>\n";
+            return kExitUsage;
+        }
+        xrkit::engine::font::FontSizePatchRequest req;
+        req.ref = operands[0];
+        req.offset = std::atoi(operands[1].c_str());
+        req.out = operands[2];
+        const xrkit::engine::font::FontSizePatchResult res =
+            xrkit::engine::font::build_font_size_patch(req);
+        if (!res.ok) {
+            std::cout << "FONTSIZEPATCH error reason=" << res.error << "\n";
+            return kExitFail;
+        }
+        std::cout << "FONTSIZEPATCH ok out=" << res.out_file
+                  << " sizes=" << res.sizes_changed << " offset=" << req.offset << "\n";
+        return kExitOk;
+    }
+
     if (action == "--font-pack") {
         // ★ 2026-11-06（HA 打回点 ①）：**只调统一引擎入口** `build_font_pack`；
         //   本分支不直接碰 build_package / ixr_build。
@@ -6220,10 +6246,6 @@ if (action == "--diff-snapshot") {
         // ★ 2026-11-10（用户）：**标准包 + 字号补丁**。补丁只含字体纹理/INI；
         //   base 永远是标准档（offset=0），每个额外档位一个补丁目录。
         if (!patch_offsets.empty()) {
-            if (req.use_ref) {
-                std::cerr << "FONTPACK error reason=矢量字号补丁暂不支持（IX-Ray 字号在 fonts.ltx 的 size，未实测）\n";
-                return kExitUsage;
-            }
             if (jsgme) {
                 std::cerr << "FONTPACK error reason=--patch-offsets 暂不支持与 --jsgme 同用\n";
                 return kExitUsage;
@@ -6261,17 +6283,39 @@ if (action == "--diff-snapshot") {
             for (const std::string& warn : base_res.bitmap.warnings) {
                 std::cout << "FONTPACK warn " << warn << "\n";
             }
-            std::cout << "FONTPACK ok writer=bitmap out=" << base_res.bitmap.out_gamedata
-                      << " lang=" << base_res.bitmap.lang
-                      << " fonts=" << base_res.bitmap.fonts_written
-                      << " xml=" << base_res.bitmap.xml_written
-                      << " warnings=" << base_res.bitmap.warnings.size() << "\n";
+            if (base_res.vector_path) {
+                std::cout << "FONTPACK ok writer=vector out=" << req.out << "\n";
+            } else {
+                std::cout << "FONTPACK ok writer=bitmap out=" << base_res.bitmap.out_gamedata
+                          << " lang=" << base_res.bitmap.lang
+                          << " fonts=" << base_res.bitmap.fonts_written
+                          << " xml=" << base_res.bitmap.xml_written
+                          << " warnings=" << base_res.bitmap.warnings.size() << "\n";
+            }
             for (int off : wanted) {
+                const std::string patch_out = req.out + "/_patches/font" +
+                                              (off >= 0 ? "+" : "") + std::to_string(off);
+                if (req.use_ref) {
+                    xrkit::engine::font::FontSizePatchRequest size_req;
+                    size_req.ref = req.ref;
+                    size_req.offset = off;
+                    size_req.out = patch_out;
+                    const xrkit::engine::font::FontSizePatchResult size_res =
+                        xrkit::engine::font::build_font_size_patch(size_req);
+                    if (!size_res.ok) {
+                        std::cout << "FONTPACK patch error offset=" << off
+                                  << " reason=" << size_res.error << "\n";
+                        return kExitFail;
+                    }
+                    std::cout << "FONTPACK patch offset=" << off << " kind=vector"
+                              << " out=" << size_res.out_file
+                              << " sizes=" << size_res.sizes_changed << "\n";
+                    continue;
+                }
                 xrkit::engine::font::FontPackRequest patch_req = req;
                 patch_req.patch_only = true;
                 patch_req.offset = off;
-                patch_req.out = req.out + "/_patches/font" + (off >= 0 ? "+" : "") +
-                            std::to_string(off);
+                patch_req.out = patch_out;
                 const xrkit::engine::font::FontPackOutcome patch_res =
                     xrkit::engine::font::build_font_pack(patch_req);
                 if (!patch_res.ok) {
@@ -6279,7 +6323,7 @@ if (action == "--diff-snapshot") {
                               << " reason=" << patch_res.error << "\n";
                     return kExitFail;
                 }
-                std::cout << "FONTPACK patch offset=" << off
+                std::cout << "FONTPACK patch offset=" << off << " kind=bitmap"
                           << " out=" << patch_res.bitmap.out_gamedata
                           << " fonts=" << patch_res.bitmap.fonts_written << "\n";
             }

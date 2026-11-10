@@ -7,7 +7,9 @@
 #include "xrkit/engine/font/xml_bytes.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -213,8 +215,99 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
     return out;
 }
 
-PackageResult build_package(const PackageOptions& opt) {
-    PackageResult res;
+FontSizePatchResult build_font_size_patch(const FontSizePatchRequest& request) {
+    FontSizePatchResult res;
+    if (request.ref.empty()) {
+        res.error = "缺参照包（fonts.ltx 来源）";
+        return res;
+    }
+    if (request.offset == 0) {
+        res.error = "offset=0 就是标准包，不需要字号补丁";
+        return res;
+    }
+    std::string src;
+    for (const std::string& candidate :
+         {join(join(request.ref, "gamedata"), "configs/fonts.ltx"),
+          join(request.ref, "configs/fonts.ltx")}) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(core::path_from_utf8(candidate), ec)) {
+            src = candidate;
+            break;
+        }
+    }
+    if (src.empty()) {
+        res.error = "参照包缺 gamedata/configs/fonts.ltx：" + request.ref;
+        return res;
+    }
+    std::vector<uint8_t> bytes;
+    std::string read_error;
+    if (!read_file_bytes(src, bytes, read_error)) {
+        res.error = "读不出 fonts.ltx：" + read_error;
+        return res;
+    }
+    const std::string text(bytes.begin(), bytes.end());
+    std::string out;
+    out.reserve(text.size() + 64);
+    int changed = 0;
+    std::size_t pos = 0;
+    while (pos < text.size()) {
+        const std::size_t nl = text.find('\n', pos);
+        std::string line = text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+        std::size_t k = 0;
+        while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k;
+        if (k < line.size() && line[k] != ';') {
+            const std::size_t key_start = k;
+            while (k < line.size() &&
+                   std::isalpha(static_cast<unsigned char>(line[k])) != 0) {
+                ++k;
+            }
+            std::string key = line.substr(key_start, k - key_start);
+            for (char& c : key) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            if (key == "size") {
+                while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k;
+                if (k < line.size() && line[k] == '=') {
+                    ++k;
+                    while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k;
+                    const std::size_t num_start = k;
+                    while (k < line.size() &&
+                           std::isdigit(static_cast<unsigned char>(line[k])) != 0) {
+                        ++k;
+                    }
+                    if (k > num_start) {
+                        const int old_size = std::atoi(line.substr(num_start, k - num_start).c_str());
+                        const int new_size = std::max(1, old_size + request.offset);
+                        line.replace(num_start, k - num_start, std::to_string(new_size));
+                        ++changed;
+                    }
+                }
+            }
+        }
+        out += line;
+        if (nl == std::string::npos) break;
+        out += '\n';
+        pos = nl + 1;
+    }
+    if (changed == 0) {
+        res.error = "fonts.ltx 里没有可改的 `size = N` 行：" + src;
+        return res;
+    }
+    const std::string dest = join(join(request.out, "gamedata"), "configs/fonts.ltx");
+    std::error_code ec;
+    std::filesystem::create_directories(
+        core::path_from_utf8(join(join(request.out, "gamedata"), "configs")), ec);
+    if (ec || !write_text(dest, out)) {
+        res.error = "写不出字号补丁：" + dest;
+        return res;
+    }
+    res.ok = true;
+    res.out_file = dest;
+    res.sizes_changed = changed;
+    return res;
+}
+
+PackageResult build_package(const PackageOptions& opt) {    PackageResult res;
     const GameTemplate* game = find_game(opt.game);
     if (game == nullptr) {
         res.error = "未知游戏版本：" + opt.game;

@@ -252,10 +252,10 @@ FontPackPage::FontPackPage(QWidget* parent)
                          const bool ixr = game_combo_->currentData().toString() ==
                                           QStringLiteral("IX-Ray");
                          if (size_button_ != nullptr) {
-                             size_button_->setEnabled(!ixr);
+                             size_button_->setEnabled(true);
                              size_button_->setToolTip(
-                                 ixr ? QStringLiteral("IX-Ray 矢量字号暂不支持（字号补丁只对位图；"
-                                                      "矢量字号在 fonts.ltx 的 size）")
+                                 ixr ? QStringLiteral("IX-Ray 字号补丁只改 configs/fonts.ltx 的 size"
+                                                      "（TTF 是矢量，不重烘；文本不动）")
                                      : QStringLiteral("标准始终生成；勾选额外档位会生成只含字体纹理的补丁"));
                          }
                          if (cyrillic_box_ != nullptr) cyrillic_box_->setEnabled(!ixr);
@@ -294,7 +294,7 @@ FontPackPage::FontPackPage(QWidget* parent)
         standard->setCheckable(true);
         standard->setChecked(true);
         standard->setEnabled(false);
-        for (int offset : {-2, -1, 3, 5, 7, 9}) {
+        for (int offset : {-5, -3, 3, 5, 7, 9}) {
             QAction* act = size_menu_->addAction(
                 offset > 0 ? QStringLiteral("大 +%1").arg(offset)
                            : QStringLiteral("小 %1").arg(offset));
@@ -615,7 +615,27 @@ engine::font::PackageOptions FontPackPage::prepare(const QString& xml_dir, const
 FontPackPage::BuildOutcome FontPackPage::run_build(
     const engine::font::PackageOptions& options) const {
     BuildOutcome base = run_build_one(options);
-    if (!base.ok || base.refused || base.ixr || options.patch_offsets.empty()) return base;
+    if (!base.ok || base.refused || options.patch_offsets.empty()) return base;
+    if (base.ixr) {
+        // ★ IX-Ray 矢量：补丁只改 configs/fonts.ltx 的 size（TTF 矢量，不重烘）。
+        for (int off : options.patch_offsets) {
+            engine::font::FontSizePatchRequest req;
+            req.ref = ixr_pack_at_start_.toStdString();
+            req.offset = off;
+            req.out = options.out_dir + "/_patches/font" + (off >= 0 ? "+" : "") +
+                      std::to_string(off);
+            const engine::font::FontSizePatchResult patch =
+                engine::font::build_font_size_patch(req);
+            if (!patch.ok) {
+                base.ok = false;
+                base.reason = QStringLiteral("字号补丁 %1 生成失败：%2").arg(off).arg(utf8(patch.error));
+                return base;
+            }
+            ++base.patch_count;
+            base.patch_dirs << utf8(patch.out_file);
+        }
+        return base;
+    }
     for (int off : options.patch_offsets) {
         engine::font::PackageOptions one = options;
         one.patch_only = true;
@@ -745,6 +765,12 @@ void FontPackPage::apply_result(const BuildOutcome& outcome) {
                           .arg(outcome.ixr_added)
                           .arg(outcome.ixr_missing)
                     : QStringLiteral("失败：") + outcome.reason);
+        }
+        if (outcome.ok && outcome.patch_count > 0 && result_label_ != nullptr) {
+            result_label_->setText(
+                result_label_->text() +
+                QStringLiteral("；字号补丁 %1 个（_patches/…，只含 fonts.ltx）")
+                    .arg(outcome.patch_count));
         }
         // ★★ 2026-11-08（用户："缺字不要紧，要紧的是缺了字怎么办"）：
         //   缺字不阻断出包，但必须**弹窗**讲清影响与三条处置（离屏自检里不弹，避免阻塞）。

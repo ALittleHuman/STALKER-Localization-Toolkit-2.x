@@ -113,4 +113,21 @@ struct FontPackOutcome {
 
 FontPackOutcome build_font_pack(const FontPackRequest& request);
 
+// ★ 2026-11-10（统一口径）：IX-Ray 矢量字号补丁 = **只改 `configs/fonts.ltx` 的 `size`**。
+//   TTF 是矢量，不需要按字号重烘；文本/其它配置一律不动。
+struct FontSizePatchRequest {
+    std::string ref;    // 参照整包（含 gamedata/configs/fonts.ltx）
+    int offset = 0;     // 字号加值（-5/-3/+3/...）
+    std::string out;    // 输出目录（函数只写 <out>/gamedata/configs/fonts.ltx）
+};
+
+struct FontSizePatchResult {
+    bool ok = false;
+    std::string error;
+    std::string out_file;
+    int sizes_changed = 0;   // 改过的显式 `size = N` 行数
+};
+
+FontSizePatchResult build_font_size_patch(const FontSizePatchRequest& request);
+
 }  // namespace xrkit::engine::font

@@ -4,8 +4,8 @@
 口径：
   · base：完整标准语言包（text + 10 个槽位的字体 + fonts.ltx/localization.ltx）；
   · 每个选中档位一个补丁目录 `<out>/_patches/font±N/gamedata/textures/ui/`；
-  · 补丁**只含** 10 个槽位的 `ui_font_<slot><suffix>.dds` + `.ini`（成对），
-    不含 text/scripts/fonts.ltx/localization.ltx；
+  · 位图补丁只含 10 个槽位的 `ui_font_<slot><suffix>.dds` + `.ini`（成对）；
+    矢量补丁只含 `gamedata/configs/fonts.ltx`（改显式 size）；都不含 text/scripts/localization；
   · 补丁叠加 base 后，字体文件与“同 offset 整包”逐字节一致。
 
 退出码：0=全绿 / 1=断言不成立 / 2=缺 CLI 或字体（外部前提）。
@@ -73,7 +73,7 @@ def main() -> int:
         out = work / "out"
         rc, text = run(["--font-pack", "--ref", "builtin", "--text-root", str(xml_dir),
                         "--font", str(FONT), "--out", str(out), "--game", "CoP",
-                        "--langs", "rus", "--patch-offsets", "3,-1"])
+                        "--langs", "rus", "--patch-offsets", "3,-5"])
         want(rc == 0, "base+补丁生成退出码 0", "rc=%d\n%s" % (rc, text[-500:]))
 
         base_gd = out / "gamedata"
@@ -87,10 +87,10 @@ def main() -> int:
         want(len(base_files) == 20, "base 有 10 槽位 × DDS+INI", "%d 个" % len(base_files))
 
         patches = sorted((out / "_patches").glob("font*"))
-        want([p.name for p in patches] == ["font+3", "font-1"],
+        want([p.name for p in patches] == ["font+3", "font-5"],
              "两个档位各一个补丁目录", [p.name for p in patches])
         for patch, off in ((out / "_patches" / "font+3", 3),
-                           (out / "_patches" / "font-1", -1)):
+                           (out / "_patches" / "font-5", -1)):
             files = sorted(p.relative_to(patch).as_posix() for p in patch.rglob("*")
                            if p.is_file())
             want(len(files) == 20,
@@ -128,6 +128,28 @@ def main() -> int:
         want("patch_offsets = size_offsets()" in ui_src,
              "页面把多选档位写进 patch_offsets")
         want("_patches/font" in ui_src, "页面补丁落点 _patches/font±N")
+
+        # ★ IX-Ray 矢量字号补丁：只改 configs/fonts.ltx 的显式 size，不碰 TTF/文本。
+        ref = work / "ixr_ref"
+        (ref / "gamedata" / "configs").mkdir(parents=True)
+        (ref / "gamedata" / "configs" / "fonts.ltx").write_text(
+            "[font_default]\nsize = 14\nname = Arial\n\n"
+            "[ui_font_hud]\nsize = 16\n\n"
+            "[derived]:font_default\nname = X\n", encoding="utf-8")
+        vout = work / "ixr_patch"
+        rc, text = run(["--font-size-patch", str(ref), "-3", str(vout)])
+        want(rc == 0, "IX-Ray 矢量字号补丁退出码 0", "rc=%d\n%s" % (rc, text[-300:]))
+        vfiles = sorted(p.relative_to(vout).as_posix() for p in vout.rglob("*")
+                        if p.is_file())
+        want(vfiles == ["gamedata/configs/fonts.ltx"],
+             "矢量补丁只含 fonts.ltx（没有 TTF/文本）", str(vfiles))
+        vbody = (vout / "gamedata" / "configs" / "fonts.ltx").read_text(encoding="utf-8")
+        want("size = 11" in vbody and "size = 13" in vbody,
+             "显式 size 14/16 ⇒ 11/13（offset=-3）", vbody[:120])
+        want("[derived]:font_default\nname = X" in vbody,
+             "继承段不擅自加 size（跟随父段）")
+        rc, text = run(["--font-size-patch", str(ref), "0", str(work / "ixr_zero")])
+        want(rc != 0 and "标准包" in text, "offset=0 明确拒绝（那是 base）", text[-160:])
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -137,7 +159,7 @@ def main() -> int:
         for item in PROBLEMS:
             print("   · " + item)
         return 1
-    print("FONT-PATCHES ok %d 项（base 标准包 + 补丁只含字体纹理，叠加逐字节等价）" % CASES)
+    print("FONT-PATCHES ok %d 项（base + 补丁：位图 DDS/INI、矢量 fonts.ltx，叠加等价）" % CASES)
     return 0
 
 
