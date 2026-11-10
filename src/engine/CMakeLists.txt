@@ -48,6 +48,7 @@ add_library(xrkit_engine STATIC
     font/langpack.cpp
   font/metrics.cpp
   font/package.cpp
+  font/distribution.cpp
   font/render.cpp
   font/resample.cpp
   font/system_dirs.cpp

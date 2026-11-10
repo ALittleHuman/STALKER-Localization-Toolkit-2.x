@@ -40,7 +40,7 @@
 #include "xrkit/engine/font/metrics.h"
 #include "xrkit/engine/font/ixr.h"
 #include "xrkit/engine/font/langpack.h"
-#include "xrkit/engine/font/package.h"
+#include "xrkit/engine/font/distribution.h"
 #include "xrkit/engine/font/render.h"
 #include "xrkit/engine/font/resample.h"
 #include "xrkit/engine/text/batch.h"
@@ -6356,74 +6356,50 @@ if (action == "--diff-snapshot") {
                 std::cerr << "FONTPACK error reason=字号补丁必须覆盖全部 10 个槽位，不能与 --only-size 同用\n";
                 return kExitUsage;
             }
-            std::vector<int> wanted;
-            for (int off : patch_offsets) {
-                if (off == 0) {
-                    std::cerr << "FONTPACK error reason=补丁档位不能是 0（0 就是标准 base）\n";
-                    return kExitUsage;
-                }
-                if (std::find(wanted.begin(), wanted.end(), off) == wanted.end()) {
-                    wanted.push_back(off);
-                }
-            }
-            xrkit::engine::font::FontPackRequest base = req;
-            base.offset = 0;
-            base.patch_only = false;
-            const xrkit::engine::font::FontPackOutcome base_res =
-                xrkit::engine::font::build_font_pack(base);
+            xrkit::engine::font::FontDistributionRequest dist;
+            dist.base = req;
+            dist.base.offset = 0;
+            dist.base.patch_only = false;
+            dist.patch_offsets = patch_offsets;
+            const xrkit::engine::font::FontDistributionOutcome outcome =
+                xrkit::engine::font::build_font_distribution(dist);
+            const xrkit::engine::font::FontPackOutcome& base_res = outcome.base;
             std::cout << "CHARSET count=" << base_res.charset_count << "\n";
             std::cout << "SEGMENTS source=" << (base_res.segments_from_ref ? "ref" : "builtin")
                       << " n=" << base_res.segments << "\n";
-            if (!base_res.ok) {
-                std::cout << "FONTPACK error reason=" << base_res.error << "\n";
-                return kExitFail;
+            if (base_res.ok) {
+                for (const std::string& warn : base_res.bitmap.warnings) {
+                    std::cout << "FONTPACK warn " << warn << "\n";
+                }
+                if (base_res.vector_path) {
+                    std::cout << "FONTPACK ok writer=vector out=" << req.out << "\n";
+                } else {
+                    std::cout << "FONTPACK ok writer=bitmap out=" << base_res.bitmap.out_gamedata
+                              << " lang=" << base_res.bitmap.lang
+                              << " fonts=" << base_res.bitmap.fonts_written
+                              << " xml=" << base_res.bitmap.xml_written
+                              << " warnings=" << base_res.bitmap.warnings.size() << "\n";
+                }
             }
-            for (const std::string& warn : base_res.bitmap.warnings) {
-                std::cout << "FONTPACK warn " << warn << "\n";
-            }
-            if (base_res.vector_path) {
-                std::cout << "FONTPACK ok writer=vector out=" << req.out << "\n";
-            } else {
-                std::cout << "FONTPACK ok writer=bitmap out=" << base_res.bitmap.out_gamedata
-                          << " lang=" << base_res.bitmap.lang
-                          << " fonts=" << base_res.bitmap.fonts_written
-                          << " xml=" << base_res.bitmap.xml_written
-                          << " warnings=" << base_res.bitmap.warnings.size() << "\n";
-            }
-            for (int off : wanted) {
-                const std::string patch_out = req.out + "/_patches/font" +
-                                              (off >= 0 ? "+" : "") + std::to_string(off);
-                if (req.use_ref) {
-                    xrkit::engine::font::FontSizePatchRequest size_req;
-                    size_req.ref = req.ref;
-                    size_req.offset = off;
-                    size_req.out = patch_out;
-                    const xrkit::engine::font::FontSizePatchResult size_res =
-                        xrkit::engine::font::build_font_size_patch(size_req);
-                    if (!size_res.ok) {
-                        std::cout << "FONTPACK patch error offset=" << off
-                                  << " reason=" << size_res.error << "\n";
-                        return kExitFail;
-                    }
-                    std::cout << "FONTPACK patch offset=" << off << " kind=vector"
-                              << " out=" << size_res.out_file
-                              << " sizes=" << size_res.sizes_changed << "\n";
+            for (const xrkit::engine::font::FontDistributionPatch& patch : outcome.patches) {
+                if (!patch.ok) {
+                    std::cout << "FONTPACK patch error offset=" << patch.offset
+                              << " reason=" << patch.error << "\n";
                     continue;
                 }
-                xrkit::engine::font::FontPackRequest patch_req = req;
-                patch_req.patch_only = true;
-                patch_req.offset = off;
-                patch_req.out = patch_out;
-                const xrkit::engine::font::FontPackOutcome patch_res =
-                    xrkit::engine::font::build_font_pack(patch_req);
-                if (!patch_res.ok) {
-                    std::cout << "FONTPACK patch error offset=" << off
-                              << " reason=" << patch_res.error << "\n";
-                    return kExitFail;
+                std::cout << "FONTPACK patch offset=" << patch.offset
+                          << " kind=" << (patch.vector_path ? "vector" : "bitmap")
+                          << " out=" << patch.out;
+                if (patch.vector_path) {
+                    std::cout << " sizes=" << patch.sizes_changed;
+                } else {
+                    std::cout << " fonts=" << patch.fonts;
                 }
-                std::cout << "FONTPACK patch offset=" << off << " kind=bitmap"
-                          << " out=" << patch_res.bitmap.out_gamedata
-                          << " fonts=" << patch_res.bitmap.fonts_written << "\n";
+                std::cout << "\n";
+            }
+            if (!outcome.ok) {
+                std::cout << "FONTPACK error reason=" << outcome.error << "\n";
+                return kExitFail;
             }
             return kExitOk;
         }
