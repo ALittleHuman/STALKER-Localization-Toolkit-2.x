@@ -140,9 +140,14 @@ bool MultiSelectComboBox::eventFilter(QObject* watched, QEvent* event) {
     // editable QComboBox 的文字区是 QLineEdit：点文字只会聚焦，不会弹下拉。
     // 多选模式点文字/空白也应展开，只有箭头走 Qt 默认路径。
     if (mode_ == Mode::Multi && watched == lineEdit() &&
-        (event->type() == QEvent::MouseButtonPress ||
-         event->type() == QEvent::MouseButtonRelease)) {
-        showPopup();
+        event->type() == QEvent::MouseButtonRelease) {
+        // 点文字区：已展开就收起，未展开就展开；只处理 release，避免 press/release 各来一次
+        // 导致“刚展开又被重新展开”，只能点空白才收。
+        if (view()->isVisible()) {
+            hidePopup();
+        } else {
+            showPopup();
+        }
         event->accept();
         return true;
     }

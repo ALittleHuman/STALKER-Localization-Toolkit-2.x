@@ -12,6 +12,7 @@
 #include "xrkit/engine/xml/dirdiff.h"
 
 #include "../pair_tree.h"
+#include "../scroll_viewport.h"
 #include "../task_shell.h"
 
 #include <QClipboard>
@@ -72,6 +73,9 @@ const char* kEncodings[] = {etxt::kUtf8,    etxt::kWindows1251, etxt::kWindows12
 
 XmlPage::XmlPage(QWidget* parent)
     : PageBase(QStringLiteral("xml"), QStringLiteral("文本工具"), parent) {
+    // 文本页的内容（结果表/详情）是弹性的：视口按窗口高度铺满，避免卡片在下方提前结束
+    // 后留下一大块页面底色（用户 2026-11-11 截图）。
+    viewport()->set_fit(ScrollViewport::Fit::Viewport);
     // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内说明整段删（六页统一）
     dir_a_edit_ = new QLineEdit;
     dir_a_edit_->setObjectName(QStringLiteral("xml_dir_a"));

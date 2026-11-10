@@ -327,6 +327,12 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                //   任务面板：同一类现场（裸容器 + 进度条/状态字），自己不涂底。
                "QWidget#task_panel { background: transparent; }"
                "QLabel { background: transparent; }"
+               // 复选框/单选框自己不带底：它们常放在 opt_row / 扫描行里，泛化的
+               // QWidget 底色会在文字周围露出一块黑底（用户 2026-11-11 截图）。
+               "QCheckBox, QRadioButton { background: transparent; }"
+               // 页面视口/画布与卡片同层灰：不再让窗口底色在底部/四周露成黑边。
+               "QWidget#page_body, QWidget#page_viewport { background: @{surface2}; }"
+               "QWidget#page_xml, QWidget#page_fs, QWidget#page_fontpack { background: @{surface2}; }"
                "QLabel#status_label { color: @{text_dim}; }"
                "QLabel#page_header { color: @{text_bright}; }"
                "QLabel#page_subtitle { color: @{text_dim}; }"

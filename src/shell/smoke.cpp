@@ -2710,9 +2710,12 @@ SmokeResult run_smoke() {
             }
             // 5.3：minsize **真的**设上了（不是"代码里写了"）
             if (!page->minsize_ok()) ++frame_bad;
-            // 5.1：页自己那层视口的 fit 必须是 content（静态内容，条子由本视口造）
+            // 5.1：页自己那层视口的 fit 必须是 content（静态内容，条子由本视口造）；
+            // XML 页例外：结果表/详情是弹性内容，按窗口高度铺满（2026-11-11 用户 UI 口径）。
             if (page->viewport() == nullptr ||
-                page->viewport()->fit() != ScrollViewport::Fit::Content) {
+                (page->viewport()->fit() != ScrollViewport::Fit::Content &&
+                 !(page->page_id() == QStringLiteral("xml") &&
+                   page->viewport()->fit() == ScrollViewport::Fit::Viewport))) {
                 ++frame_bad;
             }
             check(page->page_id() == hub.page_id(i) &&
