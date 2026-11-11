@@ -332,7 +332,10 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                "QCheckBox, QRadioButton { background: transparent; }"
                // 页面视口/画布与卡片同层灰：不再让窗口底色在底部/四周露成黑边。
                "QWidget#page_body, QWidget#page_viewport { background: @{surface2}; }"
-               "QWidget#page_xml, QWidget#page_fs, QWidget#page_fontpack { background: @{surface2}; }"
+               // 所有页根 + 页头行/底部操作栏：同一个共同点，统一透明/同层灰。
+               // 之前它们都是裸 QWidget，被泛化规则涂成 bg（#1e2124）⇒ 每条底栏都是一条黑带。
+               "QWidget[page_root=\"true\"] { background: @{surface2}; }"
+               "QWidget#page_header_row, QWidget#page_actions { background: transparent; }"
                "QLabel#status_label { color: @{text_dim}; }"
                "QLabel#page_header { color: @{text_bright}; }"
                "QLabel#page_subtitle { color: @{text_dim}; }"

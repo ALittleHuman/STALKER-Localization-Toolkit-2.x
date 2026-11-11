@@ -74,6 +74,7 @@ void reset_ui_thread_violations() {
 PageBase::PageBase(const QString& page_id, const QString& title, QWidget* parent)
     : QWidget(parent), page_id_(page_id), title_(title) {
     setObjectName(QStringLiteral("page_") + page_id);
+    setProperty("page_root", true);   // QSS：所有页根同一层 surface2，不再各写一份
     // ★ 用户 2026-09-27 真机反馈：「能输入的框点空白并不能取消，还是一闪一闪」
     //   真因：QLineEdit 拿到焦点后，点卡片/正文那些**不接焦点**的空白区，Qt 不会动焦点
     //   （默认 mousePressEvent 只 ignore，页面本身又是 NoFocus）⇒ 光标一直闪。
