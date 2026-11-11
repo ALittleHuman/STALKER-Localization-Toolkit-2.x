@@ -231,6 +231,24 @@ void PageBase::resizeEvent(QResizeEvent* event) {
     }
 }
 
+void PageBase::add_action_status(QWidget* widget) {
+    if (widget == nullptr || action_layout_ == nullptr) return;
+    if (action_status_area_ == nullptr) {
+        action_status_area_ = new QWidget(this);
+        action_status_area_->setObjectName(QStringLiteral("page_action_status"));
+        action_status_area_->setAutoFillBackground(false);
+        action_status_area_->setStyleSheet(QStringLiteral("background: transparent;"));
+        action_status_layout_ = new QHBoxLayout(action_status_area_);
+        action_status_layout_->setContentsMargins(0, 0, 0, 0);
+        action_status_layout_->setSpacing(xrkit::core::px(8));
+        action_layout_->insertWidget(0, action_status_area_, 1);
+    }
+    widget->setParent(action_status_area_);
+    widget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    widget->show();
+    action_status_layout_->addWidget(widget, 1);
+}
+
 void PageBase::set_subtitle(const QString& text) {
     if (subtitle_ == nullptr) return;
     subtitle_->setText(text);

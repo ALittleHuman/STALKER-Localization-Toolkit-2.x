@@ -276,7 +276,8 @@ ConvertPage::ConvertPage(QWidget* parent)
     status_ = new QLabel;
     status_->setObjectName(QStringLiteral("convert_status"));
     status_->setWordWrap(true);
-    footer_layout()->addWidget(status_, 0);
+    add_action_status(task_->status_label());
+    add_action_status(status_);
 
     start_button_ = add_action(QStringLiteral("开始转换"));
     start_button_->setObjectName(QStringLiteral("convert_start"));

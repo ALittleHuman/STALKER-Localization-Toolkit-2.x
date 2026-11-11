@@ -1115,7 +1115,7 @@ VideoPage::VideoPage(QWidget* parent)
     status_ = new QLabel;
     status_->setObjectName(QStringLiteral("video_status"));
     status_->setWordWrap(true);
-    footer_layout()->addWidget(status_, 0);
+    add_action_status(status_);
 
     detect_button_ = add_action(QStringLiteral("检测 ffmpeg"));
     detect_button_->setObjectName(QStringLiteral("video_detect"));

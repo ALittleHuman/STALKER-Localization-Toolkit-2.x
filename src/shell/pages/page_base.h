@@ -120,6 +120,8 @@ public:
     // 页脚：统计/任务进度/状态统一放这里，各页不再自己往 body 末尾塞。
     QWidget* footer() const { return footer_; }
     QVBoxLayout* footer_layout() const { return footer_layout_; }
+    // 把“就绪/状态”标签移到操作栏同一行左侧：和右侧按钮同高，footer 不再被状态行撑高。
+    void add_action_status(QWidget* widget);
 
     // ── ★★ 2026-10-05（用户报告 #6）：**页内一块自足内容区的滚动条**（第二层视口）──────
     //
@@ -224,6 +226,8 @@ private:
     QHBoxLayout* action_layout_ = nullptr;
     QWidget* footer_ = nullptr;
     QVBoxLayout* footer_layout_ = nullptr;
+    QWidget* action_status_area_ = nullptr;
+    QHBoxLayout* action_status_layout_ = nullptr;
 };
 
 }  // namespace xrkit::shell

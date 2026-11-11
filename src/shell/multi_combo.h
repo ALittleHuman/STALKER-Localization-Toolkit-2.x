@@ -8,6 +8,8 @@
 #include <QComboBox>
 #include <QVariantList>
 
+class QWheelEvent;
+
 class QStandardItemModel;
 
 namespace xrkit::shell {
@@ -40,6 +42,7 @@ signals:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
 
 private:
     void toggleAt(const QModelIndex& index);

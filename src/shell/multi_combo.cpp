@@ -1,11 +1,14 @@
 #include "multi_combo.h"
 
 #include <QAbstractItemView>
+#include <QApplication>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QMouseEvent>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QStandardItemModel>
+#include <QWheelEvent>
 
 namespace xrkit::shell {
 
@@ -135,6 +138,15 @@ bool MultiSelectComboBox::eventFilter(QObject* watched, QEvent* event) {
     if (mode_ != Mode::Multi || watched != view()->viewport()) {
         return QComboBox::eventFilter(watched, event);
     }
+    if (event->type() == QEvent::Wheel) {
+        // 多选展开时滚轮只滚动列表，不改变当前项/勾选，也不关闭弹层。
+        auto* wheel = static_cast<QWheelEvent*>(event);
+        if (QScrollBar* bar = view()->verticalScrollBar()) {
+            QApplication::sendEvent(bar, wheel);
+        }
+        event->accept();
+        return true;
+    }
     if (event->type() == QEvent::MouseButtonRelease) {
         auto* mouse = static_cast<QMouseEvent*>(event);
         if (mouse->button() == Qt::LeftButton) {
@@ -152,6 +164,15 @@ bool MultiSelectComboBox::eventFilter(QObject* watched, QEvent* event) {
         }
     }
     return QComboBox::eventFilter(watched, event);
+}
+
+void MultiSelectComboBox::wheelEvent(QWheelEvent* event) {
+    if (mode_ == Mode::Multi) {
+        // 收起状态滚轮不改当前项（多选没有“当前项”语义）。
+        event->ignore();
+        return;
+    }
+    QComboBox::wheelEvent(event);
 }
 
 }  // namespace xrkit::shell

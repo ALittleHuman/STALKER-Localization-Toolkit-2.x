@@ -249,6 +249,7 @@ XmlPage::XmlPage(QWidget* parent)
     task_->set_idle_status(QStringLiteral("就绪"));
     footer_layout()->addWidget(task_->panel(), 0);
     task_->panel()->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    add_action_status(task_->status_label());
     // ★★ 2026-10-07（审计补充 F3「孤儿顶层控件」）：修前这一行是
     //   `status_ = new QLabel(task_->status());` —— `TaskShell::status()` 返回的是
     //   **QString**（控件访问器叫 `status_label()`），于是 `QLabel(const QString&, QWidget* = nullptr)`
@@ -260,7 +261,7 @@ XmlPage::XmlPage(QWidget* parent)
     status_->setObjectName(QStringLiteral("xml_status"));
     status_->setWordWrap(true);
     status_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-    footer_layout()->addWidget(status_, 0);
+    add_action_status(status_);
 
     // 10.4：切模式只重建筛选项 + 清空结果（**不重跑 I/O**）
     QObject::connect(mode_combo_, &QComboBox::currentTextChanged, this,
