@@ -367,6 +367,9 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                // 它们会继续用窗口底色（用户截图里 FS 顶部/工具行周围的黑色）。
                "QTabWidget::pane { background: @{surface2}; border: 0; }"
                "QTabWidget QStackedWidget, QTabWidget QTabBar { background: @{surface2}; }"
+               // 另一条共同点：QStackedWidget / QHeaderView 也是裸控件，页内/表头上方
+               // 那一条黑带就是它们自己的窗口底色。
+               "QStackedWidget, QHeaderView { background: @{surface2}; }"
                "QTabWidget#fs_tabs::pane { background: @{surface2}; border: 0; }"
                "QWidget#fs_unpack_page, QWidget#fs_pack_page { background: transparent; }"
                // 卡片与分组（内容区加边界：原来"裸列表铺满"全靠这个改观）
