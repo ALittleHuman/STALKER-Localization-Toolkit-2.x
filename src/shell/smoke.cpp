@@ -12720,7 +12720,7 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
         VideoPage video_probe;
         measure(&video_probe, "video_info_pane", 400, "1786×1111 视频页");
         FontPackPage font_probe;
-        measure(&font_probe, "font_status_pane", 20, "1786×1111 汉化包页（Fit）");
+        measure(&font_probe, "font_status_pane", 300, "1786×1111 汉化包页");
         // Fit 夹具：430 / 800 / 1111 三个高度，操作栏都必须可见。
         FontPackPage fit_probe;
         fit_probe.set_content_mode(PageBase::ContentMode::Fit);
