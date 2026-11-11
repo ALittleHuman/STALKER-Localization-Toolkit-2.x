@@ -227,6 +227,9 @@ XmlPage::XmlPage(QWidget* parent)
     split_->addWidget(detail_panel_);   // ★ 2026-10-25：明细栏进分栏（高度可拖）
     split_->setStretchFactor(0, 1);
     split_->setStretchFactor(1, 0);
+    split_->setMaximumHeight(QWIDGETSIZE_MAX);
+    split_->setMinimumHeight(0);
+    split_->installEventFilter(this);
     // 初始没有选中行 ⇒ 详情栏隐藏；不要把 240px 的“详情栏预留”留在结果表下面，
     // 否则结果表只占一半、底部空出一截（用户 2026-11-11 截图）。
     split_->setSizes({1, 0});
@@ -236,6 +239,7 @@ XmlPage::XmlPage(QWidget* parent)
     //   2.x 原来只在完成时往表里塞一句消息（`:147-150`），界面上**没有**这个统计行。
     stats_label_ = new QLabel;
     stats_label_->setObjectName(QStringLiteral("xml_stats"));
+    stats_label_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     stats_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     // ★ 2026-10-25 用户：「总览稍微偏上了一些」⇒ 加一点上边距（不挤到分栏手柄上）
     stats_label_->setContentsMargins(0, xrkit::core::px(6), 0, 0);
@@ -244,6 +248,7 @@ XmlPage::XmlPage(QWidget* parent)
     task_ = new TaskShell(this);
     task_->set_idle_status(QStringLiteral("就绪"));
     body_layout()->addWidget(task_->panel(), 0);
+    task_->panel()->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     // ★★ 2026-10-07（审计补充 F3「孤儿顶层控件」）：修前这一行是
     //   `status_ = new QLabel(task_->status());` —— `TaskShell::status()` 返回的是
     //   **QString**（控件访问器叫 `status_label()`），于是 `QLabel(const QString&, QWidget* = nullptr)`
@@ -254,6 +259,7 @@ XmlPage::XmlPage(QWidget* parent)
     status_ = new QLabel;
     status_->setObjectName(QStringLiteral("xml_status"));
     status_->setWordWrap(true);
+    status_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     body_layout()->addWidget(status_, 0);
 
     // 10.4：切模式只重建筛选项 + 清空结果（**不重跑 I/O**）
@@ -986,6 +992,12 @@ void XmlPage::update_detail_sections() {
 }
 
 bool XmlPage::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == split_ && event->type() == QEvent::Resize && detail_panel_ != nullptr &&
+        !detail_panel_->isVisible()) {
+        if (split_->sizes().size() != 2 || split_->sizes().at(1) != 0) {
+            split_->setSizes({split_->height(), 0});
+        }
+    }
     // 明细栏的**空白区**（不是子控件）被点 ⇒ 等同于"取消选中"（用户要求恢复这个习惯）
     if (watched == detail_panel_ && event->type() == QEvent::MouseButtonPress) {
         if (result_tree_ != nullptr) {
