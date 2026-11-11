@@ -5,6 +5,7 @@
 #include "xrkit/engine/text/encoding.h"
 
 #include "../task_shell.h"
+#include "../page_ui_kit.h"
 #include "../scroll_viewport.h"   // ★ 2026-10-05（#6）：结果区的页内视口（`rows_viewport_`）
 #include "../virtual_list.h"
 
@@ -153,7 +154,7 @@ ConvertPage::ConvertPage(QWidget* parent)
                            std::function<DialogStart()> judge) {
         // ★ 2026-10-04 用户第 1 条「拖拽到相应区域」：整行是一个 QWidget 容器 ⇒ 丢在
         //   标签/按钮/空白处都能接住（`drop_zones_` 只有这一份接线实现）。
-        auto* container = new QWidget;
+        auto* container = ui::make_transparent_row();
         auto* row = new QHBoxLayout(container);
         row->setContentsMargins(0, 0, 0, 0);
         row->addWidget(new QLabel(label), 0);
@@ -236,7 +237,10 @@ ConvertPage::ConvertPage(QWidget* parent)
     //   ⇒ 给它套一层**页内视口**（由 `PageBase` 造，见那里的说明）：装不下就出现条子、能滚；
     //     装得下就不占位（滚动不变量 ①②：判据是"能不能滚"，不是"条子看不看得见"）。
     rows_viewport_ = make_inner_scroll(rows_, QStringLiteral("convert_rows_viewport"));
-    body_layout()->addWidget(rows_viewport_, 1);
+    auto* rows_pane = new ui::ResultPane;
+    rows_pane->setObjectName(QStringLiteral("convert_rows_pane"));
+    rows_pane->add_content(rows_viewport_, 1);
+    body_layout()->addWidget(rows_pane, 1);
     if (rows_viewport_ != nullptr) {
         // ★★ 2026-10-05（#6 的真接线）：行列表是**自绘虚拟列表** —— 它拿自己的 `height()`
         //   当视口高、按内部 `top_` 只画那几行。所以这层视口必须按"**自带滚动的画布**"走：
