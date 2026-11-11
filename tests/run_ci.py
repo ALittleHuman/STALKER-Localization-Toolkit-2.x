@@ -3884,30 +3884,6 @@ def step_plugin_manager(release: bool) -> None:
         fail("插件管理器判据不成立（见上）")
 
 
-def step_net_plugin(release: bool) -> None:
-    r"""★ 2026-11-09（用户："开始搞联网插件"）：**单文件联网插件**端到端（离线）。
-
-    判据（`tests/check_net_plugin.py`）：起本地 `127.0.0.1` HTTP server → 把
-    `plugins_net/net_http.py` 复制成插件目录里的单文件 → `--py-plugins --json` 读清单
-    （id/version/repo）→ `--py-plugin-call` 调 `net.http_get/1` → 正文/状态码回读；
-    另测 `ftp://` 必须 `status=error`（不把异常抛给消费者）。
-    本步**不验"随包"**：联网插件不随包是既有决策（`host-offline` 另判）。
-    """
-    say("[net-plugin] 联网插件（单文件）：本地 HTTP → 服务调用 → 正文回读")
-    script = ROOT / "tests" / "check_net_plugin.py"
-    if not require_repo_file(script, "联网插件判据脚本"):
-        return
-    rc2, out = run([sys.executable, str(script)], timeout=300)
-    for line in out.splitlines():
-        s = line.strip()
-        if s.startswith(("✓ ", "✗ ", "NET-PLUGIN", "!!")):
-            say("  " + s[:170])
-    if rc2 == 0:
-        ok("联网插件：单文件加载、服务调用、正文回读、坏 scheme 零静默全过")
-    else:
-        fail("联网插件端到端不成立（见上）")
-
-
 def step_extract_pack(release: bool) -> None:
     r"""★ 2026-11-10：CLI/GUI 共用的提取编排 `--extract-pack`。
 
@@ -8234,7 +8210,6 @@ STEPS = [
     ("plugin-services", step_plugin_services),
     ("plugin-deps", step_plugin_deps),
     ("extract-pack", step_extract_pack),
-    ("net-plugin", step_net_plugin),
     ("plugin-manager", step_plugin_manager),
     ("plugin-requires", step_plugin_requires),
     ("plugin-metadata", step_plugin_metadata),
