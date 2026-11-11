@@ -227,7 +227,9 @@ XmlPage::XmlPage(QWidget* parent)
     split_->addWidget(detail_panel_);   // ★ 2026-10-25：明细栏进分栏（高度可拖）
     split_->setStretchFactor(0, 1);
     split_->setStretchFactor(1, 0);
-    split_->setSizes({xrkit::core::px(360), xrkit::core::px(240)});
+    // 初始没有选中行 ⇒ 详情栏隐藏；不要把 240px 的“详情栏预留”留在结果表下面，
+    // 否则结果表只占一半、底部空出一截（用户 2026-11-11 截图）。
+    split_->setSizes({1, 0});
 
     // ★★ 2026-10-06（⑤）：统计标签 —— 1.x `xml_compare_app.py:406-409` 建 label、
     //   `:675-676` 写值：`一致 {cons}  |  不一致 {incon}  |  仅 {name_a} {oa}  |  仅 {name_b} {ob}`。
@@ -941,7 +943,10 @@ void XmlPage::show_detail_for_item(QTreeWidgetItem* item) {
         if (detail_head_ != nullptr) detail_head_->clear();
         if (detail_view_ != nullptr) detail_view_->clear();
         if (id_list_ != nullptr) id_list_->clear();
-        if (detail_panel_ != nullptr) detail_panel_->setVisible(false);  // 1.x `_hide_detail`
+        if (detail_panel_ != nullptr) {
+            detail_panel_->setVisible(false);
+            detail_panel_->setMaximumHeight(0);   // 隐藏时连 splitter 的预留高度一起收掉
+        }
         return;
     }
     const int index = item->data(0, Qt::UserRole).toInt();
@@ -950,7 +955,10 @@ void XmlPage::show_detail_for_item(QTreeWidgetItem* item) {
     // 完整明细**只在这一刻**生成（10.3：摘要路径绝不调它）
     if (detail_view_ != nullptr) detail_view_->setPlainText(detail_text(index));
     fill_id_tree(id_list_, detail_ids_for(index));
-    if (detail_panel_ != nullptr) detail_panel_->setVisible(true);  // 1.x `_show_detail`
+    if (detail_panel_ != nullptr) {
+        detail_panel_->setMaximumHeight(QWIDGETSIZE_MAX);
+        detail_panel_->setVisible(true);  // 1.x `_show_detail`
+    }
 }
 
 void XmlPage::update_detail_sections() {
@@ -962,6 +970,11 @@ void XmlPage::update_detail_sections() {
     // ★★ 2026-10-26 用户实测：**两项都收起时高度还在**（截图：一大片空白）
     //   ⇒ 两个都收起就把面板压到"头部那一行 + 两个小标题"的高度；任一展开就恢复可拖。
     if (split_ == nullptr) return;
+    if (!detail_panel_->isVisible()) {
+        detail_panel_->setMaximumHeight(0);
+        split_->setSizes({std::max(0, split_->height()), 0});
+        return;
+    }
     if (!show_detail && !show_ids) {
         const int collapsed = xrkit::core::px(24) * 2 + xrkit::core::px(10) + xrkit::core::px(24);
         detail_panel_->setMaximumHeight(collapsed);
