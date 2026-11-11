@@ -12712,7 +12712,7 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
             }
         };
         XmlPage xml_probe;
-        measure(&xml_probe, "xml_result_area", 500, "1786×1111 文本页");
+        measure(&xml_probe, "xml_rows", 500, "1786×1111 文本页");
         FsPage fs_probe;
         measure(&fs_probe, "fs_package_pane", 500, "1786×1111 FS 页");
         ConvertPage convert_probe;

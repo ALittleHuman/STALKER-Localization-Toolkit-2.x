@@ -122,8 +122,9 @@ PageBase::PageBase(const QString& page_id, const QString& title, QWidget* parent
                                      xrkit::core::px(12), xrkit::core::px(12));
     body_layout_->setSpacing(xrkit::core::px(6));
     auto* body_outer = new QVBoxLayout(body_);
+    body_outer_ = body_outer;
     body_outer->setContentsMargins(0, 0, 0, 0);
-    body_outer->addWidget(card_, 1);
+    body_outer->addWidget(card_);
     viewport_->set_body(body_);
 
     // ── 规则 2：操作栏**先放且贴底**。它是页的直接子控件、**不在视口里**，
@@ -147,8 +148,11 @@ PageBase::PageBase(const QString& page_id, const QString& title, QWidget* parent
     header_row_layout->addStretch(1);
     header_row_layout->addWidget(subtitle_, 0, Qt::AlignVCenter | Qt::AlignRight);
     outer_->addWidget(header_row_, 0);
-    outer_->addWidget(viewport_, 1);  // 吃剩余空间
+    outer_->addWidget(viewport_, 1);  // Fill 模式下吃剩余空间
     outer_->addWidget(action_bar_, 0);
+    // Fit 模式下用它把剩余空间推到页面底部（操作栏紧跟内容）。
+    outer_->addStretch(1);
+    outer_->setStretch(outer_->count() - 1, 0);
 
     // ② 空白容器：按在它们身上 = "点了空白" ⇒ 把输入框的焦点收回页面
     //   （只装在这几个**容器**上：按到 QLineEdit/QComboBox 等**接焦点**的控件时，
@@ -165,6 +169,27 @@ bool PageBase::eventFilter(QObject* watched, QEvent* event) {
         setFocus(Qt::MouseFocusReason);
     }
     return QWidget::eventFilter(watched, event);
+}
+
+void PageBase::set_content_mode(ContentMode mode) {
+    content_mode_ = mode;
+    if (body_outer_ != nullptr) {
+        body_outer_->setStretch(body_outer_->indexOf(card_), mode == ContentMode::Fill ? 1 : 0);
+    }
+    if (outer_ != nullptr && outer_->count() >= 4) {
+        const int tail = outer_->count() - 1;
+        outer_->setStretch(1, mode == ContentMode::Fill ? 1 : 0);
+        outer_->setStretch(tail, mode == ContentMode::Fill ? 0 : 1);
+    }
+    if (viewport_ != nullptr) {
+        viewport_->set_fit(mode == ContentMode::Fill ? ScrollViewport::Fit::Viewport
+                                                     : ScrollViewport::Fit::Content);
+        viewport_->setSizePolicy(QSizePolicy::Expanding,
+                                 mode == ContentMode::Fill ? QSizePolicy::Expanding
+                                                           : QSizePolicy::Preferred);
+        if (viewport_->layout() != nullptr) viewport_->layout()->activate();
+    }
+    if (outer_ != nullptr) outer_->activate();
 }
 
 void PageBase::set_subtitle(const QString& text) {

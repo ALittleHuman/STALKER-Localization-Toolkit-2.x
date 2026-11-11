@@ -141,14 +141,12 @@ XmlPage::XmlPage(QWidget* parent)
     result_tree_->setRootIsDecorated(false);   // 平表：没有层级，不该画展开箭头
     // ★★ 2026-10-25 用户：「详情/差异 id 以及整个明细栏也需要能够拖拽改变高度」
     //   ⇒ 结果表与明细栏放进竖向 QSplitter（总览行在分栏**下面**，始终可见）。
-    result_area_ = new QWidget;
-    result_area_->setObjectName(QStringLiteral("xml_result_area"));
-    result_area_->setAutoFillBackground(false);
-    result_layout_ = new QVBoxLayout(result_area_);
-    result_layout_->setContentsMargins(0, 0, 0, 0);
-    result_layout_->setSpacing(0);
-    result_layout_->addWidget(result_tree_, 1);
-    body_layout()->addWidget(result_area_, 1);
+    split_ = new QSplitter(Qt::Vertical);
+    split_->setObjectName(QStringLiteral("xml_split"));
+    split_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    split_->setChildrenCollapsible(false);
+    split_->addWidget(result_tree_);
+    body_layout()->addWidget(split_, 1);
     apply_result_columns();
 
     // ★★ D2 批：详情栏（1.x `:436-458`）—— 上半＝明细正文，下半＝逐条 id + 复制id。
@@ -226,7 +224,12 @@ XmlPage::XmlPage(QWidget* parent)
     // ★ 2026-10-26：点明细栏的**空白处**也要能收起（用户：「现在只能点按钮了」）
     detail_panel_->installEventFilter(this);
     detail_panel_->setVisible(false);
-    result_layout_->addWidget(detail_panel_, 0);
+    split_->addWidget(detail_panel_);   // ★ 2026-10-25：明细栏进分栏（高度可拖）
+    split_->setStretchFactor(0, 1);
+    split_->setStretchFactor(1, 0);
+    // 初始没有选中行 ⇒ 详情栏隐藏；不要把 240px 的“详情栏预留”留在结果表下面，
+    // 否则结果表只占一半、底部空出一截（用户 2026-11-11 截图）。
+    split_->setSizes({1, 0});
 
     // ★★ 2026-10-06（⑤）：统计标签 —— 1.x `xml_compare_app.py:406-409` 建 label、
     //   `:675-676` 写值：`一致 {cons}  |  不一致 {incon}  |  仅 {name_a} {oa}  |  仅 {name_b} {ob}`。
@@ -297,7 +300,7 @@ XmlPage::XmlPage(QWidget* parent)
     // insertWidget 会把原 index=3 的 stretch 留给新控件；显式把拉伸还给结果表/详情分栏，
     // 否则隐藏的复选框行拿走了 stretch，底部会空出一大块。
     body_layout()->setStretchFactor(extract_wrap, 0);
-    body_layout()->setStretchFactor(result_area_, 1);
+    body_layout()->setStretchFactor(split_, 1);
     extract_wrap_ = extract_wrap;
     // ★ 2026-11-10（用户）：**硬编码文本表始终生成** ⇒ 两个框都不勾也可以提取
     //   （只出 `*_texts.xml`，不复制语言包、不写改写产物）。两个框是独立多选：
@@ -964,13 +967,19 @@ void XmlPage::update_detail_sections() {
     const bool show_ids = id_toggle_ == nullptr || id_toggle_->isChecked();
     if (detail_view_ != nullptr) detail_view_->setVisible(show_detail);
     if (id_list_ != nullptr) id_list_->setVisible(show_ids);
+    // ★★ 2026-10-26 用户实测：**两项都收起时高度还在**（截图：一大片空白）
+    //   ⇒ 两个都收起就把面板压到"头部那一行 + 两个小标题"的高度；任一展开就恢复可拖。
+    if (split_ == nullptr) return;
     if (!detail_panel_->isVisible()) {
         detail_panel_->setMaximumHeight(0);
+        split_->setSizes({std::max(0, split_->height()), 0});
         return;
     }
     if (!show_detail && !show_ids) {
         const int collapsed = xrkit::core::px(24) * 2 + xrkit::core::px(10) + xrkit::core::px(24);
         detail_panel_->setMaximumHeight(collapsed);
+        const int total = split_->height();
+        split_->setSizes({std::max(0, total - collapsed), collapsed});
     } else {
         detail_panel_->setMaximumHeight(QWIDGETSIZE_MAX);
     }

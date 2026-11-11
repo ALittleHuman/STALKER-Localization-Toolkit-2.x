@@ -80,6 +80,11 @@ public:
     QString page_title() const { return title_; }
 
     QVBoxLayout* outer_layout() const { return outer_; }
+    // Fill：内容/卡片吃满视口（有真实结果区的页：fs/xml/convert/video）；
+    // Fit ：卡片按内容高，操作栏紧跟内容（无结果区的页：fontpack）。
+    enum class ContentMode { Fill, Fit };
+    void set_content_mode(ContentMode mode);
+    ContentMode content_mode() const { return content_mode_; }
     QLabel* header() const { return header_; }
     // ★ 2026-09-27 界面重构：页标题下面加一句**副标题**（说明本页能干什么），
     //   内容区包进**卡片**（QFrame#card：边框+圆角+内边距）——原来六页都是
@@ -203,6 +208,8 @@ private:
     ScrollViewport* inner_viewport_ = nullptr;
     QWidget* inner_content_ = nullptr;
     QWidget* body_ = nullptr;
+    QVBoxLayout* body_outer_ = nullptr;
+    ContentMode content_mode_ = ContentMode::Fill;
     QVBoxLayout* body_layout_ = nullptr;
     QWidget* action_bar_ = nullptr;
     QHBoxLayout* action_layout_ = nullptr;
