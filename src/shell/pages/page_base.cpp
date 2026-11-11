@@ -12,6 +12,7 @@
 #include <QHBoxLayout>
 #include <QFrame>
 #include <QLabel>
+#include <QTimer>
 #include <QAction>
 #include <QComboBox>
 #include <QCoreApplication>
@@ -173,23 +174,51 @@ bool PageBase::eventFilter(QObject* watched, QEvent* event) {
 
 void PageBase::set_content_mode(ContentMode mode) {
     content_mode_ = mode;
-    if (body_outer_ != nullptr) {
-        body_outer_->setStretch(body_outer_->indexOf(card_), mode == ContentMode::Fill ? 1 : 0);
+    apply_content_mode();
+}
+
+void PageBase::apply_content_mode() {
+    if (applying_content_mode_ || body_outer_ == nullptr || outer_ == nullptr ||
+        card_ == nullptr || viewport_ == nullptr) {
+        return;
     }
-    if (outer_ != nullptr && outer_->count() >= 4) {
+    applying_content_mode_ = true;
+
+    bool fill = content_mode_ == ContentMode::Fill;
+    if (!fill) {
+        // Fit 只在“窗口足够高、内容放得下”时生效；否则退回 Fill，保证操作栏可见。
+        const int content_h = card_->sizeHint().height();
+        const int chrome = (header_row_ != nullptr ? header_row_->sizeHint().height() : 0) +
+                           (action_bar_ != nullptr ? action_bar_->sizeHint().height() : 0) +
+                           xrkit::core::px(10) * 2 + xrkit::core::px(10) * 2;
+        fill = height() - chrome < content_h;
+    }
+
+    const int card_index = body_outer_->indexOf(card_);
+    if (card_index >= 0) body_outer_->setStretch(card_index, fill ? 1 : 0);
+
+    if (outer_->count() >= 4) {
         const int tail = outer_->count() - 1;
-        outer_->setStretch(1, mode == ContentMode::Fill ? 1 : 0);
-        outer_->setStretch(tail, mode == ContentMode::Fill ? 0 : 1);
+        outer_->setStretch(1, fill ? 1 : 0);
+        outer_->setStretch(tail, fill ? 0 : 1);
     }
-    if (viewport_ != nullptr) {
-        viewport_->set_fit(mode == ContentMode::Fill ? ScrollViewport::Fit::Viewport
-                                                     : ScrollViewport::Fit::Content);
-        viewport_->setSizePolicy(QSizePolicy::Expanding,
-                                 mode == ContentMode::Fill ? QSizePolicy::Expanding
-                                                           : QSizePolicy::Preferred);
-        if (viewport_->layout() != nullptr) viewport_->layout()->activate();
+    viewport_->set_fit(fill ? ScrollViewport::Fit::Viewport : ScrollViewport::Fit::Content);
+    viewport_->setSizePolicy(QSizePolicy::Expanding,
+                             fill ? QSizePolicy::Expanding : QSizePolicy::Preferred);
+    // Fit 时允许视口被压矮（内容由视口自己滚），操作栏才不会被推到窗口外。
+    viewport_->setMinimumHeight(0);
+
+    outer_->activate();
+    if (viewport_->layout() != nullptr) viewport_->layout()->activate();
+    applying_content_mode_ = false;
+}
+
+void PageBase::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    if (content_mode_ == ContentMode::Fit) {
+        // 用排队调用避免在 resize 过程中改布局造成递归。
+        QTimer::singleShot(0, this, [this] { apply_content_mode(); });
     }
-    if (outer_ != nullptr) outer_->activate();
 }
 
 void PageBase::set_subtitle(const QString& text) {

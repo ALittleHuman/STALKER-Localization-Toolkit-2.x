@@ -30,6 +30,7 @@ class QHBoxLayout;
 class QLabel;
 class QMenu;
 class QPushButton;
+class QResizeEvent;
 class QVBoxLayout;
 
 namespace xrkit::shell {
@@ -85,6 +86,9 @@ public:
     enum class ContentMode { Fill, Fit };
     void set_content_mode(ContentMode mode);
     ContentMode content_mode() const { return content_mode_; }
+    // Fit 是“窗口足够高时按内容高”：窗口压到内容放不下时自动退回 Fill，
+    // 保证操作栏永远可见（原契约）。
+    void apply_content_mode();
     QLabel* header() const { return header_; }
     // ★ 2026-09-27 界面重构：页标题下面加一句**副标题**（说明本页能干什么），
     //   内容区包进**卡片**（QFrame#card：边框+圆角+内边距）——原来六页都是
@@ -210,6 +214,8 @@ private:
     QWidget* body_ = nullptr;
     QVBoxLayout* body_outer_ = nullptr;
     ContentMode content_mode_ = ContentMode::Fill;
+    bool applying_content_mode_ = false;
+    void resizeEvent(QResizeEvent* event) override;
     QVBoxLayout* body_layout_ = nullptr;
     QWidget* action_bar_ = nullptr;
     QHBoxLayout* action_layout_ = nullptr;
