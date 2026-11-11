@@ -324,6 +324,14 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                //   标签背后那块深灰圆角（容器底色 `bg` 比卡片 `surface2` 深，只有标签那一块
                //   露出来）。整行铺满窗口的拖放区照旧是 `bg`（与所在面板一致），不会露白。
                "QWidget#field_row { background: transparent; }"
+               // FS 的两个列表面板/工具行、XML 详情面板、字体页扫描行：
+               // 都是裸容器，统一透明；真正的底由 card/list 自己给。
+               "QWidget#fs_package_pane, QWidget#fs_entry_pane,"
+               " QWidget#fs_package_bar, QWidget#fs_entry_bar { background: transparent; }"
+               "QWidget#xml_detail_panel { background: transparent; }"
+               "QWidget#font_ixr_scan_row { background: transparent; }"
+               // fontpack 的参照包行走 property（不能改 objectName，否则会命中泛化规则）
+               "QWidget[ixr_pack_row=\"true\"] { background: transparent; }"
                //   任务面板：同一类现场（裸容器 + 进度条/状态字），自己不涂底。
                "QWidget#task_panel { background: transparent; }"
                "QLabel { background: transparent; }"
