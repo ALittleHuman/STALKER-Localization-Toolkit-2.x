@@ -12693,6 +12693,36 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
         // ★★ 决策 1（C ABI 退净）：这一块整段删除（它用 `PluginApiAdapter` / `load_plugin` 测 C 插件）。
     }
 
+    // 1786×1111 五页几何门禁：每页只能有一个 stretch 目标，且它必须吃掉剩余高度。
+    {
+        const auto measure = [&check](PageBase* page, const char* object_name, int min_height,
+                                      const char* label) {
+            page->resize(1786, 1111);
+            page->show();
+            QApplication::processEvents();
+            if (auto* content = page->findChild<QWidget*>(QString::fromLatin1(object_name))) {
+                check(content->height() >= min_height,
+                      QStringLiteral("%1：内容区高度 %2 ≥ %3")
+                          .arg(QString::fromUtf8(label))
+                          .arg(content->height())
+                          .arg(min_height));
+            } else {
+                check(false, QStringLiteral("%1：找不到内容区 %2")
+                                 .arg(QString::fromUtf8(label), QString::fromLatin1(object_name)));
+            }
+        };
+        XmlPage xml_probe;
+        measure(&xml_probe, "xml_result_area", 500, "1786×1111 文本页");
+        FsPage fs_probe;
+        measure(&fs_probe, "fs_package_pane", 500, "1786×1111 FS 页");
+        ConvertPage convert_probe;
+        measure(&convert_probe, "convert_rows_pane", 400, "1786×1111 编码转换页");
+        VideoPage video_probe;
+        measure(&video_probe, "video_info_pane", 400, "1786×1111 视频页");
+        FontPackPage font_probe;
+        measure(&font_probe, "font_status_pane", 300, "1786×1111 汉化包页");
+    }
+
     // ★ 2026-10-22（用户口径）：**子进程内**落盘（外壳/引擎各一份），atexit 兜底（幂等）。
     static bool flush_registered = false;
     if (!flush_registered) {

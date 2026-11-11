@@ -9,6 +9,7 @@
 #include "xrkit/engine/font/system_dirs.h"
 
 #include "../task_shell.h"
+#include "../page_ui_kit.h"
 
 #include <QApplication>
 #include <QAction>
@@ -100,7 +101,7 @@ FontPackPage::FontPackPage(QWidget* parent)
     const auto path_row = [this](const QString& label, QLineEdit* edit, bool directory,
                                  const QString& title, std::function<DialogStart()> judge) {
         // ★ 2026-10-04 用户第 1 条：整行成容器 ⇒ "拖到相应区域"
-        auto* container = new QWidget;
+        auto* container = ui::make_transparent_row();
         auto* layout = new QHBoxLayout(container);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->addWidget(new QLabel(label), 0);
@@ -168,7 +169,7 @@ FontPackPage::FontPackPage(QWidget* parent)
         // ★★ 2026-10-27（用户：「那扫描生成的怎么弄？」）：**扫描参照包** ——
         //   与 CLI `--langpack-scan` / 插件页同一个引擎实现（`scan_lang_pack`）。
         //   扫描结果直接写在状态行：profile / lang / 段数 / ttf 数（缺什么也写）。
-        auto* scan_row = new QWidget;
+        auto* scan_row = ui::make_transparent_row();
         scan_row->setObjectName(QStringLiteral("font_ixr_scan_row"));
         auto* scan_layout = new QHBoxLayout(scan_row);
         scan_layout->setContentsMargins(0, 0, 0, 0);
@@ -322,9 +323,12 @@ FontPackPage::FontPackPage(QWidget* parent)
     sync_lang_edit();
     sync_suffix_edit();
 
-    body_layout()->addWidget(state_label_, 0);
-    body_layout()->addWidget(result_label_, 0);
-    body_layout()->addStretch(1);
+    auto* status_pane = new ui::ResultPane;
+    status_pane->setObjectName(QStringLiteral("font_status_pane"));
+    status_pane->add_content(state_label_, 0);
+    status_pane->add_content(result_label_, 0);
+    status_pane->content_layout()->addStretch(1);
+    body_layout()->addWidget(status_pane, 1);
 
     // ★★ 2026-10-06（② 用户拍板）：「**封包和字库的取消，在这里本质是完全没有的，故直接删除
     //   即可。**」⇒ 本页按 `CancelButton::No` 造任务壳：**连取消按钮都不创建**。

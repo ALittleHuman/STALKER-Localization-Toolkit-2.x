@@ -1,4 +1,5 @@
 #include "video_page.h"
+#include "../page_ui_kit.h"
 
 #include "xrkit/core/path.h"
 #include "xrkit/core/theme.h"
@@ -1027,7 +1028,7 @@ VideoPage::VideoPage(QWidget* parent)
 
     const auto row = [this](const QString& label, QLineEdit* edit, std::function<void()> on_browse) {
         // ★ 2026-10-04 用户第 1 条：整行成容器 ⇒ "拖到相应区域"
-        auto* container = new QWidget;
+        auto* container = ui::make_transparent_row();
         auto* layout = new QHBoxLayout(container);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->addWidget(new QLabel(label), 0);
@@ -1094,7 +1095,10 @@ VideoPage::VideoPage(QWidget* parent)
         info_->setFont(mono);
     }
     info_->setPlainText(info_panel_text());
-    body_layout()->addWidget(info_, 1);
+    auto* info_pane = new ui::ResultPane;
+    info_pane->setObjectName(QStringLiteral("video_info_pane"));
+    info_pane->add_content(info_, 1);
+    body_layout()->addWidget(info_pane, 1);
 
     // ── 进度（1.x `:561-562`）──
     progress_ = new QProgressBar;
@@ -1112,7 +1116,6 @@ VideoPage::VideoPage(QWidget* parent)
     status_->setObjectName(QStringLiteral("video_status"));
     status_->setWordWrap(true);
     body_layout()->addWidget(status_, 0);
-    body_layout()->addStretch(1);
 
     detect_button_ = add_action(QStringLiteral("检测 ffmpeg"));
     detect_button_->setObjectName(QStringLiteral("video_detect"));
