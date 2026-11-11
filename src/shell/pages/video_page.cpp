@@ -1105,17 +1105,17 @@ VideoPage::VideoPage(QWidget* parent)
     progress_->setObjectName(QStringLiteral("video_progress"));
     progress_->setRange(0, 100);
     progress_->setValue(0);
-    body_layout()->addWidget(progress_, 0);
+    footer_layout()->addWidget(progress_, 0);
     progress_text_ = new QLabel(QStringLiteral("就绪"));
     progress_text_->setObjectName(QStringLiteral("video_progress_text"));
     progress_text_->setWordWrap(true);
-    body_layout()->addWidget(progress_text_, 0);
+    footer_layout()->addWidget(progress_text_, 0);
 
     // 8.5：三态状态栏。构造期**不探测**（8.2）⇒ 这里显示"未检测"，不是 ✗
     status_ = new QLabel;
     status_->setObjectName(QStringLiteral("video_status"));
     status_->setWordWrap(true);
-    body_layout()->addWidget(status_, 0);
+    footer_layout()->addWidget(status_, 0);
 
     detect_button_ = add_action(QStringLiteral("检测 ffmpeg"));
     detect_button_->setObjectName(QStringLiteral("video_detect"));

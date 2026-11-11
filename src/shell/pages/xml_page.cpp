@@ -243,11 +243,11 @@ XmlPage::XmlPage(QWidget* parent)
     stats_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     // ★ 2026-10-25 用户：「总览稍微偏上了一些」⇒ 加一点上边距（不挤到分栏手柄上）
     stats_label_->setContentsMargins(0, xrkit::core::px(6), 0, 0);
-    body_layout()->addWidget(stats_label_, 0);
+    footer_layout()->addWidget(stats_label_, 0);
 
     task_ = new TaskShell(this);
     task_->set_idle_status(QStringLiteral("就绪"));
-    body_layout()->addWidget(task_->panel(), 0);
+    footer_layout()->addWidget(task_->panel(), 0);
     task_->panel()->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     // ★★ 2026-10-07（审计补充 F3「孤儿顶层控件」）：修前这一行是
     //   `status_ = new QLabel(task_->status());` —— `TaskShell::status()` 返回的是
@@ -260,7 +260,7 @@ XmlPage::XmlPage(QWidget* parent)
     status_->setObjectName(QStringLiteral("xml_status"));
     status_->setWordWrap(true);
     status_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-    body_layout()->addWidget(status_, 0);
+    footer_layout()->addWidget(status_, 0);
 
     // 10.4：切模式只重建筛选项 + 清空结果（**不重跑 I/O**）
     QObject::connect(mode_combo_, &QComboBox::currentTextChanged, this,

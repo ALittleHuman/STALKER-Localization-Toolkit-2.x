@@ -117,6 +117,9 @@ public:
     QVBoxLayout* body_layout() const { return body_layout_; }
     QWidget* action_bar() const { return action_bar_; }
     QHBoxLayout* action_layout() const { return action_layout_; }
+    // 页脚：统计/任务进度/状态统一放这里，各页不再自己往 body 末尾塞。
+    QWidget* footer() const { return footer_; }
+    QVBoxLayout* footer_layout() const { return footer_layout_; }
 
     // ── ★★ 2026-10-05（用户报告 #6）：**页内一块自足内容区的滚动条**（第二层视口）──────
     //
@@ -219,6 +222,8 @@ private:
     QVBoxLayout* body_layout_ = nullptr;
     QWidget* action_bar_ = nullptr;
     QHBoxLayout* action_layout_ = nullptr;
+    QWidget* footer_ = nullptr;
+    QVBoxLayout* footer_layout_ = nullptr;
 };
 
 }  // namespace xrkit::shell

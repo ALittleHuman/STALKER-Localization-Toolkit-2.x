@@ -586,7 +586,7 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     task_ = new TaskShell(this, TaskShell::CancelButton::No);
     task_->set_idle_status(QStringLiteral("就绪"));
     task_->set_message_handler([this](const QString& text) { log_message(text); });
-    body_layout()->addWidget(task_->panel(), 0);
+    footer_layout()->addWidget(task_->panel(), 0);
 
     QObject::connect(add_button_, &QPushButton::clicked, this, [this] {
         // ★ 2026-10-01 用户第 4 条：「能不能在加载包那里增加一个文件夹的模式，这样就能精简掉

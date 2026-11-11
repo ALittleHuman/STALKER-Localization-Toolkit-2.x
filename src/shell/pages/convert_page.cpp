@@ -266,7 +266,7 @@ ConvertPage::ConvertPage(QWidget* parent)
                                      QStringLiteral("确定要取消当前转换任务吗？")) ==
                QMessageBox::Yes;
     });
-    body_layout()->addWidget(task_->panel(), 0);
+    footer_layout()->addWidget(task_->panel(), 0);
 
     // ★★ 2026-10-07（审计补充 F3「孤儿顶层控件」）：修前是
     //   `status_ = new QLabel(task_->status());` —— `TaskShell::status()` 返回 **QString**，
@@ -276,7 +276,7 @@ ConvertPage::ConvertPage(QWidget* parent)
     status_ = new QLabel;
     status_->setObjectName(QStringLiteral("convert_status"));
     status_->setWordWrap(true);
-    body_layout()->addWidget(status_, 0);
+    footer_layout()->addWidget(status_, 0);
 
     start_button_ = add_action(QStringLiteral("开始转换"));
     start_button_->setObjectName(QStringLiteral("convert_start"));

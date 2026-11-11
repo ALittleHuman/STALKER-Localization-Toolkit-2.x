@@ -150,6 +150,15 @@ PageBase::PageBase(const QString& page_id, const QString& title, QWidget* parent
     header_row_layout->addWidget(subtitle_, 0, Qt::AlignVCenter | Qt::AlignRight);
     outer_->addWidget(header_row_, 0);
     outer_->addWidget(viewport_, 1);  // Fill 模式下吃剩余空间
+    footer_ = new QWidget(this);
+    footer_->setObjectName(QStringLiteral("page_footer"));
+    footer_->setAutoFillBackground(false);
+    footer_->setStyleSheet(QStringLiteral("background: transparent;"));
+    footer_layout_ = new QVBoxLayout(footer_);
+    footer_layout_->setContentsMargins(0, 0, 0, 0);
+    footer_layout_->setSpacing(xrkit::core::px(4));
+    footer_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    outer_->addWidget(footer_, 0);
     outer_->addWidget(action_bar_, 0);
     // Fit 模式下用它把剩余空间推到页面底部（操作栏紧跟内容）。
     outer_->addStretch(1);
