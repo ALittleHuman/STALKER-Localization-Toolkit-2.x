@@ -343,6 +343,7 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                // 所有页根 + 页头行/底部操作栏：同一个共同点，统一透明/同层灰。
                // 之前它们都是裸 QWidget，被泛化规则涂成 bg（#1e2124）⇒ 每条底栏都是一条黑带。
                "QWidget[page_root=\"true\"] { background: @{surface2}; }"
+               "QWidget[ui_surface=\"true\"] { background: @{surface2}; }"
                "QWidget#page_header_row, QWidget#page_actions { background: transparent; }"
                "QLabel#status_label { color: @{text_dim}; }"
                "QLabel#page_header { color: @{text_bright}; }"

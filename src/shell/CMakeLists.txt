@@ -22,6 +22,7 @@ screen_scale.cpp
   drop_zone.cpp
   pair_tree.cpp
   multi_combo.cpp
+  page_ui_kit.cpp
   plugin_context_menu.cpp
   row_action_delegate.cpp
   dialog_start.cpp

@@ -12,6 +12,7 @@
 //   · 6.13 格式下拉的**取值是内部键**（显示名只用于展示）。
 
 #include "page_base.h"
+#include "../page_ui_kit.h"
 #include "../task_shell.h"
 #include "../dialog_start.h"
 
@@ -44,6 +45,8 @@ class QTreeWidget;
 class QTreeWidgetItem;
 
 namespace xrkit::shell {
+
+namespace ui { class ResultPane; }
 
 class FileDropFilter;
 
@@ -400,8 +403,8 @@ private:
     QTreeWidget* entry_tree_ = nullptr;
     QTabWidget* tabs_ = nullptr;
     QSplitter* split_list_tree_ = nullptr;   // 包列表 ↔ 包内树
-    QWidget* package_pane_ = nullptr;        // 包列表面板（工具行 + 列表）
-    QWidget* entry_pane_ = nullptr;          // 条目树面板（工具行 + 树）
+    ui::ResultPane* package_pane_ = nullptr;        // 包列表面板（工具行 + 列表）
+    ui::ResultPane* entry_pane_ = nullptr;          // 条目树面板（工具行 + 树）
     QWidget* package_bar_ = nullptr;
     QWidget* entry_bar_ = nullptr;
     QVBoxLayout* unpack_layout_ = nullptr;

@@ -7,6 +7,7 @@
 
 #include "../drop_filter.h"
 #include "../pair_tree.h"
+#include "../page_ui_kit.h"
 #include "../row_action_delegate.h"
 
 
@@ -403,17 +404,11 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     //   改法：每个列表**各自成一个小面板**（工具行 + 列表，同一父控件、同一条左边界、自身只留
     //   px(4) 行距），两个面板一起进既有的竖向分隔条 ⇒ 页级横条从 4 条降到 1 条，
     //   "谁的行规谁管"一眼可辨。**不新增任何说明文字**（用户口径：界面不要解释段）。
-    package_pane_ = new QWidget;
+    package_pane_ = new ui::ResultPane;
     package_pane_->setObjectName(QStringLiteral("fs_package_pane"));
-    auto* package_pane_layout = new QVBoxLayout(package_pane_);
-    package_pane_layout->setContentsMargins(0, 0, 0, 0);
-    package_pane_layout->setSpacing(xrkit::core::px(4));
 
-    entry_pane_ = new QWidget;
+    entry_pane_ = new ui::ResultPane;
     entry_pane_->setObjectName(QStringLiteral("fs_entry_pane"));
-    auto* entry_pane_layout = new QVBoxLayout(entry_pane_);
-    entry_pane_layout->setContentsMargins(0, 0, 0, 0);
-    entry_pane_layout->setSpacing(xrkit::core::px(4));
 
     // 包列表的工具行（1.x `_build_db_panel` 的 bar：加包/全选/加载选中/取消加载/清空 + 计数）
     // ★ 2026-10-01 用户第 4/5 条：**「扫描目录」删掉**（加包多了"选文件夹…"模式，功能重合）、
@@ -447,8 +442,8 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         package_count_label_->setObjectName(QStringLiteral("fs_package_count"));
         bar->addWidget(package_count_label_, 0);
     }
-    package_pane_layout->addWidget(package_bar_, 0);
-    package_pane_layout->addWidget(package_list_, 1);
+    package_pane_->add_header(package_bar_, 0);
+    package_pane_->add_content(package_list_, 1);
     // ★ 工具行**永远只占一行高**（2026-09-30 修）：它是普通 QWidget、垂直策略默认 Preferred，
     //   一旦同面板里的列表被隐藏/没有最小高，布局会把剩余空间全塞给它 ⇒ 里面的按钮被垂直居中，
     //   看起来就是"飘在空白中间"。钉成 Fixed 之后，无论列表在不在，工具行都只在顶部一条。
@@ -476,8 +471,8 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         entry_count_label_->setObjectName(QStringLiteral("fs_entry_count"));
         bar->addWidget(entry_count_label_, 0);
     }
-    entry_pane_layout->addWidget(entry_bar_, 0);
-    entry_pane_layout->addWidget(entry_tree_, 1);
+    entry_pane_->add_header(entry_bar_, 0);
+    entry_pane_->add_content(entry_tree_, 1);
     entry_bar_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);   // 同上：工具行只占一行
 
     // ★ 用户 2026-09-30：「上面包列表和下面文件列表之间也要有可拖拽分隔条」；并授权"自己看着
