@@ -344,6 +344,7 @@ FontPackPage::FontPackPage(QWidget* parent)
         }
     });
     body_layout()->addWidget(task_->panel(), 0);
+    set_content_mode(ContentMode::Fit);
 
     auto* detect = add_action(QStringLiteral("检测字体"));
     detect->setObjectName(QStringLiteral("font_detect"));

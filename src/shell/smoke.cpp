@@ -12720,7 +12720,35 @@ QDialog* dialog = page.findChild<QDialog*>(QStringLiteral("font_picker"));
         VideoPage video_probe;
         measure(&video_probe, "video_info_pane", 400, "1786×1111 视频页");
         FontPackPage font_probe;
-        measure(&font_probe, "font_status_pane", 300, "1786×1111 汉化包页");
+        measure(&font_probe, "font_status_pane", 20, "1786×1111 汉化包页（Fit）");
+        // Fit 夹具：430 / 800 / 1111 三个高度，操作栏都必须可见。
+        FontPackPage fit_probe;
+        fit_probe.set_content_mode(PageBase::ContentMode::Fit);
+        for (int h : {430, 800, 1111}) {
+            fit_probe.resize(1786, h);
+            fit_probe.show();
+            QApplication::processEvents();
+            QWidget* bar = fit_probe.action_bar();
+            const int bar_bottom = bar != nullptr ? bar->geometry().bottom() : -1;
+            result.notes.append(QStringLiteral("FIT %1 page=%2 viewport=%3 action=%4 minbody=%5 fit=%6")
+                                    .arg(h)
+                                    .arg(fit_probe.height())
+                                    .arg(fit_probe.viewport() != nullptr
+                                             ? fit_probe.viewport()->height()
+                                             : -1)
+                                    .arg(bar_bottom)
+                                    .arg(fit_probe.viewport() != nullptr
+                                             ? fit_probe.viewport()->min_body_height()
+                                             : -1)
+                                    .arg(fit_probe.viewport() != nullptr
+                                             ? int(fit_probe.viewport()->fit())
+                                             : -1));
+            check(bar != nullptr && bar->isVisible() && bar_bottom <= fit_probe.height(),
+                  QStringLiteral("Fit %1：操作栏可见且不超出页面（bottom=%2 page=%3）")
+                      .arg(h)
+                      .arg(bar_bottom)
+                      .arg(fit_probe.height()));
+        }
     }
 
     // ★ 2026-10-22（用户口径）：**子进程内**落盘（外壳/引擎各一份），atexit 兜底（幂等）。

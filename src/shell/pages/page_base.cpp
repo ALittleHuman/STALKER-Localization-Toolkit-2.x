@@ -185,9 +185,9 @@ void PageBase::apply_content_mode() {
     applying_content_mode_ = true;
 
     bool fill = content_mode_ == ContentMode::Fill;
+    int content_h = card_->sizeHint().height();
     if (!fill) {
         // Fit 只在“窗口足够高、内容放得下”时生效；否则退回 Fill，保证操作栏可见。
-        const int content_h = card_->sizeHint().height();
         const int chrome = (header_row_ != nullptr ? header_row_->sizeHint().height() : 0) +
                            (action_bar_ != nullptr ? action_bar_->sizeHint().height() : 0) +
                            xrkit::core::px(10) * 2 + xrkit::core::px(10) * 2;
@@ -202,11 +202,12 @@ void PageBase::apply_content_mode() {
         outer_->setStretch(1, fill ? 1 : 0);
         outer_->setStretch(tail, fill ? 0 : 1);
     }
-    viewport_->set_fit(fill ? ScrollViewport::Fit::Viewport : ScrollViewport::Fit::Content);
+    viewport_->set_fit(ScrollViewport::Fit::Content);
     viewport_->setSizePolicy(QSizePolicy::Expanding,
                              fill ? QSizePolicy::Expanding : QSizePolicy::Preferred);
-    // Fit 时允许视口被压矮（内容由视口自己滚），操作栏才不会被推到窗口外。
-    viewport_->setMinimumHeight(0);
+    // Fill：视口可缩可胀；Fit：视口按内容高，操作栏紧跟内容。
+    viewport_->setMinimumHeight(fill ? 0 : content_h);
+    viewport_->setMaximumHeight(fill ? QWIDGETSIZE_MAX : content_h);
 
     outer_->activate();
     if (viewport_->layout() != nullptr) viewport_->layout()->activate();
