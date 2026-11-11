@@ -363,6 +363,10 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
                "  border-bottom: @{r2} solid @{accent}; }"
                // FS 页：标签页的空白底不该用窗口色（否则列表上方/周围是一块黑底）；
                // 页容器透明，底色由 pane 的 surface2 提供，和卡片同一层灰。
+               // QTabWidget 的内部 stack/tabbar 也是裸 QWidget：只改 pane 不够，
+               // 它们会继续用窗口底色（用户截图里 FS 顶部/工具行周围的黑色）。
+               "QTabWidget::pane { background: @{surface2}; border: 0; }"
+               "QTabWidget QStackedWidget, QTabWidget QTabBar { background: @{surface2}; }"
                "QTabWidget#fs_tabs::pane { background: @{surface2}; border: 0; }"
                "QWidget#fs_unpack_page, QWidget#fs_pack_page { background: transparent; }"
                // 卡片与分组（内容区加边界：原来"裸列表铺满"全靠这个改观）
