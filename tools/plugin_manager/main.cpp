@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -426,12 +427,28 @@ int main(int argc, char** argv) {
     QString enable_file;
     QString disable_id;
     bool scan_json = false;
-    const QStringList args = [&] {
-        QStringList list;
-        for (int i = 1; i < argc; ++i) list << QString::fromUtf8(argv[i]);
-        return list;
-    }();
-    for (int i = 0; i < args.size(); ++i) {
+
+    // Windows 的 char** argv 是本地 ANSI（中文路径/理由会变成 U+FFFD 菱形问号），
+    // 不能提前 QString::fromUtf8(argv[i])。先建 QCoreApplication/QApplication，
+    // 再用 QCoreApplication::arguments() 取 Unicode 参数。
+    bool headless_arg = false;
+    for (int i = 1; i < argc; ++i) {
+        const char* a = argv[i];
+        if (a != nullptr &&
+            (std::strcmp(a, "--scan-json") == 0 || std::strcmp(a, "--disable") == 0 ||
+             std::strcmp(a, "--enable") == 0)) {
+            headless_arg = true;
+        }
+    }
+    std::unique_ptr<QCoreApplication> core_app;
+    std::unique_ptr<QApplication> gui_app;
+    if (headless_arg) {
+        core_app = std::make_unique<QCoreApplication>(argc, argv);
+    } else {
+        gui_app = std::make_unique<QApplication>(argc, argv);
+    }
+    const QStringList args = QCoreApplication::arguments();
+    for (int i = 1; i < args.size(); ++i) {
         if (args[i] == QStringLiteral("--plugins") && i + 1 < args.size()) {
             plugins_dir = args[++i];
         } else if (args[i] == QStringLiteral("--reason") && i + 1 < args.size()) {
@@ -447,13 +464,8 @@ int main(int argc, char** argv) {
         }
     }
     // ★ 2026-11-10：`applicationDirPath()` 只有在 QCoreApplication 建好之后才有效。
-    //   无界面模式（--scan-json/--disable/--enable）先建 QCoreApplication；GUI 模式建 QApplication。
     const bool headless_mode = scan_json || !disable_file.isEmpty() || !enable_file.isEmpty();
-    std::unique_ptr<QCoreApplication> core_app;
-    if (headless_mode) {
-        core_app = std::make_unique<QCoreApplication>(argc, argv);
-        if (plugins_dir.isEmpty()) plugins_dir = default_plugins_dir();
-    }
+    if (headless_mode && plugins_dir.isEmpty()) plugins_dir = default_plugins_dir();
     if (!disable_file.isEmpty() || !enable_file.isEmpty()) {
         // 无界面启停（自动化/脚本用）；GUI 里是同样的读写路径。
         const QString file = disable_file.isEmpty() ? enable_file : disable_file;
@@ -515,9 +527,9 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
-    QApplication app(argc, argv);
+    if (gui_app == nullptr) return 2;  // headless 分支必须已 return
     if (plugins_dir.isEmpty()) plugins_dir = default_plugins_dir();
     ManagerWindow window(plugins_dir, reason);
     window.show();
-    return app.exec();
+    return gui_app->exec();
 }
