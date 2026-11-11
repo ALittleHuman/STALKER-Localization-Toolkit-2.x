@@ -43,7 +43,7 @@ PLUGIN_INFO = {
     "name": "联网（WinHTTP）",
     "version": "1.0.0",
     # ★ repo 只作元数据（插件管理器展示/更新来源），不参与依赖判定。
-    "repo": "https://github.com/ALittleHuman/STALKER-Localization-Toolkit-2.x",
+    "repo": "https://github.com/ALittleHuman/STALKER-Localization-Toolkit-2.x-Network-Plugin",
     "provides": ["xrkit.net"],
 }
 

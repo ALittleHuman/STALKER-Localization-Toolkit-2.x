@@ -37,7 +37,7 @@ PLUGIN_INFO = {
     "id": "xrkit.net_http",          # 稳定唯一键（依赖判定只认 id）
     "name": "联网（WinHTTP）",
     "version": "1.0.0",
-    "repo": "https://github.com/ALittleHuman/STALKER-Localization-Toolkit-2.x",  # 仅元数据
+    "repo": "https://github.com/ALittleHuman/STALKER-Localization-Toolkit-2.x-Network-Plugin",  # 仅元数据
     "provides": ["xrkit.net"],
 }
 ```
