@@ -203,7 +203,8 @@ private:
     QTreeWidgetItem* item_for_visible_row(int index) const;
 
     // ★★ 2026-10-26：结果表/明细栏的分栏 + 两个折叠小标题（收起时压高度要用）
-    QSplitter* split_ = nullptr;
+    QWidget* result_area_ = nullptr;
+    class QVBoxLayout* result_layout_ = nullptr;
     QToolButton* detail_toggle_ = nullptr;
     QToolButton* id_toggle_ = nullptr;
 
