@@ -22,6 +22,7 @@
 #include "xrkit/core/sha256.h"
 #include "xrkit/core/theme.h"
 #include "xrkit/core/version.h"
+#include "xrkit/core/plugin_update.h"
 #include "xrkit/core/runtime.h"
 #include "xrkit/engine/engine.h"
 #include "xrkit/engine/fs/db.h"
@@ -4534,6 +4535,52 @@ int run_cli(const std::vector<std::string>& args) {
     //   因为发行包里只有 `xrkit_app.exe`（没有 CLI），"包内 Python 能不能起来、能不能加载 .py"
     //   必须由 GUI exe 的同名开关也能跑；两处各写一遍必然分叉（本仓最贵的一类返工）。
     //   退出码：0=通 / 1=有失败 / 2=构建期没带 Python（显式跳过）/ 3=用法错误。
+    // ★ 2026-11-12：插件目录级更新事务（给联网插件/管理器用；本动作不联网）。
+    //   --plugin-update <plugins> <target> <staged> <key> <transaction> <apply|commit|rollback|recover-ok|recover-fail>
+    if (action == "--plugin-update") {
+        if (operands.size() != 6) {
+            std::cerr << "PLUGIN-UPDATE error reason=用法：--plugin-update <plugins> <target> <staged> <key> <transaction> <apply|commit|rollback|recover-ok|recover-fail>\n";
+            return kExitUsage;
+        }
+        xrkit::core::PluginUpdatePlan plan;
+        plan.plugins_dir = operands[0];
+        plan.target_dir = operands[1];
+        plan.staged_dir = operands[2];
+        plan.disabled_key = operands[3];
+        plan.transaction = operands[4];
+        const std::string verb = operands[5];
+        xrkit::core::UpdateResult result;
+        bool was_enabled = false;
+        if (verb == "apply") {
+            const xrkit::core::PluginUpdateState began =
+                xrkit::core::plugin_update_begin(plan);
+            was_enabled = began.was_enabled;
+            if (!began.ok) {
+                result = xrkit::core::UpdateResult::failure(began.error);
+            } else {
+                result = xrkit::core::plugin_update_apply(plan);
+            }
+        } else if (verb == "commit") {
+            result = xrkit::core::plugin_update_commit(plan);
+        } else if (verb == "rollback") {
+            result = xrkit::core::plugin_update_rollback(plan);
+        } else if (verb == "recover-ok") {
+            result = xrkit::core::plugin_update_recover(plan, true);
+        } else if (verb == "recover-fail") {
+            result = xrkit::core::plugin_update_recover(plan, false);
+        } else {
+            std::cerr << "PLUGIN-UPDATE error reason=未知动作 " << verb << "\n";
+            return kExitUsage;
+        }
+        std::cout << "PLUGIN-UPDATE " << (result.ok ? "ok" : "error")
+                  << " action=" << verb
+                  << " was_enabled=" << (was_enabled ? 1 : 0)
+                  << " transaction=" << plan.transaction;
+        if (!result.ok) std::cout << " reason=" << result.error;
+        std::cout << "\n";
+        return result.ok ? kExitOk : kExitFail;
+    }
+
     if (action == "--python-host" || action == "--py-plugins" || action == "--py-plugins-scan" ||
         action == "--ui-facade" || action == "--py-plugin-call") {
         return xrkit::plugin::run_python_host_probe(args, [](const std::string& line) {
