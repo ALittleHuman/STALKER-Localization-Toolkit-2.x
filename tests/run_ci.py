@@ -3831,6 +3831,23 @@ def step_host_offline(release: bool) -> None:
         fail("宿主离线判据不通过（见上）")
 
 
+def step_network_toggle(release: bool) -> None:
+    """联网总开关：关闭时本地 HTTP 收到 0 次请求，开启后才请求。"""
+    say("[network-toggle] enabled=0 零请求 / enabled=1 成功")
+    script = ROOT / "tests" / "check_network_toggle.py"
+    if not require_repo_file(script, "联网开关判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)], timeout=120)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("OK ", "FAIL ", "SKIP ")):
+            say("  " + s)
+    if rc2 == 0:
+        ok("联网开关判据全过")
+    else:
+        fail("联网开关判据不通过（见上）")
+
+
 def step_plugin_requires(release: bool) -> None:
     r"""★ 2026-11-10（P1-6）：`PLUGIN_INFO.requires`（跨插件服务）的**启动期可见告警**。
 
@@ -8216,6 +8233,7 @@ STEPS = [
     # ★ 2026-11-09（F4435）：本步（P17-98 日志缓冲锁/注册表字据）此前只定义、**从未登记** ⇒ 判据从不运行。
     ("plugin-contract", step_plugin_contract),
     ("host-offline", step_host_offline),
+    ("network-toggle", step_network_toggle),
     ("snapshot-diff", step_snapshot_diff),
     ("track", step_track),
     ("version-consistency", step_version_consistency),
