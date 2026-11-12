@@ -14,6 +14,12 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace xrkit::plugin {
 namespace {
 
@@ -64,6 +70,14 @@ const HostFacade kHostFacade = {
     []() { return host_quit(); },
     /* version：本体版本字符串（插件检查更新用） */
     []() { return xrkit::core::version_string(); },
+    /* pid：当前宿主进程号（本体 updater 等待退出用） */
+    []() -> unsigned long {
+#ifdef _WIN32
+        return static_cast<unsigned long>(GetCurrentProcessId());
+#else
+        return static_cast<unsigned long>(getpid());
+#endif
+    },
 };
 
 }  // namespace

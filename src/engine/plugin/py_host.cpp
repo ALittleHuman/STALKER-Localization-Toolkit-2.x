@@ -2285,6 +2285,13 @@ public:
         return std::string();
     }
 
+    unsigned long pid() const {
+        if (const HostFacade* facade = available("pid")) {
+            return facade->pid ? facade->pid() : 0;
+        }
+        return 0;
+    }
+
 private:
     const HostFacade* available(const std::string& method) const {
         if (!host_facade_has(method)) {
@@ -3378,7 +3385,8 @@ void ensure_api_module() {
             .def("run_process", &PyHost::run_process, py::arg("options"))
         .def("restart", &PyHost::restart)
         .def("quit", &PyHost::quit)
-        .def("version", &PyHost::version);
+        .def("version", &PyHost::version)
+        .def("pid", &PyHost::pid);
         py::class_<PyEngine>(m, "Engine")
             // ★★ 2026-10-26：语言包识别（只读；与 CLI --langpack-scan 同一份引擎实现）
             .def("langpack_scan", &PyEngine::langpack_scan, py::arg("root"))

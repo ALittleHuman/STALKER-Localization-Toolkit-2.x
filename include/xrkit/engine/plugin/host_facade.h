@@ -71,6 +71,8 @@ struct HostFacade {
     std::function<bool()> quit;
     // 本体版本（插件检查更新时比较，避免把旧包当新包）。
     std::function<std::string()> version;
+    // 当前宿主进程号（本体更新器等待退出用；无宿主返回 0）。
+    std::function<unsigned long()> pid;
 };
 
 void set_host_restart_handler(std::function<bool()> handler);

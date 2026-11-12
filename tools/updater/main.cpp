@@ -90,6 +90,7 @@ int main(int argc, char** argv) {
     std::string target, staged, transaction, exe;
     unsigned long pid = 0;
     unsigned long wait_ms = 10000;
+    bool from_temp = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         auto next = [&](std::string* out) {
@@ -121,6 +122,8 @@ int main(int argc, char** argv) {
             } catch (...) {
                 return 3;
             }
+        } else if (arg == "--from-temp") {
+            from_temp = true;
         } else if (arg == "--help" || arg == "-h") {
             std::printf("usage: xrkit_updater --pid N --target DIR --staged DIR --transaction DIR "
                         "[--exe APP] [--wait-ms N]\n");
@@ -130,6 +133,41 @@ int main(int argc, char** argv) {
         }
     }
     if (target.empty() || staged.empty() || transaction.empty()) return 3;
+
+#ifdef _WIN32
+    // updater 自己通常就在被替换的安装目录里；先复制到事务目录再让子进程执行，
+    // 否则 remove_all(target) 会撞到正在运行的 updater.exe。
+    if (!from_temp) {
+        std::error_code ec;
+        std::filesystem::create_directories(transaction, ec);
+        wchar_t self[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, self, MAX_PATH);
+        const std::filesystem::path copy =
+            std::filesystem::u8path(transaction + ".runner.exe");
+        std::filesystem::copy_file(self, copy, std::filesystem::copy_options::overwrite_existing,
+                                   ec);
+        if (!ec) {
+            std::wstring cmd = L"\"" + copy.wstring() + L"\"";
+            for (int i = 1; i < argc; ++i) {
+                cmd += L" \"" + std::filesystem::u8path(argv[i]).wstring() + L"\"";
+            }
+            cmd += L" --from-temp";
+            STARTUPINFOW si{};
+            si.cb = sizeof(si);
+            PROCESS_INFORMATION pi{};
+            std::vector<wchar_t> buffer(cmd.begin(), cmd.end());
+            buffer.push_back(L'\0');
+            if (CreateProcessW(copy.c_str(), buffer.data(), nullptr, nullptr, FALSE, 0, nullptr,
+                               nullptr, &si, &pi)) {
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+                std::printf("UPDATER handoff ok transaction=%s\n", transaction.c_str());
+                return 0;
+            }
+        }
+        // 复制/拉起失败：继续尝试原地执行（可能因自身被锁而失败，会走回滚）。
+    }
+#endif
 
     if (!wait_pid(pid)) {
         std::printf("UPDATER error reason=旧进程未退出\n");
