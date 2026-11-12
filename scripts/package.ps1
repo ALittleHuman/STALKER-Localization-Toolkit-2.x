@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
   2.0.0 打包（M3 第一步）：把 msvc-shell 的产物做成一个**可回退**的发行包。
 
@@ -189,6 +189,14 @@ if (-not (Test-Path $pm)) {
 }
 # 留根：Windows 加载器只从 exe 同层找 Qt DLL（不能用父目录的）⇒ 必须与 Qt6*.dll 同层。
 Copy-Item -LiteralPath $pm -Destination $stage
+
+# ★ 2026-11-12：本体更新器（独立 exe；旧版退出后替换文件，失败回滚）。
+Write-Host "== 复制本体更新器 =="
+$updater = Join-Path $root 'build\msvc-shell\src\shell\xrkit_updater.exe'
+if (-not (Test-Path $updater)) {
+    throw "找不到 xrkit_updater.exe（先跑 scripts\build.ps1 -Preset msvc-shell）"
+}
+Copy-Item -LiteralPath $updater -Destination $stage
 
 # ★ 2026-11-12：本体更新器（单独 exe；旧版退出后替换文件，失败回滚）。
 Write-Host "== 复制本体更新器 =="
