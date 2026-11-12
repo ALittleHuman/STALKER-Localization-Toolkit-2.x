@@ -899,17 +899,18 @@ SmokeResult run_smoke() {
     }
 
     {
-        bool found_release = false;
+        bool found_repo = false;
+        bool found_check = false;
         for (QAction* action : hub.findChildren<QAction*>()) {
-            if (action->text() == QStringLiteral("查看最新版本（打开发布页）")) {
-                found_release = true;
-            }
+            if (action->text() == QStringLiteral("打开仓库页")) found_repo = true;
+            if (action->text() == QStringLiteral("检测更新")) found_check = true;
         }
-        check(found_release, QStringLiteral("① 菜单里有「查看最新版本（打开发布页）」"));
-        const QString url = QString::fromUtf8(xrkit::shell::kReleasePageUrl);
+        check(found_repo, QStringLiteral("① 菜单里有「打开仓库页」"));
+        check(found_check, QStringLiteral("① 菜单里有「检测更新」"));
+        const QString url = QString::fromUtf8(xrkit::shell::kRepoPageUrl);
         check(url.startsWith(QStringLiteral("https://")) &&
-                  url.endsWith(QStringLiteral("/releases")),
-              QStringLiteral("① 发布页 URL 固定 HTTPS（%1）").arg(url));
+                  url.endsWith(QStringLiteral("STALKER-Localization-Toolkit-2.x")),
+              QStringLiteral("① 仓库页 URL 固定 HTTPS（%1）").arg(url));
     }
     const int slot_count = static_cast<int>(sizeof(kSlots) / sizeof(kSlots[0]));
     const int extra_count = static_cast<int>(sizeof(kExtraPages) / sizeof(kExtraPages[0]));

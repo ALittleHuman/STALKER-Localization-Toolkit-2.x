@@ -402,8 +402,8 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     network_action_->setChecked(network_enabled());
     connect(network_action_, &QAction::toggled, this,
             [this](bool enabled) { set_network_enabled(enabled); });
-    QAction* release_page = help_menu->addAction(QStringLiteral("查看最新版本（打开发布页）"));
-    QAction* host_check_update = help_menu->addAction(QStringLiteral("检测更新（宿主内置）"));
+    QAction* repo_page = help_menu->addAction(QStringLiteral("打开仓库页"));
+    QAction* host_check_update = help_menu->addAction(QStringLiteral("检测更新"));
     connect(host_check_update, &QAction::triggered, this, [this] {
         QString error;
         if (!HostUpdate::networkAllowed(&error)) {
@@ -440,21 +440,10 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
                                  QStringLiteral("更新失败：%1").arg(error));
         }
     });
-    QAction* copy_link = help_menu->addAction(QStringLiteral("复制发布页链接"));
-    connect(copy_link, &QAction::triggered, this, [this] {
-        const QString url = QString::fromUtf8(xrkit::shell::kReleasePageUrl);
-        QGuiApplication::clipboard()->setText(url);
-        const QString message = QStringLiteral("已复制发布页链接：") + url;
-        if (status_label_ != nullptr) status_label_->setText(message);
-        log_line(message);
-    });
-    connect(release_page, &QAction::triggered, this, [this] {
-        const QString url = QString::fromUtf8(xrkit::shell::kReleasePageUrl);
-        // ★ HA 2026-11-03：hosts 屏蔽时 openUrl 仍会返回 true（浏览器打开的是错误页），
-        //   所以**每次点击都把 URL 打出来**，用户能复制到别处；失败时再多一句提示。
-        log_line(QStringLiteral("打开：") + url);
+    connect(repo_page, &QAction::triggered, this, [this] {
+        const QString url = QString::fromUtf8(xrkit::shell::kRepoPageUrl);
+        log_line(QStringLiteral("打开仓库：") + url);
         if (!QDesktopServices::openUrl(QUrl(url))) {
-            // 域环境/无默认浏览器/杀软拦 ShellExecute 都真实存在 ⇒ 失败必须可读、可复制
             const QString message = QStringLiteral("打不开浏览器，请手动访问：") + url;
             if (status_label_ != nullptr) status_label_->setText(message);
             log_line(message);

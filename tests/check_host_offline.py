@@ -2,7 +2,7 @@
 """宿主联网边界判据（2026-11-12 起，联网已内置）。
 
 1. 宿主 HTTP 必须走 core::http，并由 [network] enabled 统一拦截；
-2. 「查看最新版本（打开发布页）」仍只开浏览器；
+2. 「打开仓库页」仍只开浏览器；
 3. 宿主有内置“检测更新”，不再依赖 xrkit.net_http；
 4. 基础包不得出现 plugins_net/net_http.py（联网是宿主能力，不是插件文件）。
 """
@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "https://github.com/ALittleHuman/STALKER-Localization-Toolkit-2.x/releases"
+EXPECTED = "https://github.com/ALittleHuman/STALKER-Localization-Toolkit-2.x"
 PROBLEMS = []
 
 
@@ -37,19 +37,19 @@ def main() -> int:
 
     header = ROOT / "src" / "shell" / "release_page.h"
     if not header.is_file():
-        fail("缺 src/shell/release_page.h（发布页 URL 唯一来源）")
+        fail("缺 src/shell/release_page.h（仓库页 URL 唯一来源）")
     elif EXPECTED in header.read_text(encoding="utf-8"):
-        ok("发布页 URL 固定在 release_page.h")
+        ok("仓库页 URL 固定在 release_page.h")
     else:
         fail("release_page.h 的 URL 不是约定的发布页")
 
     hub = ROOT / "src" / "shell" / "hub.cpp"
     body = hub.read_text(encoding="utf-8") if hub.is_file() else ""
-    if "查看最新版本（打开发布页）" in body and "QDesktopServices::openUrl" in body:
-        ok("菜单项「查看最新版本（打开发布页）」只调 QDesktopServices::openUrl")
+    if "打开仓库页" in body and "QDesktopServices::openUrl" in body:
+        ok("菜单项「打开仓库页」只调 QDesktopServices::openUrl")
     else:
         fail("菜单项缺失或没有走 QDesktopServices::openUrl")
-    if "检测更新（宿主内置）" in body and "HostUpdate" in body:
+    if "检测更新" in body and "HostUpdate" in body:
         ok("宿主内置检测更新入口存在")
     else:
         fail("宿主内置检测更新入口缺失")

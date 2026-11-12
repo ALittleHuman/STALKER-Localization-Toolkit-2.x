@@ -3,6 +3,8 @@
 // 用户 2026-11-03 给定。
 namespace xrkit::shell {
 
+inline constexpr const char* kRepoPageUrl =
+    "https://github.com/ALittleHuman/STALKER-Localization-Toolkit-2.x";
 inline constexpr const char* kReleasePageUrl =
     "https://github.com/ALittleHuman/STALKER-Localization-Toolkit-2.x/releases";
 
