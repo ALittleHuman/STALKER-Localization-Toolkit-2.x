@@ -4535,6 +4535,38 @@ int run_cli(const std::vector<std::string>& args) {
     //   因为发行包里只有 `xrkit_app.exe`（没有 CLI），"包内 Python 能不能起来、能不能加载 .py"
     //   必须由 GUI exe 的同名开关也能跑；两处各写一遍必然分叉（本仓最贵的一类返工）。
     //   退出码：0=通 / 1=有失败 / 2=构建期没带 Python（显式跳过）/ 3=用法错误。
+    // 本体目录更新事务：updater 退出后调用；本动作不启动/不杀进程。
+    //   --app-update <target> <staged> <transaction> <apply|commit|rollback|recover-ok|recover-fail>
+    if (action == "--app-update") {
+        if (operands.size() != 4) {
+            std::cerr << "APP-UPDATE error reason=用法：--app-update <target> <staged> <transaction> <apply|commit|rollback|recover-ok|recover-fail>\n";
+            return kExitUsage;
+        }
+        const xrkit::core::UpdatePaths paths{operands[0], operands[1], operands[2]};
+        const std::string verb = operands[3];
+        xrkit::core::UpdateResult result;
+        if (verb == "apply") {
+            result = xrkit::core::update_prepare(paths);
+            if (result.ok) result = xrkit::core::update_replace(paths);
+        } else if (verb == "commit") {
+            result = xrkit::core::update_commit(paths);
+        } else if (verb == "rollback") {
+            result = xrkit::core::update_rollback(paths);
+        } else if (verb == "recover-ok") {
+            result = xrkit::core::update_recover(paths, true);
+        } else if (verb == "recover-fail") {
+            result = xrkit::core::update_recover(paths, false);
+        } else {
+            std::cerr << "APP-UPDATE error reason=未知动作 " << verb << "\n";
+            return kExitUsage;
+        }
+        std::cout << "APP-UPDATE " << (result.ok ? "ok" : "error")
+                  << " action=" << verb << " transaction=" << paths.transaction;
+        if (!result.ok) std::cout << " reason=" << result.error;
+        std::cout << "\n";
+        return result.ok ? kExitOk : kExitFail;
+    }
+
     // ★ 2026-11-12：插件目录级更新事务（给联网插件/管理器用；本动作不联网）。
     //   --plugin-update <plugins> <target> <staged> <key> <transaction> <apply|commit|rollback|recover-ok|recover-fail>
     if (action == "--plugin-update") {
