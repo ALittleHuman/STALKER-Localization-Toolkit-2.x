@@ -42,6 +42,7 @@
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QGuiApplication>
+#include <QAction>
 #include <QMenu>
 #include <QUrl>
 #include <QMenuBar>
@@ -365,9 +366,11 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     // ★ 2026-11-03（用户给了发布页 URL；决策）：**只打开浏览器，不做检测**。
     //   文案必须写"打开发布页"——叫"检测版本"会让用户等一个永远不会来的提示。
     QMenu* help_menu = menuBar()->addMenu(QStringLiteral("帮助"));
+    help_menu_ = help_menu;
     // ★ 2026-11-09（用户："我没有找到插件管理器的入口"）：给一个**常驻入口**（对话框原先只在
     //   "有插件缺前置"时自动弹一次，没有菜单项 ⇒ 用户找不到）。
     QMenu* tools_menu = menuBar()->addMenu(QStringLiteral("工具"));
+    tools_menu_ = tools_menu;
     QAction* plugin_manager_action = tools_menu->addAction(QStringLiteral("插件管理器…"));
     plugin_manager_action->setObjectName(QStringLiteral("plugin_manager_action"));
     connect(plugin_manager_action, &QAction::triggered, this, [this]() {
@@ -1123,6 +1126,44 @@ void Hub::render_plugin_slots() {
         if (page_kind(i) == PageKind::Builtin) continue;
         ++plugin_slots_rendered_;
         log_line(QStringLiteral("插件页：%1（%2）").arg(page_title(i)).arg(page_owner(i)));
+    }
+    render_host_menu_items();
+}
+
+void Hub::render_host_menu_items() {
+    for (QAction* action : plugin_host_actions_) {
+        if (action != nullptr) {
+            action->setVisible(false);
+            action->deleteLater();
+        }
+    }
+    plugin_host_actions_.clear();
+    struct Slot {
+        QMenu* menu;
+        const char* location;
+    };
+    const Slot menu_slots[] = {{help_menu_, "help"}, {tools_menu_, "tools"}};
+    for (const Slot& slot : menu_slots) {
+        if (slot.menu == nullptr) continue;
+        for (const plugin::CommandReg* command :
+             registry_.menu_items_for("main", slot.location)) {
+            auto* action = slot.menu->addAction(QString::fromStdString(command->label));
+            action->setObjectName(QStringLiteral("plugin_host_") +
+                                   QString::fromStdString(command->id));
+            const std::string plugin = command->plugin;
+            const std::string label = command->label;
+            const plugin::CommandHandler handler = command->handler;
+            QObject::connect(action, &QAction::triggered, this,
+                             [this, plugin, label, handler] {
+                                 registry_.invoke(plugin, label, handler);
+                             });
+            plugin_host_actions_.append(action);
+            ++plugin_slots_rendered_;
+            log_line(QStringLiteral("插件菜单：%1 → %2（%3）")
+                         .arg(QString::fromUtf8(slot.location))
+                         .arg(QString::fromStdString(label))
+                         .arg(QString::fromStdString(plugin)));
+        }
     }
 }
 

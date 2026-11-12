@@ -6,6 +6,7 @@
 //
 // 本类**不用 Q_OBJECT / 不用 signals**（回调一律 lambda），所以不需要 moc。
 
+#include <QList>
 #include <QMainWindow>
 #include <functional>
 #include <QHash>
@@ -23,6 +24,8 @@ class QPushButton;
 class QPlainTextEdit;
 class QStackedWidget;
 class QLabel;
+class QMenu;
+class QAction;
 
 namespace xrkit::shell {
 
@@ -98,6 +101,8 @@ public:
     // ⑫12.4/12.1：把插件槽位**渲染出来**（工具栏菜单项先做）——
     // 注册成功但没人渲染 = FAIL，所以这一步也要有计数判据
     void render_plugin_slots();
+    // 插件注册的宿主菜单项（host="main", location="help"/"tools"）；只新增，不改原版项。
+    void render_host_menu_items();
     int plugin_slots_rendered() const { return plugin_slots_rendered_; }
     int plugin_pages_added() const { return plugin_pages_added_; }
 
@@ -185,6 +190,9 @@ private:
     bool launch_plugin_manager(const QString& reason, bool force = false);
     QString plugin_manager_path() const;
     QString plugin_dir_;
+    QMenu* help_menu_ = nullptr;
+    QMenu* tools_menu_ = nullptr;
+    QList<QAction*> plugin_host_actions_;
     bool previous_crashed_ = false;
     bool plugin_manager_launched_ = false;
     int plugin_slots_rendered_ = 0;
