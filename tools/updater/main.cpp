@@ -77,6 +77,19 @@ bool launch_and_check(const std::wstring& exe, const std::wstring& workdir,
     }
     DWORD code = 1;
     GetExitCodeProcess(pi.hProcess, &code);
+    // 双保险：某些环境下句柄等待会提前返回 signaled，但进程仍活着；
+    // 以 PID 再问一次，活着就算启动成功（避免误回滚）。
+    HANDLE alive = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE,
+                               pi.dwProcessId);
+    if (alive != nullptr) {
+        CloseHandle(alive);
+        std::printf("UPDATER detail=new process alive pid=%lu (wait=%lu code=%lu)\n",
+                    static_cast<unsigned long>(pi.dwProcessId),
+                    static_cast<unsigned long>(waited), static_cast<unsigned long>(code));
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return true;
+    }
     std::printf("UPDATER detail=new process exited code=%lu wait=%lu\n",
                 static_cast<unsigned long>(code), static_cast<unsigned long>(waited));
     CloseHandle(pi.hThread);
