@@ -140,11 +140,80 @@ UpdateResult plugin_update_apply(const PluginUpdatePlan& plan) {
     return update_replace(UpdatePaths{plan.target_dir, plan.staged_dir, plan.transaction});
 }
 
+namespace {
+
+fs::path marker_path(const std::string& plugins_dir) {
+    return fs::path(plugins_dir) / ".xrkit_update";
+}
+
+UpdateResult write_marker(const PluginUpdatePlan& plan, bool was_enabled) {
+    std::ofstream out(marker_path(plan.plugins_dir), std::ios::binary | std::ios::app);
+    if (!out) return UpdateResult::failure("无法写 .xrkit_update");
+    out << plan.disabled_key << "\t" << (was_enabled ? 1 : 0) << "\t"
+        << plan.transaction << "\t" << plan.target_dir << "\n";
+    out.flush();
+    if (!out) return UpdateResult::failure("写 .xrkit_update 失败");
+    return UpdateResult::success();
+}
+
+UpdateResult remove_marker(const std::string& plugins_dir, const std::string& key) {
+    std::ifstream in(marker_path(plugins_dir), std::ios::binary);
+    if (!in) return UpdateResult::success();
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.rfind(key + "\t", 0) != 0) lines.push_back(line);
+    }
+    in.close();
+    std::error_code ec;
+    fs::remove(marker_path(plugins_dir), ec);   // 空/失败都重建
+    if (lines.empty()) return UpdateResult::success();
+    std::ofstream out(marker_path(plugins_dir), std::ios::binary | std::ios::trunc);
+    if (!out) return UpdateResult::failure("重写 .xrkit_update 失败");
+    for (const std::string& kept : lines) out << kept << "\n";
+    out.flush();
+    if (!out) return UpdateResult::failure("重写 .xrkit_update 失败");
+    return UpdateResult::success();
+}
+
+}  // namespace
+
+std::vector<PendingPluginUpdate> pending_plugin_updates(const std::string& plugins_dir) {
+    std::vector<PendingPluginUpdate> out;
+    std::ifstream in(marker_path(plugins_dir), std::ios::binary);
+    if (!in) return out;
+    std::string line;
+    while (std::getline(in, line)) {
+        const auto a = line.find('\t');
+        const auto b = a == std::string::npos ? a : line.find('\t', a + 1);
+        const auto c = b == std::string::npos ? b : line.find('\t', b + 1);
+        if (a == std::string::npos || b == std::string::npos || c == std::string::npos) continue;
+        PendingPluginUpdate item;
+        item.key = line.substr(0, a);
+        item.was_enabled = line.substr(a + 1, b - a - 1) == "1";
+        item.transaction = line.substr(b + 1, c - b - 1);
+        item.target = line.substr(c + 1);
+        if (!item.key.empty() && !item.transaction.empty() && !item.target.empty()) {
+            out.push_back(std::move(item));
+        }
+    }
+    return out;
+}
+
+UpdateResult plugin_update_activate(const PluginUpdatePlan& plan) {
+    bool was_enabled = false;
+    std::string error;
+    if (!read_state(plan, &was_enabled, &error)) return UpdateResult::failure(error);
+    if (UpdateResult r = restore_enabled(plan, was_enabled); !r.ok) return r;
+    return write_marker(plan, was_enabled);
+}
+
 UpdateResult plugin_update_commit(const PluginUpdatePlan& plan) {
     bool was_enabled = false;
     std::string error;
     if (!read_state(plan, &was_enabled, &error)) return UpdateResult::failure(error);
     if (UpdateResult r = restore_enabled(plan, was_enabled); !r.ok) return r;
+    if (UpdateResult r = remove_marker(plan.plugins_dir, plan.disabled_key); !r.ok) return r;
     return update_commit(UpdatePaths{plan.target_dir, plan.staged_dir, plan.transaction});
 }
 
@@ -158,6 +227,7 @@ UpdateResult plugin_update_rollback(const PluginUpdatePlan& plan) {
         return r;
     }
     if (UpdateResult r = restore_enabled(plan, was_enabled); !r.ok) return r;
+    if (UpdateResult r = remove_marker(plan.plugins_dir, plan.disabled_key); !r.ok) return r;
     return update_commit(UpdatePaths{plan.target_dir, plan.staged_dir, plan.transaction});
 }
 

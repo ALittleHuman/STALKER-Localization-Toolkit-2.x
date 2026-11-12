@@ -10,6 +10,7 @@
 #include "xrkit/core/path.h"
 #include "xrkit/core/theme.h"
 #include "xrkit/core/log.h"
+#include "xrkit/core/plugin_update.h"
 #include "xrkit/engine/plugin/loader.h"
 // ★ P3：控件门面（宿主给插件 builder 的根容器 + `UiPanelScope`）
 #include "xrkit/engine/plugin/widget_facade.h"
@@ -443,6 +444,7 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     sync_pages();
     log_line(QStringLiteral("Hub 就绪：%1 个内置页").arg(builtin_page_count()));
     load_plugins(plugin_dir);
+    recover_plugin_updates();
 }
 
 int Hub::page_count() const { return static_cast<int>(page_ids_.size()); }
@@ -1128,6 +1130,35 @@ void Hub::render_plugin_slots() {
         log_line(QStringLiteral("插件页：%1（%2）").arg(page_title(i)).arg(page_owner(i)));
     }
     render_host_menu_items();
+}
+
+void Hub::recover_plugin_updates() {
+    const std::string plugins_dir = plugin_dir_.toStdString();
+    for (const xrkit::core::PendingPluginUpdate& item :
+         xrkit::core::pending_plugin_updates(plugins_dir)) {
+        bool failed = false;
+        for (const xrkit::plugin::RegistrationError& error : plugin_errors_) {
+            if (error.plugin.find(item.key) != std::string::npos ||
+                error.message.find(item.key) != std::string::npos) {
+                failed = true;
+                break;
+            }
+        }
+        xrkit::core::PluginUpdatePlan plan;
+        plan.plugins_dir = plugins_dir;
+        plan.target_dir = item.target;
+        plan.transaction = item.transaction;
+        plan.disabled_key = item.key;
+        const xrkit::core::UpdateResult result =
+            (!item.was_enabled || !failed)
+                ? xrkit::core::plugin_update_commit(plan)
+                : xrkit::core::plugin_update_rollback(plan);
+        log_line(QStringLiteral("插件更新恢复：%1 ⇒ %2（%3）")
+                     .arg(QString::fromStdString(item.key),
+                          failed ? QStringLiteral("回滚") : QStringLiteral("提交"),
+                          result.ok ? QStringLiteral("ok")
+                                    : QString::fromStdString(result.error)));
+    }
 }
 
 void Hub::render_host_menu_items() {

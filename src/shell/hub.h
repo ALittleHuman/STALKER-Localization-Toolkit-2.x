@@ -103,6 +103,8 @@ public:
     void render_plugin_slots();
     // 插件注册的宿主菜单项（host="main", location="help"/"tools"）；只新增，不改原版项。
     void render_host_menu_items();
+    // 启动时处理 .xrkit_update：新插件加载成功 ⇒ commit，加载出错 ⇒ rollback。
+    void recover_plugin_updates();
     int plugin_slots_rendered() const { return plugin_slots_rendered_; }
     int plugin_pages_added() const { return plugin_pages_added_; }
 

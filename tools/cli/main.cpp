@@ -4539,7 +4539,7 @@ int run_cli(const std::vector<std::string>& args) {
     //   --plugin-update <plugins> <target> <staged> <key> <transaction> <apply|commit|rollback|recover-ok|recover-fail>
     if (action == "--plugin-update") {
         if (operands.size() != 6) {
-            std::cerr << "PLUGIN-UPDATE error reason=用法：--plugin-update <plugins> <target> <staged> <key> <transaction> <apply|commit|rollback|recover-ok|recover-fail>\n";
+            std::cerr << "PLUGIN-UPDATE error reason=用法：--plugin-update <plugins> <target> <staged> <key> <transaction> <apply|activate|commit|rollback|recover-ok|recover-fail>\n";
             return kExitUsage;
         }
         xrkit::core::PluginUpdatePlan plan;
@@ -4562,6 +4562,8 @@ int run_cli(const std::vector<std::string>& args) {
             }
         } else if (verb == "commit") {
             result = xrkit::core::plugin_update_commit(plan);
+        } else if (verb == "activate") {
+            result = xrkit::core::plugin_update_activate(plan);
         } else if (verb == "rollback") {
             result = xrkit::core::plugin_update_rollback(plan);
         } else if (verb == "recover-ok") {

@@ -12,6 +12,7 @@
 // 网络/下载由调用方（联网插件）负责，本模块不联网。
 
 #include <string>
+#include <vector>
 
 #include "xrkit/core/update_transaction.h"
 
@@ -31,11 +32,25 @@ struct PluginUpdateState {
     std::string error;
 };
 
+struct PendingPluginUpdate {
+    std::string key;
+    std::string target;
+    std::string transaction;
+    bool was_enabled = false;
+};
+
+// 读 <plugins_dir>/.xrkit_update（启动恢复用）。
+std::vector<PendingPluginUpdate> pending_plugin_updates(const std::string& plugins_dir);
+
 // 记录原状态、自动禁用（如原启用）、prepare 文件事务。
 PluginUpdateState plugin_update_begin(const PluginUpdatePlan& plan);
 
 // 替换插件目录；失败不自动回滚（调用方应调用 rollback）。
 UpdateResult plugin_update_apply(const PluginUpdatePlan& plan);
+
+// 替换成功、准备重启：恢复原启用状态，但保留 backup/pending 供启动后健康检查。
+// 写 <plugins_dir>/.xrkit_update，宿主启动时据此提交或回滚。
+UpdateResult plugin_update_activate(const PluginUpdatePlan& plan);
 
 // 新版本加载成功：恢复原启用状态（原启用 ⇒ 删除 disabled 条目），提交事务。
 UpdateResult plugin_update_commit(const PluginUpdatePlan& plan);
