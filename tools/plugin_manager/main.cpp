@@ -293,11 +293,13 @@ public:
         auto* enable_btn = new QPushButton(QStringLiteral("启用"), this);
         auto* disable_btn = new QPushButton(QStringLiteral("禁用"), this);
         auto* open_dir_btn = new QPushButton(QStringLiteral("打开插件目录"), this);
+        auto* check_update_btn = new QPushButton(QStringLiteral("检查插件更新"), this);
         auto* close_btn = new QPushButton(QStringLiteral("关闭"), this);
         buttons->addWidget(refresh_btn);
         buttons->addWidget(enable_btn);
         buttons->addWidget(disable_btn);
         buttons->addWidget(open_dir_btn);
+        buttons->addWidget(check_update_btn);
         buttons->addStretch(1);
         buttons->addWidget(close_btn);
         layout->addLayout(buttons);
@@ -323,6 +325,50 @@ public:
         connect(disable_btn, &QPushButton::clicked, this, [this] { set_disabled(true); });
         connect(open_dir_btn, &QPushButton::clicked, this, [this] {
             QDesktopServices::openUrl(QUrl::fromLocalFile(plugins_dir_));
+        });
+        connect(check_update_btn, &QPushButton::clicked, this, [this] {
+            const QString cli = find_cli();
+            if (cli.isEmpty()) {
+                QMessageBox::warning(this, QStringLiteral("检查插件更新"),
+                                     QStringLiteral("找不到 xrkit_cli.exe，无法调用联网插件。"));
+                return;
+            }
+            QProcess proc;
+            proc.start(cli, {QStringLiteral("--py-plugin-call"), plugins_dir_,
+                             QStringLiteral("{\"action\":\"check_updates\"}")});
+            if (!proc.waitForFinished(20000)) {
+                proc.kill();
+                QMessageBox::warning(this, QStringLiteral("检查插件更新"),
+                                     QStringLiteral("联网插件调用超时。"));
+                return;
+            }
+            const QString output = QString::fromUtf8(proc.readAllStandardOutput() +
+                                                     proc.readAllStandardError());
+            const int marker = output.indexOf(QStringLiteral("PYPLUGINCALL result="));
+            if (marker < 0) {
+                QMessageBox::information(this, QStringLiteral("检查插件更新"),
+                                         QStringLiteral("没有可用的联网检查入口：\n") + output.right(1200));
+                return;
+            }
+            const QString json = output.mid(marker + 20).section(QLatin1Char('\n'), 0, 0).trimmed();
+            QJsonParseError parse_error;
+            const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &parse_error);
+            if (doc.isNull() || !doc.isObject() || !doc.object().value(QStringLiteral("ok")).toBool()) {
+                QMessageBox::warning(this, QStringLiteral("检查插件更新"),
+                                     QStringLiteral("联网插件返回无法解析：\n") + json);
+                return;
+            }
+            QStringList lines;
+            for (const QJsonValue& value : doc.object().value(QStringLiteral("plugins")).toArray()) {
+                const QJsonObject item = value.toObject();
+                lines << QStringLiteral("%1  %2  %3")
+                             .arg(item.value(QStringLiteral("id")).toString(),
+                                  item.value(QStringLiteral("version")).toString(),
+                                  item.value(QStringLiteral("package")).toString());
+            }
+            QMessageBox::information(this, QStringLiteral("检查插件更新"),
+                                     lines.isEmpty() ? QStringLiteral("没有插件条目")
+                                                     : lines.join(QLatin1Char('\n')));
         });
         connect(close_btn, &QPushButton::clicked, this, &QWidget::close);
         connect(table_, &QTableWidget::itemSelectionChanged, this, [this] { show_detail(); });
