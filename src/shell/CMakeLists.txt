@@ -122,3 +122,10 @@ set_target_properties(xrkit_plugin_manager PROPERTIES
   OUTPUT_NAME "xrkit_plugin_manager"
   WIN32_EXECUTABLE TRUE
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
+# 本体更新器：只依赖 core，不链接 Qt；由旧版本退出后调用。
+add_executable(xrkit_updater "${CMAKE_SOURCE_DIR}/tools/updater/main.cpp")
+target_link_libraries(xrkit_updater PRIVATE xrkit_core xrkit_flags)
+set_target_properties(xrkit_updater PROPERTIES
+  OUTPUT_NAME "xrkit_updater"
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
