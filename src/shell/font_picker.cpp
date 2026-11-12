@@ -21,6 +21,7 @@
 #include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
+#include <QHash>
 #include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -112,6 +113,22 @@ QString font_mark_of(const QString& font_path) {
         font_path.toUtf8().toStdString()).state));
     cache.emplace(font_path, mark);
     return mark;
+}
+
+QString font_mark_cached(const QString& font_path) {
+    if (font_path.isEmpty()) return QString();
+    auto& cache = mark_cache();
+    const auto it = cache.find(font_path);
+    return it == cache.end() ? QString() : it->second;
+}
+
+int preview_font_id(const QString& path) {
+    static QHash<QString, int> cache;
+    const auto it = cache.find(path);
+    if (it != cache.end()) return it.value();
+    const int id = QFontDatabase::addApplicationFont(path);
+    cache.insert(path, id);
+    return id;
 }
 
 QString font_preview_line(const QString& font_path, int which) {
@@ -283,7 +300,7 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
     const auto refill = [list, current](const QStringList& paths) {
         list->clear();
         for (const QString& path : paths) {
-            const QString mark = font_mark_of(path);   // 有缓存就带出来，没算过留空
+            const QString mark = font_mark_cached(path);   // 只取缓存；后台分批算
             auto* item = new QListWidgetItem(
                 QStringLiteral("%1  [%2]  %3")
                     .arg(QFileInfo(path).fileName(), QFileInfo(path).absolutePath(), mark));
@@ -339,7 +356,7 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
         }
         const QString path = item->data(Qt::UserRole).toString();
         // 字体名 + 四态标记（**与列表标记同源**：`font_mark_of` → 引擎 `cjk_state_mark`）
-        int font_id = QFontDatabase::addApplicationFont(path);
+        int font_id = preview_font_id(path);
         QStringList families;
         QString family = QStringLiteral("(解析失败)");
         if (font_id >= 0) {
@@ -440,7 +457,9 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
     QObject::connect(cancel, &QPushButton::clicked, dialog, [dialog] { dialog->reject(); });
 
     render_preview();
-    (*detect_batch)(0);
+    // ★ 不在这条构造路径里同步解析 24 个字体：dt 打开选择器时会被误判成“卡死”。
+    //   先让对话框出来，再过 250ms 开始分批识别；期间用户可正常过滤/选择。
+    QTimer::singleShot(250, dialog, [detect_batch] { (*detect_batch)(0); });
     return dialog;
 }
 
