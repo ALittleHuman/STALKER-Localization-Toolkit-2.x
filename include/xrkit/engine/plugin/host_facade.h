@@ -67,10 +67,14 @@ struct HostFacade {
     std::function<ProcessRunResult(const ProcessRunOptions&)> run_process;
     // 重启宿主（插件更新/本体更新拿到新文件后调用）；无 GUI/未装处理器时返回 false。
     std::function<bool()> restart;
+    // 退出宿主（本体更新器已启动，等旧进程退出后替换）；无 GUI 返回 false。
+    std::function<bool()> quit;
 };
 
 void set_host_restart_handler(std::function<bool()> handler);
 bool host_restart();
+void set_host_quit_handler(std::function<bool()> handler);
+bool host_quit();
 
 void set_host_facade(const HostFacade* facade);
 const HostFacade* host_facade();

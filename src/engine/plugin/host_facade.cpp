@@ -23,6 +23,7 @@ const char* const kMethodNames[] = {
     "system_font_dirs",
     "run_process",
     "restart",
+    "quit",
 };
 
 bool has_impl(const HostFacade& facade, const std::string& name) {
@@ -32,10 +33,16 @@ bool has_impl(const HostFacade& facade, const std::string& name) {
     if (name == "system_font_dirs") return static_cast<bool>(facade.system_font_dirs);
     if (name == "run_process") return static_cast<bool>(facade.run_process);
     if (name == "restart") return static_cast<bool>(facade.restart);
+    if (name == "quit") return static_cast<bool>(facade.quit);
     return false;
 }
 
 std::function<bool()>& restart_handler() {
+    static std::function<bool()> handler;
+    return handler;
+}
+
+std::function<bool()>& quit_handler() {
     static std::function<bool()> handler;
     return handler;
 }
@@ -57,6 +64,20 @@ bool host_restart() {
     {
         std::lock_guard<std::mutex> lock(facade_mutex());
         handler = restart_handler();
+    }
+    return handler ? handler() : false;
+}
+
+void set_host_quit_handler(std::function<bool()> handler) {
+    std::lock_guard<std::mutex> lock(facade_mutex());
+    quit_handler() = std::move(handler);
+}
+
+bool host_quit() {
+    std::function<bool()> handler;
+    {
+        std::lock_guard<std::mutex> lock(facade_mutex());
+        handler = quit_handler();
     }
     return handler ? handler() : false;
 }

@@ -59,6 +59,8 @@ const HostFacade kHostFacade = {
     },
     /* restart：GUI 外壳注册处理器；CLI/无壳宿主返回 false */
     []() { return host_restart(); },
+    /* quit：GUI 外壳注册处理器；CLI/无壳宿主返回 false */
+    []() { return host_quit(); },
 };
 
 }  // namespace

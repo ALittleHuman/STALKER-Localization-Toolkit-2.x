@@ -200,6 +200,10 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
         if (started) QCoreApplication::quit();
         return started;
     });
+    plugin::set_host_quit_handler([] {
+        QCoreApplication::quit();
+        return true;
+    });
     // 默认窗口尺寸过 px()（自适应入口在 main.cpp 用 adaptive_window_size 覆盖；这里只给一个
     //   不写死 96 DPI 的初始值，销掉 px-only 那条 debt）
     resize(px(1180), px(760));
