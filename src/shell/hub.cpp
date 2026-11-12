@@ -12,6 +12,7 @@
 #include "xrkit/core/log.h"
 #include "xrkit/core/plugin_update.h"
 #include "xrkit/engine/plugin/loader.h"
+#include "xrkit/engine/plugin/host_facade.h"
 // ★ P3：控件门面（宿主给插件 builder 的根容器 + `UiPanelScope`）
 #include "xrkit/engine/plugin/widget_facade.h"
 #include "xrkit/engine/xml/compare.h"
@@ -26,6 +27,7 @@
 #include <QDirIterator>
 #include <QCryptographicHash>
 #include <QCoreApplication>
+#include <QProcess>
 #include <QThread>
 #include <QDateTime>
 #include <QDir>
@@ -190,6 +192,14 @@ QString unique_log_path(const QString& dir, const QString& stamp, QString* why) 
 
 Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     setWindowTitle(QStringLiteral("STALKER 汉化工具集 2.0"));
+    // 插件更新后重启：启动新进程后退出当前进程；新进程启动时处理 .xrkit_update。
+    plugin::set_host_restart_handler([] {
+        const QString exe = QCoreApplication::applicationFilePath();
+        const QStringList args = QCoreApplication::arguments().mid(1);
+        const bool started = QProcess::startDetached(exe, args);
+        if (started) QCoreApplication::quit();
+        return started;
+    });
     // 默认窗口尺寸过 px()（自适应入口在 main.cpp 用 adaptive_window_size 覆盖；这里只给一个
     //   不写死 96 DPI 的初始值，销掉 px-only 那条 debt）
     resize(px(1180), px(760));

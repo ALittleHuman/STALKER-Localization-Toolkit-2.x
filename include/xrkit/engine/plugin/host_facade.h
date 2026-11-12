@@ -65,7 +65,12 @@ struct HostFacade {
     //   ⇒ 门面自查（`host_facade_has("run_process")`）恒 false，而插件可见的名字正是
     //   `run_process`：能力"看着在、实际拿不到"。改的是**内部字段名**，插件可见契约一字未变。
     std::function<ProcessRunResult(const ProcessRunOptions&)> run_process;
+    // 重启宿主（插件更新/本体更新拿到新文件后调用）；无 GUI/未装处理器时返回 false。
+    std::function<bool()> restart;
 };
+
+void set_host_restart_handler(std::function<bool()> handler);
+bool host_restart();
 
 void set_host_facade(const HostFacade* facade);
 const HostFacade* host_facade();

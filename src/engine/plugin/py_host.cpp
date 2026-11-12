@@ -2264,6 +2264,13 @@ public:
         return out;
     }
 
+    bool restart() const {
+        if (const HostFacade* facade = available("restart")) {
+            return facade->restart && facade->restart();
+        }
+        return false;
+    }
+
 private:
     const HostFacade* available(const std::string& method) const {
         if (!host_facade_has(method)) {
@@ -3354,7 +3361,8 @@ void ensure_api_module() {
             .def("app_dir", &PyHost::app_dir)
             .def("system_font_dirs", &PyHost::system_font_dirs)
             // ★★ P12b：跑外部进程（宿主服务）
-            .def("run_process", &PyHost::run_process, py::arg("options"));
+            .def("run_process", &PyHost::run_process, py::arg("options"))
+        .def("restart", &PyHost::restart);
         py::class_<PyEngine>(m, "Engine")
             // ★★ 2026-10-26：语言包识别（只读；与 CLI --langpack-scan 同一份引擎实现）
             .def("langpack_scan", &PyEngine::langpack_scan, py::arg("root"))

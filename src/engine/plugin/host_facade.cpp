@@ -22,6 +22,7 @@ const char* const kMethodNames[] = {
     "app_dir",
     "system_font_dirs",
     "run_process",
+    "restart",
 };
 
 bool has_impl(const HostFacade& facade, const std::string& name) {
@@ -30,7 +31,13 @@ bool has_impl(const HostFacade& facade, const std::string& name) {
     if (name == "app_dir") return static_cast<bool>(facade.app_dir);
     if (name == "system_font_dirs") return static_cast<bool>(facade.system_font_dirs);
     if (name == "run_process") return static_cast<bool>(facade.run_process);
+    if (name == "restart") return static_cast<bool>(facade.restart);
     return false;
+}
+
+std::function<bool()>& restart_handler() {
+    static std::function<bool()> handler;
+    return handler;
 }
 
 }  // namespace
@@ -38,6 +45,20 @@ bool has_impl(const HostFacade& facade, const std::string& name) {
 void set_host_facade(const HostFacade* facade) {
     std::lock_guard<std::mutex> lock(facade_mutex());
     facade_storage() = facade;
+}
+
+void set_host_restart_handler(std::function<bool()> handler) {
+    std::lock_guard<std::mutex> lock(facade_mutex());
+    restart_handler() = std::move(handler);
+}
+
+bool host_restart() {
+    std::function<bool()> handler;
+    {
+        std::lock_guard<std::mutex> lock(facade_mutex());
+        handler = restart_handler();
+    }
+    return handler ? handler() : false;
 }
 
 // 引擎自带的默认表（实现在 `host_facade_impl.cpp`；只依赖引擎 ⇒ CLI 那个宿主也能用）
