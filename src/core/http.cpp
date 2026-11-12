@@ -53,7 +53,7 @@ struct WinHttpHandles {
 };
 
 HttpResult winhttp_get(const std::string& url, int timeout_sec, std::size_t max_bytes,
-                       std::ofstream* file) {
+                       std::ofstream* file, const std::wstring& extra_headers) {
     HttpResult result;
     const std::wstring wurl = to_wide(url);
     URL_COMPONENTS uc{};
@@ -111,8 +111,9 @@ HttpResult winhttp_get(const std::string& url, int timeout_sec, std::size_t max_
         result.error = "WinHttpOpenRequest 失败";
         return result;
     }
-    if (!WinHttpSendRequest(handles.request,
-                            L"User-Agent: xrkit/2.0\r\nAccept: application/vnd.github+json\r\n",
+    const std::wstring headers =
+        L"User-Agent: xrkit/2.0\r\nAccept: application/vnd.github+json\r\n" + extra_headers;
+    if (!WinHttpSendRequest(handles.request, headers.c_str(),
                             static_cast<DWORD>(-1L), nullptr, 0, 0, 0)) {
         result.error = "WinHttpSendRequest 失败";
         return result;
@@ -165,7 +166,7 @@ HttpResult http_get(const std::string& url, int timeout_sec, std::size_t max_byt
         return result;
     }
 #ifdef _WIN32
-    return winhttp_get(url, timeout_sec, max_bytes, nullptr);
+    return winhttp_get(url, timeout_sec, max_bytes, nullptr, L"");
 #else
     HttpResult result;
     result.error = "当前构建没有 WinHTTP";
@@ -180,24 +181,47 @@ HttpResult http_download(const std::string& url, const std::string& path, int ti
         result.error = "联网功能已关闭";
         return result;
     }
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) {
-        HttpResult result;
-        result.error = "无法创建下载文件";
-        return result;
+    // 断点续传：半成品写 <path>.part；失败保留，下次 Range 续传；成功才改名到 path。
+    const std::string part = path + ".part";
+    std::error_code ec;
+    std::size_t existing = 0;
+    if (std::filesystem::is_regular_file(part, ec)) {
+        existing = static_cast<std::size_t>(std::filesystem::file_size(part, ec));
+        if (ec) existing = 0;
     }
-#ifdef _WIN32
-    HttpResult result = winhttp_get(url, timeout_sec, max_bytes, &file);
-#else
+    const auto request = [&](bool resume, HttpResult& result) {
+        std::ofstream file(part, std::ios::binary |
+                                     (resume ? std::ios::app : std::ios::trunc));
+        if (!file) {
+            result.error = "无法创建下载临时文件";
+            result.ok = false;
+            return;
+        }
+        std::wstring extra;
+        if (resume) extra = L"Range: bytes=" + std::to_wstring(existing) + L"-\r\n";
+        result = winhttp_get(url, timeout_sec, max_bytes, &file, extra);
+        file.close();
+    };
+
     HttpResult result;
-    result.error = "当前构建没有 WinHTTP";
-#endif
-    file.close();
+    request(existing > 0, result);
+    // 服务器忽略 Range 返回 200：不能把完整内容追加到半文件后面，重下一次。
+    if (existing > 0 && result.status == 200) {
+        std::filesystem::remove(part, ec);
+        existing = 0;
+        request(false, result);
+    }
     if (!result.ok || result.truncated) {
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
+        // 保留 .part：被断网/超时打断后下次可续传。
         if (result.truncated) result.error = "下载超过大小上限";
         result.ok = false;
+        return result;
+    }
+    std::filesystem::remove(path, ec);
+    std::filesystem::rename(part, path, ec);
+    if (ec) {
+        result.ok = false;
+        result.error = "下载完成但无法落到目标文件：" + ec.message();
     }
     return result;
 }

@@ -8,6 +8,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QElapsedTimer>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
@@ -15,6 +17,10 @@
 #include <QStandardPaths>
 #include <QUrl>
 
+#include <chrono>
+#include <algorithm>
+#include <future>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -61,14 +67,79 @@ bool startDetachedProcess(const QString& program, const QStringList& args,
 constexpr const char* kAppManifest =
     "https://raw.githubusercontent.com/ALittleHuman/"
     "STALKER-Localization-Toolkit-2.x-Network-Plugin/main/app_update.json";
+constexpr const char* kApiDirect =
+    "https://api.github.com/repos/ALittleHuman/"
+    "STALKER-Localization-Toolkit-2.x/releases/latest";
+constexpr const char* kProxyPrefix = "https://gh-proxy.com/";
+constexpr const char* kApiProxy =
+    "https://gh-proxy.com/https://api.github.com/repos/ALittleHuman/"
+    "STALKER-Localization-Toolkit-2.x/releases/latest";
 
-QString version_key(const QString& text) {
-    QStringList parts;
-    for (const QString& part : text.split(QRegularExpression(QStringLiteral("[^0-9]+")),
-                                          Qt::SkipEmptyParts)) {
-        parts << part;
+QStringList manifest_sources() {
+    const QString override_url = qEnvironmentVariable("XRKIT_APP_UPDATE_URL");
+    if (!override_url.isEmpty()) return {override_url};
+    return {QString::fromLatin1(kApiDirect), QString::fromLatin1(kApiProxy),
+            QString::fromLatin1(kAppManifest)};
+}
+
+QStringList package_mirrors(const QString& url) {
+    QStringList out;
+    if (url.isEmpty()) return out;
+    out << url;
+    if (url.startsWith(QStringLiteral("https://github.com/")) ||
+        url.startsWith(QStringLiteral("https://raw.githubusercontent.com/"))) {
+        out << QString::fromLatin1(kProxyPrefix) + url;
     }
-    return parts.join(QLatin1Char('.'));
+    out.removeDuplicates();
+    return out;
+}
+
+bool parse_update_payload(const std::string& body, AppUpdateInfo* info, QString* error) {
+    QJsonParseError parse_error;
+    const QJsonDocument doc =
+        QJsonDocument::fromJson(QByteArray::fromStdString(body), &parse_error);
+    if (doc.isNull() || !doc.isObject()) {
+        if (error != nullptr) *error = QStringLiteral("更新源不是 JSON");
+        return false;
+    }
+    const QJsonObject obj = doc.object();
+    if (obj.contains(QStringLiteral("assets")) ||
+        obj.contains(QStringLiteral("tag_name"))) {
+        // GitHub Release API
+        info->version = obj.value(QStringLiteral("tag_name")).toString().trimmed();
+        for (const QJsonValue& value : obj.value(QStringLiteral("assets")).toArray()) {
+            const QJsonObject asset = value.toObject();
+            const QString name = asset.value(QStringLiteral("name")).toString();
+            if (!name.endsWith(QStringLiteral(".zip"), Qt::CaseInsensitive)) continue;
+            const QString url = asset.value(QStringLiteral("browser_download_url")).toString();
+            if (!url.isEmpty()) info->packages << package_mirrors(url);
+            if (info->sha256.isEmpty()) {
+                const QString digest = asset.value(QStringLiteral("digest")).toString();
+                if (digest.startsWith(QStringLiteral("sha256:"), Qt::CaseInsensitive)) {
+                    info->sha256 = digest.mid(7).trimmed().toLower();
+                }
+            }
+        }
+    } else {
+        // 旧 app_update.json
+        info->version = obj.value(QStringLiteral("version")).toString().trimmed();
+        const QString single = obj.value(QStringLiteral("package")).toString().trimmed();
+        if (!single.isEmpty()) info->packages << package_mirrors(single);
+        for (const QJsonValue& value : obj.value(QStringLiteral("packages")).toArray()) {
+            const QString url = value.isString()
+                                    ? value.toString()
+                                    : value.toObject().value(QStringLiteral("url")).toString();
+            if (!url.isEmpty()) info->packages << package_mirrors(url);
+        }
+        info->sha256 = obj.value(QStringLiteral("sha256")).toString().trimmed().toLower();
+    }
+    info->packages.removeDuplicates();
+    if (!info->packages.isEmpty()) info->package = info->packages.first();
+    if (info->version.isEmpty() || info->packages.isEmpty()) {
+        if (error != nullptr) *error = QStringLiteral("更新源缺 version/安装包地址");
+        return false;
+    }
+    return true;
 }
 
 QString find_file(const QString& root, const QString& name) {
@@ -86,11 +157,6 @@ QString find_file(const QString& root, const QString& name) {
 
 }  // namespace
 
-QString manifest_url() {
-    const QString override_url = qEnvironmentVariable("XRKIT_APP_UPDATE_URL");
-    return override_url.isEmpty() ? QString::fromLatin1(kAppManifest) : override_url;
-}
-
 bool HostUpdate::networkAllowed(QString* reason) {
     if (xrkit::core::network_enabled()) return true;
     if (reason != nullptr) *reason = QStringLiteral("联网功能已关闭");
@@ -104,31 +170,38 @@ bool HostUpdate::fetchAppInfo(AppUpdateInfo* info, QString* error) {
         if (error != nullptr) *error = why;
         return false;
     }
-    const xrkit::core::HttpResult result = xrkit::core::http_get(manifest_url().toStdString(), 20,
-                                                                1u << 20);
-    if (!result.ok) {
-        if (error != nullptr) *error = QString::fromStdString(result.error);
-        return false;
+    *info = AppUpdateInfo{};
+    const QStringList sources = manifest_sources();
+    std::vector<std::future<xrkit::core::HttpResult>> futures;
+    futures.reserve(static_cast<std::size_t>(sources.size()));
+    for (const QString& source : sources) {
+        futures.push_back(std::async(std::launch::async, [source] {
+            return xrkit::core::http_get(source.toStdString(), 20, 1u << 20);
+        }));
     }
-    QJsonParseError parse_error;
-    const QJsonDocument doc =
-        QJsonDocument::fromJson(QByteArray::fromStdString(result.body), &parse_error);
-    if (doc.isNull() || !doc.isObject()) {
-        if (error != nullptr) *error = QStringLiteral("app_update.json 不是 JSON");
-        return false;
+    // 谁先成功用谁（并行探测 = 最快的源先返回），其余请求留到 future 析构时收尾。
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(22);
+    while (std::chrono::steady_clock::now() < deadline) {
+        bool all_done = true;
+        for (auto& future : futures) {
+            if (future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+                all_done = false;
+                continue;
+            }
+            const xrkit::core::HttpResult result = future.get();
+            if (!result.ok) continue;
+            AppUpdateInfo parsed;
+            QString parse_error;
+            if (parse_update_payload(result.body, &parsed, &parse_error)) {
+                *info = std::move(parsed);
+                return true;
+            }
+        }
+        if (all_done) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
     }
-    const QJsonObject obj = doc.object();
-    info->version = obj.value(QStringLiteral("version")).toString().trimmed();
-    info->package = obj.value(QStringLiteral("package")).toString().trimmed();
-    info->sha256 = obj.value(QStringLiteral("sha256")).toString().trimmed().toLower();
-    if (!info->package.isEmpty() && !info->package.contains(QStringLiteral("://"))) {
-        info->package = QUrl(manifest_url()).resolved(QUrl(info->package)).toString();
-    }
-    if (info->version.isEmpty() || info->package.isEmpty()) {
-        if (error != nullptr) *error = QStringLiteral("app_update.json 缺 version/package");
-        return false;
-    }
-    return true;
+    if (error != nullptr) *error = QStringLiteral("所有更新源都不可达或返回无效");
+    return false;
 }
 
 bool HostUpdate::applyAppUpdate(const AppUpdateInfo& info, QString* error) {
@@ -137,25 +210,67 @@ bool HostUpdate::applyAppUpdate(const AppUpdateInfo& info, QString* error) {
         if (error != nullptr) *error = why;
         return false;
     }
+    QStringList candidates = info.packages;
+    if (candidates.isEmpty() && !info.package.isEmpty()) candidates << info.package;
+    candidates.removeDuplicates();
+    if (candidates.isEmpty()) {
+        if (error != nullptr) *error = QStringLiteral("没有可用的安装包地址");
+        return false;
+    }
+    // 多源测速：每个源只取 1 字节测首包延迟，选最快的；失败再按延迟顺序回退。
+    struct Candidate {
+        QString url;
+        qint64 ms = 0;
+    };
+    std::vector<Candidate> ranked;
+    for (const QString& url : candidates) {
+        QElapsedTimer timer;
+        timer.start();
+        const xrkit::core::HttpResult probe =
+            xrkit::core::http_get(url.toStdString(), 8, 1);
+        if (probe.ok && (probe.status == 200 || probe.status == 206)) {
+            ranked.push_back({url, timer.elapsed()});
+        }
+    }
+    if (ranked.empty()) {
+        if (error != nullptr) *error = QStringLiteral("所有安装包镜像都不可达");
+        return false;
+    }
+    std::sort(ranked.begin(), ranked.end(),
+              [](const Candidate& a, const Candidate& b) { return a.ms < b.ms; });
+
     const QString stamp = QString::number(QDateTime::currentMSecsSinceEpoch());
     QDir root(QDir::temp().filePath(QStringLiteral("xrkit_update")));
     root.mkpath(QStringLiteral("app-%1").arg(stamp));
     const QString work = root.filePath(QStringLiteral("app-%1").arg(stamp));
     const QString zip = QDir(work).filePath(QStringLiteral("update.zip"));
-    const xrkit::core::HttpResult downloaded =
-        xrkit::core::http_download(info.package.toStdString(), zip.toStdString(), 300,
-                                   256u << 20);
-    if (!downloaded.ok) {
-        if (error != nullptr) *error = QString::fromStdString(downloaded.error);
-        return false;
-    }
-    if (!info.sha256.isEmpty()) {
-        std::string sha_error;
-        const std::string actual = xrkit::core::sha256_file(zip.toStdString(), sha_error);
-        if (actual != info.sha256.toStdString()) {
-            if (error != nullptr) *error = QStringLiteral("更新包 sha256 不匹配");
-            return false;
+    bool downloaded_ok = false;
+    QString last_error;
+    for (const Candidate& candidate : ranked) {
+        const xrkit::core::HttpResult downloaded =
+            xrkit::core::http_download(candidate.url.toStdString(), zip.toStdString(), 300,
+                                       256u << 20);
+        if (!downloaded.ok) {
+            last_error = QString::fromStdString(downloaded.error);
+            continue;
         }
+        if (!info.sha256.isEmpty()) {
+            std::string sha_error;
+            const std::string actual = xrkit::core::sha256_file(zip.toStdString(), sha_error);
+            if (actual != info.sha256.toStdString()) {
+                last_error = QStringLiteral("sha256 不匹配");
+                QFile::remove(zip);
+                QFile::remove(zip + QStringLiteral(".part"));
+                continue;
+            }
+        }
+        downloaded_ok = true;
+        break;
+    }
+    if (!downloaded_ok) {
+        if (error != nullptr) *error = last_error.isEmpty() ? QStringLiteral("下载失败")
+                                                           : last_error;
+        return false;
     }
     QDir stage(work);
     stage.mkpath(QStringLiteral("stage"));
