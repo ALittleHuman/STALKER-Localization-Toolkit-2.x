@@ -64,9 +64,6 @@ bool startDetachedProcess(const QString& program, const QStringList& args,
 #endif
 }
 
-constexpr const char* kAppManifest =
-    "https://raw.githubusercontent.com/ALittleHuman/"
-    "STALKER-Localization-Toolkit-2.x-Network-Plugin/main/app_update.json";
 constexpr const char* kApiDirect =
     "https://api.github.com/repos/ALittleHuman/"
     "STALKER-Localization-Toolkit-2.x/releases/latest";
@@ -78,8 +75,7 @@ constexpr const char* kApiProxy =
 QStringList manifest_sources() {
     const QString override_url = qEnvironmentVariable("XRKIT_APP_UPDATE_URL");
     if (!override_url.isEmpty()) return {override_url};
-    return {QString::fromLatin1(kApiDirect), QString::fromLatin1(kApiProxy),
-            QString::fromLatin1(kAppManifest)};
+    return {QString::fromLatin1(kApiDirect), QString::fromLatin1(kApiProxy)};
 }
 
 QStringList package_mirrors(const QString& url) {
