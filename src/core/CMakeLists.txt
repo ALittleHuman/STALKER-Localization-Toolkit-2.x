@@ -9,6 +9,7 @@ add_library(xrkit_core STATIC
   xlsx.cpp
   case_fold.cpp
   plugin_disabled.cpp
+  plugin_update.cpp
   update_transaction.cpp
   theme.cpp
     runtime.cpp)

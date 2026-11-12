@@ -2,6 +2,8 @@
 
 #include "xrkit/core/theme.h"
 #include "xrkit/core/update_transaction.h"
+#include "xrkit/core/plugin_disabled.h"
+#include "xrkit/core/plugin_update.h"
 #include "xrkit/core/version.h"
 #include "xrkit/core/log.h"
 // ★ 2026-10-06（审计 3-3）：自检要直接断言"两种路径写法判成同一份"这条判重口径
@@ -409,6 +411,77 @@ void test_update_transaction(SmokeResult& result, const std::function<void(bool,
     result.notes.append(QStringLiteral("UPDATETXN ok target=%1").arg(target));
 }
 
+void test_plugin_update(SmokeResult& result,
+                        const std::function<void(bool, const QString&)>& check) {
+    QTemporaryDir tmp;
+    if (!tmp.isValid()) {
+        check(false, QStringLiteral("插件更新：临时目录不可用"));
+        return;
+    }
+    const QString plugins = tmp.filePath(QStringLiteral("plugins"));
+    const QString target = plugins + QStringLiteral("/demo");
+    const QString staged = tmp.filePath(QStringLiteral("staged"));
+    const QString txn = tmp.filePath(QStringLiteral("txn"));
+    auto write = [](const QString& path, const QByteArray& data) {
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QFile f(path);
+        return f.open(QIODevice::WriteOnly) && f.write(data) == data.size();
+    };
+    auto read = [](const QString& path) {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+    };
+    check(write(target + QStringLiteral("/demo.py"), "old") &&
+              write(staged + QStringLiteral("/demo.py"), "new") &&
+              write(staged + QStringLiteral("/data.txt"), "new-data"),
+          QStringLiteral("插件更新：夹具写入"));
+
+    xrkit::core::PluginUpdatePlan plan{plugins.toStdString(), target.toStdString(),
+                                       staged.toStdString(), txn.toStdString(),
+                                       "demo.py"};
+    auto began = xrkit::core::plugin_update_begin(plan);
+    check(began.ok && began.was_enabled, QStringLiteral("插件更新：begin 自动禁用"));
+    auto applied = xrkit::core::plugin_update_apply(plan);
+    check(applied.ok && read(target + QStringLiteral("/data.txt")) == "new-data",
+          QStringLiteral("插件更新：多文件替换"));
+    auto committed = xrkit::core::plugin_update_commit(plan);
+    check(committed.ok && !QFileInfo::exists(txn),
+          QStringLiteral("插件更新：commit 恢复启用并清理"));
+    check(read(target + QStringLiteral("/demo.py")) == "new" &&
+              !xrkit::plugin::is_file_disabled(
+                  xrkit::plugin::read_disabled_plugins(plugins.toStdString()), "demo.py"),
+          QStringLiteral("插件更新：成功后回到原启用状态"));
+
+    // 回滚路径 + 原本禁用路径。
+    check(write(target + QStringLiteral("/demo.py"), "old2") &&
+              write(staged + QStringLiteral("/demo.py"), "new2"),
+          QStringLiteral("插件更新：回滚夹具"));
+    auto began2 = xrkit::core::plugin_update_begin(plan);
+    check(began2.ok && xrkit::core::plugin_update_apply(plan).ok,
+          QStringLiteral("插件更新：第二次替换"));
+    auto rolled = xrkit::core::plugin_update_rollback(plan);
+    check(rolled.ok && read(target + QStringLiteral("/demo.py")) == "old2" &&
+              !xrkit::plugin::is_file_disabled(
+                  xrkit::plugin::read_disabled_plugins(plugins.toStdString()), "demo.py"),
+          QStringLiteral("插件更新：回滚旧目录并恢复启用"));
+
+    std::string disable_error;
+    std::vector<xrkit::plugin::DisabledPluginEntry> disabled;
+    xrkit::plugin::DisabledPluginEntry entry;
+    entry.file = "demo.py";
+    entry.reason = "用户原本禁用";
+    disabled.push_back(entry);
+    check(xrkit::plugin::write_disabled_plugins(plugins.toStdString(), disabled, disable_error),
+          QStringLiteral("插件更新：预置禁用状态"));
+    auto began3 = xrkit::core::plugin_update_begin(plan);
+    check(began3.ok && !began3.was_enabled,
+          QStringLiteral("插件更新：原本禁用不恢复启用"));
+    check(xrkit::core::plugin_update_commit(plan).ok &&
+              xrkit::plugin::is_file_disabled(
+                  xrkit::plugin::read_disabled_plugins(plugins.toStdString()), "demo.py"),
+          QStringLiteral("插件更新：成功后保持原禁用"));
+}
+
 SmokeResult run_smoke() {
     SmokeResult result;
 
@@ -457,6 +530,7 @@ SmokeResult run_smoke() {
         }
     };
     test_update_transaction(result, check);
+    test_plugin_update(result, check);
     // ★★ 2026-10-23（用户口径）：**第三态**。"这一条本轮没条件跑"既不记 PASS 也不记 FAIL，
     //   而是单独计数（收尾行 `not_covered=K`）＋ 留一条可见的 note（含原因）。
     const auto not_covered = [&result](const QString& what) {
