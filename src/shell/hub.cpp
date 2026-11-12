@@ -404,42 +404,7 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
             [this](bool enabled) { set_network_enabled(enabled); });
     QAction* repo_page = help_menu->addAction(QStringLiteral("打开仓库页"));
     QAction* host_check_update = help_menu->addAction(QStringLiteral("检测更新"));
-    connect(host_check_update, &QAction::triggered, this, [this] {
-        QString error;
-        if (!HostUpdate::networkAllowed(&error)) {
-            QMessageBox::warning(this, QStringLiteral("检测更新"),
-                                 QStringLiteral("联网功能已关闭。\n请在「工具 → 联网功能」中开启。"));
-            return;
-        }
-        AppUpdateInfo info;
-        if (!HostUpdate::fetchAppInfo(&info, &error)) {
-            QMessageBox::warning(this, QStringLiteral("检测更新"),
-                                 QStringLiteral("检查失败：%1").arg(error));
-            return;
-        }
-        const QString current = QString::fromStdString(xrkit::core::version_string());
-        QStringList current_parts = current.split(QRegularExpression(QStringLiteral("[^0-9]+")),
-                                                  Qt::SkipEmptyParts);
-        QStringList latest_parts = info.version.split(QRegularExpression(QStringLiteral("[^0-9]+")),
-                                                      Qt::SkipEmptyParts);
-        const bool newer = latest_parts.size() > current_parts.size()
-                               ? true
-                               : latest_parts.join(QLatin1Char('.')) > current_parts.join(QLatin1Char('.'));
-        if (!newer) {
-            QMessageBox::information(this, QStringLiteral("检测更新"),
-                                     QStringLiteral("当前已是最新：%1").arg(current));
-            return;
-        }
-        if (QMessageBox::question(this, QStringLiteral("检测更新"),
-                                  QStringLiteral("发现新版本：%1\n当前版本：%2\n\n现在下载并安装？")
-                                      .arg(info.version, current)) != QMessageBox::Yes) {
-            return;
-        }
-        if (!HostUpdate::applyAppUpdate(info, &error)) {
-            QMessageBox::warning(this, QStringLiteral("检测更新"),
-                                 QStringLiteral("更新失败：%1").arg(error));
-        }
-    });
+    connect(host_check_update, &QAction::triggered, this, [this] { check_updates(false); });
     connect(repo_page, &QAction::triggered, this, [this] {
         const QString url = QString::fromUtf8(xrkit::shell::kRepoPageUrl);
         log_line(QStringLiteral("打开仓库：") + url);
@@ -964,6 +929,50 @@ bool Hub::log_file_active() const { return xrkit::core::log_file_active(); }
 //   它当初解决的是"落盘文件里只有引擎行、界面行一条都没有" ⇒ 所以要把内存缓冲与落盘文件**合并**导出。
 //   现在 `LogBox::flush()` 会把界面行镜像进落盘文件（C-13），落盘文件自己就能复盘一次运行，
 //   导出就是重复实现。删掉之后：**没有第二个日志来源**，也就不会出现两份不一致的日志。
+void Hub::check_updates(bool silent) {
+    QString error;
+    if (!HostUpdate::networkAllowed(&error)) {
+        if (!silent) {
+            QMessageBox::warning(this, QStringLiteral("检测更新"),
+                                 QStringLiteral("联网功能已关闭。\n请在「工具 → 联网功能」中开启。"));
+        }
+        return;
+    }
+    AppUpdateInfo info;
+    if (!HostUpdate::fetchAppInfo(&info, &error)) {
+        if (!silent) {
+            QMessageBox::warning(this, QStringLiteral("检测更新"),
+                                 QStringLiteral("检查失败：%1").arg(error));
+        }
+        return;
+    }
+    const QString current = QString::fromStdString(xrkit::core::version_string());
+    const QStringList current_parts =
+        current.split(QRegularExpression(QStringLiteral("[^0-9]+")), Qt::SkipEmptyParts);
+    const QStringList latest_parts =
+        info.version.split(QRegularExpression(QStringLiteral("[^0-9]+")), Qt::SkipEmptyParts);
+    const bool newer = latest_parts.size() > current_parts.size()
+                           ? true
+                           : latest_parts.join(QLatin1Char('.')) >
+                                 current_parts.join(QLatin1Char('.'));
+    if (!newer) {
+        if (!silent) {
+            QMessageBox::information(this, QStringLiteral("检测更新"),
+                                     QStringLiteral("当前已是最新：%1").arg(current));
+        }
+        return;
+    }
+    if (QMessageBox::question(this, QStringLiteral("检测更新"),
+                              QStringLiteral("发现新版本：%1\n当前版本：%2\n\n现在下载并安装？")
+                                  .arg(info.version, current)) != QMessageBox::Yes) {
+        return;
+    }
+    if (!HostUpdate::applyAppUpdate(info, &error)) {
+        QMessageBox::warning(this, QStringLiteral("检测更新"),
+                             QStringLiteral("更新失败：%1").arg(error));
+    }
+}
+
 bool Hub::network_enabled() const {
     return core::load_user_value("network", "enabled", "1") != "0";
 }

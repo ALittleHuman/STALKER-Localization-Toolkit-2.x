@@ -37,6 +37,7 @@
 #include <QScreen>
 #include <QStringList>
 #include <QTextStream>
+#include <QTimer>
 #include <QThread>
 #include <QTreeWidget>
 #include <functional>
@@ -221,6 +222,10 @@ int main(int argc, char** argv) {
         hub.setMinimumSize(xrkit::shell::app_min_window_size());
     }
     hub.show();
+    // 启动时一次自动检查（不轮询）；无更新/失败静默，联网关闭时直接跳过。
+    if (shot_path.isEmpty() && !args.contains(QStringLiteral("--no-auto-update"))) {
+        QTimer::singleShot(2000, &hub, [&hub] { hub.check_updates(true); });
+    }
     if (!shot_path.isEmpty()) {
         // 抓图前把布局彻底催到位（离屏下 `LayoutRequest` 不会自己派发）
         hub.resize(shot_size);

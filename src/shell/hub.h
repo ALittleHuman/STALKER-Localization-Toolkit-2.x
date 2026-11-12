@@ -97,6 +97,8 @@ public:
     // 全局联网开关（[network] enabled；关闭后所有联网检查/下载入口必须拒绝）。
     bool network_enabled() const;
     void set_network_enabled(bool enabled);
+    // silent=true：启动时的一次自动检查；无更新/失败不弹窗。
+    void check_updates(bool silent = false);
     // ★ 2026-11-09：启动时因缺前置被自动禁用的插件数（插件管理器据此决定是否弹窗）。
     int disabled_plugin_count() const { return static_cast<int>(disabled_plugins_.size()); }
     // 探针：加载插件时是否把外壳的 `api.ui`（Qt 16 方法）装上了
