@@ -22,7 +22,7 @@ from pathlib import Path
 from fontTools.ttLib import TTFont
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "plugins_ixr" / "_lib" / "merge_glyphs.py"
+SCRIPT = ROOT / "tools" / "ixr" / "merge_glyphs.py"
 TARGET = Path(r"C:\Windows\Fonts\arial.ttf")
 SOURCE = Path(r"C:\Windows\Fonts\NotoSansSC-VF.ttf")
 CFF = Path(r"C:\Windows\Fonts\3ds Light.otf")
@@ -162,7 +162,7 @@ def main() -> int:
 
         # ⑤b 端到端：--font-pack 矢量路径的 --merge-glyphs（U+2400 是 seguisym 的复合字形）
         cli = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
-        launcher = ROOT / "plugins_ixr" / "_lib" / "ixr_run.py"
+        launcher = ROOT / "tools" / "ixr" / "ixr_run.py"
         segui = Path(r"C:\Windows\Fonts\seguisym.ttf")
         if cli.is_file() and launcher.is_file() and segui.is_file():
             pack = td / "pack"

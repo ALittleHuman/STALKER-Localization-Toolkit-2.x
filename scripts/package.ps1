@@ -302,9 +302,9 @@ Write-Host "  CPython DLL 副本：python\ 里补齐 python3*.dll + vcruntime140
 $ixrTools = Join-Path $stage 'tools'
 $ixrFontlib = Join-Path $ixrTools 'fontlib'
 New-Item -ItemType Directory -Force -Path $ixrFontlib | Out-Null
-$ixrRunSrc = Join-Path $root 'plugins_ixr\_lib\ixr_run.py'
-$ixrGenSrc = Join-Path $root 'plugins_ixr\_lib\ixrgen.py'
-$ixrMergeSrc = Join-Path $root 'plugins_ixr\_lib\merge_glyphs.py'
+$ixrRunSrc = Join-Path $root 'tools\ixr\ixr_run.py'
+$ixrGenSrc = Join-Path $root 'tools\ixr\ixrgen.py'
+$ixrMergeSrc = Join-Path $root 'tools\ixr\merge_glyphs.py'
 $ixrFontSrc = Join-Path $root 'vendor\fonttools\fontTools'
 foreach ($f in @($ixrRunSrc, $ixrGenSrc, $ixrMergeSrc)) {
     if (-not (Test-Path $f)) { throw ("IX-Ray 生成器缺件：{0}（页面的 IX-Ray 选项要靠它）" -f $f) }

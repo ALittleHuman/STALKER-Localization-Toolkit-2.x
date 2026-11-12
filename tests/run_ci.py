@@ -4150,8 +4150,8 @@ def step_ixr_plugin(release: bool) -> None:
     """IX-Ray 插件（真插件，不是内置页）：生成器判据 + 插件无头装载。
 
     两件一起判，因为它们是一根链：
-      ① `plugins_ixr/_lib/ixrgen.py`：真合并（cmap 必含码位）/ 逐字节保留 / 缺字入账 / 非字体包退 1；
-      ② `plugins_ixr/ixr_langpack.py`：headless 装载 + 探针真调 `api.engine.langpack_scan`。
+      ① `tools/ixr/ixrgen.py`：真合并（cmap 必含码位）/ 逐字节保留 / 缺字入账 / 非字体包退 1；
+      ② `tests/fixtures/ixr/ixr_langpack.py`：headless 装载 + 探针真调 `api.engine.langpack_scan`。
     外部前提（系统字体 / fonttools / 真包）缺失 ⇒ 退 2 ⇒ release FAIL。
     """
     say("[?] IX-Ray 插件：生成器（ixrgen）+ 插件无头装载")
@@ -4173,9 +4173,9 @@ def step_ixr_plugin(release: bool) -> None:
         fail("IXR 生成器判据不通过（见上）")
         plugin_ok = False
 
-    fixture = ROOT / "plugins_ixr"
+    fixture = ROOT / "tests" / "fixtures" / "ixr"
     if not fixture.is_dir():
-        prereq("IX-Ray 插件目录", "缺 plugins_ixr/", release)
+        prereq("IX-Ray 插件目录", "缺 tests/fixtures/ixr/", release)
         return
     marker = fixture / "ixr_marker.txt"
     if marker.exists():

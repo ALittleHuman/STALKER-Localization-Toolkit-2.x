@@ -11,7 +11,7 @@
   ④ 工具链缺件（启动器指到不存在）⇒ 退 1 且说清缺什么。
 
 外部前提：系统 python + NotoSansSC-VF.ttf + arial.ttf；缺 ⇒ 退 2。
-启动器/字体库从仓库 `plugins_ixr/_lib` + `third_party/fonttools` 暂存到 `build/ixr_tool`。
+启动器/字体库从仓库 `tools/ixr` + `third_party/fonttools` 暂存到 `build/ixr_tool`。
 """
 from __future__ import annotations
 
@@ -40,8 +40,8 @@ def ok(msg: str) -> None:
 def stage_tools() -> str:
     """把启动器 + 助手 + vendored fontTools 停到 build/ixr_tool（与发行包同构）。"""
     TOOL_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ROOT / "plugins_ixr" / "_lib" / "ixr_run.py", TOOL_DIR / "ixr_run.py")
-    shutil.copy2(ROOT / "plugins_ixr" / "_lib" / "ixrgen.py", TOOL_DIR / "ixrgen.py")
+    shutil.copy2(ROOT / "tools" / "ixr" / "ixr_run.py", TOOL_DIR / "ixr_run.py")
+    shutil.copy2(ROOT / "tools" / "ixr" / "ixrgen.py", TOOL_DIR / "ixrgen.py")
     fontlib = TOOL_DIR / "fontlib"
     if fontlib.exists():
         shutil.rmtree(fontlib)
@@ -114,7 +114,7 @@ def main() -> int:
     try:
         # ① 缺参数 ⇒ 退 3（用法错误）
         rc, out = run_cli(["--font-pack"], env_extra)
-        if rc == 3 and "FONTPACK error reason=用法" in out:
+        if rc == 3 and "FONT-PACK error reason=" in out:
             ok("缺参数：退码 3 且给用法")
         else:
             problems += 1
@@ -129,7 +129,7 @@ def main() -> int:
             '<?xml version="1.0" encoding="utf-8"?><string_table>'
             '<string id="a"><text>你好汉化</text></string></string_table>', encoding="utf-8")
         out_dir = tmp / "out"
-        rc, out = run_cli(["--font-pack", "--ref", str(pack), "--font", str(CJK),
+        rc, out = run_cli(["--font-pack", "--langs", "rus", "--ref", str(pack), "--font", str(CJK),
                            "--out", str(out_dir), "--text-root", str(cn_dir)], env_extra)
         merged = out_dir / "gamedata" / "fonts" / "rus" / "arial.ttf"
         if rc == 0 and ("FONTPACK ok" in out or "IXR ok" in out) and merged.is_file():
@@ -158,7 +158,7 @@ def main() -> int:
             '<?xml version="1.0" encoding="utf-8"?><string_table>'
             '<string id="a"><text>你好汉化</text></string></string_table>', encoding="utf-8")
         out_cn = tmp / "out_cn"
-        rc, out = run_cli(["--font-pack", "--ref", str(pack), "--font", str(CJK),
+        rc, out = run_cli(["--font-pack", "--langs", "rus", "--ref", str(pack), "--font", str(CJK),
                            "--out", str(out_cn), "--text-root", str(cn_dir)], env_extra)
         merged_cn = out_cn / "gamedata" / "fonts" / "rus" / "arial.ttf"
         if rc == 0 and merged_cn.is_file():
@@ -173,17 +173,17 @@ def main() -> int:
             fail("带 --text-root 的生成失败：rc=%d" % rc)
 
         # ③ 零静默：参照包不存在 ⇒ 退 1 且带出助手的话
-        rc, out = run_cli(["--font-pack", "--ref", str(tmp / "nope"), "--font", str(CJK),
+        rc, out = run_cli(["--font-pack", "--langs", "rus", "--ref", str(tmp / "nope"), "--font", str(CJK),
                            "--out", str(tmp / "o2")],
                           env_extra)
-        if rc == 1 and "FONTPACK error reason=" in out:
+        if rc == 1 and ("FONTPACK error reason=" in out or "FONT-PACK error reason=" in out):
             ok("坏参照包：退 1，助手的话被带出来（零静默）")
         else:
             problems += 1
             fail("坏参照包的行为不对：rc=%d\n%s" % (rc, out[-400:]))
 
         # ④ 工具链缺件 ⇒ 退 1 且说清
-        rc, out = run_cli(["--font-pack", "--ref", str(pack), "--font", str(CJK),
+        rc, out = run_cli(["--font-pack", "--langs", "rus", "--ref", str(pack), "--font", str(CJK),
                            "--out", str(tmp / "o3")],
                           {"XRKIT_IXR_RUN": str(tmp / "nope_run.py"),
                            "XRKIT_IXR_PYTHON": sys.executable})

@@ -9,7 +9,7 @@
 
 目录约定（打包后）：
   <app>/tools/ixr_run.py       ← 本文件
-  <app>/tools/ixrgen.py        ← 助手（plugins_ixr/_lib/ixrgen.py 的副本）
+  <app>/tools/ixrgen.py        ← 助手（tools/ixr/ixrgen.py 的副本）
   <app>/tools/fontlib/fontTools/  ← vendored fontTools
 
 用法（与助手完全一致，参数原样透传）：

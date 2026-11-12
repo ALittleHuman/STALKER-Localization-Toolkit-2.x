@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""IX-Ray 语言包生成器（`plugins_ixr/_lib/ixrgen.py`）判据：**真合并、真字节、零静默**。
+"""IX-Ray 语言包生成器（`tools/ixr/ixrgen.py`）判据：**真合并、真字节、零静默**。
 
 口径（用户 2026-10-26 + `12_规划_语言包识别与分部位字体.md` §五）：
   · 「指定」模式 = 以参照包为基底，**只替换字体**，其余文件逐字节保留（ltx/文本都不许动）；
@@ -22,7 +22,7 @@ import samples  # noqa: E402
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
-TOOL = ROOT / "plugins_ixr" / "_lib" / "ixrgen.py"
+TOOL = ROOT / "tools" / "ixr" / "ixrgen.py"
 BASE_FONT = Path(r"C:\Windows\Fonts\arial.ttf")
 CJK_FONT = Path(r"C:\Windows\Fonts\NotoSansSC-VF.ttf")
 

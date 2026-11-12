@@ -54,7 +54,7 @@ def fail(m):
 def run(*args):
     # 开发树里矢量路径需要显式解释器/启动器（发行包自带，才不需要）
     env = os.environ.copy()
-    launcher = ROOT / "plugins_ixr" / "_lib" / "ixr_run.py"
+    launcher = ROOT / "tools" / "ixr" / "ixr_run.py"
     if launcher.is_file():
         env.setdefault("XRKIT_IXR_PYTHON", sys.executable)
         env.setdefault("XRKIT_IXR_RUN", str(launcher))
