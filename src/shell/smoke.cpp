@@ -874,7 +874,15 @@ SmokeResult run_smoke() {
     };
     Hub hub;
 
-    // ① 「查看最新版本（打开发布页）」：入口存在 + URL 固定 HTTPS（只开浏览器，不联网）
+    // 联网总开关：关闭后 Hub::network_enabled() 必须为 false，再恢复原值。
+    {
+        const bool before = hub.network_enabled();
+        hub.set_network_enabled(false);
+        check(!hub.network_enabled(), QStringLiteral("联网总开关：关闭后 network_enabled=false"));
+        hub.set_network_enabled(before);
+        check(hub.network_enabled() == before, QStringLiteral("联网总开关：恢复原值"));
+    }
+
     {
         bool found_release = false;
         for (QAction* action : hub.findChildren<QAction*>()) {
