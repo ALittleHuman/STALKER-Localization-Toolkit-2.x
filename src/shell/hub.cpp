@@ -10,7 +10,9 @@
 #include "xrkit/core/path.h"
 #include "xrkit/core/theme.h"
 #include "xrkit/core/log.h"
+#include "xrkit/core/version.h"
 #include "xrkit/core/plugin_update.h"
+#include "xrkit/core/http.h"
 #include "xrkit/engine/plugin/loader.h"
 #include "xrkit/engine/plugin/host_facade.h"
 // ★ P3：控件门面（宿主给插件 builder 的根容器 + `UiPanelScope`）
@@ -27,6 +29,7 @@
 #include <QDirIterator>
 #include <QCryptographicHash>
 #include <QCoreApplication>
+#include <QMessageBox>
 #include <QProcess>
 #include <QThread>
 #include <QDateTime>
@@ -398,6 +401,38 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     connect(network_action_, &QAction::toggled, this,
             [this](bool enabled) { set_network_enabled(enabled); });
     QAction* release_page = help_menu->addAction(QStringLiteral("查看最新版本（打开发布页）"));
+    QAction* host_check_update = help_menu->addAction(QStringLiteral("检测更新（宿主内置）"));
+    connect(host_check_update, &QAction::triggered, this, [this] {
+        if (!network_enabled()) {
+            QMessageBox::warning(this, QStringLiteral("检测更新"),
+                                 QStringLiteral("联网功能已关闭。\n请在「工具 → 联网功能」中开启。"));
+            return;
+        }
+        const xrkit::core::HttpResult result = xrkit::core::http_get(
+            "https://api.github.com/repos/ALittleHuman/STALKER-Localization-Toolkit-2.x/releases/latest",
+            15, 1u << 20);
+        if (!result.ok) {
+            QMessageBox::warning(this, QStringLiteral("检测更新"),
+                                 QStringLiteral("检查失败：%1")
+                                     .arg(QString::fromStdString(result.error)));
+            return;
+        }
+        const QString body = QString::fromStdString(result.body);
+        const QString marker = QStringLiteral("\"tag_name\"");
+        const int at = body.indexOf(marker);
+        QString tag;
+        if (at >= 0) {
+            const int colon = body.indexOf(QLatin1Char(':'), at + marker.size());
+            const int quote = colon >= 0 ? body.indexOf(QLatin1Char('"'), colon + 1) : -1;
+            const int end = quote >= 0 ? body.indexOf(QLatin1Char('"'), quote + 1) : -1;
+            if (quote >= 0 && end > quote) tag = body.mid(quote + 1, end - quote - 1);
+        }
+        QMessageBox::information(
+            this, QStringLiteral("检测更新"),
+            QStringLiteral("本机版本：%1\n最新版本：%2")
+                .arg(QString::fromStdString(xrkit::core::version_string()),
+                     tag.isEmpty() ? QStringLiteral("(GitHub 未返回 tag)") : tag));
+    });
     QAction* copy_link = help_menu->addAction(QStringLiteral("复制发布页链接"));
     connect(copy_link, &QAction::triggered, this, [this] {
         const QString url = QString::fromUtf8(xrkit::shell::kReleasePageUrl);

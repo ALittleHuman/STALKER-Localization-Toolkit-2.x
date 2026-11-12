@@ -23,6 +23,7 @@
 #include "xrkit/core/theme.h"
 #include "xrkit/core/version.h"
 #include "xrkit/core/plugin_update.h"
+#include "xrkit/core/http.h"
 #include "xrkit/core/runtime.h"
 #include "xrkit/engine/engine.h"
 #include "xrkit/engine/fs/db.h"
@@ -4535,6 +4536,28 @@ int run_cli(const std::vector<std::string>& args) {
     //   因为发行包里只有 `xrkit_app.exe`（没有 CLI），"包内 Python 能不能起来、能不能加载 .py"
     //   必须由 GUI exe 的同名开关也能跑；两处各写一遍必然分叉（本仓最贵的一类返工）。
     //   退出码：0=通 / 1=有失败 / 2=构建期没带 Python（显式跳过）/ 3=用法错误。
+    // 宿主内置 HTTP（联网开关在 core::http 统一拦截）。
+    if (action == "--http-get" || action == "--http-download") {
+        if (operands.empty()) {
+            std::cerr << "HTTP error reason=用法：--http-get <url> [out] | --http-download <url> <out>\n";
+            return kExitUsage;
+        }
+        const bool download = action == "--http-download";
+        if (download && operands.size() < 2) {
+            std::cerr << "HTTP error reason=用法：--http-download <url> <out>\n";
+            return kExitUsage;
+        }
+        const xrkit::core::HttpResult result =
+            download ? xrkit::core::http_download(operands[0], operands[1])
+                     : xrkit::core::http_get(operands[0]);
+        std::cout << "HTTP " << (result.ok ? "ok" : "error")
+                  << " status=" << result.status << " bytes=" << result.bytes
+                  << " truncated=" << (result.truncated ? 1 : 0);
+        if (!result.ok) std::cout << " reason=" << result.error;
+        std::cout << "\n";
+        return result.ok ? kExitOk : kExitFail;
+    }
+
     // 本体目录更新事务：updater 退出后调用；本动作不启动/不杀进程。
     //   --app-update <target> <staged> <transaction> <apply|commit|rollback|recover-ok|recover-fail>
     if (action == "--app-update") {
