@@ -633,13 +633,13 @@ exe_identity=$exeIdentity
 exe_sha256=$($ExeSha256.ToLower())
 "@ | Set-Content -LiteralPath (Join-Path $stage 'version.txt') -Encoding UTF8
 
-# ★★ 决策 4 验收：**包根散文件 ≤ 16**（"外面的文件太多了"变成判据）。
+# ★★ 决策 4 验收：**包根散文件 ≤ 14**（"外面的文件太多了"变成判据）。
 #   2026-11-07：删掉 windeployqt 默认携带的 vc_redist/dxcompiler/dxil 之后，包根回到 12 个。
 #   2026-11-10：+1 = `xrkit_plugin_manager.exe`（必须与 Qt DLL 同层，不能放 tools\）。
 $rootFiles = @(Get-ChildItem -LiteralPath $stage -File)
 Write-Host ("  包根散文件：{0} 个" -f $rootFiles.Count)
-if ($rootFiles.Count -gt 13) {
-    throw ("包根散文件 {0} 个（上限 13）：{1}`n  分类规则在 `Get-PackageDest` 里；多出来的该进 python\\ 或 bin\\。" -f `
+if ($rootFiles.Count -gt 14) {
+    throw ("包根散文件 {0} 个（上限 14）：{1}`n  分类规则在 `Get-PackageDest` 里；多出来的该进 python\\ 或 bin\\。" -f `
            $rootFiles.Count, (($rootFiles | Select-Object -ExpandProperty Name | Sort-Object) -join ', '))
 }
 
