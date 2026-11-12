@@ -6242,6 +6242,30 @@ SmokeResult run_smoke() {
                   .arg(hub.plugin_errors().size())
                   .arg(hub.plugin_notice()));
         QDir(dir).removeRecursively();
+
+        // 插件宿主菜单（不是页面 context/toolbar）：main/help 必须真的出现在 QMenu 里。
+        const QString menu_dir = QDir::temp().filePath(QStringLiteral("xrkit_smoke_host_menu"));
+        QDir(menu_dir).removeRecursively();
+        QDir().mkpath(menu_dir);
+        const QByteArray menu_source =
+            "# -*- coding: utf-8 -*-\n"
+            "PLUGIN_INFO = {'name': '宿主菜单夹具'}\n"
+            "def register(api):\n"
+            "    cid = api.register_command('smoke_host_menu', '自检宿主菜单', lambda: None)\n"
+            "    api.register_menu_item('main', 'help', cid, 0)\n";
+        const bool menu_wrote = write_fixture_safely(
+            QDir(menu_dir).filePath(QStringLiteral("smoke_menu.py")), menu_source);
+        check(menu_wrote, QStringLiteral("宿主菜单夹具写入"));
+        Hub menu_hub(nullptr, menu_dir);
+        bool menu_found = false;
+        for (QAction* action : menu_hub.findChildren<QAction*>()) {
+            if (action->text() == QStringLiteral("自检宿主菜单")) {
+                menu_found = true;
+                break;
+            }
+        }
+        check(menu_found, QStringLiteral("插件 main/help 菜单项没出现在宿主菜单"));
+        QDir(menu_dir).removeRecursively();
     }
 
     // ★★ 插件改装 P3（控件门面 L1/L2）：**Python 插件用 `api.ui.*` 造出的页，在真 Hub 里成立吗** ——

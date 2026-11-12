@@ -94,14 +94,17 @@ struct SlotSpec {
 constexpr SlotSpec kHosts[] = {
     {"fs", "文件系统"},   {"convert", "编码转换"}, {"text", "文本提取"},
     {"xml", "文本工具"},   {"video", "视频转换"},   {"font", "汉化包生成"},
+    {"main", "宿主主菜单"},
 };
-constexpr int kHostCount = 6;
+constexpr int kHostCount = 7;
 
 constexpr SlotSpec kLocations[] = {
     {"toolbar", "工具标题下方的一行插件动作区"},
     {"context", "工具主内容控件的右键菜单"},
+    {"help", "宿主帮助菜单"},
+    {"tools", "宿主工具菜单"},
 };
-constexpr int kLocationCount = 2;
+constexpr int kLocationCount = 4;
 
 bool known_host(const std::string& key) {
     for (int i = 0; i < kHostCount; ++i) {
