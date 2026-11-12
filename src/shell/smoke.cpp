@@ -1,6 +1,7 @@
 #include "smoke.h"
 
 #include "xrkit/core/theme.h"
+#include "xrkit/core/update_transaction.h"
 #include "xrkit/core/version.h"
 #include "xrkit/core/log.h"
 // ★ 2026-10-06（审计 3-3）：自检要直接断言"两种路径写法判成同一份"这条判重口径
@@ -364,8 +365,53 @@ bool write_fixture_safely(const QString& path, const QByteArray& source) {
                QCryptographicHash::hash(source, QCryptographicHash::Sha256);
 }
 
+void test_update_transaction(SmokeResult& result, const std::function<void(bool, const QString&)>& check) {
+    QTemporaryDir tmp;
+    if (!tmp.isValid()) {
+        check(false, QStringLiteral("更新事务：临时目录不可用"));
+        return;
+    }
+    const QString target = tmp.filePath(QStringLiteral("target"));
+    const QString staged = tmp.filePath(QStringLiteral("staged"));
+    const QString txn = tmp.filePath(QStringLiteral("txn"));
+    auto write = [](const QString& path, const QByteArray& data) {
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QFile f(path);
+        return f.open(QIODevice::WriteOnly) && f.write(data) == data.size();
+    };
+    auto read = [](const QString& path) {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+    };
+    check(write(target + QStringLiteral("/a.txt"), "old") &&
+              write(staged + QStringLiteral("/a.txt"), "new") &&
+              write(staged + QStringLiteral("/b.txt"), "new-b"),
+          QStringLiteral("更新事务：夹具写入"));
+    xrkit::core::UpdatePaths paths{target.toStdString(), staged.toStdString(),
+                                   txn.toStdString()};
+    auto prepared = xrkit::core::update_prepare(paths);
+    check(prepared.ok, QStringLiteral("更新事务：prepare"));
+    auto replaced = xrkit::core::update_replace(paths);
+    check(replaced.ok, QStringLiteral("更新事务：replace"));
+    check(read(target + QStringLiteral("/a.txt")) == "new" &&
+              read(target + QStringLiteral("/b.txt")) == "new-b",
+          QStringLiteral("更新事务：替换后内容"));
+    auto rolled = xrkit::core::update_rollback(paths);
+    check(rolled.ok, QStringLiteral("更新事务：rollback"));
+    check(read(target + QStringLiteral("/a.txt")) == "old" &&
+              !QFileInfo::exists(target + QStringLiteral("/b.txt")),
+          QStringLiteral("更新事务：回滚后恢复旧目录"));
+    check(xrkit::core::update_prepare(paths).ok &&
+              xrkit::core::update_replace(paths).ok &&
+              xrkit::core::update_commit(paths).ok &&
+              !QFileInfo::exists(txn),
+          QStringLiteral("更新事务：commit 删除事务目录"));
+    result.notes.append(QStringLiteral("UPDATETXN ok target=%1").arg(target));
+}
+
 SmokeResult run_smoke() {
     SmokeResult result;
+
     // ★ 2026-11-10（P0-2）：管理器唤起只记 dry-run 日志（不真起进程，离屏可验分支）。
     qputenv("XRKIT_PLUGIN_MANAGER_DRY_RUN", "1");
     // ★ 2026-10-22（用户口径）：每轮开始**删掉两份 trace**，避免跨轮残留。
@@ -410,6 +456,7 @@ SmokeResult run_smoke() {
             result.failures.append(what);
         }
     };
+    test_update_transaction(result, check);
     // ★★ 2026-10-23（用户口径）：**第三态**。"这一条本轮没条件跑"既不记 PASS 也不记 FAIL，
     //   而是单独计数（收尾行 `not_covered=K`）＋ 留一条可见的 note（含原因）。
     const auto not_covered = [&result](const QString& what) {
