@@ -64,7 +64,11 @@ bool launch_and_check(const std::wstring& exe, const std::wstring& workdir,
     const BOOL ok = CreateProcessW(exe.c_str(), buffer.data(), nullptr, nullptr, FALSE, 0,
                                    nullptr, workdir.empty() ? nullptr : workdir.c_str(), &si,
                                    &pi);
-    if (!ok) return false;
+    if (!ok) {
+        std::printf("UPDATER detail=CreateProcess failed err=%lu exe=%ls\n",
+                    static_cast<unsigned long>(GetLastError()), exe.c_str());
+        return false;
+    }
     const DWORD waited = WaitForSingleObject(pi.hProcess, wait_ms);
     if (waited == WAIT_TIMEOUT) {
         CloseHandle(pi.hThread);
@@ -73,6 +77,8 @@ bool launch_and_check(const std::wstring& exe, const std::wstring& workdir,
     }
     DWORD code = 1;
     GetExitCodeProcess(pi.hProcess, &code);
+    std::printf("UPDATER detail=new process exited code=%lu wait=%lu\n",
+                static_cast<unsigned long>(code), static_cast<unsigned long>(waited));
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     return code == 0;  // 提前正常退出也算可用；崩溃/非 0 回滚
