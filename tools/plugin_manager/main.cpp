@@ -294,12 +294,14 @@ public:
         auto* disable_btn = new QPushButton(QStringLiteral("禁用"), this);
         auto* open_dir_btn = new QPushButton(QStringLiteral("打开插件目录"), this);
         auto* check_update_btn = new QPushButton(QStringLiteral("检查插件更新"), this);
+        auto* install_update_btn = new QPushButton(QStringLiteral("安装所选更新"), this);
         auto* close_btn = new QPushButton(QStringLiteral("关闭"), this);
         buttons->addWidget(refresh_btn);
         buttons->addWidget(enable_btn);
         buttons->addWidget(disable_btn);
         buttons->addWidget(open_dir_btn);
         buttons->addWidget(check_update_btn);
+        buttons->addWidget(install_update_btn);
         buttons->addStretch(1);
         buttons->addWidget(close_btn);
         layout->addLayout(buttons);
@@ -369,6 +371,49 @@ public:
             QMessageBox::information(this, QStringLiteral("检查插件更新"),
                                      lines.isEmpty() ? QStringLiteral("没有插件条目")
                                                      : lines.join(QLatin1Char('\n')));
+        });
+        connect(install_update_btn, &QPushButton::clicked, this, [this] {
+            const int row = table_->currentRow();
+            if (row < 0) {
+                QMessageBox::information(this, QStringLiteral("安装所选更新"),
+                                         QStringLiteral("先在列表里选中一个插件。"));
+                return;
+            }
+            const QString id = table_->item(row, 1) != nullptr
+                                   ? table_->item(row, 1)->text()
+                                   : QString();
+            const QString cli = find_cli();
+            if (cli.isEmpty()) {
+                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
+                                     QStringLiteral("找不到 xrkit_cli.exe。"));
+                return;
+            }
+            const QString request = QStringLiteral("{\"action\":\"install_plugin\",\"id\":\"%1\"}")
+                                        .arg(id);
+            QProcess proc;
+            proc.start(cli, {QStringLiteral("--py-plugin-call"), plugins_dir_, request});
+            if (!proc.waitForFinished(120000)) {
+                proc.kill();
+                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
+                                     QStringLiteral("安装超时（可能正在下载）。"));
+                return;
+            }
+            const QString output = QString::fromUtf8(proc.readAllStandardOutput() +
+                                                     proc.readAllStandardError());
+            const int marker = output.indexOf(QStringLiteral("PYPLUGINCALL result="));
+            if (marker < 0) {
+                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
+                                     QStringLiteral("没有返回结果：\n") + output.right(1200));
+                return;
+            }
+            const QString json = output.mid(marker + 20).section(QLatin1Char('\n'), 0, 0).trimmed();
+            const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
+            const QJsonObject obj = doc.object();
+            QMessageBox::information(this, QStringLiteral("安装所选更新"),
+                                     obj.value(QStringLiteral("ok")).toBool()
+                                         ? QStringLiteral("插件已替换；请重启本体生效。")
+                                         : QStringLiteral("安装失败：") +
+                                               obj.value(QStringLiteral("error")).toString());
         });
         connect(close_btn, &QPushButton::clicked, this, &QWidget::close);
         connect(table_, &QTableWidget::itemSelectionChanged, this, [this] { show_detail(); });
