@@ -392,6 +392,11 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
         // ★ 2026-11-10：手动入口优先**独立进程**；管理器程序缺失才回退进程内对话框。
         if (!launch_plugin_manager(QStringLiteral("手动打开"), true)) show_plugin_manager();
     });
+    network_action_ = tools_menu->addAction(QStringLiteral("联网功能"));
+    network_action_->setCheckable(true);
+    network_action_->setChecked(network_enabled());
+    connect(network_action_, &QAction::toggled, this,
+            [this](bool enabled) { set_network_enabled(enabled); });
     QAction* release_page = help_menu->addAction(QStringLiteral("查看最新版本（打开发布页）"));
     QAction* copy_link = help_menu->addAction(QStringLiteral("复制发布页链接"));
     connect(copy_link, &QAction::triggered, this, [this] {
@@ -928,8 +933,23 @@ bool Hub::log_file_active() const { return xrkit::core::log_file_active(); }
 //   它当初解决的是"落盘文件里只有引擎行、界面行一条都没有" ⇒ 所以要把内存缓冲与落盘文件**合并**导出。
 //   现在 `LogBox::flush()` 会把界面行镜像进落盘文件（C-13），落盘文件自己就能复盘一次运行，
 //   导出就是重复实现。删掉之后：**没有第二个日志来源**，也就不会出现两份不一致的日志。
-void Hub::render_plugin_slots() {
-    // ⑫12.1：注册表里的每一类槽位都要**真的出现在界面上**（用户 2026-09-26 决策"补六类"）。
+bool Hub::network_enabled() const {
+    return core::load_user_value("network", "enabled", "1") != "0";
+}
+
+void Hub::set_network_enabled(bool enabled) {
+    core::save_user_value("network", "enabled", enabled ? "1" : "0");
+    if (network_action_ != nullptr && network_action_->isChecked() != enabled) {
+        const QSignalBlocker blocker(network_action_);
+        network_action_->setChecked(enabled);
+    }
+    const QString message = enabled ? QStringLiteral("联网功能已开启")
+                                    : QStringLiteral("联网功能已关闭（检测/下载入口将拒绝）");
+    if (status_label_ != nullptr) status_label_->setText(message);
+    log_line(message);
+}
+
+void Hub::render_plugin_slots() {    // ⑫12.1：注册表里的每一类槽位都要**真的出现在界面上**（用户 2026-09-26 决策"补六类"）。
     // 本函数覆盖六类：工具栏菜单项 / 新建下拉 / 下拉条目 / 面板 / Hub 插件页 / **右键菜单
     //（context —— 2026-10-06 ① 补齐；它的渲染端在**页面**里：`PageBase::append_plugin_context_items`
     //   由各页在弹右键菜单时调用，Hub 只负责把注册表注入下去，见 `attach_page_services`）**。

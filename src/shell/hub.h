@@ -94,6 +94,9 @@ public:
     }
     // 启动时的插件提示（读几行、非空说明有插件问题）——Hub 会把它打日志 + 写状态栏
     QString plugin_notice() const { return plugin_notice_; }
+    // 全局联网开关（[network] enabled；关闭后所有联网检查/下载入口必须拒绝）。
+    bool network_enabled() const;
+    void set_network_enabled(bool enabled);
     // ★ 2026-11-09：启动时因缺前置被自动禁用的插件数（插件管理器据此决定是否弹窗）。
     int disabled_plugin_count() const { return static_cast<int>(disabled_plugins_.size()); }
     // 探针：加载插件时是否把外壳的 `api.ui`（Qt 16 方法）装上了
@@ -195,6 +198,7 @@ private:
     QMenu* help_menu_ = nullptr;
     QMenu* tools_menu_ = nullptr;
     QList<QAction*> plugin_host_actions_;
+    QAction* network_action_ = nullptr;
     bool previous_crashed_ = false;
     bool plugin_manager_launched_ = false;
     int plugin_slots_rendered_ = 0;
