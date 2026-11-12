@@ -256,6 +256,19 @@ QVector<ScanItem> fallback_items(const QString& plugins_dir) {
         item.note = QStringLiteral("静态扫描不可用：仅按文件名列出（仍可禁用/启用）");
         out.push_back(item);
     }
+    for (const QString& name : dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
+        const QDir plugin_dir(dir.filePath(name));
+        const bool has_entry = QFileInfo::exists(plugin_dir.filePath(QStringLiteral("plugin.py"))) ||
+                               QFileInfo::exists(plugin_dir.filePath(QStringLiteral("__init__.py")));
+        if (!has_entry) continue;
+        ScanItem item;
+        item.file = name;   // 目录插件的禁用键
+        item.id = QString();
+        item.name = name;
+        item.version = QStringLiteral("-");
+        item.note = QStringLiteral("静态扫描不可用：仅按目录名列出（仍可禁用/启用）");
+        out.push_back(item);
+    }
     return out;
 }
 
