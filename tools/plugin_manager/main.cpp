@@ -11,12 +11,15 @@
 //   xrkit_plugin_manager.exe --scan-json [--plugins <目录>]
 #include "xrkit/core/plugin_disabled.h"
 #include "xrkit/core/http.h"
+#include "xrkit/core/sha256.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDesktopServices>
+#include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
 #include <QFileInfo>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -273,6 +276,24 @@ QVector<ScanItem> fallback_items(const QString& plugins_dir) {
     return out;
 }
 
+QString find_named_file(const QString& root, const QString& name) {
+    QDirIterator it(root, {name}, QDir::Files, QDirIterator::Subdirectories);
+    return it.hasNext() ? it.next() : QString();
+}
+
+bool extract_zip(const QString& zip, const QString& dest) {
+    QDir().mkpath(dest);
+    QProcess tar;
+    tar.start(QStringLiteral("tar"), {QStringLiteral("-xf"), zip, QStringLiteral("-C"), dest});
+    if (tar.waitForFinished(120000) && tar.exitCode() == 0) return true;
+    QProcess ps;
+    ps.start(QStringLiteral("powershell"),
+             {QStringLiteral("-NoProfile"), QStringLiteral("-Command"),
+              QStringLiteral("Expand-Archive -LiteralPath '%1' -DestinationPath '%2' -Force")
+                  .arg(zip, dest)});
+    return ps.waitForFinished(120000) && ps.exitCode() == 0;
+}
+
 class ManagerWindow : public QWidget {
 public:
     ManagerWindow(QString plugins_dir, QString reason)
@@ -373,41 +394,113 @@ public:
                                          QStringLiteral("先在列表里选中一个插件。"));
                 return;
             }
-            const QString id = table_->item(row, 1) != nullptr
-                                   ? table_->item(row, 1)->text()
-                                   : QString();
+            if (!xrkit::core::network_enabled()) {
+                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
+                                     QStringLiteral("联网功能已关闭。"));
+                return;
+            }
             const QString cli = find_cli();
             if (cli.isEmpty()) {
                 QMessageBox::warning(this, QStringLiteral("安装所选更新"),
                                      QStringLiteral("找不到 xrkit_cli.exe。"));
                 return;
             }
-            const QString request = QStringLiteral("{\"action\":\"install_plugin\",\"id\":\"%1\"}")
-                                        .arg(id);
-            QProcess proc;
-            proc.start(cli, {QStringLiteral("--py-plugin-call"), plugins_dir_, request});
-            if (!proc.waitForFinished(120000)) {
-                proc.kill();
+            const QString selected_id = table_->item(row, 1) != nullptr
+                                            ? table_->item(row, 1)->text()
+                                            : QString();
+            const xrkit::core::HttpResult manifest = xrkit::core::http_get(
+                "https://raw.githubusercontent.com/ALittleHuman/"
+                "STALKER-Localization-Toolkit-2.x-Network-Plugin/main/plugins.json",
+                20, 1u << 20);
+            if (!manifest.ok) {
                 QMessageBox::warning(this, QStringLiteral("安装所选更新"),
-                                     QStringLiteral("安装超时（可能正在下载）。"));
+                                     QStringLiteral("下载 plugins.json 失败：%1")
+                                         .arg(QString::fromStdString(manifest.error)));
                 return;
             }
-            const QString output = QString::fromUtf8(proc.readAllStandardOutput() +
-                                                     proc.readAllStandardError());
-            const int marker = output.indexOf(QStringLiteral("PYPLUGINCALL result="));
-            if (marker < 0) {
+            const QJsonDocument doc =
+                QJsonDocument::fromJson(QByteArray::fromStdString(manifest.body));
+            QJsonObject chosen;
+            for (const QJsonValue& value : doc.object().value(QStringLiteral("plugins")).toArray()) {
+                const QJsonObject item = value.toObject();
+                if (selected_id.isEmpty() ||
+                    item.value(QStringLiteral("id")).toString() == selected_id) {
+                    chosen = item;
+                    break;
+                }
+            }
+            if (chosen.isEmpty()) {
                 QMessageBox::warning(this, QStringLiteral("安装所选更新"),
-                                     QStringLiteral("没有返回结果：\n") + output.right(1200));
+                                     QStringLiteral("plugins.json 里没有所选 id：%1")
+                                         .arg(selected_id));
                 return;
             }
-            const QString json = output.mid(marker + 20).section(QLatin1Char('\n'), 0, 0).trimmed();
-            const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
-            const QJsonObject obj = doc.object();
-            QMessageBox::information(this, QStringLiteral("安装所选更新"),
-                                     obj.value(QStringLiteral("ok")).toBool()
-                                         ? QStringLiteral("插件已替换；请重启本体生效。")
-                                         : QStringLiteral("安装失败：") +
-                                               obj.value(QStringLiteral("error")).toString());
+            QString package = chosen.value(QStringLiteral("package")).toString();
+            if (!package.startsWith(QStringLiteral("http"))) {
+                package = QStringLiteral("https://raw.githubusercontent.com/ALittleHuman/"
+                                         "STALKER-Localization-Toolkit-2.x-Network-Plugin/main/") +
+                          package;
+            }
+            const QString entry = chosen.value(QStringLiteral("entry")).toString();
+            const QString target = chosen.value(QStringLiteral("target"))
+                                       .toString(chosen.value(QStringLiteral("id")).toString());
+            const QString stamp = QString::number(QDateTime::currentMSecsSinceEpoch());
+            const QString work = QDir::temp().filePath(QStringLiteral("xrkit_update/plugin-%1").arg(stamp));
+            QDir().mkpath(work);
+            const QString zip = QDir(work).filePath(QStringLiteral("update.zip"));
+            const xrkit::core::HttpResult downloaded =
+                xrkit::core::http_download(package.toStdString(), zip.toStdString(), 300,
+                                           64u << 20);
+            if (!downloaded.ok) {
+                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
+                                     QStringLiteral("下载失败：%1")
+                                         .arg(QString::fromStdString(downloaded.error)));
+                return;
+            }
+            const QString expect = chosen.value(QStringLiteral("sha256")).toString().toLower();
+            if (!expect.isEmpty()) {
+                std::string sha_error;
+                const std::string actual =
+                    xrkit::core::sha256_file(zip.toStdString(), sha_error);
+                if (actual != expect.toStdString()) {
+                    QMessageBox::warning(this, QStringLiteral("安装所选更新"),
+                                         QStringLiteral("sha256 不匹配"));
+                    return;
+                }
+            }
+            const QString stage = QDir(work).filePath(QStringLiteral("stage"));
+            if (!extract_zip(zip, stage)) {
+                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
+                                     QStringLiteral("解压失败"));
+                return;
+            }
+            const QString entry_file = find_named_file(stage, entry);
+            if (entry_file.isEmpty()) {
+                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
+                                     QStringLiteral("压缩包内找不到入口 %1").arg(entry));
+                return;
+            }
+            const QString staged_dir = QFileInfo(entry_file).absolutePath();
+            const QString target_dir = QDir(plugins_dir_).filePath(target);
+            const QString txn = QDir(work).filePath(QStringLiteral("transaction"));
+            QProcess apply;
+            apply.start(cli, {QStringLiteral("--plugin-update"), plugins_dir_, target_dir,
+                              staged_dir, entry, txn, QStringLiteral("apply")});
+            if (!apply.waitForFinished(120000) || apply.exitCode() != 0) {
+                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
+                                     QStringLiteral("apply 失败：") +
+                                         QString::fromUtf8(apply.readAllStandardOutput()));
+                return;
+            }
+            QProcess activate;
+            activate.start(cli, {QStringLiteral("--plugin-update"), plugins_dir_, target_dir,
+                                 staged_dir, entry, txn, QStringLiteral("activate")});
+            const bool activated =
+                activate.waitForFinished(60000) && activate.exitCode() == 0;
+            QMessageBox::information(
+                this, QStringLiteral("安装所选更新"),
+                activated ? QStringLiteral("插件已替换，请重启本体生效。")
+                          : QStringLiteral("已替换但 activate 失败，请查看日志后手动重启。"));
         });
         connect(close_btn, &QPushButton::clicked, this, &QWidget::close);
         connect(table_, &QTableWidget::itemSelectionChanged, this, [this] { show_detail(); });
