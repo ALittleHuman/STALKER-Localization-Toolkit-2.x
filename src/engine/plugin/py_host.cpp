@@ -4020,13 +4020,37 @@ std::vector<RegistrationError> load_python_plugins_impl(
     std::vector<std::string> files;
     for (std::filesystem::directory_iterator it(root, ec), end; it != end; it.increment(ec)) {
         if (ec) break;
-        if (!it->is_regular_file(ec)) continue;
-        const std::string name = xrkit::core::path_to_utf8(it->path().filename());
-        // 命名判据只许一份（大小写不敏感）：`HELLO.PY` 与 `hello.py` 是同一个文件
-        if (is_plugin_py_name(name)) files.push_back(xrkit::core::path_to_utf8(it->path()));
+        std::error_code entry_ec;
+        if (it->is_regular_file(entry_ec)) {
+            const std::string name = xrkit::core::path_to_utf8(it->path().filename());
+            // 命名判据只许一份（大小写不敏感）：`HELLO.PY` 与 `hello.py` 是同一个文件
+            if (is_plugin_py_name(name)) files.push_back(xrkit::core::path_to_utf8(it->path()));
+        } else if (it->is_directory(entry_ec)) {
+            // 多文件插件：plugins/<id>/plugin.py 或 plugins/<id>/__init__.py。
+            // 禁用键 = 目录名（plugins.disabled 的 file 字段可比目录名）。
+            const std::filesystem::path dir_path = it->path();
+            for (const char* entry : {"plugin.py", "__init__.py"}) {
+                const std::filesystem::path candidate = dir_path / entry;
+                std::error_code candidate_ec;
+                if (std::filesystem::is_regular_file(candidate, candidate_ec)) {
+                    files.push_back(xrkit::core::path_to_utf8(candidate));
+                    break;
+                }
+            }
+        }
     }
     std::sort(files.begin(), files.end());
     acc.files = files.size();
+    // 顶级 .py = 文件名；目录插件 = 目录名。禁用/owner/模块名都用这个稳定键。
+    const auto plugin_key = [&root](const std::string& file) -> std::string {
+        const std::filesystem::path path = xrkit::core::path_from_utf8(file);
+        const std::filesystem::path parent = path.parent_path();
+        return parent == root ? xrkit::core::path_to_utf8(path.filename())
+                              : xrkit::core::path_to_utf8(parent.filename());
+    };
+    const auto is_dir_plugin = [&root](const std::string& file) {
+        return xrkit::core::path_from_utf8(file).parent_path() != root;
+    };
     // ★ 2026-11-10（独立插件管理器）：按 `<dir>/plugins.disabled` 在 **import 之前**跳过。
     //   坏插件根本不会执行 ⇒ 管理器把它禁用后，宿主下一次启动不会被它拖死。
     {
@@ -4035,7 +4059,7 @@ std::vector<RegistrationError> load_python_plugins_impl(
             std::vector<std::string> kept;
             kept.reserve(files.size());
             for (const std::string& file : files) {
-                const std::string name = base_name(file);
+                const std::string name = plugin_key(file);
                 if (is_file_disabled(disabled_entries, name)) {
                     ++acc.skipped_disabled;
                     core::log(core::Level::Info, "插件按禁用清单跳过：" + name);
@@ -4233,7 +4257,7 @@ std::vector<RegistrationError> load_python_plugins_impl(
 
     // ① 全部 import + 收清单（**不 register**）
     for (const std::string& file : files) {
-        const std::string owner = base_name(file);
+        const std::string owner = plugin_key(file);
         plugin::trace_event("load_start", "file=" + owner);
         const std::string module_name = "xrkit_plugin_" + sanitize_module_name(owner);
         Manifest m;
@@ -4243,7 +4267,16 @@ std::vector<RegistrationError> load_python_plugins_impl(
         m.name = m.id;
         m.version = "0";
         try {
-            py::object spec = spec_from(module_name, file);
+            py::object spec;
+            if (is_dir_plugin(file)) {
+                py::list search;
+                search.append(xrkit::core::path_to_utf8(
+                    xrkit::core::path_from_utf8(file).parent_path()));
+                spec = spec_from(module_name, file,
+                                 py::arg("submodule_search_locations") = search);
+            } else {
+                spec = spec_from(module_name, file);
+            }
             if (spec.is_none()) {
                 throw std::runtime_error("spec_from_file_location 返回 None（文件/路径不对？）");
             }
@@ -4614,9 +4647,9 @@ def _deps(info, key):
         return {}
     return {str(k): (str(x).strip() or "*") for k, x in v.items()}
 
-def _meta(path):
+def _meta(path, key=None):
     base = os.path.splitext(os.path.basename(path))[0]
-    out = {"file": os.path.basename(path), "id": base, "name": base, "version": "",
+    out = {"file": key or os.path.basename(path), "id": base, "name": base, "version": "",
            "repo": "", "provides": [], "depends": {}, "replaces": [],
            "imports": [], "note": ""}
     try:
@@ -4668,8 +4701,20 @@ def _scan(dir_path):
         py::list items;
         std::error_code ec;
         for (const auto& entry : std::filesystem::directory_iterator(plugin_dir, ec)) {
-            if (!entry.is_regular_file() || entry.path().extension() != ".py") continue;
-            items.append(g["_meta"](entry.path().string()));
+            std::error_code entry_ec;
+            if (entry.is_regular_file(entry_ec) && entry.path().extension() == ".py") {
+                items.append(g["_meta"](entry.path().string()));
+            } else if (entry.is_directory(entry_ec)) {
+                const std::string dir_key = entry.path().filename().string();
+                for (const char* name : {"plugin.py", "__init__.py"}) {
+                    const std::filesystem::path candidate = entry.path() / name;
+                    std::error_code candidate_ec;
+                    if (std::filesystem::is_regular_file(candidate, candidate_ec)) {
+                        items.append(g["_meta"](candidate.string(), dir_key));
+                        break;
+                    }
+                }
+            }
         }
         py::str dumped = py::module_::import("json").attr("dumps")(
             items, py::arg("ensure_ascii") = false);
