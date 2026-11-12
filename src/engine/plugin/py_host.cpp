@@ -2278,6 +2278,13 @@ public:
         return false;
     }
 
+    std::string version() const {
+        if (const HostFacade* facade = available("version")) {
+            return facade->version ? facade->version() : std::string();
+        }
+        return std::string();
+    }
+
 private:
     const HostFacade* available(const std::string& method) const {
         if (!host_facade_has(method)) {
@@ -3370,7 +3377,8 @@ void ensure_api_module() {
             // ★★ P12b：跑外部进程（宿主服务）
             .def("run_process", &PyHost::run_process, py::arg("options"))
         .def("restart", &PyHost::restart)
-        .def("quit", &PyHost::quit);
+        .def("quit", &PyHost::quit)
+        .def("version", &PyHost::version);
         py::class_<PyEngine>(m, "Engine")
             // ★★ 2026-10-26：语言包识别（只读；与 CLI --langpack-scan 同一份引擎实现）
             .def("langpack_scan", &PyEngine::langpack_scan, py::arg("root"))

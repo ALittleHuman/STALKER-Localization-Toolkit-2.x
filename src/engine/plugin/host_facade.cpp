@@ -24,6 +24,7 @@ const char* const kMethodNames[] = {
     "run_process",
     "restart",
     "quit",
+    "version",
 };
 
 bool has_impl(const HostFacade& facade, const std::string& name) {
@@ -34,6 +35,7 @@ bool has_impl(const HostFacade& facade, const std::string& name) {
     if (name == "run_process") return static_cast<bool>(facade.run_process);
     if (name == "restart") return static_cast<bool>(facade.restart);
     if (name == "quit") return static_cast<bool>(facade.quit);
+    if (name == "version") return static_cast<bool>(facade.version);
     return false;
 }
 

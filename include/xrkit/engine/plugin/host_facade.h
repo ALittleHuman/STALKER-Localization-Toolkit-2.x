@@ -69,6 +69,8 @@ struct HostFacade {
     std::function<bool()> restart;
     // 退出宿主（本体更新器已启动，等旧进程退出后替换）；无 GUI 返回 false。
     std::function<bool()> quit;
+    // 本体版本（插件检查更新时比较，避免把旧包当新包）。
+    std::function<std::string()> version;
 };
 
 void set_host_restart_handler(std::function<bool()> handler);

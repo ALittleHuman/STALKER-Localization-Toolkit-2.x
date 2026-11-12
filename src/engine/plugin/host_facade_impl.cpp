@@ -8,6 +8,7 @@
 #include "xrkit/engine/plugin/host_facade.h"
 
 #include "xrkit/core/theme.h"
+#include "xrkit/core/version.h"
 #include "xrkit/engine/font/system_dirs.h"
 
 #include <string>
@@ -61,6 +62,8 @@ const HostFacade kHostFacade = {
     []() { return host_restart(); },
     /* quit：GUI 外壳注册处理器；CLI/无壳宿主返回 false */
     []() { return host_quit(); },
+    /* version：本体版本字符串（插件检查更新用） */
+    []() { return xrkit::core::version_string(); },
 };
 
 }  // namespace
