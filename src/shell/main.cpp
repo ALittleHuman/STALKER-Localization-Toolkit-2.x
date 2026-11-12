@@ -8,6 +8,7 @@
 #include "xrkit/core/theme.h"
 // ★ P2c：宿主诊断（`--python-host` / `--py-plugins`）走引擎层唯一实现（见下面的分支）
 #include "xrkit/engine/plugin/py_host.h"
+#include "host_update.h"
 #include "hub.h"
 #include "log_box.h"
 #include "pages/convert_page.h"
@@ -134,6 +135,25 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("STALKER Toolkit 2.x"));
     QApplication::setApplicationVersion(QStringLiteral("2.0.0"));
+
+    if (args.contains(QStringLiteral("--host-update-check")) ||
+        args.contains(QStringLiteral("--host-update-apply"))) {
+        const bool apply = args.contains(QStringLiteral("--host-update-apply"));
+        xrkit::shell::AppUpdateInfo info;
+        QString error;
+        if (!xrkit::shell::HostUpdate::fetchAppInfo(&info, &error)) {
+            QTextStream(stdout) << "HOST-UPDATE error reason=" << error << "\n";
+            return 1;
+        }
+        QTextStream(stdout) << "HOST-UPDATE info version=" << info.version
+                            << " package=" << info.package << "\n";
+        if (apply && !xrkit::shell::HostUpdate::applyAppUpdate(info, &error)) {
+            QTextStream(stdout) << "HOST-UPDATE apply-error reason=" << error << "\n";
+            return 1;
+        }
+        QTextStream(stdout) << "HOST-UPDATE ok apply=" << (apply ? 1 : 0) << "\n";
+        return 0;
+    }
 
     if (scale_report) {
         const double applied = xrkit::shell::apply_screen_ui_scale();

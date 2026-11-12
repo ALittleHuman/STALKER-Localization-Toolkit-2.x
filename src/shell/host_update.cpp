@@ -13,6 +13,7 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QUrl>
 
 namespace xrkit::shell {
 namespace {
@@ -45,6 +46,11 @@ QString find_file(const QString& root, const QString& name) {
 
 }  // namespace
 
+QString manifest_url() {
+    const QString override_url = qEnvironmentVariable("XRKIT_APP_UPDATE_URL");
+    return override_url.isEmpty() ? QString::fromLatin1(kAppManifest) : override_url;
+}
+
 bool HostUpdate::networkAllowed(QString* reason) {
     if (xrkit::core::network_enabled()) return true;
     if (reason != nullptr) *reason = QStringLiteral("联网功能已关闭");
@@ -58,7 +64,8 @@ bool HostUpdate::fetchAppInfo(AppUpdateInfo* info, QString* error) {
         if (error != nullptr) *error = why;
         return false;
     }
-    const xrkit::core::HttpResult result = xrkit::core::http_get(kAppManifest, 20, 1u << 20);
+    const xrkit::core::HttpResult result = xrkit::core::http_get(manifest_url().toStdString(), 20,
+                                                                1u << 20);
     if (!result.ok) {
         if (error != nullptr) *error = QString::fromStdString(result.error);
         return false;
@@ -74,6 +81,9 @@ bool HostUpdate::fetchAppInfo(AppUpdateInfo* info, QString* error) {
     info->version = obj.value(QStringLiteral("version")).toString().trimmed();
     info->package = obj.value(QStringLiteral("package")).toString().trimmed();
     info->sha256 = obj.value(QStringLiteral("sha256")).toString().trimmed().toLower();
+    if (!info->package.isEmpty() && !info->package.contains(QStringLiteral("://"))) {
+        info->package = QUrl(manifest_url()).resolved(QUrl(info->package)).toString();
+    }
     if (info->version.isEmpty() || info->package.isEmpty()) {
         if (error != nullptr) *error = QStringLiteral("app_update.json 缺 version/package");
         return false;
@@ -134,7 +144,7 @@ bool HostUpdate::applyAppUpdate(const AppUpdateInfo& info, QString* error) {
         if (error != nullptr) *error = QStringLiteral("找不到 xrkit_updater.exe");
         return false;
     }
-    const QString txn = root.filePath(QStringLiteral("app-%1").arg(stamp));
+    const QString txn = QDir(work).filePath(QStringLiteral("transaction"));
     const QString exe = QDir(install_dir).filePath(QStringLiteral("xrkit_app.exe"));
     const bool started = QProcess::startDetached(
         updater, {QStringLiteral("--pid"), QString::number(QCoreApplication::applicationPid()),
