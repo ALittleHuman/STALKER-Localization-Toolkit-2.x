@@ -876,11 +876,26 @@ SmokeResult run_smoke() {
 
     // 联网总开关：关闭后 Hub::network_enabled() 必须为 false，再恢复原值。
     {
+        const QString pref = QDir(QCoreApplication::applicationDirPath())
+                                 .filePath(QStringLiteral("xrkit_user.ltx"));
+        const bool existed = QFileInfo::exists(pref);
+        QByteArray old;
+        if (existed) {
+            QFile in(pref);
+            if (in.open(QIODevice::ReadOnly)) old = in.readAll();
+        }
         const bool before = hub.network_enabled();
         hub.set_network_enabled(false);
         check(!hub.network_enabled(), QStringLiteral("联网总开关：关闭后 network_enabled=false"));
         hub.set_network_enabled(before);
         check(hub.network_enabled() == before, QStringLiteral("联网总开关：恢复原值"));
+        // 自检不能把临时 user.ltx 留进安装目录/package_stage。
+        if (existed) {
+            QFile out(pref);
+            if (out.open(QIODevice::WriteOnly | QIODevice::Truncate)) out.write(old);
+        } else {
+            QFile::remove(pref);
+        }
     }
 
     {
