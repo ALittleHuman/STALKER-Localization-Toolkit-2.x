@@ -33,6 +33,85 @@ bool write_text(const std::string& path, const std::string& text) {
     return write_bytes(path, reinterpret_cast<const uint8_t*>(text.data()), text.size());
 }
 
+bool has_top_xml(const std::filesystem::path& dir) {
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end;
+         it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        std::string ext = it->path().extension().string();
+        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (ext == ".xml") return true;
+    }
+    return false;
+}
+
+struct TextRootLayout {
+    bool ok = false;
+    std::filesystem::path text_dir;
+    std::filesystem::path package_root;
+    std::string error;
+};
+
+// `--text-root` 既接受包根，也接受 gamedata 根、configs 根、text/<lang> 或文本目录本身。
+// 旧实现把输入直接当“只含顶层 XML 的目录”，所以指向包根时 xml=0；这里先归一化。
+TextRootLayout resolve_text_root(const std::string& value, const std::string& lang) {
+    namespace fs = std::filesystem;
+    TextRootLayout out;
+    const fs::path root = core::path_from_utf8(value);
+    std::error_code ec;
+    if (!fs::is_directory(root, ec)) {
+        out.error = "译文根不存在或不是目录：" + value;
+        return out;
+    }
+
+    std::vector<fs::path> candidates;
+    candidates.push_back(root);
+    if (!lang.empty()) {
+        candidates.push_back(root / "gamedata" / "configs" / "text" / lang);
+        candidates.push_back(root / "configs" / "text" / lang);
+        candidates.push_back(root / "text" / lang);
+        if (root.filename() == core::path_from_utf8(lang)) candidates.push_back(root);
+    }
+    for (const fs::path& candidate : candidates) {
+        if (!fs::is_directory(candidate, ec) || !has_top_xml(candidate)) continue;
+        out.ok = true;
+        out.text_dir = candidate;
+        fs::path p = candidate;
+        while (!p.empty() && p.filename() != "gamedata") p = p.parent_path();
+        if (!p.empty()) out.package_root = p.parent_path();
+        return out;
+    }
+    out.error = "译文根下找不到 XML：既不是文本目录，也没有 "
+                "gamedata/configs/text/" + (lang.empty() ? std::string("<lang>") : lang) +
+                "（输入：" + value + "）";
+    return out;
+}
+
+int copy_tree_files(const std::filesystem::path& src, const std::filesystem::path& dst,
+                    std::string* error) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_directory(src, ec)) return 0;
+    int copied = 0;
+    for (fs::recursive_directory_iterator it(src, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        const fs::path rel = fs::relative(it->path(), src, ec);
+        if (ec) continue;
+        const fs::path target = dst / rel;
+        fs::create_directories(target.parent_path(), ec);
+        fs::copy_file(it->path(), target, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            if (error != nullptr) *error = "复制 " + core::path_to_utf8(it->path().string()) +
+                                           " 失败：" + ec.message();
+            return copied;
+        }
+        ++copied;
+    }
+    if (ec && error != nullptr) *error = "遍历 " + core::path_to_utf8(src.string()) +
+                                         " 失败：" + ec.message();
+    return copied;
+}
+
 // ★★ 2026-10-07（审计补充 A1-4）：本文件原来的本地 `read_bytes`（打不开就 `return {}`）
 // 已**删除** —— 读 XML 只有 `read_file_bytes()` 一份实现（`xml_bytes.h`）。修前那条路
 // 把"打不开"当成空文件，而 `decode_xml_bytes({})` 必然成功 ⇒ **写出空 XML 并记成功**。
@@ -307,16 +386,24 @@ FontSizePatchResult build_font_size_patch(const FontSizePatchRequest& request) {
     return res;
 }
 
-PackageResult build_package(const PackageOptions& opt) {    PackageResult res;
+PackageResult build_package(const PackageOptions& opt) {
+    namespace fs = std::filesystem;
+    PackageResult res;
     const GameTemplate* game = find_game(opt.game);
     if (game == nullptr) {
         res.error = "未知游戏版本：" + opt.game;
         return res;
     }
+    const TextRootLayout layout = resolve_text_root(opt.xml_dir, opt.lang);
+    if (!layout.ok) {
+        res.error = layout.error;
+        return res;
+    }
+    const std::string xml_root = core::path_to_utf8(layout.text_dir.string());
     CharsetResult cs;
     // ★ full_cyrillic 内置：完整西里尔 + 必需字符一律纳入（不再读 opt.full_cyrillic）
-    if (!extract_chars(opt.xml_dir, /*full_cyrillic=*/true, cs)) {
-        res.error = cs.error.empty() ? ("xml 目录不存在：" + opt.xml_dir) : cs.error;
+    if (!extract_chars(xml_root, /*full_cyrillic=*/true, cs)) {
+        res.error = cs.error.empty() ? ("xml 目录不存在：" + xml_root) : cs.error;
         return res;
     }
     // ★★ 2026-10-07（审计补充 A1-4）：**打不开的文件必须计入失败** —— 原来那种文件被当成
@@ -385,12 +472,9 @@ PackageResult build_package(const PackageOptions& opt) {    PackageResult res;
                             "请换含西里尔的字体（Noto Sans / GoNotoKurrent）或用 IX-Ray 矢量包补字形";
                 return res;
             }
-            res.warnings.push_back("所选字体缺 " + std::to_string(req_miss.size()) +
-                                   " 个基线必需字形（西里尔/特殊字符）：" + list +
-                                   "。⚠ 当前语料未用到这些字；但游戏若**动态显示**俄文"
-                                   "（歌名/车辆型号/硬编码 UI），仍会显示空白。"
-                                   "要完整覆盖：换含西里尔的字体（Noto Sans / GoNotoKurrent）、"
-                                   "用 IX-Ray 矢量包补字形，或加 --require-full-cyrillic 强制校验");
+            // 基线缺失但当前语料没用到的，不再打 warn：这类提示会被误读成
+            // “字体选错了”。真正用到的字缺失已在上面的 `miss` 分支硬失败。
+            // 需要全量西里尔时用 --require-full-cyrillic（缺则不出包）。
         }
     }
 
@@ -483,7 +567,7 @@ PackageResult build_package(const PackageOptions& opt) {    PackageResult res;
     // ── XML：只扫**顶层**（1.x `sorted(os.listdir(xml_dir))`，与 extract_chars 的递归不同），
     //    一律转无 BOM UTF-8，并把第一条声明的 encoding 改成 utf-8。
     std::vector<std::string> xmls;
-    for (std::filesystem::directory_iterator it(core::path_from_utf8(opt.xml_dir), ec), end;
+    for (std::filesystem::directory_iterator it(core::path_from_utf8(xml_root), ec), end;
          it != end; it.increment(ec)) {
         // ★ A1-4 的附带面：枚举出错原来 `break`（**静默截断** XML 列表）⇒ 现在明确报错。
         if (ec) {
@@ -505,7 +589,7 @@ PackageResult build_package(const PackageOptions& opt) {    PackageResult res;
     }
     std::sort(xmls.begin(), xmls.end());
     for (const std::string& name : xmls) {
-        const std::string src = join(opt.xml_dir, name);
+        const std::string src = join(xml_root, name);
         const std::string dst = join(text_dir, name);
         std::vector<uint8_t> raw;
         std::string read_error;
@@ -535,6 +619,25 @@ PackageResult build_package(const PackageOptions& opt) {    PackageResult res;
             return res;
         }
         ++res.xml_written;
+    }
+
+    // ── 包根模式：把 scripts / configs/gameplay 一并带进包。
+    //   只认“能从文本路径反推出 gamedata 父目录”的情况；纯文本目录不猜。
+    if (!layout.package_root.empty()) {
+        std::string copy_error;
+        const fs::path package_gamedata = layout.package_root / "gamedata";
+        res.scripts_copied = copy_tree_files(package_gamedata / "scripts",
+                                             core::path_from_utf8(out_gd) / "scripts",
+                                             &copy_error);
+        res.gameplay_copied = copy_tree_files(package_gamedata / "configs" / "gameplay",
+                                              core::path_from_utf8(out_gd) / "configs" /
+                                                  "gameplay",
+                                              &copy_error);
+        if (!copy_error.empty()) {
+            res.error = copy_error;
+            remove_tree(out_gd);
+            return res;
+        }
     }
 
     // ── fonts.ltx + localization.ltx

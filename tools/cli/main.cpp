@@ -204,12 +204,12 @@ const ActionSpec kActionSpecs[] = {
      "仅 IX-Ray 矢量 fonts.ltx；位图字号补丁走 --font-pack --patch-offsets",
      "xrkit_cli --font-size-patch <参照包> -3 <输出目录>", "--font-pack"},
     {"--font-pack", "汉化包生成主入口（按段表来源选 writer）",
-     "--ref <参照包|builtin> --text-root <译文根> --font <TTF> --out <目录> [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn] [--require-full-cyrillic] [--merge-glyphs <源TTF>] [--patch-offsets 3,-1]",
+     "--ref <参照包|builtin> --text-root <译文根|包根> [--font <TTF>] --out <目录> [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn] [--require-full-cyrillic] [--merge-glyphs <源TTF>] [--patch-offsets 3,-1] [--jsgme --jsgme-category <分类> --jsgme-name <名>]",
      "参照包（--ref 目录时，只读）· 译文根（只读）· 字体（只读）", "输出目录",
      "0=成功｜1=出错｜3=用法错误",
-     "--ref 目录 ⇒ 扫描参照 fonts.ltx（source=ref，矢量 writer）；--ref builtin ⇒ 内置模板（source=builtin，位图 writer）；缺字策略 --on-missing",
-     "IXR 必须给参照包（无内置模板）；SoC/ClS/CoP 可用 builtin；--merge-glyphs 仅矢量有效（位图传了报错）",
-     "xrkit_cli --font-pack --ref builtin --game CoP --text-root xml --font 字体.ttf --out 输出",
+     "--ref 目录 ⇒ 扫描参照 fonts.ltx（source=ref，矢量 writer）；--ref builtin ⇒ 内置模板（source=builtin，位图 writer）；缺字策略 --on-missing；--text-root 可用包根/gamedata/configs/text/<lang> 或文本目录；",
+     "IXR 必须给参照包（无内置模板）；SoC/ClS/CoP 可用 builtin；--merge-glyphs 仅矢量有效（位图传了报错）；--font 省略时自动找 NotoSansSC-VF/微软雅黑",
+     "推荐：xrkit_cli --font-pack --ref builtin --text-root <包根> --out <更新目录> --langs rus --jsgme --jsgme-category 汉化 --jsgme-name 2.汉化 --patch-offsets 7（省略 --font 自动找 NotoSansSC）",
      "--langpack-scan, --font-sample"},
     {"--extract-pack", "提取编排：根 scripts + configs/scripts + gameplay（CLI/GUI 同一份）",
      "<源根> <输出根> [--no-language-pack] [--no-rewritten]",
@@ -371,15 +371,18 @@ void print_usage() {
            "  --convert-batch <源> <输出目录> <源编码> <目标编码> [--ext .xml] [--no-recursive]\n"
            "                  [--backup] [--exclude <模式>]\n"
            "                  批量编码转换（与内置 convert 页同一个引擎实现；判据对拍用它）\n"
-           "  --font-pack --ref <参照包|builtin> --text-root <译文根> --font <TTF> --out <目录>\n"
+           "  --font-pack --ref <参照包|builtin> --text-root <译文根|包根> [--font <TTF>] --out <目录>\n"
            "                     [--game SoC|ClS|CoP] [--langs rus] [--suffix s] [--offset n]\n"
            "                     [--only-size 11,14] [--on-missing fail|warn] [--require-full-cyrillic]\n"
-           "                     [--patch-offsets 3,-1]  位图：base 标准包 + 每个档位一个字号补丁（只含 DDS/INI）\n"
+           "                     [--patch-offsets 7]  base=标准字号；每个 offset 生成一个只含 DDS/INI 的补丁\n"
            "                     [--merge-glyphs <源TTF>]  仅矢量路径：把源字体缺的字形合并进 target（只增不改）\n"
            "                     [--force] [--jsgme] [--jsgme-category <分类>] [--jsgme-name <名>]\n"
-           "                     成品按 JSGME 结构摆：<out>/MODS/<分类>/<名>/{gamedata,ixr_addons}，\n"
-           "                     并把 JSGME.exe/.lng 复制到 <out>/（提取不做这件事）\n"
-           "                     汉化包生成的**主入口**：--ref 目录 ⇒ 扫参照（矢量）；--ref builtin ⇒ 内置模板（位图）\n"
+           "                     推荐（默认字体 + JSGME + 字号补丁）：\n"
+           "                       --text-root <包根> --langs rus --jsgme --jsgme-name 2.汉化 --patch-offsets 7\n"
+           "                     --text-root 会自动识别包根/gamedata/configs/text/<lang>/文本目录；\n"
+           "                     包根模式会把 scripts/ 和 configs/gameplay/ 一并带进成品。\n"
+           "                     --jsgme + --patch-offsets 现在可同用：base 与“字号+N”各是一个 MOD。\n"
+           "                     JSGME 成品：<out>/MODS/<分类>/<名>/{gamedata,...} + <out>/JSGME.exe/.lng\n"
             "  --langpack-collect <松散树> <输出根> [--lang rus,eng] [--overwrite]\n"
            "                                              从已解包树收敛语言包（结构规则扫描；默认所有语言）\n"
            "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite] [--pack-layout]\n"
@@ -3253,6 +3256,25 @@ std::string json_escape(const std::string& s) {
 }
 }  // namespace
 
+static std::string default_font_path() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path app = xrkit::core::path_from_utf8(xrkit::core::app_dir());
+    std::vector<fs::path> dirs{app};
+    if (const char* windir = std::getenv("WINDIR")) dirs.push_back(fs::path(windir) / "Fonts");
+    for (const fs::path& dir : dirs) {
+        for (const char* name : {"NotoSansSC-VF.ttf", "NotoSansSC-Regular.ttf",
+                                 "NotoSansSC.ttf", "NotoSansSC-VF.otf",
+                                 "NotoSansSC-Regular.otf", "msyh.ttc", "msyh.ttf"}) {
+            const fs::path candidate = dir / name;
+            if (fs::is_regular_file(candidate, ec)) {
+                return xrkit::core::path_to_utf8(candidate.string());
+            }
+        }
+    }
+    return {};
+}
+
 static int wrap_jsgme_layout(const std::string& out_root, const std::string& category,
                              const std::string& name) {
     // <out>/MODS/<category>/<name>/{gamedata,ixr_addons,…}；并把 JSGME.exe/.lng 放到 <out>/
@@ -3277,6 +3299,35 @@ static int wrap_jsgme_layout(const std::string& out_root, const std::string& cat
             return kExitFail;
         }
         ++moved;
+    }
+    // 字号补丁：<out>/_patches/font+7 → MODS/<分类>/<名> 字号+7/
+    const fs::path patches_root = out / "_patches";
+    if (fs::is_directory(patches_root, ec)) {
+        for (fs::directory_iterator it(patches_root, ec), end; !ec && it != end;
+             it.increment(ec)) {
+            if (!it->is_directory(ec)) continue;
+            std::string suffix = xrkit::core::path_to_utf8(it->path().filename());
+            if (suffix.rfind("font", 0) == 0) suffix = suffix.substr(4);
+            const fs::path patch_mod =
+                mod.parent_path() / (name + " 字号" + suffix);
+            fs::create_directories(patch_mod, ec);
+            for (const char* top : {"gamedata", "ixr_addons", "localization"}) {
+                const fs::path src = it->path() / top;
+                if (!fs::exists(src, ec)) continue;
+                const fs::path dst = patch_mod / top;
+                fs::remove_all(dst, ec);
+                fs::rename(src, dst, ec);
+                if (ec) {
+                    std::cerr << "FONTPACK error reason=JSGME 字号补丁摆盘失败：" << top
+                              << "（" << ec.message() << "）\n";
+                    return kExitFail;
+                }
+            }
+            std::cout << "FONTPACK jsgme patch=MODS/"
+                      << (category.empty() ? "" : category + "/") << name << " 字号" << suffix
+                      << "\n";
+        }
+        fs::remove_all(patches_root, ec);
     }
     // JSGME 最小包随工具发在场（third_party/jsgme）；能找到就复制到 <out>/
     const fs::path app = xrkit::core::path_from_utf8(xrkit::core::app_dir());
@@ -6430,9 +6481,11 @@ if (action == "--diff-snapshot") {
         const std::string jsgme_name = kv.count("jsgme-name")
                                            ? kv["jsgme-name"]
                                            : (req.langs.empty() ? req.lang : req.langs);
+        // 默认字体：NotoSansSC 优先，微软雅黑兜底（与 GUI `default_font_path` 同口径）。
+        if (req.font.empty()) req.font = default_font_path();
         if (req.ref.empty() || req.font.empty() || req.out.empty()) {
-            std::cerr << "FONTPACK error reason=用法：--font-pack 需要 --ref / --font / --out"
-                         "（builtin 路径还需要 --text-root）\n";
+            std::cerr << "FONTPACK error reason=用法：--font-pack 需要 --ref / --out"
+                         "（--font 可省略，自动找 NotoSansSC/微软雅黑；builtin 还需要 --text-root）\n";
             return kExitUsage;
         }
         req.use_ref = (req.ref != "builtin");
@@ -6450,12 +6503,9 @@ if (action == "--diff-snapshot") {
         // ★ 2026-11-10（用户）：**标准包 + 字号补丁**。补丁只含字体纹理/INI；
         //   base 永远是标准档（offset=0），每个额外档位一个补丁目录。
         if (!patch_offsets.empty()) {
-            if (jsgme) {
-                std::cerr << "FONTPACK error reason=--patch-offsets 暂不支持与 --jsgme 同用\n";
-                return kExitUsage;
-            }
             if (req.offset != 0) {
-                std::cerr << "FONTPACK error reason=--patch-offsets 模式下 base 固定标准档，别同时给 --offset\n";
+                std::cerr << "FONTPACK error reason=--patch-offsets 模式下 base 固定标准档；"
+                             "字号加值请写进 --patch-offsets（例如 --patch-offsets 7）\n";
                 return kExitUsage;
             }
             if (!req.only_sizes.empty()) {
@@ -6484,6 +6534,8 @@ if (action == "--diff-snapshot") {
                               << " lang=" << base_res.bitmap.lang
                               << " fonts=" << base_res.bitmap.fonts_written
                               << " xml=" << base_res.bitmap.xml_written
+                              << " scripts=" << base_res.bitmap.scripts_copied
+                              << " gameplay=" << base_res.bitmap.gameplay_copied
                               << " warnings=" << base_res.bitmap.warnings.size() << "\n";
                 }
             }
@@ -6506,6 +6558,10 @@ if (action == "--diff-snapshot") {
             if (!outcome.ok) {
                 std::cout << "FONTPACK error reason=" << outcome.error << "\n";
                 return kExitFail;
+            }
+            if (jsgme) {
+                const int jsgme_rc = wrap_jsgme_layout(req.out, jsgme_category, jsgme_name);
+                if (jsgme_rc != kExitOk) return jsgme_rc;
             }
             return kExitOk;
         }
@@ -6577,8 +6633,10 @@ if (action == "--diff-snapshot") {
         }
         std::cout << "FONTPACK ok writer=bitmap out=" << (jsgme ? req.out : res.bitmap.out_gamedata)
                   << " lang=" << res.bitmap.lang << " fonts=" << res.bitmap.fonts_written
-                  << " xml=" << res.bitmap.xml_written << " warnings=" << res.bitmap.warnings.size()
-                  << "\n";
+                  << " xml=" << res.bitmap.xml_written
+                  << " scripts=" << res.bitmap.scripts_copied
+                  << " gameplay=" << res.bitmap.gameplay_copied
+                  << " warnings=" << res.bitmap.warnings.size() << "\n";
         if (res.bitmap.lang != req.lang) {
             std::cout << "FONTPACK note 语言采用产物内 profile：lang=" << res.bitmap.lang << "\n";
         }
