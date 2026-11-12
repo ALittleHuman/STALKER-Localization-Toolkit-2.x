@@ -51,13 +51,14 @@ UpdateResult copy_tree(const fs::path& from, const fs::path& to) {
 }
 
 UpdateResult validate(const UpdatePaths& paths) {
-    if (paths.target.empty() || paths.staged.empty() || paths.transaction.empty()) {
-        return UpdateResult::failure("target/staged/transaction 不能为空");
+    if (paths.target.empty() || paths.transaction.empty()) {
+        return UpdateResult::failure("target/transaction 不能为空");
     }
     if (inside(paths.transaction, paths.target) || inside(paths.target, paths.transaction)) {
         return UpdateResult::failure("transaction 不能与被替换目录互相包含");
     }
-    if (inside(paths.staged, paths.target) || inside(paths.target, paths.staged)) {
+    if (!paths.staged.empty() &&
+        (inside(paths.staged, paths.target) || inside(paths.target, paths.staged))) {
         return UpdateResult::failure("staged 不能与被替换目录互相包含");
     }
     return UpdateResult::success();
@@ -67,6 +68,7 @@ UpdateResult validate(const UpdatePaths& paths) {
 
 UpdateResult update_prepare(const UpdatePaths& paths) {
     if (UpdateResult v = validate(paths); !v.ok) return v;
+    if (paths.staged.empty()) return UpdateResult::failure("staged 不能为空");
     std::error_code ec;
     fs::remove_all(paths.transaction, ec);
     if (ec) return fail("清理事务目录失败", ec);
@@ -95,6 +97,7 @@ UpdateResult update_prepare(const UpdatePaths& paths) {
 
 UpdateResult update_replace(const UpdatePaths& paths) {
     if (UpdateResult v = validate(paths); !v.ok) return v;
+    if (paths.staged.empty()) return UpdateResult::failure("staged 不能为空");
     std::error_code ec;
     if (!fs::exists(backup_path(paths), ec)) {
         return UpdateResult::failure("没有备份，拒绝替换（先 prepare）");
