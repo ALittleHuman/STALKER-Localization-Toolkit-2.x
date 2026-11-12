@@ -3308,8 +3308,9 @@ static int wrap_jsgme_layout(const std::string& out_root, const std::string& cat
             if (!it->is_directory(ec)) continue;
             std::string suffix = xrkit::core::path_to_utf8(it->path().filename());
             if (suffix.rfind("font", 0) == 0) suffix = suffix.substr(4);
+            const std::string patch_name = name + " 字号" + suffix;
             const fs::path patch_mod =
-                mod.parent_path() / (name + " 字号" + suffix);
+                mod.parent_path() / xrkit::core::path_from_utf8(patch_name);
             fs::create_directories(patch_mod, ec);
             for (const char* top : {"gamedata", "ixr_addons", "localization"}) {
                 const fs::path src = it->path() / top;
