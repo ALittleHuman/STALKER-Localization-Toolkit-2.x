@@ -26,6 +26,7 @@ screen_scale.cpp
   plugin_context_menu.cpp
   row_action_delegate.cpp
   dialog_start.cpp
+  host_update.cpp
   virtual_list.cpp
   pages/page_base.cpp
   pages/page_factory.cpp

@@ -1,0 +1,152 @@
+#include "host_update.h"
+
+#include "xrkit/core/http.h"
+#include "xrkit/core/sha256.h"
+
+#include <QCoreApplication>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QProcess>
+#include <QRegularExpression>
+#include <QStandardPaths>
+
+namespace xrkit::shell {
+namespace {
+
+constexpr const char* kAppManifest =
+    "https://raw.githubusercontent.com/ALittleHuman/"
+    "STALKER-Localization-Toolkit-2.x-Network-Plugin/main/app_update.json";
+
+QString version_key(const QString& text) {
+    QStringList parts;
+    for (const QString& part : text.split(QRegularExpression(QStringLiteral("[^0-9]+")),
+                                          Qt::SkipEmptyParts)) {
+        parts << part;
+    }
+    return parts.join(QLatin1Char('.'));
+}
+
+QString find_file(const QString& root, const QString& name) {
+    QDir dir(root);
+    const QFileInfoList hits =
+        dir.entryInfoList({name}, QDir::Files, QDir::Name);
+    if (!hits.isEmpty()) return hits.first().absoluteFilePath();
+    for (const QFileInfo& sub :
+         dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
+        const QString found = find_file(sub.absoluteFilePath(), name);
+        if (!found.isEmpty()) return found;
+    }
+    return {};
+}
+
+}  // namespace
+
+bool HostUpdate::networkAllowed(QString* reason) {
+    if (xrkit::core::network_enabled()) return true;
+    if (reason != nullptr) *reason = QStringLiteral("联网功能已关闭");
+    return false;
+}
+
+bool HostUpdate::fetchAppInfo(AppUpdateInfo* info, QString* error) {
+    if (info == nullptr) return false;
+    QString why;
+    if (!networkAllowed(&why)) {
+        if (error != nullptr) *error = why;
+        return false;
+    }
+    const xrkit::core::HttpResult result = xrkit::core::http_get(kAppManifest, 20, 1u << 20);
+    if (!result.ok) {
+        if (error != nullptr) *error = QString::fromStdString(result.error);
+        return false;
+    }
+    QJsonParseError parse_error;
+    const QJsonDocument doc =
+        QJsonDocument::fromJson(QByteArray::fromStdString(result.body), &parse_error);
+    if (doc.isNull() || !doc.isObject()) {
+        if (error != nullptr) *error = QStringLiteral("app_update.json 不是 JSON");
+        return false;
+    }
+    const QJsonObject obj = doc.object();
+    info->version = obj.value(QStringLiteral("version")).toString().trimmed();
+    info->package = obj.value(QStringLiteral("package")).toString().trimmed();
+    info->sha256 = obj.value(QStringLiteral("sha256")).toString().trimmed().toLower();
+    if (info->version.isEmpty() || info->package.isEmpty()) {
+        if (error != nullptr) *error = QStringLiteral("app_update.json 缺 version/package");
+        return false;
+    }
+    return true;
+}
+
+bool HostUpdate::applyAppUpdate(const AppUpdateInfo& info, QString* error) {
+    QString why;
+    if (!networkAllowed(&why)) {
+        if (error != nullptr) *error = why;
+        return false;
+    }
+    const QString stamp = QString::number(QDateTime::currentMSecsSinceEpoch());
+    QDir root(QDir::temp().filePath(QStringLiteral("xrkit_update")));
+    root.mkpath(QStringLiteral("app-%1").arg(stamp));
+    const QString work = root.filePath(QStringLiteral("app-%1").arg(stamp));
+    const QString zip = QDir(work).filePath(QStringLiteral("update.zip"));
+    const xrkit::core::HttpResult downloaded =
+        xrkit::core::http_download(info.package.toStdString(), zip.toStdString(), 300,
+                                   256u << 20);
+    if (!downloaded.ok) {
+        if (error != nullptr) *error = QString::fromStdString(downloaded.error);
+        return false;
+    }
+    if (!info.sha256.isEmpty()) {
+        std::string sha_error;
+        const std::string actual = xrkit::core::sha256_file(zip.toStdString(), sha_error);
+        if (actual != info.sha256.toStdString()) {
+            if (error != nullptr) *error = QStringLiteral("更新包 sha256 不匹配");
+            return false;
+        }
+    }
+    QDir stage(work);
+    stage.mkpath(QStringLiteral("stage"));
+    const QString staged = stage.filePath(QStringLiteral("stage"));
+    QProcess tar;
+    tar.start(QStringLiteral("tar"), {QStringLiteral("-xf"), zip, QStringLiteral("-C"), staged});
+    if (!tar.waitForFinished(120000) || tar.exitCode() != 0) {
+        QProcess powershell;
+        powershell.start(QStringLiteral("powershell"),
+                         {QStringLiteral("-NoProfile"), QStringLiteral("-Command"),
+                          QStringLiteral("Expand-Archive -LiteralPath '%1' -DestinationPath '%2' -Force")
+                              .arg(zip, staged)});
+        if (!powershell.waitForFinished(120000) || powershell.exitCode() != 0) {
+            if (error != nullptr) *error = QStringLiteral("更新包解压失败");
+            return false;
+        }
+    }
+    const QString app = find_file(staged, QStringLiteral("xrkit_app.exe"));
+    if (app.isEmpty()) {
+        if (error != nullptr) *error = QStringLiteral("更新包内找不到 xrkit_app.exe");
+        return false;
+    }
+    const QString install_dir = QCoreApplication::applicationDirPath();
+    const QString updater = QDir(install_dir).filePath(QStringLiteral("xrkit_updater.exe"));
+    if (!QFileInfo::exists(updater)) {
+        if (error != nullptr) *error = QStringLiteral("找不到 xrkit_updater.exe");
+        return false;
+    }
+    const QString txn = root.filePath(QStringLiteral("app-%1").arg(stamp));
+    const QString exe = QDir(install_dir).filePath(QStringLiteral("xrkit_app.exe"));
+    const bool started = QProcess::startDetached(
+        updater, {QStringLiteral("--pid"), QString::number(QCoreApplication::applicationPid()),
+                  QStringLiteral("--target"), install_dir, QStringLiteral("--staged"),
+                  QFileInfo(app).absolutePath(), QStringLiteral("--transaction"), txn,
+                  QStringLiteral("--exe"), exe});
+    if (!started) {
+        if (error != nullptr) *error = QStringLiteral("xrkit_updater 启动失败");
+        return false;
+    }
+    QCoreApplication::quit();
+    return true;
+}
+
+}  // namespace xrkit::shell

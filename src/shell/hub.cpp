@@ -6,6 +6,7 @@
 #include "scroll_viewport.h"
 #include "pages/page_base.h"
 #include "pages/page_factory.h"
+#include "host_update.h"
 
 #include "xrkit/core/path.h"
 #include "xrkit/core/theme.h"
@@ -31,6 +32,7 @@
 #include <QCoreApplication>
 #include <QMessageBox>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QThread>
 #include <QDateTime>
 #include <QDir>
@@ -403,35 +405,40 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     QAction* release_page = help_menu->addAction(QStringLiteral("查看最新版本（打开发布页）"));
     QAction* host_check_update = help_menu->addAction(QStringLiteral("检测更新（宿主内置）"));
     connect(host_check_update, &QAction::triggered, this, [this] {
-        if (!network_enabled()) {
+        QString error;
+        if (!HostUpdate::networkAllowed(&error)) {
             QMessageBox::warning(this, QStringLiteral("检测更新"),
                                  QStringLiteral("联网功能已关闭。\n请在「工具 → 联网功能」中开启。"));
             return;
         }
-        const xrkit::core::HttpResult result = xrkit::core::http_get(
-            "https://api.github.com/repos/ALittleHuman/STALKER-Localization-Toolkit-2.x/releases/latest",
-            15, 1u << 20);
-        if (!result.ok) {
+        AppUpdateInfo info;
+        if (!HostUpdate::fetchAppInfo(&info, &error)) {
             QMessageBox::warning(this, QStringLiteral("检测更新"),
-                                 QStringLiteral("检查失败：%1")
-                                     .arg(QString::fromStdString(result.error)));
+                                 QStringLiteral("检查失败：%1").arg(error));
             return;
         }
-        const QString body = QString::fromStdString(result.body);
-        const QString marker = QStringLiteral("\"tag_name\"");
-        const int at = body.indexOf(marker);
-        QString tag;
-        if (at >= 0) {
-            const int colon = body.indexOf(QLatin1Char(':'), at + marker.size());
-            const int quote = colon >= 0 ? body.indexOf(QLatin1Char('"'), colon + 1) : -1;
-            const int end = quote >= 0 ? body.indexOf(QLatin1Char('"'), quote + 1) : -1;
-            if (quote >= 0 && end > quote) tag = body.mid(quote + 1, end - quote - 1);
+        const QString current = QString::fromStdString(xrkit::core::version_string());
+        QStringList current_parts = current.split(QRegularExpression(QStringLiteral("[^0-9]+")),
+                                                  Qt::SkipEmptyParts);
+        QStringList latest_parts = info.version.split(QRegularExpression(QStringLiteral("[^0-9]+")),
+                                                      Qt::SkipEmptyParts);
+        const bool newer = latest_parts.size() > current_parts.size()
+                               ? true
+                               : latest_parts.join(QLatin1Char('.')) > current_parts.join(QLatin1Char('.'));
+        if (!newer) {
+            QMessageBox::information(this, QStringLiteral("检测更新"),
+                                     QStringLiteral("当前已是最新：%1").arg(current));
+            return;
         }
-        QMessageBox::information(
-            this, QStringLiteral("检测更新"),
-            QStringLiteral("本机版本：%1\n最新版本：%2")
-                .arg(QString::fromStdString(xrkit::core::version_string()),
-                     tag.isEmpty() ? QStringLiteral("(GitHub 未返回 tag)") : tag));
+        if (QMessageBox::question(this, QStringLiteral("检测更新"),
+                                  QStringLiteral("发现新版本：%1\n当前版本：%2\n\n现在下载并安装？")
+                                      .arg(info.version, current)) != QMessageBox::Yes) {
+            return;
+        }
+        if (!HostUpdate::applyAppUpdate(info, &error)) {
+            QMessageBox::warning(this, QStringLiteral("检测更新"),
+                                 QStringLiteral("更新失败：%1").arg(error));
+        }
     });
     QAction* copy_link = help_menu->addAction(QStringLiteral("复制发布页链接"));
     connect(copy_link, &QAction::triggered, this, [this] {
