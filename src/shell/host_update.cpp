@@ -15,8 +15,48 @@
 #include <QStandardPaths>
 #include <QUrl>
 
+#include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace xrkit::shell {
 namespace {
+
+bool startDetachedProcess(const QString& program, const QStringList& args,
+                          const QString& workdir, QString* error) {
+#ifdef _WIN32
+    QString command = QStringLiteral("\"%1\"").arg(QDir::toNativeSeparators(program));
+    for (const QString& arg : args) {
+        command += QStringLiteral(" \"%1\"").arg(QString(arg).replace(QLatin1Char('"'),
+                                                                     QStringLiteral("\\\"")));
+    }
+    std::wstring cmd = command.toStdWString();
+    std::vector<wchar_t> buffer(cmd.begin(), cmd.end());
+    buffer.push_back(L'\0');
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    const std::wstring cwd = QDir::toNativeSeparators(workdir).toStdWString();
+    DWORD flags = CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB;
+    if (!CreateProcessW(program.toStdWString().c_str(), buffer.data(), nullptr, nullptr, FALSE,
+                        flags, nullptr, cwd.empty() ? nullptr : cwd.c_str(), &si, &pi)) {
+        // 某些 job 不允许 breakaway；退回不声明 job 行为的普通 detached。
+        if (!CreateProcessW(program.toStdWString().c_str(), buffer.data(), nullptr, nullptr, FALSE,
+                            CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS, nullptr,
+                            cwd.empty() ? nullptr : cwd.c_str(), &si, &pi)) {
+            if (error != nullptr) *error = QStringLiteral("CreateProcess 失败");
+            return false;
+        }
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+#else
+    return QProcess::startDetached(program, args, workdir);
+#endif
+}
 
 constexpr const char* kAppManifest =
     "https://raw.githubusercontent.com/ALittleHuman/"
@@ -147,10 +187,12 @@ bool HostUpdate::applyAppUpdate(const AppUpdateInfo& info, QString* error) {
     const QString txn = QDir(work).filePath(QStringLiteral("transaction"));
     const QString exe = QDir(install_dir).filePath(QStringLiteral("xrkit_app.exe"));
     const bool started = QProcess::startDetached(
-        updater, {QStringLiteral("--pid"), QString::number(QCoreApplication::applicationPid()),
-                  QStringLiteral("--target"), install_dir, QStringLiteral("--staged"),
-                  QFileInfo(app).absolutePath(), QStringLiteral("--transaction"), txn,
-                  QStringLiteral("--exe"), exe});
+        updater,
+        {QStringLiteral("--pid"), QString::number(QCoreApplication::applicationPid()),
+         QStringLiteral("--target"), install_dir, QStringLiteral("--staged"),
+         QFileInfo(app).absolutePath(), QStringLiteral("--transaction"), txn,
+         QStringLiteral("--exe"), exe},
+        QDir::tempPath());
     if (!started) {
         if (error != nullptr) *error = QStringLiteral("xrkit_updater 启动失败");
         return false;

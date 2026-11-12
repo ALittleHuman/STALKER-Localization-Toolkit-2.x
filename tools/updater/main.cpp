@@ -96,6 +96,7 @@ int main(int argc, char** argv) {
     std::string target, staged, transaction, exe;
     unsigned long pid = 0;
     unsigned long wait_ms = 10000;
+    unsigned long parent_pid = 0;
     bool from_temp = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -130,6 +131,14 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "--from-temp") {
             from_temp = true;
+        } else if (arg == "--parent-pid") {
+            std::string value;
+            if (!next(&value)) return 3;
+            try {
+                parent_pid = std::stoul(value);
+            } catch (...) {
+                return 3;
+            }
         } else if (arg == "--help" || arg == "-h") {
             std::printf("usage: xrkit_updater --pid N --target DIR --staged DIR --transaction DIR "
                         "[--exe APP] [--wait-ms N]\n");
@@ -158,6 +167,7 @@ int main(int argc, char** argv) {
                 cmd += L" \"" + std::filesystem::u8path(argv[i]).wstring() + L"\"";
             }
             cmd += L" --from-temp";
+            cmd += L" --parent-pid " + std::to_wstring(GetCurrentProcessId());
             STARTUPINFOW si{};
             si.cb = sizeof(si);
             PROCESS_INFORMATION pi{};
@@ -175,6 +185,10 @@ int main(int argc, char** argv) {
     }
 #endif
 
+    if (!wait_pid(parent_pid)) {
+        std::printf("UPDATER error reason=父 updater 未退出\n");
+        return 1;
+    }
     if (!wait_pid(pid)) {
         std::printf("UPDATER error reason=旧进程未退出\n");
         return 1;
