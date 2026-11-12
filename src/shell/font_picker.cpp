@@ -103,14 +103,22 @@ QStringList font_candidates(const QString& keyword, const QString& current_font)
     return out;
 }
 
+const efont::CjkFontCheck& font_check_of(const QString& font_path) {
+    static std::map<QString, efont::CjkFontCheck> cache;
+    const auto it = cache.find(font_path);
+    if (it != cache.end()) return it->second;
+    return cache.emplace(font_path, efont::classify_cjk_font(
+                                        font_path.toUtf8().toStdString()))
+        .first->second;
+}
+
 QString font_mark_of(const QString& font_path) {
     if (font_path.isEmpty()) return QString();
     auto& cache = mark_cache();
     const auto it = cache.find(font_path);
     if (it != cache.end()) return it->second;
     // 判据**只有引擎那一份**（列表标记与预览标题共用它 ⇒ 两处结论不可能矛盾）
-    const QString mark = utf8(efont::cjk_state_mark(efont::classify_cjk_font(
-        font_path.toUtf8().toStdString()).state));
+    const QString mark = utf8(efont::cjk_state_mark(font_check_of(font_path).state));
     cache.emplace(font_path, mark);
     return mark;
 }
@@ -136,8 +144,7 @@ QString font_preview_line(const QString& font_path, int which) {
     QString line = which == 0 ? QStringLiteral("汉化测试你好ABC") : QStringLiteral("Привет 世界 123");
     // 用户口径 2026-09-14：「日语的，标明是日语字体，然后那些缺简体的就上繁体」——
     // 预览里直接把缺的简体字换成繁体字形（否则那几格是空白，用户看到的还是"缺字"）。
-    const efont::CjkFontCheck check =
-        efont::classify_cjk_font(font_path.toUtf8().toStdString());
+    const efont::CjkFontCheck& check = font_check_of(font_path);
     if (check.state == efont::CjkFontState::Japanese) {
         QString replaced;
         for (const QChar ch : line) {
@@ -393,7 +400,7 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
         QString text =
             QStringLiteral("%1  [%2]  %3").arg(QFileInfo(path).fileName(), family,
                                                font_mark_of(path));
-        const efont::CjkFontCheck check = efont::classify_cjk_font(path.toUtf8().toStdString());
+        const efont::CjkFontCheck& check = font_check_of(path);
         if (check.state == efont::CjkFontState::Japanese && !check.fallbacks.empty()) {
             QStringList pairs;
             for (const auto& [from, to] : check.fallbacks) {
