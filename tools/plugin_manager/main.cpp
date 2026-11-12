@@ -10,6 +10,7 @@
 //   xrkit_plugin_manager.exe [--plugins <目录>] [--reason <文本>]
 //   xrkit_plugin_manager.exe --scan-json [--plugins <目录>]
 #include "xrkit/core/plugin_disabled.h"
+#include "xrkit/core/http.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -329,39 +330,32 @@ public:
             QDesktopServices::openUrl(QUrl::fromLocalFile(plugins_dir_));
         });
         connect(check_update_btn, &QPushButton::clicked, this, [this] {
-            const QString cli = find_cli();
-            if (cli.isEmpty()) {
+            if (!xrkit::core::network_enabled()) {
                 QMessageBox::warning(this, QStringLiteral("检查插件更新"),
-                                     QStringLiteral("找不到 xrkit_cli.exe，无法调用联网插件。"));
+                                     QStringLiteral("联网功能已关闭。\n请在主程序「工具 → 联网功能」中开启。"));
                 return;
             }
-            QProcess proc;
-            proc.start(cli, {QStringLiteral("--py-plugin-call"), plugins_dir_,
-                             QStringLiteral("{\"action\":\"check_updates\"}")});
-            if (!proc.waitForFinished(20000)) {
-                proc.kill();
+            const xrkit::core::HttpResult result = xrkit::core::http_get(
+                "https://raw.githubusercontent.com/ALittleHuman/"
+                "STALKER-Localization-Toolkit-2.x-Network-Plugin/main/plugins.json",
+                20, 1u << 20);
+            if (!result.ok) {
                 QMessageBox::warning(this, QStringLiteral("检查插件更新"),
-                                     QStringLiteral("联网插件调用超时。"));
+                                     QStringLiteral("下载 plugins.json 失败：%1")
+                                         .arg(QString::fromStdString(result.error)));
                 return;
             }
-            const QString output = QString::fromUtf8(proc.readAllStandardOutput() +
-                                                     proc.readAllStandardError());
-            const int marker = output.indexOf(QStringLiteral("PYPLUGINCALL result="));
-            if (marker < 0) {
-                QMessageBox::information(this, QStringLiteral("检查插件更新"),
-                                         QStringLiteral("没有可用的联网检查入口：\n") + output.right(1200));
-                return;
-            }
-            const QString json = output.mid(marker + 20).section(QLatin1Char('\n'), 0, 0).trimmed();
             QJsonParseError parse_error;
-            const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &parse_error);
-            if (doc.isNull() || !doc.isObject() || !doc.object().value(QStringLiteral("ok")).toBool()) {
+            const QJsonDocument doc =
+                QJsonDocument::fromJson(QByteArray::fromStdString(result.body), &parse_error);
+            if (doc.isNull() || !doc.isObject()) {
                 QMessageBox::warning(this, QStringLiteral("检查插件更新"),
-                                     QStringLiteral("联网插件返回无法解析：\n") + json);
+                                     QStringLiteral("plugins.json 不是 JSON。"));
                 return;
             }
             QStringList lines;
-            for (const QJsonValue& value : doc.object().value(QStringLiteral("plugins")).toArray()) {
+            for (const QJsonValue& value :
+                 doc.object().value(QStringLiteral("plugins")).toArray()) {
                 const QJsonObject item = value.toObject();
                 lines << QStringLiteral("%1  %2  %3")
                              .arg(item.value(QStringLiteral("id")).toString(),
