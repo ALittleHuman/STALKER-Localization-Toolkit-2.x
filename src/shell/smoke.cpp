@@ -13,6 +13,7 @@
 #include "xrkit/engine/fs/untrusted_limits.h"   // ★ P17-17：那三个上限的具名常量
 #include "xrkit/engine/fs/squashfs.h"
 #include "xrkit/engine/plugin/loader.h"
+#include "xrkit/engine/plugin/engine_facade.h"
 // ★ P17-14（01 F-15）：保留设备名判定与写盘拦阻要看真实现
 #include "xrkit/core/atomic_write.h"
 #include "xrkit/core/build_version.h"   // ★ P17-15（01 F-11）：JSON 深度上限判据
@@ -12656,6 +12657,36 @@ SmokeResult run_smoke() {
                       .arg(bar_bottom)
                       .arg(fit_probe.height()));
         }
+    }
+
+    // 审计 F-076 行为判据：备份路径不可读时必须 fail-closed，不能删已装文件。
+    {
+        namespace ep = xrkit::plugin;
+        const QString root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_f076"));
+        QDir(root).removeRecursively();
+        QDir().mkpath(root + QStringLiteral("/target/a"));
+        QDir().mkpath(root + QStringLiteral("/backup"));
+        QFile target(root + QStringLiteral("/target/a/b.txt"));
+        if (target.open(QIODevice::WriteOnly)) target.write("installed");
+        target.close();
+        // backup/a 是普通文件 ⇒ backup/a/b.txt 的 exists() 读状态失败。
+        QFile blocker(root + QStringLiteral("/backup/a"));
+        if (blocker.open(QIODevice::WriteOnly)) blocker.write("not-a-dir");
+        blocker.close();
+        const ep::EngineFacade* facade = ep::engine_facade();
+        bool refused = false;
+        bool kept = false;
+        if (facade != nullptr && facade->pkg_restore) {
+            const ep::PkgRestoreResult restored =
+                facade->pkg_restore(root.toStdString() + "/target",
+                                    root.toStdString() + "/backup",
+                                    {std::string("a/b.txt")});
+            refused = !restored.ok && !restored.failures.empty();
+            kept = QFileInfo::exists(root + QStringLiteral("/target/a/b.txt"));
+        }
+        check(refused, QStringLiteral("审计 F-076：备份状态不可读 ⇒ 还原失败而不是当无备份"));
+        check(kept, QStringLiteral("审计 F-076：备份状态不可读时 target 文件必须保留"));
+        QDir(root).removeRecursively();
     }
 
     // ★ 2026-10-22（用户口径）：**子进程内**落盘（外壳/引擎各一份），atexit 兜底（幂等）。

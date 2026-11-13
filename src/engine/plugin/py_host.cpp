@@ -1266,7 +1266,7 @@ public:
         out["ttf"] = r.ttf;
         out["dds"] = r.dds;
         py::list slots;
-        for (const auto& slot : r.slots) {
+        for (const auto& slot : r.slot_info) {
             py::dict item;
             item["section"] = slot.section;
             item["base"] = slot.base;

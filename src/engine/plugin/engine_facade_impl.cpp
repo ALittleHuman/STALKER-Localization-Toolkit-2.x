@@ -1075,6 +1075,31 @@ const EngineFacade kFontFacade = {
             const std::filesystem::path backup =
                 core::path_from_utf8(backup_root) / core::path_from_utf8(rel);
             std::error_code exists_ec;
+            // 父级路径是文件/不可读时，exists(backup) 可能只返回 false（Windows 甚至
+            // 不设 ec）⇒ 必须先查父链，不能把它当“没有备份”去删 target。
+            bool bad_parent = false;
+            std::string bad_parent_reason;
+            for (std::filesystem::path parent = backup.parent_path(); !parent.empty();
+                 parent = parent.parent_path()) {
+                std::error_code parent_ec;
+                const std::filesystem::file_status st = std::filesystem::status(parent, parent_ec);
+                if (parent_ec) {
+                    bad_parent = true;
+                    bad_parent_reason = parent_ec.message();
+                    break;
+                }
+                if (std::filesystem::exists(st) &&
+                    !std::filesystem::is_directory(st)) {
+                    bad_parent = true;
+                    bad_parent_reason = "父级不是目录：" + core::path_to_utf8(parent.string());
+                    break;
+                }
+            }
+            if (bad_parent) {
+                out.failures.push_back(rel + "：备份路径不可读（" + bad_parent_reason +
+                                       "），已中止该文件还原");
+                continue;
+            }
             const bool backup_exists = std::filesystem::exists(backup, exists_ec);
             if (exists_ec) {
                 // 备份状态读不出 ≠ 没有备份；此时删 target 等于静默删用户文件。
@@ -1135,7 +1160,7 @@ const EngineFacade kFontFacade = {
         out.ttf = model.ttf_count;
         out.dds = model.dds_count;
         out.evidence = model.evidence;
-        out.slots.reserve(model.font_slots.size());
+        out.slot_info.reserve(model.font_slots.size());
         for (const auto& slot : model.font_slots) {
             LangPackSlotInfo info;
             info.section = slot.section;
@@ -1145,7 +1170,7 @@ const EngineFacade kFontFacade = {
             info.shader = slot.shader;
             info.size = slot.size;
             info.has_name = slot.has_name;
-            out.slots.push_back(std::move(info));
+            out.slot_info.push_back(std::move(info));
         }
         return out;
     },

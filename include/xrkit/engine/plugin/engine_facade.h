@@ -61,7 +61,7 @@ struct LangPackScanResult {
     std::string text_dir;     // configs/text/<lang>（存在时）
     int ttf = 0;
     int dds = 0;
-    std::vector<LangPackSlotInfo> slots;
+    std::vector<LangPackSlotInfo> slot_info;
     std::vector<std::string> evidence;
 };
 
