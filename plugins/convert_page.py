@@ -162,9 +162,12 @@ def register(api):
             ui.set_text(pause_button, "继续" if paused[0] else "暂停")
 
         def wait_if_paused():
-            # 暂停时在这里等（返回 False 会让引擎**停下**，所以等完必须返回 True）
+            # 暂停时在这里等；但暂停中取消必须让 gate 返回 False，
+            # 否则 worker 永远停在 while 里、关窗 join 挂死（审计 F-210）。
             import time
             while paused[0]:
+                if ui.task_cancel_requested(panel):
+                    return False
                 time.sleep(0.01)
             return True
 

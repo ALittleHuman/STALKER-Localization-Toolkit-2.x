@@ -53,6 +53,17 @@ def main() -> int:
     need("F-135 取消定时器绑定被取消进程",
          "cancelled_process" in video and "process_ != cancelled_process" in video,
          "定时器仍读成员 process_")
+    need("F-135 运行序号", "run_seq_" in video, "仍只靠指针身份")
+    need("F-061 合并失败回滚", "roll_back" in font and "backups" in font,
+         "逐文件覆盖无回滚")
+
+    patch = read("src/engine/patch/patch.cpp")
+    need("F-034 patched/expect 等长", "patched.size() != expect.size()" in patch,
+         "缺等长不变量")
+
+    convert = read("plugins/convert_page.py")
+    need("F-210 暂停检查取消", "ui.task_cancel_requested(panel)" in convert and
+         "while paused[0]" in convert, "暂停循环不查取消位")
 
     failed = 0
     for name, ok, detail in CHECKS:

@@ -823,6 +823,18 @@ PatchBuildResult build_patched(const std::string& data, const std::vector<PatchS
     for (const PatchSite& s : sites) {
         const std::string expect = hex_to_bytes(s.expect_hex);
         const std::string patched = hex_to_bytes(s.patched_hex);
+        if (patched.size() != expect.size()) {
+            // F-034：等长不变量缺失会让 slice(expect.size()) 的守卫通过，
+            // 随后 memcpy/replace 写入 patched.size()，把后续偏移全部错位。
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                          "补丁目录不合法（%s %s）：expect=%zu 字节，patched=%zu 字节；"
+                          "二者必须等长，拒绝生成",
+                          s.id.c_str(), hex_off(s.offset).c_str(), expect.size(),
+                          patched.size());
+            r.reason = buf;
+            return r;
+        }
         const std::string got = slice(data, s.offset, expect.size());
         if (got != expect) {
             const FirstDiff fd = first_diff_byte(expect, got, s.offset);
@@ -948,6 +960,11 @@ PatchBuildResult build_patched(const std::string& data, const std::vector<PatchS
     // ── 后置自检（写出之前）──
     for (const PatchSite& s : sites) {
         const std::string want = hex_to_bytes(s.patched_hex);
+        const std::string expect = hex_to_bytes(s.expect_hex);
+        if (want.size() != expect.size()) {
+            r.reason = "后置自检失败：" + s.id + " 的 patched/expect 不等长";
+            return r;
+        }
         const std::string got = slice(out, s.offset, want.size());
         if (got != want) {
             r.reason = "后置自检失败：" + s.id + "（" + hex_off(s.offset) +
