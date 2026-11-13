@@ -3848,6 +3848,22 @@ def step_network_toggle(release: bool) -> None:
         fail("联网开关判据不通过（见上）")
 
 
+def step_audit_p0(release: bool) -> None:
+    say("[audit-p0] F-061/F-076/F-152/F-040/F-135 防回退锁")
+    script = ROOT / "tests" / "check_audit_p0_guards.py"
+    if not require_repo_file(script, "审计 P0 守卫脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)], timeout=120)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("OK ", "FAIL ", "AUDIT-P0-GUARDS")):
+            say("  " + s)
+    if rc2 == 0:
+        ok("审计 P0 守卫全过")
+    else:
+        fail("审计 P0 守卫不通过（见上）")
+
+
 def step_plugin_requires(release: bool) -> None:
     r"""★ 2026-11-10（P1-6）：`PLUGIN_INFO.requires`（跨插件服务）的**启动期可见告警**。
 
@@ -8234,6 +8250,7 @@ STEPS = [
     ("plugin-contract", step_plugin_contract),
     ("host-offline", step_host_offline),
     ("network-toggle", step_network_toggle),
+    ("audit-p0", step_audit_p0),
     ("snapshot-diff", step_snapshot_diff),
     ("track", step_track),
     ("version-consistency", step_version_consistency),
