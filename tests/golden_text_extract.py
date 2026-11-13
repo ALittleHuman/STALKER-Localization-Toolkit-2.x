@@ -379,6 +379,8 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="文本提取层逐字节对拍")
     parser.add_argument("--write", action="store_true", help="用 1.x 生成基线")
+    parser.add_argument("--write-ours", action="store_true",
+                        help="用 2.x 生成基线（仅用于 F-040 这类有意偏离 1.x 的夹具）")
     parser.add_argument("--id", default="", help="只跑 id 含该子串的夹具")
     args = parser.parse_args()
 
@@ -393,7 +395,7 @@ def main() -> int:
         print("GOLDEN-TEXT-EXTRACT: SKIP (no-fixtures)")
         return 2
 
-    if args.write:
+    if args.write or args.write_ours:
         # ★ --write 只更新**本次跑到的**夹具，其余条目保留：否则 `--write --id synth`
         #   会把真语料条目从基线里抹掉（实测踩过）。
         records: list[dict] = []
@@ -402,18 +404,21 @@ def main() -> int:
             written = {f[0] for f in fixtures}
             records = [e for e in old.get("entries", []) if e["id"] not in written]
         for fixture_id, kind, src in fixtures:
-            stats = run_1x(kind, src, WORK / fixture_id / "ref")
+            out = WORK / fixture_id / ("ours" if args.write_ours else "ref")
+            stats = run_2x(kind, src, out) if args.write_ours else run_1x(kind, src, out)
             records.append({"id": fixture_id, "kind": kind, "source": str(src),
-                            "stats": stats, "tree": tree_hashes(WORK / fixture_id / "ref")})
-            print("[%s] 基线：files=%d strings=%d chars=%d，产物 %d 个文件"
-                  % (fixture_id, stats["files"], stats["strings"], stats["chars"],
-                     len(records[-1]["tree"])))
+                            "stats": stats, "tree": tree_hashes(out)})
+            print("[%s] 基线(%s)：files=%d strings=%d chars=%d，产物 %d 个文件"
+                  % (fixture_id, "2.x" if args.write_ours else "1.x", stats["files"],
+                     stats["strings"], stats["chars"], len(records[-1]["tree"])))
         records.sort(key=lambda e: e["id"])
         BASELINE.parent.mkdir(parents=True, exist_ok=True)
+        note = ("基线由 1.x apps.text_extract_app 的 _extract_gameplay/_extract_scripts 生成"
+                if not args.write_ours else
+                "基线由 2.x 生成：F-040 起，含转义脚本字面量有意偏离 1.x 的损坏行为")
         BASELINE.write_bytes((json.dumps(
-            {"note": "基线由 1.x apps.text_extract_app 的 _extract_gameplay/_extract_scripts 生成",
-             "id_prefix": ID_PREFIX, "entries": records}, indent=1, ensure_ascii=False) + "\n"
-        ).encode("utf-8"))
+            {"note": note, "id_prefix": ID_PREFIX, "entries": records},
+            indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
         print("已写基线 %d 条 → %s" % (len(records), BASELINE.relative_to(ROOT)))
         print("GOLDEN-TEXT-EXTRACT: PASS (write)")
         return 0

@@ -457,43 +457,37 @@ std::vector<std::string> script_texts(const std::string& text) {
         const size_t n = line.size();
         for (size_t i = 0; i < n; ++i) {
             const char ch = line[i];
-            if (ch == '"' || ch == '\'') {
-                if (ch == quote_char || quote_char == '\0') {
-                    if (!is_open) {
-                        ongoing.assign(1, ch);
-                        quote_char = ch;
-                        is_open = true;
-                        continue;
-                    }
-                    if (is_escape) {
-                        ongoing.push_back(ch);
-                        is_escape = false;
-                    } else {
-                        ongoing.push_back(ch);
-                        is_open = false;
-                        quote_char = '\0';
-                        if (!re_match_sensitive().search(ongoing) && has_text_letter(ongoing)) {
-                            line_matches.insert(ongoing);
-                        }
-                    }
-                    continue;
+            if (!is_open) {
+                if (ch == '"' || ch == '\'') {
+                    ongoing.assign(1, ch);
+                    quote_char = ch;
+                    is_open = true;
                 }
+                continue;
             }
-            if (is_open) {
-                if (ch == '\\') {
-                    is_escape = !is_escape;
-                    if (!is_escape) {
-                        ongoing += "\\\\";
-                    } else {
-                        ongoing += '\\';
-                    }
-                } else if (ch == 'n' && is_escape) {
-                    ongoing += '\n';
-                    is_escape = false;
-                } else {
-                    ongoing += ch;
+            // 审计 F-040：脚本字面量必须**原样保留**。
+            // 反斜杠只用于“下一个字符不结束字符串”，绝不解码/改写；
+            // old_text 之后直接取源码切片，不再二次转义。
+            if (is_escape) {
+                ongoing += ch;
+                is_escape = false;
+                continue;
+            }
+            if (ch == '\\') {
+                ongoing += ch;
+                is_escape = true;
+                continue;
+            }
+            if (ch == quote_char) {
+                ongoing.push_back(ch);
+                is_open = false;
+                quote_char = '\0';
+                if (!re_match_sensitive().search(ongoing) && has_text_letter(ongoing)) {
+                    line_matches.insert(ongoing);
                 }
+                continue;
             }
+            ongoing += ch;
         }
 
         std::vector<std::string> sorted_lm(line_matches.begin(), line_matches.end());
@@ -1306,8 +1300,9 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
                     continue;
                 }
             } else {
-                const char qc = raw[0];
-                old_text = std::string(1, qc) + escape_literal_text(inner, qc) + std::string(1, qc);
+                // F-040：直接用源码切片（含引号、含反斜杠原样），不要再
+                // escape_literal_text() 二次转义；否则 old_text 与源码对不上。
+                old_text = raw;
             }
             const std::string eid = id_prefix + "_" + std::to_string(counter);
             ++counter;

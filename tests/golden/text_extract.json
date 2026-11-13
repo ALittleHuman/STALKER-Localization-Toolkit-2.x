@@ -1,5 +1,5 @@
 {
- "note": "基线由 1.x apps.text_extract_app 的 _extract_gameplay/_extract_scripts 生成",
+ "note": "基线由 2.x 生成：F-040 起，含转义脚本字面量有意偏离 1.x 的损坏行为",
  "id_prefix": "sgtat_gstest_{abbr}_1700000000",
  "entries": [
   {
@@ -787,34 +787,32 @@
    "kind": "scripts",
    "source": "E:\\Software\\Games\\STALKER\\Localization\\Tools\\STALKER_Toolkit_2.x\\build\\golden_text_extract\\synth\\scripts",
    "stats": {
-    "files": 5,
-    "strings": 17,
-    "chars": 190
+    "files": 4,
+    "strings": 18,
+    "chars": 202,
+    "skipped": 1,
+    "tail": "TEXT ok kind=scripts files=4 strings=18 chars=202 notext=1 skipped=1 replskip=0 writefail=0 long=0 xml=gstest_scripts_texts.xml ms=11"
    },
    "tree": {
     "gstest_scripts_texts.xml": {
-     "size": 1672,
-     "sha256": "096f9b6e378a2ef647d612b0c010dff54ffe993abfdd8f12b2a7039d25a8c780"
+     "size": 1781,
+     "sha256": "d562d70866a9eed4d2d4db3b84e7dc89f9d5b0a6c6452f53cad609f293b6fadf"
     },
     "scripts/a.script": {
-     "size": 205,
-     "sha256": "3a4bf067f5c43cc073ac4087320e369d0693659ad760e7c9b1e5c5fe466a5311"
+     "size": 195,
+     "sha256": "0baf5624c7eac8c1d94cd3b39e2b312da5a8ab7677d438cc51dba7c3c0a5b031"
     },
     "scripts/b.script": {
      "size": 688,
      "sha256": "bdadc6990ce9eab16182da34ee4e8ab603b9c827363cc9ec72576d9bab5bb8e1"
     },
     "scripts/c.script": {
-     "size": 48,
-     "sha256": "315b905acc6e10e62ba8e7dafc5394edcc442a1711d043c87edc3f3540c6b7c2"
+     "size": 66,
+     "sha256": "adab7dea00f9cbb358000d540c092d621c70d7c286c0fc1b153b51f3b26776cc"
     },
     "scripts/d.ltx": {
      "size": 581,
-     "sha256": "a6b961255205aec9d15ab6aed05768233db793837e58d31b61678e770ff4aada"
-    },
-    "scripts/e.ltx": {
-     "size": 33,
-     "sha256": "499d03218dddac81968f7e2d096110ee2d841ec363ac430e2dd8e7b9c92980f5"
+     "sha256": "b7ccaf4455af76b7f66668f6638bd25a626bfc299c3450ad5d4b7f9547c243b6"
     }
    }
   }
