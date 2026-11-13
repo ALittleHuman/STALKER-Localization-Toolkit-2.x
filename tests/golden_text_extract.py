@@ -381,6 +381,8 @@ def main() -> int:
     parser.add_argument("--write", action="store_true", help="用 1.x 生成基线")
     parser.add_argument("--write-ours", action="store_true",
                         help="用 2.x 生成基线（仅用于 F-040 这类有意偏离 1.x 的夹具）")
+    parser.add_argument("--reason", default="",
+                        help="--write-ours 必填：为什么用本实现覆盖基线")
     parser.add_argument("--id", default="", help="只跑 id 含该子串的夹具")
     args = parser.parse_args()
 
@@ -396,6 +398,9 @@ def main() -> int:
         return 2
 
     if args.write or args.write_ours:
+        if args.write_ours and not args.reason.strip():
+            print("!! --write-ours 必须同时给 --reason，禁止无理由用本实现覆盖基线")
+            return 3
         # ★ --write 只更新**本次跑到的**夹具，其余条目保留：否则 `--write --id synth`
         #   会把真语料条目从基线里抹掉（实测踩过）。
         records: list[dict] = []
@@ -415,7 +420,7 @@ def main() -> int:
         BASELINE.parent.mkdir(parents=True, exist_ok=True)
         note = ("基线由 1.x apps.text_extract_app 的 _extract_gameplay/_extract_scripts 生成"
                 if not args.write_ours else
-                "基线由 2.x 生成：F-040 起，含转义脚本字面量有意偏离 1.x 的损坏行为")
+                "基线由 2.x 生成：" + args.reason.strip())
         BASELINE.write_bytes((json.dumps(
             {"note": note, "id_prefix": ID_PREFIX, "entries": records},
             indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
