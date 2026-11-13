@@ -12686,6 +12686,12 @@ SmokeResult run_smoke() {
                                           QString::fromLatin1(c.candidate))
                                      .arg(got ? 1 : 0));
         }
+        check(!xrkit::shell::HostUpdate::upgradeAllowed("2.0.0.244", "2.0.0"),
+              QStringLiteral("审计 A1：正式版不接受测试版候选"));
+        check(xrkit::shell::HostUpdate::upgradeAllowed("2.0.0.244", "2.0.0.244"),
+              QStringLiteral("审计 A1：测试版可继续测试通道"));
+        check(xrkit::shell::HostUpdate::upgradeAllowed("2.1.1", "2.1.1.103"),
+              QStringLiteral("审计 A1：测试版可接受更高正式版"));
     }
 
     // 审计 F-076 行为判据：备份路径不可读时必须 fail-closed，不能删已装文件。

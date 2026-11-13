@@ -135,6 +135,9 @@ bool parse_update_payload(const std::string& body, bool allow_test, AppUpdateInf
             if (!allow_test && obj.value(QStringLiteral("prerelease")).toBool()) continue;
             AppUpdateInfo candidate;
             if (!fill_release(obj, &candidate)) continue;
+            // A1：prerelease 字段不够。测试版若按普通 Release 发布，prerelease=false，
+            // 必须再按版本号本身判断，否则稳定版会被推测试版。
+            if (!allow_test && HostUpdate::isTestVersion(candidate.version)) continue;
             if (!found || HostUpdate::versionIsNewer(candidate.version, best.version)) {
                 best = std::move(candidate);
                 found = true;
@@ -161,6 +164,10 @@ bool parse_update_payload(const std::string& body, bool allow_test, AppUpdateInf
         }
         if (!fill_release(obj, info)) {
             if (error != nullptr) *error = QStringLiteral("Release 缺 version/安装包地址");
+            return false;
+        }
+        if (!allow_test && HostUpdate::isTestVersion(info->version)) {
+            if (error != nullptr) *error = QStringLiteral("当前正式通道不接受测试版");
             return false;
         }
         return true;
@@ -251,6 +258,11 @@ SemVer parse_semver(const QString& text) {
 bool HostUpdate::isTestVersion(const QString& version) {
     const SemVer v = parse_semver(version);
     return v.valid && v.test;
+}
+
+bool HostUpdate::upgradeAllowed(const QString& candidate, const QString& current) {
+    if (isTestVersion(current)) return true;
+    return !isTestVersion(candidate);
 }
 
 bool HostUpdate::versionIsNewer(const QString& candidate, const QString& current) {

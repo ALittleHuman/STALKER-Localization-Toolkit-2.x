@@ -19,6 +19,8 @@ public:
     // x.y.z + 测试构建 n：正式版高于同 x.y.z 测试版；测试版比较 n。
     static bool versionIsNewer(const QString& candidate, const QString& current);
     static bool isTestVersion(const QString& version);
+    // 正式版不接受测试版候选；测试版接受测试版/正式版。
+    static bool upgradeAllowed(const QString& candidate, const QString& current);
     // 下载 + sha256 + 解压 + 启动 updater；成功时调用方应退出当前进程。
     static bool applyAppUpdate(const AppUpdateInfo& info, QString* error);
 };

@@ -948,6 +948,15 @@ void Hub::check_updates(bool silent) {
     }
     const QString current = QString::fromStdString(xrkit::core::version_string());
     const bool newer = HostUpdate::versionIsNewer(info.version, current);
+    if (!HostUpdate::upgradeAllowed(info.version, current)) {
+        if (!silent) {
+            QMessageBox::information(
+                this, QStringLiteral("检测更新"),
+                QStringLiteral("最近发布的是测试版 %1；当前是正式版，不会自动升级到测试版。")
+                    .arg(info.version));
+        }
+        return;
+    }
     if (!newer) {
         if (!silent) {
             QMessageBox::information(this, QStringLiteral("检测更新"),
