@@ -1074,7 +1074,15 @@ const EngineFacade kFontFacade = {
             const std::filesystem::path target = root / core::path_from_utf8(rel);
             const std::filesystem::path backup =
                 core::path_from_utf8(backup_root) / core::path_from_utf8(rel);
-            if (std::filesystem::exists(backup, ec)) {
+            std::error_code exists_ec;
+            const bool backup_exists = std::filesystem::exists(backup, exists_ec);
+            if (exists_ec) {
+                // 备份状态读不出 ≠ 没有备份；此时删 target 等于静默删用户文件。
+                out.failures.push_back(rel + "：备份状态不可读（" + exists_ec.message() +
+                                       "），已中止该文件还原");
+                continue;
+            }
+            if (backup_exists) {
                 std::ifstream in(backup, std::ios::binary);
                 if (!in) {
                     out.failures.push_back(rel + "：备份打不开");

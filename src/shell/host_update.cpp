@@ -175,16 +175,20 @@ bool HostUpdate::fetchAppInfo(AppUpdateInfo* info, QString* error) {
             return xrkit::core::http_get(source.toStdString(), 20, 1u << 20);
         }));
     }
+    std::vector<bool> consumed(futures.size(), false);
     // 谁先成功用谁（并行探测 = 最快的源先返回），其余请求留到 future 析构时收尾。
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(22);
     while (std::chrono::steady_clock::now() < deadline) {
         bool all_done = true;
-        for (auto& future : futures) {
-            if (future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        for (std::size_t index = 0; index < futures.size(); ++index) {
+            if (consumed[index]) continue;
+            if (futures[index].wait_for(std::chrono::milliseconds(0)) !=
+                std::future_status::ready) {
                 all_done = false;
                 continue;
             }
-            const xrkit::core::HttpResult result = future.get();
+            consumed[index] = true;
+            const xrkit::core::HttpResult result = futures[index].get();
             if (!result.ok) continue;
             AppUpdateInfo parsed;
             QString parse_error;

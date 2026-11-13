@@ -291,8 +291,12 @@ void VideoPage::cancel_transcode() {
     //   "取消超时"那一支；正常情况下 `finished` 回调会先把 `process_` 置空 ⇒ 定时器空转。
     //   判据：run_ci 的 shell-smoke 静态锁要求 `waitForFinished` 不再出现在取消路径上
     //   （只允许析构里那个 2 秒的收尾等待）。
-    QTimer::singleShot(5000, this, [this] {
-        if (process_ == nullptr) return;   // `finished` 已经收干净（正常取消）
+    QProcess* const cancelled_process = process_;
+    const QString cancelled_output = output_path_;
+    QTimer::singleShot(5000, this, [this, cancelled_process, cancelled_output] {
+        // 只处理“被取消的那一次”。5 秒内用户又起点转换 ⇒ process_ 已是新对象，
+        // 不能拿成员去杀新进程/删新产物（审计 F-135）。
+        if (process_ == nullptr || process_ != cancelled_process) return;
         // 5 秒没死透 ⇒ 如实报（不假装停了），并把对象收干净。
         // ★★ 2026-10-07（审计补充 F1-1）：**必须走 `discard_process`**（先置空、再
         //   `disconnect()`、最后 `deleteLater()`）。修前这一支只 `deleteLater(); process_ = nullptr;`
@@ -304,11 +308,11 @@ void VideoPage::cancel_transcode() {
         last_error_ = QStringLiteral("取消超时：ffmpeg 没在 5 秒内退出（进程已放弃等待）");
         // ★ 同 F3：超时支不许**留半成品**（正常取消那条路会删，这里原来漏了）——
         //   否则用户看到的是一个"看着像成功"的输出文件。删没删掉都要说出来。
-        if (!output_path_.isEmpty() && QFileInfo::exists(output_path_)) {
-            last_error_ += QFile::remove(output_path_)
-                               ? QStringLiteral("；已删除半成品文件 %1").arg(output_path_)
+        if (!cancelled_output.isEmpty() && QFileInfo::exists(cancelled_output)) {
+            last_error_ += QFile::remove(cancelled_output)
+                               ? QStringLiteral("；已删除半成品文件 %1").arg(cancelled_output)
                                : QStringLiteral("；但半成品文件删不掉 %1（请手动删除）")
-                                     .arg(output_path_);
+                                     .arg(cancelled_output);
         }
         if (progress_text_ != nullptr) progress_text_->setText(QStringLiteral("失败：") + last_error_);
         log_to_host(QStringLiteral("视频转换：") + last_error_);

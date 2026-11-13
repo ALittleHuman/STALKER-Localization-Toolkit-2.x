@@ -33,6 +33,54 @@ bool write_text(const std::string& path, const std::string& text) {
     return write_bytes(path, reinterpret_cast<const uint8_t*>(text.data()), text.size());
 }
 
+// 出包先写 <out>/gamedata.xrkit_part；成功后才合并到 gamedata/。
+// 失败只删临时目录，绝不 remove_tree(最终 gamedata)（审计 F-061）。
+bool commit_staged_gamedata(const std::string& staged, const std::string& final_dir,
+                            std::string* error) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_directory(core::path_from_utf8(staged), ec)) {
+        if (error != nullptr) *error = "临时 gamedata 不存在";
+        return false;
+    }
+    const fs::path dst = core::path_from_utf8(final_dir);
+    if (!fs::exists(dst, ec)) {
+        fs::create_directories(dst.parent_path(), ec);
+        fs::rename(core::path_from_utf8(staged), dst, ec);
+        if (ec) {
+            if (error != nullptr) *error = "提交 gamedata 失败：" + ec.message();
+            return false;
+        }
+        return true;
+    }
+    // 目标已存在：只覆盖本次生成的文件，不删用户原有内容。
+    fs::create_directories(dst, ec);
+    if (ec) {
+        if (error != nullptr) *error = "建目标 gamedata 失败：" + ec.message();
+        return false;
+    }
+    for (fs::recursive_directory_iterator it(core::path_from_utf8(staged), ec), end;
+         !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        const fs::path rel = fs::relative(it->path(), core::path_from_utf8(staged), ec);
+        if (ec) continue;
+        const fs::path target = dst / rel;
+        fs::create_directories(target.parent_path(), ec);
+        fs::copy_file(it->path(), target, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            if (error != nullptr) *error = "覆盖 " + core::path_to_utf8(rel.string()) +
+                                           " 失败：" + ec.message();
+            return false;
+        }
+    }
+    if (ec) {
+        if (error != nullptr) *error = "遍历临时 gamedata 失败：" + ec.message();
+        return false;
+    }
+    fs::remove_all(core::path_from_utf8(staged), ec);
+    return true;
+}
+
 bool has_top_xml(const std::filesystem::path& dir) {
     std::error_code ec;
     for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end;
@@ -512,7 +560,9 @@ PackageResult build_package(const PackageOptions& opt) {
     const std::string lang = lang_from_profile.empty() ? opt.lang : lang_from_profile;
     res.lang = lang;
 
-    const std::string out_gd = join(opt.out_dir, "gamedata");
+    const std::string final_gd = join(opt.out_dir, "gamedata");
+    const std::string out_gd = final_gd + ".xrkit_part";
+    remove_tree(out_gd);
     const std::string tex_dir = join(join(out_gd, "textures"), "ui");
     const std::string cfg_root = join(out_gd, game->cfg_dir);
     const std::string text_dir = join(join(cfg_root, "text"), lang);
@@ -559,8 +609,14 @@ PackageResult build_package(const PackageOptions& opt) {
 
     if (opt.patch_only) {
         // ★ 2026-11-10：字号补丁 = **只有字体纹理/INI**，绝不写文本、脚本、fonts.ltx。
+        std::string commit_error;
+        if (!commit_staged_gamedata(out_gd, final_gd, &commit_error)) {
+            res.error = commit_error;
+            remove_tree(out_gd);
+            return res;
+        }
         res.ok = true;
-        res.out_gamedata = out_gd;
+        res.out_gamedata = final_gd;
         return res;
     }
 
@@ -653,8 +709,14 @@ PackageResult build_package(const PackageOptions& opt) {
         return res;
     }
 
+    std::string commit_error;
+    if (!commit_staged_gamedata(out_gd, final_gd, &commit_error)) {
+        res.error = commit_error;
+        remove_tree(out_gd);
+        return res;
+    }
     res.ok = true;
-    res.out_gamedata = out_gd;
+    res.out_gamedata = final_gd;
     return res;
 }
 
