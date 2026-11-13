@@ -184,6 +184,7 @@ bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request, 
         args << QString::fromStdString(plan.argv[i]);
     }
     process_ = new_child_process(this);
+    ++run_seq_;
     process_->setProgram(QString::fromStdString(plan.argv.front()));
     process_->setArguments(args);
     connect(process_, &QProcess::readyReadStandardError, this, [this] {
@@ -293,10 +294,11 @@ void VideoPage::cancel_transcode() {
     //   （只允许析构里那个 2 秒的收尾等待）。
     QProcess* const cancelled_process = process_;
     const QString cancelled_output = output_path_;
-    QTimer::singleShot(5000, this, [this, cancelled_process, cancelled_output] {
-        // 只处理“被取消的那一次”。5 秒内用户又起点转换 ⇒ process_ 已是新对象，
-        // 不能拿成员去杀新进程/删新产物（审计 F-135）。
-        if (process_ == nullptr || process_ != cancelled_process) return;
+    const quint64 cancelled_seq = run_seq_;
+    QTimer::singleShot(5000, this, [this, cancelled_process, cancelled_output, cancelled_seq] {
+        // 只处理“被取消的那一次”。5 秒内用户又起点转换 ⇒ run_seq_ 已变，
+        // 不能拿成员去杀新进程/删新产物（审计 F-135/R-2）。
+        if (run_seq_ != cancelled_seq || process_ == nullptr || process_ != cancelled_process) return;
         // 5 秒没死透 ⇒ 如实报（不假装停了），并把对象收干净。
         // ★★ 2026-10-07（审计补充 F1-1）：**必须走 `discard_process`**（先置空、再
         //   `disconnect()`、最后 `deleteLater()`）。修前这一支只 `deleteLater(); process_ = nullptr;`

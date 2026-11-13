@@ -223,6 +223,7 @@ private:
     bool shutting_down_ = false;
 
     QProcess* process_ = nullptr;
+    quint64 run_seq_ = 0;   // 每次真正起转码自增；取消定时器只处理自己那一序
     QString output_path_;                 // **真在写**的那个输出（取消时删的就是它）
     std::vector<char> stderr_tail_;       // ffmpeg stderr 的尾部（失败时原文带出来）
     engine::video::CancelToken cancel_token_;
