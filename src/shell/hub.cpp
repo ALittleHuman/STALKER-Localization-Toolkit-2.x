@@ -947,14 +947,7 @@ void Hub::check_updates(bool silent) {
         return;
     }
     const QString current = QString::fromStdString(xrkit::core::version_string());
-    const QStringList current_parts =
-        current.split(QRegularExpression(QStringLiteral("[^0-9]+")), Qt::SkipEmptyParts);
-    const QStringList latest_parts =
-        info.version.split(QRegularExpression(QStringLiteral("[^0-9]+")), Qt::SkipEmptyParts);
-    const bool newer = latest_parts.size() > current_parts.size()
-                           ? true
-                           : latest_parts.join(QLatin1Char('.')) >
-                                 current_parts.join(QLatin1Char('.'));
+    const bool newer = HostUpdate::versionIsNewer(info.version, current);
     if (!newer) {
         if (!silent) {
             QMessageBox::information(this, QStringLiteral("检测更新"),

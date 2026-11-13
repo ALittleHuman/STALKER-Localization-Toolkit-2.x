@@ -19,6 +19,7 @@
 #include "xrkit/core/build_version.h"   // ★ P17-15（01 F-11）：JSON 深度上限判据
 #include "xrkit/engine/process/run.h"   // ★ P17-11（01 F-04）：命令行引号判据要 `run()` / 拼命令行
 #include "xrkit/engine/text/encoding.h"
+#include "host_update.h"
 #include "hub.h"
 #include "release_page.h"
 #include "dialog_start.h"
@@ -12656,6 +12657,34 @@ SmokeResult run_smoke() {
                       .arg(h)
                       .arg(bar_bottom)
                       .arg(fit_probe.height()));
+        }
+    }
+
+    // 审计 A1/A2/A3：版本通道与 x.y.z.n 比较。
+    {
+        struct Case {
+            const char* candidate;
+            const char* current;
+            bool want;
+            const char* why;
+        };
+        static const Case cases[] = {
+            {"2.0.0.244", "2.0.0", false, "稳定版不升同号测试版"},
+            {"2.1.1", "2.1.1.103", true, "测试版可升更高正式版"},
+            {"2.0.0.244", "2.0.0.99", true, "测试版按 n 升"},
+            {"2.0.0.99", "2.0.0.244", false, "测试版不降 n"},
+            {"2.0.0", "2.0.0.244", true, "同号正式版高于测试版"},
+            {"2.0.0", "2.0.0", false, "同版本不提示"},
+            {"2.0.1", "2.0.0", true, "补丁版本升"},
+        };
+        for (const Case& c : cases) {
+            const bool got = xrkit::shell::HostUpdate::versionIsNewer(
+                QString::fromLatin1(c.candidate), QString::fromLatin1(c.current));
+            check(got == c.want, QStringLiteral("审计版本：%1（%2 → %3，实得 %4）")
+                                     .arg(QString::fromLatin1(c.why),
+                                          QString::fromLatin1(c.current),
+                                          QString::fromLatin1(c.candidate))
+                                     .arg(got ? 1 : 0));
         }
     }
 

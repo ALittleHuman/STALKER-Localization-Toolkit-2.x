@@ -16,6 +16,9 @@ class HostUpdate {
 public:
     static bool networkAllowed(QString* reason = nullptr);
     static bool fetchAppInfo(AppUpdateInfo* info, QString* error);
+    // x.y.z + 测试构建 n：正式版高于同 x.y.z 测试版；测试版比较 n。
+    static bool versionIsNewer(const QString& candidate, const QString& current);
+    static bool isTestVersion(const QString& version);
     // 下载 + sha256 + 解压 + 启动 updater；成功时调用方应退出当前进程。
     static bool applyAppUpdate(const AppUpdateInfo& info, QString* error);
 };
