@@ -75,7 +75,13 @@ constexpr const char* kApiProxy =
 
 QStringList manifest_sources() {
     const QString override_url = qEnvironmentVariable("XRKIT_APP_UPDATE_URL");
-    if (!override_url.isEmpty()) return {override_url};
+    if (!override_url.isEmpty()) {
+        QStringList out;
+        for (const QString& item : override_url.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+            out << item.trimmed();
+        }
+        return out;
+    }
     return {QString::fromLatin1(kApiDirect), QString::fromLatin1(kApiProxy)};
 }
 
