@@ -166,6 +166,7 @@ bool HostUpdate::fetchAppInfo(AppUpdateInfo* info, QString* error) {
         if (error != nullptr) *error = why;
         return false;
     }
+    try {
     *info = AppUpdateInfo{};
     const QStringList sources = manifest_sources();
     std::vector<std::future<xrkit::core::HttpResult>> futures;
@@ -202,6 +203,11 @@ bool HostUpdate::fetchAppInfo(AppUpdateInfo* info, QString* error) {
     }
     if (error != nullptr) *error = QStringLiteral("所有更新源都不可达或返回无效");
     return false;
+    } catch (const std::exception& e) {
+        // std::async 线程创建失败等：检查更新失败是正常结果，不能让启动崩。
+        if (error != nullptr) *error = QStringLiteral("检查更新异常：") + QString::fromUtf8(e.what());
+        return false;
+    }
 }
 
 bool HostUpdate::applyAppUpdate(const AppUpdateInfo& info, QString* error) {

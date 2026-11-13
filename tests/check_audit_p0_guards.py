@@ -38,6 +38,8 @@ def main() -> int:
     update = read("src/shell/host_update.cpp")
     need("F-152 future 只消费一次", "consumed" in update and
          "futures[index].get()" in update, "未见 consumed 标记/单次 get")
+    need("F-152 启动异常兜底", "catch (const std::exception" in update,
+         "std::async 异常仍可能穿出")
 
     extract = read("src/engine/text/extract.cpp")
     need("F-040 old_text 取源码切片", "old_text = raw;" in extract,
