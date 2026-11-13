@@ -500,27 +500,10 @@ std::vector<std::string> script_texts(const std::string& text) {
 
         std::string sac_line = line;
         for (const std::string& lm : sorted_lm) {
-            const char qc = lm[0];
-            const std::string inner = lm.substr(1, lm.size() >= 2 ? lm.size() - 2 : 0);
-            std::string escaped = inner;
-            // _escape_literal_text(inner, quote=qc)
-            std::string tmp;
-            tmp.reserve(escaped.size());
-            for (size_t k = 0; k < escaped.size(); ++k) {
-                const char c = escaped[k];
-                if (c == '\\') {
-                    tmp += "\\\\";
-                } else if (c == '\n') {
-                    tmp += "\\n";
-                } else if (c == '"' && qc == '"') {
-                    tmp += "\\\"";
-                } else if (c == '\'' && qc == '\'') {
-                    tmp += "\\'";
-                } else {
-                    tmp.push_back(c);
-                }
-            }
-            const std::string needle = std::string(1, qc) + tmp + std::string(1, qc);
+            // F-227：解析器保留原始反斜杠，needle 必须用**原始字面量**，
+            // 不能再用 escape_literal_text(inner) 重转义；否则剥离失败，
+            // 行内 load/open 等敏感词会把整行误过滤。
+            const std::string needle = lm;
             // Python str.replace：全部替换
             std::string replaced;
             size_t from = 0;

@@ -44,6 +44,8 @@ def main() -> int:
          "仍可能二次 escape_literal_text")
     need("F-040 转义原样保留", "is_escape" in extract and
          "原样保留" in extract, "解析器未见原样保留注释")
+    need("F-227 行过滤器使用原始字面量", "const std::string needle = lm;" in extract,
+         "sac_line 仍重转义 needle")
 
     video = read("src/shell/pages/video_page.cpp")
     need("F-135 取消定时器绑定被取消进程",
