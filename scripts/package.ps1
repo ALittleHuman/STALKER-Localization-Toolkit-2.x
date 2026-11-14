@@ -484,23 +484,18 @@ foreach ($extra in @('vc_redist.x64.exe', 'dxcompiler.dll', 'dxil.dll')) {
     }
 }
 
-# ★★ 2026-11-02（决策）：**退役"自动安装"之后不再需要 python 的联网面**。
-#   依赖扫描（plugins/ 零命中；fontTools 只用到 urllib.parse，纯字符串，不触发 _ssl）⇒ 可删：
-#     libssl-3.dll / libcrypto-3.dll / _ssl.pyd  ⇒ 插件 import ssl 会得到 ModuleNotFoundError（有意的契约）
-#     sqlite3.dll / _sqlite3.pyd                 ⇒ Python 侧零命中
-#     Qt6Network.dll / tls\                      ⇒ 全仓 QNetwork* 零命中（检测更新将来走 WinHTTP 系统组件）
+# ★★ 2026-11-14（决策）：**插件运行期放开** —— 保留 Python 的 SSL（_ssl.pyd / libssl / libcrypto）
+#   与 sqlite3（sqlite3.dll / _sqlite3.pyd）；插件可直接用 urllib / http.client / ssl / sqlite3。
+#   仍剥掉未使用的 Qt 网络件：
+#     Qt6Network.dll / tls\                      ⇒ 全仓 QNetwork* 零命中（宿主更新走 WinHTTP 系统组件）
 $pruned = @()
-foreach ($pattern in @('libssl-*.dll', 'libcrypto-*.dll', 'sqlite3.dll', 'Qt6Network.dll')) {
-    Get-ChildItem -LiteralPath $stage -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue |
-        ForEach-Object { $pruned += $_.FullName; Remove-Item -LiteralPath $_.FullName -Force }
-}
-foreach ($pattern in @('_ssl.pyd', '_sqlite3.pyd')) {
+foreach ($pattern in @('Qt6Network.dll')) {
     Get-ChildItem -LiteralPath $stage -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue |
         ForEach-Object { $pruned += $_.FullName; Remove-Item -LiteralPath $_.FullName -Force }
 }
 $tlsDir = Join-Path $stage 'tls'
 if (Test-Path $tlsDir) { $pruned += (Get-ChildItem $tlsDir -Recurse -File | ForEach-Object FullName); Remove-Item -LiteralPath $tlsDir -Recurse -Force }
-Write-Host ("  剥掉联网面 {0} 个文件（ssl/crypto/sqlite/QtNetwork/tls）" -f @($pruned).Count)
+Write-Host ("  剥掉未用的 Qt 网络件 {0} 个文件（QtNetwork/tls；python ssl + sqlite3 随包）" -f @($pruned).Count)
 
 Write-Host "== README / version =="
 # ★★ 2026-10-07（审计补充 H1-5）：`git rev-parse` 原来**不查 `$LASTEXITCODE`** ——

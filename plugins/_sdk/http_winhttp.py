@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """零依赖 HTTP 参考实现（ctypes + 系统 winhttp.dll）—— 插件用，**不随包强绑**。
 
-为什么不是 urllib：2.0 起不随包 `_ssl.pyd`，`http.client` 顶层 `import ssl` 会直接失败
-（连 http://127.0.0.1 也不行）。插件要联网就抄这份，或自备 `_ssl.pyd` + OpenSSL。
+发行包保留 Python 的 `_ssl`，插件通常可直接用 `urllib.request` / `http.client`。
+本文件用于：不想引入标准库 HTTP 栈、或运行环境缺 `_ssl` 时；行为与系统代理/证书一致。
 
 用法：
     from http_winhttp import http_get
     text = http_get("https://example.com/version.txt", timeout=5)
 
-契约（与 docs/2.0.0-跨插件服务契约.md 对齐）：
-  · 同步阻塞，调用者线程执行（同进程、无隔离、无超时保证）；
+契约：
+  · 同步阻塞，调用者线程执行（同进程、无隔离、无超时保证；请在任务 worker 里调用）；
   · 走系统代理（AUTOMATIC_PROXY）与系统证书校验，**不关校验**；
   · 允许 http→https 与 https→https 重定向，禁止 https→http 降级；
   · 总预算由调用者给（WinHTTP 的四个超时是分项，不是总超时）。

@@ -53,8 +53,7 @@ def main() -> int:
             fail("bin\\ffmpeg.exe = %.2f MB > %.0f MB —— 打包回退到了全量 exe？"
                  % (mb, MAX_MB))
 
-    banned_anywhere = ("libssl-3.dll", "libcrypto-3.dll", "_ssl.pyd", "sqlite3.dll",
-                       "_sqlite3.pyd", "Qt6Network.dll", "download_ffmpeg.py")
+    banned_anywhere = ("Qt6Network.dll", "download_ffmpeg.py")
     found = []
     for name in banned_anywhere:
         hits = list(pkg.rglob(name))
@@ -65,7 +64,7 @@ def main() -> int:
     if found:
         fail("包内出现已退役的联网面：%s" % ", ".join(found))
     else:
-        ok("包内无 ssl/crypto/sqlite/QtNetwork/tls（联网面已退役）")
+        ok("包内无 QtNetwork/tls（未用的 Qt 网络件已剥离；python ssl + sqlite3 随包）")
 
     for banned in ("download_ffmpeg.py",):
         if (pkg / "bin" / banned).exists() or (pkg / banned).exists():
