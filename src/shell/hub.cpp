@@ -950,10 +950,14 @@ void Hub::check_updates(bool silent) {
     const bool newer = HostUpdate::versionIsNewer(info.version, current);
     if (!HostUpdate::upgradeAllowed(info.version, current)) {
         if (!silent) {
+            const bool candidate_newer = HostUpdate::versionIsNewer(info.version, current);
             QMessageBox::information(
                 this, QStringLiteral("检测更新"),
-                QStringLiteral("最近发布的是测试版 %1；当前是正式版，不会自动升级到测试版。")
-                    .arg(info.version));
+                candidate_newer
+                    ? QStringLiteral("最近发布的是测试版 %1；当前是正式版，不会自动升级到测试版。")
+                          .arg(info.version)
+                    : QStringLiteral("最近的测试版 %1 不高于当前正式版 %2，无需更新。")
+                          .arg(info.version, current));
         }
         return;
     }

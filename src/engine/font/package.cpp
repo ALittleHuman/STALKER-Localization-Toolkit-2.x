@@ -65,15 +65,32 @@ bool commit_staged_gamedata(const std::string& staged, const std::string& final_
     fs::create_directories(rollback, ec);
     std::vector<std::pair<fs::path, fs::path>> backups;  // target -> backup
     std::vector<fs::path> created;
-    const auto roll_back = [&]() {
+    std::vector<fs::path> created_dirs;
+    const auto roll_back = [&]() -> bool {
+        bool ok = true;
         for (auto it = backups.rbegin(); it != backups.rend(); ++it) {
             std::error_code rec;
             fs::copy_file(it->second, it->first, fs::copy_options::overwrite_existing, rec);
+            if (rec) ok = false;
         }
         for (const fs::path& path : created) {
             std::error_code rec;
             fs::remove(path, rec);
+            if (rec) ok = false;
         }
+        for (auto it = created_dirs.rbegin(); it != created_dirs.rend(); ++it) {
+            std::error_code rec;
+            fs::remove(*it, rec);  // 只删空目录；非空时必须失败而不递归删用户内容
+            if (rec) ok = false;
+        }
+        return ok;
+    };
+    const auto fail_after_rollback = [&](const std::string& why) {
+        const bool rolled = roll_back();
+        if (error != nullptr) {
+            *error = why + (rolled ? "；已回滚" : "；回滚未完全成功，请检查 gamedata 与 *.rollback");
+        }
+        return false;
     };
     for (fs::recursive_directory_iterator it(core::path_from_utf8(staged), ec), end;
          !ec && it != end; it.increment(ec)) {
@@ -84,38 +101,38 @@ bool commit_staged_gamedata(const std::string& staged, const std::string& final_
         std::error_code exists_ec;
         const bool target_exists = fs::is_regular_file(target, exists_ec);
         if (exists_ec) {
-            roll_back();
-            if (error != nullptr) *error = "提交前检查 " + core::path_to_utf8(rel.string()) +
-                                           " 失败：" + exists_ec.message() + "；已回滚";
-            return false;
+            return fail_after_rollback("提交前检查 " + core::path_to_utf8(rel.string()) +
+                                       " 失败：" + exists_ec.message());
         }
         if (target_exists) {
             const fs::path backup = rollback / rel;
             fs::create_directories(backup.parent_path(), ec);
             fs::copy_file(target, backup, fs::copy_options::overwrite_existing, ec);
             if (ec) {
-                roll_back();
-                if (error != nullptr) *error = "备份 " + core::path_to_utf8(rel.string()) +
-                                               " 失败：" + ec.message() + "；已回滚";
-                return false;
+                return fail_after_rollback("备份 " + core::path_to_utf8(rel.string()) +
+                                           " 失败：" + ec.message());
             }
             backups.emplace_back(target, backup);
         } else {
             created.push_back(target);
         }
+        {
+            fs::path parent = target.parent_path();
+            std::error_code dir_ec;
+            while (!parent.empty() && parent != dst && !fs::exists(parent, dir_ec)) {
+                created_dirs.push_back(parent);
+                parent = parent.parent_path();
+            }
+        }
         fs::create_directories(target.parent_path(), ec);
         fs::copy_file(it->path(), target, fs::copy_options::overwrite_existing, ec);
         if (ec) {
-            roll_back();
-            if (error != nullptr) *error = "覆盖 " + core::path_to_utf8(rel.string()) +
-                                           " 失败：" + ec.message() + "；已回滚";
-            return false;
+            return fail_after_rollback("覆盖 " + core::path_to_utf8(rel.string()) +
+                                       " 失败：" + ec.message());
         }
     }
     if (ec) {
-        roll_back();
-        if (error != nullptr) *error = "遍历临时 gamedata 失败：" + ec.message() + "；已回滚";
-        return false;
+        return fail_after_rollback("遍历临时 gamedata 失败：" + ec.message());
     }
     fs::remove_all(rollback, ec);
     fs::remove_all(core::path_from_utf8(staged), ec);

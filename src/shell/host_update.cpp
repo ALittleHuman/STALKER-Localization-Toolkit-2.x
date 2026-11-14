@@ -238,19 +238,29 @@ SemVer parse_semver(const QString& text) {
     v.valid = true;
     QString rest = m.captured(4).trimmed().toLower();
     if (rest.isEmpty()) return v;
-    if (rest.startsWith(QLatin1Char('.'))) rest.remove(0, 1);
-    // beta.244 / BETA.244 / beta244 / -beta.244 / .244
-    const QRegularExpressionMatch build =
-        QRegularExpression(QStringLiteral("(\\d+)\\s*$")).match(rest);
-    if (build.hasMatch()) {
-        v.test = true;
-        v.build = build.captured(1).toInt();
-    } else if (rest.contains(QStringLiteral("alpha")) ||
-               rest.contains(QStringLiteral("beta")) ||
-               rest.contains(QStringLiteral("rc"))) {
-        v.test = true;
-        v.build = 0;
+    while (!rest.isEmpty() &&
+           (rest[0] == QLatin1Char('.') || rest[0] == QLatin1Char('-') ||
+            rest[0] == QLatin1Char('_') || rest[0] == QLatin1Char(' '))) {
+        rest.remove(0, 1);
     }
+    // x.y.z.n
+    if (QRegularExpression(QStringLiteral("^\\d+$")).match(rest).hasMatch()) {
+        v.test = true;
+        v.build = rest.toInt();
+        return v;
+    }
+    // alpha.n / beta.n / rc.n（含 beta244 / rc-1）
+    const QRegularExpressionMatch pre =
+        QRegularExpression(QStringLiteral("^(alpha|beta|rc)[._-]?(\\d+)$"),
+                           QRegularExpression::CaseInsensitiveOption)
+            .match(rest);
+    if (pre.hasMatch()) {
+        v.test = true;
+        v.build = pre.captured(2).toInt();
+        return v;
+    }
+    // hotfix / build-245 等未知后缀：不能当正式版，否则比较会静默错。
+    v.valid = false;
     return v;
 }
 }  // namespace
