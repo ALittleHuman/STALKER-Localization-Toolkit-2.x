@@ -129,6 +129,20 @@ PluginUpdateState plugin_update_begin(const PluginUpdatePlan& plan) {
     std::string error;
     if (!write_state(plan, out.was_enabled, &error)) {
         update_commit(UpdatePaths{plan.target_dir, plan.staged_dir, plan.transaction});
+        // F-002：写状态失败也要把“自动禁用”撤掉，否则插件永远不再加载。
+        if (out.was_enabled) {
+            std::vector<plugin::DisabledPluginEntry> now =
+                plugin::read_disabled_plugins(plan.plugins_dir);
+            now.erase(std::remove_if(now.begin(), now.end(),
+                                     [&plan](const auto& e) {
+                                         return plugin::is_file_disabled({e}, plan.disabled_key);
+                                     }),
+                      now.end());
+            std::string ignored;
+            if (!plugin::write_disabled_plugins(plan.plugins_dir, now, ignored)) {
+                error += "；恢复启用状态也失败：" + ignored;
+            }
+        }
         out.error = error;
         return out;
     }
