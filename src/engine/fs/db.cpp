@@ -90,18 +90,22 @@ bool utf8_to_cp1251(const std::string& s, std::vector<uint8_t>& out) {
         if (c < 0x80) {
             cp = c;
         } else if ((c & 0xE0) == 0xC0) {
-            if (i + 1 >= s.size()) {
+            if (i + 1 >= s.size() || (static_cast<uint8_t>(s[i + 1]) & 0xC0) != 0x80) {
                 ok = false;
             } else {
                 cp = ((c & 0x1Fu) << 6) | (static_cast<uint8_t>(s[i + 1]) & 0x3Fu);
+                if (cp < 0x80) ok = false;   // overlong
                 len = 2;
             }
         } else if ((c & 0xF0) == 0xE0) {
-            if (i + 2 >= s.size()) {
+            if (i + 2 >= s.size() ||
+                (static_cast<uint8_t>(s[i + 1]) & 0xC0) != 0x80 ||
+                (static_cast<uint8_t>(s[i + 2]) & 0xC0) != 0x80) {
                 ok = false;
             } else {
                 cp = ((c & 0x0Fu) << 12) | ((static_cast<uint8_t>(s[i + 1]) & 0x3Fu) << 6) |
                      (static_cast<uint8_t>(s[i + 2]) & 0x3Fu);
+                if (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF)) ok = false;
                 len = 3;
             }
         } else {
