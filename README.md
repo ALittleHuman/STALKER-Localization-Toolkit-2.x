@@ -32,7 +32,7 @@ xrkit_app.exe            图形界面
 xrkit_cli.exe            命令行
 xrkit_plugin_manager.exe 插件管理器（查看已加载/禁用/更新插件）
 xrkit_updater.exe        本体更新器（独立进程，不联网）
-plugins\                 顶层为空；放 <name>.py 即被加载（见 docs/插件开发.md）
+plugins\                 顶层为空；放 <name>.py 或 <name>/plugin.py 即被加载（见 docs/插件开发.md）
 ```
 
 ## 三、五分钟上手

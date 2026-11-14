@@ -121,6 +121,7 @@ xrkit_cli --dump gamedata.db0
 |---|---|
 | `--py-plugins <目录>` | 加载并列出插件：`PYPLUGINS files=… loaded=… registrations=… errors=…`，逐条 warn/disabled |
 | `--py-plugin-call <目录> <json>` | 无界面调用插件的 `headless(api, args)`（插件自己决定语义） |
+| `--ui-facade` | 打印 `xrkit` 模块**实际暴露**的 `Api/Ui/Engine/Host` 名字与控件门面可用性（CLI 里 `available=0` 正常）；**插件方法清单以此为准** |
 
 ```bat
 xrkit_cli --py-plugin-call plugins {"action":"scan","path":"E:\\x"}
