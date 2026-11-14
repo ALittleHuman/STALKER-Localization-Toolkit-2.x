@@ -84,9 +84,11 @@ def headless(api, args):
     lines = []
     for row in report["rows"]:
         lines.append("XMLDIRS row rel=%s kind=%s lines_a=%d lines_b=%d ids_a=%d ids_b=%d "
-                     "count_diff=%d text_diff=%d only_a=%d only_b=%d consistent=%d untrusted=%d"
+                     "count_diff=%d structure=%d text_diff=%d only_a=%d only_b=%d consistent=%d untrusted=%d"
                      % (row["rel"], row["kind"], row["lines_a"], row["lines_b"], row["ids_a"],
-                        row["ids_b"], len(row["count_diff"]), len(row["text_diff"]),
+                        row["ids_b"], len(row["count_diff"]),
+                        1 if row.get("structure") else 0,
+                        len(row["text_diff"]),
                         len(row["only_a"]), len(row["only_b"]), 1 if row["consistent"] else 0,
                         1 if (row["untrusted_a"] or row["untrusted_b"]) else 0))
     # ★★ P17-10（审计 02 F-05）：收尾行与 CLI **逐字同形**（含 `errors=N`）——

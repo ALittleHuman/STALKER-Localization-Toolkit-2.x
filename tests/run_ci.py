@@ -424,7 +424,7 @@ def step_selftest(release: bool) -> None:
 def step_cli_contract(release: bool) -> None:
     """退出码本身就是判据：0=通过 2=显式跳过 3=用法错误。
 
-    `--bench` 的**能力**在测试侧（[28] bench.py，口径见 docs/2.0.0-bench口径.md）。
+    `--bench` 的**能力**在测试侧（[28] bench.py，口径见 docs/构建与发版.md）。
     ★★ 2026-10-10（P17-19，审计 04 F-10 Low）：**这段说法以前是假的** —— 原文写
     "CLI 里**不再保留**那个只会 SKIP 的占位动作"，而 `tools/cli/main.cpp` 里
     `action == "--bench"` **仍在**（打印 `BENCH skip reason=engine-not-implemented` 后返回 2），
@@ -965,20 +965,20 @@ def step_cli_contract(release: bool) -> None:
     #   定性（P17-89）：两边都是"对若干字符串做大小写不敏感的 contains"，**唯一区别是比哪些字符串**；
     #   内置页比的是**页自己知道、门面拿不到**的那样东西 ⇒ **不是门面表达力不足**，
     #   而是**页侧决定拿什么去匹配**（门面替插件猜"哪一列是路径"＝让字段藏语义，那才是错）。
-    #   ⇒ 处置＝**记为有意差异**（写进 `docs/2.0.0-设计口径.md` §4.4），**不合成一条**。
+    #   ⇒ 处置＝**记为有意差异**（写进 `docs/内部契约.md` §4.4），**不合成一条**。
     #   ★ 判据作用（"记为差异"要有牙）：**两行字都必须在**（两条路的匹配依据各一行）——
     #     少一行 ⇒ 说明有人只改了一边却没说清；文档整个丢了 ⇒ 这条差异会漂回"没人知道"的状态。
-    doc_design = (ROOT / "docs" / "2.0.0-设计口径.md")
+    doc_design = (ROOT / "docs" / "内部契约.md")
     if not doc_design.is_file():
-        fail("过滤语义差异没有落成文字（01 F-10）：`docs/2.0.0-设计口径.md` 不在")
+        fail("过滤语义差异没有落成文字（01 F-10）：`docs/内部契约.md` 不在")
     else:
         dt = doc_design.read_text(encoding="utf-8", errors="replace")
         ft_code = active_code(ft)   # ★ 查**实现**里的匹配依据时先剥注释（本仓踩过两次）
         if "item->text(column)" not in ft_code:
             fail("门面的匹配依据变了（01 F-10）：`facade_tree.cpp` 里找不到 `item->text(column)` "
-                 "—— 若是有意改成别的依据，请连同 `docs/2.0.0-设计口径.md` §4.4 一起改")
+                 "—— 若是有意改成别的依据，请连同 `docs/内部契约.md` §4.4 一起改")
         elif "item->text(column)" not in dt or "matched_paths_" not in dt:
-            fail("过滤语义差异没有如实记账（01 F-10）：`docs/2.0.0-设计口径.md` 必须同时写出"
+            fail("过滤语义差异没有如实记账（01 F-10）：`docs/内部契约.md` 必须同时写出"
                  "「门面＝`item->text(column)`」与「内置页＝`matched_paths_`」两条依据（少一条即红）")
         else:
             ok("过滤语义差异记为有意差异（01 F-10：门面比列文本 / 内置页比节点路径，两条依据都记在 §4.4）")
@@ -1671,7 +1671,7 @@ def step_golden_sqfs_pack_real(release: bool) -> None:
       · `uncovered=`   连内容层都跑不了 ⇒ 进「本次未覆盖」。
     ★ `--release` 档**只**把 `uncovered` 当失败：这样门禁不再红在"参照侧这一次有没有扛住"
     （1.x `sqfs_pack` 把整棵树 read_bytes 进内存 + 给 tar2sqfs 挂了硬 120 s 超时 ⇒
-    同一棵树忙时超时、闲时跑完）。口径与理由见 `docs/2.0.0-行为口径对照表.md` ⑯。
+    同一棵树忙时超时、闲时跑完）。口径与理由见 `docs/用户手册.md` ⑯。
     """
     say("[11] 真机样本：SquashFS 封包对拍（判据先验选择：compared / equivalent）")
     script = ROOT / "tests" / "golden_sqfs_pack_real.py"
@@ -2759,7 +2759,7 @@ def step_shell_smoke(release: bool) -> None:
        "那条在 `engine-contract` 步 —— 这里跑 smoke 会先红，取不出静态锁自己的红）")
 
     # 3-8：**`SplitPane` 是死代码**（产品路径零实例化）—— 判据不许挂在产品不用的类上。
-    #   口径（本批二选一里选的那条，理由写进 `docs/2.0.0-外壳规格.md` 的 §10 表）：
+    #   口径（本批二选一里选的那条，理由写进 `docs/用户手册.md` 的 §10 表）：
     #   产品分栏用 `QSplitter`（外壳规格 §10 的"拖到底/松手重排"那两条判据随之改写）；
     #   `SplitPane` 只作为**自检夹具**保留（它验的是"面板分配算法"，不是产品控件），
     #   所以：`src/shell` 下**除 smoke 自身**不许出现 `SplitPane` 的实例化/包含。
@@ -3436,7 +3436,7 @@ def step_golden_sqfs_metacross(release: bool) -> None:
 def step_bench(release: bool) -> None:
     """`--bench`：三条真实 I/O 路径计时，只守"防数量级回归"的宽松上界。
 
-    口径见 `docs/2.0.0-bench口径.md`；样本缺失退 2（进"本次未覆盖"）。
+    口径见 `docs/构建与发版.md`；样本缺失退 2（进"本次未覆盖"）。
     """
     say("[28] bench：元数据列举 / 抽取吞吐 / 文本解码（只守数量级）")
     script = ROOT / "tests" / "bench.py"
@@ -6956,7 +6956,7 @@ def step_version_ledger(release: bool) -> None:
     第一版判据直接要求"必须是真提交号/路径必须存在" ⇒ 对历史痕迹**永久红**（＝没有判据）。
 
     用户 2026-10-16 裁决：**认账、不改史**（历史已推送、批报告按 SHA 引用、历史是回退点）
-    ⇒ 改成「对照只追加账本 `docs/2.0.0-版本台账认账.md`」：
+    ⇒ 改成「对照只追加账本 `docs/构建与发版.md`」：
     现状里**出现账上没有的**占位/幽灵/断号 ⇒ 红；账上有的 ⇒ 豁免。
     账上每行还必须**带理由**（不是一串裸键）。
     红证（已实测）：空账本 ⇒ 红；账本删一条 ⇒ 只点名那一条；给 version.json 造一条新占位 ⇒ 红。
@@ -6965,7 +6965,7 @@ def step_version_ledger(release: bool) -> None:
     script = ROOT / "tests" / "check_version_ledger.py"
     if not require_repo_file(script, "台账对账判据"):
         return
-    if not require_repo_file(ROOT / "docs" / "2.0.0-版本台账认账.md", "版本台账认账账"):
+    if not require_repo_file(ROOT / "docs" / "构建与发版.md", "版本台账认账账"):
         return
     rc, out = run([sys.executable, str(script)], timeout=600)
     for line in out.splitlines():
@@ -7055,7 +7055,7 @@ def step_pack_db_mem_gate(release: bool) -> None:
 def step_readme_claims(release: bool) -> None:
     r"""交付 README 的**落点口径**必须与产品行为一致（第三方只读审计 H-01；P17-148）。
 
-    修前事实：`scripts/package.ps1` 生成的 `README.txt` 与 `docs/2.0.0-打包与发版规格.md` §3 都写
+    修前事实：`scripts/package.ps1` 生成的 `README.txt` 与 `docs/构建与发版.md` §3 都写
     「本工具**不改动游戏目录里的任何文件**」。但解包的**默认落点就是"来源所在目录"**
     （引擎 `efs::resolve_output_root`），来源包通常在游戏/模组目录里 —— 2026-10-05 真发生过
     「一次默认落点解包把 3.9 万个文件盖在模组目录上」的事故。
@@ -7088,7 +7088,7 @@ def step_readme_claims(release: bool) -> None:
 def step_pack_spec_current(release: bool) -> None:
     r"""打包规格的**正文**必须与实现同源（第三方只读审计 H-04；P17-149）。
 
-    修前事实：`docs/2.0.0-打包与发版规格.md` 正文 §2/§4 仍写「把 `qoffscreen.dll` **临时**铺进
+    修前事实：`docs/构建与发版.md` 正文 §2/§4 仍写「把 `qoffscreen.dll` **临时**铺进
     舞台…**跑完删掉那个插件**再压包」，而实现早已是「**只出目录、不压 zip**」＋「`platforms\`
     同时带 qwindows/qoffscreen、**随包常驻**」（用户 2026-10-07 裁决 + 2026-09-29 产物形态）。
     靠文件头 banner 打补丁 ⇒ 读者读正文会读到与实现相反的做法。
@@ -7491,7 +7491,7 @@ def step_sqfs_write_compressor(release: bool) -> None:
     r"""**SquashFS 写侧压缩器可选**（第三方只读审计 T-07；P17-169，用户裁决「先做 gzip」）。
 
     修前事实：写侧 8 处硬编码 `Compression::Xz`，`compress_block` 对 gzip/lzo/lz4/zstd
-    直接回"封包暂只支持 xz" —— 而 `docs/2.0.0-设计口径.md` 承诺了这些选项。
+    直接回"封包暂只支持 xz" —— 而 `docs/内部契约.md` 承诺了这些选项。
 
     用户 2026-10-19 的参照参数（钉死）：gzip =
     `deflateInit2(level=9, Z_DEFLATED, window=15, memLevel=8, Z_DEFAULT_STRATEGY)` ＋ `deflate(Z_FINISH)`，
@@ -7536,7 +7536,7 @@ def step_sqfs_compressor_doc(release: bool) -> None:
     判据 `tests/check_sqfs_compressor_doc.py`：A 标成读侧 ＋ 写明写侧只支持 xz/gzip ＋ 点明"不对称"；
     B 单独一行列 lzo/lz4/zstd 及原因（minilzo 没有 lzo1x_999、要多写 options 块）；
     C "默认压缩"行写明写侧另有 gzip；D 不许再有"UI 另给 gzip / lz4 / zstd"这类未落地承诺。
-    红证（非破坏式）：`git show <P17-169 之前>:docs/2.0.0-设计口径.md` 跑 `--doc` ⇒ 8 项红。
+    红证（非破坏式）：`git show <P17-169 之前>:docs/内部契约.md` 跑 `--doc` ⇒ 8 项红。
     """
     say("[sqfs-compressor-doc] 压缩能力必须读写分开写实（审计 T-07 文档那半）")
     script = ROOT / "tests" / "check_sqfs_compressor_doc.py"
@@ -7551,7 +7551,7 @@ def step_sqfs_compressor_doc(release: bool) -> None:
     if rc == 0:
         ok("设计口径读写分开写实：写侧 xz/gzip 已落地、没做的三种有据（T-07）")
     elif rc == 2:
-        prereq("压缩能力文档判据的输入", "缺 docs/2.0.0-设计口径.md（判据没跑成，不是通过）", release)
+        prereq("压缩能力文档判据的输入", "缺 docs/内部契约.md（判据没跑成，不是通过）", release)
     else:
         fail("设计口径仍在承诺没有的压缩器（见上）：读者会按文档以为 lz4/zstd 能用（T-07）")
 
@@ -7847,7 +7847,7 @@ def step_toolchain_worker(release: bool) -> None:
 def step_dated_doc(release: bool) -> None:
     """★★ P17-105（审计 `03 F-12`）：**带日期的"当时快照"文档必须自认是快照** ＋ 已更正的断言必须与实现一致。
 
-    事实：`docs/2.0.0-1.x-vs-2.x控件对照(2026-09-27).md` 大面积过期（三处被审计点名），
+    事实：`docs/用户手册.md` 大面积过期（三处被审计点名），
     而且 ★ **没有任何门禁读这两份 2026-09-27 的文档** ⇒ 它们可以**无限漂**。
 
     判据 `tests/check_dated_docs_current.py`（**6 个反例自证**）：

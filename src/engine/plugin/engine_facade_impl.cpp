@@ -1079,8 +1079,10 @@ const EngineFacade kFontFacade = {
             // 不设 ec）⇒ 必须先查父链，不能把它当“没有备份”去删 target。
             bool bad_parent = false;
             std::string bad_parent_reason;
-            for (std::filesystem::path parent = backup.parent_path(); !parent.empty();
-                 parent = parent.parent_path()) {
+            // 父链检查必须防"到盘根后 parent_path() 还是自己"的死循环
+            // （`C:\` 的 parent 是 `C:\`；原来的 for 循环在绝对路径上会永远转下去，
+            //   实测插件 restore 动作 100% CPU 卡死）。
+            for (std::filesystem::path parent = backup.parent_path(); !parent.empty();) {
                 std::error_code parent_ec;
                 const std::filesystem::file_status st = std::filesystem::status(parent, parent_ec);
                 if (parent_ec) {
@@ -1094,6 +1096,9 @@ const EngineFacade kFontFacade = {
                     bad_parent_reason = "父级不是目录：" + core::path_to_utf8(parent.string());
                     break;
                 }
+                const std::filesystem::path up = parent.parent_path();
+                if (up == parent) break;   // 到根，停
+                parent = up;
             }
             if (bad_parent) {
                 out.failures.push_back(rel + "：备份路径不可读（" + bad_parent_reason +

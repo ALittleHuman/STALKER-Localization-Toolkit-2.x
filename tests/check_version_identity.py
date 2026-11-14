@@ -44,6 +44,8 @@ from ctypes import wintypes
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# 同目录的 `package_select.py`：run_ci 里是脚本同目录可 import，单独跑时也要能 import。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 VERSION_H = ROOT / "include" / "xrkit" / "core" / "version.h"
 WINRES_RC = ROOT / "assets" / "xrkit_winres.rc"
 STORE = ROOT / "version.json"

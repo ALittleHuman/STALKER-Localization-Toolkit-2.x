@@ -4578,8 +4578,12 @@ def _xrkit_install(gate):
     }
     // 模块名先查占用（此时插件根**还没**进 sys.path）——撞标准库/三方库就拒绝。
     py::object find_spec = py::module_::import("importlib.util").attr("find_spec");
+    py::dict sys_modules = py::module_::import("sys").attr("modules").cast<py::dict>();
     std::unordered_set<std::string> occupied_modules;
     for (const std::string& name : module_keys) {
+        // 同一进程里第二次加载（GUI 自检会分两批：默认目录 → 夹具目录）时，
+        // sys.modules 里已有**上一批的插件模块**；那是可重载的，不算"撞标准库"。
+        if (sys_modules.contains(py::str(name)) != 0) continue;
         const py::object spec = find_spec(py::str(name));
         if (!spec.is_none()) occupied_modules.insert(name);
     }
@@ -4597,7 +4601,6 @@ def _xrkit_install(gate):
     gate_globals["_xrkit_install"](gate);
     py::module_::import("sys").attr("meta_path").attr("insert")(0, gate);
 
-    py::dict sys_modules = py::module_::import("sys").attr("modules").cast<py::dict>();
     const auto purge_module = [&](const std::string& name) {
         std::vector<std::string> doomed;
         for (auto item : sys_modules) {
@@ -4637,8 +4640,15 @@ def _xrkit_install(gate):
         m.version = "0";
         try {
             if (sys_modules.contains(py::str(module_name)) != 0) {
-                throw std::runtime_error("插件模块名 '" + module_name +
-                                         "' 重复（同一进程里已有同名模块）");
+                const py::object existing = sys_modules[py::str(module_name)];
+                const bool was_plugin = py::hasattr(existing, "PLUGIN_INFO") != 0 ||
+                                        py::hasattr(existing, "PLUGIN_API") != 0;
+                if (!was_plugin) {
+                    throw std::runtime_error("插件模块名 '" + module_name +
+                                             "' 与现有模块冲突（拒绝加载，避免遮蔽标准库/三方库）");
+                }
+                // 同进程重载：把上一批的模块（含子模块）清掉再 import 一次。
+                purge_module(module_name);
             }
             if (occupied_modules.count(module_name) != 0) {
                 throw std::runtime_error("插件模块名 '" + module_name +

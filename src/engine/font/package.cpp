@@ -1,4 +1,4 @@
-#include "xrkit/engine/font/package.h"
+﻿#include "xrkit/engine/font/package.h"
 #include "xrkit/engine/font/ixr.h"
 
 #include "xrkit/core/path.h"
@@ -182,9 +182,16 @@ TextRootLayout resolve_text_root(const std::string& value, const std::string& la
         if (!fs::is_directory(candidate, ec) || !has_top_xml(candidate)) continue;
         out.ok = true;
         out.text_dir = candidate;
+        // 往上找 `gamedata` 段；**必须防"到根后 parent_path() 还是自己"的死循环**
+        // （`C:\` 的 parent 是 `C:\`，原来的 `while (!p.empty() && filename != "gamedata")`
+        //   在译文根不在 gamedata 下时会永远转下去 —— 实测 CLU/GUI 的 font-pack 100% CPU 卡死）。
         fs::path p = candidate;
-        while (!p.empty() && p.filename() != "gamedata") p = p.parent_path();
-        if (!p.empty()) out.package_root = p.parent_path();
+        while (!p.empty() && p.filename() != "gamedata") {
+            const fs::path parent = p.parent_path();
+            if (parent == p) break;   // 到根，停
+            p = parent;
+        }
+        if (!p.empty() && p.filename() == "gamedata") out.package_root = p.parent_path();
         return out;
     }
     out.error = "译文根下找不到 XML：既不是文本目录，也没有 "

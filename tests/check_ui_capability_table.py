@@ -253,6 +253,10 @@ EXPECT_HOST = {
     "pref_get": "读用户偏好（`user.ltx` 的 `[section] key`，缺失返回 fallback）",
     "pref_set": "写用户偏好（**只写点名那一项**，不整块覆盖别的键）",
     "app_dir": "exe 所在目录（发行版放 ffmpeg/ffprobe、`user.ltx` 的落点）",
+    "pid": "宿主进程号（只读）",
+    "quit": "请求宿主退出（插件管理器/页面可用）",
+    "restart": "请求宿主重启（宿主支持时）",
+    "version": "宿主版本串（只读）",
     "system_font_dirs": "系统字体目录（唯一一份：内置页与插件共用）",
     "run_process": "跑外部进程（唯一一份语义：不弹控制台/取消真停/退码如实/stderr 尾巴）",
 }
