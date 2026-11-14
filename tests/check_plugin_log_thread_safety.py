@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """P17-98 判据：插件日志缓冲的**线程安全接线** ＋ 注册表的**线程约定字据**（审计 `05 PLG-08`）。
 
 背景（事实）
@@ -45,7 +45,7 @@ PY_HOST = ROOT / "src" / "engine" / "plugin" / "py_host.cpp"
 REGISTRY_H = ROOT / "include" / "xrkit" / "engine" / "plugin" / "registry.h"
 COMPARE_H = ROOT / "include" / "xrkit" / "engine" / "xml" / "compare.h"
 ABI_HOST = ROOT / "src" / "engine" / "plugin" / "abi_host.cpp"
-DESIGN_DOC = ROOT / "docs" / "2.0.0-设计口径.md"
+DESIGN_DOC = ROOT / "docs" / "内部契约.md"
 
 
 def audit_sink_contract(compare_h: str, abi_host: str, design_doc: str) -> list:
@@ -55,7 +55,7 @@ def audit_sink_contract(compare_h: str, abi_host: str, design_doc: str) -> list:
       C ABI 的 sink 没有任何键写它 ⇒ 恒 0）；
     * 宿主不认识的键必须**记进 `unhandled_keys`**（零静默）；
     * 结果结构里必须有 `unhandled_keys` 这个字段；
-    * **口径必须落在字据上**（`docs/2.0.0-设计口径.md` §4.5）：`row_kind` 不落位 / 但不许静默丢 /
+    * **口径必须落在字据上**（`docs/内部契约.md` §4.5）：`row_kind` 不落位 / 但不许静默丢 /
       ID 数按插件报的算 —— 三句都在。
     """
     problems = []
@@ -71,7 +71,7 @@ def audit_sink_contract(compare_h: str, abi_host: str, design_doc: str) -> list:
     if "ids_a_seen" not in abi or "ids_b_seen" not in abi:
         problems.append("abi_host.cpp：`ids_a`/`ids_b` 不是从插件报上来的 ID 里数的")
     if "### 4.5" not in design_doc or "row_kind" not in design_doc:
-        problems.append("docs/2.0.0-设计口径.md：缺 §4.5（sink 键的认/不认口径）")
+        problems.append("docs/内部契约.md：缺 §4.5（sink 键的认/不认口径）")
     else:
         at = design_doc.find("### 4.5")
         window = design_doc[at:at + 2400]
@@ -81,7 +81,7 @@ def audit_sink_contract(compare_h: str, abi_host: str, design_doc: str) -> list:
                 ("真报上来的 ID 数", "没写「ID 数按插件真报上来的算」"),
         ):
             if needle not in window:
-                problems.append("docs/2.0.0-设计口径.md §4.5：%s" % why)
+                problems.append("docs/内部契约.md §4.5：%s" % why)
     return problems
 
 
@@ -258,3 +258,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

@@ -3978,6 +3978,23 @@ def step_plugin_metadata(release: bool) -> None:
         fail("插件元数据不通过（见上）")
 
 
+def step_plugin_import_gate(release: bool) -> None:
+    """H4：插件按包加载 + 导入守卫（声明依赖放行/未声明/禁用/运行时拒绝）。"""
+    say("[?] 插件导入守卫（H4）")
+    script = ROOT / "tests" / "check_plugin_import_gate.py"
+    if not require_repo_file(script, "插件导入守卫判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)], timeout=600)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("✓", "✗")) or s.startswith("PLUGIN-IMPORT-GATE"):
+            say("  " + s)
+    if rc2 == 0:
+        ok("插件导入守卫：目录插件相对 import / 声明依赖可 import / 未声明/禁用/运行时被拒")
+    else:
+        fail("插件导入守卫不成立（见上）")
+
+
 def step_plugin_services(release: bool) -> None:
     """跨插件服务契约（api.services）：provide/call/重复/缺失/命名空间。"""
     say("[?] 跨插件服务 api.services（宿主自带）")
@@ -8246,6 +8263,7 @@ STEPS = [
     ("plugin-manager", step_plugin_manager),
     ("plugin-requires", step_plugin_requires),
     ("plugin-metadata", step_plugin_metadata),
+    ("plugin-import-gate", step_plugin_import_gate),
     # ★ 2026-11-09（F4435）：本步（P17-98 日志缓冲锁/注册表字据）此前只定义、**从未登记** ⇒ 判据从不运行。
     ("plugin-contract", step_plugin_contract),
     ("host-offline", step_host_offline),

@@ -28,6 +28,7 @@
 #include <mutex>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <stdexcept>
 
 #ifdef XRKIT_WITH_PYTHON
@@ -3758,7 +3759,7 @@ void ensure_api_module() {
     modules["xrkit"] = m;
 }
 
-std::string sanitize_module_name(const std::string& name) {
+[[maybe_unused]] std::string sanitize_module_name(const std::string& name) {
     std::string out;
     out.reserve(name.size());
     for (char c : name) {
@@ -4094,6 +4095,8 @@ std::vector<RegistrationError> load_python_plugins_impl(
     };
     // ★ 2026-11-10（独立插件管理器）：按 `<dir>/plugins.disabled` 在 **import 之前**跳过。
     //   坏插件根本不会执行 ⇒ 管理器把它禁用后，宿主下一次启动不会被它拖死。
+    //   H4：被禁用的入口也要登记进导入守卫（否则插件根在 sys.path 上，别人仍能 import 到它）。
+    [[maybe_unused]] const std::vector<std::string> all_files = files;
     {
         const std::vector<DisabledPluginEntry> disabled_entries = read_disabled_plugins(dir);
         if (!disabled_entries.empty()) {
@@ -4134,8 +4137,7 @@ std::vector<RegistrationError> load_python_plugins_impl(
 
     py::gil_scoped_acquire acquire;
     ensure_api_module();
-    py::object spec_from = py::module_::import("importlib.util").attr("spec_from_file_location");
-    py::object module_from_spec = py::module_::import("importlib.util").attr("module_from_spec");
+    py::object import_module = py::module_::import("importlib").attr("import_module");
 
     // ★★ 2026-11-09（用户口径）：**缺前置的插件自动禁用**。两遍加载：
     //   ① 全部 import、收 `PLUGIN_INFO` 清单（不 register —— 依赖可能声明在后面才加载的文件上）；
@@ -4152,6 +4154,7 @@ std::vector<RegistrationError> load_python_plugins_impl(
         std::vector<std::string> provides;
         std::vector<std::string> replaces;
         std::vector<std::string> service_requires;   // ★ P1-6：PLUGIN_INFO.requires（服务名）
+        std::string module_name;                      // H4：入口对应的顶层模块名
         py::object module;
         std::string failure;
     };
@@ -4293,36 +4296,356 @@ std::vector<RegistrationError> load_python_plugins_impl(
         return true;
     };
 
+    // ── H4：插件按"入口名 = 顶层模块名"装载；导入守卫只放行
+    //    「自己 + PLUGIN_INFO.depends 里声明过的插件」，运行时跨插件 import 一律拒绝。
+    //    （声明来源是插件模块里**已经赋值**的 PLUGIN_INFO；所以跨插件 import 必须写在
+    //      PLUGIN_INFO 之后——这条在 docs/插件开发.md 里写死。）
+    static const char kPluginGatePython[] = R"PY(
+import ast, importlib.util, os, sys
+
+
+def _xrkit_parts(v):
+    out, cur, any_digit = [], 0, False
+    for ch in str(v):
+        if ch.isdigit():
+            cur = cur * 10 + int(ch)
+            any_digit = True
+        elif ch == '.':
+            out.append(cur if any_digit else 0)
+            cur, any_digit = 0, False
+        else:
+            break
+    out.append(cur if any_digit else 0)
+    return out
+
+
+def _xrkit_cmp(a, b):
+    pa, pb = _xrkit_parts(a), _xrkit_parts(b)
+    n = max(len(pa), len(pb))
+    pa += [0] * (n - len(pa))
+    pb += [0] * (n - len(pb))
+    for x, y in zip(pa, pb):
+        if x < y:
+            return -1
+        if x > y:
+            return 1
+    return 0
+
+
+def _xrkit_one(version, clause):
+    clause = str(clause).strip()
+    if not clause or clause == '*':
+        return True
+    if clause.startswith('~'):
+        base = clause[1:].strip()
+        major = (_xrkit_parts(base) or [0])[0]
+        return _xrkit_cmp(version, base) >= 0 and _xrkit_cmp(
+            version, str(major + 1) + '.0.0') < 0
+    op = ''
+    for cand in ('>=', '<=', '==', '!=', '>', '<', '='):
+        if clause.startswith(cand):
+            op = cand
+            clause = clause[len(cand):].strip()
+            break
+    if not op:
+        op = '=='
+    c = _xrkit_cmp(version, clause)
+    return {'>=': c >= 0, '>': c > 0, '<=': c <= 0, '<': c < 0,
+            '!=': c != 0}.get(op, c == 0)
+
+
+def _xrkit_satisfies(version, rng):
+    return all(_xrkit_one(version, part) for part in str(rng).split(','))
+
+
+def _xrkit_scan(root):
+    out = {}
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return out
+    for name in names:
+        path = os.path.join(root, name)
+        key, entry, is_dir = None, None, False
+        if os.path.isfile(path) and name.lower().endswith('.py'):
+            key, entry = os.path.splitext(name)[0], path
+        elif os.path.isdir(path):
+            for cand in ('plugin.py', '__init__.py'):
+                p = os.path.join(path, cand)
+                if os.path.isfile(p):
+                    key, entry, is_dir = name, p, True
+                    break
+        if key is None:
+            continue
+        meta = {'id': key, 'version': '', 'depends': {}, 'provides': [],
+                'replaces': [], 'requires': [], 'error': ''}
+        try:
+            with open(entry, 'r', encoding='utf-8-sig', errors='replace') as fh:
+                tree = ast.parse(fh.read())
+        except Exception as exc:
+            meta['error'] = '无法解析：%s' % (exc,)
+            out[key] = meta
+            continue
+        info = None
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                    isinstance(t, ast.Name) and t.id == 'PLUGIN_INFO' for t in node.targets):
+                try:
+                    info = ast.literal_eval(node.value)
+                except Exception:
+                    meta['error'] = 'PLUGIN_INFO 不是字面量'
+                if not isinstance(info, dict):
+                    meta['error'] = meta['error'] or 'PLUGIN_INFO 不是字典'
+                break
+        if isinstance(info, dict):
+            meta['id'] = str(info.get('id') or key)
+            meta['version'] = str(info.get('version') or '')
+            deps = info.get('depends')
+            if not isinstance(deps, dict):
+                deps = info.get('requires')
+            if isinstance(deps, dict):
+                meta['depends'] = {str(k): (str(v).strip() or '*') for k, v in deps.items()}
+            for field in ('provides', 'replaces', 'requires'):
+                value = info.get(field)
+                if isinstance(value, (list, tuple, set)):
+                    meta[field] = [str(x) for x in value if str(x)]
+                elif isinstance(value, str) and value.strip():
+                    meta[field] = [value.strip()]
+        out[key] = meta
+    return out
+
+
+class _XrkitGate:
+    def __init__(self, entries):
+        self.entries = entries
+        self.current = None
+
+    def _entry(self, key):
+        return self.entries.get(key) or {}
+
+    def _info(self, key):
+        module = sys.modules.get(key)
+        return getattr(module, 'PLUGIN_INFO', None) if module is not None else None
+
+    def _target(self, key):
+        entry = self._entry(key)
+        info = self._info(key)
+        tid = str(entry.get('id') or key)
+        ver = str(entry.get('version') or '')
+        if isinstance(info, dict):
+            tid = str(info.get('id') or tid)
+            ver = str(info.get('version') or ver)
+        names = {tid, key}
+        if isinstance(info, dict):
+            for field in ('provides', 'replaces'):
+                value = info.get(field)
+                if isinstance(value, (list, tuple, set)):
+                    names.update(str(x) for x in value if str(x))
+        return tid, ver, names
+
+    def _deps(self, key):
+        info = self._info(key)
+        if not isinstance(info, dict):
+            return None
+        deps = info.get('depends')
+        if not isinstance(deps, dict):
+            deps = info.get('requires')
+        if not isinstance(deps, dict):
+            return {}
+        return {str(k): (str(v).strip() or '*') for k, v in deps.items()}
+
+    def _spec(self, key):
+        entry = self._entry(key)
+        path = str(entry.get('path') or '')
+        if not path:
+            raise ModuleNotFoundError('插件 %s 没有可用的入口文件' % key)
+        if entry.get('is_dir'):
+            return importlib.util.spec_from_file_location(
+                key, path, submodule_search_locations=[str(entry.get('dir') or '')])
+        return importlib.util.spec_from_file_location(key, path)
+
+    def _check(self, caller, target):
+        if not caller or caller == target:
+            return
+        deps = self._deps(caller)
+        if deps is None:
+            raise ModuleNotFoundError(
+                '插件 %s 的 PLUGIN_INFO 在 import 之前不可用；'
+                '请把跨插件 import 放在 PLUGIN_INFO 之后' % caller)
+        tid, ver, names = self._target(target)
+        matched = None
+        for dep_id, rng in deps.items():
+            if dep_id == tid or dep_id == target or dep_id in names:
+                matched = rng
+                break
+        if matched is None:
+            raise ModuleNotFoundError(
+                '插件 %s 未在 PLUGIN_INFO.depends 中声明对 %s 的依赖'
+                % (caller, tid))
+        if self._entry(target).get('disabled'):
+            raise ModuleNotFoundError('依赖插件 %s 已被禁用' % tid)
+        if not _xrkit_satisfies(ver, matched):
+            raise ModuleNotFoundError(
+                '依赖插件 %s 的版本 %s 不满足 %s' % (tid, ver or '<未知>', matched))
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname not in self.entries:
+            return None
+        if self.current is None:
+            raise ModuleNotFoundError(
+                '运行时禁止跨插件 import：%s（请改用 api.services.call）' % fullname)
+        self._check(self.current, fullname)
+        return self._spec(fullname)
+
+
+def _xrkit_install(gate):
+    import builtins
+    original = getattr(builtins, '__import__', None)
+    if original is None:
+        return
+    if getattr(original, '_xrkit_guard', False):
+        original._xrkit_gate = gate
+        return
+
+    def _guard(name, globals=None, locals=None, fromlist=(), level=0):
+        if level == 0 and isinstance(name, str):
+            top = name.split('.', 1)[0]
+            if top in gate.entries:
+                caller = ''
+                if isinstance(globals, dict):
+                    caller = str(globals.get('__name__') or '')
+                if caller in gate.entries:
+                    gate._check(caller, top)
+        return original(name, globals, locals, fromlist, level)
+
+    _guard._xrkit_guard = True
+    _guard._xrkit_gate = gate
+    builtins.__import__ = _guard
+)PY";
+
+    // 入口 → 顶层模块名：顶层 *.py 去扩展名；目录插件用目录名。
+    //   H4：模块名要能被 `import` 使用，所以非标识符（如 `00_provider`）按
+    //   "非字母数字 → `_`、数字开头补 `_`" 归一化；owner（日志/禁用键）保持原样。
+    const auto raw_key_of = [&](const std::string& file) {
+        const std::filesystem::path path = xrkit::core::path_from_utf8(file);
+        if (is_dir_plugin(file)) {
+            return xrkit::core::path_to_utf8(path.parent_path().filename());
+        }
+        const std::string name = xrkit::core::path_to_utf8(path.filename());
+        return name.size() > 3 ? name.substr(0, name.size() - 3) : name;
+    };
+    const auto module_name_of = [&](const std::string& file) {
+        const std::string raw = raw_key_of(file);
+        std::string out;
+        out.reserve(raw.size() + 1);
+        for (char ch : raw) {
+            const unsigned char c = static_cast<unsigned char>(ch);
+            out.push_back((std::isalnum(c) != 0 || c == '_') ? ch : '_');
+        }
+        if (out.empty()) out = "_";
+        if (std::isdigit(static_cast<unsigned char>(out[0])) != 0) out.insert(out.begin(), '_');
+        return out;
+    };
+
+    py::dict gate_globals = py::module_::import("builtins").attr("__dict__");
+    py::exec(kPluginGatePython, gate_globals);
+    py::dict gate_entries;
+    py::dict static_meta = gate_globals["_xrkit_scan"](py::str(dir)).cast<py::dict>();
+    std::vector<std::string> module_keys;
+    module_keys.reserve(files.size());
+    for (const std::string& file : files) module_keys.push_back(module_name_of(file));
+    const std::unordered_set<std::string> enabled_files(files.begin(), files.end());
+    for (const std::string& file : all_files) {
+        const std::string module_name = module_name_of(file);
+        const std::string raw_key = raw_key_of(file);
+        py::dict entry;
+        entry["path"] = py::str(file);
+        entry["is_dir"] = py::bool_(is_dir_plugin(file));
+        entry["dir"] = py::str(is_dir_plugin(file)
+                                   ? xrkit::core::path_to_utf8(
+                                         xrkit::core::path_from_utf8(file).parent_path())
+                                   : std::string());
+        entry["id"] = py::str(raw_key);
+        entry["version"] = py::str("");
+        entry["disabled"] = py::bool_(enabled_files.count(file) == 0);
+        if (static_meta.contains(py::str(raw_key)) != 0) {
+            const py::dict meta =
+                py::reinterpret_borrow<py::dict>(static_meta[py::str(raw_key)]);
+            if (meta.contains("id") != 0) entry["id"] = meta["id"];
+            if (meta.contains("version") != 0) entry["version"] = meta["version"];
+        }
+        gate_entries[py::str(module_name)] = entry;
+    }
+    // 模块名先查占用（此时插件根**还没**进 sys.path）——撞标准库/三方库就拒绝。
+    py::object find_spec = py::module_::import("importlib.util").attr("find_spec");
+    std::unordered_set<std::string> occupied_modules;
+    for (const std::string& name : module_keys) {
+        const py::object spec = find_spec(py::str(name));
+        if (!spec.is_none()) occupied_modules.insert(name);
+    }
+    // 入口目录追加到 sys.path（append：不遮蔽标准库）。
+    py::list sys_path = py::module_::import("sys").attr("path").cast<py::list>();
+    bool on_path = false;
+    for (auto item : sys_path) {
+        if (py::str(item).cast<std::string>() == dir) {
+            on_path = true;
+            break;
+        }
+    }
+    if (!on_path) sys_path.append(py::str(dir));
+    py::object gate = gate_globals["_XrkitGate"](gate_entries);
+    gate_globals["_xrkit_install"](gate);
+    py::module_::import("sys").attr("meta_path").attr("insert")(0, gate);
+
+    py::dict sys_modules = py::module_::import("sys").attr("modules").cast<py::dict>();
+    const auto purge_module = [&](const std::string& name) {
+        std::vector<std::string> doomed;
+        for (auto item : sys_modules) {
+            const std::string key = py::str(item.first).cast<std::string>();
+            if (key == name ||
+                (key.size() > name.size() && key.compare(0, name.size(), name) == 0 &&
+                 key[name.size()] == '.')) {
+                doomed.push_back(key);
+            }
+        }
+        for (const std::string& key : doomed) {
+            sys_modules.attr("pop")(py::str(key), py::none());
+        }
+    };
+    const auto mark_entry_disabled = [&](const std::string& module_name, bool disabled) {
+        if (gate_entries.contains(py::str(module_name)) != 0) {
+            py::dict entry = py::reinterpret_borrow<py::dict>(gate_entries[py::str(module_name)]);
+            entry["disabled"] = py::bool_(disabled);
+        }
+    };
+
     std::vector<Manifest> manifests;
     manifests.reserve(files.size());
 
-    // ① 全部 import + 收清单（**不 register**）
-    for (const std::string& file : files) {
+    // ① 逐个 import（模块名 = 入口名；守卫按 PLUGIN_INFO.depends 放行跨插件 import）
+    for (std::size_t fi = 0; fi < files.size(); ++fi) {
+        const std::string& file = files[fi];
         const std::string owner = plugin_key(file);
+        const std::string module_name = module_keys[fi];
         plugin::trace_event("load_start", "file=" + owner);
-        const std::string module_name = "xrkit_plugin_" + sanitize_module_name(owner);
         Manifest m;
         m.owner = owner;
         m.path = file;
+        m.module_name = module_name;
         m.id = stem_of(owner);
         m.name = m.id;
         m.version = "0";
         try {
-            py::object spec;
-            if (is_dir_plugin(file)) {
-                py::list search;
-                search.append(xrkit::core::path_to_utf8(
-                    xrkit::core::path_from_utf8(file).parent_path()));
-                spec = spec_from(module_name, file,
-                                 py::arg("submodule_search_locations") = search);
-            } else {
-                spec = spec_from(module_name, file);
+            if (sys_modules.contains(py::str(module_name)) != 0) {
+                throw std::runtime_error("插件模块名 '" + module_name +
+                                         "' 重复（同一进程里已有同名模块）");
             }
-            if (spec.is_none()) {
-                throw std::runtime_error("spec_from_file_location 返回 None（文件/路径不对？）");
+            if (occupied_modules.count(module_name) != 0) {
+                throw std::runtime_error("插件模块名 '" + module_name +
+                                         "' 与现有模块冲突（拒绝加载，避免遮蔽标准库/三方库）");
             }
-            py::object module = module_from_spec(spec);
-            spec.attr("loader").attr("exec_module")(module);
+            gate.attr("current") = py::str(module_name);
+            py::object module = import_module(py::str(module_name));
             if (py::hasattr(module, "PLUGIN_API") != 0) {
                 py::object declared = module.attr("PLUGIN_API");
                 if (py::isinstance<py::int_>(declared) == 0) {
@@ -4363,12 +4686,20 @@ std::vector<RegistrationError> load_python_plugins_impl(
                 }
             }
             m.module = module;
+            if (gate_entries.contains(py::str(module_name)) != 0) {
+                py::dict entry =
+                    py::reinterpret_borrow<py::dict>(gate_entries[py::str(module_name)]);
+                entry["id"] = py::str(m.id);
+                entry["version"] = py::str(m.version);
+            }
         } catch (const py::error_already_set& err) {
             m.failure = err.what();
         } catch (const std::exception& err) {
             m.failure = err.what();
         }
         if (!m.failure.empty()) {
+            purge_module(module_name);
+            mark_entry_disabled(module_name, true);
             const std::size_t undone = registry.rollback_plugin(owner);
             unregister_services(owner);
             const std::string message =
@@ -4472,6 +4803,7 @@ std::vector<RegistrationError> load_python_plugins_impl(
                                              miss.detail);
         }
         plugin::trace_event("load", "file=" + info.owner + " ret=disabled missing=" + info.missing.front().id);
+        mark_entry_disabled(manifests[i].module_name, true);
         disabled.push_back(std::move(info));
     }
     {
@@ -4483,6 +4815,7 @@ std::vector<RegistrationError> load_python_plugins_impl(
     for (std::size_t i = 0; i < manifests.size(); ++i) {
         Manifest& m = manifests[i];
         if (!m.failure.empty() || state[i] != 1) continue;
+        gate.attr("current") = py::str(m.module_name);
         std::string failure;
         try {
             if (py::hasattr(m.module, "register") == 0) {
@@ -4504,6 +4837,8 @@ std::vector<RegistrationError> load_python_plugins_impl(
             failure = err.what();
         }
         if (!failure.empty()) {
+            purge_module(m.module_name);
+            mark_entry_disabled(m.module_name, true);
             const std::size_t undone = registry.rollback_plugin(m.owner);
             unregister_services(m.owner);
             const std::string message =
@@ -4538,6 +4873,8 @@ std::vector<RegistrationError> load_python_plugins_impl(
         }
     }
 
+    // 运行期：没有"当前插件"上下文 ⇒ 跨插件 import 一律拒绝（守卫里 current=None 的分支）。
+    gate.attr("current") = py::none();
     return errors;
 #endif
 }
