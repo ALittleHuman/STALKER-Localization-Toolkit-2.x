@@ -113,7 +113,7 @@ static unsigned char getlen, putlen;
 static const unsigned char *src_data;
 static int src_pos, src_limit;
 static unsigned char *dest_data;
-static int dest_pos, dest_limit;
+static int dest_pos, dest_limit, dest_overflow;
 
 static int getc_src(void) {
     if (src_pos < src_limit) return src_data[src_pos++];
@@ -121,7 +121,7 @@ static int getc_src(void) {
 }
 
 static void putc_dest(int c) {
-    if (dest_pos >= dest_limit) return;
+    if (dest_pos >= dest_limit) { dest_overflow = 1; return; }
     dest_data[dest_pos++] = (unsigned char)c;
 }
 
@@ -429,7 +429,8 @@ EXPORT int lzhuf_encode(const unsigned char *src, int src_len, unsigned char *de
     int textsize = src_len;
 
     src_data = src; src_pos = 0; src_limit = src_len;
-    dest_data = dest; dest_pos = 4; dest_limit = dest_cap;
+    if (dest_cap < 4) return -1;
+    dest_data = dest; dest_pos = 4; dest_limit = dest_cap; dest_overflow = 0;
     /* ★★ 2026-10-10（P17-59，审计 01 F-19 的**写侧**同款）：这里原来也是 `*(unsigned*)dest = …`
      *   —— 非对齐写 + 端序依赖。改成逐字节写**小端 32 位**，与读侧 `lzhuf_read_u32_le` 对称。 */
     dest[0] = (unsigned char)(textsize & 0xFF);
@@ -471,5 +472,6 @@ EXPORT int lzhuf_encode(const unsigned char *src, int src_len, unsigned char *de
         }
     } while (len > 0);
     EncodeEnd();
+    if (dest_overflow) return -1;
     return dest_pos;
 }
