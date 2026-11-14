@@ -1,4 +1,5 @@
 #include "plugin_ui.h"
+#include "drop_filter.h"
 
 #include <QDir>
 #include <QFile>
@@ -119,11 +120,15 @@ stk_widget* ui_drop_box(stk_host*, stk_widget* parent, stk_file_fn on_file, void
     if (width > 0) widget->setMaximumWidth(core::px(width));
     widget->setProperty("xrkit_drop_target", true);
     if (on_file != nullptr) {
-        // 拖入的落地由外壳的 dragEnter/dropEvent 过滤器统一处理（见 drop_filter.h）
-        widget->setProperty("xrkit_on_file", QVariant::fromValue(reinterpret_cast<quintptr>(
-                                                 reinterpret_cast<void*>(on_file))));
-        widget->setProperty("xrkit_on_file_user",
-                            QVariant::fromValue(reinterpret_cast<quintptr>(user)));
+        // F-155：原来只写属性，没有安装任何 drop filter ⇒ 拖入永远不触发。
+        auto* filter = new FileDropFilter(
+            [on_file, user](const QStringList& paths) {
+                if (paths.isEmpty()) return;
+                const QByteArray utf8 = paths.first().toUtf8();
+                on_file(user, utf8.constData());
+            },
+            widget);
+        filter->attach(widget);
     }
     return wrap(widget);
 }
