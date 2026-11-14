@@ -4,7 +4,7 @@
 
 - 当前源码版本：`2.0.0 BETA.245`（正式交付以 `dist\2.0.0\<MARK>\<n>` 为准）
 - 运行环境：Windows 10/11 x64；发行包自带 Qt6 运行库与 Python 3.14，**不需要系统 Python**
-- 只写你自己的输出目录与工具自己的 `xrkit_user.ltx`；**不会安装或修改游戏文件**（解包/封包含"装进游戏"的只有你手动指定的目标目录）
+- 只写你自己的输出目录、`logs\` 与工具自己的 `xrkit_user.ltx`；**不会安装或修改游戏文件**（解包/封包含"装进游戏"的只有你手动指定的目标目录）
 
 ---
 
@@ -15,9 +15,9 @@
 | 读/写 DB 六格式与 SquashFS | 文件系统页 / `xrkit_cli --dump` | 解包树、散装层、长路径与链接安全检查 |
 | 编码检测与批量转换 | 编码转换页 | cp1251 / cp1252 / GB18030 / Big5 / Shift-JIS / EUC-KR / UTF-16/32；带扫描台账、备份/恢复 |
 | 文本提取 | `xrkit_cli --extract-text` | 从 `configs/gameplay`、`scripts`、`.ltx` 提取可翻译文本（GUI 内置页不含此功能，见 §七） |
-| XML 校对 | 文本工具页 | 目录 A/B 比对（stats / text 两种模式）、CSV/XLSX 导出、复制差异 ID |
+| XML 校对 | 文本工具页 | 目录 A/B 比对（统计 / 文本对比两种模式）、XLSX 导出（CSV 供 CLI/对拍）、复制差异 ID |
 | 视频转 OGM | 视频转换页 | 以参考 OGM 的参数为准；ffmpeg 只认两处（见 §五） |
-| 汉化包生成 | 汉化包生成页 / `--font-pack` | 标准字库 + 可选 `字号+N` 补丁、JSGME 结构、IX-Ray 矢量字库 |
+| 汉化包生成 | 汉化包生成页 / `--font-pack` | 标准字库 + 可选 `大/+N`、`小/−N` 补丁、JSGME 结构、IX-Ray 矢量字库 |
 | 插件扩展 | `plugins/` | Python 插件可注册页面、菜单项、命令、比较模式（见 `docs/插件开发.md`） |
 
 ## 二、安装与启动
@@ -89,11 +89,11 @@ xrkit_cli.exe --font-pack ^
 ```bat
 scripts\build.ps1                        :: 默认 msvc-release（CLI/引擎，无 Qt）
 scripts\build.ps1 -Preset msvc-shell     :: GUI
-scripts\package.ps1                      :: 打开发/发行包（含包内自检）
-scripts\release.ps1 -Index <n> -Mark BETA
+scripts\release.ps1 -Index <n> -Mark BETA :: 发版（改版本号 → 编译 → 打包 → 校验）
 ```
 
-依赖：VS 2022 Build Tools、CMake、Ninja、Qt 6.8.3（可用 `XRKIT_VS`/`XRKIT_QT` 覆盖路径）。
+打包入口是 `xrkit_cli --build-package`（`scripts\package.ps1` 由它驱动、需要 `-ExeSha256` 等参数）；
+依赖 VS 2022 Build Tools、CMake、Ninja、Qt 6.8.3（可用 `XRKIT_VS`/`XRKIT_QT` 覆盖路径）。
 门禁见 `docs/构建与发版.md`。
 
 ## 七、已知边界（务必先看）
