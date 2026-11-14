@@ -221,7 +221,16 @@ WhenSpec when_from_python(const py::object& when) {
             //   ★ 口径（写进 `registry.h`，与宿主侧一致）：`when` 的值仍按**字符串**比较
             //     （`ContextValue = optional<string>`），宿主喂进 context 的值**本来就是字符串**
             //     （例：`fs_page.cpp` 的 `context["loaded"] = "1"/"0"`）⇒ 插件要匹配它就该写 `"1"`。
-            if (!item.second.is_none()) value = py::repr(item.second).cast<std::string>();
+            if (item.second.is_none()) {
+                value = std::nullopt;
+            } else if (py::isinstance<py::str>(item.second)) {
+                // 文档契约：context 的值是字符串，when 里写字符串按原样比较。
+                value = item.second.cast<std::string>();
+            } else {
+                // 非字符串（数字/布尔/对象）在字符串 context 里不可能命中。
+                // 不能 `repr` 成 "1" 去冒充字符串 "1"（F-082）。
+                value = std::string("\x01") + py::repr(item.second).cast<std::string>();
+            }
             spec.match.emplace_back(key, value);
         }
         return spec;
