@@ -2,6 +2,7 @@
 #include "xrkit/core/build_version.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
@@ -568,12 +569,49 @@ bool last_release(const VersionStore& store, std::string& version, std::string& 
     prerelease.clear();
     index = 0;
     error.clear();
-    // ★ 遍历 tree 找**最大序号**（不是 `current_index`：那是"下一个号"，
-    //   门禁的构建 GUI 一动就会把它推一格 —— 实测 59 → 60）。
+    // F-003：不能只按 index 取最大。序号在每个 version/prerelease 内单独递增，
+    // 新版本从 1 开始；全局最大 index 可能属于旧版本。先比语义版本，再比预发布档位，
+    // 同一档位才比 index。
+    const auto version_key = [](const std::string& text) {
+        std::array<int, 3> key{0, 0, 0};
+        size_t pos = 0;
+        for (int i = 0; i < 3; ++i) {
+            size_t end = text.find('.', pos);
+            const std::string part = text.substr(pos, end == std::string::npos ? end : end - pos);
+            try {
+                key[static_cast<size_t>(i)] = std::stoi(part);
+            } catch (...) {
+                key[static_cast<size_t>(i)] = 0;
+            }
+            if (end == std::string::npos) break;
+            pos = end + 1;
+        }
+        return key;
+    };
+    const auto marker_rank = [](const std::string& text) {
+        if (text == "ALPHA") return 0;
+        if (text == "BETA") return 1;
+        if (text == "RC") return 2;
+        if (text.empty()) return 3;
+        return 2;
+    };
+    std::array<int, 3> best_version{0, 0, 0};
+    int best_rank = -1;
+    bool found = false;
     for (const auto& per_version : store.tree) {
+        const auto key = version_key(per_version.first);
         for (const auto& per_marker : per_version.second) {
+            const int rank = marker_rank(per_marker.first);
             for (const auto& per_index : per_marker.second) {
-                if (per_index.first > index) {
+                bool better = !found || key > best_version;
+                if (!better && key == best_version) {
+                    better = rank > best_rank ||
+                             (rank == best_rank && per_index.first > index);
+                }
+                if (better) {
+                    found = true;
+                    best_version = key;
+                    best_rank = rank;
                     index = per_index.first;
                     version = per_version.first;
                     prerelease = per_marker.first;
