@@ -33,7 +33,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import samples  # noqa: E402
 
-from PIL import ImageFont
+try:
+    from PIL import Image, ImageFont
+except ImportError:
+    print("GOLDEN-FONT skip 缺 Pillow（PIL）")
+    sys.exit(2)
+Font
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent

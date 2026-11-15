@@ -229,7 +229,7 @@ def main() -> int:
 
         # ★ 2026-11-10：页面必须同时扫根 `scripts/` 与 `configs/scripts/`，
         #   否则真机样例根 scripts 的 334 条文本会被整批漏掉。
-        xml_src = (ROOT / "src" / "shell" / "pages" / "xml_page.cpp").read_text(
+        xml_src = (ROOT / "src" / "engine" / "text" / "extract_pack.cpp").read_text(
             encoding="utf-8")
         if "root_scripts" in xml_src and "append_texts" in xml_src:
             ok("页面：根 scripts + configs/scripts 都扫，文本表追加合并")

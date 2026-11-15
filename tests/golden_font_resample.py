@@ -19,7 +19,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PIL import Image
+try:
+    from PIL import Image
+except ImportError:
+    print("GOLDEN-FONT skip 缺 Pillow（PIL）")
+    sys.exit(2)
+
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent

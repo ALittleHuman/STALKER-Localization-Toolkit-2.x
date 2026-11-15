@@ -383,6 +383,10 @@ void print_usage() {
            "                     包根模式会把 scripts/ 和 configs/gameplay/ 一并带进成品。\n"
            "                     --jsgme + --patch-offsets 现在可同用：base 与“字号+N”各是一个 MOD。\n"
            "                     JSGME 成品：<out>/MODS/<分类>/<名>/{gamedata,...} + <out>/JSGME.exe/.lng\n"
+           "  --font-size-patch <参照包> <offset> <输出目录>\n"
+           "                                              只改 fonts.ltx 的 size（IX-Ray 矢量）\n"
+           "  --extract-pack <源根> <输出根> [--no-language-pack] [--no-rewritten]\n"
+           "                                              提取编排：根 scripts + configs/scripts + gameplay\n"
             "  --langpack-collect <松散树> <输出根> [--lang rus,eng] [--overwrite]\n"
            "                                              从已解包树收敛语言包（结构规则扫描；默认所有语言）\n"
            "  --langpack-build <文本目录> <提取产物|-> <输出根> [--lang L] [--overwrite] [--pack-layout]\n"
@@ -396,6 +400,14 @@ void print_usage() {
            "  --build-package <version.json> <版本> <标记> <序号>\n"
            "                                              构建 + 打包（GUI 的「构建」按钮走的就是本动作；\n"
            "                                              只此一份实现 —— GUI 只是调它，不自己拼参数）\n"
+           "  --app-update <target> <staged> <transaction> <apply|commit|rollback|recover-ok|recover-fail>\n"
+           "                  本体更新事务（更新器用；不是用户日常命令）\n"
+           "  --plugin-update <plugins> <target> <staged> <key> <transaction> <apply|activate|commit|rollback|recover-ok|recover-fail>\n"
+           "                  插件更新事务（插件管理器用）\n"
+           "  --http-get <url> [out]\n"
+           "                  HTTP 取文本（宿主自检与更新链用；走系统代理/证书）\n"
+           "  --http-download <url> <out>\n"
+           "                  HTTP 下载到文件（同上）\n"
            "  --python-host   起一次 CPython 插件宿主并打印状态（插件改装 P2；\n"
            "                  `--python-home <目录>` 可显式指定发行包自带的 python/）\n"
            "  --python-restart-probe\n"
@@ -6073,7 +6085,7 @@ if (action == "--diff-snapshot") {
             std::string lang = opt.lang;
             if (lang.empty()) {
                 namespace fs = std::filesystem;
-                const fs::path src = fs::path(operands[0]);
+                const fs::path src = xrkit::core::path_from_utf8(operands[0]);
                 const std::string parent = src.parent_path().filename().string();
                 if (parent == "text") lang = src.filename().string();
             }
@@ -6083,7 +6095,7 @@ if (action == "--diff-snapshot") {
                 for (const char* sub : {"configs/text", "config/text",
                                         "gamedata/configs/text", "gamedata/config/text"}) {
                     std::error_code ec;
-                    const fs::path dir = fs::path(operands[0]) / sub;
+                    const fs::path dir = xrkit::core::path_from_utf8(operands[0]) / sub;
                     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
                         if (it->is_directory(ec)) found.push_back(it->path().filename().string());
                     }

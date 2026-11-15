@@ -19,7 +19,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-from fontTools.ttLib import TTFont
+try:
+    from fontTools.ttLib import TTFont
+except ImportError:
+    print("MERGE-GLYPHS skip 缺 fontTools")
+    sys.exit(2)
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools" / "ixr" / "merge_glyphs.py"

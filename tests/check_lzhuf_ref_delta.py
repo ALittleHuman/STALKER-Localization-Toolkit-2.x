@@ -30,6 +30,9 @@ ONLY_IN_REF = [
     "textsize = (int)(*(unsigned*)src);",
     "if (textsize <= 0 || textsize > dest_cap || textsize > 256*1024*1024) return -1;",
     "*(unsigned*)dest = (unsigned)textsize;",
+    "static int dest_pos, dest_limit;",
+    "if (dest_pos >= dest_limit) return;",
+    "dest_data = dest; dest_pos = 4; dest_limit = dest_cap;",
 ]
 ONLY_IN_IMPL = [
     '#include "xrkit/engine/fs/untrusted_limits.h"',
@@ -44,7 +47,13 @@ ONLY_IN_IMPL = [
     "dest[1] = (unsigned char)((textsize >> 8) & 0xFF);",
     "dest[2] = (unsigned char)((textsize >> 16) & 0xFF);",
     "dest[3] = (unsigned char)((textsize >> 24) & 0xFF);",
+    "static int dest_pos, dest_limit, dest_overflow;",
+    "if (dest_pos >= dest_limit) { dest_overflow = 1; return; }",
+    "if (dest_cap < 4) return -1;",
+    "dest_data = dest; dest_pos = 4; dest_limit = dest_cap; dest_overflow = 0;",
+    "if (dest_overflow) return -1;",
 ]
+
 PROBLEMS: list = []
 
 

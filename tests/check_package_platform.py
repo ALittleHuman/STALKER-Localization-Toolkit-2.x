@@ -42,6 +42,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 PACKAGE_PS1 = ROOT / "scripts" / "package.ps1"
 
 FAILURES: list[str] = []

@@ -62,6 +62,10 @@ ALLOWED = (
     # 2026-11-04：打包失败归档的**磁盘占用统计**（只读、只用于"FAIL 太大请清理"提示），
     # 不是候选收集；它遍历 dist/FAIL 而不是用户数据，出错语义不影响任何页面的台账。
     "tools/cli/build_cmd.cpp",
+    # 2026-11-15：font-pack 的 `copy_tree_files` / 产线的 `extract_pack` 是"整树复制/解包"的
+    # 落盘实现，遍历本身不参与候选收集；出错语义各自在 writer 里给（不是第二套候选收集）。
+    "src/engine/font/package.cpp",
+    "src/engine/text/extract_pack.cpp",
 )
 EXTRACT = ROOT / "src" / "engine" / "text" / "extract.cpp"
 BATCH = ROOT / "src" / "engine" / "text" / "batch.cpp"

@@ -55,6 +55,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # 夹具＝六页插件版（各自 replaces 一个内置页）＋ 三插件同页 ＋ 最小 `.py` 加载链夹具。
 #   ★ 显式清单（不挂 glob）：`plugins/` 下多一枚 `.py` 而这里没登记 ⇒ 红（见 ① 的"多一枚"那条）。

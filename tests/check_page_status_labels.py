@@ -62,7 +62,7 @@ def label_wiring_problems(source: str) -> list[str]:
     #    必须出现把它加进布局/指定父的语句。按**每一处**分别计数（别写成"文件里出现过"）。
     for match in STATUS_ASSIGN.finditer(source):
         tail = source[match.end():match.end() + 400]
-        wired = ("addWidget(status_" in tail) or ("status_->setParent(" in tail)
+        wired = ("addWidget(status_" in tail) or ("status_->setParent(" in tail) or ("add_action_status(status_" in tail)
         if not wired:
             line = source[:match.start()].count("\n") + 1
             problems.append("第 %d 行的 `status_ = new QLabel...` 之后没有 "

@@ -117,6 +117,12 @@ def run(cmd: list[str], env: dict[str, str] | None = None, timeout: int = 600) -
     child_env = dict(os.environ if env is None else env)
     child_env.setdefault("PYTHONUTF8", "1")
     child_env.setdefault("PYTHONIOENCODING", "utf-8")
+    # 同目录判据模块（package_select 等）不在 embeddable 的 _pth 搜索路径里，
+    # 统一给子进程加 tests/；否则每条用 sibling import 的判据都会假红。
+    _tests_dir = str(ROOT / "tests")
+    child_env["PYTHONPATH"] = _tests_dir + (
+        (os.pathsep + child_env["PYTHONPATH"]) if child_env.get("PYTHONPATH") else "")
+
     # ★★ 用户 2026-10-19/20：间歇红先排除"和共享 %TEMP% 撞车"。
     #   整档门禁里多个步骤都会起 `xrkit_app --smoke`，它固定往 `%TEMP%\xrkit_smoke_*` 写日志与
     #   插件夹具；一旦有残留进程/残留文件就是一团乱（P17-176 的 vcruntime 也是同一类：残留进程）。
@@ -289,6 +295,14 @@ def configure_and_build(build_dir: Path, env: dict, shell: bool) -> bool:
              % (build_dir.name, b", ".join(missing).decode()))
         return False
     return True
+
+
+def has_python_module(name: str) -> bool:
+    try:
+        __import__(name)
+        return True
+    except Exception:
+        return False
 
 
 def step_build(release: bool) -> None:
@@ -1156,7 +1170,7 @@ def step_cli_contract(release: bool) -> None:
                    "--verify-readback", "--set", "--list", "--force", "--encoding",
                    "--prefix", "--id-prefix", "--clean", "--ext", "--no-recursive",
                    "--backup", "--exclude", "--mode", "--suffix", "--offset",
-                   "--no-full-cyrillic", "--only", "--pack-dirs"}
+                   "--no-full-cyrillic", "--only", "--pack-dirs", "--text-root"}
     dispatched_all = set(re.findall(r'(?:action|a)\s*==\s*"(--[a-z0-9-]+)"', active_code(main_src)))
     # ★ 正向（"漏列"）只认**主分派**（`action == "--xxx"`）—— 那才是"动作表"的成员；
     #   `a == "--xxx"` 那一族是某个动作内部的**子选项**（实测 `--all`/`--only`/`--pack-dirs`），
@@ -2084,6 +2098,9 @@ def step_golden_font_render(release: bool) -> None:
     **孤立**对拍（门禁 [20]）。
     退出码：0=一致，1=不一致，2=字体 / 1.x / CLI 缺失（按外部前提处理）。
     """
+    if not has_python_module("PIL"):
+        prereq("Pillow", "未安装（外部前提）", release)
+        return
     say("[19] 字库渲染产物一致性（S=1 与 x2 档：DDS + ini vs 1.x）")
     script = ROOT / "tests" / "golden_font_render.py"
     if not require_repo_file(script, "字库渲染基线脚本"):
@@ -2184,6 +2201,9 @@ def step_golden_font_package(release: bool) -> None:
     目录名与 DDS 格式）。
     退出码：0=一致，1=不一致，2=字体 / 1.x / CLI 缺失（按外部前提处理）。
     """
+    if not has_python_module("PIL"):
+        prereq("Pillow", "未安装（外部前提）", release)
+        return
     say("[22] 出包端到端一致性（整棵 gamedata 树 vs 1.x build_package）")
     script = ROOT / "tests" / "golden_font_package.py"
     if not require_repo_file(script, "出包端到端基线脚本"):
@@ -2964,6 +2984,9 @@ def step_shell_smoke(release: bool) -> None:
         "src/engine/font/charset.cpp": 1,
         "src/engine/fs/overlay.cpp": 2,
         "src/engine/xml/dirdiff.cpp": 1,   # ← P11b 新登记：目录对比的遍历（下沉自 xml_page）
+        # 2026-11-15：font-pack 的整树复制 / 产线解包各自一份落盘遍历（不是候选收集）。
+        "src/engine/font/package.cpp": 2,
+        "src/engine/text/extract_pack.cpp": 1,
     }
     shell_iter = [p for p, _ in hits if p.startswith("src/shell/")]
     if dict(hits) != expected_iter or shell_iter:
@@ -3601,6 +3624,9 @@ def step_ori_texts_only(release: bool) -> None:
 
 def step_merge_glyphs(release: bool) -> None:
     """A-min 字形合并：8 条判据（缺字/老字形不变/度量/cmap/复合/幂等/CFF/可复现）。"""
+    if not has_python_module("fontTools"):
+        prereq("fontTools", "未安装（外部前提）", release)
+        return
     say("[?] A-min 字形合并判据")
     script = ROOT / "tests" / "check_merge_glyphs.py"
     if not require_repo_file(script, "字形合并判据"):
@@ -3680,6 +3706,9 @@ def step_font_patches(release: bool) -> None:
 
 def step_font_pack_unified(release: bool) -> None:
     """最小统一：--font-pack 段表来源 / writer / 缺字策略 / 状态隔离。"""
+    if not has_python_module("fontTools"):
+        prereq("fontTools", "未安装（外部前提）", release)
+        return
     say("[?] 最小统一：--font-pack（段表/writer/缺字策略）")
     script = ROOT / "tests" / "check_font_pack_unified.py"
     if not require_repo_file(script, "最小统一判据脚本"):
@@ -4176,6 +4205,9 @@ def step_ixr_product(release: bool) -> None:
     页面（汉化包生成的 IX-Ray 选项）只调引擎 `ixr_build`；这条判据验的就是那一段：
     缺参数退 3 / 真跑出合并字体（cmap 有「你」）/ 坏包零静默 / 工具链缺件点名。
     """
+    if not has_python_module("fontTools"):
+        prereq("fontTools", "未安装（外部前提）", release)
+        return
     say("[?] IX-Ray 产品入口（--ixr-build：C++ → fonttools 助手）")
     script = ROOT / "tests" / "check_ixr_product.py"
     if not require_repo_file(script, "IXR 产品入口判据脚本"):
