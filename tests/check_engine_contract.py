@@ -7,7 +7,7 @@ r"""判红锁：审计 2026-10-06 **第 4 组余项三条**（★先写锁、再
 ① **`contract_ok()` 不校 `area` 条数**（`src/engine/plugin/contract.cpp:72-101`）
    修前它只校 HOSTS=6 / LOCATIONS=2 / api.ui=16，**AREA_* 一个都不校** ⇒ 把
    `AREA_BOTTOM="bottom"` 从生成表里删掉也全绿。而这个 area 槽位是
-   `docs/2.0.0-设计口径.md` 写死的契约（10 个区），少一个 = 插件往那个槽位注册
+   `docs/内部契约.md` 写死的契约（10 个区），少一个 = 插件往那个槽位注册
    必然被拒（表现成"注册了却不生效"）。
    本脚本**先证红**：把生成表里的 `AREA_BOTTOM` 删掉 + `kAreaCount=9`，重编
    engine+cli，跑 `--selftest` **必须红**（修前这里全绿）；还原后再跑必须绿。

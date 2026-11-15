@@ -3,7 +3,7 @@
 
 背景
 ----
-审计 T-07 原话：「`docs/2.0.0-设计口径.md` §3.1 承诺了 gzip/lz4/zstd，但实现里没有 ——
+审计 T-07 原话：「`docs/内部契约.md` §3.1 承诺了 gzip/lz4/zstd，但实现里没有 ——
 UI 无入口，文档与实现不一致」。
 
 现状（P17-169 之后）：
@@ -19,7 +19,7 @@ B 必须单独有一行**如实列出写侧没做的那三种**及其原因（lz
 C "默认压缩"那一行必须写明**写侧另有 gzip**（不再只承诺、不落地）；
 D 不许出现"UI 另给 gzip / lz4 / zstd"这类**未落地的承诺**（P17-169 前的那句就在这里）。
 
-红证：把文档退回 P17-169 之前那一版（`git show 53b3007~1:docs/2.0.0-设计口径.md`）⇒ A/B/C 红。
+红证：把文档退回 P17-169 之前那一版（`git show 53b3007~1:docs/内部契约.md`）⇒ A/B/C 红。
 退出码：0=绿 / 1=红 / 2=缺输入。
 """
 
@@ -36,7 +36,7 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 ROOT = Path(__file__).resolve().parent.parent
-DOC = ROOT / "docs" / "2.0.0-设计口径.md"
+DOC = ROOT / "docs" / "内部契约.md"
 
 PROBLEMS: list = []
 CASES = 0

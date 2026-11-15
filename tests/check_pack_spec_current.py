@@ -3,7 +3,7 @@
 
 修前事实（审计原话）
 --------------------
-`docs/2.0.0-打包与发版规格.md` 的正文 §2/§4 仍写「把 `qoffscreen.dll` **临时**铺进舞台…**跑完
+`docs/构建与发版.md` 的正文 §2/§4 仍写「把 `qoffscreen.dll` **临时**铺进舞台…**跑完
 删掉那个插件**再压包」，而实现早已是「**只出目录、不压 zip**」「`platforms\\` 同时带
 `qwindows.dll` 与 `qoffscreen.dll`，**随包常驻**」（用户 2026-10-07 裁决 + 2026-09-29 产物形态）。
 靠文件头的 banner 打补丁 —— 读者读正文会读到与实现相反的做法。
@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SPEC = ROOT / "docs" / "2.0.0-打包与发版规格.md"
+SPEC = ROOT / "docs" / "构建与发版.md"
 PS1 = ROOT / "scripts" / "package.ps1"
 
 # 旧做法的**断言句**（正文里一条都不许留；banner 里提到它们属于历史，不算）

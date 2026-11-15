@@ -43,7 +43,7 @@ THEME_CPP = ROOT / "src" / "shell" / "theme.cpp"
 HUB_H = ROOT / "src" / "shell" / "hub.h"
 SCREEN_SCALE_H = ROOT / "src" / "shell" / "screen_scale.h"
 SNIFF_CPP = ROOT / "src" / "engine" / "text" / "sniff.cpp"
-TEXT_SPEC = ROOT / "docs" / "2.0.0-文本模块规格.md"
+TEXT_SPEC = ROOT / "docs" / "内部契约.md"
 ATOMIC_H = ROOT / "include" / "xrkit" / "core" / "atomic_write.h"
 
 
@@ -111,7 +111,7 @@ def audit_sniff_thresholds(sniff_cpp: str, spec: str) -> list:
     """⑤ ★★ P17-96（审计 `02 F-13`）：**sniff 的门槛常量与规格必须同值**。
 
     事实（审计原文）：门槛「只靠注释互指」—— `sniff.cpp` 里 `kStatMinEvidence = 2` / `kStatMargin = 0.15`，
-    规格 `docs/2.0.0-文本模块规格.md` §5 写 `决定性 = 证据 >= 2 且 |score| >= 0.15`。
+    规格 `docs/内部契约.md` §5 写 `决定性 = 证据 >= 2 且 |score| >= 0.15`。
     ⇒ **改任一边都不会红**（门禁只锁零静默标记，不锁这两个数）—— 本判据把两处**对起来**：
     源码里那两个常量的值 == 规格里那两个数；任一边改了而另一边没跟上 ⇒ 红。
     """

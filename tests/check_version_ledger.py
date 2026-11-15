@@ -6,7 +6,7 @@ r"""判据 B-5：`version.json` 的台账**对着认账账断账**（第三方�
 用户 2026-10-16 裁决：**认账、不改史**（历史已推送、批报告按 SHA 引用、历史是回退点）
 ⇒ 改成「**对照台账**」：
 
-  · `docs/2.0.0-版本台账认账.md` 是**只追加**的认账账，逐条列：
+  · `tests/version_ledger.md` 是**只追加**的认账账，逐条列：
       - 10 条占位 commit（`2.0.0 ALPHA.13–16 / 19–23 / BETA.1`：串 `2.0.0 ALPHA.0`＝占位）；
       - 36 条幽灵 artifacts（34 个不同路径，`dist/` 下的早期日志与 zip，「未产出/已回退」）；
       - 2 个断号（`gap:17` / `gap:107`，「历史断号、不要补号」）。
@@ -37,7 +37,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 VJ = ROOT / "version.json"
-LEDGER = ROOT / "docs" / "2.0.0-版本台账认账.md"
+LEDGER = ROOT / "tests" / "version_ledger.md"
 
 SHA = re.compile(r"^[0-9a-f]{7,40}$")
 # `- \`<键>\` — <理由>`：键在反引号里，理由在破折号之后

@@ -406,7 +406,7 @@ def main() -> int:
                         "kind": "single-byte-statistic",
                         "note": ("★ 本次口径（2026-10-06）**有意与 1.x 不同**：声明与'鲁棒'一起进"
                                  "置信度系统 ⇒ 谎报 windows-1251 的西欧文件被统计否决。"
-                                 "用户原话见 docs\\2.0.0-行为口径对照表.md ⑨9.8/9.9。"),
+                                 "用户原话见 docs\\用户手册.md ⑨9.8/9.9。"),
                         "ref": [ref["step"], ref["enc"], ref["used"]],
                         "ours": frozen}
                 else:
