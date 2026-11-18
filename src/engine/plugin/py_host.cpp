@@ -495,7 +495,7 @@ void unload_module(const std::string& module_name) {
     }
     if (found) run_shutdown(std::move(state));
 }
-void unload_all() {
+void shutdown_all() {
     std::vector<LoadedState> all;
     {
         std::lock_guard<std::mutex> lock(mutex());
@@ -530,7 +530,12 @@ public:
     const std::string& owner() const { return owner_; }
     const std::string& plugin_dir() const { return dir_; }
 
-    void log(const std::string& message, const std::string& level = "info") const {
+    void log(const std::string& message) const {
+        log_level(message, "info", false);
+        append_plugin_log_line("[" + owner_ + "] " + message);
+    }
+    void log_level(const std::string& message, const std::string& level,
+                   bool append = true) const {
         const std::string line = "[" + owner_ + "] " + message;
         core::Level mapped = core::Level::Info;
         const std::string lv = level.empty() ? "info" : level;
@@ -542,7 +547,7 @@ public:
         }
         core::log(mapped, line);
         // detail/debug 只落盘，不进界面日志缓冲；其余仍进 UI 日志。
-        if (!detail) append_plugin_log_line(line);
+        if (append && !detail) append_plugin_log_line(line);
     }
     void log_detail(const std::string& message) const {
         core::log(core::Level::Info, "[" + owner_ + "] " + message);
@@ -4065,7 +4070,9 @@ void ensure_api_module() {
             // ★ 2026-11-03（用户口径）：跨插件服务**宿主自带**；联网插件提供 net.* 服务
             .def_property_readonly("services",
                                    [](const PyPluginApi& api) { return PyServices(api.owner()); })
-            .def("log", &PyPluginApi::log, py::arg("message"), py::arg("level") = "info")
+            .def("log", [](const PyPluginApi& api, const std::string& message,
+                                 const std::string& level) { api.log_level(message, level); },
+                 py::arg("message"), py::arg("level") = "info")
             .def("log_detail", &PyPluginApi::log_detail, py::arg("message"))
             .def("supports", &PyPluginApi::supports, py::arg("feature"))
             .def("on_unload", &PyPluginApi::on_unload, py::arg("callback"))
@@ -4270,7 +4277,7 @@ void shutdown_python() {
             main_thread_state() = nullptr;
             status.gil_released = false;
         }
-        lifecycle::unload_all();
+        lifecycle::shutdown_all();
         {
             auto& table = service_table();
             std::lock_guard<std::mutex> lock(table.mutex);

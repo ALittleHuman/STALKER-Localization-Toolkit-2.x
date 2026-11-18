@@ -2866,7 +2866,8 @@ SmokeResult run_smoke() {
 
         int frame_bad = 0;
         int order_bad = 0;
-        for (int i = 0; i < builtin_page_count(); ++i) {
+        for (int i = 0; i < hub.page_count(); ++i) {
+            if (hub.page_kind(i) != PageKind::Builtin) continue;
             PageBase* page = hub.page_at(i);
             if (page == nullptr) {
                 ++frame_bad;
