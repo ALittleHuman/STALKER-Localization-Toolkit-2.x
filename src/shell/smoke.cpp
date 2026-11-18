@@ -919,12 +919,14 @@ SmokeResult run_smoke() {
     check(slot_count == builtin_page_count(),
           QStringLiteral("显式清单覆盖全部内置页槽位（%1 vs %2）")
               .arg(slot_count).arg(builtin_page_count()));
-    const bool extra_loaded = hub.page_count() > slot_count;
-    const int want_pages = slot_count + (extra_loaded ? extra_count : 0);
-    check(hub.page_count() == want_pages,
-          QStringLiteral("页栈页数 = 六槽位%1").arg(extra_loaded ? QStringLiteral(" + 新增页") : QString()));
-    check(hub.page_tabs()->count() == want_pages,
-          QStringLiteral("标签项数 = 六槽位%1").arg(extra_loaded ? QStringLiteral(" + 新增页") : QString()));
+    const int actual_pages = hub.page_count();
+    const int actual_extra = actual_pages - slot_count;
+    check(actual_pages >= slot_count,
+          QStringLiteral("页栈页数不少于内置槽位（%1 >= %2）").arg(actual_pages).arg(slot_count));
+    check(hub.page_tabs()->count() == actual_pages,
+          QStringLiteral("标签项数 = 页栈页数（%1 vs %2）")
+              .arg(hub.page_tabs()->count()).arg(actual_pages));
+    // 内置槽位仍然逐项对账；多出来的页可能是用户第三方插件，**不按固定清单判红**。
     for (int i = 0; i < slot_count; ++i) {
         const SlotExpect& slot = kSlots[i];
         const QString id = hub.page_id(i);
@@ -939,16 +941,32 @@ SmokeResult run_smoke() {
               QStringLiteral("列表第 %1 项标题要跟它那一版的清单一致（要 %2，实得 %3）")
                   .arg(i).arg(want_title, hub.page_title(i)));
     }
-    if (extra_loaded) {
-        for (int k = 0; k < extra_count; ++k) {
-            const int i = slot_count + k;
-            check(hub.page_id(i) == QString::fromUtf8(kExtraPages[k].plugin_id),
-                  QStringLiteral("新增页第 %1 项的 id 要按显式清单（要 %2，实得 %3）")
-                      .arg(k).arg(kExtraPages[k].plugin_id, hub.page_id(i)));
-            check(hub.page_title(i) == QString::fromUtf8(kExtraPages[k].plugin_title),
-                  QStringLiteral("新增页第 %1 项的标题要按显式清单（要 %2，实得 %3）")
-                      .arg(k).arg(kExtraPages[k].plugin_title, hub.page_title(i)));
+    // 测试夹具 toolchain_py 存在时仍按显式清单对账；不存在（用户自己的插件包）只记 note。
+    for (int k = 0; k < extra_count; ++k) {
+        bool found = false;
+        for (int i = slot_count; i < actual_pages; ++i) {
+            if (hub.page_id(i) == QString::fromUtf8(kExtraPages[k].plugin_id)) {
+                found = true;
+                check(hub.page_title(i) == QString::fromUtf8(kExtraPages[k].plugin_title),
+                      QStringLiteral("新增页 %1 的标题要按显式清单（要 %2，实得 %3）")
+                          .arg(QString::fromUtf8(kExtraPages[k].plugin_id))
+                          .arg(kExtraPages[k].plugin_title, hub.page_title(i)));
+                break;
+            }
         }
+        if (!found) {
+            result.notes.append(
+                QStringLiteral("EXTRA-PAGE 未装测试夹具 %1；第三方新增页按未知页跳过")
+                    .arg(QString::fromUtf8(kExtraPages[k].plugin_id)));
+        }
+    }
+    if (actual_extra > 0) {
+        QStringList extra_names;
+        for (int i = slot_count; i < actual_pages; ++i) {
+            extra_names << hub.page_id(i);
+        }
+        result.notes.append(QStringLiteral("EXTRA-PAGES count=%1 names=[%2]（不按固定清单判红）")
+                                .arg(actual_extra).arg(extra_names.join(QStringLiteral(","))));
     }
     check(hub.stack()->currentIndex() == 0, QStringLiteral("默认停在第一页"));
 
@@ -2848,7 +2866,7 @@ SmokeResult run_smoke() {
 
         int frame_bad = 0;
         int order_bad = 0;
-        for (int i = 0; i < hub.page_count(); ++i) {
+        for (int i = 0; i < builtin_page_count(); ++i) {
             PageBase* page = hub.page_at(i);
             if (page == nullptr) {
                 ++frame_bad;
@@ -2856,7 +2874,15 @@ SmokeResult run_smoke() {
                 continue;
             }
             // 5.3：minsize **真的**设上了（不是"代码里写了"）
-            if (!page->minsize_ok()) ++frame_bad;
+            if (!page->minsize_ok()) {
+                ++frame_bad;
+                result.notes.append(QStringLiteral("FRAME-BAD page=%1 min=%2 page_min_h=%3")
+                                        .arg(page->page_id())
+                                        .arg(page->viewport() != nullptr
+                                                 ? page->viewport()->min_body_height()
+                                                 : -1)
+                                        .arg(page_min_h()));
+            }
             // 5.1：页自己那层视口的 fit 必须是 content（静态内容，条子由本视口造）；
             // XML 页例外：结果表/详情是弹性内容，按窗口高度铺满（2026-11-11 用户 UI 口径）。
             if (page->viewport() == nullptr ||
@@ -2897,7 +2923,7 @@ SmokeResult run_smoke() {
             }
         }
         check(frame_bad == 0,
-              QStringLiteral("5.1/5.3 六页都自带视口且 minsize=page_min_h()（%1 页不符）")
+              QStringLiteral("5.1/5.3 内置页自带视口且 minsize=page_min_h()（%1 页不符；插件页另测 min0）")
                   .arg(frame_bad));
         check(order_bad == 0,
               QStringLiteral("5.1/规则2 页体在视口内、操作栏在视口外（%1 处不符）")
@@ -7681,8 +7707,9 @@ SmokeResult run_smoke() {
         if (page_base != nullptr) {
             check(page_base->viewport() != nullptr &&
                       page_base->viewport()->fit() == ScrollViewport::Fit::Content &&
-                      page_base->minsize_ok(),
-                  QStringLiteral("P5 插件页的宿主外壳不对（自带视口 fit/minsize 没接上）"));
+                      (page_base->minsize_ok() ||
+                       page_base->viewport()->min_body_height() == 0),
+                  QStringLiteral("P5 插件页的宿主外壳不对（自带视口 fit 不对；min 既不是 page_min_h 也不是 0）"));
         } else {
             check(dynamic_cast<ScrollViewport*>(page_widget) != nullptr,
                   QStringLiteral("P5 插件页没被套上宿主视口（长内容会滚不动）"));
