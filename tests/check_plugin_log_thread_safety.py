@@ -55,7 +55,7 @@ def audit_sink_contract(compare_h: str, abi_host: str, design_doc: str) -> list:
       C ABI 的 sink 没有任何键写它 ⇒ 恒 0）；
     * 宿主不认识的键必须**记进 `unhandled_keys`**（零静默）；
     * 结果结构里必须有 `unhandled_keys` 这个字段；
-    * **口径必须落在字据上**（`docs/内部契约.md` §4.5）：`row_kind` 不落位 / 但不许静默丢 /
+    * **口径必须落在字据上**（`docs/内部契约.md` §1.1）：`row_kind` 不落位 / 但不许静默丢 /
       ID 数按插件报的算 —— 三句都在。
     """
     problems = []
@@ -70,10 +70,10 @@ def audit_sink_contract(compare_h: str, abi_host: str, design_doc: str) -> list:
                         "（那是**文本模式**的表，C ABI 的 sink 不写它 ⇒ 插件模式下恒 0）")
     if "ids_a_seen" not in abi or "ids_b_seen" not in abi:
         problems.append("abi_host.cpp：`ids_a`/`ids_b` 不是从插件报上来的 ID 里数的")
-    if "### 4.5" not in design_doc or "row_kind" not in design_doc:
-        problems.append("docs/内部契约.md：缺 §4.5（sink 键的认/不认口径）")
+    if "### 1.1" not in design_doc or "row_kind" not in design_doc:
+        problems.append("docs/内部契约.md：缺 §1.1（sink 键的认/不认口径）")
     else:
-        at = design_doc.find("### 4.5")
+        at = design_doc.find("### 1.1")
         window = design_doc[at:at + 2400]
         for needle, why in (
                 ("不落位", "没写「`row_kind` 不落位」"),
@@ -81,7 +81,7 @@ def audit_sink_contract(compare_h: str, abi_host: str, design_doc: str) -> list:
                 ("真报上来的 ID 数", "没写「ID 数按插件真报上来的算」"),
         ):
             if needle not in window:
-                problems.append("docs/内部契约.md §4.5：%s" % why)
+                problems.append("docs/内部契约.md §1.1：%s" % why)
     return problems
 
 
@@ -173,19 +173,19 @@ def selfcheck() -> tuple:
         ("好形状", 0, audit_log_buffer(good_host) + audit_registry_contract(good_reg)
          + audit_sink_contract("struct X { std::vector<std::string> unhandled_keys; };",
                                "target->unhandled_keys.push_back(k); ids_a_seen.insert(x); ids_b_seen.insert(y);",
-                               "### 4.5 x\nrow_kind 不落位；不许静默丢；按真报上来的 ID 数\n")),
+                               "### 1.1 x\nrow_kind 不落位；不许静默丢；按真报上来的 ID 数\n")),
         ("IDS 取回 id_text_*（修前形状）", 1,
          audit_sink_contract("struct X { std::vector<std::string> unhandled_keys; };",
                              "result.ids_a = result.id_text_a.size(); ids_a_seen.insert(x); ids_b_seen.insert(y);",
-                             "### 4.5 x\nrow_kind 不落位；不许静默丢；按真报上来的 ID 数\n")),
+                             "### 1.1 x\nrow_kind 不落位；不许静默丢；按真报上来的 ID 数\n")),
         ("不认识的键静默丢（修前形状）", 1,
          audit_sink_contract("struct X { std::vector<std::string> unhandled_keys; };",
                              "ids_a_seen.insert(x); ids_b_seen.insert(y);",
-                             "### 4.5 x\nrow_kind 不落位；不许静默丢；按真报上来的 ID 数\n")),
+                             "### 1.1 x\nrow_kind 不落位；不许静默丢；按真报上来的 ID 数\n")),
         ("口径没落字据", 1,
          audit_sink_contract("struct X { std::vector<std::string> unhandled_keys; };",
                              "target->unhandled_keys.push_back(k); ids_a_seen.insert(x); ids_b_seen.insert(y);",
-                             "（没有 §4.5）\n")),
+                             "（没有 §1.1）\n")),
         ("裸访问器又回来了（修前形状）", 1,
          audit_log_buffer(good_host.replace("void append_plugin_log_line",
                                             "std::vector<std::string>& plugin_log_buffer() { return b; }\n"

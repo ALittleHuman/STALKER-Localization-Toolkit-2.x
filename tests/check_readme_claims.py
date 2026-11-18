@@ -68,7 +68,7 @@ def readme_template(ps1: str) -> str:
 
 def spec_section(spec: str) -> str:
     """规格里"安装与回退"那一节（到下一个 `## ` 标题为止）。"""
-    m = re.search(r"##\s*安装与回退.*?(?=\n##\s)", spec, re.S)
+    m = re.search(r"##\s*(?:\d+\.\s*)?安装与回退.*?(?=\n##\s)", spec, re.S)
     return m.group(0) if m else ""
 
 

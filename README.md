@@ -2,7 +2,7 @@
 
 面向 X-Ray 引擎（SoC / Clear Sky / CoP / IX-Ray）的资源查看、解包、文本提取与汉化包生成工具。
 
-- 当前源码版本：`2.0.0 BETA.245`（正式交付以 `dist\2.0.0\<MARK>\<n>` 为准）
+- 当前源码版本：`2.0.0 BETA.246`（正式交付以 `dist\2.0.0\<MARK>\<n>` 为准）
 - 运行环境：Windows 10/11 x64；发行包自带 Qt6 运行库与 Python 3.14，**不需要系统 Python**
 - 只写你自己的输出目录、`logs\` 与工具自己的 `xrkit_user.ltx`；**不会安装或修改游戏文件**（解包/封包含"装进游戏"的只有你手动指定的目标目录）
 
@@ -33,7 +33,7 @@ xrkit_app.exe            图形界面
 xrkit_cli.exe            命令行
 xrkit_plugin_manager.exe 插件管理器（查看已加载/禁用/更新插件）
 xrkit_updater.exe        本体更新器（独立进程，不联网）
-plugins\                 顶层为空；放 <name>.py 或 <name>/plugin.py 即被加载（见 docs/插件开发.md）
+plugins\                 官方包默认顶层为空；放 <name>.py 或 <name>/plugin.py（或 <name>/__init__.py）即被加载（见 docs/插件开发.md）
 ```
 
 ## 三、五分钟上手
@@ -120,7 +120,7 @@ scripts\release.ps1 -Index <n> -Mark BETA :: 发版（改版本号 → 编译 �
 |---|---|
 | `docs/README.md` | 文档索引与阅读顺序 |
 | `docs/用户手册.md` | 五个页面的逐项操作、常见流程、常见错误 |
-| `docs/CLI参考.md` | 全部动作、参数、退出码、示例 |
+| `docs/CLI参考.md` | 已结构化的动作、参数、退出码、示例；完整动作表以 `--help` 为准 |
 | `docs/插件开发.md` | 插件结构、API、线程契约、`when`、拖放、调试 |
 | `docs/构建与发版.md` | 环境、两档构建、打包、发版、门禁 |
 | `docs/已知问题与边界.md` | 用户可见的限制与规避办法 |
