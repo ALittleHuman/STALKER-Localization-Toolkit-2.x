@@ -24,6 +24,9 @@ const char* const kMethodNames[] = {
     "cache_dir",
     "system_font_dirs",
     "run_process",
+    "start_process",
+    "stop_process",
+    "process_alive",
     "restart",
     "quit",
     "version",
@@ -38,6 +41,9 @@ bool has_impl(const HostFacade& facade, const std::string& name) {
     if (name == "cache_dir") return static_cast<bool>(facade.cache_dir);
     if (name == "system_font_dirs") return static_cast<bool>(facade.system_font_dirs);
     if (name == "run_process") return static_cast<bool>(facade.run_process);
+    if (name == "start_process") return static_cast<bool>(facade.start_process);
+    if (name == "stop_process") return static_cast<bool>(facade.stop_process);
+    if (name == "process_alive") return static_cast<bool>(facade.process_alive);
     if (name == "restart") return static_cast<bool>(facade.restart);
     if (name == "quit") return static_cast<bool>(facade.quit);
     if (name == "version") return static_cast<bool>(facade.version);

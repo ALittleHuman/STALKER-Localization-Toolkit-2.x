@@ -259,12 +259,17 @@ EXPECT_HOST = {
     "app_dir": "exe 所在目录（发行版放 ffmpeg/ffprobe、`user.ltx` 的落点）",
     "data_dir": "每个插件自己的持久数据目录（更新不删除）",
     "cache_dir": "每个插件自己的可清理缓存目录",
+    "http_get": "HTTP GET（宿主 WinHTTP，同一份联网开关）",
+    "http_post": "HTTP POST（简化版，body 原样发送）",
     "pid": "宿主进程号（只读）",
     "quit": "请求宿主退出（插件管理器/页面可用）",
     "restart": "请求宿主重启（宿主支持时）",
     "version": "宿主版本串（只读）",
     "system_font_dirs": "系统字体目录（唯一一份：内置页与插件共用）",
     "run_process": "跑外部进程（唯一一份语义：不弹控制台/取消真停/退码如实/stderr 尾巴）",
+    "start_process": "长驻/后台进程（无管道，日志重定向到文件；Job kill-on-close）",
+    "stop_process": "停止后台进程（终止并等 5 秒）",
+    "process_alive": "后台进程是否仍存活",
 }
 
 

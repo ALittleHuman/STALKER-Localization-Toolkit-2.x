@@ -15,6 +15,7 @@
 #include "xrkit/engine/plugin/host_facade.h"
 
 #include "xrkit/core/log.h"
+#include "xrkit/core/http.h"
 // `app_dir()`（exe 所在目录）住在 core/theme.h —— **不是** path.h：
 // 实测按 path.h 写会报 `"app_dir": 不是 "xrkit::core" 的成员`（本片第一次编译就踩到）。
 #include "xrkit/core/path.h"
@@ -519,6 +520,12 @@ public:
                                                                     : static_cast<bool>(facade->cache_dir));
         }
         if (feature == "host.log_detail") return true;
+        if (feature == "host.http_get" || feature == "host.http_post") return true;
+        if (feature == "host.start_process" || feature == "host.stop_process" ||
+            feature == "host.process_alive") {
+            const HostFacade* facade = host_facade();
+            return facade != nullptr && static_cast<bool>(facade->start_process);
+        }
         return false;
     }
 
@@ -1126,6 +1133,19 @@ ProcessRunOptions process_options_from_python(const py::object& options) {
             } catch (const py::error_already_set&) {
             }
         };
+    }
+    return out;
+}
+
+ProcessStartOptions process_start_options_from_python(const py::object& options) {
+    ProcessStartOptions out;
+    if (options.is_none() != 0) return out;
+    py::dict data = py::reinterpret_borrow<py::dict>(options);
+    if (data.contains("program")) out.program = py::str(data["program"]).cast<std::string>();
+    if (data.contains("working_dir")) out.working_dir = py::str(data["working_dir"]).cast<std::string>();
+    if (data.contains("log_path")) out.log_path = py::str(data["log_path"]).cast<std::string>();
+    if (data.contains("args")) {
+        for (auto item : py::list(data["args"])) out.args.push_back(py::str(item).cast<std::string>());
     }
     return out;
 }
@@ -2393,6 +2413,25 @@ public:
         return std::string();
     }
 
+    py::object http_result(const core::HttpResult& result) const {
+        py::dict out;
+        out["ok"] = result.ok;
+        out["status"] = result.status;
+        out["body"] = python_text_from_bytes(result.body);
+        out["error"] = result.error;
+        out["bytes"] = result.bytes;
+        out["truncated"] = result.truncated;
+        return out;
+    }
+    py::object http_get(const std::string& url, int timeout_sec, std::size_t max_bytes) const {
+        return http_result(core::http_get(url, timeout_sec, max_bytes));
+    }
+    py::object http_post(const std::string& url, const std::string& body,
+                         const std::string& content_type, int timeout_sec,
+                         std::size_t max_bytes) const {
+        return http_result(core::http_post(url, body, content_type, timeout_sec, max_bytes));
+    }
+
     // ── ★★ P12b：跑外部进程（宿主服务；语义唯一一份在引擎 `process/run.cpp`）────
     py::object run_process(py::object options) const {
         const HostFacade* facade = available("run_process");
@@ -2410,6 +2449,31 @@ public:
         out["stdout_lines"] = result.stdout_lines;
         out["stderr_lines"] = result.stderr_lines;
         return out;
+    }
+
+    py::object start_process(py::object options) const {
+        const HostFacade* facade = available("start_process");
+        if (facade == nullptr) {
+            py::dict out;
+            out["started"] = false;
+            out["pid"] = 0;
+            out["error"] = "宿主不支持 start_process";
+            return out;
+        }
+        const ProcessStartResult result = facade->start_process(process_start_options_from_python(options));
+        py::dict out;
+        out["started"] = result.started;
+        out["pid"] = result.pid;
+        out["error"] = result.error;
+        return out;
+    }
+    bool stop_process(unsigned long pid) const {
+        if (const HostFacade* facade = available("stop_process")) return facade->stop_process(pid);
+        return false;
+    }
+    bool process_alive(unsigned long pid) const {
+        if (const HostFacade* facade = available("process_alive")) return facade->process_alive(pid);
+        return false;
     }
 
     bool restart() const {
@@ -3596,9 +3660,17 @@ void ensure_api_module() {
             .def("app_dir", &PyHost::app_dir)
             .def("data_dir", &PyHost::data_dir)
             .def("cache_dir", &PyHost::cache_dir)
+            .def("http_get", &PyHost::http_get, py::arg("url"), py::arg("timeout_sec") = 20,
+                 py::arg("max_bytes") = 1u << 20)
+            .def("http_post", &PyHost::http_post, py::arg("url"), py::arg("body"),
+                 py::arg("content_type") = "application/json", py::arg("timeout_sec") = 20,
+                 py::arg("max_bytes") = 1u << 20)
             .def("system_font_dirs", &PyHost::system_font_dirs)
             // ★★ P12b：跑外部进程（宿主服务）
             .def("run_process", &PyHost::run_process, py::arg("options"))
+            .def("start_process", &PyHost::start_process, py::arg("options"))
+            .def("stop_process", &PyHost::stop_process, py::arg("pid"))
+            .def("process_alive", &PyHost::process_alive, py::arg("pid"))
         .def("restart", &PyHost::restart)
         .def("quit", &PyHost::quit)
         .def("version", &PyHost::version)

@@ -48,6 +48,20 @@ struct ProcessRunResult {
     uint64_t stderr_lines = 0;
 };
 
+// 长驻/后台进程：不建管道，stdout/stderr 重定向到 log_path（空 = NUL）。
+// 宿主用 kill-on-close Job 托管；插件 stop_process 或宿主退出时一起收掉。
+struct ProcessStartOptions {
+    std::string program;
+    std::vector<std::string> args;
+    std::string working_dir;
+    std::string log_path;
+};
+struct ProcessStartResult {
+    bool started = false;
+    unsigned long pid = 0;
+    std::string error;
+};
+
 struct HostFacade {
     // 用户偏好（`user.ltx` 里 `[section] key=value`）：**只读写点名的那一项**，不整块覆盖
     std::function<std::string(const std::string& section, const std::string& key,
@@ -69,6 +83,9 @@ struct HostFacade {
     //   ⇒ 门面自查（`host_facade_has("run_process")`）恒 false，而插件可见的名字正是
     //   `run_process`：能力"看着在、实际拿不到"。改的是**内部字段名**，插件可见契约一字未变。
     std::function<ProcessRunResult(const ProcessRunOptions&)> run_process;
+    std::function<ProcessStartResult(const ProcessStartOptions&)> start_process;
+    std::function<bool(unsigned long pid)> stop_process;
+    std::function<bool(unsigned long pid)> process_alive;
     // 重启宿主（插件更新/本体更新拿到新文件后调用）；无 GUI/未装处理器时返回 false。
     std::function<bool()> restart;
     // 退出宿主（本体更新器已启动，等旧进程退出后替换）；无 GUI 返回 false。

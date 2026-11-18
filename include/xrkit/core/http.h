@@ -23,6 +23,11 @@ bool network_enabled();
 HttpResult http_get(const std::string& url, int timeout_sec = 15,
                     std::size_t max_bytes = 1u << 20);
 
+// 简化 POST：body 原样发送；content_type 空时按 application/json。
+HttpResult http_post(const std::string& url, const std::string& body,
+                     const std::string& content_type = "application/json",
+                     int timeout_sec = 20, std::size_t max_bytes = 1u << 20);
+
 // 下载到 path；失败时不留下半文件。
 HttpResult http_download(const std::string& url, const std::string& path,
                          int timeout_sec = 120,

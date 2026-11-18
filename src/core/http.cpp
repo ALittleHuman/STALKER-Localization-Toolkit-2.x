@@ -52,8 +52,10 @@ struct WinHttpHandles {
     }
 };
 
-HttpResult winhttp_get(const std::string& url, int timeout_sec, std::size_t max_bytes,
-                       std::ofstream* file, const std::wstring& extra_headers) {
+HttpResult winhttp_request(const std::string& method, const std::string& url,
+                           const std::string& body, const std::string& content_type,
+                           int timeout_sec, std::size_t max_bytes, std::ofstream* file,
+                           const std::wstring& extra_headers) {
     HttpResult result;
     const std::wstring wurl = to_wide(url);
     URL_COMPONENTS uc{};
@@ -104,17 +106,22 @@ HttpResult winhttp_get(const std::string& url, int timeout_sec, std::size_t max_
     std::wstring target = path;
     if (target.empty()) target = L"/";
     if (extra[0] != L'\0') target += extra;
-    handles.request = WinHttpOpenRequest(handles.connect, L"GET", target.c_str(), nullptr,
+    const std::wstring wmethod = to_wide(method);
+    handles.request = WinHttpOpenRequest(handles.connect, wmethod.c_str(), target.c_str(), nullptr,
                                          WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                          secure ? WINHTTP_FLAG_SECURE : 0);
     if (handles.request == nullptr) {
         result.error = "WinHttpOpenRequest 失败";
         return result;
     }
-    const std::wstring headers =
+    std::wstring headers =
         L"User-Agent: xrkit/2.0\r\nAccept: application/vnd.github+json\r\n" + extra_headers;
+    if (!content_type.empty()) headers += L"Content-Type: " + to_wide(content_type) + L"\r\n";
+    if (!body.empty()) headers += L"Content-Length: " + std::to_wstring(body.size()) + L"\r\n";
+    void* body_ptr = body.empty() ? nullptr : const_cast<char*>(body.data());
+    const DWORD body_len = static_cast<DWORD>(body.size());
     if (!WinHttpSendRequest(handles.request, headers.c_str(),
-                            static_cast<DWORD>(-1L), nullptr, 0, 0, 0)) {
+                            static_cast<DWORD>(-1L), body_ptr, body_len, 0, 0)) {
         result.error = "WinHttpSendRequest 失败";
         return result;
     }
@@ -166,7 +173,8 @@ HttpResult http_get(const std::string& url, int timeout_sec, std::size_t max_byt
         return result;
     }
 #ifdef _WIN32
-    return winhttp_get(url, timeout_sec, max_bytes, nullptr, L"");
+    return winhttp_request("GET", url, std::string(), std::string(), timeout_sec, max_bytes,
+                           nullptr, L"");
 #else
     HttpResult result;
     result.error = "当前构建没有 WinHTTP";
@@ -199,7 +207,8 @@ HttpResult http_download(const std::string& url, const std::string& path, int ti
         }
         std::wstring extra;
         if (resume) extra = L"Range: bytes=" + std::to_wstring(existing) + L"-\r\n";
-        result = winhttp_get(url, timeout_sec, max_bytes, &file, extra);
+        result = winhttp_request("GET", url, std::string(), std::string(), timeout_sec, max_bytes,
+                                 &file, extra);
         file.close();
     };
 
@@ -224,6 +233,25 @@ HttpResult http_download(const std::string& url, const std::string& path, int ti
         result.error = "下载完成但无法落到目标文件：" + ec.message();
     }
     return result;
+}
+
+HttpResult http_post(const std::string& url, const std::string& body,
+                     const std::string& content_type, int timeout_sec,
+                     std::size_t max_bytes) {
+    if (!network_enabled()) {
+        HttpResult result;
+        result.error = "联网功能已关闭";
+        return result;
+    }
+#ifdef _WIN32
+    return winhttp_request("POST", url, body,
+                           content_type.empty() ? "application/json" : content_type,
+                           timeout_sec, max_bytes, nullptr, L"");
+#else
+    HttpResult result;
+    result.error = "当前构建没有 WinHTTP";
+    return result;
+#endif
 }
 
 }  // namespace xrkit::core

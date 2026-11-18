@@ -57,6 +57,31 @@ std::string ensure_dir(const fs::path& path) {
     return core::path_to_utf8(path);
 }
 
+#ifdef _WIN32
+std::wstring to_wide(const std::string& text) {
+    if (text.empty()) return {};
+    const int size = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+    if (size <= 1) return {};
+    std::wstring out(static_cast<std::size_t>(size - 1), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, out.data(), size);
+    return out;
+}
+
+HANDLE background_job() {
+    static HANDLE job = [] {
+        HANDLE handle = CreateJobObjectW(nullptr, nullptr);
+        if (handle != nullptr) {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(handle, JobObjectExtendedLimitInformation, &info,
+                                    sizeof(info));
+        }
+        return handle;
+    }();
+    return job;
+}
+#endif
+
 const HostFacade kHostFacade = {
     /* pref_get：读 `user.ltx` 的 `[section] key`（缺失返回 fallback） */
     [](const std::string& section, const std::string& key, const std::string& fallback) {
@@ -97,6 +122,93 @@ const HostFacade kHostFacade = {
         out.stdout_lines = native_result.stdout_lines;
         out.stderr_lines = native_result.stderr_lines;
         return out;
+    },
+    /* start_process：长驻/后台进程；无管道，日志重定向到文件；Job kill-on-close */
+    [](const ProcessStartOptions& options) {
+        ProcessStartResult out;
+#ifdef _WIN32
+        if (options.program.empty()) {
+            out.error = "program 为空";
+            return out;
+        }
+        const std::wstring program = to_wide(options.program);
+        std::wstring command = to_wide(eprocess::build_command_line(options.program, options.args));
+        std::wstring working;
+        if (!options.working_dir.empty()) working = to_wide(options.working_dir);
+        SECURITY_ATTRIBUTES sa{};
+        sa.nLength = sizeof(sa);
+        sa.bInheritHandle = TRUE;
+        const std::wstring log_path = options.log_path.empty() ? L"NUL" : to_wide(options.log_path);
+        HANDLE log_handle = CreateFileW(log_path.c_str(), GENERIC_WRITE,
+                                        FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, CREATE_ALWAYS,
+                                        FILE_ATTRIBUTE_NORMAL, nullptr);
+        HANDLE nul_in = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (log_handle == INVALID_HANDLE_VALUE || nul_in == INVALID_HANDLE_VALUE) {
+            if (log_handle != INVALID_HANDLE_VALUE) CloseHandle(log_handle);
+            if (nul_in != INVALID_HANDLE_VALUE) CloseHandle(nul_in);
+            out.error = "无法打开日志/NUL 句柄";
+            return out;
+        }
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdInput = nul_in;
+        si.hStdOutput = log_handle;
+        si.hStdError = log_handle;
+        PROCESS_INFORMATION pi{};
+        const BOOL ok = CreateProcessW(program.c_str(), command.data(), &sa, nullptr, TRUE,
+                                       CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr,
+                                       working.empty() ? nullptr : working.c_str(), &si, &pi);
+        CloseHandle(log_handle);
+        CloseHandle(nul_in);
+        if (!ok) {
+            out.error = "CreateProcess 失败，错误码 " + std::to_string(GetLastError());
+            return out;
+        }
+        HANDLE job = background_job();
+        if (job != nullptr) AssignProcessToJobObject(job, pi.hProcess);
+        if (ResumeThread(pi.hThread) == static_cast<DWORD>(-1)) {
+            out.error = "ResumeThread 失败";
+            TerminateProcess(pi.hProcess, 1);
+        } else {
+            out.started = true;
+            out.pid = static_cast<unsigned long>(pi.dwProcessId);
+        }
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+#else
+        out.error = "当前构建不支持后台进程";
+#endif
+        return out;
+    },
+    /* stop_process：终止并最多等 5 秒 */
+    [](unsigned long pid) {
+#ifdef _WIN32
+        HANDLE handle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
+        if (handle == nullptr) return false;
+        const bool ok = TerminateProcess(handle, 1) != 0;
+        WaitForSingleObject(handle, 5000);
+        CloseHandle(handle);
+        return ok;
+#else
+        (void)pid;
+        return false;
+#endif
+    },
+    /* process_alive */
+    [](unsigned long pid) {
+#ifdef _WIN32
+        HANDLE handle = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
+                                    static_cast<DWORD>(pid));
+        if (handle == nullptr) return false;
+        const DWORD waited = WaitForSingleObject(handle, 0);
+        CloseHandle(handle);
+        return waited == WAIT_TIMEOUT;
+#else
+        (void)pid;
+        return false;
+#endif
     },
     /* restart：GUI 外壳注册处理器；CLI/无壳宿主返回 false */
     []() { return host_restart(); },
