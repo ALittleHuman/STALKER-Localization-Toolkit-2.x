@@ -380,6 +380,19 @@ void place(QWidget* parent, QWidget* child) {
         return;
     }
     const int before = parent->layout() != nullptr ? parent->layout()->count() : -1;
+    // 行容器（ui.row）自带 QHBoxLayout：直接横排，不要再建 QVBoxLayout（Qt 会拒绝第二个 layout）。
+    if (auto* hbox = qobject_cast<QHBoxLayout*>(parent->layout())) {
+        hbox->addWidget(child);
+        trace_page_event(
+            "place_row",
+            QStringLiteral("parent=%1 before=%2 child=%3 after=%4")
+                .arg(reinterpret_cast<quintptr>(parent), 0, 16)
+                .arg(before)
+                .arg(reinterpret_cast<quintptr>(child), 0, 16)
+                .arg(hbox->count())
+                .toStdString());
+        return;
+    }
     auto* layout = qobject_cast<QVBoxLayout*>(parent->layout());
     if (layout == nullptr) {
         layout = new QVBoxLayout(parent);

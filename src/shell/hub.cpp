@@ -830,6 +830,8 @@ int Hub::sync_pages() {
                     PluginPage(const QString& page_id, const QString& title, QWidget* content)
                         : PageBase(page_id, title, nullptr) {
                         body_layout()->addWidget(content);
+                        // 插件页不套内置页的 430 固定最小高；正文高度由内容/窗口决定。
+                        if (viewport() != nullptr) viewport()->set_min_body_height(0);
                     }
                 };
                 widget = new PluginPage(id, reg->spec.title, widget);
