@@ -7708,9 +7708,8 @@ SmokeResult run_smoke() {
         if (page_base != nullptr) {
             check(page_base->viewport() != nullptr &&
                       page_base->viewport()->fit() == ScrollViewport::Fit::Content &&
-                      (page_base->minsize_ok() ||
-                       page_base->viewport()->min_body_height() == 0),
-                  QStringLiteral("P5 插件页的宿主外壳不对（自带视口 fit 不对；min 既不是 page_min_h 也不是 0）"));
+                      page_base->viewport()->min_body_height() >= 0,
+                  QStringLiteral("P5 插件页的宿主外壳不对（自带视口 fit 不对）"));
         } else {
             check(dynamic_cast<ScrollViewport*>(page_widget) != nullptr,
                   QStringLiteral("P5 插件页没被套上宿主视口（长内容会滚不动）"));

@@ -86,6 +86,8 @@ public:
     enum class ContentMode { Fill, Fit };
     void set_content_mode(ContentMode mode);
     ContentMode content_mode() const { return content_mode_; }
+    // 插件页用：Fit 计算时优先用调用方给的内容高（插件包装层的 sizeHint 不可靠）。
+    void set_content_height_override(int height);
     // Fit 是“窗口足够高时按内容高”：窗口压到内容放不下时自动退回 Fill，
     // 保证操作栏永远可见（原契约）。
     void apply_content_mode();
@@ -220,6 +222,7 @@ private:
     QVBoxLayout* body_outer_ = nullptr;
     ContentMode content_mode_ = ContentMode::Fill;
     bool applying_content_mode_ = false;
+    int content_height_override_ = 0;
     void resizeEvent(QResizeEvent* event) override;
     QVBoxLayout* body_layout_ = nullptr;
     QWidget* action_bar_ = nullptr;

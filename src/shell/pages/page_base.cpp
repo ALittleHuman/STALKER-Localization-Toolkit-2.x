@@ -186,6 +186,10 @@ void PageBase::set_content_mode(ContentMode mode) {
     apply_content_mode();
 }
 
+void PageBase::set_content_height_override(int height) {
+    content_height_override_ = height > 0 ? height : 0;
+}
+
 void PageBase::apply_content_mode() {
     if (applying_content_mode_ || body_outer_ == nullptr || outer_ == nullptr ||
         card_ == nullptr || viewport_ == nullptr) {
@@ -194,7 +198,8 @@ void PageBase::apply_content_mode() {
     applying_content_mode_ = true;
 
     bool fill = content_mode_ == ContentMode::Fill;
-    int content_h = card_->sizeHint().height();
+    int content_h = content_height_override_ > 0 ? content_height_override_
+                                                  : card_->sizeHint().height();
     if (!fill) {
         // Fit 只在“窗口足够高、内容放得下”时生效；否则退回 Fill，保证操作栏可见。
         const int chrome = (header_row_ != nullptr ? header_row_->sizeHint().height() : 0) +

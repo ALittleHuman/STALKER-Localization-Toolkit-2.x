@@ -828,11 +828,28 @@ int Hub::sync_pages() {
                 class PluginPage final : public PageBase {
                 public:
                     PluginPage(const QString& page_id, const QString& title, QWidget* content)
-                        : PageBase(page_id, title, nullptr) {
+                        : PageBase(page_id, title, nullptr), content_(content) {
                         body_layout()->addWidget(content);
-                        // 插件页不套内置页的 430 固定最小高；正文高度由内容/窗口决定。
+                        // 插件页不套内置页的 430 固定最小高；内容高在首次显示后按 sizeHint 定。
                         if (viewport() != nullptr) viewport()->set_min_body_height(0);
                     }
+
+                protected:
+                    void showEvent(QShowEvent* event) override {
+                        PageBase::showEvent(event);
+                        if (!fit_done_ && content_ != nullptr) {
+                            fit_done_ = true;
+                            const int hint = content_->sizeHint().height();
+                            if (hint > 0) {
+                                set_content_height_override(hint + xrkit::core::px(24));
+                                set_content_mode(ContentMode::Fit);
+                            }
+                        }
+                    }
+
+                private:
+                    QWidget* content_ = nullptr;
+                    bool fit_done_ = false;
                 };
                 widget = new PluginPage(id, reg->spec.title, widget);
             }
