@@ -395,6 +395,7 @@ struct LoadedState {
     std::string module_name;
     py::object module;
     py::object api;
+    std::vector<std::string> modules;
 };
 std::mutex& mutex() {
     static std::mutex* instance = new std::mutex();
@@ -407,6 +408,38 @@ std::vector<LoadedState>& states() {
 std::unordered_map<std::string, std::vector<py::object>>& callbacks() {
     static auto* instance = new std::unordered_map<std::string, std::vector<py::object>>();
     return *instance;
+}
+std::unordered_map<std::string, std::vector<std::string>>& pending_modules() {
+    static auto* instance = new std::unordered_map<std::string, std::vector<std::string>>();
+    return *instance;
+}
+void purge_modules(const std::vector<std::string>& names) {
+    if (names.empty() || !Py_IsInitialized()) return;
+    py::dict modules = py::module_::import("sys").attr("modules").cast<py::dict>();
+    std::vector<std::string> doomed;
+    for (auto item : modules) {
+        const std::string key = py::str(item.first).cast<std::string>();
+        for (const std::string& name : names) {
+            if (key == name ||
+                (key.size() > name.size() && key.compare(0, name.size(), name) == 0 &&
+                 key[name.size()] == '.')) {
+                doomed.push_back(key);
+                break;
+            }
+        }
+    }
+    for (const std::string& key : doomed) modules.attr("pop")(py::str(key), py::none());
+}
+void register_module(const std::string& owner, const std::string& name) {
+    if (name.empty()) return;
+    std::lock_guard<std::mutex> lock(mutex());
+    for (auto& state : states()) {
+        if (state.owner == owner) {
+            state.modules.push_back(name);
+            return;
+        }
+    }
+    pending_modules()[owner].push_back(name);
 }
 std::vector<py::object> take_callbacks(const std::string& owner) {
     std::lock_guard<std::mutex> lock(mutex());
@@ -443,6 +476,7 @@ void run_shutdown(LoadedState state) {
                       "[" + state.owner + "] on_unload 回调抛异常：" + e.what());
         }
     }
+    purge_modules(state.modules);
 }
 void unload_module(const std::string& module_name) {
     LoadedState state;
@@ -470,13 +504,21 @@ void unload_all() {
     for (auto& state : all) run_shutdown(std::move(state));
 }
 void register_state(const std::string& owner, const std::string& module_name, py::object module,
-                    py::object api) {
+                    py::object api, std::vector<std::string> modules) {
     unload_module(module_name);
     std::lock_guard<std::mutex> lock(mutex());
-    states().push_back(LoadedState{owner, module_name, std::move(module), std::move(api)});
+    auto pending = pending_modules().find(owner);
+    if (pending != pending_modules().end()) {
+        modules.insert(modules.end(), pending->second.begin(), pending->second.end());
+        pending_modules().erase(pending);
+    }
+    states().push_back(
+        LoadedState{owner, module_name, std::move(module), std::move(api), std::move(modules)});
 }
 void drop_owner(const std::string& owner) {
     (void)take_callbacks(owner);
+    std::lock_guard<std::mutex> lock(mutex());
+    pending_modules().erase(owner);
 }
 }  // namespace lifecycle
 
@@ -520,6 +562,7 @@ public:
                                                                     : static_cast<bool>(facade->cache_dir));
         }
         if (feature == "host.log_detail") return true;
+        if (feature == "api.register_module") return true;
         if (feature == "host.http_get" || feature == "host.http_post") return true;
         if (feature == "host.start_process" || feature == "host.stop_process" ||
             feature == "host.process_alive") {
@@ -534,6 +577,12 @@ public:
         if (callback.is_none() != 0 || PyCallable_Check(callback.ptr()) == 0) return false;
         std::lock_guard<std::mutex> lock(lifecycle::mutex());
         lifecycle::callbacks()[owner_].push_back(callback);
+        return true;
+    }
+    // ★ 运行期 exec/import 进去的模块（vendor 包）登记给宿主；卸载时按 owner 清。
+    bool register_module(const std::string& name) const {
+        if (name.empty()) return false;
+        lifecycle::register_module(owner_, name);
         return true;
     }
 
@@ -4020,6 +4069,7 @@ void ensure_api_module() {
             .def("log_detail", &PyPluginApi::log_detail, py::arg("message"))
             .def("supports", &PyPluginApi::supports, py::arg("feature"))
             .def("on_unload", &PyPluginApi::on_unload, py::arg("callback"))
+            .def("register_module", &PyPluginApi::register_module, py::arg("name"))
             .def("register_command", &PyPluginApi::register_command, py::arg("action_id"),
                  py::arg("label"), py::arg("handler"), py::arg("when") = py::none())
             .def("register_menu_item", &PyPluginApi::register_menu_item, py::arg("host"),
@@ -4438,6 +4488,7 @@ std::vector<RegistrationError> load_python_plugins_impl(
         std::vector<std::string> replaces;
         std::vector<std::string> service_requires;   // ★ P1-6：PLUGIN_INFO.requires（服务名）
         std::string module_name;                      // H4：入口对应的顶层模块名
+        std::vector<std::string> modules;             // 加载期从插件目录导入的模块（卸载时清）
         py::object module;
         std::string failure;
     };
@@ -4905,6 +4956,53 @@ def _xrkit_install(gate):
         }
     };
 
+    const auto collect_plugin_modules = [&](const std::string& module_name,
+                                            const std::string& plugin_path,
+                                            const std::unordered_set<std::string>& before,
+                                            const py::object& module) {
+        std::vector<std::string> out;
+        std::error_code ec;
+        std::string root_path = plugin_path;
+        bool dir_plugin = std::filesystem::is_directory(
+            xrkit::core::path_from_utf8(plugin_path), ec);
+        if (py::hasattr(module, "__path__") != 0) {
+            const py::list paths = py::reinterpret_borrow<py::list>(module.attr("__path__"));
+            if (py::len(paths) > 0) {
+                root_path = py::str(paths[0]).cast<std::string>();
+                dir_plugin = true;
+            }
+        }
+        const std::filesystem::path entry = xrkit::core::path_from_utf8(root_path);
+        const auto norm = [](std::string text) {
+            std::replace(text.begin(), text.end(), '\\', '/');
+            std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+            return text;
+        };
+        const std::string root = norm(xrkit::core::path_to_utf8(entry));
+        for (auto item : sys_modules) {
+            const std::string key = py::str(item.first).cast<std::string>();
+            if (before.count(key) != 0) continue;
+            if (key == module_name ||
+                (key.size() > module_name.size() &&
+                 key.compare(0, module_name.size(), module_name) == 0 &&
+                 key[module_name.size()] == '.')) {
+                out.push_back(key);
+                continue;
+            }
+            const py::object mod = py::reinterpret_borrow<py::object>(item.second);
+            if (py::hasattr(mod, "__file__") == 0) continue;
+            const std::string file = norm(py::str(mod.attr("__file__")).cast<std::string>());
+            if (dir_plugin ? (file.size() > root.size() && file.compare(0, root.size(), root) == 0 &&
+                              (file[root.size()] == '/' || file[root.size()] == '\\'))
+                           : (file == root)) {
+                out.push_back(key);
+            }
+        }
+        return out;
+    };
+
     std::vector<Manifest> manifests;
     manifests.reserve(files.size());
 
@@ -5131,7 +5229,10 @@ def _xrkit_install(gate):
         } catch (const std::exception& err) {
             failure = err.what();
         }
+        m.modules = collect_plugin_modules(m.module_name, m.path,
+                                           std::unordered_set<std::string>(), m.module);
         if (!failure.empty()) {
+            lifecycle::purge_modules(m.modules);
             lifecycle::drop_owner(m.owner);
             lifecycle::unload_module(m.module_name);
             purge_module(m.module_name);
@@ -5147,7 +5248,7 @@ def _xrkit_install(gate):
             continue;
         }
         if (modules_out != nullptr) modules_out->emplace_back(m.owner, m.module);
-        lifecycle::register_state(m.owner, m.module_name, m.module, plugin_api);
+        lifecycle::register_state(m.owner, m.module_name, m.module, plugin_api, m.modules);
         ++acc.loaded;
         acc.registrations += registry.residue_for(m.owner).registrations();
         ++loaded_python_plugins();

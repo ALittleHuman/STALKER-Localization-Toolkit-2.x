@@ -33,6 +33,7 @@ EXPECT_API = {
     "log": "写宿主日志（引擎日志 + 诊断缓冲；可选 level）",
     "log_detail": "写 Debug 明细日志（只落盘，不进界面）",
     "on_unload": "注册卸载回调（宿主在 reload/退出前调用）",
+    "register_module": "登记运行期 exec/import 的 vendor 模块，卸载时清理",
     "supports": "能力查询（只读；不存在的能力返回 false）",
     "register_command": "注册命令（可被挂载点引用）",
     "register_menu_item": "把命令挂到 (host, location) 槽位",
