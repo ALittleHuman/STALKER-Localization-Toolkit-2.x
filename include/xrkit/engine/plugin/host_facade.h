@@ -58,6 +58,10 @@ struct HostFacade {
         pref_set;
     // exe 所在目录（发行版放 ffmpeg/ffprobe 的地方，也是 `user.ltx` 的落点）
     std::function<std::string()> app_dir;
+    // 每个插件自己的持久数据目录（插件更新不删除；默认 %LOCALAPPDATA%/xrkit/plugins/<id>）
+    std::function<std::string(const std::string& owner)> data_dir;
+    // 每个插件自己的可清理缓存目录（data_dir 下的 cache/）
+    std::function<std::string(const std::string& owner)> cache_dir;
     // 系统字体目录（唯一一份：内置页与插件共用）
     std::function<std::vector<std::string>()> system_font_dirs;
     // ★★ P16-0：字段名与三处登记名（`kMethodNames` / `has_impl` / pybind 的 `.def("run_process")`

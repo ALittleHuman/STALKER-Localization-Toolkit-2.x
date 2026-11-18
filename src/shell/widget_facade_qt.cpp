@@ -1075,6 +1075,20 @@ const plug::UiFacade kQtFacade = {
                                   : (std::this_thread::get_id() == ui_thread_id());
         return same_qthread && same_std;
     },
+    /* post：任意线程 → UI 线程。qApp 作为上下文：事件排队，不阻塞调用方；
+       回调异常只记宿主日志，不穿越 Qt 事件循环。页面销毁后调用方需自行 alive() 检查。 */
+    [](std::function<void()> fn) {
+        if (!fn) return false;
+        QCoreApplication* app = QCoreApplication::instance();
+        if (app == nullptr) return false;
+        if (QThread::currentThread() == app->thread()) {
+            fn();
+            return true;
+        }
+        QMetaObject::invokeMethod(
+            app, [fn = std::move(fn)]() mutable { fn(); }, Qt::QueuedConnection);
+        return true;
+    },
     // ── ★★ P5：重型 L2 第二批（滚动视口 / 可分栏）──────────────────────────────
     /* viewport：宿主造「容器 + ScrollViewport + 画布」，**句柄＝画布**（插件往它里面 pack）。
        条子只由宿主造（口径 1.6）；`min_body_height` 由调用方给（口径 3.3）。 */

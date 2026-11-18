@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <mutex>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -393,12 +394,39 @@ public:
     const std::string& owner() const { return owner_; }
     const std::string& plugin_dir() const { return dir_; }
 
-    void log(const std::string& message) const {
+    void log(const std::string& message, const std::string& level = "info") const {
         const std::string line = "[" + owner_ + "] " + message;
-        core::log(core::Level::Info, line);
-        // ★★ P17-98（审计 `05 PLG-08`）：走**带锁的入口**（这个回调可能在工作线程上被调，
-        //   而缓冲的读侧在主线程 ⇒ 直连 vector 是数据竞争）。
-        append_plugin_log_line(line);
+        core::Level mapped = core::Level::Info;
+        const std::string lv = level.empty() ? "info" : level;
+        const bool detail = (lv == "debug" || lv == "detail");
+        if (lv == "warn" || lv == "warning") {
+            mapped = core::Level::Warn;
+        } else if (lv == "error" || lv == "err") {
+            mapped = core::Level::Error;
+        }
+        core::log(mapped, line);
+        // detail/debug 只落盘，不进界面日志缓冲；其余仍进 UI 日志。
+        if (!detail) append_plugin_log_line(line);
+    }
+    void log_detail(const std::string& message) const {
+        core::log(core::Level::Info, "[" + owner_ + "] " + message);
+    }
+
+    // ★ 发布前清障：能力查询（只读；API 1 老插件可调用，不存在的能力返回 false）。
+    bool supports(const std::string& feature) const {
+        if (feature == "api.v2") return true;
+        if (feature == "ui.supports") return true;
+        if (feature == "ui.post") {
+            const UiFacade* facade = ui_facade();
+            return facade != nullptr && static_cast<bool>(facade->post);
+        }
+        if (feature == "host.data_dir" || feature == "host.cache_dir") {
+            const HostFacade* facade = host_facade();
+            return facade != nullptr && (feature == "host.data_dir" ? static_cast<bool>(facade->data_dir)
+                                                                    : static_cast<bool>(facade->cache_dir));
+        }
+        if (feature == "host.log_detail") return true;
+        return false;
     }
 
     py::object register_command(const std::string& action_id, const std::string& label,
@@ -2255,6 +2283,15 @@ public:
         return py::list();
     }
 
+    std::string data_dir() const {
+        if (const HostFacade* facade = available("data_dir")) return facade->data_dir(owner_);
+        return std::string();
+    }
+    std::string cache_dir() const {
+        if (const HostFacade* facade = available("cache_dir")) return facade->cache_dir(owner_);
+        return std::string();
+    }
+
     // ── ★★ P12b：跑外部进程（宿主服务；语义唯一一份在引擎 `process/run.cpp`）────
     py::object run_process(py::object options) const {
         const HostFacade* facade = available("run_process");
@@ -2959,6 +2996,72 @@ public:
         }
         return false;
     }
+    // ★ 发布前清障：把任意线程的回调投到 UI 线程。UI 线程上直接执行（保持同步语义），
+    //   其它线程走宿主 `UiFacade::post`（qApp 上下文）；回调异常只记宿主日志，不穿越 Qt。
+    bool post(py::object fn, py::args args) const {
+        if (fn.is_none() != 0 || PyCallable_Check(fn.ptr()) == 0) {
+            core::log(core::Level::Warn, "[" + owner_ + "] ui.post 的 fn 不是可调用对象");
+            return false;
+        }
+        auto invoke = [&]() {
+            PyObject* result = PyObject_CallObject(fn.ptr(), args.ptr());
+            if (result == nullptr) {
+                PyObject* type = nullptr;
+                PyObject* value = nullptr;
+                PyObject* trace = nullptr;
+                PyErr_Fetch(&type, &value, &trace);
+                std::string detail;
+                if (value != nullptr) {
+                    PyObject* text = PyObject_Str(value);
+                    if (text != nullptr) {
+                        detail = py::str(text).cast<std::string>();
+                        Py_DECREF(text);
+                    }
+                }
+                Py_XDECREF(type);
+                Py_XDECREF(value);
+                Py_XDECREF(trace);
+                core::log(core::Level::Error,
+                          "[" + owner_ + "] ui.post 回调异常" +
+                              (detail.empty() ? std::string() : "：" + detail));
+                return;
+            }
+            Py_DECREF(result);
+        };
+        if (on_ui_thread()) {
+            invoke();
+            return true;
+        }
+        const UiFacade* facade = ui_facade();
+        if (facade == nullptr || !facade->post) return false;
+        struct PostCall {
+            PyObject* fn = nullptr;
+            PyObject* args = nullptr;
+            PostCall(PyObject* f, PyObject* a) : fn(f), args(a) {}
+            ~PostCall() {
+                if (!Py_IsInitialized()) return;
+                py::gil_scoped_acquire gil;
+                Py_XDECREF(fn);
+                Py_XDECREF(args);
+            }
+            void run() {
+                if (!Py_IsInitialized()) return;
+                py::gil_scoped_acquire gil;
+                PyObject* result = PyObject_CallObject(fn, args);
+                if (result == nullptr) {
+                    PyErr_Clear();
+                    core::log(core::Level::Error, "ui.post 回调在宿主 UI 线程抛异常");
+                    return;
+                }
+                Py_DECREF(result);
+            }
+        };
+        Py_INCREF(fn.ptr());
+        Py_INCREF(args.ptr());
+        auto call = std::make_shared<PostCall>(fn.ptr(), args.ptr());
+        return facade->post([call]() { call->run(); });
+    }
+
     bool on_ui_thread() const {
         if (const UiFacade* facade = available("on_ui_thread")) return facade->on_ui_thread();
         return false;
@@ -3390,6 +3493,8 @@ void ensure_api_module() {
             .def("pref_set", &PyHost::pref_set, py::arg("section"), py::arg("key"),
                  py::arg("value"))
             .def("app_dir", &PyHost::app_dir)
+            .def("data_dir", &PyHost::data_dir)
+            .def("cache_dir", &PyHost::cache_dir)
             .def("system_font_dirs", &PyHost::system_font_dirs)
             // ★★ P12b：跑外部进程（宿主服务）
             .def("run_process", &PyHost::run_process, py::arg("options"))
@@ -3642,6 +3747,7 @@ void ensure_api_module() {
             .def("task_on_message", &PyUi::task_on_message, py::arg("panel"),
                  py::arg("handler"))
             .def("on_ui_thread", &PyUi::on_ui_thread)
+            .def("post", &PyUi::post, py::arg("fn"))
             // ★ P5：重型 L2 第二批（滚动视口 / 可分栏）
             .def("viewport", &PyUi::viewport, py::arg("parent") = py::none(),
                  py::arg("min_body_height") = 0)
@@ -3737,7 +3843,9 @@ void ensure_api_module() {
             // ★ 2026-11-03（用户口径）：跨插件服务**宿主自带**；联网插件提供 net.* 服务
             .def_property_readonly("services",
                                    [](const PyPluginApi& api) { return PyServices(api.owner()); })
-            .def("log", &PyPluginApi::log, py::arg("message"))
+            .def("log", &PyPluginApi::log, py::arg("message"), py::arg("level") = "info")
+            .def("log_detail", &PyPluginApi::log_detail, py::arg("message"))
+            .def("supports", &PyPluginApi::supports, py::arg("feature"))
             .def("register_command", &PyPluginApi::register_command, py::arg("action_id"),
                  py::arg("label"), py::arg("handler"), py::arg("when") = py::none())
             .def("register_menu_item", &PyPluginApi::register_menu_item, py::arg("host"),

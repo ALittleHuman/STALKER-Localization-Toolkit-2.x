@@ -8,11 +8,15 @@
 #include "xrkit/engine/plugin/host_facade.h"
 
 #include "xrkit/core/theme.h"
+#include "xrkit/core/path.h"
 #include "xrkit/core/version.h"
 #include "xrkit/engine/font/system_dirs.h"
 
 #include <string>
 #include <vector>
+#include <filesystem>
+#include <cstdlib>
+#include <cctype>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -26,6 +30,32 @@ namespace {
 namespace core = xrkit::core;
 namespace efont = xrkit::engine::font;
 namespace eprocess = xrkit::engine::process;
+namespace fs = std::filesystem;
+
+std::string safe_owner(const std::string& owner) {
+    std::string out;
+    for (char c : owner) {
+        const unsigned char u = static_cast<unsigned char>(c);
+        out.push_back((std::isalnum(u) != 0 || c == '_' || c == '-' || c == '.') ? c : '_');
+    }
+    while (!out.empty() && out.front() == '.') out.erase(out.begin());
+    return out.empty() ? std::string("plugin") : out;
+}
+
+fs::path plugin_data_root(const std::string& owner) {
+    const char* local = std::getenv("LOCALAPPDATA");
+    fs::path base = (local != nullptr && *local != '\0')
+                        ? fs::u8path(local) / "xrkit" / "plugins"
+                        : fs::u8path(core::app_dir()) / "plugins" / ".data";
+    return base / safe_owner(owner);
+}
+
+std::string ensure_dir(const fs::path& path) {
+    std::error_code ec;
+    fs::create_directories(path, ec);
+    if (ec) return std::string();
+    return core::path_to_utf8(path);
+}
 
 const HostFacade kHostFacade = {
     /* pref_get：读 `user.ltx` 的 `[section] key`（缺失返回 fallback） */
@@ -38,6 +68,10 @@ const HostFacade kHostFacade = {
     },
     /* app_dir：exe 所在目录（发行版放 ffmpeg/ffprobe 的地方、`user.ltx` 的落点） */
     []() { return core::app_dir(); },
+    /* data_dir：per-plugin 持久目录（插件更新不删除） */
+    [](const std::string& owner) { return ensure_dir(plugin_data_root(owner)); },
+    /* cache_dir：per-plugin 可清理缓存 */
+    [](const std::string& owner) { return ensure_dir(plugin_data_root(owner) / "cache"); },
     /* system_font_dirs：唯一一份（内置页与插件共用；逐条照 1.x） */
     []() { return efont::system_font_dirs(); },
     /* run_process：**唯一一份**进程语义（CREATE_NO_WINDOW / 真停 / 如实退码 / stderr 尾巴） */

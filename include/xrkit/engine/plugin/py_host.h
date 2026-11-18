@@ -38,7 +38,7 @@
 namespace xrkit::plugin {
 
 // 宿主给插件的 API 表版本（`xrkit.api_version`）。表内向后兼容、表外无门（规格 §五）。
-constexpr int kPyHostApiVersion = 1;
+constexpr int kPyHostApiVersion = 2;
 
 struct PyHostStatus {
     bool enabled = false;       // 构建期是否带 Python 支持（编译开关 + 开发文件）

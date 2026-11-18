@@ -20,6 +20,8 @@ const char* const kMethodNames[] = {
     "pref_get",
     "pref_set",
     "app_dir",
+    "data_dir",
+    "cache_dir",
     "system_font_dirs",
     "run_process",
     "restart",
@@ -32,6 +34,8 @@ bool has_impl(const HostFacade& facade, const std::string& name) {
     if (name == "pref_get") return static_cast<bool>(facade.pref_get);
     if (name == "pref_set") return static_cast<bool>(facade.pref_set);
     if (name == "app_dir") return static_cast<bool>(facade.app_dir);
+    if (name == "data_dir") return static_cast<bool>(facade.data_dir);
+    if (name == "cache_dir") return static_cast<bool>(facade.cache_dir);
     if (name == "system_font_dirs") return static_cast<bool>(facade.system_font_dirs);
     if (name == "run_process") return static_cast<bool>(facade.run_process);
     if (name == "restart") return static_cast<bool>(facade.restart);
