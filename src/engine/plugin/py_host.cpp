@@ -386,6 +386,99 @@ private:
     std::string owner_;
 };
 
+namespace lifecycle {
+// 生命周期：on_unload 回调 + 已加载模块（owner/module/api）。故意不析构（进程级），
+// 统一在 H4 reload / shutdown_python 里清；清的时候必须已持有 GIL。
+struct LoadedState {
+    std::string owner;
+    std::string module_name;
+    py::object module;
+    py::object api;
+};
+std::mutex& mutex() {
+    static std::mutex* instance = new std::mutex();
+    return *instance;
+}
+std::vector<LoadedState>& states() {
+    static std::vector<LoadedState>* instance = new std::vector<LoadedState>();
+    return *instance;
+}
+std::unordered_map<std::string, std::vector<py::object>>& callbacks() {
+    static auto* instance = new std::unordered_map<std::string, std::vector<py::object>>();
+    return *instance;
+}
+std::vector<py::object> take_callbacks(const std::string& owner) {
+    std::lock_guard<std::mutex> lock(mutex());
+    std::vector<py::object> out;
+    auto it = callbacks().find(owner);
+    if (it != callbacks().end()) {
+        out = std::move(it->second);
+        callbacks().erase(it);
+    }
+    return out;
+}
+void run_shutdown(LoadedState state) {
+    // 约定：可选 shutdown(api)；先调它，再跑 on_unload 注册的回调。
+    if (state.module && py::hasattr(state.module, "shutdown") != 0) {
+        try {
+            py::object fn = state.module.attr("shutdown");
+            if (PyCallable_Check(fn.ptr()) != 0) fn(state.api);
+        } catch (const py::error_already_set& e) {
+            core::log(core::Level::Warn,
+                      "[" + state.owner + "] shutdown(api) 抛异常：" + e.what());
+        } catch (const std::exception& e) {
+            core::log(core::Level::Warn,
+                      "[" + state.owner + "] shutdown(api) 抛异常：" + e.what());
+        }
+    }
+    for (py::object& cb : take_callbacks(state.owner)) {
+        try {
+            cb();
+        } catch (const py::error_already_set& e) {
+            core::log(core::Level::Warn,
+                      "[" + state.owner + "] on_unload 回调抛异常：" + e.what());
+        } catch (const std::exception& e) {
+            core::log(core::Level::Warn,
+                      "[" + state.owner + "] on_unload 回调抛异常：" + e.what());
+        }
+    }
+}
+void unload_module(const std::string& module_name) {
+    LoadedState state;
+    bool found = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex());
+        auto& all = states();
+        for (auto it = all.begin(); it != all.end(); ++it) {
+            if (it->module_name == module_name) {
+                state = std::move(*it);
+                all.erase(it);
+                found = true;
+                break;
+            }
+        }
+    }
+    if (found) run_shutdown(std::move(state));
+}
+void unload_all() {
+    std::vector<LoadedState> all;
+    {
+        std::lock_guard<std::mutex> lock(mutex());
+        all.swap(states());
+    }
+    for (auto& state : all) run_shutdown(std::move(state));
+}
+void register_state(const std::string& owner, const std::string& module_name, py::object module,
+                    py::object api) {
+    unload_module(module_name);
+    std::lock_guard<std::mutex> lock(mutex());
+    states().push_back(LoadedState{owner, module_name, std::move(module), std::move(api)});
+}
+void drop_owner(const std::string& owner) {
+    (void)take_callbacks(owner);
+}
+}  // namespace lifecycle
+
 class PyPluginApi {
 public:
     PyPluginApi(Registry* registry, std::string owner, std::string plugin_dir)
@@ -427,6 +520,14 @@ public:
         }
         if (feature == "host.log_detail") return true;
         return false;
+    }
+
+    // ★ 发布前清障：插件可注册卸载回调（无参）；宿主在 shutdown/reload 前调用。
+    bool on_unload(py::object callback) const {
+        if (callback.is_none() != 0 || PyCallable_Check(callback.ptr()) == 0) return false;
+        std::lock_guard<std::mutex> lock(lifecycle::mutex());
+        lifecycle::callbacks()[owner_].push_back(callback);
+        return true;
     }
 
     py::object register_command(const std::string& action_id, const std::string& label,
@@ -3846,6 +3947,7 @@ void ensure_api_module() {
             .def("log", &PyPluginApi::log, py::arg("message"), py::arg("level") = "info")
             .def("log_detail", &PyPluginApi::log_detail, py::arg("message"))
             .def("supports", &PyPluginApi::supports, py::arg("feature"))
+            .def("on_unload", &PyPluginApi::on_unload, py::arg("callback"))
             .def("register_command", &PyPluginApi::register_command, py::arg("action_id"),
                  py::arg("label"), py::arg("handler"), py::arg("when") = py::none())
             .def("register_menu_item", &PyPluginApi::register_menu_item, py::arg("host"),
@@ -4046,6 +4148,7 @@ void shutdown_python() {
             main_thread_state() = nullptr;
             status.gil_released = false;
         }
+        lifecycle::unload_all();
         {
             auto& table = service_table();
             std::lock_guard<std::mutex> lock(table.mutex);
@@ -4755,7 +4858,8 @@ def _xrkit_install(gate):
                     throw std::runtime_error("插件模块名 '" + module_name +
                                              "' 与现有模块冲突（拒绝加载，避免遮蔽标准库/三方库）");
                 }
-                // 同进程重载：把上一批的模块（含子模块）清掉再 import 一次。
+                // 同进程重载：先跑上一批的 shutdown/on_unload，再清模块。
+                lifecycle::unload_module(module_name);
                 purge_module(module_name);
             }
             if (occupied_modules.count(module_name) != 0) {
@@ -4935,6 +5039,7 @@ def _xrkit_install(gate):
         if (!m.failure.empty() || state[i] != 1) continue;
         gate.attr("current") = py::str(m.module_name);
         std::string failure;
+        py::object plugin_api;
         try {
             if (py::hasattr(m.module, "register") == 0) {
                 throw std::runtime_error("插件没有导出 register(api)（第一版 API 表要求它）");
@@ -4944,8 +5049,8 @@ def _xrkit_install(gate):
                 throw std::runtime_error("register 不是可调用对象");
             }
             PyPluginApi* raw = new PyPluginApi(&registry, m.owner, dir);
-            py::object api = py::cast(raw, py::return_value_policy::take_ownership);
-            py::object result = register_fn(api);
+            plugin_api = py::cast(raw, py::return_value_policy::take_ownership);
+            py::object result = register_fn(plugin_api);
             if (py::isinstance<py::bool_>(result) != 0 && result.cast<bool>() == false) {
                 throw std::runtime_error("register(api) 明确返回 False（插件自报失败）");
             }
@@ -4955,6 +5060,8 @@ def _xrkit_install(gate):
             failure = err.what();
         }
         if (!failure.empty()) {
+            lifecycle::drop_owner(m.owner);
+            lifecycle::unload_module(m.module_name);
             purge_module(m.module_name);
             mark_entry_disabled(m.module_name, true);
             const std::size_t undone = registry.rollback_plugin(m.owner);
@@ -4968,6 +5075,7 @@ def _xrkit_install(gate):
             continue;
         }
         if (modules_out != nullptr) modules_out->emplace_back(m.owner, m.module);
+        lifecycle::register_state(m.owner, m.module_name, m.module, plugin_api);
         ++acc.loaded;
         acc.registrations += registry.residue_for(m.owner).registrations();
         ++loaded_python_plugins();

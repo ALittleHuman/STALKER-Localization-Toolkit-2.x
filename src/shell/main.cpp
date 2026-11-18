@@ -136,6 +136,10 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("STALKER Toolkit 2.x"));
     QApplication::setApplicationVersion(QStringLiteral("2.0.0"));
+    // ★ 发布前清障：解释器退出前调用插件的 shutdown/on_unload（Hub 先析构，再跑这里）。
+    struct PythonShutdownGuard {
+        ~PythonShutdownGuard() { xrkit::plugin::shutdown_python(); }
+    } python_shutdown_guard;
 
     if (args.contains(QStringLiteral("--host-update-check")) ||
         args.contains(QStringLiteral("--host-update-apply"))) {

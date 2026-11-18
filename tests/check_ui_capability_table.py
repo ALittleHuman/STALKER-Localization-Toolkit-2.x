@@ -32,6 +32,7 @@ EXPECT_API = {
     "host": "★宿主服务门面（偏好/exe 目录/系统字体目录；表外无门）",
     "log": "写宿主日志（引擎日志 + 诊断缓冲；可选 level）",
     "log_detail": "写 Debug 明细日志（只落盘，不进界面）",
+    "on_unload": "注册卸载回调（宿主在 reload/退出前调用）",
     "supports": "能力查询（只读；不存在的能力返回 false）",
     "register_command": "注册命令（可被挂载点引用）",
     "register_menu_item": "把命令挂到 (host, location) 槽位",
