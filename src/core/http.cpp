@@ -70,10 +70,10 @@ struct WinHttpHandles {
     }
 };
 
-HttpResult winhttp_request(const std::string& method, const std::string& url,
-                           const std::string& body, const std::string& content_type,
-                           int timeout_sec, std::size_t max_bytes, std::ofstream* file,
-                           const std::wstring& extra_headers) {
+HttpResult winhttp_request_once(const std::string& method, const std::string& url,
+                                const std::string& body, const std::string& content_type,
+                                int timeout_sec, std::size_t max_bytes, std::ofstream* file,
+                                const std::wstring& extra_headers, DWORD access_type) {
     HttpResult result;
     const std::wstring wurl = to_wide(url);
     URL_COMPONENTS uc{};
@@ -98,9 +98,9 @@ HttpResult winhttp_request(const std::string& method, const std::string& url,
     }
 
     WinHttpHandles handles;
-    handles.session = WinHttpOpen(L"xrkit/2.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    handles.session = WinHttpOpen(L"xrkit/2.0", access_type,
                                   WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (handles.session == nullptr) {
+    if (handles.session == nullptr && access_type != WINHTTP_ACCESS_TYPE_NO_PROXY) {
         handles.session = WinHttpOpen(L"xrkit/2.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     }
@@ -108,7 +108,7 @@ HttpResult winhttp_request(const std::string& method, const std::string& url,
         result.error = "WinHttpOpen 失败";
         return result;
     }
-    apply_ie_proxy(handles.session);
+    if (access_type == WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY) apply_ie_proxy(handles.session);
     const int timeout_ms = (timeout_sec > 0 ? timeout_sec : 15) * 1000;
     WinHttpSetTimeouts(handles.session, timeout_ms, timeout_ms, timeout_ms, timeout_ms);
     DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
@@ -185,13 +185,36 @@ HttpResult winhttp_request(const std::string& method, const std::string& url,
 
 }  // namespace
 
-HttpResult http_get(const std::string& url, int timeout_sec, std::size_t max_bytes) {
+HttpResult winhttp_request(const std::string& method, const std::string& url,
+                           const std::string& body, const std::string& content_type,
+                           int timeout_sec, std::size_t max_bytes, std::ofstream* file,
+                           const std::wstring& extra_headers) {
+    HttpResult result = winhttp_request_once(method, url, body, content_type, timeout_sec,
+                                             max_bytes, file, extra_headers,
+                                             WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY);
+    // 静态代理/加速器可能只对浏览器有效；代理路径失败时换直连再试一次。
+    // 文件下载不重试（第一次可能已写入部分字节，重试会重复追加）。
+    if (!result.ok && file == nullptr) {
+        HttpResult direct = winhttp_request_once(method, url, body, content_type, timeout_sec,
+                                                 max_bytes, file, extra_headers,
+                                                 WINHTTP_ACCESS_TYPE_NO_PROXY);
+        if (direct.ok || direct.status != 0) return direct;
+    }
+    return result;
+}
+
+HttpResult http_get(const std::string& url, int timeout_sec, std::size_t max_bytes,
+                    bool prefer_direct) {
     if (!network_enabled()) {
         HttpResult result;
         result.error = "联网功能已关闭";
         return result;
     }
 #ifdef _WIN32
+    if (prefer_direct) {
+        return winhttp_request_once("GET", url, std::string(), std::string(), timeout_sec,
+                                    max_bytes, nullptr, L"", WINHTTP_ACCESS_TYPE_NO_PROXY);
+    }
     return winhttp_request("GET", url, std::string(), std::string(), timeout_sec, max_bytes,
                            nullptr, L"");
 #else

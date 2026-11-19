@@ -298,37 +298,20 @@ bool HostUpdate::fetchAppInfo(AppUpdateInfo* info, QString* error) {
     *info = AppUpdateInfo{};
     const bool allow_test = isTestVersion(QString::fromStdString(xrkit::core::version_string()));
     const QStringList sources = manifest_sources();
-    std::vector<std::future<xrkit::core::HttpResult>> futures;
-    futures.reserve(static_cast<std::size_t>(sources.size()));
+    // 顺序探测：先直连 GitHub API，失败再走代理源。
+    // 不用并行 future：先成功的那一路返回后，析构仍会等慢的镜像（实测能多卡 80 秒）。
     for (const QString& source : sources) {
-        futures.push_back(std::async(std::launch::async, [source] {
-            return xrkit::core::http_get(source.toStdString(), 20, 1u << 20);
-        }));
-    }
-    std::vector<bool> consumed(futures.size(), false);
-    // 谁先成功用谁（并行探测 = 最快的源先返回），其余请求留到 future 析构时收尾。
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(22);
-    while (std::chrono::steady_clock::now() < deadline) {
-        bool all_done = true;
-        for (std::size_t index = 0; index < futures.size(); ++index) {
-            if (consumed[index]) continue;
-            if (futures[index].wait_for(std::chrono::milliseconds(0)) !=
-                std::future_status::ready) {
-                all_done = false;
-                continue;
-            }
-            consumed[index] = true;
-            const xrkit::core::HttpResult result = futures[index].get();
-            if (!result.ok) continue;
-            AppUpdateInfo parsed;
-            QString parse_error;
-            if (parse_update_payload(result.body, allow_test, &parsed, &parse_error)) {
-                *info = std::move(parsed);
-                return true;
-            }
+        const bool direct_first =
+            source.startsWith(QStringLiteral("https://api.github.com/"));
+        const xrkit::core::HttpResult result =
+            xrkit::core::http_get(source.toStdString(), 20, 1u << 20, direct_first);
+        if (!result.ok) continue;
+        AppUpdateInfo parsed;
+        QString parse_error;
+        if (parse_update_payload(result.body, allow_test, &parsed, &parse_error)) {
+            *info = std::move(parsed);
+            return true;
         }
-        if (all_done) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(40));
     }
     if (error != nullptr) *error = QStringLiteral("所有更新源都不可达或返回无效");
     return false;

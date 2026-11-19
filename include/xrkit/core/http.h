@@ -21,7 +21,7 @@ struct HttpResult {
 bool network_enabled();
 
 HttpResult http_get(const std::string& url, int timeout_sec = 15,
-                    std::size_t max_bytes = 1u << 20);
+                    std::size_t max_bytes = 1u << 20, bool prefer_direct = false);
 
 // 简化 POST：body 原样发送；content_type 空时按 application/json。
 HttpResult http_post(const std::string& url, const std::string& body,
