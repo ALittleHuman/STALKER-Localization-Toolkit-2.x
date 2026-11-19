@@ -74,7 +74,7 @@ xrkit_cli.exe --font-pack ^
 
 ## 四、更新
 
-- 只认 GitHub Release：**正式版只查正式 Release；测试版可升后续测试版，也可升更高正式版**；
+- 只认 GitHub Release：**正式版只查正式 Release；测试版（BETA/RC）必须以 Prerelease 发布**，可升后续测试版，也可升更高正式版；正式版不会被推测试版；
 - 检查走 GitHub API 直连 + `gh-proxy.com` 多源，下载用 `.part` + Range 断点续传；
 - 文件替换由独立 `xrkit_updater.exe` 完成，失败回滚；更新器本身不联网；
 - 「工具 → 联网功能」可整体关闭更新检查。
@@ -90,7 +90,7 @@ xrkit_cli.exe --font-pack ^
 ```bat
 scripts\build.ps1                        :: 默认 msvc-release（CLI/引擎，无 Qt）
 scripts\build.ps1 -Preset msvc-shell     :: GUI
-scripts\release.ps1 -Index <n> -Mark BETA :: 发版（改版本号 → 编译 → 打包 → 校验）
+scripts\release.ps1 -Index <n> -Mark BETA :: 本地构建+打包+校验（不发布；BETA 上传为 Prerelease）
 ```
 
 打包入口是 `xrkit_cli --build-package`（`scripts\package.ps1` 由它驱动、需要 `-ExeSha256` 等参数）；

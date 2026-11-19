@@ -9,6 +9,7 @@
 #   4) 校验：包内 app / cli / version.txt 的版本号一致
 #
 # 用法：pwsh -File scripts/release.ps1 -Index 127 [-Version 2.0.0] [-Mark BETA]
+# 注意：本脚本只构建/打包/校验，不发布；BETA/RC 上传 GitHub 时必须设为 Prerelease，正式版才用 Release。
 param(
     [Parameter(Mandatory = $true)][int]$Index,
     [string]$Version = '2.0.0',
