@@ -262,6 +262,7 @@ EXPECT_HOST = {
     "cache_dir": "每个插件自己的可清理缓存目录",
     "http_get": "HTTP GET（宿主 WinHTTP，同一份联网开关）",
     "http_post": "HTTP POST（简化版，body 原样发送）",
+    "http_download": "HTTP 下载到文件（大文件；失败不留半文件，与 http_get 同一份联网开关）",
     "pid": "宿主进程号（只读）",
     "quit": "请求宿主退出（插件管理器/页面可用）",
     "restart": "请求宿主重启（宿主支持时）",

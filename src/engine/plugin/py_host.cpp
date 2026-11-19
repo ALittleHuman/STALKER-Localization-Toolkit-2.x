@@ -568,7 +568,10 @@ public:
         }
         if (feature == "host.log_detail") return true;
         if (feature == "api.register_module") return true;
-        if (feature == "host.http_get" || feature == "host.http_post") return true;
+        if (feature == "host.http_get" || feature == "host.http_post" ||
+            feature == "host.http_download") {
+            return true;
+        }
         if (feature == "host.start_process" || feature == "host.stop_process" ||
             feature == "host.process_alive") {
             const HostFacade* facade = host_facade();
@@ -2485,6 +2488,16 @@ public:
                          std::size_t max_bytes) const {
         return http_result(core::http_post(url, body, content_type, timeout_sec, max_bytes));
     }
+    // ★ 2026-11-19：大文件下载。语义与 CLI `--http-download` **同一份**
+    //   `core::http_download`：失败不留半文件、受 `[network] enabled` 同一道闸门。
+    //   给"模型/运行库动辄 GB 级"的插件用；`http_get` 的 1MB 上限不适合这条路。
+    py::object http_download(const std::string& url, const std::string& path, int timeout_sec,
+                             std::size_t max_bytes) const {
+        const core::HttpResult result = core::http_download(url, path, timeout_sec, max_bytes);
+        py::dict out = http_result(result);
+        out["path"] = path;
+        return out;
+    }
 
     // ── ★★ P12b：跑外部进程（宿主服务；语义唯一一份在引擎 `process/run.cpp`）────
     py::object run_process(py::object options) const {
@@ -3719,6 +3732,8 @@ void ensure_api_module() {
             .def("http_post", &PyHost::http_post, py::arg("url"), py::arg("body"),
                  py::arg("content_type") = "application/json", py::arg("timeout_sec") = 20,
                  py::arg("max_bytes") = 1u << 20)
+            .def("http_download", &PyHost::http_download, py::arg("url"), py::arg("path"),
+                 py::arg("timeout_sec") = 300, py::arg("max_bytes") = std::size_t(8) << 30)
             .def("system_font_dirs", &PyHost::system_font_dirs)
             // ★★ P12b：跑外部进程（宿主服务）
             .def("run_process", &PyHost::run_process, py::arg("options"))
