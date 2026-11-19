@@ -156,6 +156,36 @@ HttpResult winhttp_request_once(const std::string& method, const std::string& ur
     result.status = static_cast<int>(status);
     result.ok = status >= 200 && status < 400;
 
+    // ★ 2026-11-19：记下"应该收多少字节"。200 看 Content-Length；
+    //   206（续传）看 Content-Range 的总长（`bytes a-b/total`）。
+    //   没有这个头 ⇒ expected_bytes=0，调用方不做完整性判断。
+    if (status == 206) {
+        wchar_t range[128] = {};
+        DWORD range_size = sizeof(range);
+        if (WinHttpQueryHeaders(handles.request, WINHTTP_QUERY_CONTENT_RANGE,
+                                WINHTTP_HEADER_NAME_BY_INDEX, range, &range_size,
+                                WINHTTP_NO_HEADER_INDEX)) {
+            const std::wstring text(range);
+            const std::size_t slash = text.rfind(L'/');
+            if (slash != std::wstring::npos) {
+                try {
+                    result.expected_bytes = static_cast<std::size_t>(std::stoull(text.substr(slash + 1)));
+                } catch (...) {
+                    result.expected_bytes = 0;
+                }
+            }
+        }
+    } else {
+        DWORD length = 0;
+        DWORD length_size = sizeof(length);
+        if (WinHttpQueryHeaders(handles.request,
+                                WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                                WINHTTP_HEADER_NAME_BY_INDEX, &length, &length_size,
+                                WINHTTP_NO_HEADER_INDEX)) {
+            result.expected_bytes = static_cast<std::size_t>(length);
+        }
+    }
+
     std::vector<char> buffer(64 * 1024);
     while (true) {
         DWORD read = 0;
@@ -252,10 +282,28 @@ HttpResult http_download(const std::string& url, const std::string& path, int ti
         result = winhttp_request("GET", url, std::string(), std::string(), timeout_sec, max_bytes,
                                  &file, extra);
         file.close();
+        // ★ 2026-11-19：服务端提前关门（FIN）时 WinHttpReadData 返回 0，循环按"读完了"退出，
+        //   `ok` 仍是 true ⇒ 半成品会被 rename 成成品。这里按响应声明的总长兜底：
+        //   收到的不够 ⇒ 判失败、**保留 .part**，下次 Range 续传。
+        if (result.ok && !result.truncated && result.expected_bytes > 0) {
+            const std::size_t have = (resume ? existing : 0) + result.bytes;
+            if (have < result.expected_bytes) {
+                result.ok = false;
+                result.error = "下载不完整（" + std::to_string(have) + "/" +
+                               std::to_string(result.expected_bytes) + "）";
+            }
+        }
     };
 
     HttpResult result;
     request(existing > 0, result);
+    // 半成品比远端还大（换源 / 远端重打包）⇒ Range 越界（416）：丢掉 .part 重来，
+    // 否则每次重试都 416，永远下不完。
+    if (existing > 0 && result.status == 416) {
+        std::filesystem::remove(part, ec);
+        existing = 0;
+        request(false, result);
+    }
     // 服务器忽略 Range 返回 200：不能把完整内容追加到半文件后面，重下一次。
     if (existing > 0 && result.status == 200) {
         std::filesystem::remove(part, ec);

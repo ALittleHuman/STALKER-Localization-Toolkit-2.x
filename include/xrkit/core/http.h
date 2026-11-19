@@ -16,6 +16,9 @@ struct HttpResult {
     std::string error;
     std::size_t bytes = 0;
     bool truncated = false;
+    // ★ 2026-11-19：本次响应"应该是多少字节"（200 取 Content-Length；206 取
+    //   Content-Range 的总长）。0 = 响应没给，无法判断完整性（不做校验）。
+    std::size_t expected_bytes = 0;
 };
 
 bool network_enabled();
