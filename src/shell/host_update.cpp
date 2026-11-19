@@ -3,6 +3,7 @@
 #include "xrkit/core/http.h"
 #include "xrkit/core/sha256.h"
 #include "xrkit/core/version.h"
+#include "xrkit/core/theme.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -72,6 +73,12 @@ constexpr const char* kProxyPrefix = "https://gh-proxy.com/";
 constexpr const char* kApiProxy =
     "https://gh-proxy.com/https://api.github.com/repos/ALittleHuman/"
     "STALKER-Localization-Toolkit-2.x/releases?per_page=100";
+// 安装包镜像：直连 release-assets.githubusercontent.com 在部分网络下会卡 30s+；
+// ghfast.top 实测可直连（1 MB 约 7s），放在 gh-proxy.com 前面。
+constexpr const char* kAssetMirrors[] = {
+    "https://ghfast.top/",
+    "https://gh-proxy.com/",
+};
 
 QStringList manifest_sources() {
     const QString override_url = qEnvironmentVariable("XRKIT_APP_UPDATE_URL");
@@ -88,11 +95,14 @@ QStringList manifest_sources() {
 QStringList package_mirrors(const QString& url) {
     QStringList out;
     if (url.isEmpty()) return out;
-    out << url;
+    // 先试镜像，最后才直连：没开加速器时 GitHub 资产域名经常 30s 才返回 302。
     if (url.startsWith(QStringLiteral("https://github.com/")) ||
         url.startsWith(QStringLiteral("https://raw.githubusercontent.com/"))) {
-        out << QString::fromLatin1(kProxyPrefix) + url;
+        for (const char* prefix : kAssetMirrors) {
+            out << QString::fromLatin1(prefix) + url;
+        }
     }
+    out << url;
     out.removeDuplicates();
     return out;
 }
@@ -203,6 +213,67 @@ QString find_file(const QString& root, const QString& name) {
         if (!found.isEmpty()) return found;
     }
     return {};
+}
+
+// ── 持久下载状态（跨进程断点续传）────────────────────────────────────────────
+// 目录固定，不能用 applyAppUpdate 那种时间戳目录：时间戳一变，.part 就找不到了。
+QString update_root() {
+    QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    if (base.isEmpty()) base = QDir::tempPath();
+    return QDir(base).filePath(QStringLiteral("xrkit/update"));
+}
+
+QString pending_metadata_path() {
+    return QDir(update_root()).filePath(QStringLiteral("pending.json"));
+}
+
+bool read_pending_metadata(AppUpdatePending* out) {
+    if (out == nullptr) return false;
+    QFile file(pending_metadata_path());
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    if (!doc.isObject()) return false;
+    const QJsonObject obj = doc.object();
+    out->info.version = obj.value(QStringLiteral("version")).toString();
+    out->info.package = obj.value(QStringLiteral("package")).toString();
+    out->info.sha256 = obj.value(QStringLiteral("sha256")).toString().toLower();
+    for (const QJsonValue& value : obj.value(QStringLiteral("packages")).toArray()) {
+        const QString url = value.toString();
+        if (!url.isEmpty()) out->info.packages << url;
+    }
+    if (out->info.packages.isEmpty() && !out->info.package.isEmpty()) {
+        out->info.packages << out->info.package;
+    }
+    out->zip = QDir(update_root()).filePath(QStringLiteral("update.zip"));
+    out->ready = obj.value(QStringLiteral("ready")).toBool() &&
+                 QFileInfo(out->zip).isFile() && QFileInfo(out->zip).size() > 0;
+    if (out->ready && !out->info.sha256.isEmpty()) {
+        std::string sha_error;
+        const std::string actual =
+            xrkit::core::sha256_file(out->zip.toStdString(), sha_error);
+        if (actual != out->info.sha256.toStdString()) out->ready = false;
+    }
+    return !out->info.version.isEmpty();
+}
+
+bool write_pending_metadata(const AppUpdateInfo& info, bool ready) {
+    QDir().mkpath(update_root());
+    QJsonObject obj;
+    obj.insert(QStringLiteral("version"), info.version);
+    obj.insert(QStringLiteral("package"), info.package);
+    obj.insert(QStringLiteral("sha256"), info.sha256);
+    QJsonArray urls;
+    for (const QString& url : info.packages) urls.append(url);
+    obj.insert(QStringLiteral("packages"), urls);
+    obj.insert(QStringLiteral("ready"), ready);
+    QFile file(pending_metadata_path());
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+    file.write(QJsonDocument(obj).toJson(QJsonDocument::Indented));
+    return true;
+}
+
+void clear_pending_metadata() {
+    QFile::remove(pending_metadata_path());
 }
 
 }  // namespace
@@ -320,6 +391,142 @@ bool HostUpdate::fetchAppInfo(AppUpdateInfo* info, QString* error) {
         if (error != nullptr) *error = QStringLiteral("检查更新异常：") + QString::fromUtf8(e.what());
         return false;
     }
+}
+
+bool HostUpdate::updateCheckingEnabled() {
+    return xrkit::core::load_user_value("update", "enabled", "1") != "0";
+}
+
+void HostUpdate::setUpdateCheckingEnabled(bool enabled) {
+    xrkit::core::save_user_value("update", "enabled", enabled ? "1" : "0");
+}
+
+bool HostUpdate::pendingAppUpdate(AppUpdatePending* out) {
+    return read_pending_metadata(out);
+}
+
+bool HostUpdate::downloadAppUpdate(const AppUpdateInfo& info,
+                                   const AppUpdateProgress& progress, QString* error) {
+    if (info.version.isEmpty() || (info.packages.isEmpty() && info.package.isEmpty())) {
+        if (error != nullptr) *error = QStringLiteral("更新信息缺版本或安装包地址");
+        return false;
+    }
+    AppUpdateInfo normalized = info;
+    if (normalized.packages.isEmpty()) normalized.packages << normalized.package;
+    if (normalized.package.isEmpty()) normalized.package = normalized.packages.first();
+
+    QDir().mkpath(update_root());
+    const QString zip = QDir(update_root()).filePath(QStringLiteral("update.zip"));
+    const QString part = zip + QStringLiteral(".part");
+    AppUpdatePending old;
+    const bool had_old = read_pending_metadata(&old);
+    if (had_old && old.info.version != normalized.version) {
+        QFile::remove(zip);
+        QFile::remove(part);
+    }
+    // 已下完（或上次已校验）的同版本包：直接复用，避免重复下载。
+    if (QFileInfo(zip).isFile() && QFileInfo(zip).size() > 0) {
+        if (normalized.sha256.isEmpty()) {
+            write_pending_metadata(normalized, true);
+            return true;
+        }
+        std::string sha_error;
+        const std::string actual = xrkit::core::sha256_file(zip.toStdString(), sha_error);
+        if (actual == normalized.sha256.toStdString()) {
+            write_pending_metadata(normalized, true);
+            return true;
+        }
+        QFile::remove(zip);
+        QFile::remove(part);
+    }
+    if (!write_pending_metadata(normalized, false)) {
+        if (error != nullptr) *error = QStringLiteral("无法写入更新状态文件");
+        return false;
+    }
+    QString last_error;
+    for (const QString& url : normalized.packages) {
+        const bool direct = url.startsWith(QStringLiteral("https://ghfast.top/")) ||
+                            url.startsWith(QStringLiteral("https://gh-proxy.com/"));
+        const xrkit::core::HttpResult result =
+            xrkit::core::http_download(url.toStdString(), zip.toStdString(), 300,
+                                       256u << 20, progress, direct);
+        if (!result.ok) {
+            last_error = QString::fromStdString(result.error);
+            if (last_error == QStringLiteral("下载已取消")) break;
+            continue;
+        }
+        if (!normalized.sha256.isEmpty()) {
+            std::string sha_error;
+            const std::string actual = xrkit::core::sha256_file(zip.toStdString(), sha_error);
+            if (actual != normalized.sha256.toStdString()) {
+                last_error = QStringLiteral("sha256 不匹配");
+                QFile::remove(zip);
+                QFile::remove(part);
+                continue;
+            }
+        }
+        write_pending_metadata(normalized, true);
+        return true;
+    }
+    if (error != nullptr) {
+        *error = last_error.isEmpty() ? QStringLiteral("下载失败") : last_error;
+    }
+    return false;
+}
+
+bool HostUpdate::installPendingAppUpdate(bool* started, QString* error) {
+    if (started != nullptr) *started = false;
+    AppUpdatePending pending;
+    if (!read_pending_metadata(&pending) || !pending.ready) {
+        if (error != nullptr) *error = QStringLiteral("没有已下载完成的更新包");
+        return false;
+    }
+    QDir root(update_root());
+    const QString stage = root.filePath(QStringLiteral("stage"));
+    QDir(stage).removeRecursively();
+    QDir().mkpath(stage);
+    QProcess tar;
+    tar.start(QStringLiteral("tar"),
+              {QStringLiteral("-xf"), pending.zip, QStringLiteral("-C"), stage});
+    if (!tar.waitForFinished(120000) || tar.exitCode() != 0) {
+        QProcess powershell;
+        powershell.start(QStringLiteral("powershell"),
+                         {QStringLiteral("-NoProfile"), QStringLiteral("-Command"),
+                          QStringLiteral("Expand-Archive -LiteralPath '%1' -DestinationPath '%2' -Force")
+                              .arg(pending.zip, stage)});
+        if (!powershell.waitForFinished(120000) || powershell.exitCode() != 0) {
+            if (error != nullptr) *error = QStringLiteral("更新包解压失败");
+            return false;
+        }
+    }
+    const QString app = find_file(stage, QStringLiteral("xrkit_app.exe"));
+    if (app.isEmpty()) {
+        if (error != nullptr) *error = QStringLiteral("更新包内找不到 xrkit_app.exe");
+        return false;
+    }
+    const QString install_dir = QCoreApplication::applicationDirPath();
+    const QString updater = QDir(install_dir).filePath(QStringLiteral("xrkit_updater.exe"));
+    if (!QFileInfo::exists(updater)) {
+        if (error != nullptr) *error = QStringLiteral("找不到 xrkit_updater.exe");
+        return false;
+    }
+    const QString txn = root.filePath(QStringLiteral("transaction"));
+    const QString exe = QDir(install_dir).filePath(QStringLiteral("xrkit_app.exe"));
+    const bool launched = QProcess::startDetached(
+        updater,
+        {QStringLiteral("--pid"), QString::number(QCoreApplication::applicationPid()),
+         QStringLiteral("--target"), install_dir, QStringLiteral("--staged"),
+         QFileInfo(app).absolutePath(), QStringLiteral("--transaction"), txn,
+         QStringLiteral("--exe"), exe},
+        QDir::tempPath());
+    if (!launched) {
+        if (error != nullptr) *error = QStringLiteral("xrkit_updater 启动失败");
+        return false;
+    }
+    // 更新器已接手：删 pending.json，避免新版本启动后又安装一次；stage/zip 留给更新器。
+    clear_pending_metadata();
+    if (started != nullptr) *started = true;
+    return true;
 }
 
 bool HostUpdate::applyAppUpdate(const AppUpdateInfo& info, QString* error) {

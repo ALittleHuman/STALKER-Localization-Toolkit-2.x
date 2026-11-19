@@ -5,6 +5,7 @@
 // 只提供 GET/下载；TLS/证书走系统默认，不关闭校验，不降级到 http。
 
 #include <cstddef>
+#include <functional>
 #include <string>
 
 namespace xrkit::core {
@@ -23,6 +24,9 @@ struct HttpResult {
 
 bool network_enabled();
 
+// 下载进度回调：bytes=本次已收，total=响应总长（0=未知）；返回 false 表示取消。
+using HttpProgress = std::function<bool(std::size_t bytes, std::size_t total)>;
+
 HttpResult http_get(const std::string& url, int timeout_sec = 15,
                     std::size_t max_bytes = 1u << 20, bool prefer_direct = false);
 
@@ -34,6 +38,8 @@ HttpResult http_post(const std::string& url, const std::string& body,
 // 下载到 path；失败时不留下半文件。
 HttpResult http_download(const std::string& url, const std::string& path,
                          int timeout_sec = 120,
-                         std::size_t max_bytes = 256u << 20);
+                         std::size_t max_bytes = 256u << 20,
+                         const HttpProgress& progress = {},
+                         bool prefer_direct = false);
 
 }  // namespace xrkit::core

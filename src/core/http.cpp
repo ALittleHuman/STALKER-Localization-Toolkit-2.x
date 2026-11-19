@@ -73,7 +73,8 @@ struct WinHttpHandles {
 HttpResult winhttp_request_once(const std::string& method, const std::string& url,
                                 const std::string& body, const std::string& content_type,
                                 int timeout_sec, std::size_t max_bytes, std::ofstream* file,
-                                const std::wstring& extra_headers, DWORD access_type) {
+                                const std::wstring& extra_headers, DWORD access_type,
+                                const HttpProgress& progress = {}) {
     HttpResult result;
     const std::wstring wurl = to_wide(url);
     URL_COMPONENTS uc{};
@@ -207,6 +208,11 @@ HttpResult winhttp_request_once(const std::string& method, const std::string& ur
         if (file != nullptr) file->write(buffer.data(), static_cast<std::streamsize>(read));
         else result.body.append(buffer.data(), read);
         result.bytes += read;
+        if (progress && !progress(result.bytes, result.expected_bytes)) {
+            result.ok = false;
+            result.error = "下载已取消";
+            break;
+        }
     }
     return result;
 }
@@ -218,16 +224,17 @@ HttpResult winhttp_request_once(const std::string& method, const std::string& ur
 HttpResult winhttp_request(const std::string& method, const std::string& url,
                            const std::string& body, const std::string& content_type,
                            int timeout_sec, std::size_t max_bytes, std::ofstream* file,
-                           const std::wstring& extra_headers) {
+                           const std::wstring& extra_headers,
+                           const HttpProgress& progress = {}) {
     HttpResult result = winhttp_request_once(method, url, body, content_type, timeout_sec,
                                              max_bytes, file, extra_headers,
-                                             WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY);
+                                             WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, progress);
     // 静态代理/加速器可能只对浏览器有效；代理路径失败时换直连再试一次。
     // 文件下载不重试（第一次可能已写入部分字节，重试会重复追加）。
     if (!result.ok && file == nullptr) {
         HttpResult direct = winhttp_request_once(method, url, body, content_type, timeout_sec,
                                                  max_bytes, file, extra_headers,
-                                                 WINHTTP_ACCESS_TYPE_NO_PROXY);
+                                                 WINHTTP_ACCESS_TYPE_NO_PROXY, progress);
         if (direct.ok || direct.status != 0) return direct;
     }
     return result;
@@ -255,7 +262,8 @@ HttpResult http_get(const std::string& url, int timeout_sec, std::size_t max_byt
 }
 
 HttpResult http_download(const std::string& url, const std::string& path, int timeout_sec,
-                         std::size_t max_bytes) {
+                         std::size_t max_bytes, const HttpProgress& progress,
+                         bool prefer_direct) {
     if (!network_enabled()) {
         HttpResult result;
         result.error = "联网功能已关闭";
@@ -279,8 +287,18 @@ HttpResult http_download(const std::string& url, const std::string& path, int ti
         }
         std::wstring extra;
         if (resume) extra = L"Range: bytes=" + std::to_wstring(existing) + L"-\r\n";
-        result = winhttp_request("GET", url, std::string(), std::string(), timeout_sec, max_bytes,
-                                 &file, extra);
+        const HttpProgress report = [&](std::size_t bytes, std::size_t total) {
+            if (!progress) return true;
+            return progress((resume ? existing : 0) + bytes, total);
+        };
+        if (prefer_direct) {
+            result = winhttp_request_once("GET", url, std::string(), std::string(), timeout_sec,
+                                          max_bytes, &file, extra,
+                                          WINHTTP_ACCESS_TYPE_NO_PROXY, report);
+        } else {
+            result = winhttp_request("GET", url, std::string(), std::string(), timeout_sec,
+                                     max_bytes, &file, extra, report);
+        }
         file.close();
         // ★ 2026-11-19：服务端提前关门（FIN）时 WinHttpReadData 返回 0，循环按"读完了"退出，
         //   `ok` 仍是 true ⇒ 半成品会被 rename 成成品。这里按响应声明的总长兜底：

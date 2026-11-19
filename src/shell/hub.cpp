@@ -61,6 +61,7 @@
 #include <QComboBox>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QCloseEvent>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -363,6 +364,19 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     status_label_ = new QLabel(QStringLiteral("就绪"));
     status_label_->setObjectName(QStringLiteral("status_label"));
 
+    // 「就绪」右边：版本差异 / 下载进度。只在这一行显示，不额外弹窗打扰。
+    update_version_label_ = new QLabel;
+    update_version_label_->setObjectName(QStringLiteral("update_version_label"));
+    update_version_label_->setVisible(false);
+    auto* status_row = new QWidget;
+    status_row->setObjectName(QStringLiteral("status_row"));
+    auto* status_row_layout = new QHBoxLayout(status_row);
+    status_row_layout->setContentsMargins(px(8), px(2), px(8), px(2));
+    status_row_layout->setSpacing(px(12));
+    status_row_layout->addWidget(status_label_);
+    status_row_layout->addWidget(update_version_label_);
+    status_row_layout->addStretch(1);
+
     // 整体：顶部标签条 → 内容区（吃剩余）→ 折叠日志按钮 → 日志面板 → 状态栏
     auto* central = new QWidget;
     central->setObjectName(QStringLiteral("hub_central"));
@@ -373,7 +387,7 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     central_layout->addWidget(stack_, 1);
     central_layout->addWidget(log_toggle_, 0);
     central_layout->addWidget(log_panel_, 0);
-    central_layout->addWidget(status_label_, 0);
+    central_layout->addWidget(status_row, 0);
     setCentralWidget(central);
 
     // ── 菜单：主题（暗/亮，原地更新）
@@ -404,9 +418,22 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     network_action_->setChecked(network_enabled());
     connect(network_action_, &QAction::toggled, this,
             [this](bool enabled) { set_network_enabled(enabled); });
+    // ★ 独立总开关：关闭后连“检测更新”功能一起停（不是只关弹窗）。
+    update_toggle_action_ = tools_menu->addAction(QStringLiteral("启用检测更新"));
+    update_toggle_action_->setObjectName(QStringLiteral("update_toggle_action"));
+    update_toggle_action_->setCheckable(true);
+    update_toggle_action_->setChecked(HostUpdate::updateCheckingEnabled());
+    connect(update_toggle_action_, &QAction::toggled, this, [this](bool enabled) {
+        HostUpdate::setUpdateCheckingEnabled(enabled);
+        sync_update_check_action(enabled);
+        if (!enabled && update_download_cancel_) *update_download_cancel_ = true;
+        log_line(enabled ? QStringLiteral("检测更新功能已开启")
+                         : QStringLiteral("检测更新功能已关闭（不会自动检查、下载或安装更新）"));
+    });
     QAction* repo_page = help_menu->addAction(QStringLiteral("打开仓库页"));
-    QAction* host_check_update = help_menu->addAction(QStringLiteral("检测更新"));
-    connect(host_check_update, &QAction::triggered, this, [this] { check_updates(false); });
+    update_check_action_ = help_menu->addAction(QStringLiteral("检测更新"));
+    connect(update_check_action_, &QAction::triggered, this, [this] { check_updates(false); });
+    sync_update_check_action(HostUpdate::updateCheckingEnabled());
     connect(repo_page, &QAction::triggered, this, [this] {
         const QString url = QString::fromUtf8(xrkit::shell::kRepoPageUrl);
         log_line(QStringLiteral("打开仓库：") + url);
@@ -951,6 +978,14 @@ bool Hub::log_file_active() const { return xrkit::core::log_file_active(); }
 //   现在 `LogBox::flush()` 会把界面行镜像进落盘文件（C-13），落盘文件自己就能复盘一次运行，
 //   导出就是重复实现。删掉之后：**没有第二个日志来源**，也就不会出现两份不一致的日志。
 void Hub::check_updates(bool silent) {
+    if (!HostUpdate::updateCheckingEnabled()) {
+        if (!silent) {
+            QMessageBox::information(this, QStringLiteral("检测更新"),
+                                     QStringLiteral("检测更新功能已关闭。\n"
+                                                    "可在「工具 → 启用检测更新」中重新开启。"));
+        }
+        return;
+    }
     QString error;
     if (!HostUpdate::networkAllowed(&error)) {
         if (!silent) {
@@ -959,7 +994,7 @@ void Hub::check_updates(bool silent) {
         }
         return;
     }
-    if (update_check_inflight_) return;
+    if (update_check_inflight_ || update_download_inflight_) return;
     update_check_inflight_ = true;
     if (!silent) {
         if (status_label_ != nullptr) status_label_->setText(QStringLiteral("正在检查更新…"));
@@ -987,8 +1022,8 @@ void Hub::check_updates(bool silent) {
 void Hub::finish_update_check(const AppUpdateInfo& info, const QString& error, bool ok,
                               bool silent) {
     if (!ok) {
+        if (status_label_ != nullptr) status_label_->setText(QStringLiteral("检查更新失败"));
         if (!silent) {
-            if (status_label_ != nullptr) status_label_->setText(QStringLiteral("检查更新失败"));
             QMessageBox::warning(this, QStringLiteral("检测更新"),
                                  QStringLiteral("检查失败：%1").arg(error));
         }
@@ -997,35 +1032,201 @@ void Hub::finish_update_check(const AppUpdateInfo& info, const QString& error, b
     const QString current = QString::fromStdString(xrkit::core::version_string());
     const bool newer = HostUpdate::versionIsNewer(info.version, current);
     if (!HostUpdate::upgradeAllowed(info.version, current)) {
+        if (update_version_label_ != nullptr) {
+            update_version_label_->setText(
+                QStringLiteral("当前正式版不接受测试版 %1").arg(info.version));
+            update_version_label_->setVisible(true);
+        }
         if (!silent) {
-            const bool candidate_newer = HostUpdate::versionIsNewer(info.version, current);
             QMessageBox::information(
                 this, QStringLiteral("检测更新"),
-                candidate_newer
-                    ? QStringLiteral("最近发布的是测试版 %1；当前是正式版，不会自动升级到测试版。")
-                          .arg(info.version)
-                    : QStringLiteral("最近的测试版 %1 不高于当前正式版 %2，无需更新。")
-                          .arg(info.version, current));
+                QStringLiteral("最近发布的是测试版 %1；当前是正式版，不会自动升级到测试版。")
+                    .arg(info.version));
         }
         return;
     }
     if (!newer) {
+        if (update_version_label_ != nullptr) {
+            update_version_label_->setText(QStringLiteral("已是最新：%1").arg(current));
+            update_version_label_->setVisible(true);
+        }
         if (!silent) {
             QMessageBox::information(this, QStringLiteral("检测更新"),
                                      QStringLiteral("当前已是最新：%1").arg(current));
         }
         return;
     }
+    // 版本差异固定显示在「就绪」右边；下载过程中会被进度文本覆盖。
+    if (update_version_label_ != nullptr) {
+        update_version_label_->setText(
+            QStringLiteral("可更新：%1（当前 %2）").arg(info.version, current));
+        update_version_label_->setVisible(true);
+    }
     if (QMessageBox::question(this, QStringLiteral("检测更新"),
-                              QStringLiteral("发现新版本：%1\n当前版本：%2\n\n现在下载并安装？")
+                              QStringLiteral("发现新版本：%1\n当前版本：%2\n\n现在下载更新？")
                                   .arg(info.version, current)) != QMessageBox::Yes) {
         return;
     }
-    QString apply_error = error;
-    if (!HostUpdate::applyAppUpdate(info, &apply_error)) {
-        QMessageBox::warning(this, QStringLiteral("检测更新"),
-                             QStringLiteral("更新失败：%1").arg(apply_error));
+    begin_update_download(info);
+}
+
+void Hub::sync_update_check_action(bool enabled) {
+    if (update_check_action_ != nullptr) update_check_action_->setEnabled(enabled);
+    if (update_toggle_action_ != nullptr && update_toggle_action_->isChecked() != enabled) {
+        const QSignalBlocker blocker(update_toggle_action_);
+        update_toggle_action_->setChecked(enabled);
     }
+    if (!enabled && update_version_label_ != nullptr) {
+        update_version_label_->clear();
+        update_version_label_->setVisible(false);
+    }
+}
+
+void Hub::start_update_recovery() {
+    if (!HostUpdate::updateCheckingEnabled()) {
+        sync_update_check_action(false);
+        return;
+    }
+    AppUpdatePending pending;
+    if (HostUpdate::pendingAppUpdate(&pending)) {
+        if (pending.ready) {
+            log_line(QStringLiteral("发现上次已下载的更新：%1，准备安装").arg(pending.info.version));
+            if (update_version_label_ != nullptr) {
+                update_version_label_->setText(
+                    QStringLiteral("更新已就绪：%1（等待重启）").arg(pending.info.version));
+                update_version_label_->setVisible(true);
+            }
+            install_pending_update(false);
+            return;
+        }
+        log_line(QStringLiteral("继续上次未完成的更新下载：%1").arg(pending.info.version));
+        begin_update_download(pending.info);
+        return;
+    }
+    check_updates(true);
+}
+
+void Hub::begin_update_download(const AppUpdateInfo& info) {
+    if (!HostUpdate::updateCheckingEnabled() || update_download_inflight_) return;
+    update_download_inflight_ = true;
+    update_download_cancel_ = std::make_shared<std::atomic_bool>(false);
+    const auto cancel = update_download_cancel_;
+    if (status_label_ != nullptr) status_label_->setText(QStringLiteral("正在下载更新…"));
+    if (update_version_label_ != nullptr) {
+        update_version_label_->setText(QStringLiteral("可更新：%1（当前 %2）")
+                                           .arg(info.version,
+                                                QString::fromStdString(xrkit::core::version_string())));
+        update_version_label_->setVisible(true);
+    }
+    log_line(QStringLiteral("开始下载更新：%1").arg(info.version));
+    QPointer<Hub> self(this);
+    std::thread([self, info, cancel] {
+        const auto progress = [self, cancel](std::size_t bytes, std::size_t total) {
+            if (*cancel) return false;
+            if (!self.isNull()) {
+                QMetaObject::invokeMethod(
+                    self.data(),
+                    [self, bytes, total] {
+                        if (!self.isNull()) self->show_update_progress(bytes, total);
+                    },
+                    Qt::QueuedConnection);
+            }
+            return !*cancel;
+        };
+        QString error;
+        const bool ok = HostUpdate::downloadAppUpdate(info, progress, &error);
+        if (self.isNull()) return;
+        QMetaObject::invokeMethod(
+            self.data(),
+            [self, ok, error = std::move(error)]() mutable {
+                if (!self.isNull()) self->finish_update_download(ok, error);
+            },
+            Qt::QueuedConnection);
+    }).detach();
+}
+
+void Hub::show_update_progress(std::size_t bytes, std::size_t total) {
+    if (update_version_label_ == nullptr) return;
+    const auto mib = [](std::size_t value) {
+        return QString::number(static_cast<double>(value) / (1024.0 * 1024.0), 'f', 1);
+    };
+    if (total > 0) {
+        const int percent = static_cast<int>((bytes * 100) / total);
+        update_version_label_->setText(QStringLiteral("下载更新 %1%（%2 / %3 MB）")
+                                           .arg(percent)
+                                           .arg(mib(bytes), mib(total)));
+    } else {
+        update_version_label_->setText(QStringLiteral("下载更新：%1 MB").arg(mib(bytes)));
+    }
+    update_version_label_->setVisible(true);
+}
+
+void Hub::finish_update_download(bool ok, const QString& error) {
+    update_download_inflight_ = false;
+    if (update_closing_) return;
+    if (!ok) {
+        if (status_label_ != nullptr) status_label_->setText(QStringLiteral("更新下载失败"));
+        if (update_version_label_ != nullptr) {
+            update_version_label_->setText(QStringLiteral("更新下载失败"));
+            update_version_label_->setVisible(true);
+        }
+        QMessageBox::warning(this, QStringLiteral("更新下载"),
+                             QStringLiteral("下载失败：%1").arg(error));
+        return;
+    }
+    if (status_label_ != nullptr) status_label_->setText(QStringLiteral("更新已下载"));
+    if (update_version_label_ != nullptr) {
+        update_version_label_->setText(QStringLiteral("更新已下载（等待重启）"));
+        update_version_label_->setVisible(true);
+    }
+    log_line(QStringLiteral("更新包已下载完成"));
+    if (QMessageBox::question(this, QStringLiteral("更新已下载"),
+                              QStringLiteral("更新包已下载完成。\n现在重启并安装更新？\n"
+                                             "选择「否」则下次启动时自动安装。"),
+                              QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes) {
+        install_pending_update(false);
+    } else {
+        log_line(QStringLiteral("已选择稍后安装：下次启动时自动安装更新"));
+    }
+}
+
+bool Hub::install_pending_update(bool prompt_restart) {
+    if (!HostUpdate::updateCheckingEnabled()) return false;
+    if (prompt_restart) {
+        if (QMessageBox::question(this, QStringLiteral("安装更新"),
+                                  QStringLiteral("现在重启并安装更新？"),
+                                  QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes) {
+            return false;
+        }
+    }
+    bool started = false;
+    QString error;
+    if (!HostUpdate::installPendingAppUpdate(&started, &error)) {
+        QMessageBox::warning(this, QStringLiteral("安装更新"),
+                             QStringLiteral("安装更新失败：%1").arg(error));
+        return false;
+    }
+    if (!started) return false;
+    if (status_label_ != nullptr) status_label_->setText(QStringLiteral("正在重启并安装更新…"));
+    log_line(QStringLiteral("已启动更新器，正在退出当前进程"));
+    QCoreApplication::quit();
+    return true;
+}
+
+void Hub::closeEvent(QCloseEvent* event) {
+    if (update_download_inflight_) {
+        const auto answer = QMessageBox::question(
+            this, QStringLiteral("更新正在下载"),
+            QStringLiteral("更新包还在下载。\n关闭后会保留已下载的部分，下次启动时断点续传。\n确定关闭？"),
+            QMessageBox::Yes | QMessageBox::No);
+        if (answer != QMessageBox::Yes) {
+            event->ignore();
+            return;
+        }
+        update_closing_ = true;
+        if (update_download_cancel_) *update_download_cancel_ = true;
+    }
+    QMainWindow::closeEvent(event);
 }
 
 bool Hub::network_enabled() const {

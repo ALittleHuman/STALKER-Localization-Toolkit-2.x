@@ -2471,6 +2471,17 @@ public:
         return std::string();
     }
 
+    bool host_on_ui_thread() const {
+        const UiFacade* facade = ui_facade();
+        return facade != nullptr && facade->on_ui_thread && facade->on_ui_thread();
+    }
+    py::object http_blocked_on_ui() const {
+        core::log(core::Level::Warn,
+                  "[" + owner_ + "] 插件在 UI 线程调用 host HTTP；已拒绝，请放到 task_run 的 worker");
+        core::HttpResult blocked;
+        blocked.error = "HTTP 调用必须在 worker 线程（不能阻塞 UI）";
+        return http_result(blocked);
+    }
     py::object http_result(const core::HttpResult& result) const {
         py::dict out;
         out["ok"] = result.ok;
@@ -2482,11 +2493,13 @@ public:
         return out;
     }
     py::object http_get(const std::string& url, int timeout_sec, std::size_t max_bytes) const {
+        if (host_on_ui_thread()) return http_blocked_on_ui();
         return http_result(core::http_get(url, timeout_sec, max_bytes));
     }
     py::object http_post(const std::string& url, const std::string& body,
                          const std::string& content_type, int timeout_sec,
                          std::size_t max_bytes) const {
+        if (host_on_ui_thread()) return http_blocked_on_ui();
         return http_result(core::http_post(url, body, content_type, timeout_sec, max_bytes));
     }
     // ★ 2026-11-19：大文件下载。
@@ -2496,6 +2509,15 @@ public:
     //   校验（sha256）**不在这里做**：期望值只有调用方知道，插件自己算。
     py::object http_download(py::object url, const std::string& path, int timeout_sec,
                              std::size_t max_bytes) const {
+        if (host_on_ui_thread()) {
+            py::dict blocked;
+            blocked["ok"] = false;
+            blocked["error"] = "HTTP 调用必须在 worker 线程（不能阻塞 UI）";
+            blocked["path"] = path;
+            core::log(core::Level::Warn,
+                      "[" + owner_ + "] 插件在 UI 线程调用 host.http_download；已拒绝");
+            return blocked;
+        }
         std::vector<std::string> urls;
         if (py::isinstance<py::str>(url)) {
             urls.push_back(url.cast<std::string>());

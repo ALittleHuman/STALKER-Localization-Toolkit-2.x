@@ -226,9 +226,9 @@ int main(int argc, char** argv) {
         hub.setMinimumSize(xrkit::shell::app_min_window_size());
     }
     hub.show();
-    // 启动时一次自动检查（不轮询）；无更新/失败静默，联网关闭时直接跳过。
+    // 启动时恢复未完成下载/应用已下载更新，再自动检查（不轮询）；失败静默，联网/检测关闭时跳过。
     if (shot_path.isEmpty() && !args.contains(QStringLiteral("--no-auto-update"))) {
-        QTimer::singleShot(2000, &hub, [&hub] { hub.check_updates(true); });
+        QTimer::singleShot(2000, &hub, [&hub] { hub.start_update_recovery(); });
     }
     if (!shot_path.isEmpty()) {
         // 抓图前把布局彻底催到位（离屏下 `LayoutRequest` 不会自己派发）

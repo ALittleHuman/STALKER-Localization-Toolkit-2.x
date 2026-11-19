@@ -12,6 +12,10 @@
 #include <QHash>
 #include <QString>
 
+#include <atomic>
+#include <cstddef>
+#include <memory>
+
 #include "page_host.h"
 #include "xrkit/core/theme.h"
 #include "xrkit/engine/plugin/py_host.h"
@@ -24,6 +28,7 @@ class QPushButton;
 class QPlainTextEdit;
 class QStackedWidget;
 class QLabel;
+class QCloseEvent;
 class QMenu;
 class QAction;
 
@@ -101,6 +106,8 @@ public:
     void set_network_enabled(bool enabled);
     // silent=true：启动时的一次自动检查；无更新/失败不弹窗。
     void check_updates(bool silent = false);
+    // 启动时恢复未完成的下载 / 应用已下载更新；之后才触发自动检查。
+    void start_update_recovery();
     // ★ 2026-11-09：启动时因缺前置被自动禁用的插件数（插件管理器据此决定是否弹窗）。
     int disabled_plugin_count() const { return static_cast<int>(disabled_plugins_.size()); }
     // 探针：加载插件时是否把外壳的 `api.ui`（Qt 16 方法）装上了
@@ -149,6 +156,7 @@ public:
     QPushButton* log_toggle() const { return log_toggle_; }
     QWidget* log_panel() const { return log_panel_; }
     QLabel* status_label() const { return status_label_; }
+    QLabel* update_version_label() const { return update_version_label_; }
 
     // 记一行日志（1.x 的日志栏：主窗口那根滚动条**不**管它；攒批见 LogBox）
     // ★★ P17-94（审计 `03 F-11`）：这里原来是 `Q_INVOKABLE` —— **那是空标**：本类
@@ -174,7 +182,16 @@ private:
     // 给页交付宿主机制（**唯一**一处：`PageBase::attach_services`）
     void attach_page_services(PageBase* page);
     void finish_update_check(const AppUpdateInfo& info, const QString& error, bool ok, bool silent);
+    void begin_update_download(const AppUpdateInfo& info);
+    void finish_update_download(bool ok, const QString& error);
+    void show_update_progress(std::size_t bytes, std::size_t total);
+    bool install_pending_update(bool prompt_restart);
+    void sync_update_check_action(bool enabled);
 
+protected:
+    void closeEvent(QCloseEvent* event) override;
+
+private:
     QTabBar* page_tabs_ = nullptr;
     QStackedWidget* stack_ = nullptr;
     QPlainTextEdit* log_view_ = nullptr;
@@ -192,6 +209,12 @@ private:
     QString plugin_notice_;
     bool plugin_ui_installed_ = false;
     bool update_check_inflight_ = false;
+    bool update_download_inflight_ = false;
+    bool update_closing_ = false;
+    std::shared_ptr<std::atomic_bool> update_download_cancel_;
+    QLabel* update_version_label_ = nullptr;
+    QAction* update_check_action_ = nullptr;
+    QAction* update_toggle_action_ = nullptr;
     // ★ 2026-11-09（用户口径）：启动时因缺前置被自动禁用的插件；启动完成后弹一次「插件管理器」，
     //   把**所有**这类插件与缺失项放在同一个框里逐条说明（不出现滚动条）。
     std::vector<xrkit::plugin::PluginDisabledInfo> disabled_plugins_;
