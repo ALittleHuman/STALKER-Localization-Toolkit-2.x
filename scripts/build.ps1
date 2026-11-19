@@ -1,4 +1,4 @@
-﻿#requires -Version 5.1
+#requires -Version 5.1
 <#
   2.x 构建入口。
 
@@ -67,13 +67,25 @@ $incDefine = (& $pyExe (Join-Path $root 'tools\probe_showincludes_prefix.py') `
 
 Push-Location $root
 try {
-    Write-Host "== configure ($Preset) =="
-    & cmake --preset $Preset $incDefine
-    if ($LASTEXITCODE -ne 0) { throw "configure 失败（退出码 $LASTEXITCODE）" }
+    # Native tools write warnings to stderr. With $ErrorActionPreference = 'Stop',
+    # PowerShell turns that stderr into a terminating NativeCommandError and aborts
+    # (measured: cmake configure exits 1 while cmake itself succeeded). Judge by exit code.
+    $nativePref = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
 
-    Write-Host "== build ($Preset) =="
-    & cmake --build --preset $Preset
-    if ($LASTEXITCODE -ne 0) { throw "build 失败（退出码 $LASTEXITCODE）" }
+        Write-Host "== configure ($Preset) =="
+        & cmake --preset $Preset $incDefine
+        $configureCode = $LASTEXITCODE
+        if ($configureCode -ne 0) { throw "configure failed (exit $configureCode)" }
+
+        Write-Host "== build ($Preset) =="
+        & cmake --build --preset $Preset
+        $buildCode = $LASTEXITCODE
+        if ($buildCode -ne 0) { throw "build failed (exit $buildCode)" }
+    } finally {
+        $ErrorActionPreference = $nativePref
+    }
 } finally {
     Pop-Location
 }
