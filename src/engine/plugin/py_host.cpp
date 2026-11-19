@@ -22,6 +22,7 @@
 #include "xrkit/core/theme.h"
 
 #include <algorithm>
+#include <chrono>
 #include <functional>
 #include <cctype>
 #include <cstdlib>
@@ -2488,13 +2489,76 @@ public:
                          std::size_t max_bytes) const {
         return http_result(core::http_post(url, body, content_type, timeout_sec, max_bytes));
     }
-    // ★ 2026-11-19：大文件下载。语义与 CLI `--http-download` **同一份**
-    //   `core::http_download`：失败不留半文件、受 `[network] enabled` 同一道闸门。
-    //   给"模型/运行库动辄 GB 级"的插件用；`http_get` 的 1MB 上限不适合这条路。
-    py::object http_download(const std::string& url, const std::string& path, int timeout_sec,
+    // ★ 2026-11-19：大文件下载。
+    //   · 单个 url ⇒ 直接下，**不做任何探测**；
+    //   · 列表且只有 1 个 ⇒ 同上（不探测）；
+    //   · 列表 >1 ⇒ 各取 1 字节测首包延迟，快的先下，失败按序回退。
+    //   校验（sha256）**不在这里做**：期望值只有调用方知道，插件自己算。
+    py::object http_download(py::object url, const std::string& path, int timeout_sec,
                              std::size_t max_bytes) const {
-        const core::HttpResult result = core::http_download(url, path, timeout_sec, max_bytes);
-        py::dict out = http_result(result);
+        std::vector<std::string> urls;
+        if (py::isinstance<py::str>(url)) {
+            urls.push_back(url.cast<std::string>());
+        } else if (py::isinstance<py::sequence>(url)) {
+            for (py::handle item : py::reinterpret_borrow<py::sequence>(url)) {
+                urls.push_back(py::str(item).cast<std::string>());
+            }
+        } else {
+            urls.push_back(py::str(url).cast<std::string>());
+        }
+        urls.erase(std::remove_if(urls.begin(), urls.end(),
+                                  [](const std::string& u) { return u.empty(); }),
+                   urls.end());
+
+        const auto single = [&](const std::string& target) {
+            const core::HttpResult result =
+                core::http_download(target, path, timeout_sec, max_bytes);
+            py::dict out = http_result(result);
+            out["path"] = path;
+            out["url"] = target;
+            return out;
+        };
+
+        if (urls.empty()) {
+            core::HttpResult none;
+            none.error = "没有可用的下载地址";
+            py::dict out = http_result(none);
+            out["path"] = path;
+            return out;
+        }
+        if (urls.size() == 1) return single(urls.front());
+
+        struct Ranked {
+            std::string url;
+            long long ms = 0;
+        };
+        std::vector<Ranked> ranked;
+        ranked.reserve(urls.size());
+        for (const std::string& candidate : urls) {
+            const auto started = std::chrono::steady_clock::now();
+            const core::HttpResult probe = core::http_get(candidate, 8, 1);
+            const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now() - started)
+                                     .count();
+            if (probe.ok && (probe.status == 200 || probe.status == 206)) {
+                ranked.push_back({candidate, ms});
+            }
+        }
+        if (ranked.empty()) {
+            core::HttpResult none;
+            none.error = "所有下载源都不可达";
+            py::dict out = http_result(none);
+            out["path"] = path;
+            return out;
+        }
+        std::sort(ranked.begin(), ranked.end(),
+                  [](const Ranked& a, const Ranked& b) { return a.ms < b.ms; });
+        core::HttpResult last;
+        for (const Ranked& candidate : ranked) {
+            last = core::http_download(candidate.url, path, timeout_sec, max_bytes);
+            if (last.ok) return single(candidate.url);
+        }
+        py::dict out = http_result(last);
         out["path"] = path;
         return out;
     }
