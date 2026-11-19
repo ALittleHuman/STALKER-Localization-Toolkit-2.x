@@ -29,6 +29,8 @@ class QAction;
 
 namespace xrkit::shell {
 
+struct AppUpdateInfo;
+
 class LogBox;
 
 // ★ 2026-11-10（P0-2）：**纯函数**决定“要不要唤起独立插件管理器 + 原因”（空=不唤起）。
@@ -171,6 +173,7 @@ private:
     void drain_page_diagnostics();
     // 给页交付宿主机制（**唯一**一处：`PageBase::attach_services`）
     void attach_page_services(PageBase* page);
+    void finish_update_check(const AppUpdateInfo& info, const QString& error, bool ok, bool silent);
 
     QTabBar* page_tabs_ = nullptr;
     QStackedWidget* stack_ = nullptr;
@@ -188,6 +191,7 @@ private:
     std::vector<xrkit::plugin::RegistrationError> plugin_errors_;
     QString plugin_notice_;
     bool plugin_ui_installed_ = false;
+    bool update_check_inflight_ = false;
     // ★ 2026-11-09（用户口径）：启动时因缺前置被自动禁用的插件；启动完成后弹一次「插件管理器」，
     //   把**所有**这类插件与缺失项放在同一个框里逐条说明（不出现滚动条）。
     std::vector<xrkit::plugin::PluginDisabledInfo> disabled_plugins_;

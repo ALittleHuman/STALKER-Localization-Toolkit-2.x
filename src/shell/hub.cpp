@@ -25,6 +25,7 @@
 //   （不靠别的头文件"碰巧"带进来 —— 换一个编译器/标准库版本就可能编不过）。
 #include <exception>
 #include <string>
+#include <thread>
 
 #include <QApplication>
 #include <QDirIterator>
@@ -59,6 +60,7 @@
 #include <QTextStream>
 #include <QComboBox>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -957,9 +959,36 @@ void Hub::check_updates(bool silent) {
         }
         return;
     }
-    AppUpdateInfo info;
-    if (!HostUpdate::fetchAppInfo(&info, &error)) {
+    if (update_check_inflight_) return;
+    update_check_inflight_ = true;
+    if (!silent) {
+        if (status_label_ != nullptr) status_label_->setText(QStringLiteral("正在检查更新…"));
+        log_line(QStringLiteral("正在检查更新…"));
+    }
+    // 网络请求必须在后台线程：WinHTTP 冷启动/断网时单个源就要等满超时，
+    // 同步跑会把整个界面卡住（标题栏「未响应」），用户看不到任何结果。
+    QPointer<Hub> self(this);
+    std::thread([self, silent] {
+        AppUpdateInfo info;
+        QString error;
+        const bool ok = HostUpdate::fetchAppInfo(&info, &error);
+        if (self.isNull()) return;
+        QMetaObject::invokeMethod(
+            self.data(),
+            [self, info = std::move(info), error, ok, silent]() mutable {
+                if (self.isNull()) return;
+                self->update_check_inflight_ = false;
+                self->finish_update_check(info, error, ok, silent);
+            },
+            Qt::QueuedConnection);
+    }).detach();
+}
+
+void Hub::finish_update_check(const AppUpdateInfo& info, const QString& error, bool ok,
+                              bool silent) {
+    if (!ok) {
         if (!silent) {
+            if (status_label_ != nullptr) status_label_->setText(QStringLiteral("检查更新失败"));
             QMessageBox::warning(this, QStringLiteral("检测更新"),
                                  QStringLiteral("检查失败：%1").arg(error));
         }
@@ -992,9 +1021,10 @@ void Hub::check_updates(bool silent) {
                                   .arg(info.version, current)) != QMessageBox::Yes) {
         return;
     }
-    if (!HostUpdate::applyAppUpdate(info, &error)) {
+    QString apply_error = error;
+    if (!HostUpdate::applyAppUpdate(info, &apply_error)) {
         QMessageBox::warning(this, QStringLiteral("检测更新"),
-                             QStringLiteral("更新失败：%1").arg(error));
+                             QStringLiteral("更新失败：%1").arg(apply_error));
     }
 }
 

@@ -41,6 +41,24 @@ std::string from_wide(const std::wstring& text) {
     return out;
 }
 
+// 静态系统代理（Internet 选项）默认不会被 WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY 采用；
+// 这里显式读取当前用户的 IE/WinINET 代理并交给 WinHTTP，否则“浏览器/gh 能上网、工具检测更新超时”。
+void apply_ie_proxy(HINTERNET session) {
+    if (session == nullptr) return;
+    WINHTTP_CURRENT_USER_IE_PROXY_CONFIG config{};
+    if (!WinHttpGetIEProxyConfigForCurrentUser(&config)) return;
+    if (config.lpszProxy != nullptr && config.lpszProxy[0] != L'\0') {
+        WINHTTP_PROXY_INFO info{};
+        info.dwAccessType = WINHTTP_ACCESS_TYPE_NAMED_PROXY;
+        info.lpszProxy = config.lpszProxy;
+        info.lpszProxyBypass = config.lpszProxyBypass;
+        WinHttpSetOption(session, WINHTTP_OPTION_PROXY, &info, sizeof(info));
+    }
+    if (config.lpszProxy != nullptr) GlobalFree(config.lpszProxy);
+    if (config.lpszProxyBypass != nullptr) GlobalFree(config.lpszProxyBypass);
+    if (config.lpszAutoConfigUrl != nullptr) GlobalFree(config.lpszAutoConfigUrl);
+}
+
 struct WinHttpHandles {
     HINTERNET session = nullptr;
     HINTERNET connect = nullptr;
@@ -90,6 +108,7 @@ HttpResult winhttp_request(const std::string& method, const std::string& url,
         result.error = "WinHttpOpen 失败";
         return result;
     }
+    apply_ie_proxy(handles.session);
     const int timeout_ms = (timeout_sec > 0 ? timeout_sec : 15) * 1000;
     WinHttpSetTimeouts(handles.session, timeout_ms, timeout_ms, timeout_ms, timeout_ms);
     DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
