@@ -1,0 +1,92 @@
+name: Publish npm update package
+
+# 只发布“更新分发包”，不构建本体；来源是已经存在的 GitHub Release 资产。
+# npm 侧使用 Trusted Publishing（OIDC），不需要 NODE_AUTH_TOKEN / 2FA token。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "npm semver，例如 2.0.0-beta.251"
+        required: true
+      release_tag:
+        description: "GitHub Release tag，例如 2.0.0-beta.251"
+        required: true
+      asset_name:
+        description: "Release 资产名，例如 251.zip"
+        required: true
+      dist_tag:
+        description: "npm dist-tag（BETA 用 beta）"
+        required: true
+        default: beta
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist npm-pkg/full
+          gh release download "${{ inputs.release_tag }}" --pattern "${{ inputs.asset_name }}" --dir dist
+          cp "dist/${{ inputs.asset_name }}" "npm-pkg/full/${{ inputs.version }}.zip"
+          sha="$(sha256sum "npm-pkg/full/${{ inputs.version }}.zip" | cut -d' ' -f1)"
+          python3 - "${{ inputs.version }}" "${{ inputs.asset_name }}" "$sha" <<'PY'
+          import json, sys
+          version, asset, sha = sys.argv[1], sys.argv[2], sys.argv[3]
+          manifest = {
+              "version": version,
+              "asset": f"full/{version}.zip",
+              "sha256": sha,
+              "channel": "npm-npmmirror",
+          }
+          with open("npm-pkg/manifest.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, ensure_ascii=False, indent=2)
+          PY
+
+      - name: Package metadata
+        working-directory: npm-pkg
+        run: |
+          cat > package.json <<'EOF'
+          {
+            "name": "@alittlehuman/stalker-toolkit-update",
+            "version": "VERSION_PLACEHOLDER",
+            "description": "STALKER Toolkit 2.x update channel (full package)",
+            "license": "MIT",
+            "repository": {
+              "type": "git",
+              "url": "https://github.com/ALittleHuman/STALKER-Localization-Toolkit-2.x"
+            },
+            "files": ["full", "manifest.json", "README.md"]
+          }
+          EOF
+          node -e '
+            const fs = require("fs");
+            const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            p.version = process.env.NPM_VERSION;
+            if (!/^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$/.test(p.version)) {
+              console.error("invalid semver: " + p.version);
+              process.exit(1);
+            }
+            fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
+          '
+          printf '# STALKER Toolkit 2.x update package\n\nThis package only carries the update zip and manifest; no source code.\n' > README.md
+        env:
+          NPM_VERSION: ${{ inputs.version }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish with trusted publishing
+        working-directory: npm-pkg
+        run: |
+          npm install -g npm@11.17.0
+          npm publish --access public --tag "${{ inputs.dist_tag }}" --provenance
