@@ -36,8 +36,11 @@ def main() -> int:
          "pkg_restore 仍把读失败当不存在")
 
     update = read("src/shell/host_update.cpp")
-    need("F-152 future 只消费一次", "consumed" in update and
-         "futures[index].get()" in update, "未见 consumed 标记/单次 get")
+    # 允许两条实现：并行 future（必须 consumed 标记/单次 get）或顺序探测（没有 future）。
+    future_ok = ("std::async" not in update) or (
+        "consumed" in update and "futures[index].get()" in update)
+    need("F-152 future 只消费一次/顺序探测", future_ok,
+         "并行 future 未见 consumed 标记/单次 get")
     need("F-152 启动异常兜底", "catch (const std::exception" in update,
          "std::async 异常仍可能穿出")
 

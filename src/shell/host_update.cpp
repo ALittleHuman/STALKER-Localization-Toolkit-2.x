@@ -21,7 +21,6 @@
 
 #include <chrono>
 #include <algorithm>
-#include <future>
 #include <thread>
 #include <vector>
 
@@ -387,7 +386,7 @@ bool HostUpdate::fetchAppInfo(AppUpdateInfo* info, QString* error) {
     if (error != nullptr) *error = QStringLiteral("所有更新源都不可达或返回无效");
     return false;
     } catch (const std::exception& e) {
-        // std::async 线程创建失败等：检查更新失败是正常结果，不能让启动崩。
+        // 后台线程/解析异常：检查更新失败是正常结果，不能让启动崩。
         if (error != nullptr) *error = QStringLiteral("检查更新异常：") + QString::fromUtf8(e.what());
         return false;
     }
