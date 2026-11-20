@@ -1395,11 +1395,27 @@ SmokeResult run_smoke() {
         {
             const QString root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_extract"));
             QDir(root).removeRecursively();
-            QDir().mkpath(root + QStringLiteral("/src/scripts"));
+            QDir().mkpath(root + QStringLiteral("/gamedata/configs/scripts"));
+            QDir().mkpath(root + QStringLiteral("/gamedata/configs/text/rus"));
+            QDir().mkpath(root + QStringLiteral("/gamedata/scripts"));
+            {
+                std::ofstream out((root + QStringLiteral("/gamedata/scripts/probe2.script"))
+                                      .toStdString(),
+                                  std::ios::binary | std::ios::trunc);
+                const std::string body = "function probe2()\n  local s = \"hello stalker\"\nend\n";
+                out.write(body.data(), static_cast<std::streamsize>(body.size()));
+            }
+            {
+                std::ofstream out((root + QStringLiteral("/gamedata/configs/text/rus/probe.xml"))
+                                      .toStdString(),
+                                  std::ios::binary | std::ios::trunc);
+                const std::string body = "<string_table></string_table>";
+                out.write(body.data(), static_cast<std::streamsize>(body.size()));
+            }
             QDir().mkpath(root + QStringLiteral("/out"));
             QDir().mkpath(root + QStringLiteral("/other"));
             {
-                std::ofstream out((root + QStringLiteral("/src/scripts/probe.script")).toStdString(),
+                std::ofstream out((root + QStringLiteral("/gamedata/configs/scripts/probe.script")).toStdString(),
                                   std::ios::binary | std::ios::trunc);
                 const std::string body = "function probe()\n  local s = \"hi\"\nend\n";
                 out.write(body.data(), static_cast<std::streamsize>(body.size()));
@@ -1414,8 +1430,11 @@ SmokeResult run_smoke() {
             XmlPage page;
             page.resize(720, page_min_h());
             page.show();
-            page.dir_a_edit()->setText(root + QStringLiteral("/src"));
+            page.dir_a_edit()->setText(root + QStringLiteral("/gamedata"));
             page.dir_b_edit()->setText(root + QStringLiteral("/out"));
+            // 提取模式的判定挂在 `editingFinished` 上（setText 不会触发）⇒ 显式发一次
+            page.dir_a_edit()->editingFinished();
+            page.dir_b_edit()->editingFinished();
             QApplication::processEvents();
             check(page.mode_combo()->findData(QStringLiteral("extract")) >= 0,
                   QStringLiteral("文本工具：一侧为空 ⇒ 模式多出「提取文本」"));
@@ -1426,12 +1445,15 @@ SmokeResult run_smoke() {
                   QStringLiteral("文本工具：提取模式下「筛选」隐藏"));
 
             page.dir_b_edit()->setText(root + QStringLiteral("/other"));
+
+            page.dir_b_edit()->editingFinished();
             QApplication::processEvents();
             check(page.mode_combo()->findData(QStringLiteral("extract")) < 0,
                   QStringLiteral("文本工具：两侧都有文件 ⇒ 提取模式消失"));
 
             // 真跑一次：产物 XML 落在输出目录
             page.dir_b_edit()->setText(root + QStringLiteral("/out"));
+            page.dir_b_edit()->editingFinished();
             QApplication::processEvents();
             if (auto* btn = page.findChild<QPushButton*>(QStringLiteral("xml_extract"))) {
                 btn->click();
@@ -1440,12 +1462,18 @@ SmokeResult run_smoke() {
                     QThread::msleep(25);
                 }
                 QApplication::processEvents();
-                const QStringList produced = QDir(root + QStringLiteral("/out"))
-                                                 .entryList(QStringList()
-                                                                << QStringLiteral("*_texts.xml"),
-                                                            QDir::Files);
+                // 页面按语言包布局落盘（out/configs/text/<lang>/…），所以要递归找
+                QStringList produced;
+                QDirIterator it(root + QStringLiteral("/out"),
+                                QStringList() << QStringLiteral("*_texts.xml"), QDir::Files,
+                                QDirIterator::Subdirectories);
+                while (it.hasNext()) produced << it.next();
+                const QString status_text =
+                    page.status() != nullptr ? page.status()->text() : QStringLiteral("<无>");
                 check(!produced.isEmpty(),
-                      QStringLiteral("文本工具：提取产出文本 XML（%1 个）").arg(produced.size()));
+                      QStringLiteral("文本工具：提取产出文本 XML（%1 个；状态=%2）")
+                          .arg(produced.size())
+                          .arg(status_text));
             } else {
                 check(false, QStringLiteral("文本工具：找不到提取按钮（xml_extract）"));
             }
