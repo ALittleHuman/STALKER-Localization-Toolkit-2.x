@@ -160,3 +160,12 @@ add_custom_target(xrkit_check_no_qt ALL
 
 add_dependencies(xrkit_core xrkit_check_no_qt)
 add_dependencies(xrkit_engine xrkit_check_no_qt)
+if (TARGET xrkit_build_gui)
+  xrkit_attach_manifest(xrkit_build_gui)
+endif()
+if (TARGET xrkit_plugin_manager)
+  xrkit_attach_manifest(xrkit_plugin_manager)
+endif()
+if (TARGET xrkit_updater)
+  xrkit_attach_manifest(xrkit_updater)
+endif()
