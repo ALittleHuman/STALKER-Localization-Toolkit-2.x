@@ -28,7 +28,10 @@ struct BuildRecord {
 struct VersionStore {
     std::string current_version;      // 界面上选中的版本号（如 "2.0.0"）
     std::string current_prerelease;   // 选中的标记（ALPHA / BETA / RC）
-    int current_index = 0;            // **下一个构建的序号**（只读显示的就是它）
+    int current_index = 0;            // 通道内序号（只用于 dist 落点，不再是身份）
+    // ★ 2026-11-20（模型 C）：**全局构建号**，任何通道每次构建 +1，是版本先后的唯一依据。
+    //   稳定版不写号；测试版版本串 = x.y.z.<build_counter>。RC.1 = 512，下一个 = 513。
+    int build_counter = 0;
     std::map<std::string, std::map<std::string, std::map<int, BuildRecord>>> tree;
 
     // 顶层版本号（字典序，稳定）

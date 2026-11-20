@@ -78,8 +78,13 @@ def main() -> int:
                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     out2 = p2.stdout.decode("utf-8", "replace")
     after = (sha(ROOT / "version.json"), sha(ROOT / "include" / "xrkit" / "core" / "version.h"))
-    refused = p2.returncode != 0 and "拒绝重打" in out2
-    (ok if refused else fail)("同号重打被拒（rc=%d）" % p2.returncode)
+    # ★ 2026-11-20（模型 C）：重打会被两道守卫之一拒掉——
+    #   ① 同号已存在 ⇒「拒绝重打」；② CLI 自身版本与目标身份不符 ⇒「版本不匹配」。
+    #   两者都算"拒了"，关键是下面这条"三件套一个字节都没动"。
+    _refusals = ("拒绝重打", "版本不匹配")
+    refused = p2.returncode != 0 and any(k in out2 for k in _refusals)
+    (ok if refused else fail)("重打被拒（rc=%d，命中=%s；模型 C 下同号/版本不符都算）"
+                              % (p2.returncode, [k for k in _refusals if k in out2]))
     (ok if before == after else fail)("拒重打时三件套一个字节都没动")
 
     # ① 当前包里不许留 INCOMPLETE / .pending（留了 ⇒ 下轮会被当半成品挪走）

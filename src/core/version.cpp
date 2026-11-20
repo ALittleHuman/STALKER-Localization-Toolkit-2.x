@@ -15,8 +15,7 @@ std::string semver() {
 std::string version_string() {
     std::string s = semver();
     if (kPrerelease != nullptr && kPrerelease[0] != '\0') {
-        s += " ";
-        s += kPrerelease;
+        s += "." + std::to_string(kBuildCount);   // ★ 模型 C：版本串 = x.y.z.<build>
     }
     return s;
 }
@@ -36,7 +35,13 @@ bool version_string_is_well_formed(const std::string& s) {
         }
     }
     if (i == s.size()) return true;   // 正式版
-    if (s[i] != ' ') return false;    // 标记前必须是空格
+    if (s[i] == '.') {                // ★ 模型 C：测试版 x.y.z.<build>
+        ++i;
+        const size_t start = i;
+        while (i < s.size() && is_digit(s[i])) ++i;
+        return i > start && i == s.size();
+    }
+    if (s[i] != ' ') return false;    // 旧形态 x.y.z <标记>（只为读旧串）
     return i + 1 < s.size();          // 标记不能为空
 }
 

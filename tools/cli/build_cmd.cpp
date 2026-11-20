@@ -116,16 +116,32 @@ static std::string python_prefix() {
 
 
 int run_write_version(const std::vector<std::string>& operands) {
-    if (operands.size() < 3) {
-        std::cerr << "BUILDPKG error reason=用法：--write-version <版本> <标记> <序号>\n";
+    if (operands.size() < 2) {
+        std::cerr << "BUILDPKG error reason=用法：--write-version <版本> <标记> [通道内序号]\n";
         return kUsage;
     }
+    // ★ 2026-11-20（模型 C）：第三个参数退化成**通道内序号**（只进 dist 落点），
+    //   身份是 version.json 的全局 build_counter（每次构建 +1）。
     const std::string pre = operands[1];
-    const int idx = std::atoi(operands[2].c_str());
-    // version.h 的 kPrerelease 只要 "<标记>.<序号>"
-    const std::string full = pre.empty() ? std::to_string(idx) : pre + "." + std::to_string(idx);
+    const int idx = operands.size() >= 3 ? std::atoi(operands[2].c_str()) : 0;
     std::string err;
-    if (!xrkit::core::save_version_header("include/xrkit/core/version.h", full, idx, err)) {
+    xrkit::core::VersionStore store;
+    if (!xrkit::core::load_version_store("version.json", store, err)) {
+        std::cerr << "BUILDPKG error reason=读 version.json 失败：" << err << "\n";
+        return kFail;
+    }
+    const int build_no = store.build_counter + 1;
+    store.build_counter = build_no;
+    store.current_version = operands[0];
+    store.current_prerelease = pre;
+    store.current_index = idx > 0 ? idx : build_no;
+    if (!xrkit::core::save_version_store("version.json", store, err)) {
+        std::cerr << "BUILDPKG error reason=写 version.json 失败：" << err << "\n";
+        return kFail;
+    }
+    // kPrerelease 只放**通道名**；版本串由 version.cpp 拼成 `x.y.z.<build>`
+    const std::string full = pre;
+    if (!xrkit::core::save_version_header("include/xrkit/core/version.h", full, build_no, err)) {
         std::cerr << "BUILDPKG error reason=写 version.h 失败：" << err << "\n";
         return kFail;
     }
@@ -137,7 +153,7 @@ int run_write_version(const std::vector<std::string>& operands) {
         std::cerr << "BUILDPKG error reason=重生成 .rc 失败（gen_winres.py）\n";
         return kFail;
     }
-    std::cout << "BUILDPKG wrote-version " << full << " build=" << idx << "\n";
+    std::cout << "BUILDPKG wrote-version " << full << " build=" << build_no << "\n";
     return kOk;
 }
 
@@ -190,8 +206,10 @@ int run_build_package(const std::vector<std::string>& operands) {
     //   修前"取消/被杀"会留下 `current=75` 但产物没落地 ⇒ 包选择回退到旧包、门禁红，
     //   只能手工 git checkout 三件套复原（有副作用）。改成"产物落地、校验通过之后"再写 current
     //   （见函数末尾 `store.append(...)` 之前）；中途失败/取消 ⇒ version.json 从未前进。
-    const std::string full = want_version + (want_prerelease.empty() ? "" : " " + want_prerelease) +
-                             "." + std::to_string(want_index);
+    // ★ 2026-11-20（模型 C）：身份串 = `x.y.z.<全局构建号>`；通道不进版本串。
+    const int identity_build = store.build_counter > 0 ? store.build_counter : want_index;
+    const std::string full = want_version + (want_prerelease.empty() ? std::string()
+                                                                   : "." + std::to_string(identity_build));
 
     // ★ 2026-11-10（用户实测 BETA.168/171 包内 CLI 落后一版）：
     //   `--build-package` 是 CLI 自己；直接调用时它还是**旧版本**，却会把旧 CLI 打进包。
@@ -311,9 +329,11 @@ int run_build_package(const std::vector<std::string>& operands) {
     }
     const std::string header_path = "include/xrkit/core/version.h";
     const std::string rc_path = "assets/xrkit_winres.rc";
-    const std::string want_prerelease_full =
-        want_prerelease.empty() ? std::string() : want_prerelease + "." + std::to_string(want_index);
-    if (!xrkit::core::save_version_header(header_path, want_prerelease_full, want_index, err)) {
+    // ★ 2026-11-20（模型 C）：头里的 **kBuildCount 用全局构建号**（不是通道内序号），
+    //   kPrerelease 只放通道名；版本串由 version.cpp 拼成 `x.y.z.<build>`。
+    const int global_build = store.build_counter > 0 ? store.build_counter : want_index;
+    const std::string want_prerelease_full = want_prerelease;
+    if (!xrkit::core::save_version_header(header_path, want_prerelease_full, global_build, err)) {
         std::cout << "BUILDPKG error reason=写回 version.h 失败：" << err << "\n";
         return kFail;
     }

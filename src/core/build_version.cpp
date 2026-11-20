@@ -348,6 +348,9 @@ bool load_version_store(const std::string& path, VersionStore& out, std::string&
         return false;
     }
     out = VersionStore{};
+    if (const JVal* bc = root.find("build_counter"); bc != nullptr && bc->kind == JVal::Kind::Int) {
+        out.build_counter = static_cast<int>(bc->num);
+    }
     if (const JVal* cur = root.find("current"); cur != nullptr && cur->kind == JVal::Kind::Obj) {
         if (const JVal* v = cur->find("version"); v != nullptr) out.current_version = v->str;
         if (const JVal* p = cur->find("prerelease"); p != nullptr) out.current_prerelease = p->str;
@@ -391,7 +394,8 @@ bool save_version_store(const std::string& path, const VersionStore& store, std:
     std::ostringstream o;
     o << "{\n  \"current\": { \"version\": \"" << esc(store.current_version)
       << "\", \"prerelease\": \"" << esc(store.current_prerelease)
-      << "\", \"index\": " << store.current_index << " },\n  \"tree\": {";
+      << "\", \"index\": " << store.current_index << " },\n  \"build_counter\": "
+      << store.build_counter << ",\n  \"tree\": {";
     bool first_v = true;
     for (const auto& vkv : store.tree) {
         o << (first_v ? "\n" : ",\n") << "    \"" << esc(vkv.first) << "\": {";
