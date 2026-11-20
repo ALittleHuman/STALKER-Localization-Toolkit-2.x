@@ -8074,7 +8074,9 @@ def step_samples_flows(release: bool) -> None:
         else:
             fail("样本流程 %s（退出码 %d）" % (fid, rc))
 
-STEPS = [    ("build", step_build),
+STEPS = [
+    ("samples-flows", step_samples_flows),
+    ("build", step_build),
     ("no-qt", step_no_qt_lock),
     ("no-qt-injection", step_no_qt_injection),
     ("px-only", step_px_only),
