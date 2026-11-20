@@ -1391,8 +1391,66 @@ SmokeResult run_smoke() {
             check(start_of(page.source_dialog_start()) == src_dir,
                   QStringLiteral("② 编码转换：源本身没有输入目录 ⇒ 继承自己的值"));
         }
-        // （2）文本提取：已并入「文本工具」页（第三模式），不再有独立页，
-        //     所以这里没有"文本提取页的对话框起点"这条断言。
+        // （2）文本提取：已并入「文本工具」页（第三模式）——行为判据写在这里。
+        {
+            const QString root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_extract"));
+            QDir(root).removeRecursively();
+            QDir().mkpath(root + QStringLiteral("/src/scripts"));
+            QDir().mkpath(root + QStringLiteral("/out"));
+            QDir().mkpath(root + QStringLiteral("/other"));
+            {
+                std::ofstream out((root + QStringLiteral("/src/scripts/probe.script")).toStdString(),
+                                  std::ios::binary | std::ios::trunc);
+                const std::string body = "function probe()\n  local s = \"hi\"\nend\n";
+                out.write(body.data(), static_cast<std::streamsize>(body.size()));
+            }
+            {
+                std::ofstream out((root + QStringLiteral("/other/a.xml")).toStdString(),
+                                  std::ios::binary | std::ios::trunc);
+                const std::string body = "<string_table></string_table>";
+                out.write(body.data(), static_cast<std::streamsize>(body.size()));
+            }
+
+            XmlPage page;
+            page.resize(720, page_min_h());
+            page.show();
+            page.dir_a_edit()->setText(root + QStringLiteral("/src"));
+            page.dir_b_edit()->setText(root + QStringLiteral("/out"));
+            QApplication::processEvents();
+            check(page.mode_combo()->findData(QStringLiteral("extract")) >= 0,
+                  QStringLiteral("文本工具：一侧为空 ⇒ 模式多出「提取文本」"));
+            check(page.current_mode_key() == "extract",
+                  QStringLiteral("文本工具：提取模式被自动选中（实得 %1）")
+                      .arg(QString::fromStdString(page.current_mode_key())));
+            check(!page.filter_combo()->isVisible(),
+                  QStringLiteral("文本工具：提取模式下「筛选」隐藏"));
+
+            page.dir_b_edit()->setText(root + QStringLiteral("/other"));
+            QApplication::processEvents();
+            check(page.mode_combo()->findData(QStringLiteral("extract")) < 0,
+                  QStringLiteral("文本工具：两侧都有文件 ⇒ 提取模式消失"));
+
+            // 真跑一次：产物 XML 落在输出目录
+            page.dir_b_edit()->setText(root + QStringLiteral("/out"));
+            QApplication::processEvents();
+            if (auto* btn = page.findChild<QPushButton*>(QStringLiteral("xml_extract"))) {
+                btn->click();
+                for (int i = 0; i < 400 && page.task() != nullptr && page.task()->running(); ++i) {
+                    QApplication::processEvents();
+                    QThread::msleep(25);
+                }
+                QApplication::processEvents();
+                const QStringList produced = QDir(root + QStringLiteral("/out"))
+                                                 .entryList(QStringList()
+                                                                << QStringLiteral("*_texts.xml"),
+                                                            QDir::Files);
+                check(!produced.isEmpty(),
+                      QStringLiteral("文本工具：提取产出文本 XML（%1 个）").arg(produced.size()));
+            } else {
+                check(false, QStringLiteral("文本工具：找不到提取按钮（xml_extract）"));
+            }
+            QDir(root).removeRecursively();
+        }
         // （3）XML 校对：B ← A
         {
             XmlPage page;
