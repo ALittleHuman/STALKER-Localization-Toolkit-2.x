@@ -1,6 +1,7 @@
 #include "xrkit/core/case_fold.h"
 #include "xrkit/engine/text/sniff.h"
 
+#include "xrkit/core/io.h"
 #include "xrkit/core/path.h"
 #include "xrkit/engine/text/encoding.h"
 
@@ -469,14 +470,15 @@ DecodedBytes decode_bytes(const std::vector<uint8_t>& raw, const std::string& ov
 }
 
 DecodedBytes read_text_bytes(const std::string& path, const std::string& override_enc) {
-    std::ifstream in(core::path_from_utf8(path), std::ios::binary);
-    if (!in) {
+    // ★ 2026-11-20（H5）：整文件读走上限（512 MB）
+    std::string text;
+    std::string read_error;
+    if (!core::read_file_capped(path, text, read_error)) {
         DecodedBytes out;
-        out.error = "打不开文件：" + path;
+        out.error = read_error;
         return out;
     }
-    std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),
-                             std::istreambuf_iterator<char>());
+    const std::vector<uint8_t> raw(text.begin(), text.end());
     return decode_bytes(raw, override_enc);
 }
 

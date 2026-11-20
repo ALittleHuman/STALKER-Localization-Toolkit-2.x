@@ -1,5 +1,6 @@
 #include "xrkit/engine/font/xml_bytes.h"
 
+#include "xrkit/core/io.h"
 #include "xrkit/core/path.h"
 #include "xrkit/engine/text/encoding.h"
 #include "xrkit/engine/text/sniff.h"
@@ -101,17 +102,10 @@ bool read_file_bytes(const std::string& path, std::vector<uint8_t>& out, std::st
     //   这里把两种情况分开：**打不开 = 失败**（带第一手理由），空文件才是合法的空。
     out.clear();
     error.clear();
-    std::ifstream in(core::path_from_utf8(path), std::ios::binary);
-    if (!in) {
-        error = "打不开文件（被占用 / 权限不足 / 路径过长？）：" + path;
-        return false;
-    }
-    out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    if (in.bad()) {
-        error = "读文件出错（读到一半失败）：" + path;
-        out.clear();
-        return false;
-    }
+    // ★ 2026-11-20（H5）：走统一上限（512 MB）；超限/读坏都点名报，不静默截断。
+    std::string text;
+    if (!core::read_file_capped(path, text, error)) return false;
+    out.assign(text.begin(), text.end());
     return true;
 }
 
