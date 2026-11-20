@@ -294,7 +294,6 @@ public:
 
     size_t command_count() const { return commands_.size(); }
     size_t registration_count() const;
-    bool has_command(const std::string& id) const { return commands_.count(id) != 0; }
 
 private:
     void reject(const std::string& plugin, const std::string& message);

@@ -106,6 +106,5 @@ const HostFacade* host_facade();
 
 bool host_facade_available(std::string* reason = nullptr);
 bool host_facade_has(const std::string& name);
-std::vector<std::string> host_facade_method_names();
 
 }  // namespace xrkit::plugin

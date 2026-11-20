@@ -129,15 +129,4 @@ bool host_facade_has(const std::string& name) {
     return facade != nullptr && has_impl(*facade, name);
 }
 
-std::vector<std::string> host_facade_method_names() {
-    std::lock_guard<std::mutex> lock(facade_mutex());
-    const HostFacade* facade = facade_storage() != nullptr ? facade_storage() : builtin_host_facade();
-    std::vector<std::string> out;
-    if (facade == nullptr) return out;
-    for (const char* name : kMethodNames) {
-        if (has_impl(*facade, name)) out.emplace_back(name);
-    }
-    return out;
-}
-
 }  // namespace xrkit::plugin

@@ -279,12 +279,6 @@ bool ui_method_worker_safe(const char* method) {
     return method != nullptr && ui_method_worker_safe(std::string(method));
 }
 
-std::vector<std::string> ui_worker_safe_method_names() {
-    std::vector<std::string> out;
-    for (const char* name : kWorkerSafeMethods) out.emplace_back(name);
-    return out;
-}
-
 // 前置声明：`set_current_panel_root` 里要用它（定义在下面，且必须是**无锁**版本）
 void trace_event_raw(const std::string& page, const std::string& kind,
                      const std::string& detail);

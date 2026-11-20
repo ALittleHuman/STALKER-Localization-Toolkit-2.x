@@ -369,8 +369,6 @@ std::vector<std::string> ui_facade_method_names();
 // 名单在 `src/engine/plugin/widget_facade.cpp`（与 `kMethodNames[]` 同一处，便于对账）。
 bool ui_method_worker_safe(const char* method);
 bool ui_method_worker_safe(const std::string& method);
-// 白名单里的方法名（顺序稳定）——门禁拿它逐名断言"是门面里真有的方法"。
-std::vector<std::string> ui_worker_safe_method_names();
 
 // ── 当前面板根：宿主在调插件 builder 之前设好（见文件头 ③）──────────────────
 // ★ 2026-10-22（用户口径）：`reason` 由调用点传入（scope_ctor / scope_dtor /

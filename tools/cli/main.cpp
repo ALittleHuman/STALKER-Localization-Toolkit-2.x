@@ -4622,37 +4622,9 @@ int run_cli(const std::vector<std::string>& args) {
         return result.ok ? kExitOk : kExitFail;
     }
 
-    // 本体目录更新事务：updater 退出后调用；本动作不启动/不杀进程。
-    //   --app-update <target> <staged> <transaction> <apply|commit|rollback|recover-ok|recover-fail>
-    if (action == "--app-update") {
-        if (operands.size() != 4) {
-            std::cerr << "APP-UPDATE error reason=用法：--app-update <target> <staged> <transaction> <apply|commit|rollback|recover-ok|recover-fail>\n";
-            return kExitUsage;
-        }
-        const xrkit::core::UpdatePaths paths{operands[0], operands[1], operands[2]};
-        const std::string verb = operands[3];
-        xrkit::core::UpdateResult result;
-        if (verb == "apply") {
-            result = xrkit::core::update_prepare(paths);
-            if (result.ok) result = xrkit::core::update_replace(paths);
-        } else if (verb == "commit") {
-            result = xrkit::core::update_commit(paths);
-        } else if (verb == "rollback") {
-            result = xrkit::core::update_rollback(paths);
-        } else if (verb == "recover-ok") {
-            result = xrkit::core::update_recover(paths, true);
-        } else if (verb == "recover-fail") {
-            result = xrkit::core::update_recover(paths, false);
-        } else {
-            std::cerr << "APP-UPDATE error reason=未知动作 " << verb << "\n";
-            return kExitUsage;
-        }
-        std::cout << "APP-UPDATE " << (result.ok ? "ok" : "error")
-                  << " action=" << verb << " transaction=" << paths.transaction;
-        if (!result.ok) std::cout << " reason=" << result.error;
-        std::cout << "\n";
-        return result.ok ? kExitOk : kExitFail;
-    }
+    // ★ 2026-11-20：原 `--app-update` 已删除 —— 它与 `xrkit_updater.exe` 里的
+    //   `core::update_prepare/update_replace`（tools/updater/main.cpp:209）是同一份事务的
+    //   第二套调用面，而 updater 从来不走 CLI；留着只会让"本体更新走哪条路"多一个答案。
 
     // ★ 2026-11-12：插件目录级更新事务（给联网插件/管理器用；本动作不联网）。
     //   --plugin-update <plugins> <target> <staged> <key> <transaction> <apply|commit|rollback|recover-ok|recover-fail>

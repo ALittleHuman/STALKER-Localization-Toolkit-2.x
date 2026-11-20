@@ -832,6 +832,5 @@ const EngineFacade* engine_facade();
 // 不可用时 `reason` 里是**为什么**（零静默：插件作者能立刻看出为什么调用没生效）
 bool engine_facade_available(std::string* reason = nullptr);
 bool engine_facade_has(const std::string& name);
-std::vector<std::string> engine_facade_method_names();
 
 }  // namespace xrkit::plugin
