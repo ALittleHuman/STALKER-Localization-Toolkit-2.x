@@ -4,12 +4,13 @@
 
 档位：
     --fast     公开 CI：跳过需要外部前提的步骤，跳过项一律记入「本次未覆盖」
-    默认       local 全量：能跑的都跑，缺外件记 SKIP + 清单
-    --release  发版：任何 SKIP 一律 FAIL，且「未覆盖清单」非空即整体 FAIL
+    默认       local 全量：能跑的都跑，缺外件记 WARN + 告警清单
+    --release  发版：**外部前提/测试样本缺件只告警，不阻断**；「未覆盖清单」非空仍整体 FAIL
+               （未覆盖 = 步骤没跑；缺样本 = WARN，两者别混）
 
 判据分类（1.x 的血账，别搞反）：
     · 仓库自带的门禁文件缺件          → FAIL（"把门禁文件删掉就算绿灯"是最危险的假绿）
-    · 外部前提缺件（MSVC / 真机样本） → SKIP，并记入未覆盖清单
+    · 外部前提缺件（MSVC / 真机样本） → WARN（★ 2026-11-20 用户口径：门禁不与测试样本绑定）
 
 用法：
     python tests/run_ci.py [--fast|--release] [--only 子串] [--verbose]
@@ -51,6 +52,9 @@ TOOLKIT_1X = samples.find_alias("toolkit.1x")
 
 UNCOVERED: list[str] = []
 LEDGERS: list[str] = []
+# ★ 2026-11-20（用户口径）：外部前提缺件（MSVC / 真机样本 / 1.x 仓库）**只告警**，
+#   不进 UNCOVERED、不让 `--release` 变红 —— 门禁不与测试样本绑定。
+WARNINGS: list[str] = []
 FAILURES = 0
 _MSVC_ENV: dict[str, str] | None = None
 
@@ -187,12 +191,15 @@ def ok(msg: str) -> None:
 
 
 def prereq(what: str, why: str, release: bool) -> bool:
-    """外部前提缺件：release 档 FAIL，其余档记 SKIP + 未覆盖清单。"""
-    if release:
-        fail("缺少外部前提（release 档零容忍）：%s —— %s" % (what, why))
-        return False
-    UNCOVERED.append("%s（%s）" % (what, why))
-    say("  SKIP %s —— %s" % (what, why))
+    """外部前提缺件（MSVC / 真机样本 / 1.x 仓库）⇒ **一律只告警**。
+
+    ★ 2026-11-20（用户口径）：门禁**不与测试样本绑定** —— 样本/外件不在本机是可预期的，
+    不该让 `--release` 变红。缺件逐条进 `WARNINGS`，收尾可见，不参与退出码。
+    （修前：release 档 `fail()` + 记 `UNCOVERED` ⇒ 整体 FAIL。那次口径是"零容忍"，
+    现在换成"可见但不拦"；拦不拦由人看收尾的告警段决定。）
+    """
+    WARNINGS.append("%s（%s）" % (what, why))
+    say("  WARN %s —— %s" % (what, why))
     return True
 
 
@@ -8562,6 +8569,10 @@ def main() -> int:
         say("本次差异台账（已知分歧/能力缺口，%d 项；release 不阻断，但脚本侧第三态退码非零）："
             % len(LEDGERS))
         for item in LEDGERS:
+            say("  · " + item)
+    if WARNINGS:
+        say("本次告警（外部前提缺件 / 测试样本不在本机，%d 项；**不阻断**）" % len(WARNINGS))
+        for item in WARNINGS:
             say("  · " + item)
     say("-" * 66)
 

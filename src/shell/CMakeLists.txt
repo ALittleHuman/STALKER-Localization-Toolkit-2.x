@@ -32,7 +32,6 @@ screen_scale.cpp
   pages/page_factory.cpp
   pages/fs_page.cpp
   pages/convert_page.cpp
-  pages/text_page.cpp
   pages/xml_page.cpp
   pages/video_page.cpp
   pages/fontpack_page.cpp

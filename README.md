@@ -14,7 +14,7 @@
 |---|---|---|
 | 读/写 DB 六格式与 SquashFS | 文件系统页 / `xrkit_cli --dump` | 解包树、散装层、长路径与链接安全检查 |
 | 编码检测与批量转换 | 编码转换页 | cp1251 / cp1252 / GB18030 / Big5 / Shift-JIS / EUC-KR / UTF-16/32；带扫描台账、备份/恢复 |
-| 文本提取 | `xrkit_cli --extract-text` | 从 `configs/gameplay`、`scripts`、`.ltx` 提取可翻译文本（GUI 内置页不含此功能，见 §七） |
+| 文本提取 | 文本工具页（模式「提取文本」）/ `xrkit_cli --extract-text` | 从 `configs/gameplay`、`scripts`、`.ltx` 提取可翻译文本；页面与 CLI 同一份引擎实现 |
 | XML 校对 | 文本工具页 | 目录 A/B 比对（统计 / 文本对比两种模式）、XLSX 导出（CSV 供 CLI/对拍）、复制差异 ID |
 | 视频转 OGM | 视频转换页 | 以参考 OGM 的参数为准；ffmpeg 只认两处（见 §五） |
 | 汉化包生成 | 汉化包生成页 / `--font-pack` | 标准字库 + 可选 `大/+N`、`小/−N` 补丁、JSGME 结构、IX-Ray 矢量字库 |
@@ -77,7 +77,6 @@ xrkit_cli.exe --font-pack ^
 - 完整参数见 `docs/CLI参考.md` 与 `xrkit_cli --help --font-pack`。
 
 > 完整说明：`docs/用户手册.md` §五「汉化包生成」（字号档位、IX-Ray 参照包、回滚行为）。
-> 另外：「文本提取」**没有内置页**，只有命令行 `--extract-text`，见 `docs/CLI参考.md` §3。
 
 ## 四、更新
 

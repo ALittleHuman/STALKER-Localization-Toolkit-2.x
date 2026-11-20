@@ -34,7 +34,6 @@
 #include "pages/fontpack_page.h"
 #include "pages/page_base.h"
 #include "pages/page_factory.h"
-#include "pages/text_page.h"
 #include "pages/video_page.h"
 #include "pages/xml_page.h"
 #include "scroll_viewport.h"
@@ -1392,16 +1391,8 @@ SmokeResult run_smoke() {
             check(start_of(page.source_dialog_start()) == src_dir,
                   QStringLiteral("② 编码转换：源本身没有输入目录 ⇒ 继承自己的值"));
         }
-        // （2）文本提取：输出目录 ← 源目录
-        {
-            TextPage page;
-            page.source_edit()->setText(src_dir);
-            check(start_of(page.target_dialog_start()) == src_dir,
-                  QStringLiteral("② 文本提取：源唯一 ⇒ 输出起点 = 源目录"));
-            page.source_edit()->clear();
-            check(start_of(page.target_dialog_start()) == exe_dir,
-                  QStringLiteral("② 文本提取：源空 ⇒ 输出起点 = 工具目录"));
-        }
+        // （2）文本提取：已并入「文本工具」页（第三模式），不再有独立页，
+        //     所以这里没有"文本提取页的对话框起点"这条断言。
         // （3）XML 校对：B ← A
         {
             XmlPage page;
@@ -2673,7 +2664,6 @@ SmokeResult run_smoke() {
         FsPage fs;
         FontPackPage fontpack;
         ConvertPage convert;
-        TextPage text;
         XmlPage xml;
         check(fs.task() != nullptr && fs.task()->cancel_button() == nullptr,
               QStringLiteral("② 取消：文件系统页（封包/解包）不许有取消按钮（实得 %1）")
@@ -2686,10 +2676,8 @@ SmokeResult run_smoke() {
         check(convert.task() != nullptr && convert.task()->cancel_button() != nullptr &&
                   convert.task()->cancel_button()->text() == QStringLiteral("取消"),
               QStringLiteral("② 取消：编码转换页的取消**保留**（共用任务壳那颗）"));
-        check(text.task() != nullptr && text.task()->cancel_button() != nullptr,
-              QStringLiteral("② 取消：文本提取页的取消**保留**"));
         check(xml.task() != nullptr && xml.task()->cancel_button() != nullptr,
-              QStringLiteral("② 取消：XML 校对页的取消**保留**"));
+              QStringLiteral("② 取消：文本工具页的取消**保留**（提取模式共用同一任务壳）"));
     }
 
     // ★★ 2026-10-07（审计补充 F3「孤儿顶层控件」，效应等同用户可见缺陷）
@@ -2703,7 +2691,6 @@ SmokeResult run_smoke() {
     //   （静态面由门禁 `check_page_status_labels.py` 独立成步，这条是"真画出来没有"的行为面。）
     {
         ConvertPage convert;
-        TextPage text;
         XmlPage xml;
         struct StatusEntry {
             QWidget* page;
@@ -2712,8 +2699,7 @@ SmokeResult run_smoke() {
         };
         const StatusEntry entries[] = {
             {&convert, convert.status(), "编码转换"},
-            {&text, text.status(), "文本提取"},
-            {&xml, xml.status(), "XML 校对"},
+            {&xml, xml.status(), "文本工具"},
         };
         for (const StatusEntry& entry : entries) {
             const QString name = QString::fromUtf8(entry.name);
@@ -5815,154 +5801,6 @@ SmokeResult run_smoke() {
         QDir(dir).removeRecursively();
     }
 
-    // ⑦ 文本提取页（M2-6d）：判据同源（7.1/7.5 由引擎给理由、7.2 两次运行同产物）。
-    {
-        namespace etxt = xrkit::engine::text;
-        TextPage page;
-        page.resize(720, page_min_h());
-        page.show();
-        QApplication::processEvents();
-
-        const QString root = QDir::temp().filePath(QStringLiteral("xrkit_smoke_text"));
-        QDir(root).removeRecursively();
-        QDir().mkpath(root + QStringLiteral("/gameplay/config"));
-        QDir().mkpath(root + QStringLiteral("/out"));
-        // 一份最小的 scripts 夹具（真语料上的正确性由门禁 [15] 的逐字节对拍负责）
-        QDir().mkpath(root + QStringLiteral("/scripts"));
-        {
-            std::ofstream out((root + QStringLiteral("/scripts/probe.script")).toStdString(),
-                              std::ios::binary | std::ios::trunc);
-            const std::string body = "function probe()\n  local s = \"hello stalker\"\nend\n";
-            out.write(body.data(), static_cast<std::streamsize>(body.size()));
-        }
-
-        // ⑦7.1/7.5：页面**不自己判** —— 返回的必须是引擎那句原话
-        etxt::ExtractRequest request;
-        request.source_dir = (root + QStringLiteral("/gameplay/config")).toStdString();
-        request.target_dir = (root + QStringLiteral("/out")).toStdString();
-        const QString engine_reason = QString::fromStdString(etxt::validate_request(request));
-        const QString page_reason =
-            page.validate(root + QStringLiteral("/gameplay/config"), root + QStringLiteral("/out"));
-        check(!engine_reason.isEmpty() &&
-                  page_reason == engine_reason &&
-                  engine_reason.contains(QStringLiteral("不要选它们的上层目录")),
-              QStringLiteral("⑦7.1 页面理由 = 引擎理由（%1）").arg(page_reason));
-
-        // ⑦7.5：输出目录 = 源目录的父目录 ⇒ 引擎拒绝，页面原样透出
-        const QString cover = page.validate(root + QStringLiteral("/scripts"), root);
-        check(cover.contains(QStringLiteral("会覆盖源目录中的原文件")),
-              QStringLiteral("⑦7.5 覆盖源目录被拒（%1）").arg(cover));
-
-        // ⑦7.2/7.3：显式 id_prefix ⇒ 同一份源两次运行产物逐字节相同
-        const QString out_a = root + QStringLiteral("/out_a");
-        const QString out_b = root + QStringLiteral("/out_b");
-        const etxt::ExtractStats first =
-            page.extract_one(root + QStringLiteral("/scripts"), out_a, QStringLiteral("smoke"),
-                             QStringLiteral("smoke_sc_0"), true);
-        const etxt::ExtractStats second =
-            page.extract_one(root + QStringLiteral("/scripts"), out_b, QStringLiteral("smoke"),
-                             QStringLiteral("smoke_sc_0"), true);
-        check(first.ok && first.files == 1 && first.strings >= 1,
-              QStringLiteral("⑦ 提取产出（files=%1 strings=%2 xml=%3）")
-                  .arg(first.files)
-                  .arg(first.strings)
-                  .arg(QString::fromStdString(first.texts_xml_name)));
-        check(!first.texts_xml_name.empty() &&
-                  QFileInfo::exists(QDir(out_a).filePath(QString::fromStdString(
-                      first.texts_xml_name))),
-              QStringLiteral("⑦ 文本 XML 落在输出目录根（%1）")
-                  .arg(QString::fromStdString(first.texts_xml_name)));
-
-        const auto tree_signature = [](const QString& dir) {
-            QStringList parts;
-            QDirIterator it(dir, QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
-            while (it.hasNext()) parts << it.next();
-            parts.sort();
-            QString joined;
-            for (const QString& file : parts) {
-                QFile f(file);
-                if (!f.open(QIODevice::ReadOnly)) return QString();
-                const QByteArray body = f.readAll();
-                joined += QDir(dir).relativeFilePath(file) + QStringLiteral(":") +
-                          QString::number(body.size()) + QStringLiteral(":") +
-                          QString::fromLatin1(QCryptographicHash::hash(body,
-                                                                      QCryptographicHash::Sha1)
-                                                  .toHex());
-                joined += QLatin1Char('\n');
-            }
-            return joined;
-        };
-        check(first.ok && second.ok && tree_signature(out_a) == tree_signature(out_b) &&
-                  !tree_signature(out_a).isEmpty(),
-              QStringLiteral("⑦7.2 两次运行产物逐字节相同（页面入口）"));
-
-        // 7.4（口径不对称）与 7.6（自己的产物不重复提取）在引擎里有对拍，
-        // 页面上只证一件事：参数真的透传下去了（前缀不同 ⇒ 产物 XML 名不同）。
-        const etxt::ExtractStats other_prefix =
-            page.extract_one(root + QStringLiteral("/scripts"), root + QStringLiteral("/out_c"),
-                             QStringLiteral("zz"), QStringLiteral("zz_sc_0"), true);
-        check(other_prefix.ok &&
-                  other_prefix.texts_xml_name != first.texts_xml_name &&
-                  other_prefix.texts_xml_name.rfind("zz_", 0) == 0,
-              QStringLiteral("⑦ 前缀透传（%1 vs %2）")
-                  .arg(QString::fromStdString(first.texts_xml_name))
-                  .arg(QString::fromStdString(other_prefix.texts_xml_name)));
-
-        // ★★ 2026-10-06（②）统计框三行：`gameplay / scripts / 总计`
-        //   （1.x `text_extract_app.py:647-656` 的 `stat_grid` + `:725-729` 写值）
-        //   ① 真跑一遍：标签上的数字必须**来自引擎给的 `ExtractStats`**（页面不自己数）
-        {
-            const etxt::ExtractStats real = page.extract_one(
-                root + QStringLiteral("/scripts"), root + QStringLiteral("/out_d"),
-                QStringLiteral("smoke"), QStringLiteral("smoke_sc_0"), true);
-            // 与 worker 里那条 `QMetaObject::invokeMethod(... note_stats ...)` 是**同一条入口**
-            page.note_stats(real);
-            const QStringList lines = page.stats_text().split(QLatin1Char('\n'));
-            check(real.ok && lines.size() == 3 && lines[1].startsWith(QStringLiteral("scripts")) &&
-                      lines[1].contains(QString::number(static_cast<qulonglong>(real.strings))) &&
-                      lines[1].contains(QString::number(static_cast<qulonglong>(real.files))) &&
-                      lines[1].contains(QString::number(static_cast<qulonglong>(real.chars))) &&
-                      page.stats_label() != nullptr &&
-                      page.stats_label()->text() == page.stats_text(),
-                  QStringLiteral("② 真提取后 scripts 行 = ExtractStats（strings=%1 files=%2 chars=%3 →「%4」）")
-                      .arg(real.strings)
-                      .arg(real.files)
-                      .arg(real.chars)
-                      .arg(lines.size() > 1 ? lines[1] : QString()));
-        }
-        //   ② 固定夹具：三行数字**逐字段**对得上（把某一行删掉 ⇒ 立刻红）
-        {
-            etxt::ExtractStats gp;
-            gp.ok = true;
-            gp.kind = etxt::ExtractKind::Gameplay;
-            gp.files = 7;
-            gp.strings = 11;
-            gp.chars = 1234;
-            etxt::ExtractStats sc;
-            sc.ok = true;
-            sc.kind = etxt::ExtractKind::Scripts;
-            sc.files = 3;
-            sc.strings = 5;
-            sc.chars = 66;
-            page.note_stats(gp);
-            page.note_stats(sc);
-            const QStringList lines = page.stats_text().split(QLatin1Char('\n'));
-            check(lines.size() == 3 && lines[0].startsWith(QStringLiteral("gameplay")) &&
-                      lines[1].startsWith(QStringLiteral("scripts")) &&
-                      lines[2].startsWith(QStringLiteral("总计")),
-                  QStringLiteral("② 统计框**三行**：gameplay / scripts / 总计（实得 %1 行）")
-                      .arg(lines.size()));
-            check(lines.size() == 3 &&
-                      lines[0] == QStringLiteral("gameplay：11 字符串 · 7 文件 · 1234 字符") &&
-                      lines[1] == QStringLiteral("scripts：5 字符串 · 3 文件 · 66 字符"),
-                  QStringLiteral("② 三行数字逐字段 = ExtractStats（实得「%1」/「%2」）")
-                      .arg(lines.value(0), lines.value(1)));
-            check(lines.size() == 3 &&
-                      lines[2] == QStringLiteral("总计：16 字符串 · 10 文件 · 1300 字符"),
-                  QStringLiteral("② 总计 = 两支逐字段之和（实得「%1」）").arg(lines.value(2)));
-        }
-        QDir(root).removeRecursively();
-    }
 
     // ⑩ XML 校对页（M2-6e3）：10.1 内部键 / 10.3 摘要是计数 / 10.4 切模式不重跑 /
     // 10.5 导出范围＝筛选后的行（BOM + CRLF）。
@@ -12000,47 +11838,6 @@ SmokeResult run_smoke() {
         cp.hide();
     }
 
-    // ★★ 2026-10-07（审计补充 H2-4）：**同一判据也必须在文本提取页成立** ——
-    //   修前只对转换页做了断言（"convert 修了、text 没修"），而 `page_base.h:74-83` 与
-    //   本文件都把"**文本提取的行列表**"写进同一条判据。修前形态是 `addWidget(rows_, 1)`
-    //   ⇒ 一次真实提取（gameplay 102 文件 / scripts 446 个 .script）的行数远超结果区高度时
-    //   **永远够不着**。判据与转换页同源：装得下不占位 / 超高能滚 / 拖动改变 offset。
-    //   ★ 判红办法：把 text_page 的 `make_inner_scroll(...)` 换回 `addWidget(rows_, 1)` ⇒ ①②③ 红。
-    {
-        TextPage tp;
-        tp.resize(720, page_min_h());
-        tp.show();
-        QApplication::processEvents();
-        tp.rows()->set_row_count(2);
-        tp.sync_rows_viewport();
-        QApplication::processEvents();
-        check(tp.rows_viewport() != nullptr &&
-                  !ScrollViewport::bar_shown(tp.rows_viewport()->vbar()),
-              QStringLiteral("H2-4 ① 文本提取：装得下 ⇒ 条子**不占位**（视口=%1）")
-                  .arg(tp.rows_viewport() != nullptr ? 1 : 0));
-        for (int i = 0; i < 200; ++i) tp.add_row(QStringLiteral("文本行 %1").arg(i));
-        QApplication::processEvents();
-        QScrollBar* tbar = tp.rows_viewport() != nullptr ? tp.rows_viewport()->vbar() : nullptr;
-        check(tbar != nullptr && tbar->maximum() > 0,
-              QStringLiteral("H2-4 ② 文本提取：内容超高 ⇒ **能滚**（条子=%1 / range 0..%2；"
-                             "修前本页根本没有条子）")
-                  .arg(tbar != nullptr ? 1 : 0)
-                  .arg(tbar != nullptr ? tbar->maximum() : -1));
-        if (tbar != nullptr && tbar->maximum() > 0) {
-            const int target = std::max(1, tbar->maximum() / 2);
-            tbar->setValue(target);
-            QApplication::processEvents();
-            check(tbar->value() == target && tp.rows()->scroll_top() == target,
-                  QStringLiteral("H2-4 ③ 文本提取：拖动条子改变行列表 offset"
-                                 "（期望 %1 / value=%2 / offset=%3）")
-                      .arg(target)
-                      .arg(tbar->value())
-                      .arg(tp.rows()->scroll_top()));
-        } else {
-            check(false, QStringLiteral("H2-4 ③ 文本提取：夹具没做出可滚的条子"));
-        }
-        tp.hide();
-    }
 
     // ★★ 2026-10-05（**落点覆盖必须可见 / 零静默**）—— **GUI 那一面**的锁。
     //   起因（用户报的真事故）：一次默认落点（＝来源所在目录）解包把 **3.9 万个文件**盖在
