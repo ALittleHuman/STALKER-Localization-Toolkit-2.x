@@ -4,6 +4,7 @@ add_library(xrkit_core STATIC
   log.cpp
   path.cpp
   atomic_write.cpp
+  io.cpp
   build_version.cpp
   sha256.cpp
   xlsx.cpp

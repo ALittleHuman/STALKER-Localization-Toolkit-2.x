@@ -299,11 +299,13 @@ int migrate_legacy_user_config() {
     const std::string legacy = legacy_user_ltx_path();
     if (user_file_exists(target)) return 0;      // 新文件在 ⇒ 什么都不做
     if (!user_file_exists(legacy)) return 0;     // 没有旧文件 ⇒ 什么都不做
-    std::ifstream in(path_from_utf8(legacy), std::ios::binary);
-    if (!in) return 0;
-    const std::string text((std::istreambuf_iterator<char>(in)),
-                           std::istreambuf_iterator<char>());
-    in.close();
+    // ★ 2026-11-20（H5）：整文件读走统一上限（512 MB）；读不了就当没有旧文件。
+    std::string text;
+    std::string read_error;
+    if (!read_file_capped(legacy, text, read_error)) {
+        log(Level::Warn, "旧 user.ltx 未迁移：" + read_error);
+        return 0;
+    }
     const LtxData data = parse_ltx(text);
     if (!has_our_keys(data)) return 0;   // ★ 硬条件：没有我们写过的键 ⇒ 一个字节都不碰
     std::string error;
@@ -326,11 +328,13 @@ LtxData load_user_config() {
     // ★ H-02：**第一次**读设置时给旧文件一次迁移机会（每进程一次；条件不满足/失败都返回 0/-1）
     static const int kMigrated = migrate_legacy_user_config();
     (void)kMigrated;
-    std::ifstream in(path_from_utf8(user_ltx_path()), std::ios::binary);
-    if (!in) return LtxData{};
-    const std::string text((std::istreambuf_iterator<char>(in)),
-                           std::istreambuf_iterator<char>());
-    return parse_ltx(text);
+    // ★ 2026-11-20（H5）：同上限；读失败/超限 ⇒ 回落默认，并把原因记日志。
+    std::string text;
+    std::string read_error;
+    if (!read_file_capped(user_ltx_path(), text, read_error)) {
+        log(Level::Warn, "读 user.ltx 失败：" + read_error);
+        return LtxData{};
+    }
 }
 
 std::string load_user_value(const std::string& section, const std::string& key,
