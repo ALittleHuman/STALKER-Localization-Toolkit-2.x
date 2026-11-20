@@ -610,6 +610,16 @@ DecryptGateResult gate_db_path(const Registry& registry, const std::string& path
     }
 
     // 取输入文件名（去目录）拼一个可读的临时文件名
+    // ★ 2026-11-20：**解密产物也要限额**。插件可以返回任意大的明文，没有上限时
+    //   一次解密就能把磁盘写满（`untrusted_limits.h` 只管 DB/压缩包，不管这条路）。
+    //   1 GiB 远大于任何真实包，但足以挡住失控。
+    constexpr std::size_t kMaxDecryptBytes = 1ull << 30;
+    if (plain.size() > kMaxDecryptBytes) {
+        result.ok = false;
+        result.error = "解密产物体积超限（" + std::to_string(plain.size()) + " 字节 > 1 GiB）：" + path;
+        return result;
+    }
+
     std::string name = path;
     const size_t slash = name.find_last_of("/\\");
     if (slash != std::string::npos) name = name.substr(slash + 1);
