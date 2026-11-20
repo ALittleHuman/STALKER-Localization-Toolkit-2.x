@@ -1,6 +1,7 @@
 #include "xrkit/engine/text/convert.h"
 
 #include "xrkit/core/atomic_write.h"
+#include "xrkit/core/io.h"
 #include "xrkit/core/path.h"
 #include "xrkit/engine/text/encoding.h"
 
@@ -120,14 +121,11 @@ void replace_encoding_values(std::string& decl, const std::string& target_enc) {
 }
 
 std::string read_binary(const std::string& path, bool& ok) {
-    std::ifstream in(xrkit::core::path_from_utf8(path), std::ios::binary);
-    if (!in) {
-        ok = false;
-        return {};
-    }
-    std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    ok = true;
-    return body;
+    // 2026-11-20（H5）：整文件读走上限（512 MB）
+    std::string body;
+    std::string read_error;
+    ok = xrkit::core::read_file_capped(path, body, read_error);
+    return ok ? body : std::string();
 }
 
 }  // namespace

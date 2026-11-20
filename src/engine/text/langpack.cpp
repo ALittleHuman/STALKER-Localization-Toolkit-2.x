@@ -1,5 +1,6 @@
 #include "xrkit/engine/text/langpack.h"
 
+#include "xrkit/core/io.h"
 #include "xrkit/core/path.h"
 #include "xrkit/engine/fs/overlay.h"
 #include "xrkit/engine/text/extract.h"   // 遍历只有一套：fs::collect_tree()
@@ -32,9 +33,11 @@ bool is_file(const fs::path& p) {
 }
 
 std::string read_all(const fs::path& p) {
-    std::ifstream f(p, std::ios::binary);
-    if (!f) return {};
-    return std::string(std::istreambuf_iterator<char>(f), {});
+    // 2026-11-20（H5）：整文件读走上限（512 MB）
+    std::string out;
+    std::string read_error;
+    if (!xrkit::core::read_file_capped(xrkit::core::path_to_utf8(p), out, read_error)) return {};
+    return out;
 }
 
 bool write_all(const fs::path& p, const std::string& data) {

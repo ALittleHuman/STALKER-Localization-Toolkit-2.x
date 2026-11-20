@@ -1,5 +1,6 @@
 #include "xrkit/engine/font/langpack.h"
 
+#include "xrkit/core/io.h"
 #include "xrkit/core/path.h"
 
 #include <algorithm>
@@ -41,9 +42,11 @@ bool is_file(const fs::path& p) {
 
 // 读整个 ltx（Cyrillic/UTF-8 都当字节读；键值只做 ASCII 比较）
 std::string read_text(const fs::path& p) {
-    std::ifstream f(p, std::ios::binary);
-    if (!f) return {};
-    return std::string(std::istreambuf_iterator<char>(f), {});
+    // 2026-11-20（H5）：整文件读走上限（512 MB）
+    std::string out;
+    std::string read_error;
+    if (!xrkit::core::read_file_capped(xrkit::core::path_to_utf8(p), out, read_error)) return {};
+    return out;
 }
 
 struct RawSection {
