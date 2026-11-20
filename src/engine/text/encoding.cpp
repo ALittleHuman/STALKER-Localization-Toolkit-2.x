@@ -2,6 +2,7 @@
 
 #include "probe_decls.h"
 
+#include "xrkit/core/io.h"
 #include "xrkit/core/path.h"
 
 #include <cstring>
@@ -1489,14 +1490,15 @@ void normalize_newlines(std::string& text) {
 }
 
 DecodeResult read_text_file(const std::string& path) {
-    std::ifstream in(core::path_from_utf8(path), std::ios::binary);
-    if (!in) {
+    // 2026-11-20（H5）：整文件读走上限（512 MB）
+    std::string raw_text;
+    std::string read_error;
+    if (!core::read_file_capped(path, raw_text, read_error)) {
         DecodeResult res;
-        res.error = "打不开文件：" + path;
+        res.error = read_error;
         return res;
     }
-    std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),
-                             std::istreambuf_iterator<char>());
+    const std::vector<uint8_t> raw(raw_text.begin(), raw_text.end());
     DecodeResult res = decode_text_chain(raw);
     if (res.ok) {
         normalize_newlines(res.text);
@@ -1516,4 +1518,3 @@ extern "C" const char* xrkit_engine_probe_text_tag() { return "xrkit-engine-modu
 namespace xrkit::engine {
 const char* probe_text() { return xrkit_engine_probe_text_tag(); }
 }  // namespace xrkit::engine
-

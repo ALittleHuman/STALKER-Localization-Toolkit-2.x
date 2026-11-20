@@ -2,6 +2,7 @@
 
 #include "xrkit/core/theme.h"
 #include "xrkit/core/atomic_write.h"
+#include "xrkit/core/io.h"
 #include "xrkit/core/path.h"
 #include "xrkit/engine/fs/squashfs.h"
 
@@ -2366,16 +2367,18 @@ FsPage::PackRunResult FsPage::run_pack_job(const PackJob& job, const ProgressSin
     std::vector<efs::DbPackItem> items;
     items.reserve(job.items.size());
     for (const efs::PackFileItem& item : job.items) {
-        std::ifstream in(core::path_from_utf8(item.source_path), std::ios::binary);
-        if (!in) return {false, QStringLiteral("封包失败：读不出 %1").arg(utf8(item.source_path))};
+        // 2026-11-20（H5）：整文件读走上限（512 MB）
+        std::string pack_text;
+        std::string read_error;
+        if (!core::read_file_capped(item.source_path, pack_text, read_error)) {
+            return {false, QStringLiteral("封包失败：%1").arg(utf8(read_error))};
+        }
         efs::DbPackItem pack_item;
         pack_item.path = item.rel;
         pack_item.is_dir = false;
-        pack_item.data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        pack_item.data.assign(pack_text.begin(), pack_text.end());
         items.push_back(std::move(pack_item));
     }
-    // ★ 2026-10-06（⑥ 零静默红线）：接住"名字被改写"的台账 —— cp1251 表示不了的名字
-    //   会被逐码点顶替成 `?`（引擎不认中文名），用户**必须看得见**改了哪些、改成了什么。
     //   **不阻塞**：包照样写出来（用户口径：不需要支持中文名，但不能静默）。
     std::vector<efs::DbNameRewrite> rewrites;
     // ★★ 2026-10-10（P17-66，审计 01 F-13 的**官方页接线**）：这条原来会把空包/错包写出去。

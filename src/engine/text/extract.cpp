@@ -2,6 +2,7 @@
 #include "xrkit/engine/text/case_fold.h"   // ★ P17-112（01 F-10 收尾）：小写折叠跟 CPython 导出的表
 
 #include "xrkit/core/log.h"
+#include "xrkit/core/io.h"
 #include "xrkit/core/path.h"
 #include "xrkit/engine/fs/overlay.h"   // ★ P17-102（02 F-14）：遍历转调 fs::collect_tree()
 #include "xrkit/engine/text/encoding.h"
@@ -1060,14 +1061,15 @@ std::string validate_request(const ExtractRequest& request) {
 //   字符（C++ 侧与 Python 的严格性有差异）。提取 XML 时**先尊重文件自己的 encoding 声明**，
 //   声明解不了再退回原来的六编码链；脚本/ltx 没有声明，仍走原链。
 DecodeResult read_extract_text(const std::string& path) {
-    std::ifstream in(core::path_from_utf8(path), std::ios::binary);
-    if (!in) {
+    // 2026-11-20（H5）：整文件读走上限（512 MB）
+    std::string raw_text;
+    std::string read_error;
+    if (!core::read_file_capped(path, raw_text, read_error)) {
         DecodeResult res;
-        res.error = "打不开文件：" + path;
+        res.error = read_error;
         return res;
     }
-    std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),
-                             std::istreambuf_iterator<char>());
+    const std::vector<uint8_t> raw(raw_text.begin(), raw_text.end());
     const size_t head_len = std::min<size_t>(raw.size(), 512);
     const std::string head(reinterpret_cast<const char*>(raw.data()), head_len);
     const size_t bom_skip =
@@ -1373,10 +1375,10 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
             std::filesystem::path(core::path_from_utf8(xml_out_dir)) / core::path_from_utf8(name);
         // ★ 2026-11-10：多源（scripts/ + configs/scripts/）合并到同一份文本表。
         if (options.append_texts) {
-            std::ifstream old_file(xml_path, std::ios::binary);
-            if (old_file) {
-                std::string existing((std::istreambuf_iterator<char>(old_file)),
-                                     std::istreambuf_iterator<char>());
+            // 2026-11-20（H5）：合并旧文本表也走上限（512 MB）
+            std::string existing;
+            std::string merge_error;
+            if (core::read_file_capped(core::path_to_utf8(xml_path), existing, merge_error)) {
                 const std::string open_tag = "<string_table>";
                 const std::string close_tag = "</string_table>";
                 const std::size_t old_close = existing.rfind(close_tag);
