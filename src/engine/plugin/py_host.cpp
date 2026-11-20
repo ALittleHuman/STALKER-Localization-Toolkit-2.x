@@ -524,6 +524,94 @@ void drop_owner(const std::string& owner) {
 }
 }  // namespace lifecycle
 
+// ★ 2026-11-20：插件比较模式 —— Python 回调返回的 dict 映射成引擎结果结构。
+//   认哪些键、不认的进 `unhandled_keys`（零静默：不认识的键不许悄悄丢）。
+engine::xml::XmlCompareResult compare_result_from_python(py::object obj) {
+    engine::xml::XmlCompareResult r;
+    if (obj.is_none() != 0) {
+        r.error = "插件比较回调返回 None";
+        return r;
+    }
+    if (py::isinstance<py::dict>(obj) == 0) {
+        r.error = "插件比较回调必须返回 dict";
+        return r;
+    }
+    py::dict d = py::reinterpret_borrow<py::dict>(obj);
+    const auto text = [&d](const char* key) -> std::string {
+        if (!d.contains(key)) return std::string();
+        return py::str(d[key]).cast<std::string>();
+    };
+    const auto number = [&d](const char* key) -> uint64_t {
+        if (!d.contains(key)) return 0;
+        return d[key].cast<uint64_t>();
+    };
+    const auto flag = [&d](const char* key) -> bool {
+        if (!d.contains(key)) return false;
+        return d[key].cast<bool>();
+    };
+    const auto strings = [&d](const char* key) -> std::vector<std::string> {
+        std::vector<std::string> out;
+        if (!d.contains(key)) return out;
+        for (py::handle item : py::reinterpret_borrow<py::sequence>(d[key])) {
+            out.push_back(py::str(item).cast<std::string>());
+        }
+        return out;
+    };
+    const auto triples = [&d](const char* key) {
+        std::vector<std::array<std::string, 3>> out;
+        if (!d.contains(key)) return out;
+        for (py::handle item : py::reinterpret_borrow<py::sequence>(d[key])) {
+            py::sequence triple = py::reinterpret_borrow<py::sequence>(item);
+            std::array<std::string, 3> row{};
+            size_t i = 0;
+            for (py::handle cell : triple) {
+                if (i < 3) row[i] = py::str(cell).cast<std::string>();
+                ++i;
+            }
+            out.push_back(row);
+        }
+        return out;
+    };
+    r.rel = text("rel");
+    r.consistent = flag("consistent");
+    r.only_one_side = flag("only_one_side");
+    r.only_side = text("only_side");
+    r.lines_a = number("lines_a");
+    r.lines_b = number("lines_b");
+    r.ids_a = number("ids_a");
+    r.ids_b = number("ids_b");
+    r.only_a = strings("only_a");
+    r.only_b = strings("only_b");
+    r.count_diff = triples("count_diff");
+    r.text_diff = triples("text_diff");
+    r.structure_diff = flag("structure_diff");
+    r.structure_detail = text("structure_detail");
+    r.untrusted_a = flag("untrusted_a");
+    r.untrusted_b = flag("untrusted_b");
+    r.warning = text("warning");
+    r.encoding_a = text("encoding_a");
+    r.encoding_b = text("encoding_b");
+    r.error = text("error");
+    static const char* const kKnown[] = {"rel",      "consistent", "only_one_side", "only_side",
+                                         "lines_a",  "lines_b",    "ids_a",         "ids_b",
+                                         "only_a",   "only_b",     "count_diff",    "text_diff",
+                                         "structure_diff", "structure_detail",
+                                         "untrusted_a", "untrusted_b", "warning",
+                                         "encoding_a", "encoding_b", "error"};
+    for (auto item : d) {
+        const std::string key = py::str(item.first).cast<std::string>();
+        bool known = false;
+        for (const char* name : kKnown) {
+            if (key == name) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) r.unhandled_keys.push_back(key);
+    }
+    return r;
+}
+
 class PyPluginApi {
 public:
     PyPluginApi(Registry* registry, std::string owner, std::string plugin_dir)
@@ -570,7 +658,10 @@ public:
         }
         if (feature == "host.log_detail") return true;
         if (feature == "api.register_module") return true;
-        if (feature == "api.register_decryptor" || feature == "api.register_format") return true;
+        if (feature == "api.register_decryptor" || feature == "api.register_format" ||
+            feature == "api.register_compare_mode") {
+            return true;
+        }
         if (feature == "host.http_get" || feature == "host.http_post" ||
             feature == "host.http_download" || feature == "host.http_download_async" ||
             feature == "host.http_async") {
@@ -738,6 +829,85 @@ public:
         };
         return registry_->register_format(owner_, name, std::move(fn));
     }
+    // `register_compare_mode(spec, compare)`：
+    //   spec = {key, name?, order?, columns:[{key,heading,width?}] 或 ["rel",…], filters?:[…]},
+    //   compare(rel, text_a, text_b, enc_a, enc_b) -> dict（字段见 compare_result_from_python）。
+    bool register_compare_mode(py::object spec_obj, py::object compare) const {
+        if (spec_obj.is_none() != 0 || py::isinstance<py::dict>(spec_obj) == 0) {
+            registry_->add_error(owner_, "register_compare_mode 需要 dict 形式的模式声明");
+            return false;
+        }
+        if (compare.is_none() != 0 || PyCallable_Check(compare.ptr()) == 0) {
+            registry_->add_error(owner_, "register_compare_mode 的 compare 必须可调用");
+            return false;
+        }
+        py::dict spec = py::reinterpret_borrow<py::dict>(spec_obj);
+        plugin::CompareModeReg mode;
+        const auto text = [&spec](const char* key) -> std::string {
+            if (!spec.contains(key)) return std::string();
+            return py::str(spec[key]).cast<std::string>();
+        };
+        mode.spec.key = text("key");
+        mode.spec.name = text("name");
+        if (mode.spec.name.empty()) mode.spec.name = mode.spec.key;
+        if (spec.contains("order")) mode.spec.order = spec["order"].cast<int>();
+        if (spec.contains("columns")) {
+            for (py::handle item : py::reinterpret_borrow<py::sequence>(spec["columns"])) {
+                engine::xml::XmlColumn column;
+                if (py::isinstance<py::str>(item) != 0) {
+                    column.key = py::str(item).cast<std::string>();
+                    column.heading = column.key;
+                } else if (py::isinstance<py::dict>(item) != 0) {
+                    py::dict cd = py::reinterpret_borrow<py::dict>(item);
+                    if (cd.contains("key")) column.key = py::str(cd["key"]).cast<std::string>();
+                    if (cd.contains("heading")) {
+                        column.heading = py::str(cd["heading"]).cast<std::string>();
+                    }
+                    if (column.heading.empty()) column.heading = column.key;
+                    if (cd.contains("width")) column.width = cd["width"].cast<int>();
+                }
+                if (!column.key.empty()) mode.spec.columns.push_back(std::move(column));
+            }
+        }
+        if (spec.contains("filters")) {
+            for (py::handle item : py::reinterpret_borrow<py::sequence>(spec["filters"])) {
+                if (py::isinstance<py::dict>(item) == 0) continue;
+                py::dict fd = py::reinterpret_borrow<py::dict>(item);
+                engine::xml::XmlFilter filter;
+                if (fd.contains("label")) filter.label = py::str(fd["label"]).cast<std::string>();
+                if (fd.contains("row_kinds")) {
+                    for (py::handle kind : py::reinterpret_borrow<py::sequence>(fd["row_kinds"])) {
+                        filter.row_kinds.push_back(py::str(kind).cast<std::string>());
+                    }
+                }
+                if (fd.contains("differ_types")) {
+                    for (py::handle kind : py::reinterpret_borrow<py::sequence>(fd["differ_types"])) {
+                        filter.differ_types.push_back(py::str(kind).cast<std::string>());
+                    }
+                }
+                mode.spec.filters.push_back(std::move(filter));
+            }
+        }
+        py::object kept = compare;
+        keepalive()->push_back(kept);
+        const std::string owner = owner_;
+        mode.compare = [kept, owner](const std::string& rel, const std::string& text_a,
+                                     const std::string& text_b, const std::string& enc_a,
+                                     const std::string& enc_b) {
+            py::gil_scoped_acquire acquire;
+            try {
+                return compare_result_from_python(kept(rel, text_a, text_b, enc_a, enc_b));
+            } catch (const py::error_already_set& err) {
+                engine::xml::XmlCompareResult failed;
+                failed.rel = rel;
+                failed.error = std::string("插件比较回调抛异常：") + err.what();
+                core::log(core::Level::Error, "[" + owner + "] " + failed.error);
+                return failed;
+            }
+        };
+        return registry_->register_compare_mode(owner_, std::move(mode));
+    }
+
 
 private:
     // 把 Python 的 builder 包成引擎要的 `PanelBuilder`：
@@ -4344,7 +4514,9 @@ void ensure_api_module() {
                  py::arg("decrypt"))
             .def("register_format", &PyPluginApi::register_format, py::arg("name"),
                  py::arg("handler"))
-            .def("register_tool", &PyPluginApi::register_tool, py::arg("name"), py::arg("builder"),
+.def("register_compare_mode", &PyPluginApi::register_compare_mode, py::arg("spec"),
+                 py::arg("compare"))
+                        .def("register_tool", &PyPluginApi::register_tool, py::arg("name"), py::arg("builder"),
                  py::arg("order") = 0, py::arg("replaces") = "", py::arg("subtitle") = "",
                  py::arg("title") = "");
         class_registered = true;

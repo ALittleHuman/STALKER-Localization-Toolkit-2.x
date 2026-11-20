@@ -43,6 +43,7 @@ EXPECT_API = {
     "register_tool": "贡献一个 Hub 页（控件门面的落点之一）",
     "register_decryptor": "注册解密器（check/decrypt；加密包读取前由闸门调用）",
     "register_format": "注册包格式（handler(path)->bool）",
+    "register_compare_mode": "注册比较模式（spec dict + compare 回调）",
 }
 # Ui：L1 装配（10）+ L2 操作/服务（8）+ ★P4 重型 L2 第一批（19）
 EXPECT_UI = {
