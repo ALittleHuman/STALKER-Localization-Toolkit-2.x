@@ -43,10 +43,19 @@ bool dump_glyphs(const std::string& font_path, int pixel_size,
         ~LibGuard() { FT_Done_FreeType(l); }
     } lib_guard{lib};
 
-    // FreeType 要本地编码的路径（UTF-8 → 宽字符），否则含中文的路径打不开
-    const std::string native = core::path_to_utf8(core::path_from_utf8(font_path));
+    // ★ 2026-11-20（H2b）：同 `glyph_mask_info` —— 按 UTF-8 路径读进内存，避免 ACP 窄化。
+    std::string font_bytes;
+    {
+        std::ifstream in(core::path_from_utf8(font_path), std::ios::binary);
+        if (!in) return false;
+        font_bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        if (font_bytes.empty()) return false;
+    }
     FT_Face face = nullptr;
-    if (FT_New_Face(lib, native.c_str(), 0, &face) != 0) return false;
+    if (FT_New_Memory_Face(lib, reinterpret_cast<const FT_Byte*>(font_bytes.data()),
+                           static_cast<FT_Long>(font_bytes.size()), 0, &face) != 0) {
+        return false;
+    }
     struct FaceGuard {
         FT_Face f;
         ~FaceGuard() { FT_Done_Face(f); }
@@ -127,7 +136,15 @@ bool dump_glyphs(const std::string& font_path, int pixel_size,
 bool glyph_mask_info(const std::string& font_path, int pixel_size, uint32_t cp,
                      GlyphMaskInfo& out) {
     out = GlyphMaskInfo{};
-    const std::string native = core::path_from_utf8(font_path).string();
+    // ★ 2026-11-20（H2b）：路径不能 `.string()` 窄化（Windows 按 CP_ACP，中文/日文路径会
+    //   变成 `??` 而打不开）。改成按 UTF-8 路径整读进内存，交给 FreeType 的内存构造。
+    std::string font_bytes;
+    {
+        std::ifstream in(core::path_from_utf8(font_path), std::ios::binary);
+        if (!in) return false;
+        font_bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        if (font_bytes.empty()) return false;
+    }
     FT_Library lib = nullptr;
     if (FT_Init_FreeType(&lib) != 0) return false;
     struct LibGuard {
@@ -135,7 +152,10 @@ bool glyph_mask_info(const std::string& font_path, int pixel_size, uint32_t cp,
         ~LibGuard() { FT_Done_FreeType(l); }
     } lib_guard{lib};
     FT_Face face = nullptr;
-    if (FT_New_Face(lib, native.c_str(), 0, &face) != 0) return false;
+    if (FT_New_Memory_Face(lib, reinterpret_cast<const FT_Byte*>(font_bytes.data()),
+                           static_cast<FT_Long>(font_bytes.size()), 0, &face) != 0) {
+        return false;
+    }
     struct FaceGuard {
         FT_Face f;
         ~FaceGuard() { FT_Done_Face(f); }

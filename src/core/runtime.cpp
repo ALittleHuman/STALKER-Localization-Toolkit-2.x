@@ -97,7 +97,7 @@ std::string runtime_root(const std::string& app_dir) {
     // ★★ 2026-11-01（复核 P1）：相对 root 锚到 app 目录（不能按当前工作目录解析）
     const std::filesystem::path root_candidate = path_from_utf8(resolved);
     if (!root_candidate.is_absolute()) {
-        resolved = (std::filesystem::path(path_from_utf8(app_dir)) / root_candidate).string();
+        resolved = path_to_utf8(std::filesystem::path(path_from_utf8(app_dir)) / root_candidate);
     }
     return resolved;
 }
@@ -126,7 +126,7 @@ RuntimeDep resolve_runtime_dep(const std::string& app_dir, const std::string& ke
     // ② root + 约定子路径
     if (!root.empty() && !under_root.empty()) {
         const std::string candidate =
-            (fs::path(path_from_utf8(root)) / path_from_utf8(under_root)).string();
+            path_to_utf8(fs::path(path_from_utf8(root)) / path_from_utf8(under_root));
         if (exists_any(candidate)) {
             dep.path = candidate;
             dep.source = RuntimeSource::Root;
@@ -137,7 +137,7 @@ RuntimeDep resolve_runtime_dep(const std::string& app_dir, const std::string& ke
     // ③ 工具目录默认
     if (!under_app.empty()) {
         const std::string candidate =
-            (fs::path(path_from_utf8(app_dir)) / path_from_utf8(under_app)).string();
+            path_to_utf8(fs::path(path_from_utf8(app_dir)) / path_from_utf8(under_app));
         if (exists_any(candidate)) {
             dep.path = candidate;
             dep.source = RuntimeSource::AppDefault;

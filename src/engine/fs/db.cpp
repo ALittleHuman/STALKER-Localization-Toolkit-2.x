@@ -391,17 +391,19 @@ bool validate_header(const std::vector<uint8_t>& hdr, bool comp, DbFormat fmt,
             }
             if (ctrl) continue;
             if (strict) {
-                bool ascii = true;
-                for (char c : p) {
-                    if (static_cast<unsigned char>(c) >= 127) ascii = false;
-                }
-                if (!ascii) continue;
+                // ★ 2026-11-20（E1）：原来要求条目名**全 ASCII**，全俄文名的合法包认不出。
+                //   现在按 cp1251 的"字母"判：ASCII 字母、0xC0-0xFF（А-я）、0xA8/0xB8（Ё/ё）都算。
                 const size_t lim = std::min<size_t>(8, p.size());
-                bool has_alpha = false;
+                bool has_letter = false;
                 for (size_t i = 0; i < lim; ++i) {
-                    if ((p[i] >= 'A' && p[i] <= 'Z') || (p[i] >= 'a' && p[i] <= 'z')) has_alpha = true;
+                    const unsigned char ch = static_cast<unsigned char>(p[i]);
+                    if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch >= 0xC0 ||
+                        ch == 0xA8 || ch == 0xB8) {
+                        has_letter = true;
+                        break;
+                    }
                 }
-                if (!has_alpha) continue;
+                if (!has_letter) continue;
             }
             out = std::move(entries);
             return true;

@@ -1,4 +1,5 @@
 #include "xrkit/core/theme.h"
+#include "xrkit/core/io.h"
 
 #include "xrkit/core/atomic_write.h"   // M-shell-2 / H-02：设置文件走原子写
 #include "xrkit/core/log.h"             // H-02：迁移与失败都要留痕（零静默）
