@@ -25,6 +25,7 @@
 #include <vector>
 
 #ifdef _WIN32
+#include <io.h>
 #include <windows.h>
 #endif
 
@@ -238,9 +239,18 @@ QString pending_metadata_path() {
     return QDir(update_root()).filePath(QStringLiteral("pending.json"));
 }
 
-bool read_pending_metadata(AppUpdatePending* out) {
+QString pending_backup_path() {
+    return pending_metadata_path() + QStringLiteral(".bak");
+}
+
+QString pending_temp_path() {
+    return pending_metadata_path() + QStringLiteral(".tmp");
+}
+
+// 读取一个候选槽（current/bak）。committed 允许旧文件缺省（迁移兼容）。
+bool read_pending_file(const QString& path, AppUpdatePending* out, int* generation) {
     if (out == nullptr) return false;
-    QFile file(pending_metadata_path());
+    QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return false;
     const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
     if (!doc.isObject()) return false;
@@ -255,6 +265,7 @@ bool read_pending_metadata(AppUpdatePending* out) {
     if (out->info.packages.isEmpty() && !out->info.package.isEmpty()) {
         out->info.packages << out->info.package;
     }
+    if (generation != nullptr) *generation = obj.value(QStringLiteral("generation")).toInt(0);
     out->zip = QDir(update_root()).filePath(QStringLiteral("update.zip"));
     out->ready = obj.value(QStringLiteral("ready")).toBool() &&
                  QFileInfo(out->zip).isFile() && QFileInfo(out->zip).size() > 0;
@@ -267,9 +278,56 @@ bool read_pending_metadata(AppUpdatePending* out) {
     return !out->info.version.isEmpty();
 }
 
+// current 无效时回退 bak；两代都保留，保证非正常退出后还有一份正确状态。
+bool read_pending_metadata(AppUpdatePending* out) {
+    if (out == nullptr) return false;
+    AppUpdatePending current;
+    AppUpdatePending backup;
+    int current_gen = -1;
+    int backup_gen = -1;
+    const bool has_current = read_pending_file(pending_metadata_path(), &current, &current_gen);
+    if (has_current && current_gen < 0) current_gen = 0;
+    const bool has_backup = read_pending_file(pending_backup_path(), &backup, &backup_gen);
+    if (has_backup && backup_gen < 0) backup_gen = 0;
+    if (has_current && (!has_backup || current_gen >= backup_gen)) {
+        *out = std::move(current);
+        return true;
+    }
+    if (has_backup) {
+        *out = std::move(backup);
+        return true;
+    }
+    return false;
+}
+
+bool sync_file(QFile& file) {
+    if (!file.flush()) return false;
+#ifdef _WIN32
+    const intptr_t fd = static_cast<intptr_t>(file.handle());
+    if (fd >= 0) {
+        const intptr_t os_handle = _get_osfhandle(static_cast<int>(fd));
+        if (os_handle != -1) FlushFileBuffers(reinterpret_cast<HANDLE>(os_handle));
+    }
+#endif
+    return true;
+}
+
 bool write_pending_metadata(const AppUpdateInfo& info, bool ready) {
     QDir().mkpath(update_root());
+    AppUpdatePending old;
+    int old_generation = 0;
+    if (read_pending_file(pending_metadata_path(), &old, &old_generation)) {
+        // current 有效，使用它的下一代号
+    } else {
+        AppUpdatePending backup;
+        int backup_generation = 0;
+        if (read_pending_file(pending_backup_path(), &backup, &backup_generation)) {
+            old_generation = backup_generation;
+        }
+    }
     QJsonObject obj;
+    obj.insert(QStringLiteral("generation"), old_generation + 1);
+    obj.insert(QStringLiteral("committed"), true);
     obj.insert(QStringLiteral("version"), info.version);
     obj.insert(QStringLiteral("package"), info.package);
     obj.insert(QStringLiteral("sha256"), info.sha256);
@@ -277,13 +335,33 @@ bool write_pending_metadata(const AppUpdateInfo& info, bool ready) {
     for (const QString& url : info.packages) urls.append(url);
     obj.insert(QStringLiteral("packages"), urls);
     obj.insert(QStringLiteral("ready"), ready);
-    QFile file(pending_metadata_path());
+    const QString temp = pending_temp_path();
+    QFile file(temp);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
-    file.write(QJsonDocument(obj).toJson(QJsonDocument::Indented));
+    if (file.write(QJsonDocument(obj).toJson(QJsonDocument::Indented)) < 0 || !sync_file(file)) {
+        file.close();
+        QFile::remove(temp);
+        return false;
+    }
+    file.close();
+    // 先写 tmp，再轮换。关键：current 不存在时不能先删 bak，否则崩溃会两份都没了。
+    if (QFileInfo::exists(pending_metadata_path())) {
+        QFile::remove(pending_backup_path());
+        if (!QFile::rename(pending_metadata_path(), pending_backup_path())) {
+            QFile::remove(temp);
+            return false;
+        }
+    }
+    if (!QFile::rename(temp, pending_metadata_path())) {
+        // current 已被移到 bak；保留 bak，下次启动回退。
+        return false;
+    }
     return true;
 }
 
 void clear_pending_metadata() {
+    QFile::remove(pending_temp_path());
+    QFile::remove(pending_backup_path());
     QFile::remove(pending_metadata_path());
 }
 
@@ -435,6 +513,8 @@ bool HostUpdate::downloadAppUpdate(const AppUpdateInfo& info,
         QFile::remove(zip);
         QFile::remove(part);
     }
+    // 没有任何有效元数据时，.part 无法证明属于哪个版本，不能盲目续传。
+    if (!had_old) QFile::remove(part);
     // 已下完（或上次已校验）的同版本包：直接复用，避免重复下载。
     if (QFileInfo(zip).isFile() && QFileInfo(zip).size() > 0) {
         if (normalized.sha256.isEmpty()) {
