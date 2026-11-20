@@ -1,3 +1,5 @@
+#include "xrkit/core/io.h"
+#include "xrkit/core/path.h"
 #include "xrkit/engine/text/extract_pack.h"
 
 #include "xrkit/engine/text/extract.h"
@@ -28,9 +30,11 @@ fs::path join(const fs::path& a, const std::string& b) { return a / fs::path(b);
 std::string base_name(const fs::path& p) { return p.filename().string(); }
 
 std::string read_small_text(const fs::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return {};
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    // 2026-11-20（H5）：整文件读走上限（512 MB）
+    std::string out;
+    std::string read_error;
+    if (!xrkit::core::read_file_capped(xrkit::core::path_to_utf8(path), out, read_error)) return {};
+    return out;
 }
 
 std::string lower_ascii(std::string s) {

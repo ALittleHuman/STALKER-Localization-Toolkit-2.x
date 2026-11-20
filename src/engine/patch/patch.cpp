@@ -1,6 +1,7 @@
 #include "xrkit/engine/patch/patch.h"
 
 #include "xrkit/core/atomic_write.h"
+#include "xrkit/core/io.h"
 #include "xrkit/core/path.h"
 
 #include <algorithm>
@@ -612,13 +613,15 @@ PatchIdentifyResult identify_file(const std::string& path, const std::vector<Pat
     // ★ 必须走 `path_from_utf8`：MSVC 的 `std::ifstream(std::string)` 按 **ANSI** 解路径，
     //   含中文/西里尔的路径会**直接打不开**（本批实测：全 ASCII 的 orig 样本正常，
     //   路径里带中文的 v2/v4 样本报"读不到文件"）。给 `std::filesystem::path` 就对。
-    std::ifstream in(xrkit::core::path_from_utf8(path), std::ios::binary);
-    if (!in) {
+    // 2026-11-20（H5）：整文件读走上限（512 MB）
+    std::string data;
+    std::string read_error;
+    if (!xrkit::core::read_file_capped(path, data, read_error)) {
         PatchIdentifyResult r;
         r.error = "读不到文件：" + path;
         return r;
     }
-    std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return identify_buffer(data, sites);
     return identify_buffer(data, sites);
 }
 
@@ -1010,13 +1013,15 @@ PatchBuildResult build_patched(const std::string& data, const std::vector<PatchS
 }
 
 PatchBuildResult build_patched_file(const std::string& src, const std::vector<PatchSite>& sites) {
-    std::ifstream in(xrkit::core::path_from_utf8(src), std::ios::binary);
-    if (!in) {
+    // 2026-11-20（H5）：整文件读走上限（512 MB）
+    std::string data;
+    std::string read_error;
+    if (!xrkit::core::read_file_capped(src, data, read_error)) {
         PatchBuildResult r;
         r.reason = "读不到文件：" + src;
         return r;
     }
-    const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return build_patched(data, sites);
     return build_patched(data, sites);
 }
 

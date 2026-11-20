@@ -1,6 +1,7 @@
-﻿#include "xrkit/engine/font/package.h"
+#include "xrkit/engine/font/package.h"
 #include "xrkit/engine/font/ixr.h"
 
+#include "xrkit/core/io.h"
 #include "xrkit/core/path.h"
 #include "xrkit/engine/font/charset.h"
 #include "xrkit/engine/font/render.h"
@@ -286,11 +287,11 @@ int ref_segment_count(const std::string& pack_dir) {
         core::path_from_utf8(pack_dir) / "gamedata" / "configs" / "fonts.ltx";
     std::error_code ec;
     if (!std::filesystem::is_regular_file(p, ec)) return -1;
-    const std::vector<uint8_t> raw = [&] {
-        std::ifstream in(p, std::ios::binary);
-        return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)),
-                                    std::istreambuf_iterator<char>());
-    }();
+    // 2026-11-20（H5）：整文件读走上限（512 MB）
+    std::string raw_text;
+    std::string read_error;
+    if (!core::read_file_capped(core::path_to_utf8(p), raw_text, read_error)) return -1;
+    const std::vector<uint8_t> raw(raw_text.begin(), raw_text.end());
     std::string text;
     std::string enc;
     bool trusted = false;
@@ -601,9 +602,10 @@ PackageResult build_package(const PackageOptions& opt) {
                                     ? opt.out_dir
                                     : join(opt.out_dir, candidate);
         const std::string prof = join(dir, "_xrkit_profile.json");
-        std::ifstream in(core::path_from_utf8(prof), std::ios::binary);
-        if (!in) continue;
-        std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        // 2026-11-20（H5）：profile 也走上限（512 MB）
+        std::string body;
+        std::string read_error;
+        if (!core::read_file_capped(prof, body, read_error)) continue;
         const size_t key = body.find("\"lang\":\"");
         if (key == std::string::npos) {
             res.warnings.push_back("profile 里没有 lang 字段，沿用页面语言：" + opt.lang);
