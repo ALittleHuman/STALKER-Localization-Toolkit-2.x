@@ -99,16 +99,6 @@ def find_alias(name: str) -> Path:
     return find(*path.parts)
 
 
-def find_any(*candidates: tuple) -> Path:
-    for parts in candidates:
-        got = find(*parts)
-        if got.exists():
-            return got
-    return find(*candidates[0])
-
-
-def exists(*parts: str) -> bool:
-    return find(*parts).exists()
 
 
 # ── 跳过声明 ─────────────────────────────────────────────────────────────

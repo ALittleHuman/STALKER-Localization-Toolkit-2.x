@@ -39,9 +39,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <fstream>
 #include <functional>
-#include <iterator>
 
 namespace xrkit::shell {
 namespace {

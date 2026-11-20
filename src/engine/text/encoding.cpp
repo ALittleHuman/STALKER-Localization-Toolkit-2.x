@@ -6,7 +6,6 @@
 #include "xrkit/core/path.h"
 
 #include <cstring>
-#include <fstream>
 #include <string>
 #include <unordered_map>
 

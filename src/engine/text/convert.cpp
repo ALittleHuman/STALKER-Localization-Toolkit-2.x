@@ -7,7 +7,6 @@
 
 #include <cctype>
 #include <cstdio>
-#include <fstream>
 #include <mutex>
 
 namespace xrkit::engine::text {
