@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _cpp_source import strip_comments  # noqa: E402  （共用"去注释"实现，同类只维护一套）
 
 ROOT = Path(__file__).resolve().parent.parent
-PAGES = ["xml_page.cpp", "text_page.cpp", "convert_page.cpp", "video_page.cpp"]
+PAGES = ["xml_page.cpp", "convert_page.cpp", "video_page.cpp"]   # text_page.cpp 已随合并删除
 PAGES_DIR = ROOT / "src" / "shell" / "pages"
 
 FAILURES: list[str] = []

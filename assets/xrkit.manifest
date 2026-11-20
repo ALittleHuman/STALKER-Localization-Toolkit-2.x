@@ -1,15 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<!--
-  xrkit 应用清单（2026-11-20，item 2）：
-  · activeCodePage=UTF-8 —— 进程内 ANSI API 按 UTF-8 解，配合 core/path.h 的宽字符路径，
-    让「argv 中文乱码」「按 ACP 窄化」这类问题从根上消失（Win10 1903+ 生效）；
-  · longPathAware=true —— 允许超过 260 字符的路径（仍需系统 EnableLongPaths 打开）。
--->
+<!-- xrkit GUI/build-gui/plugin-manager manifest: longPathAware only.
+     activeCodePage=UTF-8 is deliberately NOT set here: xrkit_app.exe crashes at startup
+     (0xC0000005) with it. Root cause TBD; CLI uses assets/xrkit_cli.manifest instead. -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity type="win32" name="xrkit.app" version="2.0.0.0" processorArchitecture="amd64"/>
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
-      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
       <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
     </windowsSettings>
   </application>

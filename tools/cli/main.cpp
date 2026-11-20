@@ -400,8 +400,6 @@ void print_usage() {
            "  --build-package <version.json> <版本> <标记> <序号>\n"
            "                                              构建 + 打包（GUI 的「构建」按钮走的就是本动作；\n"
            "                                              只此一份实现 —— GUI 只是调它，不自己拼参数）\n"
-           "  --app-update <target> <staged> <transaction> <apply|commit|rollback|recover-ok|recover-fail>\n"
-           "                  本体更新事务（更新器用；不是用户日常命令）\n"
            "  --plugin-update <plugins> <target> <staged> <key> <transaction> <apply|activate|commit|rollback|recover-ok|recover-fail>\n"
            "                  插件更新事务（插件管理器用）\n"
            "  --http-get <url> [out]\n"

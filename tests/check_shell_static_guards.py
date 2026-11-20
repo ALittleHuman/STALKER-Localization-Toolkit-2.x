@@ -116,12 +116,14 @@ def main() -> int:
         fail("D 裸线程判定：%s" % ", ".join(bare[:6]))
 
     # E：TextPage 是**测试专用**（HA/DSH 2026-11-02 裁决）：注释必须写死，工厂不许注册它。
+    # ★ 2026-11-20：文本提取已并入文本工具页 ⇒ 独立 TextPage 已删除。
+    #   判据改成"**不许再出现**"（防止将来有人当产品页接回来）。
     text_h = (ROOT / "src" / "shell" / "pages" / "text_page.h")
     factory = (ROOT / "src" / "shell" / "pages" / "page_factory.cpp")
-    if text_h.is_file() and "测试专用，不是产品页" in text_h.read_text(encoding="utf-8", errors="replace"):
-        ok("E TextPage 标了「测试专用，不是产品页」")
+    if not text_h.exists():
+        ok("E 独立 TextPage 已删除（提取已并入文本工具页）")
     else:
-        fail("E TextPage 没标测试专用（注释会腐烂，将来会被当产品页接回）")
+        fail("E text_page.h 又出现了（提取入口只许一份：文本工具页）")
     if factory.is_file():
         body = factory.read_text(encoding="utf-8", errors="replace")
         if "TextPage" not in body:

@@ -23,4 +23,5 @@ xrkit_attach_python_runtime(xrkit_cli)
 #   Python 插件的夹具在 `tests/python_plugins/` 与 `src/shell/smoke.cpp` 里。
 
 # ★ 2026-11-20（item 2）：UTF-8 页 + 长路径清单
-xrkit_attach_manifest(xrkit_cli)
+# CLI 用**带 UTF-8 代码页**的那一份（GUI 用默认的 longPathAware-only）
+target_link_options(xrkit_cli PRIVATE "/MANIFESTINPUT:${CMAKE_SOURCE_DIR}/assets/xrkit_cli.manifest")

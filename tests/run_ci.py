@@ -2859,12 +2859,13 @@ def step_shell_smoke(release: bool) -> None:
 
     # 对照表 ⑦7.1/7.5：**页面不许自己写拒绝理由**。判据与文案都在 `validate_request`
     #（引擎），页面只把返回值显示出来 —— 两条入口各写一份理由，迟早会不一样。
-    text_src = ROOT / "src" / "shell" / "pages" / "text_page.cpp"
+    # ★ 2026-11-20：文本提取并入文本工具页 ⇒ 独立 text_page.cpp 已删除，这里改查 xml_page.cpp
+    text_src = ROOT / "src" / "shell" / "pages" / "xml_page.cpp"
     code = active_code(text_src.read_text(encoding="utf-8", errors="replace"))
     offenders = [phrase for phrase in ("不要选它们的上层目录", "会覆盖源目录中的原文件", "请指定输出目录")
                  if phrase in code]
     if offenders:
-        fail("提取守卫文案（7.1/7.5）：text_page.cpp 里出现 %s —— 理由只能由引擎给（validate_request）"
+        fail("提取守卫文案（7.1/7.5）：xml_page.cpp 里出现 %s —— 理由只能由引擎给（validate_request）"
              % "、".join(offenders))
         return
     ok("提取守卫理由只由引擎给（7.1/7.5：页面不自己写那几句话）")
@@ -2927,7 +2928,7 @@ def step_shell_smoke(release: bool) -> None:
         return
     ok("取消接线（①：task_shell.cpp 里 `connect(cancel_` 在位）")
 
-    KEEP_CANCEL = ("convert_page.cpp", "text_page.cpp", "xml_page.cpp")
+    KEEP_CANCEL = ("convert_page.cpp", "xml_page.cpp")   # text_page.cpp 已随合并删除
     DROP_CANCEL = ("fs_page.cpp", "fontpack_page.cpp")
     keep_offenders, drop_offenders, unclassified = [], [], []
     for src in sorted((ROOT / "src" / "shell" / "pages").rglob("*.cpp")):

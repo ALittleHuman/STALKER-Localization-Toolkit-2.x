@@ -334,6 +334,7 @@ LtxData load_user_config() {
         log(Level::Warn, "读 user.ltx 失败：" + read_error);
         return LtxData{};
     }
+    return parse_ltx(text);
 }
 
 std::string load_user_value(const std::string& section, const std::string& key,
