@@ -5541,6 +5541,24 @@ if (action == "--diff-snapshot") {
             std::cout << "PACKDB error reason=写失败（" << tgt.path << "）\n";
             return kExitFail;
         }
+        // ★ 2026-11-20（item 1）：**封包后自动回读自检**。LZHUF 遇到极难压缩的数据可能写出
+        //   "块头长度为 0"的坏包却报成功（用户只能自己 --dump 才发现）。这里立刻解析一遍
+        //   刚写出的文件，条目数/可解析性不符即判失败——坏包不出厂。
+        {
+            const xrkit::engine::fs::DbListing back =
+                xrkit::engine::fs::list_db_seek(tgt.path, fmt);
+            if (!back.ok) {
+                std::cout << "PACKDB error reason=封包后自检失败（回读解析不了）：" << back.error
+                          << "\n";
+                return kExitFail;
+            }
+            if (back.entries.size() != items.size()) {
+                std::cout << "PACKDB error reason=封包后自检失败（回读 " << back.entries.size()
+                          << " 条 != 写入 " << items.size() << " 条）\n";
+                return kExitFail;
+            }
+        }
+
         std::cout << "PACKDB ok items=" << items.size() << " bytes=" << bytes.size() << "\n";
         // 名字改写台账（**清零静默**）：只在真发生改写时打，逐条给「源名 → 写进包里的名字」。
         // 计数行**恒在**（=0 也要说）——"没打印"与"没发生"必须能区分开。
