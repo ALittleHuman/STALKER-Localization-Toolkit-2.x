@@ -2512,7 +2512,10 @@ public:
         if (host_on_ui_thread()) {
             py::dict blocked;
             blocked["ok"] = false;
+            blocked["status"] = 0;
             blocked["error"] = "HTTP 调用必须在 worker 线程（不能阻塞 UI）";
+            blocked["bytes"] = 0;
+            blocked["truncated"] = false;
             blocked["path"] = path;
             core::log(core::Level::Warn,
                       "[" + owner_ + "] 插件在 UI 线程调用 host.http_download；已拒绝");

@@ -1003,20 +1003,29 @@ void Hub::check_updates(bool silent) {
     // 网络请求必须在后台线程：WinHTTP 冷启动/断网时单个源就要等满超时，
     // 同步跑会把整个界面卡住（标题栏「未响应」），用户看不到任何结果。
     QPointer<Hub> self(this);
-    std::thread([self, silent] {
-        AppUpdateInfo info;
-        QString error;
-        const bool ok = HostUpdate::fetchAppInfo(&info, &error);
-        if (self.isNull()) return;
-        QMetaObject::invokeMethod(
-            self.data(),
-            [self, info = std::move(info), error, ok, silent]() mutable {
-                if (self.isNull()) return;
-                self->update_check_inflight_ = false;
-                self->finish_update_check(info, error, ok, silent);
-            },
-            Qt::QueuedConnection);
-    }).detach();
+    try {
+        std::thread([self, silent] {
+            AppUpdateInfo info;
+            QString error;
+            const bool ok = HostUpdate::fetchAppInfo(&info, &error);
+            if (self.isNull()) return;
+            QMetaObject::invokeMethod(
+                self.data(),
+                [self, info = std::move(info), error, ok, silent]() mutable {
+                    if (self.isNull()) return;
+                    self->update_check_inflight_ = false;
+                    self->finish_update_check(info, error, ok, silent);
+                },
+                Qt::QueuedConnection);
+        }).detach();
+    } catch (const std::exception& e) {
+        update_check_inflight_ = false;
+        if (!silent) {
+            QMessageBox::warning(this, QStringLiteral("检测更新"),
+                                 QStringLiteral("无法创建更新检查线程：%1")
+                                     .arg(QString::fromUtf8(e.what())));
+        }
+    }
 }
 
 void Hub::finish_update_check(const AppUpdateInfo& info, const QString& error, bool ok,
@@ -1120,7 +1129,8 @@ void Hub::begin_update_download(const AppUpdateInfo& info) {
     }
     log_line(QStringLiteral("开始下载更新：%1").arg(info.version));
     QPointer<Hub> self(this);
-    std::thread([self, info, cancel] {
+    try {
+        std::thread([self, info, cancel] {
         const auto progress = [self, cancel](std::size_t bytes, std::size_t total) {
             if (*cancel) return false;
             if (!self.isNull()) {
@@ -1142,7 +1152,17 @@ void Hub::begin_update_download(const AppUpdateInfo& info) {
                 if (!self.isNull()) self->finish_update_download(ok, error);
             },
             Qt::QueuedConnection);
-    }).detach();
+        }).detach();
+    } catch (const std::exception& e) {
+        update_download_inflight_ = false;
+        if (update_version_label_ != nullptr) {
+            update_version_label_->setText(QStringLiteral("无法启动更新下载"));
+            update_version_label_->setVisible(true);
+        }
+        QMessageBox::warning(this, QStringLiteral("更新下载"),
+                             QStringLiteral("无法创建下载线程：%1")
+                                 .arg(QString::fromUtf8(e.what())));
+    }
 }
 
 void Hub::show_update_progress(std::size_t bytes, std::size_t total) {

@@ -78,6 +78,16 @@ constexpr const char* kAssetMirrors[] = {
     "https://ghfast.top/",
     "https://gh-proxy.com/",
 };
+// npm 更新包（Trusted Publishing 发布）；unpkg 实测 36 MB 约 4.6s。
+constexpr const char* kNpmUpdatePackage = "@alittlehuman/stalker-toolkit-update";
+
+QString npm_update_url(const QString& version) {
+    QString v = version.trimmed();
+    if (v.startsWith(QLatin1Char('v')) || v.startsWith(QLatin1Char('V'))) v.remove(0, 1);
+    if (v.isEmpty()) return {};
+    return QStringLiteral("https://unpkg.com/%1@%2/full/%3.zip")
+        .arg(QString::fromLatin1(kNpmUpdatePackage), v, v);
+}
 
 QStringList manifest_sources() {
     const QString override_url = qEnvironmentVariable("XRKIT_APP_UPDATE_URL");
@@ -130,6 +140,8 @@ bool parse_update_payload(const std::string& body, bool allow_test, AppUpdateInf
                 }
             }
         }
+        const QString npm_url = npm_update_url(out->version);
+        if (!npm_url.isEmpty()) out->packages.prepend(npm_url);
         out->packages.removeDuplicates();
         if (!out->packages.isEmpty()) out->package = out->packages.first();
         return !out->version.isEmpty() && !out->packages.isEmpty();
@@ -510,6 +522,7 @@ bool HostUpdate::installPendingAppUpdate(bool* started, QString* error) {
         return false;
     }
     const QString txn = root.filePath(QStringLiteral("transaction"));
+    QDir(txn).removeRecursively();
     const QString exe = QDir(install_dir).filePath(QStringLiteral("xrkit_app.exe"));
     const bool launched = QProcess::startDetached(
         updater,
