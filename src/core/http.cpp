@@ -343,6 +343,110 @@ HttpResult http_download(const std::string& url, const std::string& path, int ti
     return result;
 }
 
+std::uint64_t http_probe_size(const std::string& url, int timeout_sec,
+                              bool prefer_direct) {
+    if (!network_enabled()) return 0;
+    const std::wstring range = L"Range: bytes=0-0\r\n";
+#ifdef _WIN32
+    HttpResult result;
+    if (prefer_direct) {
+        result = winhttp_request_once("GET", url, std::string(), std::string(), timeout_sec,
+                                      1, nullptr, range, WINHTTP_ACCESS_TYPE_NO_PROXY);
+    } else {
+        result = winhttp_request("GET", url, std::string(), std::string(), timeout_sec, 1,
+                                 nullptr, range);
+    }
+    if (result.status == 206 || result.status == 200) return result.expected_bytes;
+#endif
+    return 0;
+}
+
+HttpResult http_download_range(const std::string& url, const std::string& path,
+                               std::uint64_t start, std::uint64_t end,
+                               int timeout_sec, const HttpProgress& progress,
+                               bool prefer_direct) {
+    HttpResult result;
+    if (end < start) {
+        result.error = "非法 Range";
+        return result;
+    }
+    if (!network_enabled()) {
+        result.error = "联网功能已关闭";
+        return result;
+    }
+    const std::uint64_t want = end - start + 1;
+    std::error_code ec;
+    std::uint64_t existing = 0;
+    if (std::filesystem::is_regular_file(path, ec)) {
+        existing = static_cast<std::uint64_t>(std::filesystem::file_size(path, ec));
+        if (ec) existing = 0;
+    }
+    if (existing > want) {
+        std::filesystem::remove(path, ec);
+        existing = 0;
+    }
+    if (existing == want) {
+        result.ok = true;
+        result.status = 206;
+        result.bytes = static_cast<std::size_t>(want);
+        result.expected_bytes = static_cast<std::size_t>(want);
+        if (progress) progress(result.bytes, result.expected_bytes);
+        return result;
+    }
+    std::ofstream file(path, std::ios::binary | std::ios::app);
+    if (!file) {
+        result.error = "无法创建分片文件";
+        return result;
+    }
+    const std::uint64_t from = start + existing;
+    std::wstring extra = L"Range: bytes=" + std::to_wstring(from) + L"-" +
+                         std::to_wstring(end) + L"\r\n";
+    const HttpProgress report = [&](std::size_t bytes, std::size_t) {
+        if (progress) {
+            return progress(static_cast<std::size_t>(existing) + bytes,
+                            static_cast<std::size_t>(want));
+        }
+        return true;
+    };
+#ifdef _WIN32
+    if (prefer_direct) {
+        result = winhttp_request_once("GET", url, std::string(), std::string(), timeout_sec,
+                                      static_cast<std::size_t>(want), &file, extra,
+                                      WINHTTP_ACCESS_TYPE_NO_PROXY, report);
+    } else {
+        result = winhttp_request("GET", url, std::string(), std::string(), timeout_sec,
+                                 static_cast<std::size_t>(want), &file, extra, report);
+    }
+#else
+    result.error = "当前构建没有 WinHTTP";
+#endif
+    file.close();
+    if (result.status == 200) {
+        // 服务器忽略 Range：不能把整包追加到分片里。
+        result.ok = false;
+        result.error = "服务器不支持 Range";
+        std::filesystem::remove(path, ec);
+        return result;
+    }
+    if (result.status == 416) {
+        result.ok = false;
+        result.error = "分片 Range 越界";
+        std::filesystem::remove(path, ec);
+        return result;
+    }
+    if (!result.ok) return result;
+    const std::uint64_t have = existing + static_cast<std::uint64_t>(result.bytes);
+    if (have < want) {
+        result.ok = false;
+        result.error = "分片下载不完整";
+        return result;
+    }
+    result.ok = true;
+    result.bytes = static_cast<std::size_t>(want);
+    result.expected_bytes = static_cast<std::size_t>(want);
+    return result;
+}
+
 HttpResult http_post(const std::string& url, const std::string& body,
                      const std::string& content_type, int timeout_sec,
                      std::size_t max_bytes) {

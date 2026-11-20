@@ -15,6 +15,7 @@
 #include "xrkit/engine/plugin/host_facade.h"
 
 #include "xrkit/core/log.h"
+#include "xrkit/core/download.h"
 #include "xrkit/core/http.h"
 // `app_dir()`（exe 所在目录）住在 core/theme.h —— **不是** path.h：
 // 实测按 path.h 写会报 `"app_dir": 不是 "xrkit::core" 的成员`（本片第一次编译就踩到）。
@@ -570,7 +571,8 @@ public:
         if (feature == "host.log_detail") return true;
         if (feature == "api.register_module") return true;
         if (feature == "host.http_get" || feature == "host.http_post" ||
-            feature == "host.http_download") {
+            feature == "host.http_download" || feature == "host.http_download_async" ||
+            feature == "host.http_async") {
             return true;
         }
         if (feature == "host.start_process" || feature == "host.stop_process" ||
@@ -2502,6 +2504,68 @@ public:
         if (host_on_ui_thread()) return http_blocked_on_ui();
         return http_result(core::http_post(url, body, content_type, timeout_sec, max_bytes));
     }
+    // 异步下载：立即返回 job id；进度用 http_download_status 轮询。
+    // 不跨线程回调 Python，避免插件卸载/解释器退出时持有 py::object。
+    py::object http_download_async(py::object url, const std::string& path, int workers,
+                                   int timeout_sec, std::size_t max_bytes) {
+        std::vector<std::string> urls;
+        if (py::isinstance<py::str>(url)) {
+            urls.push_back(url.cast<std::string>());
+        } else if (py::isinstance<py::sequence>(url)) {
+            for (py::handle item : py::reinterpret_borrow<py::sequence>(url)) {
+                urls.push_back(py::str(item).cast<std::string>());
+            }
+        } else {
+            urls.push_back(py::str(url).cast<std::string>());
+        }
+        urls.erase(std::remove_if(urls.begin(), urls.end(),
+                                  [](const std::string& item) { return item.empty(); }),
+                   urls.end());
+        py::dict out;
+        if (urls.empty() || path.empty()) {
+            out["ok"] = false;
+            out["error"] = "url/path 不能为空";
+            return out;
+        }
+        core::DownloadOptions options;
+        options.target = path;
+        options.urls = std::move(urls);
+        options.max_bytes = max_bytes;
+        options.timeout_sec = timeout_sec;
+        options.workers = std::max(1, std::min(workers, 6));
+        options.prefer_direct = true;
+        const std::uint64_t job = core::DownloadManager::instance().start(options);
+        out["ok"] = true;
+        out["job"] = job;
+        out["workers"] = options.workers;
+        out["path"] = path;
+        return out;
+    }
+
+    py::object http_download_status(std::uint64_t job) const {
+        core::DownloadStatus status;
+        py::dict out;
+        if (!core::DownloadManager::instance().status(job, &status)) {
+            out["found"] = false;
+            out["ok"] = false;
+            out["error"] = "job 不存在";
+            return out;
+        }
+        out["found"] = true;
+        out["finished"] = status.finished;
+        out["ok"] = status.ok;
+        out["cancelled"] = status.cancelled;
+        out["done"] = status.done;
+        out["total"] = status.total;
+        out["error"] = status.error;
+        out["path"] = status.path;
+        return out;
+    }
+
+    bool http_cancel(std::uint64_t job) {
+        return core::DownloadManager::instance().cancel(job);
+    }
+
     // ★ 2026-11-19：大文件下载。
     //   · 单个 url ⇒ 直接下，**不做任何探测**；
     //   · 列表且只有 1 个 ⇒ 同上（不探测）；
@@ -2673,6 +2737,7 @@ private:
     }
 
     std::string owner_;
+    mutable std::vector<std::uint64_t> jobs_;
 };
 
 class PyUi {
@@ -3823,6 +3888,11 @@ void ensure_api_module() {
                  py::arg("max_bytes") = 1u << 20)
             .def("http_download", &PyHost::http_download, py::arg("url"), py::arg("path"),
                  py::arg("timeout_sec") = 300, py::arg("max_bytes") = std::size_t(8) << 30)
+            .def("http_download_async", &PyHost::http_download_async, py::arg("url"),
+                 py::arg("path"), py::arg("workers") = 4, py::arg("timeout_sec") = 300,
+                 py::arg("max_bytes") = std::size_t(8) << 30)
+            .def("http_download_status", &PyHost::http_download_status, py::arg("job"))
+            .def("http_cancel", &PyHost::http_cancel, py::arg("job"))
             .def("system_font_dirs", &PyHost::system_font_dirs)
             // ★★ P12b：跑外部进程（宿主服务）
             .def("run_process", &PyHost::run_process, py::arg("options"))

@@ -12,6 +12,7 @@ add_library(xrkit_core STATIC
   plugin_update.cpp
   update_transaction.cpp
   http.cpp
+  download.cpp
   theme.cpp
     runtime.cpp)
 
