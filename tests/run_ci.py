@@ -8043,6 +8043,37 @@ def make_checker_step(name: str, script_name: str, label: str):
     return step
 
 
+def step_samples_flows(release: bool) -> None:
+    """按 `tests/samples.local.json` 的 `flows` 跑**自定义样本测试链**。
+
+    口径（用户 2026-11-20）：门禁**不与本机样本绑定** ——
+      · 想跑样本 ⇒ 在配置里写 `aliases` + `flows`；
+      · 不想跑 ⇒ 在 `skip` 里声明别名（或不写 flow）。
+    缺样本 / 声明跳过 ⇒ 只 WARN，不阻断。
+    """
+    say("[samples-flows] 自定义样本测试链（配置：%s）" % samples.CONFIG.name)
+    for name in samples.skipped_names():
+        prereq("样本 %s" % name,
+               "samples 配置声明跳过：%s" % (samples.skip_reason(name) or "（未写理由）"), release)
+    todo = samples.flows()
+    if not todo:
+        ok("未配置自定义测试链（样本一律按跳过处理，不影响其它步骤）")
+        return
+    for flow in todo:
+        fid = str(flow.get("id") or "flow")
+        expanded = samples.expand([str(x) for x in (flow.get("cmd") or [])])
+        if not expanded or any(not resolved for _, resolved in expanded):
+            prereq("样本流程 %s" % fid, "引用的样本未配置或已声明跳过", release)
+            continue
+        argv = [value for value, _ in expanded]
+        rc, out = run(argv, timeout=1800 if flow.get("slow") else 600)
+        for line in [ln for ln in out.splitlines() if ln.strip()][-5:]:
+            say("  | " + line.strip()[:200])
+        if rc == 0:
+            ok("样本流程 %s" % fid)
+        else:
+            fail("样本流程 %s（退出码 %d）" % (fid, rc))
+
 STEPS = [    ("build", step_build),
     ("no-qt", step_no_qt_lock),
     ("no-qt-injection", step_no_qt_injection),

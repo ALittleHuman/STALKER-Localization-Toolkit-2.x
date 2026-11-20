@@ -1,0 +1,23 @@
+{
+  "_comment": "复制成 tests/samples.local.json（已 gitignore）后按需修改；本文件只是模板，不参与门禁。",
+  "roots": [
+    "D:/samples",
+    "E:/path/to/your/samples"
+  ],
+  "aliases": {
+    "toolkit.1x": "E:/path/to/STALKER_Toolkit",
+    "mod.cop_root": "Chronicles of Pripyat/Chronicles of Pripyat",
+    "text.real_scripts": "Golden Sphere/gamedata/scripts"
+  },
+  "skip": {
+    "golden.real_corpus": "本机没有这套真语料",
+    "mod.nlc_root": "不测 NLC"
+  },
+  "flows": [
+    {
+      "id": "example-1x-baseline",
+      "cmd": ["{python}", "tests/check_some_baseline.py", "{alias:toolkit.1x}"],
+      "slow": true
+    }
+  ]
+}
