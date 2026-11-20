@@ -5255,6 +5255,16 @@ if (action == "--diff-snapshot") {
                 return kExitUsage;
             }
         }
+        // ★ 2026-11-20：`--mode <插件键>` 要走**插件的 compare 回调**（修前只认 stats/text，
+        //   插件模式注册了却永远用不上）。
+        if (!opt.mode_key.empty() && opt.mode_key != "stats" && opt.mode_key != "text") {
+            if (const auto* mode = plugin_registry.compare_mode(opt.mode_key)) {
+                opt.compare = mode->compare;
+            } else {
+                std::cerr << "XMLDIRS error reason=未知模式 " << opt.mode_key << "\n";
+                return kExitUsage;
+            }
+        }
         const xrkit::engine::xml::DirDiffReport report =
             xrkit::engine::xml::compare_dirs(opt);
         // 逐行输出（**判据对拍用的就是这些行**：rel / kind / 两侧行数 / id 数 / 差异数）

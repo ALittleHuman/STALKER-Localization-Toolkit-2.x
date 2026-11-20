@@ -12586,6 +12586,12 @@ SmokeResult run_smoke() {
             {"2.0.0", "2.0.0.244", true, "同号正式版高于测试版"},
             {"2.0.0", "2.0.0", false, "同版本不提示"},
             {"2.0.1", "2.0.0", true, "补丁版本升"},
+            // ★ 2026-11-20：测试版内部还有通道次序 ALPHA < BETA < RC。
+            //   修前只比 build ⇒ RC.1（build=1）被判成比 BETA.253 旧，RC 升级不上去。
+            {"2.0.0 RC.1", "2.0.0 BETA.253", true, "RC 高于 BETA（同 x.y.z）"},
+            {"2.0.0 BETA.253", "2.0.0 RC.1", false, "BETA 不高于 RC"},
+            {"2.0.0 ALPHA.9", "2.0.0 BETA.1", false, "ALPHA 低于 BETA"},
+            {"2.0.0 RC.2", "2.0.0 RC.1", true, "同通道按 n 升"},
         };
         for (const Case& c : cases) {
             const bool got = xrkit::shell::HostUpdate::versionIsNewer(
