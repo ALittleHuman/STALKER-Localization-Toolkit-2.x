@@ -4028,8 +4028,19 @@ int run_cli(const std::vector<std::string>& args) {
             return kExitUsage;
         }
         const std::string& target = operands.front();
-        if (is_squashfs_head(target)) {
-            const xrkit::engine::fs::ListResult res = xrkit::engine::fs::list_entries(target);
+        // ★ 2026-11-20：**先过闸门再判类型** —— 加密 SquashFS 的头不是 hsqs，
+        //   按原始路径嗅探会被判成"不是 SquashFS"然后落到 DB 分支失败。
+        std::string effective_target = target;
+        {
+            const xrkit::plugin::DecryptGateResult gate = xrkit::plugin::gate_active_read(target);
+            if (!gate.ok) {
+                std::cout << "DUMP error reason=" << gate.error << "\n";
+                return kExitFail;
+            }
+            if (gate.used_plugin && !gate.path.empty()) effective_target = gate.path;
+        }
+        if (is_squashfs_head(effective_target)) {
+            const xrkit::engine::fs::ListResult res = xrkit::engine::fs::list_entries(effective_target);
             if (!res.ok) {
                 std::cout << "DUMP error reason=" << res.error << "\n";
                 return kExitFail;
@@ -4058,7 +4069,7 @@ int run_cli(const std::vector<std::string>& args) {
         //   旧写法 `read_all` 把整文件读进内存 ⇒ 1900 MB 的包 8,063 ms；顺带把
         //   "1.9 GB 读不进来"那条旧观察也一并消掉（那次是**路径写错**：实际文件在
         //   `地图包\database\patch\` 下，`read_all` 打不开 ⇒ 返回空 ⇒ 报了"读不到文件或文件为空"）。
-        const xrkit::engine::fs::DbListing res = xrkit::engine::fs::list_db_seek(target, fmt);
+        const xrkit::engine::fs::DbListing res = xrkit::engine::fs::list_db_seek(effective_target, fmt);
         if (!res.ok) {
             std::cout << "DUMP error reason=" << res.error << "\n";
             return kExitFail;

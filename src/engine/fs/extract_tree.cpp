@@ -534,10 +534,22 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
     //   （不是每个文件读完就删 —— Windows 句柄；也不是退出才删 —— 会躺半天）。
     const xrkit::plugin::DecryptSessionScope decrypt_session_scope;
     // ① SquashFS：先只读 96 字节超块判 magic（大镜像不能整包进内存）⇒ 命中就走既有那条
+    // ★ 2026-11-20：先过闸门、再判类型（加密 SquashFS 的头不是 hsqs，先嗅探会落到 DB 分支）
+    std::string effective_image = image_path;
+    {
+        const xrkit::plugin::DecryptGateResult gate =
+            xrkit::plugin::gate_active_read(image_path);
+        if (!gate.ok) {
+            ExtractTreeResult blocked;
+            blocked.error = gate.error;
+            return blocked;
+        }
+        if (gate.used_plugin && !gate.path.empty()) effective_image = gate.path;
+    }
     SuperBlock super;
     std::string super_error;
-    if (read_superblock(image_path, super, super_error)) {
-        return extract_tree(image_path, out_root, options);
+    if (read_superblock(effective_image, super, super_error)) {
+        return extract_tree(effective_image, out_root, options);
     }
 
     // ② X-Ray DB 六格式：条目表在尾部 ⇒ 整文件读
@@ -556,7 +568,7 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
     // ② X-Ray DB 六格式：条目表在尾部 ⇒ **seek 式**只读"块头 + 尾部那一块"；
     //    逐条目解包时也只读那一条的那一段（旧实现整包读进内存：1900 MB 的包光读盘 8 s，
     //    而且整个镜像常驻内存）。两条路的产物逐值一致（共用 `decode_entry_bytes`）。
-    const DbListing listed = list_db_seek(image_path, db_fallback);
+    const DbListing listed = list_db_seek(effective_image, db_fallback);
     if (!listed.ok) {
         result.error = listed.error;
         return finish();
@@ -565,7 +577,7 @@ ExtractTreeResult extract_package(const std::string& image_path, const std::stri
     //   有插件解密器命中时它是**解密产物**；逐条提取必须读那一份（修前读的是原始密文 ⇒
     //   列条目成功、逐条报「偏移越界」/读出垃圾字节）。
     //   ★ 这样做**整批只解密一次**（`extract_entry_seek` 里的闸门认出"已在产物目录里"）。
-    const std::string& db_source = listed.read_path.empty() ? image_path : listed.read_path;
+    const std::string& db_source = listed.read_path.empty() ? effective_image : listed.read_path;
     result.ok = true;   // 从这里往后：单项失败算单项（与 SquashFS 分支同口径）
     ArtifactTally tally;   // ★ 产物口径：同一落点只算一次（真机 `maps\*.db` 的重复登记就靠它）
 
