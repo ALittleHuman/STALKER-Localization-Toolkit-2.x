@@ -1,29 +1,38 @@
 # -*- coding: utf-8 -*-
-"""**真机样本的唯一定位器**（2026-11-09：样本信息全部移出源码；2026-11-20 增补跳过/流程）。
+"""**真机样本的唯一定位器**（2026-11-09 建立；2026-11-20 改为「主目录 + 三类子目录」）。
 
 口径（用户 2026-11-09 / 2026-11-20）
 ------------------------------------
-· **源码里只允许出现通用别名**（如 `unpack.vessel_ai`），不许出现真机模组名/绝对路径；
-· 真实样本名 → 相对片段/绝对根的映射放在**工作区**配置文件：
-  `tests/samples.local.json`（已 gitignore）或 `XRKIT_SAMPLES_CONFIG` 指向的 JSON；
-· 根优先级：`XRKIT_SAMPLES`（环境变量）→ 配置文件 `roots`；都没有时用占位根
-  （`find()` 返回该占位路径，判据会明确报"样本缺失"，不是空字符串）。
-· ★ 2026-11-20：门禁**不与本机样本绑定**——样本要么在配置里给路径，要么在
-  `skip` 里**显式声明跳过**；两者都没有才是"缺样本"（WARN）。
-· 配置里还可以写 `flows`：自定义测试链，由门禁的 `samples-flows` 步骤执行。
+· 源码里只允许出现**通用别名**，不许出现真机模组名/绝对路径；
+· 配置放 `tests/samples.local.json`（gitignore）或 `XRKIT_SAMPLES_CONFIG` 指向的文件；
+· ★ 门禁**不与本机样本绑定**：样本要么给路径，要么在 `skip` 里显式声明跳过；
+· ★ 目录结构（用户 2026-11-20）：
+      <root>/
+        tmp/        每次跑**先清空**，跑完保留（日志与产物供分析）
+        samples/    样本侧（输入），按模组/主题细分
+        expected/   对照侧（正确结果），与 samples 同构
+· ★ 对照分两类：
+      deterministic = true   → **逐字节**比对（自动化 + 精准），不一致即失败；
+      deterministic = false  → **建议性**比对，不一致只告警。
 
-文件格式（全部可选，缺省见括号）
---------------------------------
+配置格式
+--------
 {
-  "roots":   ["D:/samples", "E:/..."],                  // 相对路径的基准根
-  "aliases": {"unpack.vessel_ai": "VESSEL/<真机名>/..."},// 别名 → 相对片段或绝对路径
-  "skip":    {"golden.real_corpus": "本机没有这套语料"},   // 别名 → 跳过理由（也可写列表）
-  "flows":   [                                          // 自定义测试链（按顺序跑）
-    {"id": "cop-track", "cmd": ["{python}", "tests/check_xxx.py", "{alias:mod.cop_root}"]}
-  ]
+  "root": "E:/samples-root",
+  "skip": {"golden.real_corpus": "本机没有这套语料"},
+  "cases": [
+    {"id": "cop-xml", "module": "cop/chronicles",
+     "tests": [
+       {"id": "stats", "cmd": ["{python}", "tests/check_xml_stats.py", "{case}", "{tmp}"],
+        "deterministic": true},
+       {"id": "text",  "cmd": ["{python}", "tests/check_xml_text.py", "{case}", "{tmp}"]}
+     ]}
+  ],
+  "flows": [ ... ]            // 兼容旧写法：不套 samples/expected 的裸流程
 }
 
-token 替换：`{python}` = 当前解释器；`{root}` = 第一个可用根；`{alias:名字}` = 该别名解析出的路径。
+token：`{python}` 解释器、`{root}` 主目录、`{case}` samples/<module>、
+       `{expect}` expected/<module>、`{tmp}` tmp/<case>/<test>、`{alias:名}` 旧别名。
 """
 from __future__ import annotations
 
@@ -38,6 +47,8 @@ ROOTS: list[Path] = []
 ALIASES: dict[str, str] = {}
 SKIP: dict[str, str] = {}
 FLOWS: list[dict] = []
+CASES: list[dict] = []
+ROOT: Path | None = None
 
 if os.environ.get("XRKIT_SAMPLES"):
     ROOTS.append(Path(os.environ["XRKIT_SAMPLES"]))
@@ -47,6 +58,9 @@ if CONFIG.is_file():
         data = json.loads(CONFIG.read_text(encoding="utf-8-sig"))
     except Exception:  # noqa: BLE001 - 坏配置按"没配"处理，判据自己会报样本缺失
         data = {}
+    if data.get("root"):
+        ROOT = Path(str(data["root"]))
+        ROOTS.insert(0, ROOT)
     for root in data.get("roots", []) or []:
         if str(root).strip():
             ROOTS.append(Path(str(root)))
@@ -59,13 +73,15 @@ if CONFIG.is_file():
     for flow in data.get("flows") or []:
         if isinstance(flow, dict) and flow.get("cmd"):
             FLOWS.append(flow)
+    for case in data.get("cases") or []:
+        if isinstance(case, dict) and case.get("module"):
+            CASES.append(case)
 
 if not ROOTS:
     ROOTS = [Path("samples")]
 
 
 def find(*parts: str) -> Path:
-    """在各根下依次拼 `parts`；返回第一个存在的，找不到返回第一个根下的路径。"""
     for root in ROOTS:
         cand = root.joinpath(*parts)
         if cand.exists():
@@ -74,7 +90,6 @@ def find(*parts: str) -> Path:
 
 
 def find_alias(name: str) -> Path:
-    """按**通用别名**取样本（映射在 samples.local.json；源码不出现真机名/路径）。"""
     rel = ALIASES.get(name)
     if not rel:
         return ROOTS[0] / name
@@ -85,7 +100,6 @@ def find_alias(name: str) -> Path:
 
 
 def find_any(*candidates: tuple) -> Path:
-    """按**候选列表**逐个试（每个候选是相对片段元组）；都没有则返回第一个候选。"""
     for parts in candidates:
         got = find(*parts)
         if got.exists():
@@ -97,9 +111,8 @@ def exists(*parts: str) -> bool:
     return find(*parts).exists()
 
 
-# ── ★ 2026-11-20：跳过声明与自定义流程 ───────────────────────────────────
+# ── 跳过声明 ─────────────────────────────────────────────────────────────
 def skip_reason(name: str) -> str | None:
-    """该别名是否被配置声明跳过；返回理由（可能为空串），未声明返回 None。"""
     return SKIP.get(name)
 
 
@@ -112,15 +125,47 @@ def has_alias(name: str) -> bool:
 
 
 def flows() -> list[dict]:
-    """配置里声明的自定义测试链（每项含 id + cmd）。"""
     return list(FLOWS)
 
 
-def expand(tokens: list[str]) -> list[tuple[str, bool]]:
-    """把 `{python}` / `{root}` / `{alias:名字}` 换掉。
+# ── 主目录布局（2026-11-20）──────────────────────────────────────────────
+def base_dir() -> Path:
+    """主目录：配置里 `root` 优先，否则第一个根。"""
+    return ROOT if ROOT is not None else ROOTS[0]
 
-    返回 [(值, 是否解析成功)] —— 别名缺失时**不猜路径**，调用方据此跳过该流程。
-    """
+
+def tmp_dir() -> Path:
+    return base_dir() / "tmp"
+
+
+def sample_dir(module: str) -> Path:
+    return base_dir() / "samples" / module
+
+
+def expect_dir(module: str) -> Path:
+    return base_dir() / "expected" / module
+
+
+def cases() -> list[dict]:
+    return list(CASES)
+
+
+def case_tests(case: dict) -> list[dict]:
+    return [t for t in (case.get("tests") or []) if isinstance(t, dict) and t.get("cmd")]
+
+
+def is_deterministic(test: dict) -> bool:
+    """缺省按**确定性**处理（逐字节）；显式写 false 的走建议性比对。"""
+    return bool(test.get("deterministic", True))
+
+
+def case_tmp(case_id: str, test_id: str) -> Path:
+    return tmp_dir() / case_id / test_id
+
+
+def expand(tokens: list[str], *, module: str = "", case_id: str = "",
+           test_id: str = "") -> list[tuple[str, bool]]:
+    """替换 token；别名缺失/已跳过时返回 resolved=False（调用方据此跳过）。"""
     out: list[tuple[str, bool]] = []
     for token in tokens:
         text = str(token)
@@ -128,16 +173,20 @@ def expand(tokens: list[str]) -> list[tuple[str, bool]]:
             import sys
 
             out.append((sys.executable, True))
-            continue
-        if text == "{root}":
-            out.append((str(ROOTS[0]), True))
-            continue
-        if text.startswith("{alias:"):
+        elif text == "{root}":
+            out.append((str(base_dir()), True))
+        elif text == "{case}":
+            out.append((str(sample_dir(module)), True))
+        elif text == "{expect}":
+            out.append((str(expect_dir(module)), True))
+        elif text == "{tmp}":
+            out.append((str(case_tmp(case_id, test_id) if case_id and test_id else tmp_dir()), True))
+        elif text.startswith("{alias:"):
             name = text[len("{alias:"):].rstrip("}")
             if not has_alias(name) or skip_reason(name) is not None:
                 out.append(("", False))
-                continue
-            out.append((str(find_alias(name)), True))
-            continue
-        out.append((text, True))
+            else:
+                out.append((str(find_alias(name)), True))
+        else:
+            out.append((text, True))
     return out

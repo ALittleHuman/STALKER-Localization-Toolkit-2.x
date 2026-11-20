@@ -8044,22 +8044,58 @@ def make_checker_step(name: str, script_name: str, label: str):
 
 
 def step_samples_flows(release: bool) -> None:
-    """按 `tests/samples.local.json` 的 `flows` 跑**自定义样本测试链**。
+    """按 `tests/samples.local.json` 跑**样本测试链**（2026-11-20 新布局）。
 
-    口径（用户 2026-11-20）：门禁**不与本机样本绑定** ——
-      · 想跑样本 ⇒ 在配置里写 `aliases` + `flows`；
-      · 不想跑 ⇒ 在 `skip` 里声明别名（或不写 flow）。
-    缺样本 / 声明跳过 ⇒ 只 WARN，不阻断。
+    口径（用户 2026-11-20）：
+      · 门禁**不与本机样本绑定** —— 配置里给路径，或在 `skip` 里声明跳过；
+      · 目录：`<root>/samples`（输入）/ `<root>/expected`（对照）/ `<root>/tmp`（产物）；
+      · `tmp` 每轮**先清空**，跑完**保留**（日志与产物供分析）；
+      · 对照分两类：确定性 = 逐字节，不一致**失败**；非确定性 = 建议性，不一致只**告警**。
     """
-    say("[samples-flows] 自定义样本测试链（配置：%s）" % samples.CONFIG.name)
+    say("[samples-flows] 样本测试链（配置：%s）" % samples.CONFIG.name)
     for name in samples.skipped_names():
         prereq("样本 %s" % name,
                "samples 配置声明跳过：%s" % (samples.skip_reason(name) or "（未写理由）"), release)
-    todo = samples.flows()
-    if not todo:
-        ok("未配置自定义测试链（样本一律按跳过处理，不影响其它步骤）")
+
+    cases = samples.cases()
+    flows = samples.flows()
+    if not cases and not flows:
+        ok("未配置样本用例/流程（一律按跳过处理，不影响其它步骤）")
         return
-    for flow in todo:
+
+    tmp = samples.tmp_dir()
+    if tmp.exists():
+        shutil.rmtree(tmp, ignore_errors=True)     # 先清空；跑完不再删（留证据）
+    tmp.mkdir(parents=True, exist_ok=True)
+    say("  临时目录已清空：%s（本轮产物保留供分析）" % tmp)
+
+    for case in cases:
+        cid = str(case.get("id") or case.get("module"))
+        module = str(case.get("module") or "")
+        for test in samples.case_tests(case):
+            tid = str(test.get("id") or "test")
+            label = "%s/%s" % (cid, tid)
+            expanded = samples.expand([str(x) for x in test.get("cmd") or []],
+                                      module=module, case_id=cid, test_id=tid)
+            if not expanded or any(not resolved for _, resolved in expanded):
+                prereq("样本用例 %s" % label, "引用的样本未配置或已声明跳过", release)
+                continue
+            if not samples.sample_dir(module).exists():
+                prereq("样本用例 %s" % label, "缺 %s" % samples.sample_dir(module), release)
+                continue
+            samples.case_tmp(cid, tid).mkdir(parents=True, exist_ok=True)
+            argv = [value for value, _ in expanded]
+            rc, out = run(argv, timeout=1800 if test.get("slow") else 600)
+            for line in [ln for ln in out.splitlines() if ln.strip()][-5:]:
+                say("  | " + line.strip()[:200])
+            if rc == 0:
+                ok("样本用例 %s（%s）" % (label, "确定性" if samples.is_deterministic(test) else "建议性"))
+            elif samples.is_deterministic(test):
+                fail("样本用例 %s 与对照不一致（确定性，逐字节）" % label)
+            else:
+                prereq("样本用例 %s" % label, "与对照有差异（建议性，仅告警）", release)
+
+    for flow in flows:
         fid = str(flow.get("id") or "flow")
         expanded = samples.expand([str(x) for x in (flow.get("cmd") or [])])
         if not expanded or any(not resolved for _, resolved in expanded):
@@ -8073,6 +8109,7 @@ def step_samples_flows(release: bool) -> None:
             ok("样本流程 %s" % fid)
         else:
             fail("样本流程 %s（退出码 %d）" % (fid, rc))
+
 
 STEPS = [
     ("samples-flows", step_samples_flows),

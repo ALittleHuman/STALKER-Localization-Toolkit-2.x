@@ -1,21 +1,31 @@
 {
-  "_comment": "复制成 tests/samples.local.json（已 gitignore）后按需修改；本文件只是模板，不参与门禁。",
-  "roots": [
-    "D:/samples",
-    "E:/path/to/your/samples"
-  ],
-  "aliases": {
-    "toolkit.1x": "E:/path/to/STALKER_Toolkit",
-    "mod.cop_root": "Chronicles of Pripyat/Chronicles of Pripyat",
-    "text.real_scripts": "Golden Sphere/gamedata/scripts"
-  },
+  "_comment": "复制成 tests/samples.local.json（已 gitignore）后修改；本文件只是模板，不参与门禁。",
+  "root": "E:/samples-root",
   "skip": {
     "golden.real_corpus": "本机没有这套真语料",
     "mod.nlc_root": "不测 NLC"
   },
+  "cases": [
+    {
+      "id": "cop-xml",
+      "module": "cop/chronicles",
+      "tests": [
+        {
+          "id": "stats",
+          "cmd": ["{python}", "tests/check_xml_stats.py", "{case}", "{tmp}"],
+          "deterministic": true
+        },
+        {
+          "id": "text",
+          "cmd": ["{python}", "tests/check_xml_text.py", "{case}", "{tmp}", "{expect}"],
+          "deterministic": false
+        }
+      ]
+    }
+  ],
   "flows": [
     {
-      "id": "example-1x-baseline",
+      "id": "legacy-unpack",
       "cmd": ["{python}", "tests/check_some_baseline.py", "{alias:toolkit.1x}"],
       "slow": true
     }

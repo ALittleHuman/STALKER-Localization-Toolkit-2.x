@@ -1009,6 +1009,9 @@ void append_entry_xdb(std::vector<uint8_t>& h, const std::string& name, uint32_t
     std::vector<uint8_t> nb;
     const bool clean = utf8_to_cp1251(name, nb);
     note_rewrite(name, nb, clean, log);
+    // ★ 2026-11-20（R4/R9）：条目名超过 65535-16 会**静默窄化**成另一个长度，
+    //   写出来的包读不回来（读侧也没长度校验）。这里硬拒绝，别让坏包出厂。
+    if (nb.size() + 16 > 0xFFFF) return;
     put16(h, static_cast<uint16_t>(nb.size() + 16));
     put32(h, sr);
     put32(h, sc);
