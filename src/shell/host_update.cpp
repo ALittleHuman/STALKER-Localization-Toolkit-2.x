@@ -380,7 +380,6 @@ struct SemVer {
     int patch = 0;
     bool test = false;
     int build = 0;
-    int channel = 1;   // 0=ALPHA 1=BETA(含裸 x.y.z.n) 2=RC；修前只比 build，RC.1 被判成比 BETA.253 旧
     bool valid = false;
 };
 
@@ -407,7 +406,6 @@ SemVer parse_semver(const QString& text) {
     // x.y.z.n
     if (QRegularExpression(QStringLiteral("^\\d+$")).match(rest).hasMatch()) {
         v.test = true;
-        v.channel = 1;
         v.build = rest.toInt();
         return v;
     }
@@ -418,10 +416,6 @@ SemVer parse_semver(const QString& text) {
             .match(rest);
     if (pre.hasMatch()) {
         v.test = true;
-        const QString word = pre.captured(1).toLower();
-        v.channel = (word == QStringLiteral("alpha")) ? 0
-                    : (word == QStringLiteral("rc")) ? 2
-                                                     : 1;
         v.build = pre.captured(2).toInt();
         return v;
     }
@@ -450,8 +444,7 @@ bool HostUpdate::versionIsNewer(const QString& candidate, const QString& current
     if (a.patch != b.patch) return a.patch > b.patch;
     if (a.test != b.test) return !a.test;  // 同 x.y.z：正式版高于测试版
     if (!a.test) return false;             // 都是同一正式版
-    if (a.channel != b.channel) return a.channel > b.channel;   // ALPHA < BETA < RC
-    return a.build > b.build;              // 都是测试版：n 大者新
+    return a.build > b.build;   // 测试版之间只比全局构建号，不看通道字母              // 都是测试版：n 大者新
 }
 
 bool HostUpdate::fetchAppInfo(AppUpdateInfo* info, QString* error) {

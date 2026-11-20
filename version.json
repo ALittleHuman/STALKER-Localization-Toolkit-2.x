@@ -1,4 +1,6 @@
 {
+  "//build_counter": "全局构建序号：任何通道每次构建 +1，是版本先后的唯一依据（2026-11-20 起）。RC.1 = 512。",
+  "build_counter": 512,
   "current": { "version": "2.0.0", "prerelease": "RC", "index": 1 },
   "tree": {
     "2.0.0": {
