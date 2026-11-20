@@ -125,9 +125,10 @@ def read_strings(exe: Path) -> dict[str, str] | None:
 
 # ── 分析器（纯文本 → 问题清单；下面会被喂反例自证）────────────────────────────
 
-def header_problems(header_text: str, prerelease: str, index: int) -> list[str]:
+def header_problems(header_text: str, prerelease: str, build: int) -> list[str]:
     problems: list[str] = []
-    want_pre = prerelease + "." + str(index) if prerelease else ""
+    # 模型 C：kChannel 只放**通道名**（BETA/RC），序号在 kBuildNumber（全局构建号）
+    want_pre = prerelease
     match = re.search(r'kChannel\s*=\s*"([^"]*)"', header_text)
     if match is None:
         problems.append("version.h 里读不到 kChannel")
@@ -137,13 +138,13 @@ def header_problems(header_text: str, prerelease: str, index: int) -> list[str]:
     match = re.search(r"kBuildNumber\s*=\s*(\d+)", header_text)
     if match is None:
         problems.append("version.h 里读不到 kBuildNumber")
-    elif int(match.group(1)) != index:
-        problems.append("version.h 的 kBuildNumber=%s ≠ tree 的最后一次发包序号 %d"
-                        % (match.group(1), index))
+    elif int(match.group(1)) != build:
+        problems.append("version.h 的 kBuildNumber=%s ≠ 全局构建号 %d"
+                        % (match.group(1), build))
     return problems
 
 
-def rc_problems(rc_text: str, want_version: str, index: int) -> list[str]:
+def rc_problems(rc_text: str, want_version: str, build: int) -> list[str]:
     problems: list[str] = []
     match = re.search(r'VALUE\s+"ProductVersion",\s*"([^"]*)"', rc_text)
     if match is None:
@@ -153,12 +154,12 @@ def rc_problems(rc_text: str, want_version: str, index: int) -> list[str]:
     match = re.search(r"FILEVERSION\s+(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", rc_text)
     if match is None:
         problems.append(".rc 里读不到 FILEVERSION")
-    elif int(match.group(4)) != index:
-        problems.append(".rc 的 FILEVERSION 第 4 段=%s ≠ 序号 %d" % (match.group(4), index))
+    elif int(match.group(4)) != build:
+        problems.append(".rc 的 FILEVERSION 第 4 段=%s ≠ 构建号 %d" % (match.group(4), build))
     return problems
 
 
-def exe_problems(fields: dict, want_version: str, index: int) -> list[str]:
+def exe_problems(fields: dict, want_version: str, build: int) -> list[str]:
     problems: list[str] = []
     if fields.get("ProductVersion") != want_version:
         problems.append("exe 的 ProductVersion=「%s」≠ 期望「%s」"
@@ -233,12 +234,15 @@ def main() -> int:
     #   旧口径"不读 current.index"的理由（GUI/门禁会推它）已经不成立。
     from package_select import current_identity, tree_last_release
     version, marker, index = current_identity()
+    # 模型 C：身份是 version.json 的全局 build_counter（不是通道内序号）
+    build_counter = int(json.loads((ROOT / "version.json").read_text(encoding="utf-8"))
+                        .get("build_counter", 0))
     if not marker or index <= 0:
         check(False, "version.json 的 `current` 有可用的 标记+序号（期望值从它来）",
               "current=%r" % ((version, marker, index),))
         say("VERSION-IDENTITY: FAIL")
         return 1
-    want_version = ("%s %s.%d" % (version, marker, index)) if marker else version
+    want_version = ("%s.%d" % (version, build_counter)) if marker else version
     say("  真来源：version.json 的 `current` = %s（序号 %d）" % (want_version, index))
     tv, tm, ti = tree_last_release()
     if tm and ti > 0 and (tm, ti) != (marker, index):
@@ -247,7 +251,7 @@ def main() -> int:
 
     # ① version.h
     header_text = VERSION_H.read_text(encoding="utf-8")
-    problems = header_problems(header_text, marker, index)
+    problems = header_problems(header_text, marker, build_counter)
     check(not problems, "① version.h 的 kChannel/kBuildNumber == current 的期望值",
           "\n      ".join(problems))
 
@@ -255,7 +259,7 @@ def main() -> int:
     if not WINRES_RC.is_file():
         check(False, "assets/xrkit_winres.rc 在仓库里")
     else:
-        problems = rc_problems(WINRES_RC.read_text(encoding="utf-8"), want_version, index)
+        problems = rc_problems(WINRES_RC.read_text(encoding="utf-8"), want_version, build_counter)
         check(not problems, "② .rc 的 ProductVersion/FILEVERSION 与 version.h 同源",
               "\n      ".join(problems))
 
@@ -273,7 +277,11 @@ def main() -> int:
         else:
             pkg_version = fields_txt.get("version", "")
             pkg_index = fields_txt.get("index", "")
-            check(pkg_version == want_version and pkg_index == str(index),
+            # 模型 C（2026-11-20）：身份是 `x.y.z.<build>`；模型 C 之前打的包写的是
+            # `x.y.z MARKER.N`，属**历史产物**，只要 index 对得上就认（不重打旧包）。
+            _legacy = "%s %s.%s" % (version, marker, pkg_index) if marker else version
+            check((pkg_version == want_version or pkg_version == _legacy)
+                  and pkg_index == str(index),
                   "③ 当前包 %s 的 version.txt == current 的期望值" % pkg.relative_to(ROOT).as_posix(),
                   "version=「%s」(期望「%s」) index=「%s」(期望 %d)"
                   % (pkg_version, want_version, pkg_index, index))
@@ -283,7 +291,7 @@ def main() -> int:
                 check(False, "③ %s 里能读到 xrkit_app.exe 的 VERSIONINFO"
                       % pkg.relative_to(ROOT).as_posix())
             else:
-                problems = exe_problems(fields, want_version, index)
+                problems = exe_problems(fields, want_version, build_counter)
                 check(not problems,
                       "③ 包内 exe 的 ProductVersion/数值版本第 4 段 == 期望（**现读 exe**，"
                       "不信任 version.txt 自报）",

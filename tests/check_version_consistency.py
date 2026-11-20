@@ -48,20 +48,25 @@ def main() -> int:
     store = json.loads((ROOT / "version.json").read_text(encoding="utf-8"))
     cur = store["current"]
     idx = int(cur["index"])
+    # 模型 C（2026-11-20）：版本身份是**全局构建号** build_counter；current.index 只是通道内序号。
+    build_counter = int(json.loads((ROOT / "version.json").read_text(encoding="utf-8"))
+                        .get("build_counter", 0))
     pre = cur["prerelease"]
     ver = cur["version"]
 
     header = (ROOT / "include" / "xrkit" / "core" / "version.h").read_text(encoding="utf-8")
     m = re.search(r"kBuildNumber\s*=\s*(\d+)", header)
     h_idx = int(m.group(1)) if m else -1
-    (ok if h_idx == idx else fail)("version.json current=%d == version.h kBuildNumber=%d" % (idx, h_idx))
+    (ok if h_idx == build_counter else fail)(
+        "version.h kBuildNumber=%d == version.json build_counter=%d" % (h_idx, build_counter))
 
     p = subprocess.run([str(CLI), "--exe-version", str(EXE)], stdout=subprocess.PIPE,
                        stderr=subprocess.STDOUT)
     out = p.stdout.decode("utf-8", "replace")
     m2 = re.search(r"numeric=\d+\.\d+\.\d+\.(\d+)", out) or re.search(r"\.(\d+)\b", out)
     exe_idx = int(m2.group(1)) if m2 else -1
-    (ok if exe_idx == idx else fail)("exe 自报 build=%d == current=%d" % (exe_idx, idx))
+    (ok if exe_idx == build_counter else fail)(
+        "exe 自报 build=%d == build_counter=%d" % (exe_idx, build_counter))
 
     pkg_dir = ROOT / "dist" / ver / pre / str(idx)
     vt = pkg_dir / "version.txt"
