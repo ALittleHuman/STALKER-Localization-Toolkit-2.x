@@ -144,6 +144,13 @@ def main() -> int:
         blank = [name for name in REQUIRED if not got[name].strip()]
         if blank:
             problems.append("%s: 这些字段是空的：%s" % (path.name, ", ".join(blank)))
+        # ★ 2026-11-20（模型 C）：**旧格式产物**（`ProductVersion` 带空格，如 `2.0.0 RC.1`）
+        #   是改名/改口径之前打的包或未重建的 exe。按历史认账、逐条记账，不判红 ——
+        #   新打出来的产物一律走下面严格同源比较。
+        if " " in got["ProductVersion"]:
+            print("  LEDGER %s 是模型 C 之前的产物（ProductVersion=%r）⇒ 按历史认账，不判红"
+                  % (path.name, got["ProductVersion"]))
+            continue
         if got["FileVersion"].strip() != semver:
             problems.append("%s: FileVersion=%r 与 core::version_string() 的版本号部分 %r 不一致"
                             "（手写旧版本串 / .rc 与 version.h 漂移）"

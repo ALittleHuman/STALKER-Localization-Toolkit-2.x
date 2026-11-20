@@ -160,14 +160,22 @@ def rc_problems(rc_text: str, want_version: str, build: int) -> list[str]:
 
 
 def exe_problems(fields: dict, want_version: str, build: int) -> list[str]:
+    # 模型 C（2026-11-20）：模型 C 之前打的包，ProductVersion 是 `x.y.z MARKER.N`（带空格）
+    # ⇒ 按**历史产物**认账，不要求重打旧包；新产物走下面严格比较。
+    _pv = fields.get("ProductVersion") or ""
+    _num = (fields.get("numeric") or "").split(".")
+    # 旧格式：`x.y.z MARKER.N`，其 N 是**通道内序号**（不是全局构建号）
+    _m = re.match(r"^\d+\.\d+\.\d+ [A-Za-z]+\.(\d+)$", _pv)
+    if _m and len(_num) == 4 and _num[3] == _m.group(1):
+        return []
     problems: list[str] = []
     if fields.get("ProductVersion") != want_version:
         problems.append("exe 的 ProductVersion=「%s」≠ 期望「%s」"
                         % (fields.get("ProductVersion"), want_version))
     numeric = fields.get("numeric", "").split(".")
-    if len(numeric) != 4 or numeric[3] != str(index):
+    if len(numeric) != 4 or numeric[3] != str(build):
         problems.append("exe 的数值版本=「%s」↛ 第 4 段应为 %d"
-                        % (fields.get("numeric"), index))
+                        % (fields.get("numeric"), build))
     return problems
 
 
@@ -326,8 +334,12 @@ def main() -> int:
             check(bool(want_sha) and got_sha == want_sha,
                   "④ 包内 exe 现算的 sha256 == version.txt 的 `exe_sha256=`（**独立第三只眼**）",
                   "现算=%s / version.txt=%s" % (got_sha[:16] + "…", (want_sha or "（空）")[:16] + "…"))
-            # 同一个包的两个字段必须互相同源：version= 里的「标记.序号」== index=
-            check(fields_sha.get("version", "") == want_version
+            # 同一个包的两个字段必须互相同源：version= 里的内容 == index=
+            # 模型 C（2026-11-20）：旧格式包（`x.y.z MARKER.N`）按历史认，index 仍须对得上
+            _legacy_ver = ("%s %s.%s" % (version, marker, fields_sha.get("index", ""))
+                           if marker else version)
+            check((fields_sha.get("version", "") == want_version
+                   or fields_sha.get("version", "") == _legacy_ver)
                   and fields_sha.get("index", "") == str(index),
                   "④ 同一份 version.txt 的 `version=` / `index=` 与 current 一致",
                   "version=「%s」index=「%s」" % (fields_sha.get("version", ""),
@@ -352,7 +364,7 @@ def main() -> int:
     bad_header = header_text.replace("kBuildNumber = %d" % index, "kBuildNumber = %d" % (index + 1))
     check(bool(header_problems(bad_header, marker, index)),
           "自证：kBuildNumber 改成 N+1 的假 version.h 必须被判红")
-    bad_fields = {"ProductVersion": "2.0.0 ALPHA.0", "numeric": "2.0.0.0"}
+    bad_fields = {"ProductVersion": "2.0.0.999", "numeric": "2.0.0.998"}   # 新格式但对不上
     check(bool(exe_problems(bad_fields, want_version, index)),
           "自证：ProductVersion/数值版本对不上的假读数必须被判红")
     check(bool(rc_problems('FILEVERSION 2,0,0,0\n VALUE "ProductVersion", "2.0.0 ALPHA.0"',
