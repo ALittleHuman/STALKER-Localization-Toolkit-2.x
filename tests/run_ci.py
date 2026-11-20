@@ -8017,8 +8017,33 @@ def step_sqfs_superblock(release: bool) -> None:
         fail("SquashFS 超块/元数据块校验不成立（见上）")
 
 
-STEPS = [
-    ("build", step_build),
+def make_checker_step(name: str, script_name: str, label: str):
+    """把「独立 python 判据脚本」接成门禁的一步：0=绿 / 1=红 / 2=缺外部前提（WARN）。
+
+    ★ 2026-11-20（用户口径）：脚本自报 SKIP（rc=2）不再算红，也不进「未覆盖」，
+    只进告警清单 —— 门禁不与测试样本/外部前提绑定。
+    """
+    def step(release: bool) -> None:
+        say("[%s] %s" % (name, label))
+        script = ROOT / "tests" / script_name
+        if not require_repo_file(script, label):
+            return
+        rc, out = run([sys.executable, str(script)], timeout=600)
+        for line in out.splitlines():
+            s = line.strip()
+            if s.startswith("\u2713") or s.startswith("\u2717") or s.startswith("SKIP"):
+                say("  " + s[:200])
+        if rc == 0:
+            ok(label)
+        elif rc == 2:
+            prereq(label, "判据自报 SKIP（缺外部前提）", release)
+        else:
+            fail(label + "（见上）")
+    step.__name__ = "step_" + name.replace("-", "_")
+    return step
+
+
+STEPS = [    ("build", step_build),
     ("no-qt", step_no_qt_lock),
     ("no-qt-injection", step_no_qt_injection),
     ("px-only", step_px_only),
@@ -8101,6 +8126,19 @@ STEPS = [
     ("cli-exit-codes", step_cli_exit_codes),
     # ★★ 2026-10-24（C1）：CLI 写盘点静态锁（run_cli 区间内 ofstream 必须为 0）。
     ("cli-write-sites", step_cli_write_sites),
+    # ★ 2026-11-20：五个「写了但没接线」的判据接进门禁（此前只有人手工跑）。
+    ("cli-output-paths", make_checker_step("cli-output-paths", "check_cli_output_paths.py",
+                                          "CLI 写盘落点判据")),
+    ("host-update-poll", make_checker_step("host-update-poll", "check_host_update_poll.py",
+                                           "更新检查后台轮询判据")),
+    ("host-widget-adopt", make_checker_step("host-widget-adopt", "check_host_widget_adopt.py",
+                                            "宿主控件登记判据")),
+    ("readme-consistency", make_checker_step("readme-consistency",
+                                             "check_readme_consistency.py",
+                                             "README 与实现一致性判据")),
+    ("toolchain-sync-path", make_checker_step("toolchain-sync-path",
+                                              "check_toolchain_sync_path.py",
+                                              "工具链同步路径判据")),
     # ★★ P17-145（第三方只读审计 T-05）：DB 封包的内存闸（超限拒绝 / 读之前就挡）。
     #   需要 CLI 产物（黑盒那几条）；被 `--only` 过滤时进 UNCOVERED。
     ("pack-db-mem-gate", step_pack_db_mem_gate),

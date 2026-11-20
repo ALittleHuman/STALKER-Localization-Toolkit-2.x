@@ -570,6 +570,7 @@ public:
         }
         if (feature == "host.log_detail") return true;
         if (feature == "api.register_module") return true;
+        if (feature == "api.register_decryptor" || feature == "api.register_format") return true;
         if (feature == "host.http_get" || feature == "host.http_post" ||
             feature == "host.http_download" || feature == "host.http_download_async" ||
             feature == "host.http_async") {
@@ -661,6 +662,81 @@ public:
         }
         return registry_->register_option(owner_, label, choices, handler, host, area,
                                           when_from_python(when), order);
+    }
+
+    // ★ 2026-11-20：三个原本只在 C++ 侧存在的注册点，补 Python 绑定。
+    //   `register_decryptor(check, decrypt)`：
+    //     · check(path) -> bool，用来判断"这个包要不要我解"；
+    //     · decrypt(path) -> bytes/str（明文），失败返回 None 或抛异常；
+    //     · 引擎负责把明文落到隔离目录并返回产物路径（见 registry.cpp 的闸门）。
+    bool register_decryptor(py::object check, py::object decrypt) const {
+        if (check.is_none() != 0 || PyCallable_Check(check.ptr()) == 0 ||
+            decrypt.is_none() != 0 || PyCallable_Check(decrypt.ptr()) == 0) {
+            registry_->add_error(owner_, "register_decryptor 的 check/decrypt 必须都是可调用对象");
+            return false;
+        }
+        py::object kept_check = check;
+        py::object kept_decrypt = decrypt;
+        keepalive()->push_back(kept_check);
+        keepalive()->push_back(kept_decrypt);
+        const std::string owner = owner_;
+        DecryptCheck check_fn = [kept_check, owner](const std::string& path) -> bool {
+            py::gil_scoped_acquire acquire;
+            try {
+                return py::cast<bool>(kept_check(path));
+            } catch (const py::error_already_set& err) {
+                core::log(core::Level::Warn,
+                          "[" + owner + "] 解密器 check 抛异常（按不匹配处理）：" + err.what());
+                return false;
+            }
+        };
+        DecryptFn decrypt_fn = [kept_decrypt, owner](const std::string& path,
+                                                    std::string& out) -> bool {
+            py::gil_scoped_acquire acquire;
+            try {
+                py::object result = kept_decrypt(path);
+                if (result.is_none()) return false;
+                if (py::isinstance<py::bytes>(result) != 0 ||
+                    py::isinstance<py::str>(result) != 0) {
+                    out = py::cast<std::string>(result);
+                    return true;
+                }
+                if (py::isinstance<py::bytearray>(result) != 0) {
+                    out = py::cast<std::string>(py::bytes(result));
+                    return true;
+                }
+                core::log(core::Level::Error,
+                          "[" + owner + "] 解密器 decrypt 必须返回 bytes/str/None");
+                return false;
+            } catch (const py::error_already_set& err) {
+                core::log(core::Level::Error,
+                          "[" + owner + "] 解密器 decrypt 抛异常：" + err.what());
+                return false;
+            }
+        };
+        return registry_->register_decryptor(owner_, std::move(check_fn), std::move(decrypt_fn));
+    }
+
+    // `register_format(name, handler)`：handler(path) -> bool，声明"这种文件我也能读"。
+    bool register_format(const std::string& name, py::object handler) const {
+        if (handler.is_none() != 0 || PyCallable_Check(handler.ptr()) == 0) {
+            registry_->add_error(owner_, "register_format(" + name + ") 的 handler 不可调用");
+            return false;
+        }
+        py::object kept = handler;
+        keepalive()->push_back(kept);
+        const std::string owner = owner_;
+        FormatHandler fn = [kept, owner](const std::string& path) -> bool {
+            py::gil_scoped_acquire acquire;
+            try {
+                return py::cast<bool>(kept(path));
+            } catch (const py::error_already_set& err) {
+                core::log(core::Level::Warn,
+                          "[" + owner + "] 格式处理回调抛异常（按不匹配处理）：" + err.what());
+                return false;
+            }
+        };
+        return registry_->register_format(owner_, name, std::move(fn));
     }
 
 private:
@@ -4264,6 +4340,10 @@ void ensure_api_module() {
             .def("register_panel", &PyPluginApi::register_panel, py::arg("title"),
                  py::arg("builder"), py::arg("host") = "fs", py::arg("area") = "top_bar",
                  py::arg("order") = 0)
+            .def("register_decryptor", &PyPluginApi::register_decryptor, py::arg("check"),
+                 py::arg("decrypt"))
+            .def("register_format", &PyPluginApi::register_format, py::arg("name"),
+                 py::arg("handler"))
             .def("register_tool", &PyPluginApi::register_tool, py::arg("name"), py::arg("builder"),
                  py::arg("order") = 0, py::arg("replaces") = "", py::arg("subtitle") = "",
                  py::arg("title") = "");
