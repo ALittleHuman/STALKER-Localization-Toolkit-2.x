@@ -14,13 +14,13 @@ std::string semver() {
 
 std::string version_string() {
     std::string s = semver();
-    if (kPrerelease != nullptr && kPrerelease[0] != '\0') {
-        s += "." + std::to_string(kBuildCount);   // ★ 模型 C：版本串 = x.y.z.<build>
+    if (kChannel != nullptr && kChannel[0] != '\0') {
+        s += "." + std::to_string(kBuildNumber);   // ★ 模型 C：版本串 = x.y.z.<build>
     }
     return s;
 }
 
-std::string version_with_build() { return semver() + "+" + std::to_string(kBuildCount); }
+std::string version_with_build() { return semver() + "+" + std::to_string(kBuildNumber); }
 
 bool version_string_is_well_formed(const std::string& s) {
     // 形态：主.次.补[ 标记]，三段都是非空数字串

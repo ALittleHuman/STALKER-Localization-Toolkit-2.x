@@ -62,13 +62,13 @@ std::string version_backup_path(const std::string& path);
 //
 // 事实（修前）：`version.json` 与 `include/xrkit/core/version.h` 是**两个**"唯一事实来源"，
 // 且**没有任何检查比对**它们：exe 的资源与 `core::version_string()` 编自 version.h 的常量
-// （`kPrerelease = "ALPHA.0"`、`kBuildCount = 0`，**从来没被写回**过），而包目录名 /
+// （`kChannel = "ALPHA.0"`、`kBuildNumber = 0`，**从来没被写回**过），而包目录名 /
 // `version.txt` 来自 version.json ⇒ 实测同一个交付物里"包说 `ALPHA.60`、包内 exe 说
 // `ALPHA.0`"，而门禁那两条 `WINRES` 判据全绿（只在各自源内自比）。
 //
 // 用户 2026-10-07 裁决：
 //   · **真来源 = `version.json` 的 tree**（最后一次成功发包：版本+标记+序号）；
-//     `version.h` 是它的**派生**（kPrerelease = "<标记>.<序号>"、kBuildCount = 序号）；
+//     `version.h` 是它的**派生**（kChannel = "<标记>.<序号>"、kBuildNumber = 序号）；
 //   · 写回时机 = `--build-package` 写 `version.json` 之后、调 `build.ps1` **之前**
 //     （exe 的资源与 `core::version_string()` 都编自 version.h ⇒ 必须先写）；
 //   · **原子写**（走 `write_file_atomic`，同目录 .part → rename；半写的 version.h
@@ -79,12 +79,12 @@ std::string version_backup_path(const std::string& path);
 //     （它是"下一个号"，门禁与构建 GUI 都会推它）。
 
 // 把 `<标记>.<序号>` / 序号写回 `path`（= `include/xrkit/core/version.h`）。
-// 只改 `kPrerelease` 与 `kBuildCount` 两行，其余字节原样；写盘前后各自校验一次。
+// 只改 `kChannel` 与 `kBuildNumber` 两行，其余字节原样；写盘前后各自校验一次。
 // `prerelease` 传**完整串**（形如 "ALPHA.60"；正式版传空串）。失败 ⇒ false + error。
 bool save_version_header(const std::string& path, const std::string& prerelease, int build_count,
                          std::string& error);
 
-// 读回 `kPrerelease` / `kBuildCount` 的当前值（回滚断言 / 判据探针 / 幂等检查用）。
+// 读回 `kChannel` / `kBuildNumber` 的当前值（回滚断言 / 判据探针 / 幂等检查用）。
 bool load_version_header(const std::string& path, std::string& prerelease, int& build_count,
                          std::string& error);
 

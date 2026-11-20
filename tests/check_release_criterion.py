@@ -71,10 +71,10 @@ def main():
         print("PKG-RELEASE skip 缺 version.h（判据没跑成，不是通过）")
         return 2
     vh_text = vh.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r'kPrerelease\s*=\s*"([^"]*)"', vh_text)
+    m = re.search(r'kChannel\s*=\s*"([^"]*)"', vh_text)
     hdr = (m.group(1) if m else "").strip()
     if not hdr:
-        print("PKG-RELEASE skip version.h 里读不出 kPrerelease")
+        print("PKG-RELEASE skip version.h 里读不出 kChannel")
         return 2
     # ★★ P17-136（复审计 09 分册 ⑩）：**单源**。判据自称"期望值取 `version.h`"，
     #   但修前 `expect` 与产物目录都用了 `version.json` 的 `version`/`prerelease`/`index`
@@ -87,9 +87,9 @@ def main():
         print("PKG-RELEASE skip version.h 里读不出 kVersionMajor/Minor/Patch")
         return 2
     mainver = "%s.%s.%s" % (mv.group(1), mn.group(1), mp.group(1))
-    # `kPrerelease` = "<标记>.<序号>"
+    # `kChannel` = "<标记>.<序号>"
     if "." not in hdr:
-        print("PKG-RELEASE skip kPrerelease 形状不对：%r（期望「标记.序号」）" % hdr)
+        print("PKG-RELEASE skip kChannel 形状不对：%r（期望「标记.序号」）" % hdr)
         return 2
     mark, idx = hdr.split(".", 1)
     expect = "%s %s" % (mainver, hdr)

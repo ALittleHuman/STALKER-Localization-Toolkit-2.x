@@ -3490,7 +3490,7 @@ int run_cli(const std::vector<std::string>& args) {
         if (a == "--version") {
             // ★ 只报**二进制自己的**构建号（不读任何外部文件）。
             //   发行包与二进制可能差一版：那不是 --version 该掩盖的事 —— 用 --exe-version 区分。
-            std::cout << xrkit::core::version_string() << " build=" << xrkit::core::kBuildCount
+            std::cout << xrkit::core::version_string() << " build=" << xrkit::core::kBuildNumber
                       << "\n";
             return kExitOk;
         }

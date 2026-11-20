@@ -446,8 +446,8 @@ bool restore_version_store(const std::string& backup_path, const std::string& pa
 namespace {
 
 // 这两行是**唯一的**写回点（形态变了必须在这里改，且 `--check` 会红）。
-constexpr const char* kPrereleaseLine = "inline constexpr const char* kPrerelease = ";
-constexpr const char* kBuildCountLine = "inline constexpr int kBuildCount = ";
+constexpr const char* kChannelLine = "inline constexpr const char* kChannel = ";
+constexpr const char* kBuildNumberLine = "inline constexpr int kBuildNumber = ";
 
 bool replace_value_line(std::string& text, const std::string& prefix, const std::string& value,
                         std::string& error) {
@@ -474,41 +474,41 @@ bool load_version_header(const std::string& path, std::string& prerelease, int& 
     std::string text;
     if (!read_text(path, text, error)) return false;
 
-    const size_t p = text.find(kPrereleaseLine);
+    const size_t p = text.find(kChannelLine);
     if (p == std::string::npos) {
-        error = "version.h 里找不到 kPrerelease 赋值行";
+        error = "version.h 里找不到 kChannel 赋值行";
         return false;
     }
     const size_t pq = text.find('"', p);
     const size_t pq2 = (pq == std::string::npos) ? std::string::npos : text.find('"', pq + 1);
     if (pq == std::string::npos || pq2 == std::string::npos) {
-        error = "version.h 里 kPrerelease 的值不是引号字符串";
+        error = "version.h 里 kChannel 的值不是引号字符串";
         return false;
     }
     prerelease = text.substr(pq + 1, pq2 - pq - 1);
 
-    const size_t b = text.find(kBuildCountLine);
+    const size_t b = text.find(kBuildNumberLine);
     if (b == std::string::npos) {
-        error = "version.h 里找不到 kBuildCount 赋值行";
+        error = "version.h 里找不到 kBuildNumber 赋值行";
         return false;
     }
     const size_t bs = text.find(';', b);
     if (bs == std::string::npos) {
-        error = "version.h 里 kBuildCount 那一行没有分号";
+        error = "version.h 里 kBuildNumber 那一行没有分号";
         return false;
     }
     const std::string digits =
-        text.substr(b + std::strlen(kBuildCountLine), bs - (b + std::strlen(kBuildCountLine)));
+        text.substr(b + std::strlen(kBuildNumberLine), bs - (b + std::strlen(kBuildNumberLine)));
     try {
         size_t used = 0;
         build_count = std::stoi(digits, &used);
         if (used != digits.size()) {
-            error = "version.h 里 kBuildCount 不是纯整数：" + digits;
+            error = "version.h 里 kBuildNumber 不是纯整数：" + digits;
             return false;
         }
     } catch (const std::exception&) {
         // ★ 审计 2-5 同族：解析失败不许抛穿（旧版 `stoll` 会把 CLI 整个 terminate）
-        error = "version.h 里 kBuildCount 解析失败（不是整数）：" + digits;
+        error = "version.h 里 kBuildNumber 解析失败（不是整数）：" + digits;
         return false;
     }
     return true;
@@ -532,8 +532,8 @@ bool save_version_header(const std::string& path, const std::string& prerelease,
     std::string text;
     if (!read_text(path, text, error)) return false;
     const std::string before = text;
-    if (!replace_value_line(text, kPrereleaseLine, "\"" + prerelease + "\"", error)) return false;
-    if (!replace_value_line(text, kBuildCountLine, std::to_string(build_count), error)) return false;
+    if (!replace_value_line(text, kChannelLine, "\"" + prerelease + "\"", error)) return false;
+    if (!replace_value_line(text, kBuildNumberLine, std::to_string(build_count), error)) return false;
     if (text == before) {
         // ★ 2026-11-04（审计）：**幂等不是错误**。BETA.103 那次"current 前进、version.h 同值"
         //   就是在这里被当成失败 ⇒ 回滚判"没写过" ⇒ 序号被吃掉、只能靠"直接打下一号"绕过。

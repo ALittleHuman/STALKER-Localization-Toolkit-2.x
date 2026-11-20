@@ -4,7 +4,7 @@
 
 为什么必须生成，不许手写（用户硬口径）：
   · **版本只有一个事实来源**：`version.h` 里那五个常量（kVersionMajor/kVersionMinor/
-    kVersionPatch/kPrerelease/kBuildCount）就是 `core::version_string()` 的来源 ——
+    kVersionPatch/kChannel/kBuildNumber）就是 `core::version_string()` 的来源 ——
     在 `.rc` 里再抄一遍版本号，迟早有人只改一处（改了 version.h 忘了 .rc ⇒
     资源里写着旧版本号，正是"手写旧版本串"那种事故）；
   · 所以 `.rc` 里**一个版本数字都不许手写**：本脚本读 version.h、算出版本串、
@@ -100,8 +100,8 @@ class Version:
 
     @property
     def full(self) -> str:
-        """与 `core::version_string()` **逐字同规则**：semver [+ " " + 标记]。"""
-        return self.semver if not self.prerelease else self.semver + " " + self.prerelease
+        """与 `core::version_string()` **逐字同规则**（模型 C）：x.y.z 或 x.y.z.<build>。"""
+        return self.semver if not self.prerelease else "%s.%d" % (self.semver, self.build)
 
     @property
     def numeric(self) -> str:
@@ -113,10 +113,10 @@ def load_version() -> Version:
         fail("找不到唯一事实来源：%s" % VERSION_H)
     text = VERSION_H.read_text(encoding="utf-8")
     v = Version(read_int(text, "kVersionMajor"), read_int(text, "kVersionMinor"),
-                read_int(text, "kVersionPatch"), read_str(text, "kPrerelease"),
-                read_int(text, "kBuildCount"))
+                read_int(text, "kVersionPatch"), read_str(text, "kChannel"),
+                read_int(text, "kBuildNumber"))
     # version.cpp 的 version_string_is_well_formed() 同口径：主.次.补[ 标记]
-    if not re.fullmatch(r"\d+\.\d+\.\d+( [^\s].*)?", v.full):
+    if not re.fullmatch(r"\d+\.\d+\.\d+(\.\d+| [^\s].*)?", v.full):
         fail("从 version.h 算出的版本串形态不对：%r" % v.full)
     return v
 
@@ -200,7 +200,7 @@ def build() -> bytes:
     a('            VALUE "CompanyName", %s' % cquoted(COMPANY))
     a('            VALUE "ProductName", %s' % cquoted(PRODUCT))
     a('            VALUE "FileDescription", XRKIT_WINRES_DESC')
-    a('            VALUE "FileVersion", %s' % cquoted(v.semver))
+    a('            VALUE "FileVersion", %s' % cquoted(v.full))
     a('            VALUE "ProductVersion", %s' % cquoted(v.full))
     a('            VALUE "OriginalFilename", XRKIT_WINRES_FILE')
     a('            VALUE "InternalName", XRKIT_WINRES_INTERNAL')

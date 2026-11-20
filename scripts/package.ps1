@@ -557,7 +557,7 @@ $pluginLine
 $verLine = if ($VersionString -ne '') { $VersionString } else { '2.0.0' }
 # ── ★★ 2026-10-07（H1-2，用户候选 A）：**包内 exe 的版本身份**必须等于本次发版串 ──────
 #   事实（修前）：exe 的资源与 `core::version_string()` 都编自 `version.h` 的常量
-#   （`kPrerelease="ALPHA.0"` / `kBuildCount=0`，从未被写回），而包目录名与 version.txt 来自
+#   （`kChannel="ALPHA.0"` / `kBuildNumber=0`，从未被写回），而包目录名与 version.txt 来自
 #   version.json ⇒ 实测**同一个交付物里"包说 ALPHA.60、包内 exe 说 ALPHA.0"**，
 #   而门禁那两条 `WINRES` 判据全绿（只在各自源内自比 —— 这正是审计 H1-2 说的"两个唯一
 #   事实来源、无任何检查比对"）。

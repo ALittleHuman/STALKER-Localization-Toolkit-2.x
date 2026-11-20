@@ -5,7 +5,7 @@
 事实（修前，已实测）：
   · `version.json` 与 `include/xrkit/core/version.h` 是**两个**"唯一事实来源"，且**没有任何
     检查比对**它们：exe 的资源与 `core::version_string()` 编自 version.h 的常量
-    （`kPrerelease = "ALPHA.0"` / `kBuildCount = 0`，**从来没被写回**过），包目录名与
+    （`kChannel = "ALPHA.0"` / `kBuildNumber = 0`，**从来没被写回**过），包目录名与
     `version.txt` 来自 version.json；现有的两条锁（`.rc ↔ version.h`、exe 资源 ↔
     `core::version_string()`）**都在各自源内自比**。
   · 后果（对外可见）：同一个交付物里 ——
@@ -22,11 +22,11 @@
   · **不读 `current.index`** —— 它是"下一个号"，门禁与构建 GUI 一动就把它推一格（实测 59→60）。
 
 判据（每条都能判红）：
-  ① `version.h`：`kPrerelease == "<标记>.<N>"` 且 `kBuildCount == N`（N / 标记来自 tree）；
+  ① `version.h`：`kChannel == "<标记>.<N>"` 且 `kBuildNumber == N`（N / 标记来自 tree）；
   ② `assets/xrkit_winres.rc`：`ProductVersion == v`、`FILEVERSION` 第 4 段 == N；
   ③ **包内 exe**（仅对 `version.txt` 里声明了 `exe_identity=` 的序号）：`ProductVersion == v`
      且 `numeric` 第 4 段 == N —— 判据自己读 exe 的 VERSIONINFO，**不信任那行自报**；
-  ④ 自证：喂"kBuildCount = N+1 的假 version.h""ProductVersion 不同的假 exe 文本"必须报红。
+  ④ 自证：喂"kBuildNumber = N+1 的假 version.h""ProductVersion 不同的假 exe 文本"必须报红。
 
 退出码：0 = 绿；1 = 有判据不成立；2 = 本次没有"带身份声明的新包"（调用方记台账）。
 """
@@ -128,17 +128,17 @@ def read_strings(exe: Path) -> dict[str, str] | None:
 def header_problems(header_text: str, prerelease: str, index: int) -> list[str]:
     problems: list[str] = []
     want_pre = prerelease + "." + str(index) if prerelease else ""
-    match = re.search(r'kPrerelease\s*=\s*"([^"]*)"', header_text)
+    match = re.search(r'kChannel\s*=\s*"([^"]*)"', header_text)
     if match is None:
-        problems.append("version.h 里读不到 kPrerelease")
+        problems.append("version.h 里读不到 kChannel")
     elif match.group(1) != want_pre:
-        problems.append("version.h 的 kPrerelease=「%s」≠ tree 现算的「%s」"
+        problems.append("version.h 的 kChannel=「%s」≠ tree 现算的「%s」"
                         % (match.group(1), want_pre))
-    match = re.search(r"kBuildCount\s*=\s*(\d+)", header_text)
+    match = re.search(r"kBuildNumber\s*=\s*(\d+)", header_text)
     if match is None:
-        problems.append("version.h 里读不到 kBuildCount")
+        problems.append("version.h 里读不到 kBuildNumber")
     elif int(match.group(1)) != index:
-        problems.append("version.h 的 kBuildCount=%s ≠ tree 的最后一次发包序号 %d"
+        problems.append("version.h 的 kBuildNumber=%s ≠ tree 的最后一次发包序号 %d"
                         % (match.group(1), index))
     return problems
 
@@ -248,7 +248,7 @@ def main() -> int:
     # ① version.h
     header_text = VERSION_H.read_text(encoding="utf-8")
     problems = header_problems(header_text, marker, index)
-    check(not problems, "① version.h 的 kPrerelease/kBuildCount == current 的期望值",
+    check(not problems, "① version.h 的 kChannel/kBuildNumber == current 的期望值",
           "\n      ".join(problems))
 
     # ② .rc
@@ -341,9 +341,9 @@ def main() -> int:
                 shutil.rmtree(tmp, ignore_errors=True)
 
     # ⑤ 自证：分析器不是恒真式
-    bad_header = header_text.replace("kBuildCount = %d" % index, "kBuildCount = %d" % (index + 1))
+    bad_header = header_text.replace("kBuildNumber = %d" % index, "kBuildNumber = %d" % (index + 1))
     check(bool(header_problems(bad_header, marker, index)),
-          "自证：kBuildCount 改成 N+1 的假 version.h 必须被判红")
+          "自证：kBuildNumber 改成 N+1 的假 version.h 必须被判红")
     bad_fields = {"ProductVersion": "2.0.0 ALPHA.0", "numeric": "2.0.0.0"}
     check(bool(exe_problems(bad_fields, want_version, index)),
           "自证：ProductVersion/数值版本对不上的假读数必须被判红")

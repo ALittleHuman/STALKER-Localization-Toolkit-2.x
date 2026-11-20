@@ -139,7 +139,7 @@ int run_write_version(const std::vector<std::string>& operands) {
         std::cerr << "BUILDPKG error reason=写 version.json 失败：" << err << "\n";
         return kFail;
     }
-    // kPrerelease 只放**通道名**；版本串由 version.cpp 拼成 `x.y.z.<build>`
+    // kChannel 只放**通道名**；版本串由 version.cpp 拼成 `x.y.z.<build>`
     const std::string full = pre;
     if (!xrkit::core::save_version_header("include/xrkit/core/version.h", full, build_no, err)) {
         std::cerr << "BUILDPKG error reason=写 version.h 失败：" << err << "\n";
@@ -329,8 +329,8 @@ int run_build_package(const std::vector<std::string>& operands) {
     }
     const std::string header_path = "include/xrkit/core/version.h";
     const std::string rc_path = "assets/xrkit_winres.rc";
-    // ★ 2026-11-20（模型 C）：头里的 **kBuildCount 用全局构建号**（不是通道内序号），
-    //   kPrerelease 只放通道名；版本串由 version.cpp 拼成 `x.y.z.<build>`。
+    // ★ 2026-11-20（模型 C）：头里的 **kBuildNumber 用全局构建号**（不是通道内序号），
+    //   kChannel 只放通道名；版本串由 version.cpp 拼成 `x.y.z.<build>`。
     const int global_build = store.build_counter > 0 ? store.build_counter : want_index;
     const std::string want_prerelease_full = want_prerelease;
     if (!xrkit::core::save_version_header(header_path, want_prerelease_full, global_build, err)) {

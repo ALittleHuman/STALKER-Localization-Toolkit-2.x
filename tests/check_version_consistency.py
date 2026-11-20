@@ -6,7 +6,7 @@ BETA.103 的缝：`current` 前进而 `version.h` 同值 ⇒ 写回判"没改变
 
 本判据钉死四路身份：
   ① version.json 的 current.index
-  ② version.h 的 kBuildCount
+  ② version.h 的 kBuildNumber
   ③ 构建出的 exe 自报 build=（`--exe-version`）
   ④ 包内 version.txt 的序号
 另加：同号重打必须拒绝且三件套一个字节不动；dist 下不许有"缺 version.txt / 缺 exe"的半成品。
@@ -52,9 +52,9 @@ def main() -> int:
     ver = cur["version"]
 
     header = (ROOT / "include" / "xrkit" / "core" / "version.h").read_text(encoding="utf-8")
-    m = re.search(r"kBuildCount\s*=\s*(\d+)", header)
+    m = re.search(r"kBuildNumber\s*=\s*(\d+)", header)
     h_idx = int(m.group(1)) if m else -1
-    (ok if h_idx == idx else fail)("version.json current=%d == version.h kBuildCount=%d" % (idx, h_idx))
+    (ok if h_idx == idx else fail)("version.json current=%d == version.h kBuildNumber=%d" % (idx, h_idx))
 
     p = subprocess.run([str(CLI), "--exe-version", str(EXE)], stdout=subprocess.PIPE,
                        stderr=subprocess.STDOUT)

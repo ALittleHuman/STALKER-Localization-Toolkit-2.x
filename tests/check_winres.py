@@ -104,7 +104,7 @@ def read_numeric(path: Path) -> tuple[int, int, int, int] | None:
 
 
 def compiled_version(cli: Path) -> tuple[str, int]:
-    """问 CLI 要**编译进二进制的那份**版本串（core::version_string() + kBuildCount）。"""
+    """问 CLI 要**编译进二进制的那份**版本串（core::version_string() + kBuildNumber）。"""
     proc = subprocess.run([str(cli), "--version"], stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, timeout=60)
     text = proc.stdout.decode("utf-8", errors="replace").strip()

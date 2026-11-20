@@ -777,7 +777,7 @@ def step_cli_contract(release: bool) -> None:
         ok("auto 判定停下等确认（P17-87：rc=3 ＋ 问句与诊断原样报出 ＋ 一个文件都没转）")
 
     # ── ★★ P17-36（2026-10-10，审计 04 F-12 Info）：**注释里不许写死构建计数的当前值** ──
-    #   事实：`version.h` 的注释曾写「（M0 尚为 0）」，而 `kBuildCount` 早就是三位数 ⇒
+    #   事实：`version.h` 的注释曾写「（M0 尚为 0）」，而 `kBuildNumber` 早就是三位数 ⇒
     #   「写死当前值」的注释必然过期。判据两半：① 不许再出现那种写死；
     #   ② 必须留下「由打包器就地改写」与「历史断号（17/107）别补」这两层信息（防后人乱补号）。
     vk_src = (ROOT / "include" / "xrkit" / "core" / "version.h").read_text(
@@ -6678,7 +6678,7 @@ def step_version_identity(release: bool) -> None:
       · 而同一个包 `version.txt` ⇒ `version=2.0.0 ALPHA.60`
 
     口径（用户拍板）：真来源＝`version.json` 的 tree（最后一次成功发包）；`version.h` 是
-    派生（`kPrerelease="<标记>.<序号>"`、`kBuildCount=<序号>`），写回点在 `--build-package`
+    派生（`kChannel="<标记>.<序号>"`、`kBuildNumber=<序号>`），写回点在 `--build-package`
     写 version.json 之后、`build.ps1` 之前（原子写 + 失败回滚 ⇒ 序号不被吃掉）；
     判据只对 **包内 exe** + `version.h`/`.rc` 断言，**不**对 build 目录的 exe 断言
     （开发构建用缺省值合法）；期望值从 tree 现算、**不读 `current.index`**。
@@ -8520,7 +8520,7 @@ def _vw_mark(step_name: str) -> None:
 #   就会出现「json 说 210、包内 exe 说 209」这种**三件不同步**（正是 `version-identity` 判的那件事）。
 _VERSION_IDENTITY = (
     ROOT / "version.json",                                # 真来源
-    ROOT / "include" / "xrkit" / "core" / "version.h",    # 派生：kPrerelease / kBuildCount
+    ROOT / "include" / "xrkit" / "core" / "version.h",    # 派生：kChannel / kBuildNumber
     ROOT / "assets" / "xrkit_winres.rc",                  # 派生：包内 exe 的 File/ProductVersion
 )
 

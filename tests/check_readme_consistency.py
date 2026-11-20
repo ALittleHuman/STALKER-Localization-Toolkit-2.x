@@ -55,7 +55,7 @@ else:
 print("== C. README 里的**版本口径**是否与真来源一致 ==")
 cur = json.loads((ROOT / "version.json").read_text(encoding="utf-8"))["current"]
 vh = (ROOT / "include" / "xrkit" / "core" / "version.h").read_text(encoding="utf-8")
-hdr = re.search(r'kPrerelease\s*=\s*"([^"]*)"', vh).group(1)
+hdr = re.search(r'kChannel\s*=\s*"([^"]*)"', vh).group(1)
 # ★ 2026-11-20：标题写「2.0」是产品口径，不该逼它写成 2.0.0。
 #   判据改成"标题里的版本号是 version.json 版本的前缀"——既抓陈旧（1.x/3.0），
 #   又不强制三段式。
@@ -74,7 +74,7 @@ check("README 标题里的版本号与 version.json 一致（允许只写主.次
 #   ★ 纪律：**一个判据不越权判别人负责的事** —— 越权会让它**常红**，而常红 = 没有判据。
 sync = (hdr == "%s.%s" % (cur["prerelease"], cur["index"]))
 if sync:
-    check("version.h 的 kPrerelease == version.json 的 标记.序号", True, "version.h=%s" % hdr)
+    check("version.h 的 kChannel == version.json 的 标记.序号", True, "version.h=%s" % hdr)
 else:
     print("  ·  version.h=%s vs version.json=%s.%s ⇒ **只观测**"
           "（版本同步由 `version-identity` 步判；门禁走打包链时 version.json 会被顶一格、"
