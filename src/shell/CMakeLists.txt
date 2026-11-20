@@ -129,3 +129,6 @@ target_link_libraries(xrkit_updater PRIVATE xrkit_core xrkit_flags)
 set_target_properties(xrkit_updater PROPERTIES
   OUTPUT_NAME "xrkit_updater"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
+# ★ 2026-11-20（item 2）：UTF-8 页 + 长路径清单
+xrkit_attach_manifest(xrkit_app)

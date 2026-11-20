@@ -21,3 +21,6 @@ xrkit_attach_python_runtime(xrkit_cli)
 #   它们存在的唯一目的是验证 C ABI 的加载链（LoadLibrary / `stk_plugin_init` / 失败回滚 /
 #   异常护栏）。C ABI 已删除 ⇒ 三个夹具连同它们的源文件一起删掉。
 #   Python 插件的夹具在 `tests/python_plugins/` 与 `src/shell/smoke.cpp` 里。
+
+# ★ 2026-11-20（item 2）：UTF-8 页 + 长路径清单
+xrkit_attach_manifest(xrkit_cli)

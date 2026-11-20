@@ -129,6 +129,14 @@ endfunction()
 # 第三方依赖：vendored 源码（离线可复现），见 third_party/ 与 tools/fetch_third_party.py
 # ─────────────────────────────────────────────────────────────────────
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/CMakeLists.txt")
+# ★ 2026-11-20（item 2）：UTF-8 代码页 + 长路径支持（清单由链接器嵌入到每个 exe）
+set(XRKIT_MANIFEST "${CMAKE_SOURCE_DIR}/assets/xrkit.manifest")
+function(xrkit_attach_manifest target)
+  if (WIN32 AND EXISTS "${XRKIT_MANIFEST}")
+    target_link_options(${target} PRIVATE "/MANIFESTINPUT:${XRKIT_MANIFEST}")
+  endif()
+endfunction()
+
   add_subdirectory(third_party)
 endif()
 
