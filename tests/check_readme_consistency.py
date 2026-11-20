@@ -56,9 +56,16 @@ print("== C. README 里的**版本口径**是否与真来源一致 ==")
 cur = json.loads((ROOT / "version.json").read_text(encoding="utf-8"))["current"]
 vh = (ROOT / "include" / "xrkit" / "core" / "version.h").read_text(encoding="utf-8")
 hdr = re.search(r'kPrerelease\s*=\s*"([^"]*)"', vh).group(1)
-check("README 标题里的版本号 == version.json 的 version",
-      ("2.0.0" in readme.splitlines()[0]) and cur["version"] == "2.0.0",
-      "标题=%r version.json=%s" % (readme.splitlines()[0][:40], cur["version"]))
+# ★ 2026-11-20：标题写「2.0」是产品口径，不该逼它写成 2.0.0。
+#   判据改成"标题里的版本号是 version.json 版本的前缀"——既抓陈旧（1.x/3.0），
+#   又不强制三段式。
+_title_line = readme.splitlines()[0] if readme.splitlines() else ""
+_m = re.search(r"(\d+\.\d+(?:\.\d+)?)", _title_line)
+_title_ver = _m.group(1) if _m else ""
+check("README 标题里的版本号与 version.json 一致（允许只写主.次）",
+      bool(_title_ver) and cur["version"].startswith(_title_ver),
+      "标题=%r 标题版本=%r version.json=%s"
+      % (_title_line[:40], _title_ver, cur["version"]))
 # ★★ P17-132 修正：**本条不许把 `version.json` 与 `version.h` 的同步当成自己的判据**。
 #   事实（本批实测）：门禁里**有步骤走打包链** ⇒ `version.json` 被顶一格，而 `version.h`
 #   的写回**滞后一格**（正规发布链才同步）⇒ 在这一步的时刻，两者**本来就可能不同步**。
