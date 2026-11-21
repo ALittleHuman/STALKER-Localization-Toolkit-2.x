@@ -1,3 +1,4 @@
+#include "xrkit/core/case_fold.h"
 #include "xrkit/engine/fs/squashfs.h"
 // ★ P17-115（复审计 `N-01` P0）：不可信尺寸上限的**唯一一处定义**（不再裸写字面量）
 #include "xrkit/engine/fs/untrusted_limits.h"
@@ -810,6 +811,54 @@ bool read_superblock(const std::string& path, SuperBlock& out, std::string& err)
     return parse_superblock(head, sizeof(head), out, err);
 }
 
+std::string duplicate_key(const std::string& entry_path) {
+    // D4：`\`→`/`、丢空段与 `.`、去尾斜杠
+    std::string key;
+    std::string seg;
+    const auto flush = [&key](std::string& s) {
+        if (s.empty()) return;
+        if (s == ".") {
+            s.clear();   // 丢掉但仍要清空，否则下一段会拼成 ".c"（本批实测踩过）
+            return;
+        }
+        if (!key.empty()) key += '/';
+        key += s;
+        s.clear();
+    };
+    for (char ch : entry_path) {
+        if (ch == '/' || ch == '\\') {
+            flush(seg);
+        } else {
+            seg.push_back(ch);
+        }
+    }
+    flush(seg);
+#ifdef _WIN32
+    // D2：Windows 落盘大小写不敏感 ⇒ 折叠后再比（H3b 后是 Unicode 折叠）
+    key = xrkit::core::case_fold_lower(key);
+#endif
+    return key;
+}
+
+void dedupe_entries(std::vector<Entry>& entries,
+                    std::vector<std::pair<std::string, std::string>>* duplicates) {
+    std::unordered_map<std::string, std::string> seen;  // key → 先出现的原始路径
+    std::vector<Entry> kept;
+    kept.reserve(entries.size());
+    // D3：文件与目录同名不算重名 ⇒ 键里带类型
+    for (const Entry& e : entries) {
+        const std::string key = (e.is_dir ? "d:" : "f:") + duplicate_key(e.path);
+        const auto found = seen.find(key);
+        if (found == seen.end()) {
+            seen.emplace(key, e.path);
+            kept.push_back(e);
+            continue;
+        }
+        if (duplicates != nullptr) duplicates->emplace_back(found->second, e.path);
+    }
+    entries.swap(kept);
+}
+
 ListResult list_entries(const std::string& path, const xrkit::plugin::Registry* registry) {
     ListResult res;
     const auto t0 = std::chrono::steady_clock::now();
@@ -833,6 +882,9 @@ ListResult list_entries(const std::string& path, const xrkit::plugin::Registry* 
         res.error = err;
         return res;
     }
+    // 3b：接受重名，但要**报数**（索引 first-wins）
+    dedupe_entries(res.entries, &res.duplicates);
+    res.duplicate_count = static_cast<int>(res.duplicates.size());
     const auto t1 = std::chrono::steady_clock::now();
     res.elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     res.ok = true;

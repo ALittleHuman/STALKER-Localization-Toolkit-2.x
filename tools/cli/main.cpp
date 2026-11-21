@@ -522,6 +522,36 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         check(ctx, s.find('+') != std::string::npos, "缺少构建号分隔符: " + s);
     });
 
+    reg.add("sqfs: 重名可见（batch-3 / 3b）", [](CheckContext& ctx) {
+        // 3b 的口径：读侧**接受**重名（官方不查重），但必须报数；索引 first-wins。
+        check(ctx, xrkit::engine::fs::duplicate_key("A\\B/./c/") ==
+                       xrkit::engine::fs::duplicate_key("a/b/C"),
+              "重名键：分隔符/`.`/尾斜杠归一 + 大小写折叠");
+        std::vector<xrkit::engine::fs::Entry> entries;
+        xrkit::engine::fs::Entry first;
+        first.path = "configs/a.ltx";
+        xrkit::engine::fs::Entry second;
+        second.path = "configs/A.LTX";
+        entries.push_back(first);
+        entries.push_back(second);
+        std::vector<std::pair<std::string, std::string>> dups;
+        xrkit::engine::fs::dedupe_entries(entries, &dups);
+        check(ctx, entries.size() == 1 && dups.size() == 1 && entries[0].path == first.path,
+              "重名条目 first-wins：只留第一条，重复记一条对照");
+        std::vector<xrkit::engine::fs::Entry> mixed;
+        xrkit::engine::fs::Entry file_entry;
+        file_entry.path = "models/x";
+        xrkit::engine::fs::Entry dir_entry;
+        dir_entry.path = "models/x";
+        dir_entry.is_dir = true;
+        mixed.push_back(file_entry);
+        mixed.push_back(dir_entry);
+        std::vector<std::pair<std::string, std::string>> no_dups;
+        xrkit::engine::fs::dedupe_entries(mixed, &no_dups);
+        check(ctx, mixed.size() == 2 && no_dups.empty(),
+              "文件与目录同名**不算**重名（D3）");
+    });
+
     reg.add("case: 路径/名字同一性用 Unicode 折叠（H3b）", [](CheckContext& ctx) {
         // 2026-11-21：ASCII 折叠切 Unicode（俄文/中文名的大小写同一性也要成立）。
         check(ctx, xrkit::core::case_fold_lower("ПРИВЕТ") == "привет",
@@ -4061,8 +4091,14 @@ int run_cli(const std::vector<std::string>& args) {
             for (const xrkit::engine::fs::Entry& e : res.entries) {
                 std::cout << (e.is_dir ? 'd' : 'f') << '\t' << e.path << '\t' << e.size << '\n';
             }
-            std::cout << "DUMP ok kind=sqfs entries=" << res.entries.size()
-                      << " ms=" << static_cast<long long>(res.elapsed_ms) << "\n";
+                        // ★ batch-3 / 3b（2026-11-21）：读侧接受重名，但**必须报数**（索引 first-wins）。
+            for (const auto& [first, second] : res.duplicates) {
+                std::cout << "DUMP note duplicate first=" << first << " second=" << second
+                          << "\n";
+            }
+std::cout << "DUMP ok kind=sqfs entries=" << res.entries.size()
+                      << " ms=" << static_cast<long long>(res.elapsed_ms)
+                      << " duplicates=" << res.duplicate_count << "\n";
             return kExitOk;
         }
 

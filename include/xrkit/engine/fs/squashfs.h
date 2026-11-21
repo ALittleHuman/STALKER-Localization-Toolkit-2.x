@@ -51,7 +51,20 @@ struct ListResult {
     std::string error;
     std::vector<Entry> entries;
     double elapsed_ms = 0.0;
+    // ★ batch-3 / 3b（2026-11-21）：读侧**接受**重名（官方不查重），但必须**报数**（零静默）。
+    //   索引仍是 first-wins：重复条目从 `entries` 里剔掉，对照留在 `duplicates`。
+    int duplicate_count = 0;
+    std::vector<std::pair<std::string, std::string>> duplicates;  // (先出现, 撞上来的)
 };
+
+// 重名判定的键（口径表 D1/D2/D4）：`\`→`/`、去尾斜杠、丢空段与 `.`；
+// Windows 下再做 Unicode 小写折叠（`A.txt` 与 `a.txt` 落盘会互相覆盖 ⇒ 算重名）。
+std::string duplicate_key(const std::string& entry_path);
+
+// 纯函数（不读盘，判据/自检也用）：按 `duplicate_key` 做 first-wins，
+// 把重复的从 `entries` 里剔除，并把对照追加到 `duplicates`。
+void dedupe_entries(std::vector<Entry>& entries,
+                    std::vector<std::pair<std::string, std::string>>* duplicates);
 
 struct FileData {
     bool ok = false;
