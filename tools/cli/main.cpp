@@ -5991,6 +5991,8 @@ if (action == "--diff-snapshot") {
                   << " candidates=" << outcome.candidates << " processed=" << outcome.processed
                   << " success=" << outcome.success << " skipped=" << outcome.skipped
                   << " failed=" << outcome.failed << " backed_up=" << outcome.backed_up
+                  << " backup_existed=" << outcome.backup_existed
+                  << " backup_failed=" << outcome.backup_failed
                   << " exit=" << outcome.exit_code << "\n";
         return outcome.exit_code == 0 ? kExitOk : 1;
     }

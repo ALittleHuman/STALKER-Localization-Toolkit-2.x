@@ -597,7 +597,14 @@ BatchOutcome convert_batch(const BatchOptions& opt, const BatchHooks& hooks) {
             out.collect.excluded.push_back(name);
             say("[排除] " + name + "（命中排除模式）");
         } else {
-            files.push_back(CollectedFile{name, opt.source});
+            // 2026-11-21：单文件也要**绝对化** —— 备份根取 parent_path，相对路径会得到空串
+            // （`a.xml` 的 parent 是 ""），备份直接失败。
+            std::error_code abs_ec;
+            const stdfs::path abs_src = stdfs::absolute(src_path, abs_ec);
+            const std::string full = abs_ec
+                                        ? opt.source
+                                        : xrkit::core::path_to_utf8(abs_src);
+            files.push_back(CollectedFile{name, full});
             out.collect.selected = 1;
         }
     } else if (is_dir) {
@@ -675,8 +682,16 @@ BatchOutcome convert_batch(const BatchOptions& opt, const BatchHooks& hooks) {
 
         // 备份（1.x：只在**原地**转换且勾选时做，逐文件、在写盘之前）
         if (opt.output_dir.empty() && opt.backup) {
+            // ★ 2026-11-21（用户实测）：**单文件 + 原地 + 备份**时 `source` 是文件路径，
+            //   拿它当根算相对路径会得到 "." ⇒ 备份路径变成 `<文件>/backup/./x.bak`（建不出来）。
+            //   单文件时根取它的**父目录**。
+            const std::string backup_root =
+                out.single_file
+                    ? xrkit::core::path_to_utf8(
+                          xrkit::core::path_from_utf8(file.full).parent_path())
+                    : opt.source;
             const BackupOutcome b =
-                backup_file(file.full, opt.source, opt.backup_dirname, opt.backup_suffix);
+                backup_file(file.full, backup_root, opt.backup_dirname, opt.backup_suffix);
             if (!b.ok) {
                 ++out.backup_failed;
                 say("[备份失败] " + name + " | " + b.error);
