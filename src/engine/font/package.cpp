@@ -781,6 +781,7 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
     opt.offset = request.offset;
     opt.only_sizes = request.only_sizes;
     opt.patch_only = request.patch_only;
+    opt.font_weight = request.font_weight;
     out.bitmap = build_package(opt);
     if (request.use_ref && !scan.dds_fmt.empty()) {
         const GameTemplate* game_tpl = find_game(effective_game);
@@ -898,6 +899,37 @@ FontSizePatchResult build_font_size_patch(const FontSizePatchRequest& request) {
     res.out_file = dest;
     res.sizes_changed = changed;
     return res;
+}
+
+
+// ★ 2026-11-21（用户口径）：**纯普通空白的文本 ⇒ 改成 U+00A0（NBSP）**。
+//   X-Ray 载入时会把可裁剪空白（U+0020/U+0009）裁掉 ⇒ 文本变空 ⇒
+//   `VERIFY_FAILED ... string table entry does not has a text`（A.R.E.A 的 gun_jammed 就是这样）。
+//   只处理"全是 ASCII 空白"的条目；已经是 NBSP/全角空格的保持原样。返回改动的条数。
+int fix_whitespace_only(std::string& text) {
+    int fixed = 0;
+    size_t pos = 0;
+    while ((pos = text.find("<text", pos)) != std::string::npos) {
+        const size_t gt = text.find('>', pos);
+        if (gt == std::string::npos) break;
+        const size_t end = text.find("</text", gt + 1);
+        if (end == std::string::npos) break;
+        const size_t body_at = gt + 1;
+        const size_t body_len = end - body_at;
+        bool all_ascii_ws = body_len > 0;
+        for (size_t i = body_at; i < end && all_ascii_ws; ++i) {
+            const char ch = text[i];
+            if (ch != ' ' && ch != '\t') all_ascii_ws = false;
+        }
+        if (all_ascii_ws) {
+            text.replace(body_at, body_len, "\xC2\xA0");
+            ++fixed;
+            pos = body_at + 2;
+        } else {
+            pos = end + 1;
+        }
+    }
+    return fixed;
 }
 
 PackageResult build_package(const PackageOptions& opt) {
@@ -1080,7 +1112,7 @@ PackageResult build_package(const PackageOptions& opt) {
         const int render_size = slot.size + opt.offset;
         FontProduct product;
         if (!render_font(opt.font_path, cs.chars, render_size, slot.x2 != 0, game->dds_fmt,
-                         product)) {
+                         product, opt.font_weight)) {
             res.error = "字号 " + std::to_string(slot.size) + " 渲染失败：" + product.error;
             remove_tree(out_gd);
             return res;
@@ -1175,7 +1207,8 @@ PackageResult build_package(const PackageOptions& opt) {
             return res;
         }
         if (!trusted) res.warnings.push_back(name + ": " + enc);
-        const std::string body = rewrite_xml_declaration_encoding(text);
+        std::string body = rewrite_xml_declaration_encoding(text);
+        res.ws_fixed += fix_whitespace_only(body);
         if (!write_text(dst, body)) {
             res.error = "写不出 " + dst;
             remove_tree(out_gd);

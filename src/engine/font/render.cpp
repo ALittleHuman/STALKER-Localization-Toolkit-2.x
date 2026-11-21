@@ -8,6 +8,7 @@
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_MULTIPLE_MASTERS_H
 
 #include <algorithm>
 #include <cmath>
@@ -386,8 +387,32 @@ std::vector<uint32_t> font_unrenderable(const std::string& font_path,
     return out;
 }
 
+
+// ★ 2026-11-21：给可变字体设 wght 轴（NotoSansSC-VF 含 100..900，默认实例偏细）。
+//   静态字体没有轴 ⇒ 直接跳过（msyhbd 之类不受影响）。
+void apply_variation_weight(FT_Library lib, FT_Face face, int weight) {
+    if (weight <= 0 || !FT_HAS_MULTIPLE_MASTERS(face)) return;
+    FT_MM_Var* mm = nullptr;
+    if (FT_Get_MM_Var(face, &mm) != 0 || mm == nullptr) return;
+    std::vector<FT_Fixed> coords(static_cast<size_t>(mm->num_axis));
+    for (FT_UInt i = 0; i < mm->num_axis; ++i) coords[i] = mm->axis[i].def;
+    for (FT_UInt i = 0; i < mm->num_axis; ++i) {
+        if (mm->axis[i].tag == FT_MAKE_TAG('w', 'g', 'h', 't')) {
+            const int clamped = weight < static_cast<int>(mm->axis[i].minimum >> 16)
+                                    ? static_cast<int>(mm->axis[i].minimum >> 16)
+                                    : (weight > static_cast<int>(mm->axis[i].maximum >> 16)
+                                           ? static_cast<int>(mm->axis[i].maximum >> 16)
+                                           : weight);
+            coords[i] = static_cast<FT_Fixed>(clamped) << 16;
+        }
+    }
+    FT_Set_Var_Design_Coordinates(face, mm->num_axis, coords.data());
+    FT_Done_MM_Var(lib, mm);
+}
+
 bool render_font(const std::string& font_path, const std::vector<uint32_t>& chars,
-                 int render_size, bool x2, const std::string& fmt, FontProduct& out) {
+                 int render_size, bool x2, const std::string& fmt, FontProduct& out,
+                 int weight) {
     out = FontProduct{};
     if (chars.empty()) {
         out.error = "字符集为空";
@@ -435,6 +460,7 @@ bool render_font(const std::string& font_path, const std::vector<uint32_t>& char
         FT_Face f;
         ~FaceGuard() { FT_Done_Face(f); }
     } face_guard{face};
+    apply_variation_weight(lib, face, weight);
 
     const int S = x2 ? 2 : 1;  // 1.x `S = 2 if x2 else 1`（x2 档渲染字号翻倍、最后再降采样回去）
     const int cell_h = cell_height_for(render_size);

@@ -45,6 +45,8 @@ struct PackageOptions {
     std::string localization_ltx_text;
     std::string cfg_dir_override;   // "config" / "configs"（空 = 用内置档）
     std::string dds_fmt_override;   // "8888" / "DXT5"（空 = 用内置档）
+    // ★ 2026-11-21（用户）：默认粗体 Noto Sans SC —— 可变字体按 wght 轴渲染（0 = 字体默认）
+    int font_weight = 700;
     // 只做这些槽位（空 = 全部 10 档）。门禁分片跑时用得上。
     std::vector<int> only_sizes;
     // ★ 2026-11-10：**字号补丁模式** —— 只写 `<out>/gamedata/textures/ui/*.dds|.ini`，
@@ -65,6 +67,8 @@ struct PackageResult {
     std::vector<std::string> warnings;  // 编码靠猜的 XML（"文件: 编码"）
     // ★ 2026-11-21（已知问题 §7）：本次删掉的**陈旧字库**（上一次生成、这次没再生成）。
     std::vector<std::string> stale_removed;
+    // ★ 2026-11-21（A.R.E.A 实测）：纯空白文本被自动改成 NBSP 的条数
+    int ws_fixed = 0;
     std::string lang;  // 实际采用的语言（profile 可能覆盖页面给的值）
     // ★ 2026-11-21：判定/采用的游戏版本（SoC/ClS/CoP/IXR）
     std::string game;
@@ -99,6 +103,7 @@ struct FontPackRequest {
     //   空 = 自动识别（ref 里有 .ttf ⇒ 矢量；有 ui_font_*.dds ⇒ 位图）；
     //   "bitmap" / "vector" = 强制（混合包/异常包用）。
     std::string writer;
+    int font_weight = 700;   // 可变字体的 wght 轴（默认 700 = 粗体）
     std::string lang = "rus";      // 语言（`--langs` 与它同义；单个也接受）
     std::string langs;             // 矢量：`rus,eng`；空 = 用包内 primary
     bool missing_warn = false;     // 语料缺字降级为警告

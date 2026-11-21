@@ -205,12 +205,12 @@ const ActionSpec kActionSpecs[] = {
      "仅 IX-Ray 矢量 fonts.ltx；位图字号补丁走 --font-pack --patch-offsets",
      "xrkit_cli --font-size-patch <参照包> -3 <输出目录>", "--font-pack"},
     {"--font-pack", "汉化包生成主入口（按段表来源选 writer）",
-     "--ref <参照包|builtin> --text-root <译文根|包根> [--font <TTF>] --out <目录> [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn] [--require-full-cyrillic] [--merge-glyphs <源TTF>] [--patch-offsets 3,-1] [--jsgme --jsgme-name <名>]（`--jsgme-category` 已废弃：JSGME 只认 MODS 下一层）",
+     "--ref <参照包|builtin> --text-root <译文根|包根> [--font <TTF>] --out <目录> [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn] [--font-weight 700] [--require-full-cyrillic] [--merge-glyphs <源TTF>] [--patch-offsets 3,-1] [--jsgme --jsgme-name <名>]（`--jsgme-category` 已废弃：JSGME 只认 MODS 下一层）",
      "参照包（--ref 目录时，只读）· 译文根（只读）· 字体（只读）", "输出目录",
      "0=成功｜1=出错｜3=用法错误",
      "--ref 目录 ⇒ 扫描参照 fonts.ltx（source=ref，矢量 writer）；--ref builtin ⇒ 内置模板（source=builtin，位图 writer）；缺字策略 --on-missing；--text-root 可用包根/gamedata/configs/text/<lang> 或文本目录；",
      "IXR 必须给参照包（无内置模板）；SoC/ClS/CoP 可用 builtin；--merge-glyphs 仅矢量有效（位图传了报错）；--font 省略时自动找 NotoSansSC-VF/微软雅黑",
-     "推荐：xrkit_cli --font-pack --ref builtin --text-root <包根> --out <更新目录> --langs rus --jsgme --jsgme-name 汉化 --patch-offsets 7（省略 --font 自动找 NotoSansSC）",
+     "推荐：xrkit_cli --font-pack --ref builtin --text-root <包根> --out <更新目录> --langs rus --jsgme --jsgme-name 汉化 --patch-offsets 7（省略 --font 自动找 NotoSansSC，默认粗体 wght=700）",
      "--langpack-scan, --font-sample"},
     {"--extract-pack", "提取编排：根 scripts + configs/scripts + gameplay（CLI/GUI 同一份）",
      "<源根> <输出根> [--no-language-pack] [--no-rewritten]",
@@ -6581,6 +6581,7 @@ if (action == "--diff-snapshot") {
         //   混合包/异常包用 `--writer bitmap|vector` 强制。
         // 值校验交给引擎（那边已有同一条口径）：CLI 不再多一处 rc=3 的用法错误点。
         req.writer = kv.count("writer") ? kv["writer"] : std::string();
+        req.font_weight = kv.count("font-weight") ? std::atoi(kv["font-weight"].c_str()) : 700;
         req.force = kv.count("force") != 0;
         // ★ 2026-11-08（用户：JSGME 是"汉化包生成"的事）：把成品包摆成 JSGME 结构
         const bool jsgme = kv.count("jsgme") != 0 || kv.count("jsgme-name") != 0;
@@ -6754,6 +6755,7 @@ if (action == "--diff-snapshot") {
                   << " scripts=" << res.bitmap.scripts_copied
                   << " gameplay=" << res.bitmap.gameplay_copied
                   << " warnings=" << res.bitmap.warnings.size()
+                  << " ws_fixed=" << res.bitmap.ws_fixed
                   << " stale_removed=" << res.bitmap.stale_removed.size()
                   << " game=" << (res.game.empty() ? "?" : res.game) << "\n";
         if (res.bitmap.lang != req.lang) {

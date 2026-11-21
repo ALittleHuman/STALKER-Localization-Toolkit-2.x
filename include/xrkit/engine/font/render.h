@@ -49,8 +49,11 @@ struct FontProduct {
 // `chars` 的顺序**即槽位顺序**（与 1.x 的 `chars` 字符串一致，重复码位也照排）。
 // `render_size` 是 1.x 的 `size` 参数（`build_package` 里 = 槽位名 + offset）；
 // `x2` = 该档是否超采样（1.x `SIZES` 的第二个字段）；`fmt` = "8888" 或 "A8"。
+// `weight`：可变字体（如 NotoSansSC-VF）的 wght 轴目标值（100..900；0 = 用字体默认）。
+// ★ 2026-11-21（用户）：默认要**粗体 Noto Sans SC** —— VF 里本来就有 Bold 实例，只是要设轴。
 bool render_font(const std::string& font_path, const std::vector<uint32_t>& chars,
-                 int render_size, bool x2, const std::string& fmt, FontProduct& out);
+                 int render_size, bool x2, const std::string& fmt, FontProduct& out,
+                 int weight = 0);
 
 // `\n` → `\r\n`（**每一个** `\n` 都翻，与 Python 文本模式的语义一致 —— 不是"已经是 CRLF
 // 就跳过"）。1.x 用 `open(path, "w", encoding=...)` 写 .ini/.ltx，Windows 文本模式会把
