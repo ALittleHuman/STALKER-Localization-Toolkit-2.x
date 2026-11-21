@@ -416,11 +416,30 @@ RefFontScan scan_ref_font(const std::string& ref) {
                                 read_error)) {
         out.fonts_ltx.clear();
     }
+    // ★ 2026-11-21（A.R.E.A 实测）：扫描来的模板是**磁盘原文**（多半 CRLF）；后面写盘还会
+    //   再走一次 `to_windows_newlines` ⇒ 不先归一就会出现 `\r\r\n`（产物里每行之间多空行）。
+    const auto normalize_newlines = [](std::string& text) {
+        std::string out;
+        out.reserve(text.size());
+        for (size_t i = 0; i < text.size(); ++i) {
+            if (text[i] == '\r') {
+                if (i + 1 < text.size() && text[i + 1] == '\n') continue;
+                out.push_back('\n');
+            } else {
+                out.push_back(text[i]);
+            }
+        }
+        text.swap(out);
+    };
+    normalize_newlines(out.fonts_ltx);
+
     // localization.ltx 可选（矢量包/精简包可能没有）
     std::string loc_error;
     if (!core::read_file_capped(core::path_to_utf8(cfg / "localization.ltx"),
                                 out.localization_ltx, loc_error)) {
         out.localization_ltx.clear();
+    } else {
+        normalize_newlines(out.localization_ltx);
     }
     // ② 证据计数（不递归太深：fonts/<lang>/*.ttf、textures/ui/ui_font_*.dds）
     // 按**后缀**数（不是前缀）：`a.ttf` 的扩展名在结尾。

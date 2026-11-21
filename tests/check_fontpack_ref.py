@@ -159,6 +159,20 @@ def main() -> int:
         check("沿用游戏自带纹理" not in text,
               "④e 不再刷无意义的逐条告警", text.strip()[-300:])
 
+        print("== ④f 参照包模板是 CRLF：产物必须逐字节还原（不许出现空行加倍） ==")
+        ref_crlf = work / "crlf_ref"
+        gd4 = ref_crlf / "gamedata"
+        (gd4 / "configs").mkdir(parents=True)
+        crlf = ("[only]\r\nshader\t= font\r\ntexture\t= ui\\ui_font_11\r\n")
+        (gd4 / "configs" / "fonts.ltx").write_bytes(crlf.encode("utf-8"))
+        (gd4 / "textures" / "ui").mkdir(parents=True)
+        (gd4 / "textures" / "ui" / "ui_font_11.dds").write_bytes(bytes(range(8)))
+        out_crlf = work / "out_crlf"
+        text = run(base + ["--ref", str(ref_crlf), "--out", str(out_crlf)])
+        produced_crlf = out_crlf / "gamedata" / "configs" / "fonts.ltx"
+        got = produced_crlf.read_bytes() if produced_crlf.is_file() else b""
+        check(got == crlf.encode("utf-8"), "④f 产物 fonts.ltx 与源逐字节相同", repr(got[:60]))
+
         print("== ⑤ 非法 writer 值：明确报错（不是静默忽略） ==")
         text = run(base + ["--ref", str(ref), "--out", str(work / "out_bogus"),
                            "--writer", "nope"])
