@@ -51,7 +51,9 @@ def run_case(work: Path, body: str) -> tuple[str, str]:
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
     text = proc.stdout.decode("utf-8", "replace")
     assert "EXTRACTPACK ok" in text, text
-    rewritten = (out / "configs" / "scripts" / "t.script").read_text(encoding="utf-8")
+    # 没有可提取文本时，工具**不复制/不改写**该文件（设计如此）⇒ 这里返回空串
+    rewritten_path = out / "configs" / "scripts" / "t.script"
+    rewritten = rewritten_path.read_text(encoding="utf-8") if rewritten_path.is_file() else ""
     xml = ""
     for p in out.rglob("*_texts.xml"):
         xml += p.read_text(encoding="utf-8")
@@ -88,6 +90,17 @@ def main() -> int:
         check('game.translate_string("' in rewritten, "④ 代码里的字面量被改写", rewritten)
         check('-- local z = "after comment"' in rewritten,
               "④ 注释里的同名字面量原样保留（修前会被改）", rewritten)
+
+        print("== ⑥ 注释里的文本长相**不会**被误提取 ==")
+        rewritten, xml = run_case(tmp / "c7", '-- "--[[hello big world]]"' + "\n")
+        check("hello big world" not in xml, "⑥ 行注释里的文本长得像正文也不提取", xml[:200])
+        rewritten, xml = run_case(
+            tmp / "c8",
+            'local s = "real text here" -- "--[[fake text here]]"' + "\n")
+        check("real text here" in xml and "fake text here" not in xml,
+              "⑥ 同一行：代码里的提取、注释里的不提取", xml[:200])
+        check("fake text here" in rewritten,
+              "⑥ 改写也不动注释里的那段（原样保留）", rewritten)
 
         print("== ⑤ 长字符串 [[ ]] 不参与提取/改写 ==")
         rewritten, xml = run_case(
