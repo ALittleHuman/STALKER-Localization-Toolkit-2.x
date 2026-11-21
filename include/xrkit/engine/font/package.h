@@ -39,6 +39,12 @@ struct PackageOptions {
     // ★ 2026-11-06（最小统一）：语料缺字的策略。fail（默认）= 不出包；warn = 警告并继续。
     //   基线缺字**始终只警告**（两线口径，见 f08a1d2）。
     bool missing_warn = false;
+    // ★ 2026-11-21：**从参照包扫出来的模板**（非空 ⇒ 用它，不再用内置 `kGameTemplates`）。
+    //   位图 writer 写 `fonts.ltx` 是逐字节套模板，所以扫描结果必须原样传进来。
+    std::string fonts_ltx_text;
+    std::string localization_ltx_text;
+    std::string cfg_dir_override;   // "config" / "configs"（空 = 用内置档）
+    std::string dds_fmt_override;   // "8888" / "DXT5"（空 = 用内置档）
     // 只做这些槽位（空 = 全部 10 档）。门禁分片跑时用得上。
     std::vector<int> only_sizes;
     // ★ 2026-11-10：**字号补丁模式** —— 只写 `<out>/gamedata/textures/ui/*.dds|.ini`，
@@ -85,6 +91,10 @@ struct FontPackRequest {
     std::string font;
     std::string out;
     std::string game = "CoP";      // 位图模板档
+    // ★ 2026-11-21（用户）：**writer 与段表来源解耦** —— `--ref <目录>` 也要能出位图包。
+    //   空 = 自动识别（ref 里有 .ttf ⇒ 矢量；有 ui_font_*.dds ⇒ 位图）；
+    //   "bitmap" / "vector" = 强制（混合包/异常包用）。
+    std::string writer;
     std::string lang = "rus";      // 语言（`--langs` 与它同义；单个也接受）
     std::string langs;             // 矢量：`rus,eng`；空 = 用包内 primary
     bool missing_warn = false;     // 语料缺字降级为警告

@@ -8206,7 +8206,10 @@ STEPS = [
     # ★ 2026-11-21：重复生成要清旧字库（已知问题 §7）
     ("fontpack-stale", make_checker_step("fontpack-stale", "check_fontpack_stale.py",
                                                "旧字库清理判据")),
-    # ★ 2026-11-20：五个「写了但没接线」的判据接进门禁（此前只有人手工跑）。
+
+    # ★ 2026-11-21（用户）：--ref <目录> 也要能出位图（writer 与段表来源解耦）
+    ("fontpack-ref", make_checker_step("fontpack-ref", "check_fontpack_ref.py",
+                                             "参照包扫描出位图判据")),    # ★ 2026-11-20：五个「写了但没接线」的判据接进门禁（此前只有人手工跑）。
     ("cli-output-paths", make_checker_step("cli-output-paths", "check_cli_output_paths.py",
                                           "CLI 写盘落点判据")),
     ("host-update-poll", make_checker_step("host-update-poll", "check_host_update_poll.py",

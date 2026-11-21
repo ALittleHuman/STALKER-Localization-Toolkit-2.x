@@ -371,9 +371,98 @@ int template_segment_count(const std::string& game) {
     return static_cast<int>(parse_segments(t->fonts_ltx).size());
 }
 
+// ★ 2026-11-21（用户口径）：**writer 与段表来源解耦** —— `--ref <目录>` 也要能出位图包。
+//   扫描三样东西：① `fonts.ltx` 原文（位图 writer 逐字节套模板，必须原样带过去）；
+//   ② `localization.ltx`（有就用，没有回落到该游戏族的内置文本）；③ 证据计数（.ttf vs
+//   `ui_font_*.dds`），用来在"没显式指定 writer"时判断该走矢量还是位图。
+struct RefFontScan {
+    bool ok = false;
+    std::string error;
+    std::string root;          // 参照包的 gamedata 根
+    std::string cfg_dir;       // "configs" / "config"
+    std::string fonts_ltx;
+    std::string localization_ltx;
+    int ttf_count = 0;
+    int dds_count = 0;
+};
+
+RefFontScan scan_ref_font(const std::string& ref) {
+    namespace fs = std::filesystem;
+    RefFontScan out;
+    std::error_code ec;
+    const fs::path base = core::path_from_utf8(ref);
+    const fs::path gd = fs::is_directory(base / "gamedata", ec) ? (base / "gamedata") : base;
+    if (!fs::is_directory(gd, ec)) {
+        out.error = "参照包目录不存在：" + ref;
+        return out;
+    }
+    // ① cfg 目录：两个候选都认（1.x 的 SoC 用 `config`，ClS/CoP/IXR 用 `configs`）
+    fs::path cfg;
+    for (const char* name : {"configs", "config"}) {
+        if (fs::is_directory(gd / name, ec)) {
+            cfg = gd / name;
+            out.cfg_dir = name;
+            break;
+        }
+    }
+    if (cfg.empty()) {
+        out.error = "参照包缺 configs/ 或 config/：" + ref;
+        return out;
+    }
+    std::string read_error;
+    if (!core::read_file_capped(core::path_to_utf8(cfg / "fonts.ltx"), out.fonts_ltx,
+                                read_error)) {
+        out.error = "参照包缺 " + out.cfg_dir + "/fonts.ltx：" + ref;
+        return out;
+    }
+    // localization.ltx 可选（矢量包/精简包可能没有）
+    std::string loc_error;
+    if (!core::read_file_capped(core::path_to_utf8(cfg / "localization.ltx"),
+                                out.localization_ltx, loc_error)) {
+        out.localization_ltx.clear();
+    }
+    // ② 证据计数（不递归太深：fonts/<lang>/*.ttf、textures/ui/ui_font_*.dds）
+    // 按**后缀**数（不是前缀）：`a.ttf` 的扩展名在结尾。
+    const auto count_ext = [](const fs::path& dir, const std::string& ext) {
+        int n = 0;
+        std::error_code count_ec;
+        if (!fs::is_directory(dir, count_ec)) return n;
+        for (fs::recursive_directory_iterator it(dir, count_ec), end; !count_ec && it != end;
+             it.increment(count_ec)) {
+            if (!it->is_regular_file(count_ec)) continue;
+            const std::string name = core::path_to_utf8(it->path().filename());
+            if (name.size() > ext.size() &&
+                name.compare(name.size() - ext.size(), ext.size(), ext) == 0) {
+                ++n;
+            }
+        }
+        return n;
+    };
+    const int ttf = count_ext(gd / "fonts", ".ttf");
+    out.ttf_count = ttf;
+    out.dds_count = 0;
+    {
+        std::error_code count_ec;
+        const fs::path ui = gd / "textures" / "ui";
+        if (fs::is_directory(ui, count_ec)) {
+            for (fs::directory_iterator it(ui, count_ec), end; !count_ec && it != end;
+                 it.increment(count_ec)) {
+                if (!it->is_regular_file(count_ec)) continue;
+                const std::string name = core::path_to_utf8(it->path().filename());
+                if (name.rfind("ui_font_", 0) == 0 && name.size() > 4 &&
+                    name.compare(name.size() - 4, 4, ".dds") == 0) {
+                    ++out.dds_count;
+                }
+            }
+        }
+    }
+    out.root = core::path_to_utf8(gd);
+    out.ok = true;
+    return out;
+}
+
 FontPackOutcome build_font_pack(const FontPackRequest& request) {
     FontPackOutcome out;
-    out.vector_path = request.use_ref;
     // ① 字符集：**统一核心**（两条 writer 都用它）
     if (!request.text_root.empty()) {
         CharsetResult cs;
@@ -381,20 +470,60 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
             out.charset_count = cs.chars.size();
         }
     }
-    // ② 段表：**统一解析器**（内置模板与参照包同一份）
-    // ★ 矢量路径**不读 game**：段表来自参照包；`game` 只在位图路径（内置模板）才有意义。
-    //   调用方（页面/CLI）在 use_ref=true 时应当传空 game —— 传了也会被忽略（见下）。
-    out.segments = request.use_ref ? ref_segment_count(request.ref)
-                                   : template_segment_count(request.game);
-    out.segments_from_ref = request.use_ref;
-    if (out.segments < 0) {
-        out.error = request.use_ref
-                        ? ("参照包缺 gamedata/configs/fonts.ltx（或不含任何段）：" + request.ref)
-                        : ("未知游戏版本：" + request.game);
+    // ② 参照包扫描（**不再**"有 ref 就只能走矢量"）
+    RefFontScan scan;
+    if (request.use_ref) {
+        scan = scan_ref_font(request.ref);
+        if (!scan.ok) {
+            out.error = scan.error;
+            return out;
+        }
+        out.segments = static_cast<int>(parse_segments(scan.fonts_ltx).size());
+        out.segments_from_ref = true;
+        if (out.segments <= 0) {
+            out.error = "参照包 fonts.ltx 不含任何段：" + request.ref;
+            return out;
+        }
+        if (!request.writer.empty() && request.writer != "bitmap" &&
+            request.writer != "vector") {
+            out.error = "未知 writer：「" + request.writer + "」（只支持 bitmap / vector）";
+            return out;
+        }
+    } else {
+        out.segments = template_segment_count(request.game);
+        if (out.segments < 0) {
+            out.error = "未知游戏版本：" + request.game;
+            return out;
+        }
+    }
+    if (!request.writer.empty() && request.writer != "bitmap" && request.writer != "vector") {
+        out.error = "未知 writer：「" + request.writer + "」（只支持 bitmap / vector）";
         return out;
     }
-    // ③ 分流到 writer（只有这一处）
+    if (!request.use_ref && request.writer == "vector") {
+        out.error = "`--ref builtin` 只有位图模板，不能配 `--writer vector`；"
+                    "矢量请用 `--ref <参照包目录>`";
+        return out;
+    }
+    // ③ writer 决策：显式优先，否则按**证据**（.ttf ⇒ 矢量；ui_font_*.dds ⇒ 位图）
+    bool use_vector = false;
     if (request.use_ref) {
+        if (!request.writer.empty()) {
+            use_vector = (request.writer == "vector");
+        } else if (scan.ttf_count > 0 && scan.dds_count == 0) {
+            use_vector = true;
+        } else if (scan.dds_count > 0 && scan.ttf_count == 0) {
+            use_vector = false;
+        } else {
+            out.error = "参照包的 writer 证据冲突或缺失（" + std::to_string(scan.ttf_count) +
+                        " 个 .ttf / " + std::to_string(scan.dds_count) +
+                        " 个 ui_font_*.dds）：请用 --writer bitmap|vector 明确指定";
+            return out;
+        }
+    }
+    out.vector_path = use_vector;
+    // ④ 分流到 writer（只有这一处）
+    if (use_vector) {
         if (request.patch_only) {
             out.error = "矢量字号补丁暂不支持（IX-Ray 的字号在 fonts.ltx 的 size，需实测后再发）";
             return out;
@@ -456,6 +585,13 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
     }
     PackageOptions opt;
     opt.game = request.game;
+    if (request.use_ref) {
+        // 位图 writer 是**逐字节套模板**：段名/纹理名/空行都必须原样来自参照包。
+        opt.fonts_ltx_text = scan.fonts_ltx;
+        opt.localization_ltx_text = scan.localization_ltx;
+        opt.cfg_dir_override = scan.cfg_dir;
+        if (const GameTemplate* t = find_game(request.game)) opt.dds_fmt_override = t->dds_fmt;
+    }
     opt.lang = request.lang;
     opt.xml_dir = request.text_root;
     opt.font_path = request.font;
@@ -567,7 +703,24 @@ FontSizePatchResult build_font_size_patch(const FontSizePatchRequest& request) {
 PackageResult build_package(const PackageOptions& opt) {
     namespace fs = std::filesystem;
     PackageResult res;
-    const GameTemplate* game = find_game(opt.game);
+    // ★ 2026-11-21：模板可以是**外部传入**（从参照包扫出来的 fonts.ltx），
+    //   不再只认内置 `kGameTemplates`（那样扫参照包就只剩矢量一条路）。
+    const GameTemplate* builtin_game = find_game(opt.game);
+    GameTemplate external_game{};
+    const GameTemplate* game = builtin_game;
+    if (!opt.fonts_ltx_text.empty()) {
+        external_game.game = opt.game.empty() ? "ref" : opt.game.c_str();
+        external_game.cfg_dir = opt.cfg_dir_override.empty() ? "configs"
+                                                             : opt.cfg_dir_override.c_str();
+        external_game.dds_fmt = opt.dds_fmt_override.empty() ? "8888"
+                                                             : opt.dds_fmt_override.c_str();
+        external_game.fonts_ltx = opt.fonts_ltx_text.c_str();
+        external_game.localization_ltx =
+            opt.localization_ltx_text.empty()
+                ? (builtin_game != nullptr ? builtin_game->localization_ltx : "")
+                : opt.localization_ltx_text.c_str();
+        game = &external_game;
+    }
     if (game == nullptr) {
         res.error = "未知游戏版本：" + opt.game;
         return res;

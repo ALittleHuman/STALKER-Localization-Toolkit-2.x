@@ -80,6 +80,11 @@ TEXT ok kind=scripts files=4 strings=18 chars=202 notext=1 skipped=1 replskip=0 
 - **摆盘固定为 `MODS\<名>\`（平铺）**：JSGME 只扫描 MODS 的下一层，`MODS\<分类>\<名>\` 那种分类目录**不会被列出**（用户实测 A.R.E.A 加载不上）。`--jsgme-category` 仅为兼容旧命令行保留，传了会告警并忽略。
 - MOD 名前缀（如 `1.`/`2.`）只影响 **JSGME 列表里的排序**，不是必须；不加前缀一样能加载。
 
+- `--ref <目录>` 会**扫描参照包**：`fonts.ltx` 原文直接作为模板（段名/纹理名/空行照抄），
+  writer 按证据自动选择 —— 有 `.ttf` ⇒ 矢量；有 `ui_font_*.dds` ⇒ 位图
+  （SoC/ClS/CoP 的常规形态）。两种证据同时存在或都不存在时**不猜**，
+  报错要求显式 `--writer bitmap|vector`。
+
 ```bat
 xrkit_cli --font-pack --ref builtin --text-root "E:\...\2.汉化" --out "E:\...\更新\2.汉化" ^
           --langs rus --jsgme --jsgme-name "汉化" --patch-offsets 7

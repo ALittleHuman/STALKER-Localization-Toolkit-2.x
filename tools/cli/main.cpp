@@ -6545,6 +6545,10 @@ if (action == "--diff-snapshot") {
             }
         }
         req.merge_glyphs = kv.count("merge-glyphs") ? kv["merge-glyphs"] : std::string();
+        // ★ 2026-11-21（用户）：writer 与段表来源解耦 —— `--ref <目录>` 默认按证据选，
+        //   混合包/异常包用 `--writer bitmap|vector` 强制。
+        // 值校验交给引擎（那边已有同一条口径）：CLI 不再多一处 rc=3 的用法错误点。
+        req.writer = kv.count("writer") ? kv["writer"] : std::string();
         req.force = kv.count("force") != 0;
         // ★ 2026-11-08（用户：JSGME 是"汉化包生成"的事）：把成品包摆成 JSGME 结构
         const bool jsgme = kv.count("jsgme") != 0 || kv.count("jsgme-name") != 0;
