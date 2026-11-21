@@ -461,6 +461,60 @@ RefFontScan scan_ref_font(const std::string& ref) {
     return out;
 }
 
+// ★ 2026-11-21（用户）：位图-from-ref **必须按 ref 的 ltx 生成同名 DDS/INI** ——
+//   否则套了参照包的 fonts.ltx，却还是只写那 10 个固定名字，ref 里新增的字号就指向不存在的纹理。
+//   口径：只收 `texture* = ui\ui_font_<数字>`（`ui_font_hud_*` 之类是游戏自带，不生成）；
+//   顺序按出现先后、同名去重；超采样沿用内置表的阈值（>=16 档走 2x）。
+std::vector<FontSize> slots_from_fonts_ltx(const std::string& ltx,
+                                           std::vector<std::string>* non_numeric) {
+    std::vector<FontSize> slots;
+    auto seen = [&slots](int size) {
+        for (const FontSize& s : slots) {
+            if (s.size == size) return true;
+        }
+        return false;
+    };
+    size_t pos = 0;
+    while (pos <= ltx.size()) {
+        const size_t nl = ltx.find('\n', pos);
+        std::string line = ltx.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+        pos = (nl == std::string::npos) ? ltx.size() + 1 : nl + 1;
+        if (line.find('=') == std::string::npos) continue;
+        std::string key = line.substr(0, line.find('='));
+        std::string value = line.substr(line.find('=') + 1);
+        const auto trim = [](std::string& s) {
+            while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r')) {
+                s.pop_back();
+            }
+            size_t b = 0;
+            while (b < s.size() && (s[b] == ' ' || s[b] == '\t')) ++b;
+            s.erase(0, b);
+        };
+        trim(key);
+        trim(value);
+        std::string lower_key;
+        for (char ch : key) lower_key.push_back(static_cast<char>(std::tolower(
+            static_cast<unsigned char>(ch))));
+        if (lower_key.rfind("texture", 0) != 0) continue;
+        const size_t sep = value.find_last_of("\\/");
+        const std::string base = sep == std::string::npos ? value : value.substr(sep + 1);
+        if (base.rfind("ui_font_", 0) != 0) continue;
+        const std::string digits = base.substr(std::string("ui_font_").size());
+        bool all_digits = !digits.empty();
+        for (char ch : digits) {
+            if (ch < '0' || ch > '9') { all_digits = false; break; }
+        }
+        if (!all_digits) {
+            if (non_numeric != nullptr) non_numeric->push_back(base);
+            continue;
+        }
+        const int size = std::atoi(digits.c_str());
+        if (size <= 0 || seen(size)) continue;
+        slots.push_back(FontSize{size, size >= 16 ? 1 : 0});
+    }
+    return slots;
+}
+
 FontPackOutcome build_font_pack(const FontPackRequest& request) {
     FontPackOutcome out;
     // ① 字符集：**统一核心**（两条 writer 都用它）
@@ -860,8 +914,25 @@ PackageResult build_package(const PackageOptions& opt) {
         return res;
     }
 
-    // ── 字库（10 个字号；任一处失败就把 gamedata 整个删掉，绝不留半成品）
-    for (const FontSize& slot : kFontSizes) {
+    // ── 字库（任一处失败就把 gamedata 整个删掉，绝不留半成品）
+    // ★ 2026-11-21：模板来自参照包时，**槽位也从模板推**（ref 里出现哪些 `ui_font_<数字>`
+    //   就生成哪些同名 DDS/INI）；内置模板仍用固定 10 档。
+    std::vector<FontSize> slots;
+    if (!opt.fonts_ltx_text.empty()) {
+        std::vector<std::string> non_numeric;
+        slots = slots_from_fonts_ltx(opt.fonts_ltx_text, &non_numeric);
+        for (const std::string& name : non_numeric) {
+            res.warnings.push_back("沿用游戏自带纹理（未生成）：" + name);
+        }
+        if (slots.empty()) {
+            res.error = "参照包 fonts.ltx 里没有可生成的 `ui_font_<数字>` 纹理引用 —— "
+                        "位图 writer 不知道该生成哪些 DDS/INI";
+            return res;
+        }
+    } else {
+        slots.assign(std::begin(kFontSizes), std::end(kFontSizes));
+    }
+    for (const FontSize& slot : slots) {
         if (!opt.only_sizes.empty() &&
             std::find(opt.only_sizes.begin(), opt.only_sizes.end(), slot.size) ==
                 opt.only_sizes.end()) {

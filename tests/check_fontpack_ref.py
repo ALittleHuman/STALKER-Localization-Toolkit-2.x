@@ -103,6 +103,26 @@ def main() -> int:
         text = run(base + ["--ref", str(ref_mix), "--out", str(work / "out_forced"),
                            "--writer", "bitmap"])
         check("writer=bitmap" in text, "④ --writer bitmap 生效", text.strip()[-300:])
+        print("== ④b 参照包里的**新增字号**：必须生成同名 DDS/INI ==")
+        ref_custom = work / "custom_ref"
+        gd = ref_custom / "gamedata"
+        (gd / "configs").mkdir(parents=True)
+        (gd / "configs" / "fonts.ltx").write_text(
+            "[custom_12]\nshader\t\t\t= font\ntexture\t\t\t= ui\\ui_font_12\n\n"
+            "[hud_font_small]\nshader\t\t\t= font\ntexture\t\t\t= ui\\ui_font_hud_01\n",
+            encoding="utf-8", newline="\n")
+        (gd / "textures" / "ui").mkdir(parents=True)
+        (gd / "textures" / "ui" / "ui_font_12.dds").write_bytes(bytes(range(8)))
+        out_custom = work / "out_custom"
+        text = run(base + ["--ref", str(ref_custom), "--out", str(out_custom)])
+        check("writer=bitmap" in text, "④b 走位图writer", text.strip()[-300:])
+        ui = out_custom / "gamedata" / "textures" / "ui"
+        names = sorted(x.name for x in ui.iterdir()) if ui.is_dir() else []
+        check("ui_font_12.dds" in names, "④b 生成同名 DDS（ui_font_12.dds）", str(names))
+        check("ui_font_12.ini" in names, "④b 生成同名 INI（ui_font_12.ini）", str(names))
+        check("ui_font_hud_01" in text, "④b 游戏自带纹理采用并**报出**（不静默）",
+              text.strip()[-300:])
+
         print("== ⑤ 非法 writer 值：明确报错（不是静默忽略） ==")
         text = run(base + ["--ref", str(ref), "--out", str(work / "out_bogus"),
                            "--writer", "nope"])
