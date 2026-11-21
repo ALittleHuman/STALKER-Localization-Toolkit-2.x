@@ -8,8 +8,10 @@
 //   而 `text → fs` 的行为依赖已经存在（`text/extract.cpp` include `fs/overlay.h`）⇒
 //   `fs → text` 会成环。所以**原语下沉**，而不是让 fs 上调 text。
 //
-// 本阶段（a）**只搬家、不改语义**：调用点先切到 `ascii_lower_char()`（与旧手写逐字节等价）；
-// 下一阶段（b）再把"同一性判定"的站点切到 `case_fold_lower()`（会动基线，单独一次）。
+// (a) 2026-10-25：调用点先切到 `ascii_lower_char()`（与旧手写逐字节等价）。
+// (b) 2026-11-21：**"同一性判定"的站点已切 `case_fold_lower()`** —— `path_equals`、
+//     `component_equal`/`artifact_key`、`overlay` 的 basename、`db` 的名字归一化；
+//     `sniff` 的两处保持 ASCII（它比的是**原始字节**与 ASCII 字面量，不是名字同一性）。
 //
 // 表的边界（照抄原头，别让它漂）：
 //   · 只做 Python `str.lower()` 的单码位/多码位映射，**不做** `casefold()` 的额外等价；

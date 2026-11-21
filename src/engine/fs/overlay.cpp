@@ -24,10 +24,8 @@ std::string basename_lower(const std::string& path) {
     // ★ H2（全量审计）：同 log.cpp —— `.string()` 是 CP_ACP 窄化；用 `path_to_utf8` 保留 UTF-8。
     std::string name =
         xrkit::core::path_to_utf8(xrkit::core::path_from_utf8(path).filename());
-    for (char& c : name) {
-        c = xrkit::core::ascii_lower_char(c);
-    }
-    return name;
+    // ★ H3(b)：Unicode 折叠（覆盖俄文/中文名的大小写同一性）
+    return xrkit::core::case_fold_lower(name);
 }
 
 std::vector<std::string> split_path(const std::string& path) {

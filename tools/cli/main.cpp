@@ -14,6 +14,7 @@
 #include "xrkit/engine/font/xml_bytes.h"
 #include "xrkit/core/check.h"
 #include "xrkit/core/log.h"
+#include "xrkit/core/case_fold.h"
 #include "xrkit/core/path.h"
 #include "xrkit/core/atomic_write.h"
 #include "build_cmd.h"
@@ -519,6 +520,16 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
     reg.add("version: 构建号与版本可组合", [](CheckContext& ctx) {
         const std::string s = xrkit::core::version_with_build();
         check(ctx, s.find('+') != std::string::npos, "缺少构建号分隔符: " + s);
+    });
+
+    reg.add("case: 路径/名字同一性用 Unicode 折叠（H3b）", [](CheckContext& ctx) {
+        // 2026-11-21：ASCII 折叠切 Unicode（俄文/中文名的大小写同一性也要成立）。
+        check(ctx, xrkit::core::case_fold_lower("ПРИВЕТ") == "привет",
+              "Unicode 小写折叠基本行为");
+        check(ctx, xrkit::core::path_equals("C:/ПУТЬ/Файл.ltx", "c:/путь/файл.LTX"),
+              "俄文路径的大小写差异应判为同一路径");
+        check(ctx, !xrkit::core::path_equals("C:/путь/a.ltx", "C:/путь/b.ltx"),
+              "不同文件名不能判同一");
     });
 
     reg.add("log: 落盘可用、可关闭、内容真写出", [](CheckContext& ctx) {

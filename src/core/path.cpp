@@ -43,20 +43,14 @@ bool path_equals(const std::string& a, const std::string& b) {
     const std::filesystem::path pb = path_from_utf8(b).lexically_normal();
     auto ia = pa.begin();
     auto ib = pb.begin();
-#ifdef _WIN32
-    const auto lower = [](char c) {
-        return xrkit::core::ascii_lower_char(c);
-    };
-#endif
     for (; ia != pa.end() && ib != pb.end(); ++ia, ++ib) {
-        std::string ca = path_to_utf8(*ia);
-        std::string cb = path_to_utf8(*ib);
+        const std::string ca = path_to_utf8(*ia);
+        const std::string cb = path_to_utf8(*ib);
 #ifdef _WIN32
-        // Windows 下路径比较大小写不敏感（1.x 用 os.path.normcase）
-        if (ca.size() != cb.size()) return false;
-        for (size_t i = 0; i < ca.size(); ++i) {
-            if (lower(ca[i]) != lower(cb[i])) return false;
-        }
+        // Windows 下路径比较大小写不敏感（1.x 用 os.path.normcase）。
+        // H3(b) 2026-11-21：切 **Unicode** 小写折叠（俄文/中文名的大小写同一性也要成立）。
+        // 不能先比字节长度：折叠可能改变长度，所以整段折叠后再比。
+        if (xrkit::core::case_fold_lower(ca) != xrkit::core::case_fold_lower(cb)) return false;
 #else
         if (ca != cb) return false;
 #endif

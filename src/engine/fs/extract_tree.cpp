@@ -62,20 +62,12 @@ std::string strip_trailing_dots_spaces(const std::string& seg) {
 // 段里有没有点（用来区分"只剩点的变体"与"纯空格"两种空段，见上）
 bool has_dot(const std::string& seg) { return seg.find('.') != std::string::npos; }
 
-bool ascii_iequal(char a, char b) {
-    const auto lower = [](char c) { return xrkit::core::ascii_lower_char(c); };
-    return lower(a) == lower(b);
-}
-
 // Windows 下路径比较**大小写不敏感**（1.x 的 `os.path.normcase`）；
 // 其它平台按字节比。
 bool component_equal(const std::string& a, const std::string& b) {
 #ifdef _WIN32
-    if (a.size() != b.size()) return false;
-    for (size_t i = 0; i < a.size(); ++i) {
-        if (!ascii_iequal(a[i], b[i])) return false;
-    }
-    return true;
+    // ★ H3(b)：Unicode 折叠（俄文名的大小写同一性；不能先比长度）
+    return xrkit::core::case_fold_lower(a) == xrkit::core::case_fold_lower(b);
 #else
     return a == b;
 #endif
@@ -104,9 +96,8 @@ std::string artifact_key(const std::string& path) {
         if (c == '\\') c = '/';
     }
 #ifdef _WIN32
-    for (char& c : key) {
-        c = xrkit::core::ascii_lower_char(c);
-    }
+    // ★ H3(b)：产物同一性按 Unicode 折叠（与 component_equal 同口径）
+    key = xrkit::core::case_fold_lower(key);
 #endif
     return key;
 }

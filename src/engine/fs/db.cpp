@@ -1141,9 +1141,9 @@ std::string dup_key(const std::string& path) {
         }
         if (!out.empty()) out += '/';
 #ifdef _WIN32
-        for (char& c : seg) {
-            c = xrkit::core::ascii_lower_char(c);
-        }
+        // ★ H3(b)：Unicode 折叠 —— 判重与 `--strict` 的名字同一性都用它。
+        //   影响面：俄文/中文名里只有大小写不同的两条，从这里开始算"重名"。
+        seg = xrkit::core::case_fold_lower(seg);
 #endif
         out += seg;
         seg.clear();
