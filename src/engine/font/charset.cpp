@@ -185,6 +185,63 @@ void strip_japanese_kana(std::set<uint32_t>& chars) {
     }
 }
 
+
+// ★ 2026-11-21：找出**纯空白**的 `<text>` 条目（空格/Tab/NBSP/全角空格…）。
+//   X-Ray 载入时会把可裁剪空白裁掉 ⇒ 文本变空 ⇒ `VERIFY_FAILED`。
+//   这里只做"报出来"（不改写），样例带文件名与 id，便于定位。
+void scan_whitespace_only(const std::string& text, const std::string& file,
+                          std::vector<std::string>* out) {
+    if (out == nullptr) return;
+    const auto is_ws_cp = [](uint32_t cp) {
+        return cp == 0x20 || cp == 0x09 || cp == 0x0A || cp == 0x0D || cp == 0x00A0 ||
+               cp == 0x3000 || cp == 0x2000 || cp == 0x2002 || cp == 0x2003;
+    };
+    size_t pos = 0;
+    while ((pos = text.find("<text", pos)) != std::string::npos) {
+        const size_t gt = text.find('>', pos);
+        if (gt == std::string::npos) break;
+        const size_t end = text.find("</text", gt + 1);
+        if (end == std::string::npos) break;
+        const std::string body = text.substr(gt + 1, end - gt - 1);
+        pos = end + 1;
+        if (body.empty()) continue;
+        // 解码成码位判断是否全空白
+        bool all_ws = true;
+        std::string cps;
+        size_t i = 0;
+        while (i < body.size() && all_ws) {
+            uint32_t cp = 0;
+            const unsigned char ch = static_cast<unsigned char>(body[i]);
+            int extra = 0;
+            if (ch < 0x80) { cp = ch; }
+            else if ((ch & 0xE0) == 0xC0) { cp = ch & 0x1F; extra = 1; }
+            else if ((ch & 0xF0) == 0xE0) { cp = ch & 0x0F; extra = 2; }
+            else if ((ch & 0xF8) == 0xF0) { cp = ch & 0x07; extra = 3; }
+            else { all_ws = false; break; }
+            ++i;
+            for (int k = 0; k < extra && i < body.size(); ++k, ++i) {
+                cp = (cp << 6) | (static_cast<unsigned char>(body[i]) & 0x3F);
+            }
+            if (!is_ws_cp(cp)) { all_ws = false; break; }
+            char buf[16];
+            std::snprintf(buf, sizeof(buf), "U+%04X ", cp);
+            cps += buf;
+        }
+        if (!all_ws) continue;
+        // 往前找最近的 id="..."
+        std::string id;
+        const size_t window = pos > 240 ? pos - 240 : 0;
+        const std::string before = text.substr(window, pos - window);
+        const size_t at = before.rfind("id=\"");
+        if (at != std::string::npos) {
+            const size_t b = at + 4;
+            const size_t e = before.find('"', b);
+            if (e != std::string::npos) id = before.substr(b, e - b);
+        }
+        out->push_back(file + "::" + (id.empty() ? "?" : id) + " [" + cps + "]");
+    }
+}
+
 bool extract_chars(const std::string& xml_dir, bool full_cyrillic, CharsetResult& out) {
     out = CharsetResult{};
     std::error_code ec;
@@ -236,6 +293,8 @@ bool extract_chars(const std::string& xml_dir, bool full_cyrillic, CharsetResult
         }
         if (!trusted) out.guessed.push_back(core::path_to_utf8(path.filename()));
         scan_xml_texts(text, chars);
+        scan_whitespace_only(text, core::path_to_utf8(path.filename()),
+                             &out.whitespace_only);
     }
 
     // ④' 日文层砍掉（用户 2026-09-26）：任何来源的假名都不进字符集

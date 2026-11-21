@@ -33,6 +33,10 @@ struct CharsetResult {
     // 枚举目录失败这类**硬失败**的第一手理由（配合 extract_chars 返回 false）。
     std::string error;
     std::vector<std::string> guessed;  // 编码是"猜"的文件名（1.x 会汇总告警）
+    // ★ 2026-11-21（A.R.E.A 实测崩溃）：**纯空白文本**条目。
+    //   X-Ray 会把普通空格裁掉 ⇒ `VERIFY_FAILED ... does not has a text`；原版常用
+    //   U+00A0（NBSP）顶着。抓字形时顺手报出来（样例：file::id [U+00A0]）。
+    std::vector<std::string> whitespace_only;
 };
 
 // `xml_dir` 不存在返回 false（1.x 返回 None）。

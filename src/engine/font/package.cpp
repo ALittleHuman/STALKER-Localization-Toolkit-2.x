@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -42,9 +43,23 @@ bool write_text(const std::string& path, const std::string& text) {
 // 删除范围**双保险**：只碰 `gamedata/textures/ui/ui_font_` 开头的路径。
 constexpr const char* kFontManifestName = "_xrkit_fonts.json";
 
+// ★ 2026-11-21（用户）：清单是**临时记账**，不许落进发布目录（更别说 JSGME 摆盘后会错位）。
+//   改放 `%LOCALAPPDATA%\xrkit\fontpack\<输出目录哈希>.json` —— 产物目录因此保持干净。
 std::string font_manifest_path(const std::string& out_dir) {
-    return out_dir.empty() ? std::string(kFontManifestName)
-                           : (out_dir + "/" + kFontManifestName);
+    const char* base = std::getenv("LOCALAPPDATA");
+    std::string dir = base != nullptr ? std::string(base) : std::string(".");
+    dir += "\\xrkit\\fontpack";
+    std::error_code dir_ec;
+    std::filesystem::create_directories(core::path_from_utf8(dir), dir_ec);
+    const std::string key = std::to_string(std::hash<std::string>{}(out_dir));
+    return dir + "\\" + key + ".json";
+}
+
+// 旧版本把清单写在 `<out>/_xrkit_fonts.json`；生成时顺手删掉，避免残留进包。
+void drop_legacy_manifest(const std::string& out_dir) {
+    if (out_dir.empty()) return;
+    std::error_code ec;
+    std::filesystem::remove(core::path_from_utf8(out_dir + "/" + kFontManifestName), ec);
 }
 
 std::vector<std::string> read_font_manifest(const std::string& out_dir) {
@@ -582,6 +597,12 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
         CharsetResult cs;
         if (extract_chars(request.text_root, /*full_cyrillic=*/true, cs)) {
             out.charset_count = cs.chars.size();
+            // ★ 2026-11-21（A.R.E.A 实测）：抓字形的顺带把**纯空白文本**报出来 ——
+            //   X-Ray 会把它裁空 ⇒ `VERIFY_FAILED ... does not has a text`（原版常用 NBSP 顶着）。
+            for (const std::string& sample : cs.whitespace_only) {
+                out.warnings_extra.push_back(
+                    "纯空白文本（引擎会裁成空 ⇒ VERIFY_FAILED，建议与原版逐字节一致）：" + sample);
+            }
         }
     }
     // ② 参照包扫描（**不再**"有 ref 就只能走矢量"）
@@ -1080,6 +1101,7 @@ PackageResult build_package(const PackageOptions& opt) {
         ++res.fonts_written;
     }
 
+    drop_legacy_manifest(opt.out_dir);
     const std::vector<std::string> staged_fonts = collect_staged_fonts(out_gd);
     if (opt.patch_only) {
         // ★ 2026-11-10：字号补丁 = **只有字体纹理/INI**，绝不写文本、脚本、fonts.ltx。
