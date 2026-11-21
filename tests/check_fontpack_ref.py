@@ -103,25 +103,21 @@ def main() -> int:
         text = run(base + ["--ref", str(ref_mix), "--out", str(work / "out_forced"),
                            "--writer", "bitmap"])
         check("writer=bitmap" in text, "④ --writer bitmap 生效", text.strip()[-300:])
-        print("== ④b 参照包里的**新增字号**：必须生成同名 DDS/INI ==")
-        ref_custom = work / "custom_ref"
-        gd = ref_custom / "gamedata"
-        (gd / "configs").mkdir(parents=True)
-        (gd / "configs" / "fonts.ltx").write_text(
-            "[custom_12]\nshader\t\t\t= font\ntexture\t\t\t= ui\\ui_font_12\n\n"
-            "[hud_font_small]\nshader\t\t\t= font\ntexture\t\t\t= ui\\ui_font_hud_01\n",
+        print("== ④b 参照包只提了 1 个纹理：仍然**全量 10 档** ==")
+        ref_one = work / "one_ref"
+        gd_one = ref_one / "gamedata"
+        (gd_one / "configs").mkdir(parents=True)
+        (gd_one / "configs" / "fonts.ltx").write_text(
+            "[only_one]\nshader\t= font\ntexture\t= ui\\ui_font_11\n",
             encoding="utf-8", newline="\n")
-        (gd / "textures" / "ui").mkdir(parents=True)
-        (gd / "textures" / "ui" / "ui_font_12.dds").write_bytes(bytes(range(8)))
-        out_custom = work / "out_custom"
-        text = run(base + ["--ref", str(ref_custom), "--out", str(out_custom)])
-        check("writer=bitmap" in text, "④b 走位图writer", text.strip()[-300:])
-        ui = out_custom / "gamedata" / "textures" / "ui"
-        names = sorted(x.name for x in ui.iterdir()) if ui.is_dir() else []
-        check("ui_font_12.dds" in names, "④b 生成同名 DDS（ui_font_12.dds）", str(names))
-        check("ui_font_12.ini" in names, "④b 生成同名 INI（ui_font_12.ini）", str(names))
-        check("ui_font_hud_01" in text, "④b 游戏自带纹理采用并**报出**（不静默）",
-              text.strip()[-300:])
+        (gd_one / "textures" / "ui").mkdir(parents=True)
+        (gd_one / "textures" / "ui" / "ui_font_11.dds").write_bytes(bytes(range(8)))
+        out_one = work / "out_one"
+        text = run(base + ["--ref", str(ref_one), "--out", str(out_one)])
+        names_one = sorted(x.name for x in (out_one / "gamedata" / "textures" / "ui").iterdir())
+        check(len(names_one) == 20, "④b 全量 20 个文件（10 档 × dds/ini）", str(names_one[:4]))
+        check("ui_font_11.dds" in names_one and "ui_font_25.ini" in names_one,
+              "④b 覆盖全部标准档位", str(names_one[:4]))
 
         print("== ④c 拿不到引用：回落内置模板并明确告警 ==")
         ref_noltx = work / "noltx_ref"
@@ -134,17 +130,20 @@ def main() -> int:
         check("fonts.ltx" in text and "回落" in text, "④c 回落**有告警**（不静默）",
               text.strip()[-300:])
 
-        print("== ④d 有 ltx 但没有可用纹理引用：同样回落 ==")
-        ref_hud = work / "hudonly_ref"
-        (ref_hud / "gamedata" / "configs").mkdir(parents=True)
-        (ref_hud / "gamedata" / "configs" / "fonts.ltx").write_text(
-            "[hud_font_small]\nshader\t= font\ntexture\t= ui\\ui_font_hud_01\n",
+        print("== ④d 引用里出现非标准字号：不按引用裁剪，仍全量 ==")
+        ref_custom = work / "custom_ref2"
+        gd2 = ref_custom / "gamedata"
+        (gd2 / "configs").mkdir(parents=True)
+        (gd2 / "configs" / "fonts.ltx").write_text(
+            "[custom_12]\nshader\t= font\ntexture\t= ui\\ui_font_12\n",
             encoding="utf-8", newline="\n")
-        (ref_hud / "gamedata" / "textures" / "ui").mkdir(parents=True)
-        (ref_hud / "gamedata" / "textures" / "ui" / "ui_font_11.dds").write_bytes(bytes(range(8)))
-        text = run(base + ["--ref", str(ref_hud), "--out", str(work / "out_hud")])
-        check("source=builtin" in text and "回落" in text,
-              "④d 无 `ui_font_<数字>` 引用 ⇒ 回落内置模板 + 告警", text.strip()[-300:])
+        (gd2 / "textures" / "ui").mkdir(parents=True)
+        (gd2 / "textures" / "ui" / "ui_font_12.dds").write_bytes(bytes(range(8)))
+        out_custom = work / "out_custom2"
+        text = run(base + ["--ref", str(ref_custom), "--out", str(out_custom)])
+        names2 = sorted(x.name for x in (out_custom / "gamedata" / "textures" / "ui").iterdir())
+        check(len(names2) == 20, "④d 仍生成全量 20 个", str(names2[:4]))
+        check("writer=bitmap" in text, "④d 走位图 writer", text.strip()[-300:])
 
         print("== ⑤ 非法 writer 值：明确报错（不是静默忽略） ==")
         text = run(base + ["--ref", str(ref), "--out", str(work / "out_bogus"),
