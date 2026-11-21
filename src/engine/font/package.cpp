@@ -383,6 +383,7 @@ struct RefFontScan {
     std::string fonts_ltx;
     std::string localization_ltx;
     std::string dds_fmt;       // 从参照包的 ui_font_*.dds 头读出来（"A8" / "8888"）
+    std::string game;          // 判定出的游戏版本（SoC/ClS/CoP/IXR；判定不出为空）
     int ttf_count = 0;
     int dds_count = 0;
 };
@@ -497,6 +498,20 @@ RefFontScan scan_ref_font(const std::string& ref) {
             }
         }
     }
+    // ③ 游戏版本判定（扫描产物，不再让用户提前填 --game）：
+    //   · 有 .ttf 且无 ui_font_*.dds ⇒ IX-Ray（矢量）
+    //   · cfg 目录 `config`                  ⇒ SoC
+    //   · cfg `configs` + DDS 8888           ⇒ ClS
+    //   · cfg `configs` + DDS A8             ⇒ CoP
+    if (out.ttf_count > 0 && out.dds_count == 0) {
+        out.game = "IXR";
+    } else if (out.cfg_dir == "config") {
+        out.game = "SoC";
+    } else if (out.cfg_dir == "configs" && out.dds_fmt == "8888") {
+        out.game = "ClS";
+    } else if (out.cfg_dir == "configs" && out.dds_fmt == "A8") {
+        out.game = "CoP";
+    }
     out.root = core::path_to_utf8(gd);
     out.ok = true;
     return out;
@@ -559,6 +574,9 @@ std::vector<FontSize> slots_from_fonts_ltx(const std::string& ltx,
 
 FontPackOutcome build_font_pack(const FontPackRequest& request) {
     FontPackOutcome out;
+    // ★ 2026-11-21（用户）：**扫描与生成分两步** —— 游戏版本以扫描判定为准；
+    //   `--game` 只在没参照、或参照判定不出时才需要（显式给了但冲突 ⇒ 告警后按判定走）。
+    std::string effective_game = request.game;
     // ① 字符集：**统一核心**（两条 writer 都用它）
     if (!request.text_root.empty()) {
         CharsetResult cs;
@@ -583,7 +601,7 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
             }
         } else {
             // 回落：只有拿到内置模板档才继续
-            const int builtin_segments = template_segment_count(request.game);
+            const int builtin_segments = template_segment_count(effective_game);
             if (builtin_segments < 0) {
                 out.error = "参照包缺 fonts.ltx，且没有可回落的内置模板（--game 只认 "
                             "SoC/ClS/CoP）：请补 fonts.ltx 或显式给一个内置档";
@@ -598,9 +616,11 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
             return out;
         }
     } else {
-        out.segments = template_segment_count(request.game);
+        out.segments = template_segment_count(effective_game);
         if (out.segments < 0) {
-            out.error = "未知游戏版本：" + request.game;
+            out.error = effective_game.empty()
+                            ? "`--ref builtin` 必须指定 --game SoC|ClS|CoP（内置模板只有这三档）"
+                            : ("未知游戏版本：" + effective_game + "（只认 SoC/ClS/CoP）");
             return out;
         }
     }
@@ -613,6 +633,21 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
                     "矢量请用 `--ref <参照包目录>`";
         return out;
     }
+    if (request.use_ref && !scan.game.empty()) {
+        if (!effective_game.empty() && effective_game != scan.game) {
+            out.warnings_extra.push_back(
+                "参照包判定为 " + scan.game + "（cfg=" + scan.cfg_dir + "，dds=" +
+                scan.dds_fmt + "），与 --game " + effective_game + " 不同：按判定走");
+        }
+        effective_game = scan.game;
+    }
+    if (effective_game.empty()) {
+        out.error = request.use_ref
+                        ? "判定不出游戏版本（参照包证据不足）：请补 --game SoC|ClS|CoP"
+                        : "`--ref builtin` 必须指定 --game SoC|ClS|CoP（内置模板只有这三档）";
+        return out;
+    }
+    out.game = effective_game;
     // ③ writer 决策：显式优先，否则按**证据**（.ttf ⇒ 矢量；ui_font_*.dds ⇒ 位图）
     bool use_vector = false;
     if (request.use_ref) {
@@ -707,7 +742,7 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
             // 回落链：拿不到引用 ⇒ 用内置模板（SoC/ClS/CoP），并明确告警
             opt.cfg_dir_override.clear();
         }
-        const GameTemplate* game_tpl = find_game(request.game);
+        const GameTemplate* game_tpl = find_game(effective_game);
         if (!scan.dds_fmt.empty()) {
             // 参照包自己是最硬的证据（A.R.E.A = CoP/A8）：格式按参照包，--game 只作回落
             opt.dds_fmt_override = scan.dds_fmt;
@@ -727,7 +762,7 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
     opt.patch_only = request.patch_only;
     out.bitmap = build_package(opt);
     if (request.use_ref && !scan.dds_fmt.empty()) {
-        const GameTemplate* game_tpl = find_game(request.game);
+        const GameTemplate* game_tpl = find_game(effective_game);
         if (game_tpl != nullptr && scan.dds_fmt != game_tpl->dds_fmt) {
             out.bitmap.warnings.push_back(
                 std::string("参照包的 DDS 格式是 ") + scan.dds_fmt +
@@ -737,15 +772,15 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
     }
     if (request.use_ref && !scan.fonts_ltx.empty() && opt.fonts_ltx_text.empty()) {
         // 有 ltx 但没有可生成的纹理 ⇒ 同样回落 10 档，并明确告警
-        out.segments = template_segment_count(request.game);
+        out.segments = template_segment_count(effective_game);
         out.segments_from_ref = false;
         out.bitmap.warnings.push_back(
             "参照包 fonts.ltx 里没有可生成的 `ui_font_<数字>` 纹理：纹理/段表回落到内置模板档「" +
-            request.game + "」，字号固定 10 档");
+            effective_game + "」，字号固定 10 档");
     } else if (request.use_ref && scan.fonts_ltx.empty()) {
         out.bitmap.warnings.push_back(
             "参照包没有可用的 fonts.ltx（缺文件）：纹理/段表回落到内置模板档「" +
-            request.game + "」，字号固定 10 档");
+            effective_game + "」，字号固定 10 档");
     }
     out.ok = out.bitmap.ok;
     if (!out.ok) out.error = out.bitmap.error;

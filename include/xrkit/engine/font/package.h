@@ -66,6 +66,8 @@ struct PackageResult {
     // ★ 2026-11-21（已知问题 §7）：本次删掉的**陈旧字库**（上一次生成、这次没再生成）。
     std::vector<std::string> stale_removed;
     std::string lang;  // 实际采用的语言（profile 可能覆盖页面给的值）
+    // ★ 2026-11-21：判定/采用的游戏版本（SoC/ClS/CoP/IXR）
+    std::string game;
 };
 
 PackageResult build_package(const PackageOptions& opt);
@@ -90,7 +92,9 @@ struct FontPackRequest {
     std::string text_root;         // 译文根（矢量可选；位图必填）
     std::string font;
     std::string out;
-    std::string game = "CoP";      // 位图模板档
+    // ★ 2026-11-21（用户）：扫描和生成是两步 —— 游戏版本由**扫描结果**判定，
+    //   这里默认空 = 自动；只有没参照（`--ref builtin`）或判定不出时才必须显式给。
+    std::string game;
     // ★ 2026-11-21（用户）：**writer 与段表来源解耦** —— `--ref <目录>` 也要能出位图包。
     //   空 = 自动识别（ref 里有 .ttf ⇒ 矢量；有 ui_font_*.dds ⇒ 位图）；
     //   "bitmap" / "vector" = 强制（混合包/异常包用）。
@@ -123,6 +127,10 @@ struct FontPackOutcome {
     //   缺字账目从助手报告里**解析到引擎**，CLI 强烈提示 / GUI 弹窗都用这一份。
     int missing = 0;                        // 缺字总数
     std::vector<std::string> missing_cps;  // U+XXXX（最多留 64 个）
+    // ★ 2026-11-21：判定/采用的游戏版本（SoC/ClS/CoP/IXR），CLI 直接报出来
+    std::string game;
+    // 引擎侧的非致命提示（判定与 --game 冲突等）；CLI 逐条打 warn
+    std::vector<std::string> warnings_extra;
 };
 
 FontPackOutcome build_font_pack(const FontPackRequest& request);

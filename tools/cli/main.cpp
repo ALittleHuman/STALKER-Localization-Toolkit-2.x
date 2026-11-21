@@ -6531,7 +6531,9 @@ if (action == "--diff-snapshot") {
         req.text_root = kv.count("text-root") ? kv["text-root"] : std::string();
         req.font = kv.count("font") ? kv["font"] : std::string();
         req.out = kv.count("out") ? kv["out"] : std::string();
-        req.game = kv.count("game") ? kv["game"] : "CoP";
+        // ★ 2026-11-21（用户）：扫描与生成分两步 —— 游戏版本由**扫描判定**；
+        //   --game 只在没有参照/判定不出时要给。
+        req.game = kv.count("game") ? kv["game"] : std::string();
         // ★ `--langs` 是统一名（单个语言也接受）；`--lang` 保留为同义别名
         req.langs = kv.count("langs") ? kv["langs"] : (kv.count("lang") ? kv["lang"] : "");
         if (req.langs.empty()) {
@@ -6629,7 +6631,10 @@ if (action == "--diff-snapshot") {
                 xrkit::engine::font::build_font_distribution(dist);
             const xrkit::engine::font::FontPackOutcome& base_res = outcome.base;
             std::cout << "CHARSET count=" << base_res.charset_count << "\n";
-            std::cout << "SEGMENTS source=" << (base_res.segments_from_ref ? "ref" : "builtin")
+            for (const std::string& warn : base_res.warnings_extra) {
+            std::cout << "FONTPACK warn " << warn << "\n";
+        }
+        std::cout << "SEGMENTS source=" << (base_res.segments_from_ref ? "ref" : "builtin")
                       << " n=" << base_res.segments << "\n";
             if (base_res.ok) {
                 for (const std::string& warn : base_res.bitmap.warnings) {
@@ -6676,6 +6681,9 @@ if (action == "--diff-snapshot") {
         }
         const xrkit::engine::font::FontPackOutcome res =
             xrkit::engine::font::build_font_pack(req);
+        for (const std::string& warn : res.warnings_extra) {
+            std::cout << "FONTPACK warn " << warn << "\n";
+        }
         std::cout << "CHARSET count=" << res.charset_count << "\n";
         std::cout << "SEGMENTS source=" << (res.segments_from_ref ? "ref" : "builtin")
                   << " n=" << res.segments << "\n";
@@ -6746,7 +6754,8 @@ if (action == "--diff-snapshot") {
                   << " scripts=" << res.bitmap.scripts_copied
                   << " gameplay=" << res.bitmap.gameplay_copied
                   << " warnings=" << res.bitmap.warnings.size()
-                  << " stale_removed=" << res.bitmap.stale_removed.size() << "\n";
+                  << " stale_removed=" << res.bitmap.stale_removed.size()
+                  << " game=" << (res.game.empty() ? "?" : res.game) << "\n";
         if (res.bitmap.lang != req.lang) {
             std::cout << "FONTPACK note 语言采用产物内 profile：lang=" << res.bitmap.lang << "\n";
         }

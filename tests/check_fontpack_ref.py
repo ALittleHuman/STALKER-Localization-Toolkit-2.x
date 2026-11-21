@@ -62,7 +62,7 @@ def make_ref(work: Path, name: str, ttf: bool, dds: bool) -> Path:
         (gd / "fonts" / "rus" / "a.ttf").write_bytes(b"\x00\x01")
     if dds:
         (gd / "textures" / "ui").mkdir(parents=True)
-        (gd / "textures" / "ui" / "ui_font_11.dds").write_bytes(bytes(range(16)))
+        (gd / "textures" / "ui" / "ui_font_11.dds").write_bytes(a8_dds_header())
     return ref
 
 
@@ -120,7 +120,7 @@ def main() -> int:
             "[only_one]\nshader\t= font\ntexture\t= ui\\ui_font_11\n",
             encoding="utf-8", newline="\n")
         (gd_one / "textures" / "ui").mkdir(parents=True)
-        (gd_one / "textures" / "ui" / "ui_font_11.dds").write_bytes(bytes(range(8)))
+        (gd_one / "textures" / "ui" / "ui_font_11.dds").write_bytes(a8_dds_header())
         out_one = work / "out_one"
         text = run(base + ["--ref", str(ref_one), "--out", str(out_one)])
         names_one = sorted(x.name for x in (out_one / "gamedata" / "textures" / "ui").iterdir())
@@ -131,7 +131,7 @@ def main() -> int:
         ref_noltx = work / "noltx_ref"
         (ref_noltx / "gamedata" / "configs").mkdir(parents=True)
         (ref_noltx / "gamedata" / "textures" / "ui").mkdir(parents=True)
-        (ref_noltx / "gamedata" / "textures" / "ui" / "ui_font_11.dds").write_bytes(bytes(range(8)))
+        (ref_noltx / "gamedata" / "textures" / "ui" / "ui_font_11.dds").write_bytes(a8_dds_header())
         text = run(base + ["--ref", str(ref_noltx), "--out", str(work / "out_noltx")])
         check("writer=bitmap" in text and "source=builtin" in text,
               "④c 缺 fonts.ltx ⇒ 回落内置模板（source=builtin）", text.strip()[-300:])
@@ -146,7 +146,7 @@ def main() -> int:
             "[custom_12]\nshader\t= font\ntexture\t= ui\\ui_font_12\n",
             encoding="utf-8", newline="\n")
         (gd2 / "textures" / "ui").mkdir(parents=True)
-        (gd2 / "textures" / "ui" / "ui_font_12.dds").write_bytes(bytes(range(8)))
+        (gd2 / "textures" / "ui" / "ui_font_12.dds").write_bytes(a8_dds_header())
         out_custom = work / "out_custom2"
         text = run(base + ["--ref", str(ref_custom), "--out", str(out_custom)])
         names2 = sorted(x.name for x in (out_custom / "gamedata" / "textures" / "ui").iterdir())
@@ -161,7 +161,7 @@ def main() -> int:
             "[hud]\nshader\t= font\ntexture\t= ui\\ui_font_hud_01\n",
             encoding="utf-8", newline="\n")
         (gd3 / "textures" / "ui").mkdir(parents=True)
-        (gd3 / "textures" / "ui" / "ui_font_11.dds").write_bytes(bytes(range(8)))
+        (gd3 / "textures" / "ui" / "ui_font_11.dds").write_bytes(a8_dds_header())
         text = run(base + ["--ref", str(ref_hud), "--out", str(work / "out_hud2")])
         check("source=builtin" in text and "回落" in text,
               "④e 只有基础游戏字体（hud/console）⇒ 回退内置 10 档并说明", text.strip()[-300:])
@@ -175,7 +175,7 @@ def main() -> int:
         crlf = ("[only]\r\nshader\t= font\r\ntexture\t= ui\\ui_font_11\r\n")
         (gd4 / "configs" / "fonts.ltx").write_bytes(crlf.encode("utf-8"))
         (gd4 / "textures" / "ui").mkdir(parents=True)
-        (gd4 / "textures" / "ui" / "ui_font_11.dds").write_bytes(bytes(range(8)))
+        (gd4 / "textures" / "ui" / "ui_font_11.dds").write_bytes(a8_dds_header())
         out_crlf = work / "out_crlf"
         text = run(base + ["--ref", str(ref_crlf), "--out", str(out_crlf)])
         produced_crlf = out_crlf / "gamedata" / "configs" / "fonts.ltx"
@@ -197,6 +197,21 @@ def main() -> int:
         bits = int.from_bytes(produced_dds.read_bytes()[88:92], "little") if produced_dds.is_file() else -1
         check(bits == 8, "④g 产物按参照包写成 A8（bitcount=8）", "bits=%d" % bits)
         check("A8" in text and "参照包" in text, "④g 与 --game 不一致时告警", text.strip()[-300:])
+
+        print("== ④h 不填 --game：游戏版本由扫描判定 ==")
+        ref_auto = work / "auto_ref"
+        gd6 = ref_auto / "gamedata"
+        (gd6 / "configs").mkdir(parents=True)
+        (gd6 / "configs" / "fonts.ltx").write_text(
+            "[f]\nshader\t= font\ntexture\t= ui\\ui_font_11\n",
+            encoding="utf-8", newline="\n")
+        (gd6 / "textures" / "ui").mkdir(parents=True)
+        (gd6 / "textures" / "ui" / "ui_font_11.dds").write_bytes(a8_dds_header())
+        text = run(["--font-pack", "--ref", str(ref_auto), "--text-root", str(text_root),
+                    "--lang", "rus", "--out", str(work / "out_auto")])
+        check("game=CoP" in text, "④h A8 + configs ⇒ 判定为 CoP", text.strip()[-300:])
+        check("writer=bitmap" in text and "未知游戏版本" not in text,
+              "④h 不再要求用户提前填 --game", text.strip()[-300:])
 
         print("== ⑤ 非法 writer 值：明确报错（不是静默忽略） ==")
         text = run(base + ["--ref", str(ref), "--out", str(work / "out_bogus"),
