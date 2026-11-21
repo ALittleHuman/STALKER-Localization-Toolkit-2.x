@@ -548,17 +548,19 @@ LuaLineScan scan_lua_line(const std::string& line, LuaScanState& st) {
                     std::string literal(1, c);
                     ++i;
                     bool closed = false;
-                    bool escape = false;
+                    // 审计 F-040：脚本字面量必须**原样保留**（反斜杠不解码、不改写；
+                    // needle 直接取源码切片）。这里只把反斜杠当作"下一个字符不结束串"。
+                    bool is_escape = false;
                     while (i < line.size()) {
                         const char ch = line[i];
                         literal.push_back(ch);
                         ++i;
-                        if (escape) {
-                            escape = false;
+                        if (is_escape) {
+                            is_escape = false;
                             continue;
                         }
                         if (ch == '\\') {
-                            escape = true;
+                            is_escape = true;
                             continue;
                         }
                         if (ch == quote) {
