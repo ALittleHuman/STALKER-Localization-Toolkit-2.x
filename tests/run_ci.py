@@ -8197,6 +8197,9 @@ STEPS = [
     ("cli-exit-codes", step_cli_exit_codes),
     # ★★ 2026-10-24（C1）：CLI 写盘点静态锁（run_cli 区间内 ofstream 必须为 0）。
     ("cli-write-sites", step_cli_write_sites),
+    # ★ 2026-11-21：Lua 片段词法（引号优先）—— 抽取/改写四条行为回归
+    ("script-lexer", make_checker_step("script-lexer", "check_script_lexer.py",
+                                            "Lua 片段词法判据")),
     # ★ 2026-11-20：五个「写了但没接线」的判据接进门禁（此前只有人手工跑）。
     ("cli-output-paths", make_checker_step("cli-output-paths", "check_cli_output_paths.py",
                                           "CLI 写盘落点判据")),

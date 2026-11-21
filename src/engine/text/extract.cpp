@@ -264,16 +264,6 @@ const Regex& re_tag_start() {
     return r;
 }
 
-const Regex& re_script_comment() {
-    static const Regex& r = *[] {
-        auto* x = new Regex();
-        std::string err;
-        x->compile("--[\\s\\S]*$", 0, err);
-        return x;
-    }();
-    return r;
-}
-
 // ── 码位级小工具（与 Python str 语义对齐）─────────────────────────────
 bool is_rus_letter(uint32_t cp) {
     return (cp >= 0x0410 && cp <= 0x044F) || cp == 0x0401 || cp == 0x0451;
@@ -438,62 +428,253 @@ std::vector<std::string> sorted_unique(std::vector<std::string> v) {
     return v;
 }
 
-// ── 三分支的候选提取（1.x 同名函数）──────────────────────────────────
-std::vector<std::string> script_texts(const std::string& text) {
-    std::vector<std::string> result;
+// ── ★ 2026-11-21（用户口径 B）：Lua 片段词法 —— **先看引号，再认注释** ────────────
+//
+// 修前的形状（bug 来源）：`line = py_strip(re_script_comment().sub_literal(line, ""))`
+// —— 正则先把 `--` 到行尾砍掉，**再**扫引号。于是 `local s = "a -- b"` 被砍成
+// `local s = "a`，引号未闭合、整条字面量丢失。
+//
+// 本词法的规则（用户 2026-11-21 裁定）：
+//   · `--` **只有在引号外**才是注释；引号里的 `--` 是普通内容；
+//   · 注释里的引号是普通字符（`-- don't` 不许开串）——所以"未闭合引号"只可能出现在
+//     注释里，代码区不以此为由丢内容；
+//   · 支持 `--[[ ]]` / `--[=[ ]=]` 块注释与 `[[ ]]` / `[=[ ]=]` 长字符串（**可跨行**）。
+//
+// 扫描是**逐行 + 跨行状态**：块注释/长字符串的状态带到下一行；引号串不跨行
+// （Lua 的普通字符串本就不能跨行，跨行必须用长字符串）。
+struct LuaScanState {
+    enum class Kind { Code, LineComment, BlockComment, LongString };
+    Kind kind = Kind::Code;
+    int level = 0;   // 长括号的等号个数（`[[`=0，`[=[`=1，…）
+};
+
+struct LuaSpan {
+    size_t begin = 0;   // 含起始引号
+    size_t end = 0;     // 闭引号之后
+};
+
+struct LuaLineScan {
+    std::string code;                   // 去注释、去字面量后的代码（供敏感词判定）
+    std::vector<std::string> literals;  // 本行完整闭合的引号字面量（含引号）
+    std::vector<LuaSpan> literal_spans; // 同上的**区间**（改写用：只在这段里替换）
+    bool unterminated = false;          // 行尾仍在引号里（代码区不该出现；记账用）
+};
+
+// `i` 处若是 `[=*[`，返回等号数；否则 -1。
+int long_bracket_open(const std::string& s, size_t i) {
+    if (i >= s.size() || s[i] != '[') return -1;
+    size_t k = i + 1;
+    while (k < s.size() && s[k] == '=') ++k;
+    if (k < s.size() && s[k] == '[') return static_cast<int>(k - i - 1);
+    return -1;
+}
+
+// `s[i..]` 是否以 `]=*]` 收尾（等号数必须等于 level）；成立时把 i 移到末尾之后。
+bool long_bracket_close(const std::string& s, size_t& i, int level) {
+    if (i >= s.size() || s[i] != ']') return false;
+    size_t k = i + 1;
+    int eq = 0;
+    while (k < s.size() && s[k] == '=') { ++eq; ++k; }
+    if (eq != level || k >= s.size() || s[k] != ']') return false;
+    i = k + 1;
+    return true;
+}
+
+LuaLineScan scan_lua_line(const std::string& line, LuaScanState& st) {
+    LuaLineScan out;
+    out.code.reserve(line.size());
+    size_t i = 0;
+    while (i < line.size()) {
+        switch (st.kind) {
+            case LuaScanState::Kind::LineComment:
+                i = line.size();          // 注释到行尾；**不解析引号**
+                break;
+            case LuaScanState::Kind::BlockComment: {
+                // 在本行里**向前找**收尾 `]=*]`（不能只在当前位置判）
+                bool closed = false;
+                while (i < line.size()) {
+                    if (long_bracket_close(line, i, st.level)) { closed = true; break; }
+                    ++i;
+                }
+                if (closed) {
+                    st.kind = LuaScanState::Kind::Code;
+                    st.level = 0;
+                }
+                break;
+            }
+            case LuaScanState::Kind::LongString: {
+                // 长字符串内容既不进代码区也不当字面量提取（保持 1.x 行为）
+                bool closed = false;
+                while (i < line.size()) {
+                    if (long_bracket_close(line, i, st.level)) { closed = true; break; }
+                    ++i;
+                }
+                if (closed) {
+                    st.kind = LuaScanState::Kind::Code;
+                    st.level = 0;
+                }
+                break;
+            }
+            case LuaScanState::Kind::Code: {
+                const char c = line[i];
+                // ① 注释：`--`（引号外才走到这里）
+                if (c == '-' && i + 1 < line.size() && line[i + 1] == '-') {
+                    size_t k = i + 2;
+                    const int lv = long_bracket_open(line, k);
+                    if (lv >= 0) {
+                        st.kind = LuaScanState::Kind::BlockComment;
+                        st.level = lv;
+                        i = k + static_cast<size_t>(lv) + 2;
+                    } else {
+                        st.kind = LuaScanState::Kind::LineComment;
+                        i = line.size();
+                    }
+                    break;
+                }
+                // ② 长字符串 `[[` / `[=[`
+                if (c == '[') {
+                    const int lv = long_bracket_open(line, i);
+                    if (lv >= 0) {
+                        st.kind = LuaScanState::Kind::LongString;
+                        st.level = lv;
+                        i += static_cast<size_t>(lv) + 2;
+                        break;
+                    }
+                }
+                // ③ 普通字符串：本行内必须闭合
+                if (c == '"' || c == '\'') {
+                    const char quote = c;
+                    const size_t begin = i;
+                    std::string literal(1, c);
+                    ++i;
+                    bool closed = false;
+                    bool escape = false;
+                    while (i < line.size()) {
+                        const char ch = line[i];
+                        literal.push_back(ch);
+                        ++i;
+                        if (escape) {
+                            escape = false;
+                            continue;
+                        }
+                        if (ch == '\\') {
+                            escape = true;
+                            continue;
+                        }
+                        if (ch == quote) {
+                            closed = true;
+                            break;
+                        }
+                    }
+                    if (!closed) {
+                        out.unterminated = true;
+                        out.code.append(line, begin, std::string::npos);
+                        i = line.size();
+                        break;
+                    }
+                    out.literals.push_back(literal);
+                    out.literal_spans.push_back(LuaSpan{begin, i});
+                    break;
+                }
+                out.code.push_back(c);
+                ++i;
+                break;
+            }
+        }
+    }
+    // 行注释只到本行末尾：状态必须还原，否则下一行会被整行当注释（本批实测踩过）
+    if (st.kind == LuaScanState::Kind::LineComment) {
+        st.kind = LuaScanState::Kind::Code;
+    }
+    return out;
+}
+
+// 把整段文本按行喂给词法，收集**每一行**的结果（行号与 `text` 的行对齐）。
+std::vector<LuaLineScan> scan_lua_lines(const std::string& text) {
+    std::vector<LuaLineScan> lines;
+    LuaScanState st;
     size_t pos = 0;
     while (pos <= text.size()) {
         const size_t nl = text.find('\n', pos);
         const size_t end = (nl == std::string::npos) ? text.size() : nl;
-        std::string line = text.substr(pos, end - pos);
+        lines.push_back(scan_lua_line(text.substr(pos, end - pos), st));
+        pos = (nl == std::string::npos) ? text.size() + 1 : nl + 1;
+    }
+    return lines;
+}
+
+// ── ★ 2026-11-21（用户口径 B）：**只在引号字面量里替换** ──────────────────────
+//
+// 修前 `.script`/gameplay 走裸 `replace_all`：注释里的同名文本也会被替换（用户实测）。
+// 现在按行词法找出字面量区间，只在这些区间内做"整条字面量"替换 —— 注释、代码、
+// 长字符串 `[[ ]]` 一个字节都不动。整条替换而不是子串替换：`old_text` 本来就带引号。
+std::string rewrite_literals_only(const std::string& text,
+                                  const std::vector<std::pair<std::string, std::string>>& repls,
+                                  std::vector<std::string>* ledger, const std::string& rel) {
+    std::string out;
+    out.reserve(text.size());
+    LuaScanState st;
+    size_t pos = 0;
+    size_t line_no = 0;
+    while (pos <= text.size()) {
+        const size_t nl = text.find('\n', pos);
+        const size_t end = (nl == std::string::npos) ? text.size() : nl;
+        const std::string line = text.substr(pos, end - pos);
+        const LuaLineScan scan = scan_lua_line(line, st);
+        ++line_no;
+
+        size_t at = 0;
+        for (const LuaSpan& span : scan.literal_spans) {
+            out.append(line, at, span.begin - at);   // 字面量之前的代码/注释原样
+            const std::string token = line.substr(span.begin, span.end - span.begin);
+            const std::string* replacement = nullptr;
+            for (const auto& [needle, value] : repls) {
+                if (needle == token) {
+                    replacement = &value;
+                    break;
+                }
+            }
+            if (replacement != nullptr) {
+                out += *replacement;
+            } else {
+                out += token;
+            }
+            at = span.end;
+        }
+        out.append(line, at, std::string::npos);
+        if (nl == std::string::npos) break;
+        out.push_back('\n');
+        pos = nl + 1;
+    }
+    if (ledger != nullptr && out.size() == text.size()) {
+        // 长度相同不代表没改；这里不记台账，真正"没替换到"由调用方的计数体现
+        (void)rel;
+        (void)line_no;
+    }
+    return out;
+}
+
+// ── 三分支的候选提取（1.x 同名函数）──────────────────────────────────
+std::vector<std::string> script_texts(const std::string& text) {
+    std::vector<std::string> result;
+    const std::vector<LuaLineScan> scanned = scan_lua_lines(text);
+    size_t pos = 0;
+    for (const LuaLineScan& scan : scanned) {
+        if (pos > text.size()) break;
+        const size_t nl = text.find('\n', pos);
+        const size_t end = (nl == std::string::npos) ? text.size() : nl;
+        std::string line = text.substr(pos, end - pos);   // 原始行（替换敏感词用）
         pos = (nl == std::string::npos) ? text.size() + 1 : nl + 1;
 
-        line = py_strip(re_script_comment().sub_literal(line, ""));
-        bool is_open = false;
-        bool is_escape = false;
-        std::string ongoing;
-        char quote_char = '\0';
         std::set<std::string> line_matches;
-
-        const size_t n = line.size();
-        for (size_t i = 0; i < n; ++i) {
-            const char ch = line[i];
-            if (!is_open) {
-                if (ch == '"' || ch == '\'') {
-                    ongoing.assign(1, ch);
-                    quote_char = ch;
-                    is_open = true;
-                }
-                continue;
+        for (const std::string& literal : scan.literals) {
+            if (!re_match_sensitive().search(literal) && has_text_letter(literal)) {
+                line_matches.insert(literal);
             }
-            // 审计 F-040：脚本字面量必须**原样保留**。
-            // 反斜杠只用于“下一个字符不结束字符串”，绝不解码/改写；
-            // old_text 之后直接取源码切片，不再二次转义。
-            if (is_escape) {
-                ongoing += ch;
-                is_escape = false;
-                continue;
-            }
-            if (ch == '\\') {
-                ongoing += ch;
-                is_escape = true;
-                continue;
-            }
-            if (ch == quote_char) {
-                ongoing.push_back(ch);
-                is_open = false;
-                quote_char = '\0';
-                if (!re_match_sensitive().search(ongoing) && has_text_letter(ongoing)) {
-                    line_matches.insert(ongoing);
-                }
-                continue;
-            }
-            ongoing += ch;
         }
 
         std::vector<std::string> sorted_lm(line_matches.begin(), line_matches.end());
-        // 1.x: sorted(line_matches, key=len, reverse=True)（稳定：等长保持集合迭代序，
-        //      而集合序随哈希随机化 —— 只在"等长且都要替换"时才有可见差异，见规格文档）
+        // 1.x: sorted(line_matches, key=len, reverse=True)（稳定：等长保持集合迭代序）
         std::stable_sort(sorted_lm.begin(), sorted_lm.end(),
                          [](const std::string& a, const std::string& b) {
                              return a.size() > b.size();
@@ -501,11 +682,8 @@ std::vector<std::string> script_texts(const std::string& text) {
 
         std::string sac_line = line;
         for (const std::string& lm : sorted_lm) {
-            // F-227：解析器保留原始反斜杠，needle 必须用**原始字面量**，
-            // 不能再用 escape_literal_text(inner) 重转义；否则剥离失败，
-            // 行内 load/open 等敏感词会把整行误过滤。
+            // F-227：解析器保留原始反斜杠，needle 必须用**原始字面量**
             const std::string needle = lm;
-            // Python str.replace：全部替换
             std::string replaced;
             size_t from = 0;
             while (true) {
@@ -522,7 +700,6 @@ std::vector<std::string> script_texts(const std::string& text) {
 
         const std::string norm = ascii_lower(sac_line);
         if (re_script_permit().search(norm)) {
-            // result = set(sorted_lm + list(result))
             std::vector<std::string> merged = sorted_lm;
             merged.insert(merged.end(), result.begin(), result.end());
             result = merged;
@@ -534,6 +711,7 @@ std::vector<std::string> script_texts(const std::string& text) {
     }
     return sorted_unique(result);
 }
+
 
 }  // namespace
 
@@ -1323,7 +1501,19 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
         }
 
         std::string body = out_text;
+        // ★ 2026-11-21（用户口径 B）：**脚本**只在引号字面量里替换（注释/长字符串不动）。
+        //   gameplay 是 XML（裸文本替换，保持原路径）；ltx 走 replace_all_protected。
+        if (!gameplay && !is_ltx) {
+            std::vector<std::pair<std::string, std::string>> pairs;
+            pairs.reserve(repls.size());
+            for (const Repl& r : repls) {
+                pairs.emplace_back(r.old_text,
+                                   "game.translate_string(\"" + r.id + "\")");
+            }
+            body = rewrite_literals_only(out_text, pairs, &st.repl_skipped, f.rel);
+        }
         for (const Repl& r : repls) {
+            if (!gameplay && !is_ltx) break;   // 脚本已经整份处理过，别再来一遍裸替换
             // ★ 本批：`.ltx` 不再走裸全局替换 —— 见 `replace_all_protected`：
             //   注释里的命中、以及落在**更长标识符内部**的命中会被**跳过并逐条登记**
             //   （零静默）。判据作用在 `body`（已经过前面几轮替换的当前文本）上，
