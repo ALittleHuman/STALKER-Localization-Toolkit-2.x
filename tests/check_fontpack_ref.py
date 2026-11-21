@@ -155,7 +155,9 @@ def main() -> int:
         (gd3 / "textures" / "ui" / "ui_font_11.dds").write_bytes(bytes(range(8)))
         text = run(base + ["--ref", str(ref_hud), "--out", str(work / "out_hud2")])
         check("source=builtin" in text and "回落" in text,
-              "④e 回退内置 10 档且**有告警**", text.strip()[-300:])
+              "④e 只有基础游戏字体（hud/console）⇒ 回退内置 10 档并说明", text.strip()[-300:])
+        check("沿用游戏自带纹理" not in text,
+              "④e 不再刷无意义的逐条告警", text.strip()[-300:])
 
         print("== ⑤ 非法 writer 值：明确报错（不是静默忽略） ==")
         text = run(base + ["--ref", str(ref), "--out", str(work / "out_bogus"),

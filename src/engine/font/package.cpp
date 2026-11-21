@@ -954,11 +954,10 @@ PackageResult build_package(const PackageOptions& opt) {
     //   没有参照 / 参照缺 fonts.ltx ⇒ 内置模板，固定 10 档。
     std::vector<FontSize> slots;
     if (!opt.fonts_ltx_text.empty()) {
-        std::vector<std::string> non_numeric;
-        slots = slots_from_fonts_ltx(opt.fonts_ltx_text, &non_numeric);
-        for (const std::string& name : non_numeric) {
-            res.warnings.push_back("沿用游戏自带纹理（未生成）：" + name);
-        }
+        // ★ 2026-11-21（用户）：`ui_font_hud_*` / `ui_font_console_*` 是**基础游戏的字体**，
+        //   语言包不替换它们（1.x 也只生成 `ui_font_<数字>` 那一组）⇒ 不生成、也**不告警**，
+        //   否则每次生成都会刷一排无意义的提示。
+        slots = slots_from_fonts_ltx(opt.fonts_ltx_text, nullptr);
     }
     if (slots.empty()) slots.assign(std::begin(kFontSizes), std::end(kFontSizes));
     for (const FontSize& slot : slots) {
