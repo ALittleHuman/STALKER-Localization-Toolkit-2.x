@@ -57,6 +57,8 @@ struct PackageResult {
     int scripts_copied = 0;
     int gameplay_copied = 0;
     std::vector<std::string> warnings;  // 编码靠猜的 XML（"文件: 编码"）
+    // ★ 2026-11-21（已知问题 §7）：本次删掉的**陈旧字库**（上一次生成、这次没再生成）。
+    std::vector<std::string> stale_removed;
     std::string lang;  // 实际采用的语言（profile 可能覆盖页面给的值）
 };
 

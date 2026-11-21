@@ -8203,6 +8203,9 @@ STEPS = [
     # ★ 2026-11-21：单文件 + 原地 + 备份（用户实测缺陷的回归锁）
     ("batch-backup", make_checker_step("batch-backup", "check_batch_backup.py",
                                                "单文件原地备份判据")),
+    # ★ 2026-11-21：重复生成要清旧字库（已知问题 §7）
+    ("fontpack-stale", make_checker_step("fontpack-stale", "check_fontpack_stale.py",
+                                               "旧字库清理判据")),
     # ★ 2026-11-20：五个「写了但没接线」的判据接进门禁（此前只有人手工跑）。
     ("cli-output-paths", make_checker_step("cli-output-paths", "check_cli_output_paths.py",
                                           "CLI 写盘落点判据")),

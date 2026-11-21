@@ -33,6 +33,67 @@ bool write_text(const std::string& path, const std::string& text) {
     return write_bytes(path, reinterpret_cast<const uint8_t*>(text.data()), text.size());
 }
 
+// ── ★ 2026-11-21（已知问题 §7）：旧字库清理 ──────────────────────────────────
+//
+// 同一输出目录重复生成、改了 `--suffix` 或字号档位后，上一次的 `ui_font_*` 不会被删，
+// 会被一起打进包。这里用一份清单 `<out>/_xrkit_fonts.json` 记录"本工具生成过哪些字体"：
+//   · 全量重生成 ⇒ 旧清单 − 本次生成 = 陈旧，删掉并记账；
+//   · patch_only（字号补丁）⇒ 只增不删（它本来就叠加在既有产物上）。
+// 删除范围**双保险**：只碰 `gamedata/textures/ui/ui_font_` 开头的路径。
+constexpr const char* kFontManifestName = "_xrkit_fonts.json";
+
+std::string font_manifest_path(const std::string& out_dir) {
+    return out_dir.empty() ? std::string(kFontManifestName)
+                           : (out_dir + "/" + kFontManifestName);
+}
+
+std::vector<std::string> read_font_manifest(const std::string& out_dir) {
+    std::vector<std::string> paths;
+    std::ifstream in(core::path_from_utf8(font_manifest_path(out_dir)), std::ios::binary);
+    if (!in) return paths;
+    std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    size_t pos = 0;
+    while ((pos = body.find('"', pos)) != std::string::npos) {
+        const size_t end = body.find('"', pos + 1);
+        if (end == std::string::npos) break;
+        paths.push_back(body.substr(pos + 1, end - pos - 1));
+        pos = end + 1;
+    }
+    return paths;
+}
+
+void write_font_manifest(const std::string& out_dir, const std::vector<std::string>& paths) {
+    std::string body = "{\n  \"files\": [\n";
+    for (size_t i = 0; i < paths.size(); ++i) {
+        body += "    \"" + paths[i] + "\"" + (i + 1 == paths.size() ? "" : ",") + "\n";
+    }
+    body += "  ]\n}\n";
+    std::ofstream out(core::path_from_utf8(font_manifest_path(out_dir)),
+                      std::ios::binary | std::ios::trunc);
+    if (out) out.write(body.data(), static_cast<std::streamsize>(body.size()));
+}
+
+// 收集 staged 里的字体相对路径（以 `gamedata/` 开头）
+std::vector<std::string> collect_staged_fonts(const std::string& staged_gd) {
+    namespace fs = std::filesystem;
+    std::vector<std::string> out;
+    std::error_code ec;
+    const fs::path root = core::path_from_utf8(staged_gd);
+    for (fs::recursive_directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        const std::string rel = core::path_to_utf8(fs::relative(it->path(), root, ec));
+        if (ec) { ec.clear(); continue; }
+        if (rel.rfind("textures/ui/ui_font_", 0) != 0) continue;
+        out.push_back("gamedata/" + rel);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+bool is_font_rel(const std::string& rel) {
+    return rel.rfind("gamedata/textures/ui/ui_font_", 0) == 0;
+}
+
 // 出包先写 <out>/gamedata.xrkit_part；成功后才合并到 gamedata/。
 // 失败只删临时目录，绝不 remove_tree(最终 gamedata)（审计 F-061）。
 bool commit_staged_gamedata(const std::string& staged, const std::string& final_dir,
@@ -99,7 +160,11 @@ bool commit_staged_gamedata(const std::string& staged, const std::string& final_
         if (ec) continue;
         const fs::path target = dst / rel;
         std::error_code exists_ec;
+        // ★ 2026-11-21：`is_regular_file` 在**目标还不存在**时也会置 ec（ERROR_FILE_NOT_FOUND），
+        //   原来把它当"检查失败"⇒ 合并到既有 gamedata 且本次有**新文件名**（如换 --suffix）时
+        //   整批回滚。这里把"文件不存在"当成正常分支（目标不存在 = 不备份、直接写）。
         const bool target_exists = fs::is_regular_file(target, exists_ec);
+        if (exists_ec == std::errc::no_such_file_or_directory) exists_ec.clear();
         if (exists_ec) {
             return fail_after_rollback("提交前检查 " + core::path_to_utf8(rel.string()) +
                                        " 失败：" + exists_ec.message());
@@ -673,6 +738,7 @@ PackageResult build_package(const PackageOptions& opt) {
         ++res.fonts_written;
     }
 
+    const std::vector<std::string> staged_fonts = collect_staged_fonts(out_gd);
     if (opt.patch_only) {
         // ★ 2026-11-10：字号补丁 = **只有字体纹理/INI**，绝不写文本、脚本、fonts.ltx。
         std::string commit_error;
@@ -680,6 +746,17 @@ PackageResult build_package(const PackageOptions& opt) {
             res.error = commit_error;
             remove_tree(out_gd);
             return res;
+        }
+        // 字号补丁：只增不删 —— 清单取并集
+        {
+            std::vector<std::string> merged = read_font_manifest(opt.out_dir);
+            for (const std::string& rel : staged_fonts) {
+                if (std::find(merged.begin(), merged.end(), rel) == merged.end()) {
+                    merged.push_back(rel);
+                }
+            }
+            std::sort(merged.begin(), merged.end());
+            write_font_manifest(opt.out_dir, merged);
         }
         res.ok = true;
         res.out_gamedata = final_gd;
@@ -780,6 +857,18 @@ PackageResult build_package(const PackageOptions& opt) {
         res.error = commit_error;
         remove_tree(out_gd);
         return res;
+    }
+    {
+        const std::vector<std::string> previous = read_font_manifest(opt.out_dir);
+        for (const std::string& rel : previous) {
+            if (!is_font_rel(rel)) continue;
+            if (std::binary_search(staged_fonts.begin(), staged_fonts.end(), rel)) continue;
+            std::error_code rm_ec;
+            const std::string abs = final_gd + "/" + rel.substr(std::string("gamedata/").size());
+            std::filesystem::remove(core::path_from_utf8(abs), rm_ec);
+            if (!rm_ec) res.stale_removed.push_back(rel);
+        }
+        write_font_manifest(opt.out_dir, staged_fonts);
     }
     res.ok = true;
     res.out_gamedata = final_gd;

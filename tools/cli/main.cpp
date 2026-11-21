@@ -6563,7 +6563,8 @@ if (action == "--diff-snapshot") {
                               << " xml=" << base_res.bitmap.xml_written
                               << " scripts=" << base_res.bitmap.scripts_copied
                               << " gameplay=" << base_res.bitmap.gameplay_copied
-                              << " warnings=" << base_res.bitmap.warnings.size() << "\n";
+                              << " warnings=" << base_res.bitmap.warnings.size()
+                              << " stale_removed=" << base_res.bitmap.stale_removed.size() << "\n";
                 }
             }
             for (const xrkit::engine::font::FontDistributionPatch& patch : outcome.patches) {
@@ -6663,7 +6664,8 @@ if (action == "--diff-snapshot") {
                   << " xml=" << res.bitmap.xml_written
                   << " scripts=" << res.bitmap.scripts_copied
                   << " gameplay=" << res.bitmap.gameplay_copied
-                  << " warnings=" << res.bitmap.warnings.size() << "\n";
+                  << " warnings=" << res.bitmap.warnings.size()
+                  << " stale_removed=" << res.bitmap.stale_removed.size() << "\n";
         if (res.bitmap.lang != req.lang) {
             std::cout << "FONTPACK note 语言采用产物内 profile：lang=" << res.bitmap.lang << "\n";
         }
