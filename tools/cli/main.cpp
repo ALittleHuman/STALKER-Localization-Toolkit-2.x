@@ -522,6 +522,36 @@ void register_core_checks(xrkit::core::CheckRegistry& reg) {
         check(ctx, s.find('+') != std::string::npos, "缺少构建号分隔符: " + s);
     });
 
+    reg.add("fs: 合并树大小写同一把尺 + 段名归一（R26/R27）", [](CheckContext& ctx) {
+        using xrkit::engine::fs::EntryInfo;
+        using xrkit::engine::fs::MergeInput;
+        using xrkit::engine::fs::MergeTree;
+        // R26：只差大小写的两条，在 Windows 上落盘会互相覆盖 ⇒ 树上必须是一个节点，且计数可见
+        MergeInput a;
+        a.source = "a.zip";
+        a.entries.push_back(EntryInfo("Textures/A.dds", false, 1));
+        MergeInput b;
+        b.source = "b.zip";
+        b.entries.push_back(EntryInfo("textures/a.dds", false, 2));
+        MergeTree tree = xrkit::engine::fs::build_tree(a);
+        const MergeTree other = xrkit::engine::fs::build_tree(b);
+        tree.merge(other, 1);
+        check(ctx, tree.find("textures/a.dds") != nullptr && tree.find("Textures/A.dds") != nullptr,
+              "R26 大小写不同的同名文件落在同一个节点上");
+        check(ctx, tree.case_collision_count() >= 1, "R26 碰撞次数可见（至少 1 次）");
+        // R27：段尾的 `.`/空格在 Windows 落盘会被吞掉 ⇒ 建树时就该剥掉
+        MergeInput weird;
+        weird.source = "c.zip";
+        weird.entries.push_back(EntryInfo("a. /f.txt", false, 1));
+        MergeInput dotted;
+        dotted.source = "d.zip";
+        dotted.entries.push_back(EntryInfo("./x/y.txt", false, 2));
+        const MergeTree t1 = xrkit::engine::fs::build_tree(weird);
+        const MergeTree t2 = xrkit::engine::fs::build_tree(dotted);
+        check(ctx, t1.find("a/f.txt") != nullptr, "R27 段尾 `.`/空格已剥掉（a.  → a）");
+        check(ctx, t2.find("x/y.txt") != nullptr, "R27 `.` 段被丢弃（./x/y.txt → x/y.txt）");
+    });
+
     reg.add("sqfs: 重名可见（batch-3 / 3b）", [](CheckContext& ctx) {
         // 3b 的口径：读侧**接受**重名（官方不查重），但必须报数；索引 first-wins。
         check(ctx, xrkit::engine::fs::duplicate_key("A\\B/./c/") ==

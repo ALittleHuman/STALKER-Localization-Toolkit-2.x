@@ -36,6 +36,17 @@ inline bool is_reserved_device_name(const std::string& seg) {
     return xrkit::core::is_windows_reserved_name(seg);
 }
 
+// ★ R27（2026-11-21）：**段名归一化**，与 extract 层同一把尺。
+//   Windows 落盘会把段尾的 `.` 与空格**吞掉**（`a. ` 与 `a` 是同一个文件）⇒
+//   建树/判定前必须先剥掉，否则"树上是两个节点、盘上只有一个文件"。
+//   只剥**尾部**：`a.b` 中间的 `.` 合法。
+inline std::string normalize_segment(std::string seg) {
+    std::size_t end = seg.size();
+    while (end > 0 && (seg[end - 1] == '.' || seg[end - 1] == ' ')) --end;
+    seg.resize(end);
+    return seg;
+}
+
 // 返回**空串**表示这一段合法；否则返回可直接给用户的拒因（点名是哪条规则、哪个名字）。
 // ★ 拒因文案要稳定：判据按关键字认（"控制字符" / "保留设备名"）。
 inline std::string segment_reject_reason(const std::string& seg) {

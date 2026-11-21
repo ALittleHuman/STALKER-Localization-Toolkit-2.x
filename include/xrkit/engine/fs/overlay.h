@@ -178,6 +178,9 @@ struct MergeTree {
     std::vector<const MergeNode*> flatten() const;
 
     int conflict_count() const { return conflicts_; }
+    // ★ R26（2026-11-21）：**只是大小写不同**的同名碰撞（已按同一节点合并）——
+    //   必须能被看见：Windows 上两条路径落盘会互相覆盖。
+    int case_collision_count() const { return case_collisions_; }
     int checked_file_count() const;
 
     // ★★ 2026-10-06（审计 3-1）：勾选态的**快照 / 回灌** —— 页面「加一个包」走的是
@@ -193,6 +196,7 @@ struct MergeTree {
 
 private:
     int conflicts_ = 0;
+    int case_collisions_ = 0;
 };
 
 // 从条目清单建树（单源，不做合并）

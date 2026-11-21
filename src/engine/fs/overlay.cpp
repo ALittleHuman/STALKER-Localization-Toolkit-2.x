@@ -1,4 +1,5 @@
 #include "xrkit/core/case_fold.h"
+#include "name_check.h"
 #include "xrkit/engine/fs/overlay.h"
 #include "xrkit/engine/plugin/registry.h"
 
@@ -40,13 +41,34 @@ std::vector<std::string> split_path(const std::string& path) {
         }
     }
     if (!cur.empty()) parts.push_back(cur);
-    return parts;
+    // ★ R27：与 extract 层同一把尺 —— 丢 `.`、剥段尾的 `.`/空格（Windows 落盘会吞掉它们）
+    std::vector<std::string> normalized;
+    normalized.reserve(parts.size());
+    for (const std::string& part : parts) {
+        if (part == ".") continue;
+        const std::string seg = name_check::normalize_segment(part);
+        if (!seg.empty()) normalized.push_back(seg);
+    }
+    return normalized;
 }
 
-MergeNode* child_by_name(MergeNode& parent, const std::string& name) {
+// ★ R26（2026-11-21）：判"同名"与 extract/tally 用**同一把尺** —— Windows 下折大小写
+//   （`Textures/A.dds` 与 `textures/a.dds` 在盘上会互相覆盖，树上不能算两个节点）。
+//   `case_only` 回传"只是大小写不同" ⇒ 调用方计一条**可见**的碰撞，不静默合并。
+MergeNode* child_by_name(MergeNode& parent, const std::string& name, bool* case_only) {
+    if (case_only != nullptr) *case_only = false;
     for (MergeNode& child : parent.children) {
         if (child.name == name) return &child;
     }
+#ifdef _WIN32
+    const std::string folded = xrkit::core::case_fold_lower(name);
+    for (MergeNode& child : parent.children) {
+        if (xrkit::core::case_fold_lower(child.name) == folded) {
+            if (case_only != nullptr) *case_only = true;
+            return &child;
+        }
+    }
+#endif
     return nullptr;
 }
 
@@ -99,7 +121,7 @@ MergeTree build_tree(const MergeInput& input) {
             if (!acc.empty()) acc += '/';
             acc += parts[i];
             const bool last = (i + 1 == parts.size());
-            MergeNode* next = child_by_name(*cur, parts[i]);
+            MergeNode* next = child_by_name(*cur, parts[i], nullptr);
             if (next == nullptr) {
                 MergeNode fresh;
                 fresh.name = parts[i];
@@ -144,7 +166,9 @@ void MergeTree::merge(const MergeTree& other, int other_source_index) {
     const std::function<void(MergeNode&, const MergeNode&)> merge_children =
         [&](MergeNode& dst, const MergeNode& src) {
             for (const MergeNode& src_child : src.children) {
-                MergeNode* cur = child_by_name(dst, src_child.name);
+                bool case_only = false;
+                MergeNode* cur = child_by_name(dst, src_child.name, &case_only);
+                if (cur != nullptr && case_only) ++case_collisions_;
                 if (cur != nullptr && cur->is_dir && src_child.is_dir) {
                     merge_children(*cur, src_child);
                     continue;
@@ -177,7 +201,7 @@ MergeNode* MergeTree::find(const std::string& path) {
     const std::vector<std::string> parts = split_path(path);
     MergeNode* cur = &root;
     for (const std::string& part : parts) {
-        cur = child_by_name(*cur, part);
+        cur = child_by_name(*cur, part, nullptr);
         if (cur == nullptr) return nullptr;
     }
     return cur;
