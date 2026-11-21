@@ -382,9 +382,27 @@ struct RefFontScan {
     std::string cfg_dir;       // "configs" / "config"
     std::string fonts_ltx;
     std::string localization_ltx;
+    std::string dds_fmt;       // 从参照包的 ui_font_*.dds 头读出来（"A8" / "8888"）
     int ttf_count = 0;
     int dds_count = 0;
 };
+
+// DDS legacy 头：偏移 88 = pixelformat.dwRGBBitCount ⇒ 8=A8、32=8888（render_font 只认这两种）
+std::string detect_dds_format(const std::string& dds_path) {
+    std::ifstream in(core::path_from_utf8(dds_path), std::ios::binary);
+    if (!in) return {};
+    unsigned char head[128] = {};
+    in.read(reinterpret_cast<char*>(head), sizeof(head));
+    if (in.gcount() < static_cast<std::streamsize>(sizeof(head))) return {};
+    if (head[0] != 'D' || head[1] != 'D' || head[2] != 'S' || head[3] != ' ') return {};
+    const uint32_t bits = static_cast<uint32_t>(head[88]) |
+                          (static_cast<uint32_t>(head[89]) << 8) |
+                          (static_cast<uint32_t>(head[90]) << 16) |
+                          (static_cast<uint32_t>(head[91]) << 24);
+    if (bits == 8) return "A8";
+    if (bits == 32) return "8888";
+    return {};
+}
 
 RefFontScan scan_ref_font(const std::string& ref) {
     namespace fs = std::filesystem;
@@ -472,6 +490,9 @@ RefFontScan scan_ref_font(const std::string& ref) {
                 if (name.rfind("ui_font_", 0) == 0 && name.size() > 4 &&
                     name.compare(name.size() - 4, 4, ".dds") == 0) {
                     ++out.dds_count;
+                    if (out.dds_fmt.empty()) {
+                        out.dds_fmt = detect_dds_format(core::path_to_utf8(it->path()));
+                    }
                 }
             }
         }
@@ -686,7 +707,13 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
             // 回落链：拿不到引用 ⇒ 用内置模板（SoC/ClS/CoP），并明确告警
             opt.cfg_dir_override.clear();
         }
-        if (const GameTemplate* t = find_game(request.game)) opt.dds_fmt_override = t->dds_fmt;
+        const GameTemplate* game_tpl = find_game(request.game);
+        if (!scan.dds_fmt.empty()) {
+            // 参照包自己是最硬的证据（A.R.E.A = CoP/A8）：格式按参照包，--game 只作回落
+            opt.dds_fmt_override = scan.dds_fmt;
+        } else if (game_tpl != nullptr) {
+            opt.dds_fmt_override = game_tpl->dds_fmt;
+        }
     }
     opt.lang = request.lang;
     opt.xml_dir = request.text_root;
@@ -699,6 +726,15 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
     opt.only_sizes = request.only_sizes;
     opt.patch_only = request.patch_only;
     out.bitmap = build_package(opt);
+    if (request.use_ref && !scan.dds_fmt.empty()) {
+        const GameTemplate* game_tpl = find_game(request.game);
+        if (game_tpl != nullptr && scan.dds_fmt != game_tpl->dds_fmt) {
+            out.bitmap.warnings.push_back(
+                std::string("参照包的 DDS 格式是 ") + scan.dds_fmt +
+                "（从 ui_font_*.dds 头读出），与 --game " + request.game + " 的 " +
+                game_tpl->dds_fmt + " 不同：按**参照包**写");
+        }
+    }
     if (request.use_ref && !scan.fonts_ltx.empty() && opt.fonts_ltx_text.empty()) {
         // 有 ltx 但没有可生成的纹理 ⇒ 同样回落 10 档，并明确告警
         out.segments = template_segment_count(request.game);

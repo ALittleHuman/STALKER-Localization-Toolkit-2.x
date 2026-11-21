@@ -43,6 +43,15 @@ def check(cond: bool, label: str, detail: str = "") -> None:
         FAILURES.append(label)
 
 
+
+def a8_dds_header() -> bytes:
+    """128 字节 DDS legacy 头：bitcount=8（A8）。"""
+    head = bytearray(128)
+    head[0:4] = b"DDS "
+    head[4:8] = (124).to_bytes(4, "little")
+    head[88:92] = (8).to_bytes(4, "little")
+    return bytes(head)
+
 def make_ref(work: Path, name: str, ttf: bool, dds: bool) -> Path:
     ref = work / name
     gd = ref / "gamedata"
@@ -172,6 +181,22 @@ def main() -> int:
         produced_crlf = out_crlf / "gamedata" / "configs" / "fonts.ltx"
         got = produced_crlf.read_bytes() if produced_crlf.is_file() else b""
         check(got == crlf.encode("utf-8"), "④f 产物 fonts.ltx 与源逐字节相同", repr(got[:60]))
+
+        print("== ④g 参照包 DDS 是 A8、--game 给的是 8888：按参照包并告警 ==")
+        ref_a8 = work / "a8_ref"
+        gd5 = ref_a8 / "gamedata"
+        (gd5 / "configs").mkdir(parents=True)
+        (gd5 / "configs" / "fonts.ltx").write_text(
+            "[f]\nshader\t= font\ntexture\t= ui\\ui_font_11\n",
+            encoding="utf-8", newline="\n")
+        (gd5 / "textures" / "ui").mkdir(parents=True)
+        (gd5 / "textures" / "ui" / "ui_font_11.dds").write_bytes(a8_dds_header())
+        out_a8 = work / "out_a8"
+        text = run(base + ["--ref", str(ref_a8), "--out", str(out_a8)])
+        produced_dds = out_a8 / "gamedata" / "textures" / "ui" / "ui_font_11.dds"
+        bits = int.from_bytes(produced_dds.read_bytes()[88:92], "little") if produced_dds.is_file() else -1
+        check(bits == 8, "④g 产物按参照包写成 A8（bitcount=8）", "bits=%d" % bits)
+        check("A8" in text and "参照包" in text, "④g 与 --game 不一致时告警", text.strip()[-300:])
 
         print("== ⑤ 非法 writer 值：明确报错（不是静默忽略） ==")
         text = run(base + ["--ref", str(ref), "--out", str(work / "out_bogus"),
