@@ -71,16 +71,18 @@ TEXT ok kind=scripts files=4 strings=18 chars=202 notext=1 skipped=1 replskip=0 
 ### `--font-pack`（主入口）
 `--ref <参照包|builtin> --text-root <译文根|包根> [--font <TTF>] --out <目录> [--game SoC|ClS|CoP] [--lang rus]
 [--langs rus] [--on-missing fail|warn] [--require-full-cyrillic] [--merge-glyphs <源TTF>]
-[--patch-offsets 3,-1] [--jsgme --jsgme-category <分类> --jsgme-name <名>]`
+[--patch-offsets 3,-1] [--jsgme --jsgme-name <名>]`
 
 - `--ref builtin`：内置模板（位图 writer，SoC/ClS/CoP 可用）；`--ref <目录>`：扫描参照 `fonts.ltx`（矢量 writer，IX-Ray 必须）；
 - `--text-root` 可用包根 / `gamedata` 根 / `gamedata/configs/text/<lang>` / 文本目录；
 - `--font` 省略时自动找 NotoSansSC → 微软雅黑；`--merge-glyphs` 仅矢量有效；
 - `--patch-offsets 7` 生成独立「字号+7」MOD，可与 `--jsgme` 同用。
+- **摆盘固定为 `MODS\<名>\`（平铺）**：JSGME 只扫描 MODS 的下一层，`MODS\<分类>\<名>\` 那种分类目录**不会被列出**（用户实测 A.R.E.A 加载不上）。`--jsgme-category` 仅为兼容旧命令行保留，传了会告警并忽略。
+- MOD 名前缀（如 `1.`/`2.`）只影响 **JSGME 列表里的排序**，不是必须；不加前缀一样能加载。
 
 ```bat
 xrkit_cli --font-pack --ref builtin --text-root "E:\...\2.汉化" --out "E:\...\更新\2.汉化" ^
-          --langs rus --jsgme --jsgme-category 汉化 --jsgme-name "2.汉化" --patch-offsets 7
+          --langs rus --jsgme --jsgme-name "汉化" --patch-offsets 7
 ```
 
 ### `--font-size-patch <参照包> <offset> <输出目录>`

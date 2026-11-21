@@ -204,12 +204,12 @@ const ActionSpec kActionSpecs[] = {
      "仅 IX-Ray 矢量 fonts.ltx；位图字号补丁走 --font-pack --patch-offsets",
      "xrkit_cli --font-size-patch <参照包> -3 <输出目录>", "--font-pack"},
     {"--font-pack", "汉化包生成主入口（按段表来源选 writer）",
-     "--ref <参照包|builtin> --text-root <译文根|包根> [--font <TTF>] --out <目录> [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn] [--require-full-cyrillic] [--merge-glyphs <源TTF>] [--patch-offsets 3,-1] [--jsgme --jsgme-category <分类> --jsgme-name <名>]",
+     "--ref <参照包|builtin> --text-root <译文根|包根> [--font <TTF>] --out <目录> [--game SoC|ClS|CoP] [--lang rus] [--langs rus] [--on-missing fail|warn] [--require-full-cyrillic] [--merge-glyphs <源TTF>] [--patch-offsets 3,-1] [--jsgme --jsgme-name <名>]（`--jsgme-category` 已废弃：JSGME 只认 MODS 下一层）",
      "参照包（--ref 目录时，只读）· 译文根（只读）· 字体（只读）", "输出目录",
      "0=成功｜1=出错｜3=用法错误",
      "--ref 目录 ⇒ 扫描参照 fonts.ltx（source=ref，矢量 writer）；--ref builtin ⇒ 内置模板（source=builtin，位图 writer）；缺字策略 --on-missing；--text-root 可用包根/gamedata/configs/text/<lang> 或文本目录；",
      "IXR 必须给参照包（无内置模板）；SoC/ClS/CoP 可用 builtin；--merge-glyphs 仅矢量有效（位图传了报错）；--font 省略时自动找 NotoSansSC-VF/微软雅黑",
-     "推荐：xrkit_cli --font-pack --ref builtin --text-root <包根> --out <更新目录> --langs rus --jsgme --jsgme-category 汉化 --jsgme-name 2.汉化 --patch-offsets 7（省略 --font 自动找 NotoSansSC）",
+     "推荐：xrkit_cli --font-pack --ref builtin --text-root <包根> --out <更新目录> --langs rus --jsgme --jsgme-name 汉化 --patch-offsets 7（省略 --font 自动找 NotoSansSC）",
      "--langpack-scan, --font-sample"},
     {"--extract-pack", "提取编排：根 scripts + configs/scripts + gameplay（CLI/GUI 同一份）",
      "<源根> <输出根> [--no-language-pack] [--no-rewritten]",
@@ -376,7 +376,7 @@ void print_usage() {
            "                     [--only-size 11,14] [--on-missing fail|warn] [--require-full-cyrillic]\n"
            "                     [--patch-offsets 7]  base=标准字号；每个 offset 生成一个只含 DDS/INI 的补丁\n"
            "                     [--merge-glyphs <源TTF>]  仅矢量路径：把源字体缺的字形合并进 target（只增不改）\n"
-           "                     [--force] [--jsgme] [--jsgme-category <分类>] [--jsgme-name <名>]\n"
+           "                     [--force] [--jsgme] [--jsgme-name <名>]\n"
            "                     推荐（默认字体 + JSGME + 字号补丁）：\n"
            "                       --text-root <包根> --langs rus --jsgme --jsgme-name 2.汉化 --patch-offsets 7\n"
            "                     --text-root 会自动识别包根/gamedata/configs/text/<lang>/文本目录；\n"
@@ -3287,14 +3287,18 @@ static std::string default_font_path() {
 
 static int wrap_jsgme_layout(const std::string& out_root, const std::string& category,
                              const std::string& name) {
-    // <out>/MODS/<category>/<name>/{gamedata,ixr_addons,…}；并把 JSGME.exe/.lng 放到 <out>/
+    // <out>/MODS/<name>/{gamedata,ixr_addons,…}；并把 JSGME.exe/.lng 放到 <out>/
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path out = xrkit::core::path_from_utf8(out_root);
     const fs::path mods = out / "MODS";
-    const fs::path mod = category.empty() ? (mods / xrkit::core::path_from_utf8(name))
-                                          : (mods / xrkit::core::path_from_utf8(category) /
-                                             xrkit::core::path_from_utf8(name));
+    // ★ 2026-11-21（用户实测 A.R.E.A）：JSGME **只扫描 MODS 的下一层**，分类子目录里的
+    //   MOD 不会被列出（MODS/汉化/2.汉化 A.R.E.A 加载不上）⇒ 一律平铺到 MODS/<name>。
+    //   `category` 仅为兼容旧命令行保留，传了也忽略并告警。
+    if (!category.empty()) {
+        std::cout << "FONTPACK warn reason=--jsgme-category 已忽略：JSGME 只认 MODS 下一层，分类目录不会被加载\n";
+    }
+    const fs::path mod = mods / xrkit::core::path_from_utf8(name);
     fs::create_directories(mod, ec);
     int moved = 0;
     for (const char* top : {"gamedata", "ixr_addons", "localization"}) {
@@ -3335,8 +3339,7 @@ static int wrap_jsgme_layout(const std::string& out_root, const std::string& cat
                 }
             }
             std::cout << "FONTPACK jsgme patch=MODS/"
-                      << (category.empty() ? "" : category + "/") << name << " 字号" << suffix
-                      << "\n";
+                      << name << " 字号" << suffix << "\n";
         }
         fs::remove_all(patches_root, ec);
     }
@@ -3355,7 +3358,7 @@ static int wrap_jsgme_layout(const std::string& out_root, const std::string& cat
         }
         break;
     }
-    std::cout << "FONTPACK jsgme mod=MODS/" << (category.empty() ? "" : category + "/") << name
+    std::cout << "FONTPACK jsgme mod=MODS/" << name
               << " top=" << moved << "\n";
     return kExitOk;
 }
@@ -6497,7 +6500,7 @@ if (action == "--diff-snapshot") {
         // ★ 2026-11-08（用户：JSGME 是"汉化包生成"的事）：把成品包摆成 JSGME 结构
         const bool jsgme = kv.count("jsgme") != 0 || kv.count("jsgme-name") != 0;
         // ★ 2026-11-08（用户："工具必须完全独立"）：**不默认任何分类名**；
-        //   不传 --jsgme-category ⇒ MODS/<名>/…（没有分类这一层）。
+        //   模型固定为 MODS/<名>/…（JSGME 只扫下一层；分类那一层会加载不上）。
         const std::string jsgme_category = kv.count("jsgme-category") ? kv["jsgme-category"]
                                                                      : std::string();
         const std::string jsgme_name = kv.count("jsgme-name")
