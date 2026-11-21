@@ -409,11 +409,12 @@ RefFontScan scan_ref_font(const std::string& ref) {
         out.error = "参照包缺 configs/ 或 config/：" + ref;
         return out;
     }
+    // ★ 2026-11-21（用户）：**引用不是总能拿到** —— fonts.ltx 缺失/不含纹理行时，
+    //   把判断留给回落链（有 --game 就用内置模板），不要在这里一刀切失败。
     std::string read_error;
     if (!core::read_file_capped(core::path_to_utf8(cfg / "fonts.ltx"), out.fonts_ltx,
                                 read_error)) {
-        out.error = "参照包缺 " + out.cfg_dir + "/fonts.ltx：" + ref;
-        return out;
+        out.fonts_ltx.clear();
     }
     // localization.ltx 可选（矢量包/精简包可能没有）
     std::string loc_error;
@@ -532,11 +533,23 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
             out.error = scan.error;
             return out;
         }
-        out.segments = static_cast<int>(parse_segments(scan.fonts_ltx).size());
-        out.segments_from_ref = true;
-        if (out.segments <= 0) {
-            out.error = "参照包 fonts.ltx 不含任何段：" + request.ref;
-            return out;
+        if (!scan.fonts_ltx.empty()) {
+            out.segments = static_cast<int>(parse_segments(scan.fonts_ltx).size());
+            out.segments_from_ref = true;
+            if (out.segments <= 0) {
+                out.error = "参照包 fonts.ltx 不含任何段：" + request.ref;
+                return out;
+            }
+        } else {
+            // 回落：只有拿到内置模板档才继续
+            const int builtin_segments = template_segment_count(request.game);
+            if (builtin_segments < 0) {
+                out.error = "参照包缺 fonts.ltx，且没有可回落的内置模板（--game 只认 "
+                            "SoC/ClS/CoP）：请补 fonts.ltx 或显式给一个内置档";
+                return out;
+            }
+            out.segments = builtin_segments;
+            out.segments_from_ref = false;
         }
         if (!request.writer.empty() && request.writer != "bitmap" &&
             request.writer != "vector") {
@@ -640,10 +653,19 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
     PackageOptions opt;
     opt.game = request.game;
     if (request.use_ref) {
-        // 位图 writer 是**逐字节套模板**：段名/纹理名/空行都必须原样来自参照包。
-        opt.fonts_ltx_text = scan.fonts_ltx;
-        opt.localization_ltx_text = scan.localization_ltx;
-        opt.cfg_dir_override = scan.cfg_dir;
+        // ★ 2026-11-21：**有 ltx ≠ 有可用引用** —— 里面若一个 `ui_font_<数字>` 纹理都没有
+        //   （例如只有 hud 自带字体），照样回落到内置模板，不要拿一份写不出纹理的模板硬套。
+        const bool ref_template_usable =
+            !scan.fonts_ltx.empty() && !slots_from_fonts_ltx(scan.fonts_ltx, nullptr).empty();
+        if (ref_template_usable) {
+            // 位图 writer 是**逐字节套模板**：段名/纹理名/空行都必须原样来自参照包。
+            opt.fonts_ltx_text = scan.fonts_ltx;
+            opt.localization_ltx_text = scan.localization_ltx;
+            opt.cfg_dir_override = scan.cfg_dir;
+        } else {
+            // 回落链：拿不到引用 ⇒ 用内置模板（SoC/ClS/CoP），并明确告警
+            opt.cfg_dir_override.clear();
+        }
         if (const GameTemplate* t = find_game(request.game)) opt.dds_fmt_override = t->dds_fmt;
     }
     opt.lang = request.lang;
@@ -657,6 +679,20 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
     opt.only_sizes = request.only_sizes;
     opt.patch_only = request.patch_only;
     out.bitmap = build_package(opt);
+    if (request.use_ref && !opt.fonts_ltx_text.empty()) {
+        // 用上了 ref 模板：什么都不补
+    } else if (request.use_ref && scan.fonts_ltx.empty()) {
+        out.bitmap.warnings.push_back(
+            "参照包没有可用的 fonts.ltx（缺文件）：纹理/段表回落到内置模板档「" +
+            request.game + "」，字号固定 10 档");
+    } else if (request.use_ref && !scan.fonts_ltx.empty()) {
+        // 回落用的是内置模板 ⇒ 段数/来源戳也要跟着改，别报成 source=ref
+        out.segments = template_segment_count(request.game);
+        out.segments_from_ref = false;
+        out.bitmap.warnings.push_back(
+            "参照包 fonts.ltx 里没有 `ui_font_<数字>` 纹理引用（拿不到可用引用）："
+            "纹理/段表回落到内置模板档「" + request.game + "」，字号固定 10 档");
+    }
     out.ok = out.bitmap.ok;
     if (!out.ok) out.error = out.bitmap.error;
     return out;

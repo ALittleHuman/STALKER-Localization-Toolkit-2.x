@@ -123,6 +123,29 @@ def main() -> int:
         check("ui_font_hud_01" in text, "④b 游戏自带纹理采用并**报出**（不静默）",
               text.strip()[-300:])
 
+        print("== ④c 拿不到引用：回落内置模板并明确告警 ==")
+        ref_noltx = work / "noltx_ref"
+        (ref_noltx / "gamedata" / "configs").mkdir(parents=True)
+        (ref_noltx / "gamedata" / "textures" / "ui").mkdir(parents=True)
+        (ref_noltx / "gamedata" / "textures" / "ui" / "ui_font_11.dds").write_bytes(bytes(range(8)))
+        text = run(base + ["--ref", str(ref_noltx), "--out", str(work / "out_noltx")])
+        check("writer=bitmap" in text and "source=builtin" in text,
+              "④c 缺 fonts.ltx ⇒ 回落内置模板（source=builtin）", text.strip()[-300:])
+        check("fonts.ltx" in text and "回落" in text, "④c 回落**有告警**（不静默）",
+              text.strip()[-300:])
+
+        print("== ④d 有 ltx 但没有可用纹理引用：同样回落 ==")
+        ref_hud = work / "hudonly_ref"
+        (ref_hud / "gamedata" / "configs").mkdir(parents=True)
+        (ref_hud / "gamedata" / "configs" / "fonts.ltx").write_text(
+            "[hud_font_small]\nshader\t= font\ntexture\t= ui\\ui_font_hud_01\n",
+            encoding="utf-8", newline="\n")
+        (ref_hud / "gamedata" / "textures" / "ui").mkdir(parents=True)
+        (ref_hud / "gamedata" / "textures" / "ui" / "ui_font_11.dds").write_bytes(bytes(range(8)))
+        text = run(base + ["--ref", str(ref_hud), "--out", str(work / "out_hud")])
+        check("source=builtin" in text and "回落" in text,
+              "④d 无 `ui_font_<数字>` 引用 ⇒ 回落内置模板 + 告警", text.strip()[-300:])
+
         print("== ⑤ 非法 writer 值：明确报错（不是静默忽略） ==")
         text = run(base + ["--ref", str(ref), "--out", str(work / "out_bogus"),
                            "--writer", "nope"])
