@@ -532,59 +532,155 @@ RefFontScan scan_ref_font(const std::string& ref) {
     return out;
 }
 
-// ★ 2026-11-21（用户）：**有 fonts.ltx 就按它生成** —— 里面定义了几个 `ui_font_<数字>`
-//   纹理，就产出几个同名 DDS/INI（顺序按出现先后、同名去重；≥16 档沿用 2x 超采样）。
-//   `ui_font_hud_*` 这类非数字名是游戏自带资源，不生成（由调用方告警）。
-std::vector<FontSize> slots_from_fonts_ltx(const std::string& ltx,
-                                           std::vector<std::string>* non_numeric) {
-    std::vector<FontSize> slots;
-    const auto seen = [&slots](int size) {
-        for (const FontSize& s : slots) {
-            if (s.size == size) return true;
-        }
-        return false;
-    };
-    size_t pos = 0;
-    while (pos <= ltx.size()) {
-        const size_t nl = ltx.find('\n', pos);
-        std::string line = ltx.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
-        pos = (nl == std::string::npos) ? ltx.size() + 1 : nl + 1;
-        const size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
-        std::string key = line.substr(0, eq);
-        std::string value = line.substr(eq + 1);
-        const auto trim = [](std::string& s) {
-            while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r')) {
-                s.pop_back();
-            }
-            size_t b = 0;
-            while (b < s.size() && (s[b] == ' ' || s[b] == '\t')) ++b;
-            s.erase(0, b);
-        };
-        trim(key);
-        trim(value);
-        std::string lower_key;
-        for (char ch : key) {
-            lower_key.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-        }
-        if (lower_key.rfind("texture", 0) != 0) continue;
-        const size_t sep = value.find_last_of("\\/");
-        const std::string base = sep == std::string::npos ? value : value.substr(sep + 1);
-        if (base.rfind("ui_font_", 0) != 0) continue;
-        const std::string digits = base.substr(std::string("ui_font_").size());
-        bool all_digits = !digits.empty();
-        for (char ch : digits) {
-            if (ch < '0' || ch > '9') { all_digits = false; break; }
-        }
-        if (!all_digits) {
-            if (non_numeric != nullptr) non_numeric->push_back(base);
-            continue;
-        }
-        const int size = std::atoi(digits.c_str());
-        if (size <= 0 || seen(size)) continue;
-        slots.push_back(FontSize{size, size >= 16 ? 1 : 0});
+// ★ 2026-11-21（用户「段表修」）：参照包的 `fonts.ltx` 必须**整段保留**。
+//   做法：逐行扫描分节；对每个"要我们生成纹理"的段：
+//     · 纹理已是 `ui_font_<数字>` ⇒ 原样保留（不破坏原版映射）；
+//     · 纹理名非标准 ⇒ 取**段名里的数字**当字号，生成 `ui_font_<数字>` 并改写这几个 texture 行；
+//     · hud/console/stat 段（纹理在 `ui\fonts\` 下，或段名带 hud/stat）⇒ 不动。
+struct RefFontsLtx {
+    std::string ltx;             // 改写后的全文（段名/其它键原样）
+    std::vector<int> sizes;      // 需要生成的槽位（升序去重）
+    int rewritten = 0;           // 改写的 texture 行数
+};
+
+bool has_digits(const std::string& s) {
+    for (char ch : s) {
+        if (ch >= '0' && ch <= '9') return true;
     }
-    return slots;
+    return false;
+}
+
+int last_number_in(const std::string& s, int fallback) {
+    int n = -1;
+    int cur = -1;
+    for (char ch : s) {
+        if (ch >= '0' && ch <= '9') {
+            cur = (cur < 0 ? 0 : cur * 10) + (ch - '0');
+        } else if (cur >= 0) {
+            n = cur;
+            cur = -1;
+        }
+    }
+    if (cur >= 0) n = cur;
+    return n > 0 ? n : fallback;
+}
+
+std::string basename_of_texture(std::string v) {
+    const size_t sep = v.find_last_of("\\/");
+    if (sep != std::string::npos) v = v.substr(sep + 1);
+    return v;
+}
+
+bool is_standard_font_texture(const std::string& base) {
+    if (base.rfind("ui_font_", 0) != 0) return false;
+    const std::string digits = base.substr(std::string("ui_font_").size());
+    if (digits.empty()) return false;
+    for (char ch : digits) {
+        if (ch < '0' || ch > '9') return false;
+    }
+    return true;
+}
+
+bool is_hud_section(const std::string& name, const std::string& texture_value) {
+    if (name.rfind("hud", 0) == 0 || name.rfind("stat_", 0) == 0) return true;
+    const std::string value = texture_value;
+    // 游戏自带字体在 `ui\fonts\...` 下（我们那份是 `ui\ui_font_*`）
+    return value.find("ui\\fonts\\") != std::string::npos ||
+           value.find("ui/fonts/") != std::string::npos;
+}
+
+RefFontsLtx rewrite_ref_fonts_ltx(const std::string& in) {
+    RefFontsLtx out;
+    out.ltx.reserve(in.size() + 64);
+    size_t pos = 0;
+    std::string section;
+    while (pos <= in.size()) {
+        const size_t nl = in.find('\n', pos);
+        std::string line = in.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+        const bool last_line = (nl == std::string::npos);
+        pos = last_line ? in.size() + 1 : nl + 1;
+        const std::string raw = line;
+        // 段头：[name] 或 [name]:parent
+        std::string trimmed = line;
+        while (!trimmed.empty() && (trimmed.front() == ' ' || trimmed.front() == '\t')) {
+            trimmed.erase(trimmed.begin());
+        }
+        if (!trimmed.empty() && trimmed.front() == '[') {
+            const size_t close = trimmed.find(']');
+            section = close == std::string::npos ? std::string() : trimmed.substr(1, close - 1);
+        } else if (trimmed.find('=') != std::string::npos && !section.empty()) {
+            std::string key = trimmed.substr(0, trimmed.find('='));
+            while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+            std::string lower_key;
+            for (char ch : key) {
+                lower_key.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+            }
+            if (lower_key.rfind("texture", 0) == 0) {
+                std::string value = trimmed.substr(trimmed.find('=') + 1);
+                while (!value.empty() && (value.back() == ' ' || value.back() == '\t' ||
+                                          value.back() == '\r')) {
+                    value.pop_back();
+                }
+                size_t b = 0;
+                while (b < value.size() && (value[b] == ' ' || value[b] == '\t')) ++b;
+                value.erase(0, b);
+                const std::string base = basename_of_texture(value);
+                if (!is_hud_section(section, value) && !is_standard_font_texture(base)) {
+                    int size = last_number_in(section, 0);
+                    if (size <= 0) size = last_number_in(base, 0);
+                    if (size > 0) {
+                        const std::string new_base = "ui_font_" + std::to_string(size);
+                        const std::string new_value = "ui\\" + new_base;
+                        line = raw.substr(0, raw.find('=') + 1);
+                        // 保留 `= ` 之后的原空白量（对齐观感）
+                        size_t eq = raw.find('=');
+                        size_t spaces = eq + 1;
+                        while (spaces < raw.size() && (raw[spaces] == ' ' || raw[spaces] == '\t')) {
+                            ++spaces;
+                        }
+                        line = raw.substr(0, spaces) + new_value;
+                        out.sizes.push_back(size);
+                        ++out.rewritten;
+                    }
+                }
+            }
+        }
+        out.ltx += line;
+        if (!last_line) out.ltx += '\n';
+    }
+    // 标准 `ui_font_<数字>` 纹理同样需要生成（原样保留那些段也要有图）
+    size_t sp = 0;
+    while ((sp = out.ltx.find('=', sp)) != std::string::npos) {
+        const size_t line_start = out.ltx.rfind('\n', sp);
+        const std::string head = out.ltx.substr(line_start == std::string::npos ? 0 : line_start + 1,
+                                                sp - (line_start == std::string::npos ? 0 : line_start + 1));
+        std::string key;
+        for (char ch : head) {
+            if (ch != ' ' && ch != '\t') key.push_back(static_cast<char>(std::tolower(
+                static_cast<unsigned char>(ch))));
+        }
+        if (key.rfind("texture", 0) == 0) {
+            size_t e = out.ltx.find('\n', sp);
+            std::string value = out.ltx.substr(sp + 1, (e == std::string::npos ? out.ltx.size() : e) - sp - 1);
+            size_t b = 0;
+            while (b < value.size() && (value[b] == ' ' || value[b] == '\t')) ++b;
+            value.erase(0, b);
+            while (!value.empty() && (value.back() == ' ' || value.back() == '\t' || value.back() == '\r')) {
+                value.pop_back();
+            }
+            const std::string base = basename_of_texture(value);
+            if (is_standard_font_texture(base)) {
+                out.sizes.push_back(last_number_in(base, 0));
+            }
+        }
+        sp += 1;
+    }
+    std::sort(out.sizes.begin(), out.sizes.end());
+    out.sizes.erase(std::unique(out.sizes.begin(), out.sizes.end()), out.sizes.end());
+    out.sizes.erase(std::remove_if(out.sizes.begin(), out.sizes.end(),
+                                   [](int s) { return s <= 0; }),
+                    out.sizes.end());
+    return out;
 }
 
 FontPackOutcome build_font_pack(const FontPackRequest& request) {
@@ -752,8 +848,9 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
     if (request.use_ref) {
         // 有 fonts.ltx 且里面确实定义了可生成的纹理 ⇒ 才用它当模板；
         // 否则回落内置模板（并告警），否则会套一份"写不出任何字库"的模板。
+        // 有 fonts.ltx 且**能推出要生成的槽位**才算可用（hud-only 那种推不出 ⇒ 回落内置）
         const bool ref_template_usable =
-            !scan.fonts_ltx.empty() && !slots_from_fonts_ltx(scan.fonts_ltx, nullptr).empty();
+            !scan.fonts_ltx.empty() && !rewrite_ref_fonts_ltx(scan.fonts_ltx).sizes.empty();
         if (ref_template_usable) {
             // 位图 writer 是**逐字节套模板**：段名/纹理名/空行都必须原样来自参照包。
             opt.fonts_ltx_text = scan.fonts_ltx;
@@ -932,6 +1029,7 @@ int fix_whitespace_only(std::string& text) {
     return fixed;
 }
 
+
 PackageResult build_package(const PackageOptions& opt) {
     namespace fs = std::filesystem;
     PackageResult res;
@@ -1096,11 +1194,17 @@ PackageResult build_package(const PackageOptions& opt) {
     // ★ 2026-11-21（用户口径）：**有 fonts.ltx 就按它生成**（里面定义了几个字号就做几个）；
     //   没有参照 / 参照缺 fonts.ltx ⇒ 内置模板，固定 10 档。
     std::vector<FontSize> slots;
+    std::string effective_fonts_ltx = opt.fonts_ltx_text;
     if (!opt.fonts_ltx_text.empty()) {
-        // ★ 2026-11-21（用户）：`ui_font_hud_*` / `ui_font_console_*` 是**基础游戏的字体**，
-        //   语言包不替换它们（1.x 也只生成 `ui_font_<数字>` 那一组）⇒ 不生成、也**不告警**，
-        //   否则每次生成都会刷一排无意义的提示。
-        slots = slots_from_fonts_ltx(opt.fonts_ltx_text, nullptr);
+        // ★ 2026-11-21（用户「段表修」）：整段保留参照包的段表；非标准纹理名按段名数字
+        //   生成新槽位并改写引用。hud/console 段不动。
+        const RefFontsLtx ref = rewrite_ref_fonts_ltx(opt.fonts_ltx_text);
+        effective_fonts_ltx = ref.ltx;
+        for (int size : ref.sizes) slots.push_back(FontSize{size, size >= 16 ? 1 : 0});
+        if (ref.rewritten > 0) {
+            res.warnings.push_back("fonts.ltx 有 " + std::to_string(ref.rewritten) +
+                                   " 行纹理引用按段名数字改写（非标准纹理名）");
+        }
     }
     if (slots.empty()) slots.assign(std::begin(kFontSizes), std::end(kFontSizes));
     for (const FontSize& slot : slots) {
@@ -1242,7 +1346,9 @@ PackageResult build_package(const PackageOptions& opt) {
     std::string loc = game->localization_ltx;
     replace_all(loc, "_#LANG#", opt.suffix);
     replace_all(loc, "#LANG#", lang);
-    if (!write_text(join(cfg_root, "fonts.ltx"), to_windows_newlines(game->fonts_ltx)) ||
+    if (!write_text(join(cfg_root, "fonts.ltx"),
+                    to_windows_newlines(opt.fonts_ltx_text.empty() ? game->fonts_ltx
+                                                                   : effective_fonts_ltx)) ||
         !write_text(join(cfg_root, "localization.ltx"), to_windows_newlines(loc))) {
         res.error = "写不出 fonts.ltx / localization.ltx";
         remove_tree(out_gd);

@@ -127,6 +127,30 @@ def main() -> int:
         check(names_one == ["ui_font_11.dds", "ui_font_11.ini"],
               "④b 只生成 fonts.ltx 里定义的那一个字号", str(names_one))
 
+        print("== ④b2 非标准纹理名：段名照抄 + 按段名数字生成并改写引用 ==")
+        ref_sec = work / "sec_ref"
+        gd_s = ref_sec / "gamedata"
+        (gd_s / "configs").mkdir(parents=True)
+        (gd_s / "configs" / "fonts.ltx").write_text(
+            "[ui_font_electron_18]\nshader\t= font\ntexture\t= ui\\ui_font_electron_18_1024\n\n"
+            "[ui_font_graff_32]\nshader\t= font\ntexture\t= ui\\ui_font_graff_32_1024\n",
+            encoding="utf-8", newline="\n")
+        (gd_s / "textures" / "ui").mkdir(parents=True)
+        (gd_s / "textures" / "ui" / "ui_font_electron_18_1024.dds").write_bytes(a8_dds_header())
+        out_sec = work / "out_sec"
+        text = run(base + ["--ref", str(ref_sec), "--out", str(out_sec)])
+        produced = out_sec / "gamedata" / "configs" / "fonts.ltx"
+        body = produced.read_text(encoding="utf-8") if produced.is_file() else ""
+        check("[ui_font_electron_18]" in body and "[ui_font_graff_32]" in body,
+              "④b2 段名一个不少", body[:200])
+        check("ui\\ui_font_18" in body and "ui\\ui_font_32" in body,
+              "④b2 非标准纹理名已按段名数字改写", body[:200])
+        dds_names = sorted(x.name for x in (out_sec / "gamedata" / "textures" / "ui").iterdir()
+                           if x.suffix == ".dds")
+        check(dds_names == ["ui_font_18.dds", "ui_font_32.dds"],
+              "④b2 按段名数字生成对应字号", str(dds_names))
+
+
         print("== ④c 拿不到引用：回落内置模板并明确告警 ==")
         ref_noltx = work / "noltx_ref"
         (ref_noltx / "gamedata" / "configs").mkdir(parents=True)
