@@ -616,9 +616,21 @@ $pyZipName = (Get-ChildItem -LiteralPath $pyEmbed -Filter 'python3*.zip' -File |
 $pyDllName = (Get-ChildItem -LiteralPath $pyEmbed -Filter 'python3*.dll' -File |
               Select-Object -First 1).Name
 $pyContract = "zip=$pyZipName,dll=$pyDllName"
+# 模型 C：version.txt 必须同时有通道序号 index 和全局 build；旧包只有 index。
+$buildNo = ''
+if ($verLine -match '^\d+\.\d+\.\d+\.(\d+)$') { $buildNo = $Matches[1] }
+if ($buildNo -eq '') {
+    $vjBuild = Join-Path $root 'version.json'
+    if (Test-Path $vjBuild) {
+        $bc = (Get-Content -LiteralPath $vjBuild -Raw -Encoding UTF8 | ConvertFrom-Json).build_counter
+        if ($bc) { $buildNo = [string]$bc }
+    }
+}
+if ($buildNo -eq '') { $buildNo = '0' }
 @"
 version=$verLine
 index=$BuildIndex
+build=$buildNo
 commit=$commit
 built=$stamp
 platform_plugins=qwindows,qoffscreen

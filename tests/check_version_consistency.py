@@ -136,15 +136,19 @@ def main() -> int:
         vt2 = pkg3 / "version.txt"
         if cli.is_file() and vt2.is_file():
             text2 = vt2.read_text(encoding="utf-8", errors="replace")
-            m4 = re.search(r"index=(\d+)", text2)
-            want2 = int(m4.group(1)) if m4 else -1
+            m4b = re.search(r"build=(\d+)", text2)
+            if m4b:
+                want2 = int(m4b.group(1))
+            else:
+                m4v = re.search(r"version=\d+\.\d+\.\d+\.(\d+)", text2)
+                want2 = int(m4v.group(1)) if m4v else -1
             p3 = subprocess.run([str(cli), "--version"], stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT)
             out3 = p3.stdout.decode("utf-8", "replace")
             m5 = re.search(r"build=(\d+)", out3)
             got2 = int(m5.group(1)) if m5 else -1
             (ok if p3.returncode == 0 and got2 == want2 else fail)(
-                "包内 CLI 版本 == version.txt（cli=%d, 包=%d）" % (got2, want2))
+                "包内 CLI build == version.txt build（cli=%d, 包=%d）" % (got2, want2))
 
     bad = []
     for vdir in (ROOT / "dist").glob("*/*/*"):
