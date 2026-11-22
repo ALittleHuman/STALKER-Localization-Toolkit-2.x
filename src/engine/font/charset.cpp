@@ -193,7 +193,9 @@ void scan_whitespace_only(const std::string& text, const std::string& file,
                           std::vector<std::string>* out) {
     if (out == nullptr) return;
     const auto is_ws_cp = [](uint32_t cp) {
-        return cp == 0x20 || cp == 0x09 || cp == 0x0A || cp == 0x0D || cp == 0x00A0 ||
+        // ★ U+00A0（NBSP）是 X-Ray 的合法占位，不是“会被裁空的普通空白”；
+        //   把它算进来会在 A.R.E.A 这类原版 NBSP 文本上误报。
+        return cp == 0x20 || cp == 0x09 || cp == 0x0A || cp == 0x0D ||
                cp == 0x3000 || cp == 0x2000 || cp == 0x2002 || cp == 0x2003;
     };
     size_t pos = 0;

@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,94 @@ bool write_bytes(const std::string& path, const uint8_t* data, size_t size) {
 
 bool write_text(const std::string& path, const std::string& text) {
     return write_bytes(path, reinterpret_cast<const uint8_t*>(text.data()), text.size());
+}
+
+// IX-Ray 的矢量字体不是预烘 DDS，而是引擎运行时按 FontAtlasSize 烘图集。
+// 中文 3596 字 / 50px 时 4096 不够；生成器只负责把上限抬到 8192（单图集，不分页），
+// 保留 engine_external.ltx 里其它段与键，仅改 [render] FontAtlasSize。
+bool ensure_ixr_font_atlas_size(const std::string& out_dir, int atlas_size,
+                                std::string* error) {
+    namespace fs = std::filesystem;
+    const fs::path cfg = core::path_from_utf8(out_dir) / "gamedata" / "configs" /
+                         "engine_external.ltx";
+    std::error_code ec;
+    fs::create_directories(cfg.parent_path(), ec);
+    std::vector<std::string> lines;
+    std::ifstream in(cfg, std::ios::binary);
+    if (in) {
+        std::string line;
+        while (std::getline(in, line)) lines.push_back(line);
+    }
+    bool in_render = false;
+    bool key_seen = false;
+    std::size_t insert_at = static_cast<std::size_t>(-1);
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        std::string t = lines[i];
+        while (!t.empty() && (t.front() == ' ' || t.front() == '\t' || t.front() == '\r')) {
+            t.erase(t.begin());
+        }
+        while (!t.empty() && (t.back() == ' ' || t.back() == '\t' || t.back() == '\r')) {
+            t.pop_back();
+        }
+        if (!t.empty() && t.front() == '[') {
+            const std::size_t close = t.find(']');
+            const std::string section = close == std::string::npos
+                                            ? std::string()
+                                            : t.substr(1, close - 1);
+            in_render = (section == "render" || section == "Render" || section == "RENDER");
+            if (in_render) insert_at = i + 1;
+            continue;
+        }
+        if (!in_render) continue;
+        const std::size_t eq = t.find('=');
+        if (eq == std::string::npos) continue;
+        std::string key = t.substr(0, eq);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+        std::string lower;
+        for (char ch : key) lower.push_back(static_cast<char>(std::tolower(
+            static_cast<unsigned char>(ch))));
+        if (lower == "fontatlassize") {
+            lines[i] = "FontAtlasSize = " + std::to_string(atlas_size);
+            key_seen = true;
+        }
+    }
+    if (!key_seen) {
+        const std::string entry = "FontAtlasSize = " + std::to_string(atlas_size);
+        if (insert_at != static_cast<std::size_t>(-1) && insert_at <= lines.size()) {
+            lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(insert_at), entry);
+        } else {
+            if (!lines.empty() && !lines.back().empty()) lines.push_back(std::string());
+            lines.push_back("[render]");
+            lines.push_back(entry);
+        }
+    }
+    std::ostringstream out;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        out << lines[i];
+        if (i + 1 < lines.size()) out << "\n";
+    }
+    out << "\n";
+    const fs::path temp = cfg.string() + ".tmp";
+    std::ofstream file(temp, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        if (error != nullptr) *error = "无法写 engine_external.ltx";
+        return false;
+    }
+    const std::string body = out.str();
+    file.write(body.data(), static_cast<std::streamsize>(body.size()));
+    file.flush();
+    if (!file) {
+        if (error != nullptr) *error = "写 engine_external.ltx 失败";
+        return false;
+    }
+    file.close();
+    fs::remove(cfg, ec);
+    fs::rename(temp, cfg, ec);
+    if (ec) {
+        if (error != nullptr) *error = "无法落盘 engine_external.ltx：" + ec.message();
+        return false;
+    }
+    return true;
 }
 
 // ── ★ 2026-11-21（已知问题 §7）：旧字库清理 ──────────────────────────────────
@@ -498,15 +587,21 @@ RefFontScan scan_ref_font(const std::string& ref) {
         std::error_code count_ec;
         const fs::path ui = gd / "textures" / "ui";
         if (fs::is_directory(ui, count_ec)) {
-            for (fs::directory_iterator it(ui, count_ec), end; !count_ec && it != end;
-                 it.increment(count_ec)) {
-                if (!it->is_regular_file(count_ec)) continue;
-                const std::string name = core::path_to_utf8(it->path().filename());
+            // ★ 2026-11-22：不能只扫 textures/ui 的**直接子项**。A.R.E.A 的
+            //   electron 等自定义字体在 textures/ui/fonts/ 下；只扫一层会看不见
+            //   DDS，进而把参照包误判成“没有位图证据”。用统一遍历（D2）。
+            xrkit::engine::fs::WalkReport walk;
+            for (const xrkit::engine::fs::TreeItem& item :
+                 xrkit::engine::fs::collect_tree(core::path_to_utf8(ui), &walk)) {
+                if (item.is_dir) continue;
+                std::string name = item.path;
+                const size_t sep = name.find_last_of("\\/");
+                if (sep != std::string::npos) name = name.substr(sep + 1);
                 if (name.rfind("ui_font_", 0) == 0 && name.size() > 4 &&
                     name.compare(name.size() - 4, 4, ".dds") == 0) {
                     ++out.dds_count;
                     if (out.dds_fmt.empty()) {
-                        out.dds_fmt = detect_dds_format(core::path_to_utf8(it->path()));
+                        out.dds_fmt = detect_dds_format(item.source_path);
                     }
                 }
             }
@@ -580,12 +675,11 @@ bool is_standard_font_texture(const std::string& base) {
     return true;
 }
 
-bool is_hud_section(const std::string& name, const std::string& texture_value) {
-    if (name.rfind("hud", 0) == 0 || name.rfind("stat_", 0) == 0) return true;
-    const std::string value = texture_value;
-    // 游戏自带字体在 `ui\fonts\...` 下（我们那份是 `ui\ui_font_*`）
-    return value.find("ui\\fonts\\") != std::string::npos ||
-           value.find("ui/fonts/") != std::string::npos;
+bool is_hud_section(const std::string& name, const std::string& /*texture_value*/) {
+    // ★ 2026-11-22（用户口径）：**不能按 `ui\fonts\` 路径整类排除**。
+    //   electron 等自定义段和正常字体段在 fonts.ltx 里结构完全一样，必须参与生成；
+    //   生成后由人复核是否要保留原贴图/英文。这里只跳过明确的 HUD/STAT 基础字体。
+    return name.rfind("hud", 0) == 0 || name.rfind("stat_", 0) == 0;
 }
 
 RefFontsLtx rewrite_ref_fonts_ltx(const std::string& in) {
@@ -804,6 +898,12 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
         // ★ 报告里**每个字体**都有 `"missing"/"missing_cps"`（第一个常常是 0），
         //   顶层汇总的 `"missing"` 在最后 ⇒ 取**最后一个** `"missing":`；缺字清单则是
         //   所有 `missing_cps` 的并集（去重）。
+        if (out.ok && out.charset_count > 3000) {
+            std::string atlas_error;
+            if (!ensure_ixr_font_atlas_size(request.out, 8192, &atlas_error)) {
+                out.warnings_extra.push_back("IX-Ray FontAtlasSize 未能写入：" + atlas_error);
+            }
+        }
         if (out.ok) {
             const std::string& tail = out.vector_result.stdout_tail;
             const std::size_t at = tail.rfind("\"missing\":");

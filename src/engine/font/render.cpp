@@ -28,7 +28,8 @@ constexpr const char* kFitSample =
 
 constexpr int kFitExtra = 13;    // `range(size, size + 14)` ⇒ 候选 size..size+13
 constexpr int kInkMargin = 4;    // 定标判据：墨迹高 ≤ cell − 4
-constexpr int kTexWidths[2] = {2048, 4096};  // 1024 放不下时的两档候选
+constexpr int kTexWidths[3] = {2048, 4096, 8192};  // 1024 放不下时逐档硬扩（单图集，不分页）
+constexpr int kMaxTexDimension = 8192;              // 引擎/显存上限；超过必须明确失败
 
 // Python 的 `//` 向**下**取整，C++ 的 `/` 向零截断 —— 负数会差 1（-3//2 = -2 而 -3/2 = -1）。
 int floor_div(int a, int b) {
@@ -476,7 +477,7 @@ bool render_font(const std::string& font_path, const std::vector<uint32_t>& char
     const int desc = static_cast<int>((-face->size->metrics.descender + 32) >> 6);
     const int vshift = std::max(0, cell_h - floor_div(asc + desc, S));
 
-    // 画布宽：1024 → 2048 → 4096（判据是 `rows*cell − 1 <= tex_w`，照抄 1.x）
+    // 画布宽：1024 → 2048 → 4096 → 8192（单图集硬扩；不做多页/降字号）
     int tex_w = 1024;
     int slots = tex_w / cell_h;
     int rows_n = (static_cast<int>(chars.size()) + slots - 1) / slots;
@@ -493,6 +494,18 @@ bool render_font(const std::string& font_path, const std::vector<uint32_t>& char
     const int max_y = rows_n * cell_h;
     int tex_h = 16;
     while (tex_h < std::max(1, max_y)) tex_h *= 2;
+    if (tex_w > kMaxTexDimension || tex_h > kMaxTexDimension) {
+        out.error = "图集尺寸超限：" + std::to_string(tex_w) + "×" + std::to_string(tex_h) +
+                    "（上限 " + std::to_string(kMaxTexDimension) + "，单图集无法分页）";
+        return false;
+    }
+    const std::uint64_t pixels = static_cast<std::uint64_t>(tex_w) *
+                                 static_cast<std::uint64_t>(tex_h);
+    if (pixels == 0 || pixels > static_cast<std::uint64_t>(kMaxTexDimension) *
+                                   static_cast<std::uint64_t>(kMaxTexDimension)) {
+        out.error = "图集像素数超限";
+        return false;
+    }
 
     std::vector<uint8_t> canvas(static_cast<size_t>(tex_w) * static_cast<size_t>(tex_h), 0);
     std::vector<std::string> ini_lines;

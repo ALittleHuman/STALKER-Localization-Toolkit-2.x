@@ -28,6 +28,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CLI = Path(os.environ.get("XRKIT_CLI", ROOT / "build" / "msvc-release" / "tools" / "cli" /
                           "xrkit_cli.exe"))
+CJK = Path(r"C:\Windows\Fonts\NotoSansSC-VF.ttf")
 
 FAILURES: list[str] = []
 LTX = ("[ui_font_default]\nshader\t\t\t= font\ntexture\t\t\t= ui\\ui_font_11\n\n"
@@ -132,11 +133,11 @@ def main() -> int:
         gd_s = ref_sec / "gamedata"
         (gd_s / "configs").mkdir(parents=True)
         (gd_s / "configs" / "fonts.ltx").write_text(
-            "[ui_font_electron_18]\nshader\t= font\ntexture\t= ui\\ui_font_electron_18_1024\n\n"
+            "[ui_font_electron_18]\nshader\t= font\ntexture\t= ui\\fonts\\ui_font_electron_18_1024\n\n"
             "[ui_font_graff_32]\nshader\t= font\ntexture\t= ui\\ui_font_graff_32_1024\n",
             encoding="utf-8", newline="\n")
-        (gd_s / "textures" / "ui").mkdir(parents=True)
-        (gd_s / "textures" / "ui" / "ui_font_electron_18_1024.dds").write_bytes(a8_dds_header())
+        (gd_s / "textures" / "ui" / "fonts").mkdir(parents=True)
+        (gd_s / "textures" / "ui" / "fonts" / "ui_font_electron_18_1024.dds").write_bytes(a8_dds_header())
         out_sec = work / "out_sec"
         text = run(base + ["--ref", str(ref_sec), "--out", str(out_sec)])
         produced = out_sec / "gamedata" / "configs" / "fonts.ltx"
@@ -257,6 +258,36 @@ def main() -> int:
         loc_body = loc_sfx.read_text(encoding="utf-8") if loc_sfx.is_file() else ""
         check("font_prefix" in loc_body and "_chs" in loc_body,
               "④j 后缀落在 localization.ltx 的 font_prefix", loc_body[:160])
+
+        print("== ④k 50px + 3596 字：单图集硬扩到 8192 ==")
+        if not CJK.is_file():
+            print("  · 缺系统 CJK 字体，跳过")
+        else:
+            big_xml = work / "big_xml"
+            big_xml.mkdir()
+            big = "".join(chr(0x4E00 + i) for i in range(3500))
+            (big_xml / "big.xml").write_text(
+                '<string_table><string id="a"><text>' + big + '</text></string>'
+                '</string_table>', encoding="utf-8", newline="\n")
+            big_ref = work / "big_ref"
+            big_gd = big_ref / "gamedata"
+            (big_gd / "configs").mkdir(parents=True)
+            (big_gd / "configs" / "fonts.ltx").write_text(
+                "[ui_font_graff_50]\nshader = hud\\font\ntexture = ui\\ui_font_50\n",
+                encoding="utf-8", newline="\n")
+            (big_gd / "textures" / "ui").mkdir(parents=True)
+            (big_gd / "textures" / "ui" / "ui_font_50.dds").write_bytes(a8_dds_header())
+            big_out = work / "big_out"
+            text = run(base + ["--text-root", str(big_xml), "--ref", str(big_ref),
+                               "--out", str(big_out), "--font", str(CJK)])
+            big_dds = big_out / "gamedata" / "textures" / "ui" / "ui_font_50.dds"
+            dims = (-1, -1)
+            if big_dds.is_file():
+                head = big_dds.read_bytes()[:128]
+                dims = (int.from_bytes(head[16:20], "little"),
+                        int.from_bytes(head[12:16], "little"))
+            check(big_dds.is_file() and dims == (8192, 4096),
+                  "④k 50px 单图集为 8192×4096", "dims=%s" % (dims,))
 
         print("== ⑤ 非法 writer 值：明确报错（不是静默忽略） ==")
         text = run(base + ["--ref", str(ref), "--out", str(work / "out_bogus"),
