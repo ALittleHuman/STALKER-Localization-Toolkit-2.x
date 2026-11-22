@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "npm semver，例如 2.0.0-beta.251"
+        description: "版本串，例如 2.0.0.514；workflow 会转成 npm 合法 semver 2.0.0-514"
         required: true
       release_tag:
         description: "GitHub Release tag，例如 2.0.0-beta.251"
@@ -69,7 +69,11 @@ jobs:
           node -e '
             const fs = require("fs");
             const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
-            p.version = process.env.NPM_VERSION;
+            let v = process.env.NPM_VERSION;
+            // 模型 C：x.y.z.<build> ⇒ npm 合法 prerelease x.y.z-<build>
+            const m = v.match(/^(\d+\.\d+\.\d+)\.(\d+)$/);
+            if (m) v = m[1] + "-" + m[2];
+            p.version = v;
             if (!/^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$/.test(p.version)) {
               console.error("invalid semver: " + p.version);
               process.exit(1);

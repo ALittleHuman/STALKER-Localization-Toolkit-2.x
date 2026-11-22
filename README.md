@@ -2,7 +2,7 @@
 
 面向 X-Ray 引擎（SoC / Clear Sky / CoP / IX-Ray）的资源查看、解包、文本提取与汉化包生成工具。
 
-- 当前源码版本：`2.0.0.514（RC.2）`（正式交付以 `dist\2.0.0\<MARK>\<n>` 为准）
+- 当前源码版本：`2.0.0.515（BETA.255）`（正式交付以 `dist\2.0.0\<MARK>\<n>` 为准）
 - 运行环境：Windows 10/11 x64；发行包自带 Qt6 运行库与 Python 3.14，**不需要系统 Python**
 - 只写你自己的输出目录、`logs\` 与工具自己的 `xrkit_user.ltx`；**不会安装或修改游戏文件**（解包/封包含"装进游戏"的只有你手动指定的目标目录）
 
@@ -112,8 +112,8 @@ scripts\release.ps1 -Index <n> -Mark BETA :: 本地构建+打包+校验（不发
 1. **路径**（2026-11-20 起分两侧，口径不同）：
    - **命令行 `xrkit_cli.exe`**：已声明 `activeCodePage=UTF-8` + `longPathAware` ⇒ 中文/西里尔路径不再乱码，
      中文目录的打包/列举已实测通过；
-   - **图形界面 `xrkit_app.exe`（含构建器/插件管理器/更新器）**：只声明 `longPathAware`，
-     **没有** UTF-8 代码页 ⇒ GUI 侧的 ANSI 相关限制仍在（为什么不敢开：开了 GUI 启动即崩，根因待查）；
+   - **图形界面 `xrkit_app.exe`（含构建器/插件管理器/更新器）**：RC2 起也声明 `activeCodePage=UTF-8` + `longPathAware`；
+     GUI 启动、截图、Python 宿主/插件加载已实测正常；
    - 超过 **260 字符**的深层路径仍受系统开关限制：需要 Windows 的 `EnableLongPaths`，否则整体拒绝（会点名路径，不静默跳过）。
    - 规避：GUI 处理含中文路径的包时，优先用命令行或把包放到短 ASCII 路径下。
 2. **插件与宿主同进程**：插件异常可能影响宿主；插件可以联网、可用标准库 `sqlite3`

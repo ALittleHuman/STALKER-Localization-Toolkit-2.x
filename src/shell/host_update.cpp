@@ -90,6 +90,23 @@ QString npm_update_url(const QString& version) {
         .arg(QString::fromLatin1(kNpmUpdatePackage), v, v);
 }
 
+// 模型 C 的版本串是 x.y.z.<build>，四段不是合法 npm semver；发布 workflow 把它
+// 转成 x.y.z-<build>。客户端同样生成这个后备 URL，成功时 npm 通道也能用。
+QString npm_semver_version(const QString& version) {
+    QString v = version.trimmed();
+    if (v.startsWith(QLatin1Char('v')) || v.startsWith(QLatin1Char('V'))) v.remove(0, 1);
+    const QRegularExpression re(QStringLiteral("^(\\d+\\.\\d+\\.\\d+)\\.(\\d+)$"));
+    const QRegularExpressionMatch match = re.match(v);
+    if (match.hasMatch()) return match.captured(1) + QStringLiteral("-") + match.captured(2);
+    return v;
+}
+
+QString npm_update_url_for(const QString& version, const QString& package_version) {
+    if (package_version.isEmpty()) return {};
+    return QStringLiteral("https://unpkg.com/%1@%2/full/%3.zip")
+        .arg(QString::fromLatin1(kNpmUpdatePackage), package_version, version);
+}
+
 QStringList manifest_sources() {
     const QString override_url = qEnvironmentVariable("XRKIT_APP_UPDATE_URL");
     if (!override_url.isEmpty()) {
@@ -180,7 +197,10 @@ bool parse_update_payload(const std::string& body, bool allow_test, AppUpdateInf
         out->packages = package_mirrors(chosen->url);
         out->sha256 = chosen->digest;
         const QString npm_url = npm_update_url(out->version);
-        if (!npm_url.isEmpty()) out->packages.prepend(npm_url);
+        const QString npm_alias = npm_semver_version(out->version);
+        const QString npm_alias_url = npm_update_url_for(out->version, npm_alias);
+        if (!npm_alias_url.isEmpty()) out->packages.prepend(npm_alias_url);
+        if (!npm_url.isEmpty() && npm_url != npm_alias_url) out->packages.prepend(npm_url);
         out->packages.removeDuplicates();
         if (!out->packages.isEmpty()) out->package = out->packages.first();
         return !out->version.isEmpty() && !out->packages.isEmpty();

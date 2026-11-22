@@ -64,6 +64,7 @@ target_sources(xrkit_smoke PRIVATE "${CMAKE_SOURCE_DIR}/assets/xrkit_winres.rc")
 target_compile_definitions(xrkit_smoke PRIVATE XRKIT_WINRES_SMOKE)
 target_link_libraries(xrkit_smoke PRIVATE xrkit_shell Qt6::Widgets)
 xrkit_attach_python_runtime(xrkit_smoke)
+xrkit_attach_manifest(xrkit_smoke)
 set_target_properties(xrkit_smoke PROPERTIES
   WIN32_EXECUTABLE TRUE
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
