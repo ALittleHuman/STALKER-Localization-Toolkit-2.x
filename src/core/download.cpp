@@ -54,6 +54,7 @@ struct Job {
     std::condition_variable cv;
     DownloadStatus status;
     std::atomic_bool cancel{false};
+    std::chrono::steady_clock::time_point finished_at{};
     std::thread worker;
 };
 
@@ -72,6 +73,7 @@ void finish_job(const std::shared_ptr<Job>& job, bool ok, bool cancelled,
         job->status.cancelled = cancelled;
         job->status.error = error;
         job->status.path = job->options.target;
+        job->finished_at = std::chrono::steady_clock::now();
     }
     job->cv.notify_all();
 }
@@ -255,7 +257,10 @@ void run_job(const std::shared_ptr<Job>& job) {
     std::error_code ec;
     const auto parent = std::filesystem::path(job->options.target).parent_path();
     if (!parent.empty()) std::filesystem::create_directories(parent, ec);
-    if (file_matches_sha(job->options.target, job->options.sha256)) {
+    // ★ 没有期望 sha 时，目标文件存在不代表内容完整（可能是上次手工留下的半文件）；
+    //   不能把“存在且非空”当成下载完成，必须重新下载。
+    if (!job->options.sha256.empty() &&
+        file_matches_sha(job->options.target, job->options.sha256)) {
         const std::uint64_t size = file_size(job->options.target);
         set_progress(job, size, size);
         finish_job(job, true, false, {});
@@ -293,6 +298,28 @@ struct DownloadManager::Impl {
     mutable std::mutex mutex;
     std::map<std::uint64_t, std::shared_ptr<Job>> jobs;
     std::atomic<std::uint64_t> next{1};
+
+    // 完成后的 job 保留一段时间给调用方轮询最终状态，超过期限回收；
+    // worker 已结束，可安全 join 后释放 std::thread 句柄。
+    void reap_finished_locked() {
+        const auto now = std::chrono::steady_clock::now();
+        constexpr auto kRetention = std::chrono::minutes(10);
+        for (auto it = jobs.begin(); it != jobs.end();) {
+            bool finished = false;
+            bool old = false;
+            {
+                std::lock_guard<std::mutex> lock(it->second->mutex);
+                finished = it->second->status.finished;
+                if (finished) old = (now - it->second->finished_at) > kRetention;
+            }
+            if (!finished || !old) {
+                ++it;
+                continue;
+            }
+            if (it->second->worker.joinable()) it->second->worker.join();
+            it = jobs.erase(it);
+        }
+    }
 };
 
 DownloadManager& DownloadManager::instance() {
@@ -321,6 +348,7 @@ std::uint64_t DownloadManager::start(const DownloadOptions& options) {
     }
     {
         std::lock_guard<std::mutex> lock(impl_->mutex);
+        impl_->reap_finished_locked();
         impl_->jobs[id] = job;
     }
     return id;
