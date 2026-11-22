@@ -34,8 +34,7 @@ screen_scale.cpp
   pages/convert_page.cpp
   pages/xml_page.cpp
   pages/video_page.cpp
-  pages/fontpack_page.cpp
-  smoke.cpp)
+  pages/fontpack_page.cpp)
 
 target_include_directories(xrkit_shell PUBLIC "${CMAKE_SOURCE_DIR}/include")
 target_link_libraries(xrkit_shell
@@ -56,6 +55,19 @@ qt_add_executable(xrkit_app
 #   删半成品）/ 跑完收干净进程 这三条判据必须落在"真进程"上，桩函数替不掉；而真 ffmpeg
 #   在本机不一定按 ⑧8.1 的口径可见（只认 user.ltx 与程序目录、不搜 PATH）⇒ 自己造一个。
 #   它**不进发行包**（package.ps1 只拷 xrkit_app.exe + Qt 运行时），纯粹是构建产物。
+# ★ RC2：自检从本体拆出 —— smoke.cpp 只进 xrkit_smoke.exe，不链进 xrkit_app。
+add_executable(xrkit_smoke
+  smoke_main.cpp
+  smoke.cpp)
+target_sources(xrkit_smoke PRIVATE "${CMAKE_SOURCE_DIR}/assets/app.rc")
+target_sources(xrkit_smoke PRIVATE "${CMAKE_SOURCE_DIR}/assets/xrkit_winres.rc")
+target_compile_definitions(xrkit_smoke PRIVATE XRKIT_WINRES_SMOKE)
+target_link_libraries(xrkit_smoke PRIVATE xrkit_shell Qt6::Widgets)
+xrkit_attach_python_runtime(xrkit_smoke)
+set_target_properties(xrkit_smoke PROPERTIES
+  WIN32_EXECUTABLE TRUE
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
 add_executable(xrkit_fake_ffmpeg fake_ffmpeg.cpp)
 target_link_libraries(xrkit_fake_ffmpeg PRIVATE xrkit_flags)
 set_target_properties(xrkit_fake_ffmpeg PROPERTIES

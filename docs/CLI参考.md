@@ -138,12 +138,12 @@ xrkit_cli --py-plugin-call plugins {"action":"scan","path":"E:\\x"}
 
 | 动作 | 用途 |
 |---|---|
-| `--smoke` | 离屏全量自检，结论行 `SHELL-SMOKE ok checks=N failed=0`；`failed=` 必须为 0，退出码 0 |
+| `xrkit_smoke.exe` | RC2 起自检从本体拆出：单独 exe，离屏全量自检，结论行 `SHELL-SMOKE ok checks=N failed=0`；`failed=` 必须为 0，退出码 0 |
 | `--version` | 打印图形程序版本 |
 
 ```bat
 set QT_QPA_PLATFORM=offscreen
-xrkit_app.exe --smoke
+xrkit_smoke.exe
 ```
 
 ## 9. 组合示例：两条常用流水线

@@ -17,7 +17,6 @@
 #include "pages/fontpack_page.h"
 #include "pages/page_base.h"
 #include "pages/video_page.h"
-#include "smoke.h"
 #include "screen_scale.h"
 #include "theme.h"
 
@@ -69,9 +68,6 @@ int main(int argc, char** argv) {
             });
         return probe_rc;
     }
-    const bool smoke = args.contains(QStringLiteral("--smoke"));
-    // ★ 2026-11-08：离屏自检不弹缺字对话框（否则门禁卡在模态框上）
-    if (smoke) qputenv("XRKIT_SMOKE", "1");
     // ★ 屏幕自适应诊断：打印「启动时按当前屏幕算出来的缩放与窗口尺寸」然后退出。
     //   为什么要有它：离屏自检只验了纯函数；这条分支验的是**真实启动路径**
     //   （QScreen 逻辑 DPI → snap → set_ui_scale → 窗口尺寸），可配合 QT_SCALE_FACTOR 实测。
@@ -124,7 +120,7 @@ int main(int argc, char** argv) {
     const bool log_open = args.contains(QStringLiteral("--log-open"));
 
     // 离屏：不依赖真实显示器（门禁机器上也可能没有交互桌面）
-    if ((smoke || !shot_path.isEmpty()) && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
+    if (!shot_path.isEmpty() && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
         qputenv("QT_QPA_PLATFORM", "offscreen");
     }
 
@@ -186,28 +182,6 @@ int main(int argc, char** argv) {
                    .arg(minsz.height());
         out.flush();
         return 0;
-    }
-
-    if (smoke) {
-        // 主题先按 user.ltx 的偏好铺上（读不到就用默认暗色）
-        const xrkit::core::ThemeMode mode = xrkit::core::load_theme_mode();
-        xrkit::shell::apply_theme(app, mode);
-
-        const xrkit::shell::SmokeResult result = xrkit::shell::run_smoke();
-        QTextStream out(stdout);
-        for (const QString& note : result.notes) {
-            out << "  SHELL-SMOKE note " << note << "\n";
-        }
-        for (const QString& failure : result.failures) {
-            out << "  SHELL-SMOKE fail " << failure << "\n";
-        }
-        out << QStringLiteral("SHELL-SMOKE ok checks=%1 failed=%2 not_covered=%3 mode=%4\n")
-                   .arg(result.checks)
-                   .arg(result.failed)
-                   .arg(result.not_covered)
-                   .arg(QString::fromUtf8(xrkit::core::theme_mode_name(mode)));
-        out.flush();
-        return result.failed == 0 ? 0 : 1;
     }
 
     // ★ 屏幕自适应 + 用户偏好（主题 / 界面大小）——**这条序列只有一份实现**

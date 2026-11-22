@@ -55,6 +55,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 ROOT = Path(__file__).resolve().parent.parent
+SMOKE = ROOT / "build" / "msvc-shell" / "src" / "shell" / "xrkit_smoke.exe"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # 夹具＝六页插件版（各自 replaces 一个内置页）＋ 三插件同页 ＋ 最小 `.py` 加载链夹具。
@@ -259,8 +260,12 @@ def run_smoke(pkg: Path, timeout: int = 900):
     env["TEMP"] = str(private_temp)
     env["TMP"] = str(private_temp)
     exe = pkg / "xrkit_app.exe"
+    if not SMOKE.is_file():
+        return None, "缺独立 smoke exe：%s" % SMOKE
+    stage_smoke = pkg / "xrkit_smoke.exe"
+    shutil.copy2(SMOKE, stage_smoke)
     try:
-        proc = subprocess.run([str(exe), "--smoke"], cwd=str(pkg), env=env,
+        proc = subprocess.run([str(stage_smoke)], cwd=str(pkg), env=env,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
     except subprocess.TimeoutExpired:
         subprocess.run(["taskkill", "/F", "/T", "/IM", "xrkit_app.exe"],

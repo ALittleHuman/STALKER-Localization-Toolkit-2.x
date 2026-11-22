@@ -38,10 +38,12 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import shutil
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+SMOKE = ROOT / "build" / "msvc-shell" / "src" / "shell" / "xrkit_smoke.exe"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 PACKAGE_PS1 = ROOT / "scripts" / "package.ps1"
 
@@ -179,11 +181,16 @@ def run_artifact() -> None:
     if not exe.is_file():
         check(False, "产物 %s：xrkit_app.exe 在包里" % rel.as_posix())
         return
+    if not SMOKE.is_file():
+        check(False, "产物 %s：独立 smoke exe 不在构建树" % rel.as_posix(), str(SMOKE))
+        return
+    stage_smoke = pkg / "xrkit_smoke.exe"
+    shutil.copy2(SMOKE, stage_smoke)
     env = dict(os.environ)
     env["QT_QPA_PLATFORM"] = "offscreen"   # ★ 只给子进程，不设持久变量
     env.setdefault("PYTHONUTF8", "1")
     try:
-        proc = subprocess.run([str(exe), "--smoke"], cwd=str(pkg), env=env,
+        proc = subprocess.run([str(stage_smoke)], cwd=str(pkg), env=env,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600)
     except subprocess.TimeoutExpired:
         subprocess.run(["taskkill", "/F", "/T", "/IM", "xrkit_app.exe"],
@@ -194,6 +201,8 @@ def run_artifact() -> None:
         # 不是可执行文件 / 架构不兼容 / 被杀软拦下 ⇒ 明确报错，别让 traceback 变成"判据不通过"
         check(False, "产物 %s：能起得来 `--smoke`" % rel.as_posix(), str(exc))
         return
+    finally:
+        stage_smoke.unlink(missing_ok=True)
     out = proc.stdout.decode("utf-8", errors="replace")
     line = SMOKE_RE.search(out)
     check(line is not None and proc.returncode == 0,

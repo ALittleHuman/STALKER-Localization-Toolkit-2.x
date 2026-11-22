@@ -547,7 +547,7 @@ $pluginLine
       **不再自带 ffprobe** —— 探测走 ffmpeg -i 降级，
       用户可自备 bin\ffprobe.exe 或 [ffmpeg] probe）。
 不含：NLC 解密插件（发行版）、实验性引擎补丁。
-自检：命令行跑 `xrkit_app.exe --smoke`（离屏，ASCII 输出）可核对包是否完整。
+自检：开发树上用独立 `xrkit_smoke.exe`（离屏，ASCII 输出）；发布包不随带该工具。
       本包 `platforms\` **同时**带 `qwindows.dll` 与 `qoffscreen.dll`：`--smoke`/`--layout-report`
       走离屏，而 `windeployqt` 按 app 的实际调用只铺 qwindows ⇒ 少了后者会直接
       崩 `0xC0000409`（BEX64 / 故障模块 Qt6Core.dll / P7=0x267a8，ALPHA.57~59 都踩过）。
@@ -683,6 +683,12 @@ New-Item -ItemType Directory -Force -Path $stagePlat | Out-Null
 Copy-Item -LiteralPath $off -Destination $stagePlat -Force
 $prevQpa = $env:QT_QPA_PLATFORM
 $env:QT_QPA_PLATFORM = 'offscreen'
+# ★ RC2：smoke 已从本体拆成独立 exe；只在包内临时拷入跑自检，跑完删除，不随发布包。
+$smokeTool = Get-ChildItem -Path $shell -Recurse -Filter 'xrkit_smoke.exe' -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+if (-not $smokeTool) { throw "找不到 msvc-shell 的 xrkit_smoke.exe（RC2 起自检拆成独立 exe）" }
+$stageSmoke = Join-Path $stage 'xrkit_smoke.exe'
+Copy-Item -LiteralPath $smokeTool.FullName -Destination $stageSmoke -Force
 $smokeOk = $false
 try {
     # ★ 原生程序往 stderr 打警告（Qt 的 QFontDatabase 之类）在 `$ErrorActionPreference='Stop'`
@@ -700,7 +706,7 @@ try {
         #   ★ 2026-10-07：结论行判据收窄成 `... failed=0` —— 修前只 grep `SHELL-SMOKE ok`，
         #   而 smoke 的收尾行**恒**以 `ok` 开头（`SHELL-SMOKE ok checks=741 failed=1` 也是 "ok"）
         #   ⇒ 一旦只看那一行，"有 1 条判据不过"就会被读成通过（本次实测见过 failed=1 的那行）。
-        $proc = Start-Process -FilePath (Join-Path $stage 'xrkit_app.exe') -ArgumentList '--smoke' `
+        $proc = Start-Process -FilePath $stageSmoke `
             -NoNewWindow -Wait -PassThru -RedirectStandardOutput $log -RedirectStandardError $errLog
         $line = Select-String -Path $log -Pattern 'SHELL-SMOKE ok checks=(\d+) failed=0' | Select-Object -First 1
         # ★★ 2026-10-05（本批 #8）：**包内自检要把插件数与名字打出来** —— 那一行由 smoke 自己发
@@ -734,6 +740,9 @@ try {
     }
 }
 if (-not $smokeOk) { throw "包内 exe 的离屏自检没通过（结论行要求 `SHELL-SMOKE ok … failed=0` 且退出码 0）" }
+# 自检 exe/日志只是临时工具，不随包发布。
+Remove-Item -LiteralPath $stageSmoke -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $stage 'smoke.log'), (Join-Path $stage 'smoke.err.log') -Force -ErrorAction SilentlyContinue
 
 # ★★ 2026-10-07（用户裁决后半）：**平台插件必须在产物里**（不是"跑判据时临时有"）。
 #   这条与上面那次"从产物里真跑"合起来才成立：判据本身要能在**用户拿到的那个目录**里重跑。

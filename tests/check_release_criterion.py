@@ -18,6 +18,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+SMOKE = ROOT / "build" / "msvc-shell" / "src" / "shell" / "xrkit_smoke.exe"
 PS = ROOT / "scripts" / "package.ps1"
 VERSION = ROOT / "version.json"
 CLI = ROOT / "build" / "msvc-release" / "tools" / "cli" / "xrkit_cli.exe"
@@ -204,7 +205,11 @@ def main():
         exe = pkgdir / ("xrkit_app.exe")
         if not exe.exists():
             return fail("产物里没有 xrkit_app.exe")
-        smoke = subprocess.run([str(exe), "--smoke"], capture_output=True, timeout=1800,
+        if not SMOKE.is_file():
+            return fail("缺独立 smoke exe：%s" % SMOKE)
+        stage_smoke = pkgdir / "xrkit_smoke.exe"
+        shutil.copy2(SMOKE, stage_smoke)
+        smoke = subprocess.run([str(stage_smoke)], capture_output=True, timeout=1800,
                                cwd=str(pkgdir))
         st = ((smoke.stdout or b"") + (smoke.stderr or b"")).decode("utf-8", "replace")
         # ★★ B-4（第三方只读审计 2026-10-18）：**优先认新 ASCII 行**（`PLUGIN-PAGES pages=…`），

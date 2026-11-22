@@ -55,6 +55,7 @@ TARGETS = [
     ("XRKIT_WINRES_CLI", "xrkit_cli.exe", "引擎命令行"),
     ("XRKIT_WINRES_APP", "xrkit_app.exe", "图形外壳"),
     ("XRKIT_WINRES_GUI", "xrkit_build_gui.exe", "构建器"),
+    ("XRKIT_WINRES_SMOKE", "xrkit_smoke.exe", "外壳自检"),
 ]
 
 

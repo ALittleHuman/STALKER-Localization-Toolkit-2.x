@@ -39,6 +39,7 @@ CLI_EXE = BUILD_DIR / "tools" / "cli" / "xrkit_cli.exe"
 # Qt6 外壳是**另一个构建目录**：CLI 侧那条"core/engine 脱离 Qt 也能编"的约束因此仍被真实检验
 SHELL_BUILD_DIR = ROOT / "build" / "msvc-shell"
 SHELL_EXE = SHELL_BUILD_DIR / "src" / "shell" / "xrkit_app.exe"
+SMOKE_EXE = SHELL_BUILD_DIR / "src" / "shell" / "xrkit_smoke.exe"
 ENV_CACHE = ROOT / "build" / "msvc_env.txt"
 
 VS_ROOT = Path(os.environ.get("XRKIT_VS", r"E:\Software\Tools\Visual Studio\2022\BuildTools"))
@@ -143,7 +144,7 @@ def run(cmd: list[str], env: dict[str, str] | None = None, timeout: int = 600) -
     #   （＝本次构建产出的），用户从 dist/ 之外开的实例一律不碰。
     def _kill_own_app_processes() -> int:
         script = (
-            "Get-Process xrkit_app -ErrorAction SilentlyContinue | "
+            "Get-Process xrkit_app,xrkit_smoke -ErrorAction SilentlyContinue | "
             "Where-Object { $_.Path -and $_.Path.StartsWith('%s', "
             "[System.StringComparison]::OrdinalIgnoreCase) } | "
             "ForEach-Object { $_.Id }" % str(ROOT).replace("'", "''"))
@@ -2391,7 +2392,10 @@ def step_shell_smoke(release: bool) -> None:
         else:
             fail("构建 GUI 排版口径不通过（退出码 %d，见上）" % rc_gui)
 
-    rc, out = run([str(SHELL_EXE), "--smoke"], env=env, timeout=300)
+    if not SMOKE_EXE.is_file():
+        fail("缺独立 smoke exe：%s（先构建 xrkit_smoke）" % SMOKE_EXE)
+        return
+    rc, out = run([str(SMOKE_EXE)], env=env, timeout=300)
     for line in out.splitlines():
         s = line.strip()
         if s.startswith("SHELL-SMOKE") or s.startswith("!!"):
