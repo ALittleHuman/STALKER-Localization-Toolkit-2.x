@@ -922,11 +922,21 @@ if ($VersionString -eq '') {
         }
     }
 }
-# 从 `-VersionString`（形如 "2.0.0 ALPHA.13"）拆出 主版本 / 标记 / 序号
+# 从 `-VersionString` 拆出 主版本 / 标记 / 序号。
+# 模型 C（2026-11-20 起）CLI 传的是**数字版本串** `2.0.0.513`，不含标记；
+# 此时标记必须从 version.json.current.prerelease 取，不能默认 ALPHA。
 $verMajor = '2.0.0'
 $marker   = 'ALPHA'
 $idx      = 0
-if ($VersionString -match '^\s*(\S+)\s+([A-Za-z]+)\.?(\d*)') {
+if ($VersionString -match '^\s*(\d+\.\d+\.\d+)(?:\.\d+)?\s*$') {
+    $verMajor = $Matches[1]
+    if ($BuildIndex -gt 0) { $idx = [int]$BuildIndex }
+    $vjMarker = Join-Path $root 'version.json'
+    if (Test-Path $vjMarker) {
+        $curMarker = (Get-Content -LiteralPath $vjMarker -Raw -Encoding UTF8 | ConvertFrom-Json).current
+        if ($curMarker -and $curMarker.prerelease) { $marker = ([string]$curMarker.prerelease).ToUpper() }
+    }
+} elseif ($VersionString -match '^\s*(\S+)\s+([A-Za-z]+)\.?(\d*)') {
     $verMajor = $Matches[1]
     $marker   = $Matches[2].ToUpper()
     if ($Matches[3] -ne '') { $idx = [int]$Matches[3] }

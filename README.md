@@ -2,7 +2,7 @@
 
 面向 X-Ray 引擎（SoC / Clear Sky / CoP / IX-Ray）的资源查看、解包、文本提取与汉化包生成工具。
 
-- 当前源码版本：`2.0.0 BETA.253`（正式交付以 `dist\2.0.0\<MARK>\<n>` 为准）
+- 当前源码版本：`2.0.0.513（BETA.254）`（正式交付以 `dist\2.0.0\<MARK>\<n>` 为准）
 - 运行环境：Windows 10/11 x64；发行包自带 Qt6 运行库与 Python 3.14，**不需要系统 Python**
 - 只写你自己的输出目录、`logs\` 与工具自己的 `xrkit_user.ltx`；**不会安装或修改游戏文件**（解包/封包含"装进游戏"的只有你手动指定的目标目录）
 
@@ -121,7 +121,7 @@ scripts\release.ps1 -Index <n> -Mark BETA :: 本地构建+打包+校验（不发
    插件之间用 `api.services` 联动；直接 `import` 别的插件必须在 `PLUGIN_INFO.depends` 里声明，
    且运行时禁止。`plugins\*_page.py` 是**非产品夹具**（API 示例），不承诺生产可用；
    插件 API 目前标记为实验性。
-3. **"文本提取"只有 CLI**：`--extract-text`；内置页里没有这一页。
+3. **文本提取已并入文本工具页**：页面模式「提取文本」与 `xrkit_cli --extract-text` 同一份引擎实现。
 4. **LZHUF 上限**：极难压缩的数据在封包时可能触发编码失败，此时产物可能不可用；
    建议封包后用 `xrkit_cli --dump <包>` 验证一下，遇到读不出的包请附样本与日志反馈。
 5. **8.x ffmpeg** 被有意拒绝；`--patch-offsets` 与 IXR 矢量字库的语义不同，别混用。
