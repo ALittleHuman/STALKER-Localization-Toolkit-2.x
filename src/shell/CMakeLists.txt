@@ -34,7 +34,8 @@ screen_scale.cpp
   pages/convert_page.cpp
   pages/xml_page.cpp
   pages/video_page.cpp
-  pages/fontpack_page.cpp)
+  pages/fontpack_page.cpp
+  watchdog.cpp)
 
 target_include_directories(xrkit_shell PUBLIC "${CMAKE_SOURCE_DIR}/include")
 target_link_libraries(xrkit_shell

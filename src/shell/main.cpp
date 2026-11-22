@@ -19,6 +19,7 @@
 #include "pages/video_page.h"
 #include "screen_scale.h"
 #include "theme.h"
+#include "watchdog.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -132,6 +133,10 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("STALKER Toolkit 2.x"));
     QApplication::setApplicationVersion(QStringLiteral("2.0.0"));
+    xrkit::shell::start_ui_watchdog();
+    QTimer ui_heartbeat_timer;
+    QObject::connect(&ui_heartbeat_timer, &QTimer::timeout, [] { xrkit::shell::ui_heartbeat(); });
+    ui_heartbeat_timer.start(1000);
     // ★ 发布前清障：解释器退出前调用插件的 shutdown/on_unload（Hub 先析构，再跑这里）。
     struct PythonShutdownGuard {
         ~PythonShutdownGuard() { xrkit::plugin::shutdown_python(); }
