@@ -87,16 +87,20 @@ def main():
         print("PKG-RELEASE skip version.h 里读不出 kVersionMajor/Minor/Patch")
         return 2
     mainver = "%s.%s.%s" % (mv.group(1), mn.group(1), mp.group(1))
-    # `kChannel` = "<标记>.<序号>"
-    if "." not in hdr:
-        print("PKG-RELEASE skip kChannel 形状不对：%r（期望「标记.序号」）" % hdr)
-        return 2
-    mark, idx = hdr.split(".", 1)
-    expect = "%s %s" % (mainver, hdr)
-    if hdr != "%s.%s" % (vcur["prerelease"], vcur["index"]):
-        print("  前提：`version.h`=%r、`version.json`=%r 不一致 —— 本次按 **version.h** 打包"
-              "（它是包内 exe 的直接来源；不一致本身由 `version-identity` 步负责判）"
-              % (hdr, "%s.%s" % (vcur["prerelease"], vcur["index"])))
+    # 模型 C：kChannel 只是通道名（BETA/RC/ALPHA），身份在 kBuildNumber；
+    # version.json.current.index 只决定 dist 落点。旧模型 kChannel 仍是 "BETA.N"。
+    mb = re.search(r"kBuildNumber\s*=\s*(\d+)", vh_text)
+    build_no = int(mb.group(1)) if mb else -1
+    if "." in hdr:
+        mark, idx = hdr.split(".", 1)
+        expect = "%s %s" % (mainver, hdr)
+    else:
+        mark = hdr
+        idx = str(vcur["index"])
+        expect = "%s.%d" % (mainver, build_no)
+        if hdr != vcur["prerelease"] or int(idx) != int(vcur["index"]):
+            print("  前提：`version.h`=%s/%d、`version.json`=%s/%s 不一致 —— 本次按 version.h"
+                  % (hdr, build_no, vcur["prerelease"], vcur["index"]))
     # ★ 不用 tempfile：`package.ps1:607` 是 `$dist = Join-Path $root $OutDir`，
     #   所以 `-OutDir` **必须是相对仓库根**的目录名（默认 dist）——
     #   传绝对路径会被拼成 `E:/.../2.x/C:/.../dist` ⇒ `New-Item` 报
