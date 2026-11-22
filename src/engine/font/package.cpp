@@ -589,7 +589,7 @@ bool is_hud_section(const std::string& name, const std::string& texture_value) {
            value.find("ui/fonts/") != std::string::npos;
 }
 
-RefFontsLtx rewrite_ref_fonts_ltx(const std::string& in) {
+RefFontsLtx rewrite_ref_fonts_ltx(const std::string& in, const std::string& suffix) {
     RefFontsLtx out;
     out.ltx.reserve(in.size() + 64);
     size_t pos = 0;
@@ -629,7 +629,8 @@ RefFontsLtx rewrite_ref_fonts_ltx(const std::string& in) {
                     int size = last_number_in(section, 0);
                     if (size <= 0) size = last_number_in(base, 0);
                     if (size > 0) {
-                        const std::string new_base = "ui_font_" + std::to_string(size);
+                        const std::string new_base =
+                            "ui_font_" + std::to_string(size) + suffix;
                         const std::string new_value = "ui\\" + new_base;
                         line = raw.substr(0, raw.find('=') + 1);
                         // 保留 `= ` 之后的原空白量（对齐观感）
@@ -671,6 +672,31 @@ RefFontsLtx rewrite_ref_fonts_ltx(const std::string& in) {
             const std::string base = basename_of_texture(value);
             if (is_standard_font_texture(base)) {
                 out.sizes.push_back(last_number_in(base, 0));
+                // ★ 2026-11-22（用户）：文件叫 `ui_font_11_chs.dds`，ltx 就必须写 `ui_font_11_chs`；
+                //   否则游戏读的是原版 `ui_font_11`，我们生成的字体根本没被引用。
+                if (!suffix.empty()) {
+                    const size_t value_at = sp + 1 + (out.ltx.compare(sp + 1, 1, " ") == 0 ? 1 : 0);
+                    std::string new_value = out.ltx.substr(value_at, (e == std::string::npos
+                                                                         ? out.ltx.size()
+                                                                         : e) - value_at);
+                    size_t b = 0;
+                    while (b < new_value.size() && (new_value[b] == ' ' || new_value[b] == '\t')) ++b;
+                    new_value.erase(0, b);
+                    while (!new_value.empty() &&
+                           (new_value.back() == ' ' || new_value.back() == '\t' ||
+                            new_value.back() == '\r')) {
+                        new_value.pop_back();
+                    }
+                    if (new_value.size() > base.size() &&
+                        new_value.compare(new_value.size() - base.size(), base.size(), base) == 0) {
+                        const std::string replaced =
+                            new_value.substr(0, new_value.size() - base.size()) + base + suffix;
+                        out.ltx.replace(value_at, (e == std::string::npos ? out.ltx.size()
+                                                                         : e) - value_at,
+                                        replaced);
+                        ++out.rewritten;
+                    }
+                }
             }
         }
         sp += 1;
@@ -850,7 +876,8 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
         // 否则回落内置模板（并告警），否则会套一份"写不出任何字库"的模板。
         // 有 fonts.ltx 且**能推出要生成的槽位**才算可用（hud-only 那种推不出 ⇒ 回落内置）
         const bool ref_template_usable =
-            !scan.fonts_ltx.empty() && !rewrite_ref_fonts_ltx(scan.fonts_ltx).sizes.empty();
+            !scan.fonts_ltx.empty() &&
+            !rewrite_ref_fonts_ltx(scan.fonts_ltx, request.suffix).sizes.empty();
         if (ref_template_usable) {
             // 位图 writer 是**逐字节套模板**：段名/纹理名/空行都必须原样来自参照包。
             opt.fonts_ltx_text = scan.fonts_ltx;
@@ -1194,17 +1221,17 @@ PackageResult build_package(const PackageOptions& opt) {
     // ★ 2026-11-21（用户口径）：**有 fonts.ltx 就按它生成**（里面定义了几个字号就做几个）；
     //   没有参照 / 参照缺 fonts.ltx ⇒ 内置模板，固定 10 档。
     std::vector<FontSize> slots;
-    std::string effective_fonts_ltx = opt.fonts_ltx_text;
-    if (!opt.fonts_ltx_text.empty()) {
-        // ★ 2026-11-21（用户「段表修」）：整段保留参照包的段表；非标准纹理名按段名数字
-        //   生成新槽位并改写引用。hud/console 段不动。
-        const RefFontsLtx ref = rewrite_ref_fonts_ltx(opt.fonts_ltx_text);
-        effective_fonts_ltx = ref.ltx;
-        for (int size : ref.sizes) slots.push_back(FontSize{size, size >= 16 ? 1 : 0});
-        if (ref.rewritten > 0) {
-            res.warnings.push_back("fonts.ltx 有 " + std::to_string(ref.rewritten) +
-                                   " 行纹理引用按段名数字改写（非标准纹理名）");
-        }
+    // ★ 2026-11-21/22：**模板统一走改写** —— 段表整段保留；非标准纹理名按段名数字生成；
+    //   并且所有指向我们字库的纹理名都带上 `--suffix`（否则 ltx 引用的不是我们产出的文件）。
+    //   内置模板也走同一条（它同样可能带后缀）。
+    const std::string template_text =
+        opt.fonts_ltx_text.empty() ? std::string(game->fonts_ltx) : opt.fonts_ltx_text;
+    const RefFontsLtx ref = rewrite_ref_fonts_ltx(template_text, opt.suffix);
+    std::string effective_fonts_ltx = ref.ltx;
+    for (int size : ref.sizes) slots.push_back(FontSize{size, size >= 16 ? 1 : 0});
+    if (ref.rewritten > 0) {
+        res.warnings.push_back("fonts.ltx 有 " + std::to_string(ref.rewritten) +
+                               " 行纹理引用已按实际文件名改写（段名数字/后缀）");
     }
     if (slots.empty()) slots.assign(std::begin(kFontSizes), std::end(kFontSizes));
     for (const FontSize& slot : slots) {
@@ -1347,8 +1374,7 @@ PackageResult build_package(const PackageOptions& opt) {
     replace_all(loc, "_#LANG#", opt.suffix);
     replace_all(loc, "#LANG#", lang);
     if (!write_text(join(cfg_root, "fonts.ltx"),
-                    to_windows_newlines(opt.fonts_ltx_text.empty() ? game->fonts_ltx
-                                                                   : effective_fonts_ltx)) ||
+                    to_windows_newlines(effective_fonts_ltx)) ||
         !write_text(join(cfg_root, "localization.ltx"), to_windows_newlines(loc))) {
         res.error = "写不出 fonts.ltx / localization.ltx";
         remove_tree(out_gd);
