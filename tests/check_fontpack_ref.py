@@ -237,7 +237,7 @@ def main() -> int:
         check("writer=bitmap" in text and "未知游戏版本" not in text,
               "④h 不再要求用户提前填 --game", text.strip()[-300:])
 
-        print("== ④j 带 --suffix：fonts.ltx 必须引用带后缀的实际文件名 ==")
+        print("== ④j --suffix：文件带后缀、fonts.ltx 不带、后缀落在 localization.ltx ==")
         ref_sfx = work / "sfx_ref"
         gd7 = ref_sfx / "gamedata"
         (gd7 / "configs").mkdir(parents=True)
@@ -248,11 +248,15 @@ def main() -> int:
         (gd7 / "textures" / "ui" / "ui_font_11.dds").write_bytes(a8_dds_header())
         out_sfx = work / "out_sfx"
         text = run(base + ["--ref", str(ref_sfx), "--out", str(out_sfx), "--suffix", "_chs"])
-        produced_sfx = out_sfx / "gamedata" / "configs" / "fonts.ltx"
-        body_sfx = produced_sfx.read_text(encoding="utf-8") if produced_sfx.is_file() else ""
-        check("ui_font_11_chs" in body_sfx, "④j ltx 引用带后缀的文件名", body_sfx[:200])
+        body_sfx = (out_sfx / "gamedata" / "configs" / "fonts.ltx").read_text(encoding="utf-8")
+        check("ui_font_11" in body_sfx and "ui_font_11_chs" not in body_sfx,
+              "④j fonts.ltx 写基础名（后缀由引擎按 font_prefix 拼）", body_sfx[:200])
         check((out_sfx / "gamedata" / "textures" / "ui" / "ui_font_11_chs.dds").is_file(),
-              "④j 生成的文件名确实带后缀")
+              "④j 实际文件带后缀")
+        loc_sfx = out_sfx / "gamedata" / "configs" / "localization.ltx"
+        loc_body = loc_sfx.read_text(encoding="utf-8") if loc_sfx.is_file() else ""
+        check("font_prefix" in loc_body and "_chs" in loc_body,
+              "④j 后缀落在 localization.ltx 的 font_prefix", loc_body[:160])
 
         print("== ⑤ 非法 writer 值：明确报错（不是静默忽略） ==")
         text = run(base + ["--ref", str(ref), "--out", str(work / "out_bogus"),
