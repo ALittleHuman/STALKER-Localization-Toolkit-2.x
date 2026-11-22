@@ -126,21 +126,59 @@ bool parse_update_payload(const std::string& body, bool allow_test, AppUpdateInf
         if (error != nullptr) *error = QStringLiteral("更新源不是 JSON");
         return false;
     }
-    const auto fill_release = [](const QJsonObject& obj, AppUpdateInfo* out) {
+    // 版本串/资产名里**最后一段数字**（`2.0.0.254`、`254.zip` 都取到 "254"）。
+    const auto last_digits = [](const QString& text) {
+        int end = -1;
+        int begin = -1;
+        for (int i = text.size() - 1; i >= 0; --i) {
+            if (text.at(i).isDigit()) {
+                if (end < 0) end = i;
+                begin = i;
+            } else if (end >= 0) {
+                break;
+            }
+        }
+        return end < 0 ? QString() : text.mid(begin, end - begin + 1);
+    };
+    const auto fill_release = [&last_digits](const QJsonObject& obj, AppUpdateInfo* out) {
         out->version = obj.value(QStringLiteral("tag_name")).toString().trimmed();
+        out->packages.clear();
+        out->sha256.clear();
+        // ★ 2026-11-22：一个 Release 可能有多个 zip（例如 `254.zip` 与别的附件）。
+        //   修前把所有 zip 的镜像都收进 packages、却只取**第一个**的 digest ⇒
+        //   下载走到第二个 zip 时校验必然对不上（或装错包）。
+        //   现在：优先挑**版本号 build 对得上**的那个 zip，其余忽略；digest 跟着同一个资产走。
+        struct ZipAsset {
+            QString name;
+            QString url;
+            QString digest;
+        };
+        QVector<ZipAsset> zips;
         for (const QJsonValue& value : obj.value(QStringLiteral("assets")).toArray()) {
             const QJsonObject asset = value.toObject();
             const QString name = asset.value(QStringLiteral("name")).toString();
             if (!name.endsWith(QStringLiteral(".zip"), Qt::CaseInsensitive)) continue;
-            const QString url = asset.value(QStringLiteral("browser_download_url")).toString();
-            if (!url.isEmpty()) out->packages << package_mirrors(url);
-            if (out->sha256.isEmpty()) {
-                const QString digest = asset.value(QStringLiteral("digest")).toString();
-                if (digest.startsWith(QStringLiteral("sha256:"), Qt::CaseInsensitive)) {
-                    out->sha256 = digest.mid(7).trimmed().toLower();
-                }
+            ZipAsset zip;
+            zip.name = name;
+            zip.url = asset.value(QStringLiteral("browser_download_url")).toString();
+            const QString digest = asset.value(QStringLiteral("digest")).toString();
+            if (digest.startsWith(QStringLiteral("sha256:"), Qt::CaseInsensitive)) {
+                zip.digest = digest.mid(7).trimmed().toLower();
+            }
+            if (!zip.url.isEmpty()) zips.push_back(zip);
+        }
+        if (zips.isEmpty()) return false;
+        const QString want = last_digits(out->version);
+        const ZipAsset* chosen = nullptr;
+        for (const ZipAsset& zip : zips) {
+            if (!want.isEmpty() && last_digits(zip.name) == want) {
+                chosen = &zip;
+                break;
             }
         }
+        if (chosen == nullptr) chosen = &zips.first();
+        out->packages = package_mirrors(chosen->url);
+        out->sha256 = chosen->digest;
         const QString npm_url = npm_update_url(out->version);
         if (!npm_url.isEmpty()) out->packages.prepend(npm_url);
         out->packages.removeDuplicates();
