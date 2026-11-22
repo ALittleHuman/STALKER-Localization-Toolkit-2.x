@@ -1,3 +1,4 @@
+#include "xrkit/engine/fs/overlay.h"
 #include "xrkit/engine/font/package.h"
 #include "xrkit/engine/font/ixr.h"
 
@@ -90,16 +91,14 @@ void write_font_manifest(const std::string& out_dir, const std::vector<std::stri
 
 // 收集 staged 里的字体相对路径（以 `gamedata/` 开头）
 std::vector<std::string> collect_staged_fonts(const std::string& staged_gd) {
-    namespace fs = std::filesystem;
+    // ★ D2（同类只有一套）：递归遍历一律转调 `fs::collect_tree`，不在这里再写一份。
     std::vector<std::string> out;
-    std::error_code ec;
-    const fs::path root = core::path_from_utf8(staged_gd);
-    for (fs::recursive_directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
-        if (!it->is_regular_file(ec)) continue;
-        const std::string rel = core::path_to_utf8(fs::relative(it->path(), root, ec));
-        if (ec) { ec.clear(); continue; }
-        if (rel.rfind("textures/ui/ui_font_", 0) != 0) continue;
-        out.push_back("gamedata/" + rel);
+    xrkit::engine::fs::WalkReport walk;
+    for (const xrkit::engine::fs::TreeItem& item :
+         xrkit::engine::fs::collect_tree(staged_gd, &walk)) {
+        if (item.is_dir) continue;
+        if (item.path.rfind("textures/ui/ui_font_", 0) != 0) continue;
+        out.push_back("gamedata/" + item.path);
     }
     std::sort(out.begin(), out.end());
     return out;
@@ -478,13 +477,13 @@ RefFontScan scan_ref_font(const std::string& ref) {
     // ② 证据计数（不递归太深：fonts/<lang>/*.ttf、textures/ui/ui_font_*.dds）
     // 按**后缀**数（不是前缀）：`a.ttf` 的扩展名在结尾。
     const auto count_ext = [](const fs::path& dir, const std::string& ext) {
+        // ★ D2：遍历转调 `fs::collect_tree`（不新增 recursive_directory_iterator）。
         int n = 0;
-        std::error_code count_ec;
-        if (!fs::is_directory(dir, count_ec)) return n;
-        for (fs::recursive_directory_iterator it(dir, count_ec), end; !count_ec && it != end;
-             it.increment(count_ec)) {
-            if (!it->is_regular_file(count_ec)) continue;
-            const std::string name = core::path_to_utf8(it->path().filename());
+        xrkit::engine::fs::WalkReport walk;
+        for (const xrkit::engine::fs::TreeItem& item :
+             xrkit::engine::fs::collect_tree(core::path_to_utf8(dir), &walk)) {
+            if (item.is_dir) continue;
+            const std::string& name = item.path;
             if (name.size() > ext.size() &&
                 name.compare(name.size() - ext.size(), ext.size(), ext) == 0) {
                 ++n;
