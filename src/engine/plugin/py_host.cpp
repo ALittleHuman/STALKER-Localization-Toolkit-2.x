@@ -2776,6 +2776,7 @@ public:
         core::DownloadOptions options;
         options.target = path;
         options.urls = std::move(urls);
+        options.owner = owner_;
         options.max_bytes = max_bytes;
         options.timeout_sec = timeout_sec;
         options.workers = std::max(1, std::min(workers, 6));

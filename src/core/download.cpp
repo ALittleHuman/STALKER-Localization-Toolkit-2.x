@@ -366,6 +366,17 @@ bool DownloadManager::cancel(std::uint64_t job_id) {
     return true;
 }
 
+void DownloadManager::cancel_owner(const std::string& owner) {
+    std::vector<std::shared_ptr<Job>> matched;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        for (const auto& item : impl_->jobs) {
+            if (item.second->options.owner == owner) matched.push_back(item.second);
+        }
+    }
+    for (const auto& job : matched) job->cancel.store(true);
+}
+
 bool DownloadManager::status(std::uint64_t job_id, DownloadStatus* out) const {
     if (out == nullptr) return false;
     std::shared_ptr<Job> job;

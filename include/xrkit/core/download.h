@@ -18,6 +18,7 @@ struct DownloadOptions {
     std::string target;
     std::vector<std::string> urls;
     std::string sha256;
+    std::string owner;  // 可选：插件 owner；卸载时按 owner 取消
     std::size_t max_bytes = 8u << 30;
     int timeout_sec = 300;
     int workers = 4;
@@ -40,6 +41,8 @@ public:
 
     std::uint64_t start(const DownloadOptions& options);
     bool cancel(std::uint64_t job);
+    // 取消某个 owner 名下的全部任务（插件 unload / reload 时调用）。
+    void cancel_owner(const std::string& owner);
     bool status(std::uint64_t job, DownloadStatus* out) const;
     // 供同步调用方等待；timeout_ms < 0 表示无限等待。
     bool wait(std::uint64_t job, DownloadStatus* out, int timeout_ms = -1);
