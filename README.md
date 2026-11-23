@@ -77,6 +77,7 @@ xrkit_cli.exe --font-pack ^
 - 所有 `ui_font_*` 段都参与生成（含 electron 和 `ui\fonts\` 下的自定义段）；HUD/STAT 基础字体跳过；
 - IX-Ray 矢量包会写 `gamedata/configs/engine_external.ltx` 的 `FontAtlasSize=8192`；
 - 特殊字体是否保留原贴图/英文由生成后人工复核。
+- 可变字体（如 NotoSansSC-VF）会读取 `wght` 轴：页面有「字重」下拉与「字重预览」，默认 700；可预览后选择 100–900。
 
 ### 4）更新
 

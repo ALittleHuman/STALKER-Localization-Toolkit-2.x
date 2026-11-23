@@ -6,6 +6,7 @@
 #include "xrkit/engine/font/ixr.h"
 #include "xrkit/engine/font/langpack.h"
 #include "xrkit/engine/font/metrics.h"
+#include "xrkit/engine/font/render.h"
 #include "xrkit/engine/font/system_dirs.h"
 
 #include "../task_shell.h"
@@ -18,7 +19,9 @@
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontDatabase>
@@ -34,8 +37,10 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSlider>
 #include <QSet>
 #include <QTimer>
 #include <QToolButton>
@@ -59,6 +64,7 @@ constexpr const char* kFontKey = "path";
 // ★★ 2026-10-25：**再记一项"玩家选择的字体"**（家族名，如 `NotoSansSC`）——
 //   路径会因移动/改名失效，名字不会。与 `path` 在**同一次** `save_user_values` 里写（不做两次写盘）。
 constexpr const char* kFontNameKey = "name";
+constexpr const char* kFontWeightKey = "weight";
 
 // 字体后缀白名单（1.x `:501-503`：**小写比较**，逐个 fnmatch）
 const char* kFontExts[] = {".ttf", ".ttc", ".otf"};
@@ -133,6 +139,50 @@ FontPackPage::FontPackPage(QWidget* parent)
                                       QStringLiteral("选择 XML 目录"), xml_judge));
     body_layout()->addWidget(path_row(QStringLiteral("字体："), font_edit_, false,
                                       QStringLiteral("选择字体文件"), font_judge));
+
+    // 可变字体字重：只在字体有 wght 轴时启用；旁边是独立预览（不阻塞生成）。
+    {
+        auto* container = ui::make_transparent_row();
+        auto* layout = new QHBoxLayout(container);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->addWidget(new QLabel(QStringLiteral("字重：")), 0);
+        weight_combo_ = new QComboBox;
+        weight_combo_->setObjectName(QStringLiteral("font_weight"));
+        // 这一行是后加的，直接套主题令牌；否则 QComboBox 默认底色在离屏渲染里是黑。
+        weight_combo_->setStyleSheet(
+            QStringLiteral("QComboBox { background: %1; color: %2; } QComboBox:disabled { background: %1; color: %3; }")
+                .arg(QString::fromLatin1(xrkit::core::theme_color_current("entry_bg")),
+                     QString::fromLatin1(xrkit::core::theme_color_current("text")),
+                     QString::fromLatin1(xrkit::core::theme_color_current("text_dim"))));
+        for (int weight = 100; weight <= 900; weight += 100) {
+            weight_combo_->addItem(QString::number(weight), weight);
+        }
+        const int saved = utf8(xrkit::core::load_user_value("font", kFontWeightKey, "700")).toInt();
+        const int index = weight_combo_->findData(saved);
+        weight_combo_->setCurrentIndex(index >= 0 ? index : weight_combo_->findData(700));
+        weight_combo_->setEnabled(false);
+        weight_combo_->setVisible(false);
+        layout->addWidget(weight_combo_, 0);
+        weight_hint_ = new QLabel(QStringLiteral("先选择字体"));
+        weight_hint_->setObjectName(QStringLiteral("font_weight_hint"));
+        layout->addWidget(weight_hint_, 1);
+        weight_preview_ = new QPushButton(QStringLiteral("字重预览…"));
+        weight_preview_->setObjectName(QStringLiteral("font_weight_preview_button"));
+        layout->addWidget(weight_preview_, 0);
+        QObject::connect(weight_preview_, &QPushButton::clicked, this,
+                         [this] { preview_weight(); });
+        QObject::connect(weight_combo_, &QComboBox::currentIndexChanged, this,
+                         [this](int) {
+                             if (weight_combo_ != nullptr) {
+                                 xrkit::core::save_user_value("font", kFontWeightKey,
+                                     QString::number(weight_combo_->currentData().toInt()).toStdString());
+                             }
+                         });
+        QObject::connect(font_edit_, &QLineEdit::editingFinished, this,
+                         [this] { refresh_state(); });
+        body_layout()->addWidget(container);
+    }
+
     body_layout()->addWidget(path_row(QStringLiteral("输出目录："), out_edit_, true,
                                       QStringLiteral("选择输出目录"), out_judge));
 
@@ -259,6 +309,7 @@ FontPackPage::FontPackPage(QWidget* parent)
                                                       "（TTF 是矢量，不重烘；文本不动）")
                                      : QStringLiteral("标准始终生成；勾选额外档位会生成只含字体纹理的补丁"));
                          }
+                         refresh_weight_controls();
                          if (cyrillic_box_ != nullptr) cyrillic_box_->setEnabled(!ixr);
                      });
     // 1.x `:71-82`：加载语言初始给 eng/rus/chs；**扫描后从参照包追加实际语言**（自定义才显示输入框）
@@ -561,6 +612,120 @@ QString FontPackPage::font_state_text(const QString& font_path) const {
 void FontPackPage::refresh_state() {
     if (state_label_ == nullptr) return;
     state_label_->setText(QStringLiteral("字体状态：") + font_state_text(font_edit_->text().trimmed()));
+    refresh_weight_controls();
+}
+
+void FontPackPage::refresh_weight_controls() {
+    if (weight_combo_ == nullptr || weight_hint_ == nullptr) return;
+    const QString font = font_edit_->text().trimmed();
+    const bool vector = game_combo_ != nullptr &&
+                        game_combo_->currentData().toString() == QStringLiteral("IX-Ray");
+    if (vector) {
+        weight_combo_->setEnabled(false);
+        weight_combo_->setVisible(false);
+        weight_preview_->setEnabled(false);
+        weight_hint_->setText(QStringLiteral("IX-Ray 矢量路径不按 wght 重烘；位图包才生效"));
+        return;
+    }
+    if (font.isEmpty()) {
+        weight_combo_->setEnabled(false);
+        weight_combo_->setVisible(false);
+        weight_preview_->setEnabled(false);
+        weight_hint_->setText(QStringLiteral("先选择字体"));
+        return;
+    }
+    const engine::font::FontVariationInfo info =
+        engine::font::font_variation_info(font.toStdString());
+    weight_preview_->setEnabled(info.ok);
+    if (!info.ok) {
+        weight_combo_->setEnabled(false);
+        weight_combo_->setVisible(false);
+        weight_hint_->setText(QStringLiteral("字体轴读取失败"));
+        return;
+    }
+    if (!info.variable || !info.has_wght) {
+        weight_combo_->setEnabled(false);
+        weight_combo_->setVisible(false);
+        weight_hint_->setText(QStringLiteral("静态字体（无 wght 轴）"));
+        return;
+    }
+    weight_combo_->setEnabled(true);
+    weight_combo_->setVisible(true);
+    weight_hint_->setText(QStringLiteral("可变字体：wght %1–%2（默认 %3）")
+                              .arg(info.wght_min).arg(info.wght_max).arg(info.wght_default));
+    weight_hint_->setToolTip(QStringLiteral("生成时按所选 wght 轴实例化；静态字体忽略此选项"));
+}
+
+void FontPackPage::preview_weight() {
+    const QString font = font_edit_->text().trimmed();
+    if (font.isEmpty()) return;
+    const engine::font::FontVariationInfo info =
+        engine::font::font_variation_info(font.toStdString());
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("字重预览"));
+    dialog.setObjectName(QStringLiteral("font_weight_preview_dialog"));
+    dialog.resize(xrkit::core::px(860), xrkit::core::px(260));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* title = new QLabel(QStringLiteral("汉化测试你好 Привет 123"), &dialog);
+    title->setObjectName(QStringLiteral("font_weight_preview_title"));
+    layout->addWidget(title);
+    auto* slider = new QSlider(Qt::Horizontal, &dialog);
+    slider->setObjectName(QStringLiteral("font_weight_preview_slider"));
+    auto* image = new QLabel(&dialog);
+    image->setObjectName(QStringLiteral("font_weight_preview_image"));
+    image->setAlignment(Qt::AlignCenter);
+    image->setMinimumHeight(xrkit::core::px(110));
+    auto* status = new QLabel(&dialog);
+    status->setObjectName(QStringLiteral("font_weight_preview_status"));
+    status->setWordWrap(true);
+    layout->addWidget(slider);
+    layout->addWidget(image, 1);
+    layout->addWidget(status);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    layout->addWidget(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    bool preview_ok = info.ok;
+    int initial = weight_combo_ != nullptr ? weight_combo_->currentData().toInt() : 700;
+    if (info.variable && info.has_wght) {
+        slider->setRange(info.wght_min, info.wght_max);
+        slider->setSingleStep(10);
+        slider->setPageStep(100);
+        initial = std::max(info.wght_min, std::min(info.wght_max, initial));
+        slider->setValue(initial);
+        status->setText(QStringLiteral("拖动滑块预览 wght（当前 %1）").arg(initial));
+    } else {
+        slider->setEnabled(false);
+        status->setText(info.ok ? QStringLiteral("静态字体：没有 wght 轴，预览使用字体默认字重")
+                                : QStringLiteral("字体轴读取失败：%1").arg(utf8(info.error)));
+    }
+
+    const auto render = [font, image, status, title, preview_ok](int weight) {
+        if (!preview_ok) return;
+        const QString ppm = QDir::temp().filePath(QStringLiteral("xrkit_font_weight_preview.ppm"));
+        const engine::font::TextSample sample = engine::font::render_text_sample(
+            font.toStdString(), title->text().toStdString(), 56, ppm.toStdString(), weight);
+        if (!sample.ok) {
+            image->setText(QStringLiteral("预览失败：%1").arg(utf8(sample.error)));
+            return;
+        }
+        QPixmap pixmap;
+        if (!pixmap.load(ppm)) {
+            image->setText(QStringLiteral("预览图读取失败"));
+            return;
+        }
+        image->setPixmap(pixmap);
+        if (weight > 0) {
+            status->setText(QStringLiteral("wght=%1　缺字 %2 个").arg(weight).arg(sample.missing));
+        } else {
+            status->setText(QStringLiteral("字体默认字重　缺字 %1 个").arg(sample.missing));
+        }
+        QFile::remove(ppm);
+    };
+    QObject::connect(slider, &QSlider::valueChanged, &dialog,
+                     [render](int value) { render(value); });
+    render(info.variable && info.has_wght ? slider->value() : 0);
+    dialog.exec();
 }
 
 engine::font::PackageOptions FontPackPage::options_for(const QString& xml_dir,
@@ -589,6 +754,7 @@ engine::font::PackageOptions FontPackPage::options_for(const QString& xml_dir,
     // ★ 2026-11-10：base 永远标准档（0）；额外档位进 patch_offsets（多选）。
     options.offset = 0;
     options.patch_offsets = size_offsets();
+    options.font_weight = weight_combo_ != nullptr ? weight_combo_->currentData().toInt() : 700;
     options.full_cyrillic = cyrillic_box_->isChecked();
     return options;
 }
@@ -670,6 +836,7 @@ FontPackPage::BuildOutcome FontPackPage::run_build_one(
     request.offset = options.offset;
     request.only_sizes = options.only_sizes;
     request.patch_only = options.patch_only;
+    request.font_weight = options.font_weight;
     request.missing_warn = true;   // 缺字不阻断（弹窗告知处置）
     request.require_full_cyrillic = options.require_full_cyrillic;
 

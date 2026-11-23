@@ -68,7 +68,7 @@ xrkit_cli --font-pack ^
   --ref <参照包|builtin> ^
   --text-root <译文根|包根> ^
   --out <目录> ^
-  [--font <TTF>] [--game SoC|ClS|CoP] [--lang rus] [--langs rus] ^
+  [--font <TTF>] [--font-weight 700] [--game SoC|ClS|CoP] [--lang rus] [--langs rus] ^
   [--on-missing fail|warn] [--require-full-cyrillic] [--merge-glyphs <源TTF>] ^
   [--patch-offsets 3,-1] [--jsgme --jsgme-name <名>]
 ```
@@ -76,7 +76,7 @@ xrkit_cli --font-pack ^
 - `--ref builtin`：内置位图模板（SoC/ClS/CoP 可用）；
 - `--ref <目录>`：扫描 `fonts.ltx`，按证据选 writer（TTF ⇒ 矢量，`ui_font_*.dds` ⇒ 位图）；冲突/缺失时要求 `--writer bitmap|vector`；
 - `--text-root` 可给包根、`gamedata` 根、`gamedata/configs/text/<lang>` 或文本目录；
-- `--font` 省略时自动找 NotoSansSC → 微软雅黑；
+- `--font` 省略时自动找 NotoSansSC → 微软雅黑；可变字体的 `--font-weight` 直接设 `wght` 轴（100–900，默认 700）；
 - `--patch-offsets` 生成独立字号补丁，可与 `--jsgme` 同用；
 - JSGME 摆盘固定 `MODS\<名>\` 平铺；`--jsgme-category` 仅为兼容旧命令行，会告警并忽略；
 - 位图单图集最多 8192；50px 大字集硬扩到 8192×4096，不做多页/自动降字号；

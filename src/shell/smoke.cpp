@@ -29,6 +29,7 @@
 #include "drop_filter.h"
 #include "font_picker.h"
 #include "xrkit/engine/font/system_dirs.h"
+#include "xrkit/engine/font/render.h"
 #include "drop_zone.h"
 #include "log_box.h"
 #include "plugin_ui.h"
@@ -10033,6 +10034,14 @@ SmokeResult run_smoke() {
         FontPackPage page;
         page.resize(760, page_min_h());
         page.show();
+        // 可变字体识别：只在本机有 NotoSansSC-VF 时检查（外部前提缺件不伪装通过）。
+        const QString vf = QStringLiteral("C:/Windows/Fonts/NotoSansSC-VF.ttf");
+        if (QFileInfo::exists(vf)) {
+            const auto info = xrkit::engine::font::font_variation_info(vf.toStdString());
+            check(info.ok && info.variable && info.has_wght && info.wght_min >= 100 &&
+                      info.wght_max <= 900,
+                  QStringLiteral("可变字体识别失败（NotoSansSC-VF 的 wght 轴没读出来）"));
+        }
         QApplication::processEvents();
 
         // ★ 2026-11-09：测试字体路径**不许写死本机**（`XRKIT_TEST_CJK_FONT` 覆盖；默认系统 msyh）

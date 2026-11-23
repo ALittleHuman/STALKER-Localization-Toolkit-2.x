@@ -459,7 +459,7 @@ void print_usage() {
            "  --video-ffmpeg-probe [工具目录]    视频 ffmpeg 版本探测（打印 version_major / rejected）\n"
            "  --runtime-paths <工具目录>            依赖路由：[runtime] root / @APP@ 解析结果\n"
            "  --langpack-scan <语言包目录>      只读识别：profile/lang/槽位/资源（IX-Ray 生成器「指定」模式的底座）\n"
-           "  --font-sample <字体> <文本> <字号> <out.ppm>   文本样张（预览用；缺字计数）\n"
+           "  --font-sample <字体> <文本> <字号> <out.ppm> [wght]   文本样张（预览用；可变字重可给 100..900）\n"
            "  --ori-tree <源目录> <ori 目录> [--lang L] [--clean]\n"
            "                                   整树复制 + 容器内提取 + ori/<容器>/...（文本提取最终规划）\n"
            "  --version       打印版本\n"
@@ -6404,12 +6404,13 @@ if (action == "--diff-snapshot") {
     // IX-Ray 矢量包（外部 fonttools 助手；产品入口与页面共用一份）
     if (action == "--font-sample") {
         if (operands.size() < 4) {
-            std::cerr << "SAMPLE error reason=用法：--font-sample <字体> <文本> <字号> <out.ppm>\n";
+            std::cerr << "SAMPLE error reason=用法：--font-sample <字体> <文本> <字号> <out.ppm> [wght]\n";
             return kExitUsage;
         }
         const int px = std::atoi(operands[2].c_str());
+        const int weight = operands.size() >= 5 ? std::atoi(operands[4].c_str()) : 0;
         const xrkit::engine::font::TextSample s = xrkit::engine::font::render_text_sample(
-            operands[0], operands[1], px, operands[3]);
+            operands[0], operands[1], px, operands[3], weight);
         if (!s.ok) {
             std::cout << "SAMPLE error reason=" << s.error << "\n";
             return kExitFail;

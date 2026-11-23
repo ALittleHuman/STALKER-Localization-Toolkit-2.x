@@ -147,6 +147,8 @@ public:
 
 private:
     void refresh_state();
+    void refresh_weight_controls();
+    void preview_weight();
     void sync_lang_edit();      // 语言选"自定义"才显示输入框（1.x `_lang_changed`）
     void sync_suffix_edit();    // 后缀选"自定义"才显示输入框（1.x `_suf_changed`）
     // 弹出字库选择器（宿主唯一一份）并返回它 —— 自检要驱动它（双击＝选择）
@@ -163,6 +165,9 @@ private:
     QString ixr_text_at_start_;          // 「文本 XML」快照＝字符集来源
     QString ixr_lang_at_start_;  // 语言选择快照（审计 P1-34：worker 不许读控件）
     QComboBox* game_combo_ = nullptr;
+    QComboBox* weight_combo_ = nullptr;
+    QLabel* weight_hint_ = nullptr;
+    QPushButton* weight_preview_ = nullptr;
     QComboBox* lang_combo_ = nullptr;
     QLineEdit* lang_edit_ = nullptr;
     QComboBox* suffix_combo_ = nullptr;

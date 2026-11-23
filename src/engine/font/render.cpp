@@ -676,8 +676,48 @@ std::vector<uint32_t> decode_utf8_text(const std::string& text) {
 namespace xrkit::engine::font {
 
 // ── ★★ 2026-10-26：文本样张（预览用）。复用本文件的 `raster_glyph` —— 口径只一份。
+FontVariationInfo font_variation_info(const std::string& font_path) {
+    FontVariationInfo out;
+    FT_Library lib = nullptr;
+    if (FT_Init_FreeType(&lib) != 0) {
+        out.error = "FreeType 起不来";
+        return out;
+    }
+    struct LibGuard {
+        FT_Library lib;
+        ~LibGuard() { if (lib) FT_Done_FreeType(lib); }
+    } guard{lib};
+    FT_Face face = nullptr;
+    if (FT_New_Face(lib, font_path.c_str(), 0, &face) != 0) {
+        out.error = "字体打不开";
+        return out;
+    }
+    struct FaceGuard {
+        FT_Face face;
+        ~FaceGuard() { if (face) FT_Done_Face(face); }
+    } face_guard{face};
+    out.ok = true;
+    if (!FT_HAS_MULTIPLE_MASTERS(face)) return out;
+    out.variable = true;
+    FT_MM_Var* mm = nullptr;
+    if (FT_Get_MM_Var(face, &mm) != 0 || mm == nullptr) {
+        out.error = "读不到可变字体轴";
+        return out;
+    }
+    for (FT_UInt i = 0; i < mm->num_axis; ++i) {
+        if (mm->axis[i].tag != FT_MAKE_TAG('w', 'g', 'h', 't')) continue;
+        out.has_wght = true;
+        out.wght_min = static_cast<int>(mm->axis[i].minimum >> 16);
+        out.wght_default = static_cast<int>(mm->axis[i].def >> 16);
+        out.wght_max = static_cast<int>(mm->axis[i].maximum >> 16);
+        break;
+    }
+    FT_Done_MM_Var(lib, mm);
+    return out;
+}
+
 TextSample render_text_sample(const std::string& font_path, const std::string& utf8_text,
-                              int pixel_size, const std::string& out_ppm) {
+                              int pixel_size, const std::string& out_ppm, int weight) {
     TextSample out;
     if (pixel_size <= 4) {
         out.error = "字号太小";
@@ -701,6 +741,7 @@ TextSample render_text_sample(const std::string& font_path, const std::string& u
         FT_Face face;
         ~FaceGuard() { if (face) FT_Done_Face(face); }
     } face_guard{face};
+    apply_variation_weight(lib, face, weight);
     if (FT_Set_Pixel_Sizes(face, 0, static_cast<FT_UInt>(pixel_size)) != 0) {
         out.error = "字号设置失败";
         return out;

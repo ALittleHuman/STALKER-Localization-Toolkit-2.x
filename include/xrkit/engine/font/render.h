@@ -74,6 +74,18 @@ std::vector<uint32_t> font_missing_chars(const std::string& font_path,
 std::vector<uint32_t> font_unrenderable(const std::string& font_path,
                                         const std::vector<uint32_t>& chars);
 
+// ── ★★ 2026-11-23（用户）：可变字体识别。只读 fvar/wght 轴，不改字体 ──
+struct FontVariationInfo {
+    bool ok = false;          // 字体能打开
+    bool variable = false;    // 有 fvar 轴
+    bool has_wght = false;    // 轴里有 wght
+    int wght_min = 0;
+    int wght_default = 0;
+    int wght_max = 0;
+    std::string error;
+};
+FontVariationInfo font_variation_info(const std::string& font_path);
+
 // ── ★★ 2026-10-26：文本样张渲染（给插件页的「原字体 vs 候选」并排预览）────────
 //
 // 为什么放在引擎层：插件没有光栅能力（无 PIL/无 Qt），而引擎本来就有 FreeType 与
@@ -92,6 +104,6 @@ struct TextSample {
 };
 
 TextSample render_text_sample(const std::string& font_path, const std::string& utf8_text,
-                              int pixel_size, const std::string& out_ppm);
+                              int pixel_size, const std::string& out_ppm, int weight = 0);
 
 }  // namespace xrkit::engine::font
