@@ -11,6 +11,7 @@
 //   xrkit_plugin_manager.exe --scan-json [--plugins <目录>]
 #include "xrkit/core/plugin_disabled.h"
 #include "xrkit/core/http.h"
+#include "xrkit/core/plugin_registry.h"
 #include "xrkit/core/sha256.h"
 
 #include <QApplication>
@@ -32,6 +33,7 @@
 #include <QProcess>
 #include <QPushButton>
 #include <QTableWidget>
+#include <QTimer>
 #include <QTextEdit>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -142,6 +144,32 @@ bool version_satisfies(const QString& version, const QString& range) {
         if (!ok) return false;
     }
     return true;
+}
+
+// 线上插件注册表地址（**硬编码**，平台没有提供覆盖开关）。
+const char* kDefaultRegistryUrl =
+    "https://raw.githubusercontent.com/ALittleHuman/"
+    "STALKER-Localization-Toolkit-2.x-Network-Plugin/main/plugins.json";
+
+// 注册表地址：默认用平台硬编码的那份；测试/自建镜像可用环境变量覆盖。
+std::string registry_url() {
+    const QByteArray env = qgetenv("XRKIT_PLUGIN_REGISTRY_URL");
+    if (!env.isEmpty()) return std::string(env.constData(), env.size());
+    return std::string(kDefaultRegistryUrl);
+}
+
+// 注册表条目 → 结构体（字段名严格按平台读取的那些：id/version/package/sha256/entry/target）
+xrkit::core::RegistryEntry parse_registry_entry(const QJsonObject& item) {
+    xrkit::core::RegistryEntry entry;
+    entry.id = item.value(QStringLiteral("id")).toString().toStdString();
+    entry.version = item.value(QStringLiteral("version")).toString().toStdString();
+    entry.package = item.value(QStringLiteral("package")).toString().toStdString();
+    entry.sha256 = item.value(QStringLiteral("sha256")).toString().toStdString();
+    entry.entry = item.value(QStringLiteral("entry")).toString().toStdString();
+    entry.target = item.value(QStringLiteral("target")).toString().toStdString();
+    entry.name = item.value(QStringLiteral("name")).toString().toStdString();
+    entry.note = item.value(QStringLiteral("note")).toString().toStdString();
+    return entry;
 }
 
 struct ScanItem {
@@ -344,48 +372,20 @@ public:
         detail_->setMinimumHeight(110);
         layout->addWidget(detail_);
 
-        connect(refresh_btn, &QPushButton::clicked, this, [this] { refresh(); });
+        connect(refresh_btn, &QPushButton::clicked, this, [this] {
+            refresh();
+            // ★ 新增：刷新时也把注册表里"本地没装"的条目补进表格 ——
+            //   全新用户点一下「刷新」就能看到线上可装的插件。
+            sync_registry_rows(false);
+        });
         connect(enable_btn, &QPushButton::clicked, this, [this] { set_disabled(false); });
         connect(disable_btn, &QPushButton::clicked, this, [this] { set_disabled(true); });
         connect(open_dir_btn, &QPushButton::clicked, this, [this] {
             QDesktopServices::openUrl(QUrl::fromLocalFile(plugins_dir_));
         });
         connect(check_update_btn, &QPushButton::clicked, this, [this] {
-            if (!xrkit::core::network_enabled()) {
-                QMessageBox::warning(this, QStringLiteral("检查插件更新"),
-                                     QStringLiteral("联网功能已关闭。\n请在主程序「工具 → 联网功能」中开启。"));
-                return;
-            }
-            const xrkit::core::HttpResult result = xrkit::core::http_get(
-                "https://raw.githubusercontent.com/ALittleHuman/"
-                "STALKER-Localization-Toolkit-2.x-Network-Plugin/main/plugins.json",
-                20, 1u << 20);
-            if (!result.ok) {
-                QMessageBox::warning(this, QStringLiteral("检查插件更新"),
-                                     QStringLiteral("下载 plugins.json 失败：%1")
-                                         .arg(QString::fromStdString(result.error)));
-                return;
-            }
-            QJsonParseError parse_error;
-            const QJsonDocument doc =
-                QJsonDocument::fromJson(QByteArray::fromStdString(result.body), &parse_error);
-            if (doc.isNull() || !doc.isObject()) {
-                QMessageBox::warning(this, QStringLiteral("检查插件更新"),
-                                     QStringLiteral("plugins.json 不是 JSON。"));
-                return;
-            }
-            QStringList lines;
-            for (const QJsonValue& value :
-                 doc.object().value(QStringLiteral("plugins")).toArray()) {
-                const QJsonObject item = value.toObject();
-                lines << QStringLiteral("%1  %2  %3")
-                             .arg(item.value(QStringLiteral("id")).toString(),
-                                  item.value(QStringLiteral("version")).toString(),
-                                  item.value(QStringLiteral("package")).toString());
-            }
-            QMessageBox::information(this, QStringLiteral("检查插件更新"),
-                                     lines.isEmpty() ? QStringLiteral("没有插件条目")
-                                                     : lines.join(QLatin1Char('\n')));
+            // 同步注册表并弹窗列出（verbose=true）
+            sync_registry_rows(true);
         });
         connect(install_update_btn, &QPushButton::clicked, this, [this] {
             const int row = table_->currentRow();
@@ -409,8 +409,7 @@ public:
                                             ? table_->item(row, 1)->text()
                                             : QString();
             const xrkit::core::HttpResult manifest = xrkit::core::http_get(
-                "https://raw.githubusercontent.com/ALittleHuman/"
-                "STALKER-Localization-Toolkit-2.x-Network-Plugin/main/plugins.json",
+                registry_url(),
                 20, 1u << 20);
             if (!manifest.ok) {
                 QMessageBox::warning(this, QStringLiteral("安装所选更新"),
@@ -506,9 +505,118 @@ public:
         connect(table_, &QTableWidget::itemSelectionChanged, this, [this] { show_detail(); });
         resize(760, 480);
         refresh();
+        // ★ 启动后自动同步一次线上注册表：全新用户一打开插件管理器，
+        //   就能在表格里看到"可安装（线上注册表）"的条目，不必先点刷新。
+        QTimer::singleShot(300, this, [this] { sync_registry_rows(false); });
+    }
+
+public:
+    // 拉线上注册表，把「本地还没装」的条目补进表格（状态：可安装（线上注册表））。
+    //   verbose=true → 顺便弹窗列出注册表条目（"检查插件更新"的语义）；
+    //   verbose=false → 静默（"刷新"/启动时的语义；失败不打扰用户）。
+    // 返回补进表格的行数。
+    int sync_registry_rows(bool verbose, const QString& url = QString()) {
+        if (!xrkit::core::network_enabled()) {
+            if (verbose) {
+                QMessageBox::warning(this, QStringLiteral("检查插件更新"),
+                                     QStringLiteral("联网功能已关闭。\n请在主程序「工具 → 联网功能」中开启。"));
+            }
+            return 0;
+        }
+        const QString source = url.isEmpty() ? QString::fromStdString(registry_url())
+                                             : url;
+        const xrkit::core::HttpResult result =
+            xrkit::core::http_get(source.toStdString(), 8, 1u << 20);
+        if (!result.ok) {
+            if (verbose) {
+                QMessageBox::warning(this, QStringLiteral("检查插件更新"),
+                                     QStringLiteral("下载 plugins.json 失败：%1")
+                                         .arg(QString::fromStdString(result.error)));
+            }
+            return 0;
+        }
+        QJsonParseError parse_error;
+        const QJsonDocument doc =
+            QJsonDocument::fromJson(QByteArray::fromStdString(result.body), &parse_error);
+        if (doc.isNull() || !doc.isObject()) {
+            if (verbose) {
+                QMessageBox::warning(this, QStringLiteral("检查插件更新"),
+                                     QStringLiteral("plugins.json 不是 JSON。"));
+            }
+            return 0;
+        }
+        QStringList lines;
+        std::vector<xrkit::core::RegistryEntry> registry;
+        for (const QJsonValue& value :
+             doc.object().value(QStringLiteral("plugins")).toArray()) {
+            const QJsonObject item = value.toObject();
+            lines << QStringLiteral("%1  %2  %3")
+                         .arg(item.value(QStringLiteral("id")).toString(),
+                              item.value(QStringLiteral("version")).toString(),
+                              item.value(QStringLiteral("package")).toString());
+            registry.push_back(parse_registry_entry(item));
+        }
+        // ★ 核心改动：注册表 ∖ 本地 ⇒ 补成表格行。
+        //   原行为里表格只扫本地 plugins/ 目录，所以「安装所选更新」只能给
+        //   **已装**插件做更新；全新用户即使注册表里有条目也选不中。
+        //   补行之后，选中它走的就是原来那套安装逻辑
+        //   （下载 package → 校验 sha256 → 解压 → 按 entry 定位目录 →
+        //     整目录替换 plugins/<target>/），全新用户于是也能一键装。
+        const int added = append_registry_rows(registry);
+        if (verbose) {
+            QMessageBox::information(this, QStringLiteral("检查插件更新"),
+                                     lines.isEmpty() ? QStringLiteral("没有插件条目")
+                                                     : lines.join(QLatin1Char('\n')));
+        }
+        return added;
+    }
+
+    // 无头自检：拉注册表 → 走**真实的表格补行路径** → 把表格内容打到 stdout。
+    // 用途：CI / 人工核对"注册表里有、本地没装"的条目确实进了表格。
+    int load_registry_rows(const QString& url) {
+        const int added = sync_registry_rows(false, url);
+        if (added < 0) return 1;
+        for (int row = 0; row < table_->rowCount(); ++row) {
+            printf("REGISTRY-ROW %s|%s|%s|%s|%s\n",
+                   qPrintable(table_->item(row, 0) ? table_->item(row, 0)->text() : ""),
+                   qPrintable(table_->item(row, 1) ? table_->item(row, 1)->text() : ""),
+                   qPrintable(table_->item(row, 2) ? table_->item(row, 2)->text() : ""),
+                   qPrintable(table_->item(row, 3) ? table_->item(row, 3)->text() : ""),
+                   qPrintable(table_->item(row, 4) ? table_->item(row, 4)->text() : ""));
+        }
+        printf("PLUGIN-MANAGER ok action=registry-rows added=%d rows=%d\n",
+               added, table_->rowCount());
+        return 0;
     }
 
 private:
+    // 把「注册表里有、本地没装」的条目补成表格行（状态：可安装（线上注册表））。
+    // 返回补进去的行数。GUI 与 --registry-rows 自检共用这一条路径。
+    int append_registry_rows(const std::vector<xrkit::core::RegistryEntry>& registry) {
+        std::vector<xrkit::core::LocalPluginRef> local;
+        for (const ScanItem& item : items_) {
+            local.push_back({item.id.toStdString(), item.version.toStdString()});
+        }
+        int added = 0;
+        for (const xrkit::core::RegistryEntry& entry :
+             xrkit::core::registry_missing(local, registry)) {
+            const int row = table_->rowCount();
+            table_->insertRow(row);
+            const QString id = QString::fromStdString(entry.id);
+            table_->setItem(row, 0, new QTableWidgetItem(id));
+            table_->setItem(row, 1, new QTableWidgetItem(id));
+            table_->setItem(row, 2, new QTableWidgetItem(
+                QString::fromStdString(entry.name.empty() ? entry.id : entry.name)));
+            table_->setItem(row, 3, new QTableWidgetItem(
+                QString::fromStdString(entry.version)));
+            table_->setItem(row, 4, new QTableWidgetItem(
+                QStringLiteral("可安装（线上注册表）")));
+            ++added;
+        }
+        if (table_->rowCount() > 0) table_->resizeColumnsToContents();
+        return added;
+    }
+
     QString selected_file() const {
         const int row = table_->currentRow();
         if (row < 0 || row >= items_.size()) return QString();
@@ -616,6 +724,7 @@ int main(int argc, char** argv) {
     QString reason;
     QString disable_file;
     QString enable_file;
+    QString registry_rows_url;
     QString disable_id;
     bool scan_json = false;
 
@@ -687,6 +796,13 @@ int main(int argc, char** argv) {
                disable_file.isEmpty() ? "enable" : "disable", file.toUtf8().constData());
         return 0;
     }
+    for (int i = 1; i < argc; ++i) {
+        const QByteArray arg = QCoreApplication::arguments().at(i).toUtf8();
+        if (arg == "--registry-rows" && i + 1 < QCoreApplication::arguments().size()) {
+            registry_rows_url = QCoreApplication::arguments().at(i + 1);
+            ++i;
+        }
+    }
     if (scan_json) {
         QString json, error;
         if (!run_scan(plugins_dir, &json, &error)) {
@@ -721,6 +837,10 @@ int main(int argc, char** argv) {
     if (gui_app == nullptr) return 2;  // headless 分支必须已 return
     if (plugins_dir.isEmpty()) plugins_dir = default_plugins_dir();
     ManagerWindow window(plugins_dir, reason);
+    if (!registry_rows_url.isEmpty()) {
+        // 无头自检：走真实表格路径验证"注册表 ∖ 本地"的补行
+        return window.load_registry_rows(registry_rows_url);
+    }
     window.show();
     return gui_app->exec();
 }
