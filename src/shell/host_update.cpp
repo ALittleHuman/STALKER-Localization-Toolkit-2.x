@@ -1,5 +1,6 @@
 #include "host_update.h"
 
+#include "xrkit/core/download.h"
 #include "xrkit/core/http.h"
 #include "xrkit/core/sha256.h"
 #include "xrkit/core/version.h"
@@ -592,35 +593,52 @@ bool HostUpdate::downloadAppUpdate(const AppUpdateInfo& info,
         if (error != nullptr) *error = QStringLiteral("无法写入更新状态文件");
         return false;
     }
-    QString last_error;
-    for (const QString& url : normalized.packages) {
-        const bool direct = url.startsWith(QStringLiteral("https://ghfast.top/")) ||
-                            url.startsWith(QStringLiteral("https://gh-proxy.com/"));
-        const xrkit::core::HttpResult result =
-            xrkit::core::http_download(url.toStdString(), zip.toStdString(), 300,
-                                       256u << 20, progress, direct);
-        if (!result.ok) {
-            last_error = QString::fromStdString(result.error);
-            if (last_error == QStringLiteral("下载已取消")) break;
-            continue;
-        }
-        if (!normalized.sha256.isEmpty()) {
-            std::string sha_error;
-            const std::string actual = xrkit::core::sha256_file(zip.toStdString(), sha_error);
-            if (actual != normalized.sha256.toStdString()) {
-                last_error = QStringLiteral("sha256 不匹配");
-                QFile::remove(zip);
-                QFile::remove(part);
-                continue;
+    // 与插件异步下载共用同一个 DownloadManager（单流/多段、取消、续传、sha 只有一套）。
+    xrkit::core::DownloadOptions options;
+    options.target = zip.toStdString();
+    options.sha256 = normalized.sha256.toStdString();
+    options.max_bytes = 256u << 20;
+    options.timeout_sec = 300;
+    options.workers = 4;
+    options.prefer_direct = false;
+    for (const QString& url : normalized.packages) options.urls.push_back(url.toStdString());
+    const std::uint64_t job = xrkit::core::DownloadManager::instance().start(options);
+    xrkit::core::DownloadStatus status;
+    bool cancelled = false;
+    for (;;) {
+        if (xrkit::core::DownloadManager::instance().wait(job, &status, 200)) break;
+        xrkit::core::DownloadStatus live;
+        if (xrkit::core::DownloadManager::instance().status(job, &live)) {
+            if (!cancelled && progress && !progress(live.done, live.total)) {
+                cancelled = true;
+                xrkit::core::DownloadManager::instance().cancel(job);
             }
         }
-        write_pending_metadata(normalized, true);
-        return true;
     }
-    if (error != nullptr) {
-        *error = last_error.isEmpty() ? QStringLiteral("下载失败") : last_error;
+    if (!status.ok) {
+        if (error != nullptr) {
+            *error = status.cancelled ? QStringLiteral("下载已取消")
+                                      : (status.error.empty() ? QStringLiteral("下载失败")
+                                                              : QString::fromStdString(status.error));
+        }
+        // 取消/失败都保留 .part.N/.segments 和 pending 元数据，下一次继续。
+        return false;
     }
-    return false;
+    if (!normalized.sha256.isEmpty()) {
+        std::string sha_error;
+        const std::string actual = xrkit::core::sha256_file(zip.toStdString(), sha_error);
+        if (actual != normalized.sha256.toStdString()) {
+            QFile::remove(zip);
+            QFile::remove(part);
+            QFile::remove(zip + QStringLiteral(".segments"));
+            for (int i = 0; i < 6; ++i)
+                QFile::remove(zip + QStringLiteral(".part.") + QString::number(i));
+            if (error != nullptr) *error = QStringLiteral("sha256 不匹配");
+            return false;
+        }
+    }
+    write_pending_metadata(normalized, true);
+    return true;
 }
 
 bool HostUpdate::installPendingAppUpdate(bool* started, QString* error) {

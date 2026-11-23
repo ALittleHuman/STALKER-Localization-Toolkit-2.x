@@ -3889,6 +3889,23 @@ def step_network_toggle(release: bool) -> None:
         fail("联网开关判据不通过（见上）")
 
 
+def step_network_loopback(release: bool) -> None:
+    """网络补强（BETA.256）：回环直连 / 门面放 GIL / 卸载取消异步下载。"""
+    say("[network-loopback] 回环直连 / 并发门面 / cancel_owner")
+    script = ROOT / "tests" / "check_network_loopback.py"
+    if not require_repo_file(script, "网络补强判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)], timeout=240)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("OK ", "FAIL ", "SKIP ")):
+            say("  " + s)
+    if rc2 == 0:
+        ok("网络补强判据全过")
+    else:
+        fail("网络补强判据不通过（见上）")
+
+
 def step_audit_p0(release: bool) -> None:
     say("[audit-p0] F-061/F-076/F-152/F-040/F-135 防回退锁")
     script = ROOT / "tests" / "check_audit_p0_guards.py"
@@ -8432,6 +8449,7 @@ STEPS = [
     ("plugin-contract", step_plugin_contract),
     ("host-offline", step_host_offline),
     ("network-toggle", step_network_toggle),
+    ("network-loopback", step_network_loopback),
     ("audit-p0", step_audit_p0),
     ("snapshot-diff", step_snapshot_diff),
     ("track", step_track),

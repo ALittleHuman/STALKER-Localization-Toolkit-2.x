@@ -213,6 +213,7 @@ private:
     bool update_closing_ = false;
     std::shared_ptr<std::atomic_bool> update_download_cancel_;
     QLabel* update_version_label_ = nullptr;
+    QPushButton* update_cancel_button_ = nullptr;
     QAction* update_check_action_ = nullptr;
     QAction* update_toggle_action_ = nullptr;
     // ★ 2026-11-09（用户口径）：启动时因缺前置被自动禁用的插件；启动完成后弹一次「插件管理器」，

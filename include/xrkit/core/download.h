@@ -33,6 +33,7 @@ struct DownloadStatus {
     std::uint64_t total = 0;
     std::string error;
     std::string path;
+    std::string url;
 };
 
 class DownloadManager {

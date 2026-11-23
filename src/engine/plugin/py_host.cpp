@@ -454,6 +454,10 @@ std::vector<py::object> take_callbacks(const std::string& owner) {
     return out;
 }
 void run_shutdown(LoadedState state) {
+    // ★ 2026-11-23（BETA.256）：先取消该 owner 的全部异步下载。daab027 只加了
+    //   DownloadManager::cancel_owner，却没有调用点 —— 插件卸载/重载后分片线程会
+    //   一直跑到进程退出（文档与提交说明都写着"会自动取消"，代码里没有）。
+    core::DownloadManager::instance().cancel_owner(state.owner);
     // 约定：可选 shutdown(api)；先调它，再跑 on_unload 注册的回调。
     if (state.module && py::hasattr(state.module, "shutdown") != 0) {
         try {
@@ -2742,18 +2746,32 @@ public:
     }
     py::object http_get(const std::string& url, int timeout_sec, std::size_t max_bytes) const {
         if (host_on_ui_thread()) return http_blocked_on_ui();
-        return http_result(core::http_get(url, timeout_sec, max_bytes));
+        // ★ 2026-11-23（BETA.256）：阻塞期释放 GIL。pybind 默认整个调用期持锁，
+        //   插件多线程调门面会被串行化（实测 3 路并发 7.32s ≈ 3×2.44s，自建 urllib 2.14s）。
+        core::HttpResult result;
+        {
+            py::gil_scoped_release release;
+            result = core::http_get(url, timeout_sec, max_bytes);
+        }
+        return http_result(result);
     }
     py::object http_post(const std::string& url, const std::string& body,
                          const std::string& content_type, int timeout_sec,
                          std::size_t max_bytes) const {
         if (host_on_ui_thread()) return http_blocked_on_ui();
-        return http_result(core::http_post(url, body, content_type, timeout_sec, max_bytes));
+        // 同上：推理请求是长阻塞，必须让出 GIL，否则多路并发形同串行。
+        core::HttpResult result;
+        {
+            py::gil_scoped_release release;
+            result = core::http_post(url, body, content_type, timeout_sec, max_bytes);
+        }
+        return http_result(result);
     }
     // 异步下载：立即返回 job id；进度用 http_download_status 轮询。
     // 不跨线程回调 Python，避免插件卸载/解释器退出时持有 py::object。
     py::object http_download_async(py::object url, const std::string& path, int workers,
-                                   int timeout_sec, std::size_t max_bytes) {
+                                   int timeout_sec, std::size_t max_bytes,
+                                   bool prefer_direct) {
         std::vector<std::string> urls;
         if (py::isinstance<py::str>(url)) {
             urls.push_back(url.cast<std::string>());
@@ -2780,7 +2798,9 @@ public:
         options.max_bytes = max_bytes;
         options.timeout_sec = timeout_sec;
         options.workers = std::max(1, std::min(workers, 6));
-        options.prefer_direct = true;
+        // ★ 2026-11-23（BETA.256）：原先写死 true（直连），在"只能走系统代理"的机器上
+        //   异步下载必然失败。改成调用方决定，默认 false（跟随系统代理）。
+        options.prefer_direct = prefer_direct;
         const std::uint64_t job = core::DownloadManager::instance().start(options);
         out["ok"] = true;
         out["job"] = job;
@@ -2846,56 +2866,37 @@ public:
                                   [](const std::string& u) { return u.empty(); }),
                    urls.end());
 
-        const auto single = [&](const std::string& target) {
-            const core::HttpResult result =
-                core::http_download(target, path, timeout_sec, max_bytes);
-            py::dict out = http_result(result);
-            out["path"] = path;
-            out["url"] = target;
-            return out;
-        };
-
+        py::dict out;
         if (urls.empty()) {
-            core::HttpResult none;
-            none.error = "没有可用的下载地址";
-            py::dict out = http_result(none);
+            out["ok"] = false;
+            out["status"] = 0;
+            out["error"] = "没有可用的下载地址";
+            out["bytes"] = 0;
+            out["truncated"] = false;
             out["path"] = path;
             return out;
         }
-        if (urls.size() == 1) return single(urls.front());
-
-        struct Ranked {
-            std::string url;
-            long long ms = 0;
-        };
-        std::vector<Ranked> ranked;
-        ranked.reserve(urls.size());
-        for (const std::string& candidate : urls) {
-            const auto started = std::chrono::steady_clock::now();
-            const core::HttpResult probe = core::http_get(candidate, 8, 1);
-            const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                     std::chrono::steady_clock::now() - started)
-                                     .count();
-            if (probe.ok && (probe.status == 200 || probe.status == 206)) {
-                ranked.push_back({candidate, ms});
-            }
+        // 同步入口也走同一套 DownloadManager：与异步下载/宿主更新只有一份断点、取消、sha 逻辑。
+        core::DownloadOptions options;
+        options.target = path;
+        options.urls = urls;
+        options.max_bytes = max_bytes;
+        options.timeout_sec = timeout_sec;
+        options.workers = 4;
+        options.prefer_direct = false;
+        const std::uint64_t job = core::DownloadManager::instance().start(options);
+        core::DownloadStatus status;
+        {
+            py::gil_scoped_release release;
+            core::DownloadManager::instance().wait(job, &status, -1);
         }
-        if (ranked.empty()) {
-            core::HttpResult none;
-            none.error = "所有下载源都不可达";
-            py::dict out = http_result(none);
-            out["path"] = path;
-            return out;
-        }
-        std::sort(ranked.begin(), ranked.end(),
-                  [](const Ranked& a, const Ranked& b) { return a.ms < b.ms; });
-        core::HttpResult last;
-        for (const Ranked& candidate : ranked) {
-            last = core::http_download(candidate.url, path, timeout_sec, max_bytes);
-            if (last.ok) return single(candidate.url);
-        }
-        py::dict out = http_result(last);
+        out["ok"] = status.ok;
+        out["status"] = status.ok ? 200 : 0;
+        out["error"] = status.error;
+        out["bytes"] = status.done;
+        out["truncated"] = false;
         out["path"] = path;
+        out["url"] = status.url.empty() ? py::str(urls.front()) : py::str(status.url);
         return out;
     }
 
@@ -2903,8 +2904,13 @@ public:
     py::object run_process(py::object options) const {
         const HostFacade* facade = available("run_process");
         if (facade == nullptr) return py::none();
-        const ProcessRunResult result =
-            facade->run_process(process_options_from_python(options));
+        // 参数转换必须持 GIL；真正的执行让出 GIL（回调侧自带 gil_scoped_acquire）。
+        ProcessRunOptions native = process_options_from_python(options);
+        ProcessRunResult result;
+        {
+            py::gil_scoped_release release;
+            result = facade->run_process(native);
+        }
         py::dict out;
         out["started"] = result.started;
         out["cancelled"] = result.cancelled;
@@ -2927,7 +2933,12 @@ public:
             out["error"] = "宿主不支持 start_process";
             return out;
         }
-        const ProcessStartResult result = facade->start_process(process_start_options_from_python(options));
+        ProcessStartOptions native = process_start_options_from_python(options);
+        ProcessStartResult result;
+        {
+            py::gil_scoped_release release;
+            result = facade->start_process(native);
+        }
         py::dict out;
         out["started"] = result.started;
         out["pid"] = result.pid;
@@ -2935,8 +2946,10 @@ public:
         return out;
     }
     bool stop_process(unsigned long pid) const {
-        if (const HostFacade* facade = available("stop_process")) return facade->stop_process(pid);
-        return false;
+        const HostFacade* facade = available("stop_process");
+        if (facade == nullptr) return false;
+        py::gil_scoped_release release;   // 最长等 5 秒
+        return facade->stop_process(pid);
     }
     bool process_alive(unsigned long pid) const {
         if (const HostFacade* facade = available("process_alive")) return facade->process_alive(pid);
@@ -4137,7 +4150,8 @@ void ensure_api_module() {
                  py::arg("timeout_sec") = 300, py::arg("max_bytes") = std::size_t(8) << 30)
             .def("http_download_async", &PyHost::http_download_async, py::arg("url"),
                  py::arg("path"), py::arg("workers") = 4, py::arg("timeout_sec") = 300,
-                 py::arg("max_bytes") = std::size_t(8) << 30)
+                 py::arg("max_bytes") = std::size_t(8) << 30,
+                 py::arg("prefer_direct") = false)
             .def("http_download_status", &PyHost::http_download_status, py::arg("job"))
             .def("http_cancel", &PyHost::http_cancel, py::arg("job"))
             .def("system_font_dirs", &PyHost::system_font_dirs)

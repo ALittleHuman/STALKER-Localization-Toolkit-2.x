@@ -6,6 +6,7 @@
 #include "xrkit/core/path.h"
 
 #include <filesystem>
+#include <mutex>
 
 #include <algorithm>
 #include <cstring>
@@ -323,18 +324,71 @@ int migrate_legacy_user_config() {
     return sections;
 }
 
+namespace {
+
+struct UserConfigCache {
+    std::mutex mutex;
+    std::string key;
+    LtxData data;
+    bool valid = false;
+};
+
+UserConfigCache& user_config_cache() {
+    static UserConfigCache cache;
+    return cache;
+}
+
+// key = 路径 + 大小 + mtime：文件被外部改过（换机器 / 手工编辑 / 迁移）⇒ key 变 ⇒ 重读。
+std::string user_config_key(const std::string& path) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec) return path + "|missing";
+    const auto stamp = std::filesystem::last_write_time(path, ec);
+    if (ec) return path + "|" + std::to_string(size);
+    return path + "|" + std::to_string(size) + "|" +
+           std::to_string(static_cast<long long>(stamp.time_since_epoch().count()));
+}
+
+void invalidate_user_config_cache() {
+    UserConfigCache& cache = user_config_cache();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    cache.valid = false;
+    cache.key.clear();
+}
+
+}  // namespace
+
 LtxData load_user_config() {
     // ★ H-02：**第一次**读设置时给旧文件一次迁移机会（每进程一次；条件不满足/失败都返回 0/-1）
     static const int kMigrated = migrate_legacy_user_config();
     (void)kMigrated;
+    const std::string path = user_ltx_path();
+    const std::string key = user_config_key(path);
+    // ★ 2026-11-23（BETA.256）：原先每次调用都重读+重解析整份 xrkit_user.ltx。
+    //   network_enabled() 走的就是这条链 ⇒ 每个 HTTP 请求（健康检查/测速）都白读一次盘。
+    //   这里按 (path, size, mtime) 缓存；写设置时显式失效（见 save_user_values）。
+    {
+        UserConfigCache& cache = user_config_cache();
+        std::lock_guard<std::mutex> lock(cache.mutex);
+        if (cache.valid && cache.key == key) return cache.data;
+    }
     // ★ 2026-11-20（H5）：同上限；读失败/超限 ⇒ 回落默认，并把原因记日志。
     std::string text;
     std::string read_error;
-    if (!read_file_capped(user_ltx_path(), text, read_error)) {
+    LtxData parsed;
+    if (!read_file_capped(path, text, read_error)) {
         log(Level::Warn, "读 user.ltx 失败：" + read_error);
-        return LtxData{};
+    } else {
+        parsed = parse_ltx(text);
     }
-    return parse_ltx(text);
+    {
+        UserConfigCache& cache = user_config_cache();
+        std::lock_guard<std::mutex> lock(cache.mutex);
+        cache.key = key;
+        cache.data = parsed;
+        cache.valid = true;
+    }
+    return parsed;
 }
 
 std::string load_user_value(const std::string& section, const std::string& key,
@@ -379,8 +433,10 @@ bool save_user_values(const std::string& section,
     const std::string text = to_windows_newlines(render_ltx(data));
     const std::vector<uint8_t> bytes(text.begin(), text.end());
     std::string error;
-    return write_file_atomic(user_ltx_path(), bytes, /*atomic=*/true, error,
-                             WriteVerify::Streamed);
+    const bool written = write_file_atomic(user_ltx_path(), bytes, /*atomic=*/true, error,
+                                          WriteVerify::Streamed);
+    if (written) invalidate_user_config_cache();   // 下一次读一定重解析（防 mtime 粒度不够）
+    return written;
 }
 
 bool save_user_value(const std::string& section, const std::string& key,

@@ -2,6 +2,7 @@
 
 #include "xrkit/core/theme.h"
 
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <system_error>
@@ -19,6 +20,34 @@ bool network_enabled() {
 }
 
 namespace {
+
+// 回环地址永远不经过代理：IE/WinINET 的代理经常没有把 127.0.0.1 列进 bypass，
+// WinHTTP 会把本地请求老老实实发给代理 —— 代理要么 404、要么拖到超时
+// （实测本机代理 127.0.0.1:26561：一次 /health 白等 24 秒）。入口统一短路。
+bool is_loopback_url(const std::string& url) {
+    const std::size_t scheme = url.find("://");
+    if (scheme == std::string::npos) return false;
+    const std::size_t begin = scheme + 3;
+    std::size_t end = url.find_first_of("/?#", begin);
+    if (end == std::string::npos) end = url.size();
+    std::string host = url.substr(begin, end - begin);
+    const std::size_t at = host.rfind('@');
+    if (at != std::string::npos) host.erase(0, at + 1);
+    if (!host.empty() && host.front() == '[') {
+        const std::size_t close = host.find(']');
+        host = host.substr(1, close == std::string::npos ? std::string::npos : close - 1);
+    } else {
+        const std::size_t colon = host.find(':');
+        if (colon != std::string::npos) host.erase(colon);
+    }
+    std::string lower;
+    lower.reserve(host.size());
+    for (const char c : host) {
+        lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    if (lower == "localhost" || lower == "::1") return true;
+    return lower.rfind("127.", 0) == 0;
+}
 
 #ifdef _WIN32
 
@@ -248,7 +277,7 @@ HttpResult http_get(const std::string& url, int timeout_sec, std::size_t max_byt
         return result;
     }
 #ifdef _WIN32
-    if (prefer_direct) {
+    if (prefer_direct || is_loopback_url(url)) {
         return winhttp_request_once("GET", url, std::string(), std::string(), timeout_sec,
                                     max_bytes, nullptr, L"", WINHTTP_ACCESS_TYPE_NO_PROXY);
     }
@@ -269,6 +298,7 @@ HttpResult http_download(const std::string& url, const std::string& path, int ti
         result.error = "联网功能已关闭";
         return result;
     }
+    const bool direct = prefer_direct || is_loopback_url(url);
     // 断点续传：半成品写 <path>.part；失败保留，下次 Range 续传；成功才改名到 path。
     const std::string part = path + ".part";
     std::error_code ec;
@@ -277,7 +307,7 @@ HttpResult http_download(const std::string& url, const std::string& path, int ti
         existing = static_cast<std::size_t>(std::filesystem::file_size(part, ec));
         if (ec) existing = 0;
     }
-    const auto request = [&](bool resume, HttpResult& result) {
+    const auto request = [&](bool resume, bool use_direct, HttpResult& result) {
         std::ofstream file(part, std::ios::binary |
                                      (resume ? std::ios::app : std::ios::trunc));
         if (!file) {
@@ -291,7 +321,7 @@ HttpResult http_download(const std::string& url, const std::string& path, int ti
             if (!progress) return true;
             return progress((resume ? existing : 0) + bytes, total);
         };
-        if (prefer_direct) {
+        if (use_direct) {
             result = winhttp_request_once("GET", url, std::string(), std::string(), timeout_sec,
                                           max_bytes, &file, extra,
                                           WINHTTP_ACCESS_TYPE_NO_PROXY, report);
@@ -314,19 +344,26 @@ HttpResult http_download(const std::string& url, const std::string& path, int ti
     };
 
     HttpResult result;
-    request(existing > 0, result);
+    request(existing > 0, direct, result);
+    // ★ 2026-11-23（BETA.256）：代理路径完全没拿到响应（status==0 且 0 字节）⇒ 丢掉
+    //   半文件，直连再试一次。只认这一种：4xx/5xx 是服务端明确答复，换路由重打没意义。
+    if (!result.ok && !direct && result.status == 0 && result.bytes == 0) {
+        std::filesystem::remove(part, ec);
+        existing = 0;
+        request(false, true, result);
+    }
     // 半成品比远端还大（换源 / 远端重打包）⇒ Range 越界（416）：丢掉 .part 重来，
     // 否则每次重试都 416，永远下不完。
     if (existing > 0 && result.status == 416) {
         std::filesystem::remove(part, ec);
         existing = 0;
-        request(false, result);
+        request(false, direct, result);
     }
     // 服务器忽略 Range 返回 200：不能把完整内容追加到半文件后面，重下一次。
     if (existing > 0 && result.status == 200) {
         std::filesystem::remove(part, ec);
         existing = 0;
-        request(false, result);
+        request(false, direct, result);
     }
     if (!result.ok || result.truncated) {
         // 保留 .part：被断网/超时打断后下次可续传。
@@ -349,7 +386,7 @@ std::uint64_t http_probe_size(const std::string& url, int timeout_sec,
     const std::wstring range = L"Range: bytes=0-0\r\n";
 #ifdef _WIN32
     HttpResult result;
-    if (prefer_direct) {
+    if (prefer_direct || is_loopback_url(url)) {
         result = winhttp_request_once("GET", url, std::string(), std::string(), timeout_sec,
                                       1, nullptr, range, WINHTTP_ACCESS_TYPE_NO_PROXY);
     } else {
@@ -374,6 +411,7 @@ HttpResult http_download_range(const std::string& url, const std::string& path,
         result.error = "联网功能已关闭";
         return result;
     }
+    const bool direct = prefer_direct || is_loopback_url(url);
     const std::uint64_t want = end - start + 1;
     std::error_code ec;
     std::uint64_t existing = 0;
@@ -409,7 +447,7 @@ HttpResult http_download_range(const std::string& url, const std::string& path,
         return true;
     };
 #ifdef _WIN32
-    if (prefer_direct) {
+    if (direct) {
         result = winhttp_request_once("GET", url, std::string(), std::string(), timeout_sec,
                                       static_cast<std::size_t>(want), &file, extra,
                                       WINHTTP_ACCESS_TYPE_NO_PROXY, report);
@@ -421,6 +459,11 @@ HttpResult http_download_range(const std::string& url, const std::string& path,
     result.error = "当前构建没有 WinHTTP";
 #endif
     file.close();
+    // ★ 2026-11-23（BETA.256）：代理路径 0 响应 0 字节 ⇒ 清分片，直连重取这一段。
+    if (!result.ok && !direct && result.status == 0 && result.bytes == 0) {
+        std::filesystem::remove(path, ec);
+        return http_download_range(url, path, start, end, timeout_sec, progress, true);
+    }
     if (result.status == 200) {
         // 服务器忽略 Range：不能把整包追加到分片里。
         result.ok = false;
@@ -456,6 +499,12 @@ HttpResult http_post(const std::string& url, const std::string& body,
         return result;
     }
 #ifdef _WIN32
+    if (is_loopback_url(url)) {
+        return winhttp_request_once("POST", url, body,
+                                    content_type.empty() ? "application/json" : content_type,
+                                    timeout_sec, max_bytes, nullptr, L"",
+                                    WINHTTP_ACCESS_TYPE_NO_PROXY);
+    }
     return winhttp_request("POST", url, body,
                            content_type.empty() ? "application/json" : content_type,
                            timeout_sec, max_bytes, nullptr, L"");

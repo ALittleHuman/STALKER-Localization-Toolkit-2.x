@@ -240,6 +240,7 @@ bool download_parallel(const std::shared_ptr<Job>& job, const std::string& url,
     }
     if (!file_matches_sha(job->options.target, job->options.sha256)) {
         std::filesystem::remove(job->options.target, ec);
+        remove_parts(job->options.target, kMaxWorkers);
         finish_job(job, false, false, "sha256 不匹配");
         return false;
     }
@@ -278,6 +279,10 @@ void run_job(const std::shared_ptr<Job>& job) {
             total = probe;
             break;
         }
+    }
+    if (!url.empty()) {
+        std::lock_guard<std::mutex> lock(job->mutex);
+        job->status.url = url;
     }
     if (url.empty()) {
         // 清单没给总长：退回单流，至少还能下载/续传。

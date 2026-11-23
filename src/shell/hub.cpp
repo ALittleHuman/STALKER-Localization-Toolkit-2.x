@@ -375,6 +375,19 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     status_row_layout->setSpacing(px(12));
     status_row_layout->addWidget(status_label_);
     status_row_layout->addWidget(update_version_label_);
+    update_cancel_button_ = new QPushButton(QStringLiteral("取消下载"));
+    update_cancel_button_->setObjectName(QStringLiteral("update_cancel_button"));
+    update_cancel_button_->setVisible(false);
+    update_cancel_button_->setToolTip(QStringLiteral("停止更新下载；已下载部分保留，下次可续传"));
+    QObject::connect(update_cancel_button_, &QPushButton::clicked, this, [this] {
+        if (!update_download_inflight_) return;
+        if (update_download_cancel_) *update_download_cancel_ = true;
+        update_cancel_button_->setEnabled(false);
+        update_cancel_button_->setText(QStringLiteral("正在取消…"));
+        if (status_label_ != nullptr) status_label_->setText(QStringLiteral("正在取消更新下载…"));
+        log_line(QStringLiteral("用户请求取消更新下载"));
+    });
+    status_row_layout->addWidget(update_cancel_button_);
     status_row_layout->addStretch(1);
 
     // 整体：顶部标签条 → 内容区（吃剩余）→ 折叠日志按钮 → 日志面板 → 状态栏
@@ -1089,6 +1102,10 @@ void Hub::sync_update_check_action(bool enabled) {
         update_version_label_->clear();
         update_version_label_->setVisible(false);
     }
+    if (!enabled && update_cancel_button_ != nullptr) {
+        update_cancel_button_->setVisible(false);
+        update_cancel_button_->setEnabled(false);
+    }
 }
 
 void Hub::start_update_recovery() {
@@ -1121,6 +1138,11 @@ void Hub::begin_update_download(const AppUpdateInfo& info) {
     update_download_cancel_ = std::make_shared<std::atomic_bool>(false);
     const auto cancel = update_download_cancel_;
     if (status_label_ != nullptr) status_label_->setText(QStringLiteral("正在下载更新…"));
+    if (update_cancel_button_ != nullptr) {
+        update_cancel_button_->setText(QStringLiteral("取消下载"));
+        update_cancel_button_->setEnabled(true);
+        update_cancel_button_->setVisible(true);
+    }
     if (update_version_label_ != nullptr) {
         update_version_label_->setText(QStringLiteral("可更新：%1（当前 %2）")
                                            .arg(info.version,
@@ -1155,6 +1177,7 @@ void Hub::begin_update_download(const AppUpdateInfo& info) {
         }).detach();
     } catch (const std::exception& e) {
         update_download_inflight_ = false;
+        if (update_cancel_button_ != nullptr) update_cancel_button_->setVisible(false);
         if (update_version_label_ != nullptr) {
             update_version_label_->setText(QStringLiteral("无法启动更新下载"));
             update_version_label_->setVisible(true);
@@ -1183,7 +1206,17 @@ void Hub::show_update_progress(std::size_t bytes, std::size_t total) {
 
 void Hub::finish_update_download(bool ok, const QString& error) {
     update_download_inflight_ = false;
+    if (update_cancel_button_ != nullptr) update_cancel_button_->setVisible(false);
     if (update_closing_) return;
+    if (!ok && error.contains(QStringLiteral("取消"))) {
+        if (status_label_ != nullptr) status_label_->setText(QStringLiteral("更新下载已取消"));
+        if (update_version_label_ != nullptr) {
+            update_version_label_->setText(QStringLiteral("更新下载已取消"));
+            update_version_label_->setVisible(true);
+        }
+        log_line(QStringLiteral("更新下载已取消；已下载部分保留"));
+        return;
+    }
     if (!ok) {
         if (status_label_ != nullptr) status_label_->setText(QStringLiteral("更新下载失败"));
         if (update_version_label_ != nullptr) {
@@ -1246,6 +1279,7 @@ void Hub::closeEvent(QCloseEvent* event) {
         update_closing_ = true;
         if (update_download_cancel_) *update_download_cancel_ = true;
     }
+    if (update_cancel_button_ != nullptr) update_cancel_button_->setVisible(false);
     QMainWindow::closeEvent(event);
 }
 
