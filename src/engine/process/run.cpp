@@ -58,7 +58,7 @@ std::wstring widen(const std::string& text) {
 //     · 需要外层引号 ⇔ 参数**为空**或含**空格/制表符**（只含 `"` 的不需要）；
 //     · 连续 N 个反斜杠后面跟一个 `"` ⇒ 那 N 个要写成 2N 个，再写 `\"`；
 //     · 参数**以 N 个反斜杠结尾且要加外层引号** ⇒ 那 N 个要写成 2N 个，否则收尾引号被吃掉。
-//   判据：`xrkit_app --smoke` 里的引号表（期望值由 `subprocess.list2cmdline` 逐条生成；
+//   判据：`xrkit_smoke.exe` 里的引号表（期望值由 `subprocess.list2cmdline` 逐条生成；
 //   另在 4000 条随机串上做过逐字节对拍，见批报告）。
 std::string quote_arg(const std::string& arg) {
     const bool need_quotes = arg.empty() || arg.find_first_of(" \t") != std::string::npos;

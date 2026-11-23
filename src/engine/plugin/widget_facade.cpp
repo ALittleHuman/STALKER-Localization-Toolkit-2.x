@@ -315,7 +315,7 @@ void set_current_page_context(const std::string& page_id, xrkit::plugin::Registr
 // ★ 2026-10-22（用户口径）：**带 page 的无锁版本** —— `set_current_panel_root` 持有
 //   `facade_mutex` 时不能再调 `current_page_id()`（同一把锁 ⇒ 自死锁）。
 // ★★ 2026-10-22：**诊断开关**。这套 trace 每行一次 open/write/close，
-//   一次 `--smoke` 会写几百 KB；开着它本身就会拖慢器件、改变时序
+//   一次 `xrkit_smoke.exe` 会写几百 KB；开着它本身就会拖慢器件、改变时序
 //   ⇒ 我把它从"总是开"改成"默认关、`XRKIT_PAGE_TRACE=1` 才开"。
 //   （教训与用户 2026-10-21 那条一致：**加诊断不许改变被测对象**。）
 bool page_trace_enabled() {

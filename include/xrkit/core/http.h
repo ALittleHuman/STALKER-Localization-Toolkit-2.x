@@ -2,7 +2,7 @@
 // xrkit::core —— 宿主内置 HTTP（Windows WinHTTP）。
 //
 // 联网总开关 `[network] enabled=0` 在这里统一拦截；调用方不需要自己判断。
-// 只提供 GET/下载；TLS/证书走系统默认，不关闭校验，不降级到 http。
+// 提供 GET/POST/文件下载/Range 分片；TLS/证书走系统默认，不关闭校验，不降级到 http。
 
 #include <cstddef>
 #include <cstdint>

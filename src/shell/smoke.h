@@ -1,5 +1,5 @@
 #pragma once
-// xrkit::shell —— `--smoke` 自检（M2-1）。
+// xrkit::shell —— 独立 xrkit_smoke.exe 的离屏自检（RC2 起从本体拆出）。
 //
 // 为什么外壳也要自检：M2 的判据是"行为口径对照表 15 组逐条重验 + 拖动性能不低于试点"，
 // 而界面行为**在离屏（offscreen）下也能量**（Qt 的 `-platform offscreen` 能构造真实的

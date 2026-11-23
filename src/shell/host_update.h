@@ -12,14 +12,14 @@ struct AppUpdateInfo {
     QString version;
     QString package;      // 兼容旧清单：主地址
     QString sha256;
-    QStringList packages;  // 多源：按探测结果选择最快；每个都校验同一个 sha256
+    QStringList packages;  // 多源：交给 DownloadManager 探测/换源；每个都校验同一个 sha256
 };
 
 // 更新下载的持久状态：zip 与 pending.json 放在用户本地目录，跨进程可续传。
 struct AppUpdatePending {
     AppUpdateInfo info;
     QString zip;
-    bool ready = false;   // zip 已下载且 sha 通过；false=有 .part 可续传
+    bool ready = false;   // zip 已下载且 sha 通过；false=有 .part.N/.segments 可续传
 };
 
 using AppUpdateProgress = std::function<bool(std::size_t bytes, std::size_t total)>;

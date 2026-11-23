@@ -1,9 +1,6 @@
 // xrkit_app —— 2.x Qt6 外壳入口（M2）。
 //
-// 两种模式：
-//   · 正常：起 Hub 主窗口，进事件循环。
-//   · `--smoke`：**离屏**构造真实的控件树并跑自检，输出 ASCII 收尾行
-//     `SHELL-SMOKE ok checks=N failed=M`，退出码 0/1 —— 门禁靠它判外壳（不靠人眼截图）。
+// 只负责正常 GUI 和宿主诊断；离屏自检已拆到独立 xrkit_smoke.exe（RC2 起）。
 
 #include "xrkit/core/theme.h"
 // ★ P2c：宿主诊断（`--python-host` / `--py-plugins`）走引擎层唯一实现（见下面的分支）

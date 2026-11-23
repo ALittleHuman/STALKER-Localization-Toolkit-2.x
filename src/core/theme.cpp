@@ -230,7 +230,7 @@ std::string app_dir() {
     //   （不是失败码）⇒ 那个判断不成立 ⇒ 直接 `return "."`：**app 目录变成当前工作目录**
     //   （日志/`user.ltx`/插件目录全找错地方，而且没有任何提示）。这正是审计说的"用两步法"。
     //   ★ 第一次改法（`GetModuleFileNameW(nullptr, nullptr, 0)` 问所需长度）**在这台机器上返回 0**
-    //     ⇒ 直接掉进 `return "."`，被 `--smoke` 当场抓住（"默认落盘目录 … 实得 ./logs"、
+    //     ⇒ 直接掉进 `return "."`，被 `xrkit_smoke.exe` 当场抓住（"默认落盘目录 … 实得 ./logs"、
     //     "user.ltx 与 exe 同目录"两条同时红）。所以改成**逐次翻倍重试**：
     //     返回 0、或"返回长度 == 缓冲大小"都当作"可能被截断"⇒ 缓冲翻倍再来；
     //     上限 32768 字符（够任何现实路径，不会无限翻）。`n < size` 才算拿到完整路径。
@@ -365,7 +365,7 @@ LtxData load_user_config() {
     const std::string path = user_ltx_path();
     const std::string key = user_config_key(path);
     // ★ 2026-11-23（BETA.256）：原先每次调用都重读+重解析整份 xrkit_user.ltx。
-    //   network_enabled() 走的就是这条链 ⇒ 每个 HTTP 请求（健康检查/测速）都白读一次盘。
+    //   network_enabled() 走的就是这条链 ⇒ 每次检查更新/下载都白读一次盘。
     //   这里按 (path, size, mtime) 缓存；写设置时显式失效（见 save_user_values）。
     {
         UserConfigCache& cache = user_config_cache();

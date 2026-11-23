@@ -334,7 +334,7 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
                                    QFileInfo(items[i]).absolutePath(), font_mark_of(items[i])));
         }
         if (end < static_cast<int>(items.size())) {
-            // ★★ 2026-10-05 真缺陷修复（血账：`--smoke` 里 0xC0000005 的**真因**就在这里）：
+            // ★★ 2026-10-05 真缺陷修复（血账：`xrkit_smoke.exe` 里 0xC0000005 的**真因**就在这里）：
             //   这条自续期链**必须绑在对话框的生命期上**。修前写的是
             //   `QTimer::singleShot(25, [keep, end] { (*keep)(end); })` —— **没有 context 对象**，
             //   于是它既不属于 dialog、也不属于页面，谁析构都拦不住它；而 `detect_batch` 捕获的是

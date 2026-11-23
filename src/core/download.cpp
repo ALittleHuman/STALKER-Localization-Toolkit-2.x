@@ -1,3 +1,6 @@
+// xrkit::core —— 唯一的多段下载管理器。
+// 宿主更新、插件同步/异步下载都走这里；多源按候选顺序探测/重试，取消保留分片。
+
 #include "xrkit/core/download.h"
 
 #include "xrkit/core/http.h"
@@ -55,6 +58,8 @@ struct Job {
     DownloadStatus status;
     std::atomic_bool cancel{false};
     std::chrono::steady_clock::time_point finished_at{};
+    bool defer_failure = false;
+    std::string last_attempt_error;
     std::thread worker;
 };
 
@@ -68,6 +73,10 @@ void finish_job(const std::shared_ptr<Job>& job, bool ok, bool cancelled,
                 const std::string& error) {
     {
         std::lock_guard<std::mutex> lock(job->mutex);
+        if (!ok && job->defer_failure) {
+            job->last_attempt_error = error;
+            return;
+        }
         job->status.finished = true;
         job->status.ok = ok;
         job->status.cancelled = cancelled;
@@ -268,33 +277,43 @@ void run_job(const std::shared_ptr<Job>& job) {
         return;
     }
 
-    std::string url;
-    std::uint64_t total = 0;
+    std::string last_error;
     for (const std::string& candidate : job->options.urls) {
-        const std::uint64_t probe =
+        const std::uint64_t total =
             http_probe_size(candidate, std::min(8, job->options.timeout_sec),
                             job->options.prefer_direct);
-        if (probe > 0) {
-            url = candidate;
-            total = probe;
-            break;
+        {
+            std::lock_guard<std::mutex> lock(job->mutex);
+            job->status.url = candidate;
+            job->defer_failure = true;
+            job->last_attempt_error.clear();
         }
+        bool ok = false;
+        if (job->options.workers <= 1 || total < kMinParallel) {
+            ok = download_single(job, candidate, total);
+        } else {
+            ok = download_parallel(job, candidate, total, job->options.workers);
+        }
+        if (ok) return;
+        if (job->cancel.load()) {
+            {
+                std::lock_guard<std::mutex> lock(job->mutex);
+                job->defer_failure = false;
+            }
+            finish_job(job, false, true, "下载已取消");
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(job->mutex);
+            job->defer_failure = false;
+            last_error = job->last_attempt_error;
+        }
+        remove_parts(job->options.target, kMaxWorkers);
+        std::error_code ec;
+        std::filesystem::remove(job->options.target + ".part", ec);
     }
-    if (!url.empty()) {
-        std::lock_guard<std::mutex> lock(job->mutex);
-        job->status.url = url;
-    }
-    if (url.empty()) {
-        // 清单没给总长：退回单流，至少还能下载/续传。
-        url = job->options.urls.front();
-        if (!download_single(job, url, 0)) return;
-        return;
-    }
-    if (job->options.workers <= 1 || total < kMinParallel) {
-        if (!download_single(job, url, total)) return;
-        return;
-    }
-    download_parallel(job, url, total, job->options.workers);
+    finish_job(job, false, false,
+               last_error.empty() ? "所有下载源都失败" : last_error);
 }
 
 }  // namespace

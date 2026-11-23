@@ -1,5 +1,5 @@
 // xrkit_smoke —— 外壳自检的独立入口（RC2 起从本体拆出）。
-// 本体 xrkit_app.exe 不再包含 smoke.cpp / --smoke；本 exe 只用于构建、门禁和包内临时自检，
+// 本体 xrkit_app.exe 不再包含 smoke.cpp / xrkit_smoke.exe；本 exe 只用于构建、门禁和包内临时自检，
 // 不随发布包发放。
 
 #include "smoke.h"

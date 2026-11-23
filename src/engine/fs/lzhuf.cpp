@@ -27,7 +27,7 @@ std::vector<uint8_t> lzhuf_encode(const uint8_t* data, size_t size) {
     //   而 `size * 2` 本身可能**回绕**（`size > SIZE_MAX/2` 时表达式截断），于是 out 变得极小；
     //   紧接着 `static_cast<int>(size)` 与 `static_cast<int>(out.size())` 又是**窄化**：
     //   一个荒谬的入参（上游 bug / 超大条目）不会当场被拒，而是拿着错尺寸进 LZHUF 内部去写
-    //   —— 这是"越界写"的典型形状。判据（`xrkit_app --smoke`）：超上限或空指针必须**当场返回空**
+    //   —— 这是"越界写"的典型形状。判据（`xrkit_smoke.exe`）：超上限或空指针必须**当场返回空**
     //   并且**一个字节都不碰**（判据故意用 `nullptr` + 超大 size 调，能安全证明"先判后碰"）。
     constexpr size_t kMaxEncodeInputBytes = XRKIT_LZHUF_MAX_DECLARED_BYTES;
     if (data == nullptr || size == 0 || size > kMaxEncodeInputBytes) return {};

@@ -213,7 +213,7 @@ QString stylesheet_for(xrkit::core::ThemeMode mode) {
     // ★ 2026-09-27：**这套 QSS 从 `%1..%N` 链式 `.arg()` 改成「命名令牌 + replace」**。
     //   起因是真机实测到的真事故（用户截图 + 控制台刷屏）：模板编号**不连续**时
     //   Qt 的 `.arg()` 会把"下一个值"喂给"下一个**还存在**的号" ⇒ **从缺号处整体错位**。
-    //   当时的现场（本机 `--smoke` 实测 88 条 `QCssParser::parseHexColor: Unknown color
+    //   当时的现场（本机 `xrkit_smoke.exe` 实测 88 条 `QCssParser::parseHexColor: Unknown color
     //   name '#3a3f45px'`）：`padding: #3a3f45px 4px`、`border-radius: #ffffffpx`、
     //   `color: 2`、`background: 10` —— 也就是**尺寸槽拿到颜色值、颜色槽拿到数字**，
     //   于是那些 padding / 圆角 / 勾选框尺寸 / 选中文字色**全部静默失效**（观感因此
@@ -586,7 +586,7 @@ void apply_ui_size(QApplication& app, double scale) {
 //
 // ★★ 2026-10-06（H-1）：这段原先**内联在 `src/shell/main.cpp` 的 main() 里**，于是
 //   "字体与几何必须同源""界面大小不许翻主题"这两条判据在离屏自检里**没法复现**
-//   （`--smoke` 走的是另一条分支，压根不经过交互式启动那段）。**口径一字不改，只是搬到
+//   （`xrkit_smoke.exe` 走的是另一条分支，压根不经过交互式启动那段）。**口径一字不改，只是搬到
 //   能被调用处**，`main.cpp` 与 `smoke.cpp` 调同一个函数 ⇒ 锁钉的就是真实启动路径。
 //
 // 顺序（有意如此，别改）：

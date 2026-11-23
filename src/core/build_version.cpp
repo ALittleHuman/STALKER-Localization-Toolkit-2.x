@@ -150,7 +150,7 @@ private:
         //   （`--version-store` / 界面读 `version.json` 都是不可信输入路径）⇒ 崩而不是报错。
         //   现在：进一层就 +1，超上限即**带理由返回 false**（调用方已有的 `error` 通道照用）。
         //   version.json 的真实形状只有 3–4 层；64 层足够宽，又远小于栈能承受的深度。
-        //   判据：`xrkit_app --smoke` 里的"8000 层嵌套必须报错而不是崩"那条。
+        //   判据：`xrkit_smoke.exe` 里的"8000 层嵌套必须报错而不是崩"那条。
         constexpr int kMaxJsonDepth = 64;
         if (++depth_ > kMaxJsonDepth) {
             --depth_;

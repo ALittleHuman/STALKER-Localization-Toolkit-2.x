@@ -1,3 +1,6 @@
+// xrkit_smoke —— 独立离屏自检实现。
+// 包含本体的控件树/任务/插件/更新等行为判据；不链进 xrkit_app，也不随发布包发放。
+
 #include "smoke.h"
 
 #include "xrkit/core/theme.h"
@@ -1686,7 +1689,7 @@ SmokeResult run_smoke() {
     //   目前并没有保留继承的功能（即下次开启又是默认的方案）」）。判据是"先证红再改绿"那种：
     //   ① 改主题 ⇒ `user.ltx` 里 `[theme] mode` 变成新值 ⇒ **重新读回**（= 重启路径）拿到同一主题；
     //   ② 界面大小档位同样；③ 另**预置一个别的键**（`[ffmpeg] path`），断言那次改动**只动了该动的键**。
-    //   ⚠ 这一段会真的写 `user.ltx` ⇒ 结束后**原样复原**（发行包会在包目录里跑 `--smoke`，
+    //   ⚠ 这一段会真的写 `user.ltx` ⇒ 结束后**原样复原**（发行包会在包目录里跑 `xrkit_smoke.exe`，
     //     留一个 user.ltx 进去等于往包里塞用户设置）。
     {
         const QString ltx = QString::fromStdString(xrkit::core::user_ltx_path());
@@ -1776,7 +1779,7 @@ SmokeResult run_smoke() {
 
     // ④-c ★★ 2026-10-06（H-1 / H-2）：**启动序列本身**必须能在自检里复现（判红锁）。
     //   为什么这一段非有不可：修前那条序列**内联在 `src/shell/main.cpp` 的 main() 里**，
-    //   而 `--smoke` 走的是另一条分支、压根不经过交互式启动 ⇒ 这两条判据在门禁里
+    //   而 `xrkit_smoke.exe` 走的是另一条分支、压根不经过交互式启动 ⇒ 这两条判据在门禁里
     //   **验不到**，于是两条都真机红：
     //     · H-1 `apply_theme` 在"保存档覆盖 ui_scale"**之前**调用、之后没重套 ⇒
     //       控件几何按 1.2、字体按 1.0（用户红线："字体大小也要保留继承"）；
@@ -1785,7 +1788,7 @@ SmokeResult run_smoke() {
     //       读到空串 ⇒ 走 Dark ⇒ 整界面被拍回暗色（用户红线："主题……要保留继承"）。
     //   现在的判据钉在**与 main 共用的那个函数**上（`apply_startup_ui`）：预置
     //   `[theme] mode=light / scale=1.2` → 调它 → 断言"字体与几何同源"+"点界面大小仍是浅色"。
-    //   ⚠ 会写 user.ltx ⇒ 跑完**原样复原**（发行包会在包目录里跑 `--smoke`）。
+    //   ⚠ 会写 user.ltx ⇒ 跑完**原样复原**（发行包会在包目录里跑 `xrkit_smoke.exe`）。
     {
         const QString ltx = QString::fromStdString(xrkit::core::user_ltx_path());
         const bool ltx_existed = QFileInfo::exists(ltx);
@@ -6661,7 +6664,7 @@ SmokeResult run_smoke() {
             "        ui.tree_on_drop(tree, lambda paths: mark('tree_drop:' + ','.join(sorted(paths))))\n"
             // ★★ P17-83（接口契约批「`ask_*` 参数缺口」）：1.x 的 `filetypes` / `initialdir` /
             //   `initialfile` 在 2.x 被静默丢掉。**这里不调它们** —— 真实宿主实现会**发真对话框**，
-            //   而 `--smoke` 是离屏无人值守（真发会阻塞；且这条链"发不发、发成什么样"在无人环境里
+            //   而 `xrkit_smoke.exe` 是离屏无人值守（真发会阻塞；且这条链"发不发、发成什么样"在无人环境里
             //   根本观察不到）。⇒ 归**静态判据**：门禁新步 `ask-dialog-params`
             //   （`tests/check_ask_dialog_params.py`）逐项核对
             //   （pybind 收得下三个参数 ＋ 宿主把 `nameFilters`/`directory`/`selectFile` 都真的接上了），
@@ -9031,7 +9034,7 @@ SmokeResult run_smoke() {
         //   ⇒ alive 必须 false；再对死句柄 `set_text` 必须**不崩**（门面之后还能正常工作）。
         {
             if (plug::ui_facade() == nullptr) {
-                // 门面还没装（`--smoke` 通常是 Hub 构造时装上的）⇒ 自己装一份，只影响本用例之后
+                // 门面还没装（`xrkit_smoke.exe` 通常是 Hub 构造时装上的）⇒ 自己装一份，只影响本用例之后
                 install_qt_ui_facade(nullptr);
             }
             const plug::UiFacade* ui_facade = plug::ui_facade();

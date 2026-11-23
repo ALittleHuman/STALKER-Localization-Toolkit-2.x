@@ -1,164 +1,153 @@
 # CLI 参考（`xrkit_cli.exe`）
 
-> 权威来源是程序自带的 `xrkit_cli.exe --actions`（机器可读 JSON，只含有结构化元数据的动作）与 `--help`（完整动作表）。
-> 本页列已结构化的动作；其它动作用 `--help <动作>` 查参数。发现不一致以程序为准并提 issue。
+本页是常用动作的说明；**参数表以程序自身为准**：
+
+```bat
+xrkit_cli --help
+xrkit_cli --help <动作>
+xrkit_cli --actions
+```
+
+`--actions` 输出结构化动作表（JSON）；`--help` 是完整文本表。
 
 ## 0. 通用约定
 
-- **退出码**：`0` 成功；`1` 出错（有理由）；`3` 没做（用法错误，或写盘守卫/待确认——都读理由行）。
-- **路径**：单文件/目录都用绝对路径最稳；含中文/空格的路径**加引号**（且见"已知边界"里的路径限制）。
-- **输出**：解析型动作（`--snapshot`/`--track` 等）会写文件；其余多数只打印，不改输入。
-- **自检**：`xrkit_cli --version` 打印版本；`--help` 列出全部动作；`--help <动作>` 打印参数签名。
-- **编码名**：用标准名（如 `windows-1251`，不是 `cp1251`）；不确定就先 `auto`。
-- **`--only` 清单**：每行一个包内路径（`/` 分隔、大小写敏感）；**空清单＝拒绝**（不是全选）；
-  UTF-8 BOM 会被剥掉、`\` 会转成 `/`、前导 `./` 会被去掉。
-- **模式显示名**：GUI 里是「行数/ID 统计」「ID 文本对比」，CLI 对应 `--mode stats` / `--mode text`。
+- 退出码：`0` 成功；`1` 出错（有理由）；`3` 没做（用法错误、写盘守卫或待确认，读理由行）。
+- 路径含中文/空格时加引号；单文件/目录尽量用绝对路径。
+- 编码名用标准名（如 `windows-1251`），不确定用 `auto`。
+- `--only` 清单每行一个包内路径，`/` 分隔、大小写敏感；空清单拒绝执行。
+- GUI 的模式名「行数/ID 统计」「ID 文本对比」对应 CLI 的 `--mode stats` / `--mode text`。
 
-## 1. 追更链路
-
-### `--snapshot <根目录> <out.json>`
-文件级 manifest：`rel/kind/size/mtime/sha256` + JSGME 行序。**无时间戳 ⇒ 两次跑逐字节一致**。
+## 1. 追更与快照
 
 ```bat
-xrkit_cli --snapshot old\ old.json
+xrkit_cli --snapshot <根目录> <out.json>
+xrkit_cli --diff-snapshot <旧.json> <新.json>
+xrkit_cli --track <baseline_dir> <current_dir> <out_dir> [--baseline old.json] [--rehash]
 ```
 
-### `--diff-snapshot <旧.json> <新.json>`
-只比 manifest（不读文件内容），打印 added/removed/modified/jsgme_changed。有变化也返回 0。
-
-```bat
-xrkit_cli --diff-snapshot old.json new.json
-```
-
-### `--track <baseline_dir> <current_dir> <out_dir> [--baseline old.json] [--rehash]`
-文件级预筛 + 条目级文本对比（XML 现算）。写 `out_dir/report.json` 与 `out_dir/changed/*.tsv`。
-`.ltx/.script/.txt` 只到文件级（运行时打印 caps 行）；`--rehash` 忽略 size+mtime 缓存。
-
-```bat
-xrkit_cli --track old\ new\ out\ --baseline old.json
-```
+- `--snapshot`：文件级 manifest（`rel/kind/size/mtime/sha256` + JSGME 行序），无时间戳，两次运行逐字节一致。
+- `--diff-snapshot`：只比 manifest，打印 added/removed/modified/jsgme_changed；有变化也返回 0。
+- `--track`：文件级预筛 + XML 条目级文本对比；写 `report.json` 与 `changed/*.tsv`；`.ltx/.script/.txt` 只到文件级。
 
 ## 2. XML 对比
 
-### `--xml-compare-dirs <目录A> <目录B> [--mode stats|text] [--enc-a X] [--enc-b Y]`
-默认 `stats` 只比 ID 集合与文件数；**找文本改动必须 `--mode text`**。只比 `.xml`。
-
 ```bat
-xrkit_cli --xml-compare-dirs old\ new\ --mode text
+xrkit_cli --xml-compare-dirs <目录A> <目录B> [--mode stats|text] [--enc-a X] [--enc-b Y]
 ```
+
+默认 `stats` 只比 ID 集合和文件数；找文本改动必须 `--mode text`。只处理 `.xml`。
 
 ## 3. 文本提取
 
-### `--extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]`
-从 `scripts` / `gameplay` / `.ltx` 目录提取可翻译文本，产出 `<prefix>_scripts_texts.xml`（或 gameplay 版）
-与改写后的源码树（`game.translate_string("<id>")`）。`--clean` 先清输出落点。
-
 ```bat
-xrkit_cli --extract-text gamedata\scripts out\ --prefix gs
+xrkit_cli --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]
 ```
 
-输出一行结论，字段即契约：
+从 `scripts` / `gameplay` / `.ltx` 提取可翻译文本，产出 `<prefix>_scripts_texts.xml`（或 gameplay 版）和改写后的源码树。`--clean` 先清输出落点。
+
+汇总行字段：
 
 ```text
-TEXT ok kind=scripts files=4 strings=18 chars=202 notext=1 skipped=1 replskip=0 writefail=0 long=0 xml=gs_scripts_texts.xml ms=11
+TEXT ok kind=scripts files=4 strings=18 chars=202 notext=1 skipped=1 replskip=0 writefail=0 ...
 ```
 
-`notext`=没有可译文本的文件数，`skipped`=跳过数，`replskip`=提取到了但没替换上的数量（应为 0），
-`writefail`=写回失败数（应为 0）。
+- `notext`：没有可译文本的文件数；
+- `skipped`：跳过数；
+- `replskip`：提取到但没替换上的数量（应为 0）；
+- `writefail`：写回失败数（应为 0）。
+
+含 `--` 的脚本文本可能被注释剥离逻辑跳过，见 `已知问题与边界.md`。
 
 ## 4. 汉化包
 
-### `--font-pack`（主入口）
-`--ref <参照包|builtin> --text-root <译文根|包根> [--font <TTF>] --out <目录> [--game SoC|ClS|CoP] [--lang rus]
-[--langs rus] [--on-missing fail|warn] [--require-full-cyrillic] [--merge-glyphs <源TTF>]
-[--patch-offsets 3,-1] [--jsgme --jsgme-name <名>]`
-
-- `--ref builtin`：内置模板（位图 writer，SoC/ClS/CoP 可用）；`--ref <目录>`：扫描参照 `fonts.ltx`（矢量 writer，IX-Ray 必须）；
-- `--text-root` 可用包根 / `gamedata` 根 / `gamedata/configs/text/<lang>` / 文本目录；
-- `--font` 省略时自动找 NotoSansSC → 微软雅黑；`--merge-glyphs` 仅矢量有效；
-- `--patch-offsets 7` 生成独立「字号+7」MOD，可与 `--jsgme` 同用。
-- **摆盘固定为 `MODS\<名>\`（平铺）**：JSGME 只扫描 MODS 的下一层，`MODS\<分类>\<名>\` 那种分类目录**不会被列出**（用户实测 A.R.E.A 加载不上）。`--jsgme-category` 仅为兼容旧命令行保留，传了会告警并忽略。
-- MOD 名前缀（如 `1.`/`2.`）只影响 **JSGME 列表里的排序**，不是必须；不加前缀一样能加载。
-
-- `--ref <目录>` 会**扫描参照包**：`fonts.ltx` 原文直接作为模板（段名/纹理名/空行照抄），
-  writer 按证据自动选择 —— 有 `.ttf` ⇒ 矢量；有 `ui_font_*.dds` ⇒ 位图
-  （SoC/ClS/CoP 的常规形态）。两种证据同时存在或都不存在时**不猜**，
-  报错要求显式 `--writer bitmap|vector`。
+### `--font-pack`
 
 ```bat
-xrkit_cli --font-pack --ref builtin --text-root "E:\...\2.汉化" --out "E:\...\更新\2.汉化" ^
-          --langs rus --jsgme --jsgme-name "汉化" --patch-offsets 7
+xrkit_cli --font-pack ^
+  --ref <参照包|builtin> ^
+  --text-root <译文根|包根> ^
+  --out <目录> ^
+  [--font <TTF>] [--game SoC|ClS|CoP] [--lang rus] [--langs rus] ^
+  [--on-missing fail|warn] [--require-full-cyrillic] [--merge-glyphs <源TTF>] ^
+  [--patch-offsets 3,-1] [--jsgme --jsgme-name <名>]
 ```
 
-### `--font-size-patch <参照包> <offset> <输出目录>`
-只改 IX-Ray `fonts.ltx` 的显式 `size = N`（继承段跟随父段；TTF 为矢量，不重烘）。
+- `--ref builtin`：内置位图模板（SoC/ClS/CoP 可用）；
+- `--ref <目录>`：扫描 `fonts.ltx`，按证据选 writer（TTF ⇒ 矢量，`ui_font_*.dds` ⇒ 位图）；冲突/缺失时要求 `--writer bitmap|vector`；
+- `--text-root` 可给包根、`gamedata` 根、`gamedata/configs/text/<lang>` 或文本目录；
+- `--font` 省略时自动找 NotoSansSC → 微软雅黑；
+- `--patch-offsets` 生成独立字号补丁，可与 `--jsgme` 同用；
+- JSGME 摆盘固定 `MODS\<名>\` 平铺；`--jsgme-category` 仅为兼容旧命令行，会告警并忽略；
+- 位图单图集最多 8192；50px 大字集硬扩到 8192×4096，不做多页/自动降字号；
+- 所有 `ui_font_*` 段参与生成；HUD/STAT 基础字体跳过；特殊字体由人工复核；
+- IX-Ray 矢量包会写 `gamedata/configs/engine_external.ltx` 的 `FontAtlasSize=8192`。
+
+### `--font-size-patch`
 
 ```bat
-xrkit_cli --font-size-patch 参照包\ -3 out\
+xrkit_cli --font-size-patch <参照包> <offset> <输出目录>
 ```
 
-### `--extract-pack <源根> <输出根> [--no-language-pack] [--no-rewritten]`
-提取编排：根 `scripts` + `configs/scripts` + `gameplay`，语言包收集/文本表合并由引擎统一实现。
-源根需含 `configs`/`config`；空成果返回 1。
+只改 IX-Ray `fonts.ltx` 的显式 `size = N`（继承段跟随父段；TTF 不重烘）。和位图 `--patch-offsets` 是两套机制。
 
-### `--langpack-scan <汉化包或目录>`
+### `--extract-pack`
+
+```bat
+xrkit_cli --extract-pack <源根> <输出根> [--no-language-pack] [--no-rewritten]
+```
+
+提取编排：根 `scripts` + `configs/scripts` + `gameplay`；空成果返回 1。源根需含 `configs`/`config`。
+
+### `--langpack-scan`
+
+```bat
+xrkit_cli --langpack-scan <汉化包或目录>
+```
+
 识别 `gamedata/configs/text/<lang>` 槽位与字体/贴图资源；不解包、不改文件。
 
 ## 5. 资源查看
 
-### `--dump <包文件> [DB格式]`
-列出包内条目（DB 六格式 / SquashFS 自动嗅探）。只读。
-
 ```bat
-xrkit_cli --dump gamedata.db0
+xrkit_cli --dump <包文件> [DB格式]
 ```
 
-## 6. 版本与打包（发版脚本用）
+列出 DB 六格式/SquashFS 条目；只读。格式省略时自动嗅探。
+
+## 6. 版本与打包
 
 | 动作 | 用途 |
 |---|---|
 | `--version` | 打印版本行（含 `build=`） |
-| `--write-version <版本> <标记> <序号>` | 改 `version.h` 与 `.rc`（不动 `version.json` 的 current） |
-| `--build-package <version.json> <版本> <标记> <序号> [--prebuilt]` | 打包 + 自检 + 写 `version.txt` |
-| `--exe-version <exe>` | 读任意 exe 的 VERSIONINFO（发版校验用） |
+| `--write-version <版本> <标记> <序号>` | 递增 `build_counter`，写 `version.h/.rc/version.json.current` |
+| `--build-package <version.json> <版本> <标记> <序号> [--prebuilt]` | 算 sha、打包、写构建史；`--prebuilt` 只打包不重编 |
+| `--exe-version <exe>` | 读 VERSIONINFO |
+| `--sha256 <文件>` | 打印 SHA256 |
 
-## 7. 插件
+模型 C：测试版版本串是 `x.y.z.<build>`；`标记/序号` 只决定通道目录，例如：
 
-| 动作 | 用途 |
-|---|---|
-| `--py-plugins <目录>` | 加载并列出插件：`PYPLUGINS files=… loaded=… registrations=… errors=…`，逐条 warn/disabled |
-| `--py-plugin-call <目录> <json>` | 无界面调用插件的 `headless(api, args)`（插件自己决定语义） |
-| `--ui-facade` | 打印 `xrkit` 模块**实际暴露**的 `Api/Ui/Engine/Host` 名字与控件门面可用性（CLI 里 `available=0` 正常）；**插件方法清单以此为准** |
-
-```bat
-xrkit_cli --py-plugin-call plugins {"action":"scan","path":"E:\\x"}
+```text
+BETA.256 + build 516 ⇒ 版本串 2.0.0.516，dist\2.0.0\BETA\256
 ```
 
-## 8. 图形程序的自检入口（`xrkit_app.exe`）
-
-| 动作 | 用途 |
-|---|---|
-| `xrkit_smoke.exe` | RC2 起自检从本体拆出：单独 exe，离屏全量自检，结论行 `SHELL-SMOKE ok checks=N failed=0`；`failed=` 必须为 0，退出码 0 |
-| `--version` | 打印图形程序版本 |
+## 7. 自检与宿主诊断
 
 ```bat
-set QT_QPA_PLATFORM=offscreen
-xrkit_smoke.exe
+xrkit_cli --version
+xrkit_cli --python-host
+xrkit_cli --py-plugins <目录>
+xrkit_cli --ui-facade
+xrkit_cli --py-plugin-call <目录> [JSON]
 ```
 
-## 9. 组合示例：两条常用流水线
-
-**A. 追更 → 出文本对照表**
+宿主更新诊断（通常由主程序/GUI 使用）：
 
 ```bat
-xrkit_cli --snapshot 旧包\ 旧.json
-xrkit_cli --track 旧包\ 新包\ 追更\ --baseline 旧.json
-xrkit_cli --xml-compare-dirs 旧包\configs\text 新包\configs\text --mode text
+xrkit_app --host-update-check
+xrkit_app --host-update-apply
 ```
 
-**B. 出汉化包 + 独立字号补丁**
+`--host-update-apply` 会下载并启动 `xrkit_updater.exe`；成功时当前进程退出。
 
-```bat
-xrkit_cli --font-pack --ref builtin --text-root 译文本\ --out 更新\base --langs rus --jsgme
-xrkit_cli --font-pack --ref builtin --text-root 译文本\ --out 更新\plus7 --langs rus --patch-offsets 7
-```
+`--smoke` 不是 CLI/本体动作；离屏自检由独立 `xrkit_smoke.exe` 执行。发布包不随带 smoke。

@@ -3,9 +3,9 @@
 //
 // 设计边界：
 //   · 目标文件 + <target>.part.N + <target>.segments；
-//   · 1/2/4 段（默认 4），服务器不支持 Range 时回退单流；
-//   · 取消只置位，正在阻塞的 WinHTTP 最多等到当前超时；
-//   · 管理线程负责状态/拼接/校验，worker 只写自己的分片。
+//   · 默认 4 段，最多 6 段；服务器不支持 Range 时回退单流；
+//   · 取消只置位，正在阻塞的 WinHTTP 最多等到当前超时；分片保留，可续传；
+//   · 每个 job 一个管理线程；worker 只写自己的分片。宿主更新和插件 sync/async 共用本类。
 
 #include <cstddef>
 #include <cstdint>

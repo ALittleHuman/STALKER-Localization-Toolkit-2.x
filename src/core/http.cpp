@@ -1,3 +1,6 @@
+// xrkit::core —— WinHTTP 底层原语（GET/POST/下载/Range）。
+// 联网总开关、代理/直连回退、超时与大小上限都在这里；上层不要绕过它。
+
 #include "xrkit/core/http.h"
 
 #include "xrkit/core/theme.h"
