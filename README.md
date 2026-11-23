@@ -129,3 +129,4 @@ scripts\release.ps1 -Index <序号> -Version 2.0.0 -Mark BETA
 | `docs/构建与发版.md` | 构建、smoke 拆分、打包、版本模型、npm |
 | `docs/内部契约.md` | 维护者硬口径 |
 | `docs/已知问题与边界.md` | 用户可见限制与规避 |
+| `docs/路线图.md` | 非 2.0.0 规划：模块化字库、OGSR 二进制补丁 |
