@@ -688,7 +688,9 @@ FontVariationInfo font_variation_info(const std::string& font_path) {
         ~LibGuard() { if (lib) FT_Done_FreeType(lib); }
     } guard{lib};
     FT_Face face = nullptr;
-    if (FT_New_Face(lib, font_path.c_str(), 0, &face) != 0) {
+    // 与 render_font 同口径：FreeType 要本地编码路径（UTF-8 中文/西里尔路径不能直接 c_str）。
+    const std::string native = core::path_to_utf8(core::path_from_utf8(font_path));
+    if (FT_New_Face(lib, native.c_str(), 0, &face) != 0) {
         out.error = "字体打不开";
         return out;
     }
@@ -733,7 +735,8 @@ TextSample render_text_sample(const std::string& font_path, const std::string& u
         ~LibGuard() { if (lib) FT_Done_FreeType(lib); }
     } guard{lib};
     FT_Face face = nullptr;
-    if (FT_New_Face(lib, font_path.c_str(), 0, &face) != 0) {
+    const std::string native = core::path_to_utf8(core::path_from_utf8(font_path));
+    if (FT_New_Face(lib, native.c_str(), 0, &face) != 0) {
         out.error = "字体打不开";
         return out;
     }
