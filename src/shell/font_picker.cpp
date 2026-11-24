@@ -266,7 +266,8 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
     //   缩放得能真的看全 —— 放大后整张图变大，画布**滚动条随之可用**。
     auto* preview_scroll = new QScrollArea(dialog);
     preview_scroll->setObjectName(QStringLiteral("font_picker_preview_scroll"));
-    preview_scroll->setWidgetResizable(true);
+    // 图随内容定高；不要让 QLabel 被拉满视口（否则预览区高度与图片/缩放无关）。
+    preview_scroll->setWidgetResizable(false);
     auto* preview = new QLabel;
     preview->setObjectName(QStringLiteral("font_picker_preview"));
     preview->setAlignment(Qt::AlignTop | Qt::AlignLeft);
@@ -318,39 +319,9 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
     };
     refill(items);
 
-    // 后台分片识别中文字形（1.x `detect_all`）：一屏几百个字体，一次性全解析会卡住界面。
-    // 缓存跨对话框复用，所以第二次打开几乎是立刻的。
-    const auto detect_batch = std::make_shared<std::function<void(int)>>();
-    std::weak_ptr<std::function<void(int)>> weak = detect_batch;
-    *detect_batch = [list, items, weak, dialog](int start) {
-        const int end = std::min(start + 24, static_cast<int>(items.size()));
-        for (int i = start; i < end; ++i) font_mark_of(items[i]);
-        // 回填标记（列表项文本：`basename [目录] 标记`）
-        for (int i = 0; i < list->count() && i < static_cast<int>(items.size()); ++i) {
-            QListWidgetItem* item = list->item(i);
-            if (item == nullptr || item->data(Qt::UserRole).toString() != items[i]) continue;
-            item->setText(QStringLiteral("%1  [%2]  %3")
-                              .arg(QFileInfo(items[i]).fileName(),
-                                   QFileInfo(items[i]).absolutePath(), font_mark_of(items[i])));
-        }
-        if (end < static_cast<int>(items.size())) {
-            // ★★ 2026-10-05 真缺陷修复（血账：`xrkit_smoke.exe` 里 0xC0000005 的**真因**就在这里）：
-            //   这条自续期链**必须绑在对话框的生命期上**。修前写的是
-            //   `QTimer::singleShot(25, [keep, end] { (*keep)(end); })` —— **没有 context 对象**，
-            //   于是它既不属于 dialog、也不属于页面，谁析构都拦不住它；而 `detect_batch` 捕获的是
-            //   裸 `this`（当时是页面），下一跳里 `cached_mark(items[i])` 直接摸页面的
-            //   `font_mark_cache_`（`std::map<QString,QString>` 成员）。
-            //   现场（门禁 [23] 实崩）：页夹具析构后链还在 25 ms 一跳地跑 ⇒ 下一个
-            //   `processEvents()` 里 `_Find_lower_bound` 解引用已释放的树节点 ⇒ 访问违例
-            //   （崩溃栈：`run_smoke` ← `make_font_picker 的 lambda` ← `cached_mark`
-            //    ← `std::_Tree<...>::_Find_lower_bound`）。
-            //   ★ 修法：把 **dialog** 交给 `singleShot` 当 context —— 对话框一析构，Qt 就把这一跳
-            //     取消，链自然终止（`keep` 随之释放）。抽到本文件后，"缓存的宿主"从页面变成了
-            //     **文件内静态**（不再有页面生命周期问题），context 仍是 dialog。
-            if (auto keep = weak.lock()) QTimer::singleShot(25, dialog, [keep, end] { (*keep)(end); });
-        }
-    };
-
+    // 不在打开时批量识别全部字体：一次四态判定要读整份字体（实测 ~64ms/字体），
+    // 几百个字体在 UI 线程排队就是"打开选择器即卡死"。列表先只显示缓存标记；
+    // 当前选中项的标记/预览在下面按需算（同一份引擎判据，不另写）。
     // 预览（1.x `show_preview` `:532-596`）：字号 = max(12, int(40*zoom))，图随内容增长。
     const auto render_preview = [list, preview, caption, zoom_label, dialog, preview_zoom,
                                  preview_pixel_size] {
@@ -396,6 +367,7 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
             painter.drawText(pad, pad + metrics.height() + pad / 2 + metrics.ascent(), line2);
         }
         preview->setPixmap(pixmap);
+        preview->adjustSize();
         // 标题：`basename  [字体名]` + 四态标记（1.x `:593`）
         QString text =
             QStringLiteral("%1  [%2]  %3").arg(QFileInfo(path).fileName(), family,
@@ -421,12 +393,8 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
     };
 
     QObject::connect(keyword, &QLineEdit::textChanged, dialog,
-                     [list, refill, detect_batch, current](const QString& text) {
-                         const QStringList paths = font_candidates(text, current);
-                         refill(paths);
-                         // 旧检测链作废（1.x 的"代次"）：这里用 items 快照 + 匹配校验代替，
-                         // 列表项与 items 对不上就跳过 ⇒ 不会把过期结果写进新列表。
-                         if (!paths.isEmpty()) (*detect_batch)(0);
+                     [list, refill, current](const QString& text) {
+                         refill(font_candidates(text, current));
                      });
     QObject::connect(list, &QListWidget::currentItemChanged, dialog,
                      [render_preview](QListWidgetItem*, QListWidgetItem*) { render_preview(); });
@@ -463,10 +431,8 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
                      });
     QObject::connect(cancel, &QPushButton::clicked, dialog, [dialog] { dialog->reject(); });
 
-    render_preview();
-    // ★ 不在这条构造路径里同步解析 24 个字体：dt 打开选择器时会被误判成“卡死”。
-    //   先让对话框出来，再过 250ms 开始分批识别；期间用户可正常过滤/选择。
-    QTimer::singleShot(250, dialog, [detect_batch] { (*detect_batch)(0); });
+    // 预览与分类都排到事件循环：先让对话框出来，避免构造期同步解析字体。
+    QTimer::singleShot(0, dialog, render_preview);
     return dialog;
 }
 

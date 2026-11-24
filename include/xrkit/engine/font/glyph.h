@@ -37,4 +37,9 @@ struct GlyphMaskInfo {
 bool glyph_mask_info(const std::string& font_path, int pixel_size, uint32_t cp,
                      GlyphMaskInfo& out);
 
+// 一次打开字体、批量取多个码位（四态判定的快路径；单字接口仍保留）。
+// 返回 false 只在字体打不开/字号设置失败；单个码位失败看 out[i].ok。
+bool glyph_mask_infos(const std::string& font_path, int pixel_size,
+                      const std::vector<uint32_t>& cps, std::vector<GlyphMaskInfo>& out);
+
 }  // namespace xrkit::engine::font

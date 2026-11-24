@@ -133,9 +133,9 @@ bool dump_glyphs(const std::string& font_path, int pixel_size,
     return static_cast<bool>(f);
 }
 
-bool glyph_mask_info(const std::string& font_path, int pixel_size, uint32_t cp,
-                     GlyphMaskInfo& out) {
-    out = GlyphMaskInfo{};
+bool glyph_mask_infos(const std::string& font_path, int pixel_size,
+                      const std::vector<uint32_t>& cps, std::vector<GlyphMaskInfo>& out) {
+    out.assign(cps.size(), GlyphMaskInfo{});
     // ★ 2026-11-20（H2b）：路径不能 `.string()` 窄化（Windows 按 CP_ACP，中文/日文路径会
     //   变成 `??` 而打不开）。改成按 UTF-8 路径整读进内存，交给 FreeType 的内存构造。
     std::string font_bytes;
@@ -162,52 +162,58 @@ bool glyph_mask_info(const std::string& font_path, int pixel_size, uint32_t cp,
     } face_guard{face};
     if (FT_Set_Pixel_Sizes(face, 0, static_cast<FT_UInt>(pixel_size)) != 0) return false;
 
-    const FT_UInt index = FT_Get_Char_Index(face, cp);
-    if (index == 0) {
-        // 字体里没有这个码位 ⇒ 走 .notdef；**判据不是它**，而是渲染出来有没有墨迹
-        // （有些字体的 .notdef 是空白，有些是方框；1.x 用 `getbbox() is None` 区分）。
-        if (FT_Load_Glyph(face, 0, FT_LOAD_DEFAULT) != 0) return false;
-    } else if (FT_Load_Glyph(face, index, FT_LOAD_DEFAULT) != 0) {
-        return false;
-    }
-    if (face->glyph->format == FT_GLYPH_FORMAT_OUTLINE &&
-        FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL) != 0) {
-        return false;
-    }
-    const FT_Bitmap& bm = face->glyph->bitmap;
-    out.width = static_cast<int>(bm.width);
-    out.height = static_cast<int>(bm.rows);
-    out.ok = true;
-    // ★★ 2026-10-10（P17-3，审计 02 F-06 Medium）：**MONO 也要参与 bbox/has_ink**。
-    //   修前这一句是 `if (bm.pixel_mode != FT_PIXEL_MODE_GRAY || bm.buffer == nullptr) return true;`
-    //   —— 对以 MONO 内嵌位图呈现的字形直接早退成「画得出但没有墨迹」，而本函数是
-    //   `classify_cjk_font` 与四态判定的**唯一判据** ⇒ 会把好字体判成缺字形。
-    //   当前取样字号是固定的 40px（落在 strike 之外）⇒ 这条洞**暂时不可达**；本批一并堵上，
-    //   免得将来把取样字号挪进 strike 窗口时变成活雷。
-    //   其它 pixel_mode（LCD/BGRA）照旧不认（`bitmap_is_readable` 是唯一口径）。
-    if (!bitmap_is_readable(bm)) return true;
+    for (size_t i = 0; i < cps.size(); ++i) {
+        GlyphMaskInfo& info = out[i];
+        const FT_UInt index = FT_Get_Char_Index(face, cps[i]);
+        if (index == 0) {
+            // 字体里没有这个码位 ⇒ 走 .notdef；判据不是它，而是渲染出来有没有墨迹。
+            if (FT_Load_Glyph(face, 0, FT_LOAD_DEFAULT) != 0) continue;
+        } else if (FT_Load_Glyph(face, index, FT_LOAD_DEFAULT) != 0) {
+            continue;
+        }
+        if (face->glyph->format == FT_GLYPH_FORMAT_OUTLINE &&
+            FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL) != 0) {
+            continue;
+        }
+        const FT_Bitmap& bm = face->glyph->bitmap;
+        info.width = static_cast<int>(bm.width);
+        info.height = static_cast<int>(bm.rows);
+        info.ok = true;
+        if (!bitmap_is_readable(bm)) continue;
 
-    int x0 = out.width;
-    int y0 = out.height;
-    int x1 = -1;
-    int y1 = -1;
-    for (int r = 0; r < out.height; ++r) {
-        for (int c = 0; c < out.width; ++c) {
-            if (bitmap_pixel_8bpp(bm, c, r) == 0) continue;
-            if (c < x0) x0 = c;
-            if (c > x1) x1 = c;
-            if (r < y0) y0 = r;
-            if (r > y1) y1 = r;
+        int x0 = info.width;
+        int y0 = info.height;
+        int x1 = -1;
+        int y1 = -1;
+        for (int r = 0; r < info.height; ++r) {
+            for (int c = 0; c < info.width; ++c) {
+                if (bitmap_pixel_8bpp(bm, c, r) == 0) continue;
+                if (c < x0) x0 = c;
+                if (c > x1) x1 = c;
+                if (r < y0) y0 = r;
+                if (r > y1) y1 = r;
+            }
+        }
+        if (x1 >= 0) {
+            info.has_ink = true;
+            info.x0 = x0;
+            info.y0 = y0;
+            info.x1 = x1 + 1;  // 与 Pillow 的 bbox 一样是半开区间
+            info.y1 = y1 + 1;
         }
     }
-    if (x1 >= 0) {
-        out.has_ink = true;
-        out.x0 = x0;
-        out.y0 = y0;
-        out.x1 = x1 + 1;  // 与 Pillow 的 bbox 一样是**半开区间**
-        out.y1 = y1 + 1;
-    }
     return true;
+}
+
+bool glyph_mask_info(const std::string& font_path, int pixel_size, uint32_t cp,
+                     GlyphMaskInfo& out) {
+    std::vector<GlyphMaskInfo> one;
+    if (!glyph_mask_infos(font_path, pixel_size, {cp}, one) || one.empty()) {
+        out = GlyphMaskInfo{};
+        return false;
+    }
+    out = one.front();
+    return out.ok;
 }
 
 }  // namespace xrkit::engine::font

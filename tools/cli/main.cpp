@@ -373,6 +373,7 @@ void print_usage() {
            "                  [--backup] [--exclude <模式>]\n"
            "                  批量编码转换（与内置 convert 页同一个引擎实现；判据对拍用它）\n"
            "  --font-pack --ref <参照包|builtin> --text-root <译文根|包根> [--font <TTF>] --out <目录>\n"
+           "                     [--font-weight 700]  可变字体 wght 轴（100..900；静态字体忽略）\n"
            "                     [--game SoC|ClS|CoP] [--langs rus] [--suffix s] [--offset n]\n"
            "                     [--only-size 11,14] [--on-missing fail|warn] [--require-full-cyrillic]\n"
            "                     [--patch-offsets 7]  base=标准字号；每个 offset 生成一个只含 DDS/INI 的补丁\n"

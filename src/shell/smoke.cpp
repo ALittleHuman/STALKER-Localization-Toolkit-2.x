@@ -58,6 +58,7 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDialog>
+#include <QEventLoop>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -11313,8 +11314,24 @@ SmokeResult run_smoke() {
         //   ★★ P8a：缩放状态**只属于那个对话框**（原来挂在页面上），所以这条判据改成
         //   **真的点按钮**（用户就是这么用的），而不是去摸页面方法。
 
-        // 暂时跳过字体选择器 UI 交互：smoke 在该段超时；产品实现保留，待性能修复后恢复。
-        result.notes.append(QStringLiteral("D2-字体 选择器交互**未覆盖**（smoke 性能修复中）"));
+        // 选择器打开/关闭必须快：不在构造期批量分类全部字体。
+        {
+            QElapsedTimer timer;
+            timer.start();
+            QDialog* picker = make_font_picker(&page, page.font_edit()->text(), nullptr,
+                                               nullptr, nullptr);
+            picker->show();
+            QTimer::singleShot(100, picker, &QDialog::reject);
+            while (picker->isVisible() && timer.elapsed() < 5000) {
+                QApplication::processEvents(QEventLoop::AllEvents, 20);
+            }
+            const bool closed = !picker->isVisible();
+            const qint64 elapsed = timer.elapsed();
+            delete picker;
+            check(closed && elapsed < 5000,
+                  QStringLiteral("D2-字体 选择器打开/关闭未卡死（实得 %1ms，closed=%2）")
+                      .arg(elapsed).arg(closed ? 1 : 0));
+        }
         page.hide();
     }
 

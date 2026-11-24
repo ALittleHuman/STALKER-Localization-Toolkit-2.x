@@ -59,9 +59,15 @@ CjkFontCheck classify_cjk_font(const std::string& font_path, int pixel_size) {
     std::set<std::array<int, 4>> boxes;
     bool saw_missing = false;
 
-    for (uint32_t cp : cps) {
-        GlyphMaskInfo info;
-        if (!glyph_mask_info(font_path, pixel_size, cp, info) || !info.ok) {
+    // 一次打开字体，批量取所有样本（修前每个码位都重读整份字体 ⇒ 字体选择器打开即卡死）。
+    std::vector<GlyphMaskInfo> infos;
+    if (!glyph_mask_infos(font_path, pixel_size, cps, infos) || infos.size() != cps.size()) {
+        check.state = CjkFontState::Unknown;
+        return check;
+    }
+    for (size_t i = 0; i < cps.size(); ++i) {
+        const GlyphMaskInfo& info = infos[i];
+        if (!info.ok) {
             // 检测失败（字体打不开/渲染不了）—— 与"缺字形"**不是一回事**
             check.state = CjkFontState::Unknown;
             return check;
@@ -77,19 +83,22 @@ CjkFontCheck classify_cjk_font(const std::string& font_path, int pixel_size) {
     if (saw_missing) {
         // `sample_missing` + `sample_fallback`：缺的字里有哪些能用繁体字形顶上
         //（判据是该字在表里有繁体替代**且字体真画得出那个繁体**）
-        for (uint32_t cp : cps) {
-            GlyphMaskInfo info;
-            if (!glyph_mask_info(font_path, pixel_size, cp, info) || !info.ok || info.has_ink) {
-                continue;
-            }
-            const std::string simplified = utf8_of(cp);
+        std::vector<uint32_t> missing_cps;
+        std::vector<uint32_t> alt_cps;
+        for (size_t i = 0; i < cps.size(); ++i) {
+            if (!infos[i].ok || infos[i].has_ink) continue;
+            missing_cps.push_back(cps[i]);
+            alt_cps.push_back(st_fallback(cps[i]));
+        }
+        std::vector<GlyphMaskInfo> alt_infos;
+        glyph_mask_infos(font_path, pixel_size, alt_cps, alt_infos);
+        for (size_t i = 0; i < missing_cps.size(); ++i) {
+            const std::string simplified = utf8_of(missing_cps[i]);
             check.missing.push_back(simplified);
-            const uint32_t alt = st_fallback(cp);
-            if (alt == 0) continue;
-            GlyphMaskInfo alt_info;
-            if (glyph_mask_info(font_path, pixel_size, alt, alt_info) && alt_info.ok &&
-                alt_info.has_ink) {
-                check.fallbacks[simplified] = utf8_of(alt);
+            if (alt_cps[i] == 0 || i >= alt_infos.size()) continue;
+            const GlyphMaskInfo& alt_info = alt_infos[i];
+            if (alt_info.ok && alt_info.has_ink) {
+                check.fallbacks[simplified] = utf8_of(alt_cps[i]);
             }
         }
         // ★ 照**代码**：`return "japanese" if sample_fallback(path) else "missing"` ——
