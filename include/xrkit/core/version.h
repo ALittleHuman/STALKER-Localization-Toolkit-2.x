@@ -20,7 +20,7 @@ inline constexpr const char* kChannel = "BETA";
 //     后来一路涨到三位数却没跟着改 —— 这类「写死当前值」的注释必然过期，所以这里改成**不写数字**。
 //   ★ 另：`version.json` 的 `tree.2.0.0.ALPHA` 里**缺序号 17 与 107** 属**历史断号**（不是缺陷），
 //     别去「补号」—— 补了会让包目录名与既有发布记录对不上。
-inline constexpr int kBuildNumber = 518;
+inline constexpr int kBuildNumber = 519;
 
 // "2.0.0 ALPHA.0"（无预发布时为 "2.0.0"）
 std::string version_string();
