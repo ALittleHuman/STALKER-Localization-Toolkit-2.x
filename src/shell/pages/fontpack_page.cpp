@@ -671,15 +671,19 @@ void FontPackPage::preview_weight() {
     layout->addWidget(title);
     auto* slider = new QSlider(Qt::Horizontal, &dialog);
     slider->setObjectName(QStringLiteral("font_weight_preview_slider"));
-    auto* image = new QLabel(&dialog);
+    // 复用字体选择器同一份预览壳：滚动区 + 内容定高的 QLabel，不另造黑底图。
+    auto* preview_scroll = new QScrollArea(&dialog);
+    preview_scroll->setObjectName(QStringLiteral("font_weight_preview_scroll"));
+    preview_scroll->setWidgetResizable(false);
+    auto* image = new QLabel;
     image->setObjectName(QStringLiteral("font_weight_preview_image"));
-    image->setAlignment(Qt::AlignCenter);
-    image->setMinimumHeight(xrkit::core::px(110));
+    image->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    preview_scroll->setWidget(image);
     auto* status = new QLabel(&dialog);
     status->setObjectName(QStringLiteral("font_weight_preview_status"));
     status->setWordWrap(true);
     layout->addWidget(slider);
-    layout->addWidget(image, 1);
+    layout->addWidget(preview_scroll, 1);
     layout->addWidget(status);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
     layout->addWidget(buttons);
@@ -702,25 +706,14 @@ void FontPackPage::preview_weight() {
 
     const auto render = [font, image, status, title, preview_ok](int weight) {
         if (!preview_ok) return;
-        const QString ppm = QDir::temp().filePath(QStringLiteral("xrkit_font_weight_preview.ppm"));
-        const engine::font::TextSample sample = engine::font::render_text_sample(
-            font.toStdString(), title->text().toStdString(), 56, ppm.toStdString(), weight);
-        if (!sample.ok) {
-            image->setText(QStringLiteral("预览失败：%1").arg(utf8(sample.error)));
-            return;
-        }
-        QPixmap pixmap;
-        if (!pixmap.load(ppm)) {
-            image->setText(QStringLiteral("预览图读取失败"));
-            return;
-        }
+        // 与字体选择器同一个 `font_preview_pixmap` 实现（同一套 QFont/主题/缩放观感）。
+        const QPixmap pixmap =
+            font_preview_pixmap(font, title->text(), QString(), 56, weight);
         image->setPixmap(pixmap);
-        if (weight > 0) {
-            status->setText(QStringLiteral("wght=%1　缺字 %2 个").arg(weight).arg(sample.missing));
-        } else {
-            status->setText(QStringLiteral("字体默认字重　缺字 %1 个").arg(sample.missing));
-        }
-        QFile::remove(ppm);
+        image->adjustSize();
+        status->setText(weight > 0
+                            ? QStringLiteral("wght=%1（预览与选择器同源）").arg(weight)
+                            : QStringLiteral("字体默认字重（预览与选择器同源）"));
     };
     QObject::connect(slider, &QSlider::valueChanged, &dialog,
                      [render](int value) { render(value); });

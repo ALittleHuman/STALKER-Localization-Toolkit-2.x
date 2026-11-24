@@ -11,7 +11,7 @@
 //      0xC0000005），**把修法与那段注释一起搬过来**才不会又踩一次。
 //
 // 口径（逐条照原实现，别改）：
-//   · 列表行文本：`basename  [目录]  标记`；标记**先留空**，检测**按批（每 24 个）**回填；
+//   · 列表行文本：`basename  [目录]  标记`；标记只取缓存，当前预览按需判定（不在打开时全量分类）；
 //   · 缓存**跨对话框复用**（第二次打开几乎是立刻的）；
 //   · 双击列表项 ＝ 点「选择」；「选择」/「浏览其他目录…」都算用户的选择（回调给调用方）；
 //   · 预览：字号 `max(12, int(40*zoom))`，图**随内容增长**（外层滚动条随即可用）；
@@ -20,6 +20,7 @@
 #include "dialog_start.h"
 
 #include <QDialog>
+#include <QPixmap>
 #include <QString>
 #include <QStringList>
 
@@ -39,6 +40,11 @@ QString font_mark_of(const QString& font_path);
 
 // 预览样张两行（第二行带西里尔与数字）；日语字体按引擎给的替换表换成繁体字形
 QString font_preview_line(const QString& font_path, int which);
+
+// **字体预览的唯一实现**：选择器与字重预览共用。`line2` 为空时只画一行；
+// `weight>0` 时用 Qt 可变字体轴（与字体选择器同一套 QFont 观感）。
+QPixmap font_preview_pixmap(const QString& font_path, const QString& line1,
+                            const QString& line2, int pixel_size, int weight = 0);
 
 // 默认字体路径（唯一一份）：
 //   ① 上次用过的（`user.ltx` 的 `[font] path`，**文件仍存在**才算）

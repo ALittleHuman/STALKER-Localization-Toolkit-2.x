@@ -139,6 +139,34 @@ int preview_font_id(const QString& path) {
     return id;
 }
 
+
+QPixmap font_preview_pixmap(const QString& font_path, const QString& line1,
+                            const QString& line2, int pixel_size, int weight) {
+    const int id = preview_font_id(font_path);
+    const QStringList families =
+        id >= 0 ? QFontDatabase::applicationFontFamilies(id) : QStringList();
+    QFont font = families.isEmpty() ? QApplication::font() : QFont(families.first());
+    if (weight > 0) font.setVariableAxis(QFont::Tag("wght"), static_cast<float>(weight));
+    font.setPixelSize(std::max(6, pixel_size));
+    const QFontMetrics metrics(font);
+    const int pad = xrkit::core::px(8);
+    const bool two_lines = !line2.isEmpty();
+    const int width = std::max(metrics.horizontalAdvance(line1),
+                               two_lines ? metrics.horizontalAdvance(line2) : 0) + 2 * pad;
+    const int height = (two_lines ? 2 : 1) * metrics.height() + (two_lines ? 3 : 2) * pad;
+    QPixmap pixmap(std::max(1, width), std::max(1, height));
+    pixmap.fill(QColor(QString::fromUtf8(xrkit::core::theme_color_current("surface"))));
+    QPainter painter(&pixmap);
+    painter.setFont(font);
+    painter.setPen(QColor(QString::fromUtf8(xrkit::core::theme_color_current("text"))));
+    painter.drawText(pad, pad + metrics.ascent(), line1);
+    if (two_lines) {
+        painter.setPen(QColor(QString::fromUtf8(xrkit::core::theme_color_current("text_dim"))));
+        painter.drawText(pad, pad + metrics.height() + pad / 2 + metrics.ascent(), line2);
+    }
+    return pixmap;
+}
+
 QString font_preview_line(const QString& font_path, int which) {
     // 1.x `:570`：两行样本（第二行带西里尔与数字）
     QString line = which == 0 ? QStringLiteral("汉化测试你好ABC") : QStringLiteral("Привет 世界 123");
@@ -343,29 +371,8 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
         }
         const QString line1 = font_preview_line(path, 0);
         const QString line2 = font_preview_line(path, 1);
-        QFont font;
-        if (!families.isEmpty()) {
-            font = QFont(families.first());
-        } else {
-            font = dialog->font();
-        }
-        font.setPixelSize(preview_pixel_size());
-        const QFontMetrics metrics(font);
-        const int pad = xrkit::core::px(8);
-        const int width =
-            std::max(metrics.horizontalAdvance(line1), metrics.horizontalAdvance(line2)) + 2 * pad;
-        const int height = 2 * metrics.height() + 3 * pad;
-        QPixmap pixmap(width, height);
-        pixmap.fill(QColor(QString::fromUtf8(xrkit::core::theme_color_current("surface"))));
-        {
-            QPainter painter(&pixmap);
-            painter.setFont(font);
-            painter.setPen(QColor(QString::fromUtf8(xrkit::core::theme_color_current("text"))));
-            painter.drawText(pad, pad + metrics.ascent(), line1);
-            painter.setPen(
-                QColor(QString::fromUtf8(xrkit::core::theme_color_current("text_dim"))));
-            painter.drawText(pad, pad + metrics.height() + pad / 2 + metrics.ascent(), line2);
-        }
+        const QPixmap pixmap =
+            font_preview_pixmap(path, line1, line2, preview_pixel_size(), 0);
         preview->setPixmap(pixmap);
         preview->adjustSize();
         // 标题：`basename  [字体名]` + 四态标记（1.x `:593`）
