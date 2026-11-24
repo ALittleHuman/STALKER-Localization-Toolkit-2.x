@@ -74,13 +74,13 @@ xrkit_cli --font-pack ^
 ```
 
 - `--ref builtin`：内置位图模板（SoC/ClS/CoP 可用）；
-- `--ref <目录>`：扫描 `fonts.ltx`，按证据选 writer（TTF ⇒ 矢量，`ui_font_*.dds` ⇒ 位图）；冲突/缺失时要求 `--writer bitmap|vector`；
+- `--ref <目录>`：扫描 `fonts.ltx`，按证据选 writer（矢量字体 ⇒ 矢量，位图字体纹理 ⇒ 位图）；冲突/缺失时要求 `--writer bitmap|vector`；
 - `--text-root` 可给包根、`gamedata` 根、`gamedata/configs/text/<lang>` 或文本目录；
-- `--font` 省略时自动找 NotoSansSC → 微软雅黑；可变字体的 `--font-weight` 直接设 `wght` 轴（100–900，默认 700）；
+- `--font` 省略时自动寻找可用的默认中文字体；可变字体的 `--font-weight` 直接设 `wght` 轴（100–900，默认 700）；
 - `--patch-offsets` 生成独立字号补丁，可与 `--jsgme` 同用；
 - JSGME 摆盘固定 `MODS\<名>\` 平铺；`--jsgme-category` 仅为兼容旧命令行，会告警并忽略；
 - 位图单图集最多 8192；50px 大字集硬扩到 8192×4096，不做多页/自动降字号；
-- 所有 `ui_font_*` 段参与生成；HUD/STAT 基础字体跳过；特殊字体由人工复核；
+- 所有字体段参与生成；基础 HUD/STAT 字体跳过；特殊字体段由人工复核；
 - IX-Ray 矢量包会写 `gamedata/configs/engine_external.ltx` 的 `FontAtlasSize=8192`。
 
 ### `--font-size-patch`
@@ -128,7 +128,7 @@ xrkit_cli --dump <包文件> [DB格式]
 模型 C：测试版版本串是 `x.y.z.<build>`；`标记/序号` 只决定通道目录，例如：
 
 ```text
-BETA.259 + build 519 ⇒ 版本串 2.0.0.519，dist\2.0.0\BETA\259
+BETA.260 + build 520 ⇒ 版本串 2.0.0.520，dist\2.0.0\BETA\260
 ```
 
 ## 7. 自检与宿主诊断

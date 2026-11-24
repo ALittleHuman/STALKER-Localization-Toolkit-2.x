@@ -3,14 +3,14 @@
   2.0.0 打包（M3 第一步）：把 msvc-shell 的产物做成一个**可回退**的发行包。
 
   口径（见 docs/2.0.0-打包与发版规格.md）：
-   ① 包内**不带** ffmpeg、**不带** NLC 解密插件、**不带**实验性引擎补丁；`plugins\` 目录**存在但为空**
+   ① 包内**不带** ffmpeg、**不带**第三方解密插件、**不带**实验性引擎补丁；`plugins\` 目录**存在但为空**
       （插件由用户自己放；发行包为空是既有决策）；
       ★★ P17-81（甲）：**产品实现＝C++ 内置六页**；`plugins\*_page.py` 与 `hello.py` 一律是
       因而随包携带、默认不加载），发行版**一枚都不进包**。两份形态的包内自检都断言
       "默认可见页＝六个内置页"（见下面"包内自检"那一段）。
    ② Qt 运行时用官方 `windeployqt` 铺（不手抄 DLL 名单，避免漏平台插件）；
    ③ 包内放 `README.txt`（安装/回退）与 `version.txt`（版本 + 源提交 + 构建时间）；
-   ④ 打完后**从包目录跑一次离屏自检**（`xrkit_app.exe --smoke`）——这是"包是否完整可运行"的判据，
+   ④ 打完后**从包目录跑一次离屏自检**（`xrkit_smoke.exe`）——这是"包是否完整可运行"的判据，
       不是人眼看文件齐不齐。
 
   用法：pwsh -File scripts/package.ps1 [-OutDir dist]
@@ -362,7 +362,7 @@ if ($isDev) {
     #   它们只服务门禁：`tests/check_package_fixture_pages.py` ④ 从**仓库** `plugins/` 抬一次验插件页。
     Write-Host "== 开发版：不再随包携带插件夹具（夹具留在仓库，门禁从仓库抬）=="
 } else {
-    Write-Host "== 发行版：plugins\ 保持为空（既定策略：NLC 解密插件不随包发布）=="
+    Write-Host "== 发行版：plugins\ 保持为空（既定策略：第三方解密插件不随包发布）=="
 }
 
 # ★★ 用户口径（2026-10-05）：「ffmpeg 等依赖应当自带」。
@@ -523,11 +523,11 @@ if ($isDev) {
                            "该子目录**不参与加载** —— `plugins\` 顶层为空、程序默认跑的仍是内置六页）：{2}。")
         $pluginLineHead -f $copiedPlugins.Count, ($copiedPlugins.Count - 1), ($copiedPlugins -join ', ')
     } else {
-        "插件：本包是**开发版**，但构建产物里没有插件夹具，plugins\ 为空。"
+        "插件：本包为测试构建，构建产物里没有内置插件，plugins\ 为空。"
     }
 } else {
-    $pluginLine = "插件：plugins\ 为空目录（发行版策略：NLC 解密插件闭源、不随包发布；" +
-                  "随包夹具一律不进发行口径包）。需要时把 <name>.dll 放进去，重启程序。"
+    $pluginLine = "插件：plugins\ 为空目录（发行版策略：第三方解密插件不随包发布；" +
+                  "随包示例插件不进发行包）。需要时把 <name>.dll 放进去，重启程序。"
 }
 @"
 STALKER 汉化工具集 2.0.0（xrkit）
@@ -546,13 +546,7 @@ $pluginLine
       libtheora/libvorbis 编码、theora/vorbis/h264/mpeg4/aac/mp3 解码；视频页不填路径也能直接用；
       **不再自带 ffprobe** —— 探测走 ffmpeg -i 降级，
       用户可自备 bin\ffprobe.exe 或 [ffmpeg] probe）。
-不含：NLC 解密插件（发行版）、实验性引擎补丁。
-自检：开发树上用独立 `xrkit_smoke.exe`（离屏，ASCII 输出）；发布包不随带该工具。
-      本包 `platforms\` **同时**带 `qwindows.dll` 与 `qoffscreen.dll`：`--smoke`/`--layout-report`
-      走离屏，而 `windeployqt` 按 app 的实际调用只铺 qwindows ⇒ 少了后者会直接
-      崩 `0xC0000409`（BEX64 / 故障模块 Qt6Core.dll / P7=0x267a8，ALPHA.57~59 都踩过）。
-      跑法：`set QT_QPA_PLATFORM=offscreen` 再执行；结论行是 `SHELL-SMOKE ok checks=N failed=0`
-      （`failed=` 必须为 0，退出码必须为 0）。
+不含：第三方解密插件、实验性引擎补丁。
 "@ | Set-Content -LiteralPath (Join-Path $stage 'README.txt') -Encoding UTF8
 $verLine = if ($VersionString -ne '') { $VersionString } else { '2.0.0' }
 # ── ★★ 2026-10-07（H1-2，用户候选 A）：**包内 exe 的版本身份**必须等于本次发版串 ──────
@@ -912,7 +906,7 @@ if ($isDev) {
     Write-Host "  插件自检通过：包里 0 个插件（可见页＝六个内置页）、无夹具（夹具在仓库）"
 } else {
     if ($pluginTotal -ne 0 -or $pluginDlls -ne 0 -or $pluginPys -ne 0) {
-        throw ("发行版的 `plugins\` 顶层必须为空（既定策略：NLC 解密插件不随包发布），" +
+        throw ("发行版的 `plugins\` 顶层必须为空（既定策略：第三方解密插件不随包发布），" +
                "实测自检 {0} 个文件（{1} dll / {2} py）" -f $pluginTotal, $pluginDlls, $pluginPys)
     }
     if ($pageBuiltin -ne $builtinSlots.Count -or $pagePluginPy -ne 0) {

@@ -2,7 +2,7 @@
 
 面向 X-Ray 引擎（SoC / Clear Sky / CoP / IX-Ray）的资源查看、解包、文本提取与汉化包生成工具。
 
-- 当前源码版本：`2.0.0.519（BETA.259）`
+- 当前源码版本：`2.0.0.520（BETA.260）`
 - 运行环境：Windows 10/11 x64；发行包自带 Qt6 运行库与 Python 3.14，**不需要系统 Python**
 - 只写你自己的输出目录、`logs\` 与工具自己的 `xrkit_user.ltx`；不会安装或修改游戏文件
 
@@ -63,21 +63,21 @@ plugins\                  插件目录；顶层空表示只有内置页
 ```bat
 xrkit_cli.exe --font-pack ^
   --ref builtin ^
-  --text-root "E:\...\2.汉化" ^
-  --out "E:\...\更新\2.汉化 A.R.E.A" ^
+  --text-root "<译文目录>" ^
+  --out "<输出目录>" ^
   --langs rus ^
-  --jsgme --jsgme-name "2.汉化 A.R.E.A" ^
+  --jsgme --jsgme-name "<MOD 名>" ^
   --patch-offsets 7
 ```
 
 - `--text-root` 可给包根、`gamedata` 根、文本目录；
-- `--font` 省略时自动找 NotoSansSC → 微软雅黑；
-- `--ref <目录>` 扫描参照包：有 `.ttf` 走矢量，有 `ui_font_*.dds` 走位图；证据冲突或缺失时要求显式 writer（--writer）；
+- `--font` 省略时自动寻找可用的默认中文字体；
+- `--ref <目录>` 扫描参照包：有矢量字体走矢量，有位图字体纹理走位图；证据冲突或缺失时要求显式 writer（--writer）；
 - 位图单张图集最多 **8192**；50px 大字集硬扩到 8192×4096，不做多页/降字号；
-- 所有 `ui_font_*` 段都参与生成（含 electron 和 `ui\fonts\` 下的自定义段）；HUD/STAT 基础字体跳过；
+- 所有字体段都参与生成（含自定义段）；基础 HUD/STAT 字体跳过；
 - IX-Ray 矢量包会写 `gamedata/configs/engine_external.ltx` 的 `FontAtlasSize=8192`；
-- 特殊字体是否保留原贴图/英文由生成后人工复核。
-- 可变字体（如 NotoSansSC-VF）会读取 `wght` 轴：页面有「字重」下拉与「字重预览」，默认 700；可预览后选择 100–900。
+- 特殊字体段是否保留原贴图/英文由生成后人工复核。
+- 可变字体会读取 `wght` 轴：页面有「字重」下拉与「字重预览」，默认 700；可预览后选择 100–900。
 
 ### 4）更新
 
@@ -88,7 +88,7 @@ xrkit_cli.exe --font-pack ^
 - 「工具 → 启用检测更新」和「工具 → 联网功能」可关闭更新；启动参数 --no-auto-update 也可关闭自动检查；
 - 文件替换由 `xrkit_updater.exe` 完成，失败回滚；更新器本身不联网。
 
-当前 RC2 预发布为 `2.0.0.514`；BETA.259 只在本机打包，没有发布。
+当前 RC2 预发布为 `2.0.0.514`；BETA.260 只在本机打包，没有发布。
 
 ## 四、视频转换的 ffmpeg 约定
 
@@ -115,7 +115,7 @@ scripts\release.ps1 -Index <序号> -Version 2.0.0 -Mark BETA
 2. **插件与宿主同进程**：崩溃、`import` 副作用会影响宿主；主线程 30 秒无心跳会触发 UI 看门狗，写 `logs/ui_watchdog.log` 并退出进程（fail-fast，不是热恢复）。长活请放 `task_run` worker。
 3. **文本提取**：含 `--` 的脚本文本可能被注释剥离逻辑跳过；见 `docs/已知问题与边界.md`。
 4. **汉化包**：失败会回滚；输出目录不要直接指游戏根。
-5. **更新**：当前 npm 只修了发布/寻址链路，BETA.259 未上传 npm；客户端会回退 GitHub。
+5. **更新**：当前 npm 只修了发布/寻址链路，BETA.260 未上传 npm；客户端会回退 GitHub。
 
 更多见 `docs/已知问题与边界.md`。
 
