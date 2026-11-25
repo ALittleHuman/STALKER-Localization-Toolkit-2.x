@@ -128,22 +128,34 @@ def collect_charset(pack: Path, lang: str, text_roots: list[Path], scope: str) -
     chars: set[str] = set()
 
     def eat(xml: Path) -> None:
+        # 与 C++ extract_chars / scan_xml_texts 同口径：**所有文本节点 + tail**，
+        # 不只 <text>/<caption>。修前只认这两个标签，另一处写在别的标签里的行
+        # （实测：字符集少 39 字，--merge-glyphs 仍报 missing 0）就被漏掉。
+        raw = xml.read_bytes()
         try:
-            root = ET.fromstring(xml.read_bytes())
+            root = ET.fromstring(raw)
         except Exception:
+            # 坏 XML：按“标签之外的字面文本”兜底（与 C++ 的 raw scanner 等价），
+            # 不再整份文件静默丢弃。
+            import html as _html
+            import re as _re
+            text = raw.decode("utf-8", "replace")
+            text = _re.sub(r"<!--.*?-->", " ", text, flags=_re.S)
+            text = _re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", text, flags=_re.S)
+            text = _re.sub(r"<[^>]*>", " ", text)
+            chars.update(_html.unescape(text))
             return
-        for node in root.iter():
-            if node.tag in ("text", "caption"):
-                if node.text:
-                    chars.update(node.text)
-                for value in (node.attrib or {}).values():
-                    chars.update(value)
+        for value in root.itertext():
+            if value:
+                chars.update(value)
 
     gd = pack / "gamedata" if (pack / "gamedata").is_dir() else pack
     dirs: list[Path] = []
-    lang_dir = gd / "configs" / "text" / lang
-    if lang_dir.is_dir():
-        dirs.append(lang_dir)
+    # 生成器要覆盖“最终包里会出现的所有文本”，不能只扫当前语言目录：
+    # 其它语言槽/自定义语言、UI XML、以及 --text-root 都要并进来。
+    text_root = gd / "configs" / "text"
+    if text_root.is_dir():
+        dirs.append(text_root)
     for root in text_roots:
         cand = root / lang
         dirs.append(cand if cand.is_dir() else root)
