@@ -39,19 +39,82 @@ bool write_text(const std::string& path, const std::string& text) {
 // IX-Ray 的矢量字体不是预烘 DDS，而是引擎运行时按 FontAtlasSize 烘图集。
 // 中文 3596 字 / 50px 时 4096 不够；生成器只负责把上限抬到 8192（单图集，不分页），
 // 保留 engine_external.ltx 里其它段与键，仅改 [render] FontAtlasSize。
-bool ensure_ixr_font_atlas_size(const std::string& out_dir, int atlas_size,
-                                std::string* error) {
+bool ensure_ixr_font_atlas_size(const std::string& out_dir, const std::string& ref_dir,
+                                int atlas_size, std::string* error) {
     namespace fs = std::filesystem;
     const fs::path cfg = core::path_from_utf8(out_dir) / "gamedata" / "configs" /
                          "engine_external.ltx";
     std::error_code ec;
     fs::create_directories(cfg.parent_path(), ec);
-    std::vector<std::string> lines;
-    std::ifstream in(cfg, std::ios::binary);
-    if (in) {
+
+    const auto read_lines = [&cfg](std::vector<std::string>& lines) {
+        lines.clear();
+        std::ifstream in(cfg, std::ios::binary);
+        if (!in) return false;
         std::string line;
         while (std::getline(in, line)) lines.push_back(line);
+        return true;
+    };
+    const auto has_section = [](const std::vector<std::string>& lines, const char* want) {
+        for (std::string t : lines) {
+            while (!t.empty() && (t.front() == ' ' || t.front() == '\t' || t.front() == '\r')) {
+                t.erase(t.begin());
+            }
+            while (!t.empty() && (t.back() == ' ' || t.back() == '\t' || t.back() == '\r')) {
+                t.pop_back();
+            }
+            if (t.size() < 3 || t.front() != '[') continue;
+            const std::size_t close = t.find(']');
+            if (close == std::string::npos) continue;
+            std::string name = t.substr(1, close - 1);
+            for (char& ch : name) {
+                ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            }
+            if (name == want) return true;
+        }
+        return false;
+    };
+    const auto copy_ref = [&]() -> bool {
+        if (ref_dir.empty()) return false;
+        const fs::path root = core::path_from_utf8(ref_dir);
+        const fs::path candidates[] = {
+            root / "gamedata" / "configs" / "engine_external.ltx",
+            root / "gamedata" / "config" / "engine_external.ltx",
+            root / "configs" / "engine_external.ltx",
+            root / "config" / "engine_external.ltx",
+        };
+        for (const fs::path& src : candidates) {
+            if (!fs::is_regular_file(src, ec)) continue;
+            fs::copy_file(src, cfg, fs::copy_options::overwrite_existing, ec);
+            if (!ec) return true;
+        }
+        return false;
+    };
+
+    std::vector<std::string> lines;
+    const bool existed = read_lines(lines);
+    if (!existed) {
+        if (!copy_ref()) {
+            if (error != nullptr) {
+                *error = "参照包缺 gamedata/configs/engine_external.ltx；拒绝生成残缺文件";
+            }
+            return false;
+        }
+        read_lines(lines);
     }
+    if (!has_section(lines, "general")) {
+        // 旧版曾在这里直接新建一个只有 [render] 的 30 字节文件 ⇒ 引擎读不到 Platform，
+        // JSGME 覆盖游戏原件后直接 FATAL。先尝试用参照包完整文件修复；修不了就拒绝。
+        if (!copy_ref() || !read_lines(lines) || !has_section(lines, "general")) {
+            if (error != nullptr) {
+                *error = "engine_external.ltx 缺 [general]（Platform 等），参照包也没有可复制的完整文件；"
+                         "拒绝写入，避免覆盖游戏原件后崩溃";
+            }
+            fs::remove(cfg, ec);
+            return false;
+        }
+    }
+
     bool in_render = false;
     bool key_seen = false;
     std::size_t insert_at = static_cast<std::size_t>(-1);
@@ -900,8 +963,9 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
         //   所有 `missing_cps` 的并集（去重）。
         if (out.ok && out.charset_count > 3000) {
             std::string atlas_error;
-            if (!ensure_ixr_font_atlas_size(request.out, 8192, &atlas_error)) {
-                out.warnings_extra.push_back("IX-Ray FontAtlasSize 未能写入：" + atlas_error);
+            if (!ensure_ixr_font_atlas_size(request.out, request.ref, 8192, &atlas_error)) {
+                out.ok = false;
+                out.error = "IX-Ray FontAtlasSize 未写入：" + atlas_error;
             }
         }
         if (out.ok) {
