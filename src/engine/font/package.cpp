@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -40,6 +41,64 @@ bool write_text(const std::string& path, const std::string& text) {
 // IX-Ray 的矢量字体不是预烘 DDS，而是引擎运行时按 FontAtlasSize 烘图集。
 // 中文 3596 字 / 50px 时 4096 不够；生成器只负责把上限抬到 8192（单图集，不分页），
 // 保留 engine_external.ltx 里其它段与键，仅改 [render] FontAtlasSize。
+// 矢量字体没有预烘图集：字号越大、字符越多，运行时需要越大的方形图集。
+// 这里只负责算“能装下”的边长（2 的幂，最小 4096，最大 8192）。
+int ixr_atlas_side_for(int charset_count, int max_font_size) {
+    if (charset_count <= 0) return 4096;
+    const int size = std::max(8, max_font_size);
+    const int cell = static_cast<int>(std::ceil(size * 1.5));
+    const int per_axis = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(charset_count))));
+    const long long needed = static_cast<long long>(per_axis) * cell;
+    int side = 4096;
+    while (side < needed && side < 8192) side *= 2;
+    return side > 8192 ? 8192 : side;
+}
+
+int ixr_max_font_size_in_ltx(const std::string& text) {
+    int max_size = 0;
+    std::size_t pos = 0;
+    while (pos < text.size()) {
+        const std::size_t nl = text.find('\n', pos);
+        std::string line = text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+        std::size_t k = 0;
+        while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k;
+        if (k < line.size() && line[k] != ';' &&
+            (line.compare(k, 4, "size") == 0 || line.compare(k, 4, "SIZE") == 0)) {
+            k += 4;
+            while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k;
+            if (k < line.size() && line[k] == '=') {
+                ++k;
+                while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k;
+                const std::size_t start = k;
+                while (k < line.size() && std::isdigit(static_cast<unsigned char>(line[k])) != 0) ++k;
+                if (k > start) max_size = std::max(max_size, std::atoi(line.substr(start, k - start).c_str()));
+            }
+        }
+        if (nl == std::string::npos) break;
+        pos = nl + 1;
+    }
+    return max_size;
+}
+
+int ixr_charset_count_for_ref(const std::string& ref) {
+    if (ref.empty()) return 0;
+    namespace fs = std::filesystem;
+    const fs::path root = core::path_from_utf8(ref);
+    std::vector<uint32_t> merged;
+    for (const fs::path& dir : {root / "gamedata" / "configs" / "text",
+                                root / "gamedata" / "configs" / "ui",
+                                root / "configs" / "text", root / "configs" / "ui"}) {
+        std::error_code ec;
+        if (!fs::is_directory(dir, ec)) continue;
+        CharsetResult part;
+        if (!extract_chars(core::path_to_utf8(dir), true, part)) continue;
+        merged.insert(merged.end(), part.chars.begin(), part.chars.end());
+    }
+    std::sort(merged.begin(), merged.end());
+    merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+    return static_cast<int>(merged.size());
+}
+
 bool ensure_ixr_font_atlas_size(const std::string& out_dir, const std::string& ref_dir,
                                 int atlas_size, std::string* error) {
     namespace fs = std::filesystem;
@@ -145,7 +204,13 @@ bool ensure_ixr_font_atlas_size(const std::string& out_dir, const std::string& r
         for (char ch : key) lower.push_back(static_cast<char>(std::tolower(
             static_cast<unsigned char>(ch))));
         if (lower == "fontatlassize") {
-            lines[i] = "FontAtlasSize = " + std::to_string(atlas_size);
+            // 只升不降：已有更大的图集不要因为这次字号小就缩回去。
+            const std::size_t v = t.find('=');
+            const int old_size = v == std::string::npos
+                                     ? 0
+                                     : std::atoi(t.substr(v + 1).c_str());
+            const int target = std::max(atlas_size, old_size);
+            lines[i] = "FontAtlasSize = " + std::to_string(target);
             key_seen = true;
         }
     }
@@ -998,9 +1063,23 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
         // ★ 报告里**每个字体**都有 `"missing"/"missing_cps"`（第一个常常是 0），
         //   顶层汇总的 `"missing"` 在最后 ⇒ 取**最后一个** `"missing":`；缺字清单则是
         //   所有 `missing_cps` 的并集（去重）。
-        if (out.ok && out.charset_count > 3000) {
+        if (out.ok) {
+            // 矢量字号不是改 TTF，而是决定运行时要多大的方形图集：
+            // 字符数 × 最大字号 ⇒ 4096/8192（只升不降）。
+            int max_size = 0;
+            for (const std::string& rel : {std::string("gamedata/configs/fonts.ltx"),
+                                           std::string("configs/fonts.ltx")}) {
+                const std::string path = join(request.ref, rel);
+                std::vector<uint8_t> raw;
+                std::string err;
+                if (!read_file_bytes(path, raw, err)) continue;
+                max_size = ixr_max_font_size_in_ltx(std::string(raw.begin(), raw.end()));
+                if (max_size > 0) break;
+            }
+            if (max_size <= 0) max_size = 16;
+            const int atlas = ixr_atlas_side_for(out.charset_count, max_size);
             std::string atlas_error;
-            if (!ensure_ixr_font_atlas_size(request.out, request.ref, 8192, &atlas_error)) {
+            if (!ensure_ixr_font_atlas_size(request.out, request.ref, atlas, &atlas_error)) {
                 out.ok = false;
                 out.error = "IX-Ray FontAtlasSize 未写入：" + atlas_error;
             }
@@ -1142,6 +1221,7 @@ FontSizePatchResult build_font_size_patch(const FontSizePatchRequest& request) {
     std::string out;
     out.reserve(text.size() + 64);
     int changed = 0;
+    int max_new_size = 0;
     std::size_t pos = 0;
     while (pos < text.size()) {
         const std::size_t nl = text.find('\n', pos);
@@ -1172,6 +1252,7 @@ FontSizePatchResult build_font_size_patch(const FontSizePatchRequest& request) {
                         const int old_size = std::atoi(line.substr(num_start, k - num_start).c_str());
                         const int new_size = std::max(1, old_size + request.offset);
                         line.replace(num_start, k - num_start, std::to_string(new_size));
+                        max_new_size = std::max(max_new_size, new_size);
                         ++changed;
                     }
                 }
@@ -1192,6 +1273,14 @@ FontSizePatchResult build_font_size_patch(const FontSizePatchRequest& request) {
         core::path_from_utf8(join(join(request.out, "gamedata"), "configs")), ec);
     if (ec || !write_text(dest, out)) {
         res.error = "写不出字号补丁：" + dest;
+        return res;
+    }
+    // 字号补丁也可能把引擎图集撑爆：按参照包字符集 + 新最大字号重算。
+    const int atlas = ixr_atlas_side_for(ixr_charset_count_for_ref(request.ref),
+                                         max_new_size > 0 ? max_new_size : 16);
+    std::string atlas_error;
+    if (!ensure_ixr_font_atlas_size(request.out, request.ref, atlas, &atlas_error)) {
+        res.error = "IX-Ray FontAtlasSize 未写入：" + atlas_error;
         return res;
     }
     res.ok = true;

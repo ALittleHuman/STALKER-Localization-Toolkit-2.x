@@ -71,6 +71,11 @@ TEXT ok kind=scripts files=4 strings=18 chars=202 notext=1 skipped=1 replskip=0 
 
 ## 4. 汉化包
 
+矢量字体（IX-Ray）的“字号”不是改 TTF，而是决定运行时图集大小：
+- 生成器按包内字符数 + `fonts.ltx` 最大字号计算 `FontAtlasSize`；
+- 最小 4096，按 2 的幂升到 8192，只升不降；
+- 字号补丁也会把 `engine_external.ltx` 一并写入补丁。
+
 ### `--font-pack`
 
 ```bat
@@ -138,7 +143,7 @@ xrkit_cli --dump <包文件> [DB格式]
 模型 C：测试版版本串是 `x.y.z.<build>`；`标记/序号` 只决定通道目录，例如：
 
 ```text
-BETA.267 + build 527 ⇒ 版本串 2.0.0.527，dist\2.0.0\BETA\267
+BETA.268 + build 528 ⇒ 版本串 2.0.0.528，dist\2.0.0\BETA\268
 ```
 
 ## 7. 自检与宿主诊断
