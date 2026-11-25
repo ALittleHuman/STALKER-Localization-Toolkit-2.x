@@ -41,6 +41,10 @@ size_t skip_tag(const std::string& s, size_t i) {
 void add_cp(std::set<uint32_t>& chars, uint32_t cp) {
     if (cp == '\r' || cp == '\n') return;
     if (cp < 0x20 && cp != '\t') return;
+    // C1 控制区：UTF-8 续字节 0x80..0xBF 若被当成码位，会在这里变成 U+0084 等
+    // “字符”，随后缺字检查报几百个根本不存在的字。真实文本不会把这些当字形。
+    if (cp >= 0x80 && cp <= 0x9F) return;
+    if (cp == 0x7F) return;
     if (cp >= 0xD800 && cp <= 0xDFFF) return;
     chars.insert(cp);
 }

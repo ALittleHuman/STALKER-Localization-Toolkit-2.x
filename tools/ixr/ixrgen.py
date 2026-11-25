@@ -214,62 +214,18 @@ def merge_into(base_path: Path, cjk_source, cjk_cmap: dict, wanted: list[int]) -
                 continue
             for cp, glyph_name in added_map.items():
                 sub.cmap[cp] = glyph_name
-    # ★★ 2026-10-29（交接区审计 P1-5/P1-11）：只合并 glyf/cmap/hmtx 是**不够的** ——
-    #   纵向度量还停在原字体的高度上，汉字顶部会被图集裁切（本会话真实踩过）。
-    #   合并后把四个字体表一起放宽到"包含新字形"：
-    #     hhea：numberOfHMetrics / advanceWidthMax / ascent / descent / 三个极值
-    #     head：xMin/yMin/xMax/yMax
-    #     OS/2：sTypoAscender/Descender、usWinAscent/Descent
-    def _num(font, table, name, default=0):
-        try:
-            return int(getattr(font[table], name))
-        except Exception:
-            return default
-
-    glyf = dst["glyf"]
-    boxes = []
-    # 直接从**合并后的整张字体**取包围盒（不依赖 added_map：实测按 added_map 取会拿到空集）
-    for _name in dst.getGlyphOrder():
-        try:
-            g = glyf[_name]
-        except Exception:
-            continue
-        if getattr(g, "numberOfContours", 0) and getattr(g, "yMax", None) is not None:
-            boxes.append((int(g.xMin), int(g.yMin), int(g.xMax), int(g.yMax)))
-    if boxes:
-        new_y_max = max(b[3] for b in boxes)
-        new_y_min = min(b[1] for b in boxes)
-        new_x_max = max(b[2] for b in boxes)
-        new_x_min = min(b[0] for b in boxes)
-        adv = [int(dst["hmtx"][n][0]) for n in dst.getGlyphOrder() if n in dst["hmtx"].metrics]
-        try:
-            hhea = dst["hhea"]
-            hhea.numberOfHMetrics = len(dst["hmtx"].metrics)
-            if adv:
-                hhea.advanceWidthMax = max(int(getattr(hhea, "advanceWidthMax", 0)), max(adv))
-            hhea.ascent = max(int(getattr(hhea, "ascent", 0)), new_y_max)
-            hhea.descent = min(int(getattr(hhea, "descent", 0)), new_y_min)
-            if adv:
-                hhea.minLeftSideBearing = min(int(getattr(hhea, "minLeftSideBearing", 0)), new_x_min)
-                hhea.xMaxExtent = max(int(getattr(hhea, "xMaxExtent", 0)), new_x_max)
-        except Exception as exc:
-            log("IXRGEN warn hhea 度量没同步：%r" % (exc,))
-        try:
-            head = dst["head"]
-            head.xMin = min(int(getattr(head, "xMin", 0)), new_x_min)
-            head.yMin = min(int(getattr(head, "yMin", 0)), new_y_min)
-            head.xMax = max(int(getattr(head, "xMax", 0)), new_x_max)
-            head.yMax = max(int(getattr(head, "yMax", 0)), new_y_max)
-        except Exception as exc:
-            log("IXRGEN warn head bbox 没同步：%r" % (exc,))
-        try:
-            os2 = dst["OS/2"]
-            os2.sTypoAscender = max(int(getattr(os2, "sTypoAscender", 0)), new_y_max)
-            os2.sTypoDescender = min(int(getattr(os2, "sTypoDescender", 0)), new_y_min)
-            os2.usWinAscent = max(int(getattr(os2, "usWinAscent", 0)), new_y_max)
-            os2.usWinDescent = max(int(getattr(os2, "usWinDescent", 0)), abs(new_y_min))
-        except Exception as exc:
-            log("IXRGEN warn OS/2 度量没同步：%r" % (exc,))
+    # ★★ 2026-11-25（用户实测）：合并只许补字形，**不许改目标的垂直度量**。
+    #   引擎按 hhea/OS/2 的 ascent 计算文本格；把源字体（如 msyh）的 yMax 放宽到
+    #   hhea.ascent/descent、OS/2.sTypo/usWin 会让同一字号整体放大约 14%。
+    #   因此这里只维护水平方向必需的 hmtx 计数，ascent/descender/win 度量原样保留。
+    adv = [int(dst["hmtx"][n][0]) for n in dst.getGlyphOrder() if n in dst["hmtx"].metrics]
+    try:
+        hhea = dst["hhea"]
+        hhea.numberOfHMetrics = len(dst["hmtx"].metrics)
+        if adv:
+            hhea.advanceWidthMax = max(int(getattr(hhea, "advanceWidthMax", 0)), max(adv))
+    except Exception as exc:
+        log("IXRGEN warn hhea 水平度量没同步：%r" % (exc,))
 
     # ★★ 2026-11-08（外部复核：同样输入跑两次，34 个 .ttf 不同）：fontTools 默认在
     #   compile 时把 `head.modified` 写成 `time.time()` ⇒ 产物不可复现（逐字节对拍永远红）。
@@ -332,7 +288,7 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
                              (int(line.strip(), 16) for line in
                               Path(args.charset_file).read_text(encoding="ascii").splitlines()
                               if line.strip())
-                             if cp > 0x20})
+                             if cp > 0x20 and not (0x80 <= cp <= 0x9F)})
         except Exception as exc:
             raise SystemExit("IXRGEN error reason=读不到 --charset-file：%s（%r）"
                              % (args.charset_file, exc))

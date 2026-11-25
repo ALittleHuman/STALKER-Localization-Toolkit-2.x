@@ -76,6 +76,8 @@ TEXT ok kind=scripts files=4 strings=18 chars=202 notext=1 skipped=1 replskip=0 
 - 最小 4096，按 2 的幂升到 8192，只升不降；
 - 字号补丁也会把 `engine_external.ltx` 一并写入补丁。
 
+`--merge-glyphs` 只把源字体的缺字形和 `hmtx` 抄进目标；**不改目标字体的 hhea / OS/2 垂直度量**（ascent/descender 决定引擎的文本格高度）。字符集统计也会排除 C1 控制区（U+0080–U+009F），UTF-8 续字节不会被当成真实文字。
+
 ### `--font-pack`
 
 ```bat
@@ -143,7 +145,7 @@ xrkit_cli --dump <包文件> [DB格式]
 模型 C：测试版版本串是 `x.y.z.<build>`；`标记/序号` 只决定通道目录，例如：
 
 ```text
-BETA.268 + build 528 ⇒ 版本串 2.0.0.528，dist\2.0.0\BETA\268
+BETA.269 + build 529 ⇒ 版本串 2.0.0.529，dist\2.0.0\BETA\269
 ```
 
 ## 7. 自检与宿主诊断
