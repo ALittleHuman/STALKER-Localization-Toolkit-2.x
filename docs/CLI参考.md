@@ -50,7 +50,7 @@ xrkit_cli --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p]
 - 改写后的文件按**相对源根的路径**落到输出目录（例如 `addon/gamedata/scripts/...`）；
 - 文本表落在引擎可读的 `.../gamedata/configs/text/<lang>/`；`--lang` 默认 `rus`；
 - 每棵子树的 ID 前缀带相对路径哈希，跨表不重名；
-- 根节点不是 `string_table` 的 XML（如 `character_desc_*.xml`）按无文本跳过，不当表、不复制；
+- 根节点不是 `string_table` 的配置 XML按无文本跳过，不当表、不复制；
 - 没有可提取文本的子树只计 `notext`，不生成空文件；
 - 输出目录不能等于、包含或位于源目录内。
 
@@ -138,7 +138,7 @@ xrkit_cli --dump <包文件> [DB格式]
 模型 C：测试版版本串是 `x.y.z.<build>`；`标记/序号` 只决定通道目录，例如：
 
 ```text
-BETA.266 + build 526 ⇒ 版本串 2.0.0.526，dist\2.0.0\BETA\266
+BETA.267 + build 527 ⇒ 版本串 2.0.0.527，dist\2.0.0\BETA\267
 ```
 
 ## 7. 自检与宿主诊断

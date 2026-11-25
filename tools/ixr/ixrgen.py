@@ -308,7 +308,7 @@ FONT_EXTS = (".ttf", ".otf", ".ttc")
 
 
 def _all_fonts(root: Path) -> list[Path]:
-    """所有字体容器（不只 ttf）：fonts/fra 和 addon 下的 otf/ttc 不能漏。"""
+    """所有字体容器（不只 ttf）：额外字体目录和 addon 下的 otf/ttc 不能漏。"""
     return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in FONT_EXTS)
 
 

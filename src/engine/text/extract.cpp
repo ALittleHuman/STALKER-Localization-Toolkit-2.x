@@ -795,7 +795,7 @@ std::vector<std::string> ltx_candidates(const std::string& text) {
 }
 
 std::string xml_root_name(const std::string& text) {
-    // 只用于 gameplay 分支：根节点不是 string_table 的配置 XML（character_desc_* 等）
+    // 只用于 gameplay 分支：根节点不是 string_table 的配置 XML（例如 <xml> 配置）
     // 不是文本表，不能 normalize 成 <string_table> 后当表处理/复制。
     std::string t = text;
     if (t.size() >= 3 && static_cast<unsigned char>(t[0]) == 0xEF &&
@@ -1467,12 +1467,10 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
         std::vector<std::string> cands;
         std::string out_text;
         if (gameplay) {
-            // character_desc_*.xml 是 gameplay 配置（根节点 xml），不是文本表：
-            // 1.x 会把它当“含 text 的 XML”改写并复制，污染输出树。只对这一类明确跳过；
-            // 其它非 string_table 的 gameplay 夹具（config/多根）仍按原口径处理。
-            const std::string base = ascii_lower(f.rel.substr(f.rel.find_last_of('/') + 1));
-            if (base.rfind("character_desc_", 0) == 0 &&
-                xml_root_name(dec.text) != "string_table") {
+            // 根节点为 <xml> 的 gameplay 配置不是文本表（不是 string_table）：
+            // 1.x 会把它当“含 text 的 XML”改写并复制，污染输出树。
+            // 这里按根节点判，不按具体文件名/项目名；其它非 string_table 夹具仍按原口径处理。
+            if (xml_root_name(dec.text) == "xml") {
                 ++st.no_text_files;
                 continue;
             }
