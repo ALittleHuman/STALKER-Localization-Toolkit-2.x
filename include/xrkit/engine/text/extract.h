@@ -10,7 +10,8 @@
 //     得到不同 ID）；我们这里直接产出"排序去重"后的候选表。
 //   · 正则用 PCRE2（`std::regex` 不支持 lookbehind）；`PCRE2_UTF|PCRE2_UCP` 对齐
 //     Python `re` 的 Unicode `\s` 语义。
-//   · 源目录名必须是 gameplay / scripts（只看文件夹自己的名字，不向下查找）。
+//   · 低层 `extract_dir` 的源目录名必须是 gameplay / scripts；上层 `extract_root`
+//     支持游戏根/addons 根，向下发现子树（页面/CLI 的“根目录”入口用它）。
 
 #include <cstdint>
 #include <functional>
@@ -107,6 +108,35 @@ std::string validate_request(const ExtractRequest& request);
 ExtractStats extract_dir(const std::string& source_dir, const std::string& target_dir,
                          const std::string& xml_out_dir,
                          const ExtractOptions& options = ExtractOptions{});
+
+// ── 2026-11-25（用户实测）：输入游戏根/模组根，自动找所有 scripts/gameplay ─────
+// 低层 `extract_dir` 仍只接受 scripts/gameplay 本身；本入口负责：
+//   · 递归发现 `scripts` / `gameplay` 目录（不进入已发现的目录再往下找）；
+//   · 每个子树的输出路径保持它相对源根的路径（例如 addon/gamedata/scripts/...）；
+//   · 文本表写到该子树的上一级目录（与原有 `{prefix}_{kind}_texts.xml` 命名一致）；
+//   · 汇总所有子树的 files/strings/no_text/skipped/...
+struct ExtractRootStats {
+    bool ok = false;
+    bool empty = false;
+    bool cancelled = false;
+    std::string error;
+    uint64_t jobs = 0;
+    uint64_t files = 0;
+    uint64_t strings = 0;
+    uint64_t chars = 0;
+    uint64_t no_text_files = 0;
+    uint64_t write_failures = 0;
+    std::vector<std::string> skipped;
+    std::vector<std::string> repl_skipped;
+    std::vector<std::string> long_texts;
+    std::vector<std::string> texts;   // 相对输出根的文本表路径
+    double elapsed_ms = 0.0;
+};
+
+// 源根可以是游戏根、模组根、addons 根；根下面没有 scripts/gameplay ⇒ ok=false + error。
+ExtractRootStats extract_root(const std::string& source_root,
+                              const std::string& target_root,
+                              const ExtractOptions& options = ExtractOptions{});
 
 // 给内部/测试用：三分支的纯文本处理（不碰文件系统）
 std::vector<std::string> config_xml_candidates(const std::string& text);

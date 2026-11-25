@@ -2,7 +2,7 @@
 
 面向 X-Ray 引擎（SoC / Clear Sky / CoP / IX-Ray）的资源查看、解包、文本提取与汉化包生成工具。
 
-- 当前源码版本：`2.0.0.521（BETA.261）`
+- 当前源码版本：`2.0.0.522（BETA.262）`
 - 运行环境：Windows 10/11 x64；发行包自带 Qt6 运行库与 Python 3.14，**不需要系统 Python**
 - 只写你自己的输出目录、`logs\` 与工具自己的 `xrkit_user.ltx`；不会安装或修改游戏文件
 
@@ -14,7 +14,7 @@
 |---|---|---|
 | 读/写 DB 六格式与 SquashFS | 文件系统页 / `xrkit_cli --dump` | 解包树、散装层、长路径与链接安全检查 |
 | 编码检测与批量转换 | 编码转换页 | cp1251 / cp1252 / GB18030 / Big5 / Shift-JIS / EUC-KR / UTF-16/32；带扫描台账、备份/恢复 |
-| 文本提取 | 文本工具页（模式「提取文本」）/ `xrkit_cli --extract-text` | 从 `configs/gameplay`、`scripts`、`.ltx` 提取可翻译文本；页面与 CLI 共用引擎实现 |
+| 文本提取 | 文本工具页（模式「提取文本」）/ `xrkit_cli --extract-text` | 从 `configs/gameplay`、`scripts`、`.ltx` 提取；也可直接给游戏根/addons 根，保留相对树 |
 | XML 校对 | 文本工具页 | 目录 A/B 比对（统计 / 文本对比）、CSV/XLSX 导出、复制差异 ID |
 | 视频转 OGM | 视频转换页 | 以参考 OGM 的参数为准；ffmpeg 只认两处 |
 | 汉化包生成 | 汉化包生成页 / `--font-pack` | 标准字库、字号补丁、JSGME 平铺、IX-Ray 矢量字库 |
@@ -88,7 +88,7 @@ xrkit_cli.exe --font-pack ^
 - 「工具 → 启用检测更新」和「工具 → 联网功能」可关闭更新；启动参数 --no-auto-update 也可关闭自动检查；
 - 文件替换由 `xrkit_updater.exe` 完成，失败回滚；更新器本身不联网。
 
-当前 RC2 预发布为 `2.0.0.514`；BETA.261 只在本机打包，没有发布。
+当前 RC2 预发布为 `2.0.0.514`；BETA.262 只在本机打包，没有发布。
 
 ## 四、视频转换的 ffmpeg 约定
 
@@ -115,7 +115,7 @@ scripts\release.ps1 -Index <序号> -Version 2.0.0 -Mark BETA
 2. **插件与宿主同进程**：崩溃、`import` 副作用会影响宿主；主线程 30 秒无心跳会触发 UI 看门狗，写 `logs/ui_watchdog.log` 并退出进程（fail-fast，不是热恢复）。长活请放 `task_run` worker。
 3. **文本提取**：含 `--` 的脚本文本可能被注释剥离逻辑跳过；见 `docs/已知问题与边界.md`。
 4. **汉化包**：失败会回滚；输出目录不要直接指游戏根。
-5. **更新**：当前 npm 只修了发布/寻址链路，BETA.261 未上传 npm；客户端会回退 GitHub。
+5. **更新**：当前 npm 只修了发布/寻址链路，BETA.262 未上传 npm；客户端会回退 GitHub。
 
 更多见 `docs/已知问题与边界.md`。
 

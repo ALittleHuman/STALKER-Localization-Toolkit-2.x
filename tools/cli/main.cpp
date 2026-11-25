@@ -216,16 +216,16 @@ const ActionSpec kActionSpecs[] = {
      "<源根> <输出根> [--no-language-pack] [--no-rewritten]",
      "源根（只读）", "输出根", "0=成功｜1=出错｜3=用法错误",
      "语言包收集/文本表合并/无文本跳过都由引擎统一实现；空成果退 1",
-     "源根需含 configs|config；单目录低层入口仍是 --extract-text",
-     "xrkit_cli --extract-pack gd_18 lang_18",
+     "源根需含 configs|config；单目录低层入口仍是 --extract-text（也接受游戏根/addons 根）",
+     "xrkit_cli --extract-text <游戏根|addons根> out/",
      "--extract-text, --langpack-build"},
     {"--extract-text", "把译文树的文本抽成对照表",
      "<源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]",
      "源目录（只读）", "输出目录",
      "0=成功｜1=出错｜3=用法错误",
-     "容器/散装都走同一套扫描；输出每行原文与译文对照",
+     "容器/散装都走同一套扫描；输入可为 scripts/gameplay 本身，或游戏根/addons 根（递归找子树、保留相对路径）",
      "文本 XML；非文本 XML 不处理",
-     "xrkit_cli --extract-text gamedata/ out/",
+     "xrkit_cli --extract-text <游戏根|addons根> out/",
      "--langpack-scan"},
     {"--langpack-scan", "认出语言包的语言槽与资源",
      "<汉化包或目录>", "包/目录（只读）", "无（只打印）",
@@ -346,7 +346,7 @@ void print_usage() {
            "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
            "  --ui-scale-probe                            读 user.ltx 的 [theme] scale（只读；判据用）\n"
            "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
-           "                                              文本提取（gameplay|scripts 一个分支）\n"
+           "                                              文本提取（scripts/gameplay 本身，或游戏根/addons 根；根模式保留相对树）\n"
            "  --text-plan <源目录> <输出目录>              文本提取的请求守卫（7.1 文件夹名 / 7.5 覆盖源目录）\n"
            "                                              目录里只放坏 init 夹具 DLL，按 owner 逐容器断言零残留）\n"
            "  --status-line [--module-subset <a,b,c>]    引擎状态行（模块计数**从模块表算出来**，不是常量自报）。\n"
@@ -7196,8 +7196,47 @@ if (action == "--diff-snapshot") {
         xrkit::engine::text::ExtractKind kind{};
         std::string kind_err;
         if (!xrkit::engine::text::kind_from_dir_name(source, kind, kind_err)) {
-            std::cout << "TEXT error reason=" << kind_err << "\n";
-            return kExitFail;
+            // 源不是 scripts/gameplay 本身：按“游戏根/模组根/addons 根”处理。
+            // 递归发现所有 scripts/gameplay，输出树保持相对源根的路径。
+            xrkit::engine::text::ExtractOptions root_opt;
+            if (!text_prefix.empty()) root_opt.prefix = text_prefix;
+            root_opt.id_prefix = text_id_prefix;
+            root_opt.clean = clean;
+            for (std::size_t i = 2; i < operands.size(); ++i) {
+                if (operands[i] == "--append-texts") root_opt.append_texts = true;
+            }
+            const auto root_st = xrkit::engine::text::extract_root(source, target, root_opt);
+            std::cout << "TEXT root jobs=" << root_st.jobs
+                      << " files=" << root_st.files << " strings=" << root_st.strings
+                      << " chars=" << root_st.chars << " notext=" << root_st.no_text_files
+                      << " skipped=" << root_st.skipped.size()
+                      << " replskip=" << root_st.repl_skipped.size()
+                      << " writefail=" << root_st.write_failures
+                      << " long=" << root_st.long_texts.size()
+                      << " xml=" << root_st.texts.size()
+                      << " ms=" << static_cast<long long>(root_st.elapsed_ms) << "\n";
+            for (const std::string& t : root_st.texts) std::cout << "TEXT table " << t << "\n";
+            for (const std::string& s : root_st.skipped) std::cout << "TEXT skip " << s << "\n";
+            for (const std::string& s : root_st.repl_skipped)
+                std::cout << "TEXT repl-skip " << s << "\n";
+            if (!root_st.ok) {
+                std::cout << "TEXT error reason=" << root_st.error << "\n";
+                return kExitFail;
+            }
+            if (root_st.cancelled) {
+                std::cout << "TEXT cancelled reason=" << root_st.error << "\n";
+                return kExitFail;
+            }
+            if (root_st.empty) {
+                std::cout << "TEXT error reason=没有可提取的文本（根目录下 scripts/gameplay 都为空）："
+                          << source << "\n";
+                return kExitFail;
+            }
+            std::cout << "TEXT ok kind=root jobs=" << root_st.jobs
+                      << " files=" << root_st.files << " strings=" << root_st.strings
+                      << " chars=" << root_st.chars << " notext=" << root_st.no_text_files
+                      << " xml=" << root_st.texts.size() << "\n";
+            return kExitOk;
         }
         const std::string type_dir =
             (kind == xrkit::engine::text::ExtractKind::Gameplay) ? "gameplay" : "scripts";

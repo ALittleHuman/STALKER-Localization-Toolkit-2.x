@@ -1602,6 +1602,145 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
 }
 
 
+
+// ── 2026-11-25（用户实测）：游戏根/addons 根的文本提取编排 ─────────────────────
+// 低层 extract_dir 只接受 scripts/gameplay 本身；这里先发现所有子树，再逐棵调用它。
+ExtractRootStats extract_root(const std::string& source_root, const std::string& target_root,
+                              const ExtractOptions& options) {
+    namespace fs = std::filesystem;
+    ExtractRootStats out;
+    const auto t0 = std::chrono::steady_clock::now();
+    const fs::path root = core::path_from_utf8(source_root);
+    const fs::path out_root = core::path_from_utf8(target_root);
+    std::error_code ec;
+    if (!fs::is_directory(root, ec)) {
+        out.error = "源目录不存在（或不是目录）：" + source_root;
+        return out;
+    }
+    if (target_root.empty()) {
+        out.error = "请指定输出目录";
+        return out;
+    }
+    const auto is_within = [](const fs::path& child, const fs::path& parent) {
+        std::error_code ec;
+        const fs::path rel = fs::relative(child, parent, ec);
+        if (ec || rel.empty()) return false;
+        const std::string first = rel.begin()->string();
+        return first != "..";
+    };
+    if (core::path_equals(core::path_to_utf8(root), core::path_to_utf8(out_root)) ||
+        is_within(out_root, root) || is_within(root, out_root)) {
+        out.error = "输出目录不能等于/包含/位于源目录内（会覆盖源文件或递归扫描到产物）";
+        return out;
+    }
+
+    struct Job {
+        fs::path source;
+        fs::path target;
+        fs::path xml_dir;
+        std::string label;
+        ExtractKind kind{};
+    };
+    std::vector<Job> jobs;
+    for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied,
+                                             ec),
+         end;
+         it != end && !ec; it.increment(ec)) {
+        if (!it->is_directory(ec)) continue;
+        const std::string name = ascii_lower(core::path_to_utf8(it->path().filename()));
+        if (name != "scripts" && name != "gameplay") continue;
+        Job job;
+        job.source = it->path();
+        job.kind = name == "gameplay" ? ExtractKind::Gameplay : ExtractKind::Scripts;
+        const fs::path rel = fs::relative(job.source, root, ec);
+        if (ec || rel.empty()) continue;
+        job.target = out_root / rel;
+        job.xml_dir = job.target.parent_path();
+        job.label = core::path_to_utf8(rel);
+        jobs.push_back(std::move(job));
+        it.disable_recursion_pending();
+    }
+    if (ec) {
+        out.error = "扫描源目录失败：" + ec.message();
+        return out;
+    }
+    if (jobs.empty()) {
+        out.error = "源目录下没有 scripts/gameplay 子目录：" + source_root;
+        return out;
+    }
+    std::sort(jobs.begin(), jobs.end(),
+              [](const Job& a, const Job& b) { return a.label < b.label; });
+
+    // 先验证每个子树，再允许 --clean 删除任何东西。
+    for (const Job& job : jobs) {
+        ExtractRequest request;
+        request.source_dir = core::path_to_utf8(job.source);
+        request.target_dir = core::path_to_utf8(job.xml_dir);
+        request.prefix = options.prefix;
+        const std::string reason = validate_request(request);
+        if (!reason.empty()) {
+            out.error = "子树 " + job.label + "：" + reason;
+            return out;
+        }
+    }
+    if (options.clean) {
+        fs::remove_all(out_root, ec);
+        if (ec) {
+            out.error = "无法清理输出目录：" + ec.message();
+            return out;
+        }
+    }
+
+    for (const Job& job : jobs) {
+        if (options.should_stop && options.should_stop()) {
+            out.cancelled = true;
+            out.error = "已取消：停在文件边界";
+            break;
+        }
+        fs::create_directories(job.target, ec);
+        fs::create_directories(job.xml_dir, ec);
+        if (ec) {
+            out.error = "无法创建输出目录：" + ec.message();
+            return out;
+        }
+        ExtractOptions one = options;
+        one.clean = false;
+        one.append_texts = false;
+        const ExtractStats st = extract_dir(core::path_to_utf8(job.source),
+                                            core::path_to_utf8(job.target),
+                                            core::path_to_utf8(job.xml_dir), one);
+        ++out.jobs;
+        if (!st.ok) {
+            out.error = "子树 " + job.label + "：" + st.error;
+            return out;
+        }
+        if (st.cancelled) {
+            out.cancelled = true;
+            out.error = "已取消：停在文件边界";
+            break;
+        }
+        out.files += st.files;
+        out.strings += st.strings;
+        out.chars += st.chars;
+        out.no_text_files += st.no_text_files;
+        out.write_failures += st.write_failures;
+        for (const std::string& s : st.skipped) out.skipped.push_back(job.label + "：" + s);
+        for (const std::string& s : st.repl_skipped)
+            out.repl_skipped.push_back(job.label + "：" + s);
+        for (const std::string& s : st.long_texts)
+            out.long_texts.push_back(job.label + "：" + s);
+        if (!st.texts_xml_name.empty()) {
+            out.texts.push_back(core::path_to_utf8(fs::relative(job.xml_dir / st.texts_xml_name,
+                                                                out_root, ec)));
+        }
+    }
+    const auto t1 = std::chrono::steady_clock::now();
+    out.elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    out.ok = true;
+    out.empty = (out.files == 0 && out.strings == 0);
+    return out;
+}
+
 // ★★ P17-112：把 path_lower 移出匿名命名空间 —— 判据要能直接考在用的那个函数。
 //   （第一版判据只考 case_fold_lower，于是把 path_lower 退回 ascii_lower 照样绿。）
 
