@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -954,6 +955,42 @@ FontPackOutcome build_font_pack(const FontPackRequest& request) {
         opt.merge_glyphs = request.merge_glyphs;
         opt.force = request.force;
         opt.missing_warn = request.missing_warn;
+
+        // ★ 2026-11-25：字符集只有 C++ `extract_chars` 一份实现。这里把最终集合写成
+        //   码位文件交给 ixrgen.py；生成器不再自己扫 XML（避免“2935 vs 2974”再次分叉）。
+        CharsetResult vector_cs;
+        const auto add_chars = [&vector_cs](const std::string& dir) {
+            if (dir.empty()) return;
+            std::error_code ec;
+            if (!std::filesystem::is_directory(core::path_from_utf8(dir), ec)) return;
+            CharsetResult part;
+            if (!extract_chars(dir, /*full_cyrillic=*/true, part)) return;
+            vector_cs.chars.insert(vector_cs.chars.end(), part.chars.begin(), part.chars.end());
+            std::sort(vector_cs.chars.begin(), vector_cs.chars.end());
+            vector_cs.chars.erase(std::unique(vector_cs.chars.begin(), vector_cs.chars.end()),
+                                  vector_cs.chars.end());
+        };
+        add_chars(request.text_root);
+        if (request.use_ref && !request.ref.empty()) {
+            add_chars((std::filesystem::path(core::path_from_utf8(request.ref)) / "gamedata" /
+                       "configs" / "text").string());
+            add_chars((std::filesystem::path(core::path_from_utf8(request.ref)) / "gamedata" /
+                       "configs" / "ui").string());
+        }
+        std::string charset_path;
+        if (!vector_cs.chars.empty()) {
+            out.charset_count = vector_cs.chars.size();
+            const std::string stamp = std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count());
+            charset_path = (std::filesystem::temp_directory_path() /
+                            ("xrkit_charset_" + stamp + ".txt")).string();
+            write_text(charset_path, charset_to_lines(vector_cs.chars));
+            opt.charset_file = charset_path;
+        }
+        struct CharsetFileGuard {
+            std::string path;
+            ~CharsetFileGuard() { if (!path.empty()) std::filesystem::remove(core::path_from_utf8(path)); }
+        } charset_guard{charset_path};
         out.vector_result = ixr_build(opt);
         out.ok = out.vector_result.ok;
         if (!out.ok) out.error = out.vector_result.error;

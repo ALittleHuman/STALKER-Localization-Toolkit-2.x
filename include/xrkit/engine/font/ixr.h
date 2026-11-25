@@ -27,6 +27,9 @@ struct IxrBuildOptions {
     // ★★ 2026-10-27（用户：「生成结果是俄语包而非汉化包」）：**字符集必须来自这份文本**。
     //   页面把「文本 XML」指过来；空 = 只用参照包自己的 `configs/text/<lang>`。
     std::string text_root;
+    // ★ 2026-11-25：字符集由 C++ 统一扫好后传给生成器（文件每行一个十六进制码位）；
+    //   非空时 ixrgen.py 不再自己扫 XML。
+    std::string charset_file;
     std::string plan;      // 逐槽位字体计划 JSON（可空）
     std::string sizes;     // 分区字号档（逗号分隔，可空）
     // ★ 2026-11-06（A-min）：额外源字体 —— 把 target 缺的字形**按字形级**合并进去

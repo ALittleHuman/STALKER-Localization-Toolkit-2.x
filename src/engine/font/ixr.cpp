@@ -100,6 +100,10 @@ IxrBuildResult ixr_build(const IxrBuildOptions& options) {
         run.args.push_back("--text-root");
         run.args.push_back(options.text_root);
     }
+    if (!options.charset_file.empty()) {
+        run.args.push_back("--charset-file");
+        run.args.push_back(options.charset_file);
+    }
     if (!options.plan.empty()) {
         run.args.push_back("--plan");
         run.args.push_back(options.plan);

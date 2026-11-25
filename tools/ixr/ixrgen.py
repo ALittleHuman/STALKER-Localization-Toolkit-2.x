@@ -9,7 +9,7 @@ v0.3（2026-10-27）新增：
 既有口径（`12_规划_语言包识别与分部位字体.md` §五 + 用户 2026-10-26）：
   · 「指定」模式 = 以参照包为基底：只替换字体，其余文件逐字节保留；
   · 只改字体文件本身（名字不变 ⇒ fonts.ltx 不用动）；
-  · 字符集 = 包内 configs/text/<lang>/*.xml + --text-root + configs/ui/**/*.xml；
+  · 字符集 = C++ extract_chars 的 --charset-file（独立调用才回退到扫 XML）；
   · 逐槽位字体计划（--plan）；分区（--sizes）；缺字必须入报告（零静默）。
 
 用法：
@@ -317,9 +317,22 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
                 "added": 0, "missing": 0, "fonts": [], "sections": []}
 
     sections = parse_ltx(fonts_ltx)
-    wanted = sorted({ord(c) for c in collect_charset(
-        pack, lang, [Path(p) for p in (args.text_root or [])], args.charset_scope)
-        if ord(c) > 0x20})
+    if getattr(args, "charset_file", ""):
+        # 产品路径：字符集由 C++ extract_chars 统一扫描后传进来，这里不再重复扫 XML。
+        try:
+            wanted = sorted({cp for cp in
+                             (int(line.strip(), 16) for line in
+                              Path(args.charset_file).read_text(encoding="ascii").splitlines()
+                              if line.strip())
+                             if cp > 0x20})
+        except Exception as exc:
+            raise SystemExit("IXRGEN error reason=读不到 --charset-file：%s（%r）"
+                             % (args.charset_file, exc))
+    else:
+        # 独立排查/旧调用：没有 C++ 字符集文件时才走本地扫描（不作为产品口径）。
+        wanted = sorted({ord(c) for c in collect_charset(
+            pack, lang, [Path(p) for p in (args.text_root or [])], args.charset_scope)
+            if ord(c) > 0x20})
 
     # ★★ 2026-11-08（外部复核：矢量路径的 --on-missing fail 不生效）：
     #   在**写任何输出之前**按最终覆盖能力预扫一遍；fail 且仍有缺字 ⇒ 直接不出包。
@@ -849,6 +862,8 @@ def main() -> int:
     ap.add_argument("--split-output", action="store_true",
                     help="多语言时输出到 <out>/<lang>/")
     ap.add_argument("--text-root", action="append", default=[])
+    ap.add_argument("--charset-file", default="",
+                    help="C++ extract_chars 导出的码位表（产品路径；给了就不再扫 XML）")
     ap.add_argument("--charset-scope", default="used", choices=["used", "common"])
     ap.add_argument("--plan", default="")
     ap.add_argument("--sizes", default="")
