@@ -37,6 +37,8 @@ struct ExtractOptions {
     //   第二次提取把条目**追加**到同一份 `{prefix}_scripts_texts.xml`，不覆盖第一份。
     //   调用方必须给不同的 `id_prefix`，避免 id 冲突。
     bool append_texts = false;
+    // ★ 2026-11-25：根模式的文本表落点 `gamedata/configs/text/<lang>/`（默认 rus）。
+    std::string lang = "rus";
     // ★ 2026-10-06（用户红线：取消要**真停**）：可选的停止谓词。**只在文件边界轮询**
     //   ⇒ 停下来时已写出的产物都是**完整的单文件产物**，绝不写半个文件（零静默的反面：
     //   "停是停了，但产物半截" 比不停更糟）。默认空 ⇒ 行为与旧版逐字节相同。

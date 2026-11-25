@@ -18,6 +18,7 @@
 //   （区间内只有注释、没有代码）—— 空的平台宏是**误导**：看上去像"这里有平台分支"，
 //   而实际上它什么都不控制。⇒ 删掉宏，**保留说明**（原因比形式重要）。
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -793,6 +794,45 @@ std::vector<std::string> ltx_candidates(const std::string& text) {
     return sorted_unique(cands);
 }
 
+std::string xml_root_name(const std::string& text) {
+    // 只用于 gameplay 分支：根节点不是 string_table 的配置 XML（character_desc_* 等）
+    // 不是文本表，不能 normalize 成 <string_table> 后当表处理/复制。
+    std::string t = text;
+    if (t.size() >= 3 && static_cast<unsigned char>(t[0]) == 0xEF &&
+        static_cast<unsigned char>(t[1]) == 0xBB && static_cast<unsigned char>(t[2]) == 0xBF) {
+        t.erase(0, 3);
+    }
+    size_t i = 0;
+    while (i < t.size()) {
+        while (i < t.size() && (t[i] == ' ' || t[i] == '\t' || t[i] == '\r' || t[i] == '\n')) ++i;
+        if (t.compare(i, 2, "<?") == 0) {
+            const size_t end = t.find("?>", i + 2);
+            i = end == std::string::npos ? t.size() : end + 2;
+            continue;
+        }
+        if (t.compare(i, 4, "<!--") == 0) {
+            const size_t end = t.find("-->", i + 4);
+            i = end == std::string::npos ? t.size() : end + 3;
+            continue;
+        }
+        if (t.compare(i, 9, "<!DOCTYPE") == 0 || t.compare(i, 9, "<!doctype") == 0) {
+            const size_t end = t.find('>', i + 9);
+            i = end == std::string::npos ? t.size() : end + 1;
+            continue;
+        }
+        if (i < t.size() && t[i] == '<') {
+            ++i;
+            while (i < t.size() && (t[i] == ' ' || t[i] == '\t')) ++i;
+            const size_t start = i;
+            while (i < t.size() && t[i] != '>' && t[i] != '/' && t[i] != ' ' && t[i] != '\\t' &&
+                   t[i] != '\\r' && t[i] != '\\n') ++i;
+            return ascii_lower(t.substr(start, i - start));
+        }
+        break;
+    }
+    return {};
+}
+
 std::string normalize_xml_string(const std::string& text, bool need_fix_st, bool delete_header) {
     std::string s = text;
     if (need_fix_st) delete_header = true;
@@ -1427,6 +1467,15 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
         std::vector<std::string> cands;
         std::string out_text;
         if (gameplay) {
+            // character_desc_*.xml 是 gameplay 配置（根节点 xml），不是文本表：
+            // 1.x 会把它当“含 text 的 XML”改写并复制，污染输出树。只对这一类明确跳过；
+            // 其它非 string_table 的 gameplay 夹具（config/多根）仍按原口径处理。
+            const std::string base = ascii_lower(f.rel.substr(f.rel.find_last_of('/') + 1));
+            if (base.rfind("character_desc_", 0) == 0 &&
+                xml_root_name(dec.text) != "string_table") {
+                ++st.no_text_files;
+                continue;
+            }
             const std::string whole = normalize_xml_string(dec.text, false, false);
             cands = config_xml_candidates(whole);
             out_text = whole;
@@ -1655,8 +1704,19 @@ ExtractRootStats extract_root(const std::string& source_root, const std::string&
         const fs::path rel = fs::relative(job.source, root, ec);
         if (ec || rel.empty()) continue;
         job.target = out_root / rel;
-        job.xml_dir = job.target.parent_path();
         job.label = core::path_to_utf8(rel);
+        // 文本表必须落在引擎会扫描的 gamedata/configs/text/<lang>/。
+        // rel 形如 <addon>/gamedata/scripts 或 gamedata/scripts；保留 addon 前缀。
+        fs::path base = out_root;
+        for (const fs::path& part : rel.parent_path()) {
+            if (ascii_lower(core::path_to_utf8(part)) == "gamedata") break;
+            base /= part;
+        }
+        std::string lang = options.lang.empty() ? "rus" : options.lang;
+        for (char& ch : lang) {
+            if (ch == '/' || ch == '\\') ch = '_';
+        }
+        job.xml_dir = base / "gamedata" / "configs" / "text" / lang;
         jobs.push_back(std::move(job));
         it.disable_recursion_pending();
     }
@@ -1706,6 +1766,18 @@ ExtractRootStats extract_root(const std::string& source_root, const std::string&
         ExtractOptions one = options;
         one.clean = false;
         one.append_texts = false;
+        uint32_t hash = 2166136261u;
+        for (unsigned char ch : job.label) {
+            hash ^= ch;
+            hash *= 16777619u;
+        }
+        char hash_hex[16] = {};
+        std::snprintf(hash_hex, sizeof(hash_hex), "%08X", hash);
+        const std::string kind = job.kind == ExtractKind::Gameplay ? "gp" : "sc";
+        one.id_prefix = (options.id_prefix.empty()
+                             ? ("sgtat_" + options.prefix + "_" + kind + "_")
+                             : (options.id_prefix + "_")) +
+                        hash_hex;
         const ExtractStats st = extract_dir(core::path_to_utf8(job.source),
                                             core::path_to_utf8(job.target),
                                             core::path_to_utf8(job.xml_dir), one);

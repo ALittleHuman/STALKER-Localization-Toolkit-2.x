@@ -41,14 +41,16 @@ xrkit_cli --xml-compare-dirs <目录A> <目录B> [--mode stats|text] [--enc-a X]
 ## 3. 文本提取
 
 ```bat
-xrkit_cli --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]
+xrkit_cli --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--lang rus] [--clean]
 ```
 
 `<源目录>` 可以直接是 `scripts`/`gameplay`，也可以是**游戏根、模组根、addons 根**：
 
 - 根模式会递归找出所有 `scripts`/`gameplay` 子树；
 - 改写后的文件按**相对源根的路径**落到输出目录（例如 `addon/gamedata/scripts/...`）；
-- 每个子树的文本表落在该子树的上一级（`<prefix>_scripts_texts.xml` / `<prefix>_gameplay_texts.xml`）；
+- 文本表落在引擎可读的 `.../gamedata/configs/text/<lang>/`；`--lang` 默认 `rus`；
+- 每棵子树的 ID 前缀带相对路径哈希，跨表不重名；
+- 根节点不是 `string_table` 的 XML（如 `character_desc_*.xml`）按无文本跳过，不当表、不复制；
 - 没有可提取文本的子树只计 `notext`，不生成空文件；
 - 输出目录不能等于、包含或位于源目录内。
 
@@ -136,7 +138,7 @@ xrkit_cli --dump <包文件> [DB格式]
 模型 C：测试版版本串是 `x.y.z.<build>`；`标记/序号` 只决定通道目录，例如：
 
 ```text
-BETA.264 + build 524 ⇒ 版本串 2.0.0.524，dist\2.0.0\BETA\264
+BETA.265 + build 525 ⇒ 版本串 2.0.0.525，dist\2.0.0\BETA\265
 ```
 
 ## 7. 自检与宿主诊断

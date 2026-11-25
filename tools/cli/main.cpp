@@ -345,8 +345,9 @@ void print_usage() {
            "                                              判定链（六步）判定 + 解码（对拍用）；\n"
            "                                              输出已存在时**拒绝覆盖**，确认要覆盖请加 --force\n"
            "  --ui-scale-probe                            读 user.ltx 的 [theme] scale（只读；判据用）\n"
-           "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--clean]\n"
-           "                                              文本提取（scripts/gameplay 本身，或游戏根/addons 根；根模式保留相对树）\n"
+           "  --extract-text <源目录> <输出目录> [--prefix p] [--id-prefix p] [--lang rus] [--clean]\n"
+           "                                              文本提取（scripts/gameplay 本身，或游戏根/addons 根；根模式保留相对树，\n"
+           "                                              文本表落在 gamedata/configs/text/<lang>/）\n"
            "  --text-plan <源目录> <输出目录>              文本提取的请求守卫（7.1 文件夹名 / 7.5 覆盖源目录）\n"
            "                                              目录里只放坏 init 夹具 DLL，按 owner 逐容器断言零残留）\n"
            "  --status-line [--module-subset <a,b,c>]    引擎状态行（模块计数**从模块表算出来**，不是常量自报）。\n"
@@ -3443,6 +3444,7 @@ int run_cli(const std::vector<std::string>& args) {
     bool clean = false;
     std::string text_prefix;
     std::string text_id_prefix;
+    std::string text_lang = "rus";
     std::string text_encoding = "auto";
     std::string only_list;   // --unpack-tree 的 --only <清单文件>（每行一个镜像内路径）
     bool extract_all = false;
@@ -3486,6 +3488,10 @@ int run_cli(const std::vector<std::string>& args) {
         }
         if (a == "--id-prefix" && i + 1 < args.size()) {
             text_id_prefix = args[++i];
+            continue;
+        }
+        if (a == "--lang" && i + 1 < args.size()) {
+            text_lang = args[++i];
             continue;
         }
         if (a == "--encoding" && i + 1 < args.size()) {
@@ -7187,8 +7193,8 @@ if (action == "--diff-snapshot") {
 
     if (action == "--extract-text") {
         if (operands.size() < 2) {
-            std::cerr << "TEXT error reason=用法：--extract-text <源目录(gameplay|scripts)> <输出目录>"
-                         " [--prefix p] [--id-prefix p] [--clean] [--append-texts]\n";
+            std::cerr << "TEXT error reason=用法：--extract-text <源目录(gameplay|scripts|游戏根|addons根)> <输出目录>"
+                         " [--prefix p] [--id-prefix p] [--lang rus] [--clean] [--append-texts]\n";
             return kExitUsage;
         }
         const std::string& source = operands[0];
@@ -7201,6 +7207,7 @@ if (action == "--diff-snapshot") {
             xrkit::engine::text::ExtractOptions root_opt;
             if (!text_prefix.empty()) root_opt.prefix = text_prefix;
             root_opt.id_prefix = text_id_prefix;
+            root_opt.lang = text_lang;
             root_opt.clean = clean;
             for (std::size_t i = 2; i < operands.size(); ++i) {
                 if (operands[i] == "--append-texts") root_opt.append_texts = true;
