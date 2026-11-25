@@ -304,6 +304,14 @@ def merge_extra_glyphs(target_path: Path, source_ttf: str, wanted: list[int]) ->
             "copied": report["copied_glyphs"]}
 
 
+FONT_EXTS = (".ttf", ".otf", ".ttc")
+
+
+def _all_fonts(root: Path) -> list[Path]:
+    """所有字体容器（不只 ttf）：fonts/fra 和 addon 下的 otf/ttc 不能漏。"""
+    return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in FONT_EXTS)
+
+
 def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
     pack = Path(args.pack)
     out = (Path(args.out) / lang) if args.split_output else Path(args.out)
@@ -716,8 +724,18 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
               "long_texts": len(long_texts), "status": "ok"}
 
     for name in sorted(by_name):
-        path = out_fonts / (name if name.lower().endswith(".ttf") else name + ".ttf")
-        if not path.is_file():
+        path = None
+        if name.lower().endswith(FONT_EXTS):
+            candidate = out_fonts / name
+            if candidate.is_file():
+                path = candidate
+        if path is None:
+            for ext in FONT_EXTS:
+                candidate = out_fonts / (name + ext)
+                if candidate.is_file():
+                    path = candidate
+                    break
+        if path is None:
             report["sections"].append({"name": name, "status": "missing-file"})
             continue
         src = font_for_name.get(name)
@@ -761,8 +779,14 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
     # 否则分区用例里 letterica（size=16 被跳过）会被额外字体那一遍偷偷合并。
     all_names = {str(sec["kv"].get("name", "")) for sec in sections.values()}
     all_names |= set(by_name)
-    processed = {str(out_fonts / (n if n.lower().endswith(".ttf") else n + ".ttf"))
-                 for n in all_names if n}
+    processed: set[str] = set()
+    for n in all_names:
+        if not n:
+            continue
+        if n.lower().endswith(FONT_EXTS):
+            processed.add(str(out_fonts / n))
+        for ext in FONT_EXTS:
+            processed.add(str(out_fonts / (n + ext)))
     extra_fonts = 0
     if not args.no_extra_fonts and not args.fonts_only:
         def _skip_extra(path_: Path) -> bool:
@@ -785,7 +809,7 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
                         return True
             return False
 
-        for path in sorted(out.rglob("*.ttf")):
+        for path in _all_fonts(out):
             if str(path) in processed:
                 continue
             if _skip_extra(path):
@@ -820,7 +844,7 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
         added_by_name[one.split("/")[-1]] = int(entry.get("added", 0))
     final_fonts = []
     total_missing = 0
-    for path in sorted(out.rglob("*.ttf")):
+    for path in _all_fonts(out):
         try:
             cmap = TTFont(str(path), fontNumber=0, recalcBBoxes=False,
                           recalcTimestamp=False).getBestCmap() or {}
