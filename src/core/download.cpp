@@ -21,7 +21,7 @@ namespace xrkit::core {
 namespace {
 
 constexpr std::uint64_t kMinParallel = 2u << 20;   // 2 MB 以下不折腾多段
-constexpr int kMaxWorkers = 6;
+constexpr int kMaxWorkers = 12;
 
 std::uint64_t file_size(const std::string& path) {
     std::error_code ec;
@@ -121,8 +121,13 @@ bool state_matches(const std::string& target, const std::string& url, const std:
             try { saved_segments = std::stoi(line.substr(9)); } catch (...) { return false; }
         }
     }
-    return !saved_url.empty() && saved_url == url && saved_sha == sha &&
-           saved_total == total && saved_segments == segments;
+    // ★ BETA.270：断点键不再绑定 url —— 镜像换源时同一份文件（sha/total 相同）
+    //   应当能接着下，而不是从 0 重来。没有 sha 时无法证明"同一份文件"，仍按 url 保守判。
+    if (saved_sha.empty() || sha.empty()) {
+        return !saved_url.empty() && saved_url == url && saved_sha == sha &&
+               saved_total == total && saved_segments == segments;
+    }
+    return saved_sha == sha && saved_total == total && saved_segments == segments;
 }
 
 void remove_parts(const std::string& target, int count) {
@@ -140,7 +145,8 @@ bool download_single(const std::shared_ptr<Job>& job, const std::string& url,
     };
     const HttpResult result = http_download(url, job->options.target, job->options.timeout_sec,
                                             job->options.max_bytes, progress,
-                                            job->options.prefer_direct);
+                                            job->options.prefer_direct,
+                                            job->options.allow_disabled);
     if (!result.ok) {
         finish_job(job, false, job->cancel.load(), result.error);
         return false;
@@ -199,7 +205,8 @@ bool download_parallel(const std::shared_ptr<Job>& job, const std::string& url,
             };
             const HttpResult result = http_download_range(
                 url, segment_path(job->options.target, i), start, end,
-                job->options.timeout_sec, progress, job->options.prefer_direct);
+                job->options.timeout_sec, progress, job->options.prefer_direct,
+                job->options.allow_disabled);
             if (!result.ok) failures.fetch_add(1);
         });
     }
@@ -281,7 +288,7 @@ void run_job(const std::shared_ptr<Job>& job) {
     for (const std::string& candidate : job->options.urls) {
         const std::uint64_t total =
             http_probe_size(candidate, std::min(8, job->options.timeout_sec),
-                            job->options.prefer_direct);
+                            job->options.prefer_direct, job->options.allow_disabled);
         {
             std::lock_guard<std::mutex> lock(job->mutex);
             job->status.url = candidate;

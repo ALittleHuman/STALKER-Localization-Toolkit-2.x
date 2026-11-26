@@ -278,6 +278,10 @@ EXPECT_HOST = {
     "start_process": "长驻/后台进程（无管道，日志重定向到文件；Job kill-on-close）",
     "stop_process": "停止后台进程（终止并等 5 秒）",
     "process_alive": "后台进程是否仍存活",
+    # ★ BETA.270：结构化能力表。为什么必须有：插件要判断"宿主是否已放 GIL / 下载是否
+    #   支持跨源续传与 sha 校验"，否则只能永久保留自建通道（绕开联网开关与代理）。
+    #   只读、无副作用；老宿主没有它 ⇒ AttributeError ⇒ 插件按旧路径降级。
+    "capabilities": "结构化能力表（api/http/download 三段；只读）",
 }
 
 

@@ -1689,20 +1689,39 @@ ExtractRootStats extract_root(const std::string& source_root, const std::string&
         ExtractKind kind{};
     };
     std::vector<Job> jobs;
-    for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied,
-                                             ec),
-         end;
-         it != end && !ec; it.increment(ec)) {
-        if (!it->is_directory(ec)) continue;
-        const std::string name = ascii_lower(core::path_to_utf8(it->path().filename()));
+    // ★ D2：目录发现也转调 fs::collect_tree()（全仓库唯一遍历件）。
+    //   原来这里又写了一份 recursive_directory_iterator，D2 清单立刻抓到；
+    //   而且它会与 collect_tree 的错误/顺序语义各自漂。
+    xrkit::engine::fs::WalkReport walk;
+    const std::vector<xrkit::engine::fs::TreeItem> items =
+        xrkit::engine::fs::collect_tree(source_root, &walk);
+    if (!walk.errors.empty()) {
+        out.error = "扫描源目录失败：" + walk.errors.front();
+        return out;
+    }
+    std::vector<std::string> chosen;
+    for (const auto& item : items) {
+        if (!item.is_dir) continue;
+        const std::string name = ascii_lower(core::path_to_utf8(
+            core::path_from_utf8(item.path).filename()));
         if (name != "scripts" && name != "gameplay") continue;
+        // 已选 scripts/gameplay 的子树不再向下发现（与旧 disable_recursion_pending 等价）。
+        bool nested = false;
+        for (const std::string& parent : chosen) {
+            if (item.path.size() > parent.size() &&
+                item.path.compare(0, parent.size(), parent) == 0 &&
+                item.path[parent.size()] == '/') {
+                nested = true;
+                break;
+            }
+        }
+        if (nested) continue;
         Job job;
-        job.source = it->path();
+        job.source = root / core::path_from_utf8(item.path);
         job.kind = name == "gameplay" ? ExtractKind::Gameplay : ExtractKind::Scripts;
-        const fs::path rel = fs::relative(job.source, root, ec);
-        if (ec || rel.empty()) continue;
+        const fs::path rel = core::path_from_utf8(item.path);
         job.target = out_root / rel;
-        job.label = core::path_to_utf8(rel);
+        job.label = item.path;
         // 文本表必须落在引擎会扫描的 gamedata/configs/text/<lang>/。
         // rel 形如 <addon>/gamedata/scripts 或 gamedata/scripts；保留 addon 前缀。
         fs::path base = out_root;
@@ -1716,11 +1735,7 @@ ExtractRootStats extract_root(const std::string& source_root, const std::string&
         }
         job.xml_dir = base / "gamedata" / "configs" / "text" / lang;
         jobs.push_back(std::move(job));
-        it.disable_recursion_pending();
-    }
-    if (ec) {
-        out.error = "扫描源目录失败：" + ec.message();
-        return out;
+        chosen.push_back(item.path);
     }
     if (jobs.empty()) {
         out.error = "源目录下没有 scripts/gameplay 子目录：" + source_root;

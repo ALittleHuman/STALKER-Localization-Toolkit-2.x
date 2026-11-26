@@ -25,6 +25,7 @@
 
 #include "xrkit/core/theme.h"
 #include "xrkit/engine/plugin/widget_facade.h"
+#include "xrkit/engine/plugin/net_prompt.h"
 
 #include <QCheckBox>
 #include <functional>
@@ -45,6 +46,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QTabWidget>
@@ -1484,6 +1486,40 @@ bool qt_ui_facade_on_ui_thread() {
     return QThread::currentThread() == app->thread();
 }
 
+
+namespace {
+
+// BETA.270：插件在「联网功能」关闭时请求网络 → 弹窗询问。调用来自插件 worker，
+// 所以必须投递回 UI 线程并阻塞等待；没有壳（owner 为空）时返回 false（拒绝）。
+bool ask_network_permission_qt(const QPointer<QWidget>& anchor, const std::string& owner,
+                               const std::string& url) {
+    if (anchor.isNull()) return false;
+    const auto show = [anchor, owner, url]() -> bool {
+        QMessageBox box(anchor.data());
+        box.setIcon(QMessageBox::Question);
+        box.setWindowTitle(QStringLiteral("插件请求联网"));
+        box.setText(QStringLiteral("插件「%1」请求访问网络：")
+                        .arg(QString::fromStdString(owner)));
+        box.setInformativeText(
+            QString::fromStdString(url) +
+            QStringLiteral("\n\n当前「联网功能」已关闭。允许这一次请求吗？\n"
+                           "（同一站点 10 分钟内不再询问）"));
+        box.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+        box.setDefaultButton(QMessageBox::No);
+        if (auto* yes = box.button(QMessageBox::Yes)) yes->setText(QStringLiteral("允许"));
+        if (auto* no = box.button(QMessageBox::No)) no->setText(QStringLiteral("拒绝"));
+        QTimer::singleShot(60000, &box, [&box]() { box.done(QMessageBox::No); });
+        return box.exec() == QMessageBox::Yes;
+    };
+    if (QThread::currentThread() == anchor->thread()) return show();
+    bool answer = false;
+    QMetaObject::invokeMethod(anchor.data(), [&show, &answer]() { answer = show(); },
+                              Qt::BlockingQueuedConnection);
+    return answer;
+}
+
+}  // namespace
+
 void install_qt_ui_facade(std::function<void(const std::string&)> log_sink, const void* owner) {
     // ★★ 2026-10-21（用户口径）：**只有主线程的装配才设置 sink**。
     //   修前每个 Hub（含自检里在工作线程构造的）都会覆盖这个进程级 sink ⇒
@@ -1493,6 +1529,11 @@ void install_qt_ui_facade(std::function<void(const std::string&)> log_sink, cons
     if (on_main) {
         mutable_facade().log_append = std::move(log_sink);
         g_log_sink_owner = owner;
+        // BETA.270：把"插件联网询问"接到 Qt。owner 为空（自检/无壳）时锚点空 ⇒ 一律拒绝。
+        QPointer<QWidget> anchor(static_cast<QWidget*>(const_cast<void*>(owner)));
+        plug::set_network_prompt([anchor](const std::string& who, const std::string& url) {
+            return ask_network_permission_qt(anchor, who, url);
+        });
     }
     plug::set_ui_facade(&mutable_facade());
 }

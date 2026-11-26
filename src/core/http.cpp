@@ -273,8 +273,8 @@ HttpResult winhttp_request(const std::string& method, const std::string& url,
 }
 
 HttpResult http_get(const std::string& url, int timeout_sec, std::size_t max_bytes,
-                    bool prefer_direct) {
-    if (!network_enabled()) {
+                    bool prefer_direct, bool allow_disabled) {
+    if (!allow_disabled && !network_enabled()) {
         HttpResult result;
         result.error = "联网功能已关闭";
         return result;
@@ -295,8 +295,8 @@ HttpResult http_get(const std::string& url, int timeout_sec, std::size_t max_byt
 
 HttpResult http_download(const std::string& url, const std::string& path, int timeout_sec,
                          std::size_t max_bytes, const HttpProgress& progress,
-                         bool prefer_direct) {
-    if (!network_enabled()) {
+                         bool prefer_direct, bool allow_disabled) {
+    if (!allow_disabled && !network_enabled()) {
         HttpResult result;
         result.error = "联网功能已关闭";
         return result;
@@ -384,8 +384,8 @@ HttpResult http_download(const std::string& url, const std::string& path, int ti
 }
 
 std::uint64_t http_probe_size(const std::string& url, int timeout_sec,
-                              bool prefer_direct) {
-    if (!network_enabled()) return 0;
+                              bool prefer_direct, bool allow_disabled) {
+    if (!allow_disabled && !network_enabled()) return 0;
     const std::wstring range = L"Range: bytes=0-0\r\n";
 #ifdef _WIN32
     HttpResult result;
@@ -404,13 +404,13 @@ std::uint64_t http_probe_size(const std::string& url, int timeout_sec,
 HttpResult http_download_range(const std::string& url, const std::string& path,
                                std::uint64_t start, std::uint64_t end,
                                int timeout_sec, const HttpProgress& progress,
-                               bool prefer_direct) {
+                               bool prefer_direct, bool allow_disabled) {
     HttpResult result;
     if (end < start) {
         result.error = "非法 Range";
         return result;
     }
-    if (!network_enabled()) {
+    if (!allow_disabled && !network_enabled()) {
         result.error = "联网功能已关闭";
         return result;
     }
@@ -465,7 +465,8 @@ HttpResult http_download_range(const std::string& url, const std::string& path,
     // ★ 2026-11-23（BETA.256）：代理路径 0 响应 0 字节 ⇒ 清分片，直连重取这一段。
     if (!result.ok && !direct && result.status == 0 && result.bytes == 0) {
         std::filesystem::remove(path, ec);
-        return http_download_range(url, path, start, end, timeout_sec, progress, true);
+        return http_download_range(url, path, start, end, timeout_sec, progress, true,
+                                   allow_disabled);
     }
     if (result.status == 200) {
         // 服务器忽略 Range：不能把整包追加到分片里。
@@ -495,8 +496,8 @@ HttpResult http_download_range(const std::string& url, const std::string& path,
 
 HttpResult http_post(const std::string& url, const std::string& body,
                      const std::string& content_type, int timeout_sec,
-                     std::size_t max_bytes) {
-    if (!network_enabled()) {
+                     std::size_t max_bytes, bool allow_disabled) {
+    if (!allow_disabled && !network_enabled()) {
         HttpResult result;
         result.error = "联网功能已关闭";
         return result;

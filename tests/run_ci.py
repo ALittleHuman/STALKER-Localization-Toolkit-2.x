@@ -3906,6 +3906,23 @@ def step_network_loopback(release: bool) -> None:
         fail("网络补强判据不通过（见上）")
 
 
+def step_plugin_net_gate(release: bool) -> None:
+    """插件联网闸门（BETA.270）：开关对插件权威；关闭时无界面一律拒绝；能力表。"""
+    say("[plugin-net-gate] 联网开关 × 插件请求 / api.host.capabilities")
+    script = ROOT / "tests" / "check_plugin_net_gate.py"
+    if not require_repo_file(script, "插件联网判据脚本"):
+        return
+    rc2, out = run([sys.executable, str(script)], timeout=240)
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith(("OK ", "FAIL ", "SKIP ")):
+            say("  " + s)
+    if rc2 == 0:
+        ok("插件联网判据全过")
+    else:
+        fail("插件联网判据不通过（见上）")
+
+
 def step_audit_p0(release: bool) -> None:
     say("[audit-p0] F-061/F-076/F-152/F-040/F-135 防回退锁")
     script = ROOT / "tests" / "check_audit_p0_guards.py"
@@ -8450,6 +8467,7 @@ STEPS = [
     ("host-offline", step_host_offline),
     ("network-toggle", step_network_toggle),
     ("network-loopback", step_network_loopback),
+    ("plugin-net-gate", step_plugin_net_gate),
     ("audit-p0", step_audit_p0),
     ("snapshot-diff", step_snapshot_diff),
     ("track", step_track),

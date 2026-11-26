@@ -431,6 +431,17 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     network_action_->setChecked(network_enabled());
     connect(network_action_, &QAction::toggled, this,
             [this](bool enabled) { set_network_enabled(enabled); });
+    // ★ BETA.270：联网关闭时，插件请求联网要不要弹窗询问（默认开）。
+    QAction* plugin_prompt_action = tools_menu->addAction(QStringLiteral("插件联网时询问"));
+    plugin_prompt_action->setObjectName(QStringLiteral("plugin_prompt_action"));
+    plugin_prompt_action->setCheckable(true);
+    plugin_prompt_action->setChecked(
+        core::load_user_value("network", "plugin_prompt", "1") != "0");
+    connect(plugin_prompt_action, &QAction::toggled, this, [this](bool on) {
+        core::save_user_value("network", "plugin_prompt", on ? "1" : "0");
+        log_line(on ? QStringLiteral("插件联网请求将弹窗询问（联网功能关闭时）")
+                    : QStringLiteral("插件联网请求不再询问（联网功能关闭时直接拒绝）"));
+    });
     // ★ 独立总开关：关闭后连“检测更新”功能一起停（不是只关弹窗）。
     update_toggle_action_ = tools_menu->addAction(QStringLiteral("启用检测更新"));
     update_toggle_action_->setObjectName(QStringLiteral("update_toggle_action"));

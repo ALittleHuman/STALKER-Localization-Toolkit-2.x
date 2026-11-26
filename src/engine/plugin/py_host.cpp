@@ -13,6 +13,7 @@
 #include "xrkit/engine/text/convert.h"
 // ★ P7b：宿主服务门面（`api.host.*`：偏好读写 / exe 目录 / 系统字体目录）
 #include "xrkit/engine/plugin/host_facade.h"
+#include "xrkit/engine/plugin/net_prompt.h"
 
 #include "xrkit/core/log.h"
 #include "xrkit/core/download.h"
@@ -44,6 +45,29 @@
 #endif
 
 namespace xrkit::plugin {
+
+// ── 插件联网授权钩子（BETA.258）───────────────────────────────────
+// 外壳在 UI 线程装入 Qt 实现；没有界面时保持空 ⇒ gate 一律拒绝（fail closed）。
+namespace net_prompt_detail {
+std::mutex& prompt_mutex() {
+    static std::mutex* instance = new std::mutex();
+    return *instance;
+}
+NetworkPrompt& prompt_storage() {
+    static NetworkPrompt* instance = new NetworkPrompt();
+    return *instance;
+}
+}  // namespace net_prompt_detail
+
+void set_network_prompt(NetworkPrompt prompt) {
+    std::lock_guard<std::mutex> lock(net_prompt_detail::prompt_mutex());
+    net_prompt_detail::prompt_storage() = std::move(prompt);
+}
+
+NetworkPrompt network_prompt() {
+    std::lock_guard<std::mutex> lock(net_prompt_detail::prompt_mutex());
+    return net_prompt_detail::prompt_storage();
+}
 
 // ★★ P17-98（审计 `05 PLG-08`）：插件日志缓冲（`api.log()` 的近期行）的**唯一两个入口**。
 //   **必须定义在文件作用域、且在下面那个匿名命名空间之前** —— `PyPluginApi::log`（在匿名命名空间里）
@@ -119,6 +143,90 @@ void refresh_reason_if_disabled(PyHostStatus& status) {
 std::string base_name(const std::string& path) {
     const size_t slash = path.find_last_of("/\\");
     return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+// ── 插件联网闸门（BETA.258）───────────────────────────────────────
+// 联网开关对插件**始终权威**；开关关闭时按 `[network] plugin_prompt`（默认开）
+// 在 UI 线程弹窗询问，用户放行只覆盖"这一次"。同一 (owner, host) 的决定缓存
+// 10 分钟，避免健康检查把弹窗刷屏。
+constexpr int kGateDenied = 0;        // 拒绝
+constexpr int kGateOpen = 1;          // 开关本身是开的
+constexpr int kGateUserAllowed = 2;   // 开关关着，用户刚放行本次
+
+std::mutex& gate_mutex() {
+    static std::mutex* instance = new std::mutex();
+    return *instance;
+}
+
+struct GateEntry {
+    int decision = kGateDenied;
+    std::chrono::steady_clock::time_point at{};
+};
+
+std::map<std::string, GateEntry>& gate_cache() {
+    static std::map<std::string, GateEntry>* instance = new std::map<std::string, GateEntry>();
+    return *instance;
+}
+
+std::string url_host_of(const std::string& url) {
+    const std::size_t scheme = url.find("://");
+    const std::size_t begin = scheme == std::string::npos ? 0 : scheme + 3;
+    std::size_t end = url.find_first_of("/?#", begin);
+    if (end == std::string::npos) end = url.size();
+    return url.substr(begin, end - begin);
+}
+
+int gate_lookup(const std::string& key) {
+    std::lock_guard<std::mutex> lock(gate_mutex());
+    auto& cache = gate_cache();
+    const auto it = cache.find(key);
+    if (it == cache.end()) return -1;
+    if (std::chrono::steady_clock::now() - it->second.at > std::chrono::minutes(10)) {
+        cache.erase(it);
+        return -1;
+    }
+    return it->second.decision;
+}
+
+void gate_store(const std::string& key, int decision) {
+    std::lock_guard<std::mutex> lock(gate_mutex());
+    gate_cache()[key] = GateEntry{decision, std::chrono::steady_clock::now()};
+}
+
+void gate_clear_owner(const std::string& owner) {
+    const std::string prefix = owner + "|";
+    std::lock_guard<std::mutex> lock(gate_mutex());
+    auto& cache = gate_cache();
+    for (auto it = cache.begin(); it != cache.end();) {
+        if (it->first.rfind(prefix, 0) == 0) {
+            it = cache.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+int gate_plugin_network(const std::string& owner, const std::string& url, const char* action) {
+    if (core::network_enabled()) return kGateOpen;
+    if (core::load_user_value("network", "plugin_prompt", "1") == "0") return kGateDenied;
+    const std::string host = url_host_of(url);
+    const std::string key = owner + "|" + host;
+    const int cached = gate_lookup(key);
+    if (cached >= 0) return cached;
+    const NetworkPrompt prompt = network_prompt();
+    if (!prompt) {
+        core::log(core::Level::Warn,
+                  "[" + owner + "] 联网功能已关闭，且当前没有界面可询问用户；已拒绝 " +
+                      std::string(action) + " " + host);
+        gate_store(key, kGateDenied);
+        return kGateDenied;
+    }
+    const bool allowed = prompt(owner, url);
+    gate_store(key, allowed ? kGateUserAllowed : kGateDenied);
+    core::log(allowed ? core::Level::Info : core::Level::Warn,
+              "[" + owner + "] " + (allowed ? "用户放行" : "用户拒绝") +
+                  "联网请求（联网功能已关闭）：" + std::string(action) + " " + host);
+    return allowed ? kGateUserAllowed : kGateDenied;
 }
 
 #ifdef XRKIT_WITH_PYTHON
@@ -458,6 +566,7 @@ void run_shutdown(LoadedState state) {
     //   DownloadManager::cancel_owner，却没有调用点 —— 插件卸载/重载后分片线程会
     //   一直跑到进程退出（文档与提交说明都写着"会自动取消"，代码里没有）。
     core::DownloadManager::instance().cancel_owner(state.owner);
+    gate_clear_owner(state.owner);
     // 约定：可选 shutdown(api)；先调它，再跑 on_unload 注册的回调。
     if (state.module && py::hasattr(state.module, "shutdown") != 0) {
         try {
@@ -669,6 +778,12 @@ public:
         if (feature == "host.http_get" || feature == "host.http_post" ||
             feature == "host.http_download" || feature == "host.http_download_async" ||
             feature == "host.http_async") {
+            return true;
+        }
+        if (feature == "host.http.concurrent" || feature == "host.http.plugin_prompt" ||
+            feature == "host.download.cross_source_resume" ||
+            feature == "host.download.sha256" || feature == "host.download.submit" ||
+            feature == "host.capabilities") {
             return true;
         }
         if (feature == "host.start_process" || feature == "host.stop_process" ||
@@ -2742,16 +2857,32 @@ public:
         out["error"] = result.error;
         out["bytes"] = result.bytes;
         out["truncated"] = result.truncated;
+        if (result.truncated && result.error.empty()) {
+            out["error"] = "响应超过 max_bytes 上限，已被截断";
+        }
+        return out;
+    }
+
+    // 联网开关拒绝 / 用户拒绝弹窗时的统一返回。
+    py::object http_denied(const std::string& path) const {
+        core::HttpResult result;
+        result.error = "联网功能已关闭，插件联网请求未获授权";
+        py::dict out = http_result(result);
+        if (!path.empty()) out["path"] = path;
+        out["denied"] = true;
         return out;
     }
     py::object http_get(const std::string& url, int timeout_sec, std::size_t max_bytes) const {
         if (host_on_ui_thread()) return http_blocked_on_ui();
+        const int gate = gate_plugin_network(owner_, url, "GET");
+        if (gate == kGateDenied) return http_denied("");
         // ★ 2026-11-23（BETA.256）：阻塞期释放 GIL。pybind 默认整个调用期持锁，
         //   插件多线程调门面会被串行化（实测 3 路并发 7.32s ≈ 3×2.44s，自建 urllib 2.14s）。
         core::HttpResult result;
         {
             py::gil_scoped_release release;
-            result = core::http_get(url, timeout_sec, max_bytes);
+            result = core::http_get(url, timeout_sec, max_bytes, false,
+                                    gate == kGateUserAllowed);
         }
         return http_result(result);
     }
@@ -2759,11 +2890,14 @@ public:
                          const std::string& content_type, int timeout_sec,
                          std::size_t max_bytes) const {
         if (host_on_ui_thread()) return http_blocked_on_ui();
+        const int gate = gate_plugin_network(owner_, url, "POST");
+        if (gate == kGateDenied) return http_denied("");
         // 同上：推理请求是长阻塞，必须让出 GIL，否则多路并发形同串行。
         core::HttpResult result;
         {
             py::gil_scoped_release release;
-            result = core::http_post(url, body, content_type, timeout_sec, max_bytes);
+            result = core::http_post(url, body, content_type, timeout_sec, max_bytes,
+                                     gate == kGateUserAllowed);
         }
         return http_result(result);
     }
@@ -2771,7 +2905,7 @@ public:
     // 不跨线程回调 Python，避免插件卸载/解释器退出时持有 py::object。
     py::object http_download_async(py::object url, const std::string& path, int workers,
                                    int timeout_sec, std::size_t max_bytes,
-                                   bool prefer_direct) {
+                                   bool prefer_direct, const std::string& sha256) {
         std::vector<std::string> urls;
         if (py::isinstance<py::str>(url)) {
             urls.push_back(url.cast<std::string>());
@@ -2791,13 +2925,24 @@ public:
             out["error"] = "url/path 不能为空";
             return out;
         }
+        const int gate = gate_plugin_network(owner_, urls.front(), "DOWNLOAD");
+        if (gate == kGateDenied) {
+            py::dict denied;
+            denied["ok"] = false;
+            denied["error"] = "联网功能已关闭，插件联网请求未获授权";
+            denied["path"] = path;
+            denied["denied"] = true;
+            return denied;
+        }
         core::DownloadOptions options;
         options.target = path;
         options.urls = std::move(urls);
         options.owner = owner_;
         options.max_bytes = max_bytes;
         options.timeout_sec = timeout_sec;
-        options.workers = std::max(1, std::min(workers, 6));
+        options.workers = std::max(1, std::min(workers, 12));
+        options.sha256 = sha256;
+        options.allow_disabled = (gate == kGateUserAllowed);
         // ★ 2026-11-23（BETA.256）：原先写死 true（直连），在"只能走系统代理"的机器上
         //   异步下载必然失败。改成调用方决定，默认 false（跟随系统代理）。
         options.prefer_direct = prefer_direct;
@@ -2826,6 +2971,7 @@ public:
         out["total"] = status.total;
         out["error"] = status.error;
         out["path"] = status.path;
+        out["url"] = status.url;
         return out;
     }
 
@@ -2839,7 +2985,8 @@ public:
     //   · 列表 >1 ⇒ 各取 1 字节测首包延迟，快的先下，失败按序回退。
     //   校验（sha256）**不在这里做**：期望值只有调用方知道，插件自己算。
     py::object http_download(py::object url, const std::string& path, int timeout_sec,
-                             std::size_t max_bytes) const {
+                             std::size_t max_bytes, int wait_seconds, int workers,
+                             const std::string& sha256) const {
         if (host_on_ui_thread()) {
             py::dict blocked;
             blocked["ok"] = false;
@@ -2876,19 +3023,44 @@ public:
             out["path"] = path;
             return out;
         }
+        const int gate = gate_plugin_network(owner_, urls.front(), "DOWNLOAD");
+        if (gate == kGateDenied) {
+            py::dict denied;
+            denied["ok"] = false;
+            denied["status"] = 0;
+            denied["error"] = "联网功能已关闭，插件联网请求未获授权";
+            denied["bytes"] = 0;
+            denied["truncated"] = false;
+            denied["path"] = path;
+            denied["denied"] = true;
+            return denied;
+        }
         // 同步入口也走同一套 DownloadManager：与异步下载/宿主更新只有一份断点、取消、sha 逻辑。
         core::DownloadOptions options;
         options.target = path;
         options.urls = urls;
         options.max_bytes = max_bytes;
         options.timeout_sec = timeout_sec;
-        options.workers = 4;
+        options.workers = std::max(1, std::min(workers, 12));
         options.prefer_direct = false;
+        options.sha256 = sha256;
+        options.allow_disabled = (gate == kGateUserAllowed);
         const std::uint64_t job = core::DownloadManager::instance().start(options);
+        // ★ BETA.258：wait_seconds==0 ⇒ 立即返回 job（可轮询/可取消），大文件不再只能死等。
+        if (wait_seconds == 0) {
+            py::dict pending;
+            pending["ok"] = true;
+            pending["pending"] = true;
+            pending["job"] = job;
+            pending["workers"] = options.workers;
+            pending["path"] = path;
+            return pending;
+        }
         core::DownloadStatus status;
         {
             py::gil_scoped_release release;
-            core::DownloadManager::instance().wait(job, &status, -1);
+            core::DownloadManager::instance().wait(
+                job, &status, wait_seconds < 0 ? -1 : wait_seconds * 1000);
         }
         out["ok"] = status.ok;
         out["status"] = status.ok ? 200 : 0;
@@ -2954,6 +3126,35 @@ public:
     bool process_alive(unsigned long pid) const {
         if (const HostFacade* facade = available("process_alive")) return facade->process_alive(pid);
         return false;
+    }
+
+    // ★ BETA.258：结构化能力表。插件据此决定要不要保留自建通道；这里写的都是
+    //   宿主**承诺**，不是探测结果（老宿主没有这个方法 ⇒ AttributeError，按需降级）。
+    py::object capabilities() const {
+        py::dict out;
+        out["api"] = kPyHostApiVersion;
+        out["host_version"] = version();
+        py::dict http;
+        http["gil"] = "released";
+        http["concurrency_hint"] = 32;
+        http["post_max_bytes_default"] = std::size_t(8) << 20;
+        http["max_bytes_per_call"] = true;
+        http["truncation"] = "flag+error";
+        http["network_switch"] = "authoritative";
+        http["plugin_prompt"] = true;
+        http["timeout_semantics"] = "per_winhttp_op";
+        out["http"] = http;
+        py::dict download;
+        download["manager"] = "unified";
+        download["sources"] = "multi";
+        download["cross_source_resume"] = true;
+        download["sha256"] = true;
+        download["progress"] = "poll";
+        download["cancel"] = "job+owner";
+        download["max_workers"] = 12;
+        download["sync_submit"] = true;
+        out["download"] = download;
+        return out;
     }
 
     bool restart() const {
@@ -4145,13 +4346,15 @@ void ensure_api_module() {
                  py::arg("max_bytes") = 1u << 20)
             .def("http_post", &PyHost::http_post, py::arg("url"), py::arg("body"),
                  py::arg("content_type") = "application/json", py::arg("timeout_sec") = 20,
-                 py::arg("max_bytes") = 1u << 20)
+                 py::arg("max_bytes") = std::size_t(8) << 20)
             .def("http_download", &PyHost::http_download, py::arg("url"), py::arg("path"),
-                 py::arg("timeout_sec") = 300, py::arg("max_bytes") = std::size_t(8) << 30)
+                 py::arg("timeout_sec") = 300, py::arg("max_bytes") = std::size_t(8) << 30,
+                 py::arg("wait_seconds") = -1, py::arg("workers") = 4,
+                 py::arg("sha256") = "")
             .def("http_download_async", &PyHost::http_download_async, py::arg("url"),
                  py::arg("path"), py::arg("workers") = 4, py::arg("timeout_sec") = 300,
                  py::arg("max_bytes") = std::size_t(8) << 30,
-                 py::arg("prefer_direct") = false)
+                 py::arg("prefer_direct") = false, py::arg("sha256") = "")
             .def("http_download_status", &PyHost::http_download_status, py::arg("job"))
             .def("http_cancel", &PyHost::http_cancel, py::arg("job"))
             .def("system_font_dirs", &PyHost::system_font_dirs)
@@ -4163,7 +4366,8 @@ void ensure_api_module() {
         .def("restart", &PyHost::restart)
         .def("quit", &PyHost::quit)
         .def("version", &PyHost::version)
-        .def("pid", &PyHost::pid);
+        .def("pid", &PyHost::pid)
+        .def("capabilities", &PyHost::capabilities);
         py::class_<PyEngine>(m, "Engine")
             // ★★ 2026-10-26：语言包识别（只读；与 CLI --langpack-scan 同一份引擎实现）
             .def("langpack_scan", &PyEngine::langpack_scan, py::arg("root"))

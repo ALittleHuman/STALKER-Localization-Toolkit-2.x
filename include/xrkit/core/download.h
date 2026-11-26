@@ -23,6 +23,8 @@ struct DownloadOptions {
     int timeout_sec = 300;
     int workers = 4;
     bool prefer_direct = true;
+    // 联网开关关闭时仍允许本次下载（插件经用户弹窗授权后由 py_host 置 true）。
+    bool allow_disabled = false;
 };
 
 struct DownloadStatus {
