@@ -4,6 +4,7 @@
 
 #include "xrkit/engine/text/extract.h"
 #include "xrkit/engine/text/langpack.h"
+#include "xrkit/engine/fs/overlay.h"
 
 #include <algorithm>
 #include <cctype>
@@ -77,15 +78,17 @@ std::string read_language_ltx(const fs::path& cfg_root) {
 // 在树里找所有 .../configs/text/<lang> 与 .../config/text/<lang>
 std::vector<fs::path> find_text_dirs(const fs::path& root) {
     std::vector<fs::path> dirs;
-    std::error_code ec;
-    for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied,
-                                              ec),
-         end;
-         it != end && !ec; it.increment(ec)) {
-        if (!it->is_directory(ec)) continue;
-        const std::string name = lower_ascii(base_name(it->path()));
+    // D2：目录发现统一走 fs::collect_tree()，不再在这里写第二份递归遍历。
+    xrkit::engine::fs::WalkReport walk;
+    const std::vector<xrkit::engine::fs::TreeItem> items =
+        xrkit::engine::fs::collect_tree(core::path_to_utf8(root), &walk);
+    if (!walk.errors.empty()) return dirs;
+    for (const auto& item : items) {
+        if (!item.is_dir) continue;
+        const fs::path dir = root / core::path_from_utf8(item.path);
+        const std::string name = lower_ascii(base_name(dir));
         if (name != "configs" && name != "config") continue;
-        const fs::path text = it->path() / "text";
+        const fs::path text = dir / "text";
         if (!is_dir(text)) continue;
         std::error_code lec;
         for (fs::directory_iterator lit(text, lec), lend; lit != lend && !lec;

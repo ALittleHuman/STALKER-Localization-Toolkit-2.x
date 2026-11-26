@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import samples  # noqa: E402
@@ -62,9 +63,38 @@ def build_pack(root: Path, font: Path, text: str) -> Path:
     return pack
 
 
+def _charset_file(pack: Path, out: Path, extra: list | None) -> Path:
+    """测试侧夹具：模拟 C++ extract_chars 的码位表；产品路径不提供 Python 扫描回退。"""
+    chars = set()
+    roots = [pack]
+    args = list(extra or [])
+    for i, item in enumerate(args):
+        if item == "--text-root" and i + 1 < len(args):
+            roots.append(Path(args[i + 1]))
+    for root in roots:
+        if not root.exists():
+            continue
+        for xml in root.rglob("*.xml"):
+            try:
+                tree = ET.fromstring(xml.read_bytes())
+            except Exception:  # noqa: BLE001
+                continue
+            for text in tree.itertext():
+                if text:
+                    chars.update(ord(c) for c in text if ord(c) > 0x20)
+    chars.update(range(0x20, 0x7F))
+    chars.update(range(0x0410, 0x0500))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    path = out.parent / (out.name + ".charset.txt")
+    path.write_text("\n".join("%X" % cp for cp in sorted(chars)) + "\n", encoding="ascii")
+    return path
+
+
 def run_tool(pack: Path, font: Path, out: Path, extra: list | None = None) -> tuple[int, str]:
+    charset = _charset_file(pack, out, extra)
     cmd = [sys.executable, str(TOOL), "--pack", str(pack),
-           "--font", str(font), "--out", str(out)] + list(extra or [])
+           "--font", str(font), "--out", str(out),
+           "--charset-file", str(charset)] + list(extra or [])
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return proc.returncode, proc.stdout.decode("utf-8", errors="replace")
 
@@ -416,20 +446,17 @@ def main() -> int:
             fail("低 ascent 夹具：产物字体不存在")
         else:
             mf = _TTFont(str(merged))
-            ys = []
-            for _n in mf.getGlyphOrder():
-                _g = mf["glyf"][_n]
-                if getattr(_g, "numberOfContours", 0) > 0 and getattr(_g, "yMax", None) is not None:
-                    ys.append(int(_g.yMax))
-            need = max(ys) if ys else 0
-            got = [int(mf["hhea"].ascent), int(mf["OS/2"].usWinAscent),
-                   int(mf["OS/2"].sTypoAscender), int(mf["head"].yMax)]
-            if all(v >= need for v in got):
-                ok("纵向度量：hhea/OS-2/head 都放宽到包住最高字形（need=%d, got=%r）"
-                   % (need, got))
+            # ★ 2026-11-26（用户实测）：合并只补字形，**不许**把源字体的 yMax
+            #   写进目标的 hhea/OS-2；这里断言低 ascent 目标原样保留。
+            got = [int(mf["hhea"].ascent), int(mf["hhea"].descent),
+                   int(mf["OS/2"].usWinAscent), int(mf["OS/2"].usWinDescent),
+                   int(mf["OS/2"].sTypoAscender), int(mf["OS/2"].sTypoDescender)]
+            expected = [100, -20, 100, 20, 100, -20]
+            if got == expected:
+                ok("纵向度量：合并后 hhea/OS-2 保持目标原值（%r）" % (got,))
             else:
                 problems += 1
-                fail("纵向度量没放宽：最高字形 %d，实得 %r" % (need, got))
+                fail("纵向度量被合并器改写：期望 %r，实得 %r" % (expected, got))
             if int(mf["hhea"].numberOfHMetrics) >= len(mf.getGlyphOrder()):
                 ok("hhea.numberOfHMetrics 与新字形数一致")
             else:

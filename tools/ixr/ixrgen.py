@@ -9,12 +9,12 @@ v0.3（2026-10-27）新增：
 既有口径（`12_规划_语言包识别与分部位字体.md` §五 + 用户 2026-10-26）：
   · 「指定」模式 = 以参照包为基底：只替换字体，其余文件逐字节保留；
   · 只改字体文件本身（名字不变 ⇒ fonts.ltx 不用动）；
-  · 字符集 = C++ extract_chars 的 --charset-file（独立调用才回退到扫 XML）；
+  · 字符集 = C++ extract_chars 的 --charset-file（唯一实现；没有它直接拒绝）；
   · 逐槽位字体计划（--plan）；分区（--sizes）；缺字必须入报告（零静默）。
 
 用法：
   python ixrgen.py --pack <整包> --font <CJK> --out <目录> [--langs rus,eng --split-output]
-                   [--plan plan.json] [--sizes 14,16] [--text-root DIR]...
+                   [--plan plan.json] [--sizes 14,16] [--text-root DIR]... --charset-file FILE
 退出码：0 成功；1 失败；2 外部前提缺（fonttools）。
 """
 from __future__ import annotations
@@ -124,150 +124,6 @@ def merge_text_by_id(ref_text: str, tr_text: str) -> str:
     return merged
 
 
-def collect_charset(pack: Path, lang: str, text_roots: list[Path], scope: str) -> set[str]:
-    chars: set[str] = set()
-
-    def eat(xml: Path) -> None:
-        # 与 C++ extract_chars / scan_xml_texts 同口径：**所有文本节点 + tail**，
-        # 不只 <text>/<caption>。修前只认这两个标签，另一处写在别的标签里的行
-        # （实测：字符集少 39 字，--merge-glyphs 仍报 missing 0）就被漏掉。
-        raw = xml.read_bytes()
-        try:
-            root = ET.fromstring(raw)
-        except Exception:
-            # 坏 XML：按“标签之外的字面文本”兜底（与 C++ 的 raw scanner 等价），
-            # 不再整份文件静默丢弃。
-            import html as _html
-            import re as _re
-            text = raw.decode("utf-8", "replace")
-            text = _re.sub(r"<!--.*?-->", " ", text, flags=_re.S)
-            text = _re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", text, flags=_re.S)
-            text = _re.sub(r"<[^>]*>", " ", text)
-            chars.update(_html.unescape(text))
-            return
-        for value in root.itertext():
-            if value:
-                chars.update(value)
-
-    gd = pack / "gamedata" if (pack / "gamedata").is_dir() else pack
-    dirs: list[Path] = []
-    # 生成器要覆盖“最终包里会出现的所有文本”，不能只扫当前语言目录：
-    # 其它语言槽/自定义语言、UI XML、以及 --text-root 都要并进来。
-    text_root = gd / "configs" / "text"
-    if text_root.is_dir():
-        dirs.append(text_root)
-    for root in text_roots:
-        cand = root / lang
-        dirs.append(cand if cand.is_dir() else root)
-    ui = gd / "configs" / "ui"
-    if ui.is_dir():
-        dirs.append(ui)
-    for d in dirs:
-        if d.is_dir():
-            for xml in d.rglob("*.xml"):
-                eat(xml)
-    if scope == "common":
-        chars.update(chr(c) for c in range(0x4E00, 0x4E00 + 3500))
-    return chars
-
-
-def merge_into(base_path: Path, cjk_source, cjk_cmap: dict, wanted: list[int]) -> tuple[int, list[int]]:
-    dst = TTFont(str(base_path), fontNumber=0)
-    if "glyf" not in dst:
-        raise RuntimeError("not-glyf")
-    dst_cmap = dst.getBestCmap() or {}
-    need = [cp for cp in wanted if cp not in dst_cmap and cp in cjk_cmap]
-    missing = [cp for cp in wanted if cp not in dst_cmap and cp not in cjk_cmap]
-    if need:
-        from fontTools.pens.recordingPen import DecomposingRecordingPen
-        from fontTools.pens.transformPen import TransformPen
-        from fontTools.pens.ttGlyphPen import TTGlyphPen
-
-        scale = dst["head"].unitsPerEm / cjk_source["head"].unitsPerEm
-        order = list(dst.getGlyphOrder())
-        order_set = set(order)
-        glyf = dst["glyf"]
-        hmtx = dst["hmtx"]
-        glyph_set = cjk_source.getGlyphSet()
-        added_map: dict[int, str] = {}
-        for cp in need:
-            gname = cjk_cmap[cp]
-            pen = TTGlyphPen(None)
-            rec = DecomposingRecordingPen(glyph_set)
-            glyph_set[gname].draw(rec)
-            rec.replay(TransformPen(pen, (scale, 0, 0, scale, 0, 0)))
-            glyph = pen.glyph()
-            newname = "uni%04X" % cp
-            while newname in order_set:
-                newname += "_"
-            glyf.glyphs[newname] = glyph
-            order.append(newname)
-            order_set.add(newname)
-            adv, lsb = cjk_source["hmtx"][gname]
-            hmtx.metrics[newname] = (int(round(adv * scale)), int(round(lsb * scale)))
-            added_map[cp] = newname
-        dst.setGlyphOrder(order)
-        dst["maxp"].numGlyphs = len(order)
-        # ★ cmap 必须真写；只加字形不加映射 = 引擎找不到字（修过）
-        for sub in dst["cmap"].tables:
-            if not sub.isUnicode():
-                continue
-            for cp, glyph_name in added_map.items():
-                sub.cmap[cp] = glyph_name
-    # ★★ 2026-11-25（用户实测）：合并只许补字形，**不许改目标的垂直度量**。
-    #   引擎按 hhea/OS/2 的 ascent 计算文本格；把源字体（如 msyh）的 yMax 放宽到
-    #   hhea.ascent/descent、OS/2.sTypo/usWin 会让同一字号整体放大约 14%。
-    #   因此这里只维护水平方向必需的 hmtx 计数，ascent/descender/win 度量原样保留。
-    adv = [int(dst["hmtx"][n][0]) for n in dst.getGlyphOrder() if n in dst["hmtx"].metrics]
-    try:
-        hhea = dst["hhea"]
-        hhea.numberOfHMetrics = len(dst["hmtx"].metrics)
-        if adv:
-            hhea.advanceWidthMax = max(int(getattr(hhea, "advanceWidthMax", 0)), max(adv))
-    except Exception as exc:
-        log("IXRGEN warn hhea 水平度量没同步：%r" % (exc,))
-
-    # ★★ 2026-11-08（外部复核：同样输入跑两次，34 个 .ttf 不同）：fontTools 默认在
-    #   compile 时把 `head.modified` 写成 `time.time()` ⇒ 产物不可复现（逐字节对拍永远红）。
-    #   治本：关掉 recalcTimestamp，并把 modified 钉成固定值（与 merge_glyphs 同一个常量）。
-    try:
-        dst.recalcTimestamp = False
-        dst["head"].modified = 3786825600   # 2020-01-01 00:00:00 UTC，固定常量
-    except Exception as exc:   # 字体没有 head（理论不会）⇒ 如实报，不静默
-        log("IXRGEN warn head.modified 没钉住：%r" % (exc,))
-    dst.save(str(base_path))
-    return len(need), missing
-
-
-_OWN_OUTS: set[str] = set()   # 本次运行自己清空/建出来的输出目录（多语言复用同一父目录）
-
-
-def merge_extra_glyphs(target_path: Path, source_ttf: str, wanted: list[int]) -> dict:
-    """A-min：把**额外源字体**里 target 缺的字形合并进来（只增不改、复合递归重映射）。
-
-    复用 `merge_glyphs.py`（与独立入口/判据同一份实现），避免第二套合并逻辑。
-    """
-    import sys as _sys
-
-    here = str(Path(__file__).resolve().parent)
-    if here not in _sys.path:
-        _sys.path.insert(0, here)
-    import merge_glyphs as _mg
-
-    report = _mg.merge(Path(target_path), Path(source_ttf), sorted(set(wanted)),
-                       Path(target_path))
-    return {"added": report["added"], "missing": report["missing_in_source"],
-            "copied": report["copied_glyphs"]}
-
-
-FONT_EXTS = (".ttf", ".otf", ".ttc")
-
-
-def _all_fonts(root: Path) -> list[Path]:
-    """所有字体容器（不只 ttf）：额外字体目录和 addon 下的 otf/ttc 不能漏。"""
-    return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in FONT_EXTS)
-
-
 def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
     pack = Path(args.pack)
     out = (Path(args.out) / lang) if args.split_output else Path(args.out)
@@ -293,10 +149,10 @@ def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
             raise SystemExit("IXRGEN error reason=读不到 --charset-file：%s（%r）"
                              % (args.charset_file, exc))
     else:
-        # 独立排查/旧调用：没有 C++ 字符集文件时才走本地扫描（不作为产品口径）。
-        wanted = sorted({ord(c) for c in collect_charset(
-            pack, lang, [Path(p) for p in (args.text_root or [])], args.charset_scope)
-            if ord(c) > 0x20})
+        # 字符集只有 C++ extract_chars 一份实现。没有 --charset-file 就不出包，
+        # 避免 Python 再扫一套 XML 规则（历史上 2935/2974 分叉就是这么来的）。
+        raise SystemExit("IXRGEN error reason=缺 --charset-file：字符集必须由 "
+                         "xrkit_cli/font-pack 的 extract_chars 提供（不再支持 Python 自扫 XML）")
 
     # ★★ 2026-11-08（外部复核：矢量路径的 --on-missing fail 不生效）：
     #   在**写任何输出之前**按最终覆盖能力预扫一遍；fail 且仍有缺字 ⇒ 直接不出包。
@@ -844,7 +700,6 @@ def main() -> int:
     ap.add_argument("--text-root", action="append", default=[])
     ap.add_argument("--charset-file", default="",
                     help="C++ extract_chars 导出的码位表（产品路径；给了就不再扫 XML）")
-    ap.add_argument("--charset-scope", default="used", choices=["used", "common"])
     ap.add_argument("--plan", default="")
     ap.add_argument("--sizes", default="")
     ap.add_argument("--merge-glyphs", default="",

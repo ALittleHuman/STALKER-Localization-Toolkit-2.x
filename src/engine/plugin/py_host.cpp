@@ -26,8 +26,12 @@
 #include <algorithm>
 #include <chrono>
 #include <functional>
+#include <iostream>
 #include <cctype>
 #include <cstdlib>
+#ifdef _WIN32
+#include <io.h>
+#endif
 #include <filesystem>
 #include <mutex>
 #include <memory>
@@ -46,7 +50,7 @@
 
 namespace xrkit::plugin {
 
-// ── 插件联网授权钩子（BETA.258）───────────────────────────────────
+// ── 插件联网授权钩子（BETA.270）───────────────────────────────────
 // 外壳在 UI 线程装入 Qt 实现；没有界面时保持空 ⇒ gate 一律拒绝（fail closed）。
 namespace net_prompt_detail {
 std::mutex& prompt_mutex() {
@@ -5967,10 +5971,40 @@ std::string one_line(const std::string& text) {
 
 }  // namespace
 
+// CLI 的联网授权：终端里给文字告警并读 y/N；stdin 不是终端（CI/管道/自检）
+// 一律 fail closed，绝不弹窗、也绝不因为没人回答而放行。
+bool cli_network_prompt(const std::string& owner, const std::string& url) {
+    static std::mutex prompt_lock;
+    std::lock_guard<std::mutex> lock(prompt_lock);
+#ifdef _WIN32
+    if (_isatty(_fileno(stdin)) == 0) {
+        std::cerr << "[插件联网] " << owner << " 请求 " << url
+                  << "；当前联网功能已关闭，且 stdin 不是终端 ⇒ 拒绝。\n";
+        std::cerr.flush();
+        return false;
+    }
+#endif
+    std::cerr << "\n[插件联网] " << owner << " 请求访问：\n  " << url
+              << "\n当前「联网功能」已关闭。允许本次请求？[y/N] ";
+    std::cerr.flush();
+    std::string line;
+    if (!std::getline(std::cin, line)) return false;
+    for (char& ch : line) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    const std::size_t begin = line.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) return false;
+    const std::size_t end = line.find_last_not_of(" \t\r\n");
+    const std::string answer = line.substr(begin, end - begin + 1);
+    return answer == "y" || answer == "yes";
+}
+
 int run_python_host_probe(const std::vector<std::string>& args, const LineSink& sink) {
     const auto emit = [&sink](const std::string& line) {
         if (sink) sink(line);
     };
+    // CLI 进程没有 Qt 外壳：用文字 y/N，而不是静默拒绝或假装无界面。
+    set_network_prompt([](const std::string& owner, const std::string& url) {
+        return cli_network_prompt(owner, url);
+    });
     bool want_host = false;
     bool want_plugins = false;
     bool want_scan = false;

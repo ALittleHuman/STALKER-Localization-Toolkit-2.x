@@ -2996,9 +2996,8 @@ def step_shell_smoke(release: bool) -> None:
         "src/engine/font/charset.cpp": 1,
         "src/engine/fs/overlay.cpp": 2,
         "src/engine/xml/dirdiff.cpp": 1,   # ← P11b 新登记：目录对比的遍历（下沉自 xml_page）
-        # 2026-11-15：font-pack 的整树复制 / 产线解包各自一份落盘遍历（不是候选收集）。
+        # 2026-11-15：font-pack 的整树复制（不是候选收集）。
         "src/engine/font/package.cpp": 2,
-        "src/engine/text/extract_pack.cpp": 1,
     }
     shell_iter = [p for p, _ in hits if p.startswith("src/shell/")]
     if dict(hits) != expected_iter or shell_iter:

@@ -50,6 +50,7 @@ def run_fixture(url: str) -> str:
     env["XRKIT_PROBE_NET_URL"] = url
     env["PYTHONUTF8"] = "1"
     proc = subprocess.run([str(CLI), "--py-plugins", str(FIXTURE)],
+                          stdin=subprocess.DEVNULL,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                           env=env, timeout=120)
     return proc.stdout.decode("utf-8", "replace")
