@@ -1652,6 +1652,13 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
 
 // ── 2026-11-25（用户实测）：游戏根/addons 根的文本提取编排 ─────────────────────
 // 低层 extract_dir 只接受 scripts/gameplay 本身；这里先发现所有子树，再逐棵调用它。
+std::string text_table_dir(const std::string& game_root, const std::string& cfg_name,
+                           const std::string& lang) {
+    const std::string safe_lang = lang.empty() ? "rus" : lang;
+    const std::string base = game_root;
+    return base + "/" + cfg_name + "/text/" + safe_lang;
+}
+
 ExtractRootStats extract_root(const std::string& source_root, const std::string& target_root,
                               const ExtractOptions& options) {
     namespace fs = std::filesystem;
@@ -1733,7 +1740,8 @@ ExtractRootStats extract_root(const std::string& source_root, const std::string&
         for (char& ch : lang) {
             if (ch == '/' || ch == '\\') ch = '_';
         }
-        job.xml_dir = base / "gamedata" / "configs" / "text" / lang;
+        job.xml_dir = core::path_from_utf8(text_table_dir(
+            core::path_to_utf8(base / "gamedata"), "configs", lang));
         jobs.push_back(std::move(job));
         chosen.push_back(item.path);
     }

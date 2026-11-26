@@ -136,6 +136,11 @@ struct ExtractRootStats {
 };
 
 // 源根可以是游戏根、模组根、addons 根；根下面没有 scripts/gameplay ⇒ ok=false + error。
+// 文本表落点只此一份：<game_root>/<cfg_name>/text/<lang>。
+// 根提取、extract_pack、GUI 共用；CLI/GUI 不再各自拼目录。
+std::string text_table_dir(const std::string& game_root, const std::string& cfg_name,
+                           const std::string& lang);
+
 ExtractRootStats extract_root(const std::string& source_root,
                               const std::string& target_root,
                               const ExtractOptions& options = ExtractOptions{});

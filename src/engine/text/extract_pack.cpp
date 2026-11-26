@@ -212,7 +212,8 @@ ExtractPackResult extract_language_pack(const ExtractPackOptions& options) {
         if (texts_out.empty()) texts_out = copied_text_dirs.front();
         lang = base_name(texts_out);
     } else {
-        texts_out = join(join(join(join(out_root, rel_prefix), cfg_name), "text"), lang);
+        texts_out = core::path_from_utf8(text_table_dir(
+            core::path_to_utf8(join(out_root, rel_prefix)), cfg_name, lang));
     }
     std::error_code ec;
     fs::create_directories(texts_out, ec);
