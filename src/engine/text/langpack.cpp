@@ -131,7 +131,8 @@ void copy_tree(const fs::path& src, const fs::path& dst, bool overwrite, int& co
 namespace {
 
 // ★★ 2026-10-28（用户）：「有出现一段文本没有换行过的，超过上限需要弹警告并且写日志」。
-//   口径：**不含换行**且 > 1024 码位（有换行的放宽到 2048）；日志形态
+//   2026-11-27（用户）改口径：**统一 1024 码位**，不再对含换行的条目放宽到 2048
+//   （部分汉字是 4 字节，按字节卡死更不合适；码位口径最稳）。日志形态
 //   `长文本：<文件>|<id>|<码位数>|<前 60 字符>` —— 用户拿这条去原文里定位修改。
 constexpr size_t kLongTextLimit = 1024;   // 用户 2026-10-28：>512 不算超限
 
@@ -157,9 +158,8 @@ void scan_long_texts(const std::string& xml, const std::string& file_label,
             if (ch < 0x80) { ++cp; } else if ((ch & 0xC0) != 0x80) { ++cp; ascii = false; }
         }
         (void)ascii;
-        const bool has_nl = body.find('\n') != std::string::npos;
-        const size_t limit = has_nl ? kLongTextLimit * 2 : kLongTextLimit;
-        if (cp > limit) {
+        // 2026-11-27（用户）：统一按 1024 码位判定，含换行也不放宽。
+        if (cp > kLongTextLimit) {
             std::string head = body.substr(0, 180);
             for (char& ch : head) if (ch == '\n') ch = ' ';
             warnings->push_back("长文本：" + file_label + "|" + current_id + "|" +

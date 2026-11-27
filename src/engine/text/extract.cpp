@@ -1522,10 +1522,9 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
             extracted.emplace_back(eid, inner);
             {
                 // 长文本记账（零静默：弹警告 + 落日志都要能指到"哪个文件、哪条 id"）
+                // 2026-11-27（用户）：统一按 1024 码位判定，含换行也不放宽。
                 const size_t cp = utf8_codepoint_count(inner);
-                const bool has_nl = inner.find('\n') != std::string::npos;
-                const size_t limit = has_nl ? kLongTextLimit * 2 : kLongTextLimit;
-                if (cp > limit) {
+                if (cp > kLongTextLimit) {
                     std::string head;
                     for (char ch : inner.substr(0, 360)) {
                         head.push_back(ch == '\n' ? ' ' : ch);
