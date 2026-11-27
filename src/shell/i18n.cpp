@@ -1,8 +1,11 @@
 #include "i18n.h"
 
+#include <algorithm>
+
 #include <QAbstractButton>
 #include <QAction>
-#include <QApplication>\n#include <QCoreApplication>
+#include <QApplication>
+#include <QCoreApplication>
 #include <QComboBox>
 #include <QDir>
 #include <QEvent>
@@ -19,8 +22,10 @@
 #include <QSignalBlocker>
 #include <QTabWidget>
 #include <QTableWidget>
+#include <QRegularExpression>
 #include <QTimer>
 #include <QTreeWidget>
+#include <QVector>
 #include <QWidget>
 
 #include "xrkit/core/theme.h"
@@ -30,6 +35,13 @@ namespace {
 
 UiLanguage g_language = UiLanguage::Chinese;
 QHash<QString, QString> g_ru;
+
+struct TextTemplate {
+    QRegularExpression pattern;
+    QString russian;
+    int placeholders = 0;
+};
+QVector<TextTemplate> g_templates;
 
 QString language_name(UiLanguage language) {
     return language == UiLanguage::Russian ? QStringLiteral("ru") : QStringLiteral("zh");
@@ -47,6 +59,8 @@ QString read_language_override(const QStringList& args) {
     return {};
 }
 
+void rebuild_templates();
+
 bool load_ru(const QString& file) {
     QFile input(file);
     if (!input.open(QIODevice::ReadOnly)) return false;
@@ -59,13 +73,68 @@ bool load_ru(const QString& file) {
     for (auto it = strings.begin(); it != strings.end(); ++it) {
         if (it.value().isString()) g_ru.insert(it.key(), it.value().toString());
     }
+    rebuild_templates();
     return !g_ru.isEmpty();
+}
+
+void rebuild_templates() {
+    g_templates.clear();
+    for (auto it = g_ru.constBegin(); it != g_ru.constEnd(); ++it) {
+        const QString source = it.key();
+        int max_placeholder = 0;
+        QString pattern = QStringLiteral("^");
+        bool has_placeholder = false;
+        for (int i = 0; i < source.size(); ++i) {
+            const QChar ch = source[i];
+            if (ch == QLatin1Char('%') && i + 1 < source.size() && source[i + 1].isDigit()) {
+                const int number = source[i + 1].digitValue();
+                if (number <= 0) {
+                    has_placeholder = false;
+                    break;
+                }
+                max_placeholder = std::max(max_placeholder, number);
+                pattern += QStringLiteral("(.+?)");
+                has_placeholder = true;
+                ++i;
+            } else {
+                pattern += QRegularExpression::escape(QString(ch));
+            }
+        }
+        pattern += QStringLiteral("$");
+        if (!has_placeholder) continue;
+        QRegularExpression re(pattern);
+        if (!re.isValid()) continue;
+        g_templates.push_back(TextTemplate{re, it.value(), max_placeholder});
+    }
 }
 
 void translate_text(QString& text) {
     if (g_language != UiLanguage::Russian || text.isEmpty()) return;
     const auto it = g_ru.constFind(text);
-    if (it != g_ru.constEnd()) text = it.value();
+    if (it != g_ru.constEnd()) {
+        text = it.value();
+        return;
+    }
+    for (const TextTemplate& candidate : g_templates) {
+        const QRegularExpressionMatch match = candidate.pattern.match(text);
+        if (!match.hasMatch()) continue;
+        QString out;
+        const QString& format = candidate.russian;
+        for (int i = 0; i < format.size(); ++i) {
+            if (format[i] == QLatin1Char('%') && i + 1 < format.size() &&
+                format[i + 1].isDigit()) {
+                const int number = format[i + 1].digitValue();
+                if (number > 0 && number <= match.lastCapturedIndex()) {
+                    out += match.captured(number);
+                    ++i;
+                    continue;
+                }
+            }
+            out += format[i];
+        }
+        text = out;
+        return;
+    }
 }
 
 void translate_object(QObject* object);
@@ -165,7 +234,18 @@ void translate_object(QObject* object) {
 
 class LanguageWatcher final : public QObject {
 public:
-    using QObject::QObject;
+    explicit LanguageWatcher(QObject* parent = nullptr) : QObject(parent) {
+        auto* timer = new QTimer(this);
+        timer->setInterval(500);
+        connect(timer, &QTimer::timeout, this, [] {
+            for (QWidget* widget : QApplication::allWidgets()) {
+                if (widget != nullptr && widget->isWindow() && widget->isVisible()) {
+                    apply_ui_language(widget);
+                }
+            }
+        });
+        timer->start();
+    }
     bool eventFilter(QObject* watched, QEvent* event) override {
         if (event != nullptr && event->type() == QEvent::Show) {
             if (auto* widget = qobject_cast<QWidget*>(watched); widget != nullptr &&

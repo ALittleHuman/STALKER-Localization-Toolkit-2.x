@@ -200,6 +200,10 @@ int main(int argc, char** argv) {
     xrkit::shell::install_ui_language_watcher();
     if (args.contains(QStringLiteral("--i18n-report"))) {
         QTextStream report(stdout);
+        QLabel i18n_probe;
+        i18n_probe.setText(QStringLiteral("发现新版本：2.0.0.999"));
+        xrkit::shell::apply_ui_language(&i18n_probe);
+        report << "I18N template=" << i18n_probe.text() << "\n";
         report << "I18N title=" << hub.windowTitle() << "\n";
         const auto actions = hub.findChildren<QAction*>();
         for (const QAction* action : actions) {

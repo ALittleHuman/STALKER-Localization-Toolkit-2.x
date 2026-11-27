@@ -203,7 +203,18 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     // 插件更新后重启：启动新进程后退出当前进程；新进程启动时处理 .xrkit_update。
     plugin::set_host_restart_handler([] {
         const QString exe = QCoreApplication::applicationFilePath();
-        const QStringList args = QCoreApplication::arguments().mid(1);
+        QStringList args;
+        const QStringList original = QCoreApplication::arguments().mid(1);
+        for (int i = 0; i < original.size(); ++i) {
+            const QString& arg = original[i];
+            // 语言菜单已把选择写进 [ui] lang；旧 --lang 会覆盖它，必须在重启参数里去掉。
+            if (arg == QStringLiteral("--lang")) {
+                if (i + 1 < original.size()) ++i;
+                continue;
+            }
+            if (arg.startsWith(QStringLiteral("--lang="))) continue;
+            args << arg;
+        }
         const bool started = QProcess::startDetached(exe, args);
         if (started) QCoreApplication::quit();
         return started;
