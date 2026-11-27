@@ -131,10 +131,65 @@ void copy_tree(const fs::path& src, const fs::path& dst, bool overwrite, int& co
 namespace {
 
 // ★★ 2026-10-28（用户）：「有出现一段文本没有换行过的，超过上限需要弹警告并且写日志」。
-//   2026-11-27（用户）改口径：**统一 1024 码位**，不再对含换行的条目放宽到 2048
-//   （部分汉字是 4 字节，按字节卡死更不合适；码位口径最稳）。日志形态
-//   `长文本：<文件>|<id>|<码位数>|<前 60 字符>` —— 用户拿这条去原文里定位修改。
+//   ★ 2026-11-27（用户）改口径：引擎按「单个字段」计量，所以工具也必须**按换行切分后
+//   逐段**计码位，而不是整段计——这样带换行的长文总长可以正常上去，只有单段超限才报警。
+//   换行既可能是字面转义 `\n` / `\r\n`（反斜杠 + n），也可能是真实换行符，两种都算分隔。
+//   日志形态：`长文本：<文件>|<id>|<码位数>|<段首 40 字>…`
 constexpr size_t kLongTextLimit = 1024;   // 用户 2026-10-28：>512 不算超限
+
+// 按换行把文本切成「单个字段」。支持字面 `\n`、`\r\n` 与真实 CR/LF。
+std::vector<std::string> split_text_fields(const std::string& body) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (size_t i = 0; i < body.size();) {
+        const char c = body[i];
+        if (c == '\\' && i + 1 < body.size() && (body[i + 1] == 'n' || body[i + 1] == 'r')) {
+            out.push_back(cur);
+            cur.clear();
+            const bool was_r = body[i + 1] == 'r';
+            i += 2;
+            if (was_r && i + 1 < body.size() && body[i] == '\\' && body[i + 1] == 'n') i += 2;
+            continue;
+        }
+        if (c == '\r' || c == '\n') {
+            out.push_back(cur);
+            cur.clear();
+            if (c == '\r' && i + 1 < body.size() && body[i + 1] == '\n') ++i;
+            ++i;
+            continue;
+        }
+        cur.push_back(c);
+        ++i;
+    }
+    out.push_back(cur);
+    return out;
+}
+
+// 取字段开头 max_cp 个码位做预览。
+std::string field_head_preview(const std::string& seg, size_t max_cp = 40) {
+    std::string out;
+    size_t cp = 0;
+    for (size_t i = 0; i < seg.size() && cp < max_cp;) {
+        const unsigned char ch = static_cast<unsigned char>(seg[i]);
+        size_t len = 1;
+        if ((ch & 0xE0) == 0xC0) len = 2;
+        else if ((ch & 0xF0) == 0xE0) len = 3;
+        else if ((ch & 0xF8) == 0xF0) len = 4;
+        if (i + len > seg.size()) len = 1;
+        out.append(seg, i, len);
+        i += len;
+        ++cp;
+    }
+    return out;
+}
+
+size_t count_codepoints_simple(const std::string& s) {
+    size_t cp = 0;
+    for (unsigned char ch : s) {
+        if ((ch & 0xC0) != 0x80) ++cp;
+    }
+    return cp;
+}
 
 void scan_long_texts(const std::string& xml, const std::string& file_label,
                      std::vector<std::string>* warnings) {
@@ -152,18 +207,13 @@ void scan_long_texts(const std::string& xml, const std::string& file_label,
         const size_t close = xml.find("</text>", text_pos);
         if (close == std::string::npos) break;
         const std::string body = xml.substr(text_pos + 6, close - text_pos - 6);
-        size_t cp = 0;
-        bool ascii = true;
-        for (unsigned char ch : body) {
-            if (ch < 0x80) { ++cp; } else if ((ch & 0xC0) != 0x80) { ++cp; ascii = false; }
-        }
-        (void)ascii;
-        // 2026-11-27（用户）：统一按 1024 码位判定，含换行也不放宽。
-        if (cp > kLongTextLimit) {
-            std::string head = body.substr(0, 180);
-            for (char& ch : head) if (ch == '\n') ch = ' ';
-            warnings->push_back("长文本：" + file_label + "|" + current_id + "|" +
-                                std::to_string(cp) + "|" + head);
+        // 2026-11-27（用户）：逐字段判定，总长度不限。
+        for (const std::string& fld : split_text_fields(body)) {
+            const size_t cp = count_codepoints_simple(fld);
+            if (cp > kLongTextLimit) {
+                warnings->push_back("长文本：" + file_label + "|" + current_id + "|" +
+                                    std::to_string(cp) + "|" + field_head_preview(fld) + "…");
+            }
         }
         pos = close + 7;
     }

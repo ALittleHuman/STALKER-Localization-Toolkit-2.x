@@ -402,11 +402,58 @@ std::string ascii_lower(const std::string& s) {
 }
 
 
-// ★★ 2026-10-28（用户口径）：**没有换行**且 > 1024 码位才算超限（含换行的放宽到 2048）。
-//   为什么是"没有换行"：游戏 UI 按行折，一段没有换行的超长串会直接撑爆/被裁掉；
-//   有换行的长文本是作者有意分行。
+// ★★ 2026-10-28（用户口径）：长文本告警。
+//   2026-11-27（用户）改口径：引擎按「单个字段」计量，工具也必须**按换行切分后逐段**
+//   计码位；带换行的长文总长可以正常上去，只有单段超限才报警。
+//   换行既可能是字面转义 `\n` / `\r\n`，也可能是真实换行符。
 //   ★ 2026-10-28 用户追加：「>512 不需要告警」⇒ 上限从 512 抬到 1024。
 constexpr size_t kLongTextLimit = 1024;   // 用户 2026-10-28：>512 不算超限
+
+// 按换行把文本切成「单个字段」（字面 `\n`/`\r\n` 与真实 CR/LF 都算分隔）。
+std::vector<std::string> split_text_fields(const std::string& body) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (size_t i = 0; i < body.size();) {
+        const char c = body[i];
+        if (c == '\\' && i + 1 < body.size() && (body[i + 1] == 'n' || body[i + 1] == 'r')) {
+            out.push_back(cur);
+            cur.clear();
+            const bool was_r = body[i + 1] == 'r';
+            i += 2;
+            if (was_r && i + 1 < body.size() && body[i] == '\\' && body[i + 1] == 'n') i += 2;
+            continue;
+        }
+        if (c == '\r' || c == '\n') {
+            out.push_back(cur);
+            cur.clear();
+            if (c == '\r' && i + 1 < body.size() && body[i + 1] == '\n') ++i;
+            ++i;
+            continue;
+        }
+        cur.push_back(c);
+        ++i;
+    }
+    out.push_back(cur);
+    return out;
+}
+
+// 取字段开头 max_cp 个码位做预览。
+std::string field_head_preview(const std::string& seg, size_t max_cp = 40) {
+    std::string out;
+    size_t cp = 0;
+    for (size_t i = 0; i < seg.size() && cp < max_cp;) {
+        const unsigned char ch = static_cast<unsigned char>(seg[i]);
+        size_t len = 1;
+        if ((ch & 0xE0) == 0xC0) len = 2;
+        else if ((ch & 0xF0) == 0xE0) len = 3;
+        else if ((ch & 0xF8) == 0xF0) len = 4;
+        if (i + len > seg.size()) len = 1;
+        out.append(seg, i, len);
+        i += len;
+        ++cp;
+    }
+    return out;
+}
 
 // ── 候选判定（1.x 同名函数）──────────────────────────────────────────
 bool looks_like_id(const std::string& text) {
@@ -1522,15 +1569,13 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
             extracted.emplace_back(eid, inner);
             {
                 // 长文本记账（零静默：弹警告 + 落日志都要能指到"哪个文件、哪条 id"）
-                // 2026-11-27（用户）：统一按 1024 码位判定，含换行也不放宽。
-                const size_t cp = utf8_codepoint_count(inner);
-                if (cp > kLongTextLimit) {
-                    std::string head;
-                    for (char ch : inner.substr(0, 360)) {
-                        head.push_back(ch == '\n' ? ' ' : ch);
+                // 2026-11-27（用户）：按换行切分后逐段计码位，总长度不限。
+                for (const std::string& fld : split_text_fields(inner)) {
+                    const size_t cp = utf8_codepoint_count(fld);
+                    if (cp > kLongTextLimit) {
+                        st.long_texts.push_back(f.rel + "|" + eid + "|" + std::to_string(cp) +
+                                                "|" + field_head_preview(fld) + "…");
                     }
-                    st.long_texts.push_back(f.rel + "|" + eid + "|" + std::to_string(cp) +
-                                            "|" + head);
                 }
             }
             repls.push_back(Repl{old_text, eid, repls.size()});
