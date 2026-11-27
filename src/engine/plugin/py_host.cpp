@@ -3066,6 +3066,20 @@ public:
             core::DownloadManager::instance().wait(
                 job, &status, wait_seconds < 0 ? -1 : wait_seconds * 1000);
         }
+        out["job"] = job;
+        if (!status.finished) {
+            // 等待超时不是失败：任务仍在后台跑，必须把 job 交回去，否则插件既不能
+            // 轮询也不能取消（B4 的 wait_seconds 语义）。
+            out["ok"] = true;
+            out["pending"] = true;
+            out["status"] = 0;
+            out["error"] = "等待超时，下载仍在后台；用 http_download_status(job) 轮询";
+            out["bytes"] = status.done;
+            out["truncated"] = false;
+            out["path"] = path;
+            out["url"] = status.url.empty() ? py::str(urls.front()) : py::str(status.url);
+            return out;
+        }
         out["ok"] = status.ok;
         out["status"] = status.ok ? 200 : 0;
         out["error"] = status.error;
