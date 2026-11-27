@@ -7272,7 +7272,7 @@ if (action == "--diff-snapshot") {
         }
         // ★★ 2026-10-28（用户）：「有出现一段文本没有换行过的，超过上限需要弹警告并且写日志」。
         //   CLI 侧照做：逐条打印 + **落一份日志文件**（<输出>/_xrkit_long_texts.log），
-        //   日志里带文件名 / id / 码位数 / 前 180 字节，方便回原文定位。
+        //   日志里带文件名 / id / 码位数（含临界值）/ 段首预览，方便回原文定位。
         if (!st.long_texts.empty()) {
             std::cout << "TEXT warn long=" << st.long_texts.size() << " limit=1024\n";
             std::size_t shown = 0;

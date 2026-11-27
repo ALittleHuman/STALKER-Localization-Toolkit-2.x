@@ -1574,6 +1574,7 @@ ExtractStats extract_dir(const std::string& source_dir, const std::string& targe
                     const size_t cp = utf8_codepoint_count(fld);
                     if (cp > kLongTextLimit) {
                         st.long_texts.push_back(f.rel + "|" + eid + "|" + std::to_string(cp) +
+                                                "超临界" + std::to_string(kLongTextLimit) +
                                                 "|" + field_head_preview(fld) + "…");
                     }
                 }

@@ -212,7 +212,7 @@ void scan_long_texts(const std::string& xml, const std::string& file_label,
             const size_t cp = count_codepoints_simple(fld);
             if (cp > kLongTextLimit) {
                 warnings->push_back("长文本：" + file_label + "|" + current_id + "|" +
-                                    std::to_string(cp) + "|" + field_head_preview(fld) + "…");
+                                    std::to_string(cp) + "超临界" + std::to_string(kLongTextLimit) + "|" + field_head_preview(fld) + "…");
             }
         }
         pos = close + 7;
