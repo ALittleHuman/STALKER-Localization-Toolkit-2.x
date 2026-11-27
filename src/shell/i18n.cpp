@@ -103,6 +103,7 @@ void rebuild_templates() {
         pattern += QStringLiteral("$");
         if (!has_placeholder) continue;
         QRegularExpression re(pattern);
+        re.setPatternOptions(QRegularExpression::DotMatchesEverythingOption);
         if (!re.isValid()) continue;
         g_templates.push_back(TextTemplate{re, it.value(), max_placeholder});
     }
