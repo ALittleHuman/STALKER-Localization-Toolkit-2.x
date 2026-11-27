@@ -442,6 +442,22 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
         log_line(on ? QStringLiteral("插件联网请求将弹窗询问（联网功能关闭时）")
                     : QStringLiteral("插件联网请求不再询问（联网功能关闭时直接拒绝）"));
     });
+    // ★ 界面语言：保存后重启进程，新进程从 xrkit_user.ltx [ui] lang 读取。
+    QAction* language_action = tools_menu->addAction(QStringLiteral("界面语言"));
+    language_action->setObjectName(QStringLiteral("ui_language_action"));
+    QMenu* language_menu = new QMenu(this);
+    language_action->setMenu(language_menu);
+    QAction* language_zh = language_menu->addAction(QStringLiteral("中文"));
+    QAction* language_ru = language_menu->addAction(QStringLiteral("Русский"));
+    connect(language_zh, &QAction::triggered, this, [this]() {
+        core::save_user_value("ui", "lang", "zh");
+        plugin::host_restart();
+    });
+    connect(language_ru, &QAction::triggered, this, [this]() {
+        core::save_user_value("ui", "lang", "ru");
+        plugin::host_restart();
+    });
+
     // ★ 独立总开关：关闭后连“检测更新”功能一起停（不是只关弹窗）。
     update_toggle_action_ = tools_menu->addAction(QStringLiteral("启用检测更新"));
     update_toggle_action_->setObjectName(QStringLiteral("update_toggle_action"));

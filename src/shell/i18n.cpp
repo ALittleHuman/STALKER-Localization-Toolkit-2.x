@@ -23,6 +23,8 @@
 #include <QTreeWidget>
 #include <QWidget>
 
+#include "xrkit/core/theme.h"
+
 namespace xrkit::shell {
 namespace {
 
@@ -40,6 +42,8 @@ QString read_language_override(const QStringList& args) {
     }
     const QByteArray env = qgetenv("XRKIT_LANG");
     if (!env.isEmpty()) return QString::fromUtf8(env);
+    const std::string saved = core::load_user_value("ui", "lang", "");
+    if (!saved.empty()) return QString::fromStdString(saved);
     return {};
 }
 
