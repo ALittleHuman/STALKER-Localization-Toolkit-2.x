@@ -517,7 +517,7 @@
         "267": { "built": "2026-11-25 22:58:14", "commit": "3e977fd", "artifacts": ["build\\logs\\build_pkg_267.log", "dist\\2.0.0\\BETA\\267"] },
         "268": { "built": "2026-11-25 23:35:05", "commit": "76a02bc", "artifacts": ["build\\logs\\build_pkg_268.log", "dist\\2.0.0\\BETA\\268"] },
         "269": { "built": "2026-11-25 23:58:56", "commit": "94ecba7", "artifacts": ["build\\logs\\build_pkg_269.log", "dist\\2.0.0\\BETA\\269"] },
-        "270": { "built": "2026-11-27 17:21:17", "commit": "5571c41", "artifacts": ["build\\logs\\build_pkg_270.log", "dist\\2.0.0\\BETA\\270"] }
+        "270": { "built": "2026-11-28 00:26:26", "commit": "780c6ff", "artifacts": ["build\\logs\\build_pkg_270.log", "dist\\2.0.0\\BETA\\270"] }
       },
       "RC": {
         "1": { "built": "2026-11-20 16:51:09", "commit": "5951b29", "artifacts": ["build\\logs\\build_pkg_1.log", "dist\\2.0.0\\RC\\1"] },
