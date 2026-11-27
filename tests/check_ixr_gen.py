@@ -15,6 +15,7 @@ import json
 import shutil
 import subprocess
 import sys
+import os
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -24,6 +25,40 @@ import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "tools" / "ixr" / "ixrgen.py"
+TOOL_DIR = ROOT / "build" / "ixr_gen_check_tools"
+RUNNER = TOOL_DIR / "ixr_run.py"
+
+
+def _stage_tools() -> bool:
+    """按发行包结构 staging 启动器 + 助手 + vendor/fontTools。
+
+    不能直接跑 tools/ixr/ixrgen.py：它没有相邻 fontlib，嵌入式 Python 的 _pth
+    又不读 PYTHONPATH ⇒ 会误报缺 fonttools。产品包一直带 fontTools，入口是
+    ixr_run.py；测试必须走同一入口。
+    """
+    fontlib_src = ROOT / "vendor" / "fonttools" / "fontTools"
+    if not TOOL.is_file() or not fontlib_src.is_dir():
+        return False
+    TOOL_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "tools" / "ixr" / "ixr_run.py", TOOL_DIR / "ixr_run.py")
+    shutil.copy2(TOOL, TOOL_DIR / "ixrgen.py")
+    shutil.copy2(ROOT / "tools" / "ixr" / "merge_glyphs.py", TOOL_DIR / "merge_glyphs.py")
+    fontlib = TOOL_DIR / "fontlib"
+    if fontlib.exists():
+        shutil.rmtree(fontlib)
+    (fontlib).mkdir(parents=True, exist_ok=True)
+    shutil.copytree(fontlib_src, fontlib / "fontTools")
+    for cand in (fontlib, TOOL_DIR):
+        if str(cand) not in sys.path:
+            sys.path.insert(0, str(cand))
+    return True
+
+
+if not _stage_tools():
+    print("!! 缺 tools/ixr 或 vendor/fonttools")
+    print("IXR-GEN: SKIP (fonttools-missing)")
+    raise SystemExit(2)
+
 BASE_FONT = Path(r"C:\Windows\Fonts\arial.ttf")
 CJK_FONT = Path(r"C:\Windows\Fonts\NotoSansSC-VF.ttf")
 
@@ -84,15 +119,17 @@ def _charset_file(pack: Path, out: Path, extra: list | None) -> Path:
                     chars.update(ord(c) for c in text if ord(c) > 0x20)
     chars.update(range(0x20, 0x7F))
     chars.update(range(0x0410, 0x0500))
-    out.parent.mkdir(parents=True, exist_ok=True)
-    path = out.parent / (out.name + ".charset.txt")
+    # 绝不能写进 pack 内部：--out 落在 pack 里的拒绝用例会因此污染夹具。
+    fd, name = tempfile.mkstemp(prefix="ixrgen_charset_", suffix=".txt")
+    os.close(fd)
+    path = Path(name)
     path.write_text("\n".join("%X" % cp for cp in sorted(chars)) + "\n", encoding="ascii")
     return path
 
 
 def run_tool(pack: Path, font: Path, out: Path, extra: list | None = None) -> tuple[int, str]:
     charset = _charset_file(pack, out, extra)
-    cmd = [sys.executable, str(TOOL), "--pack", str(pack),
+    cmd = [sys.executable, str(RUNNER), "--pack", str(pack),
            "--font", str(font), "--out", str(out),
            "--charset-file", str(charset)] + list(extra or [])
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -108,8 +145,8 @@ def report_of(out: str) -> dict:
 
 def main() -> int:
     print("== IX-Ray 生成器（ixrgen）：真合并 + 逐字节保留 + 缺字入账 ==")
-    if not TOOL.is_file():
-        print("!! 缺 %s" % TOOL)
+    if not TOOL.is_file() or not RUNNER.is_file():
+        print("!! 缺工具入口：%s / %s" % (TOOL, RUNNER))
         return 1
     missing_fonts = [p for p in (BASE_FONT, CJK_FONT) if not p.is_file()]
     if missing_fonts:
@@ -580,21 +617,16 @@ def main() -> int:
             '{"sections": {"font_letterica": %s}, "sizes": []}' % json.dumps(str(CJK_FONT)),
             encoding="utf-8")
         out_plan = tmp / "out_plan"
-        proc = subprocess.run([sys.executable, str(TOOL), "--pack", str(pack2),
-                               "--font", str(CJK_FONT), "--out", str(out_plan),
-                               "--plan", str(plan_file)],
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        rc_plan, so_plan = run_tool(pack2, CJK_FONT, out_plan, ["--plan", str(plan_file)])
         both = [out_plan / "gamedata" / "fonts" / "rus" / n for n in ("arial.ttf", "letterica.ttf")]
-        if proc.returncode == 0 and all(f.is_file() for f in both):
+        if rc_plan == 0 and all(f.is_file() for f in both):
             ok("逐槽位计划：两份字体都产出")
         else:
             problems += 1
-            fail("逐槽位计划失败：rc=%d" % proc.returncode)
+            fail("逐槽位计划失败：rc=%d\n%s" % (rc_plan, so_plan[-300:]))
 
         out_p14 = tmp / "out_p14"
-        subprocess.run([sys.executable, str(TOOL), "--pack", str(pack2),
-                        "--font", str(CJK_FONT), "--out", str(out_p14), "--sizes", "14"],
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        run_tool(pack2, CJK_FONT, out_p14, ["--sizes", "14"])
         f14 = out_p14 / "gamedata" / "fonts" / "rus" / "letterica.ttf"
         if f14.is_file():
             cmap14 = set(TTFont(str(f14)).getBestCmap())
@@ -618,29 +650,23 @@ def main() -> int:
                 '<?xml version="1.0" encoding="utf-8"?><string_table>'
                 '<string id="a"><text>你好</text></string></string_table>', encoding="utf-8")
         out_multi = tmp / "out_multi"
-        proc = subprocess.run([sys.executable, str(TOOL), "--pack", str(pack3),
-                               "--font", str(CJK_FONT), "--out", str(out_multi),
-                               "--all-langs", "--split-output"],
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        rc_multi, so_multi = run_tool(pack3, CJK_FONT, out_multi,
+                                      ["--all-langs", "--split-output"])
         both = [out_multi / lang / "gamedata" / "fonts" / lang / "arial.ttf"
                 for lang in ("rus", "eng")]
-        if proc.returncode == 0 and all(f.is_file() for f in both):
+        if rc_multi == 0 and all(f.is_file() for f in both):
             ok("多语言：--all-langs --split-output 出了 rus / eng 两份")
         else:
             problems += 1
-            fail("多语言没出两份：rc=%d\n%s"
-                 % (proc.returncode, proc.stdout.decode("utf-8", "replace")[-300:]))
+            fail("多语言没出两份：rc=%d\n%s" % (rc_multi, so_multi[-300:]))
 
         # ②c 多语言没给 --split-output ⇒ 必须拒绝（不许互相覆盖）
-        proc = subprocess.run([sys.executable, str(TOOL), "--pack", str(pack3),
-                               "--font", str(CJK_FONT), "--out", str(tmp / "out_bad"),
-                               "--all-langs"],
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        if proc.returncode == 1 and "split-output" in proc.stdout.decode("utf-8", "replace"):
+        rc_bad, so_bad = run_tool(pack3, CJK_FONT, tmp / "out_bad", ["--all-langs"])
+        if rc_bad == 1 and "split-output" in so_bad:
             ok("多语言不给 --split-output：退 1 且说理由")
         else:
             problems += 1
-            fail("多语言没有 split-output 保护：rc=%d" % proc.returncode)
+            fail("多语言没有 split-output 保护：rc=%d\n%s" % (rc_bad, so_bad[-300:]))
 
         # ③ 零静默：给一个没有中文的字体当源 ⇒ 必须把缺字记进报告（不是静默成功）
         out2 = tmp / "out2"

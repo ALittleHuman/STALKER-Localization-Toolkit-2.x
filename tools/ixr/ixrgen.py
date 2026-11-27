@@ -124,6 +124,103 @@ def merge_text_by_id(ref_text: str, tr_text: str) -> str:
     return merged
 
 
+def merge_into(base_path: Path, cjk_source, cjk_cmap: dict, wanted: list[int]) -> tuple[int, list[int]]:
+    dst = TTFont(str(base_path), fontNumber=0)
+    if "glyf" not in dst:
+        raise RuntimeError("not-glyf")
+    dst_cmap = dst.getBestCmap() or {}
+    need = [cp for cp in wanted if cp not in dst_cmap and cp in cjk_cmap]
+    missing = [cp for cp in wanted if cp not in dst_cmap and cp not in cjk_cmap]
+    if need:
+        from fontTools.pens.recordingPen import DecomposingRecordingPen
+        from fontTools.pens.transformPen import TransformPen
+        from fontTools.pens.ttGlyphPen import TTGlyphPen
+
+        scale = dst["head"].unitsPerEm / cjk_source["head"].unitsPerEm
+        order = list(dst.getGlyphOrder())
+        order_set = set(order)
+        glyf = dst["glyf"]
+        hmtx = dst["hmtx"]
+        glyph_set = cjk_source.getGlyphSet()
+        added_map: dict[int, str] = {}
+        for cp in need:
+            gname = cjk_cmap[cp]
+            pen = TTGlyphPen(None)
+            rec = DecomposingRecordingPen(glyph_set)
+            glyph_set[gname].draw(rec)
+            rec.replay(TransformPen(pen, (scale, 0, 0, scale, 0, 0)))
+            glyph = pen.glyph()
+            newname = "uni%04X" % cp
+            while newname in order_set:
+                newname += "_"
+            glyf.glyphs[newname] = glyph
+            order.append(newname)
+            order_set.add(newname)
+            adv, lsb = cjk_source["hmtx"][gname]
+            hmtx.metrics[newname] = (int(round(adv * scale)), int(round(lsb * scale)))
+            added_map[cp] = newname
+        dst.setGlyphOrder(order)
+        dst["maxp"].numGlyphs = len(order)
+        # ★ cmap 必须真写；只加字形不加映射 = 引擎找不到字（修过）
+        for sub in dst["cmap"].tables:
+            if not sub.isUnicode():
+                continue
+            for cp, glyph_name in added_map.items():
+                sub.cmap[cp] = glyph_name
+    # ★★ 2026-11-25（用户实测）：合并只许补字形，**不许改目标的垂直度量**。
+    #   引擎按 hhea/OS/2 的 ascent 计算文本格；把源字体（如 msyh）的 yMax 放宽到
+    #   hhea.ascent/descent、OS/2.sTypo/usWin 会让同一字号整体放大约 14%。
+    #   因此这里只维护水平方向必需的 hmtx 计数，ascent/descender/win 度量原样保留。
+    adv = [int(dst["hmtx"][n][0]) for n in dst.getGlyphOrder() if n in dst["hmtx"].metrics]
+    try:
+        hhea = dst["hhea"]
+        hhea.numberOfHMetrics = len(dst["hmtx"].metrics)
+        if adv:
+            hhea.advanceWidthMax = max(int(getattr(hhea, "advanceWidthMax", 0)), max(adv))
+    except Exception as exc:
+        log("IXRGEN warn hhea 水平度量没同步：%r" % (exc,))
+
+    # ★★ 2026-11-08（外部复核：同样输入跑两次，34 个 .ttf 不同）：fontTools 默认在
+    #   compile 时把 `head.modified` 写成 `time.time()` ⇒ 产物不可复现（逐字节对拍永远红）。
+    #   治本：关掉 recalcTimestamp，并把 modified 钉成固定值（与 merge_glyphs 同一个常量）。
+    try:
+        dst.recalcTimestamp = False
+        dst["head"].modified = 3786825600   # 2020-01-01 00:00:00 UTC，固定常量
+    except Exception as exc:   # 字体没有 head（理论不会）⇒ 如实报，不静默
+        log("IXRGEN warn head.modified 没钉住：%r" % (exc,))
+    dst.save(str(base_path))
+    return len(need), missing
+
+
+_OWN_OUTS: set[str] = set()   # 本次运行自己清空/建出来的输出目录（多语言复用同一父目录）
+
+
+def merge_extra_glyphs(target_path: Path, source_ttf: str, wanted: list[int]) -> dict:
+    """A-min：把**额外源字体**里 target 缺的字形合并进来（只增不改、复合递归重映射）。
+
+    复用 `merge_glyphs.py`（与独立入口/判据同一份实现），避免第二套合并逻辑。
+    """
+    import sys as _sys
+
+    here = str(Path(__file__).resolve().parent)
+    if here not in _sys.path:
+        _sys.path.insert(0, here)
+    import merge_glyphs as _mg
+
+    report = _mg.merge(Path(target_path), Path(source_ttf), sorted(set(wanted)),
+                       Path(target_path))
+    return {"added": report["added"], "missing": report["missing_in_source"],
+            "copied": report["copied_glyphs"]}
+
+
+FONT_EXTS = (".ttf", ".otf", ".ttc")
+
+
+def _all_fonts(root: Path) -> list[Path]:
+    """所有字体容器（不只 ttf）：额外字体目录和 addon 下的 otf/ttc 不能漏。"""
+    return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in FONT_EXTS)
+
+
 def build_one(args, lang: str, cjk_source, cjk_cmap) -> dict:
     pack = Path(args.pack)
     out = (Path(args.out) / lang) if args.split_output else Path(args.out)
