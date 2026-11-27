@@ -497,6 +497,14 @@ $tlsDir = Join-Path $stage 'tls'
 if (Test-Path $tlsDir) { $pruned += (Get-ChildItem $tlsDir -Recurse -File | ForEach-Object FullName); Remove-Item -LiteralPath $tlsDir -Recurse -Force }
 Write-Host ("  剥掉未用的 Qt 网络件 {0} 个文件（QtNetwork/tls；python ssl + sqlite3 随包）" -f @($pruned).Count)
 
+Write-Host "== 俄语界面与文档 =="
+$langDir = Join-Path $stage 'lang'
+New-Item -ItemType Directory -Force -Path $langDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $root 'assets\i18n\ru.json') -Destination $langDir -Force
+$docsRu = Join-Path $stage 'docs\ru'
+New-Item -ItemType Directory -Force -Path $docsRu | Out-Null
+Copy-Item -Path (Join-Path $root 'docs\ru\*') -Destination $docsRu -Recurse -Force
+
 Write-Host "== README / version =="
 # ★★ 2026-10-07（审计补充 H1-5）：`git rev-parse` 原来**不查 `$LASTEXITCODE`** ——
 #   git 不可用 / 不在仓库里时，`version.txt` 的 `commit=` 会静默写成一个错的值
@@ -540,7 +548,7 @@ STALKER 汉化工具集 2.0.0（xrkit）
       直接点开始、没改落点的话，产物会落进**来源包所在的游戏/模组目录**里。请先确认落点。
 $pluginLine
       插件加载失败不会阻塞启动，问题会显示在启动后的日志栏里。
-运行日志（logs\log_*.txt）里既有引擎行、也有界面上出现的每一行；没有「导出日志」按钮 ——
+Русский интерфейс: запустите с `--lang ru` или на русской локали Windows; документация — docs\ru\README.md.`n运行日志（logs\log_*.txt）里既有引擎行、也有界面上出现的每一行；没有「导出日志」按钮 ——
 落盘文件已含全部内容，导出是重复实现。需要发日志时直接附上这个文件。
 自带：ffmpeg.exe（**自建 minimal 7.1.5，只含 OGM 转码所需**：mp4/mov/matroska/avi/ogg 解封装、
       libtheora/libvorbis 编码、theora/vorbis/h264/mpeg4/aac/mp3 解码；视频页不填路径也能直接用；

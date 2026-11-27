@@ -7,6 +7,7 @@
 #include "xrkit/engine/plugin/py_host.h"
 #include "host_update.h"
 #include "hub.h"
+#include "i18n.h"
 #include "log_box.h"
 #include "pages/convert_page.h"
 #include "pages/fs_page.h"
@@ -18,6 +19,7 @@
 #include "theme.h"
 #include "watchdog.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QComboBox>
 #include <QDialog>
@@ -128,6 +130,7 @@ int main(int argc, char** argv) {
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
     QApplication app(argc, argv);
+    xrkit::shell::initialize_ui_language(args);
     QApplication::setApplicationName(QStringLiteral("STALKER Toolkit 2.x"));
     QApplication::setApplicationVersion(QStringLiteral("2.0.0"));
     xrkit::shell::start_ui_watchdog();
@@ -193,6 +196,17 @@ int main(int argc, char** argv) {
     const xrkit::core::ThemeMode mode = xrkit::shell::apply_startup_ui(app);
 
     xrkit::shell::Hub hub;
+    xrkit::shell::apply_ui_language(&hub);
+    xrkit::shell::install_ui_language_watcher();
+    if (args.contains(QStringLiteral("--i18n-report"))) {
+        QTextStream report(stdout);
+        report << "I18N title=" << hub.windowTitle() << "\n";
+        const auto actions = hub.findChildren<QAction*>();
+        for (const QAction* action : actions) {
+            if (!action->text().isEmpty()) report << "I18N action=" << action->text() << "\n";
+        }
+        return 0;
+    }
     xrkit::shell::apply_dark_titlebar(&hub, mode);
     {
         const QScreen* screen = QGuiApplication::primaryScreen();

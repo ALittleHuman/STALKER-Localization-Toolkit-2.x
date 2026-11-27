@@ -3,6 +3,7 @@
 面向 X-Ray 引擎（SoC / Clear Sky / CoP / IX-Ray）的资源查看、解包、文本提取与汉化包生成工具。
 
 - 当前源码版本：`2.0.0.530（BETA.270）`
+- Русская документация: `docs/ru/README.md`；интерфейс: `xrkit_app.exe --lang ru`（или русская локаль Windows）
 - 运行环境：Windows 10/11 x64；发行包自带 Qt6 运行库与 Python 3.14，**不需要系统 Python**
 - 只写你自己的输出目录、`logs\` 与工具自己的 `xrkit_user.ltx`；不会安装或修改游戏文件
 
