@@ -208,6 +208,12 @@ void translate_object(QObject* object) {
             translate_text(text);
             if (text != combo->itemText(i)) combo->setItemText(i, text);
         }
+        // MultiSelectComboBox 的已选摘要写在 lineEdit 里，item 文本翻译不会更新它。
+        if (QLineEdit* edit = combo->lineEdit()) {
+            QString text = edit->text();
+            translate_text(text);
+            if (text != edit->text()) edit->setText(text);
+        }
     }
     if (auto* line = qobject_cast<QLineEdit*>(object)) {
         QString text = line->placeholderText();
