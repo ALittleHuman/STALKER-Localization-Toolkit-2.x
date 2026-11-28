@@ -22,6 +22,8 @@
 #include <QAction>
 #include <QApplication>
 #include <QTabBar>
+#include <QPlainTextEdit>
+#include <QTextEdit>
 #include <QComboBox>
 #include <QDialog>
 #include <QDir>
@@ -206,8 +208,20 @@ int main(int argc, char** argv) {
         xrkit::shell::apply_ui_language(&i18n_probe);
         report << "I18N template=" << i18n_probe.text() << "\n";
         report << "I18N title=" << hub.windowTitle() << "\n";
+        hub.set_current_page(3);
+        QApplication::processEvents();
+        for (const QTextEdit* edit : hub.findChildren<QTextEdit*>()) {
+            const QString text = edit->toPlainText();
+            if (!text.isEmpty()) report << "I18N video=" << text.left(80) << "\n";
+        }
+        for (const QPlainTextEdit* edit : hub.findChildren<QPlainTextEdit*>()) {
+            const QString text = edit->toPlainText();
+            if (!text.isEmpty()) report << "I18N video_plain=" << text.left(80) << "\n";
+        }
+        hub.set_current_page(4);
+        QApplication::processEvents();
         for (const QComboBox* combo : hub.findChildren<QComboBox*>()) {
-            report << "I18N combo=" << combo->currentText() << "\n";
+            report << "I18N combo=" << combo->currentText() << " | placeholder=" << combo->placeholderText() << "\n";
         }
         for (const QTreeWidget* tree : hub.findChildren<QTreeWidget*>()) {
             if (tree->headerItem() == nullptr) continue;
