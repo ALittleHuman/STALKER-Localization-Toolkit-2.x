@@ -127,7 +127,9 @@ void translate_text(QString& text) {
                 format[i + 1].isDigit()) {
                 const int number = format[i + 1].digitValue();
                 if (number > 0 && number <= match.lastCapturedIndex()) {
-                    out += match.captured(number);
+                    QString captured = match.captured(number);
+                    translate_text(captured);
+                    out += captured;
                     ++i;
                     continue;
                 }

@@ -206,6 +206,15 @@ int main(int argc, char** argv) {
         xrkit::shell::apply_ui_language(&i18n_probe);
         report << "I18N template=" << i18n_probe.text() << "\n";
         report << "I18N title=" << hub.windowTitle() << "\n";
+        for (const QComboBox* combo : hub.findChildren<QComboBox*>()) {
+            report << "I18N combo=" << combo->currentText() << "\n";
+        }
+        for (const QTreeWidget* tree : hub.findChildren<QTreeWidget*>()) {
+            if (tree->headerItem() == nullptr) continue;
+            for (int i = 0; i < tree->columnCount(); ++i) {
+                report << "I18N header=" << tree->headerItem()->text(i) << "\n";
+            }
+        }
         for (const QTabBar* tab_bar : hub.findChildren<QTabBar*>()) {
             for (int i = 0; i < tab_bar->count(); ++i) {
                 report << "I18N tab=" << tab_bar->tabText(i) << "\n";
