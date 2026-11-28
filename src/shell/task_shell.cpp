@@ -1,4 +1,5 @@
 #include "task_shell.h"
+#include "i18n.h"
 
 #include "theme.h"
 
@@ -45,7 +46,7 @@ TaskShell::TaskShell(QWidget* parent, CancelButton cancel) : QObject(parent) {
     //   事实（改动前）：这两页共用任务壳那颗「取消」，而封包是一次原子写、字库打包+写盘
     //   也不可中途停 ⇒ 用户口径「**本质是完全没有的，故直接删除即可**」。
     if (cancel == CancelButton::Yes) {
-        cancel_ = new QPushButton(QStringLiteral("取消"), panel_);
+        cancel_ = new QPushButton(xrkit::shell::tr_zh("取消"), panel_);
         cancel_->setEnabled(false);
         cancel_->setObjectName(QStringLiteral("task_cancel"));
         // ★★ 2026-10-06（①）：**这颗按钮以前是死的** —— 全文件只有三处 `setEnabled`，
@@ -56,7 +57,7 @@ TaskShell::TaskShell(QWidget* parent, CancelButton cancel) : QObject(parent) {
             // ★ D2 批：页面级确认（只有编码转换页装它）。返回 false ⇒ **什么都不发生**：
             //   不置位、不留痕、按钮保持可点 —— 1.x 的 `askyesno` 就是这个语义。
             if (cancel_confirm_ && !cancel_confirm_()) return;
-            request_cancel(QStringLiteral("已取消：用户点了「取消」"));
+            request_cancel(xrkit::shell::tr_zh("已取消：用户点了「取消」"));
         });
         row->addWidget(cancel_);
     }
@@ -148,7 +149,7 @@ bool TaskShell::run(const QString& title, const WorkerFn& worker) {
     cancel_requested_.store(false);
     cancel_reason_.clear();
     if (cancel_ != nullptr) {
-        cancel_->setText(QStringLiteral("取消"));
+        cancel_->setText(xrkit::shell::tr_zh("取消"));
         cancel_->setEnabled(true);
     }
     bar_->setValue(0);
@@ -180,7 +181,7 @@ bool TaskShell::run(const QString& title, const WorkerFn& worker) {
                 this, [this, text] { apply_error(text); }, Qt::QueuedConnection);
         } catch (...) {
             QMetaObject::invokeMethod(
-                this, [this] { apply_error(QStringLiteral("未知错误")); }, Qt::QueuedConnection);
+                this, [this] { apply_error(xrkit::shell::tr_zh("未知错误")); }, Qt::QueuedConnection);
         }
         QMetaObject::invokeMethod(this, [this] { apply_finish(QString()); }, Qt::QueuedConnection);
                 // ★ 2026-10-22（用户口径）：worker 的**完成事件**（只发通知）。
@@ -234,11 +235,11 @@ void TaskShell::request_cancel(const QString& reason) {
     if (!running_) return;
     cancel_requested_.store(true);
     const int n = ++cancel_requests_;
-    cancel_reason_ = reason.isEmpty() ? QStringLiteral("已取消：用户请求停止") : reason;
+    cancel_reason_ = reason.isEmpty() ? xrkit::shell::tr_zh("已取消：用户请求停止") : reason;
     if (cancel_ != nullptr) {
         // 按钮收起来（已请求 ⇒ 再点没有意义），并把**正在取消**这件事摆在界面上。
         cancel_->setEnabled(false);
-        cancel_->setText(QStringLiteral("正在取消…"));
+        cancel_->setText(xrkit::shell::tr_zh("正在取消…"));
     }
     // 理由**立刻**可见（不等 worker 回来）：状态栏就是用户看的那个地方。
     status_text_ = cancel_reason_;
@@ -292,7 +293,7 @@ void TaskShell::apply_finish(QString final_status) {
     running_ = false;
     if (cancel_ != nullptr) {
         cancel_->setEnabled(false);
-        cancel_->setText(QStringLiteral("取消"));   // 文案复位（下一轮 run 还会再置一次）
+        cancel_->setText(xrkit::shell::tr_zh("取消"));   // 文案复位（下一轮 run 还会再置一次）
     }
     // 13.4：没给最终文案、无错误、且状态栏还是 run() 那句 ⇒ **恢复前置状态**
     QString next = final_status;
@@ -300,18 +301,18 @@ void TaskShell::apply_finish(QString final_status) {
         next = prev_status_;
     }
     if (next.isEmpty() && error_text_.isEmpty()) next = idle_status_;  // 13.5 兜底
-    if (!error_text_.isEmpty()) next = QStringLiteral("失败：") + error_text_;
+    if (!error_text_.isEmpty()) next = xrkit::shell::tr_zh("失败：") + error_text_;
     // ★ 2026-10-06（用户红线：取消要**理由可见**）：取消理由**优先收尾** ——
     //   否则会被 worker 的最后一句（"完成"/idle 兜底）盖掉，用户就看不到"为什么停了"。
     //   若同时还有错误，两个都报（不许把错误吞掉）。
     if (cancel_requested_.load() && !cancel_reason_.isEmpty()) {
         next = cancel_reason_;
         if (!error_text_.isEmpty()) {
-            next += QStringLiteral("（另有错误：") + error_text_ + QStringLiteral("）");
+            next += xrkit::shell::tr_zh("（另有错误：") + error_text_ + QStringLiteral("）");
         }
     }
     // 13.5：兜底**必须**非空（空串会让状态栏变成空白）
-    if (next.isEmpty()) next = idle_status_.isEmpty() ? QStringLiteral("就绪") : idle_status_;
+    if (next.isEmpty()) next = idle_status_.isEmpty() ? xrkit::shell::tr_zh("就绪") : idle_status_;
     status_text_ = next;
     status_->setText(next);
     const bool on_main = on_main_thread();

@@ -154,12 +154,12 @@ struct ScanItem {
 
 bool run_scan(const QString& plugins_dir, QString* json_line, QString* error) {
     if (!qEnvironmentVariableIsEmpty("XRKIT_PLUGIN_MANAGER_NO_SCAN")) {
-        *error = QStringLiteral("静态扫描被 XRKIT_PLUGIN_MANAGER_NO_SCAN 禁用（判据夹具）");
+        *error = xrkit::shell::tr_zh("静态扫描被 XRKIT_PLUGIN_MANAGER_NO_SCAN 禁用（判据夹具）");
         return false;
     }
     const QString cli = find_cli();
     if (cli.isEmpty()) {
-        *error = QStringLiteral("找不到 xrkit_cli.exe（无法静态扫描；可设 XRKIT_CLI）");
+        *error = xrkit::shell::tr_zh("找不到 xrkit_cli.exe（无法静态扫描；可设 XRKIT_CLI）");
         return false;
     }
     QProcess proc;
@@ -168,7 +168,7 @@ bool run_scan(const QString& plugins_dir, QString* json_line, QString* error) {
     proc.setProcessChannelMode(QProcess::MergedChannels);
     proc.start();
     if (!proc.waitForFinished(120000)) {
-        *error = QStringLiteral("xrkit_cli --py-plugins-scan 超时/起不来：%1").arg(proc.errorString());
+        *error = xrkit::shell::tr_zh("xrkit_cli --py-plugins-scan 超时/起不来：%1").arg(proc.errorString());
         return false;
     }
     const QString out = QString::fromUtf8(proc.readAll());
@@ -179,7 +179,7 @@ bool run_scan(const QString& plugins_dir, QString* json_line, QString* error) {
             return true;
         }
     }
-    *error = QStringLiteral("扫描没有返回 PYPLUGINSCAN-JSON（rc=%1）").arg(proc.exitCode());
+    *error = xrkit::shell::tr_zh("扫描没有返回 PYPLUGINSCAN-JSON（rc=%1）").arg(proc.exitCode());
     return false;
 }
 
@@ -189,7 +189,7 @@ QVector<ScanItem> parse_items(const QString& json, const QVector<xrkit::plugin::
     QJsonParseError parse_error{};
     const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isArray()) {
-        *error = QStringLiteral("扫描 JSON 解析失败：%1").arg(parse_error.errorString());
+        *error = xrkit::shell::tr_zh("扫描 JSON 解析失败：%1").arg(parse_error.errorString());
         return out;
     }
     for (const QJsonValue& value : doc.array()) {
@@ -233,7 +233,7 @@ void write_list(const QString& plugins_dir,
 
 QString status_of(const ScanItem& item, const QVector<ScanItem>& all,
                   const QVector<xrkit::plugin::DisabledPluginEntry>& disabled) {
-    if (file_disabled(disabled, item.file)) return QStringLiteral("已禁用");
+    if (file_disabled(disabled, item.file)) return xrkit::shell::tr_zh("已禁用");
     QStringList missing;
     for (auto it = item.depends.begin(); it != item.depends.end(); ++it) {
         bool found = false;
@@ -244,8 +244,8 @@ QString status_of(const ScanItem& item, const QVector<ScanItem>& all,
         }
         if (!found) missing << QStringLiteral("%1(%2)").arg(it.key(), it.value());
     }
-    if (!missing.isEmpty()) return QStringLiteral("缺前置：") + missing.join(QStringLiteral(", "));
-    return QStringLiteral("已启用");
+    if (!missing.isEmpty()) return xrkit::shell::tr_zh("缺前置：") + missing.join(QStringLiteral(", "));
+    return xrkit::shell::tr_zh("已启用");
 }
 
 // ★ 2026-11-10（P0-1）：扫描不可用（CLI 缺失 / CPython 起不来 / 解析失败）时的**退化清单**：
@@ -259,7 +259,7 @@ QVector<ScanItem> fallback_items(const QString& plugins_dir) {
         item.id = QString();           // 无法静态解析 ⇒ id 未知（详情里显式说明）
         item.name = name;
         item.version = QStringLiteral("-");
-        item.note = QStringLiteral("静态扫描不可用：仅按文件名列出（仍可禁用/启用）");
+        item.note = xrkit::shell::tr_zh("静态扫描不可用：仅按文件名列出（仍可禁用/启用）");
         out.push_back(item);
     }
     for (const QString& name : dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
@@ -272,7 +272,7 @@ QVector<ScanItem> fallback_items(const QString& plugins_dir) {
         item.id = QString();
         item.name = name;
         item.version = QStringLiteral("-");
-        item.note = QStringLiteral("静态扫描不可用：仅按目录名列出（仍可禁用/启用）");
+        item.note = xrkit::shell::tr_zh("静态扫描不可用：仅按目录名列出（仍可禁用/启用）");
         out.push_back(item);
     }
     return out;
@@ -300,26 +300,26 @@ class ManagerWindow : public QWidget {
 public:
     ManagerWindow(QString plugins_dir, QString reason)
         : plugins_dir_(std::move(plugins_dir)) {
-        setWindowTitle(QStringLiteral("插件管理器"));
+        setWindowTitle(xrkit::shell::tr_zh("插件管理器"));
         auto* layout = new QVBoxLayout(this);
 
         banner_ = new QLabel(this);
         banner_->setWordWrap(true);
         base_banner_ = reason.isEmpty()
                            ? QStringLiteral("插件目录：%1").arg(QDir::toNativeSeparators(plugins_dir_))
-                           : QStringLiteral("%1\n插件目录：%2")
+                           : xrkit::shell::tr_zh("%1\n插件目录：%2")
                                  .arg(reason, QDir::toNativeSeparators(plugins_dir_));
         banner_->setText(base_banner_);
         layout->addWidget(banner_);
 
         auto* buttons = new QHBoxLayout;
-        auto* refresh_btn = new QPushButton(QStringLiteral("刷新"), this);
-        auto* enable_btn = new QPushButton(QStringLiteral("启用"), this);
-        auto* disable_btn = new QPushButton(QStringLiteral("禁用"), this);
-        auto* open_dir_btn = new QPushButton(QStringLiteral("打开插件目录"), this);
-        auto* check_update_btn = new QPushButton(QStringLiteral("检查插件更新"), this);
-        auto* install_update_btn = new QPushButton(QStringLiteral("安装所选更新"), this);
-        auto* close_btn = new QPushButton(QStringLiteral("关闭"), this);
+        auto* refresh_btn = new QPushButton(xrkit::shell::tr_zh("刷新"), this);
+        auto* enable_btn = new QPushButton(xrkit::shell::tr_zh("启用"), this);
+        auto* disable_btn = new QPushButton(xrkit::shell::tr_zh("禁用"), this);
+        auto* open_dir_btn = new QPushButton(xrkit::shell::tr_zh("打开插件目录"), this);
+        auto* check_update_btn = new QPushButton(xrkit::shell::tr_zh("检查插件更新"), this);
+        auto* install_update_btn = new QPushButton(xrkit::shell::tr_zh("安装所选更新"), this);
+        auto* close_btn = new QPushButton(xrkit::shell::tr_zh("关闭"), this);
         buttons->addWidget(refresh_btn);
         buttons->addWidget(enable_btn);
         buttons->addWidget(disable_btn);
@@ -332,9 +332,9 @@ public:
 
         table_ = new QTableWidget(this);
         table_->setColumnCount(5);
-        table_->setHorizontalHeaderLabels({QStringLiteral("文件"), QStringLiteral("id"),
-                                           QStringLiteral("名称"), QStringLiteral("版本"),
-                                           QStringLiteral("状态")});
+        table_->setHorizontalHeaderLabels({xrkit::shell::tr_zh("文件"), QStringLiteral("id"),
+                                           xrkit::shell::tr_zh("名称"), xrkit::shell::tr_zh("版本"),
+                                           xrkit::shell::tr_zh("状态")});
         table_->horizontalHeader()->setStretchLastSection(true);
         table_->setSelectionBehavior(QAbstractItemView::SelectRows);
         table_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -354,8 +354,8 @@ public:
         });
         connect(check_update_btn, &QPushButton::clicked, this, [this] {
             if (!xrkit::core::network_enabled()) {
-                QMessageBox::warning(this, QStringLiteral("检查插件更新"),
-                                     QStringLiteral("联网功能已关闭。\n请在主程序「工具 → 联网功能」中开启。"));
+                QMessageBox::warning(this, xrkit::shell::tr_zh("检查插件更新"),
+                                     xrkit::shell::tr_zh("联网功能已关闭。\n请在主程序「工具 → 联网功能」中开启。"));
                 return;
             }
             const xrkit::core::HttpResult result = xrkit::core::http_get(
@@ -363,8 +363,8 @@ public:
                 "STALKER-Localization-Toolkit-2.x-Network-Plugin/main/plugins.json",
                 20, 1u << 20);
             if (!result.ok) {
-                QMessageBox::warning(this, QStringLiteral("检查插件更新"),
-                                     QStringLiteral("下载 plugins.json 失败：%1")
+                QMessageBox::warning(this, xrkit::shell::tr_zh("检查插件更新"),
+                                     xrkit::shell::tr_zh("下载 plugins.json 失败：%1")
                                          .arg(QString::fromStdString(result.error)));
                 return;
             }
@@ -372,8 +372,8 @@ public:
             const QJsonDocument doc =
                 QJsonDocument::fromJson(QByteArray::fromStdString(result.body), &parse_error);
             if (doc.isNull() || !doc.isObject()) {
-                QMessageBox::warning(this, QStringLiteral("检查插件更新"),
-                                     QStringLiteral("plugins.json 不是 JSON。"));
+                QMessageBox::warning(this, xrkit::shell::tr_zh("检查插件更新"),
+                                     xrkit::shell::tr_zh("plugins.json 不是 JSON。"));
                 return;
             }
             QStringList lines;
@@ -385,26 +385,26 @@ public:
                                   item.value(QStringLiteral("version")).toString(),
                                   item.value(QStringLiteral("package")).toString());
             }
-            QMessageBox::information(this, QStringLiteral("检查插件更新"),
-                                     lines.isEmpty() ? QStringLiteral("没有插件条目")
+            QMessageBox::information(this, xrkit::shell::tr_zh("检查插件更新"),
+                                     lines.isEmpty() ? xrkit::shell::tr_zh("没有插件条目")
                                                      : lines.join(QLatin1Char('\n')));
         });
         connect(install_update_btn, &QPushButton::clicked, this, [this] {
             const int row = table_->currentRow();
             if (row < 0) {
-                QMessageBox::information(this, QStringLiteral("安装所选更新"),
-                                         QStringLiteral("先在列表里选中一个插件。"));
+                QMessageBox::information(this, xrkit::shell::tr_zh("安装所选更新"),
+                                         xrkit::shell::tr_zh("先在列表里选中一个插件。"));
                 return;
             }
             if (!xrkit::core::network_enabled()) {
-                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
-                                     QStringLiteral("联网功能已关闭。"));
+                QMessageBox::warning(this, xrkit::shell::tr_zh("安装所选更新"),
+                                     xrkit::shell::tr_zh("联网功能已关闭。"));
                 return;
             }
             const QString cli = find_cli();
             if (cli.isEmpty()) {
-                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
-                                     QStringLiteral("找不到 xrkit_cli.exe。"));
+                QMessageBox::warning(this, xrkit::shell::tr_zh("安装所选更新"),
+                                     xrkit::shell::tr_zh("找不到 xrkit_cli.exe。"));
                 return;
             }
             const QString selected_id = table_->item(row, 1) != nullptr
@@ -415,8 +415,8 @@ public:
                 "STALKER-Localization-Toolkit-2.x-Network-Plugin/main/plugins.json",
                 20, 1u << 20);
             if (!manifest.ok) {
-                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
-                                     QStringLiteral("下载 plugins.json 失败：%1")
+                QMessageBox::warning(this, xrkit::shell::tr_zh("安装所选更新"),
+                                     xrkit::shell::tr_zh("下载 plugins.json 失败：%1")
                                          .arg(QString::fromStdString(manifest.error)));
                 return;
             }
@@ -432,8 +432,8 @@ public:
                 }
             }
             if (chosen.isEmpty()) {
-                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
-                                     QStringLiteral("plugins.json 里没有所选 id：%1")
+                QMessageBox::warning(this, xrkit::shell::tr_zh("安装所选更新"),
+                                     xrkit::shell::tr_zh("plugins.json 里没有所选 id：%1")
                                          .arg(selected_id));
                 return;
             }
@@ -454,8 +454,8 @@ public:
                 xrkit::core::http_download(package.toStdString(), zip.toStdString(), 300,
                                            64u << 20);
             if (!downloaded.ok) {
-                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
-                                     QStringLiteral("下载失败：%1")
+                QMessageBox::warning(this, xrkit::shell::tr_zh("安装所选更新"),
+                                     xrkit::shell::tr_zh("下载失败：%1")
                                          .arg(QString::fromStdString(downloaded.error)));
                 return;
             }
@@ -465,21 +465,21 @@ public:
                 const std::string actual =
                     xrkit::core::sha256_file(zip.toStdString(), sha_error);
                 if (actual != expect.toStdString()) {
-                    QMessageBox::warning(this, QStringLiteral("安装所选更新"),
-                                         QStringLiteral("sha256 不匹配"));
+                    QMessageBox::warning(this, xrkit::shell::tr_zh("安装所选更新"),
+                                         xrkit::shell::tr_zh("sha256 不匹配"));
                     return;
                 }
             }
             const QString stage = QDir(work).filePath(QStringLiteral("stage"));
             if (!extract_zip(zip, stage)) {
-                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
-                                     QStringLiteral("解压失败"));
+                QMessageBox::warning(this, xrkit::shell::tr_zh("安装所选更新"),
+                                     xrkit::shell::tr_zh("解压失败"));
                 return;
             }
             const QString entry_file = find_named_file(stage, entry);
             if (entry_file.isEmpty()) {
-                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
-                                     QStringLiteral("压缩包内找不到入口 %1").arg(entry));
+                QMessageBox::warning(this, xrkit::shell::tr_zh("安装所选更新"),
+                                     xrkit::shell::tr_zh("压缩包内找不到入口 %1").arg(entry));
                 return;
             }
             const QString staged_dir = QFileInfo(entry_file).absolutePath();
@@ -489,8 +489,8 @@ public:
             apply.start(cli, {QStringLiteral("--plugin-update"), plugins_dir_, target_dir,
                               staged_dir, entry, txn, QStringLiteral("apply")});
             if (!apply.waitForFinished(120000) || apply.exitCode() != 0) {
-                QMessageBox::warning(this, QStringLiteral("安装所选更新"),
-                                     QStringLiteral("apply 失败：") +
+                QMessageBox::warning(this, xrkit::shell::tr_zh("安装所选更新"),
+                                     xrkit::shell::tr_zh("apply 失败：") +
                                          QString::fromUtf8(apply.readAllStandardOutput()));
                 return;
             }
@@ -500,9 +500,9 @@ public:
             const bool activated =
                 activate.waitForFinished(60000) && activate.exitCode() == 0;
             QMessageBox::information(
-                this, QStringLiteral("安装所选更新"),
-                activated ? QStringLiteral("插件已替换，请重启本体生效。")
-                          : QStringLiteral("已替换但 activate 失败，请查看日志后手动重启。"));
+                this, xrkit::shell::tr_zh("安装所选更新"),
+                activated ? xrkit::shell::tr_zh("插件已替换，请重启本体生效。")
+                          : xrkit::shell::tr_zh("已替换但 activate 失败，请查看日志后手动重启。"));
         });
         connect(close_btn, &QPushButton::clicked, this, &QWidget::close);
         connect(table_, &QTableWidget::itemSelectionChanged, this, [this] { show_detail(); });
@@ -596,7 +596,7 @@ private:
         QString error;
         write_list(plugins_dir_, entries, &error);
         if (!error.isEmpty()) {
-            QMessageBox::warning(this, QStringLiteral("插件管理器"), error);
+            QMessageBox::warning(this, xrkit::shell::tr_zh("插件管理器"), error);
             return;
         }
         refresh();
@@ -724,8 +724,6 @@ int main(int argc, char** argv) {
     if (plugins_dir.isEmpty()) plugins_dir = default_plugins_dir();
     xrkit::shell::initialize_ui_language(args);
     ManagerWindow window(plugins_dir, reason);
-    xrkit::shell::apply_ui_language(&window);
-    xrkit::shell::install_ui_language_watcher();
     if (args.contains(QStringLiteral("--i18n-report"))) {
         QTextStream report(stdout);
         report << "I18N manager title=" << window.windowTitle() << "\n";

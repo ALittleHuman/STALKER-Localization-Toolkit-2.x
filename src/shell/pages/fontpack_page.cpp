@@ -1,4 +1,5 @@
 #include "fontpack_page.h"
+#include "../i18n.h"
 
 #include "../font_picker.h"
 
@@ -80,18 +81,18 @@ bool font_ext_ok(const QString& name) {
 }  // namespace
 
 FontPackPage::FontPackPage(QWidget* parent)
-    : PageBase(QStringLiteral("fontpack"), QStringLiteral("汉化包生成"), parent) {
+    : PageBase(QStringLiteral("fontpack"), xrkit::shell::tr_zh("汉化包生成"), parent) {
     // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内说明整段删（六页统一）
     xml_edit_ = new QLineEdit;
     xml_edit_->setObjectName(QStringLiteral("font_xml_dir"));
     xml_edit_->setPlaceholderText(
-        QStringLiteral("译文 XML 目录（只扫顶层）—— 生成看译文：字符集与文本都取这里"));
+        xrkit::shell::tr_zh("译文 XML 目录（只扫顶层）—— 生成看译文：字符集与文本都取这里"));
     font_edit_ = new QLineEdit;
     font_edit_->setObjectName(QStringLiteral("font_path"));
-    font_edit_->setPlaceholderText(QStringLiteral("字体文件（.ttf/.ttc/.otf）"));
+    font_edit_->setPlaceholderText(xrkit::shell::tr_zh("字体文件（.ttf/.ttc/.otf）"));
     out_edit_ = new QLineEdit;
     out_edit_->setObjectName(QStringLiteral("font_out_dir"));
-    out_edit_->setPlaceholderText(QStringLiteral("输出目录（产物是 <输出>/gamedata）"));
+    out_edit_->setPlaceholderText(xrkit::shell::tr_zh("输出目录（产物是 <输出>/gamedata）"));
 
     // 11.8：状态标记与预览标题共用同一判据（引擎）
     state_label_ = new QLabel;
@@ -112,7 +113,7 @@ FontPackPage::FontPackPage(QWidget* parent)
         layout->setContentsMargins(0, 0, 0, 0);
         layout->addWidget(new QLabel(label), 0);
         layout->addWidget(edit, 1);
-        auto* browse = new QPushButton(QStringLiteral("选择…"));
+        auto* browse = new QPushButton(xrkit::shell::tr_zh("选择…"));
         // ★ P8a：给按钮一个名字 —— 自检要**点真按钮**打开选择器（不是去调 private 方法）
         browse->setObjectName(directory ? QStringLiteral("pick_dir_button")
                                         : QStringLiteral("pick_font_button"));
@@ -135,17 +136,17 @@ FontPackPage::FontPackPage(QWidget* parent)
         drop_zones_.attach_row(container, this);
         return container;
     };
-    body_layout()->addWidget(path_row(QStringLiteral("文本 XML："), xml_edit_, true,
-                                      QStringLiteral("选择 XML 目录"), xml_judge));
-    body_layout()->addWidget(path_row(QStringLiteral("字体："), font_edit_, false,
-                                      QStringLiteral("选择字体文件"), font_judge));
+    body_layout()->addWidget(path_row(xrkit::shell::tr_zh("文本 XML："), xml_edit_, true,
+                                      xrkit::shell::tr_zh("选择 XML 目录"), xml_judge));
+    body_layout()->addWidget(path_row(xrkit::shell::tr_zh("字体："), font_edit_, false,
+                                      xrkit::shell::tr_zh("选择字体文件"), font_judge));
 
     // 可变字体字重：只在字体有 wght 轴时启用；旁边是独立预览（不阻塞生成）。
     {
         auto* container = ui::make_transparent_row();
         auto* layout = new QHBoxLayout(container);
         layout->setContentsMargins(0, 0, 0, 0);
-        layout->addWidget(new QLabel(QStringLiteral("字重：")), 0);
+        layout->addWidget(new QLabel(xrkit::shell::tr_zh("字重：")), 0);
         weight_combo_ = new QComboBox;
         weight_combo_->setObjectName(QStringLiteral("font_weight"));
         // 这一行是后加的，直接套主题令牌；否则 QComboBox 默认底色在离屏渲染里是黑。
@@ -163,10 +164,10 @@ FontPackPage::FontPackPage(QWidget* parent)
         weight_combo_->setEnabled(false);
         weight_combo_->setVisible(false);
         layout->addWidget(weight_combo_, 0);
-        weight_hint_ = new QLabel(QStringLiteral("先选择字体"));
+        weight_hint_ = new QLabel(xrkit::shell::tr_zh("先选择字体"));
         weight_hint_->setObjectName(QStringLiteral("font_weight_hint"));
         layout->addWidget(weight_hint_, 1);
-        weight_preview_ = new QPushButton(QStringLiteral("字重预览…"));
+        weight_preview_ = new QPushButton(xrkit::shell::tr_zh("字重预览…"));
         weight_preview_->setObjectName(QStringLiteral("font_weight_preview_button"));
         layout->addWidget(weight_preview_, 0);
         QObject::connect(weight_preview_, &QPushButton::clicked, this,
@@ -183,8 +184,8 @@ FontPackPage::FontPackPage(QWidget* parent)
         body_layout()->addWidget(container);
     }
 
-    body_layout()->addWidget(path_row(QStringLiteral("输出目录："), out_edit_, true,
-                                      QStringLiteral("选择输出目录"), out_judge));
+    body_layout()->addWidget(path_row(xrkit::shell::tr_zh("输出目录："), out_edit_, true,
+                                      xrkit::shell::tr_zh("选择输出目录"), out_judge));
 
     // ★★★ 2026-10-27（用户）：参照包这一行**必须走同一个 `path_row`** ——
     //   我第一版手搓了一行，结果两个毛病：
@@ -194,13 +195,13 @@ FontPackPage::FontPackPage(QWidget* parent)
     pack_edit_ = new QLineEdit;
     pack_edit_->setObjectName(QStringLiteral("font_ixr_pack"));
     pack_edit_->setPlaceholderText(
-        QStringLiteral("参照包（原文结构：fonts.ltx / textures / addons 照抄，只换字体与文本）"));
+        xrkit::shell::tr_zh("参照包（原文结构：fonts.ltx / textures / addons 照抄，只换字体与文本）"));
     const auto pack_judge = [this]() {
         return dialog_start_for(pack_edit_->text().trimmed(), QStringList{}, false);
     };
     {
-        QWidget* pack_row = path_row(QStringLiteral("参照包："), pack_edit_, true,
-                                     QStringLiteral("选择参照整包目录"), pack_judge);
+        QWidget* pack_row = path_row(xrkit::shell::tr_zh("参照包："), pack_edit_, true,
+                                     xrkit::shell::tr_zh("选择参照整包目录"), pack_judge);
         // 按钮改回它自己的名字（`pick_dir_button` 已被上面三行占用；
         // 同名会让"按名字点按钮"的自检点到别人身上）
         for (QPushButton* button : pack_row->findChildren<QPushButton*>()) {
@@ -223,12 +224,12 @@ FontPackPage::FontPackPage(QWidget* parent)
         scan_row->setObjectName(QStringLiteral("font_ixr_scan_row"));
         auto* scan_layout = new QHBoxLayout(scan_row);
         scan_layout->setContentsMargins(0, 0, 0, 0);
-        auto* scan_button = new QPushButton(QStringLiteral("扫描参照包"));
+        auto* scan_button = new QPushButton(xrkit::shell::tr_zh("扫描参照包"));
         scan_button->setObjectName(QStringLiteral("font_ixr_scan"));
         QObject::connect(scan_button, &QPushButton::clicked, this, [this] {
             const QString pack = pack_edit_ != nullptr ? pack_edit_->text().trimmed() : QString();
             if (pack.isEmpty()) {
-                if (result_label_ != nullptr) result_label_->setText(QStringLiteral("先选「参照包」目录"));
+                if (result_label_ != nullptr) result_label_->setText(xrkit::shell::tr_zh("先选「参照包」目录"));
                 return;
             }
             const engine::font::LangPackModel model =
@@ -251,7 +252,7 @@ FontPackPage::FontPackPage(QWidget* parent)
                 !model.text_dir.empty()) {
                 xml_edit_->setText(QDir::toNativeSeparators(QString::fromStdString(model.text_dir)));
             }
-            QString text = QStringLiteral("扫描：profile=%1（已自动切档位）lang=%2 段=%3 ttf=%4")
+            QString text = xrkit::shell::tr_zh("扫描：profile=%1（已自动切档位）lang=%2 段=%3 ttf=%4")
                                .arg(QString::fromStdString(detected))
                                .arg(QString::fromStdString(model.lang))
                                .arg(model.font_slots.size())
@@ -307,7 +308,7 @@ FontPackPage::FontPackPage(QWidget* parent)
                              size_combo_->setToolTip(
                                  ixr ? QStringLiteral("IX-Ray 字号补丁只改 configs/fonts.ltx 的 size"
                                                       "（TTF 是矢量，不重烘；文本不动）")
-                                     : QStringLiteral("标准始终生成；勾选额外档位会生成只含字体纹理的补丁"));
+                                     : xrkit::shell::tr_zh("标准始终生成；勾选额外档位会生成只含字体纹理的补丁"));
                          }
                          refresh_weight_controls();
                          if (cyrillic_box_ != nullptr) cyrillic_box_->setEnabled(!ixr);
@@ -316,22 +317,22 @@ FontPackPage::FontPackPage(QWidget* parent)
     lang_combo_ = new QComboBox;
     lang_combo_->setObjectName(QStringLiteral("font_lang"));
     for (const char* lang : {"eng", "rus", "chs"}) lang_combo_->addItem(utf8(lang), utf8(lang));
-    lang_combo_->addItem(QStringLiteral("自定义"), QStringLiteral("自定义"));
+    lang_combo_->addItem(xrkit::shell::tr_zh("自定义"), QStringLiteral("__custom__"));
     lang_combo_->setCurrentText(QStringLiteral("chs"));
     lang_edit_ = new QLineEdit;
     lang_edit_->setObjectName(QStringLiteral("font_lang_custom"));
-    lang_edit_->setPlaceholderText(QStringLiteral("自定义"));
+    lang_edit_->setPlaceholderText(xrkit::shell::tr_zh("自定义"));
     lang_edit_->setMaximumWidth(xrkit::core::px(120));
     lang_edit_->setVisible(false);
     // 1.x `:91-102`：字体后缀 = 无/_chs/**自定义**
     suffix_combo_ = new QComboBox;
     suffix_combo_->setObjectName(QStringLiteral("font_suffix"));
-    suffix_combo_->addItem(QStringLiteral("无"), QString());
+    suffix_combo_->addItem(xrkit::shell::tr_zh("无"), QString());
     suffix_combo_->addItem(QStringLiteral("_chs"), QStringLiteral("_chs"));
-    suffix_combo_->addItem(QStringLiteral("自定义"), QStringLiteral("自定义"));
+    suffix_combo_->addItem(xrkit::shell::tr_zh("自定义"), QStringLiteral("__custom__"));
     suffix_edit_ = new QLineEdit;
     suffix_edit_->setObjectName(QStringLiteral("font_suffix_custom"));
-    suffix_edit_->setPlaceholderText(QStringLiteral("自定义"));
+    suffix_edit_->setPlaceholderText(xrkit::shell::tr_zh("自定义"));
     suffix_edit_->setMaximumWidth(xrkit::core::px(120));
     suffix_edit_->setVisible(false);
     // ★ 2026-11-10：字号改多选；与其它下拉**同一个 QComboBox 实现**，只是 mode=Multi。
@@ -340,28 +341,28 @@ FontPackPage::FontPackPage(QWidget* parent)
     size_combo_->setObjectName(QStringLiteral("font_size_multi"));
     size_combo_->setMode(MultiSelectComboBox::Mode::Multi);
     size_combo_->setMinimumWidth(xrkit::core::px(170));
-    size_combo_->setToolTip(QStringLiteral("标准始终生成；勾选额外档位会生成只含字体纹理的补丁"));
-    size_combo_->addChoice(QStringLiteral("标准（始终生成）"), 0, true, false);
+    size_combo_->setToolTip(xrkit::shell::tr_zh("标准始终生成；勾选额外档位会生成只含字体纹理的补丁"));
+    size_combo_->addChoice(xrkit::shell::tr_zh("标准（始终生成）"), 0, true, false);
     for (int offset : {-5, -3, 3, 5, 7, 9}) {
-        size_combo_->addChoice(offset > 0 ? QStringLiteral("大 +%1").arg(offset)
-                                         : QStringLiteral("小 %1").arg(offset),
+        size_combo_->addChoice(offset > 0 ? xrkit::shell::tr_zh("大 +%1").arg(offset)
+                                         : xrkit::shell::tr_zh("小 %1").arg(offset),
                                offset);
     }
     QObject::connect(size_combo_, &MultiSelectComboBox::checkedChanged, this,
                      [this] { update_size_button_text(); });
     update_size_button_text();
-    cyrillic_box_ = new QCheckBox(QStringLiteral("包含完整西里尔"));
+    cyrillic_box_ = new QCheckBox(xrkit::shell::tr_zh("包含完整西里尔"));
     cyrillic_box_->setObjectName(QStringLiteral("font_full_cyrillic"));
     cyrillic_box_->setChecked(true);
     auto* opt_row = new QHBoxLayout;
-    opt_row->addWidget(new QLabel(QStringLiteral("游戏：")), 0);
+    opt_row->addWidget(new QLabel(xrkit::shell::tr_zh("游戏：")), 0);
     opt_row->addWidget(game_combo_, 0);
-    opt_row->addWidget(new QLabel(QStringLiteral("语言：")), 0);
+    opt_row->addWidget(new QLabel(xrkit::shell::tr_zh("语言：")), 0);
     opt_row->addWidget(lang_combo_, 0);
     opt_row->addWidget(lang_edit_, 0);
-    opt_row->addWidget(new QLabel(QStringLiteral("字号：")), 0);
+    opt_row->addWidget(new QLabel(xrkit::shell::tr_zh("字号：")), 0);
     opt_row->addWidget(size_combo_, 0);
-    opt_row->addWidget(new QLabel(QStringLiteral("后缀：")), 0);
+    opt_row->addWidget(new QLabel(xrkit::shell::tr_zh("后缀：")), 0);
     opt_row->addWidget(suffix_combo_, 0);
     opt_row->addWidget(suffix_edit_, 0);
     opt_row->addWidget(cyrillic_box_, 0);
@@ -386,7 +387,7 @@ FontPackPage::FontPackPage(QWidget* parent)
     //   事实依据：字库打包 + 原子写盘不可中途停止（修前那段"已取消（请求已记录）：…不可中途
     //   停止"就是在如实说明这件事）⇒ 这颗按钮在本页"本质是完全没有的"。
     task_ = new TaskShell(this, TaskShell::CancelButton::No);
-    task_->set_idle_status(QStringLiteral("就绪"));
+    task_->set_idle_status(xrkit::shell::tr_zh("就绪"));
     // ★★ P17-1（03 F-01）：worker 算完的结果由**主线程收尾回调**画到控件上。
     //   这条回调在 `TaskShell::apply_finish` 的最后、于主线程执行 ⇒ 可以碰控件。
     task_->set_finish_handler([this] {
@@ -397,24 +398,24 @@ FontPackPage::FontPackPage(QWidget* parent)
     footer_layout()->addWidget(task_->panel(), 0);
     add_action_status(task_->status_label());
 
-    auto* detect = add_action(QStringLiteral("检测字体"));
+    auto* detect = add_action(xrkit::shell::tr_zh("检测字体"));
     detect->setObjectName(QStringLiteral("font_detect"));
     QObject::connect(detect, &QPushButton::clicked, this, [this] { refresh_state(); });
     // 1.x `:155`：`打开输出目录`（原来 2.x 没有这颗 —— 用户没入口去看产物）
-    open_out_button_ = add_action(QStringLiteral("打开输出目录"));
+    open_out_button_ = add_action(xrkit::shell::tr_zh("打开输出目录"));
     open_out_button_->setObjectName(QStringLiteral("font_open_out"));
     QObject::connect(open_out_button_, &QPushButton::clicked, this, [this] {
         QString problem;
         if (!open_output(&problem)) result_label_->setText(problem);
     });
-    auto* build_button = add_action(QStringLiteral("生成汉化包"));
+    auto* build_button = add_action(xrkit::shell::tr_zh("生成汉化包"));
     build_button->setObjectName(QStringLiteral("font_build"));
     QObject::connect(build_button, &QPushButton::clicked, this, [this] {
         const QString xml_dir = xml_edit_->text().trimmed();
         const QString font = font_edit_->text().trimmed();
         const QString out = out_edit_->text().trimmed();
         if (xml_dir.isEmpty() || font.isEmpty() || out.isEmpty()) {
-            result_label_->setText(QStringLiteral("请把三个路径都填上"));
+            result_label_->setText(xrkit::shell::tr_zh("请把三个路径都填上"));
             return;
         }
         // ★★ 2026-10-10（P17-1，审计 03 F-01 Critical）：**主线程先把控件读成值**
@@ -432,8 +433,8 @@ FontPackPage::FontPackPage(QWidget* parent)
             //   线程契约判红（实测抓到 run_build 里读 lang_combo_->currentText）。
             ixr_lang_at_start_.clear();
             if (lang_combo_ != nullptr) {
-                const QString picked = lang_combo_->currentText().trimmed();
-                if (picked != QStringLiteral("自定义")) {
+                const QString picked = lang_combo_->currentData().toString();
+                if (picked != QStringLiteral("__custom__")) {
                     ixr_lang_at_start_ = picked;
                 } else if (lang_edit_ != nullptr) {
                     ixr_lang_at_start_ = lang_edit_->text().trimmed();
@@ -441,12 +442,12 @@ FontPackPage::FontPackPage(QWidget* parent)
             }
         if (game_combo_->currentData().toString() == QStringLiteral("IX-Ray") &&
             ixr_pack_at_start_.isEmpty()) {
-            result_label_->setText(QStringLiteral("IX-Ray 需要「参照包」（能当模组打的整包目录）"));
+            result_label_->setText(xrkit::shell::tr_zh("IX-Ray 需要「参照包」（能当模组打的整包目录）"));
             return;
         }
         const engine::font::PackageOptions options = prepare(xml_dir, font, out);
         auto outcome = std::make_shared<BuildOutcome>();
-        const bool started = task_->run(QStringLiteral("生成汉化包"),
+        const bool started = task_->run(xrkit::shell::tr_zh("生成汉化包"),
                                         [this, options, outcome, out](const ProgressSink& progress,
                                                                       const MessageSink& message) {
             progress(0);
@@ -465,13 +466,13 @@ FontPackPage::FontPackPage(QWidget* parent)
                 publish_outcome(outcome);
                 return;
             }
-            message(QStringLiteral("产物写到 %1/gamedata").arg(out).toUtf8().toStdString());
+            message(xrkit::shell::tr_zh("产物写到 %1/gamedata").arg(out).toUtf8().toStdString());
             progress(100);
             publish_outcome(outcome);
         });
         if (!started) {
             // 13.1 重入闸门拒绝（已有任务在跑）：什么都不许改（结果也还没算）
-            result_label_->setText(QStringLiteral("已有任务在跑，请等它结束"));
+            result_label_->setText(xrkit::shell::tr_zh("已有任务在跑，请等它结束"));
         }
     });
 
@@ -494,14 +495,14 @@ FontPackPage::~FontPackPage() {
 
 void FontPackPage::sync_lang_edit() {
     if (lang_edit_ == nullptr || lang_combo_ == nullptr) return;
-    const bool custom = lang_combo_->currentText() == QStringLiteral("自定义");
+    const bool custom = lang_combo_->currentData().toString() == QStringLiteral("__custom__");
     lang_edit_->setVisible(custom);
     if (!custom) lang_edit_->clear();
 }
 
 void FontPackPage::sync_suffix_edit() {
     if (suffix_edit_ == nullptr || suffix_combo_ == nullptr) return;
-    const bool custom = suffix_combo_->currentText() == QStringLiteral("自定义");
+    const bool custom = suffix_combo_->currentData().toString() == QStringLiteral("__custom__");
     suffix_edit_->setVisible(custom);
     if (!custom) suffix_edit_->clear();
 }
@@ -554,9 +555,9 @@ bool FontPackPage::remember_font(const QString& path, QString* problem) {
     };
     if (!xrkit::core::save_user_values(kFontSection, values)) {
         if (problem != nullptr) {
-            *problem = QStringLiteral("警告: 无法写入 user.ltx，下次启动需重新选择字体");
+            *problem = xrkit::shell::tr_zh("警告: 无法写入 user.ltx，下次启动需重新选择字体");
         }
-        log_to_host(QStringLiteral("警告: 无法写入 user.ltx，下次启动需重新选择字体"));
+        log_to_host(xrkit::shell::tr_zh("警告: 无法写入 user.ltx，下次启动需重新选择字体"));
         return false;
     }
     if (problem != nullptr) problem->clear();
@@ -575,13 +576,13 @@ bool FontPackPage::open_output(QString* problem) {
     const QString dir = out_edit_ != nullptr ? out_edit_->text().trimmed() : QString();
     if (dir.isEmpty() || !QFileInfo(dir).isDir()) {
         // 1.x `:649-654`：目录无效要明确说，不是点了没反应
-        if (problem != nullptr) *problem = QStringLiteral("输出目录无效：") + dir;
+        if (problem != nullptr) *problem = xrkit::shell::tr_zh("输出目录无效：") + dir;
         return false;
     }
     if (!QDesktopServices::openUrl(QUrl::fromLocalFile(dir))) {
         // 1.x `:656-659`：`open_in_explorer` 失败原先忽略返回值 ⇒ 点了没反馈
         if (problem != nullptr) {
-            *problem = QStringLiteral("打开失败：%1（可能缺少文件管理器关联或权限不足，请手动打开）")
+            *problem = xrkit::shell::tr_zh("打开失败：%1（可能缺少文件管理器关联或权限不足，请手动打开）")
                            .arg(QDir::toNativeSeparators(dir));
         }
         return false;
@@ -598,20 +599,20 @@ engine::font::CjkFontCheck FontPackPage::check_font(const QString& font_path) co
 
 QString FontPackPage::font_state_text(const QString& font_path) const {
     const engine::font::CjkFontCheck check = check_font(font_path);
-    QString text = utf8(engine::font::cjk_state_mark(check.state));
+    QString text = xrkit::shell::tr_zh(engine::font::cjk_state_mark(check.state));
     if (!check.missing.empty()) {
-        text += QStringLiteral("　缺 %1 个字").arg(check.missing.size());
+        text += xrkit::shell::tr_zh("　缺 %1 个字").arg(check.missing.size());
         if (!check.fallbacks.empty()) {
-            text += QStringLiteral("，其中 %1 个可用繁体顶").arg(check.fallbacks.size());
+            text += xrkit::shell::tr_zh("，其中 %1 个可用繁体顶").arg(check.fallbacks.size());
         }
     }
-    if (font_path.isEmpty()) text = QStringLiteral("未选择字体");
+    if (font_path.isEmpty()) text = xrkit::shell::tr_zh("未选择字体");
     return text;
 }
 
 void FontPackPage::refresh_state() {
     if (state_label_ == nullptr) return;
-    state_label_->setText(QStringLiteral("字体状态：") + font_state_text(font_edit_->text().trimmed()));
+    state_label_->setText(xrkit::shell::tr_zh("字体状态：") + font_state_text(font_edit_->text().trimmed()));
     refresh_weight_controls();
 }
 
@@ -624,14 +625,14 @@ void FontPackPage::refresh_weight_controls() {
         weight_combo_->setEnabled(false);
         weight_combo_->setVisible(false);
         weight_preview_->setEnabled(false);
-        weight_hint_->setText(QStringLiteral("IX-Ray 矢量路径不按 wght 重烘；位图包才生效"));
+        weight_hint_->setText(xrkit::shell::tr_zh("IX-Ray 矢量路径不按 wght 重烘；位图包才生效"));
         return;
     }
     if (font.isEmpty()) {
         weight_combo_->setEnabled(false);
         weight_combo_->setVisible(false);
         weight_preview_->setEnabled(false);
-        weight_hint_->setText(QStringLiteral("先选择字体"));
+        weight_hint_->setText(xrkit::shell::tr_zh("先选择字体"));
         return;
     }
     const engine::font::FontVariationInfo info =
@@ -640,20 +641,20 @@ void FontPackPage::refresh_weight_controls() {
     if (!info.ok) {
         weight_combo_->setEnabled(false);
         weight_combo_->setVisible(false);
-        weight_hint_->setText(QStringLiteral("字体轴读取失败"));
+        weight_hint_->setText(xrkit::shell::tr_zh("字体轴读取失败"));
         return;
     }
     if (!info.variable || !info.has_wght) {
         weight_combo_->setEnabled(false);
         weight_combo_->setVisible(false);
-        weight_hint_->setText(QStringLiteral("静态字体（无 wght 轴）"));
+        weight_hint_->setText(xrkit::shell::tr_zh("静态字体（无 wght 轴）"));
         return;
     }
     weight_combo_->setEnabled(true);
     weight_combo_->setVisible(true);
-    weight_hint_->setText(QStringLiteral("可变字体：wght %1–%2（默认 %3）")
+    weight_hint_->setText(xrkit::shell::tr_zh("可变字体：wght %1–%2（默认 %3）")
                               .arg(info.wght_min).arg(info.wght_max).arg(info.wght_default));
-    weight_hint_->setToolTip(QStringLiteral("生成时按所选 wght 轴实例化；静态字体忽略此选项"));
+    weight_hint_->setToolTip(xrkit::shell::tr_zh("生成时按所选 wght 轴实例化；静态字体忽略此选项"));
 }
 
 void FontPackPage::preview_weight() {
@@ -662,11 +663,11 @@ void FontPackPage::preview_weight() {
     const engine::font::FontVariationInfo info =
         engine::font::font_variation_info(font.toStdString());
     QDialog dialog(this);
-    dialog.setWindowTitle(QStringLiteral("字重预览"));
+    dialog.setWindowTitle(xrkit::shell::tr_zh("字重预览"));
     dialog.setObjectName(QStringLiteral("font_weight_preview_dialog"));
     dialog.resize(xrkit::core::px(860), xrkit::core::px(260));
     auto* layout = new QVBoxLayout(&dialog);
-    auto* title = new QLabel(QStringLiteral("汉化测试你好 Привет 123"), &dialog);
+    auto* title = new QLabel(xrkit::shell::tr_zh("汉化测试你好 Привет 123"), &dialog);
     title->setObjectName(QStringLiteral("font_weight_preview_title"));
     layout->addWidget(title);
     auto* slider = new QSlider(Qt::Horizontal, &dialog);
@@ -697,11 +698,11 @@ void FontPackPage::preview_weight() {
         slider->setPageStep(100);
         initial = std::max(info.wght_min, std::min(info.wght_max, initial));
         slider->setValue(initial);
-        status->setText(QStringLiteral("拖动滑块预览 wght（当前 %1）").arg(initial));
+        status->setText(xrkit::shell::tr_zh("拖动滑块预览 wght（当前 %1）").arg(initial));
     } else {
         slider->setEnabled(false);
-        status->setText(info.ok ? QStringLiteral("静态字体：没有 wght 轴，预览使用字体默认字重")
-                                : QStringLiteral("字体轴读取失败：%1").arg(utf8(info.error)));
+        status->setText(info.ok ? xrkit::shell::tr_zh("静态字体：没有 wght 轴，预览使用字体默认字重")
+                                : xrkit::shell::tr_zh("字体轴读取失败：%1").arg(utf8(info.error)));
     }
 
     const auto render = [font, image, status, title, preview_ok](int weight) {
@@ -712,8 +713,8 @@ void FontPackPage::preview_weight() {
         image->setPixmap(pixmap);
         image->adjustSize();
         status->setText(weight > 0
-                            ? QStringLiteral("wght=%1（预览与选择器同源）").arg(weight)
-                            : QStringLiteral("字体默认字重（预览与选择器同源）"));
+                            ? xrkit::shell::tr_zh("wght=%1（预览与选择器同源）").arg(weight)
+                            : xrkit::shell::tr_zh("字体默认字重（预览与选择器同源）"));
     };
     QObject::connect(slider, &QSlider::valueChanged, &dialog,
                      [render](int value) { render(value); });
@@ -729,7 +730,7 @@ engine::font::PackageOptions FontPackPage::options_for(const QString& xml_dir,
     engine::font::PackageOptions options;
     options.game = game_combo_->currentData().toString().toUtf8().toStdString();
     // 语言：选"自定义"时用输入框里的值（1.x `_generate` `:667-672` 的口径）
-    if (lang_combo_->currentText() == QStringLiteral("自定义")) {
+    if (lang_combo_->currentData().toString() == QStringLiteral("__custom__")) {
         options.lang = lang_edit_->text().trimmed().toUtf8().toStdString();
     } else {
         options.lang = lang_combo_->currentData().toString().toUtf8().toStdString();
@@ -738,7 +739,7 @@ engine::font::PackageOptions FontPackPage::options_for(const QString& xml_dir,
     options.font_path = font_path.toUtf8().toStdString();
     options.out_dir = out_dir.toUtf8().toStdString();
     // 后缀：无 ⇒ 空串；_chs ⇒ `_chs`；自定义 ⇒ 输入框（1.x `:674-679`）
-    if (suffix_combo_->currentText() == QStringLiteral("自定义")) {
+    if (suffix_combo_->currentData().toString() == QStringLiteral("__custom__")) {
         options.suffix = suffix_edit_->text().trimmed().toUtf8().toStdString();
     } else {
         options.suffix = suffix_combo_->currentData().toString().toUtf8().toStdString();
@@ -778,7 +779,7 @@ FontPackPage::BuildOutcome FontPackPage::run_build(
                 engine::font::build_font_size_patch(req);
             if (!patch.ok) {
                 base.ok = false;
-                base.reason = QStringLiteral("字号补丁 %1 生成失败：%2").arg(off).arg(utf8(patch.error));
+                base.reason = xrkit::shell::tr_zh("字号补丁 %1 生成失败：%2").arg(off).arg(utf8(patch.error));
                 return base;
             }
             ++base.patch_count;
@@ -796,7 +797,7 @@ FontPackPage::BuildOutcome FontPackPage::run_build(
         BuildOutcome patch = run_build_one(one);
         if (!patch.ok) {
             base.ok = false;
-            base.reason = QStringLiteral("字号补丁 %1 生成失败：%2").arg(off).arg(patch.reason);
+            base.reason = xrkit::shell::tr_zh("字号补丁 %1 生成失败：%2").arg(off).arg(patch.reason);
             return base;
         }
         ++base.patch_count;
@@ -841,7 +842,7 @@ FontPackPage::BuildOutcome FontPackPage::run_build_one(
             outcome.refused = true;
             refused_count_.fetch_add(1);
             outcome.reason =
-                QStringLiteral("拒绝生成：%1（缺字形或字体不可用；没有创建任何目录）")
+                xrkit::shell::tr_zh("拒绝生成：%1（缺字形或字体不可用；没有创建任何目录）")
                     .arg(utf8(engine::font::cjk_state_mark(outcome.check.state)));
             return outcome;
         }
@@ -915,12 +916,12 @@ void FontPackPage::apply_result(const BuildOutcome& outcome) {
                           .arg(outcome.ixr_texts)
                           .arg(outcome.ixr_added)
                           .arg(outcome.ixr_missing)
-                    : QStringLiteral("失败：") + outcome.reason);
+                    : xrkit::shell::tr_zh("失败：") + outcome.reason);
         }
         if (outcome.ok && outcome.patch_count > 0 && result_label_ != nullptr) {
             result_label_->setText(
                 result_label_->text() +
-                QStringLiteral("；字号补丁 %1 个（_patches/…，只含 fonts.ltx）")
+                xrkit::shell::tr_zh("；字号补丁 %1 个（_patches/…，只含 fonts.ltx）")
                     .arg(outcome.patch_count));
         }
         // ★★ 2026-11-08（用户："缺字不要紧，要紧的是缺了字怎么办"）：
@@ -933,8 +934,8 @@ void FontPackPage::apply_result(const BuildOutcome& outcome) {
             }
             QMessageBox box(this);
             box.setIcon(QMessageBox::Warning);
-            box.setWindowTitle(QStringLiteral("缺字提示"));
-            box.setText(QStringLiteral("本次生成缺 %1 个字%2")
+            box.setWindowTitle(xrkit::shell::tr_zh("缺字提示"));
+            box.setText(xrkit::shell::tr_zh("本次生成缺 %1 个字%2")
                             .arg(outcome.ixr_missing)
                             .arg(cps.isEmpty() ? QString()
                                                : QStringLiteral("：") + cps.join(QStringLiteral(","))));
@@ -947,7 +948,7 @@ void FontPackPage::apply_result(const BuildOutcome& outcome) {
                                "3) 缩字符集：改文本，别用这些字。\n\n"
                                "本次包**已生成**（缺字不阻断）。"));
             box.setStandardButtons(QMessageBox::Ok);
-            box.button(QMessageBox::Ok)->setText(QStringLiteral("知道了"));
+            box.button(QMessageBox::Ok)->setText(xrkit::shell::tr_zh("知道了"));
             box.exec();
         }
         return;
@@ -955,20 +956,20 @@ void FontPackPage::apply_result(const BuildOutcome& outcome) {
     if (result_label_ != nullptr) {
         QString text =
             outcome.result.ok
-                ? QStringLiteral("完成：字体 %1 个、XML %2 个%3")
+                ? xrkit::shell::tr_zh("完成：字体 %1 个、XML %2 个%3")
                       .arg(outcome.result.fonts_written)
                       .arg(outcome.result.xml_written)
                       .arg(outcome.result.warnings.empty()
                                ? QString()
-                               : QStringLiteral("（%1 条告警）").arg(outcome.result.warnings.size()))
-                : QStringLiteral("失败：") + utf8(outcome.result.error);
+                               : xrkit::shell::tr_zh("（%1 条告警）").arg(outcome.result.warnings.size()))
+                : xrkit::shell::tr_zh("失败：") + utf8(outcome.result.error);
         if (outcome.result.ok && outcome.patch_count > 0) {
-            text += QStringLiteral("；字号补丁 %1 个（_patches/…）").arg(outcome.patch_count);
+            text += xrkit::shell::tr_zh("；字号补丁 %1 个（_patches/…）").arg(outcome.patch_count);
         }
         result_label_->setText(text);
     }
     if (outcome.fallback_used && state_label_ != nullptr) {
-        state_label_->setText(state_label_->text() + QStringLiteral("（已按繁体回退生成）"));
+        state_label_->setText(state_label_->text() + xrkit::shell::tr_zh("（已按繁体回退生成）"));
     }
 }
 
@@ -991,7 +992,7 @@ bool FontPackPage::build(const QString& xml_dir, const QString& font_path, const
     //   worker 里调它 ⇒ 守卫在第一句就拒绝并记账，控件一个字都不许变（smoke 有这条判据）。
     if (!ui_thread_guard("FontPackPage::build")) {
         if (reason != nullptr) {
-            *reason = QStringLiteral("线程纪律：本方法只许在主线程调用");
+            *reason = xrkit::shell::tr_zh("线程纪律：本方法只许在主线程调用");
         }
         return false;
     }

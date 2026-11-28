@@ -1,4 +1,5 @@
 #include "hub.h"
+#include "i18n.h"
 #include "release_page.h"
 
 #include "log_box.h"
@@ -82,12 +83,12 @@ QString join_reasons(const QStringList& reasons) {
 QString plugin_manager_launch_reason(bool previous_crashed, int plugin_errors,
                                      int auto_disabled) {
     QStringList reasons;
-    if (previous_crashed) reasons << QStringLiteral("上次未正常退出（可能由插件导致）");
+    if (previous_crashed) reasons << xrkit::shell::tr_zh("上次未正常退出（可能由插件导致）");
     if (plugin_errors > 0) {
-        reasons << QStringLiteral("插件加载失败：%1 个（详见日志）").arg(plugin_errors);
+        reasons << xrkit::shell::tr_zh("插件加载失败：%1 个（详见日志）").arg(plugin_errors);
     }
     if (auto_disabled > 0) {
-        reasons << QStringLiteral("缺前置被自动禁用：%1 个").arg(auto_disabled);
+        reasons << xrkit::shell::tr_zh("缺前置被自动禁用：%1 个").arg(auto_disabled);
     }
     return join_reasons(reasons);
 }
@@ -127,7 +128,7 @@ QWidget* make_placeholder(const PageSpec& spec) {
     title->setFont(font);
     // ★ 2026-11-09（用户口径：**精简描述性水印**）：占位页只留一句最短提示，
     //   不再把"页 id / M2-6 逐片接入 / 外壳已把布局主题日志壳就位"这类开发口径印给用户。
-    auto* note = new QLabel(QStringLiteral("本页尚未接入"));
+    auto* note = new QLabel(xrkit::shell::tr_zh("本页尚未接入"));
     note->setObjectName(QStringLiteral("page_placeholder_note"));
     note->setWordWrap(true);
     layout->addWidget(title);
@@ -192,14 +193,14 @@ QString unique_log_path(const QString& dir, const QString& stamp, QString* why) 
     }
     // 一万个同秒同名都占满了：**不静默**，如实说出来，但仍返回第一个（宁可覆盖也不丢话）。
     if (why != nullptr) {
-        *why = QStringLiteral("log_%1.txt 及其 9998 个序号副本都已存在，落点无法唯一化")
+        *why = xrkit::shell::tr_zh("log_%1.txt 及其 9998 个序号副本都已存在，落点无法唯一化")
                    .arg(stamp);
     }
     return first;
 }
 
 Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
-    setWindowTitle(QStringLiteral("STALKER 汉化工具集 2.0"));
+    setWindowTitle(xrkit::shell::tr_zh("STALKER 汉化工具集 2.0"));
     // 插件更新后重启：启动新进程后退出当前进程；新进程启动时处理 .xrkit_update。
     plugin::set_host_restart_handler([] {
         const QString exe = QCoreApplication::applicationFilePath();
@@ -253,7 +254,7 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     //   `logs/log_*.txt` 全是 **0 字节**（包里 5 份日志实测如此）。
     log_box_->set_persist([](const QString& block) { xrkit::core::log_block(block.toStdString()); });
     log_view_ = log_box_;  // 兼容访问器（LogBox 是 QPlainTextEdit 子类）
-    log_clear_ = new QPushButton(QStringLiteral("清空"));
+    log_clear_ = new QPushButton(xrkit::shell::tr_zh("清空"));
     log_clear_->setObjectName(QStringLiteral("log_clear"));
     QObject::connect(log_clear_, &QPushButton::clicked, this, [this] {
         if (log_box_ != nullptr) log_box_->clear_log();
@@ -271,7 +272,7 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     log_panel_layout->setContentsMargins(px(8), px(4), px(8), px(4));
     log_panel_layout->setSpacing(px(6));
     log_panel_layout->addWidget(log_box_, 1);
-    log_keep_ = new QPushButton(QStringLiteral("保留本次日志"));
+    log_keep_ = new QPushButton(xrkit::shell::tr_zh("保留本次日志"));
     log_keep_->setObjectName(QStringLiteral("log_keep"));
     QObject::connect(log_keep_, &QPushButton::clicked, this, [this] {
         // ★ 用户口径：「也可以手动选择留存日志」——复制成 `_保留`，不改正在写的文件
@@ -282,10 +283,10 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
             info.completeBaseName() + QStringLiteral("_保留.") + info.suffix());
         if (QFile::exists(dest)) QFile::remove(dest);
         if (QFile::copy(src, dest)) {
-            log_line(QStringLiteral("已手动保留本次日志：%1")
+            log_line(xrkit::shell::tr_zh("已手动保留本次日志：%1")
                          .arg(QDir::toNativeSeparators(dest)));
         } else {
-            log_line(QStringLiteral("保留日志失败（拷贝不动）：%1")
+            log_line(xrkit::shell::tr_zh("保留日志失败（拷贝不动）：%1")
                          .arg(QDir::toNativeSeparators(dest)));
         }
     });
@@ -333,20 +334,20 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
         }
         if (sweep.previous_crashed) {
             previous_crashed_ = true;
-            log_line(QStringLiteral("上次没有正常退出；崩溃现场日志已保留：%1")
+            log_line(xrkit::shell::tr_zh("上次没有正常退出；崩溃现场日志已保留：%1")
                          .arg(QDir::toNativeSeparators(QString::fromStdString(sweep.kept_log))));
         } else if (!sweep.removed_log.empty()) {
-            log_line(QStringLiteral("上次正常退出，旧日志已重置（保留策略：崩溃才留）"));
+            log_line(xrkit::shell::tr_zh("上次正常退出，旧日志已重置（保留策略：崩溃才留）"));
         }
         // ★ 同秒已有同名运行日志 ⇒ 本次换了落点：**说出来**（否则用户会以为在看重名的那一份）
-        if (!clash.isEmpty()) log_line(QStringLiteral("运行日志落点：%1").arg(clash));
+        if (!clash.isEmpty()) log_line(xrkit::shell::tr_zh("运行日志落点：%1").arg(clash));
         // ★ 落点**永远**打一条（不只冲突时）：用户与自检都要能看到"这一次的日志写去了哪"
-        log_line(QStringLiteral("本次运行日志落点：%1")
+        log_line(xrkit::shell::tr_zh("本次运行日志落点：%1")
                      .arg(QDir::toNativeSeparators(log_file_path_)));
         // 1.x A-2：「日志**写不出去**必须让用户看见」——`set_log_file` 自己会静默降级，
         //   所以这里读它的状态位把话说明白（进日志栏，用户至少知道"这次没有文件可查"）。
         if (!log_file_active()) {
-            log_line(QStringLiteral("日志无法落盘：%1（本次运行的日志没有保存到文件）")
+            log_line(xrkit::shell::tr_zh("日志无法落盘：%1（本次运行的日志没有保存到文件）")
                          .arg(QDir::toNativeSeparators(log_file_path_)));
         }
         // ★★ C-13 §5.6：运行日志**保留 50 份**（新的留、当前这份永不删）。
@@ -354,25 +355,25 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
         const xrkit::core::PruneResult pruned =
             xrkit::core::prune_log_files(log_dir.toStdString(), 50, log_file_path_.toStdString());
         if (pruned.deleted > 0) {
-            log_line(QStringLiteral("旧运行日志已清理 %1 份（保留最近 50 份）").arg(pruned.deleted));
+            log_line(xrkit::shell::tr_zh("旧运行日志已清理 %1 份（保留最近 50 份）").arg(pruned.deleted));
         }
         if (pruned.failed > 0) {
-            log_line(QStringLiteral("有 %1 份旧运行日志删不掉（可能被另一个实例占用）").arg(pruned.failed));
+            log_line(xrkit::shell::tr_zh("有 %1 份旧运行日志删不掉（可能被另一个实例占用）").arg(pruned.failed));
         }
     }
 
-    log_toggle_ = new QPushButton(QStringLiteral("▸ 日志"));
+    log_toggle_ = new QPushButton(xrkit::shell::tr_zh("▸ 日志"));
     log_toggle_->setObjectName(QStringLiteral("log_toggle"));
     QObject::connect(log_toggle_, &QPushButton::clicked, this, [this] {
         log_expanded_ = !log_expanded_;
         if (log_panel_ != nullptr) log_panel_->setVisible(log_expanded_);
         if (log_toggle_ != nullptr) {
-            log_toggle_->setText(log_expanded_ ? QStringLiteral("▾ 日志")
-                                               : QStringLiteral("▸ 日志"));
+            log_toggle_->setText(log_expanded_ ? xrkit::shell::tr_zh("▾ 日志")
+                                               : xrkit::shell::tr_zh("▸ 日志"));
         }
     });
 
-    status_label_ = new QLabel(QStringLiteral("就绪"));
+    status_label_ = new QLabel(xrkit::shell::tr_zh("就绪"));
     status_label_->setObjectName(QStringLiteral("status_label"));
 
     // 「就绪」右边：版本差异 / 下载进度。只在这一行显示，不额外弹窗打扰。
@@ -386,17 +387,17 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     status_row_layout->setSpacing(px(12));
     status_row_layout->addWidget(status_label_);
     status_row_layout->addWidget(update_version_label_);
-    update_cancel_button_ = new QPushButton(QStringLiteral("取消下载"));
+    update_cancel_button_ = new QPushButton(xrkit::shell::tr_zh("取消下载"));
     update_cancel_button_->setObjectName(QStringLiteral("update_cancel_button"));
     update_cancel_button_->setVisible(false);
-    update_cancel_button_->setToolTip(QStringLiteral("停止更新下载；已下载部分保留，下次可续传"));
+    update_cancel_button_->setToolTip(xrkit::shell::tr_zh("停止更新下载；已下载部分保留，下次可续传"));
     QObject::connect(update_cancel_button_, &QPushButton::clicked, this, [this] {
         if (!update_download_inflight_) return;
         if (update_download_cancel_) *update_download_cancel_ = true;
         update_cancel_button_->setEnabled(false);
-        update_cancel_button_->setText(QStringLiteral("正在取消…"));
-        if (status_label_ != nullptr) status_label_->setText(QStringLiteral("正在取消更新下载…"));
-        log_line(QStringLiteral("用户请求取消更新下载"));
+        update_cancel_button_->setText(xrkit::shell::tr_zh("正在取消…"));
+        if (status_label_ != nullptr) status_label_->setText(xrkit::shell::tr_zh("正在取消更新下载…"));
+        log_line(xrkit::shell::tr_zh("用户请求取消更新下载"));
     });
     status_row_layout->addWidget(update_cancel_button_);
     status_row_layout->addStretch(1);
@@ -415,50 +416,50 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     setCentralWidget(central);
 
     // ── 菜单：主题（暗/亮，原地更新）
-    QMenu* view_menu = menuBar()->addMenu(QStringLiteral("视图"));
+    QMenu* view_menu = menuBar()->addMenu(xrkit::shell::tr_zh("视图"));
     // ★★ 2026-10-25 用户：「主题应当收束，就和页面大小一样」⇒ 收成子菜单（与「界面大小」同形态）。
-    QMenu* theme_menu = view_menu->addMenu(QStringLiteral("主题"));
-    QAction* dark = theme_menu->addAction(QStringLiteral("暗色主题"));
-    QAction* light = theme_menu->addAction(QStringLiteral("亮色主题"));
+    QMenu* theme_menu = view_menu->addMenu(xrkit::shell::tr_zh("主题"));
+    QAction* dark = theme_menu->addAction(xrkit::shell::tr_zh("暗色主题"));
+    QAction* light = theme_menu->addAction(xrkit::shell::tr_zh("亮色主题"));
 
     // ★ 用户 2026-09-30：「上面除了主题之外，再增加一个调整 UI 控件大小（当然，包括里面的字体）
     //   的下拉菜单。」⇒ 视图菜单里加「界面大小」子菜单（立即生效；字体与控件一起缩放）。
     // ★ 2026-11-03（用户给了发布页 URL；决策）：**只打开浏览器，不做检测**。
     //   文案必须写"打开发布页"——叫"检测版本"会让用户等一个永远不会来的提示。
-    QMenu* help_menu = menuBar()->addMenu(QStringLiteral("帮助"));
+    QMenu* help_menu = menuBar()->addMenu(xrkit::shell::tr_zh("帮助"));
     help_menu_ = help_menu;
     // ★ 2026-11-09（用户："我没有找到插件管理器的入口"）：给一个**常驻入口**（对话框原先只在
     //   "有插件缺前置"时自动弹一次，没有菜单项 ⇒ 用户找不到）。
-    QMenu* tools_menu = menuBar()->addMenu(QStringLiteral("工具"));
+    QMenu* tools_menu = menuBar()->addMenu(xrkit::shell::tr_zh("工具"));
     tools_menu_ = tools_menu;
-    QAction* plugin_manager_action = tools_menu->addAction(QStringLiteral("插件管理器…"));
+    QAction* plugin_manager_action = tools_menu->addAction(xrkit::shell::tr_zh("插件管理器…"));
     plugin_manager_action->setObjectName(QStringLiteral("plugin_manager_action"));
     connect(plugin_manager_action, &QAction::triggered, this, [this]() {
         // ★ 2026-11-10：手动入口优先**独立进程**；管理器程序缺失才回退进程内对话框。
-        if (!launch_plugin_manager(QStringLiteral("手动打开"), true)) show_plugin_manager();
+        if (!launch_plugin_manager(xrkit::shell::tr_zh("手动打开"), true)) show_plugin_manager();
     });
-    network_action_ = tools_menu->addAction(QStringLiteral("联网功能"));
+    network_action_ = tools_menu->addAction(xrkit::shell::tr_zh("联网功能"));
     network_action_->setCheckable(true);
     network_action_->setChecked(network_enabled());
     connect(network_action_, &QAction::toggled, this,
             [this](bool enabled) { set_network_enabled(enabled); });
     // ★ BETA.270：联网关闭时，插件请求联网要不要弹窗询问（默认开）。
-    QAction* plugin_prompt_action = tools_menu->addAction(QStringLiteral("插件联网时询问"));
+    QAction* plugin_prompt_action = tools_menu->addAction(xrkit::shell::tr_zh("插件联网时询问"));
     plugin_prompt_action->setObjectName(QStringLiteral("plugin_prompt_action"));
     plugin_prompt_action->setCheckable(true);
     plugin_prompt_action->setChecked(
         core::load_user_value("network", "plugin_prompt", "1") != "0");
     connect(plugin_prompt_action, &QAction::toggled, this, [this](bool on) {
         core::save_user_value("network", "plugin_prompt", on ? "1" : "0");
-        log_line(on ? QStringLiteral("插件联网请求将弹窗询问（联网功能关闭时）")
-                    : QStringLiteral("插件联网请求不再询问（联网功能关闭时直接拒绝）"));
+        log_line(on ? xrkit::shell::tr_zh("插件联网请求将弹窗询问（联网功能关闭时）")
+                    : xrkit::shell::tr_zh("插件联网请求不再询问（联网功能关闭时直接拒绝）"));
     });
     // ★ 界面语言：保存后重启进程，新进程从 xrkit_user.ltx [ui] lang 读取。
-    QAction* language_action = tools_menu->addAction(QStringLiteral("界面语言"));
+    QAction* language_action = tools_menu->addAction(xrkit::shell::tr_zh("界面语言"));
     language_action->setObjectName(QStringLiteral("ui_language_action"));
     QMenu* language_menu = new QMenu(this);
     language_action->setMenu(language_menu);
-    QAction* language_zh = language_menu->addAction(QStringLiteral("中文"));
+    QAction* language_zh = language_menu->addAction(xrkit::shell::tr_zh("中文"));
     QAction* language_ru = language_menu->addAction(QStringLiteral("Русский"));
     connect(language_zh, &QAction::triggered, this, [this]() {
         core::save_user_value("ui", "lang", "zh");
@@ -470,7 +471,7 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     });
 
     // ★ 独立总开关：关闭后连“检测更新”功能一起停（不是只关弹窗）。
-    update_toggle_action_ = tools_menu->addAction(QStringLiteral("启用检测更新"));
+    update_toggle_action_ = tools_menu->addAction(xrkit::shell::tr_zh("启用检测更新"));
     update_toggle_action_->setObjectName(QStringLiteral("update_toggle_action"));
     update_toggle_action_->setCheckable(true);
     update_toggle_action_->setChecked(HostUpdate::updateCheckingEnabled());
@@ -478,24 +479,24 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
         HostUpdate::setUpdateCheckingEnabled(enabled);
         sync_update_check_action(enabled);
         if (!enabled && update_download_cancel_) *update_download_cancel_ = true;
-        log_line(enabled ? QStringLiteral("检测更新功能已开启")
-                         : QStringLiteral("检测更新功能已关闭（不会自动检查、下载或安装更新）"));
+        log_line(enabled ? xrkit::shell::tr_zh("检测更新功能已开启")
+                         : xrkit::shell::tr_zh("检测更新功能已关闭（不会自动检查、下载或安装更新）"));
     });
-    QAction* repo_page = help_menu->addAction(QStringLiteral("打开仓库页"));
-    update_check_action_ = help_menu->addAction(QStringLiteral("检测更新"));
+    QAction* repo_page = help_menu->addAction(xrkit::shell::tr_zh("打开仓库页"));
+    update_check_action_ = help_menu->addAction(xrkit::shell::tr_zh("检测更新"));
     connect(update_check_action_, &QAction::triggered, this, [this] { check_updates(false); });
     sync_update_check_action(HostUpdate::updateCheckingEnabled());
     connect(repo_page, &QAction::triggered, this, [this] {
         const QString url = QString::fromUtf8(xrkit::shell::kRepoPageUrl);
-        log_line(QStringLiteral("打开仓库：") + url);
+        log_line(xrkit::shell::tr_zh("打开仓库：") + url);
         if (!QDesktopServices::openUrl(QUrl(url))) {
-            const QString message = QStringLiteral("打不开浏览器，请手动访问：") + url;
+            const QString message = xrkit::shell::tr_zh("打不开浏览器，请手动访问：") + url;
             if (status_label_ != nullptr) status_label_->setText(message);
             log_line(message);
         }
     });
 
-    QMenu* size_menu = view_menu->addMenu(QStringLiteral("界面大小"));
+    QMenu* size_menu = view_menu->addMenu(xrkit::shell::tr_zh("界面大小"));
     {
         for (const xrkit::shell::UiSizeChoice& item : xrkit::shell::ui_size_choices()) {
             const QString label = QString::fromUtf8(item.label);
@@ -507,10 +508,10 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
                 QString problem;
                 apply_ui_size(scale, &problem);
                 log_line(problem.isEmpty()
-                             ? QStringLiteral("界面大小已切到「%1」（缩放 %2×，已记住）")
+                             ? xrkit::shell::tr_zh("界面大小已切到「%1」（缩放 %2×，已记住）")
                                    .arg(label)
                                    .arg(scale)
-                             : QStringLiteral("界面大小已切到「%1」（缩放 %2×），但%3")
+                             : xrkit::shell::tr_zh("界面大小已切到「%1」（缩放 %2×），但%3")
                                    .arg(label)
                                    .arg(scale)
                                    .arg(problem));
@@ -537,7 +538,7 @@ Hub::Hub(QWidget* parent, const QString& plugin_dir) : QMainWindow(parent) {
     //   插件目录为空时（发行口径）修前那条路也成立，显式调用只是让"内置页装配"不依赖插件侧。
     //   `sync_pages()` 幂等：后面 `render_plugin_slots()` 里的调用不会重建已有页（P1 那条锁）。
     sync_pages();
-    log_line(QStringLiteral("Hub 就绪：%1 个内置页").arg(builtin_page_count()));
+    log_line(xrkit::shell::tr_zh("Hub 就绪：%1 个内置页").arg(builtin_page_count()));
     load_plugins(plugin_dir);
     recover_plugin_updates();
 }
@@ -554,13 +555,13 @@ void Hub::apply_theme_mode(xrkit::core::ThemeMode mode, QString* problem) {
     // ② 再记住（写 user.ltx 的 [theme] mode；**只动这一个键**）
     if (!xrkit::core::save_theme_mode(mode)) {
         if (problem != nullptr) {
-            *problem = QStringLiteral("写不进 user.ltx 的 [theme] mode —— 下次启动会回到上次记住的主题");
+            *problem = xrkit::shell::tr_zh("写不进 user.ltx 的 [theme] mode —— 下次启动会回到上次记住的主题");
         }
-        log_line(QStringLiteral("警告: 无法写入 user.ltx，下次启动需重新选择主题"));
+        log_line(xrkit::shell::tr_zh("警告: 无法写入 user.ltx，下次启动需重新选择主题"));
         return;
     }
-    log_line(mode == xrkit::core::ThemeMode::Light ? QStringLiteral("已切到亮色主题（已记住）")
-                                                   : QStringLiteral("已切到暗色主题（已记住）"));
+    log_line(mode == xrkit::core::ThemeMode::Light ? xrkit::shell::tr_zh("已切到亮色主题（已记住）")
+                                                   : xrkit::shell::tr_zh("已切到暗色主题（已记住）"));
 }
 
 void Hub::apply_ui_size(double scale, QString* problem) {
@@ -570,9 +571,9 @@ void Hub::apply_ui_size(double scale, QString* problem) {
     // ② 再记住（写 user.ltx 的 [theme] scale；**只动这一个键**）
     if (!xrkit::core::save_ui_scale(scale)) {
         if (problem != nullptr) {
-            *problem = QStringLiteral("写不进 user.ltx 的 [theme] scale —— 下次启动会回到屏幕自适应的档位");
+            *problem = xrkit::shell::tr_zh("写不进 user.ltx 的 [theme] scale —— 下次启动会回到屏幕自适应的档位");
         }
-        log_line(QStringLiteral("警告: 无法写入 user.ltx，下次启动需重新调整界面大小"));
+        log_line(xrkit::shell::tr_zh("警告: 无法写入 user.ltx，下次启动需重新调整界面大小"));
         return;
     }
 }
@@ -697,8 +698,8 @@ void Hub::attach_page_services(PageBase* page) {
 void Hub::drain_page_diagnostics() {
     for (const PageDiag& diag : pages_.take_diagnostics()) {
         const QString text =
-            QStringLiteral("页注册%1：%2")
-                .arg(diag.fatal ? QStringLiteral("被拒") : QStringLiteral("变化"))
+            xrkit::shell::tr_zh("页注册%1：%2")
+                .arg(diag.fatal ? xrkit::shell::tr_zh("被拒") : xrkit::shell::tr_zh("变化"))
                 .arg(QString::fromStdString(diag.message));
         log_line(text);
         if (diag.fatal && status_label_ != nullptr) status_label_->setText(text);
@@ -836,7 +837,7 @@ int Hub::sync_pages() {
                                                   .arg(QString::fromStdString(builder_exception)));
                 } catch (...) {
                     builder_exception = "非 std::exception 的 C++ 异常";
-                    trace_page_build(trace_id, QStringLiteral("error:非 std::exception"));
+                    trace_page_build(trace_id, xrkit::shell::tr_zh("error:非 std::exception"));
                 }
 
             }
@@ -883,13 +884,13 @@ int Hub::sync_pages() {
             if (builder_threw) {
                 widget = make_placeholder(reg->spec);
                 if (widget != container) container->deleteLater();
-                log_line(QStringLiteral("页「%1」（%2）的 builder 抛异常后已用占位页顶替（S-02）")
+                log_line(xrkit::shell::tr_zh("页「%1」（%2）的 builder 抛异常后已用占位页顶替（S-02）")
                              .arg(id)
                              .arg(QString::fromStdString(reg->owner)));
             } else if (!anything_built) {
                 widget = make_placeholder(reg->spec);
                 if (widget != container) container->deleteLater();
-                log_line(QStringLiteral("页「%1」（%2）没造出控件，已用占位页顶替")
+                log_line(xrkit::shell::tr_zh("页「%1」（%2）没造出控件，已用占位页顶替")
                              .arg(id)
                              .arg(QString::fromStdString(reg->owner)));
             } else if (dynamic_cast<PageBase*>(widget) == nullptr) {
@@ -1031,7 +1032,7 @@ bool Hub::log_file_active() const { return xrkit::core::log_file_active(); }
 void Hub::check_updates(bool silent) {
     if (!HostUpdate::updateCheckingEnabled()) {
         if (!silent) {
-            QMessageBox::information(this, QStringLiteral("检测更新"),
+            QMessageBox::information(this, xrkit::shell::tr_zh("检测更新"),
                                      QStringLiteral("检测更新功能已关闭。\n"
                                                     "可在「工具 → 启用检测更新」中重新开启。"));
         }
@@ -1040,16 +1041,16 @@ void Hub::check_updates(bool silent) {
     QString error;
     if (!HostUpdate::networkAllowed(&error)) {
         if (!silent) {
-            QMessageBox::warning(this, QStringLiteral("检测更新"),
-                                 QStringLiteral("联网功能已关闭。\n请在「工具 → 联网功能」中开启。"));
+            QMessageBox::warning(this, xrkit::shell::tr_zh("检测更新"),
+                                 xrkit::shell::tr_zh("联网功能已关闭。\n请在「工具 → 联网功能」中开启。"));
         }
         return;
     }
     if (update_check_inflight_ || update_download_inflight_) return;
     update_check_inflight_ = true;
     if (!silent) {
-        if (status_label_ != nullptr) status_label_->setText(QStringLiteral("正在检查更新…"));
-        log_line(QStringLiteral("正在检查更新…"));
+        if (status_label_ != nullptr) status_label_->setText(xrkit::shell::tr_zh("正在检查更新…"));
+        log_line(xrkit::shell::tr_zh("正在检查更新…"));
     }
     // 网络请求必须在后台线程：WinHTTP 冷启动/断网时单个源就要等满超时，
     // 同步跑会把整个界面卡住（标题栏「未响应」），用户看不到任何结果。
@@ -1072,8 +1073,8 @@ void Hub::check_updates(bool silent) {
     } catch (const std::exception& e) {
         update_check_inflight_ = false;
         if (!silent) {
-            QMessageBox::warning(this, QStringLiteral("检测更新"),
-                                 QStringLiteral("无法创建更新检查线程：%1")
+            QMessageBox::warning(this, xrkit::shell::tr_zh("检测更新"),
+                                 xrkit::shell::tr_zh("无法创建更新检查线程：%1")
                                      .arg(QString::fromUtf8(e.what())));
         }
     }
@@ -1082,10 +1083,10 @@ void Hub::check_updates(bool silent) {
 void Hub::finish_update_check(const AppUpdateInfo& info, const QString& error, bool ok,
                               bool silent) {
     if (!ok) {
-        if (status_label_ != nullptr) status_label_->setText(QStringLiteral("检查更新失败"));
+        if (status_label_ != nullptr) status_label_->setText(xrkit::shell::tr_zh("检查更新失败"));
         if (!silent) {
-            QMessageBox::warning(this, QStringLiteral("检测更新"),
-                                 QStringLiteral("检查失败：%1").arg(error));
+            QMessageBox::warning(this, xrkit::shell::tr_zh("检测更新"),
+                                 xrkit::shell::tr_zh("检查失败：%1").arg(error));
         }
         return;
     }
@@ -1094,36 +1095,36 @@ void Hub::finish_update_check(const AppUpdateInfo& info, const QString& error, b
     if (!HostUpdate::upgradeAllowed(info.version, current)) {
         if (update_version_label_ != nullptr) {
             update_version_label_->setText(
-                QStringLiteral("当前正式版不接受测试版 %1").arg(info.version));
+                xrkit::shell::tr_zh("当前正式版不接受测试版 %1").arg(info.version));
             update_version_label_->setVisible(true);
         }
         if (!silent) {
             QMessageBox::information(
-                this, QStringLiteral("检测更新"),
-                QStringLiteral("最近发布的是测试版 %1；当前是正式版，不会自动升级到测试版。")
+                this, xrkit::shell::tr_zh("检测更新"),
+                xrkit::shell::tr_zh("最近发布的是测试版 %1；当前是正式版，不会自动升级到测试版。")
                     .arg(info.version));
         }
         return;
     }
     if (!newer) {
         if (update_version_label_ != nullptr) {
-            update_version_label_->setText(QStringLiteral("已是最新：%1").arg(current));
+            update_version_label_->setText(xrkit::shell::tr_zh("已是最新：%1").arg(current));
             update_version_label_->setVisible(true);
         }
         if (!silent) {
-            QMessageBox::information(this, QStringLiteral("检测更新"),
-                                     QStringLiteral("当前已是最新：%1").arg(current));
+            QMessageBox::information(this, xrkit::shell::tr_zh("检测更新"),
+                                     xrkit::shell::tr_zh("当前已是最新：%1").arg(current));
         }
         return;
     }
     // 版本差异固定显示在「就绪」右边；下载过程中会被进度文本覆盖。
     if (update_version_label_ != nullptr) {
         update_version_label_->setText(
-            QStringLiteral("可更新：%1（当前 %2）").arg(info.version, current));
+            xrkit::shell::tr_zh("可更新：%1（当前 %2）").arg(info.version, current));
         update_version_label_->setVisible(true);
     }
-    if (QMessageBox::question(this, QStringLiteral("检测更新"),
-                              QStringLiteral("发现新版本：%1\n当前版本：%2\n\n现在下载更新？")
+    if (QMessageBox::question(this, xrkit::shell::tr_zh("检测更新"),
+                              xrkit::shell::tr_zh("发现新版本：%1\n当前版本：%2\n\n现在下载更新？")
                                   .arg(info.version, current)) != QMessageBox::Yes) {
         return;
     }
@@ -1154,16 +1155,16 @@ void Hub::start_update_recovery() {
     AppUpdatePending pending;
     if (HostUpdate::pendingAppUpdate(&pending)) {
         if (pending.ready) {
-            log_line(QStringLiteral("发现上次已下载的更新：%1，准备安装").arg(pending.info.version));
+            log_line(xrkit::shell::tr_zh("发现上次已下载的更新：%1，准备安装").arg(pending.info.version));
             if (update_version_label_ != nullptr) {
                 update_version_label_->setText(
-                    QStringLiteral("更新已就绪：%1（等待重启）").arg(pending.info.version));
+                    xrkit::shell::tr_zh("更新已就绪：%1（等待重启）").arg(pending.info.version));
                 update_version_label_->setVisible(true);
             }
             install_pending_update(false);
             return;
         }
-        log_line(QStringLiteral("继续上次未完成的更新下载：%1").arg(pending.info.version));
+        log_line(xrkit::shell::tr_zh("继续上次未完成的更新下载：%1").arg(pending.info.version));
         begin_update_download(pending.info);
         return;
     }
@@ -1175,19 +1176,19 @@ void Hub::begin_update_download(const AppUpdateInfo& info) {
     update_download_inflight_ = true;
     update_download_cancel_ = std::make_shared<std::atomic_bool>(false);
     const auto cancel = update_download_cancel_;
-    if (status_label_ != nullptr) status_label_->setText(QStringLiteral("正在下载更新…"));
+    if (status_label_ != nullptr) status_label_->setText(xrkit::shell::tr_zh("正在下载更新…"));
     if (update_cancel_button_ != nullptr) {
-        update_cancel_button_->setText(QStringLiteral("取消下载"));
+        update_cancel_button_->setText(xrkit::shell::tr_zh("取消下载"));
         update_cancel_button_->setEnabled(true);
         update_cancel_button_->setVisible(true);
     }
     if (update_version_label_ != nullptr) {
-        update_version_label_->setText(QStringLiteral("可更新：%1（当前 %2）")
+        update_version_label_->setText(xrkit::shell::tr_zh("可更新：%1（当前 %2）")
                                            .arg(info.version,
                                                 QString::fromStdString(xrkit::core::version_string())));
         update_version_label_->setVisible(true);
     }
-    log_line(QStringLiteral("开始下载更新：%1").arg(info.version));
+    log_line(xrkit::shell::tr_zh("开始下载更新：%1").arg(info.version));
     QPointer<Hub> self(this);
     try {
         std::thread([self, info, cancel] {
@@ -1217,11 +1218,11 @@ void Hub::begin_update_download(const AppUpdateInfo& info) {
         update_download_inflight_ = false;
         if (update_cancel_button_ != nullptr) update_cancel_button_->setVisible(false);
         if (update_version_label_ != nullptr) {
-            update_version_label_->setText(QStringLiteral("无法启动更新下载"));
+            update_version_label_->setText(xrkit::shell::tr_zh("无法启动更新下载"));
             update_version_label_->setVisible(true);
         }
-        QMessageBox::warning(this, QStringLiteral("更新下载"),
-                             QStringLiteral("无法创建下载线程：%1")
+        QMessageBox::warning(this, xrkit::shell::tr_zh("更新下载"),
+                             xrkit::shell::tr_zh("无法创建下载线程：%1")
                                  .arg(QString::fromUtf8(e.what())));
     }
 }
@@ -1233,11 +1234,11 @@ void Hub::show_update_progress(std::size_t bytes, std::size_t total) {
     };
     if (total > 0) {
         const int percent = static_cast<int>((bytes * 100) / total);
-        update_version_label_->setText(QStringLiteral("下载更新 %1%（%2 / %3 MB）")
+        update_version_label_->setText(xrkit::shell::tr_zh("下载更新 %1%（%2 / %3 MB）")
                                            .arg(percent)
                                            .arg(mib(bytes), mib(total)));
     } else {
-        update_version_label_->setText(QStringLiteral("下载更新：%1 MB").arg(mib(bytes)));
+        update_version_label_->setText(xrkit::shell::tr_zh("下载更新：%1 MB").arg(mib(bytes)));
     }
     update_version_label_->setVisible(true);
 }
@@ -1246,46 +1247,46 @@ void Hub::finish_update_download(bool ok, const QString& error) {
     update_download_inflight_ = false;
     if (update_cancel_button_ != nullptr) update_cancel_button_->setVisible(false);
     if (update_closing_) return;
-    if (!ok && error.contains(QStringLiteral("取消"))) {
-        if (status_label_ != nullptr) status_label_->setText(QStringLiteral("更新下载已取消"));
+    if (!ok && error.contains(xrkit::shell::tr_zh("取消"))) {
+        if (status_label_ != nullptr) status_label_->setText(xrkit::shell::tr_zh("更新下载已取消"));
         if (update_version_label_ != nullptr) {
-            update_version_label_->setText(QStringLiteral("更新下载已取消"));
+            update_version_label_->setText(xrkit::shell::tr_zh("更新下载已取消"));
             update_version_label_->setVisible(true);
         }
-        log_line(QStringLiteral("更新下载已取消；已下载部分保留"));
+        log_line(xrkit::shell::tr_zh("更新下载已取消；已下载部分保留"));
         return;
     }
     if (!ok) {
-        if (status_label_ != nullptr) status_label_->setText(QStringLiteral("更新下载失败"));
+        if (status_label_ != nullptr) status_label_->setText(xrkit::shell::tr_zh("更新下载失败"));
         if (update_version_label_ != nullptr) {
-            update_version_label_->setText(QStringLiteral("更新下载失败"));
+            update_version_label_->setText(xrkit::shell::tr_zh("更新下载失败"));
             update_version_label_->setVisible(true);
         }
-        QMessageBox::warning(this, QStringLiteral("更新下载"),
-                             QStringLiteral("下载失败：%1").arg(error));
+        QMessageBox::warning(this, xrkit::shell::tr_zh("更新下载"),
+                             xrkit::shell::tr_zh("下载失败：%1").arg(error));
         return;
     }
-    if (status_label_ != nullptr) status_label_->setText(QStringLiteral("更新已下载"));
+    if (status_label_ != nullptr) status_label_->setText(xrkit::shell::tr_zh("更新已下载"));
     if (update_version_label_ != nullptr) {
-        update_version_label_->setText(QStringLiteral("更新已下载（等待重启）"));
+        update_version_label_->setText(xrkit::shell::tr_zh("更新已下载（等待重启）"));
         update_version_label_->setVisible(true);
     }
-    log_line(QStringLiteral("更新包已下载完成"));
-    if (QMessageBox::question(this, QStringLiteral("更新已下载"),
+    log_line(xrkit::shell::tr_zh("更新包已下载完成"));
+    if (QMessageBox::question(this, xrkit::shell::tr_zh("更新已下载"),
                               QStringLiteral("更新包已下载完成。\n现在重启并安装更新？\n"
                                              "选择「否」则下次启动时自动安装。"),
                               QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes) {
         install_pending_update(false);
     } else {
-        log_line(QStringLiteral("已选择稍后安装：下次启动时自动安装更新"));
+        log_line(xrkit::shell::tr_zh("已选择稍后安装：下次启动时自动安装更新"));
     }
 }
 
 bool Hub::install_pending_update(bool prompt_restart) {
     if (!HostUpdate::updateCheckingEnabled()) return false;
     if (prompt_restart) {
-        if (QMessageBox::question(this, QStringLiteral("安装更新"),
-                                  QStringLiteral("现在重启并安装更新？"),
+        if (QMessageBox::question(this, xrkit::shell::tr_zh("安装更新"),
+                                  xrkit::shell::tr_zh("现在重启并安装更新？"),
                                   QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes) {
             return false;
         }
@@ -1293,13 +1294,13 @@ bool Hub::install_pending_update(bool prompt_restart) {
     bool started = false;
     QString error;
     if (!HostUpdate::installPendingAppUpdate(&started, &error)) {
-        QMessageBox::warning(this, QStringLiteral("安装更新"),
-                             QStringLiteral("安装更新失败：%1").arg(error));
+        QMessageBox::warning(this, xrkit::shell::tr_zh("安装更新"),
+                             xrkit::shell::tr_zh("安装更新失败：%1").arg(error));
         return false;
     }
     if (!started) return false;
-    if (status_label_ != nullptr) status_label_->setText(QStringLiteral("正在重启并安装更新…"));
-    log_line(QStringLiteral("已启动更新器，正在退出当前进程"));
+    if (status_label_ != nullptr) status_label_->setText(xrkit::shell::tr_zh("正在重启并安装更新…"));
+    log_line(xrkit::shell::tr_zh("已启动更新器，正在退出当前进程"));
     QCoreApplication::quit();
     return true;
 }
@@ -1307,8 +1308,8 @@ bool Hub::install_pending_update(bool prompt_restart) {
 void Hub::closeEvent(QCloseEvent* event) {
     if (update_download_inflight_) {
         const auto answer = QMessageBox::question(
-            this, QStringLiteral("更新正在下载"),
-            QStringLiteral("更新包还在下载。\n关闭后会保留已下载的部分，下次启动时断点续传。\n确定关闭？"),
+            this, xrkit::shell::tr_zh("更新正在下载"),
+            xrkit::shell::tr_zh("更新包还在下载。\n关闭后会保留已下载的部分，下次启动时断点续传。\n确定关闭？"),
             QMessageBox::Yes | QMessageBox::No);
         if (answer != QMessageBox::Yes) {
             event->ignore();
@@ -1331,8 +1332,8 @@ void Hub::set_network_enabled(bool enabled) {
         const QSignalBlocker blocker(network_action_);
         network_action_->setChecked(enabled);
     }
-    const QString message = enabled ? QStringLiteral("联网功能已开启")
-                                    : QStringLiteral("联网功能已关闭（检测/下载入口将拒绝）");
+    const QString message = enabled ? xrkit::shell::tr_zh("联网功能已开启")
+                                    : xrkit::shell::tr_zh("联网功能已关闭（检测/下载入口将拒绝）");
     if (status_label_ != nullptr) status_label_->setText(message);
     log_line(message);
 }
@@ -1381,12 +1382,12 @@ void Hub::render_plugin_slots() {    // ⑫12.1：注册表里的每一类槽位
             try {
                 return reinterpret_cast<QWidget*>(builder(parent));
             } catch (const std::exception& exc) {
-                log_line(QStringLiteral("插件页构建异常：%1（%2）—— 该页跳过")
+                log_line(xrkit::shell::tr_zh("插件页构建异常：%1（%2）—— 该页跳过")
                              .arg(QString::fromStdString(tool->plugin))
                              .arg(QString::fromUtf8(exc.what())));
                 return nullptr;
             } catch (...) {
-                log_line(QStringLiteral("插件页构建异常：%1（未知异常）—— 该页跳过")
+                log_line(xrkit::shell::tr_zh("插件页构建异常：%1（未知异常）—— 该页跳过")
                              .arg(QString::fromStdString(tool->plugin)));
                 return nullptr;
             }
@@ -1423,7 +1424,7 @@ void Hub::render_plugin_slots() {    // ⑫12.1：注册表里的每一类槽位
                                  registry_.invoke(plugin, label, handler);
                              });
             ++plugin_slots_rendered_;
-            log_line(QStringLiteral("插件槽位：%1 → %2（%3）")
+            log_line(xrkit::shell::tr_zh("插件槽位：%1 → %2（%3）")
                          .arg(QString::fromStdString(host))
                          .arg(QString::fromStdString(command->label))
                          .arg(QString::fromStdString(plugin)));
@@ -1452,7 +1453,7 @@ void Hub::render_plugin_slots() {    // ⑫12.1：注册表里的每一类槽位
                 combo->addItem(QString::fromStdString(choice));
             }
             ++plugin_slots_rendered_;
-            log_line(QStringLiteral("插件槽位：%1 → 下拉 %2（%3）")
+            log_line(xrkit::shell::tr_zh("插件槽位：%1 → 下拉 %2（%3）")
                          .arg(QString::fromStdString(host))
                          .arg(QString::fromStdString(option->label))
                          .arg(QString::fromStdString(option->plugin)));
@@ -1472,7 +1473,7 @@ void Hub::render_plugin_slots() {    // ⑫12.1：注册表里的每一类槽位
             }
             combo->addItem(QString::fromStdString(entry.value));
             ++plugin_slots_rendered_;
-            log_line(QStringLiteral("插件槽位：%1 → 下拉条目 %2（area=%3，%4）")
+            log_line(xrkit::shell::tr_zh("插件槽位：%1 → 下拉条目 %2（area=%3，%4）")
                          .arg(QString::fromStdString(host))
                          .arg(QString::fromStdString(entry.value))
                          .arg(area)
@@ -1510,7 +1511,7 @@ void Hub::render_plugin_slots() {    // ⑫12.1：注册表里的每一类槽位
             if (panel_threw) {
                 // 一票否决：抛在半途的 builder 可能已经往 container 里塞了半截控件
                 container->deleteLater();
-                log_line(QStringLiteral("插件面板「%1」（%2）构建异常：%3 —— 该面板跳过")
+                log_line(xrkit::shell::tr_zh("插件面板「%1」（%2）构建异常：%3 —— 该面板跳过")
                              .arg(QString::fromStdString(panel->title))
                              .arg(QString::fromStdString(panel->plugin))
                              .arg(QString::fromStdString(panel_exception)));
@@ -1524,7 +1525,7 @@ void Hub::render_plugin_slots() {    // ⑫12.1：注册表里的每一类槽位
             QLayout* placed = container->layout();
             if (built == nullptr && (placed == nullptr || placed->count() == 0)) {
                 container->deleteLater();
-                log_line(QStringLiteral("插件面板「%1」（%2）没造出控件，已跳过")
+                log_line(xrkit::shell::tr_zh("插件面板「%1」（%2）没造出控件，已跳过")
                              .arg(QString::fromStdString(panel->title))
                              .arg(QString::fromStdString(panel->plugin)));
                 continue;
@@ -1535,7 +1536,7 @@ void Hub::render_plugin_slots() {    // ⑫12.1：注册表里的每一类槽位
             if (page->body()->layout() == nullptr) new QVBoxLayout(page->body());
             page->body()->layout()->addWidget(widget);
             ++plugin_slots_rendered_;
-            log_line(QStringLiteral("插件槽位：%1 → 面板 %2（%3）")
+            log_line(xrkit::shell::tr_zh("插件槽位：%1 → 面板 %2（%3）")
                          .arg(QString::fromStdString(host))
                          .arg(QString::fromStdString(panel->title))
                          .arg(QString::fromStdString(panel->plugin)));
@@ -1549,7 +1550,7 @@ void Hub::render_plugin_slots() {    // ⑫12.1：注册表里的每一类槽位
         //   `page_owner(i)` 仍然只当"给人看的字"用（下面那行的括号里）。
         if (page_kind(i) == PageKind::Builtin) continue;
         ++plugin_slots_rendered_;
-        log_line(QStringLiteral("插件页：%1（%2）").arg(page_title(i)).arg(page_owner(i)));
+        log_line(xrkit::shell::tr_zh("插件页：%1（%2）").arg(page_title(i)).arg(page_owner(i)));
     }
     render_host_menu_items();
 }
@@ -1575,9 +1576,9 @@ void Hub::recover_plugin_updates() {
             (!item.was_enabled || !failed)
                 ? xrkit::core::plugin_update_commit(plan)
                 : xrkit::core::plugin_update_rollback(plan);
-        log_line(QStringLiteral("插件更新恢复：%1 ⇒ %2（%3）")
+        log_line(xrkit::shell::tr_zh("插件更新恢复：%1 ⇒ %2（%3）")
                      .arg(QString::fromStdString(item.key),
-                          failed ? QStringLiteral("回滚") : QStringLiteral("提交"),
+                          failed ? xrkit::shell::tr_zh("回滚") : xrkit::shell::tr_zh("提交"),
                           result.ok ? QStringLiteral("ok")
                                     : QString::fromStdString(result.error)));
     }
@@ -1612,7 +1613,7 @@ void Hub::render_host_menu_items() {
                              });
             plugin_host_actions_.append(action);
             ++plugin_slots_rendered_;
-            log_line(QStringLiteral("插件菜单：%1 → %2（%3）")
+            log_line(xrkit::shell::tr_zh("插件菜单：%1 → %2（%3）")
                          .arg(QString::fromUtf8(slot.location))
                          .arg(QString::fromStdString(label))
                          .arg(QString::fromStdString(plugin)));
@@ -1634,7 +1635,7 @@ void dump_plugin_files(const QString& dir) {
         const QFileInfo info(path);
         if (info.suffix().compare(QStringLiteral("py"), Qt::CaseInsensitive) != 0) continue;
         QFile f(path);
-        QString digest = QStringLiteral("(打不开)");
+        QString digest = xrkit::shell::tr_zh("(打不开)");
         if (f.open(QIODevice::ReadOnly)) {
             QCryptographicHash hash(QCryptographicHash::Sha256);
             hash.addData(&f);
@@ -1681,19 +1682,19 @@ void Hub::load_plugins(const QString& plugin_dir) {
     // ★★ C-12（第三方只读审计 2026-10-18）：这里原来有个 `int loaded = 0;` —— **死变量**
     //   （下面一行 `++loaded` 之后再也不读）。删掉，别让读者以为它在计什么数。
     for (const xrkit::plugin::RegistrationError& error : plugin_errors_) {
-        log_line(QStringLiteral("插件问题：%1 —— %2")
+        log_line(xrkit::shell::tr_zh("插件问题：%1 —— %2")
                      .arg(QString::fromStdString(error.plugin))
                      .arg(QString::fromStdString(error.message)));
     }
     if (plugin_errors_.empty()) {
-        plugin_notice_ = QStringLiteral("插件：无（目录 %1）").arg(QDir::toNativeSeparators(dir));
+        plugin_notice_ = xrkit::shell::tr_zh("插件：无（目录 %1）").arg(QDir::toNativeSeparators(dir));
     } else {
-        plugin_notice_ = QStringLiteral("插件：%1 个问题（详见日志）").arg(plugin_errors_.size());
+        plugin_notice_ = xrkit::shell::tr_zh("插件：%1 个问题（详见日志）").arg(plugin_errors_.size());
     }
     log_line(plugin_notice_);
     if (status_label_ != nullptr && !plugin_errors_.empty()) status_label_->setText(plugin_notice_);
     if (!disabled_plugins_.empty()) {
-        log_line(QStringLiteral("插件：%1 个因缺前置被自动禁用（详见插件管理器）")
+        log_line(xrkit::shell::tr_zh("插件：%1 个因缺前置被自动禁用（详见插件管理器）")
                      .arg(disabled_plugins_.size()));
     }
     // ★ 2026-11-10：插件加载失败/被自动禁用 ⇒ 唤起**独立进程**插件管理器；
@@ -1739,18 +1740,18 @@ bool Hub::launch_plugin_manager(const QString& reason, bool force) {
     if (!qEnvironmentVariableIsEmpty("XRKIT_NO_PLUGIN_MANAGER")) return false;
     const QString exe = plugin_manager_path();
     if (exe.isEmpty()) {
-        log_line(QStringLiteral("插件管理器程序不存在（xrkit_plugin_manager.exe）—— 回退内置对话框"));
+        log_line(xrkit::shell::tr_zh("插件管理器程序不存在（xrkit_plugin_manager.exe）—— 回退内置对话框"));
         return false;
     }
     QStringList args;
     if (!plugin_dir_.isEmpty()) args << QStringLiteral("--plugins") << plugin_dir_;
     if (!reason.isEmpty()) args << QStringLiteral("--reason") << reason;
     if (!QProcess::startDetached(exe, args)) {
-        log_line(QStringLiteral("插件管理器启动失败：%1").arg(QDir::toNativeSeparators(exe)));
+        log_line(xrkit::shell::tr_zh("插件管理器启动失败：%1").arg(QDir::toNativeSeparators(exe)));
         return false;
     }
     plugin_manager_launched_ = true;
-    log_line(QStringLiteral("已打开独立插件管理器：%1%2")
+    log_line(xrkit::shell::tr_zh("已打开独立插件管理器：%1%2")
                  .arg(QDir::toNativeSeparators(exe),
                       reason.isEmpty() ? QString()
                                        : QStringLiteral("（%1）").arg(reason)));
@@ -1762,20 +1763,20 @@ bool Hub::launch_plugin_manager(const QString& reason, bool force) {
 //   用 QGroupBox + 自动换行 QLabel；条目多时对话框长高，不滚动）。
 void Hub::show_plugin_manager() {
     QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("插件管理器"));
+    dlg.setWindowTitle(xrkit::shell::tr_zh("插件管理器"));
     dlg.setModal(true);
     auto* layout = new QVBoxLayout(&dlg);
     if (disabled_plugins_.empty()) {
         // ★ 2026-11-09：菜单入口常驻 ⇒ 没有禁用项时也要有内容（不能点了没反应）。
         auto* idle = new QLabel(
-            QStringLiteral("本次启动没有被自动禁用的插件。\n已加载 Python 插件：%1 个")
+            xrkit::shell::tr_zh("本次启动没有被自动禁用的插件。\n已加载 Python 插件：%1 个")
                 .arg(static_cast<int>(xrkit::plugin::loaded_python_plugin_count())),
             &dlg);
         idle->setWordWrap(true);
         layout->addWidget(idle);
     } else {
         auto* head = new QLabel(
-            QStringLiteral("以下插件因缺少前置已自动禁用（本次启动不会加载）："), &dlg);
+            xrkit::shell::tr_zh("以下插件因缺少前置已自动禁用（本次启动不会加载）："), &dlg);
         head->setWordWrap(true);
         layout->addWidget(head);
     }
@@ -1786,7 +1787,7 @@ void Hub::show_plugin_manager() {
         auto* box = new QGroupBox(title, &dlg);
         auto* box_layout = new QVBoxLayout(box);
         auto* meta = new QLabel(
-            QStringLiteral("id：%1　版本：%2　文件：%3")
+            xrkit::shell::tr_zh("id：%1　版本：%2　文件：%3")
                 .arg(QString::fromStdString(info.id),
                      QString::fromStdString(info.version),
                      QString::fromStdString(info.owner)),
@@ -1795,7 +1796,7 @@ void Hub::show_plugin_manager() {
         box_layout->addWidget(meta);
         QStringList lines;
         for (const xrkit::plugin::PluginMissingDep& miss : info.missing) {
-            lines << QStringLiteral("缺少前置：<b>%1</b>（要求 %2）—— %3")
+            lines << xrkit::shell::tr_zh("缺少前置：<b>%1</b>（要求 %2）—— %3")
                          .arg(QString::fromStdString(miss.id),
                               QString::fromStdString(miss.range),
                               QString::fromStdString(miss.detail));
@@ -1806,7 +1807,7 @@ void Hub::show_plugin_manager() {
         box_layout->addWidget(missing);
         if (!info.repo.empty()) {
             auto* repo = new QLabel(
-                QStringLiteral("来源：<a href=\"%1\">%1</a>")
+                xrkit::shell::tr_zh("来源：<a href=\"%1\">%1</a>")
                     .arg(QString::fromStdString(info.repo)),
                 box);
             repo->setTextFormat(Qt::RichText);

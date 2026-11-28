@@ -14,6 +14,7 @@
 //   · 弹出式对话框（ask_*）会**阻塞**：只有用户点了才会走到（自检不走这条路径）。
 
 #include "plugin_ui.h"
+#include "i18n.h"
 
 #include "drop_filter.h"
 #include "drop_zone.h"
@@ -1053,7 +1054,7 @@ const plug::UiFacade kQtFacade = {
     /* task_cancel */
     [](plug::UiHandle panel) {
         if (TaskShell* shell = task_of(panel)) {
-            shell->request_cancel(QStringLiteral("插件请求取消"));
+            shell->request_cancel(xrkit::shell::tr_zh("插件请求取消"));
         }
     },
     /* task_cancel_requested */
@@ -1497,8 +1498,8 @@ bool ask_network_permission_qt(const QPointer<QWidget>& anchor, const std::strin
     const auto show = [anchor, owner, url]() -> bool {
         QMessageBox box(anchor.data());
         box.setIcon(QMessageBox::Question);
-        box.setWindowTitle(QStringLiteral("插件请求联网"));
-        box.setText(QStringLiteral("插件「%1」请求访问网络：")
+        box.setWindowTitle(xrkit::shell::tr_zh("插件请求联网"));
+        box.setText(xrkit::shell::tr_zh("插件「%1」请求访问网络：")
                         .arg(QString::fromStdString(owner)));
         box.setInformativeText(
             QString::fromStdString(url) +
@@ -1506,8 +1507,8 @@ bool ask_network_permission_qt(const QPointer<QWidget>& anchor, const std::strin
                            "（同一站点 10 分钟内不再询问）"));
         box.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
         box.setDefaultButton(QMessageBox::No);
-        if (auto* yes = box.button(QMessageBox::Yes)) yes->setText(QStringLiteral("允许"));
-        if (auto* no = box.button(QMessageBox::No)) no->setText(QStringLiteral("拒绝"));
+        if (auto* yes = box.button(QMessageBox::Yes)) yes->setText(xrkit::shell::tr_zh("允许"));
+        if (auto* no = box.button(QMessageBox::No)) no->setText(xrkit::shell::tr_zh("拒绝"));
         QTimer::singleShot(60000, &box, [&box]() { box.done(QMessageBox::No); });
         return box.exec() == QMessageBox::Yes;
     };

@@ -6,6 +6,7 @@
 //   ③ 浏览起点用共用的 `resolve_dialog_start` / `font_dialog_start`（原来在页面里也是走它）。
 
 #include "font_picker.h"
+#include "i18n.h"
 
 #include "dialog_start.h"
 #include "theme.h"
@@ -169,7 +170,7 @@ QPixmap font_preview_pixmap(const QString& font_path, const QString& line1,
 
 QString font_preview_line(const QString& font_path, int which) {
     // 1.x `:570`：两行样本（第二行带西里尔与数字）
-    QString line = which == 0 ? QStringLiteral("汉化测试你好ABC") : QStringLiteral("Привет 世界 123");
+    QString line = which == 0 ? xrkit::shell::tr_zh("汉化测试你好ABC") : xrkit::shell::tr_zh("Привет 世界 123");
     // 用户口径 2026-09-14：「日语的，标明是日语字体，然后那些缺简体的就上繁体」——
     // 预览里直接把缺的简体字换成繁体字形（否则那几格是空白，用户看到的还是"缺字"）。
     const efont::CjkFontCheck& check = font_check_of(font_path);
@@ -242,7 +243,7 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
                           std::function<void(const QString&)> on_problem) {
     auto* dialog = new QDialog(parent);
     dialog->setObjectName(QStringLiteral("font_picker"));
-    dialog->setWindowTitle(QStringLiteral("选择字体文件"));
+    dialog->setWindowTitle(xrkit::shell::tr_zh("选择字体文件"));
     dialog->resize(xrkit::core::px(900), xrkit::core::px(520));
     auto* outer = new QVBoxLayout(dialog);
 
@@ -264,7 +265,7 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
 
     // 过滤框（1.x `:293-296`：`kw_var.trace_add("write", refresh)`）
     auto* bar = new QHBoxLayout;
-    bar->addWidget(new QLabel(QStringLiteral("过滤："), dialog), 0);
+    bar->addWidget(new QLabel(xrkit::shell::tr_zh("过滤："), dialog), 0);
     auto* keyword = new QLineEdit(dialog);
     keyword->setObjectName(QStringLiteral("font_picker_filter"));
     bar->addWidget(keyword, 1);
@@ -276,7 +277,7 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
     body->addWidget(list, 3);
     auto* right = new QVBoxLayout;
     auto* zoom_row = new QHBoxLayout;
-    zoom_row->addWidget(new QLabel(QStringLiteral("预览"), dialog), 0);
+    zoom_row->addWidget(new QLabel(xrkit::shell::tr_zh("预览"), dialog), 0);
     zoom_row->addStretch(1);
     auto* zoom_out = new QPushButton(QStringLiteral("−"), dialog);
     zoom_out->setObjectName(QStringLiteral("font_picker_zoom_out"));
@@ -311,7 +312,7 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
     // 图例（1.x `:301-302`：只留"符号 = 什么意思"，实现细节不摆在界面上）
     auto* legend = new QLabel(dialog);
     legend->setObjectName(QStringLiteral("font_picker_legend"));
-    legend->setText(QStringLiteral("图例: %1 · %2 · %3")
+    legend->setText(xrkit::shell::tr_zh("图例: %1 · %2 · %3")
                         .arg(utf8(efont::cjk_state_mark(efont::CjkFontState::Ok)),
                              utf8(efont::cjk_state_mark(efont::CjkFontState::Missing)),
                              utf8(efont::cjk_state_mark(efont::CjkFontState::Unknown))));
@@ -319,11 +320,11 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
     outer->addWidget(legend, 0);
 
     auto* buttons = new QHBoxLayout;
-    auto* pick = new QPushButton(QStringLiteral("选择"), dialog);
+    auto* pick = new QPushButton(xrkit::shell::tr_zh("选择"), dialog);
     pick->setObjectName(QStringLiteral("font_picker_pick"));
-    auto* browse_other = new QPushButton(QStringLiteral("浏览其他目录…"), dialog);
+    auto* browse_other = new QPushButton(xrkit::shell::tr_zh("浏览其他目录…"), dialog);
     browse_other->setObjectName(QStringLiteral("font_picker_browse"));
-    auto* cancel = new QPushButton(QStringLiteral("取消"), dialog);
+    auto* cancel = new QPushButton(xrkit::shell::tr_zh("取消"), dialog);
     cancel->setObjectName(QStringLiteral("font_picker_cancel"));
     buttons->addWidget(pick, 0);
     buttons->addWidget(browse_other, 0);
@@ -364,7 +365,7 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
         // 字体名 + 四态标记（**与列表标记同源**：`font_mark_of` → 引擎 `cjk_state_mark`）
         int font_id = preview_font_id(path);
         QStringList families;
-        QString family = QStringLiteral("(解析失败)");
+        QString family = xrkit::shell::tr_zh("(解析失败)");
         if (font_id >= 0) {
             families = QFontDatabase::applicationFontFamilies(font_id);
             if (!families.isEmpty()) family = families.first();
@@ -385,7 +386,7 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
             for (const auto& [from, to] : check.fallbacks) {
                 pairs << QStringLiteral("%1→%2").arg(utf8(from), utf8(to));
             }
-            text += QStringLiteral("（缺 %1 个简体字，预览已用繁体字形显示：%2）")
+            text += xrkit::shell::tr_zh("（缺 %1 个简体字，预览已用繁体字形显示：%2）")
                         .arg(check.fallbacks.size())
                         .arg(pairs.join(QStringLiteral("、")));
         }
@@ -432,8 +433,8 @@ QDialog* make_font_picker(QWidget* parent, const QString& current,
                                                             current, QStringList());
                          const QString start = resolve_dialog_start(spec);
                          const QString picked = QFileDialog::getOpenFileName(
-                             dialog, QStringLiteral("选择字体文件"), start,
-                             QStringLiteral("字体文件 (*.ttf *.ttc *.otf)"));
+                             dialog, xrkit::shell::tr_zh("选择字体文件"), start,
+                             xrkit::shell::tr_zh("字体文件 (*.ttf *.ttc *.otf)"));
                          accept_path(picked);   // 「浏览其他目录」也是用户的选择
                      });
     QObject::connect(cancel, &QPushButton::clicked, dialog, [dialog] { dialog->reject(); });

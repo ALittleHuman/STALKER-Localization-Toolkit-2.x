@@ -1,4 +1,5 @@
 #include "xml_page.h"
+#include "../i18n.h"
 
 #include "xrkit/core/theme.h"
 #include "xrkit/core/xlsx.h"
@@ -72,17 +73,17 @@ const char* kEncodings[] = {etxt::kUtf8,    etxt::kWindows1251, etxt::kWindows12
 }  // namespace
 
 XmlPage::XmlPage(QWidget* parent)
-    : PageBase(QStringLiteral("xml"), QStringLiteral("文本工具"), parent) {
+    : PageBase(QStringLiteral("xml"), xrkit::shell::tr_zh("文本工具"), parent) {
     // 文本页的内容（结果表/详情）是弹性的：视口按窗口高度铺满，避免卡片在下方提前结束
     // 后留下一大块页面底色（用户 2026-11-11 截图）。
     viewport()->set_fit(ScrollViewport::Fit::Viewport);
     // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内说明整段删（六页统一）
     dir_a_edit_ = new QLineEdit;
     dir_a_edit_->setObjectName(QStringLiteral("xml_dir_a"));
-    dir_a_edit_->setPlaceholderText(QStringLiteral("文件夹 A"));
+    dir_a_edit_->setPlaceholderText(xrkit::shell::tr_zh("文件夹 A"));
     dir_b_edit_ = new QLineEdit;
     dir_b_edit_->setObjectName(QStringLiteral("xml_dir_b"));
-    dir_b_edit_->setPlaceholderText(QStringLiteral("文件夹 B"));
+    dir_b_edit_->setPlaceholderText(xrkit::shell::tr_zh("文件夹 B"));
 
     // ★ 2026-10-04 用户第 2 条（"目录定向"）：判据只有成员函数那一份（自检断言同一份）
     const auto dir_a_judge = [this]() { return dir_a_dialog_start(); };
@@ -100,22 +101,22 @@ XmlPage::XmlPage(QWidget* parent)
         enc->addItem(QStringLiteral("auto"), QStringLiteral("auto"));
         for (const char* name : kEncodings) enc->addItem(utf8(name), utf8(name));
         layout->addWidget(enc, 0);
-        auto* browse = new QPushButton(QStringLiteral("选择…"));
+        auto* browse = new QPushButton(xrkit::shell::tr_zh("选择…"));
         layout->addWidget(browse, 0);
         QObject::connect(browse, &QPushButton::clicked, this, [this, edit, judge] {
             // ★ 2026-10-04 用户第 2 条：①上次的选择 → ②唯一输入目录 → ③工具自身所在文件夹
             const QString picked = QFileDialog::getExistingDirectory(
-                this, QStringLiteral("选择目录"),
+                this, xrkit::shell::tr_zh("选择目录"),
                 resolve_dialog_start(judge ? judge() : DialogStart{}));
             if (!picked.isEmpty()) edit->setText(QDir::toNativeSeparators(picked));
         });
         drop_zones_.attach_row(container, this);
         return container;
     };
-    body_layout()->addWidget(dir_row(QStringLiteral("文件夹 A："), dir_a_edit_, enc_a_combo_,
+    body_layout()->addWidget(dir_row(xrkit::shell::tr_zh("文件夹 A："), dir_a_edit_, enc_a_combo_,
                                      dir_a_judge));
     // 文件夹 B ← 文件夹 A（唯一才用；A 空/多元 ⇒ 工具目录）
-    body_layout()->addWidget(dir_row(QStringLiteral("文件夹 B："), dir_b_edit_, enc_b_combo_,
+    body_layout()->addWidget(dir_row(xrkit::shell::tr_zh("文件夹 B："), dir_b_edit_, enc_b_combo_,
                                      dir_b_judge));
 
     mode_combo_ = new QComboBox;
@@ -124,10 +125,10 @@ XmlPage::XmlPage(QWidget* parent)
     filter_combo_ = new QComboBox;
     filter_combo_->setObjectName(QStringLiteral("xml_filter"));
     auto* opt_row = new QHBoxLayout;
-    opt_row->addWidget(new QLabel(QStringLiteral("比较模式：")), 0);
+    opt_row->addWidget(new QLabel(xrkit::shell::tr_zh("比较模式：")), 0);
     opt_row->addWidget(mode_combo_, 0);
     opt_row->addSpacing(xrkit::core::px(12));
-    filter_label_ = new QLabel(QStringLiteral("筛选："));
+    filter_label_ = new QLabel(xrkit::shell::tr_zh("筛选："));
     opt_row->addWidget(filter_label_, 0);
     opt_row->addWidget(filter_combo_, 0);
     opt_row->addStretch(1);
@@ -172,15 +173,15 @@ XmlPage::XmlPage(QWidget* parent)
         detail_toggle->setAutoRaise(true);
         detail_toggle->setCheckable(true);
         detail_toggle->setChecked(true);
-        detail_toggle->setText(QStringLiteral("▾ 详情"));
+        detail_toggle->setText(xrkit::shell::tr_zh("▾ 详情"));
         QObject::connect(detail_toggle, &QToolButton::toggled, this,
                          [this, detail_toggle](bool on) {
-                             detail_toggle->setText(on ? QStringLiteral("▾ 详情")
-                                                       : QStringLiteral("▸ 详情"));
+                             detail_toggle->setText(on ? xrkit::shell::tr_zh("▾ 详情")
+                                                       : xrkit::shell::tr_zh("▸ 详情"));
                              update_detail_sections();
                          });
         head_row->addWidget(detail_toggle, 0);
-        auto* collapse = new QPushButton(QStringLiteral("收起明细"));
+        auto* collapse = new QPushButton(xrkit::shell::tr_zh("收起明细"));
         collapse->setObjectName(QStringLiteral("xml_detail_collapse"));
         QObject::connect(collapse, &QPushButton::clicked, this, [this] {
             if (result_tree_ != nullptr) {
@@ -203,10 +204,10 @@ XmlPage::XmlPage(QWidget* parent)
         id_toggle->setAutoRaise(true);
         id_toggle->setCheckable(true);
         id_toggle->setChecked(true);
-        id_toggle->setText(QStringLiteral("▾ 差异 id（逐条复制）"));
+        id_toggle->setText(xrkit::shell::tr_zh("▾ 差异 id（逐条复制）"));
         QObject::connect(id_toggle, &QToolButton::toggled, this, [this, id_toggle](bool on) {
-            id_toggle->setText(on ? QStringLiteral("▾ 差异 id（逐条复制）")
-                                  : QStringLiteral("▸ 差异 id（逐条复制）"));
+            id_toggle->setText(on ? xrkit::shell::tr_zh("▾ 差异 id（逐条复制）")
+                                  : xrkit::shell::tr_zh("▸ 差异 id（逐条复制）"));
             update_detail_sections();
         });
         detail_layout->addWidget(id_toggle, 0, Qt::AlignLeft);
@@ -246,7 +247,7 @@ XmlPage::XmlPage(QWidget* parent)
     footer_layout()->addWidget(stats_label_, 0);
 
     task_ = new TaskShell(this);
-    task_->set_idle_status(QStringLiteral("就绪"));
+    task_->set_idle_status(xrkit::shell::tr_zh("就绪"));
     footer_layout()->addWidget(task_->panel(), 0);
     task_->panel()->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     add_action_status(task_->status_label());
@@ -269,7 +270,7 @@ XmlPage::XmlPage(QWidget* parent)
     // ★★ 2026-10-26：**mod 覆盖树对齐**。B 侧是 `<mod>/configs/...` 而 A 侧是 `configs/...` 时，
     //   原样配对是零交集（实测 186 行全判"仅一侧"）。默认开：两侧都从根开始时 key 完全相同，
     //   对普通目录**行为不变**；只有存在外层 mod 目录时才真正起作用。
-    align_check_ = new QCheckBox(QStringLiteral("mod 目录对齐"));
+    align_check_ = new QCheckBox(xrkit::shell::tr_zh("mod 目录对齐"));
     align_check_->setObjectName(QStringLiteral("xml_align_mod"));
     align_check_->setChecked(true);
     align_check_->setToolTip(QStringLiteral(
@@ -281,14 +282,14 @@ XmlPage::XmlPage(QWidget* parent)
     // ── ★★ 2026-10-27：第三模式「提取文本」的选项行（默认隐藏；一侧为空时出现）──────
     // ★ 2026-11-10（用户）：不再写任何说明文字；复选框直接放在模式行下面、结果区上面。
     auto* checks_row = new QHBoxLayout;
-    texts_check_ = new QCheckBox(QStringLiteral("复制语言包（文本 XML/字体/localization）"));
+    texts_check_ = new QCheckBox(xrkit::shell::tr_zh("复制语言包（文本 XML/字体/localization）"));
     texts_check_->setObjectName(QStringLiteral("xml_extract_texts"));
     texts_check_->setChecked(true);
-    texts_check_->setToolTip(QStringLiteral("勾选=连同语言包一起复制；不勾=只抽脚本/配置里的硬编码文本"));
-    rewrite_check_ = new QCheckBox(QStringLiteral("改写脚本/配置（写入输出）"));
+    texts_check_->setToolTip(xrkit::shell::tr_zh("勾选=连同语言包一起复制；不勾=只抽脚本/配置里的硬编码文本"));
+    rewrite_check_ = new QCheckBox(xrkit::shell::tr_zh("改写脚本/配置（写入输出）"));
     rewrite_check_->setObjectName(QStringLiteral("xml_extract_rewritten"));
     rewrite_check_->setChecked(true);
-    rewrite_check_->setToolTip(QStringLiteral("勾选=改写后的脚本/配置写进输出；不勾=只出文本表"));
+    rewrite_check_->setToolTip(xrkit::shell::tr_zh("勾选=改写后的脚本/配置写进输出；不勾=只出文本表"));
     // 复选框在上、输出目录固定为空的一侧：先选“做什么”，完整树就是输出。
     checks_row->addWidget(texts_check_, 0);
     checks_row->addWidget(rewrite_check_, 0);
@@ -348,19 +349,19 @@ XmlPage::XmlPage(QWidget* parent)
                          if (QDialog* dialog = make_detail_dialog(index, this)) dialog->show();
                      });
 
-    extract_button_ = add_action(QStringLiteral("提取文本"));
+    extract_button_ = add_action(xrkit::shell::tr_zh("提取文本"));
     extract_button_->setObjectName(QStringLiteral("xml_extract"));
     extract_button_->setVisible(false);
     QObject::connect(extract_button_, &QPushButton::clicked, this, [this] { run_extract(); });
 
-    auto* start = add_action(QStringLiteral("开始比较"));
+    auto* start = add_action(xrkit::shell::tr_zh("开始比较"));
     start->setObjectName(QStringLiteral("xml_start"));
     start_button_ = start;
     QObject::connect(start, &QPushButton::clicked, this, [this] {
         const QString a = dir_a_edit_->text().trimmed();
         const QString b = dir_b_edit_->text().trimmed();
         if (a.isEmpty() || b.isEmpty()) {
-            status_->setText(QStringLiteral("请先选两个文件夹"));
+            status_->setText(xrkit::shell::tr_zh("请先选两个文件夹"));
             return;
         }
         const QString enc_a = enc_a_combo_->currentData().toString();
@@ -376,7 +377,7 @@ XmlPage::XmlPage(QWidget* parent)
         //   管的是自检直接调 `compare_dirs` 的情形）；收尾在 `apply_finish` 恢复。
         set_compare_controls_enabled(false);
         // 任务壳拒绝（已有任务在跑）⇒ 把刚禁用的控件马上放回去（否则页面会僵住）
-        const bool started = task_->run(QStringLiteral("文本工具"), [this, a, b, enc_a, enc_b](
+        const bool started = task_->run(xrkit::shell::tr_zh("文本工具"), [this, a, b, enc_a, enc_b](
                                                   const ProgressSink& progress,
                                                   const MessageSink& message) {
             progress(0);
@@ -388,13 +389,13 @@ XmlPage::XmlPage(QWidget* parent)
             progress(100);
             if (last_compare_cancelled_) {
                 // ①零静默：说清"停在哪、已经比了多少"（绝不报成"比较完成"）
-                message(QStringLiteral("已取消：在文件边界停下（已比较 %1 / 共 %2 个文件）")
+                message(xrkit::shell::tr_zh("已取消：在文件边界停下（已比较 %1 / 共 %2 个文件）")
                             .arg(count)
                             .arg(last_compare_total_)
                             .toUtf8().toStdString());
                 return;
             }
-            message(QStringLiteral("比较完成：%1 个文件（当前筛选后 %2 行）")
+            message(xrkit::shell::tr_zh("比较完成：%1 个文件（当前筛选后 %2 行）")
                         .arg(count)
                         .arg(visible_count())
                         .toUtf8().toStdString());
@@ -403,10 +404,10 @@ XmlPage::XmlPage(QWidget* parent)
     });
     // ★ 2026-10-06（⑤）：1.x `xml_compare_app.py:391-392` 的「清除」——
     //   2.x 原来全文件 `清除` 零命中（这条用户可达功能整体消失）。
-    clear_button_ = add_action(QStringLiteral("清除"));
+    clear_button_ = add_action(xrkit::shell::tr_zh("清除"));
     clear_button_->setObjectName(QStringLiteral("xml_clear"));
     QObject::connect(clear_button_, &QPushButton::clicked, this, [this] { clear_dirs(); });
-    auto* export_button = add_action(QStringLiteral("导出 Excel"));
+    auto* export_button = add_action(xrkit::shell::tr_zh("导出 Excel"));
     export_button_ = export_button;   // ★ P17-6：成员化 —— 比较期间要跟模式/筛选/清除一起禁用
     export_button->setObjectName(QStringLiteral("xml_export"));
     QObject::connect(export_button, &QPushButton::clicked, this, [this] {
@@ -414,8 +415,8 @@ XmlPage::XmlPage(QWidget* parent)
         //   （明细/汇总/统计三张表；范围＝全部比较结果）。CSV 那条仍留在
         //   `export_csv()`（CLI/对拍用），只是不再是按钮的落点。
         const QString path = QFileDialog::getSaveFileName(
-            this, QStringLiteral("导出 Excel"), QStringLiteral("xml_compare.xlsx"),
-            QStringLiteral("Excel 工作簿 (*.xlsx)"));
+            this, xrkit::shell::tr_zh("导出 Excel"), QStringLiteral("xml_compare.xlsx"),
+            xrkit::shell::tr_zh("Excel 工作簿 (*.xlsx)"));
         if (path.isEmpty()) return;
         const QString done = export_xlsx(
                                    path, QDateTime::currentDateTime().toString(
@@ -441,7 +442,7 @@ QString XmlPage::stats_text() const {
     uint64_t only_b = 0;
     count_kinds(&consistent, &inconsistent, &only_a, &only_b);
     // 1.x 的空格口径照抄：`一致 N  |  不一致 N  |  仅 {名} N  |  仅 {名} N`
-    return QStringLiteral("一致 %1  |  不一致 %2  |  仅 %3 %4  |  仅 %5 %6")
+    return xrkit::shell::tr_zh("一致 %1  |  不一致 %2  |  仅 %3 %4  |  仅 %5 %6")
         .arg(static_cast<qulonglong>(consistent))
         .arg(static_cast<qulonglong>(inconsistent))
         .arg(utf8(name_a()))
@@ -458,7 +459,7 @@ void XmlPage::refresh_stats_label() {
     //   页面上一个字都没有。现在把引擎带回来的 `report.errors` 贴在统计行下面
     //   （零静默：说清是哪一侧、什么错，并明确"结论不可信"）。
     if (!last_scan_errors_.isEmpty()) {
-        text += QStringLiteral("\n⚠ 目录遍历出错 %1 处 ⇒ **本次比较结论不可信**：%2")
+        text += xrkit::shell::tr_zh("\n⚠ 目录遍历出错 %1 处 ⇒ **本次比较结论不可信**：%2")
                     .arg(last_scan_errors_.size())
                     .arg(last_scan_errors_.first());
     }
@@ -488,13 +489,13 @@ void XmlPage::fill_mode_combo() {
     if (registry_ != nullptr) {
         // ⑫12.1/12.5：内置与插件**同一张表**，按 order 升序 + 注册顺序（内置同名优先）
         for (const plugin::CompareModeReg* mode : registry_->compare_modes_for()) {
-            mode_combo_->addItem(utf8(mode->spec.name), utf8(mode->spec.key));
+            mode_combo_->addItem(xrkit::shell::tr_zh(mode->spec.name.c_str()), utf8(mode->spec.key));
         }
     }
     if (mode_combo_->count() == 0) {
         // 没有注册表（或表是空的）⇒ 退回内置声明表：页面照样能用
         for (const exml::XmlModeSpec& spec : exml::builtin_modes()) {
-            mode_combo_->addItem(utf8(spec.name), utf8(spec.key));
+            mode_combo_->addItem(xrkit::shell::tr_zh(spec.name.c_str()), utf8(spec.key));
         }
     }
     const int index = mode_combo_->findData(keep);
@@ -556,16 +557,17 @@ const plugin::CompareModeReg* XmlPage::mode_reg() const {
 
 void XmlPage::rebuild_filter_combo() {
     const exml::XmlModeSpec* spec = mode();
-    const QString keep = filter_combo_->currentText();
+    const QString keep = filter_combo_->currentData().toString();
     filter_combo_->blockSignals(true);
     filter_combo_->clear();
     if (spec != nullptr) {
         for (const exml::XmlFilter& filter : spec->filters) {
-            filter_combo_->addItem(utf8(filter.label), utf8(filter.label));
+            filter_combo_->addItem(xrkit::shell::tr_zh(filter.label.c_str()),
+                                   utf8(filter.label));
         }
     }
-    // 旧筛选名在新模式下仍然有效就保留，否则回到第 0 项（照 1.x 的做法）
-    const int index = filter_combo_->findText(keep);
+    // 旧筛选 key 在新模式下仍然有效就保留，否则回到第 0 项（照 1.x 的做法）
+    const int index = filter_combo_->findData(keep);
     filter_combo_->setCurrentIndex(index >= 0 ? index : 0);
     filter_combo_->blockSignals(false);
 }
@@ -696,7 +698,7 @@ bool XmlPage::compare_controls_enabled() const {
 
 bool XmlPage::row_matches(const Row& row) const {
     const exml::XmlModeSpec* spec = mode();
-    const std::string label = filter_combo_->currentText().toUtf8().toStdString();
+    const std::string label = filter_combo_->currentData().toString().toUtf8().toStdString();
     if (spec == nullptr) return true;
     for (const exml::XmlFilter& filter : spec->filters) {
         if (filter.label != label) continue;
@@ -721,10 +723,10 @@ bool XmlPage::row_matches(const Row& row) const {
 
 // 一行"状态"列的唯一实现：结果表 / CSV / 详情头都读它（表头与明细不可能对不上）
 QString XmlPage::row_status_text(const Row& row) const {
-    if (row.kind == "same") return QStringLiteral("一致");
-    if (row.kind == "only_a") return QStringLiteral("仅 %1").arg(utf8(name_a()));
-    if (row.kind == "only_b") return QStringLiteral("仅 %1").arg(utf8(name_b()));
-    return QStringLiteral("不一致");
+    if (row.kind == "same") return xrkit::shell::tr_zh("一致");
+    if (row.kind == "only_a") return xrkit::shell::tr_zh("仅 %1").arg(utf8(name_a()));
+    if (row.kind == "only_b") return xrkit::shell::tr_zh("仅 %1").arg(utf8(name_b()));
+    return xrkit::shell::tr_zh("不一致");
 }
 
 // 一列一格的**唯一实现**（1.x `_cell_text`；结果表与 CSV 共用 ⇒ 不可能分叉）
@@ -734,7 +736,7 @@ std::string XmlPage::cell_text(const Row& row, const exml::XmlColumn& column) co
     if (column.key == "status") {
         QString text = status;
         if (row.result.untrusted_a || row.result.untrusted_b) {
-            text += QStringLiteral("（不可信）");
+            text += xrkit::shell::tr_zh("（不可信）");
         }
         return text.toUtf8().toStdString();
     }
@@ -757,7 +759,7 @@ void XmlPage::apply_result_columns() {
     std::string signature;
     if (spec != nullptr) {
         for (const exml::XmlColumn& column : spec->columns) {
-            tree_spec.headers << utf8(column.heading);
+            tree_spec.headers << xrkit::shell::tr_zh(column.heading.c_str());
             tree_spec.widths << column.width;
             signature += column.key + "|";
         }
@@ -799,7 +801,7 @@ void XmlPage::refresh_rows() {
         // 行文本（`\t` 拼接）保留下来：它是"这一行会显示成什么"的**单一口径**，
         // 自检与日志都读它；表格则按模式声明的列画（两者同源于 cell_text）。
         QString text = row_status_text(row);
-        if (row.result.untrusted_a || row.result.untrusted_b) text += QStringLiteral("(不可信)");
+        if (row.result.untrusted_a || row.result.untrusted_b) text += xrkit::shell::tr_zh("(不可信)");
         text += QStringLiteral("\t") + utf8(row.result.rel) + QStringLiteral("\t") +
                 utf8(exml::inline_detail(row.result, name_a(), name_b()));
         row_texts_.push_back(text);
@@ -855,7 +857,7 @@ QString XmlPage::detail_head_for(int index) const {
     if (row.kind == "only_a" || row.kind == "only_b") {
         return QStringLiteral("[ %1 ] %2").arg(rel, status);
     }
-    return QStringLiteral("[ %1 ] ✗ %2  ID 数: A=%3 B=%4")
+    return xrkit::shell::tr_zh("[ %1 ] ✗ %2  ID 数: A=%3 B=%4")
         .arg(rel, status)
         .arg(static_cast<qulonglong>(row.result.ids_a))
         .arg(static_cast<qulonglong>(row.result.ids_b));
@@ -873,16 +875,16 @@ std::vector<XmlDetailId> XmlPage::detail_ids_for(int index) const {
         out.push_back(XmlDetailId{category, utf8(value)});
     };
     for (const std::string& id : row.result.only_a) {
-        add(QStringLiteral("仅 %1").arg(utf8(name_a())), id);
+        add(xrkit::shell::tr_zh("仅 %1").arg(utf8(name_a())), id);
     }
     for (const std::string& id : row.result.only_b) {
-        add(QStringLiteral("仅 %1").arg(utf8(name_b())), id);
+        add(xrkit::shell::tr_zh("仅 %1").arg(utf8(name_b())), id);
     }
     for (const auto& item : row.result.text_diff) {
-        add(QStringLiteral("文本不同"), item[0]);
+        add(xrkit::shell::tr_zh("文本不同"), item[0]);
     }
     for (const auto& item : row.result.count_diff) {
-        add(QStringLiteral("次数不同"), item[0]);
+        add(xrkit::shell::tr_zh("次数不同"), item[0]);
     }
     return out;
 }
@@ -894,8 +896,8 @@ void XmlPage::fill_id_tree(QTreeWidget* tree, const std::vector<XmlDetailId>& id
         // 列策略与结果表**同一份装配件**（一律 Interactive ＋ 末列吃剩余宽度）。
         // 「复制id」按钮放在**第 0 列**（窄列），中间的 id 文本吃剩余宽度 —— 按钮在行首，
         // 不会像"按钮列在末列"那样被 stretchLastSection 拉到右边、中间留一大块空白。
-        apply_pair_tree_spec(tree, PairTreeSpec{QStringList{QStringLiteral("复制"),
-                                                            QStringLiteral("来源"),
+        apply_pair_tree_spec(tree, PairTreeSpec{QStringList{xrkit::shell::tr_zh("复制"),
+                                                            xrkit::shell::tr_zh("来源"),
                                                             QStringLiteral("id")},
                                                 QList<int>{96, 110, 240}, 0, false});
     }
@@ -908,9 +910,9 @@ void XmlPage::fill_id_tree(QTreeWidget* tree, const std::vector<XmlDetailId>& id
         //   三处一起改：① 文案缩成「复制」（完整 id 进 tooltip）；② 高度按 px(20) 固定、
         //   宽度按字宽算（不再靠列宽施舍）；③ 外面包一层容器并**垂直居中** ——
         //   `setItemWidget` 会把控件拉伸到整个单元格矩形，直接放按钮就会贴顶/贴底。
-        auto* copy = new QPushButton(QStringLiteral("复制"));
+        auto* copy = new QPushButton(xrkit::shell::tr_zh("复制"));
         copy->setObjectName(QStringLiteral("xml_copy_id"));
-        copy->setToolTip(QStringLiteral("复制 id：%1").arg(one.id));
+        copy->setToolTip(xrkit::shell::tr_zh("复制 id：%1").arg(one.id));
         // ★ 2026-10-26 用户复测：**还是被裁** ⇒ 高度 20→26、右边距 16→34（QSS 里还有 8px 内距）
         // ★★ 2026-10-26 第二版：不再"猜"宽高 —— 直接用它自己的 `sizeHint()`
         //   （sizeHint 已经把 QSS 的 padding/border 与字体算进去了；手写的数值总有一边对不上）。
@@ -934,11 +936,11 @@ void XmlPage::fill_id_tree(QTreeWidget* tree, const std::vector<XmlDetailId>& id
 bool XmlPage::copy_id(const QString& id) {
     QClipboard* clip = QGuiApplication::clipboard();
     if (clip == nullptr) {
-        status_->setText(QStringLiteral("复制失败：拿不到剪贴板"));
+        status_->setText(xrkit::shell::tr_zh("复制失败：拿不到剪贴板"));
         return false;
     }
     clip->setText(id);
-    const QString done = QStringLiteral("已复制 id: %1").arg(id);
+    const QString done = xrkit::shell::tr_zh("已复制 id: %1").arg(id);
     status_->setText(done);
     log_to_host(done);
     return true;
@@ -1015,7 +1017,7 @@ QDialog* XmlPage::make_detail_dialog(int index, QWidget* parent) {
     if (index < 0 || index >= static_cast<int>(visible_.size())) return nullptr;
     auto* dialog = new QDialog(parent != nullptr ? parent : this);
     dialog->setObjectName(QStringLiteral("xml_detail_dialog"));
-    dialog->setWindowTitle(QStringLiteral("明细：%1").arg(utf8(results_[static_cast<size_t>(
+    dialog->setWindowTitle(xrkit::shell::tr_zh("明细：%1").arg(utf8(results_[static_cast<size_t>(
         visible_[static_cast<size_t>(index)])].result.rel)));
     dialog->resize(xrkit::core::px(760), xrkit::core::px(520));
     auto* layout = new QVBoxLayout(dialog);
@@ -1026,12 +1028,12 @@ QDialog* XmlPage::make_detail_dialog(int index, QWidget* parent) {
     view->setObjectName(QStringLiteral("xml_dialog_text"));
     view->setReadOnly(true);
     view->setPlainText(detail_text(index));
-    auto* id_title = new QLabel(QStringLiteral("差异 id（逐条复制）"), dialog);
+    auto* id_title = new QLabel(xrkit::shell::tr_zh("差异 id（逐条复制）"), dialog);
     auto* ids = new QTreeWidget(dialog);
     ids->setObjectName(QStringLiteral("xml_dialog_id_list"));
     ids->setRootIsDecorated(false);
     fill_id_tree(ids, detail_ids_for(index));
-    auto* close = new QPushButton(QStringLiteral("关闭"), dialog);
+    auto* close = new QPushButton(xrkit::shell::tr_zh("关闭"), dialog);
     close->setObjectName(QStringLiteral("xml_dialog_close"));
     QObject::connect(close, &QPushButton::clicked, dialog, &QDialog::accept);
     auto* button_row = new QHBoxLayout;
@@ -1055,8 +1057,8 @@ bool XmlPage::export_csv(const QString& path, const QString& generated_at) {
     //   ⇒ 同一个 `std::vector` 的主/worker 并发读写（UB）。
     //   零静默：拒绝要留痕（调用方与用户都看得见"为什么没导出"）。
     if (task_ != nullptr && task_->running()) {
-        status_->setText(QStringLiteral("比较进行中：导出已拒绝（等它结束或先取消）"));
-        log_to_host(QStringLiteral("导出 CSV 被拒：比较任务正在跑（worker 正在改结果表）"));
+        status_->setText(xrkit::shell::tr_zh("比较进行中：导出已拒绝（等它结束或先取消）"));
+        log_to_host(xrkit::shell::tr_zh("导出 CSV 被拒：比较任务正在跑（worker 正在改结果表）"));
         return false;
     }
     const exml::XmlModeSpec* spec = mode();
@@ -1121,8 +1123,8 @@ bool XmlPage::export_xlsx(const QString& path, const QString& generated_at) {
     //     · 统计：元数据 + 总计数（不再是 CSV 顶部那 7 行"占位"）
     //   范围：**全部比较结果**（用户裁定）。
     if (task_ != nullptr && task_->running()) {
-        status_->setText(QStringLiteral("比较进行中：导出已拒绝（等它结束或先取消）"));
-        log_to_host(QStringLiteral("导出 Excel 被拒：比较任务正在跑"));
+        status_->setText(xrkit::shell::tr_zh("比较进行中：导出已拒绝（等它结束或先取消）"));
+        log_to_host(xrkit::shell::tr_zh("导出 Excel 被拒：比较任务正在跑"));
         return false;
     }
     // 行状态文本：与界面「状态」列**同一份实现**（`cell_text`；保留键 "status"）
@@ -1255,11 +1257,11 @@ bool XmlPage::export_xlsx(const QString& path, const QString& generated_at) {
 
     std::string error;
     if (!xrkit::core::write_xlsx_file(path.toUtf8().toStdString(), sheets, &error)) {
-        status_->setText(QStringLiteral("导出失败：%1").arg(utf8(error)));
-        log_to_host(QStringLiteral("导出 Excel 失败：%1").arg(utf8(error)));
+        status_->setText(xrkit::shell::tr_zh("导出失败：%1").arg(utf8(error)));
+        log_to_host(xrkit::shell::tr_zh("导出 Excel 失败：%1").arg(utf8(error)));
         return false;
     }
-    const QString done = QStringLiteral("已导出 Excel：%1 个文件 / %2 条明细")
+    const QString done = xrkit::shell::tr_zh("已导出 Excel：%1 个文件 / %2 条明细")
                              .arg(results_.size())
                              .arg(sheets.front().rows.size());
     status_->setText(done);
@@ -1306,7 +1308,7 @@ void XmlPage::update_extract_mode() {
             if (!info.exists()) return probe;                 // 还没建 ⇒ 真为空
             if (!info.isDir()) {
                 probe.ok = false;
-                probe.error = QStringLiteral("不是目录：%1").arg(path);
+                probe.error = xrkit::shell::tr_zh("不是目录：%1").arg(path);
                 return probe;
             }
             // ★ 2026-11-07（用户：拖入大目录卡很久）：只判"有没有文件"就停，
@@ -1327,7 +1329,7 @@ void XmlPage::update_extract_mode() {
         if (!pa.ok || !pb.ok) {
             walk_error_ = pa.ok ? pb.error : pa.error;
             if (status_ != nullptr) {
-                status_->setText(QStringLiteral("判定失败（遍历/路径错误，不按“空目录”处理）：%1")
+                status_->setText(xrkit::shell::tr_zh("判定失败（遍历/路径错误，不按“空目录”处理）：%1")
                                      .arg(walk_error_));
             }
             show = false;
@@ -1342,7 +1344,7 @@ void XmlPage::update_extract_mode() {
         const int existing = mode_combo_->findData(QStringLiteral("extract"));
         mode_combo_->blockSignals(true);
         if (show && existing < 0) {
-            mode_combo_->addItem(QStringLiteral("提取文本"), QStringLiteral("extract"));
+            mode_combo_->addItem(xrkit::shell::tr_zh("提取文本"), QStringLiteral("extract"));
             mode_combo_->setCurrentIndex(mode_combo_->findData(QStringLiteral("extract")));
         } else if (!show && existing >= 0) {
             mode_combo_->removeItem(existing);
@@ -1359,13 +1361,13 @@ void XmlPage::update_extract_mode() {
 
 void XmlPage::run_extract() {
     if (task_ != nullptr && task_->running()) {
-        status_->setText(QStringLiteral("已有任务在跑，等它结束再提取"));
+        status_->setText(xrkit::shell::tr_zh("已有任务在跑，等它结束再提取"));
         return;
     }
     const QString a = dir_a_edit_->text().trimmed();
     const QString b = dir_b_edit_->text().trimmed();
     if (a.isEmpty() || b.isEmpty()) {
-        status_->setText(QStringLiteral("请先选两个文件夹（一侧放源，另一侧留空当输出）"));
+        status_->setText(xrkit::shell::tr_zh("请先选两个文件夹（一侧放源，另一侧留空当输出）"));
         return;
     }
     // worker 不许读控件 ⇒ 复选框状态在主线程快照
@@ -1373,7 +1375,7 @@ void XmlPage::run_extract() {
     const bool want_texts = texts_check_ != nullptr && texts_check_->isChecked();
     set_compare_controls_enabled(false);
     const bool started = task_->run(
-        QStringLiteral("提取文本"),
+        xrkit::shell::tr_zh("提取文本"),
         [this, a, b, want_rewritten, want_texts](const ProgressSink& progress,
                                                  const MessageSink& message) {
             const auto should_stop = [this]() {
@@ -1404,14 +1406,14 @@ void XmlPage::run_extract() {
             const bool a_empty = files_of(a) == 0;
             const bool b_empty = files_of(b) == 0;
             if (walk_errors > 0) {
-                post_status(QStringLiteral("无法判定空侧：遍历有 %1 处错误（%2）")
+                post_status(xrkit::shell::tr_zh("无法判定空侧：遍历有 %1 处错误（%2）")
                                 .arg(walk_errors)
                                 .arg(walk_error_text));
                 return;
             }
             if (a_empty == b_empty) {
-                post_status(QStringLiteral("提取要求**恰好一侧为空**（空侧当输出）；现在是%1")
-                                .arg(a_empty ? QStringLiteral("两侧都空") : QStringLiteral("两侧都非空")));
+                post_status(xrkit::shell::tr_zh("提取要求**恰好一侧为空**（空侧当输出）；现在是%1")
+                                .arg(a_empty ? xrkit::shell::tr_zh("两侧都空") : xrkit::shell::tr_zh("两侧都非空")));
                 return;
             }
             const QString source = a_empty ? b : a;
@@ -1430,18 +1432,18 @@ void XmlPage::run_extract() {
             const xrkit::engine::text::ExtractPackResult result =
                 xrkit::engine::text::extract_language_pack(opt);
             if (result.cancelled) {
-                post_status(QStringLiteral("已取消：停在文件边界（%1 条已出、%2 个已改写）")
+                post_status(xrkit::shell::tr_zh("已取消：停在文件边界（%1 条已出、%2 个已改写）")
                                 .arg(result.strings)
                                 .arg(result.files));
                 return;
             }
             if (!result.ok) {
-                post_status(QStringLiteral("提取失败：%1").arg(utf8(result.error)));
+                post_status(xrkit::shell::tr_zh("提取失败：%1").arg(utf8(result.error)));
                 return;
             }
             if (result.empty) {
                 post_status(result.jobs == 0
-                                ? QStringLiteral("目录里没有 scripts/ 或 gameplay/：%1")
+                                ? xrkit::shell::tr_zh("目录里没有 scripts/ 或 gameplay/：%1")
                                       .arg(QDir::toNativeSeparators(source))
                                 : QStringLiteral("未找到可提取的源文件/文本：%1（目录名虽合法，但内容里没有"
                                                  "可提取的 .script/.ltx/.xml 文本）")

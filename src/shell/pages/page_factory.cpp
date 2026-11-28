@@ -1,4 +1,5 @@
 #include "page_factory.h"
+#include "../i18n.h"
 
 #include "convert_page.h"
 #include "fontpack_page.h"
@@ -60,12 +61,12 @@ void register_builtin_pages(PageRegistry& pages) {
         const PageInfo& info = kBuiltinPages[i];
         PageSpec spec;
         spec.id = info.id;
-        spec.title = QString::fromUtf8(info.title);
+        spec.title = xrkit::shell::tr_zh(info.title);
         spec.subtitle = QString::fromUtf8(info.subtitle);
         spec.order = info.order;
         spec.band = kBuiltinPageBand;  // 内置带（见 page_host.h）
         const QString id = QString::fromUtf8(info.id);
-        const QString title = QString::fromUtf8(info.title);
+        const QString title = xrkit::shell::tr_zh(info.title);
         // ★★ P17-88（§四·8② 运行期那一半）：内置页那条路**必须显式声明** `PageKind::Builtin`
         //   —— 新口径是"kind 与 owner 必须自洽，不自洽当场拒"。这正是"把现在靠哨兵分叉的暗号
         //   **提明白**"；便利重载默认 `Plugin`，所以内置页要是忘了声明，**它自己就会被挡在门外**（有牙）。
@@ -78,7 +79,7 @@ QWidget* create_builtin_page_widget(const std::string& id, QWidget* parent) {
     const QString key = QString::fromStdString(id);
     for (int i = 0; i < kBuiltinPageCount; ++i) {
         if (key == QString::fromUtf8(kBuiltinPages[i].id)) {
-            return build_builtin(key, QString::fromUtf8(kBuiltinPages[i].title), parent);
+            return build_builtin(key, xrkit::shell::tr_zh(kBuiltinPages[i].title), parent);
         }
     }
     return build_builtin(key, key, parent);
@@ -90,7 +91,7 @@ PageBase* create_page(int index, QWidget* parent) {
     // 各页陆续换成自己的实现类；还没轮到的戴 `PageBase` 的框架
     //（标题 / 页内视口 / 贴底操作栏 —— 形态从第一天起就是一致的）。
     const QString id = QString::fromUtf8(info.id);
-    const QString title = QString::fromUtf8(info.title);
+    const QString title = xrkit::shell::tr_zh(info.title);
     return dynamic_cast<PageBase*>(build_builtin(id, title, parent));
 }
 

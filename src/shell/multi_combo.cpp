@@ -1,4 +1,5 @@
 #include "multi_combo.h"
+#include "i18n.h"
 
 #include <QAbstractItemView>
 #include <QApplication>
@@ -109,11 +110,11 @@ QString MultiSelectComboBox::summary() const {
         if (item != nullptr && item->checkState() == Qt::Checked) {
             QString label = item->text();
             // 显示用短名：完整项名留给弹出列表，避免把控件撑宽/截断。
-            if (label.startsWith(QStringLiteral("标准"))) label = QStringLiteral("标准");
+            if (label.startsWith(xrkit::shell::tr_zh("标准"))) label = xrkit::shell::tr_zh("标准");
             parts << label;
         }
     }
-    if (parts.isEmpty()) return QStringLiteral("未选择");
+    if (parts.isEmpty()) return xrkit::shell::tr_zh("未选择");
     return parts.join(QStringLiteral(" · "));
 }
 

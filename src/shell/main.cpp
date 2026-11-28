@@ -199,13 +199,10 @@ int main(int argc, char** argv) {
     const xrkit::core::ThemeMode mode = xrkit::shell::apply_startup_ui(app);
 
     xrkit::shell::Hub hub;
-    xrkit::shell::apply_ui_language(&hub);
-    xrkit::shell::install_ui_language_watcher();
     if (args.contains(QStringLiteral("--i18n-report"))) {
         QTextStream report(stdout);
         QLabel i18n_probe;
-        i18n_probe.setText(QStringLiteral("发现新版本：2.0.0.999"));
-        xrkit::shell::apply_ui_language(&i18n_probe);
+        i18n_probe.setText(xrkit::shell::tr_zh("发现新版本：2.0.0.999"));
         report << "I18N template=" << i18n_probe.text() << "\n";
         report << "I18N title=" << hub.windowTitle() << "\n";
         hub.set_current_page(3);

@@ -2,34 +2,15 @@
 
 #include <algorithm>
 
-#include <QAbstractButton>
-#include <QAction>
-#include <QApplication>
 #include <QCoreApplication>
-#include <QComboBox>
 #include <QDir>
-#include <QEvent>
 #include <QFile>
-#include <QGroupBox>
 #include <QHash>
-#include <QHeaderView>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QLabel>
-#include <QLineEdit>
-#include <QPlainTextEdit>
 #include <QLocale>
-#include <QMenu>
-#include <QSignalBlocker>
-#include <QTabBar>
-#include <QTabWidget>
-#include <QTextEdit>
-#include <QTableWidget>
 #include <QRegularExpression>
-#include <QTimer>
-#include <QTreeWidget>
 #include <QVector>
-#include <QWidget>
 
 #include "xrkit/core/theme.h"
 
@@ -42,13 +23,9 @@ QHash<QString, QString> g_ru;
 struct TextTemplate {
     QRegularExpression pattern;
     QString russian;
-    int placeholders = 0;
 };
-QVector<TextTemplate> g_templates;
 
-QString language_name(UiLanguage language) {
-    return language == UiLanguage::Russian ? QStringLiteral("ru") : QStringLiteral("zh");
-}
+QVector<TextTemplate> g_templates;
 
 QString read_language_override(const QStringList& args) {
     for (int i = 0; i < args.size(); ++i) {
@@ -84,7 +61,6 @@ void rebuild_templates() {
     g_templates.clear();
     for (auto it = g_ru.constBegin(); it != g_ru.constEnd(); ++it) {
         const QString source = it.key();
-        int max_placeholder = 0;
         QString pattern = QStringLiteral("^");
         bool has_placeholder = false;
         for (int i = 0; i < source.size(); ++i) {
@@ -95,7 +71,6 @@ void rebuild_templates() {
                     has_placeholder = false;
                     break;
                 }
-                max_placeholder = std::max(max_placeholder, number);
                 pattern += QStringLiteral("(.+?)");
                 has_placeholder = true;
                 ++i;
@@ -108,7 +83,7 @@ void rebuild_templates() {
         QRegularExpression re(pattern);
         re.setPatternOptions(QRegularExpression::DotMatchesEverythingOption);
         if (!re.isValid()) continue;
-        g_templates.push_back(TextTemplate{re, it.value(), max_placeholder});
+        g_templates.push_back(TextTemplate{re, it.value()});
     }
 }
 
@@ -143,152 +118,6 @@ void translate_text(QString& text) {
     }
 }
 
-void translate_object(QObject* object);
-
-void translate_children(QObject* object) {
-    if (object == nullptr) return;
-    for (QObject* child : object->children()) translate_object(child);
-}
-
-void translate_object(QObject* object) {
-    if (object == nullptr) return;
-
-    if (auto* widget = qobject_cast<QWidget*>(object)) {
-        QString title = widget->windowTitle();
-        translate_text(title);
-        if (title != widget->windowTitle()) widget->setWindowTitle(title);
-    }
-    if (auto* label = qobject_cast<QLabel*>(object)) {
-        QString text = label->text();
-        translate_text(text);
-        if (text != label->text()) label->setText(text);
-    }
-    if (auto* button = qobject_cast<QAbstractButton*>(object)) {
-        QString text = button->text();
-        translate_text(text);
-        if (text != button->text()) button->setText(text);
-    }
-    if (auto* group = qobject_cast<QGroupBox*>(object)) {
-        QString title = group->title();
-        translate_text(title);
-        if (title != group->title()) group->setTitle(title);
-    }
-    if (auto* action = qobject_cast<QAction*>(object)) {
-        QString text = action->text();
-        translate_text(text);
-        if (text != action->text()) action->setText(text);
-        QString tip = action->toolTip();
-        translate_text(tip);
-        if (tip != action->toolTip()) action->setToolTip(tip);
-        QString status = action->statusTip();
-        translate_text(status);
-        if (status != action->statusTip()) action->setStatusTip(status);
-    }
-    if (auto* menu = qobject_cast<QMenu*>(object)) {
-        QString title = menu->title();
-        translate_text(title);
-        if (title != menu->title()) menu->setTitle(title);
-    }
-    if (auto* tab_bar = qobject_cast<QTabBar*>(object)) {
-        for (int i = 0; i < tab_bar->count(); ++i) {
-            QString text = tab_bar->tabText(i);
-            translate_text(text);
-            if (text != tab_bar->tabText(i)) tab_bar->setTabText(i, text);
-        }
-    }
-    if (auto* tabs = qobject_cast<QTabWidget*>(object)) {
-        for (int i = 0; i < tabs->count(); ++i) {
-            QString text = tabs->tabText(i);
-            translate_text(text);
-            if (text != tabs->tabText(i)) tabs->setTabText(i, text);
-        }
-    }
-    if (auto* combo = qobject_cast<QComboBox*>(object)) {
-        const QSignalBlocker blocker(combo);
-        for (int i = 0; i < combo->count(); ++i) {
-            QString text = combo->itemText(i);
-            translate_text(text);
-            if (text != combo->itemText(i)) combo->setItemText(i, text);
-        }
-        // MultiSelectComboBox 的已选摘要写在 lineEdit 里，item 文本翻译不会更新它。
-        if (QLineEdit* edit = combo->lineEdit()) {
-            QString text = edit->text();
-            translate_text(text);
-            if (text != edit->text()) edit->setText(text);
-        }
-        QString placeholder = combo->placeholderText();
-        translate_text(placeholder);
-        if (placeholder != combo->placeholderText()) combo->setPlaceholderText(placeholder);
-    }
-    if (auto* line = qobject_cast<QLineEdit*>(object)) {
-        QString text = line->placeholderText();
-        translate_text(text);
-        if (text != line->placeholderText()) line->setPlaceholderText(text);
-    }
-    if (auto* text_edit = qobject_cast<QTextEdit*>(object)) {
-        QString text = text_edit->toPlainText();
-        translate_text(text);
-        if (text != text_edit->toPlainText()) text_edit->setPlainText(text);
-    }
-    if (auto* plain = qobject_cast<QPlainTextEdit*>(object)) {
-        QString text = plain->toPlainText();
-        translate_text(text);
-        if (text != plain->toPlainText()) plain->setPlainText(text);
-    }
-    if (auto* table = qobject_cast<QTableWidget*>(object)) {
-        for (int i = 0; i < table->columnCount(); ++i) {
-            if (auto* item = table->horizontalHeaderItem(i)) {
-                QString text = item->text();
-                translate_text(text);
-                if (text != item->text()) item->setText(text);
-            }
-        }
-        for (int i = 0; i < table->rowCount(); ++i) {
-            if (auto* item = table->verticalHeaderItem(i)) {
-                QString text = item->text();
-                translate_text(text);
-                if (text != item->text()) item->setText(text);
-            }
-        }
-    }
-    if (auto* tree = qobject_cast<QTreeWidget*>(object)) {
-        for (int i = 0; i < tree->columnCount(); ++i) {
-            if (auto* item = tree->headerItem()) {
-                QString text = item->text(i);
-                translate_text(text);
-                if (text != item->text(i)) item->setText(i, text);
-            }
-        }
-    }
-
-    translate_children(object);
-}
-
-class LanguageWatcher final : public QObject {
-public:
-    explicit LanguageWatcher(QObject* parent = nullptr) : QObject(parent) {
-        auto* timer = new QTimer(this);
-        timer->setInterval(500);
-        connect(timer, &QTimer::timeout, this, [] {
-            for (QWidget* widget : QApplication::allWidgets()) {
-                if (widget != nullptr && widget->isWindow() && widget->isVisible()) {
-                    apply_ui_language(widget);
-                }
-            }
-        });
-        timer->start();
-    }
-    bool eventFilter(QObject* watched, QEvent* event) override {
-        if (event != nullptr && event->type() == QEvent::Show) {
-            if (auto* widget = qobject_cast<QWidget*>(watched); widget != nullptr &&
-                                                               widget->isWindow()) {
-                QTimer::singleShot(0, widget, [widget] { apply_ui_language(widget); });
-            }
-        }
-        return QObject::eventFilter(watched, event);
-    }
-};
-
 }  // namespace
 
 void initialize_ui_language(const QStringList& args) {
@@ -299,6 +128,7 @@ void initialize_ui_language(const QStringList& args) {
     }
     g_language = code.startsWith(QStringLiteral("ru")) ? UiLanguage::Russian : UiLanguage::Chinese;
     g_ru.clear();
+    g_templates.clear();
     if (g_language != UiLanguage::Russian) return;
 
     const QDir app(QCoreApplication::applicationDirPath());
@@ -319,26 +149,9 @@ UiLanguage ui_language() { return g_language; }
 
 QString tr_zh(const char* chinese) {
     if (chinese == nullptr) return {};
-    const QString source = QString::fromUtf8(chinese);
-    if (g_language == UiLanguage::Russian) {
-        const auto it = g_ru.constFind(source);
-        if (it != g_ru.constEnd()) return it.value();
-    }
+    QString source = QString::fromUtf8(chinese);
+    translate_text(source);
     return source;
-}
-
-void apply_ui_language(QObject* root) {
-    if (root == nullptr || g_language != UiLanguage::Russian) return;
-    translate_object(root);
-}
-
-void install_ui_language_watcher() {
-    if (g_language != UiLanguage::Russian) return;
-    static LanguageWatcher* watcher = nullptr;
-    if (watcher == nullptr) {
-        watcher = new LanguageWatcher(qApp);
-        qApp->installEventFilter(watcher);
-    }
 }
 
 }  // namespace xrkit::shell

@@ -2,6 +2,7 @@
 // 下载统一走 core::DownloadManager；pending.json 只负责安装事务。
 
 #include "host_update.h"
+#include "i18n.h"
 
 #include "xrkit/core/download.h"
 #include "xrkit/core/http.h"
@@ -57,7 +58,7 @@ bool startDetachedProcess(const QString& program, const QStringList& args,
         if (!CreateProcessW(program.toStdWString().c_str(), buffer.data(), nullptr, nullptr, FALSE,
                             CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS, nullptr,
                             cwd.empty() ? nullptr : cwd.c_str(), &si, &pi)) {
-            if (error != nullptr) *error = QStringLiteral("CreateProcess 失败");
+            if (error != nullptr) *error = xrkit::shell::tr_zh("CreateProcess 失败");
             return false;
         }
     }
@@ -143,7 +144,7 @@ bool parse_update_payload(const std::string& body, bool allow_test, AppUpdateInf
     const QJsonDocument doc =
         QJsonDocument::fromJson(QByteArray::fromStdString(body), &parse_error);
     if (doc.isNull()) {
-        if (error != nullptr) *error = QStringLiteral("更新源不是 JSON");
+        if (error != nullptr) *error = xrkit::shell::tr_zh("更新源不是 JSON");
         return false;
     }
     // 版本串/资产名里**最后一段数字**（`2.0.0.254`、`254.zip` 都取到 "254"）。
@@ -227,7 +228,7 @@ bool parse_update_payload(const std::string& body, bool allow_test, AppUpdateInf
             }
         }
         if (!found) {
-            if (error != nullptr) *error = QStringLiteral("没有当前通道可用的 Release");
+            if (error != nullptr) *error = xrkit::shell::tr_zh("没有当前通道可用的 Release");
             return false;
         }
         *info = std::move(best);
@@ -235,22 +236,22 @@ bool parse_update_payload(const std::string& body, bool allow_test, AppUpdateInf
     }
 
     if (!doc.isObject()) {
-        if (error != nullptr) *error = QStringLiteral("更新源不是 JSON 对象/数组");
+        if (error != nullptr) *error = xrkit::shell::tr_zh("更新源不是 JSON 对象/数组");
         return false;
     }
     const QJsonObject obj = doc.object();
     if (obj.contains(QStringLiteral("assets")) ||
         obj.contains(QStringLiteral("tag_name"))) {
         if (!allow_test && obj.value(QStringLiteral("prerelease")).toBool()) {
-            if (error != nullptr) *error = QStringLiteral("只有测试版 Release");
+            if (error != nullptr) *error = xrkit::shell::tr_zh("只有测试版 Release");
             return false;
         }
         if (!fill_release(obj, info)) {
-            if (error != nullptr) *error = QStringLiteral("Release 缺 version/安装包地址");
+            if (error != nullptr) *error = xrkit::shell::tr_zh("Release 缺 version/安装包地址");
             return false;
         }
         if (!allow_test && HostUpdate::isTestVersion(info->version)) {
-            if (error != nullptr) *error = QStringLiteral("当前正式通道不接受测试版");
+            if (error != nullptr) *error = xrkit::shell::tr_zh("当前正式通道不接受测试版");
             return false;
         }
         return true;
@@ -269,7 +270,7 @@ bool parse_update_payload(const std::string& body, bool allow_test, AppUpdateInf
     info->packages.removeDuplicates();
     if (!info->packages.isEmpty()) info->package = info->packages.first();
     if (info->version.isEmpty() || info->packages.isEmpty()) {
-        if (error != nullptr) *error = QStringLiteral("更新源缺 version/安装包地址");
+        if (error != nullptr) *error = xrkit::shell::tr_zh("更新源缺 version/安装包地址");
         return false;
     }
     return true;
@@ -430,7 +431,7 @@ void clear_pending_metadata() {
 
 bool HostUpdate::networkAllowed(QString* reason) {
     if (xrkit::core::network_enabled()) return true;
-    if (reason != nullptr) *reason = QStringLiteral("联网功能已关闭");
+    if (reason != nullptr) *reason = xrkit::shell::tr_zh("联网功能已关闭");
     return false;
 }
 
@@ -534,11 +535,11 @@ bool HostUpdate::fetchAppInfo(AppUpdateInfo* info, QString* error) {
             return true;
         }
     }
-    if (error != nullptr) *error = QStringLiteral("所有更新源都不可达或返回无效");
+    if (error != nullptr) *error = xrkit::shell::tr_zh("所有更新源都不可达或返回无效");
     return false;
     } catch (const std::exception& e) {
         // 后台线程/解析异常：检查更新失败是正常结果，不能让启动崩。
-        if (error != nullptr) *error = QStringLiteral("检查更新异常：") + QString::fromUtf8(e.what());
+        if (error != nullptr) *error = xrkit::shell::tr_zh("检查更新异常：") + QString::fromUtf8(e.what());
         return false;
     }
 }
@@ -558,7 +559,7 @@ bool HostUpdate::pendingAppUpdate(AppUpdatePending* out) {
 bool HostUpdate::downloadAppUpdate(const AppUpdateInfo& info,
                                    const AppUpdateProgress& progress, QString* error) {
     if (info.version.isEmpty() || (info.packages.isEmpty() && info.package.isEmpty())) {
-        if (error != nullptr) *error = QStringLiteral("更新信息缺版本或安装包地址");
+        if (error != nullptr) *error = xrkit::shell::tr_zh("更新信息缺版本或安装包地址");
         return false;
     }
     AppUpdateInfo normalized = info;
@@ -592,7 +593,7 @@ bool HostUpdate::downloadAppUpdate(const AppUpdateInfo& info,
         QFile::remove(part);
     }
     if (!write_pending_metadata(normalized, false)) {
-        if (error != nullptr) *error = QStringLiteral("无法写入更新状态文件");
+        if (error != nullptr) *error = xrkit::shell::tr_zh("无法写入更新状态文件");
         return false;
     }
     // 与插件异步下载共用同一个 DownloadManager（单流/多段、取消、续传、sha 只有一套）。
@@ -619,8 +620,8 @@ bool HostUpdate::downloadAppUpdate(const AppUpdateInfo& info,
     }
     if (!status.ok) {
         if (error != nullptr) {
-            *error = status.cancelled ? QStringLiteral("下载已取消")
-                                      : (status.error.empty() ? QStringLiteral("下载失败")
+            *error = status.cancelled ? xrkit::shell::tr_zh("下载已取消")
+                                      : (status.error.empty() ? xrkit::shell::tr_zh("下载失败")
                                                               : QString::fromStdString(status.error));
         }
         // 取消/失败都保留 .part.N/.segments 和 pending 元数据，下一次继续。
@@ -635,7 +636,7 @@ bool HostUpdate::downloadAppUpdate(const AppUpdateInfo& info,
             QFile::remove(zip + QStringLiteral(".segments"));
             for (int i = 0; i < 6; ++i)
                 QFile::remove(zip + QStringLiteral(".part.") + QString::number(i));
-            if (error != nullptr) *error = QStringLiteral("sha256 不匹配");
+            if (error != nullptr) *error = xrkit::shell::tr_zh("sha256 不匹配");
             return false;
         }
     }
@@ -647,7 +648,7 @@ bool HostUpdate::installPendingAppUpdate(bool* started, QString* error) {
     if (started != nullptr) *started = false;
     AppUpdatePending pending;
     if (!read_pending_metadata(&pending) || !pending.ready) {
-        if (error != nullptr) *error = QStringLiteral("没有已下载完成的更新包");
+        if (error != nullptr) *error = xrkit::shell::tr_zh("没有已下载完成的更新包");
         return false;
     }
     QDir root(update_root());
@@ -664,19 +665,19 @@ bool HostUpdate::installPendingAppUpdate(bool* started, QString* error) {
                           QStringLiteral("Expand-Archive -LiteralPath '%1' -DestinationPath '%2' -Force")
                               .arg(pending.zip, stage)});
         if (!powershell.waitForFinished(120000) || powershell.exitCode() != 0) {
-            if (error != nullptr) *error = QStringLiteral("更新包解压失败");
+            if (error != nullptr) *error = xrkit::shell::tr_zh("更新包解压失败");
             return false;
         }
     }
     const QString app = find_file(stage, QStringLiteral("xrkit_app.exe"));
     if (app.isEmpty()) {
-        if (error != nullptr) *error = QStringLiteral("更新包内找不到 xrkit_app.exe");
+        if (error != nullptr) *error = xrkit::shell::tr_zh("更新包内找不到 xrkit_app.exe");
         return false;
     }
     const QString install_dir = QCoreApplication::applicationDirPath();
     const QString updater = QDir(install_dir).filePath(QStringLiteral("xrkit_updater.exe"));
     if (!QFileInfo::exists(updater)) {
-        if (error != nullptr) *error = QStringLiteral("找不到 xrkit_updater.exe");
+        if (error != nullptr) *error = xrkit::shell::tr_zh("找不到 xrkit_updater.exe");
         return false;
     }
     const QString txn = root.filePath(QStringLiteral("transaction"));
@@ -690,7 +691,7 @@ bool HostUpdate::installPendingAppUpdate(bool* started, QString* error) {
          QStringLiteral("--exe"), exe},
         QDir::tempPath());
     if (!launched) {
-        if (error != nullptr) *error = QStringLiteral("xrkit_updater 启动失败");
+        if (error != nullptr) *error = xrkit::shell::tr_zh("xrkit_updater 启动失败");
         return false;
     }
     // 更新器已接手：删 pending.json，避免新版本启动后又安装一次；stage/zip 留给更新器。
@@ -709,7 +710,7 @@ bool HostUpdate::applyAppUpdate(const AppUpdateInfo& info, QString* error) {
     if (candidates.isEmpty() && !info.package.isEmpty()) candidates << info.package;
     candidates.removeDuplicates();
     if (candidates.isEmpty()) {
-        if (error != nullptr) *error = QStringLiteral("没有可用的安装包地址");
+        if (error != nullptr) *error = xrkit::shell::tr_zh("没有可用的安装包地址");
         return false;
     }
     const QString stamp = QString::number(QDateTime::currentMSecsSinceEpoch());
@@ -731,8 +732,8 @@ bool HostUpdate::applyAppUpdate(const AppUpdateInfo& info, QString* error) {
     xrkit::core::DownloadManager::instance().wait(job, &status, -1);
     if (!status.ok) {
         if (error != nullptr) {
-            *error = status.cancelled ? QStringLiteral("下载已取消")
-                                      : (status.error.empty() ? QStringLiteral("下载失败")
+            *error = status.cancelled ? xrkit::shell::tr_zh("下载已取消")
+                                      : (status.error.empty() ? xrkit::shell::tr_zh("下载失败")
                                                               : QString::fromStdString(status.error));
         }
         return false;
@@ -749,19 +750,19 @@ bool HostUpdate::applyAppUpdate(const AppUpdateInfo& info, QString* error) {
                           QStringLiteral("Expand-Archive -LiteralPath '%1' -DestinationPath '%2' -Force")
                               .arg(zip, staged)});
         if (!powershell.waitForFinished(120000) || powershell.exitCode() != 0) {
-            if (error != nullptr) *error = QStringLiteral("更新包解压失败");
+            if (error != nullptr) *error = xrkit::shell::tr_zh("更新包解压失败");
             return false;
         }
     }
     const QString app = find_file(staged, QStringLiteral("xrkit_app.exe"));
     if (app.isEmpty()) {
-        if (error != nullptr) *error = QStringLiteral("更新包内找不到 xrkit_app.exe");
+        if (error != nullptr) *error = xrkit::shell::tr_zh("更新包内找不到 xrkit_app.exe");
         return false;
     }
     const QString install_dir = QCoreApplication::applicationDirPath();
     const QString updater = QDir(install_dir).filePath(QStringLiteral("xrkit_updater.exe"));
     if (!QFileInfo::exists(updater)) {
-        if (error != nullptr) *error = QStringLiteral("找不到 xrkit_updater.exe");
+        if (error != nullptr) *error = xrkit::shell::tr_zh("找不到 xrkit_updater.exe");
         return false;
     }
     const QString txn = QDir(work).filePath(QStringLiteral("transaction"));
@@ -774,7 +775,7 @@ bool HostUpdate::applyAppUpdate(const AppUpdateInfo& info, QString* error) {
          QStringLiteral("--exe"), exe},
         QDir::tempPath());
     if (!started) {
-        if (error != nullptr) *error = QStringLiteral("xrkit_updater 启动失败");
+        if (error != nullptr) *error = xrkit::shell::tr_zh("xrkit_updater 启动失败");
         return false;
     }
     QCoreApplication::quit();

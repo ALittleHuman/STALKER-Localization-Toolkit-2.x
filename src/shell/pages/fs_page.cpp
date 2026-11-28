@@ -1,4 +1,5 @@
 #include "fs_page.h"
+#include "../i18n.h"
 
 #include "xrkit/core/theme.h"
 #include "xrkit/core/atomic_write.h"
@@ -212,7 +213,7 @@ bool FsPage::gate_source(QString& path, QString* error_out) {
     if (result.used_plugin) {
         // 解开了：换成解密产物，并在日志里说清"这一份是插件解出来的"
         path = QString::fromStdString(result.path);
-        log_message(QStringLiteral("已用插件解密器解开：%1").arg(path));
+        log_message(xrkit::shell::tr_zh("已用插件解密器解开：%1").arg(path));
     }
     return true;
 }
@@ -228,23 +229,23 @@ bool FsPage::add_loose_dir(const QString& dir, QString* error) {
     if (!err.empty()) {
         // 不存在的目录/读不动 ⇒ **可见失败**（不静默加一个空源）
         if (error != nullptr) *error = QString::fromStdString(err);
-        log_message(QStringLiteral("散装层拒绝加载：%1").arg(QString::fromStdString(err)));
+        log_message(xrkit::shell::tr_zh("散装层拒绝加载：%1").arg(QString::fromStdString(err)));
         return false;
     }
     if (loose_info.truncated) {
         // 截断**不是失败**：照样加载，但必须**可见**（零静默）
-        log_message(QStringLiteral("散装层条目表被截断（仍加载）：%1")
+        log_message(xrkit::shell::tr_zh("散装层条目表被截断（仍加载）：%1")
                         .arg(QString::fromStdString(loose_info.truncated_reason)));
     }
     QString gated = dir;
     QString gate_error;
     if (!gate_source(gated, &gate_error)) {
         if (error != nullptr) *error = gate_error;
-        log_message(QStringLiteral("散装层被解密闸门拒绝：%1").arg(gate_error));
+        log_message(xrkit::shell::tr_zh("散装层被解密闸门拒绝：%1").arg(gate_error));
         return false;
     }
     add_source(gated, entries);
-    log_message(QStringLiteral("散装层已并入：%1（%2 个条目）")
+    log_message(xrkit::shell::tr_zh("散装层已并入：%1（%2 个条目）")
                     .arg(gated)
                     .arg(static_cast<int>(entries.size())));
     return true;
@@ -256,7 +257,7 @@ void FsPage::log_message(const QString& text) {
     log_to_host(text);
 }
 
-FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral("文件系统"), parent) {
+FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), xrkit::shell::tr_zh("文件系统"), parent) {
     // ★ 2026-10-04：解密产物落点改为**引擎那一份口径**（`plugin::decrypt_output_dir()`）。
     //   闸门现在在引擎读入口也跑（CLI 同样走它），落点若由外壳自己算（原来这里是
     //   `QDir::temp()`），两边就可能不是同一个目录 ⇒ 引擎那道闸门认不出"这是产物"、
@@ -278,14 +279,14 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     package_list_ = new QTreeWidget;
     package_list_->setObjectName(QStringLiteral("fs_package_list"));
     package_list_->setColumnCount(3);
-    package_list_->setHeaderLabels({QStringLiteral("包"), QStringLiteral("大小"), QString()});
+    package_list_->setHeaderLabels({xrkit::shell::tr_zh("包"), xrkit::shell::tr_zh("大小"), QString()});
     // ★★ 2026-10-02 用户：「为什么包树和文件树的形式不同。文件树的形式已经相当成熟，包树直接引用
     //   树的统一函数就行啊。」⇒ 装配改成**调同一个 `apply_pair_tree_spec`**（列/行高/多选/拖放/
     //   最小高/根装饰/单击才展开 只有一份），两树的差异只剩"各是哪三列、哪一列吃剩余宽度"。
     //   列宽来由（用户 2026-10-02 圈着表头打「？」那条）：三列若都 Interactive 且没有一列吃剩余宽度
     //   ⇒ 总宽 ≪ 面板宽 ⇒ 表头/每行右半边是死区 ⇒ **名称列吃满、后两列钉右**。
     apply_pair_tree_spec(package_list_, PairTreeSpec{
-                                            {QStringLiteral("包"), QStringLiteral("大小"), QString()},
+                                            {xrkit::shell::tr_zh("包"), xrkit::shell::tr_zh("大小"), QString()},
                                             {300, 90, 48},
                                             120,
                                             true});
@@ -335,8 +336,8 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     //   **名称列吃剩余宽度、后两列 Interactive 钉右**（用户 09-29 要的"列之间能拖"不丢）。
     //   这条同时消掉条目树的老毛病：名称列固定 340 被截、而"来源"列（短字符串）却吃着剩余宽度。
     apply_pair_tree_spec(entry_tree_, PairTreeSpec{
-                                         {QStringLiteral("包内条目"), QStringLiteral("大小"),
-                                          QStringLiteral("来源")},
+                                         {xrkit::shell::tr_zh("包内条目"), xrkit::shell::tr_zh("大小"),
+                                          xrkit::shell::tr_zh("来源")},
                                          {340, 110, 220},
                                          160,
                                          false});
@@ -367,28 +368,28 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     pack_page->setObjectName(QStringLiteral("fs_pack_page"));
     pack_page_layout_ = new QVBoxLayout(pack_page);
     pack_page_layout_->setContentsMargins(0, 0, 0, 0);
-    tabs_->addTab(unpack_page, QStringLiteral("解包"));
-    tabs_->addTab(pack_page, QStringLiteral("封包"));
+    tabs_->addTab(unpack_page, xrkit::shell::tr_zh("解包"));
+    tabs_->addTab(pack_page, xrkit::shell::tr_zh("封包"));
     // ── 顶部一行 = **整页级**的东西（与两张列表都无关）：打包/解包格式 + 解包输出。
     // 1.x 的「输入」行在这里换成了「解包到」：2.x 的包是"加进来"的（加包/拖放/扫描），
     // 所以缺的不是输入行而是**解包输出行**（原来写死 `<包路径>.out`，用户没法选）。
     auto* row_holder = new QWidget;
     auto* row = new QHBoxLayout(row_holder);
     row->setContentsMargins(0, 0, 0, 0);
-    row->addWidget(new QLabel(QStringLiteral("打包/解包格式：")), 0);
+    row->addWidget(new QLabel(xrkit::shell::tr_zh("打包/解包格式：")), 0);
     row->addWidget(format_combo_, 0);
     row->addWidget(format_hint_, 0);   // ④：格式说明（auto ⇒ 自动检测）
     row->addSpacing(xrkit::core::px(12));
-    row->addWidget(new QLabel(QStringLiteral("解包到：")), 0);
+    row->addWidget(new QLabel(xrkit::shell::tr_zh("解包到：")), 0);
     out_edit_ = new QLineEdit;
     out_edit_->setObjectName(QStringLiteral("fs_output_dir"));
     // ★ 2026-10-04：输入框自己**不接**拖放 —— 接住它的是**整行区域**（`drop_zones_`）。
-    out_edit_->setPlaceholderText(QStringLiteral("输出目录（留空＝与包同目录）"));
+    out_edit_->setPlaceholderText(xrkit::shell::tr_zh("输出目录（留空＝与包同目录）"));
     row->addWidget(out_edit_, 1);
-    auto* browse_out = new QPushButton(QStringLiteral("选择…"));
+    auto* browse_out = new QPushButton(xrkit::shell::tr_zh("选择…"));
     browse_out->setObjectName(QStringLiteral("fs_browse_output"));
     row->addWidget(browse_out, 0);
-    open_out_button_ = new QPushButton(QStringLiteral("打开"));
+    open_out_button_ = new QPushButton(xrkit::shell::tr_zh("打开"));
     open_out_button_->setObjectName(QStringLiteral("fs_open_output"));
     row->addWidget(open_out_button_, 0);
     // ★ 2026-10-04 用户第 1 条：「所有目录都需要拖拽，而且是**拖拽到相应区域**。」
@@ -418,22 +419,22 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         auto* bar = new QHBoxLayout(package_bar_);
         bar->setContentsMargins(0, 0, 0, 0);
         bar->setSpacing(xrkit::core::px(6));
-        add_button_ = new QPushButton(QStringLiteral("加包"));
+        add_button_ = new QPushButton(xrkit::shell::tr_zh("加包"));
         add_button_->setObjectName(QStringLiteral("fs_add_package"));
         bar->addWidget(add_button_, 0);
         // ★ 第 1 条：按钮表述改成「全选」（原「全选包」）；行为＝**选中而非勾选**
-        select_all_button_ = new QPushButton(QStringLiteral("全选"));
+        select_all_button_ = new QPushButton(xrkit::shell::tr_zh("全选"));
         select_all_button_->setObjectName(QStringLiteral("fs_select_all_packages"));
         bar->addWidget(select_all_button_, 0);
-        auto* load_sel = new QPushButton(QStringLiteral("加载选中"));
+        auto* load_sel = new QPushButton(xrkit::shell::tr_zh("加载选中"));
         load_sel->setObjectName(QStringLiteral("fs_load_selected"));
         bar->addWidget(load_sel, 0);
         QObject::connect(load_sel, &QPushButton::clicked, this, [this] { load_selected(); });
-        auto* unload_sel = new QPushButton(QStringLiteral("取消加载"));
+        auto* unload_sel = new QPushButton(xrkit::shell::tr_zh("取消加载"));
         unload_sel->setObjectName(QStringLiteral("fs_unload_selected"));
         bar->addWidget(unload_sel, 0);
         QObject::connect(unload_sel, &QPushButton::clicked, this, [this] { unload_selected(); });
-        clear_button_ = new QPushButton(QStringLiteral("清空"));
+        clear_button_ = new QPushButton(xrkit::shell::tr_zh("清空"));
         clear_button_->setObjectName(QStringLiteral("fs_clear_packages"));
         bar->addWidget(clear_button_, 0);
         bar->addStretch(1);
@@ -455,16 +456,16 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         auto* bar = new QHBoxLayout(entry_bar_);
         bar->setContentsMargins(0, 0, 0, 0);
         bar->setSpacing(xrkit::core::px(6));
-        check_all_button_ = new QPushButton(QStringLiteral("包内全选"));
+        check_all_button_ = new QPushButton(xrkit::shell::tr_zh("包内全选"));
         check_all_button_->setObjectName(QStringLiteral("fs_check_all_files"));
         bar->addWidget(check_all_button_, 0);
-        check_none_button_ = new QPushButton(QStringLiteral("包内全不选"));
+        check_none_button_ = new QPushButton(xrkit::shell::tr_zh("包内全不选"));
         check_none_button_->setObjectName(QStringLiteral("fs_check_no_files"));
         bar->addWidget(check_none_button_, 0);
-        bar->addWidget(new QLabel(QStringLiteral("搜索")), 0);
+        bar->addWidget(new QLabel(xrkit::shell::tr_zh("搜索")), 0);
         search_edit_ = new QLineEdit;
         search_edit_->setObjectName(QStringLiteral("fs_search"));
-        search_edit_->setPlaceholderText(QStringLiteral("按路径过滤（边打边筛）"));
+        search_edit_->setPlaceholderText(xrkit::shell::tr_zh("按路径过滤（边打边筛）"));
         bar->addWidget(search_edit_, 1);
         entry_count_label_ = new QLabel;
         entry_count_label_->setObjectName(QStringLiteral("fs_entry_count"));
@@ -496,7 +497,7 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         auto* pack_row_holder = new QWidget;
         auto* row = new QHBoxLayout(pack_row_holder);
         row->setContentsMargins(0, 0, 0, 0);
-        row->addWidget(new QLabel(QStringLiteral("封包格式：")), 0);
+        row->addWidget(new QLabel(xrkit::shell::tr_zh("封包格式：")), 0);
         pack_format_combo_ = new QComboBox;
         pack_format_combo_->setObjectName(QStringLiteral("fs_pack_format"));
         for (const efs::FsFormatItem& item : efs::fs_formats()) {
@@ -508,15 +509,15 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
             pack_format_combo_->addItem(utf8(item.label), utf8(item.key));
         }
         row->addWidget(pack_format_combo_, 0);
-        row->addWidget(new QLabel(QStringLiteral("封包输出：")), 0);
+        row->addWidget(new QLabel(xrkit::shell::tr_zh("封包输出：")), 0);
         pack_out_edit_ = new QLineEdit;
         pack_out_edit_->setObjectName(QStringLiteral("fs_pack_out"));
-        pack_out_edit_->setPlaceholderText(QStringLiteral("输出文件（留空＝弹保存框）"));
+        pack_out_edit_->setPlaceholderText(xrkit::shell::tr_zh("输出文件（留空＝弹保存框）"));
         row->addWidget(pack_out_edit_, 1);
-        auto* browse_pack = new QPushButton(QStringLiteral("选择…"));
+        auto* browse_pack = new QPushButton(xrkit::shell::tr_zh("选择…"));
         browse_pack->setObjectName(QStringLiteral("fs_pack_browse"));
         row->addWidget(browse_pack, 0);
-        pack_button_ = new QPushButton(QStringLiteral("封包"));
+        pack_button_ = new QPushButton(xrkit::shell::tr_zh("封包"));
         pack_button_->setObjectName(QStringLiteral("fs_pack"));
         row->addWidget(pack_button_, 0);
         // ★ 2026-10-04 用户第 1 条：整行成容器 ⇒ 丢进来的路径填「封包输出」那一格
@@ -524,16 +525,16 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         pack_page_layout_->addWidget(pack_row_holder);
 
         auto* bar = new QHBoxLayout;
-        auto* add_files = new QPushButton(QStringLiteral("＋文件"));
+        auto* add_files = new QPushButton(xrkit::shell::tr_zh("＋文件"));
         add_files->setObjectName(QStringLiteral("fs_pack_add_files"));
         bar->addWidget(add_files, 0);
-        auto* add_dir = new QPushButton(QStringLiteral("＋目录"));
+        auto* add_dir = new QPushButton(xrkit::shell::tr_zh("＋目录"));
         add_dir->setObjectName(QStringLiteral("fs_pack_add_dir"));
         bar->addWidget(add_dir, 0);
-        auto* rm = new QPushButton(QStringLiteral("移除"));
+        auto* rm = new QPushButton(xrkit::shell::tr_zh("移除"));
         rm->setObjectName(QStringLiteral("fs_pack_remove"));
         bar->addWidget(rm, 0);
-        auto* clr = new QPushButton(QStringLiteral("清空"));
+        auto* clr = new QPushButton(xrkit::shell::tr_zh("清空"));
         clr->setObjectName(QStringLiteral("fs_pack_clear"));
         bar->addWidget(clr, 0);
         bar->addStretch(1);
@@ -551,14 +552,14 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         QObject::connect(add_files, &QPushButton::clicked, this, [this] {
             // ★ 2026-10-04 用户第 2 条：起点＝①上次的选择 → ②唯一输入目录 → ③工具自身所在文件夹
             const QStringList picked = QFileDialog::getOpenFileNames(
-                this, QStringLiteral("选择要打进去的文件"),
+                this, xrkit::shell::tr_zh("选择要打进去的文件"),
                 resolve_dialog_start(pack_add_files_dialog_start()),
-                QStringLiteral("所有文件 (*.*)"));
+                xrkit::shell::tr_zh("所有文件 (*.*)"));
             if (!picked.isEmpty()) add_pack_files(picked);
         });
         QObject::connect(add_dir, &QPushButton::clicked, this, [this] {
             const QString dir = QFileDialog::getExistingDirectory(
-                this, QStringLiteral("选择要打进去的目录（递归，自动排除包文件）"),
+                this, xrkit::shell::tr_zh("选择要打进去的目录（递归，自动排除包文件）"),
                 resolve_dialog_start(pack_add_files_dialog_start()));
             if (!dir.isEmpty()) add_pack_dir(dir);
         });
@@ -567,9 +568,9 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         QObject::connect(browse_pack, &QPushButton::clicked, this, [this] {
             // 1.x 走 `_resolve_pack_target` 的保存框分支；这里显式选一次（选完回填）
             const QString picked = QFileDialog::getSaveFileName(
-                this, QStringLiteral("封包输出文件"),
+                this, xrkit::shell::tr_zh("封包输出文件"),
                 resolve_dialog_start(pack_output_dialog_start()),
-                QStringLiteral("包 (*.db *.sqfs);;所有文件 (*.*)"));
+                xrkit::shell::tr_zh("包 (*.db *.sqfs);;所有文件 (*.*)"));
             if (!picked.isEmpty()) pack_out_edit_->setText(QDir::toNativeSeparators(picked));
         });
         QObject::connect(pack_button_, &QPushButton::clicked, this, [this] { start_pack(); });
@@ -583,7 +584,7 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     //   在一份包的中途停干净 ⇒ 这颗按钮在本页"本质是完全没有的"（用户口径）。
     //   其余三页（编码转换 / 文本提取 / XML 校对）的取消照旧保留。
     task_ = new TaskShell(this, TaskShell::CancelButton::No);
-    task_->set_idle_status(QStringLiteral("就绪"));
+    task_->set_idle_status(xrkit::shell::tr_zh("就绪"));
     task_->set_message_handler([this](const QString& text) { log_message(text); });
     footer_layout()->addWidget(task_->panel(), 0);
     add_action_status(task_->status_label());
@@ -592,19 +593,19 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         // ★ 2026-10-01 用户第 4 条：「能不能在加载包那里增加一个文件夹的模式，这样就能精简掉
         //   一个按钮了。」⇒ 一个「加包」按钮两种模式（弹小菜单），原「扫描目录」按钮删掉。
         QMenu menu(this);
-        QAction* pick_files = menu.addAction(QStringLiteral("选包文件…"));
-        QAction* pick_dir = menu.addAction(QStringLiteral("选文件夹…"));
+        QAction* pick_files = menu.addAction(xrkit::shell::tr_zh("选包文件…"));
+        QAction* pick_dir = menu.addAction(xrkit::shell::tr_zh("选文件夹…"));
         QAction* chosen = menu.exec(add_button_->mapToGlobal(QPoint(0, add_button_->height())));
         if (chosen == nullptr) return;
         if (chosen == pick_dir) {
             const QString dir = QFileDialog::getExistingDirectory(
-                this, QStringLiteral("选择要加载的文件夹"),
+                this, xrkit::shell::tr_zh("选择要加载的文件夹"),
                 resolve_dialog_start(load_package_dialog_start()));
             if (!dir.isEmpty()) add_paths({dir});   // 目录 ⇒ 散装层 + 递归找包并加载
             return;
         }
         const QStringList picked = QFileDialog::getOpenFileNames(
-            this, QStringLiteral("选择要加载的包（可多选）"),
+            this, xrkit::shell::tr_zh("选择要加载的包（可多选）"),
             resolve_dialog_start(load_package_dialog_start()),
             QString::fromUtf8(kPackageDialogFilter));
         if (!picked.isEmpty()) add_paths(picked);
@@ -614,7 +615,7 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
         //   工具所在的目录。**改成定向到输入的目录**。」⇒ 起点＝来源包**所在目录**（唯一才用），
         //   空/多元 ⇒ 工具自身所在文件夹。
         const QString picked = QFileDialog::getExistingDirectory(
-            this, QStringLiteral("选择解包输出目录"),
+            this, xrkit::shell::tr_zh("选择解包输出目录"),
             resolve_dialog_start(unpack_output_dialog_start()));
         if (!picked.isEmpty()) out_edit_->setText(QDir::toNativeSeparators(picked));
     });
@@ -628,9 +629,9 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     drop_filter_->attach(card());
 
     // ── 操作栏（规则 2：贴底、不进视口）：1.x 顶部那两个解包入口
-    unpack_checked_button_ = add_action(QStringLiteral("解包选中"));
+    unpack_checked_button_ = add_action(xrkit::shell::tr_zh("解包选中"));
     unpack_checked_button_->setObjectName(QStringLiteral("fs_unpack_checked"));
-    unpack_all_button_ = add_action(QStringLiteral("批量解包"));
+    unpack_all_button_ = add_action(xrkit::shell::tr_zh("批量解包"));
     unpack_all_button_->setObjectName(QStringLiteral("fs_unpack_all"));
 
     // 包列表勾选框（1.x `_db_toggle`：勾一个包 = 加载它 + 该包条目全勾）
@@ -668,13 +669,13 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
                          QMenu menu(this);
                          // ★★ 2026-10-06（①）：记下**真右键路径**上弹出的这个菜单（自检要看到它）
                          last_package_context_menu_ = &menu;
-                         QAction* act_load = menu.addAction(QStringLiteral("加载选中"));
-                         QAction* act_unload = menu.addAction(QStringLiteral("取消加载"));
+                         QAction* act_load = menu.addAction(xrkit::shell::tr_zh("加载选中"));
+                         QAction* act_unload = menu.addAction(xrkit::shell::tr_zh("取消加载"));
                          menu.addSeparator();
-                         QAction* act_select_all = menu.addAction(QStringLiteral("全选"));
+                         QAction* act_select_all = menu.addAction(xrkit::shell::tr_zh("全选"));
                          menu.addSeparator();
-                         QAction* act_remove = menu.addAction(QStringLiteral("移除选中"));
-                         QAction* act_clear = menu.addAction(QStringLiteral("清空"));
+                         QAction* act_remove = menu.addAction(xrkit::shell::tr_zh("移除选中"));
+                         QAction* act_clear = menu.addAction(xrkit::shell::tr_zh("清空"));
                          // ★★ 2026-10-06（①）：`context` 槽 —— 插件注册的右键命令追加在
                          //   **原有项之后**（「原有项 → 分隔符 → 插件项」，1.x
                          //   `attach_plugin_context_menu` / `PLUGINS.md` §3.3）。
@@ -695,13 +696,13 @@ FsPage::FsPage(QWidget* parent) : PageBase(QStringLiteral("fs"), QStringLiteral(
     QObject::connect(entry_tree_, &QWidget::customContextMenuRequested, this,
                      [this](const QPoint& pos) {
                          QMenu menu(this);
-                         QAction* act_expand = menu.addAction(QStringLiteral("展开一级"));
-                         QAction* act_collapse = menu.addAction(QStringLiteral("折叠全部"));
+                         QAction* act_expand = menu.addAction(xrkit::shell::tr_zh("展开一级"));
+                         QAction* act_collapse = menu.addAction(xrkit::shell::tr_zh("折叠全部"));
                          menu.addSeparator();
-                         QAction* act_check = menu.addAction(QStringLiteral("勾选选中"));
-                         QAction* act_uncheck = menu.addAction(QStringLiteral("取消勾选选中"));
+                         QAction* act_check = menu.addAction(xrkit::shell::tr_zh("勾选选中"));
+                         QAction* act_uncheck = menu.addAction(xrkit::shell::tr_zh("取消勾选选中"));
                          menu.addSeparator();
-                         QAction* act_copy = menu.addAction(QStringLiteral("复制路径"));
+                         QAction* act_copy = menu.addAction(xrkit::shell::tr_zh("复制路径"));
                          QAction* chosen = menu.exec(entry_tree_->viewport()->mapToGlobal(pos));
                          if (chosen == nullptr) return;
                          if (chosen == act_expand || chosen == act_collapse) {
@@ -765,7 +766,7 @@ QString FsPage::format_hint_text() const {
     if (format_combo_ == nullptr) return QString();
     const std::string key = format_combo_->currentData().toString().toStdString();
     if (efs::format_key_is_auto(key)) {
-        return QStringLiteral("自动检测（不给格式：按包自洽判定；歧义时显式拒绝）");
+        return xrkit::shell::tr_zh("自动检测（不给格式：按包自洽判定；歧义时显式拒绝）");
     }
     return format_combo_->currentText();
 }
@@ -780,7 +781,7 @@ void FsPage::add_source(const QString& source_in,
     QString gated = source_in;
     QString gate_error;
     if (!gate_source(gated, &gate_error)) {
-        log_message(QStringLiteral("拒绝加载（需要解密插件）：%1").arg(gate_error));
+        log_message(xrkit::shell::tr_zh("拒绝加载（需要解密插件）：%1").arg(gate_error));
         return;
     }
     push_source(gated, entries);
@@ -862,7 +863,7 @@ int FsPage::add_paths(const QStringList& paths) {
         QString gated = raw;
         QString gate_error;
         if (!gate_source(gated, &gate_error)) {
-            const QString why = QStringLiteral("拒绝加载（需要解密插件）：%1 —— %2")
+            const QString why = xrkit::shell::tr_zh("拒绝加载（需要解密插件）：%1 —— %2")
                                     .arg(raw, gate_error);
             log_message(why);
             load_errors_ << why;
@@ -896,10 +897,10 @@ int FsPage::add_paths(const QStringList& paths) {
                 // ★ 2026-10-03：**返回值要如实** —— `add_paths` 的返回是"这次调用加载了几个源"，
                 //   目录分支里加载的那些必须计进去（自检那条"拖目录 ⇒ 返回 1"的锁当场抓出这里漏了）。
                 loaded += loaded_now;
-                log_message(QStringLiteral("目录里的 %1 个包已加载（右栏＝产物预览，可选择性解包）")
+                log_message(xrkit::shell::tr_zh("目录里的 %1 个包已加载（右栏＝产物预览，可选择性解包）")
                                 .arg(loaded_now));
             } else {
-                const QString why = QStringLiteral("这个目录里没有认得出的包：%1").arg(raw);
+                const QString why = xrkit::shell::tr_zh("这个目录里没有认得出的包：%1").arg(raw);
                 log_message(why);
                 load_errors_ << why;
             }
@@ -929,7 +930,7 @@ int FsPage::add_paths(const QStringList& paths) {
             }
         }
         if (already_known) {
-            const QString why = QStringLiteral("已经在列表里，未重复添加：%1").arg(gated);
+            const QString why = xrkit::shell::tr_zh("已经在列表里，未重复添加：%1").arg(gated);
             log_message(why);
             load_errors_ << why;
             continue;
@@ -943,18 +944,18 @@ int FsPage::add_paths(const QStringList& paths) {
                                        registry_, &read_info);
         if (!error.empty()) {
             // ③ **可见失败**：认不出/解不开都要说清是哪一份、为什么（绝不静默加空包）
-            const QString why = QStringLiteral("加载失败：%1 —— %2").arg(raw, utf8(error));
+            const QString why = xrkit::shell::tr_zh("加载失败：%1 —— %2").arg(raw, utf8(error));
             log_message(why);
             load_errors_ << why;
             continue;
         }
         push_source(gated, entries);
         ++loaded;
-        log_message(QStringLiteral("已加载：%1（%2 项）")
+        log_message(xrkit::shell::tr_zh("已加载：%1（%2 项）")
                         .arg(raw)
                         .arg(static_cast<int>(entries.size())));
         // ★ 整包读才打（正常包一个字都不打）—— 这是"读得多但结果正确"那种中间状态的唯一出口
-        note_package_read(QStringLiteral("列条目"), read_info.header_bytes, read_info.used_seek,
+        note_package_read(xrkit::shell::tr_zh("列条目"), read_info.header_bytes, read_info.used_seek,
                           read_info.whole_file_reason, raw);
     }
     return loaded;
@@ -974,7 +975,7 @@ bool FsPage::note_package_read(const QString& tail, uint64_t header_bytes, bool 
     //     · false + 空   ⇒ 仍然打（并且骂一句"没有给出理由"），那是缺陷、不许静默。
     if (used_seek && whole_file_reason.empty()) return false;
     if (used_seek) {
-        log_message(QStringLiteral("%1：%2 —— 未整包读（seek 解析）：%3")
+        log_message(xrkit::shell::tr_zh("%1：%2 —— 未整包读（seek 解析）：%3")
                         .arg(tail, display_path, utf8(whole_file_reason)));
         return true;
     }
@@ -984,9 +985,9 @@ bool FsPage::note_package_read(const QString& tail, uint64_t header_bytes, bool 
                                               .arg(static_cast<double>(header_bytes) / 1024.0, 0,
                                                    'f', 1);
     const QString why = whole_file_reason.empty()
-                            ? QStringLiteral("（没有给出理由 —— 这本身就该修：见 db.cpp 的退回点）")
+                            ? xrkit::shell::tr_zh("（没有给出理由 —— 这本身就该修：见 db.cpp 的退回点）")
                             : utf8(whole_file_reason);
-    log_message(QStringLiteral("%1：%2 —— 整包读 %3 字节（%4）：%5")
+    log_message(xrkit::shell::tr_zh("%1：%2 —— 整包读 %3 字节（%4）：%5")
                     .arg(tail, display_path)
                     .arg(QString::number(header_bytes), size_text, why));
     return true;
@@ -1103,7 +1104,7 @@ void FsPage::refresh_counts() {
         }
         package_count_label_->setText(sources_.empty()
                                           ? QString()
-                                          : QStringLiteral("%1 个（已加载 %2）")
+                                          : xrkit::shell::tr_zh("%1 个（已加载 %2）")
                                                 .arg(static_cast<int>(sources_.size()))
                                                 .arg(loaded));
     }
@@ -1121,7 +1122,7 @@ void FsPage::refresh_counts() {
             if (!entry_visible(*node)) continue;
             ++files;
         }
-        entry_count_label_->setText(files == 0 ? QString() : QStringLiteral("%1 文件").arg(files));
+        entry_count_label_->setText(files == 0 ? QString() : xrkit::shell::tr_zh("%1 文件").arg(files));
     }
 }
 
@@ -1595,7 +1596,7 @@ QString FsPage::run_unpack_jobs(const std::vector<UnpackJob>& jobs, const Progre
     //   所以这里做两件事：① 解包**前**把 `包 → 落点` 逐条打出来（下面这个循环）；
     //   ② 解包**中/后**把被覆盖的已存在文件**逐条**报出来 + 汇总计数（见下面的 `overwritten`）。
     for (size_t i = 0; i < jobs.size(); ++i) {
-        const QString pre = QStringLiteral("解包目标：%1 → %2").arg(utf8(jobs[i].label), utf8(jobs[i].target));
+        const QString pre = xrkit::shell::tr_zh("解包目标：%1 → %2").arg(utf8(jobs[i].label), utf8(jobs[i].target));
         per_package << pre;
         if (message) message(pre.toUtf8().toStdString());
     }
@@ -1609,16 +1610,16 @@ QString FsPage::run_unpack_jobs(const std::vector<UnpackJob>& jobs, const Progre
         //   ★ 判红锁（smoke 的本页夹具）：解两遍 ⇒ 第二遍必须出现「覆盖：…」且计数非零；
         //     把这一段删掉（或把引擎那两处 `overwritten.push_back` 去掉）⇒ 立刻红。
         for (const std::string& one_path : result.overwritten) {
-            const QString one = QStringLiteral("覆盖：%1").arg(utf8(one_path));
+            const QString one = xrkit::shell::tr_zh("覆盖：%1").arg(utf8(one_path));
             per_package << one;
             if (message) message(one.toUtf8().toStdString());
         }
         overwritten += static_cast<int>(result.overwritten_size());
-        const QString line = QStringLiteral("%1→%2（%3 文件%4）")
+        const QString line = xrkit::shell::tr_zh("%1→%2（%3 文件%4）")
                                  .arg(utf8(jobs[i].label), utf8(jobs[i].target))
                                  .arg(result.files_written)
                                  .arg(result.ok ? QString()
-                                                : QStringLiteral("，失败：") + utf8(result.error));
+                                                : xrkit::shell::tr_zh("，失败：") + utf8(result.error));
         per_package << line;
         if (message) message(line.toUtf8().toStdString());
         if (progress && !jobs.empty()) {
@@ -1627,13 +1628,13 @@ QString FsPage::run_unpack_jobs(const std::vector<UnpackJob>& jobs, const Progre
     }
     if (per_package.isEmpty()) {
         if (written_out != nullptr) *written_out = 0;
-        return QStringLiteral("没有可解的内容（先「加包」/「扫描目录」并勾选，或先加载包）");
+        return xrkit::shell::tr_zh("没有可解的内容（先「加包」/「扫描目录」并勾选，或先加载包）");
     }
     // ★★ P17-4（审计 03 F-03）：计数在这里**带出去** —— 调用方（`unpack_selected/unpack_all`）
     //   修前是"再跑一遍 extract_job 自己数"，那等于整批写盘两遍（见 fs_page.h 的说明与
     //   run_ci 里那条静态锁）。
     if (written_out != nullptr) *written_out = written;
-    return QStringLiteral("解包：%1 个文件、覆盖 %2、失败 %3\n  %4")
+    return xrkit::shell::tr_zh("解包：%1 个文件、覆盖 %2、失败 %3\n  %4")
         .arg(written)
         .arg(overwritten)
         .arg(failed)
@@ -1644,16 +1645,16 @@ void FsPage::start_unpack(bool checked_only) {
     QString root;
     const std::vector<UnpackJob> jobs = plan_unpack(checked_only, &root);
     if (jobs.empty()) {
-        log_message(QStringLiteral("解包：没有可解的内容（先「加包」/「扫描目录」并勾选，或先加载包）"));
+        log_message(xrkit::shell::tr_zh("解包：没有可解的内容（先「加包」/「扫描目录」并勾选，或先加载包）"));
         return;
     }
-    const QString title = checked_only ? QStringLiteral("解包选中") : QStringLiteral("批量解包");
-    log_message(QStringLiteral("%1：%2 个包 → %3").arg(title).arg(static_cast<int>(jobs.size())).arg(root));
+    const QString title = checked_only ? xrkit::shell::tr_zh("解包选中") : xrkit::shell::tr_zh("批量解包");
+    log_message(xrkit::shell::tr_zh("%1：%2 个包 → %3").arg(title).arg(static_cast<int>(jobs.size())).arg(root));
     if (task_ == nullptr || !task_->run(title, [this, jobs](const ProgressSink& progress,
                                                              const MessageSink& message) {
             run_unpack_jobs(jobs, progress, message);
         })) {
-        log_message(QStringLiteral("有任务在跑，稍后再试"));
+        log_message(xrkit::shell::tr_zh("有任务在跑，稍后再试"));
     }
 }
 
@@ -1720,7 +1721,7 @@ int FsPage::scan_dir(const QString& dir) {
     apply_load_order();
     rebuild_package_list();
     rebuild_tree();
-    log_message(QStringLiteral("扫描目录：新增 %1 个包，共 %2 个（未加载）")
+    log_message(xrkit::shell::tr_zh("扫描目录：新增 %1 个包，共 %2 个（未加载）")
                     .arg(added)
                     .arg(static_cast<int>(sources_.size())));
     return added;
@@ -1759,7 +1760,7 @@ void FsPage::rebuild_package_list() {
                 const Source& source = sources_[static_cast<size_t>(node.source_index)];
                 item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
                 item->setText(0, source.loaded
-                                     ? QStringLiteral("%1　[已加载]").arg(label)
+                                     ? xrkit::shell::tr_zh("%1　[已加载]").arg(label)
                                      : label);
                 if (!node.is_dir) {
                     const QFileInfo info(source.path);
@@ -1840,7 +1841,7 @@ void FsPage::on_package_item_changed(QTreeWidgetItem* item) {
         }
         rebuild_tree();
         rebuilding_package_list_ = true;              // 改自己那一行（文本/勾选）时别回灌
-        item->setText(0, QStringLiteral("%1　[已加载]").arg(QFileInfo(sources_[static_cast<size_t>(index)].path).fileName()));
+        item->setText(0, xrkit::shell::tr_zh("%1　[已加载]").arg(QFileInfo(sources_[static_cast<size_t>(index)].path).fileName()));
         item->setCheckState(0, Qt::Checked);
         rebuilding_package_list_ = false;
     }
@@ -1875,7 +1876,7 @@ bool FsPage::load_one_source(int source_index, QString* error_out) {
     QString gated = source.path;
     QString gate_error;
     if (!gate_source(gated, &gate_error)) {
-        const QString why = QStringLiteral("拒绝加载（需要解密插件）：%1 —— %2").arg(source.path, gate_error);
+        const QString why = xrkit::shell::tr_zh("拒绝加载（需要解密插件）：%1 —— %2").arg(source.path, gate_error);
         log_message(why);
         load_errors_ << why;
         if (error_out != nullptr) *error_out = why;
@@ -1893,7 +1894,7 @@ bool FsPage::load_one_source(int source_index, QString* error_out) {
             efs::LooseInfo loose_info;
             entries = efs::loose_entries(gated.toUtf8().toStdString(), error, &loose_info);
             if (loose_info.truncated) {
-                log_message(QStringLiteral("散装层条目表被截断（仍加载）：%1")
+                log_message(xrkit::shell::tr_zh("散装层条目表被截断（仍加载）：%1")
                                 .arg(QString::fromStdString(loose_info.truncated_reason)));
             }
         }
@@ -1903,7 +1904,7 @@ bool FsPage::load_one_source(int source_index, QString* error_out) {
                                        registry_, &read_info);
     }
     if (!error.empty()) {
-        const QString why = QStringLiteral("加载失败：%1 —— %2").arg(source.path, utf8(error));
+        const QString why = xrkit::shell::tr_zh("加载失败：%1 —— %2").arg(source.path, utf8(error));
         log_message(why);
         load_errors_ << why;
         if (error_out != nullptr) *error_out = why;
@@ -1913,7 +1914,7 @@ bool FsPage::load_one_source(int source_index, QString* error_out) {
     source.key = gated.toUtf8().toStdString();
     source.loaded = true;
     entries_[static_cast<size_t>(source_index)] = std::move(entries);
-    note_package_read(QStringLiteral("列条目"), read_info.header_bytes, read_info.used_seek,
+    note_package_read(xrkit::shell::tr_zh("列条目"), read_info.header_bytes, read_info.used_seek,
                       read_info.whole_file_reason, gated);
     return true;
 }
@@ -2048,7 +2049,7 @@ int FsPage::load_selected() {
         QString gated = sources_[static_cast<size_t>(row)].path;
         QString gate_error;
         if (!gate_source(gated, &gate_error)) {
-            const QString why = QStringLiteral("拒绝加载（需要解密插件）：%1 —— %2")
+            const QString why = xrkit::shell::tr_zh("拒绝加载（需要解密插件）：%1 —— %2")
                                     .arg(sources_[static_cast<size_t>(row)].path, gate_error);
             log_message(why);
             load_errors_ << why;
@@ -2065,7 +2066,7 @@ int FsPage::load_selected() {
             efs::LooseInfo loose_info;
             entries = efs::loose_entries(gated.toUtf8().toStdString(), error, &loose_info);
             if (loose_info.truncated) {
-                log_message(QStringLiteral("散装层条目表被截断（仍加载）：%1")
+                log_message(xrkit::shell::tr_zh("散装层条目表被截断（仍加载）：%1")
                                 .arg(QString::fromStdString(loose_info.truncated_reason)));
             }
         }
@@ -2075,7 +2076,7 @@ int FsPage::load_selected() {
                                            registry_, &read_info);
         }
         if (!error.empty()) {
-            const QString why = QStringLiteral("加载失败：%1 —— %2")
+            const QString why = xrkit::shell::tr_zh("加载失败：%1 —— %2")
                                     .arg(sources_[static_cast<size_t>(row)].path, utf8(error));
             log_message(why);
             load_errors_ << why;
@@ -2086,12 +2087,12 @@ int FsPage::load_selected() {
         sources_[static_cast<size_t>(row)].loaded = true;
         entries_[static_cast<size_t>(row)] = std::move(entries);
         ++loaded;
-        note_package_read(QStringLiteral("列条目"), read_info.header_bytes, read_info.used_seek,
+        note_package_read(xrkit::shell::tr_zh("列条目"), read_info.header_bytes, read_info.used_seek,
                           read_info.whole_file_reason, gated);
     }
     rebuild_package_list();
     rebuild_tree();
-    log_message(QStringLiteral("加载选中：%1 个（共 %2 个已加载）")
+    log_message(xrkit::shell::tr_zh("加载选中：%1 个（共 %2 个已加载）")
                     .arg(loaded)
                     .arg(static_cast<int>(std::count_if(
                         sources_.begin(), sources_.end(),
@@ -2231,7 +2232,7 @@ void FsPage::refresh_pack_list() {
     if (pack_count_label_ != nullptr) {
         pack_count_label_->setText(pack_items_.empty()
                                        ? QString()
-                                       : QStringLiteral("%1 个文件")
+                                       : xrkit::shell::tr_zh("%1 个文件")
                                              .arg(static_cast<int>(pack_items_.size())));
     }
 }
@@ -2269,8 +2270,8 @@ QString FsPage::resolve_pack_target() {
     QString out = QString::fromStdString(t.path);
     if (t.needs_frontend_dialog) {
         const QString chosen = QFileDialog::getSaveFileName(
-            this, QStringLiteral("封包保存到"), QDir::toNativeSeparators(out),
-            QStringLiteral("包 (*.db *.sqfs);;所有文件 (*.*)"));
+            this, xrkit::shell::tr_zh("封包保存到"), QDir::toNativeSeparators(out),
+            xrkit::shell::tr_zh("包 (*.db *.sqfs);;所有文件 (*.*)"));
         if (chosen.isEmpty()) return QString();
         out = chosen;
     }
@@ -2283,13 +2284,13 @@ FsPage::PackJob FsPage::plan_pack(bool* ok, QString* why) {
     PackJob job;
     if (pack_items_.empty()) {
         if (ok != nullptr) *ok = false;
-        if (why != nullptr) *why = QStringLiteral("封包：列表是空的（先「＋文件」或「＋目录」）");
+        if (why != nullptr) *why = xrkit::shell::tr_zh("封包：列表是空的（先「＋文件」或「＋目录」）");
         return job;
     }
     const QString out = resolve_pack_target();
     if (out.isEmpty()) {
         if (ok != nullptr) *ok = false;
-        if (why != nullptr) *why = QStringLiteral("封包：没选输出文件，已取消");
+        if (why != nullptr) *why = xrkit::shell::tr_zh("封包：没选输出文件，已取消");
         return job;
     }
     job.out = out.toUtf8().toStdString();
@@ -2321,8 +2322,8 @@ FsPage::PackRunResult FsPage::run_pack_job(const PackJob& job, const ProgressSin
         }
         const efs::PackResult result = efs::pack_squashfs(job.out, items);
         if (progress) progress(100);
-        if (!result.ok) return {false, QStringLiteral("封包失败（SquashFS）：%1").arg(utf8(result.error))};
-        const QString text = QStringLiteral("封包完成（SquashFS）：%1 个文件、%2 字节 → %3")
+        if (!result.ok) return {false, xrkit::shell::tr_zh("封包失败（SquashFS）：%1").arg(utf8(result.error))};
+        const QString text = xrkit::shell::tr_zh("封包完成（SquashFS）：%1 个文件、%2 字节 → %3")
                                  .arg(static_cast<int>(items.size()))
                                  .arg(result.file_size)
                                  .arg(utf8(job.out));
@@ -2331,7 +2332,7 @@ FsPage::PackRunResult FsPage::run_pack_job(const PackJob& job, const ProgressSin
     }
     const std::optional<efs::DbFormat> fmt = efs::format_key_to_db(job.key);
     if (!fmt.has_value()) {
-        return {false, QStringLiteral("封包：格式键 %1 既不是 DB 也不是 SquashFS").arg(utf8(job.key))};
+        return {false, xrkit::shell::tr_zh("封包：格式键 %1 既不是 DB 也不是 SquashFS").arg(utf8(job.key))};
     }
     // ★★ T-05（第三方只读审计 2026-10-18）：**读之前先量总量**。
     //   修前：下面这个循环把每个文件整个读进 `DbPackItem.data`，`pack_db` 再拼一份连续
@@ -2346,7 +2347,7 @@ FsPage::PackRunResult FsPage::run_pack_job(const PackJob& job, const ProgressSin
             const std::uintmax_t one =
                 std::filesystem::file_size(core::path_from_utf8(item.source_path), size_ec);
             if (size_ec) {
-                return {false, QStringLiteral("封包失败：量不出文件尺寸（%1）：%2")
+                return {false, xrkit::shell::tr_zh("封包失败：量不出文件尺寸（%1）：%2")
                                    .arg(utf8(size_ec.message()))
                                    .arg(utf8(item.source_path))};
             }
@@ -2369,7 +2370,7 @@ FsPage::PackRunResult FsPage::run_pack_job(const PackJob& job, const ProgressSin
         std::string pack_text;
         std::string read_error;
         if (!core::read_file_capped(item.source_path, pack_text, read_error)) {
-            return {false, QStringLiteral("封包失败：%1").arg(utf8(read_error))};
+            return {false, xrkit::shell::tr_zh("封包失败：%1").arg(utf8(read_error))};
         }
         efs::DbPackItem pack_item;
         pack_item.path = item.rel;
@@ -2385,15 +2386,15 @@ FsPage::PackRunResult FsPage::run_pack_job(const PackJob& job, const ProgressSin
     std::string pack_err;
     const std::vector<uint8_t> raw = efs::pack_db(items, *fmt, &rewrites, &pack_err);
     if (!pack_err.empty()) {
-        return {false, QStringLiteral("封包失败（%1）").arg(utf8(pack_err))};
+        return {false, xrkit::shell::tr_zh("封包失败（%1）").arg(utf8(pack_err))};
     }
     if (progress) progress(70);
     std::string write_error;
     if (!core::write_file_atomic(job.out, raw, true, write_error)) {
-        return {false, QStringLiteral("封包失败（写盘）：%1").arg(utf8(write_error))};
+        return {false, xrkit::shell::tr_zh("封包失败（写盘）：%1").arg(utf8(write_error))};
     }
     if (progress) progress(100);
-    const QString text = QStringLiteral("封包完成（%1）：%2 个文件、%3 字节 → %4")
+    const QString text = xrkit::shell::tr_zh("封包完成（%1）：%2 个文件、%3 字节 → %4")
                              .arg(utf8(efs::db_format_key(*fmt)))
                              .arg(static_cast<int>(items.size()))
                              .arg(raw.size())
@@ -2401,14 +2402,14 @@ FsPage::PackRunResult FsPage::run_pack_job(const PackJob& job, const ProgressSin
     say(text);
     // ⑥：台账**逐条**打出来 + 计数（没发生改写也说明"0"，让"没打印"与"没发生"能区分）
     if (rewrites.empty()) {
-        say(QStringLiteral("名字改写：无（%1 个条目名都能用 cp1251 原样写出）")
+        say(xrkit::shell::tr_zh("名字改写：无（%1 个条目名都能用 cp1251 原样写出）")
                 .arg(static_cast<int>(items.size())));
     } else {
         say(QStringLiteral("警告：%1 个条目名被改写（cp1251 表示不了的字符逐码点顶替成 '?'；"
                            "包已照常产出，请核对下列名字）")
                 .arg(static_cast<int>(rewrites.size())));
         for (const efs::DbNameRewrite& r : rewrites) {
-            say(QStringLiteral("  改名：%1 → %2").arg(utf8(r.source), utf8(r.written)));
+            say(xrkit::shell::tr_zh("  改名：%1 → %2").arg(utf8(r.source), utf8(r.written)));
         }
     }
     return {true, text};
@@ -2436,11 +2437,11 @@ void FsPage::start_pack() {
         return;
     }
     const QString out = utf8(job.out);
-    log_message(QStringLiteral("封包（%1）：%2 个文件 → %3")
+    log_message(xrkit::shell::tr_zh("封包（%1）：%2 个文件 → %3")
                     .arg(utf8(job.key))
                     .arg(static_cast<int>(job.items.size()))
                     .arg(out));
-    if (task_ == nullptr || !task_->run(QStringLiteral("封包"),
+    if (task_ == nullptr || !task_->run(xrkit::shell::tr_zh("封包"),
                                         [this, job](const ProgressSink& progress,
                                                     const MessageSink& message) {
                                             const PackRunResult r =
@@ -2451,7 +2452,7 @@ void FsPage::start_pack() {
                                                 message(r.message.toUtf8().toStdString());
                                             }
                                         })) {
-        log_message(QStringLiteral("有任务在跑，稍后再试"));
+        log_message(xrkit::shell::tr_zh("有任务在跑，稍后再试"));
     }
 }
 

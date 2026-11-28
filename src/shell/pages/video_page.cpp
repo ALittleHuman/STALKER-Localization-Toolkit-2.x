@@ -1,4 +1,5 @@
 #include "video_page.h"
+#include "../i18n.h"
 #include "../page_ui_kit.h"
 
 #include "xrkit/core/path.h"
@@ -54,16 +55,16 @@ QString native(const QString& path) { return QDir::toNativeSeparators(path); }
 // 1.x `_fmt`：面板里"一条媒体"的那几行（顺序、单位、小数位照 1.x）
 QStringList media_lines(const QString& path, const engine::video::MediaInfo& info) {
     QStringList lines;
-    lines << QStringLiteral("  文件: %1").arg(QFileInfo(path).fileName());
-    lines << QStringLiteral("  大小: %1 MB").arg(info.size_mb, 0, 'f', 1);
+    lines << xrkit::shell::tr_zh("  文件: %1").arg(QFileInfo(path).fileName());
+    lines << xrkit::shell::tr_zh("  大小: %1 MB").arg(info.size_mb, 0, 'f', 1);
     if (info.duration > 0) {
         const int total = static_cast<int>(info.duration);
-        lines << QStringLiteral("  时长: %1:%2")
+        lines << xrkit::shell::tr_zh("  时长: %1:%2")
                      .arg(total / 60)
                      .arg(total % 60, 2, 10, QLatin1Char('0'));
     }
     if (info.has_video) {
-        QString line = QStringLiteral("  视频: %1  %2x%3  %4fps")
+        QString line = xrkit::shell::tr_zh("  视频: %1  %2x%3  %4fps")
                            .arg(utf8(info.video.codec))
                            .arg(info.video.width)
                            .arg(info.video.height)
@@ -74,7 +75,7 @@ QStringList media_lines(const QString& path, const engine::video::MediaInfo& inf
         lines << line;
     }
     if (info.has_audio) {
-        QString line = QStringLiteral("  音频: %1  %2ch  %3Hz")
+        QString line = xrkit::shell::tr_zh("  音频: %1  %2ch  %3Hz")
                            .arg(utf8(info.audio.codec))
                            .arg(info.audio.channels)
                            .arg(info.audio.sample_rate);
@@ -144,7 +145,7 @@ VideoPage::~VideoPage() {
 
 bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request, QString* error) {
     if (process_ != nullptr) {
-        if (error != nullptr) *error = QStringLiteral("已经在转码中");
+        if (error != nullptr) *error = xrkit::shell::tr_zh("已经在转码中");
         return false;
     }
     cancel_token_.reset();  // 1.x：新一轮要显式 reset（convert() 自己不清零）
@@ -160,7 +161,7 @@ bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request, 
     {
         const engine::video::FfmpegPaths paths_now = ensure_ffmpeg();
         if (engine::video::version_rejected(paths_now.version)) {
-            const QString why = QStringLiteral("ffmpeg 版本不受支持（8.x 及以上）：") +
+            const QString why = xrkit::shell::tr_zh("ffmpeg 版本不受支持（8.x 及以上）：") +
                                 QString::fromStdString(paths_now.version).trimmed();
             if (error != nullptr) *error = why;
             last_error_ = why;
@@ -173,7 +174,7 @@ bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request, 
     if (plan.argv.empty()) {
         // ★ P-782：空 argv 不是"没写参数"，而是**产不出 OGM**（缺 libtheora/libvorbis）。
         const QString why = plan.error.empty()
-                                ? QStringLiteral("空命令行")
+                                ? xrkit::shell::tr_zh("空命令行")
                                 : QString::fromStdString(plan.error);
         if (error != nullptr) *error = why;
         last_error_ = why;   // ★ P-782：页面必须能看到理由（不是只有出参）
@@ -200,43 +201,43 @@ bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request, 
             QString detail;
             if (!output_path_.isEmpty() && QFileInfo::exists(output_path_)) {
                 detail = QFile::remove(output_path_)
-                             ? QStringLiteral("，已删除半成品文件 %1").arg(output_path_)
-                             : QStringLiteral("，但半成品文件删不掉 %1（请手动删除）")
+                             ? xrkit::shell::tr_zh("，已删除半成品文件 %1").arg(output_path_)
+                             : xrkit::shell::tr_zh("，但半成品文件删不掉 %1（请手动删除）")
                                    .arg(output_path_);
             } else {
-                detail = QStringLiteral("，没有半成品文件可删");
+                detail = xrkit::shell::tr_zh("，没有半成品文件可删");
             }
-            last_error_ = QStringLiteral("已取消") + detail;
+            last_error_ = xrkit::shell::tr_zh("已取消") + detail;
             last_cancel_message_ = last_error_;
             progress_percent_ = 0;
             if (progress_ != nullptr) progress_->setValue(0);
             if (progress_text_ != nullptr) progress_text_->setText(last_cancel_message_);
-            log_to_host(QStringLiteral("视频转换：") + last_cancel_message_);
+            log_to_host(xrkit::shell::tr_zh("视频转换：") + last_cancel_message_);
         } else if (status != QProcess::NormalExit || code != 0) {
             const QString tail = last_stderr_tail();
-            last_error_ = QStringLiteral("ffmpeg 退出码 %1（%2）")
+            last_error_ = xrkit::shell::tr_zh("ffmpeg 退出码 %1（%2）")
                               .arg(code)
-                              .arg(status == QProcess::NormalExit ? QStringLiteral("正常退出")
-                                                                  : QStringLiteral("异常终止"));
+                              .arg(status == QProcess::NormalExit ? xrkit::shell::tr_zh("正常退出")
+                                                                  : xrkit::shell::tr_zh("异常终止"));
             if (!tail.isEmpty()) {
-                last_error_ += QStringLiteral("；stderr 末尾：\n") + tail;
+                last_error_ += xrkit::shell::tr_zh("；stderr 末尾：\n") + tail;
             }
             progress_percent_ = 0;
             if (progress_ != nullptr) progress_->setValue(0);
             if (progress_text_ != nullptr) {
                 // 界面上留下**第一手理由**（原文在面板与日志里；不静默）
-                progress_text_->setText(QStringLiteral("失败：ffmpeg 退出码 %1").arg(code));
+                progress_text_->setText(xrkit::shell::tr_zh("失败：ffmpeg 退出码 %1").arg(code));
             }
-            log_to_host(QStringLiteral("视频转换失败：") + last_error_);
+            log_to_host(xrkit::shell::tr_zh("视频转换失败：") + last_error_);
             // 1.x：失败时输出文件**保留**供排障（只有取消才删）
         } else {
             progress_percent_ = 100;
             if (progress_ != nullptr) progress_->setValue(100);
             if (progress_text_ != nullptr) {
                 progress_text_->setText(
-                    QStringLiteral("完成: %1").arg(QFileInfo(output_path_).fileName()));
+                    xrkit::shell::tr_zh("完成: %1").arg(QFileInfo(output_path_).fileName()));
             }
-            log_to_host(QStringLiteral("视频转换完成：") + output_path_);
+            log_to_host(xrkit::shell::tr_zh("视频转换完成：") + output_path_);
             // 1.x：转换完成后**再解析一次产物**，并把结果贴到面板（不是抹掉原对比）
             start_probe(output_path_, ProbeTarget::Result);
         }
@@ -249,29 +250,29 @@ bool VideoPage::start_transcode(const engine::video::TranscodeRequest& request, 
     //   `errorOccurred` 兜底（两半缺一不可：只缩短等待会把失败变成静默）。
     connect(process_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError err) {
         if (shutting_down_ || err != QProcess::FailedToStart) return;
-        last_error_ = QStringLiteral("启动失败：%1（进程随后才报）")
+        last_error_ = xrkit::shell::tr_zh("启动失败：%1（进程随后才报）")
                           .arg(process_ != nullptr ? process_->errorString() : QString());
         discard_process(process_);
-        if (progress_text_ != nullptr) progress_text_->setText(QStringLiteral("失败：") + last_error_);
-        log_to_host(QStringLiteral("视频转换启动失败：") + last_error_);
+        if (progress_text_ != nullptr) progress_text_->setText(xrkit::shell::tr_zh("失败：") + last_error_);
+        log_to_host(xrkit::shell::tr_zh("视频转换启动失败：") + last_error_);
         set_running_ui(false);
         refresh_display();
     });
     if (!wait_for_start_probed(process_)) {
-        last_error_ = QStringLiteral("启动失败：%1（程序 %2）")
+        last_error_ = xrkit::shell::tr_zh("启动失败：%1（程序 %2）")
                           .arg(process_->errorString())
                           .arg(QString::fromStdString(plan.argv.front()));
         // ★ 2026-10-07（F1-1）：与 cancel_transcode 同一口径 —— **先置空再断开**
         //   （`waitForStarted` 超时返回 false 时进程仍可能随后真的起来并派 `finished`）。
         discard_process(process_);
         if (error != nullptr) *error = last_error_;
-        if (progress_text_ != nullptr) progress_text_->setText(QStringLiteral("失败：") + last_error_);
-        log_to_host(QStringLiteral("视频转换启动失败：") + last_error_);
+        if (progress_text_ != nullptr) progress_text_->setText(xrkit::shell::tr_zh("失败：") + last_error_);
+        log_to_host(xrkit::shell::tr_zh("视频转换启动失败：") + last_error_);
         return false;
     }
     set_running_ui(true);
     if (progress_ != nullptr) progress_->setValue(0);
-    if (progress_text_ != nullptr) progress_text_->setText(QStringLiteral("转换中… 0%"));
+    if (progress_text_ != nullptr) progress_text_->setText(xrkit::shell::tr_zh("转换中… 0%"));
     return true;
 }
 
@@ -279,11 +280,11 @@ void VideoPage::cancel_transcode() {
     cancel_token_.cancel();  // 令牌先置位（1.x `Converter.cancel()` 的第一件事）
     if (process_ == nullptr) {
         // 没在跑也要说出来（"点了取消但什么都没发生"最容易被当成静默失败）
-        last_cancel_message_ = QStringLiteral("已取消：当前没有在跑的转换");
+        last_cancel_message_ = xrkit::shell::tr_zh("已取消：当前没有在跑的转换");
         if (progress_text_ != nullptr) progress_text_->setText(last_cancel_message_);
         return;
     }
-    log_to_host(QStringLiteral("视频转换：用户取消"));
+    log_to_host(xrkit::shell::tr_zh("视频转换：用户取消"));
     process_->kill();
     // ★★ 2026-10-10（P17-7，审计 03 F-06 Medium）：**取消不再在主线程上等 5 秒**。
     //   事实（修前）：`kill()` 之后紧跟 `waitForFinished(5000)` —— 它跑在按钮回调这条
@@ -307,17 +308,17 @@ void VideoPage::cancel_transcode() {
         //     ① 对 nullptr 调 `deleteLater()`；② 取消超时后立刻再点转换 ⇒ 旧对象的回调
         //        把**新**的进程对象删掉。析构里早就有正确写法可对照（`process->disconnect()`）。
         discard_process(process_);
-        last_error_ = QStringLiteral("取消超时：ffmpeg 没在 5 秒内退出（进程已放弃等待）");
+        last_error_ = xrkit::shell::tr_zh("取消超时：ffmpeg 没在 5 秒内退出（进程已放弃等待）");
         // ★ 同 F3：超时支不许**留半成品**（正常取消那条路会删，这里原来漏了）——
         //   否则用户看到的是一个"看着像成功"的输出文件。删没删掉都要说出来。
         if (!cancelled_output.isEmpty() && QFileInfo::exists(cancelled_output)) {
             last_error_ += QFile::remove(cancelled_output)
-                               ? QStringLiteral("；已删除半成品文件 %1").arg(cancelled_output)
-                               : QStringLiteral("；但半成品文件删不掉 %1（请手动删除）")
+                               ? xrkit::shell::tr_zh("；已删除半成品文件 %1").arg(cancelled_output)
+                               : xrkit::shell::tr_zh("；但半成品文件删不掉 %1（请手动删除）")
                                      .arg(cancelled_output);
         }
-        if (progress_text_ != nullptr) progress_text_->setText(QStringLiteral("失败：") + last_error_);
-        log_to_host(QStringLiteral("视频转换：") + last_error_);
+        if (progress_text_ != nullptr) progress_text_->setText(xrkit::shell::tr_zh("失败：") + last_error_);
+        log_to_host(xrkit::shell::tr_zh("视频转换：") + last_error_);
         set_running_ui(false);
     });
 }
@@ -364,7 +365,7 @@ void VideoPage::handle_stderr_text(const QString& text) {
             if (progress_ != nullptr) progress_->setValue(progress_percent_);
             if (progress_text_ != nullptr) {
                 progress_text_->setText(
-                    QStringLiteral("转换中… %1%").arg(progress_percent_));
+                    xrkit::shell::tr_zh("转换中… %1%").arg(progress_percent_));
             }
         }
         if (nl == std::string::npos) break;
@@ -397,10 +398,10 @@ QString VideoPage::ffmpeg_search_summary() const {
     const QString local = QDir(app_dir).filePath(QStringLiteral("ffmpeg.exe"));
     return QStringLiteral("试过两处：① user.ltx [ffmpeg] path = %1；② 程序目录 %2（%3）。"
                           "按口径**不搜 PATH**。")
-        .arg(config.empty() ? QStringLiteral("（未设置）") : utf8(config))
+        .arg(config.empty() ? xrkit::shell::tr_zh("（未设置）") : utf8(config))
         .arg(native(local))
-        .arg(QFileInfo::exists(local) ? QStringLiteral("文件在，但探测没认它")
-                                      : QStringLiteral("不存在"));
+        .arg(QFileInfo::exists(local) ? xrkit::shell::tr_zh("文件在，但探测没认它")
+                                      : xrkit::shell::tr_zh("不存在"));
 }
 
 QProcess* VideoPage::make_child_process() { return new_child_process(this); }
@@ -432,7 +433,7 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
     if (probe_process_ != nullptr || text_probe_process_ != nullptr) {
         // ★ 2026-11-01（HA 复核）：只挡并发会**丢请求**（A 在跑、选 B 被跳过 ⇒ B 永远"正在解析"）。
         //   改成 latest wins：取消旧探针，起新的。取消本身留痕（不静默）。
-        note_skip(QStringLiteral("换文件 ⇒ 取消上一份参数解析（%1）").arg(native(path)));
+        note_skip(xrkit::shell::tr_zh("换文件 ⇒ 取消上一份参数解析（%1）").arg(native(path)));
         if (probe_process_ != nullptr) {
             probe_process_->disconnect();
             if (probe_process_->state() != QProcess::NotRunning) probe_process_->kill();
@@ -449,11 +450,11 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
     if (paths.ffprobe.empty()) {
         // ★ P-798（复核）：降级条件是"**不可用**"，不只是"没找到"。
         if (paths.found) {
-            start_text_probe(path, target, QStringLiteral("没找到 ffprobe"));
+            start_text_probe(path, target, xrkit::shell::tr_zh("没找到 ffprobe"));
             return;
         }
         apply_probe_result(path, target, engine::video::MediaInfo(),
-                           QStringLiteral("没找到 ffprobe（") + ffmpeg_search_summary() +
+                           xrkit::shell::tr_zh("没找到 ffprobe（") + ffmpeg_search_summary() +
                                QStringLiteral("；ffprobe 与 ffmpeg 可以分开放，但都要在程序目录"
                                               "或 user.ltx 里）"));
         return;
@@ -471,7 +472,7 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
         // Result 不做过期判定：产物路径由转码决定，与输入框文本不是一回事（HA 复核）
         if (probe_result_is_stale(target, path)) return;
         if (status != QProcess::NormalExit || code != 0) {
-            const QString why = QStringLiteral("ffprobe 返回码 %1：%2")
+            const QString why = xrkit::shell::tr_zh("ffprobe 返回码 %1：%2")
                                     .arg(code).arg(err.trimmed().left(120));
             if (ensure_ffmpeg().found) {
                 start_text_probe(path, target, why);
@@ -483,7 +484,7 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
         const engine::video::MediaInfo info =
             engine::video::parse_ffprobe_json(out.toUtf8().toStdString());
         if (!info.parsed) {
-            const QString why = QStringLiteral("ffprobe 的输出不是合法 JSON（%1 字节）")
+            const QString why = xrkit::shell::tr_zh("ffprobe 的输出不是合法 JSON（%1 字节）")
                                     .arg(out.toUtf8().size());
             if (ensure_ffmpeg().found) {
                 start_text_probe(path, target, why);
@@ -504,7 +505,7 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
             [this, path, target](QProcess::ProcessError err) {
                 if (shutting_down_ || err != QProcess::FailedToStart) return;
                 const QString reason =
-                    QStringLiteral("起不了 ffprobe（随后才报）：%1")
+                    xrkit::shell::tr_zh("起不了 ffprobe（随后才报）：%1")
                         .arg(probe_process_ != nullptr ? probe_process_->errorString() : QString());
                 discard_process(probe_process_);
                 if (ensure_ffmpeg().found) {
@@ -514,7 +515,7 @@ void VideoPage::start_probe(const QString& path, ProbeTarget target) {
                 }
             });
     if (!wait_for_start_probed(probe_process_)) {
-        const QString reason = QStringLiteral("起不了 ffprobe：%1").arg(probe_process_->errorString());
+        const QString reason = xrkit::shell::tr_zh("起不了 ffprobe：%1").arg(probe_process_->errorString());
         // ★ 2026-10-07（F1-1）：**先置空再断开** —— 否则这个对象随后派 `finished` 时，
         //   回调读的是成员 `probe_process_`（已经是 nullptr）⇒ 对 nullptr 解引用。
         discard_process(probe_process_);
@@ -532,10 +533,10 @@ void VideoPage::start_text_probe(const QString& path, ProbeTarget target, const 
     //   退出码非 0 是正常的（真 ffmpeg 没有输出目标时也返回 1）⇒ 只看能否解析出流。
     const engine::video::FfmpegPaths paths = ensure_ffmpeg();
     if (text_probe_process_ != nullptr) {
-        note_skip(QStringLiteral("上一份文件的降级探测还在跑 ⇒ 暂不解析 %1").arg(native(path)));
+        note_skip(xrkit::shell::tr_zh("上一份文件的降级探测还在跑 ⇒ 暂不解析 %1").arg(native(path)));
         return;
     }
-    probe_note_ = QStringLiteral("ffprobe 不可用（%1）⇒ 已用 ffmpeg -i 降级").arg(why);
+    probe_note_ = xrkit::shell::tr_zh("ffprobe 不可用（%1）⇒ 已用 ffmpeg -i 降级").arg(why);
     text_probe_text_.clear();
     text_probe_process_ = make_child_process();
     connect(text_probe_process_, &QProcess::readyReadStandardError, this, [this] {
@@ -561,11 +562,11 @@ void VideoPage::start_text_probe(const QString& path, ProbeTarget target, const 
                     apply_probe_result(path, target, parsed.info, QString());
                     refresh_status();
                 } else {
-                    probe_note_ = QStringLiteral("降级失败：%1")
+                    probe_note_ = xrkit::shell::tr_zh("降级失败：%1")
                                       .arg(QString::fromStdString(parsed.error).left(80));
                     apply_probe_result(
                         path, target, engine::video::MediaInfo(),
-                        QStringLiteral("ffprobe 与 ffmpeg -i 都拿不到参数（%1；%2）")
+                        xrkit::shell::tr_zh("ffprobe 与 ffmpeg -i 都拿不到参数（%1；%2）")
                             .arg(probe_note_,
                                  QString::fromStdString(parsed.error).left(120)));
                 }
@@ -573,7 +574,7 @@ void VideoPage::start_text_probe(const QString& path, ProbeTarget target, const 
     connect(text_probe_process_, &QProcess::errorOccurred, this,
             [this, path, target](QProcess::ProcessError err) {
                 if (shutting_down_ || err != QProcess::FailedToStart) return;
-                const QString reason = QStringLiteral("起不了 ffmpeg（降级探测）：%1")
+                const QString reason = xrkit::shell::tr_zh("起不了 ffmpeg（降级探测）：%1")
                                            .arg(text_probe_process_ != nullptr
                                                     ? text_probe_process_->errorString()
                                                     : QString());
@@ -593,7 +594,7 @@ void VideoPage::start_encoder_scan() {
     const engine::video::FfmpegPaths paths = ensure_ffmpeg();
     if (!paths.found) {
         // 找不到 ffmpeg ⇒ 编码器集合只能空着；**原因要可见**（用户红线）
-        complete_encoder_scan(false, QStringLiteral("没找到 ffmpeg，编码器表没扫：") +
+        complete_encoder_scan(false, xrkit::shell::tr_zh("没找到 ffmpeg，编码器表没扫：") +
                                         ffmpeg_search_summary());
         return;
     }
@@ -604,7 +605,7 @@ void VideoPage::start_encoder_scan() {
         const QString err = QString::fromUtf8(encoder_process_->readAllStandardError());
         discard_process(encoder_process_);
         if (status != QProcess::NormalExit || code != 0) {
-            complete_encoder_scan(false, QStringLiteral("`ffmpeg -encoders` 返回码 %1：%2")
+            complete_encoder_scan(false, xrkit::shell::tr_zh("`ffmpeg -encoders` 返回码 %1：%2")
                                             .arg(code)
                                             .arg(err.trimmed().left(200)));
             return;
@@ -624,14 +625,14 @@ void VideoPage::start_encoder_scan() {
     // ★★ P17-7（03 F-06）：晚一拍的启动失败也要有理由（见 `wait_for_start_probed`）
     connect(encoder_process_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError err) {
         if (shutting_down_ || err != QProcess::FailedToStart) return;
-        const QString reason = QStringLiteral("起不了 ffmpeg（随后才报）：%1")
+        const QString reason = xrkit::shell::tr_zh("起不了 ffmpeg（随后才报）：%1")
                                    .arg(encoder_process_ != nullptr ? encoder_process_->errorString()
                                                                     : QString());
         discard_process(encoder_process_);
         complete_encoder_scan(false, reason);
     });
     if (!wait_for_start_probed(encoder_process_)) {
-        const QString reason = QStringLiteral("起不了 ffmpeg：%1").arg(encoder_process_->errorString());
+        const QString reason = xrkit::shell::tr_zh("起不了 ffmpeg：%1").arg(encoder_process_->errorString());
         // ★ 2026-10-07（F1-1）：同 `probe_process_` —— 先置空再断开。
         discard_process(encoder_process_);
         complete_encoder_scan(false, reason);
@@ -641,7 +642,7 @@ void VideoPage::start_encoder_scan() {
 void VideoPage::complete_encoder_scan(bool ok, const QString& reason) {
     encoders_scanned_ = true;
     encoder_note_ = ok ? QString() : reason;
-    if (!ok) log_to_host(QStringLiteral("视频转换：编码器表不可用 —— ") + reason);
+    if (!ok) log_to_host(xrkit::shell::tr_zh("视频转换：编码器表不可用 —— ") + reason);
     refresh_display();
     if (pending_transcode_) {
         pending_transcode_ = false;
@@ -679,7 +680,7 @@ void VideoPage::apply_probe_result(const QString& path, ProbeTarget target,
             source_probed_ = !bad;
             if (bad) {
                 source_path_.clear();
-                source_probe_error_ = error.isEmpty() ? QStringLiteral("输出不完整") : error;
+                source_probe_error_ = error.isEmpty() ? xrkit::shell::tr_zh("输出不完整") : error;
             } else {
                 source_info_ = info;
                 source_path_ = path;
@@ -690,7 +691,7 @@ void VideoPage::apply_probe_result(const QString& path, ProbeTarget target,
             reference_probed_ = !bad;
             if (bad) {
                 reference_path_.clear();
-                reference_probe_error_ = error.isEmpty() ? QStringLiteral("输出不完整") : error;
+                reference_probe_error_ = error.isEmpty() ? xrkit::shell::tr_zh("输出不完整") : error;
             } else {
                 reference_info_ = info;
                 reference_path_ = path;
@@ -700,18 +701,18 @@ void VideoPage::apply_probe_result(const QString& path, ProbeTarget target,
         case ProbeTarget::Result:
             result_path_ = path;
             result_info_ = info;
-            result_probe_error_ = bad ? (error.isEmpty() ? QStringLiteral("输出不完整") : error)
+            result_probe_error_ = bad ? (error.isEmpty() ? xrkit::shell::tr_zh("输出不完整") : error)
                                       : QString();
             if (bad) {
-                log_to_host(QStringLiteral("视频转换：产物参数没解析出来 —— ") + result_probe_error_);
+                log_to_host(xrkit::shell::tr_zh("视频转换：产物参数没解析出来 —— ") + result_probe_error_);
             }
             break;
     }
     if (bad && target != ProbeTarget::Result) {
         // 失败**不静默**：进面板 + 进日志（1.x 是弹窗，本项目口径是不阻塞）
-        const QString what = target == ProbeTarget::Source ? QStringLiteral("源文件")
-                                                           : QStringLiteral("参考 OGM");
-        log_to_host(QStringLiteral("视频转换：%1 参数解析失败 —— %2").arg(what).arg(error));
+        const QString what = target == ProbeTarget::Source ? xrkit::shell::tr_zh("源文件")
+                                                           : xrkit::shell::tr_zh("参考 OGM");
+        log_to_host(xrkit::shell::tr_zh("视频转换：%1 参数解析失败 —— %2").arg(what).arg(error));
     }
     refresh_display();
     refresh_buttons();
@@ -761,8 +762,8 @@ QString VideoPage::ask_save_output(const QString& start_dir, const QString& init
     // 1.x `asksaveasfilename(defaultextension=".ogm", filetypes=[("OGM 视频","*.ogm")])`
     QString initial = start_dir;
     if (!initial_name.isEmpty()) initial = QDir(start_dir).filePath(initial_name);
-    return QFileDialog::getSaveFileName(this, QStringLiteral("保存为 OGM"), initial,
-                                        QStringLiteral("OGM 视频 (*.ogm)"));
+    return QFileDialog::getSaveFileName(this, xrkit::shell::tr_zh("保存为 OGM"), initial,
+                                        xrkit::shell::tr_zh("OGM 视频 (*.ogm)"));
 }
 
 QString VideoPage::ask_open_file(const QString& title, const QString& filter,
@@ -773,8 +774,8 @@ QString VideoPage::ask_open_file(const QString& title, const QString& filter,
 bool VideoPage::confirm_overwrite(const QString& reason) {
     // ★ 2026-10-07（审计补充 F1-2）：`-y` 恒在 argv 里 ⇒ 覆盖前必须**先说清楚再问**。
     //   文案里带引擎给的第一手理由（哪个文件、为什么会覆盖）。答否 ⇒ 一个字都不写。
-    return QMessageBox::question(this, QStringLiteral("确认覆盖"),
-                                 reason + QStringLiteral("\n\n要覆盖它吗？")) == QMessageBox::Yes;
+    return QMessageBox::question(this, xrkit::shell::tr_zh("确认覆盖"),
+                                 reason + xrkit::shell::tr_zh("\n\n要覆盖它吗？")) == QMessageBox::Yes;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -785,7 +786,7 @@ QString VideoPage::info_panel_text() const {
     QStringList lines;
     const QString source_text = source_edit_->text().trimmed();
         if (!probe_note_.isEmpty()) {
-            lines << QStringLiteral("探测：%1").arg(probe_note_);
+            lines << xrkit::shell::tr_zh("探测：%1").arg(probe_note_);
             lines << QString();
         }
     const QString reference_text = reference_edit_->text().trimmed();
@@ -798,11 +799,11 @@ QString VideoPage::info_panel_text() const {
             if (!path.isEmpty()) {
                 lines << QStringLiteral("  文件: %1").arg(QFileInfo(path).fileName());
             }
-            lines << QStringLiteral("  ⚠ 参数未探测到：%1").arg(error);
-        lines << QStringLiteral("  支持的容器：%1").arg(utf8(engine::video::containers_text()));
-        lines << QStringLiteral("  视频编码：%1").arg(
+            lines << xrkit::shell::tr_zh("  ⚠ 参数未探测到：%1").arg(error);
+        lines << xrkit::shell::tr_zh("  支持的容器：%1").arg(utf8(engine::video::containers_text()));
+        lines << xrkit::shell::tr_zh("  视频编码：%1").arg(
             utf8(engine::video::join_dot(engine::video::supported_video_codecs())));
-        lines << QStringLiteral("  音频编码：%1").arg(
+        lines << xrkit::shell::tr_zh("  音频编码：%1").arg(
             utf8(engine::video::join_dot(engine::video::supported_audio_codecs())));
         } else {
             lines << media_lines(path, info);  // 里面已经含"文件/大小/时长/视频/音频"那几行
@@ -812,19 +813,19 @@ QString VideoPage::info_panel_text() const {
 
     if (!reference_text.isEmpty()) {
         if (reference_probed_) {
-            block(QStringLiteral("参考 OGM"), reference_path_, reference_info_, QString());
+            block(xrkit::shell::tr_zh("参考 OGM"), reference_path_, reference_info_, QString());
         } else {
-            block(QStringLiteral("参考 OGM"), reference_text, engine::video::MediaInfo(),
-                  reference_probe_error_.isEmpty() ? QStringLiteral("正在解析（还没出结论）")
+            block(xrkit::shell::tr_zh("参考 OGM"), reference_text, engine::video::MediaInfo(),
+                  reference_probe_error_.isEmpty() ? xrkit::shell::tr_zh("正在解析（还没出结论）")
                                                    : reference_probe_error_);
         }
     }
     if (!source_text.isEmpty()) {
         if (source_probed_) {
-            block(QStringLiteral("源文件"), source_path_, source_info_, QString());
+            block(xrkit::shell::tr_zh("源文件"), source_path_, source_info_, QString());
         } else {
-            block(QStringLiteral("源文件"), source_text, engine::video::MediaInfo(),
-                  source_probe_error_.isEmpty() ? QStringLiteral("正在解析（还没出结论）")
+            block(xrkit::shell::tr_zh("源文件"), source_text, engine::video::MediaInfo(),
+                  source_probe_error_.isEmpty() ? xrkit::shell::tr_zh("正在解析（还没出结论）")
                                                 : source_probe_error_);
         }
     }
@@ -842,78 +843,78 @@ QString VideoPage::info_panel_text() const {
         const engine::video::AudioStream& sa = source_info_.audio;
         const engine::video::AudioStream& ra = reference_info_.audio;
 
-        lines << QStringLiteral("══ 转换参数（匹配参考 OGM） ══");
+        lines << xrkit::shell::tr_zh("══ 转换参数（匹配参考 OGM） ══");
         if (source_info_.has_video && reference_info_.has_video) {
-            lines << QStringLiteral("  视频编码: %1 -> %2")
+            lines << xrkit::shell::tr_zh("  视频编码: %1 -> %2")
                          .arg(utf8(rv.codec),
-             plan.video_encoder.empty() ? QStringLiteral("（缺 libtheora，无法产出 OGM）")
+             plan.video_encoder.empty() ? xrkit::shell::tr_zh("（缺 libtheora，无法产出 OGM）")
                                         : QString::fromStdString(plan.video_encoder));
-            lines << QStringLiteral("  分辨率:   %1x%2 -> %3x%4  [%5]")
+            lines << xrkit::shell::tr_zh("  分辨率:   %1x%2 -> %3x%4  [%5]")
                          .arg(sv.width)
                          .arg(sv.height)
                          .arg(rv.width)
                          .arg(rv.height)
-                         .arg(plan.scale_applied ? QStringLiteral("将缩放") : QStringLiteral("OK"));
-            lines << QStringLiteral("  帧率:     %1 -> %2  [%3]")
+                         .arg(plan.scale_applied ? xrkit::shell::tr_zh("将缩放") : QStringLiteral("OK"));
+            lines << xrkit::shell::tr_zh("  帧率:     %1 -> %2  [%3]")
                          .arg(sv.fps, 0, 'f', 2)
                          .arg(rv.fps, 0, 'f', 2)
-                         .arg(plan.fps_applied ? QStringLiteral("将调整") : QStringLiteral("OK"));
+                         .arg(plan.fps_applied ? xrkit::shell::tr_zh("将调整") : QStringLiteral("OK"));
             if (rv.bitrate > 0) {
-                lines << QStringLiteral("  视频码率: %1 kbps（匹配参考）").arg(rv.bitrate / 1000);
+                lines << xrkit::shell::tr_zh("  视频码率: %1 kbps（匹配参考）").arg(rv.bitrate / 1000);
             }
         }
         if (source_info_.has_audio && reference_info_.has_audio) {
             // 显示**实际会传给 ffmpeg 的值**（引擎的结论；参考为 0 时它已经回退成 48000/2/160k）
-            lines << QStringLiteral("  音频:     采样率 %1Hz  %2ch  %3kbps")
+            lines << xrkit::shell::tr_zh("  音频:     采样率 %1Hz  %2ch  %3kbps")
                          .arg(plan.audio_sample_rate)
                          .arg(plan.audio_channels)
                          .arg(plan.audio_bitrate / 1000);
-            lines << QStringLiteral("            源 %1ch -> %2ch  [%3]")
+            lines << xrkit::shell::tr_zh("            源 %1ch -> %2ch  [%3]")
                          .arg(sa.channels)
                          .arg(plan.audio_channels)
                          .arg(sa.channels == ra.channels ? QStringLiteral("OK")
-                                                         : QStringLiteral("将调整"));
+                                                         : xrkit::shell::tr_zh("将调整"));
         }
         if (plan.encoder_warning) {
             // 降级必须可见（1.x 会告警：输出编码与参考不一致）
-            lines << QStringLiteral("  ⚠ 没有可用编码器表 ⇒ 回退内置 mpeg4（输出编码可能与参考不一致）");
+            lines << xrkit::shell::tr_zh("  ⚠ 没有可用编码器表 ⇒ 回退内置 mpeg4（输出编码可能与参考不一致）");
         }
         lines << QString();
     }
 
     if (result_probe_error_.isEmpty() && result_info_.parsed) {
-        lines << QStringLiteral("══ 输出文件（本次转换结果） ══");
+        lines << xrkit::shell::tr_zh("══ 输出文件（本次转换结果） ══");
         lines << media_lines(result_path_, result_info_);
         lines << QString();
     } else if (!result_probe_error_.isEmpty()) {
-        lines << QStringLiteral("══ 输出文件（本次转换结果） ══");
-        lines << QStringLiteral("  ⚠ 产物参数未探测到：%1").arg(result_probe_error_);
+        lines << xrkit::shell::tr_zh("══ 输出文件（本次转换结果） ══");
+        lines << xrkit::shell::tr_zh("  ⚠ 产物参数未探测到：%1").arg(result_probe_error_);
         lines << QString();
     }
 
     if (!encoder_note_.isEmpty()) {
-        lines << QStringLiteral("  ⚠ 编码器表：%1").arg(encoder_note_);
+        lines << xrkit::shell::tr_zh("  ⚠ 编码器表：%1").arg(encoder_note_);
     }
     if (!skip_reasons_.isEmpty()) {
-        lines << QStringLiteral("══ 跳过 %1 项（逐条原因） ══").arg(skip_reasons_.size());
+        lines << xrkit::shell::tr_zh("══ 跳过 %1 项（逐条原因） ══").arg(skip_reasons_.size());
         for (const QString& reason : skip_reasons_) {
             lines << QStringLiteral("  · %1").arg(reason);
         }
     }
     if (!last_error_.isEmpty()) {
-        lines << QStringLiteral("══ 最近一次转换的错误原文 ══");
+        lines << xrkit::shell::tr_zh("══ 最近一次转换的错误原文 ══");
         lines << QStringLiteral("  %1").arg(QString(last_error_).replace(QLatin1Char('\n'),
                                                                         QStringLiteral("\n  ")));
     }
 
     while (!lines.isEmpty() && lines.last().isEmpty()) lines.removeLast();
-    if (lines.isEmpty()) return QStringLiteral("拖入视频文件查看参数");  // 1.x 的空状态文案
+    if (lines.isEmpty()) return xrkit::shell::tr_zh("拖入视频文件查看参数");  // 1.x 的空状态文案
     return lines.join(QLatin1Char('\n'));
 }
 
 void VideoPage::note_skip(const QString& reason) {
     skip_reasons_ << reason;
-    log_to_host(QStringLiteral("视频转换：跳过 —— ") + reason);
+    log_to_host(xrkit::shell::tr_zh("视频转换：跳过 —— ") + reason);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -941,21 +942,21 @@ engine::video::TranscodeRequest VideoPage::build_request(
 void VideoPage::request_transcode() {
     if (process_ != nullptr) return;
     if (!source_probed_) {
-        note_skip(QStringLiteral("没有可用的源文件（参数没落地）⇒ 不转换"));
+        note_skip(xrkit::shell::tr_zh("没有可用的源文件（参数没落地）⇒ 不转换"));
         refresh_display();
         return;
     }
     if (!reference_probed_) {
-        note_skip(QStringLiteral("参考 OGM 没落地（1.x 口径：参考必需）⇒ 不转换"));
+        note_skip(xrkit::shell::tr_zh("参考 OGM 没落地（1.x 口径：参考必需）⇒ 不转换"));
         refresh_display();
         return;
     }
     const engine::video::FfmpegPaths paths = ensure_ffmpeg();
     if (!paths.found) {
         // 用户红线：找不到 ffmpeg 要**明确报**（含试过的路径），不能只灰着
-        last_error_ = QStringLiteral("找不到 ffmpeg，无法转换。") + ffmpeg_search_summary();
-        if (progress_text_ != nullptr) progress_text_->setText(QStringLiteral("失败：") + last_error_);
-        log_to_host(QStringLiteral("视频转换：") + last_error_);
+        last_error_ = xrkit::shell::tr_zh("找不到 ffmpeg，无法转换。") + ffmpeg_search_summary();
+        if (progress_text_ != nullptr) progress_text_->setText(xrkit::shell::tr_zh("失败：") + last_error_);
+        log_to_host(xrkit::shell::tr_zh("视频转换：") + last_error_);
         refresh_display();
         return;
     }
@@ -964,7 +965,7 @@ void VideoPage::request_transcode() {
         pending_transcode_ = true;
         start_encoder_scan();
         if (progress_text_ != nullptr) {
-            progress_text_->setText(QStringLiteral("正在扫描可用编码器（ffmpeg -encoders）…"));
+            progress_text_->setText(xrkit::shell::tr_zh("正在扫描可用编码器（ffmpeg -encoders）…"));
         }
         return;
     }
@@ -992,20 +993,20 @@ void VideoPage::request_transcode() {
     if (conflict != engine::video::OutputConflict::None) {
         const QString reason = utf8(engine::video::output_conflict_reason(conflict, request));
         if (conflict == engine::video::OutputConflict::Exists && confirm_overwrite(reason)) {
-            log_to_host(QStringLiteral("视频转换：用户确认覆盖 ") + native(out));
+            log_to_host(xrkit::shell::tr_zh("视频转换：用户确认覆盖 ") + native(out));
         } else {
             last_error_ = (conflict == engine::video::OutputConflict::Exists)
-                              ? QStringLiteral("已取消：不覆盖已存在的输出文件 ") + native(out)
+                              ? xrkit::shell::tr_zh("已取消：不覆盖已存在的输出文件 ") + native(out)
                               : reason;
             if (progress_text_ != nullptr) {
-                progress_text_->setText(QStringLiteral("失败：") + last_error_);
+                progress_text_->setText(xrkit::shell::tr_zh("失败：") + last_error_);
             }
-            log_to_host(QStringLiteral("视频转换：") + last_error_);
+            log_to_host(xrkit::shell::tr_zh("视频转换：") + last_error_);
             refresh_display();
             return;
         }
     }
-    log_to_host(QStringLiteral("视频转换：开始 %1 -> %2").arg(native(source_path_), native(out)));
+    log_to_host(xrkit::shell::tr_zh("视频转换：开始 %1 -> %2").arg(native(source_path_), native(out)));
     QString error;
     if (!start_transcode(request, &error)) {
         last_error_ = error;
@@ -1018,7 +1019,7 @@ void VideoPage::request_transcode() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 VideoPage::VideoPage(QWidget* parent)
-    : PageBase(QStringLiteral("video"), QStringLiteral("视频转换"), parent) {
+    : PageBase(QStringLiteral("video"), xrkit::shell::tr_zh("视频转换"), parent) {
     // ★ 用户 2026-09-27：「先把我截图的文字全删了」—— 页内说明整段删（六页统一）
     // ★ 用户 2026-10-04：「视频，一般都是一对一的转换，所以基本上都是**单文件形式**」
     //   ⇒ 三个输入行都是**单文件**（源 / 参考 OGM / 输出 OGM），每行整行可拖（drop_zone.h）。
@@ -1028,9 +1029,9 @@ VideoPage::VideoPage(QWidget* parent)
         edit->setPlaceholderText(placeholder);
         return edit;
     };
-    source_edit_ = make_edit(QStringLiteral("video_source"), QStringLiteral("源视频文件"));
-    reference_edit_ = make_edit(QStringLiteral("video_reference"), QStringLiteral("参考 OGM 文件"));
-    output_edit_ = make_edit(QStringLiteral("video_output"), QStringLiteral("输出 OGM 文件"));
+    source_edit_ = make_edit(QStringLiteral("video_source"), xrkit::shell::tr_zh("源视频文件"));
+    reference_edit_ = make_edit(QStringLiteral("video_reference"), xrkit::shell::tr_zh("参考 OGM 文件"));
+    output_edit_ = make_edit(QStringLiteral("video_output"), xrkit::shell::tr_zh("输出 OGM 文件"));
 
     const auto row = [this](const QString& label, QLineEdit* edit, std::function<void()> on_browse) {
         // ★ 2026-10-04 用户第 1 条：整行成容器 ⇒ "拖到相应区域"
@@ -1039,27 +1040,27 @@ VideoPage::VideoPage(QWidget* parent)
         layout->setContentsMargins(0, 0, 0, 0);
         layout->addWidget(new QLabel(label), 0);
         layout->addWidget(edit, 1);
-        auto* browse = new QPushButton(QStringLiteral("选择…"));
+        auto* browse = new QPushButton(xrkit::shell::tr_zh("选择…"));
         layout->addWidget(browse, 0);
         QObject::connect(browse, &QPushButton::clicked, this, std::move(on_browse));
         drop_zones_.attach_row(container, this);
         return container;
     };
 
-    body_layout()->addWidget(row(QStringLiteral("源文件："), source_edit_, [this] {
+    body_layout()->addWidget(row(xrkit::shell::tr_zh("源文件："), source_edit_, [this] {
         const QString picked = ask_open_file(
-            QStringLiteral("选择源视频文件"),
+            xrkit::shell::tr_zh("选择源视频文件"),
             video_filter(),
             resolve_dialog_start(source_dialog_start()));
         if (!picked.isEmpty()) source_edit_->setText(native(picked));
     }));
-    body_layout()->addWidget(row(QStringLiteral("参考 OGM："), reference_edit_, [this] {
-        const QString picked = ask_open_file(QStringLiteral("选择参考 OGM"),
-                                             QStringLiteral("OGM 视频 (*.ogm);;所有文件 (*.*)"),
+    body_layout()->addWidget(row(xrkit::shell::tr_zh("参考 OGM："), reference_edit_, [this] {
+        const QString picked = ask_open_file(xrkit::shell::tr_zh("选择参考 OGM"),
+                                             xrkit::shell::tr_zh("OGM 视频 (*.ogm);;所有文件 (*.*)"),
                                              resolve_dialog_start(reference_dialog_start()));
         if (!picked.isEmpty()) reference_edit_->setText(native(picked));
     }));
-    body_layout()->addWidget(row(QStringLiteral("输出 OGM："), output_edit_,
+    body_layout()->addWidget(row(xrkit::shell::tr_zh("输出 OGM："), output_edit_,
                                  [this] { browse_output(); }));
 
     // 拖进来的路径与"选择…"走**同一份**落地实现：只在**真存在的文件**上起探测
@@ -1112,7 +1113,7 @@ VideoPage::VideoPage(QWidget* parent)
     progress_->setRange(0, 100);
     progress_->setValue(0);
     footer_layout()->addWidget(progress_, 0);
-    progress_text_ = new QLabel(QStringLiteral("就绪"));
+    progress_text_ = new QLabel(xrkit::shell::tr_zh("就绪"));
     progress_text_->setObjectName(QStringLiteral("video_progress_text"));
     progress_text_->setWordWrap(true);
     footer_layout()->addWidget(progress_text_, 0);
@@ -1123,24 +1124,24 @@ VideoPage::VideoPage(QWidget* parent)
     status_->setWordWrap(true);
     add_action_status(status_);
 
-    detect_button_ = add_action(QStringLiteral("检测 ffmpeg"));
+    detect_button_ = add_action(xrkit::shell::tr_zh("检测 ffmpeg"));
     detect_button_->setObjectName(QStringLiteral("video_detect"));
     QObject::connect(detect_button_, &QPushButton::clicked, this, [this] {
         if (detect()) return;
         request_setup();  // 8.3：读不到就弹三按钮小窗（非阻塞）
     });
-    setup_button_ = add_action(QStringLiteral("设置 ffmpeg"));
+    setup_button_ = add_action(xrkit::shell::tr_zh("设置 ffmpeg"));
     setup_button_->setObjectName(QStringLiteral("video_setup"));
     QObject::connect(setup_button_, &QPushButton::clicked, this, [this] { request_setup(); });
 
     // 1.x：取消按钮平时**不出现**，跑起来才出现在主按钮左边（`:579-583`）
-    cancel_button_ = add_action(QStringLiteral("取消"));
+    cancel_button_ = add_action(xrkit::shell::tr_zh("取消"));
     cancel_button_->setObjectName(QStringLiteral("video_cancel"));
     cancel_button_->setVisible(false);
     QObject::connect(cancel_button_, &QPushButton::clicked, this, [this] { cancel_transcode(); });
 
     // 1.x 主按钮（`:574-577`）：未选源时置灰，点击走 start_transcode
-    convert_button_ = add_action(QStringLiteral("转换为 OGM"));
+    convert_button_ = add_action(xrkit::shell::tr_zh("转换为 OGM"));
     convert_button_->setObjectName(QStringLiteral("video_convert"));
     convert_button_->setEnabled(false);
     QObject::connect(convert_button_, &QPushButton::clicked, this, [this] { request_transcode(); });
@@ -1158,7 +1159,7 @@ QString VideoPage::video_filter() {
     for (const std::string& ext : engine::video::supported_containers()) {
         patterns << QStringLiteral("*.") + utf8(ext);
     }
-    return QStringLiteral("视频文件 (%1);;所有文件 (*.*)").arg(patterns.join(QLatin1Char(' ')));
+    return xrkit::shell::tr_zh("视频文件 (%1);;所有文件 (*.*)").arg(patterns.join(QLatin1Char(' ')));
 }
 
 QString VideoPage::status_text() const {
@@ -1168,38 +1169,38 @@ QString VideoPage::status_text() const {
         QString text = QStringLiteral("✓ ffmpeg: ") + utf8(resolved.ffmpeg);
         if (!resolved.has_probe) {
             text += probe_note_.isEmpty()
-                        ? QStringLiteral("（缺 ffprobe；将用 ffmpeg -i 降级）")
+                        ? xrkit::shell::tr_zh("（缺 ffprobe；将用 ffmpeg -i 降级）")
                         : QStringLiteral("（") + probe_note_ + QStringLiteral("）");
         }
-        if (resolved.ffmpeg_from_config) text += QStringLiteral("（user.ltx 手动指定）");
+        if (resolved.ffmpeg_from_config) text += xrkit::shell::tr_zh("（user.ltx 手动指定）");
         // ★ 2026-11-02：参考**应当**是 OGM。不是 .ogm 时提示一句（不拒绝）：降级探测下
         //   拿不到流码率时会走 `-q:v 7`，码率匹配可能退化。
         const QString ref = reference_edit_ != nullptr ? reference_edit_->text().trimmed() : QString();
         if (!ref.isEmpty() && !ref.endsWith(QStringLiteral(".ogm"), Qt::CaseInsensitive)) {
-            text += QStringLiteral("（参考不是 OGM：码率匹配可能退化，将走 -q:v 7）");
+            text += xrkit::shell::tr_zh("（参考不是 OGM：码率匹配可能退化，将走 -q:v 7）");
         }
         return text;
     }
     switch (locator_.state()) {
         case engine::video::ProbeState::NotProbed:
             // ★ 探测之前**不显示 ✗**（那就是在断言"没有"，而我们还没查）
-            return QStringLiteral("未检测 ffmpeg");
+            return xrkit::shell::tr_zh("未检测 ffmpeg");
         case engine::video::ProbeState::Found: {
             const engine::video::FfmpegPaths paths = resolve_ffmpeg();
             QString text = QStringLiteral("✓ ffmpeg: ") + utf8(paths.ffmpeg);
             // HA 复核：缺 ffprobe != 读不出来（有 ffmpeg -i 降级）；只有降级也失败才是读不出来
             if (!paths.has_probe) {
                 text += probe_note_.isEmpty()
-                            ? QStringLiteral("（缺 ffprobe；将用 ffmpeg -i 降级）")
+                            ? xrkit::shell::tr_zh("（缺 ffprobe；将用 ffmpeg -i 降级）")
                             : QStringLiteral("（") + probe_note_ + QStringLiteral("）");
             }
-            if (paths.ffmpeg_from_config) text += QStringLiteral("（user.ltx 手动指定）");
+            if (paths.ffmpeg_from_config) text += xrkit::shell::tr_zh("（user.ltx 手动指定）");
 
             return text;
         }
         case engine::video::ProbeState::Missing:
             // 用户 2026-10-04 红线：找不到要**报出试过哪些路径**，不能只给一行泛泛的话
-            return QStringLiteral("✗ 没找到 ffmpeg（只认 user.ltx 与程序目录）—— ") +
+            return xrkit::shell::tr_zh("✗ 没找到 ffmpeg（只认 user.ltx 与程序目录）—— ") +
                    ffmpeg_search_summary();
     }
     return QString();
@@ -1253,7 +1254,7 @@ QWidget* VideoPage::request_setup() {
     }
     auto* dialog = new QDialog(this);
     dialog->setObjectName(QStringLiteral("video_setup_dialog"));
-    dialog->setWindowTitle(QStringLiteral("需要 ffmpeg"));
+    dialog->setWindowTitle(xrkit::shell::tr_zh("需要 ffmpeg"));
     dialog->setModal(false);  // 8.3：**非阻塞**（不 grab、不等窗口）
     auto* layout = new QVBoxLayout(dialog);
     layout->addWidget(new QLabel(
@@ -1261,8 +1262,8 @@ QWidget* VideoPage::request_setup() {
                        "ffmpeg.exe / ffprobe.exe 的位置。")));
     auto* buttons = new QHBoxLayout;
     // ★ 2026-11-02（决策）：自动安装退役 ⇒ 两按钮
-    auto* choose = new QPushButton(QStringLiteral("手动选择"));
-    auto* later = new QPushButton(QStringLiteral("稍后"));
+    auto* choose = new QPushButton(xrkit::shell::tr_zh("手动选择"));
+    auto* later = new QPushButton(xrkit::shell::tr_zh("稍后"));
     buttons->addWidget(choose);
     buttons->addWidget(later);
     buttons->addStretch(1);
@@ -1272,7 +1273,7 @@ QWidget* VideoPage::request_setup() {
     //（随包自带 ⇒ 指到它并重新探测；只有脚本 ⇒ 真跑脚本；都没有 ⇒ 如实报不可用）
     QObject::connect(choose, &QPushButton::clicked, this, [this, dialog] {
         const QString picked = QFileDialog::getOpenFileName(
-            this, QStringLiteral("选择 ffmpeg.exe"), QString(), QStringLiteral("ffmpeg (ffmpeg*.exe)"));
+            this, xrkit::shell::tr_zh("选择 ffmpeg.exe"), QString(), QStringLiteral("ffmpeg (ffmpeg*.exe)"));
         if (picked.isEmpty()) return;
         const QDir dir = QFileInfo(picked).absoluteDir();
         QString probe = dir.filePath(QStringLiteral("ffprobe.exe"));
