@@ -4,6 +4,7 @@
 // 口径（照 1.x）：重要结果进 GUI 日志栏并落盘；纯明细只落盘。
 // 该分层由上层决定，这里只提供落盘与标准错误两条通道。
 
+#include <functional>
 #include <string>
 #include <string_view>
 
@@ -13,6 +14,9 @@ enum class Level { Info, Warn, Error };
 
 // 追加一行（std::cerr + 可选文件）。msg 里的中文按 UTF-8 写出。
 void log(Level level, std::string_view msg);
+
+// UI 层可注入日志文案翻译（例如 xrkit_app 的 tr_zh）；CLI 不设置时保持原文。
+void set_log_translator(std::function<std::string(std::string_view)> translator);
 
 // 空字符串 = 关闭文件输出。目录不存在时静默降级（绝不因日志失败中断程序）。
 void set_log_file(const std::string& path);

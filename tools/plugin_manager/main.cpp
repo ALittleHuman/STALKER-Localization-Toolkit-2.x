@@ -11,6 +11,7 @@
 //   xrkit_plugin_manager.exe --scan-json [--plugins <目录>]
 #include "xrkit/core/plugin_disabled.h"
 #include "xrkit/core/http.h"
+#include "xrkit/core/log.h"
 #include "xrkit/core/sha256.h"
 #include "i18n.h"
 
@@ -723,6 +724,9 @@ int main(int argc, char** argv) {
     if (gui_app == nullptr) return 2;  // headless 分支必须已 return
     if (plugins_dir.isEmpty()) plugins_dir = default_plugins_dir();
     xrkit::shell::initialize_ui_language(args);
+    xrkit::core::set_log_translator([](std::string_view message) {
+        return xrkit::shell::tr_zh(std::string(message).c_str()).toStdString();
+    });
     ManagerWindow window(plugins_dir, reason);
     if (args.contains(QStringLiteral("--i18n-report"))) {
         QTextStream report(stdout);

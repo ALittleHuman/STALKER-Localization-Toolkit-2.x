@@ -16,6 +16,7 @@ namespace {
 std::mutex g_mutex;
 std::ofstream g_file;
 bool g_active = false;
+std::function<std::string(std::string_view)> g_translator;
 
 const char* level_tag(Level level) {
     switch (level) {
@@ -37,6 +38,11 @@ std::string now_stamp() {
 
 }  // namespace
 
+void set_log_translator(std::function<std::string(std::string_view)> translator) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_translator = std::move(translator);
+}
+
 void set_log_file(const std::string& path) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_file.is_open()) g_file.close();
@@ -53,6 +59,11 @@ bool log_file_active() {
 
 void log(Level level, std::string_view msg) {
     std::lock_guard<std::mutex> lock(g_mutex);
+    std::string translated;
+    if (g_translator) {
+        translated = g_translator(msg);
+        msg = translated;
+    }
     std::string line;
     line.reserve(msg.size() + 32);
     line += "[";

@@ -2,6 +2,7 @@
 //
 // 只负责正常 GUI 和宿主诊断；离屏自检已拆到独立 xrkit_smoke.exe（RC2 起）。
 
+#include "xrkit/core/log.h"
 #include "xrkit/core/theme.h"
 // ★ P2c：宿主诊断（`--python-host` / `--py-plugins`）走引擎层唯一实现（见下面的分支）
 #include "xrkit/engine/plugin/py_host.h"
@@ -134,6 +135,9 @@ int main(int argc, char** argv) {
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
     QApplication app(argc, argv);
     xrkit::shell::initialize_ui_language(args);
+    xrkit::core::set_log_translator([](std::string_view message) {
+        return xrkit::shell::tr_zh(std::string(message).c_str()).toStdString();
+    });
     QApplication::setApplicationName(QStringLiteral("STALKER Toolkit 2.x"));
     QApplication::setApplicationVersion(QStringLiteral("2.0.0"));
     xrkit::shell::start_ui_watchdog();
