@@ -26,6 +26,7 @@ struct TextTemplate {
 };
 
 QVector<TextTemplate> g_templates;
+QVector<QPair<QString, QString>> g_log_fragments;
 
 QString read_language_override(const QStringList& args) {
     for (int i = 0; i < args.size(); ++i) {
@@ -85,6 +86,16 @@ void rebuild_templates() {
         if (!re.isValid()) continue;
         g_templates.push_back(TextTemplate{re, it.value()});
     }
+    g_log_fragments.clear();
+    for (auto it = g_ru.constBegin(); it != g_ru.constEnd(); ++it) {
+        if (it.key().contains(QLatin1Char('%'))) continue;
+        if (it.key().size() < 2) continue;
+        g_log_fragments.push_back({it.key(), it.value()});
+    }
+    std::sort(g_log_fragments.begin(), g_log_fragments.end(),
+              [](const QPair<QString, QString>& a, const QPair<QString, QString>& b) {
+                  return a.first.size() > b.first.size();
+              });
 }
 
 void translate_text(QString& text) {
@@ -151,6 +162,17 @@ QString tr_zh(const char* chinese) {
     if (chinese == nullptr) return {};
     QString source = QString::fromUtf8(chinese);
     translate_text(source);
+    return source;
+}
+
+QString tr_log(const char* chinese) {
+    if (chinese == nullptr) return {};
+    QString source = QString::fromUtf8(chinese);
+    translate_text(source);
+    if (g_language != UiLanguage::Russian) return source;
+    for (const auto& pair : g_log_fragments) {
+        if (source.contains(pair.first)) source.replace(pair.first, pair.second);
+    }
     return source;
 }
 

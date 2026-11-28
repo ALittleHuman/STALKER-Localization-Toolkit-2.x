@@ -725,7 +725,7 @@ int main(int argc, char** argv) {
     if (plugins_dir.isEmpty()) plugins_dir = default_plugins_dir();
     xrkit::shell::initialize_ui_language(args);
     xrkit::core::set_log_translator([](std::string_view message) {
-        return xrkit::shell::tr_zh(std::string(message).c_str()).toStdString();
+        return xrkit::shell::tr_log(std::string(message).c_str()).toStdString();
     });
     ManagerWindow window(plugins_dir, reason);
     if (args.contains(QStringLiteral("--i18n-report"))) {

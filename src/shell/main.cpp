@@ -136,7 +136,7 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     xrkit::shell::initialize_ui_language(args);
     xrkit::core::set_log_translator([](std::string_view message) {
-        return xrkit::shell::tr_zh(std::string(message).c_str()).toStdString();
+        return xrkit::shell::tr_log(std::string(message).c_str()).toStdString();
     });
     QApplication::setApplicationName(QStringLiteral("STALKER Toolkit 2.x"));
     QApplication::setApplicationVersion(QStringLiteral("2.0.0"));

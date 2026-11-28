@@ -15,4 +15,7 @@ void initialize_ui_language(const QStringList& args);
 UiLanguage ui_language();
 QString tr_zh(const char* chinese);
 
+// 日志专用：先走模板，再对残留中文片段做短语替换（日志是拼接字符串，不是单条 UI 文案）。
+QString tr_log(const char* chinese);
+
 }  // namespace xrkit::shell
