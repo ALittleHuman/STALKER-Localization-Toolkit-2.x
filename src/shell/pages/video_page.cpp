@@ -785,10 +785,6 @@ bool VideoPage::confirm_overwrite(const QString& reason) {
 QString VideoPage::info_panel_text() const {
     QStringList lines;
     const QString source_text = source_edit_->text().trimmed();
-        if (!probe_note_.isEmpty()) {
-            lines << xrkit::shell::tr_zh("探测：%1").arg(probe_note_);
-            lines << QString();
-        }
     const QString reference_text = reference_edit_->text().trimmed();
 
     const auto block = [&lines](const QString& title, const QString& path,
@@ -1167,11 +1163,7 @@ QString VideoPage::status_text() const {
     const engine::video::FfmpegPaths resolved = resolve_ffmpeg();
     if (resolved.found) {
         QString text = QStringLiteral("✓ ffmpeg: ") + utf8(resolved.ffmpeg);
-        if (!resolved.has_probe) {
-            text += probe_note_.isEmpty()
-                        ? xrkit::shell::tr_zh("（缺 ffprobe；将用 ffmpeg -i 降级）")
-                        : QStringLiteral("（") + probe_note_ + QStringLiteral("）");
-        }
+        // 内置 ffmpeg 已经可用；ffprobe 只是可选的精确探测件，不再在状态行提示。
         if (resolved.ffmpeg_from_config) text += xrkit::shell::tr_zh("（user.ltx 手动指定）");
         // ★ 2026-11-02：参考**应当**是 OGM。不是 .ogm 时提示一句（不拒绝）：降级探测下
         //   拿不到流码率时会走 `-q:v 7`，码率匹配可能退化。
@@ -1188,12 +1180,7 @@ QString VideoPage::status_text() const {
         case engine::video::ProbeState::Found: {
             const engine::video::FfmpegPaths paths = resolve_ffmpeg();
             QString text = QStringLiteral("✓ ffmpeg: ") + utf8(paths.ffmpeg);
-            // HA 复核：缺 ffprobe != 读不出来（有 ffmpeg -i 降级）；只有降级也失败才是读不出来
-            if (!paths.has_probe) {
-                text += probe_note_.isEmpty()
-                            ? xrkit::shell::tr_zh("（缺 ffprobe；将用 ffmpeg -i 降级）")
-                            : QStringLiteral("（") + probe_note_ + QStringLiteral("）");
-            }
+            // 同上：ffprobe 可选，不在状态行显示降级说明。
             if (paths.ffmpeg_from_config) text += xrkit::shell::tr_zh("（user.ltx 手动指定）");
 
             return text;
