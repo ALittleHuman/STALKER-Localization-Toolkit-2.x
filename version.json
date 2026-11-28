@@ -518,7 +518,7 @@
         "268": { "built": "2026-11-25 23:35:05", "commit": "76a02bc", "artifacts": ["build\\logs\\build_pkg_268.log", "dist\\2.0.0\\BETA\\268"] },
         "269": { "built": "2026-11-25 23:58:56", "commit": "94ecba7", "artifacts": ["build\\logs\\build_pkg_269.log", "dist\\2.0.0\\BETA\\269"] },
         "270": { "built": "2026-11-28 00:45:24", "commit": "a86781f", "artifacts": ["build\\logs\\build_pkg_270.log", "dist\\2.0.0\\BETA\\270"] },
-        "273": { "built": "2026-11-28 12:43:37", "commit": "905fef5", "artifacts": ["dist\\2.0.0\\BETA\\273", "E:\\Software\\Tools\\DeepSeek Harness\\_release_273\\530.zip"] }
+        "273": { "built": "2026-11-28 12:43:37", "commit": "905fef5", "artifacts": ["dist\\2.0.0\\BETA\\273"] }
       },
       "RC": {
         "1": { "built": "2026-11-20 16:51:09", "commit": "5951b29", "artifacts": ["build\\logs\\build_pkg_1.log", "dist\\2.0.0\\RC\\1"] },
