@@ -12,6 +12,7 @@
 #include "xrkit/core/plugin_disabled.h"
 #include "xrkit/core/http.h"
 #include "xrkit/core/sha256.h"
+#include "i18n.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -33,6 +34,7 @@
 #include <QPushButton>
 #include <QTableWidget>
 #include <QTextEdit>
+#include <QTextStream>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QVector>
@@ -720,7 +722,18 @@ int main(int argc, char** argv) {
     }
     if (gui_app == nullptr) return 2;  // headless 分支必须已 return
     if (plugins_dir.isEmpty()) plugins_dir = default_plugins_dir();
+    xrkit::shell::initialize_ui_language(args);
     ManagerWindow window(plugins_dir, reason);
+    xrkit::shell::apply_ui_language(&window);
+    xrkit::shell::install_ui_language_watcher();
+    if (args.contains(QStringLiteral("--i18n-report"))) {
+        QTextStream report(stdout);
+        report << "I18N manager title=" << window.windowTitle() << "\n";
+        for (const QPushButton* button : window.findChildren<QPushButton*>()) {
+            report << "I18N manager button=" << button->text() << "\n";
+        }
+        return 0;
+    }
     window.show();
     return gui_app->exec();
 }

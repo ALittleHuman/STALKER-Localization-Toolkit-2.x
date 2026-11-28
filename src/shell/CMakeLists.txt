@@ -129,6 +129,8 @@ xrkit_attach_python_runtime(xrkit_build_gui)
 #   只做静态清单（调 `xrkit_cli --py-plugins-scan`，不 import 插件）＋启停；
 #   因此只链 xrkit_core（禁用清单实现）与 Qt Widgets，**不链 xrkit_shell/engine**。
 qt_add_executable(xrkit_plugin_manager "${CMAKE_SOURCE_DIR}/tools/plugin_manager/main.cpp")
+target_sources(xrkit_plugin_manager PRIVATE "${CMAKE_SOURCE_DIR}/src/shell/i18n.cpp")
+target_include_directories(xrkit_plugin_manager PRIVATE "${CMAKE_SOURCE_DIR}/src/shell")
 target_sources(xrkit_plugin_manager PRIVATE "${CMAKE_SOURCE_DIR}/assets/app.rc")
 target_sources(xrkit_plugin_manager PRIVATE "${CMAKE_SOURCE_DIR}/assets/xrkit_winres.rc")
 target_compile_definitions(xrkit_plugin_manager PRIVATE XRKIT_WINRES_GUI)
