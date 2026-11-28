@@ -17,11 +17,13 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QLocale>
 #include <QMenu>
 #include <QSignalBlocker>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTextEdit>
 #include <QTableWidget>
 #include <QRegularExpression>
 #include <QTimer>
@@ -214,11 +216,24 @@ void translate_object(QObject* object) {
             translate_text(text);
             if (text != edit->text()) edit->setText(text);
         }
+        QString placeholder = combo->placeholderText();
+        translate_text(placeholder);
+        if (placeholder != combo->placeholderText()) combo->setPlaceholderText(placeholder);
     }
     if (auto* line = qobject_cast<QLineEdit*>(object)) {
         QString text = line->placeholderText();
         translate_text(text);
         if (text != line->placeholderText()) line->setPlaceholderText(text);
+    }
+    if (auto* text_edit = qobject_cast<QTextEdit*>(object)) {
+        QString text = text_edit->toPlainText();
+        translate_text(text);
+        if (text != text_edit->toPlainText()) text_edit->setPlainText(text);
+    }
+    if (auto* plain = qobject_cast<QPlainTextEdit*>(object)) {
+        QString text = plain->toPlainText();
+        translate_text(text);
+        if (text != plain->toPlainText()) plain->setPlainText(text);
     }
     if (auto* table = qobject_cast<QTableWidget*>(object)) {
         for (int i = 0; i < table->columnCount(); ++i) {
