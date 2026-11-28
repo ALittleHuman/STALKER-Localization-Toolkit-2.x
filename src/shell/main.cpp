@@ -21,6 +21,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QTabBar>
 #include <QComboBox>
 #include <QDialog>
 #include <QDir>
@@ -205,6 +206,11 @@ int main(int argc, char** argv) {
         xrkit::shell::apply_ui_language(&i18n_probe);
         report << "I18N template=" << i18n_probe.text() << "\n";
         report << "I18N title=" << hub.windowTitle() << "\n";
+        for (const QTabBar* tab_bar : hub.findChildren<QTabBar*>()) {
+            for (int i = 0; i < tab_bar->count(); ++i) {
+                report << "I18N tab=" << tab_bar->tabText(i) << "\n";
+            }
+        }
         const auto actions = hub.findChildren<QAction*>();
         for (const QAction* action : actions) {
             if (!action->text().isEmpty()) report << "I18N action=" << action->text() << "\n";

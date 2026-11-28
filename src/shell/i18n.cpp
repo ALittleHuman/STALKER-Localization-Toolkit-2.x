@@ -20,6 +20,7 @@
 #include <QLocale>
 #include <QMenu>
 #include <QSignalBlocker>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QRegularExpression>
@@ -183,6 +184,13 @@ void translate_object(QObject* object) {
         QString title = menu->title();
         translate_text(title);
         if (title != menu->title()) menu->setTitle(title);
+    }
+    if (auto* tab_bar = qobject_cast<QTabBar*>(object)) {
+        for (int i = 0; i < tab_bar->count(); ++i) {
+            QString text = tab_bar->tabText(i);
+            translate_text(text);
+            if (text != tab_bar->tabText(i)) tab_bar->setTabText(i, text);
+        }
     }
     if (auto* tabs = qobject_cast<QTabWidget*>(object)) {
         for (int i = 0; i < tabs->count(); ++i) {
